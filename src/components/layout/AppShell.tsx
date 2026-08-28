@@ -11,8 +11,8 @@ interface AppShellProps {
   role: string;
   /** Affiche la section « Administration » dans la sidebar (rôle Admin). */
   canAdmin?: boolean;
-  /** Affiche "À catégoriser (Finance)" dans la sidebar (treso.categoriser_demande). */
-  canCategoriser?: boolean;
+  /** Affiche "Demandes à traiter (Finance)" (categoriser_demande OU valider_demande). */
+  canAccesFinanceDemandes?: boolean;
   children: ReactNode;
 }
 
@@ -28,7 +28,7 @@ export function AppShell({
   user,
   role,
   canAdmin = false,
-  canCategoriser = false,
+  canAccesFinanceDemandes = false,
   children,
 }: AppShellProps) {
   // Rendu initial (serveur + première passe client) toujours « déployé »
@@ -68,7 +68,7 @@ export function AppShell({
         collapsed={collapsed}
         onToggleCollapse={toggleCollapse}
         canAdmin={canAdmin}
-        canCategoriser={canCategoriser}
+        canAccesFinanceDemandes={canAccesFinanceDemandes}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />

@@ -26,7 +26,7 @@ export default async function DashboardHomePage({
       {error === "acces_refuse_categoriser" ? (
         <ToastOnMount
           variant="error"
-          message="Vous n'avez pas la permission de catégoriser les demandes."
+          message="Vous n'avez pas accès à l'espace Finance des demandes."
         />
       ) : null}
 

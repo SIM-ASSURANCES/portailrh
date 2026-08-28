@@ -14,8 +14,8 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   /** Rôle Admin : ajoute la section « Administration » au bas de la navigation. */
   canAdmin?: boolean;
-  /** Permission treso.categoriser_demande : ajoute "À catégoriser (Finance)". */
-  canCategoriser?: boolean;
+  /** categoriser_demande OU valider_demande : ajoute "Demandes à traiter (Finance)". */
+  canAccesFinanceDemandes?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -48,12 +48,12 @@ export function Sidebar({
   collapsed,
   onToggleCollapse,
   canAdmin = false,
-  canCategoriser = false,
+  canAccesFinanceDemandes = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
   const pathname = usePathname();
-  const navBranches = getNavBranches({ canCategoriser });
+  const navBranches = getNavBranches({ canAccesFinanceDemandes });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0].key
   );

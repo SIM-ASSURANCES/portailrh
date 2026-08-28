@@ -63,7 +63,7 @@ export async function categoriserDemandeAction(
     };
   }
 
-  const objet = await prisma.objet.findUnique({ where: { id: objetId } });
+  const objet = await prisma.objet.findUnique({ where: { id: objetId }, include: { categorie: true } });
   if (!objet || objet.categorieId !== categorieId) {
     return {
       status: "error",
@@ -82,7 +82,7 @@ export async function categoriserDemandeAction(
       entity: "Demande",
       entityId: demandeId,
       action: "CATEGORISER",
-      detail: `Catégorisation : catégorie=${categorieId}, objet=${objetId}, budget=${budgetDisponible}`,
+      detail: `Catégorie « ${objet.categorie.label} », objet « ${objet.label} », budget ${budgetDisponible.toLocaleString("fr-FR")} FCFA`,
       userId: session.user.id,
     },
   });
@@ -91,4 +91,114 @@ export async function categoriserDemandeAction(
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
 
   return { status: "success", message: "Catégorisation enregistrée." };
+}
+
+type SimpleActionResult = { status: "success" | "error"; message: string };
+
+function revalidateDemandePaths(demandeId: string) {
+  revalidatePath("/treso/finance/demandes");
+  revalidatePath(`/treso/finance/demandes/${demandeId}`);
+  revalidatePath("/treso/demandes");
+}
+
+/**
+ * Valide une demande. Réservée à `treso.valider_demande`.
+ *
+ * Verrouillage DÉFINITIF (règle impérative) : une fois VALIDEE, plus aucune
+ * action ne peut la faire revenir en arrière — il n'existe volontairement
+ * aucune fonction de "dévalidation" dans tout le portail. Défense en
+ * profondeur : le statut EN_ATTENTE est revérifié ici juste avant
+ * l'écriture, jamais uniquement via le masquage du bouton dans l'UI (même
+ * principe que `categoriserDemandeAction` ci-dessus).
+ */
+export async function validerDemandeAction(demandeId: string): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.valider_demande")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.statut !== "EN_ATTENTE") {
+    return {
+      status: "error",
+      message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
+    };
+  }
+
+  await prisma.$transaction([
+    prisma.demande.update({ where: { id: demandeId }, data: { statut: "VALIDEE" } }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "validation",
+        detail: null,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+
+  revalidateDemandePaths(demandeId);
+
+  return { status: "success", message: `Demande ${demande.reference} validée.` };
+}
+
+const motifRejetSchema = z
+  .string()
+  .trim()
+  .min(3, "Le motif du rejet est obligatoire (3 caractères minimum)");
+
+/**
+ * Rejette une demande. Réservée à `treso.valider_demande` (même permission
+ * que valider — la décision valider/rejeter est un seul et même pouvoir).
+ * Motif obligatoire (validé ici, jamais uniquement côté client) ; même
+ * défense en profondeur sur le statut EN_ATTENTE que `validerDemandeAction`.
+ */
+export async function rejeterDemandeAction(
+  demandeId: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.valider_demande")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedMotif = motifRejetSchema.safeParse(motif);
+  if (!parsedMotif.success) {
+    return { status: "error", message: parsedMotif.error.issues[0].message };
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.statut !== "EN_ATTENTE") {
+    return {
+      status: "error",
+      message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
+    };
+  }
+
+  await prisma.$transaction([
+    prisma.demande.update({
+      where: { id: demandeId },
+      data: { statut: "REJETEE", motifRejet: parsedMotif.data },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "rejet",
+        detail: parsedMotif.data,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+
+  revalidateDemandePaths(demandeId);
+
+  return { status: "success", message: `Demande ${demande.reference} rejetée.` };
 }

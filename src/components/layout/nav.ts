@@ -35,7 +35,7 @@ export const DASHBOARD_ITEM: NavItem = {
  * dans ce fichier, purement statique et sans accès à la session).
  */
 export interface NavFlags {
-  canCategoriser: boolean;
+  canAccesFinanceDemandes: boolean;
 }
 
 /**
@@ -49,7 +49,7 @@ export interface NavFlags {
  * Les routes non encore implémentées renvoient un 404 tant que l'écran
  * correspondant n'existe pas — l'entrée fige la structure de navigation.
  */
-export function getNavBranches({ canCategoriser }: NavFlags): NavBranch[] {
+export function getNavBranches({ canAccesFinanceDemandes }: NavFlags): NavBranch[] {
   return [
     {
       key: "achat",
@@ -59,10 +59,10 @@ export function getNavBranches({ canCategoriser }: NavFlags): NavBranch[] {
         {
           items: [
             { label: "Demandes", href: "/treso/demandes", icon: "file-text" },
-            ...(canCategoriser
+            ...(canAccesFinanceDemandes
               ? [
                   {
-                    label: "À catégoriser (Finance)",
+                    label: "Demandes à traiter (Finance)",
                     href: "/treso/finance/demandes",
                     icon: "folder-tree",
                   } satisfies NavItem,

@@ -2,9 +2,13 @@ import { notFound } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
+import type { Prisma } from "@/generated/prisma/client";
+import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 import { CategorisationForm } from "./CategorisationForm";
+import { ValidationActions } from "./ValidationActions";
 
 export default async function CategoriserDemandePage({
   params,
@@ -12,6 +16,10 @@ export default async function CategoriserDemandePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+
+  const session = await getSession();
+  const canCategoriser = hasPermission(session, "treso.categoriser_demande");
+  const canValider = hasPermission(session, "treso.valider_demande");
 
   const demande = await prisma.demande.findUnique({
     where: { id },
@@ -23,7 +31,7 @@ export default async function CategoriserDemandePage({
   }
 
   const [categories, objets] =
-    demande.statut === "EN_ATTENTE"
+    demande.statut === "EN_ATTENTE" && canCategoriser
       ? await Promise.all([
           prisma.categorie.findMany({ orderBy: { label: "asc" } }),
           prisma.objet.findMany({ orderBy: { label: "asc" } }),
@@ -75,44 +83,45 @@ export default async function CategoriserDemandePage({
       </div>
 
       {demande.statut === "EN_ATTENTE" ? (
-        <CategorisationForm
-          demandeId={demande.id}
-          categories={categories.map((c) => ({ id: c.id, label: c.label }))}
-          objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
-          initialCategorieId={demande.categorieId ?? undefined}
-          initialObjetId={demande.objetId ?? undefined}
-          initialBudget={demande.budgetDisponible != null ? Number(demande.budgetDisponible) : undefined}
-        />
+        <>
+          {canCategoriser ? (
+            <CategorisationForm
+              demandeId={demande.id}
+              categories={categories.map((c) => ({ id: c.id, label: c.label }))}
+              objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
+              initialCategorieId={demande.categorieId ?? undefined}
+              initialObjetId={demande.objetId ?? undefined}
+              initialBudget={demande.budgetDisponible != null ? Number(demande.budgetDisponible) : undefined}
+            />
+          ) : (
+            <CategorisationSummary
+              categorieLabel={demande.categorie?.label}
+              objetLabel={demande.objet?.label}
+              budget={demande.budgetDisponible}
+              note="Catégorie, objet et budget sont renseignés par l'équipe Finance."
+            />
+          )}
+
+          {canValider ? <ValidationActions demandeId={demande.id} /> : null}
+        </>
       ) : demande.statut === "VALIDEE" ? (
-        <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
-          <p className="rounded-md bg-info-bg px-3 py-2 text-sm text-info">
-            Cette demande est validée : catégorie, objet et budget sont
-            définitivement verrouillés et ne peuvent plus être modifiés.
+        <CategorisationSummary
+          categorieLabel={demande.categorie?.label}
+          objetLabel={demande.objet?.label}
+          budget={demande.budgetDisponible}
+          lockMessage="Cette demande est validée : catégorie, objet et budget sont définitivement verrouillés et ne peuvent plus être modifiés."
+        />
+      ) : demande.statut === "REJETEE" ? (
+        <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
+          <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
+            Cette demande a été rejetée.
           </p>
-          <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div>
-              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Catégorie
-              </dt>
-              <dd className="text-sm text-foreground">{demande.categorie?.label ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Objet
-              </dt>
-              <dd className="text-sm text-foreground">{demande.objet?.label ?? "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Budget disponible
-              </dt>
-              <dd className="text-sm text-foreground">
-                {demande.budgetDisponible != null
-                  ? `${Number(demande.budgetDisponible).toLocaleString("fr-FR")} FCFA`
-                  : "—"}
-              </dd>
-            </div>
-          </dl>
+          {demande.motifRejet ? (
+            <p className="text-sm text-foreground">
+              <span className="font-medium">Motif : </span>
+              {demande.motifRejet}
+            </p>
+          ) : null}
         </div>
       ) : (
         <p className="rounded-lg border border-border bg-muted px-4 py-6 text-center text-sm text-muted-foreground">
@@ -120,6 +129,62 @@ export default async function CategoriserDemandePage({
           catégorisation n&apos;est possible à ce stade.
         </p>
       )}
+
+      <DemandeHistorique demandeId={demande.id} />
+    </div>
+  );
+}
+
+/**
+ * Résumé en lecture seule de la catégorisation (catégorie/objet/budget) —
+ * utilisé quand aucun formulaire éditable n'est proposé, soit parce que la
+ * demande est verrouillée (`lockMessage`), soit parce que l'utilisateur n'a
+ * pas la permission de catégoriser (`note`). Colocalisé : uniquement utilisé
+ * par cette page, dans deux branches différentes.
+ */
+function CategorisationSummary({
+  categorieLabel,
+  objetLabel,
+  budget,
+  lockMessage,
+  note,
+}: {
+  categorieLabel?: string;
+  objetLabel?: string;
+  budget: Prisma.Decimal | null;
+  lockMessage?: string;
+  note?: string;
+}) {
+  const budgetValue =
+    budget != null ? `${Number(budget).toLocaleString("fr-FR")} FCFA` : "—";
+
+  return (
+    <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
+      {lockMessage ? (
+        <p className="rounded-md bg-info-bg px-3 py-2 text-sm text-info">{lockMessage}</p>
+      ) : note ? (
+        <p className="text-sm text-muted-foreground">{note}</p>
+      ) : null}
+      <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div>
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Catégorie
+          </dt>
+          <dd className="text-sm text-foreground">{categorieLabel ?? "Non catégorisée"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Objet
+          </dt>
+          <dd className="text-sm text-foreground">{objetLabel ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Budget disponible
+          </dt>
+          <dd className="text-sm text-foreground">{budgetValue}</dd>
+        </div>
+      </dl>
     </div>
   );
 }

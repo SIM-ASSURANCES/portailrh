@@ -19,7 +19,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
       user={session.user}
       role={session.role}
       canAdmin={isAdmin(session)}
-      canCategoriser={hasPermission(session, "treso.categoriser_demande")}
+      canAccesFinanceDemandes={
+        hasPermission(session, "treso.categoriser_demande") ||
+        hasPermission(session, "treso.valider_demande")
+      }
     >
       {children}
     </AppShell>

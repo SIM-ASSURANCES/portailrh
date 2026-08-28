@@ -75,14 +75,15 @@ sim-portail/
 │   │   │           ├── DemandeForm.tsx         # Client Component (useActionState)
 │   │   │           └── actions.ts              # Server Action creerDemandeAction (zod + ActionState)
 │   │   │   └── finance/
-│   │   │       ├── layout.tsx              # Garde treso.categoriser_demande (tout l'espace Finance)
+│   │   │       ├── layout.tsx              # Garde categoriser_demande OU valider_demande
 │   │   │       └── demandes/
 │   │   │           ├── page.tsx               # "Demandes à catégoriser" (toutes, tri par ancienneté)
 │   │   │           ├── DemandesACategoriserTable.tsx
 │   │   │           └── [id]/
-│   │   │               ├── page.tsx               # Détail + rendu conditionnel selon statut
+│   │   │               ├── page.tsx               # Détail + rendu conditionnel statut x permission
 │   │   │               ├── CategorisationForm.tsx  # Select Catégorie->Objet en cascade (Client)
-│   │   │               └── actions.ts              # categoriserDemandeAction (défense en profondeur)
+│   │   │               ├── ValidationActions.tsx    # Boutons Valider/Rejeter (Client, useTransition)
+│   │   │               └── actions.ts              # categoriser/valider/rejeterDemandeAction
 │   │   ├── (dev)/
 │   │   │   └── ui-preview/
 │   │   │       ├── page.tsx            # Vitrine des composants src/components/ui (OUTIL DE DEV)
@@ -112,7 +113,8 @@ sim-portail/
 │   │   ├── layout/                # Coquille applicative (voir Design system > Coquille)
 │   │   │   └── AppShell.tsx, Sidebar.tsx, Topbar.tsx, nav.ts, actions.ts
 │   │   ├── tresorerie/             # Domaine Trésorerie, réutilisé sur plusieurs écrans
-│   │   │   └── demandeStatut.ts      # STATUT_DEMANDE_BADGE_VARIANT / _LABEL (mapping Badge partagé)
+│   │   │   ├── demandeStatut.ts      # STATUT_DEMANDE_BADGE_VARIANT / _LABEL (mapping Badge partagé)
+│   │   │   └── DemandeHistorique.tsx  # Historique générique d'une Demande (Server Component autonome)
 │   │   # À venir (dev #2) : ReglementCard.tsx, etc. (les formulaires restent
 │   │   # colocalisés à leur page tant qu'une seule route les utilise).
 │   ├── lib/                       # Utilitaires, auth, prisma, helpers
@@ -582,13 +584,86 @@ Hors périmètre des tâches de ce ticket ; à couvrir par un ticket dédié
 `/admin/modules`) quand le besoin de les éditer en production se présentera.
 
 **Navigation conditionnelle par permission** — `nav.ts` expose désormais
-`getNavBranches({ canCategoriser })` (fonction, plus une constante statique)
-pour insérer conditionnellement l'entrée "À catégoriser (Finance)" dans la
-branche "Demande d'Achat". Le booléen est calculé une fois dans
-`(dashboard)/layout.tsx` (`hasPermission(session, "treso.categoriser_demande")`)
-et descend via `AppShell` → `Sidebar`, exactement comme `canAdmin`/`isAdmin()`
-pour la section "Administration" — même pattern à suivre pour toute future
-entrée de nav conditionnée par une permission.
+`getNavBranches({ canAccesFinanceDemandes })` (fonction, plus une constante
+statique) pour insérer conditionnellement l'entrée "Demandes à traiter
+(Finance)" dans la branche "Demande d'Achat". Le booléen est calculé une
+fois dans `(dashboard)/layout.tsx` et descend via `AppShell` → `Sidebar`,
+exactement comme `canAdmin`/`isAdmin()` pour la section "Administration" —
+même pattern à suivre pour toute future entrée de nav conditionnée par une
+permission. **Mis à jour au Ticket 3** : ce booléen vaut
+`categoriser_demande OU valider_demande` (pas juste `categoriser_demande`)
+puisque le DG accède au même espace pour valider/rejeter — voir Ticket 3
+ci-dessous pour le détail.
+
+## Module Trésorerie : Ticket 3 — Validation / Rejet d'une demande
+
+**Statut : terminé.**
+
+**Garde élargie** — `treso/finance/layout.tsx` accepte désormais
+`treso.categoriser_demande` **OU** `treso.valider_demande` (avant : seulement
+la première). Le DG (`treso.valider_demande`, pas `treso.categoriser_demande`
+dans le seed) partage donc le même espace `/treso/finance/*` que Finance,
+mais **la page de détail affiche des actions différentes selon la
+permission précise** — ne jamais supposer qu'un utilisateur qui a passé la
+garde du layout a les deux permissions :
+
+- A `treso.categoriser_demande` → voit le formulaire de catégorisation
+  (`CategorisationForm`) si `EN_ATTENTE`.
+- N'a pas `treso.categoriser_demande` → voit un résumé en lecture seule
+  (catégorie/objet/budget, ou "Non catégorisée") à la place du formulaire,
+  quel que soit son autre statut de permission — c'est le cas du DG, qui a
+  besoin de voir la catégorisation pour décider, sans pouvoir la modifier.
+- A `treso.valider_demande` → voit le bloc "Décision" (`ValidationActions`,
+  boutons Valider/Rejeter) si `EN_ATTENTE`.
+- N'a ni l'une ni l'autre — impossible en pratique : la garde du layout
+  l'aurait déjà refusé.
+
+**`validerDemandeAction(demandeId)` / `rejeterDemandeAction(demandeId, motif)`**
+(dans `treso/finance/demandes/[id]/actions.ts`, à côté de
+`categoriserDemandeAction`) :
+
+- Appelées directement depuis `ValidationActions.tsx` (Client Component,
+  `useTransition`) — pas de `<form action={...}>` : ce sont de simples
+  fonctions serveur invoquées avec des arguments, comme les toggles de la
+  console admin.
+- **Verrouillage définitif** : valider passe la demande en `VALIDEE`, sans
+  aucune fonction de "dévalidation" nulle part dans le portail — la seule
+  façon de "défaire" une décision serait une intervention manuelle en base,
+  jamais via l'application.
+- **Motif obligatoire pour un rejet** (zod, `min(3)`), revérifié côté serveur
+  même si le bouton "Confirmer le rejet" est aussi bloqué côté client si le
+  champ est vide.
+- **Défense en profondeur** (même principe que `categoriserDemandeAction`) :
+  chaque action revérifie `statut === "EN_ATTENTE"` juste avant l'écriture.
+  Vérifié manuellement en contournant volontairement la garde d'UI sur une
+  demande déjà `VALIDEE` : la Server Action a refusé une seconde validation
+  (aucune entrée `HistoriqueEntry` dupliquée, statut inchangé).
+- Écriture + historisation dans une transaction Prisma (`$transaction`) :
+  `Demande.update` (statut, `motifRejet` si rejet) et
+  `HistoriqueEntry.create` (`action: "validation"` ou `"rejet"`, `detail`
+  = motif ou `null`) réussissent ou échouent ensemble.
+- `revalidatePath` sur `/treso/finance/demandes`, `/treso/finance/demandes/[id]`
+  **et** `/treso/demandes` (Ticket 1) : le badge de statut se met à jour
+  immédiatement partout où la demande apparaît.
+
+**Historique générique de la demande** —
+[src/components/tresorerie/DemandeHistorique.tsx](src/components/tresorerie/DemandeHistorique.tsx) :
+Server Component autonome (`<DemandeHistorique demandeId={...} />`) qui
+requête lui-même `HistoriqueEntry` (`entity: "Demande"`), triées par ordre
+chronologique. Volontairement générique : une action sans libellé connu
+dans `ACTION_LABELS` s'affiche simplement avec sa valeur brute — aucune
+modification nécessaire ici quand les tickets suivants (règlements, retours
+de caisse) commenceront à historiser leurs propres évènements sur la même
+demande. Utilisable depuis n'importe quelle page affichant une demande, pas
+seulement l'écran Finance.
+
+**Lisibilité de l'historique (petit correctif rétroactif sur le Ticket 2)**
+— en construisant l'affichage de l'historique, l'entrée "Catégorisation"
+du Ticket 2 s'est révélée peu lisible (elle stockait les identifiants bruts
+`categorieId`/`objetId` plutôt que des libellés). Corrigé dans
+`categoriserDemandeAction` pour stocker les libellés humains
+(`Catégorie « X », objet « Y », budget Z FCFA`) — les entrées créées avant
+ce correctif restent inchangées en base (elles gardent les IDs bruts).
 
 ## Module Pointage RH : fondations de données
 
