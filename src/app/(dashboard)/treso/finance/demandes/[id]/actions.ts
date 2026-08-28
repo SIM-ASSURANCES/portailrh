@@ -101,6 +101,10 @@ function revalidateDemandePaths(demandeId: string) {
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath("/treso/demandes");
   revalidatePath(`/treso/demandes/${demandeId}`);
+  // Ticket 8 : validation/rejet/clôture changent la répartition des
+  // demandes VALIDEE — revalider tout l'espace Finance (dashboard + listes
+  // "à décaisser"/"à régulariser") en une fois via `type: "layout"`.
+  revalidatePath("/treso/finance", "layout");
 }
 
 /**

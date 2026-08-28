@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
+import { RETOUR_EN_ATTENTE_WHERE } from "@/lib/dashboardFinance";
 import { prisma } from "@/lib/prisma";
 
 import { RetoursEnAttenteTable } from "./RetoursEnAttenteTable";
@@ -20,6 +21,9 @@ import { RetoursEnAttenteTable } from "./RetoursEnAttenteTable";
  * proposer de bouton "Réceptionner" voué à échouer côté serveur
  * (`receptionnerRetourAction` le refuserait de toute façon, mais autant ne
  * pas l'afficher — même principe que `canEffectuerReglement` au Ticket 4).
+ * Filtre factorisé dans `RETOUR_EN_ATTENTE_WHERE` (Ticket 8) : le compteur
+ * "Retours de caisse en attente" du dashboard Finance désigne exactement
+ * le même ensemble de lignes que cette liste.
  */
 export default async function RetoursEnAttentePage() {
   const session = await getSession();
@@ -28,7 +32,7 @@ export default async function RetoursEnAttentePage() {
   }
 
   const rawRetours = await prisma.retourCaisse.findMany({
-    where: { estReceptionne: false, reglement: { demande: { statut: "VALIDEE" } } },
+    where: RETOUR_EN_ATTENTE_WHERE,
     include: {
       declarant: true,
       reglement: { include: { demande: true } },

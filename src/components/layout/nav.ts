@@ -4,6 +4,13 @@ export interface NavItem {
   label: string;
   href: string;
   icon: IconName;
+  /**
+   * Force une correspondance exacte (pas de préfixe) pour l'état "actif".
+   * Nécessaire dès qu'un item est le préfixe strict d'un autre item de la
+   * même sidebar (ex: "/treso/finance" préfixe de "/treso/finance/demandes")
+   * — sans quoi les deux s'allumeraient simultanément sur une sous-route.
+   */
+  exact?: boolean;
 }
 
 export interface NavGroup {
@@ -38,6 +45,8 @@ export interface NavFlags {
   canAccesFinanceDemandes: boolean;
   /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
   canReceptionnerRetour: boolean;
+  /** `treso.voir_dashboard_finance` : ajoute "Tableau de bord Finance" (en tête de branche). */
+  canVoirDashboardFinance: boolean;
 }
 
 /**
@@ -51,7 +60,11 @@ export interface NavFlags {
  * Les routes non encore implémentées renvoient un 404 tant que l'écran
  * correspondant n'existe pas — l'entrée fige la structure de navigation.
  */
-export function getNavBranches({ canAccesFinanceDemandes, canReceptionnerRetour }: NavFlags): NavBranch[] {
+export function getNavBranches({
+  canAccesFinanceDemandes,
+  canReceptionnerRetour,
+  canVoirDashboardFinance,
+}: NavFlags): NavBranch[] {
   return [
     {
       key: "achat",
@@ -60,6 +73,16 @@ export function getNavBranches({ canAccesFinanceDemandes, canReceptionnerRetour 
       groups: [
         {
           items: [
+            ...(canVoirDashboardFinance
+              ? [
+                  {
+                    label: "Tableau de bord Finance",
+                    href: "/treso/finance",
+                    icon: "layout-grid",
+                    exact: true,
+                  } satisfies NavItem,
+                ]
+              : []),
             { label: "Demandes", href: "/treso/demandes", icon: "file-text" },
             ...(canAccesFinanceDemandes
               ? [

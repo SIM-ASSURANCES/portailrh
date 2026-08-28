@@ -81,7 +81,14 @@ sim-portail/
 │   │   │           ├── RetourCaisseRow.tsx      # Bouton/formulaire par règlement (Client)
 │   │   │           └── RetourCaisseForm.tsx     # Formulaire de déclaration (Client, useActionState)
 │   │   │   └── finance/
-│   │   │       ├── layout.tsx              # Garde categoriser_demande OU valider_demande OU receptionner_retour
+│   │   │       ├── layout.tsx              # Garde categoriser/valider/receptionner_retour/voir_dashboard_finance
+│   │   │       ├── page.tsx                # Dashboard Finance (4 StatCard, Ticket 8)
+│   │   │       ├── a-decaisser/
+│   │   │       │   ├── page.tsx               # Demandes VALIDEE, reste à régler > 0
+│   │   │       │   └── ADecaisserTable.tsx
+│   │   │       ├── a-regulariser/
+│   │   │       │   ├── page.tsx               # Demandes VALIDEE, reste à régler = 0, non clôturées
+│   │   │       │   └── ARegulariserTable.tsx
 │   │   │       ├── retours/
 │   │   │       │   ├── page.tsx               # "Retours en attente" (garde receptionner_retour)
 │   │   │       │   ├── RetoursEnAttenteTable.tsx
@@ -138,7 +145,8 @@ sim-portail/
 │   │   ├── auth.ts                  # Config Auth.js + contrat getSession()/hasPermission()/isAdmin()/getAccessibleModules()
 │   │   ├── prisma.ts                # Singleton PrismaClient (driver adapter pg)
 │   │   ├── reference.ts             # generateDemandeReference() : référence lisible "DEM-2026-000123"
-│   │   ├── tresorerie.ts            # getTotalRegle()/getResteARegler()/getSoldeCaisse()
+│   │   ├── tresorerie.ts            # getTotalRegle/getResteARegler/getSoldeCaisse/getEcart...
+│   │   ├── dashboardFinance.ts      # getDemandesADecaisser/getDecaissementsARegulariser/getRetoursEnAttente
 │   │   ├── validation.ts            # ActionState, fieldErrorsFromZod (pattern Server Action + zod)
 │   │   └── hooks/
 │   │       └── useActionFeedback.ts   # Relie un ActionState à un toast sonner
@@ -1033,6 +1041,121 @@ avance) : aucune modification nécessaire pour ce ticket.
   FCFA, collaborateur injoignable.") acceptée, motif visible à l'identique
   côté Finance et côté Collaborateur.
 
+## Module Trésorerie : Ticket 8 — Dashboard Finance
+
+**Statut : terminé.**
+
+**Fonctions d'agrégation** (`src/lib/dashboardFinance.ts`, distinct de
+`tresorerie.ts` pour ne pas le surcharger) :
+
+- `getDemandesADecaisser()` / `getDecaissementsARegulariser()` — répartissent
+  les demandes `VALIDEE` en deux ensembles selon leur reste à régler
+  (`> 0` / `= 0`), calculés en **2 requêtes groupées** (`findMany` +
+  `reglement.groupBy({ by: ["demandeId"] })`) partagées par une fonction
+  interne commune, **jamais une requête `getResteARegler()` par demande** —
+  le volume de demandes validées à un instant T reste modeste pour une
+  application interne, mais autant éviter le N+1 dès que c'est simple.
+- `getRetoursEnAttente()` — compte les `RetourCaisse` non réceptionnés dont
+  la demande est toujours `VALIDEE`, via `RETOUR_EN_ATTENTE_WHERE` : ce
+  filtre Prisma est **exporté et réutilisé tel quel** par
+  `treso/finance/retours/page.tsx` (Ticket 6), pour que le chiffre du
+  dashboard et la liste sur laquelle on atterrit en cliquant dessus
+  désignent toujours exactement le même ensemble de lignes.
+- `getSoldeCaisse()` (Ticket 4) est réutilisée telle quelle, sans
+  modification.
+
+Les deux listes filtrées (`treso/finance/a-decaisser/page.tsx` et
+`.../a-regulariser/page.tsx`) recalculent la même répartition
+groupée pour afficher le détail ligne par ligne (référence, créateur,
+montant, reste à régler ou écart, date de validation — `Demande.updatedAt`,
+qui correspond exactement à la date de validation tant que la demande
+reste `VALIDEE`, aucun autre champ de `Demande` ne changeant après coup).
+Sur `a-regulariser`, l'écart par demande (`getEcart()`, Ticket 7) est
+calculé **par demande** via `Promise.all` plutôt qu'en une requête groupée
+supplémentaire : contrairement à "toutes les demandes validées", cet
+ensemble est par nature une file d'attente opérationnelle bornée (demandes
+déjà entièrement réglées, en attente de clôture), donc son volume reste
+modeste même pour une application interne active.
+
+**Aucune mise en cache applicative des indicateurs** : chaque fonction
+interroge Prisma directement à chaque appel, sans mémoïsation ni `unstable_cache`
+— la fraîcheur "temps réel" repose entièrement sur `revalidatePath`, jamais
+sur un TTL. **Toutes les Server Actions qui changent l'état d'une demande,
+d'un règlement ou d'un retour** (`confirmerReglementAction`,
+`annulerReglementAction`, `creerReglementAction`/`modifierReglementAction`
+via le même helper, `creerRetourCaisseAction`, `receptionnerRetourAction`,
+`categoriserDemandeAction`/`validerDemandeAction`/`rejeterDemandeAction`/
+`cloturerDemandeAction` via `revalidateDemandePaths`) appellent désormais
+`revalidatePath("/treso/finance", "layout")` en plus des chemins déjà
+revalidés — le second argument `"layout"` invalide **toute** la sous-arborescence
+partageant `finance/layout.tsx` (dashboard, `a-decaisser`, `a-regulariser`,
+`retours`, `demandes`) en un seul appel, plutôt que d'énumérer chaque
+sous-route une par une à chaque action. Vérifié manuellement : un règlement
+confirmé dans un onglet fait apparaître le nouveau reste à régler dans un
+**second onglet** déjà ouvert sur le dashboard, sur la **navigation
+suivante** vers cette page (clic sur un lien, ou `router.refresh()`) —
+`revalidatePath` invalide le cache serveur, il ne pousse pas la mise à jour
+vers un onglet resté statique sans revenir sur la route, comportement
+standard déjà en vigueur sur tout le reste du portail.
+
+**Écran** (`treso/finance/page.tsx`) — `PageHeader` + 4 `StatCard`
+(composants déjà fournis par le maître de stage, réutilisés tels quels,
+aucune carte recréée à la main) :
+
+| Indicateur | Icône | Ton | Cliquable vers |
+|---|---|---|---|
+| Solde de caisse | `wallet` | `success` | — |
+| Demandes à décaisser | `file-text` | `info` | `/treso/finance/a-decaisser` |
+| Décaissements à régulariser | `book-text` | `neutral` | `/treso/finance/a-regulariser` |
+| Retours de caisse en attente | `rotate-ccw` | `warning` | `/treso/finance/retours` (Ticket 6) |
+
+Ce mapping icône/ton reprend **exactement** le bloc d'indicateurs
+« indicatifs » déjà présent sur le tableau de bord général
+(`(dashboard)/page.tsx`, commentaire "valeurs indicatives tant que le
+module Trésorerie n'est pas câblé") : ce placeholder préfigurait très
+précisément cet écran (même libellé et mêmes icône/ton pour "Retours de
+caisse en attente"). **Ce placeholder général n'a pas été touché** (hors
+périmètre de ce ticket) — le câbler sur ces mêmes fonctions, ou le
+remplacer par un lien vers ce dashboard, est une suite naturelle à évaluer
+avec le maître de stage.
+
+**Piège de navigation trouvé et corrigé pendant la vérification manuelle** —
+ajouter un item de nav dont l'`href` (`/treso/finance`) est un **préfixe
+strict** d'autres items déjà existants (`/treso/finance/demandes`,
+`/treso/finance/retours`) aurait fait s'allumer **simultanément** "Tableau
+de bord Finance" et l'item réellement actif sur toute sous-route Finance,
+`isActive()` (dans `Sidebar.tsx`) utilisant un simple `pathname.startsWith(href + "/")`.
+Corrigé en ajoutant un champ `exact?: boolean` à `NavItem` (`nav.ts`) —
+posé sur ce nouvel item uniquement — et en faisant respecter ce flag dans
+`isActive()`, en plus du cas déjà spécial de `href === "/"`. À réutiliser
+pour tout futur item de nav dont l'`href` serait le préfixe d'un autre.
+
+**Navigation** — "Tableau de bord Finance" (`layout-grid`, `exact: true`)
+ajouté **en tête** de la branche "Demande d'Achat" dans `nav.ts`, visible
+avec le nouveau booléen `canVoirDashboardFinance` (`NavFlags`), propagé
+comme les précédents via `(dashboard)/layout.tsx` → `AppShell` → `Sidebar`.
+
+**Garde du layout Finance étendue une quatrième fois** — accepte désormais
+aussi `treso.voir_dashboard_finance`, par le même principe que les
+extensions précédentes (Tickets 3 et 6) : correcte par principe pour tout
+futur rôle qui n'aurait que cette permission, même si Finance/DG ont
+toujours au moins une autre permission qui suffirait à elle seule.
+
+**Vérifié explicitement** : base à zéro (0 partout) avant création des
+données de test. Après une demande de 40 000 FCFA réglée à 15 000 FCFA
+(Caisse) et une demande de 30 000 FCFA entièrement réglée avec un retour de
+2 000 FCFA déclaré mais non réceptionné → solde -45 000, "Demandes à
+décaisser" 1 (25 000 FCFA — le reste à régler, pas les 40 000 du montant
+total), "Décaissements à régulariser" 1 (30 000 FCFA), "Retours en
+attente" 1. Chaque indicateur cliqué mène à la bonne ligne dans sa liste
+filtrée. Confirmation d'un second règlement de 25 000 FCFA sur la première
+demande (son reste tombe à 0) : le dashboard rouvert dans un second onglet
+(nouvelle navigation, sans F5) passe correctement à solde -70 000,
+"Demandes à décaisser" 0, "Décaissements à régulariser" 2 (70 000 FCFA).
+Le compte collaborateur ne voit ni le lien ni l'accès direct à
+`/treso/finance` (redirection + toast). Toutes les données de test
+supprimées, les 4 indicateurs reviennent exactement à zéro.
+
 ## Module Pointage RH : fondations de données
 
 **Statut : fondations posées, aucun écran développé.** Modèles, enums,
@@ -1188,17 +1311,19 @@ réutilisables, identité visuelle SIM Assurances, dashboard personnalisé par
 droits, et console d'administration complète (`isAdmin()`,
 `getAccessibleModules()`, `/admin/users`, `/admin/roles`, `/admin/modules`).
 
-Le **Module Trésorerie** est désormais **terminé** (Tickets 1 à 7) : il
-couvre l'intégralité du cycle métier des sections 2 à 10 du cahier des
+Le **Module Trésorerie** est désormais **terminé** (Tickets 1 à 8) : il
+couvre l'intégralité du cycle métier des sections 2 à 11 du cahier des
 charges — création de la demande (Ticket 1) → catégorisation par Finance
 (Ticket 2) → validation/rejet (Ticket 3) → règlement Caisse/Banque avec
 grand livre `JournalCaisse` (Ticket 4) → déclaration d'un retour de caisse
 par le Collaborateur (Ticket 5) → réception du retour par Finance, seul
 moment où la caisse est réellement créditée (Ticket 6) → régularisation et
-clôture totale/partielle, qui referme définitivement le dossier (Ticket 7).
-Voir [Règles métier impératives](#règles-métier-impératives--module-trésorerie)
+clôture totale/partielle, qui referme définitivement le dossier (Ticket 7)
+→ dashboard Finance donnant une vue d'ensemble recalculée en temps réel de
+tout ce cycle (Ticket 8). Voir
+[Règles métier impératives](#règles-métier-impératives--module-trésorerie)
 pour les invariants transversaux (verrouillages définitifs, immutabilité du
-grand livre, historisation systématique) qui traversent ces sept tickets.
+grand livre, historisation systématique) qui traversent ces huit tickets.
 
 Le développement de ce module a suivi les conventions et patterns du Socle
 sans jamais le modifier : routes sous `src/app/(dashboard)/treso/`,

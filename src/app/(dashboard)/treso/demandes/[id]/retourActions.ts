@@ -122,6 +122,9 @@ export async function creerRetourCaisseAction(
 
   revalidatePath(`/treso/demandes/${reglement.demandeId}`);
   revalidatePath("/treso/demandes");
+  // Ticket 8 : un nouveau retour déclaré augmente aussitôt l'indicateur
+  // "Retours de caisse en attente" du dashboard Finance et sa liste.
+  revalidatePath("/treso/finance", "layout");
 
   return { status: "success", message: "Retour de caisse déclaré." };
 }

@@ -17,6 +17,11 @@ function revalidateDemande(demandeId: string) {
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath("/treso/finance/demandes");
   revalidatePath("/treso/demandes");
+  // Ticket 8 : le dashboard Finance (et ses listes filtrées "à décaisser" /
+  // "à régulariser") dépend du montant réglé — revalider tout l'espace
+  // Finance en une fois (`type: "layout"` couvre toutes les routes sous
+  // `finance/layout.tsx`) plutôt que d'énumérer chaque sous-route une à une.
+  revalidatePath("/treso/finance", "layout");
 }
 
 const creerReglementSchema = z.object({

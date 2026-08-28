@@ -18,17 +18,21 @@ interface SidebarProps {
   canAccesFinanceDemandes?: boolean;
   /** treso.receptionner_retour : ajoute "Retours en attente". */
   canReceptionnerRetour?: boolean;
+  /** treso.voir_dashboard_finance : ajoute "Tableau de bord Finance". */
+  canVoirDashboardFinance?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
 
-function isActive(pathname: string, href: string) {
-  return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
+function isActive(pathname: string, item: NavItem) {
+  return item.href === "/" || item.exact
+    ? pathname === item.href
+    : pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
 function branchContains(branch: NavBranch, pathname: string) {
-  return branch.groups.some((group) => group.items.some((item) => isActive(pathname, item.href)));
+  return branch.groups.some((group) => group.items.some((item) => isActive(pathname, item)));
 }
 
 /**
@@ -52,11 +56,12 @@ export function Sidebar({
   canAdmin = false,
   canAccesFinanceDemandes = false,
   canReceptionnerRetour = false,
+  canVoirDashboardFinance = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
   const pathname = usePathname();
-  const navBranches = getNavBranches({ canAccesFinanceDemandes, canReceptionnerRetour });
+  const navBranches = getNavBranches({ canAccesFinanceDemandes, canReceptionnerRetour, canVoirDashboardFinance });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0].key
   );
@@ -100,7 +105,7 @@ export function Sidebar({
         <nav className="flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-3 py-4">
           <ItemLink
             item={DASHBOARD_ITEM}
-            active={isActive(pathname, DASHBOARD_ITEM.href)}
+            active={isActive(pathname, DASHBOARD_ITEM)}
             collapsed={collapsed}
             onNavigate={onCloseMobile}
           />
@@ -118,7 +123,7 @@ export function Sidebar({
                         <li key={item.href}>
                           <ItemLink
                             item={item}
-                            active={isActive(pathname, item.href)}
+                            active={isActive(pathname, item)}
                             collapsed
                             onNavigate={onCloseMobile}
                           />
@@ -162,7 +167,7 @@ export function Sidebar({
                             <li key={item.href}>
                               <ItemLink
                                 item={item}
-                                active={isActive(pathname, item.href)}
+                                active={isActive(pathname, item)}
                                 collapsed={false}
                                 nested
                                 onNavigate={onCloseMobile}
@@ -190,7 +195,7 @@ export function Sidebar({
                   <li key={item.href}>
                     <ItemLink
                       item={item}
-                      active={isActive(pathname, item.href)}
+                      active={isActive(pathname, item)}
                       collapsed={collapsed}
                       onNavigate={onCloseMobile}
                     />

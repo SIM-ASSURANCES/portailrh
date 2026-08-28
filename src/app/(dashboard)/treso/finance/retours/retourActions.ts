@@ -89,6 +89,9 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   revalidatePath("/treso/finance/retours");
   revalidatePath(`/treso/demandes/${demandeId}`);
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
+  // Ticket 8 : la réception impacte le solde de caisse ET fait baisser le
+  // compteur "Retours de caisse en attente" du dashboard Finance.
+  revalidatePath("/treso/finance", "layout");
 
   return { status: "success", message: "Retour de caisse réceptionné." };
 }
