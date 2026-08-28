@@ -1,12 +1,17 @@
 import Link from "next/link";
 
-import { Button, PageHeader } from "@/components/ui";
+import { Button, PageHeader, ToastOnMount } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 import { MesDemandesTable } from "./MesDemandesTable";
 
-export default async function MesDemandesPage() {
+export default async function MesDemandesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
   const session = await getSession();
 
   const rawDemandes = session
@@ -29,6 +34,12 @@ export default async function MesDemandesPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
+      {error === "acces_refuse_demande" ? (
+        <ToastOnMount
+          variant="error"
+          message="Vous n'avez pas accès à cette demande : elle appartient à un autre collaborateur."
+        />
+      ) : null}
       <PageHeader
         title="Mes demandes"
         description="Historique de vos demandes de dépense."

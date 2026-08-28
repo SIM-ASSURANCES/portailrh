@@ -70,10 +70,16 @@ sim-portail/
 │   │   │   └── demandes/
 │   │   │       ├── page.tsx                # "Mes demandes" (liste filtrée par créateur)
 │   │   │       ├── MesDemandesTable.tsx     # Wrapper Client de DataTable (voir plus bas)
-│   │   │       └── nouvelle/
-│   │   │           ├── page.tsx               # Formulaire, gardé par treso.creer_demande
-│   │   │           ├── DemandeForm.tsx         # Client Component (useActionState)
-│   │   │           └── actions.ts              # Server Action creerDemandeAction (zod + ActionState)
+│   │   │       ├── nouvelle/
+│   │   │       │   ├── page.tsx               # Formulaire, gardé par treso.creer_demande
+│   │   │       │   ├── DemandeForm.tsx         # Client Component (useActionState)
+│   │   │       │   └── actions.ts              # Server Action creerDemandeAction (zod + ActionState)
+│   │   │       └── [id]/
+│   │   │           ├── page.tsx               # Détail Collaborateur (créateur uniquement)
+│   │   │           ├── retourActions.ts        # creerRetourCaisseAction (jamais de JournalCaisse)
+│   │   │           ├── RetoursCaisseSection.tsx # Server Component, règlements Caisse éligibles
+│   │   │           ├── RetourCaisseRow.tsx      # Bouton/formulaire par règlement (Client)
+│   │   │           └── RetourCaisseForm.tsx     # Formulaire de déclaration (Client, useActionState)
 │   │   │   └── finance/
 │   │   │       ├── layout.tsx              # Garde categoriser_demande OU valider_demande
 │   │   │       └── demandes/
@@ -738,6 +744,77 @@ Corrigé en ajoutant une prop `canEffectuerReglement` à `ReglementRow`,
 calculée dans `page.tsx` et transmise via `ReglementsSection` — même
 principe que `canCategoriser`/`canValider` du Ticket 3 : ne jamais supposer
 qu'un utilisateur de l'espace Finance a toutes les permissions.
+
+## Module Trésorerie : Ticket 5 — Déclaration d'un retour de caisse (Collaborateur)
+
+**Statut : terminé.**
+
+**Nouvelle route Collaborateur** —
+[src/app/(dashboard)/treso/demandes/[id]/page.tsx](<src/app/(dashboard)/treso/demandes/[id]>)
+est le premier écran de détail de demande côté **Collaborateur** (créateur),
+distinct de `treso/finance/demandes/[id]` (Finance/DG). Accessible via un
+lien "Voir" ajouté à chaque ligne de `MesDemandesTable` (Ticket 1). Garde
+côté serveur : `demande.createurId !== session.user.id` →
+`redirect("/treso/demandes?error=acces_refuse_demande")`, jamais seulement
+l'absence de lien dans l'UI — vérifié en accédant directement à l'URL avec
+un autre compte (DG) : redirection immédiate + toast d'erreur, aucune fuite
+de données. Affiche le détail en lecture seule (montant, statut, catégorie/
+objet si renseignés), la section "Retours de caisse" ci-dessous, et
+l'historique générique (`DemandeHistorique`, Ticket 3, réutilisé tel quel).
+
+**Déclaration toujours depuis un règlement précis** — jamais de formulaire
+libre : `RetoursCaisseSection.tsx` (Server Component) liste les règlements
+`CAISSE` **confirmés et non annulés** de la demande ; `RetourCaisseRow.tsx`
+(Client) affiche par règlement soit son statut de retour ("En attente de
+réception" / "Réceptionné"), soit un bouton "Déclarer un retour de caisse"
+si aucun retour n'existe encore pour ce règlement précis.
+
+**Choix V1 : un seul retour déclaré par règlement.** Dès qu'un
+`RetourCaisse` existe pour un règlement (quel que soit son statut de
+réception), le bouton de déclaration disparaît définitivement pour ce
+règlement — évite les doublons sans complexité additionnelle. Si un
+besoin de retours multiples par règlement apparaît plus tard, à traiter
+comme une évolution dédiée (pas dans le périmètre de ce ticket).
+
+**`creerRetourCaisseAction(reglementId, formData)`**
+(`treso/demandes/[id]/retourActions.ts`) — vérifie dans l'ordre :
+permission `treso.declarer_retour`, règlement existe et est
+`mode: CAISSE` + `estConfirme: true` + `estAnnule: false`,
+`demande.createurId === session.user.id` (un collaborateur ne peut déclarer
+que sur ses propres demandes, revérifié serveur même si l'UI ne propose le
+bouton qu'au bon endroit), et qu'aucun `RetourCaisse` n'existe déjà pour ce
+règlement. Champs : montant dépensé, montant à retourner, justification
+(`TypeJustification`), commentaire — **obligatoire uniquement si
+justification = `SANS_PIECE`** (zod `.superRefine()`, testé dans les deux
+sens : refusé sans commentaire, accepté avec). Crée le `RetourCaisse`
+(`estReceptionne: false`) et une `HistoriqueEntry`
+(`action: "declaration_retour"`).
+
+**Règle impérative respectée et vérifiée explicitement : cette action ne
+touche jamais `JournalCaisse` ni le solde de caisse.** Aucun code de
+`retourActions.ts` n'importe ni n'écrit dans `JournalCaisse` — seule la
+**réception** du retour par Finance (Ticket 6, à venir) impactera le solde.
+Vérifié en pratique : `JournalCaisse` comptait exactement 2 lignes (une par
+règlement Caisse confirmé, 30 000 + 25 000 FCFA) avant et après la
+déclaration de deux retours de caisse distincts — aucune ligne
+supplémentaire, `getSoldeCaisse()` strictement inchangé par la déclaration.
+
+**Piège rencontré et corrigé pendant la vérification manuelle : le toast de
+succès n'apparaissait jamais**, alors que le `RetourCaisse` était bien créé
+en base. Cause : `revalidatePath()` fait remonter un `retour` non nul depuis
+`RetoursCaisseSection` (Server Component) dans le **même aller-retour
+réseau** que la résolution de l'état de `useActionState` — si le rendu de
+`RetourCaisseForm` dépend de `!retour`, le composant est démonté par ce
+rafraîchissement avant même de committer son propre état "success", et
+l'effet du toast (`useActionFeedback`) ne s'exécute jamais. Corrigé dans
+`RetourCaisseRow.tsx` : la présence du formulaire ne dépend plus que de
+l'état local `formOpen` (jamais de `retour`) — le formulaire reste monté le
+temps de committer son état "success" (toast + `onSuccess()` qui referme le
+formulaire au rendu suivant), exactement comme `ReglementForm.tsx` (Ticket
+4), qui ne s'est jamais démonté de l'extérieur. À retenir pour tout futur
+formulaire dont la fermeture après succès dépend d'un état Serveur
+revalidé : ne jamais conditionner le rendu du formulaire lui-même sur cette
+donnée serveur, seulement sur un état local fermé par son propre effet.
 
 ## Module Pointage RH : fondations de données
 

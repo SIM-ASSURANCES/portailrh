@@ -1,6 +1,8 @@
 "use client";
 
-import { Badge, DataTable } from "@/components/ui";
+import Link from "next/link";
+
+import { Badge, Button, DataTable } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import type { StatutDemande } from "@/generated/prisma/client";
 
@@ -57,6 +59,15 @@ export function MesDemandesTable({ demandes }: { demandes: DemandeRow[] }) {
           sortable: true,
           accessor: (d) => d.createdAt,
           render: (d) => d.createdAt.toLocaleDateString("fr-FR"),
+        },
+        {
+          key: "actions",
+          header: "Actions",
+          render: (d) => (
+            <Link href={`/treso/demandes/${d.id}`}>
+              <Button variant="secondary">Voir</Button>
+            </Link>
+          ),
         },
       ]}
       data={demandes}
