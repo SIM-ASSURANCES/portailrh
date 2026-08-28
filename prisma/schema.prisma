@@ -1,0 +1,205 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// SOCLE PORTAIL
+// ============================================================
+
+model User {
+  id           String   @id @default(cuid())
+  fullName     String
+  email        String   @unique
+  passwordHash String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  demandesCreees      Demande[]         @relation("DemandeCreateur")
+  reglementsFaits     Reglement[]       @relation("ReglementAuteur")
+  retoursDeclares     RetourCaisse[]    @relation("RetourDeclarant")
+  retoursReceptionnes RetourCaisse[]    @relation("RetourReceptionnaire")
+  historique          HistoriqueEntry[]
+}
+
+model Role {
+  id          String            @id @default(cuid())
+  name        String            @unique
+  description String?
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Module {
+  id          String       @id @default(cuid())
+  key         String       @unique
+  label       String
+  isActive    Boolean      @default(true)
+  permissions Permission[]
+}
+
+model Permission {
+  id       String @id @default(cuid())
+  key      String @unique
+  label    String
+  moduleId String
+  module   Module @relation(fields: [moduleId], references: [id])
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+}
+
+model HistoriqueEntry {
+  id        String   @id @default(cuid())
+  entity    String
+  entityId  String
+  action    String
+  detail    String?
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+}
+
+// ============================================================
+// MODULE 1 — TRÉSORERIE
+// ============================================================
+
+enum StatutDemande {
+  EN_ATTENTE
+  VALIDEE
+  REJETEE
+  CLOTUREE_TOTALE
+  CLOTUREE_PARTIELLE
+}
+
+enum ModeReglement {
+  CAISSE
+  BANQUE
+}
+
+enum TypeJustification {
+  FACTURE
+  RECU
+  TICKET
+  SANS_PIECE
+}
+
+model Categorie {
+  id       String    @id @default(cuid())
+  label    String    @unique
+  objets   Objet[]
+  demandes Demande[]
+}
+
+model Objet {
+  id          String    @id @default(cuid())
+  label       String
+  categorieId String
+  categorie   Categorie @relation(fields: [categorieId], references: [id])
+  demandes    Demande[]
+}
+
+model Demande {
+  id          String        @id @default(cuid())
+  reference   String        @unique
+  montant     Decimal       @db.Decimal(14, 2)
+  description String
+  commentaire String?
+  statut      StatutDemande @default(EN_ATTENTE)
+
+  categorieId      String?
+  categorie        Categorie? @relation(fields: [categorieId], references: [id])
+  objetId          String?
+  objet            Objet?     @relation(fields: [objetId], references: [id])
+  budgetDisponible Decimal?   @db.Decimal(14, 2)
+
+  motifRejet   String?
+  motifCloture String?
+
+  createurId String
+  createur   User   @relation("DemandeCreateur", fields: [createurId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pieces     PieceJointe[]
+  reglements Reglement[]
+}
+
+model PieceJointe {
+  id        String   @id @default(cuid())
+  url       String
+  demandeId String
+  demande   Demande  @relation(fields: [demandeId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Reglement {
+  id              String        @id @default(cuid())
+  montant         Decimal       @db.Decimal(14, 2)
+  mode            ModeReglement
+  estConfirme     Boolean       @default(false)
+  estAnnule       Boolean       @default(false)
+  motifAnnulation String?
+
+  demandeId String
+  demande   Demande @relation(fields: [demandeId], references: [id])
+
+  auteurId String
+  auteur   User   @relation("ReglementAuteur", fields: [auteurId], references: [id])
+
+  retours RetourCaisse[]
+
+  createdAt DateTime @default(now())
+}
+
+model RetourCaisse {
+  id                String            @id @default(cuid())
+  montantDepense    Decimal           @db.Decimal(14, 2)
+  montantARetourner Decimal           @db.Decimal(14, 2)
+  justification     TypeJustification
+  commentaire       String?
+  estReceptionne    Boolean           @default(false)
+
+  reglementId String
+  reglement   Reglement @relation(fields: [reglementId], references: [id])
+
+  declarantId String
+  declarant   User   @relation("RetourDeclarant", fields: [declarantId], references: [id])
+
+  receptionneParId String?
+  receptionnePar   User?   @relation("RetourReceptionnaire", fields: [receptionneParId], references: [id])
+
+  createdAt     DateTime  @default(now())
+  receptionneAt DateTime?
+}
+
+model JournalCaisse {
+  id        String   @id @default(cuid())
+  type      String
+  montant   Decimal  @db.Decimal(14, 2)
+  source    String
+  refId     String
+  createdAt DateTime @default(now())
+}
