@@ -81,7 +81,11 @@ sim-portail/
 │   │   │           ├── RetourCaisseRow.tsx      # Bouton/formulaire par règlement (Client)
 │   │   │           └── RetourCaisseForm.tsx     # Formulaire de déclaration (Client, useActionState)
 │   │   │   └── finance/
-│   │   │       ├── layout.tsx              # Garde categoriser_demande OU valider_demande
+│   │   │       ├── layout.tsx              # Garde categoriser_demande OU valider_demande OU receptionner_retour
+│   │   │       ├── retours/
+│   │   │       │   ├── page.tsx               # "Retours en attente" (garde receptionner_retour)
+│   │   │       │   ├── RetoursEnAttenteTable.tsx
+│   │   │       │   └── retourActions.ts        # receptionnerRetourAction (ENTREE JournalCaisse)
 │   │   │       └── demandes/
 │   │   │           ├── page.tsx               # "Demandes à catégoriser" (toutes, tri par ancienneté)
 │   │   │           ├── DemandesACategoriserTable.tsx
@@ -815,6 +819,85 @@ formulaire au rendu suivant), exactement comme `ReglementForm.tsx` (Ticket
 formulaire dont la fermeture après succès dépend d'un état Serveur
 revalidé : ne jamais conditionner le rendu du formulaire lui-même sur cette
 donnée serveur, seulement sur un état local fermé par son propre effet.
+
+## Module Trésorerie : Ticket 6 — Réception d'un retour de caisse (Finance)
+
+**Statut : terminé.** Complément direct du Ticket 5 : la déclaration d'un
+retour par le Collaborateur ne touche jamais `JournalCaisse` ; la
+**réception** par Finance, ici, est l'unique moment où ce retour impacte
+réellement le solde de caisse.
+
+**Garde du layout Finance élargie une troisième fois** —
+`treso/finance/layout.tsx` accepte désormais `treso.categoriser_demande`
+**OU** `treso.valider_demande` **OU** `treso.receptionner_retour` (même
+principe qu'au Ticket 3 pour la deuxième permission) : dans le seed actuel
+le rôle Finance a les trois, mais la garde reste correcte par principe pour
+tout futur rôle qui n'en aurait qu'une seule.
+
+**`treso/finance/retours/page.tsx`** — "Retours en attente" : tous les
+`RetourCaisse` où `estReceptionne = false`, tous collaborateurs confondus,
+triés par ancienneté croissante (même convention que `finance/demandes`).
+Protégée explicitement par `treso.receptionner_retour` (page elle-même,
+`redirect("/?error=acces_refuse_receptionner_retour")`), jamais supposée
+acquise du simple fait d'avoir passé la garde du layout partagé.
+
+**`receptionnerRetourAction(retourId)`** (`treso/finance/retours/retourActions.ts`,
+appelée directement depuis `RetoursEnAttenteTable.tsx` via `useTransition`,
+comme `confirmerReglementAction` au Ticket 4 — pas de champ à valider, juste
+un identifiant) :
+
+- Vérifie `treso.receptionner_retour`, que le retour existe, et **revérifie
+  `estReceptionne` juste avant d'agir** (défense en profondeur : un autre
+  utilisateur Finance a pu réceptionner ce même retour entre l'affichage de
+  la liste et ce clic — vérifié manuellement avec deux onglets Finance
+  ouverts simultanément sur la même liste non rafraîchie : le second clic
+  est refusé côté serveur avec un message explicite, aucune écriture
+  `JournalCaisse` supplémentaire créée).
+- Dans une **même transaction** (`$transaction`) : met à jour le
+  `RetourCaisse` (`estReceptionne: true`, `receptionneParId`,
+  `receptionneAt`), crée l'écriture `JournalCaisse` (`type: "ENTREE"`,
+  montant = `montantARetourner`, `source: "retour_caisse_receptionne"`,
+  `refId` = id du retour), et une `HistoriqueEntry` sur la **demande**
+  (remontée via `RetourCaisse -> Reglement -> Demande`, puisque le retour ne
+  connaît pas directement sa demande).
+- `revalidatePath` sur `/treso/finance/retours`, `/treso/demandes/[demandeId]`
+  et `/treso/finance/demandes/[demandeId]` : le retour disparaît
+  immédiatement de la liste Finance, et le badge passe à "Réceptionné" côté
+  Collaborateur sans action supplémentaire de sa part — `RetourCaisseRow.tsx`
+  (Ticket 5) n'a nécessité **aucune modification** : il lisait déjà
+  `estReceptionne` depuis la base pour choisir son libellé de badge.
+
+**Cycle caisse complet, maintenant symétrique et vérifié de bout en bout** :
+un règlement `CAISSE` confirmé crée une `SORTIE` (Ticket 4) ; sa déclaration
+de retour (Ticket 5) ne crée **rien** ; sa réception (ce ticket) crée une
+`ENTREE` de `montantARetourner` — la caisse n'est donc impactée que deux
+fois par ce cycle, jamais trois, jamais à la déclaration. Vérifié
+explicitement : règlement Caisse de 30 000 FCFA confirmé (`JournalCaisse` :
+1 ligne `SORTIE`, solde -30 000), retour de 5 000 FCFA déclaré (`JournalCaisse`
+toujours 1 ligne, solde inchangé -30 000), retour réceptionné
+(`JournalCaisse` : 2 lignes, `ENTREE` de 5 000, **solde -25 000** — soit
+exactement +5 000 par rapport à avant réception).
+
+**Libellé d'historique et justification partagée** — `reception_retour`
+ajouté à `ACTION_LABELS` dans
+[DemandeHistorique.tsx](src/components/tresorerie/DemandeHistorique.tsx)
+("Retour de caisse réceptionné"). Les libellés de `TypeJustification`
+(Facture/Reçu/Ticket/Dépense sans pièce formelle), jusqu'ici définis en
+dur dans `RetourCaisseForm.tsx` (Ticket 5), sont désormais factorisés dans
+[src/components/tresorerie/justification.ts](src/components/tresorerie/justification.ts)
+(`JUSTIFICATION_LABEL` / `JUSTIFICATION_OPTIONS`) — réutilisés par le
+formulaire de déclaration et par la colonne "Justification" de la liste
+"Retours en attente", même principe que `demandeStatut.ts` pour
+`StatutDemande`.
+
+**Navigation** — nouvelle entrée conditionnelle "Retours en attente"
+(`/treso/finance/retours`) dans la branche "Demande d'Achat" de `nav.ts`,
+gérée par un nouveau booléen `canReceptionnerRetour` dans `NavFlags`,
+calculé dans `(dashboard)/layout.tsx` et descendu via `AppShell` → `Sidebar`
+— même chemin de propagation que `canAccesFinanceDemandes` (Ticket 2) et
+`canAdmin`. Vérifié qu'un compte sans `treso.receptionner_retour` (DG) ne
+voit ni le lien dans la sidebar, ni n'accède à `/treso/finance/retours` en
+URL directe (redirection + toast).
 
 ## Module Pointage RH : fondations de données
 

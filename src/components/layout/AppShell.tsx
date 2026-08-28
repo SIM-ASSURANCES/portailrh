@@ -13,6 +13,8 @@ interface AppShellProps {
   canAdmin?: boolean;
   /** Affiche "Demandes à traiter (Finance)" (categoriser_demande OU valider_demande). */
   canAccesFinanceDemandes?: boolean;
+  /** Affiche "Retours en attente" (treso.receptionner_retour). */
+  canReceptionnerRetour?: boolean;
   children: ReactNode;
 }
 
@@ -29,6 +31,7 @@ export function AppShell({
   role,
   canAdmin = false,
   canAccesFinanceDemandes = false,
+  canReceptionnerRetour = false,
   children,
 }: AppShellProps) {
   // Rendu initial (serveur + première passe client) toujours « déployé »
@@ -69,6 +72,7 @@ export function AppShell({
         onToggleCollapse={toggleCollapse}
         canAdmin={canAdmin}
         canAccesFinanceDemandes={canAccesFinanceDemandes}
+        canReceptionnerRetour={canReceptionnerRetour}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />

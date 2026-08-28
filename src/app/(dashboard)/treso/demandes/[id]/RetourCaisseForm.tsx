@@ -3,17 +3,11 @@
 import { useActionState, useEffect } from "react";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
+import { JUSTIFICATION_OPTIONS } from "@/components/tresorerie/justification";
 import { useActionFeedback } from "@/lib/hooks/useActionFeedback";
 import { IDLE_ACTION_STATE } from "@/lib/validation";
 
 import { creerRetourCaisseAction } from "./retourActions";
-
-const JUSTIFICATION_OPTIONS = [
-  { value: "FACTURE", label: "Facture" },
-  { value: "RECU", label: "Reçu" },
-  { value: "TICKET", label: "Ticket" },
-  { value: "SANS_PIECE", label: "Dépense sans pièce formelle" },
-];
 
 /**
  * Formulaire de déclaration d'un retour de caisse, associé à un règlement

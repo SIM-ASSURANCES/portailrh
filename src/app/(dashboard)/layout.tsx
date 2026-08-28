@@ -23,6 +23,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "treso.categoriser_demande") ||
         hasPermission(session, "treso.valider_demande")
       }
+      canReceptionnerRetour={hasPermission(session, "treso.receptionner_retour")}
     >
       {children}
     </AppShell>

@@ -16,6 +16,8 @@ interface SidebarProps {
   canAdmin?: boolean;
   /** categoriser_demande OU valider_demande : ajoute "Demandes à traiter (Finance)". */
   canAccesFinanceDemandes?: boolean;
+  /** treso.receptionner_retour : ajoute "Retours en attente". */
+  canReceptionnerRetour?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -49,11 +51,12 @@ export function Sidebar({
   onToggleCollapse,
   canAdmin = false,
   canAccesFinanceDemandes = false,
+  canReceptionnerRetour = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
   const pathname = usePathname();
-  const navBranches = getNavBranches({ canAccesFinanceDemandes });
+  const navBranches = getNavBranches({ canAccesFinanceDemandes, canReceptionnerRetour });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0].key
   );

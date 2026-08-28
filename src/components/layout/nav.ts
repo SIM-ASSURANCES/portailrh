@@ -36,6 +36,8 @@ export const DASHBOARD_ITEM: NavItem = {
  */
 export interface NavFlags {
   canAccesFinanceDemandes: boolean;
+  /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
+  canReceptionnerRetour: boolean;
 }
 
 /**
@@ -49,7 +51,7 @@ export interface NavFlags {
  * Les routes non encore implémentées renvoient un 404 tant que l'écran
  * correspondant n'existe pas — l'entrée fige la structure de navigation.
  */
-export function getNavBranches({ canAccesFinanceDemandes }: NavFlags): NavBranch[] {
+export function getNavBranches({ canAccesFinanceDemandes, canReceptionnerRetour }: NavFlags): NavBranch[] {
   return [
     {
       key: "achat",
@@ -65,6 +67,15 @@ export function getNavBranches({ canAccesFinanceDemandes }: NavFlags): NavBranch
                     label: "Demandes à traiter (Finance)",
                     href: "/treso/finance/demandes",
                     icon: "folder-tree",
+                  } satisfies NavItem,
+                ]
+              : []),
+            ...(canReceptionnerRetour
+              ? [
+                  {
+                    label: "Retours en attente",
+                    href: "/treso/finance/retours",
+                    icon: "rotate-ccw",
                   } satisfies NavItem,
                 ]
               : []),
