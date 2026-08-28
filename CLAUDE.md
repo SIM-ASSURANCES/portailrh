@@ -66,6 +66,14 @@ sim-portail/
 │   │   │       ├── users/                    # Gestion des utilisateurs (créer, activer/désactiver)
 │   │   │       ├── roles/                    # Permissions par rôle (cases à cocher par module)
 │   │   │       └── modules/                  # Activation/désactivation des modules
+│   │   ├── (dashboard)/treso/            # Module Trésorerie (écrans métier)
+│   │   │   └── demandes/
+│   │   │       ├── page.tsx                # "Mes demandes" (liste filtrée par créateur)
+│   │   │       ├── MesDemandesTable.tsx     # Wrapper Client de DataTable (voir plus bas)
+│   │   │       └── nouvelle/
+│   │   │           ├── page.tsx               # Formulaire, gardé par treso.creer_demande
+│   │   │           ├── DemandeForm.tsx         # Client Component (useActionState)
+│   │   │           └── actions.ts              # Server Action creerDemandeAction (zod + ActionState)
 │   │   ├── (dev)/
 │   │   │   └── ui-preview/
 │   │   │       ├── page.tsx            # Vitrine des composants src/components/ui (OUTIL DE DEV)
@@ -75,10 +83,10 @@ sim-portail/
 │   │       └── auth/
 │   │           └── [...nextauth]/
 │   │               └── route.ts          # Handlers Auth.js (GET/POST)
-│   │   # À venir (dev #2) : treso/ (écrans Trésorerie : demandes, règlements,
-│   │   # retours de caisse), à placer dans (dashboard)/ pour hériter de
-│   │   # l'en-tête. Le Socle Portail (auth, permissions, dashboard, admin)
-│   │   # est terminé — voir "Socle Portail : statut" en bas de ce fichier.
+│   │   # À venir (dev #2) : le reste du Module Trésorerie (règlements, retours
+│   │   # de caisse, vue Finance "toutes les demandes") sous (dashboard)/treso/,
+│   │   # même pattern que demandes/. Le Socle Portail (auth, permissions,
+│   │   # dashboard, admin) est terminé — voir "Socle Portail : statut" plus bas.
 │   ├── components/
 │   │   ├── ui/                    # Composants génériques réutilisables, sans logique métier
 │   │   │   ├── Button.tsx
@@ -89,13 +97,18 @@ sim-portail/
 │   │   │   ├── DataTable.tsx
 │   │   │   ├── PageHeader.tsx
 │   │   │   ├── Badge.tsx
+│   │   │   ├── Card.tsx / StatCard.tsx # Surface générique / carte indicateur (dashboard)
 │   │   │   ├── ToastOnMount.tsx     # Déclenche un toast au montage (ex: après un redirect serveur)
 │   │   │   └── index.ts             # Barrel export : `import { Button, Input } from "@/components/ui"`
-│   │   # À venir (dev #2) : src/components/tresorerie/ (ex: DemandeForm.tsx,
-│   │   # ReglementCard.tsx) pour les composants spécifiques au métier Trésorerie.
+│   │   ├── layout/                # Coquille applicative (voir Design system > Coquille)
+│   │   │   └── AppShell.tsx, Sidebar.tsx, Topbar.tsx, nav.ts, actions.ts
+│   │   # À venir (dev #2) : src/components/tresorerie/ (ex: ReglementCard.tsx)
+│   │   # pour les composants métier réutilisés sur plusieurs écrans
+│   │   # (DemandeForm reste colocalisé : une seule page l'utilise pour l'instant).
 │   ├── lib/                       # Utilitaires, auth, prisma, helpers
 │   │   ├── auth.ts                  # Config Auth.js + contrat getSession()/hasPermission()/isAdmin()/getAccessibleModules()
 │   │   ├── prisma.ts                # Singleton PrismaClient (driver adapter pg)
+│   │   ├── reference.ts             # generateDemandeReference() : référence lisible "DEM-2026-000123"
 │   │   ├── validation.ts            # ActionState, fieldErrorsFromZod (pattern Server Action + zod)
 │   │   └── hooks/
 │   │       └── useActionFeedback.ts   # Relie un ActionState à un toast sonner
@@ -450,6 +463,49 @@ Ces règles sont non négociables et doivent guider toute implémentation
    `HistoriqueEntry`** (création/validation/rejet de demande, règlement,
    déclaration/réception de retour, clôture, annulation...), avec l'auteur
    (`userId`) et un `detail` exploitable.
+
+## Module Trésorerie : Ticket 1 — Création de demande (Collaborateur)
+
+**Statut : terminé.** Routes sous
+[src/app/(dashboard)/treso/demandes/](<src/app/(dashboard)/treso/demandes>)
+(voir [Structure des dossiers](#structure-des-dossiers)) :
+
+- `treso/demandes` — "Mes demandes", filtrée sur `createurId = session.user.id`
+  (chaque utilisateur ne voit que ses propres demandes), tri décroissant sur
+  `createdAt`. Le bouton "Nouvelle demande" n'apparaît que si
+  `hasPermission(session, "treso.creer_demande")`.
+- `treso/demandes/nouvelle` — formulaire de création, gardé côté page
+  (`redirect("/?error=acces_refuse_creer_demande")` si la permission
+  manque) et revérifié dans la Server Action (jamais uniquement le layout).
+
+**Génération de référence** — `generateDemandeReference()` dans
+[src/lib/reference.ts](src/lib/reference.ts) : format `DEM-2026-000123`
+(préfixe + année + compteur sur 6 chiffres, remis à zéro chaque année).
+V1 volontairement simple : compte les demandes de l'année en cours et
+incrémente. Gestion de la concurrence sans sur-ingénierie : la contrainte
+`@unique` sur `Demande.reference` protège la base, et
+`treso/demandes/nouvelle/actions.ts` retente (jusqu'à 5 fois) avec une
+référence fraîchement recalculée si la création échoue sur un conflit
+(`Prisma.PrismaClientKnownRequestError`, code `P2002`, cible `reference`) —
+pas de verrou ni de table de séquence dédiée.
+
+**Pièce jointe non implémentée en V1** — aucune solution de stockage de
+fichiers n'existe encore dans le projet. Le champ est visuellement présent
+dans le formulaire mais désactivé (`disabled`), avec une note "à venir".
+À câbler quand une solution de stockage (S3, disque, etc.) sera choisie —
+le modèle `PieceJointe` existe déjà côté schéma, prêt à recevoir des URLs.
+
+**Coquille applicative rendue responsive** — en construisant ce formulaire,
+la sidebar (`src/components/layout/`) s'est révélée non utilisable sur
+mobile (toujours en flux normal, largeur fixe, laissant une colonne de
+contenu de quelques dizaines de pixels sur un écran de téléphone), alors
+que le cahier des charges insiste sur l'usage mobile pour les collaborateurs
+sans ordinateur. Corrigé à la source plutôt que contourné : `Sidebar`
+devient un tiroir hors-écran en dessous de `lg` (position fixe, glissé
+depuis la gauche, fond d'estompage cliquable, refermeture automatique au
+clic sur un lien), ouvert via un bouton menu ajouté dans `Topbar`. Comportement
+desktop (`lg:` et plus) inchangé. Ce correctif bénéficie à tout le portail,
+pas seulement à cet écran — voir `AppShell.tsx`/`Sidebar.tsx`/`Topbar.tsx`.
 
 ## Module Pointage RH : fondations de données
 

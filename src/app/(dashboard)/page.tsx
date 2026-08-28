@@ -17,6 +17,12 @@ export default async function DashboardHomePage({
       {error === "acces_refuse_admin" ? (
         <ToastOnMount variant="error" message="Accès réservé aux administrateurs." />
       ) : null}
+      {error === "acces_refuse_creer_demande" ? (
+        <ToastOnMount
+          variant="error"
+          message="Vous n'avez pas la permission de créer une demande."
+        />
+      ) : null}
 
       <PageHeader
         title="Tableau de bord"

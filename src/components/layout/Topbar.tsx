@@ -3,6 +3,8 @@ import { Icon } from "@/components/icons";
 interface TopbarProps {
   user: { fullName: string; email: string };
   role: string;
+  /** Ouvre le tiroir de navigation mobile (bouton visible seulement < lg). */
+  onOpenMobileMenu: () => void;
 }
 
 function initials(fullName: string) {
@@ -17,9 +19,18 @@ function initials(fullName: string) {
  * de système de notifications) et bloc profil (avatar initiales, nom, email,
  * rôle). Reste blanche, au-dessus du contenu, alignée à droite.
  */
-export function Topbar({ user, role }: TopbarProps) {
+export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
   return (
-    <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-4 border-b border-slate-200 bg-white px-6">
+    <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-4 border-b border-slate-200 bg-white px-4 sm:px-6">
+      <button
+        type="button"
+        onClick={onOpenMobileMenu}
+        aria-label="Ouvrir le menu"
+        className="grid size-10 place-items-center rounded-lg text-slate-500 transition-colors hover:bg-slate-50 lg:hidden"
+      >
+        <Icon name="menu" className="size-5" />
+      </button>
+
       <div className="ml-auto flex items-center gap-4">
         <button
           type="button"

@@ -27,6 +27,10 @@ export function AppShell({ user, role, canAdmin = false, children }: AppShellPro
   // pour éviter tout écart d'hydratation ; on relit la préférence persistée
   // juste après le montage, côté client uniquement.
   const [collapsed, setCollapsed] = useState(false);
+  // Tiroir mobile (< lg) : caché par défaut, ouvert via le bouton menu de la
+  // Topbar. N'a aucun effet au-dessus de lg (la sidebar y est toujours en
+  // flux normal, cf. Sidebar.tsx).
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -52,10 +56,16 @@ export function AppShell({ user, role, canAdmin = false, children }: AppShellPro
 
   return (
     <div className="flex min-h-screen bg-app-bg">
-      <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapse} canAdmin={canAdmin} />
+      <Sidebar
+        collapsed={collapsed}
+        onToggleCollapse={toggleCollapse}
+        canAdmin={canAdmin}
+        mobileOpen={mobileOpen}
+        onCloseMobile={() => setMobileOpen(false)}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar user={user} role={role} />
-        <main className="flex-1 px-6 py-8">{children}</main>
+        <Topbar user={user} role={role} onOpenMobileMenu={() => setMobileOpen(true)} />
+        <main className="flex-1 px-4 py-6 sm:px-6 sm:py-8">{children}</main>
       </div>
     </div>
   );

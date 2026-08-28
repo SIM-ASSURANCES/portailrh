@@ -47,7 +47,7 @@ export const NAV_BRANCHES: NavBranch[] = [
     groups: [
       {
         items: [
-          { label: "Demandes", href: "/demandes", icon: "file-text" },
+          { label: "Demandes", href: "/treso/demandes", icon: "file-text" },
           { label: "Règlements", href: "/reglements", icon: "wallet" },
           { label: "Retours de caisse", href: "/retours", icon: "rotate-ccw" },
         ],
