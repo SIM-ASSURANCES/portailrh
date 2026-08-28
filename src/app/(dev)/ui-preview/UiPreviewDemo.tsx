@@ -54,6 +54,50 @@ export function UiPreviewDemo() {
   return (
     <div className="space-y-12">
       <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-foreground">
+          Charte graphique — couleurs officielles
+        </h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+          {(
+            [
+              { name: "sim-blue-dark", label: "Bleu foncé (principal)", className: "bg-sim-blue-dark" },
+              { name: "sim-blue-light", label: "Bleu clair (secondaire)", className: "bg-sim-blue-light" },
+              { name: "sim-red", label: "Dommage / erreur", className: "bg-sim-red" },
+              { name: "sim-yellow", label: "Santé / attention", className: "bg-sim-yellow" },
+              { name: "sim-orange", label: "Accident / avertissement", className: "bg-sim-orange" },
+            ] as const
+          ).map((swatch) => (
+            <div key={swatch.name} className="space-y-1">
+              <div className={`h-16 rounded-md border border-border ${swatch.className}`} />
+              <p className="text-xs font-medium text-foreground">{swatch.name}</p>
+              <p className="text-xs text-muted-foreground">{swatch.label}</p>
+            </div>
+          ))}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Tokens sémantiques dérivés (assombris pour rester WCAG AA en texte/fond plein) :
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <span className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">primary</span>
+          <span className="rounded-md bg-danger px-3 py-1.5 text-sm text-danger-foreground">danger</span>
+          <span className="rounded-md bg-warning-bg px-3 py-1.5 text-sm text-warning border border-warning-border">warning</span>
+          <span className="rounded-md bg-info-bg px-3 py-1.5 text-sm text-info border border-info-border">info</span>
+          <span className="rounded-md bg-success-bg px-3 py-1.5 text-sm text-success border border-success-border">success</span>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-foreground">Typographie — Montserrat</h2>
+        <div className="space-y-2">
+          <p className="text-3xl font-black text-foreground">Black 900 — Gros titre</p>
+          <p className="text-xl font-bold text-foreground">Bold 700 — Titre de section</p>
+          <p className="text-base font-normal text-foreground">
+            Regular 400 — Texte courant du portail, utilisé pour le contenu, les formulaires et les tableaux.
+          </p>
+        </div>
+      </section>
+
+      <section className="space-y-3">
         <h2 className="text-lg font-semibold text-foreground">Button</h2>
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="primary">Primary</Button>

@@ -12,7 +12,7 @@ const variantClasses: Record<BadgeVariant, string> = {
   info: "bg-info-bg text-info border border-info-border",
   success: "bg-success-bg text-success border border-success-border",
   warning: "bg-warning-bg text-warning border border-warning-border",
-  danger: "bg-danger/10 text-danger border border-danger/30",
+  danger: "bg-danger-bg text-danger border border-danger-border",
 };
 
 /**

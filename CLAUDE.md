@@ -25,7 +25,10 @@ retours de caisse.
   [Authentification](#authentification) plus bas).
 - **Tailwind CSS v4** (via `@tailwindcss/postcss`, pas de fichier
   `tailwind.config` — tokens de design définis dans `globals.css`, voir
-  [Design system](#design-system--composants-ui) plus bas).
+  [Design system](#design-system--composants-ui) plus bas). Palette et
+  police issues de la charte graphique officielle SIM Assurances.
+- **Montserrat** (`next/font/google`) : police institutionnelle, appliquée
+  par défaut à tout le projet (voir [Typographie](#typographie)).
 - **sonner** pour les toasts, **zod** pour la validation de formulaires côté
   serveur (voir [Toasts et gestion des erreurs](#toasts-et-gestion-des-erreurs)).
 - **bcryptjs** pour le hachage des mots de passe.
@@ -43,12 +46,14 @@ sim-portail/
 ├── prisma7.config.ts            # Config Prisma 7 (chemin schema, migrations, DATABASE_URL, seed)
 ├── src/
 │   ├── app/                      # Routes (App Router), groupées par domaine
-│   │   ├── layout.tsx              # Layout racine (fonts Geist, Tailwind, <Toaster/>)
-│   │   ├── page.tsx                 # Page d'accueil
-│   │   ├── globals.css              # Tokens de design (couleurs) + config Tailwind v4
+│   │   ├── layout.tsx              # Layout racine (police Montserrat, Tailwind, <Toaster/>)
+│   │   ├── globals.css              # Tokens de design (couleurs charte + police) + config Tailwind v4
 │   │   ├── (auth)/
 │   │   │   └── login/
 │   │   │       └── page.tsx           # Page de connexion (formulaire + Server Action)
+│   │   ├── (dashboard)/               # Socle Portail : écrans authentifiés
+│   │   │   ├── layout.tsx              # En-tête institutionnel (logo, fond bleu foncé) + garde de session
+│   │   │   └── page.tsx                 # Page d'accueil du portail (route "/")
 │   │   ├── (dev)/
 │   │   │   └── ui-preview/
 │   │   │       ├── page.tsx            # Vitrine des composants src/components/ui (OUTIL DE DEV)
@@ -58,9 +63,9 @@ sim-portail/
 │   │       └── auth/
 │   │           └── [...nextauth]/
 │   │               └── route.ts          # Handlers Auth.js (GET/POST)
-│   │   # À venir (dev #2) : (dashboard)/ (écrans transverses type dashboard Finance,
-│   │   # reporting), admin/ (gestion rôles/permissions/modules), treso/ (écrans
-│   │   # Trésorerie : demandes, règlements, retours de caisse). Créer ces groupes
+│   │   # À venir (dev #2) : admin/ (gestion rôles/permissions/modules), treso/
+│   │   # (écrans Trésorerie : demandes, règlements, retours de caisse), à
+│   │   # placer dans (dashboard)/ pour hériter de l'en-tête. Créer ces groupes
 │   │   # de routes au fur et à mesure des écrans réels — ne pas créer de dossiers vides.
 │   ├── components/
 │   │   ├── ui/                    # Composants génériques réutilisables, sans logique métier
@@ -86,6 +91,7 @@ sim-portail/
 │   └── generated/
 │       └── prisma/                  # Client Prisma généré (ne pas éditer, ne pas committer de logique ici)
 ├── public/                        # Assets statiques
+│   └── logo-sim-blanc.webp          # Logo SIM Assurances, version blanche (fonds foncés uniquement)
 └── package.json
 ```
 
@@ -131,18 +137,67 @@ assurances. Si oui → `ui/`. Si non → dossier de domaine.
 
 ## Design system & composants UI
 
-Les tokens de couleur sont définis une seule fois dans
-[src/app/globals.css](src/app/globals.css) (`--color-primary`,
-`--color-danger`, `--color-success`, `--color-warning`, `--color-info`,
-`--color-neutral`, `--color-border`, `--color-muted`...) et exposés comme
-classes Tailwind (`bg-primary`, `text-danger`, `border-border`...). **Ne
-jamais coder une couleur en dur dans un composant** (`bg-blue-600`,
-`#1d4ed8`...) — passer par ces tokens pour que toute évolution de palette
-se fasse à un seul endroit. Palette volontairement sobre (bleu/gris),
-adaptée à une application interne — pas de mode sombre pour l'instant.
+Les tokens de couleur et la police sont définis une seule fois dans
+[src/app/globals.css](src/app/globals.css) et exposés comme classes
+Tailwind. **Ne jamais coder une couleur en dur dans un composant**
+(`bg-blue-600`, `#004B9C`...) — passer par ces tokens pour que toute
+évolution de palette se fasse à un seul endroit. Pas de mode sombre pour
+l'instant.
 
-Une page de démonstration montre tous les composants avec des exemples
-concrets : voir [Page de démo UI](#page-de-démo-ui) plus bas.
+Une page de démonstration montre tous les composants, la palette et la
+typographie avec des exemples concrets : voir
+[Page de démo UI](#page-de-démo-ui) plus bas.
+
+### Palette officielle SIM Assurances
+
+Couleurs de la charte graphique, disponibles telles quelles via
+`bg-sim-blue-dark`, `text-sim-red`, etc. :
+
+| Token Tailwind | Hex | Usage charte |
+|---|---|---|
+| `sim-blue-dark` | `#004B9C` | Couleur principale |
+| `sim-blue-light` | `#51AEE2` | Couleur secondaire |
+| `sim-red` | `#FE0101` | État "Dommage" / erreur |
+| `sim-yellow` | `#FDF20E` | État "Santé" / attention |
+| `sim-orange` | `#F16622` | État "Accident" / avertissement |
+
+**Ces couleurs brutes sont réservées aux aplats et accents non-textuels**
+(fonds pleins comme l'en-tête du portail, bordures, éléments décoratifs) —
+voir la note d'accessibilité ci-dessous avant de les utiliser pour du texte.
+
+Pour l'UI (boutons, badges, messages d'état), utiliser les **tokens
+sémantiques**, qui dérivent des couleurs officielles :
+
+| Token | Dérivé de | Usage |
+|---|---|---|
+| `bg-primary` / `text-primary-foreground` | sim-blue-dark (identique) | Bouton principal, en-tête du portail |
+| `bg-danger` / `text-danger` | sim-red (assombri) | Bouton danger, erreurs, badge REJETEE |
+| `text-warning` + `bg-warning-bg` | sim-orange (assombri) | Badge d'avertissement (ex: EN_ATTENTE) |
+| `text-info` + `bg-info-bg` | sim-blue-light (assombri) | Badge d'information (ex: CAISSE) |
+| `text-success` + `bg-success-bg` | vert (hors charte, voir note) | Badge de succès (ex: VALIDEE) |
+
+**Note accessibilité (WCAG AA, 4.5:1 minimum) :** les couleurs officielles
+`sim-red` et `sim-orange` n'atteignent que 4.02:1 et 3.15:1 avec du texte
+blanc, et `sim-blue-light` seulement 2.47:1 — toutes en dessous du seuil
+AA. Les tokens sémantiques (`danger`, `warning`, `info`) utilisent donc une
+teinte assombrie de la même couleur (même teinte/saturation, luminosité
+réduite) qui passe AA (`danger` 5.27:1, `warning` 6.66:1, `info` >4.5:1),
+sans changer l'identité perçue. `sim-yellow` (Santé) n'a pas d'équivalent
+sémantique : à 1.17:1 avec du blanc et illisible même en texte sombre sur
+fond clair, elle ne doit être utilisée qu'en aplat avec du texte très
+sombre — pas encore intégrée à un composant, à traiter au cas par cas si
+un usage apparaît. Il n'existe pas de couleur "succès" dans la charte :
+`success` reste un vert sobre choisi indépendamment, sans conflit avec les
+couleurs officielles.
+
+### Typographie
+
+**Montserrat** est la police institutionnelle (titres et communication),
+chargée via `next/font/google` dans
+[src/app/layout.tsx](src/app/layout.tsx) et appliquée par défaut à tout le
+projet (`font-sans`). Poids chargés : `font-normal` (400, texte courant),
+`font-bold` (700, titres de section), `font-black` (900, gros titres). Ne
+pas importer d'autre police pour du texte ou des titres.
 
 Composants disponibles dans `src/components/ui/` (tous importables via
 `@/components/ui`) :
@@ -227,6 +282,21 @@ const statutBadgeVariant: Record<StatutDemande, BadgeVariant> = {
 ```
 
 Cette convention est démontrée dans `src/app/(dev)/ui-preview/UiPreviewDemo.tsx`.
+
+### Logo
+
+[public/logo-sim-blanc.webp](public/logo-sim-blanc.webp) est la version
+**blanche** du logo — à utiliser exclusivement sur fond foncé (typiquement
+`bg-primary`, le bleu institutionnel). Utilisée dans l'en-tête du Socle
+Portail ([src/app/(dashboard)/layout.tsx](<src/app/(dashboard)/layout.tsx>)).
+Une version couleur pour fond clair sera fournie plus tard — ne pas poser
+la version blanche sur un fond clair en attendant (illisible).
+
+Respecter une zone de protection minimale autour du logo : aucun élément
+(texte, icône, bordure) ne doit toucher ses bords. Dans l'en-tête existant,
+cet espace est garanti par le padding du conteneur — reproduire le même
+principe pour tout nouvel emplacement du logo plutôt que de le coller à un
+bord ou à un autre élément.
 
 ## Toasts et gestion des erreurs
 
@@ -328,10 +398,11 @@ champ) est démontré de bout en bout dans la [page de démo UI](#page-de-démo-
 ## Page de démo UI
 
 [src/app/(dev)/ui-preview/page.tsx](<src/app/(dev)/ui-preview/page.tsx>)
-(route `/ui-preview`) affiche tous les composants de `src/components/ui`
-avec des exemples d'usage réels : variantes de Button, Badges de statut,
-DataTable triable, déclenchement de toasts, et un formulaire complet
-Server Action + zod + gestion d'erreurs par champ.
+(route `/ui-preview`, accessible sans connexion) affiche la palette
+officielle, les graisses Montserrat, et tous les composants de
+`src/components/ui` avec des exemples d'usage réels : variantes de Button,
+Badges de statut, DataTable triable, déclenchement de toasts, et un
+formulaire complet Server Action + zod + gestion d'erreurs par champ.
 
 **C'est un outil de développement, pas un écran du produit.** À supprimer
 (ou à protéger derrière une permission admin) avant mise en production.
@@ -401,3 +472,13 @@ Prérequis : un fichier `.env` avec `DATABASE_URL` (PostgreSQL) et
 Comptes de test (mot de passe `password123` pour tous) :
 `collaborateur@simassurances.test`, `finance@simassurances.test`,
 `dg@simassurances.test`, `admin@simassurances.test`.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

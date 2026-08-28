@@ -9,34 +9,66 @@
      dur dans les composants : passer par ces tokens (classes Tailwind
      bg-primary, text-danger, border-border, etc. générées par @theme
      ci-dessous) pour que toute évolution de palette se fasse ici. */
+
+  /* --- Couleurs officielles SIM Assurances (charte graphique) ---
+     Disponibles telles quelles via bg-sim-blue-dark, text-sim-red, etc.
+     À utiliser pour les usages "bruts" (fonds pleins, accents, logo) où le
+     contraste texte/fond n'est pas un enjeu direct. Pour du texte ou des
+     éléments d'interface, préférer les tokens sémantiques ci-dessous, qui
+     dérivent de ces couleurs en garantissant WCAG AA. */
+  --color-sim-blue-dark: #004b9c; /* Couleur principale */
+  --color-sim-blue-light: #51aee2; /* Couleur secondaire */
+  --color-sim-red: #fe0101; /* État "Dommage" / erreur */
+  --color-sim-yellow: #fdf20e; /* État "Santé" / attention */
+  --color-sim-orange: #f16622; /* État "Accident" / avertissement */
+
   --color-surface: #ffffff;
   --color-border: #e2e8f0;
   --color-muted: #f1f5f9;
   --color-muted-foreground: #64748b;
 
-  --color-primary: #1d4ed8;
-  --color-primary-hover: #1e40af;
+  /* primary = sim-blue-dark, utilisable tel quel : 8.45:1 avec du texte
+     blanc, largement au-dessus du seuil WCAG AA (4.5:1). */
+  --color-primary: #004b9c;
+  --color-primary-hover: #003773;
   --color-primary-foreground: #ffffff;
 
   --color-secondary: #f1f5f9;
   --color-secondary-hover: #e2e8f0;
   --color-secondary-foreground: #0f172a;
 
-  --color-danger: #dc2626;
-  --color-danger-hover: #b91c1c;
+  /* danger dérive de sim-red (#fe0101). Le rouge officiel pur ne tient que
+     4.02:1 avec du texte blanc (< 4.5 requis) : assombri en #da0101
+     (5.27:1) pour rester conforme AA sur fond plein comme en texte sur
+     fond clair (badges), sans changer la teinte perçue. */
+  --color-danger: #da0101;
+  --color-danger-hover: #b10101;
   --color-danger-foreground: #ffffff;
+  --color-danger-bg: #ffebeb;
+  --color-danger-border: #ffb3b3;
 
+  /* warning dérive de sim-orange / "Accident" (#f16622), 3.15:1 avec du
+     blanc (insuffisant) : assombri en #bf470c (6.7:1 sur blanc) pour un
+     usage texte/icône accessible. */
+  --color-warning: #bf470c;
+  --color-warning-bg: #fef3ed;
+  --color-warning-border: #fbd1bd;
+
+  /* info dérive de sim-blue-light (#51aee2), seulement 2.47:1 avec du
+     blanc et à peine mieux avec du texte sombre à cette luminosité :
+     assombri en #1d78ab (contraste >4.5:1) pour rester lisible en texte
+     sur fond clair. sim-blue-light reste disponible tel quel pour les
+     aplats/accents décoratifs (cf. usages du logo, bordures). */
+  --color-info: #1d78ab;
+  --color-info-bg: #f1f9fd;
+  --color-info-border: #cbe7f6;
+
+  /* success : aucune couleur "succès" n'est définie dans la charte SIM
+     Assurances. Conservé en vert sobre, sans conflit avec les couleurs
+     officielles. */
   --color-success: #16a34a;
   --color-success-bg: #f0fdf4;
   --color-success-border: #bbf7d0;
-
-  --color-warning: #d97706;
-  --color-warning-bg: #fffbeb;
-  --color-warning-border: #fde68a;
-
-  --color-info: #2563eb;
-  --color-info-bg: #eff6ff;
-  --color-info-border: #bfdbfe;
 
   --color-neutral: #475569;
   --color-neutral-bg: #f1f5f9;
@@ -46,8 +78,14 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-montserrat);
   --font-mono: var(--font-geist-mono);
+
+  --color-sim-blue-dark: var(--color-sim-blue-dark);
+  --color-sim-blue-light: var(--color-sim-blue-light);
+  --color-sim-red: var(--color-sim-red);
+  --color-sim-yellow: var(--color-sim-yellow);
+  --color-sim-orange: var(--color-sim-orange);
 
   --color-surface: var(--color-surface);
   --color-border: var(--color-border);
@@ -65,10 +103,8 @@
   --color-danger: var(--color-danger);
   --color-danger-hover: var(--color-danger-hover);
   --color-danger-foreground: var(--color-danger-foreground);
-
-  --color-success: var(--color-success);
-  --color-success-bg: var(--color-success-bg);
-  --color-success-border: var(--color-success-border);
+  --color-danger-bg: var(--color-danger-bg);
+  --color-danger-border: var(--color-danger-border);
 
   --color-warning: var(--color-warning);
   --color-warning-bg: var(--color-warning-bg);
@@ -78,6 +114,10 @@
   --color-info-bg: var(--color-info-bg);
   --color-info-border: var(--color-info-border);
 
+  --color-success: var(--color-success);
+  --color-success-bg: var(--color-success-bg);
+  --color-success-border: var(--color-success-border);
+
   --color-neutral: var(--color-neutral);
   --color-neutral-bg: var(--color-neutral-bg);
   --color-neutral-border: var(--color-neutral-border);
@@ -86,5 +126,5 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }
