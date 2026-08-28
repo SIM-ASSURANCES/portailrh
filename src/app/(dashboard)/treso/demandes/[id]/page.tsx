@@ -7,6 +7,7 @@ import { Badge, PageHeader } from "@/components/ui";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
+import { ReglementsRecusSection } from "./ReglementsRecusSection";
 import { RetoursCaisseSection } from "./RetoursCaisseSection";
 
 /**
@@ -117,6 +118,8 @@ export default async function MaDemandeDetailPage({
           ) : null}
         </>
       ) : null}
+
+      <ReglementsRecusSection demandeId={demande.id} />
 
       <RetoursCaisseSection demandeId={demande.id} peutDeclarer={demande.statut === "VALIDEE"} />
 

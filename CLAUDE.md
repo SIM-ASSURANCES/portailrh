@@ -79,7 +79,8 @@ sim-portail/
 │   │   │           ├── retourActions.ts        # creerRetourCaisseAction (jamais de JournalCaisse)
 │   │   │           ├── RetoursCaisseSection.tsx # Server Component, règlements Caisse éligibles
 │   │   │           ├── RetourCaisseRow.tsx      # Bouton/formulaire par règlement (Client)
-│   │   │           └── RetourCaisseForm.tsx     # Formulaire de déclaration (Client, useActionState)
+│   │   │           ├── RetourCaisseForm.tsx     # Formulaire de déclaration (Client, useActionState)
+│   │   │           └── ReglementsRecusSection.tsx # Règlements confirmés + "Télécharger le reçu" (Ticket 9)
 │   │   │   └── finance/
 │   │   │       ├── layout.tsx              # Garde categoriser/valider/receptionner_retour/voir_dashboard_finance
 │   │   │       ├── page.tsx                # Dashboard Finance (4 StatCard, Ticket 8)
@@ -112,9 +113,14 @@ sim-portail/
 │   │   │       ├── UiPreviewDemo.tsx    # Partie interactive (Client Component)
 │   │   │       └── actions.ts           # Server Action de démo (zod + ActionState)
 │   │   └── api/
-│   │       └── auth/
-│   │           └── [...nextauth]/
-│   │               └── route.ts          # Handlers Auth.js (GET/POST)
+│   │       ├── auth/
+│   │       │   └── [...nextauth]/
+│   │       │       └── route.ts          # Handlers Auth.js (GET/POST)
+│   │       └── treso/
+│   │           └── reglements/
+│   │               └── [id]/
+│   │                   └── recu/
+│   │                       └── route.tsx     # GET : génère le reçu PDF d'un règlement (Ticket 9)
 │   │   # À venir (dev #2) : le reste du Module Trésorerie (règlements, retours
 │   │   # de caisse, validation par DG) sous (dashboard)/treso/, même pattern.
 │   │   # Le Socle Portail (auth, permissions, dashboard, admin) est terminé —
@@ -147,6 +153,8 @@ sim-portail/
 │   │   ├── reference.ts             # generateDemandeReference() : référence lisible "DEM-2026-000123"
 │   │   ├── tresorerie.ts            # getTotalRegle/getResteARegler/getSoldeCaisse/getEcart...
 │   │   ├── dashboardFinance.ts      # getDemandesADecaisser/getDecaissementsARegulariser/getRetoursEnAttente
+│   │   ├── pdf/
+│   │   │   └── ReceiptDocument.tsx    # Gabarit @react-pdf/renderer du reçu de règlement (Ticket 9)
 │   │   ├── validation.ts            # ActionState, fieldErrorsFromZod (pattern Server Action + zod)
 │   │   └── hooks/
 │   │       └── useActionFeedback.ts   # Relie un ActionState à un toast sonner
@@ -1156,6 +1164,104 @@ Le compte collaborateur ne voit ni le lien ni l'accès direct à
 `/treso/finance` (redirection + toast). Toutes les données de test
 supprimées, les 4 indicateurs reviennent exactement à zéro.
 
+## Module Trésorerie : Ticket 9 — Reçu PDF par règlement
+
+**Statut : terminé.**
+
+**Librairie retenue : `@react-pdf/renderer`** (aucune librairie PDF n'était
+présente dans le projet — installée pour ce ticket). Choisie parce qu'elle
+permet d'écrire le gabarit en JSX (`Document`/`Page`/`View`/`Text`,
+`StyleSheet.create`), fonctionne nativement dans un Route Handler Next.js
+(rendu 100% serveur, `renderToBuffer()`), et n'a pas besoin d'un navigateur
+headless (contrairement à une approche Puppeteer/Chromium).
+
+**Champ manquant trouvé et corrigé avant même d'écrire le gabarit** —
+`Reglement` n'avait que `createdAt` (date de création du **brouillon**),
+aucune date de confirmation. Le cahier des charges exige explicitement la
+date de confirmation sur le reçu, jamais celle du brouillon. Migration
+Prisma ajoutée : `Reglement.confirmeAt DateTime?` (même convention de
+nommage que `RetourCaisse.receptionneAt`), renseigné dans
+`confirmerReglementAction` (Ticket 4) au moment précis de la confirmation.
+Migration `20260828225240_add_confirme_at_reglement`.
+
+**Police Montserrat côté PDF** — `next/font/google` ne produit qu'une classe
+CSS pour le navigateur, inutilisable par @react-pdf/renderer (rendu Node,
+pas de DOM). Le gabarit (`src/lib/pdf/ReceiptDocument.tsx`) enregistre donc
+directement les 4 graisses (400/500/600/700) via `Font.register()` en
+pointant les URLs statiques versionnées de `fonts.gstatic.com` (mêmes
+fichiers que ceux que `next/font/google` télécharge à la compilation pour
+le reste du portail — le projet dépend déjà de cette même infrastructure
+Google Fonts, ce n'est pas une nouvelle classe de dépendance externe).
+
+**Pas de logo image** — `logo-sim-blanc.webp` pose deux problèmes distincts
+pour ce reçu : (1) format WebP non fiablement supporté par le moteur de
+rendu image de @react-pdf/renderer, et (2) c'est une version blanche pensée
+pour un fond bleu plein. Le bandeau d'en-tête du reçu **est** bleu
+(`sim-blue-dark`), donc le problème de contraste ne se serait pas posé ici,
+mais le format reste bloquant. Choix (comme anticipé dans la demande) :
+"SIM ASSURANCES" en texte stylé (Montserrat 700, lettres espacées, blanc
+sur bleu) plutôt qu'une image. Une vraie version du logo (SVG ou PNG) réglerait
+ce point pour de futurs documents PDF — hors périmètre de ce ticket.
+
+**Palette dupliquée en hexadécimal littéral** dans `ReceiptDocument.tsx` —
+@react-pdf/renderer ne lit pas les classes Tailwind/tokens CSS du projet ;
+les valeurs (`#004b9c`, `#1d78ab`/`#f1f9fd`/`#cbe7f6` pour le badge Caisse,
+`#475569`/`#f1f5f9`/`#e2e8f0` pour Banque...) sont recopiées **telles
+quelles** depuis `globals.css`, jamais réinventées, pour un rendu
+visuellement identique aux tokens `info`/`neutral` déjà utilisés partout
+ailleurs dans l'application.
+
+**Route** `GET /api/treso/reglements/[id]/recu`
+(`src/app/api/treso/reglements/[id]/recu/route.tsx` — extension `.tsx` : le
+handler contient du JSX pour instancier `<ReceiptDocument />`, Next.js
+reconnaît `route` comme nom de fichier spécial quelle que soit l'extension
+`.ts`/`.tsx`) :
+
+- 401 si non authentifié ; 404 si le règlement n'existe pas **ou** n'est
+  pas confirmé (un brouillon n'a pas de reçu — pas encore un paiement réel) ;
+  403 si authentifié mais ni Finance/DG ni créateur de la demande.
+- Autorisé : n'importe laquelle des permissions `treso.effectuer_reglement`
+  / `treso.categoriser_demande` / `treso.valider_demande` /
+  `treso.receptionner_retour` / `treso.voir_dashboard_finance` (en clair,
+  Finance ou DG), **OU** `demande.createurId === session.user.id` (le
+  collaborateur voit le reçu de son propre décaissement, jamais celui d'un
+  tiers).
+- **Référence du reçu** = référence de la demande + rang du règlement parmi
+  les règlements confirmés de cette demande, dans l'ordre de création (ex:
+  `DEM-2026-000123-R1`, `-R2`...) — dérivée, sans nouveau champ en base.
+- `Content-Disposition: attachment; filename="recu-DEM-2026-000123-R1.pdf"`.
+
+**Boutons "Télécharger le reçu"** — sur `ReglementRow.tsx` (Finance,
+Ticket 4) pour tout règlement `estConfirme && !estAnnule`, **sans condition
+sur `canEffectuerReglement`** : la route autorise déjà n'importe quelle
+permission Finance/DG, donc masquer le lien pour le DG (qui n'a pas
+`effectuer_reglement` mais passe la garde du layout Finance) serait
+incohérent avec ce que le serveur accepterait réellement — contrairement à
+"Confirmer"/"Annuler", qui restent des actions réservées. Côté
+Collaborateur, aucune liste "Règlements" n'existait encore sur
+`treso/demandes/[id]/page.tsx` (Ticket 5) : nouveau
+`ReglementsRecusSection.tsx` (Server Component, purement en lecture seule)
+ajouté, listant les mêmes règlements confirmés et non annulés avec
+montant/mode/date et le même bouton, pointant vers la même route.
+
+**Vérifié explicitement** : règlement Caisse de 30 000 FCFA confirmé sur une
+demande catégorisée (Fournitures / objet renseigné) — le PDF téléchargé par
+Finance contient exactement la référence de la demande, le nom du
+demandeur, la catégorie et l'objet, le montant (30 000 FCFA), le mode
+(badge "Caisse"), la date du règlement, la référence du reçu
+(`DEM-2026-000001-R1`) et l'auteur du règlement ; relu directement (extraction
+de texte du PDF) pour confirmer chaque champ. Le même reçu téléchargé par
+le collaborateur créateur de la demande réussit à l'identique (PDF de même
+taille en octets). Un second compte collaborateur créé spécifiquement pour
+ce test (non créateur, sans permission Finance) reçoit **403**. Une requête
+sans cookie de session reçoit **401**. Le DG (Finance/DG mais pas créateur)
+reçoit **200** — autorisé par design, comme documenté ci-dessus. Un
+règlement créé en brouillon (jamais confirmé) sur une demande dédiée : le
+bouton n'apparaît nulle part dans l'UI, **et** une requête directe et
+authentifiée vers sa route de reçu renvoie **404** — la défense en
+profondeur ne repose pas que sur l'absence du bouton. Toutes les données de
+test (demandes, second compte collaborateur) supprimées après vérification.
+
 ## Module Pointage RH : fondations de données
 
 **Statut : fondations posées, aucun écran développé.** Modèles, enums,
@@ -1311,8 +1417,8 @@ réutilisables, identité visuelle SIM Assurances, dashboard personnalisé par
 droits, et console d'administration complète (`isAdmin()`,
 `getAccessibleModules()`, `/admin/users`, `/admin/roles`, `/admin/modules`).
 
-Le **Module Trésorerie** est désormais **terminé** (Tickets 1 à 8) : il
-couvre l'intégralité du cycle métier des sections 2 à 11 du cahier des
+Le **Module Trésorerie** est désormais **terminé** (Tickets 1 à 9) : il
+couvre l'intégralité du cycle métier des sections 2 à 12 du cahier des
 charges — création de la demande (Ticket 1) → catégorisation par Finance
 (Ticket 2) → validation/rejet (Ticket 3) → règlement Caisse/Banque avec
 grand livre `JournalCaisse` (Ticket 4) → déclaration d'un retour de caisse
@@ -1320,10 +1426,10 @@ par le Collaborateur (Ticket 5) → réception du retour par Finance, seul
 moment où la caisse est réellement créditée (Ticket 6) → régularisation et
 clôture totale/partielle, qui referme définitivement le dossier (Ticket 7)
 → dashboard Finance donnant une vue d'ensemble recalculée en temps réel de
-tout ce cycle (Ticket 8). Voir
-[Règles métier impératives](#règles-métier-impératives--module-trésorerie)
+tout ce cycle (Ticket 8) → reçu PDF téléchargeable par règlement (Ticket 9).
+Voir [Règles métier impératives](#règles-métier-impératives--module-trésorerie)
 pour les invariants transversaux (verrouillages définitifs, immutabilité du
-grand livre, historisation systématique) qui traversent ces huit tickets.
+grand livre, historisation systématique) qui traversent ces neuf tickets.
 
 Le développement de ce module a suivi les conventions et patterns du Socle
 sans jamais le modifier : routes sous `src/app/(dashboard)/treso/`,

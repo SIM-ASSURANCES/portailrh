@@ -177,7 +177,8 @@ model Reglement {
 
   retours RetourCaisse[]
 
-  createdAt DateTime @default(now())
+  createdAt  DateTime  @default(now())
+  confirmeAt DateTime?
 }
 
 model RetourCaisse {

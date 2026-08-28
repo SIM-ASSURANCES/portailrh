@@ -152,6 +152,10 @@ export async function modifierReglementAction(
  * `JournalCaisse` (SORTIE) est créée dans la même transaction que la
  * confirmation — les deux réussissent ou échouent ensemble. Un règlement
  * BANQUE n'a strictement aucun effet sur `JournalCaisse`.
+ *
+ * `confirmeAt` (Ticket 9) enregistre la date de confirmation elle-même,
+ * distincte de `createdAt` (date de création du brouillon) — c'est cette
+ * date qui doit apparaître sur le reçu PDF, jamais la date du brouillon.
  */
 export async function confirmerReglementAction(reglementId: string): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -185,7 +189,10 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   }
 
   await prisma.$transaction([
-    prisma.reglement.update({ where: { id: reglementId }, data: { estConfirme: true } }),
+    prisma.reglement.update({
+      where: { id: reglementId },
+      data: { estConfirme: true, confirmeAt: new Date() },
+    }),
     ...(reglement.mode === "CAISSE"
       ? [
           prisma.journalCaisse.create({

@@ -43,6 +43,14 @@ function ReglementStatutBadge({ reglement }: { reglement: ReglementRowData }) {
  * Le formulaire d'édition reste non contrôlé (`defaultValue` + `FormData`
  * au submit) : passer `value` à `Select` entrerait en conflit avec son
  * `defaultValue` interne (voir CLAUDE.md, piège déjà rencontré au Ticket 2).
+ *
+ * "Télécharger le reçu" (Ticket 9) apparaît sur tout règlement confirmé et
+ * non annulé, **sans condition sur `canEffectuerReglement`** : la Route
+ * Handler qui génère le PDF autorise déjà n'importe quelle permission
+ * Finance/DG (pas seulement `treso.effectuer_reglement`), donc tout
+ * utilisateur qui voit cette page (garde du layout Finance partagé) a de
+ * toute façon le droit de télécharger — masquer le lien pour le DG serait
+ * incohérent avec ce que le serveur accepterait réellement.
  */
 export function ReglementRow({
   reglement,
@@ -124,6 +132,13 @@ export function ReglementRow({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ReglementStatutBadge reglement={reglement} />
+          {reglement.estConfirme && !reglement.estAnnule ? (
+            <a href={`/api/treso/reglements/${reglement.id}/recu`}>
+              <Button type="button" variant="secondary">
+                Télécharger le reçu
+              </Button>
+            </a>
+          ) : null}
           {canEffectuerReglement && !reglement.estConfirme && !reglement.estAnnule && uiMode === "view" ? (
             <>
               <Button type="button" variant="secondary" onClick={() => setUiMode("edit")}>
