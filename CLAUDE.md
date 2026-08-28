@@ -83,7 +83,11 @@ sim-portail/
 │   │   │               ├── page.tsx               # Détail + rendu conditionnel statut x permission
 │   │   │               ├── CategorisationForm.tsx  # Select Catégorie->Objet en cascade (Client)
 │   │   │               ├── ValidationActions.tsx    # Boutons Valider/Rejeter (Client, useTransition)
-│   │   │               └── actions.ts              # categoriser/valider/rejeterDemandeAction
+│   │   │               ├── actions.ts              # categoriser/valider/rejeterDemandeAction
+│   │   │               ├── ReglementsSection.tsx    # Totaux + liste (Server Component, si VALIDEE)
+│   │   │               ├── ReglementForm.tsx        # Ajout d'un règlement (Client, useActionState)
+│   │   │               ├── ReglementRow.tsx         # Modifier/Confirmer/Annuler par ligne (Client)
+│   │   │               └── reglementActions.ts      # créer/modifier/confirmer/annulerReglementAction
 │   │   ├── (dev)/
 │   │   │   └── ui-preview/
 │   │   │       ├── page.tsx            # Vitrine des composants src/components/ui (OUTIL DE DEV)
@@ -121,6 +125,7 @@ sim-portail/
 │   │   ├── auth.ts                  # Config Auth.js + contrat getSession()/hasPermission()/isAdmin()/getAccessibleModules()
 │   │   ├── prisma.ts                # Singleton PrismaClient (driver adapter pg)
 │   │   ├── reference.ts             # generateDemandeReference() : référence lisible "DEM-2026-000123"
+│   │   ├── tresorerie.ts            # getTotalRegle()/getResteARegler()/getSoldeCaisse()
 │   │   ├── validation.ts            # ActionState, fieldErrorsFromZod (pattern Server Action + zod)
 │   │   └── hooks/
 │   │       └── useActionFeedback.ts   # Relie un ActionState à un toast sonner
@@ -664,6 +669,75 @@ du Ticket 2 s'est révélée peu lisible (elle stockait les identifiants bruts
 `categoriserDemandeAction` pour stocker les libellés humains
 (`Catégorie « X », objet « Y », budget Z FCFA`) — les entrées créées avant
 ce correctif restent inchangées en base (elles gardent les IDs bruts).
+
+## Module Trésorerie : Ticket 4 — Règlement d'une demande validée
+
+**Statut : terminé.**
+
+**Fonctions de calcul** —
+[src/lib/tresorerie.ts](src/lib/tresorerie.ts) :
+
+- `getTotalRegle(demandeId)` — somme des règlements **confirmés et non
+  annulés** d'une demande (un brouillon ou un règlement annulé ne compte
+  jamais).
+- `getResteARegler(demandeId)` — `montant demande - getTotalRegle(...)`,
+  jamais négatif.
+- `getSoldeCaisse()` — solde de caisse global, **toujours recalculé** à
+  partir du grand livre immuable `JournalCaisse` (entrées - sorties),
+  jamais saisi manuellement (règle impérative). N'alimente encore aucun
+  écran : préparée pour le dashboard Finance d'un prochain ticket.
+
+**Cycle de vie d'un `Reglement`** (`treso/finance/demandes/[id]/reglementActions.ts`,
+fichier dédié séparé du `actions.ts` du Ticket 3 pour ne pas surcharger ce
+dernier) :
+
+1. **Brouillon** (`creerReglementAction`) — `estConfirme: false`. Montant
+   plafonné au reste à régler (zod + revérification serveur), modifiable
+   librement tant qu'il n'est pas confirmé (`modifierReglementAction`,
+   mêmes contrôles que la création).
+2. **Confirmation** (`confirmerReglementAction`) — défense en profondeur :
+   revérifie que la demande est toujours `VALIDEE`, que le règlement n'est
+   ni déjà confirmé ni annulé, et **recalcule** `getTotalRegle()` côté
+   serveur avant d'accepter (jamais confiance dans le montant affiché par
+   l'UI, qui a pu devenir obsolète). Si `mode = CAISSE`, crée dans la
+   **même transaction** (`$transaction`) une écriture `JournalCaisse`
+   (`type: "SORTIE"`, `source: "reglement_caisse"`, `refId` = id du
+   règlement). Un règlement `BANQUE` ne touche jamais `JournalCaisse`.
+   Plus aucune édition possible une fois confirmé (seul "Annuler" reste).
+3. **Annulation** (`annulerReglementAction`, motif obligatoire, zod
+   `min(3)`) — **jamais de suppression ni d'édition silencieuse** : le
+   règlement passe `estAnnule: true` avec son `motifAnnulation`, mais reste
+   visible dans la liste (barré, badge "Annulé"). Si le règlement annulé
+   était `CAISSE`, une écriture `JournalCaisse` **compensatoire**
+   (`type: "ENTREE"`, `source: "annulation_reglement_caisse"`, même
+   `refId`) neutralise l'effet de la `SORTIE` d'origine — celle-ci n'est
+   **jamais modifiée ni supprimée** (grand livre immuable). Le reste à
+   régler remonte automatiquement puisque `getTotalRegle()` exclut les
+   règlements annulés.
+
+Chaque confirmation et chaque annulation crée une `HistoriqueEntry`
+(`action: "reglement"` / `"annulation_reglement"`, `detail` = montant+mode
+ou motif), ajoutées à `ACTION_LABELS` dans
+[DemandeHistorique.tsx](src/components/tresorerie/DemandeHistorique.tsx)
+("Règlement" / "Annulation de règlement") — confirme que ce composant
+générique du Ticket 3 n'a effectivement rien demandé d'autre qu'une entrée
+de libellé pour accueillir un nouveau type d'évènement.
+
+**Section "Règlements"** (`ReglementsSection.tsx`, Server Component ;
+`ReglementRow.tsx` et `ReglementForm.tsx`, Client Components) n'apparaît
+que si la demande est `VALIDEE`. Le formulaire d'ajout est non contrôlé
+(`defaultValue`/`FormData`, comme `CategorisationForm` du Ticket 2) — passer
+`value` à `Select` entrerait en conflit avec son `defaultValue` interne.
+
+**Piège trouvé et corrigé pendant la vérification manuelle** — `ReglementRow`
+affichait ses boutons Modifier/Confirmer/Annuler à **tout** utilisateur de
+l'espace Finance, y compris le DG (`treso.valider_demande` sans
+`treso.effectuer_reglement`) : les Server Actions les auraient bien
+refusés côté serveur, mais l'UI proposait des actions vouées à échouer.
+Corrigé en ajoutant une prop `canEffectuerReglement` à `ReglementRow`,
+calculée dans `page.tsx` et transmise via `ReglementsSection` — même
+principe que `canCategoriser`/`canValider` du Ticket 3 : ne jamais supposer
+qu'un utilisateur de l'espace Finance a toutes les permissions.
 
 ## Module Pointage RH : fondations de données
 

@@ -12,6 +12,8 @@ const ACTION_LABELS: Record<string, string> = {
   CATEGORISER: "Catégorisation",
   validation: "Validation",
   rejet: "Rejet",
+  reglement: "Règlement",
+  annulation_reglement: "Annulation de règlement",
 };
 
 function labelForAction(action: string): string {

@@ -8,6 +8,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 import { CategorisationForm } from "./CategorisationForm";
+import { ReglementsSection } from "./ReglementsSection";
 import { ValidationActions } from "./ValidationActions";
 
 export default async function CategoriserDemandePage({
@@ -20,6 +21,7 @@ export default async function CategoriserDemandePage({
   const session = await getSession();
   const canCategoriser = hasPermission(session, "treso.categoriser_demande");
   const canValider = hasPermission(session, "treso.valider_demande");
+  const canEffectuerReglement = hasPermission(session, "treso.effectuer_reglement");
 
   const demande = await prisma.demande.findUnique({
     where: { id },
@@ -105,12 +107,19 @@ export default async function CategoriserDemandePage({
           {canValider ? <ValidationActions demandeId={demande.id} /> : null}
         </>
       ) : demande.statut === "VALIDEE" ? (
-        <CategorisationSummary
-          categorieLabel={demande.categorie?.label}
-          objetLabel={demande.objet?.label}
-          budget={demande.budgetDisponible}
-          lockMessage="Cette demande est validée : catégorie, objet et budget sont définitivement verrouillés et ne peuvent plus être modifiés."
-        />
+        <>
+          <CategorisationSummary
+            categorieLabel={demande.categorie?.label}
+            objetLabel={demande.objet?.label}
+            budget={demande.budgetDisponible}
+            lockMessage="Cette demande est validée : catégorie, objet et budget sont définitivement verrouillés et ne peuvent plus être modifiés."
+          />
+          <ReglementsSection
+            demandeId={demande.id}
+            montantDemande={Number(demande.montant)}
+            canEffectuerReglement={canEffectuerReglement}
+          />
+        </>
       ) : demande.statut === "REJETEE" ? (
         <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
           <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
