@@ -1,29 +1,8 @@
 "use client";
 
 import { Badge, DataTable } from "@/components/ui";
-import type { BadgeVariant } from "@/components/ui";
+import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import type { StatutDemande } from "@/generated/prisma/client";
-
-/**
- * Convention : un enum métier se mappe vers une variante de Badge via un
- * objet local au composant qui l'affiche — voir CLAUDE.md ("Badges de
- * statut métier").
- */
-const statutBadgeVariant: Record<StatutDemande, BadgeVariant> = {
-  EN_ATTENTE: "warning",
-  VALIDEE: "success",
-  REJETEE: "danger",
-  CLOTUREE_TOTALE: "neutral",
-  CLOTUREE_PARTIELLE: "info",
-};
-
-const statutLabel: Record<StatutDemande, string> = {
-  EN_ATTENTE: "En attente",
-  VALIDEE: "Validée",
-  REJETEE: "Rejetée",
-  CLOTUREE_TOTALE: "Clôturée",
-  CLOTUREE_PARTIELLE: "Clôturée (partielle)",
-};
 
 interface DemandeRow {
   id: string;
@@ -66,7 +45,11 @@ export function MesDemandesTable({ demandes }: { demandes: DemandeRow[] }) {
         {
           key: "statut",
           header: "Statut",
-          render: (d) => <Badge variant={statutBadgeVariant[d.statut]}>{statutLabel[d.statut]}</Badge>,
+          render: (d) => (
+            <Badge variant={STATUT_DEMANDE_BADGE_VARIANT[d.statut]}>
+              {STATUT_DEMANDE_LABEL[d.statut]}
+            </Badge>
+          ),
         },
         {
           key: "createdAt",

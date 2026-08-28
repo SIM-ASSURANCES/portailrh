@@ -11,6 +11,8 @@ interface AppShellProps {
   role: string;
   /** Affiche la section « Administration » dans la sidebar (rôle Admin). */
   canAdmin?: boolean;
+  /** Affiche "À catégoriser (Finance)" dans la sidebar (treso.categoriser_demande). */
+  canCategoriser?: boolean;
   children: ReactNode;
 }
 
@@ -22,7 +24,13 @@ const STORAGE_KEY = "sim-sidebar-collapsed";
  * que la largeur du contenu s'ajuste. Le layout serveur ne fait que lui
  * transmettre l'utilisateur et son rôle.
  */
-export function AppShell({ user, role, canAdmin = false, children }: AppShellProps) {
+export function AppShell({
+  user,
+  role,
+  canAdmin = false,
+  canCategoriser = false,
+  children,
+}: AppShellProps) {
   // Rendu initial (serveur + première passe client) toujours « déployé »
   // pour éviter tout écart d'hydratation ; on relit la préférence persistée
   // juste après le montage, côté client uniquement.
@@ -60,6 +68,7 @@ export function AppShell({ user, role, canAdmin = false, children }: AppShellPro
         collapsed={collapsed}
         onToggleCollapse={toggleCollapse}
         canAdmin={canAdmin}
+        canCategoriser={canCategoriser}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />

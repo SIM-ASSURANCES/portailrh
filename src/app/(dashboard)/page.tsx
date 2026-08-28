@@ -23,6 +23,12 @@ export default async function DashboardHomePage({
           message="Vous n'avez pas la permission de créer une demande."
         />
       ) : null}
+      {error === "acces_refuse_categoriser" ? (
+        <ToastOnMount
+          variant="error"
+          message="Vous n'avez pas la permission de catégoriser les demandes."
+        />
+      ) : null}
 
       <PageHeader
         title="Tableau de bord"

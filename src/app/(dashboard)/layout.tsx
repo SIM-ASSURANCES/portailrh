@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/layout/AppShell";
-import { getSession, isAdmin } from "@/lib/auth";
+import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 
 /**
  * Layout du Socle Portail (écrans authentifiés). Toute route de ce groupe
@@ -15,7 +15,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
   }
 
   return (
-    <AppShell user={session.user} role={session.role} canAdmin={isAdmin(session)}>
+    <AppShell
+      user={session.user}
+      role={session.role}
+      canAdmin={isAdmin(session)}
+      canCategoriser={hasPermission(session, "treso.categoriser_demande")}
+    >
       {children}
     </AppShell>
   );

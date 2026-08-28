@@ -29,6 +29,16 @@ export const DASHBOARD_ITEM: NavItem = {
 };
 
 /**
+ * Permissions/rôles conditionnant l'affichage de certaines entrées de la
+ * navigation (calculées côté serveur, cf. `(dashboard)/layout.tsx`, puis
+ * passées en booléens jusqu'à la Sidebar — jamais de logique de permission
+ * dans ce fichier, purement statique et sans accès à la session).
+ */
+export interface NavFlags {
+  canCategoriser: boolean;
+}
+
+/**
  * Les deux branches fonctionnelles du portail. Chaque branche est un
  * accordéon dans la sidebar (déployée) ou un bloc d'icônes séparé par un
  * filet (sidebar réduite).
@@ -39,55 +49,66 @@ export const DASHBOARD_ITEM: NavItem = {
  * Les routes non encore implémentées renvoient un 404 tant que l'écran
  * correspondant n'existe pas — l'entrée fige la structure de navigation.
  */
-export const NAV_BRANCHES: NavBranch[] = [
-  {
-    key: "achat",
-    label: "Demande d'Achat",
-    icon: "shopping-cart",
-    groups: [
-      {
-        items: [
-          { label: "Demandes", href: "/treso/demandes", icon: "file-text" },
-          { label: "Règlements", href: "/reglements", icon: "wallet" },
-          { label: "Retours de caisse", href: "/retours", icon: "rotate-ccw" },
-        ],
-      },
-      {
-        title: "Trésorerie",
-        items: [
-          { label: "Journal de caisse", href: "/journal", icon: "book-text" },
-          { label: "Catégories", href: "/categories", icon: "folder-tree" },
-          { label: "Objets", href: "/objets", icon: "package" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "pointage",
-    label: "Pointage de Présence",
-    icon: "clock",
-    groups: [
-      {
-        title: "Mon espace",
-        items: [
-          { label: "Pointer", href: "/pointage/pointer", icon: "qr-code" },
-          { label: "Mon historique", href: "/pointage/historique", icon: "book-text" },
-        ],
-      },
-      {
-        title: "RH",
-        items: [
-          { label: "Présence du jour", href: "/pointage/rh", icon: "layout-grid" },
-          { label: "Pointages", href: "/pointage/rh/pointages", icon: "file-text" },
-          { label: "Retards & absences", href: "/pointage/rh/retards", icon: "alert-triangle" },
-          { label: "Reporting", href: "/pointage/rh/reporting", icon: "download" },
-          { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil" },
-          { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings" },
-        ],
-      },
-    ],
-  },
-];
+export function getNavBranches({ canCategoriser }: NavFlags): NavBranch[] {
+  return [
+    {
+      key: "achat",
+      label: "Demande d'Achat",
+      icon: "shopping-cart",
+      groups: [
+        {
+          items: [
+            { label: "Demandes", href: "/treso/demandes", icon: "file-text" },
+            ...(canCategoriser
+              ? [
+                  {
+                    label: "À catégoriser (Finance)",
+                    href: "/treso/finance/demandes",
+                    icon: "folder-tree",
+                  } satisfies NavItem,
+                ]
+              : []),
+            { label: "Règlements", href: "/reglements", icon: "wallet" },
+            { label: "Retours de caisse", href: "/retours", icon: "rotate-ccw" },
+          ],
+        },
+        {
+          title: "Trésorerie",
+          items: [
+            { label: "Journal de caisse", href: "/journal", icon: "book-text" },
+            { label: "Catégories", href: "/categories", icon: "folder-tree" },
+            { label: "Objets", href: "/objets", icon: "package" },
+          ],
+        },
+      ],
+    },
+    {
+      key: "pointage",
+      label: "Pointage de Présence",
+      icon: "clock",
+      groups: [
+        {
+          title: "Mon espace",
+          items: [
+            { label: "Pointer", href: "/pointage/pointer", icon: "qr-code" },
+            { label: "Mon historique", href: "/pointage/historique", icon: "book-text" },
+          ],
+        },
+        {
+          title: "RH",
+          items: [
+            { label: "Présence du jour", href: "/pointage/rh", icon: "layout-grid" },
+            { label: "Pointages", href: "/pointage/rh/pointages", icon: "file-text" },
+            { label: "Retards & absences", href: "/pointage/rh/retards", icon: "alert-triangle" },
+            { label: "Reporting", href: "/pointage/rh/reporting", icon: "download" },
+            { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil" },
+            { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings" },
+          ],
+        },
+      ],
+    },
+  ];
+}
 
 /**
  * Console d'administration du Socle (réservée au rôle Admin, cf.

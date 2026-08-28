@@ -74,6 +74,15 @@ sim-portail/
 │   │   │           ├── page.tsx               # Formulaire, gardé par treso.creer_demande
 │   │   │           ├── DemandeForm.tsx         # Client Component (useActionState)
 │   │   │           └── actions.ts              # Server Action creerDemandeAction (zod + ActionState)
+│   │   │   └── finance/
+│   │   │       ├── layout.tsx              # Garde treso.categoriser_demande (tout l'espace Finance)
+│   │   │       └── demandes/
+│   │   │           ├── page.tsx               # "Demandes à catégoriser" (toutes, tri par ancienneté)
+│   │   │           ├── DemandesACategoriserTable.tsx
+│   │   │           └── [id]/
+│   │   │               ├── page.tsx               # Détail + rendu conditionnel selon statut
+│   │   │               ├── CategorisationForm.tsx  # Select Catégorie->Objet en cascade (Client)
+│   │   │               └── actions.ts              # categoriserDemandeAction (défense en profondeur)
 │   │   ├── (dev)/
 │   │   │   └── ui-preview/
 │   │   │       ├── page.tsx            # Vitrine des composants src/components/ui (OUTIL DE DEV)
@@ -84,9 +93,9 @@ sim-portail/
 │   │           └── [...nextauth]/
 │   │               └── route.ts          # Handlers Auth.js (GET/POST)
 │   │   # À venir (dev #2) : le reste du Module Trésorerie (règlements, retours
-│   │   # de caisse, vue Finance "toutes les demandes") sous (dashboard)/treso/,
-│   │   # même pattern que demandes/. Le Socle Portail (auth, permissions,
-│   │   # dashboard, admin) est terminé — voir "Socle Portail : statut" plus bas.
+│   │   # de caisse, validation par DG) sous (dashboard)/treso/, même pattern.
+│   │   # Le Socle Portail (auth, permissions, dashboard, admin) est terminé —
+│   │   # voir "Socle Portail : statut" plus bas.
 │   ├── components/
 │   │   ├── ui/                    # Composants génériques réutilisables, sans logique métier
 │   │   │   ├── Button.tsx
@@ -102,9 +111,10 @@ sim-portail/
 │   │   │   └── index.ts             # Barrel export : `import { Button, Input } from "@/components/ui"`
 │   │   ├── layout/                # Coquille applicative (voir Design system > Coquille)
 │   │   │   └── AppShell.tsx, Sidebar.tsx, Topbar.tsx, nav.ts, actions.ts
-│   │   # À venir (dev #2) : src/components/tresorerie/ (ex: ReglementCard.tsx)
-│   │   # pour les composants métier réutilisés sur plusieurs écrans
-│   │   # (DemandeForm reste colocalisé : une seule page l'utilise pour l'instant).
+│   │   ├── tresorerie/             # Domaine Trésorerie, réutilisé sur plusieurs écrans
+│   │   │   └── demandeStatut.ts      # STATUT_DEMANDE_BADGE_VARIANT / _LABEL (mapping Badge partagé)
+│   │   # À venir (dev #2) : ReglementCard.tsx, etc. (les formulaires restent
+│   │   # colocalisés à leur page tant qu'une seule route les utilise).
 │   ├── lib/                       # Utilitaires, auth, prisma, helpers
 │   │   ├── auth.ts                  # Config Auth.js + contrat getSession()/hasPermission()/isAdmin()/getAccessibleModules()
 │   │   ├── prisma.ts                # Singleton PrismaClient (driver adapter pg)
@@ -506,6 +516,79 @@ depuis la gauche, fond d'estompage cliquable, refermeture automatique au
 clic sur un lien), ouvert via un bouton menu ajouté dans `Topbar`. Comportement
 desktop (`lg:` et plus) inchangé. Ce correctif bénéficie à tout le portail,
 pas seulement à cet écran — voir `AppShell.tsx`/`Sidebar.tsx`/`Topbar.tsx`.
+
+## Module Trésorerie : Ticket 2 — Catégorisation par Finance
+
+**Statut : terminé.** Routes sous
+[src/app/(dashboard)/treso/finance/](<src/app/(dashboard)/treso/finance>) :
+
+- `treso/finance/layout.tsx` — garde l'ensemble de l'espace Finance
+  (`treso.categoriser_demande`), même pattern que `admin/layout.tsx` :
+  `redirect("/?error=acces_refuse_categoriser")` si la permission manque.
+  Couvre `finance/demandes` et `finance/demandes/[id]` sans dupliquer la
+  garde sur chaque page — et couvrira automatiquement tout futur écran
+  Finance placé sous ce dossier (règlements, reporting...).
+- `treso/finance/demandes` — "Demandes à catégoriser" : **toutes** les
+  demandes `EN_ATTENTE` du système (pas seulement celles de l'utilisateur
+  connecté, contrairement à `treso/demandes` du Ticket 1), triées par
+  ancienneté croissante (`orderBy: { createdAt: "asc" }`) — les plus
+  anciennes remontent en premier, plus utile pour Finance qu'un tri
+  anti-chronologique.
+- `treso/finance/demandes/[id]` — détail + catégorisation. Rendu
+  conditionnel selon `demande.statut` :
+  - `EN_ATTENTE` → formulaire (`CategorisationForm`, Client Component).
+    Pré-rempli avec les valeurs déjà enregistrées si la demande a déjà été
+    catégorisée mais reste en attente (Finance peut corriger tant qu'elle
+    n'est pas validée) ; redirige vers la liste après succès plutôt que de
+    rester sur un formulaire visuellement réinitialisé.
+  - `VALIDEE` → catégorie/objet/budget affichés en lecture seule avec un
+    message explicite de verrouillage. Aucun formulaire.
+  - Tout autre statut (`REJETEE`, `CLOTUREE_*`) → détail en lecture seule,
+    pas de catégorisation (n'a pas de sens à ce stade).
+
+**Filtrage Catégorie → Objet** — entièrement côté client, sans requête
+réseau supplémentaire : la page serveur charge une fois toutes les
+`Categorie` et tous les `Objet` (faible volume : 9 catégories, quelques
+objets), `CategorisationForm` les filtre en mémoire au changement de
+catégorie (`useMemo` sur `objets.filter(o => o.categorieId === categorieId)`).
+Le `<Select>` Objet est remonté (`key={categorieId}`) à chaque changement de
+catégorie pour repartir d'une sélection propre. Approche volontairement
+simple, à revoir avec un vrai fetch si le nombre d'objets grossit beaucoup.
+
+**Défense en profondeur sur le verrouillage** (règle impérative du cahier
+des charges) — `treso/finance/demandes/[id]/actions.ts` ne fait jamais
+confiance à l'UI seule : `categoriserDemandeAction` recharge la demande
+et **revérifie `statut === "EN_ATTENTE"` juste avant l'écriture**, même si
+l'interface ne devrait normalement présenter le formulaire que dans ce cas
+(le statut a pu changer entre l'affichage de la page et la soumission —
+ex: validée entre-temps par un autre utilisateur Finance). Vérifié
+manuellement en forçant une demande à `VALIDEE` en base puis en
+contournant volontairement la garde d'UI : la Server Action a bien refusé
+l'écriture (toast d'erreur, aucune modification en base). Même principe
+que la vérification `isAdmin(session)` dans chaque Server Action de
+`/admin` — jamais uniquement le layout ou le masquage de l'UI.
+
+**Statut métier factorisé** —
+[src/components/tresorerie/demandeStatut.ts](src/components/tresorerie/demandeStatut.ts)
+exporte `STATUT_DEMANDE_BADGE_VARIANT` et `STATUT_DEMANDE_LABEL`, utilisés
+par `MesDemandesTable` (Ticket 1), `DemandesACategoriserTable` et le détail
+Finance — évite de dupliquer le mapping `StatutDemande -> Badge` à chaque
+nouvel écran qui affiche un statut.
+
+**Gestion CRUD Catégorie/Objet** — vérifiée avant ce ticket : n'existe nulle
+part encore dans le projet (seulement les 9 catégories/3 objets du seed).
+Hors périmètre des tâches de ce ticket ; à couvrir par un ticket dédié
+(probablement `/admin/categories` et `/admin/objets`, même pattern que
+`/admin/modules`) quand le besoin de les éditer en production se présentera.
+
+**Navigation conditionnelle par permission** — `nav.ts` expose désormais
+`getNavBranches({ canCategoriser })` (fonction, plus une constante statique)
+pour insérer conditionnellement l'entrée "À catégoriser (Finance)" dans la
+branche "Demande d'Achat". Le booléen est calculé une fois dans
+`(dashboard)/layout.tsx` (`hasPermission(session, "treso.categoriser_demande")`)
+et descend via `AppShell` → `Sidebar`, exactement comme `canAdmin`/`isAdmin()`
+pour la section "Administration" — même pattern à suivre pour toute future
+entrée de nav conditionnée par une permission.
 
 ## Module Pointage RH : fondations de données
 

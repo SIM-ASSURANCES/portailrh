@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { Icon } from "@/components/icons";
-import { ADMIN_GROUP, DASHBOARD_ITEM, NAV_BRANCHES, type NavBranch, type NavItem } from "./nav";
+import { ADMIN_GROUP, DASHBOARD_ITEM, getNavBranches, type NavBranch, type NavItem } from "./nav";
 import { signOutAction } from "./actions";
 
 interface SidebarProps {
@@ -14,6 +14,8 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   /** Rôle Admin : ajoute la section « Administration » au bas de la navigation. */
   canAdmin?: boolean;
+  /** Permission treso.categoriser_demande : ajoute "À catégoriser (Finance)". */
+  canCategoriser?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -46,12 +48,14 @@ export function Sidebar({
   collapsed,
   onToggleCollapse,
   canAdmin = false,
+  canCategoriser = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
   const pathname = usePathname();
+  const navBranches = getNavBranches({ canCategoriser });
   const [openBranch, setOpenBranch] = useState<string | null>(
-    () => NAV_BRANCHES.find((branch) => branchContains(branch, pathname))?.key ?? NAV_BRANCHES[0].key
+    () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0].key
   );
 
   return (
@@ -98,7 +102,7 @@ export function Sidebar({
             onNavigate={onCloseMobile}
           />
 
-          {NAV_BRANCHES.map((branch) => {
+          {navBranches.map((branch) => {
             const open = openBranch === branch.key;
             const hasActive = branchContains(branch, pathname);
 
