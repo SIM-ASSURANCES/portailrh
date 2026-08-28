@@ -14,6 +14,12 @@ import { RetoursEnAttenteTable } from "./RetoursEnAttenteTable";
  * categoriser_demande OU valider_demande OU receptionner_retour) : cette
  * page exige précisément `treso.receptionner_retour`, jamais supposée
  * acquise du simple fait d'avoir passé le layout.
+ *
+ * Exclut aussi les retours dont la demande n'est plus `VALIDEE` (Ticket 7) :
+ * une demande clôturée avec un retour resté en attente ne doit plus
+ * proposer de bouton "Réceptionner" voué à échouer côté serveur
+ * (`receptionnerRetourAction` le refuserait de toute façon, mais autant ne
+ * pas l'afficher — même principe que `canEffectuerReglement` au Ticket 4).
  */
 export default async function RetoursEnAttentePage() {
   const session = await getSession();
@@ -22,7 +28,7 @@ export default async function RetoursEnAttentePage() {
   }
 
   const rawRetours = await prisma.retourCaisse.findMany({
-    where: { estReceptionne: false },
+    where: { estReceptionne: false, reglement: { demande: { statut: "VALIDEE" } } },
     include: {
       declarant: true,
       reglement: { include: { demande: true } },

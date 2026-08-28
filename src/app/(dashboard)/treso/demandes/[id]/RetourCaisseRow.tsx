@@ -10,6 +10,8 @@ export interface RetourCaisseRowData {
   reglementId: string;
   montant: number;
   retour: { estReceptionne: boolean } | null;
+  /** Masque le bouton de déclaration une fois la demande clôturée (Ticket 7). */
+  peutDeclarer: boolean;
 }
 
 /**
@@ -36,7 +38,7 @@ export interface RetourCaisseRowData {
  * principe que `ReglementForm.tsx`, où le formulaire ne se démonte jamais
  * de l'extérieur.
  */
-export function RetourCaisseRow({ reglementId, montant, retour }: RetourCaisseRowData) {
+export function RetourCaisseRow({ reglementId, montant, retour, peutDeclarer }: RetourCaisseRowData) {
   const [formOpen, setFormOpen] = useState(false);
 
   return (
@@ -47,10 +49,12 @@ export function RetourCaisseRow({ reglementId, montant, retour }: RetourCaisseRo
           <Badge variant={retour.estReceptionne ? "success" : "warning"}>
             {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
           </Badge>
-        ) : (
+        ) : peutDeclarer ? (
           <Button type="button" variant="secondary" onClick={() => setFormOpen(true)}>
             Déclarer un retour de caisse
           </Button>
+        ) : (
+          <Badge variant="neutral">Non déclaré</Badge>
         )}
       </div>
 

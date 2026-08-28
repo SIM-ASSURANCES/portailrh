@@ -41,6 +41,12 @@ const retourSchema = z
  * NE touche PAS au solde de caisse — seule la RÉCEPTION du retour par
  * Finance (Ticket 6, pas celui-ci) aura cet effet. Déclarer un retour
  * n'enregistre qu'une intention/justification côté collaborateur.
+ *
+ * Défense en profondeur (Ticket 7) : `reglement.demande.statut === "VALIDEE"`
+ * est revérifiée ici — une fois la demande clôturée (`CLOTUREE_TOTALE` ou
+ * `CLOTUREE_PARTIELLE`), plus aucun nouveau retour ne peut être déclaré,
+ * même si le règlement d'origine reste `estConfirme` (ce champ ne change
+ * jamais après clôture, ce n'était donc pas suffisant pour bloquer l'accès).
  */
 export async function creerRetourCaisseAction(
   _prevState: ActionState,
@@ -79,6 +85,12 @@ export async function creerRetourCaisseAction(
   }
   if (reglement.mode !== "CAISSE" || !reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est pas éligible à un retour de caisse." };
+  }
+  if (reglement.demande.statut !== "VALIDEE") {
+    return {
+      status: "error",
+      message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).`,
+    };
   }
   if (reglement.demande.createurId !== session.user.id) {
     return { status: "error", message: "Vous ne pouvez déclarer un retour que sur vos propres demandes." };

@@ -41,3 +41,48 @@ export async function getSoldeCaisse(): Promise<number> {
   ]);
   return Number(entrees._sum.montant ?? 0) - Number(sorties._sum.montant ?? 0);
 }
+
+/**
+ * Somme des `montantDepense` de TOUS les `RetourCaisse` liés aux règlements
+ * d'une demande — peu importe qu'ils soient déjà réceptionnés ou non : c'est
+ * ce que le collaborateur affirme avoir dépensé, indépendamment du
+ * traitement de Finance. Ticket 7 (régularisation/clôture).
+ */
+export async function getDepensesDeclarees(demandeId: string): Promise<number> {
+  const result = await prisma.retourCaisse.aggregate({
+    where: { reglement: { demandeId } },
+    _sum: { montantDepense: true },
+  });
+  return Number(result._sum.montantDepense ?? 0);
+}
+
+/**
+ * Somme des `montantARetourner` des `RetourCaisse` d'une demande,
+ * UNIQUEMENT ceux réceptionnés (`estReceptionne: true`) — l'argent
+ * réellement revenu en caisse, par opposition à un retour simplement
+ * déclaré mais pas encore traité par Finance.
+ */
+export async function getRetoursRecus(demandeId: string): Promise<number> {
+  const result = await prisma.retourCaisse.aggregate({
+    where: { reglement: { demandeId }, estReceptionne: true },
+    _sum: { montantARetourner: true },
+  });
+  return Number(result._sum.montantARetourner ?? 0);
+}
+
+/**
+ * Écart de régularisation d'une demande : montant décaissé (règlements
+ * confirmés) moins ce qui est déjà justifié (dépenses déclarées + retours
+ * réceptionnés). Un écart de 0 signifie que tout l'argent décaissé est
+ * justifié. Un écart positif n'est pas nécessairement un blocage : c'est
+ * une information affichée à Finance au moment de la clôture (la clôture
+ * partielle sert justement à traiter ce cas, avec un motif obligatoire).
+ */
+export async function getEcart(demandeId: string): Promise<number> {
+  const [totalRegle, depensesDeclarees, retoursRecus] = await Promise.all([
+    getTotalRegle(demandeId),
+    getDepensesDeclarees(demandeId),
+    getRetoursRecus(demandeId),
+  ]);
+  return totalRegle - depensesDeclarees - retoursRecus;
+}

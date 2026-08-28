@@ -93,11 +93,12 @@ sim-portail/
 │   │   │               ├── page.tsx               # Détail + rendu conditionnel statut x permission
 │   │   │               ├── CategorisationForm.tsx  # Select Catégorie->Objet en cascade (Client)
 │   │   │               ├── ValidationActions.tsx    # Boutons Valider/Rejeter (Client, useTransition)
-│   │   │               ├── actions.ts              # categoriser/valider/rejeterDemandeAction
+│   │   │               ├── actions.ts              # categoriser/valider/rejeter/cloturerDemandeAction
 │   │   │               ├── ReglementsSection.tsx    # Totaux + liste (Server Component, si VALIDEE)
 │   │   │               ├── ReglementForm.tsx        # Ajout d'un règlement (Client, useActionState)
 │   │   │               ├── ReglementRow.tsx         # Modifier/Confirmer/Annuler par ligne (Client)
-│   │   │               └── reglementActions.ts      # créer/modifier/confirmer/annulerReglementAction
+│   │   │               ├── reglementActions.ts      # créer/modifier/confirmer/annulerReglementAction
+│   │   │               └── ClotureActions.tsx        # Boutons Clôturer totalement/partiellement (Client)
 │   │   ├── (dev)/
 │   │   │   └── ui-preview/
 │   │   │       ├── page.tsx            # Vitrine des composants src/components/ui (OUTIL DE DEV)
@@ -128,7 +129,9 @@ sim-portail/
 │   │   │   └── AppShell.tsx, Sidebar.tsx, Topbar.tsx, nav.ts, actions.ts
 │   │   ├── tresorerie/             # Domaine Trésorerie, réutilisé sur plusieurs écrans
 │   │   │   ├── demandeStatut.ts      # STATUT_DEMANDE_BADGE_VARIANT / _LABEL (mapping Badge partagé)
-│   │   │   └── DemandeHistorique.tsx  # Historique générique d'une Demande (Server Component autonome)
+│   │   │   ├── DemandeHistorique.tsx  # Historique générique d'une Demande (Server Component autonome)
+│   │   │   ├── justification.ts       # JUSTIFICATION_LABEL / _OPTIONS (TypeJustification)
+│   │   │   └── RegularisationSummary.tsx # Décaissé/dépenses/retours/écart (Finance ET Collaborateur)
 │   │   # À venir (dev #2) : ReglementCard.tsx, etc. (les formulaires restent
 │   │   # colocalisés à leur page tant qu'une seule route les utilise).
 │   ├── lib/                       # Utilitaires, auth, prisma, helpers
@@ -899,6 +902,137 @@ calculé dans `(dashboard)/layout.tsx` et descendu via `AppShell` → `Sidebar`
 voit ni le lien dans la sidebar, ni n'accède à `/treso/finance/retours` en
 URL directe (redirection + toast).
 
+## Module Trésorerie : Ticket 7 — Régularisation et clôture d'une demande
+
+**Statut : terminé.** Ce ticket referme le cycle métier complet du Module
+Trésorerie : demande → catégorisation → validation → règlement → retour →
+réception → **clôture**.
+
+**Formules de régularisation** (`src/lib/tresorerie.ts`) :
+
+- `getDepensesDeclarees(demandeId)` — somme de `montantDepense` sur **tous**
+  les `RetourCaisse` liés aux règlements de la demande, réceptionnés ou non
+  : c'est ce que le collaborateur affirme avoir dépensé, indépendamment du
+  traitement de Finance.
+- `getRetoursRecus(demandeId)` — somme de `montantARetourner`, **uniquement**
+  sur les retours `estReceptionne: true` : l'argent réellement revenu en
+  caisse.
+- `getEcart(demandeId)` = `getTotalRegle() - getDepensesDeclarees() -
+  getRetoursRecus()`. Un écart de 0 signifie que tout l'argent décaissé est
+  justifié. Un écart positif n'est **pas nécessairement un blocage** — c'est
+  une information affichée à Finance au moment de la clôture ; la clôture
+  partielle sert justement à l'acter avec un motif.
+
+**Composant partagé** —
+[src/components/tresorerie/RegularisationSummary.tsx](src/components/tresorerie/RegularisationSummary.tsx)
+(Server Component autonome, purement informatif) affiche les 4 chiffres et
+met l'écart en évidence (`text-success` si nul, `text-warning` sinon — même
+convention que le "Reste à régler" du Ticket 4). Réutilisé tel quel à trois
+endroits pour ne jamais dupliquer ce calcul : section "Régularisation" côté
+Finance (demande `VALIDEE`, actionnable) ou en lecture seule (demande
+clôturée), et section "Situation finale" côté Collaborateur (Ticket 5,
+demande clôturée).
+
+**Clôture totale vs partielle** (`cloturerDemandeAction(demandeId, type,
+motif?)` dans `treso/finance/demandes/[id]/actions.ts`, appelée directement
+depuis `ClotureActions.tsx` via `useTransition`, comme
+`validerDemandeAction`/`rejeterDemandeAction`) :
+
+- Réservée à `treso.cloturer_demande` (Finance uniquement selon le seed
+  actuel, **pas le DG**) — revérifiée dans la Server Action, jamais
+  supposée acquise du simple fait d'avoir passé la garde du layout Finance
+  partagé. Vérifié manuellement : le DG voit la section Régularisation
+  (information) mais aucun bouton de clôture.
+- Uniquement sur une demande `VALIDEE` (défense en profondeur : revérifié
+  juste avant l'écriture, comme toutes les transitions de statut du
+  module).
+- **Totale** : motif libre optionnel (simple commentaire, stocké dans
+  `Demande.motifCloture`, aucune validation de longueur).
+- **Partielle** : motif **obligatoire** (zod, min 3 caractères), refusé
+  côté serveur sans lui, même si le bouton de confirmation est aussi
+  bloqué côté client si le champ est vide.
+- Verrouillage **définitif** (même principe que la validation, Ticket 3) :
+  `Demande.statut` passe à `CLOTUREE_TOTALE` ou `CLOTUREE_PARTIELLE`, et il
+  n'existe aucune fonction de "déclôture" dans le portail. Écriture +
+  `HistoriqueEntry` (`action: "cloture_totale"` / `"cloture_partielle"`,
+  `detail` = motif si partielle, sinon un résumé de l'écart constaté) dans
+  une transaction Prisma.
+
+**Défense en profondeur étendue à toutes les actions du cycle caisse** —
+règle impérative : une fois clôturée, plus aucune action n'est possible sur
+la demande. `creerReglementAction` (Ticket 4) vérifiait déjà
+`demande.statut === "VALIDEE"`. Trois failles ont été trouvées et corrigées
+à l'occasion de ce ticket, car `estConfirme`/`estAnnule`/`estReceptionne`
+ne changent jamais après une clôture — ces champs seuls ne suffisaient pas
+à bloquer l'accès :
+
+- `creerRetourCaisseAction` (Ticket 5) — revérifie maintenant aussi
+  `reglement.demande.statut === "VALIDEE"`.
+- `receptionnerRetourAction` (Ticket 6) — revérifie maintenant aussi
+  `retour.reglement.demande.statut === "VALIDEE"` : un retour resté en
+  attente au moment d'une clôture partielle ne peut plus jamais être
+  réceptionné ensuite (l'écart constaté est acté par le motif de clôture,
+  pas rattrapable après coup).
+- `annulerReglementAction` (Ticket 4) — même correctif, par cohérence.
+
+Vérifié manuellement avec un scénario réaliste (deux onglets ouverts avant
+clôture, formulaires pré-remplis mais non soumis, clôture déclenchée dans
+un troisième onglet, puis soumission des formulaires restés ouverts) : les
+deux tentatives sont refusées côté serveur avec un message explicite
+("Cette demande n'est pas validée : aucun règlement possible." /
+"Cette demande n'est plus modifiable (statut actuel : CLOTUREE_TOTALE)."),
+et aucune ligne supplémentaire n'apparaît en base (règlement et retour
+inchangés après les deux tentatives).
+
+**Bonus UX (pas de défense en profondeur, juste éviter une action vouée à
+l'échec)** : la liste "Retours en attente" (Ticket 6) exclut désormais les
+retours dont la demande n'est plus `VALIDEE`, et `RetourCaisseRow.tsx`
+(Ticket 5, vue Collaborateur) masque le bouton "Déclarer un retour de
+caisse" une fois la demande clôturée (`peutDeclarer`, badge "Non déclaré"
+à la place) — même principe que `canEffectuerReglement` au Ticket 4.
+
+**Écrans Finance et Collaborateur une fois clôturée** — la page Finance
+(`treso/finance/demandes/[id]/page.tsx`) gagne une branche dédiée aux
+statuts `CLOTUREE_TOTALE`/`CLOTUREE_PARTIELLE` : bandeau de verrouillage,
+catégorisation en lecture seule, `RegularisationSummary` en lecture seule
+(aucun bouton), motif affiché si clôture partielle. Elle ne rend plus du
+tout `ReglementsSection` (déjà exclu par la structure en branches
+`if`/`else if` sur le statut, sans code supplémentaire) : "plus de section
+Règlements/Retours actionnable" découle naturellement du fait qu'on ne
+passe plus jamais dans la branche `VALIDEE`. Côté Collaborateur
+(`treso/demandes/[id]/page.tsx`), une section "Situation finale" identique
+apparaît au même titre, avec un bandeau "Ce dossier est clôturé...".
+
+**`revalidateDemandePaths` complété** — ce helper partagé (categoriser/
+valider/rejeter/cloturer) revalidait `/treso/finance/demandes`,
+`/treso/finance/demandes/[id]` et `/treso/demandes`, mais **pas**
+`/treso/demandes/[id]` (la page Collaborateur du Ticket 5, qui n'existait
+pas encore au moment où ce helper a été écrit au Ticket 3). Corrigé ici :
+profite rétroactivement à `validerDemandeAction`/`rejeterDemandeAction`
+aussi, qui reflètent désormais le nouveau statut sans délai sur la page
+Collaborateur.
+
+**Badges de statut** — `CLOTUREE_TOTALE` ("Clôturée", `neutral`) et
+`CLOTUREE_PARTIELLE` ("Clôturée (partielle)", `info`) étaient déjà
+correctement définis dans `demandeStatut.ts` depuis le Ticket 1 (prévus par
+avance) : aucune modification nécessaire pour ce ticket.
+
+**Vérifié explicitement (deux scénarios de bout en bout)** :
+
+- **Clôture totale, écart nul** : règlement Caisse 30 000 FCFA confirmé,
+  retour de 5 000 FCFA déclaré puis réceptionné → décaissé 30 000, dépenses
+  25 000, retours reçus 5 000, **écart 0** (affiché en vert). Clôture
+  totale réussie sans motif. Verrouillage confirmé (plus de section
+  Règlements/Clôture actionnable) et vue Collaborateur "Situation finale"
+  cohérente des deux côtés.
+- **Clôture partielle, écart positif** : règlement Caisse 20 000 FCFA
+  confirmé, retour de 3 000 FCFA déclaré mais **laissé en attente de
+  réception** → dépenses 15 000, retours reçus 0, **écart 5 000** (affiché
+  en orange). Clôture partielle sans motif refusée côté client ET aurait
+  été refusée côté serveur ; avec motif ("Justificatif manquant pour 5000
+  FCFA, collaborateur injoignable.") acceptée, motif visible à l'identique
+  côté Finance et côté Collaborateur.
+
 ## Module Pointage RH : fondations de données
 
 **Statut : fondations posées, aucun écran développé.** Modèles, enums,
@@ -1054,16 +1188,26 @@ réutilisables, identité visuelle SIM Assurances, dashboard personnalisé par
 droits, et console d'administration complète (`isAdmin()`,
 `getAccessibleModules()`, `/admin/users`, `/admin/roles`, `/admin/modules`).
 
-Le développement du **Module Trésorerie** (écrans de demandes, validation,
-règlements, retours de caisse — voir
-[Règles métier impératives](#règles-métier-impératives--module-trésorerie))
-peut démarrer sur cette base sans rien modifier au Socle : créer les routes
-sous `src/app/(dashboard)/treso/`, les composants métier sous
-`src/components/tresorerie/`, et suivre les conventions et patterns déjà en
-place (composants `ui/`, `ActionState` + `useActionFeedback` pour les
-formulaires, `getSession()`/`hasPermission()` pour les permissions,
-`getAccessibleModules()` s'occupe déjà de faire apparaître la carte
-"Gestion des demandes et trésorerie" sur le dashboard).
+Le **Module Trésorerie** est désormais **terminé** (Tickets 1 à 7) : il
+couvre l'intégralité du cycle métier des sections 2 à 10 du cahier des
+charges — création de la demande (Ticket 1) → catégorisation par Finance
+(Ticket 2) → validation/rejet (Ticket 3) → règlement Caisse/Banque avec
+grand livre `JournalCaisse` (Ticket 4) → déclaration d'un retour de caisse
+par le Collaborateur (Ticket 5) → réception du retour par Finance, seul
+moment où la caisse est réellement créditée (Ticket 6) → régularisation et
+clôture totale/partielle, qui referme définitivement le dossier (Ticket 7).
+Voir [Règles métier impératives](#règles-métier-impératives--module-trésorerie)
+pour les invariants transversaux (verrouillages définitifs, immutabilité du
+grand livre, historisation systématique) qui traversent ces sept tickets.
+
+Le développement de ce module a suivi les conventions et patterns du Socle
+sans jamais le modifier : routes sous `src/app/(dashboard)/treso/`,
+composants métier sous `src/components/tresorerie/`, composants `ui/`,
+`ActionState` + `useActionFeedback` pour les formulaires,
+`getSession()`/`hasPermission()` pour les permissions,
+`getAccessibleModules()` pour la carte "Gestion des demandes et
+trésorerie" sur le dashboard — un patron directement réutilisable pour tout
+futur module métier du portail (à commencer par Pointage RH ci-dessous).
 
 Les **fondations de données du Module Pointage RH** sont posées de la même
 façon (voir

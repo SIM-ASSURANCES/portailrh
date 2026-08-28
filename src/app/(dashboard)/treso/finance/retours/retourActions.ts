@@ -23,6 +23,13 @@ type SimpleActionResult = { status: "success" | "error"; message: string };
  * même si l'UI ne propose le bouton "Réceptionner" que sur les retours non
  * réceptionnés — un autre utilisateur Finance a pu réceptionner ce même
  * retour entre l'affichage de la liste et ce clic.
+ *
+ * Défense en profondeur (Ticket 7) : revérifie aussi que la demande liée est
+ * toujours `VALIDEE`. Une fois clôturée (même partiellement, précisément le
+ * cas d'un retour resté en attente de réception au moment de la clôture),
+ * plus aucune réception n'est possible — l'écart constaté est acté par le
+ * motif de la clôture partielle, pas rattrapable ensuite par une réception
+ * tardive.
  */
 export async function receptionnerRetourAction(retourId: string): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -32,7 +39,7 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
 
   const retour = await prisma.retourCaisse.findUnique({
     where: { id: retourId },
-    include: { reglement: true },
+    include: { reglement: { include: { demande: true } } },
   });
 
   if (!retour) {
@@ -40,6 +47,12 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   }
   if (retour.estReceptionne) {
     return { status: "error", message: "Ce retour de caisse est déjà réceptionné." };
+  }
+  if (retour.reglement.demande.statut !== "VALIDEE") {
+    return {
+      status: "error",
+      message: `Cette demande n'est plus modifiable (statut actuel : ${retour.reglement.demande.statut}).`,
+    };
   }
 
   const demandeId = retour.reglement.demandeId;

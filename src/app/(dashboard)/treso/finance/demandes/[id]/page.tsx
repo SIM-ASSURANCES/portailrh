@@ -3,11 +3,13 @@ import { notFound } from "next/navigation";
 import { Badge, PageHeader } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
+import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import type { Prisma } from "@/generated/prisma/client";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 import { CategorisationForm } from "./CategorisationForm";
+import { ClotureActions } from "./ClotureActions";
 import { ReglementsSection } from "./ReglementsSection";
 import { ValidationActions } from "./ValidationActions";
 
@@ -22,6 +24,7 @@ export default async function CategoriserDemandePage({
   const canCategoriser = hasPermission(session, "treso.categoriser_demande");
   const canValider = hasPermission(session, "treso.valider_demande");
   const canEffectuerReglement = hasPermission(session, "treso.effectuer_reglement");
+  const canCloturerDemande = hasPermission(session, "treso.cloturer_demande");
 
   const demande = await prisma.demande.findUnique({
     where: { id },
@@ -119,6 +122,30 @@ export default async function CategoriserDemandePage({
             montantDemande={Number(demande.montant)}
             canEffectuerReglement={canEffectuerReglement}
           />
+          <RegularisationSummary demandeId={demande.id} montantDemande={Number(demande.montant)} />
+          {canCloturerDemande ? <ClotureActions demandeId={demande.id} /> : null}
+        </>
+      ) : demande.statut === "CLOTUREE_TOTALE" || demande.statut === "CLOTUREE_PARTIELLE" ? (
+        <>
+          <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+            Ce dossier est clôturé{demande.statut === "CLOTUREE_PARTIELLE" ? " (partiellement)" : ""} :
+            plus aucune action n&apos;est possible (règlement, retour de caisse, re-clôture).
+          </p>
+          <CategorisationSummary
+            categorieLabel={demande.categorie?.label}
+            objetLabel={demande.objet?.label}
+            budget={demande.budgetDisponible}
+            lockMessage="Catégorie, objet et budget sont définitivement verrouillés."
+          />
+          <RegularisationSummary demandeId={demande.id} montantDemande={Number(demande.montant)} />
+          {demande.statut === "CLOTUREE_PARTIELLE" && demande.motifCloture ? (
+            <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Motif de la clôture partielle
+              </p>
+              <p className="mt-1 text-sm text-foreground">{demande.motifCloture}</p>
+            </div>
+          ) : null}
         </>
       ) : demande.statut === "REJETEE" ? (
         <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">

@@ -222,6 +222,11 @@ const motifAnnulationSchema = z
  * supprimée — une écriture ENTREE compensatoire neutralise son effet sur
  * le solde, dans le grand livre immuable `JournalCaisse`. Le règlement
  * annulé reste visible dans la liste (statut "Annulé"), jamais supprimé.
+ *
+ * Défense en profondeur (Ticket 7) : revérifie aussi que la demande liée
+ * est toujours `VALIDEE` — une fois clôturée, plus aucune action sur ses
+ * règlements n'est possible, y compris une annulation (`estConfirme` ne
+ * change jamais après clôture, ce n'était donc pas suffisant à lui seul).
  */
 export async function annulerReglementAction(
   reglementId: string,
@@ -237,7 +242,7 @@ export async function annulerReglementAction(
     return { status: "error", message: parsedMotif.error.issues[0].message };
   }
 
-  const reglement = await prisma.reglement.findUnique({ where: { id: reglementId } });
+  const reglement = await prisma.reglement.findUnique({ where: { id: reglementId }, include: { demande: true } });
   if (!reglement) {
     return { status: "error", message: "Règlement introuvable." };
   }
@@ -246,6 +251,12 @@ export async function annulerReglementAction(
   }
   if (reglement.estAnnule) {
     return { status: "error", message: "Ce règlement est déjà annulé." };
+  }
+  if (reglement.demande.statut !== "VALIDEE") {
+    return {
+      status: "error",
+      message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).`,
+    };
   }
 
   await prisma.$transaction([

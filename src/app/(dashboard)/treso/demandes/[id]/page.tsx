@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
+import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -95,7 +96,29 @@ export default async function MaDemandeDetailPage({
         </dl>
       </div>
 
-      <RetoursCaisseSection demandeId={demande.id} />
+      {demande.statut === "CLOTUREE_TOTALE" || demande.statut === "CLOTUREE_PARTIELLE" ? (
+        <>
+          <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+            Ce dossier est clôturé{demande.statut === "CLOTUREE_PARTIELLE" ? " (partiellement)" : ""} :
+            plus aucune action n&apos;est possible dessus.
+          </p>
+          <RegularisationSummary
+            demandeId={demande.id}
+            montantDemande={Number(demande.montant)}
+            title="Situation finale"
+          />
+          {demande.statut === "CLOTUREE_PARTIELLE" && demande.motifCloture ? (
+            <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Motif de la clôture partielle
+              </p>
+              <p className="mt-1 text-sm text-foreground">{demande.motifCloture}</p>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      <RetoursCaisseSection demandeId={demande.id} peutDeclarer={demande.statut === "VALIDEE"} />
 
       <DemandeHistorique demandeId={demande.id} />
     </div>

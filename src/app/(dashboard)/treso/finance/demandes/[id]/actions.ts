@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getEcart } from "@/lib/tresorerie";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
 const categorisationSchema = z.object({
@@ -99,6 +100,7 @@ function revalidateDemandePaths(demandeId: string) {
   revalidatePath("/treso/finance/demandes");
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath("/treso/demandes");
+  revalidatePath(`/treso/demandes/${demandeId}`);
 }
 
 /**
@@ -201,4 +203,97 @@ export async function rejeterDemandeAction(
   revalidateDemandePaths(demandeId);
 
   return { status: "success", message: `Demande ${demande.reference} rejetée.` };
+}
+
+const motifClotureSchema = z
+  .string()
+  .trim()
+  .min(3, "Le motif de la clôture partielle est obligatoire (3 caractères minimum)");
+
+/**
+ * Clôture une demande VALIDEE. Réservée à `treso.cloturer_demande` (Finance
+ * uniquement selon le seed actuel, pas le DG — la garde du layout partagé
+ * n'accorde pas cette permission automatiquement, revérifiée ici).
+ *
+ * Verrouillage DÉFINITIF (même principe que `validerDemandeAction`) : une
+ * fois `CLOTUREE_TOTALE` ou `CLOTUREE_PARTIELLE`, plus aucune action n'est
+ * possible sur la demande — ni nouveau règlement, ni nouvelle déclaration
+ * de retour, ni nouvelle réception, ni re-clôture. Cette Server Action ne
+ * fait que fermer son propre statut ; la défense en profondeur côté des
+ * AUTRES actions (`creerReglementAction`, `creerRetourCaisseAction`,
+ * `receptionnerRetourAction`, `annulerReglementAction`) revérifie chacune
+ * `demande.statut === "VALIDEE"` de son côté (voir leurs fichiers
+ * respectifs) : le statut CLOTUREE_* les fait toutes échouer naturellement.
+ *
+ * Clôture totale : motif libre optionnel, stocké dans `motifCloture` à
+ * titre de commentaire (pas de validation de longueur). Clôture partielle :
+ * motif obligatoire (min 3 caractères), refusé côté serveur sans lui, même
+ * si le bouton de confirmation est aussi bloqué côté client si le champ est
+ * vide.
+ */
+export async function cloturerDemandeAction(
+  demandeId: string,
+  type: "TOTALE" | "PARTIELLE",
+  motif?: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.cloturer_demande")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  let motifValide: string | null = null;
+  if (type === "PARTIELLE") {
+    const parsedMotif = motifClotureSchema.safeParse(motif);
+    if (!parsedMotif.success) {
+      return { status: "error", message: parsedMotif.error.issues[0].message };
+    }
+    motifValide = parsedMotif.data;
+  } else if (motif?.trim()) {
+    motifValide = motif.trim();
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.statut !== "VALIDEE") {
+    return {
+      status: "error",
+      message: `Cette demande ne peut pas être clôturée (statut actuel : ${demande.statut}).`,
+    };
+  }
+
+  const ecart = await getEcart(demandeId);
+  const detail =
+    type === "PARTIELLE"
+      ? motifValide!
+      : `Clôture totale — écart au moment de la clôture : ${ecart.toLocaleString("fr-FR")} FCFA${
+          motifValide ? ` (${motifValide})` : ""
+        }`;
+
+  await prisma.$transaction([
+    prisma.demande.update({
+      where: { id: demandeId },
+      data: {
+        statut: type === "TOTALE" ? "CLOTUREE_TOTALE" : "CLOTUREE_PARTIELLE",
+        motifCloture: motifValide,
+      },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: type === "TOTALE" ? "cloture_totale" : "cloture_partielle",
+        detail,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+
+  revalidateDemandePaths(demandeId);
+
+  return {
+    status: "success",
+    message: `Demande ${demande.reference} clôturée${type === "PARTIELLE" ? " (partielle)" : ""}.`,
+  };
 }

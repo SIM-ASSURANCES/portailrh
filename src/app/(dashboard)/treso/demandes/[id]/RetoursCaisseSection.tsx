@@ -8,8 +8,19 @@ import { RetourCaisseRow } from "./RetourCaisseRow";
  * demande n'a aucun règlement de ce type (les règlements BANQUE ne donnent
  * jamais lieu à un retour de caisse). Server Component autonome : ne prend
  * que l'id de la demande.
+ *
+ * `peutDeclarer` (Ticket 7) : masque le bouton "Déclarer un retour de
+ * caisse" une fois la demande clôturée — `creerRetourCaisseAction` le
+ * refuserait de toute façon côté serveur, mais autant ne pas proposer une
+ * action vouée à échouer (même principe que `canEffectuerReglement`).
  */
-export async function RetoursCaisseSection({ demandeId }: { demandeId: string }) {
+export async function RetoursCaisseSection({
+  demandeId,
+  peutDeclarer,
+}: {
+  demandeId: string;
+  peutDeclarer: boolean;
+}) {
   const reglements = await prisma.reglement.findMany({
     where: { demandeId, mode: "CAISSE", estConfirme: true, estAnnule: false },
     include: { retours: true },
@@ -30,6 +41,7 @@ export async function RetoursCaisseSection({ demandeId }: { demandeId: string })
             reglementId={r.id}
             montant={Number(r.montant)}
             retour={r.retours[0] ? { estReceptionne: r.retours[0].estReceptionne } : null}
+            peutDeclarer={peutDeclarer}
           />
         ))}
       </ul>

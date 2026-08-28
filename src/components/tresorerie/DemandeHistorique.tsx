@@ -16,6 +16,8 @@ const ACTION_LABELS: Record<string, string> = {
   annulation_reglement: "Annulation de règlement",
   declaration_retour: "Retour de caisse déclaré",
   reception_retour: "Retour de caisse réceptionné",
+  cloture_totale: "Clôture totale",
+  cloture_partielle: "Clôture partielle",
 };
 
 function labelForAction(action: string): string {
