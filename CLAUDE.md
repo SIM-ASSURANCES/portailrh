@@ -12,9 +12,8 @@ retours de caisse.
 
 Un deuxième module est en préparation : **Pointage RH**, suivi des
 arrivées/départs, retards et absences du personnel. Les fondations de
-données sont en place (voir
-[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données)) ;
-aucun écran n'est encore développé.
+données et le parcours de pointage collaborateur par QR code sont en place
+(voir [Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données)).
 
 ## Stack technique
 
@@ -451,14 +450,13 @@ Ces règles sont non négociables et doivent guider toute implémentation
    déclaration/réception de retour, clôture, annulation...), avec l'auteur
    (`userId`) et un `detail` exploitable.
 
-## Module Pointage RH : fondations de données
+## Module Pointage RH : fondations de données et parcours QR
 
-**Statut : fondations posées, aucun écran développé.** Modèles, enums,
-module, permissions et rôle sont en place dans le schéma et le seed —
-le deuxième développeur peut démarrer les écrans directement dessus, sans
-rien changer au Socle. Suivre le même pattern que Trésorerie : routes sous
-`src/app/(dashboard)/pointage/`, composants métier sous
-`src/components/pointage/`.
+**Statut : tickets 1 et 2 implémentés.** Les modèles, enums, module,
+permissions et rôle sont en place dans le schéma. Le parcours collaborateur
+est disponible à `/pointage` et la destination du QR code à `/pointage/qr`.
+Les pointages et les scans QR authentifiés sont journalisés dans
+`HistoriqueEntry`.
 
 Modèles (dans [prisma/schema.prisma](prisma/schema.prisma), section
 "MODULE 2 — POINTAGE RH") :
@@ -504,6 +502,65 @@ Module et permissions (seed) :
   (accès admin via `isAdmin()`, pas via permissions — voir
   [Administration](#administration-console-admin)).
 - Compte de test : `rh@simassurances.test` / `password123`.
+
+### Tester le parcours QR
+
+1. Démarrer l'application avec `npm run dev`. Si le port 3000 est déjà pris,
+  utiliser le port indiqué par Next.js.
+2. Depuis un navigateur, ouvrir `/pointage/qr`.
+3. Vérifier qu'un utilisateur non connecté est envoyé vers `/login` avec un
+  `callbackUrl` contenant `/pointage?source=QR_CODE`.
+4. Se connecter avec `collaborateur@simassurances.test` / `password123`.
+5. Vérifier le retour automatique vers `/pointage?source=QR_CODE`, l'affichage
+  du bandeau « Pointage par QR code », puis valider une arrivée ou un départ.
+6. Vérifier que l'écran affiche immédiatement la date et l'heure retournées
+  par le serveur. En cas d'arrivée après l'horaire de référence, le motif
+  de retard doit être obligatoire et les minutes doivent être calculées.
+
+Pour tester avec un téléphone connecté au même réseau que le PC, le QR code
+doit contenir l'URL réseau du PC, par exemple
+`http://192.168.1.22:3000/pointage/qr`, et non `localhost`. Le port réel est
+celui affiché par `npm run dev`.
+
+En développement, l'adresse réseau du PC est aussi déclarée dans
+`next.config.ts` via `allowedDevOrigins` pour autoriser les ressources HMR
+(`/_next/hmr`) chargées depuis le téléphone. Si l'adresse IP du PC change,
+mettre à jour cette liste et redémarrer Next.js.
+
+Après un pointage réussi, contrôler dans PostgreSQL qu'il existe :
+
+- une ligne `Pointage` avec `source = QR_CODE` et l'heure serveur ;
+- une ligne `HistoriqueEntry` avec `entity = Pointage`, le même `entityId`
+  et `action = CREATE` ;
+- une ligne `HistoriqueEntry` avec `entity = PointageQR` et `action = SCAN`
+  pour un scan effectué avec une session existante.
+
+La création du pointage et sa ligne d'historique sont réalisées dans une
+transaction Prisma : elles réussissent ou échouent ensemble. Un scan anonyme
+est redirigé vers la connexion et ne peut pas être attribué à un utilisateur ;
+le pointage réalisé après connexion, lui, est toujours journalisé.
+
+### Contrôle du terminal et du réseau (Ticket 3)
+
+Le serveur détecte le terminal via l'en-tête `User-Agent` avant d'afficher les
+paramètres de pointage : téléphone (`TELEPHONE`) ou ordinateur
+(`ORDINATEUR`). Un ordinateur n'affiche pas le formulaire et ne peut pas
+pointer si son adresse IP n'est pas présente dans `ALLOWED_OFFICE_IPS`, une
+liste séparée par des virgules. Le même contrôle est répété dans la Server
+Action : une valeur `source` modifiée dans le navigateur ne permet donc pas de
+contourner la restriction. Un refus réseau authentifié est historisé avec
+`entity = PointageAccess` et `action = ACCESS_DENIED`.
+
+Pour tester ce ticket en local, définir par exemple
+`ALLOWED_OFFICE_IPS=127.0.0.1` dans `.env`, redémarrer Next.js, puis ouvrir
+`/pointage` sur le PC. Pour tester un refus, retirer l'adresse de la liste.
+Pour un téléphone, utiliser l'URL réseau du PC et le port de Next.js ; le
+téléphone est détecté séparément et n'est pas soumis à la restriction IP du
+poste ordinateur.
+
+Les liens RH tels que `/pointage/rh` peuvent encore retourner `404` tant que
+les tickets d'espace RH (à partir du ticket 8) ne sont pas implémentés. Le
+parcours collaborateur à tester reste `/pointage` ou `/pointage/qr`.
 
 ## Authentification
 
@@ -617,13 +674,13 @@ formulaires, `getSession()`/`hasPermission()` pour les permissions,
 `getAccessibleModules()` s'occupe déjà de faire apparaître la carte
 "Gestion des demandes et trésorerie" sur le dashboard).
 
-Les **fondations de données du Module Pointage RH** sont posées de la même
-façon (voir
-[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données))
+Les **fondations de données du Module Pointage RH** et les tickets 1 et 2 sont
+en place (voir
+[Module Pointage RH : fondations de données et parcours QR](#module-pointage-rh--fondations-de-données-et-parcours-qr))
 — rôle RH, module `pointage`, ses 8 permissions, modèles `Pointage` /
-`CorrectionPointage` / `Absence` / `ParametrageHoraire`, compte de test.
-Aucun écran n'est encore développé pour ce module : c'est le prochain
-chantier du deuxième développeur, sur le même modèle que Trésorerie.
+`CorrectionPointage` / `Absence` / `ParametrageHoraire`, compte de test,
+pointage collaborateur et destination QR. Les prochains écrans à développer
+concernent l'historique collaborateur et les fonctions RH.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

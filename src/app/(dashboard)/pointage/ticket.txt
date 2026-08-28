@@ -1,0 +1,57 @@
+# Backlog — Module Pointage RH (pour le binôme)
+
+Compte de test RH : rh@simassurances.test / password123
+
+## Ticket 1 — Pointage collaborateur (arrivée/départ)
+- Écran simple accessible au Collaborateur pour pointer son arrivée ou son départ
+- L'heure est générée automatiquement côté serveur (jamais saisie/modifiable par le collaborateur)
+- Si l'heure d'arrivée est après 07h45 (voir ParametrageHoraire) : afficher un champ "motif du retard" obligatoire avant de valider
+- Calcul automatique du nombre de minutes de retard
+- Doit fonctionner sur mobile en priorité (pointage au téléphone)
+
+## Ticket 2 — Pointage par QR Code
+- Page de destination du QR Code (affichée quand on scanne) qui redirige vers l'écran de pointage si le collaborateur est connecté, sinon vers /login
+- Après connexion, redirection automatique vers l'écran de pointage
+- Affichage immédiat de la date/heure enregistrée après validation
+
+## Ticket 3 — Contrôle réseau pour le pointage ordinateur
+- Le pointage depuis un ordinateur ne doit être autorisé que depuis le réseau de l'entreprise
+- Solution simple pour V1 : vérifier l'adresse IP source de la requête contre une liste blanche configurable (variable d'environnement ou table de configuration), refuser le pointage sinon avec un message clair
+
+## Ticket 4 — Espace collaborateur (historique)
+- Le collaborateur consulte son historique : arrivées, départs, retards avec motifs, absences
+- Filtrable par période
+
+## Ticket 5 — Pointage exceptionnel par la RH
+- Écran RH pour enregistrer un pointage à la place d'un collaborateur (sélection du collaborateur, heure réelle, motif obligatoire)
+- Le pointage doit indiquer clairement qu'il a été fait par la RH (source = RH_EXCEPTIONNEL) et rester dans l'historique du collaborateur concerné
+
+## Ticket 6 — Correction de pointage (RH uniquement)
+- Écran RH pour corriger un pointage existant
+- Chaque correction doit créer une entrée CorrectionPointage conservant l'ancienne valeur, la nouvelle valeur, le motif, l'auteur et la date — jamais d'écrasement silencieux
+
+## Ticket 7 — Gestion des absences
+- Si aucun pointage d'arrivée n'existe pour un collaborateur sur une journée travaillée, le système doit le signaler (statut A_CONTROLER) — probablement via une tâche planifiée ou un calcul à la demande sur le dashboard RH (à trancher techniquement selon la stack disponible)
+- Écran RH pour confirmer ou corriger le statut d'une absence, avec motif
+
+## Ticket 8 — Dashboard RH
+- Présence du jour : présents, absents, retardataires, pointages manquants
+- Retards : nombre de jours de retard et total des minutes de retard (les deux métriques doivent être distinctes, ne pas les confondre)
+
+## Ticket 9 — Reporting RH
+- Sélection libre d'une période (du/au)
+- Par collaborateur : nombre de jours de retard ET total des minutes de retard (deux colonnes distinctes)
+- Détail des retards par collaborateur : date, heure prévue, heure réelle, minutes de retard, motif
+- Filtres : période, collaborateur, service
+
+## Ticket 10 — Export Excel
+- Export du reporting avec les mêmes filtres que le Ticket 9
+
+## Ticket 11 — Paramétrage des horaires (RH)
+- Écran RH pour modifier les horaires de référence (ParametrageHoraire) : heure de début/fin matin, heure de début/fin après-midi
+
+## Règles impératives à garder en tête
+- Le collaborateur ne peut jamais modifier son heure de pointage, ni sa correction
+- Le motif de retard est obligatoire avant validation, mais ne modifie jamais l'heure réelle enregistrée
+- Toute intervention RH (pointage exceptionnel, correction) est historisée avec l'auteur et la date
+- Le dashboard RH doit refléter les données en temps réel (pas de valeurs pré-calculées obsolètes)

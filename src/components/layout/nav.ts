@@ -70,7 +70,7 @@ export const NAV_BRANCHES: NavBranch[] = [
       {
         title: "Mon espace",
         items: [
-          { label: "Pointer", href: "/pointage/pointer", icon: "qr-code" },
+          { label: "Pointer", href: "/pointage", icon: "qr-code" },
           { label: "Mon historique", href: "/pointage/historique", icon: "book-text" },
         ],
       },
