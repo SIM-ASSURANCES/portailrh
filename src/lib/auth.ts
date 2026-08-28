@@ -167,11 +167,18 @@ export function isAdmin(session: { role: string } | null): boolean {
  * admin (`/admin/modules`) pour retirer un module du dashboard de tous les
  * utilisateurs.
  *
+ * Cas Admin : `isAdmin(session)` retourne TOUS les modules actifs, sans
+ * filtrer par permissions. Le rôle Admin n'a délibérément aucune ligne
+ * `RolePermission` (son accès à `/admin` est un bypass, voir `isAdmin()`) —
+ * sans ce cas particulier, `getAccessibleModules()` ne renverrait jamais
+ * rien pour lui, alors qu'un administrateur doit garder une vue d'ensemble
+ * de tous les modules métier du portail.
+ *
  * Générique : fonctionne pour n'importe quel module présent en base, sans
  * modification de code à l'ajout d'un nouveau module.
  */
 export async function getAccessibleModules(
-  session: { permissions: string[] } | null
+  session: { role: string; permissions: string[] } | null
 ): Promise<{ id: string; key: string; label: string }[]> {
   if (!session) {
     return [];
@@ -183,7 +190,15 @@ export async function getAccessibleModules(
     orderBy: { label: "asc" },
   });
 
-  return modules
-    .filter((module_) => module_.permissions.some((p) => session.permissions.includes(p.key)))
-    .map((module_) => ({ id: module_.id, key: module_.key, label: module_.label }));
+  const visibleModules = isAdmin(session)
+    ? modules
+    : modules.filter((module_) =>
+        module_.permissions.some((p) => session.permissions.includes(p.key))
+      );
+
+  return visibleModules.map((module_) => ({
+    id: module_.id,
+    key: module_.key,
+    label: module_.label,
+  }));
 }

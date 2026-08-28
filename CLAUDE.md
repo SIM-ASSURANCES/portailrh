@@ -10,6 +10,12 @@ Le premier module livré est **Trésorerie** : gestion des demandes de
 dépense, de leur validation, des règlements (caisse ou banque) et des
 retours de caisse.
 
+Un deuxième module est en préparation : **Pointage RH**, suivi des
+arrivées/départs, retards et absences du personnel. Les fondations de
+données sont en place (voir
+[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données)) ;
+aucun écran n'est encore développé.
+
 ## Stack technique
 
 - **Next.js 16** (App Router, dossier `src/app`), React 19, TypeScript strict.
@@ -445,6 +451,60 @@ Ces règles sont non négociables et doivent guider toute implémentation
    déclaration/réception de retour, clôture, annulation...), avec l'auteur
    (`userId`) et un `detail` exploitable.
 
+## Module Pointage RH : fondations de données
+
+**Statut : fondations posées, aucun écran développé.** Modèles, enums,
+module, permissions et rôle sont en place dans le schéma et le seed —
+le deuxième développeur peut démarrer les écrans directement dessus, sans
+rien changer au Socle. Suivre le même pattern que Trésorerie : routes sous
+`src/app/(dashboard)/pointage/`, composants métier sous
+`src/components/pointage/`.
+
+Modèles (dans [prisma/schema.prisma](prisma/schema.prisma), section
+"MODULE 2 — POINTAGE RH") :
+
+- **`ParametrageHoraire`** — horaires de référence (`07:45-12:15` /
+  `13:15-16:45` par défaut), paramétrables par RH
+  (`pointage.gerer_horaires`). Une seule ligne active en pratique, mais le
+  modèle n'impose pas d'unicité — à trancher côté écran RH si plusieurs
+  lignes doivent pouvoir coexister (historique de configurations, etc.).
+- **`Pointage`** — un enregistrement d'arrivée ou de départ
+  (`TypePointage`), avec sa source (`SourcePointage` : `QR_CODE`,
+  `ORDINATEUR`, ou `RH_EXCEPTIONNEL`). `estRetard`/`minutesRetard`/`motif`
+  ne sont pertinents que pour une arrivée (`type = ARRIVEE`) — à valider
+  côté logique applicative, le schéma ne le contraint pas en base.
+  `effectuePar` n'est renseigné que si `source = RH_EXCEPTIONNEL` (RH a
+  pointé à la place du collaborateur).
+- **`CorrectionPointage`** — trace obligatoire de toute correction d'un
+  `Pointage` (ancienne valeur, nouvelle valeur, motif, auteur). Reprend
+  exactement le principe de la règle 5 de Trésorerie : **jamais d'édition
+  silencieuse d'un pointage**, toujours une ligne de correction associée.
+- **`Absence`** — une journée d'absence pour un employé, avec un statut
+  (`StatutAbsence` : `A_CONTROLER` par défaut, `CONFIRMEE`, `JUSTIFIEE`) et
+  qui l'a contrôlée (`controlePar`, optionnel tant que non traitée).
+
+Relations `User` ajoutées (même convention de nommage explicite que pour
+Trésorerie, ex. `"DemandeCreateur"`) : `pointagesEffectues` (pointages de
+l'employé lui-même), `pointagesRealises` (pointages exceptionnels
+effectués par un RH pour autrui), `correctionsEffectuees`,
+`absencesDeclarees` (absences de l'employé), `absencesControlees`
+(absences que l'employé — RH ou DG — a contrôlées).
+
+Module et permissions (seed) :
+
+- Module `pointage`, label "Pointage RH".
+- Permissions : `pointage.pointer`, `pointage.consulter_historique`,
+  `pointage.consulter_tous`, `pointage.pointage_exceptionnel`,
+  `pointage.corriger_pointage`, `pointage.gerer_horaires`,
+  `pointage.voir_dashboard_rh`, `pointage.voir_reporting`.
+- Répartition : **Collaborateur** → `pointer` + `consulter_historique` ;
+  **RH** (nouveau rôle) → les 8 permissions du module ; **DG** → lecture
+  seule (`consulter_tous`, `voir_dashboard_rh`, `voir_reporting`), cohérent
+  avec "consultation selon les droits accordés" ; **Admin** → aucune
+  (accès admin via `isAdmin()`, pas via permissions — voir
+  [Administration](#administration-console-admin)).
+- Compte de test : `rh@simassurances.test` / `password123`.
+
 ## Authentification
 
 - Provider **Credentials** uniquement pour l'instant (email + mot de passe
@@ -485,6 +545,14 @@ Ces règles sont non négociables et doivent guider toute implémentation
   `/admin/modules` (désactiver un module le fait disparaître de tous les
   dashboards, immédiatement — pas de cache à invalider manuellement grâce à
   `revalidatePath`).
+  - **Cas particulier Admin** : comme le rôle Admin n'a volontairement
+    aucune `RolePermission` (voir ci-dessus), un filtrage par permissions
+    ne lui montrerait jamais aucun module — corrigé en faisant retourner à
+    `getAccessibleModules()` **tous** les modules actifs dès que
+    `isAdmin(session)` est vrai, sans passer par le filtre de permissions.
+    L'Admin garde ainsi une vue d'ensemble de tous les modules métier sur
+    son dashboard, sans que cela lui donne les permissions d'action de ces
+    modules (toujours régies par `hasPermission()`).
 - Structure de la console (toutes les routes sous
   [src/app/(dashboard)/admin/](<src/app/(dashboard)/admin>), donc URL
   `/admin`, `/admin/users`, etc.) :
@@ -518,7 +586,7 @@ Le schéma complet (modèles, enums, relations) est dans
 ```bash
 npm install                # installer les dépendances
 npx prisma migrate dev     # appliquer les migrations sur la base locale
-npx prisma db seed         # peupler la base (rôles, permissions, 4 comptes de test, catégories/objets)
+npx prisma db seed         # peupler la base (rôles, permissions, 5 comptes de test, catégories/objets)
 npm run dev                # démarrer le serveur de développement
 ```
 
@@ -528,7 +596,7 @@ Prérequis : un fichier `.env` avec `DATABASE_URL` (PostgreSQL) et
 
 Comptes de test (mot de passe `password123` pour tous) :
 `collaborateur@simassurances.test`, `finance@simassurances.test`,
-`dg@simassurances.test`, `admin@simassurances.test`.
+`dg@simassurances.test`, `admin@simassurances.test`, `rh@simassurances.test`.
 
 ## Socle Portail : statut
 
@@ -548,6 +616,14 @@ place (composants `ui/`, `ActionState` + `useActionFeedback` pour les
 formulaires, `getSession()`/`hasPermission()` pour les permissions,
 `getAccessibleModules()` s'occupe déjà de faire apparaître la carte
 "Gestion des demandes et trésorerie" sur le dashboard).
+
+Les **fondations de données du Module Pointage RH** sont posées de la même
+façon (voir
+[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données))
+— rôle RH, module `pointage`, ses 8 permissions, modèles `Pointage` /
+`CorrectionPointage` / `Absence` / `ParametrageHoraire`, compte de test.
+Aucun écran n'est encore développé pour ce module : c'est le prochain
+chantier du deuxième développeur, sur le même modèle que Trésorerie.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

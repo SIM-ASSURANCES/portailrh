@@ -31,6 +31,12 @@ model User {
   retoursDeclares     RetourCaisse[]    @relation("RetourDeclarant")
   retoursReceptionnes RetourCaisse[]    @relation("RetourReceptionnaire")
   historique          HistoriqueEntry[]
+
+  pointagesEffectues    Pointage[]           @relation("PointageEmploye")
+  pointagesRealises     Pointage[]           @relation("PointageEffectuePar")
+  correctionsEffectuees CorrectionPointage[] @relation("CorrectionEffectuePar")
+  absencesDeclarees     Absence[]            @relation("AbsenceEmploye")
+  absencesControlees    Absence[]            @relation("AbsenceControlePar")
 }
 
 model Role {
@@ -202,4 +208,86 @@ model JournalCaisse {
   source    String
   refId     String
   createdAt DateTime @default(now())
+}
+
+// ============================================================
+// MODULE 2 — POINTAGE RH
+// ============================================================
+
+enum TypePointage {
+  ARRIVEE
+  DEPART
+}
+
+enum SourcePointage {
+  QR_CODE
+  ORDINATEUR
+  RH_EXCEPTIONNEL
+}
+
+enum StatutAbsence {
+  A_CONTROLER
+  CONFIRMEE
+  JUSTIFIEE
+}
+
+model ParametrageHoraire {
+  id                  String   @id @default(cuid())
+  heureDebutMatin     String
+  heureFinMatin       String
+  heureDebutApresMidi String
+  heureFinApresMidi   String
+  isActive            Boolean  @default(true)
+  updatedAt           DateTime @updatedAt
+}
+
+model Pointage {
+  id            String         @id @default(cuid())
+  type          TypePointage
+  source        SourcePointage
+  heure         DateTime
+  estRetard     Boolean        @default(false)
+  minutesRetard Int?
+  motif         String?
+
+  userId String
+  user   User   @relation("PointageEmploye", fields: [userId], references: [id])
+
+  effectueParId String?
+  effectuePar   User?   @relation("PointageEffectuePar", fields: [effectueParId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  corrections CorrectionPointage[]
+}
+
+model CorrectionPointage {
+  id             String @id @default(cuid())
+  ancienneValeur String
+  nouvelleValeur String
+  motif          String
+
+  pointageId String
+  pointage   Pointage @relation(fields: [pointageId], references: [id])
+
+  effectueParId String
+  effectuePar   User   @relation("CorrectionEffectuePar", fields: [effectueParId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model Absence {
+  id     String        @id @default(cuid())
+  date   DateTime
+  statut StatutAbsence @default(A_CONTROLER)
+  motif  String?
+
+  userId String
+  user   User   @relation("AbsenceEmploye", fields: [userId], references: [id])
+
+  controleParId String?
+  controlePar   User?   @relation("AbsenceControlePar", fields: [controleParId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
