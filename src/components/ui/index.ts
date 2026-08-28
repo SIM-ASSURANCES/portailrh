@@ -19,6 +19,12 @@ export type { BadgeProps, BadgeVariant } from "./Badge";
 export { PageHeader } from "./PageHeader";
 export type { PageHeaderProps } from "./PageHeader";
 
+export { Card } from "./Card";
+export type { CardProps } from "./Card";
+
+export { StatCard } from "./StatCard";
+export type { StatCardProps, StatTone } from "./StatCard";
+
 export { DataTable } from "./DataTable";
 export type { DataTableProps, DataTableColumn } from "./DataTable";
 

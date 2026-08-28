@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { PageHeader, ToastOnMount } from "@/components/ui";
+import { Card, PageHeader, StatCard, ToastOnMount } from "@/components/ui";
 import { getAccessibleModules, getSession } from "@/lib/auth";
 
 export default async function DashboardHomePage({
@@ -13,7 +13,7 @@ export default async function DashboardHomePage({
   const modules = await getAccessibleModules(session);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-10 px-6 py-10">
+    <div className="mx-auto max-w-7xl space-y-6">
       {error === "acces_refuse_admin" ? (
         <ToastOnMount variant="error" message="Accès réservé aux administrateurs." />
       ) : null}
@@ -22,6 +22,46 @@ export default async function DashboardHomePage({
         title="Tableau de bord"
         description={session ? `Bonjour, ${session.user.fullName} — ${session.role}` : undefined}
       />
+
+      {/* Filtre par période */}
+      <Card>
+        <h2 className="text-base font-bold text-slate-900">Filtrer par période</h2>
+        <div className="mt-4 flex flex-wrap items-end gap-4">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-600">Du</span>
+            <input
+              type="date"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-2 focus:outline-offset-2 focus:outline-primary"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-600">Au</span>
+            <input
+              type="date"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-2 focus:outline-offset-2 focus:outline-primary"
+            />
+          </label>
+          <button
+            type="button"
+            className="ml-auto text-sm font-medium text-info transition-colors hover:text-primary"
+          >
+            Toutes périodes
+          </button>
+        </div>
+      </Card>
+
+      {/* Indicateurs — valeurs indicatives tant que le module Trésorerie n'est pas câblé */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard icon="file-text" tone="info" label="Demandes en attente" value="0" />
+        <StatCard icon="wallet" tone="success" label="Montant à régler" value="0 FCFA" />
+        <StatCard icon="book-text" tone="neutral" label="Règlements du mois" value="0" />
+        <StatCard
+          icon="rotate-ccw"
+          tone="warning"
+          label="Retours de caisse en attente"
+          value="0"
+        />
+      </div>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-foreground">Vos modules</h2>
