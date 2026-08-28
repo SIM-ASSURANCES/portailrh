@@ -92,6 +92,12 @@ async function main() {
       "treso.voir_reporting",
     ],
     [roleDG.id]: ["treso.valider_demande", "treso.voir_dashboard_finance", "treso.voir_reporting"],
+    // Le rôle Admin n'a délibérément aucune permission de module ici : son
+    // accès à la console d'administration est un bypass basé sur
+    // role.name === "Admin" (voir isAdmin() dans src/lib/auth.ts), pas sur
+    // le système RolePermission. Il ne voit donc aucun module métier sur son
+    // propre dashboard tant qu'aucune permission ne lui est explicitement
+    // accordée (séparation des rôles).
   };
 
   let rolePermissionCount = 0;

@@ -52,8 +52,14 @@ sim-portail/
 │   │   │   └── login/
 │   │   │       └── page.tsx           # Page de connexion (formulaire + Server Action)
 │   │   ├── (dashboard)/               # Socle Portail : écrans authentifiés
-│   │   │   ├── layout.tsx              # En-tête institutionnel (logo, fond bleu foncé) + garde de session
-│   │   │   └── page.tsx                 # Page d'accueil du portail (route "/")
+│   │   │   ├── layout.tsx              # En-tête institutionnel (logo, nav, garde de session)
+│   │   │   ├── page.tsx                 # Dashboard "/" : modules accessibles, notifications, actions
+│   │   │   └── admin/                    # Console d'administration (route "/admin", réservée à isAdmin())
+│   │   │       ├── layout.tsx              # Garde isAdmin() -> redirect("/?error=acces_refuse_admin")
+│   │   │       ├── page.tsx                 # Accueil admin (cartes vers users/roles/modules)
+│   │   │       ├── users/                    # Gestion des utilisateurs (créer, activer/désactiver)
+│   │   │       ├── roles/                    # Permissions par rôle (cases à cocher par module)
+│   │   │       └── modules/                  # Activation/désactivation des modules
 │   │   ├── (dev)/
 │   │   │   └── ui-preview/
 │   │   │       ├── page.tsx            # Vitrine des composants src/components/ui (OUTIL DE DEV)
@@ -63,10 +69,10 @@ sim-portail/
 │   │       └── auth/
 │   │           └── [...nextauth]/
 │   │               └── route.ts          # Handlers Auth.js (GET/POST)
-│   │   # À venir (dev #2) : admin/ (gestion rôles/permissions/modules), treso/
-│   │   # (écrans Trésorerie : demandes, règlements, retours de caisse), à
-│   │   # placer dans (dashboard)/ pour hériter de l'en-tête. Créer ces groupes
-│   │   # de routes au fur et à mesure des écrans réels — ne pas créer de dossiers vides.
+│   │   # À venir (dev #2) : treso/ (écrans Trésorerie : demandes, règlements,
+│   │   # retours de caisse), à placer dans (dashboard)/ pour hériter de
+│   │   # l'en-tête. Le Socle Portail (auth, permissions, dashboard, admin)
+│   │   # est terminé — voir "Socle Portail : statut" en bas de ce fichier.
 │   ├── components/
 │   │   ├── ui/                    # Composants génériques réutilisables, sans logique métier
 │   │   │   ├── Button.tsx
@@ -77,11 +83,12 @@ sim-portail/
 │   │   │   ├── DataTable.tsx
 │   │   │   ├── PageHeader.tsx
 │   │   │   ├── Badge.tsx
+│   │   │   ├── ToastOnMount.tsx     # Déclenche un toast au montage (ex: après un redirect serveur)
 │   │   │   └── index.ts             # Barrel export : `import { Button, Input } from "@/components/ui"`
 │   │   # À venir (dev #2) : src/components/tresorerie/ (ex: DemandeForm.tsx,
 │   │   # ReglementCard.tsx) pour les composants spécifiques au métier Trésorerie.
 │   ├── lib/                       # Utilitaires, auth, prisma, helpers
-│   │   ├── auth.ts                  # Config Auth.js + contrat getSession()/hasPermission()
+│   │   ├── auth.ts                  # Config Auth.js + contrat getSession()/hasPermission()/isAdmin()/getAccessibleModules()
 │   │   ├── prisma.ts                # Singleton PrismaClient (driver adapter pg)
 │   │   ├── validation.ts            # ActionState, fieldErrorsFromZod (pattern Server Action + zod)
 │   │   └── hooks/
@@ -446,10 +453,60 @@ Ces règles sont non négociables et doivent guider toute implémentation
   d'`@auth/prisma-adapter`) : Auth.js ne supporte pas les sessions
   persistées en base avec le Credentials provider.
 - Le contrat applicatif à utiliser dans le reste du code est
-  `getSession()` / `hasPermission()` exportés par
-  [src/lib/auth.ts](src/lib/auth.ts) — voir les commentaires du fichier pour
-  le détail d'usage. Ne pas appeler `auth()` directement en dehors de ce
-  fichier pour la vérification de permissions.
+  `getSession()` / `hasPermission()` / `isAdmin()` / `getAccessibleModules()`
+  exportés par [src/lib/auth.ts](src/lib/auth.ts) — voir les commentaires du
+  fichier pour le détail d'usage. Ne pas appeler `auth()` directement en
+  dehors de ce fichier pour la vérification de permissions.
+
+## Administration (console `/admin`)
+
+- **`isAdmin(session)`** (dans [src/lib/auth.ts](src/lib/auth.ts)) donne
+  l'accès à la console d'administration. C'est un **bypass sur
+  `role.name === "Admin"`**, pas une permission stockée dans
+  `RolePermission` — choix délibéré (deux raisons, détaillées en
+  commentaire dans le fichier) :
+  1. Le rôle Admin garde un accès total à `/admin` même si personne n'a (ou
+     plus) pensé à lui attribuer les bonnes permissions — impossible de se
+     retrouver bloqué hors de la console.
+  2. La console d'admin est une fonctionnalité du **Socle**, orthogonale au
+     système de permissions par module (`treso.*`...) qui sert aux modules
+     métier. Être Admin ne donne **pas** automatiquement les permissions
+     métier des autres modules — `hasPermission()` reste la seule source de
+     vérité pour celles-ci (séparation des rôles). Dans le seed, le rôle
+     Admin n'a donc volontairement aucune ligne `RolePermission`.
+  - Toujours vérifier `isAdmin(session)` **dans la Server Action elle-même**,
+    jamais seulement via le layout ou le masquage de l'UI.
+- **`getAccessibleModules(session)`** retourne les modules actifs
+  (`Module.isActive`) auxquels le rôle a accès (au moins une permission
+  rattachée au module). Générique : aucune modification de code nécessaire
+  à l'ajout d'un futur module. Utilisée par le dashboard
+  ([src/app/(dashboard)/page.tsx](<src/app/(dashboard)/page.tsx>)) pour
+  n'afficher que les cartes de modules pertinentes, et indirectement par
+  `/admin/modules` (désactiver un module le fait disparaître de tous les
+  dashboards, immédiatement — pas de cache à invalider manuellement grâce à
+  `revalidatePath`).
+- Structure de la console (toutes les routes sous
+  [src/app/(dashboard)/admin/](<src/app/(dashboard)/admin>), donc URL
+  `/admin`, `/admin/users`, etc.) :
+  - `admin/users` — création d'utilisateur (Server Action + zod + bcrypt),
+    activation/désactivation (**jamais de suppression** d'utilisateur).
+  - `admin/roles` — matrice de permissions par rôle, groupées par module ;
+    chaque case à cocher appelle directement une Server Action (pas de
+    bouton "Enregistrer" global — persistance immédiate par case).
+  - `admin/modules` — activation/désactivation par module.
+  - Chaque mutation (création utilisateur, activation/désactivation,
+    changement de permission) est historisée dans `HistoriqueEntry`.
+- **Piège Server/Client à connaître** : `DataTable` (voir
+  [Design system](#design-system--composants-ui)) est un Client Component.
+  Ses `columns` contiennent des fonctions (`accessor`/`render`) : elles ne
+  peuvent **pas** être construites dans une page Server Component puis
+  passées en props (React/Next refuse de sérialiser des fonctions à travers
+  la frontière Server → Client, sauf Server Actions). Solution utilisée
+  partout dans `admin/` : un petit wrapper Client Component (ex:
+  `UsersTable.tsx`, `ModulesTable.tsx`) qui reçoit uniquement les données
+  (sérialisables) en props et construit lui-même les `columns`. Reproduire
+  ce pattern pour toute nouvelle page Trésorerie utilisant `DataTable`
+  depuis un Server Component.
 
 ## Où trouver le schéma de données
 
@@ -472,6 +529,25 @@ Prérequis : un fichier `.env` avec `DATABASE_URL` (PostgreSQL) et
 Comptes de test (mot de passe `password123` pour tous) :
 `collaborateur@simassurances.test`, `finance@simassurances.test`,
 `dg@simassurances.test`, `admin@simassurances.test`.
+
+## Socle Portail : statut
+
+Le Socle Portail est **terminé** : authentification (Auth.js v5,
+`getSession()`/`hasPermission()`), design system et composants UI
+réutilisables, identité visuelle SIM Assurances, dashboard personnalisé par
+droits, et console d'administration complète (`isAdmin()`,
+`getAccessibleModules()`, `/admin/users`, `/admin/roles`, `/admin/modules`).
+
+Le développement du **Module Trésorerie** (écrans de demandes, validation,
+règlements, retours de caisse — voir
+[Règles métier impératives](#règles-métier-impératives--module-trésorerie))
+peut démarrer sur cette base sans rien modifier au Socle : créer les routes
+sous `src/app/(dashboard)/treso/`, les composants métier sous
+`src/components/tresorerie/`, et suivre les conventions et patterns déjà en
+place (composants `ui/`, `ActionState` + `useActionFeedback` pour les
+formulaires, `getSession()`/`hasPermission()` pour les permissions,
+`getAccessibleModules()` s'occupe déjà de faire apparaître la carte
+"Gestion des demandes et trésorerie" sur le dashboard).
 
 <!-- BEGIN:nextjs-agent-rules -->
 

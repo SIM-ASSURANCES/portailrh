@@ -1,7 +1,8 @@
 import Image from "next/image";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { getSession } from "@/lib/auth";
+import { getSession, isAdmin } from "@/lib/auth";
 
 /**
  * Layout du Socle Portail (écrans authentifiés). Toute route placée dans ce
@@ -29,6 +30,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
             priority
           />
         </div>
+        <nav className="flex items-center gap-4 text-sm text-primary-foreground">
+          <Link href="/" className="hover:underline">
+            Tableau de bord
+          </Link>
+          {isAdmin(session) ? (
+            <Link href="/admin" className="hover:underline">
+              Administration
+            </Link>
+          ) : null}
+        </nav>
         <div className="ml-auto flex items-center gap-3 text-sm text-primary-foreground">
           <span className="font-medium">{session.user.fullName}</span>
           <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-xs">{session.role}</span>

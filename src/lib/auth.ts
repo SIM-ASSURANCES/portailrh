@@ -135,3 +135,55 @@ export function hasPermission(
 ): boolean {
   return session?.permissions.includes(permissionKey) ?? false;
 }
+
+/**
+ * Accès administrateur du Socle Portail (console /admin : utilisateurs,
+ * rôles, modules).
+ *
+ * Choix volontaire : c'est un bypass basé sur `role.name === "Admin"`, PAS
+ * une permission stockée dans RolePermission. Deux raisons :
+ *  1. Le rôle Admin doit garder un accès total à l'administration même si
+ *     personne n'a (ou plus) pensé à lui attribuer les bonnes permissions —
+ *     pas de risque de se retrouver bloqué hors de la console d'admin.
+ *  2. La console d'admin est une fonctionnalité du Socle, orthogonale au
+ *     système de permissions par module (`treso.*`, etc.) qui sert aux
+ *     modules métier. Être Admin ne donne PAS automatiquement les
+ *     permissions métier des autres modules : `hasPermission()` reste la
+ *     seule source de vérité pour celles-ci.
+ *
+ * Usage : gate de route (`if (!isAdmin(session)) redirect(...)`) et dans
+ * chaque Server Action de la console admin (ne jamais se fier au seul
+ * masquage de l'UI).
+ */
+export function isAdmin(session: { role: string } | null): boolean {
+  return session?.role === "Admin";
+}
+
+/**
+ * Modules actifs auxquels la session a accès : un module n'apparaît que si
+ * l'utilisateur possède au moins une permission qui lui est rattachée.
+ * Un module désactivé (`isActive: false`) n'apparaît jamais, même avec les
+ * permissions correspondantes — c'est le mécanisme utilisé par la console
+ * admin (`/admin/modules`) pour retirer un module du dashboard de tous les
+ * utilisateurs.
+ *
+ * Générique : fonctionne pour n'importe quel module présent en base, sans
+ * modification de code à l'ajout d'un nouveau module.
+ */
+export async function getAccessibleModules(
+  session: { permissions: string[] } | null
+): Promise<{ id: string; key: string; label: string }[]> {
+  if (!session) {
+    return [];
+  }
+
+  const modules = await prisma.module.findMany({
+    where: { isActive: true },
+    include: { permissions: { select: { key: true } } },
+    orderBy: { label: "asc" },
+  });
+
+  return modules
+    .filter((module_) => module_.permissions.some((p) => session.permissions.includes(p.key)))
+    .map((module_) => ({ id: module_.id, key: module_.key, label: module_.label }));
+}

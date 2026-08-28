@@ -21,3 +21,6 @@ export type { PageHeaderProps } from "./PageHeader";
 
 export { DataTable } from "./DataTable";
 export type { DataTableProps, DataTableColumn } from "./DataTable";
+
+export { ToastOnMount } from "./ToastOnMount";
+export type { ToastOnMountProps } from "./ToastOnMount";
