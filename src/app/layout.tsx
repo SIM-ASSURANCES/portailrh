@@ -9,7 +9,10 @@ import "./globals.css";
 const montserrat = Montserrat({
   variable: "--font-montserrat",
   subsets: ["latin"],
-  weight: ["400", "700", "900"],
+  // Charte SIM Assurances : Montserrat pour toute la communication
+  // institutionnelle et commerciale (dont ce portail). 500/600 ajoutés
+  // pour que `font-medium` / `font-semibold` rendent une vraie graisse.
+  weight: ["300", "400", "500", "600", "700", "900"],
 });
 
 const geistMono = Geist_Mono({

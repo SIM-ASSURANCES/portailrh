@@ -73,6 +73,14 @@
   --color-neutral: #475569;
   --color-neutral-bg: #f1f5f9;
   --color-neutral-border: #e2e8f0;
+
+  /* --- Coquille applicative (sidebar + topbar + fond de contenu) ---
+     Reproduit la mise en page de référence : sidebar blanche à en-tête
+     bleu, fond de contenu gris clair, cartes blanches. */
+  --color-app-bg: #f1f5f9;
+  --color-sidebar: #ffffff;
+  --color-sidebar-border: #e2e8f0;
+  --color-sidebar-section: #94a3b8;
 }
 
 @theme inline {
@@ -121,6 +129,11 @@
   --color-neutral: var(--color-neutral);
   --color-neutral-bg: var(--color-neutral-bg);
   --color-neutral-border: var(--color-neutral-border);
+
+  --color-app-bg: var(--color-app-bg);
+  --color-sidebar: var(--color-sidebar);
+  --color-sidebar-border: var(--color-sidebar-border);
+  --color-sidebar-section: var(--color-sidebar-section);
 }
 
 body {
