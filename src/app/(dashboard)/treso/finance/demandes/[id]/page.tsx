@@ -35,13 +35,37 @@ export default async function CategoriserDemandePage({
     notFound();
   }
 
-  const [categories, objets] =
+  // Ticket A.1 : seules les catégories/objets actifs sont proposables pour
+  // une nouvelle catégorisation (soft-delete, jamais de suppression
+  // définitive — voir admin/categories).
+  const [categoriesActives, objetsActives] =
     demande.statut === "EN_ATTENTE" && canCategoriser
       ? await Promise.all([
-          prisma.categorie.findMany({ orderBy: { label: "asc" } }),
-          prisma.objet.findMany({ orderBy: { label: "asc" } }),
+          prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
+          prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
         ])
       : [[], []];
+
+  // Piège trouvé et corrigé en vérification manuelle : si la demande est
+  // déjà catégorisée (EN_ATTENTE, en cours de correction par Finance) avec
+  // une catégorie/objet désactivé entre-temps, celui-ci est absent de la
+  // liste ci-dessus — le <select> non contrôlé retombe alors SILENCIEUSEMENT
+  // sur sa première option (comportement natif du navigateur pour une
+  // defaultValue sans option correspondante), sans que l'état React
+  // `categorieId` ne s'en aperçoive. Réenregistrer le formulaire sans rien
+  // changer écraserait alors la vraie catégorie par cette fausse valeur
+  // affichée. On réinjecte donc la catégorie/l'objet déjà assignés à CETTE
+  // demande même s'ils sont désactivés, marqués « (inactive) » — jamais les
+  // autres catégories/objets désactivés, qui restent indisponibles pour
+  // toute nouvelle sélection.
+  const categories =
+    demande.categorie && !categoriesActives.some((c) => c.id === demande.categorie!.id)
+      ? [...categoriesActives, { ...demande.categorie, label: `${demande.categorie.label} (inactive)` }]
+      : categoriesActives;
+  const objets =
+    demande.objet && !objetsActives.some((o) => o.id === demande.objet!.id)
+      ? [...objetsActives, { ...demande.objet, label: `${demande.objet.label} (inactif)` }]
+      : objetsActives;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">

@@ -65,7 +65,14 @@ sim-portail/
 │   │   │       ├── page.tsx                 # Accueil admin (cartes vers users/roles/modules)
 │   │   │       ├── users/                    # Gestion des utilisateurs (créer, activer/désactiver)
 │   │   │       ├── roles/                    # Permissions par rôle (cases à cocher par module)
-│   │   │       └── modules/                  # Activation/désactivation des modules
+│   │   │       ├── modules/                  # Activation/désactivation des modules
+│   │   │       └── categories/                # Catégories/Objets Trésorerie (Ticket A.1)
+│   │   │           ├── page.tsx                  # Liste imbriquée + formulaires de création
+│   │   │           ├── CategorieCreateForm.tsx    # Client, useActionState
+│   │   │           ├── ObjetCreateForm.tsx        # Client, categorieId en champ caché
+│   │   │           ├── CategoriesList.tsx         # Client, liste + toggles imbriqués
+│   │   │           ├── ActiveToggleButton.tsx     # Bouton Activer/Désactiver générique
+│   │   │           └── actions.ts                 # créer/toggle Categorie et Objet
 │   │   ├── (dashboard)/treso/            # Module Trésorerie (écrans métier)
 │   │   │   └── demandes/
 │   │   │       ├── page.tsx                # "Mes demandes" (liste filtrée par créateur)
@@ -82,8 +89,11 @@ sim-portail/
 │   │   │           ├── RetourCaisseForm.tsx     # Formulaire de déclaration (Client, useActionState)
 │   │   │           └── ReglementsRecusSection.tsx # Règlements confirmés + "Télécharger le reçu" (Ticket 9)
 │   │   │   └── finance/
-│   │   │       ├── layout.tsx              # Garde categoriser/valider/receptionner_retour/voir_dashboard_finance
+│   │   │       ├── layout.tsx              # Garde categoriser/valider/receptionner_retour/dashboard/reporting
 │   │   │       ├── page.tsx                # Dashboard Finance (4 StatCard, Ticket 8)
+│   │   │       ├── reporting/
+│   │   │       │   ├── page.tsx               # Écran de reporting + suivi budgétaire (Ticket 10)
+│   │   │       │   └── ReportingFiltersForm.tsx # Filtres en GET, cascade Catégorie->Objet (Client)
 │   │   │       ├── a-decaisser/
 │   │   │       │   ├── page.tsx               # Demandes VALIDEE, reste à régler > 0
 │   │   │       │   └── ADecaisserTable.tsx
@@ -117,10 +127,13 @@ sim-portail/
 │   │       │   └── [...nextauth]/
 │   │       │       └── route.ts          # Handlers Auth.js (GET/POST)
 │   │       └── treso/
-│   │           └── reglements/
-│   │               └── [id]/
-│   │                   └── recu/
-│   │                       └── route.tsx     # GET : génère le reçu PDF d'un règlement (Ticket 9)
+│   │           ├── reglements/
+│   │           │   └── [id]/
+│   │           │       └── recu/
+│   │           │           └── route.tsx     # GET : génère le reçu PDF d'un règlement (Ticket 9)
+│   │           └── reporting/
+│   │               └── export/
+│   │                   └── route.ts          # GET : export Excel 6 feuilles (Ticket 10)
 │   │   # À venir (dev #2) : le reste du Module Trésorerie (règlements, retours
 │   │   # de caisse, validation par DG) sous (dashboard)/treso/, même pattern.
 │   │   # Le Socle Portail (auth, permissions, dashboard, admin) est terminé —
@@ -153,6 +166,7 @@ sim-portail/
 │   │   ├── reference.ts             # generateDemandeReference() : référence lisible "DEM-2026-000123"
 │   │   ├── tresorerie.ts            # getTotalRegle/getResteARegler/getSoldeCaisse/getEcart...
 │   │   ├── dashboardFinance.ts      # getDemandesADecaisser/getDecaissementsARegulariser/getRetoursEnAttente
+│   │   ├── reporting.ts             # Filtres + requêtes du reporting, partagées écran/export (Ticket 10)
 │   │   ├── pdf/
 │   │   │   └── ReceiptDocument.tsx    # Gabarit @react-pdf/renderer du reçu de règlement (Ticket 9)
 │   │   ├── validation.ts            # ActionState, fieldErrorsFromZod (pattern Server Action + zod)
@@ -613,9 +627,9 @@ nouvel écran qui affiche un statut.
 
 **Gestion CRUD Catégorie/Objet** — vérifiée avant ce ticket : n'existe nulle
 part encore dans le projet (seulement les 9 catégories/3 objets du seed).
-Hors périmètre des tâches de ce ticket ; à couvrir par un ticket dédié
-(probablement `/admin/categories` et `/admin/objets`, même pattern que
-`/admin/modules`) quand le besoin de les éditer en production se présentera.
+Hors périmètre des tâches de ce ticket. **Résolu au Ticket A.1** (console
+admin `/admin/categories`, voir [Administration](#administration-console-admin)) —
+cette note reste ici pour l'historique de la dette identifiée à ce moment.
 
 **Navigation conditionnelle par permission** — `nav.ts` expose désormais
 `getNavBranches({ canAccesFinanceDemandes })` (fonction, plus une constante
@@ -1262,6 +1276,115 @@ authentifiée vers sa route de reçu renvoie **404** — la défense en
 profondeur ne repose pas que sur l'absence du bouton. Toutes les données de
 test (demandes, second compte collaborateur) supprimées après vérification.
 
+## Module Trésorerie : Ticket 10 — Reporting et Export
+
+**Statut : terminé. Dernier ticket du backlog initial du Module Trésorerie.**
+
+**Champ `User.service` ajouté (choix d'architecture, pas un détail)** — le
+cahier des charges demande un filtre par "service", mais `User` n'avait
+aucun champ de ce type. Vérifié explicitement qu'il n'avait pas été ajouté
+entre-temps par ailleurs : absent. Ajouté via migration Prisma
+(`20260829000309_add_service_user`) : `service String?`, texte libre
+optionnel, **pas** de table de référence dédiée (`Service` avec ses propres
+lignes) — le volume de services distincts reste faible pour une
+application interne, une V1 en texte simple suffit ; à revoir si un jour un
+vrai référentiel RH doit piloter cette liste. Seed mis à jour avec une
+valeur d'exemple par compte de test : `collaborateur@` → "Commercial",
+`finance@` → "Finance", `dg@` → "Direction", `rh@` → "Ressources Humaines",
+`admin@` → aucun (l'Admin est un compte du Socle, pas un service métier).
+
+**Module partagé `src/lib/reporting.ts`** — filtres et requêtes utilisés
+**à l'identique** par l'écran et par l'export Excel, jamais deux
+implémentations séparées des mêmes données :
+
+- `parseReportingFilters(searchParams)` — parse les filtres depuis les
+  search params de l'URL (période `du`/`au`, `demandeurId`, `service`,
+  `categorieId`, `objetId`, `mode`, `statut`) ; `au` traité comme fin de
+  journée incluse (23:59:59.999).
+- `getReportingRows(filters)` — tableau agrégé par Catégorie puis Objet
+  (nombre de demandes, montant demandé, montant réglé, budget alloué
+  cumulé), calculé en **une requête `findMany` + un `groupBy`** (jamais une
+  requête par demande). Si `mode` est filtré, seules les demandes ayant au
+  moins un règlement confirmé de ce mode sont retenues, et seul ce mode
+  compte dans le montant réglé (un règlement Banque ne "pollue" jamais un
+  filtre Caisse, et réciproquement).
+- `getReportingDemandesDetail` / `getReportingReglementsDetail` /
+  `getReportingRetoursDetail` / `getReportingJournalDetail` — les listes
+  détaillées des 4 premières feuilles de l'export, dérivées du **même**
+  ensemble de demandes filtrées que `getReportingRows` (fonction interne
+  `getDemandesFiltrees` partagée). Le journal de caisse est **délibérément
+  filtré uniquement par période** (jamais par catégorie/objet/mode), comme
+  demandé : une écriture `JournalCaisse` n'a pas de catégorie.
+
+**Écran** (`treso/finance/reporting/page.tsx`, protégé par
+`treso.voir_reporting`) : formulaire de filtres en **GET natif**
+(`ReportingFiltersForm.tsx`, `<form method="get">`, pas de Server Action) —
+l'URL résultante reste partageable/rechargeable telle quelle, comme
+demandé. Cascade Catégorie → Objet en mémoire côté client, même principe
+que `CategorisationForm.tsx` (Ticket 2), à une différence près : l'Objet
+n'est **pas verrouillé** tant qu'aucune catégorie n'est choisie (c'est un
+filtre, pas une saisie — on peut vouloir filtrer directement par objet).
+Tableau agrégé avec ligne de "Total général", puis section "Suivi
+budgétaire" (Tâche 2) ne listant que les groupes où au moins une demande a
+un `budgetDisponible` renseigné, écart mis en évidence (`text-danger` si
+le réglé dépasse le budget alloué, `text-success` sinon).
+
+**Export Excel** (`api/treso/reporting/export/route.ts`, `treso.voir_reporting`,
+401/403) — librairie **`exceljs`** (choisie car elle gère nativement
+plusieurs feuilles et une mise en forme basique, contrairement à des
+alternatives plus légères mono-feuille). Mêmes query params et mêmes
+fonctions de `reporting.ts` que l'écran : le classeur téléchargé désigne
+toujours exactement les mêmes données que ce qui est affiché à l'écran
+pour un même jeu de filtres. **6 feuilles**, en-tête bleu institutionnel
+(`#004B9C`, texte blanc, mêmes valeurs hex que `globals.css`) :
+
+| Feuille | Contenu |
+|---|---|
+| Demandes | Référence, créateur, service, catégorie, objet, montant, statut, date |
+| Règlements | Référence demande, montant, mode, date de confirmation, auteur |
+| Retours de caisse | Référence demande, montant dépensé, montant à retourner, justification, statut (Réceptionné/En attente), date |
+| Journal de caisse | Type, montant, source, date — filtré par période uniquement |
+| Reporting | Le tableau agrégé de l'écran, avec sa ligne "Total général" |
+| Suivi budgétaire | Budget alloué / montant réglé / écart, écart négatif (dépassement) en rouge |
+
+Bouton "Exporter en Excel" sur l'écran : lien simple (`<a href=...>`)
+reconstruisant la query string des filtres actifs
+(`reportingFiltersToQueryString`), nom de fichier
+`reporting-tresorerie-{date}.xlsx`.
+
+**Navigation** — "Reporting" (icône `download`, même icône que "Reporting"
+côté Pointage RH dans `nav.ts`, pour la cohérence des deux modules) ajouté
+dans la branche "Demande d'Achat", visible avec le nouveau booléen
+`canVoirReporting` (`NavFlags`), propagé comme les précédents via
+`(dashboard)/layout.tsx` → `AppShell` → `Sidebar`.
+
+**Garde du layout Finance étendue une cinquième fois** — accepte désormais
+aussi `treso.voir_reporting`, même principe que les quatre extensions
+précédentes (Tickets 3, 6, 8) : correcte par principe pour tout futur rôle
+qui n'aurait que cette permission.
+
+**Vérifié explicitement** : jeu de données varié (2 catégories —
+Déplacements et Carburant —, un règlement Caisse et un règlement Banque, un
+retour réceptionné et un retour en attente, un cas de dépassement
+budgétaire délibéré : budget 45 001 FCFA pour 65 000 FCFA réglés). Le
+tableau agrégé et son export Excel affichent des totaux strictement
+identiques (3 demandes, 85 000 FCFA demandé, 85 000 FCFA réglé) ; les 6
+feuilles existent avec des données cohérentes (le journal de caisse ne
+montre que 2 SORTIE + 1 ENTREE, aucune écriture pour le règlement Banque —
+règle impérative déjà vérifiée aux Tickets 4 et 6, reconfirmée ici via
+l'export). Le filtre par catégorie a été vérifié individuellement (ne
+laisse apparaître que "Carburant" avec ses propres totaux), de même pour
+le filtre par statut et par période (une période antérieure à la création
+des données ne retourne aucune ligne). Le compte collaborateur (sans
+`treso.voir_reporting`) ne voit ni le lien ni n'accède à la page
+(redirection + toast) ni à la route d'export (403). Toutes les données de
+test nettoyées, serveur arrêté.
+
+**Avec ce ticket, le backlog initial du Module Trésorerie (Tickets 1 à 10)
+est entièrement complété** — sections 2 à 15 du cahier des charges :
+demande → catégorisation → validation → règlement → retour → réception →
+clôture → dashboard → reçu PDF → reporting/export.
+
 ## Module Pointage RH : fondations de données
 
 **Statut : fondations posées, aucun écran développé.** Modèles, enums,
@@ -1373,6 +1496,8 @@ Module et permissions (seed) :
     chaque case à cocher appelle directement une Server Action (pas de
     bouton "Enregistrer" global — persistance immédiate par case).
   - `admin/modules` — activation/désactivation par module.
+  - `admin/categories` — gestion des `Categorie`/`Objet` de Trésorerie
+    (Ticket A.1, voir détail ci-dessous).
   - Chaque mutation (création utilisateur, activation/désactivation,
     changement de permission) est historisée dans `HistoriqueEntry`.
 - **Piège Server/Client à connaître** : `DataTable` (voir
@@ -1386,6 +1511,73 @@ Module et permissions (seed) :
   (sérialisables) en props et construit lui-même les `columns`. Reproduire
   ce pattern pour toute nouvelle page Trésorerie utilisant `DataTable`
   depuis un Server Component.
+
+### `admin/categories` — Gestion des Catégories/Objets (Ticket A.1)
+
+**Statut : terminé.** Résout la dette technique identifiée au Ticket 2 : le
+cahier des charges exige une liste de catégories paramétrable, mais aucune
+interface n'existait (seulement le seed).
+
+**Soft-delete `isActive`** — `Categorie` et `Objet` gagnent un champ
+`isActive Boolean @default(true)` (migration `add_isactive_categorie_objet`),
+même principe que `Module.isActive` : **jamais de suppression définitive**,
+uniquement une désactivation. Nécessaire car `Categorie`/`Objet` sont
+potentiellement référencés par des `Demande` existantes (`categorieId`,
+`objetId`) — une vraie suppression casserait l'intégrité de l'historique.
+
+**Écran** (`admin/categories/page.tsx`) : liste des catégories avec leurs
+objets imbriqués (liste indentée), inactives visuellement distinguées
+(opacité réduite + `Badge` neutre). Formulaire de création de catégorie en
+haut, formulaire d'ajout d'objet sous chaque catégorie
+(`ObjetCreateForm.tsx`, `categorieId` en champ caché), et un bouton
+Activer/Désactiver par ligne (`ActiveToggleButton.tsx`) — généralisation de
+`ModuleActiveToggle.tsx` (admin/modules) avec l'action de toggle en prop,
+partagée entre les lignes Catégorie et Objet plutôt que deux composants
+quasi identiques.
+
+**Répercussion dans le reste de l'app** — `treso/finance/demandes/[id]/page.tsx`
+(Ticket 2) et `treso/finance/reporting/page.tsx` (Ticket 10) filtrent
+désormais leurs requêtes `categorie.findMany`/`objet.findMany` par
+`isActive: true` : une catégorie désactivée n'est plus proposable pour une
+nouvelle catégorisation ni un nouveau filtre de reporting.
+
+**Piège trouvé et corrigé en vérification manuelle** — une demande restée
+`EN_ATTENTE` et déjà catégorisée avec une catégorie désactivée entre-temps
+faisait planter silencieusement `CategorisationForm` : sa catégorie n'étant
+plus dans la liste (filtrée sur `isActive: true`), le `<select>` non
+contrôlé retombait sur sa **première option de la liste** (comportement
+natif du navigateur pour une `defaultValue` sans option correspondante),
+sans que l'état React `categorieId` ne s'en aperçoive. Réenregistrer le
+formulaire sans rien changer aurait alors **écrasé silencieusement** la
+vraie catégorie par cette fausse valeur affichée. Corrigé en réinjectant
+dans la liste d'options la catégorie/l'objet déjà assignés à *cette*
+demande précise, même désactivés (libellé suffixé « (inactive) ») —
+jamais les autres catégories/objets désactivés, qui restent indisponibles
+pour toute nouvelle sélection. Vérifié explicitement : catégorie de test
+désactivée après catégorisation d'une demande restée `EN_ATTENTE` → le
+`<select>` affiche maintenant correctement « (inactive) » comme valeur
+sélectionnée, et une resoumission du formulaire sans modification conserve
+la bonne catégorie.
+
+**Navigation** — "Catégories" (`folder-tree`) ajouté dans la section
+"Administration" de la sidebar, à côté de Utilisateurs/Rôles/Modules.
+
+**Piège de navigation trouvé et corrigé au passage** — le même problème de
+préfixe déjà rencontré au Ticket 8 (`/treso/finance` préfixe de
+`/treso/finance/demandes`) existait aussi dans `ADMIN_GROUP` : "Vue
+d'ensemble" (`/admin`) est un préfixe strict de `/admin/users`,
+`/admin/modules`, etc., donc les deux s'allumaient simultanément sur toute
+sous-route admin. Corrigé en ajoutant `exact: true` sur l'item "Vue
+d'ensemble", même mécanisme déjà en place dans `Sidebar.tsx`.
+
+**Vérifié explicitement** : catégorie de test créée avec deux objets,
+immédiatement disponible dans le formulaire de catégorisation Finance ;
+désactivée ensuite → absente du Select de catégorisation pour une nouvelle
+demande et des filtres de reporting, mais la demande qui la référençait
+déjà continue de l'afficher correctement (catégorie + objet), y compris
+dans le cas `EN_ATTENTE` encore modifiable (piège ci-dessus). Le compte
+Finance (non-Admin) n'a accès ni au lien ni à `/admin/categories`
+(redirection + toast). Toutes les données de test supprimées.
 
 ## Où trouver le schéma de données
 
@@ -1417,19 +1609,22 @@ réutilisables, identité visuelle SIM Assurances, dashboard personnalisé par
 droits, et console d'administration complète (`isAdmin()`,
 `getAccessibleModules()`, `/admin/users`, `/admin/roles`, `/admin/modules`).
 
-Le **Module Trésorerie** est désormais **terminé** (Tickets 1 à 9) : il
-couvre l'intégralité du cycle métier des sections 2 à 12 du cahier des
-charges — création de la demande (Ticket 1) → catégorisation par Finance
-(Ticket 2) → validation/rejet (Ticket 3) → règlement Caisse/Banque avec
-grand livre `JournalCaisse` (Ticket 4) → déclaration d'un retour de caisse
-par le Collaborateur (Ticket 5) → réception du retour par Finance, seul
-moment où la caisse est réellement créditée (Ticket 6) → régularisation et
-clôture totale/partielle, qui referme définitivement le dossier (Ticket 7)
-→ dashboard Finance donnant une vue d'ensemble recalculée en temps réel de
-tout ce cycle (Ticket 8) → reçu PDF téléchargeable par règlement (Ticket 9).
-Voir [Règles métier impératives](#règles-métier-impératives--module-trésorerie)
+Le **Module Trésorerie** est désormais **entièrement terminé** (Tickets 1 à
+10 — backlog initial complet) : il couvre l'intégralité du cycle métier
+des sections 2 à 15 du cahier des charges — création de la demande
+(Ticket 1) → catégorisation par Finance (Ticket 2) → validation/rejet
+(Ticket 3) → règlement Caisse/Banque avec grand livre `JournalCaisse`
+(Ticket 4) → déclaration d'un retour de caisse par le Collaborateur
+(Ticket 5) → réception du retour par Finance, seul moment où la caisse est
+réellement créditée (Ticket 6) → régularisation et clôture
+totale/partielle, qui referme définitivement le dossier (Ticket 7) →
+dashboard Finance donnant une vue d'ensemble recalculée en temps réel de
+tout ce cycle (Ticket 8) → reçu PDF téléchargeable par règlement (Ticket 9)
+→ reporting agrégé, suivi budgétaire et export Excel multi-feuilles
+(Ticket 10). Voir
+[Règles métier impératives](#règles-métier-impératives--module-trésorerie)
 pour les invariants transversaux (verrouillages définitifs, immutabilité du
-grand livre, historisation systématique) qui traversent ces neuf tickets.
+grand livre, historisation systématique) qui traversent ces dix tickets.
 
 Le développement de ce module a suivi les conventions et patterns du Socle
 sans jamais le modifier : routes sous `src/app/(dashboard)/treso/`,

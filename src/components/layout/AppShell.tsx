@@ -17,6 +17,8 @@ interface AppShellProps {
   canReceptionnerRetour?: boolean;
   /** Affiche "Tableau de bord Finance" (treso.voir_dashboard_finance). */
   canVoirDashboardFinance?: boolean;
+  /** Affiche "Reporting" (treso.voir_reporting). */
+  canVoirReporting?: boolean;
   children: ReactNode;
 }
 
@@ -35,6 +37,7 @@ export function AppShell({
   canAccesFinanceDemandes = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
+  canVoirReporting = false,
   children,
 }: AppShellProps) {
   // Rendu initial (serveur + première passe client) toujours « déployé »
@@ -77,6 +80,7 @@ export function AppShell({
         canAccesFinanceDemandes={canAccesFinanceDemandes}
         canReceptionnerRetour={canReceptionnerRetour}
         canVoirDashboardFinance={canVoirDashboardFinance}
+        canVoirReporting={canVoirReporting}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />

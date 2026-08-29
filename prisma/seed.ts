@@ -163,11 +163,11 @@ async function main() {
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, SALT_ROUNDS);
 
   const testUsers = [
-    { fullName: "Collaborateur Test", email: "collaborateur@simassurances.test", roleId: roleCollaborateur.id },
-    { fullName: "Finance Test", email: "finance@simassurances.test", roleId: roleFinance.id },
-    { fullName: "DG Test", email: "dg@simassurances.test", roleId: roleDG.id },
-    { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id },
-    { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id },
+    { fullName: "Collaborateur Test", email: "collaborateur@simassurances.test", roleId: roleCollaborateur.id, service: "Commercial" },
+    { fullName: "Finance Test", email: "finance@simassurances.test", roleId: roleFinance.id, service: "Finance" },
+    { fullName: "DG Test", email: "dg@simassurances.test", roleId: roleDG.id, service: "Direction" },
+    { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id, service: null },
+    { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id, service: "Ressources Humaines" },
   ];
 
   const createdUsers = await Promise.all(
@@ -178,6 +178,7 @@ async function main() {
           email: u.email,
           passwordHash,
           roleId: u.roleId,
+          service: u.service,
         },
       })
     )

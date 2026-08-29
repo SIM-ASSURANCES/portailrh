@@ -20,6 +20,12 @@ model User {
   email        String   @unique
   passwordHash String
   isActive     Boolean  @default(true)
+  /// Service/département de l'utilisateur (ex: "Commercial", "Finance",
+  /// "Direction") — facultatif, utilisé comme axe de filtre par le
+  /// reporting Trésorerie (Ticket 10). Simple champ texte libre en V1,
+  /// pas de table de référence dédiée : le volume de services distincts
+  /// reste faible pour une application interne.
+  service      String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -114,6 +120,12 @@ enum TypeJustification {
 model Categorie {
   id       String    @id @default(cuid())
   label    String    @unique
+  /// Soft-delete : une catégorie désactivée n'apparaît plus dans les
+  /// sélecteurs de nouvelle catégorisation ni les filtres de reporting,
+  /// mais reste affichée normalement sur les demandes qui la référencent
+  /// déjà (jamais de suppression définitive — Categorie/Objet sont
+  /// potentiellement référencés par des Demande existantes).
+  isActive Boolean   @default(true)
   objets   Objet[]
   demandes Demande[]
 }
@@ -121,6 +133,8 @@ model Categorie {
 model Objet {
   id          String    @id @default(cuid())
   label       String
+  /// Voir Categorie.isActive — même principe de soft-delete.
+  isActive    Boolean   @default(true)
   categorieId String
   categorie   Categorie @relation(fields: [categorieId], references: [id])
   demandes    Demande[]

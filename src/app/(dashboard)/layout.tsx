@@ -25,6 +25,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       }
       canReceptionnerRetour={hasPermission(session, "treso.receptionner_retour")}
       canVoirDashboardFinance={hasPermission(session, "treso.voir_dashboard_finance")}
+      canVoirReporting={hasPermission(session, "treso.voir_reporting")}
     >
       {children}
     </AppShell>

@@ -47,6 +47,8 @@ export interface NavFlags {
   canReceptionnerRetour: boolean;
   /** `treso.voir_dashboard_finance` : ajoute "Tableau de bord Finance" (en tête de branche). */
   canVoirDashboardFinance: boolean;
+  /** `treso.voir_reporting` : ajoute "Reporting". */
+  canVoirReporting: boolean;
 }
 
 /**
@@ -64,6 +66,7 @@ export function getNavBranches({
   canAccesFinanceDemandes,
   canReceptionnerRetour,
   canVoirDashboardFinance,
+  canVoirReporting,
 }: NavFlags): NavBranch[] {
   return [
     {
@@ -99,6 +102,15 @@ export function getNavBranches({
                     label: "Retours en attente",
                     href: "/treso/finance/retours",
                     icon: "rotate-ccw",
+                  } satisfies NavItem,
+                ]
+              : []),
+            ...(canVoirReporting
+              ? [
+                  {
+                    label: "Reporting",
+                    href: "/treso/finance/reporting",
+                    icon: "download",
                   } satisfies NavItem,
                 ]
               : []),
@@ -152,9 +164,10 @@ export function getNavBranches({
 export const ADMIN_GROUP: NavGroup = {
   title: "Administration",
   items: [
-    { label: "Vue d'ensemble", href: "/admin", icon: "layout-grid" },
+    { label: "Vue d'ensemble", href: "/admin", icon: "layout-grid", exact: true },
     { label: "Utilisateurs", href: "/admin/users", icon: "users" },
     { label: "Rôles & permissions", href: "/admin/roles", icon: "shield-check" },
     { label: "Modules", href: "/admin/modules", icon: "package" },
+    { label: "Catégories", href: "/admin/categories", icon: "folder-tree" },
   ],
 };

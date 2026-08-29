@@ -20,6 +20,8 @@ interface SidebarProps {
   canReceptionnerRetour?: boolean;
   /** treso.voir_dashboard_finance : ajoute "Tableau de bord Finance". */
   canVoirDashboardFinance?: boolean;
+  /** treso.voir_reporting : ajoute "Reporting". */
+  canVoirReporting?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -57,11 +59,17 @@ export function Sidebar({
   canAccesFinanceDemandes = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
+  canVoirReporting = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
   const pathname = usePathname();
-  const navBranches = getNavBranches({ canAccesFinanceDemandes, canReceptionnerRetour, canVoirDashboardFinance });
+  const navBranches = getNavBranches({
+    canAccesFinanceDemandes,
+    canReceptionnerRetour,
+    canVoirDashboardFinance,
+    canVoirReporting,
+  });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0].key
   );
