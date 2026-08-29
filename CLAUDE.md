@@ -1677,6 +1677,42 @@ Comptes de test (mot de passe `password123` pour tous) :
 `collaborateur@simassurances.test`, `finance@simassurances.test`,
 `dg@simassurances.test`, `admin@simassurances.test`, `rh@simassurances.test`.
 
+## Déploiement Docker
+
+Le projet est entièrement conteneurisé (application Next.js + PostgreSQL) :
+démarrage reproductible sur n'importe quelle machine avec Docker installé,
+sans dépendance à l'environnement local. **Guide complet, étape par
+étape :** [DEPLOIEMENT.md](DEPLOIEMENT.md).
+
+Fichiers concernés : `Dockerfile` (build multi-étapes `deps` → `builder` →
+`prod-deps` → `runner`), `docker-compose.yml` (services `db` et `app`),
+`docker-entrypoint.sh` (migrations au démarrage), `.dockerignore`,
+`.env.example`.
+
+Choix techniques principaux (détaillés en commentaires dans `Dockerfile`) :
+
+- **Image de base Debian** (`node:20-bookworm-slim`), pas Alpine, par
+  précaution vis-à-vis des binaires natifs Prisma — même si ce projet,
+  avec le driver adapter `@prisma/adapter-pg`, n'utilise aucun moteur de
+  requête binaire au runtime (`src/generated/prisma` ne contient que du
+  TypeScript). Seul le "schema engine" (CLI `prisma generate`/`migrate
+  deploy`) reste un binaire natif, téléchargé automatiquement pour la
+  plateforme Linux du conteneur — **`binaryTargets` n'a donc pas été
+  ajouté** au bloc `generator` de `schema.prisma`, volontairement.
+- **Migrations automatiques, seed manuel jamais automatisé** :
+  `docker-entrypoint.sh` lance `prisma migrate deploy` (pas `migrate dev`)
+  avant `node server.js` à chaque démarrage du conteneur `app` ; le seed
+  (`prisma/seed.ts`, qui fait des `deleteMany`) ne tourne jamais tout seul
+  — commande dédiée documentée dans `DEPLOIEMENT.md`
+  (`docker compose exec app npx prisma db seed`), à lancer une seule fois.
+- **Volume `uploads`** déjà prêt sur `/app/uploads` dans le conteneur
+  `app`, pour la future fonctionnalité de pièce jointe (`PieceJointe`,
+  non implémentée) — aucun changement de configuration Docker nécessaire
+  le jour où elle sera développée.
+- `prisma`, `tsx` et `dotenv` sont dans `dependencies` (pas
+  `devDependencies`) : nécessaires au runtime du conteneur (migrations,
+  seed manuel), pas seulement au build.
+
 ## Socle Portail : statut
 
 Le Socle Portail est **terminé** : authentification (Auth.js v5,

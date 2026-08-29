@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sim_portail}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?La variable POSTGRES_PASSWORD doit etre definie (copiez .env.example vers .env)}"
+      POSTGRES_DB: ${POSTGRES_DB:-sim_portail}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sim_portail} -d ${POSTGRES_DB:-sim_portail}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Pas de port exposé à l'hôte par défaut : la base n'est accessible
+    # que depuis le réseau Docker interne (service "app"). Décommenter
+    # uniquement pour un accès direct depuis un client SQL local.
+    # ports:
+    #   - "5432:5432"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # "db" = nom du service ci-dessus, résolu par le réseau Docker
+      # interne créé automatiquement par Compose — jamais "localhost"
+      # depuis le conteneur "app".
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sim_portail}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sim_portail}
+      AUTH_SECRET: "${AUTH_SECRET:?La variable AUTH_SECRET doit etre definie (voir DEPLOIEMENT.md : openssl rand -base64 32)}"
+      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
+      # Auth.js v5 : fait confiance à l'en-tête Host de la requête entrante
+      # plutôt que d'exiger une correspondance stricte avec AUTH_URL —
+      # nécessaire ici car l'app tourne derrière le mappage de port Docker.
+      AUTH_TRUST_HOST: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      # Stockage des futures pièces jointes (voir Dockerfile) — non utilisé
+      # tant que la fonctionnalité d'upload n'est pas implémentée, mais
+      # l'infrastructure est prête à l'accueillir sans changement de
+      # configuration.
+      - uploads:/app/uploads
+
+volumes:
+  postgres_data:
+  uploads:

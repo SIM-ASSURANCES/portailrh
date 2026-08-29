@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ... sauf le gabarit documenté (Docker, Tâche 4) : aucun secret réel dedans,
+# doit être commité pour que quiconque clone le repo sache quelles
+# variables définir.
+!.env.example
 
 # vercel
 .vercel
