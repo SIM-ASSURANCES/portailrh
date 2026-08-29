@@ -1,20 +1,46 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { Document, Font, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 
 /**
  * Montserrat n'est disponible côté serveur que via `next/font/google` (qui
  * ne produit qu'une classe CSS pour le navigateur, inutilisable par
- * @react-pdf/renderer). Le rendu PDF tourne dans un Route Handler Node, donc
- * on enregistre directement les fichiers statiques Google Fonts (URLs
- * versionnées, stables tant que Google ne publie pas une nouvelle version
- * de la police — vérifié accessible directement via ces URLs `fonts.gstatic.com`).
+ * @react-pdf/renderer). Le rendu PDF tourne dans un Route Handler Node.
+ *
+ * **Fichiers bundlés localement (`./fonts/*.ttf`), pas d'URL distante,
+ * pas de `__dirname`.** Deux incidents constatés en vérification manuelle
+ * avant ce choix : (1) les URLs `fonts.gstatic.com` (documentées comme
+ * stables au Ticket 9) ont provoqué un `ConnectTimeoutError` reproductible
+ * lors de la génération d'un reçu, y compris après redémarrage du serveur
+ * — un souci réseau ponctuel au premier rendu suffit à rendre
+ * `Font.register` en échec pour toute la durée de vie du process (react-pdf
+ * ne retente jamais un chargement de police en échec) ; (2) une première
+ * correction via `path.join(__dirname, ...)` a échoué à son tour :
+ * Turbopack réécrit `__dirname` vers un chemin racine virtuel
+ * (`C:\ROOT\...`) qui n'existe pas sur le disque réel (`ENOENT`). Solution
+ * robuste retenue : lire chaque fichier en `Buffer` une seule fois au
+ * chargement du module via `process.cwd()` (toujours la racine du projet
+ * pour `next dev`/`next start`, jamais virtualisé par le bundler), puis
+ * l'encoder en data URL base64 passée à `src` (`@react-pdf/font` accepte
+ * nativement ce format) — les données de police vivent alors entièrement
+ * en mémoire, sans plus jamais retoucher le disque ni le réseau au moment
+ * du rendu.
  */
+const FONTS_DIR = path.join(process.cwd(), "src/lib/pdf/fonts");
+
+function fontDataUrl(fileName: string): string {
+  const buffer = readFileSync(path.join(FONTS_DIR, fileName));
+  return `data:font/ttf;base64,${buffer.toString("base64")}`;
+}
+
 Font.register({
   family: "Montserrat",
   fonts: [
-    { src: "https://fonts.gstatic.com/s/montserrat/v31/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Ew-.ttf", fontWeight: 400 },
-    { src: "https://fonts.gstatic.com/s/montserrat/v31/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtZ6Ew-.ttf", fontWeight: 500 },
-    { src: "https://fonts.gstatic.com/s/montserrat/v31/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCu170w-.ttf", fontWeight: 600 },
-    { src: "https://fonts.gstatic.com/s/montserrat/v31/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCuM70w-.ttf", fontWeight: 700 },
+    { src: fontDataUrl("Montserrat-Regular.ttf"), fontWeight: 400 },
+    { src: fontDataUrl("Montserrat-Medium.ttf"), fontWeight: 500 },
+    { src: fontDataUrl("Montserrat-SemiBold.ttf"), fontWeight: 600 },
+    { src: fontDataUrl("Montserrat-Bold.ttf"), fontWeight: 700 },
   ],
 });
 
@@ -37,6 +63,8 @@ const COLORS = {
   border: "#e2e8f0",
   mutedForeground: "#64748b",
   foreground: "#0f172a",
+  warning: "#bf470c",
+  success: "#16a34a",
 };
 
 const styles = StyleSheet.create({
@@ -111,6 +139,11 @@ const styles = StyleSheet.create({
     fontWeight: 700,
     color: COLORS.primary,
   },
+  statValueMedium: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: COLORS.foreground,
+  },
   badge: {
     alignSelf: "flex-start",
     borderRadius: 4,
@@ -183,6 +216,12 @@ export interface ReceiptData {
   confirmeLe: Date;
   auteurNom: string;
   genereLe: Date;
+  /** Montant total de la Demande (pas seulement ce règlement). */
+  montantDemande: number;
+  /** getTotalRegle(demandeId) au moment de la génération — état le plus à jour, pas figé à la date du règlement. */
+  totalRegleADate: number;
+  /** getResteARegler(demandeId), même logique de fraîcheur. */
+  resteARegler: number;
 }
 
 function formatMontant(montant: number): string {
@@ -253,6 +292,31 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
               >
                 {modeIsCaisse ? "Caisse" : "Banque"}
               </Text>
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Situation de la demande</Text>
+            <View style={styles.statsRow}>
+              <View style={styles.statCell}>
+                <Text style={styles.statLabel}>Montant demandé</Text>
+                <Text style={styles.statValueMedium}>{formatMontant(data.montantDemande)}</Text>
+              </View>
+              <View style={styles.statCell}>
+                <Text style={styles.statLabel}>Total réglé à ce jour</Text>
+                <Text style={styles.statValueMedium}>{formatMontant(data.totalRegleADate)}</Text>
+              </View>
+              <View style={styles.statCell}>
+                <Text style={styles.statLabel}>Reste à régler</Text>
+                <Text
+                  style={[
+                    styles.statValueMedium,
+                    { color: data.resteARegler > 0 ? COLORS.warning : COLORS.success },
+                  ]}
+                >
+                  {formatMontant(data.resteARegler)}
+                </Text>
+              </View>
             </View>
           </View>
 

@@ -60,10 +60,16 @@ export default async function ReportingPage({
     (acc, r) => ({
       nombreDemandes: acc.nombreDemandes + r.nombreDemandes,
       montantDemande: acc.montantDemande + r.montantDemande,
+      montantValide: acc.montantValide + r.montantValide,
       montantRegle: acc.montantRegle + r.montantRegle,
+      montantRegleCaisse: acc.montantRegleCaisse + r.montantRegleCaisse,
+      montantRegleBanque: acc.montantRegleBanque + r.montantRegleBanque,
     }),
-    { nombreDemandes: 0, montantDemande: 0, montantRegle: 0 }
+    { nombreDemandes: 0, montantDemande: 0, montantValide: 0, montantRegle: 0, montantRegleCaisse: 0, montantRegleBanque: 0 }
   );
+  // "Reste à régler" du total général recalculé à partir des totaux
+  // agrégés (jamais négatif) — cohérent avec le calcul par ligne.
+  const totalResteARegler = Math.max(0, total.montantValide - total.montantRegle);
 
   const rowsAvecBudget = rows.filter((r): r is ReportingRow & { budgetAlloue: number } => r.budgetAlloue != null);
 
@@ -108,14 +114,18 @@ export default async function ReportingPage({
                 <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Catégorie</th>
                 <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Objet</th>
                 <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Nb. demandes</th>
-                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Montant demandé</th>
-                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Montant réglé</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Demandé</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Validé</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Réglé</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Reste à régler</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Réglé Caisse</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Réglé Banque</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border bg-surface">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">
+                  <td colSpan={9} className="px-4 py-6 text-center text-muted-foreground">
                     Aucune demande ne correspond à ces filtres.
                   </td>
                 </tr>
@@ -129,7 +139,19 @@ export default async function ReportingPage({
                       {r.montantDemande.toLocaleString("fr-FR")} FCFA
                     </td>
                     <td className="px-4 py-2 text-right text-foreground">
+                      {r.montantValide.toLocaleString("fr-FR")} FCFA
+                    </td>
+                    <td className="px-4 py-2 text-right text-foreground">
                       {r.montantRegle.toLocaleString("fr-FR")} FCFA
+                    </td>
+                    <td className="px-4 py-2 text-right text-foreground">
+                      {r.resteARegler.toLocaleString("fr-FR")} FCFA
+                    </td>
+                    <td className="px-4 py-2 text-right text-foreground">
+                      {r.montantRegleCaisse.toLocaleString("fr-FR")} FCFA
+                    </td>
+                    <td className="px-4 py-2 text-right text-foreground">
+                      {r.montantRegleBanque.toLocaleString("fr-FR")} FCFA
                     </td>
                   </tr>
                 ))
@@ -144,7 +166,19 @@ export default async function ReportingPage({
                     {total.montantDemande.toLocaleString("fr-FR")} FCFA
                   </td>
                   <td className="px-4 py-2 text-right text-foreground">
+                    {total.montantValide.toLocaleString("fr-FR")} FCFA
+                  </td>
+                  <td className="px-4 py-2 text-right text-foreground">
                     {total.montantRegle.toLocaleString("fr-FR")} FCFA
+                  </td>
+                  <td className="px-4 py-2 text-right text-foreground">
+                    {totalResteARegler.toLocaleString("fr-FR")} FCFA
+                  </td>
+                  <td className="px-4 py-2 text-right text-foreground">
+                    {total.montantRegleCaisse.toLocaleString("fr-FR")} FCFA
+                  </td>
+                  <td className="px-4 py-2 text-right text-foreground">
+                    {total.montantRegleBanque.toLocaleString("fr-FR")} FCFA
                   </td>
                 </tr>
               </tfoot>

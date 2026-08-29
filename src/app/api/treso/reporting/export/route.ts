@@ -145,8 +145,12 @@ export async function GET(request: NextRequest) {
     { header: "Catégorie", key: "categorie", width: 18 },
     { header: "Objet", key: "objet", width: 26 },
     { header: "Nb. demandes", key: "nombre", width: 14 },
-    { header: "Montant demandé (FCFA)", key: "montantDemande", width: 20 },
-    { header: "Montant réglé (FCFA)", key: "montantRegle", width: 20 },
+    { header: "Demandé (FCFA)", key: "montantDemande", width: 18 },
+    { header: "Validé (FCFA)", key: "montantValide", width: 18 },
+    { header: "Réglé (FCFA)", key: "montantRegle", width: 18 },
+    { header: "Reste à régler (FCFA)", key: "resteARegler", width: 20 },
+    { header: "Réglé Caisse (FCFA)", key: "montantRegleCaisse", width: 18 },
+    { header: "Réglé Banque (FCFA)", key: "montantRegleBanque", width: 18 },
   ];
   rows.forEach((r) =>
     sheetReporting.addRow({
@@ -154,15 +158,25 @@ export async function GET(request: NextRequest) {
       objet: r.objetLabel,
       nombre: r.nombreDemandes,
       montantDemande: r.montantDemande,
+      montantValide: r.montantValide,
       montantRegle: r.montantRegle,
+      resteARegler: r.resteARegler,
+      montantRegleCaisse: r.montantRegleCaisse,
+      montantRegleBanque: r.montantRegleBanque,
     })
   );
+  const totalMontantValide = rows.reduce((s, r) => s + r.montantValide, 0);
+  const totalMontantRegle = rows.reduce((s, r) => s + r.montantRegle, 0);
   const totalRow = sheetReporting.addRow({
     categorie: "Total général",
     objet: "",
     nombre: rows.reduce((s, r) => s + r.nombreDemandes, 0),
     montantDemande: rows.reduce((s, r) => s + r.montantDemande, 0),
-    montantRegle: rows.reduce((s, r) => s + r.montantRegle, 0),
+    montantValide: totalMontantValide,
+    montantRegle: totalMontantRegle,
+    resteARegler: Math.max(0, totalMontantValide - totalMontantRegle),
+    montantRegleCaisse: rows.reduce((s, r) => s + r.montantRegleCaisse, 0),
+    montantRegleBanque: rows.reduce((s, r) => s + r.montantRegleBanque, 0),
   });
   totalRow.font = { bold: true };
   styleHeaderRow(sheetReporting);

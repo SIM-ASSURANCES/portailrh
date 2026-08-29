@@ -1198,14 +1198,30 @@ nommage que `RetourCaisse.receptionneAt`), renseigné dans
 `confirmerReglementAction` (Ticket 4) au moment précis de la confirmation.
 Migration `20260828225240_add_confirme_at_reglement`.
 
-**Police Montserrat côté PDF** — `next/font/google` ne produit qu'une classe
-CSS pour le navigateur, inutilisable par @react-pdf/renderer (rendu Node,
-pas de DOM). Le gabarit (`src/lib/pdf/ReceiptDocument.tsx`) enregistre donc
-directement les 4 graisses (400/500/600/700) via `Font.register()` en
-pointant les URLs statiques versionnées de `fonts.gstatic.com` (mêmes
-fichiers que ceux que `next/font/google` télécharge à la compilation pour
-le reste du portail — le projet dépend déjà de cette même infrastructure
-Google Fonts, ce n'est pas une nouvelle classe de dépendance externe).
+**Police Montserrat côté PDF — fichiers bundlés localement, pas d'URL
+distante** (corrigé lors d'un audit de conformité ultérieur). Choix initial :
+`Font.register()` pointait les URLs statiques versionnées de
+`fonts.gstatic.com` (mêmes fichiers que `next/font/google` télécharge à la
+compilation pour le reste du portail). **Deux incidents constatés en
+vérification manuelle** ont invalidé ce choix : (1) un `ConnectTimeoutError`
+réseau ponctuel au premier rendu a suffi à faire échouer `Font.register`
+pour **toute la durée de vie du process** (react-pdf ne retente jamais un
+chargement de police en échec) — un fetch réseau à chaque génération de PDF
+est fondamentalement fragile pour une fonctionnalité de production ; (2)
+une première correction via `path.join(__dirname, ...)` a échoué à son
+tour : Turbopack réécrit `__dirname` vers un chemin racine virtuel
+(`C:\ROOT\...`) qui n'existe pas sur le disque réel. Solution retenue : les
+4 fichiers `.ttf` (400/500/600/700) sont commités dans
+`src/lib/pdf/fonts/`, lus en `Buffer` une seule fois au chargement du
+module via `path.join(process.cwd(), "src/lib/pdf/fonts")` (`process.cwd()`
+est toujours la racine du projet pour `next dev`/`next start`, jamais
+virtualisé par le bundler), puis encodés en data URL base64 passée à `src`
+(`@react-pdf/font` accepte nativement ce format) — les données de police
+vivent entièrement en mémoire après le premier chargement du module,
+aucune dépendance réseau ni résolution de chemin fragile au moment du
+rendu. **Point de vigilance pour un build de production** : cette approche
+suppose que `process.cwd()` reste la racine du projet ; à revérifier si le
+déploiement change ce répertoire de travail (ex: mode `standalone`).
 
 **Pas de logo image** — `logo-sim-blanc.webp` pose deux problèmes distincts
 pour ce reçu : (1) format WebP non fiablement supporté par le moteur de
@@ -1245,6 +1261,19 @@ reconnaît `route` comme nom de fichier spécial quelle que soit l'extension
   `DEM-2026-000123-R1`, `-R2`...) — dérivée, sans nouveau champ en base.
 - `Content-Disposition: attachment; filename="recu-DEM-2026-000123-R1.pdf"`.
 
+**Contenu complet du reçu** (section "Situation de la demande" ajoutée lors
+d'un audit de conformité, le reste dès la version initiale) : référence de
+la demande, date du règlement, montant réglé (ce règlement précis), mode
+(badge Caisse/Banque), demandeur, catégorie, objet, auteur du règlement,
+référence du reçu — **plus, dans une section dédiée, l'état le plus à jour
+de la demande au moment de la génération** (pas figé à la date de ce
+règlement) : montant demandé (`Demande.montant`), total réglé à ce jour
+(`getTotalRegle(demandeId)`) et reste à régler
+(`getResteARegler(demandeId)`, vert si nul, orange sinon — même convention
+que "Reste à régler" ailleurs dans l'app). Un même règlement téléchargé à
+deux moments différents peut donc afficher un reste à régler différent si
+d'autres règlements sont intervenus depuis sur la même demande.
+
 **Boutons "Télécharger le reçu"** — sur `ReglementRow.tsx` (Finance,
 Ticket 4) pour tout règlement `estConfirme && !estAnnule`, **sans condition
 sur `canEffectuerReglement`** : la route autorise déjà n'importe quelle
@@ -1276,6 +1305,15 @@ authentifiée vers sa route de reçu renvoie **404** — la défense en
 profondeur ne repose pas que sur l'absence du bouton. Toutes les données de
 test (demandes, second compte collaborateur) supprimées après vérification.
 
+**Audit de conformité — vérifié explicitement** : reçu téléchargé pour une
+demande `CLOTUREE_TOTALE` (montant 25 000 FCFA, entièrement réglée par un
+unique règlement Caisse de 25 000 FCFA) — la section "Situation de la
+demande" affiche Montant demandé 25 000 FCFA, Total réglé à ce jour
+25 000 FCFA, Reste à régler 0 FCFA (en vert), cohérent avec l'état affiché
+au même moment sur l'écran Finance. Mise en page relue : la nouvelle
+section s'insère proprement entre les informations du règlement et le
+détail de la demande, sans rogner ni chevaucher le reste du contenu.
+
 ## Module Trésorerie : Ticket 10 — Reporting et Export
 
 **Statut : terminé. Dernier ticket du backlog initial du Module Trésorerie.**
@@ -1301,13 +1339,33 @@ implémentations séparées des mêmes données :
   search params de l'URL (période `du`/`au`, `demandeurId`, `service`,
   `categorieId`, `objetId`, `mode`, `statut`) ; `au` traité comme fin de
   journée incluse (23:59:59.999).
-- `getReportingRows(filters)` — tableau agrégé par Catégorie puis Objet
-  (nombre de demandes, montant demandé, montant réglé, budget alloué
-  cumulé), calculé en **une requête `findMany` + un `groupBy`** (jamais une
-  requête par demande). Si `mode` est filtré, seules les demandes ayant au
-  moins un règlement confirmé de ce mode sont retenues, et seul ce mode
-  compte dans le montant réglé (un règlement Banque ne "pollue" jamais un
-  filtre Caisse, et réciproquement).
+- `getReportingRows(filters)` — tableau agrégé par Catégorie puis Objet,
+  **six colonnes de montants exigées par le cahier des charges** (section 15,
+  complétées lors d'un audit de conformité) + le nombre de demandes et le
+  budget alloué cumulé (Tâche 2) :
+  - **Demandé** — somme des montants de **toutes** les demandes du groupe
+    correspondant aux filtres, quel que soit leur statut (y compris
+    `REJETEE` et `EN_ATTENTE`). Convention documentée ici : c'est la colonne
+    qui répond à "combien a-t-on demandé au total", par opposition aux
+    colonnes suivantes qui ne comptent que ce qui a réellement avancé.
+  - **Validé** — somme des montants des demandes ayant au moins atteint
+    `VALIDEE` (`VALIDEE`, `CLOTUREE_TOTALE` ou `CLOTUREE_PARTIELLE`). Une
+    demande `REJETEE` ne contribue **jamais** à cette colonne.
+  - **Réglé** — somme de tous les règlements confirmés et non annulés
+    (Caisse + Banque confondus) des demandes du groupe.
+  - **Reste à régler** — `max(0, Validé - Réglé)`, jamais négatif.
+  - **Réglé Caisse** / **Réglé Banque** — même somme que "Réglé", ventilée
+    par mode. Invariant garanti pour **chaque ligne** : `Réglé = Réglé
+    Caisse + Réglé Banque`.
+
+  Calculé en **une requête `findMany` + un seul `groupBy` par
+  `["demandeId", "mode"]`** (`getMontantsRegleParDemande`), jamais une
+  requête par demande. **Piège évité lors de la correction** : si `mode`
+  est filtré, ce filtre ne sert **qu'à sélectionner quelles demandes
+  apparaissent** (celles ayant au moins un règlement confirmé de ce mode
+  précis) — il ne tronque plus les montants "Réglé"/"Réglé Caisse"/"Réglé
+  Banque" d'une demande déjà retenue, contrairement à une première version
+  où filtrer par Caisse aurait rendu "Réglé Banque" incohérent avec "Réglé".
 - `getReportingDemandesDetail` / `getReportingReglementsDetail` /
   `getReportingRetoursDetail` / `getReportingJournalDetail` — les listes
   détaillées des 4 premières feuilles de l'export, dérivées du **même**
@@ -1344,7 +1402,7 @@ pour un même jeu de filtres. **6 feuilles**, en-tête bleu institutionnel
 | Règlements | Référence demande, montant, mode, date de confirmation, auteur |
 | Retours de caisse | Référence demande, montant dépensé, montant à retourner, justification, statut (Réceptionné/En attente), date |
 | Journal de caisse | Type, montant, source, date — filtré par période uniquement |
-| Reporting | Le tableau agrégé de l'écran, avec sa ligne "Total général" |
+| Reporting | Le tableau agrégé de l'écran (Demandé/Validé/Réglé/Reste à régler/Réglé Caisse/Réglé Banque), avec sa ligne "Total général" |
 | Suivi budgétaire | Budget alloué / montant réglé / écart, écart négatif (dépassement) en rouge |
 
 Bouton "Exporter en Excel" sur l'écran : lien simple (`<a href=...>`)
@@ -1379,6 +1437,24 @@ des données ne retourne aucune ligne). Le compte collaborateur (sans
 `treso.voir_reporting`) ne voit ni le lien ni n'accède à la page
 (redirection + toast) ni à la route d'export (403). Toutes les données de
 test nettoyées, serveur arrêté.
+
+**Audit de conformité — vérifié explicitement** (jeu de données couvrant
+les 4 statuts distincts : `REJETEE`, `VALIDEE` non réglée, `VALIDEE`
+partiellement réglée avec mélange Caisse/Banque, `CLOTUREE_TOTALE`) :
+
+| Groupe | Nb | Demandé | Validé | Réglé | Reste | Caisse | Banque |
+|---|---|---|---|---|---|---|---|
+| Carburant / Carburant véhicule de liaison | 2 | 75 000 | 75 000 | 55 000 | 20 000 | 45 000 | 10 000 |
+| Déplacements / Déplacement équipe commerciale | 2 | 35 000 | 15 000 | 0 | 15 000 | 0 | 0 |
+| **Total général** | **4** | **110 000** | **90 000** | **55 000** | **35 000** | **45 000** | **10 000** |
+
+La demande `REJETEE` (20 000 FCFA, groupe Déplacements) contribue à
+"Demandé" (35 000 = 20 000 + 15 000) mais **pas** à "Validé" (15 000, la
+seule demande `VALIDEE` du groupe), confirmant que la colonne "Demandé"
+inclut délibérément tous les statuts tandis que "Validé"/"Réglé" filtrent
+strictement. Export Excel (feuille "Reporting") relu programmatiquement :
+chiffres strictement identiques à l'écran, ligne par ligne et sur le total
+général. Toutes les données de test nettoyées, serveur arrêté.
 
 **Avec ce ticket, le backlog initial du Module Trésorerie (Tickets 1 à 10)
 est entièrement complété** — sections 2 à 15 du cahier des charges :

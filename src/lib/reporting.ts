@@ -80,26 +80,45 @@ function buildDemandeWhere(filters: ReportingFilters): Prisma.DemandeWhereInput 
   };
 }
 
+export interface MontantsRegle {
+  total: number;
+  caisse: number;
+  banque: number;
+}
+
 /**
- * Montant réglé par demande (règlements confirmés, non annulés), groupé en
- * une seule requête — jamais une requête `getTotalRegle()` par demande. Si
- * `mode` est fourni, seuls les règlements de ce mode sont comptés : une
- * demande sans aucun règlement de ce mode n'apparaît alors pas dans la map
- * (utilisé ensuite pour l'exclure du reporting quand le filtre mode est actif).
+ * Montants réglés par demande (règlements confirmés, non annulés), groupés
+ * par demande ET par mode en **une seule requête** `groupBy` — jamais une
+ * requête par demande. Renvoie systématiquement les trois totaux (global,
+ * Caisse, Banque) pour que `Réglé = Réglé Caisse + Réglé Banque` reste vrai
+ * pour CHAQUE ligne du reporting, quel que soit le filtre `mode` actif :
+ * ce dernier ne sert plus qu'à sélectionner QUELLES demandes apparaissent
+ * (celles ayant au moins un règlement de ce mode), jamais à tronquer les
+ * montants affichés d'une demande déjà retenue.
  */
-async function getMontantRegleParDemande(
-  demandeIds: string[],
-  mode?: ModeReglement
-): Promise<Map<string, number>> {
+async function getMontantsRegleParDemande(demandeIds: string[]): Promise<Map<string, MontantsRegle>> {
   if (demandeIds.length === 0) {
     return new Map();
   }
   const sommes = await prisma.reglement.groupBy({
-    by: ["demandeId"],
-    where: { demandeId: { in: demandeIds }, estConfirme: true, estAnnule: false, ...(mode ? { mode } : {}) },
+    by: ["demandeId", "mode"],
+    where: { demandeId: { in: demandeIds }, estConfirme: true, estAnnule: false },
     _sum: { montant: true },
   });
-  return new Map(sommes.map((s) => [s.demandeId, Number(s._sum.montant ?? 0)]));
+
+  const map = new Map<string, MontantsRegle>();
+  for (const s of sommes) {
+    const montant = Number(s._sum.montant ?? 0);
+    const entry = map.get(s.demandeId) ?? { total: 0, caisse: 0, banque: 0 };
+    entry.total += montant;
+    if (s.mode === "CAISSE") {
+      entry.caisse += montant;
+    } else {
+      entry.banque += montant;
+    }
+    map.set(s.demandeId, entry);
+  }
+  return map;
 }
 
 interface DemandeAvecRelations {
@@ -119,29 +138,37 @@ interface DemandeAvecRelations {
 /**
  * Demandes correspondant aux filtres, **après application du filtre
  * `mode`** (exclusion des demandes sans aucun règlement confirmé de ce
- * mode) — fonction interne partagée par `getReportingRows` et
+ * mode précis) — fonction interne partagée par `getReportingRows` et
  * `getReportingDemandesDetail`, pour ne calculer cette liste qu'une fois
  * par appel et garantir que le tableau agrégé et le détail Excel désignent
- * toujours le même ensemble de demandes.
+ * toujours le même ensemble de demandes. Le filtre `mode` ne sert qu'à
+ * SÉLECTIONNER les demandes retenues ; les montants renvoyés
+ * (`montantsRegleParDemande`) restent les totaux complets (tous modes) de
+ * chaque demande retenue — voir `getMontantsRegleParDemande`.
  */
 async function getDemandesFiltrees(
   filters: ReportingFilters
-): Promise<{ demandes: DemandeAvecRelations[]; montantRegleParDemande: Map<string, number> }> {
+): Promise<{ demandes: DemandeAvecRelations[]; montantsRegleParDemande: Map<string, MontantsRegle> }> {
   const demandes = await prisma.demande.findMany({
     where: buildDemandeWhere(filters),
     include: { categorie: true, objet: true, createur: true },
     orderBy: { createdAt: "asc" },
   });
 
-  const montantRegleParDemande = await getMontantRegleParDemande(
-    demandes.map((d) => d.id),
-    filters.mode
-  );
+  const montantsRegleParDemande = await getMontantsRegleParDemande(demandes.map((d) => d.id));
 
-  const demandesFiltrees = filters.mode ? demandes.filter((d) => montantRegleParDemande.has(d.id)) : demandes;
+  const demandesFiltrees = filters.mode
+    ? demandes.filter((d) => {
+        const montants = montantsRegleParDemande.get(d.id);
+        if (!montants) return false;
+        return filters.mode === "CAISSE" ? montants.caisse > 0 : montants.banque > 0;
+      })
+    : demandes;
 
-  return { demandes: demandesFiltrees, montantRegleParDemande };
+  return { demandes: demandesFiltrees, montantsRegleParDemande };
 }
+
+const STATUTS_VALIDES: readonly StatutDemande[] = ["VALIDEE", "CLOTUREE_TOTALE", "CLOTUREE_PARTIELLE"];
 
 export interface ReportingRow {
   categorieId: string | null;
@@ -149,33 +176,60 @@ export interface ReportingRow {
   objetId: string | null;
   objetLabel: string;
   nombreDemandes: number;
+  /** Somme des montants de TOUTES les demandes du groupe, quel que soit leur statut. */
   montantDemande: number;
+  /** Somme des montants des demandes ayant au moins atteint VALIDEE (VALIDEE, CLOTUREE_TOTALE, CLOTUREE_PARTIELLE). */
+  montantValide: number;
+  /** Somme de tous les règlements confirmés et non annulés (Caisse + Banque). */
   montantRegle: number;
+  /** max(0, montantValide - montantRegle) — jamais négatif. */
+  resteARegler: number;
+  /** Règlements confirmés et non annulés en mode CAISSE uniquement. */
+  montantRegleCaisse: number;
+  /** Règlements confirmés et non annulés en mode BANQUE uniquement. */
+  montantRegleBanque: number;
   /** null si aucune demande de ce groupe n'a de `budgetDisponible` renseigné. */
   budgetAlloue: number | null;
 }
 
 /**
- * Tableau agrégé par Catégorie puis Objet (Ticket 10, Tâche 1) : nombre de
- * demandes, montant total demandé, montant total réglé — plus le budget
- * alloué cumulé (Tâche 2, suivi budgétaire), calculés en mémoire à partir
- * d'une seule requête `findMany` + un seul `groupBy`, jamais une requête
- * par demande.
+ * Tableau agrégé par Catégorie puis Objet (Ticket 10, Tâche 1 ; complété
+ * lors de l'audit de conformité avec les 4 colonnes explicitement exigées
+ * par le cahier des charges — section 15) : nombre de demandes, montant
+ * demandé (toutes demandes), montant validé (VALIDEE ou clôturée), montant
+ * réglé (Caisse + Banque confondus), reste à régler, et la répartition
+ * Caisse/Banque du réglé — plus le budget alloué cumulé (Tâche 2, suivi
+ * budgétaire). Calculés en mémoire à partir d'une seule requête `findMany`
+ * + un seul `groupBy`, jamais une requête par demande.
+ *
+ * Convention documentée (CLAUDE.md) : "Demandé" inclut TOUTES les demandes
+ * correspondant aux filtres actifs, quel que soit leur statut (y compris
+ * REJETEE et EN_ATTENTE) — c'est la colonne qui répond à "combien a-t-on
+ * demandé au total", par opposition à "Validé"/"Réglé" qui ne comptent que
+ * ce qui a réellement avancé dans le circuit. Une demande REJETEE ne
+ * contribue donc jamais à "Validé", "Réglé", "Reste à régler" ni aux
+ * colonnes Caisse/Banque — uniquement à "Demandé" (et au nombre de
+ * demandes).
  */
 export async function getReportingRows(filters: ReportingFilters): Promise<ReportingRow[]> {
-  const { demandes, montantRegleParDemande } = await getDemandesFiltrees(filters);
+  const { demandes, montantsRegleParDemande } = await getDemandesFiltrees(filters);
 
   const buckets = new Map<string, ReportingRow>();
   for (const d of demandes) {
     const key = `${d.categorieId ?? "none"}|${d.objetId ?? "none"}`;
-    const montantRegle = montantRegleParDemande.get(d.id) ?? 0;
+    const montants = montantsRegleParDemande.get(d.id) ?? { total: 0, caisse: 0, banque: 0 };
+    const estValidee = STATUTS_VALIDES.includes(d.statut);
+    const montantValideContribution = estValidee ? Number(d.montant) : 0;
     const budget = d.budgetDisponible != null ? Number(d.budgetDisponible) : null;
 
     const existing = buckets.get(key);
     if (existing) {
       existing.nombreDemandes += 1;
       existing.montantDemande += Number(d.montant);
-      existing.montantRegle += montantRegle;
+      existing.montantValide += montantValideContribution;
+      existing.montantRegle += montants.total;
+      existing.montantRegleCaisse += montants.caisse;
+      existing.montantRegleBanque += montants.banque;
       if (budget != null) {
         existing.budgetAlloue = (existing.budgetAlloue ?? 0) + budget;
       }
@@ -187,13 +241,22 @@ export async function getReportingRows(filters: ReportingFilters): Promise<Repor
         objetLabel: d.objet?.label ?? "Non renseigné",
         nombreDemandes: 1,
         montantDemande: Number(d.montant),
-        montantRegle,
+        montantValide: montantValideContribution,
+        montantRegle: montants.total,
+        resteARegler: 0,
+        montantRegleCaisse: montants.caisse,
+        montantRegleBanque: montants.banque,
         budgetAlloue: budget,
       });
     }
   }
 
-  return Array.from(buckets.values()).sort(
+  const rows = Array.from(buckets.values());
+  for (const row of rows) {
+    row.resteARegler = Math.max(0, row.montantValide - row.montantRegle);
+  }
+
+  return rows.sort(
     (a, b) => a.categorieLabel.localeCompare(b.categorieLabel) || a.objetLabel.localeCompare(b.objetLabel)
   );
 }

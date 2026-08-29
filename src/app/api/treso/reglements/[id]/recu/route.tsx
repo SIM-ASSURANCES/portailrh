@@ -4,6 +4,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { ReceiptDocument, type ReceiptData } from "@/lib/pdf/ReceiptDocument";
+import { getResteARegler, getTotalRegle } from "@/lib/tresorerie";
 
 /**
  * Génère le reçu PDF d'un règlement confirmé (Ticket 9).
@@ -64,6 +65,16 @@ export async function GET(
   const rang = reglementsConfirmes.findIndex((r) => r.id === reglement.id) + 1;
   const recuReference = `${reglement.demande.reference}-R${rang}`;
 
+  // Correction (audit de conformité) : montant demandé, total réglé et
+  // reste à régler sont l'état LE PLUS À JOUR au moment de la génération du
+  // reçu, jamais figés à la date de ce règlement précis — un même règlement
+  // téléchargé à deux moments différents peut donc afficher un "reste à
+  // régler" différent si d'autres règlements sont intervenus depuis.
+  const [totalRegleADate, resteARegler] = await Promise.all([
+    getTotalRegle(reglement.demandeId),
+    getResteARegler(reglement.demandeId),
+  ]);
+
   const data: ReceiptData = {
     recuReference,
     demandeReference: reglement.demande.reference,
@@ -75,6 +86,9 @@ export async function GET(
     confirmeLe: reglement.confirmeAt ?? reglement.createdAt,
     auteurNom: reglement.auteur.fullName,
     genereLe: new Date(),
+    montantDemande: Number(reglement.demande.montant),
+    totalRegleADate,
+    resteARegler,
   };
 
   const buffer = await renderToBuffer(<ReceiptDocument data={data} />);
