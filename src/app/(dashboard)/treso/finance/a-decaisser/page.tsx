@@ -3,18 +3,23 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 
 import { ADecaisserTable } from "./ADecaisserTable";
 
 /**
- * "Demandes à décaisser" — demandes `VALIDEE` dont il reste quelque chose à
- * régler, triées par ancienneté de validation croissante (les plus
- * anciennes en premier, même convention que les autres files d'attente
- * Finance). Cible du clic sur l'indicateur du même nom du dashboard
- * (Ticket 8) : même définition exacte (reste à régler > 0), calculée en 2
- * requêtes groupées plutôt qu'une par demande (voir
+ * "Demandes à décaisser" — demandes ayant un montant validé dont il reste
+ * quelque chose à régler, triées par ancienneté de validation croissante
+ * (les plus anciennes en premier, même convention que les autres files
+ * d'attente Finance). Cible du clic sur l'indicateur du même nom du
+ * dashboard (Ticket 8) : même définition exacte (reste à régler > 0),
+ * calculée en 2 requêtes groupées plutôt qu'une par demande (voir
  * `dashboardFinance.ts`).
+ *
+ * REFONTE V1 / Phase C (voir CLAUDE.md "Refonte V1 en cours") : la sélection
+ * et le calcul du reste se basent sur `montantValide`, pas le statut
+ * (`STATUTS_VALIDATION_COMPLETE`, Phase B) ni le montant demandé — une
+ * demande `PARTIELLEMENT_VALIDEE` apparaît donc ici dès que son montant
+ * validé dépasse ce qui est déjà réglé (cahier des charges section 4).
  */
 export default async function ADecaisserPage() {
   const session = await getSession();
@@ -22,10 +27,8 @@ export default async function ADecaisserPage() {
     redirect("/?error=acces_refuse_dashboard_finance");
   }
 
-  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
-  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
   const demandes = await prisma.demande.findMany({
-    where: { statut: { in: [...STATUTS_VALIDATION_COMPLETE] } },
+    where: { montantValide: { gt: 0 }, statut: { notIn: ["REJETEE", "CLOTUREE"] } },
     include: { createur: true },
     orderBy: { updatedAt: "asc" },
   });
@@ -40,14 +43,14 @@ export default async function ADecaisserPage() {
 
   const rows = demandes
     .map((d) => {
-      const montant = Number(d.montant);
+      const montantValide = Number(d.montantValide);
       const totalRegle = totalRegleParDemande.get(d.id) ?? 0;
-      const reste = Math.max(0, montant - totalRegle);
+      const reste = Math.max(0, montantValide - totalRegle);
       return {
         id: d.id,
         reference: d.reference,
         createurNom: d.createur.fullName,
-        montant,
+        montantValide,
         reste,
         valideeLe: d.updatedAt,
       };

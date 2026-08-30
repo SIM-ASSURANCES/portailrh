@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -25,12 +24,21 @@ type SimpleActionResult = { status: "success" | "error"; message: string };
  * réceptionnés — un autre utilisateur Finance a pu réceptionner ce même
  * retour entre l'affichage de la liste et ce clic.
  *
- * Défense en profondeur (Ticket 7) : revérifie aussi que la demande liée est
- * toujours `VALIDEE`. Une fois clôturée (même partiellement, précisément le
- * cas d'un retour resté en attente de réception au moment de la clôture),
- * plus aucune réception n'est possible — l'écart constaté est acté par le
- * motif de la clôture partielle, pas rattrapable ensuite par une réception
- * tardive.
+* Défense en profondeur (Ticket 7, corrigée Phase C) : revérifie que la
+ * demande n'est pas `CLOTUREE`. Une fois clôturée (précisément le cas d'un
+ * retour resté en attente de réception au moment de la clôture), plus
+ * aucune réception n'est possible — l'écart constaté est acté par le motif
+ * de la clôture, pas rattrapable ensuite par une réception tardive.
+ *
+ * REFONTE V1 / Phase C : cette garde dépendait de `STATUTS_VALIDATION_COMPLETE`
+ * (Phase B), donc bloquait à tort la réception d'un retour lié à un
+ * règlement confirmé sur une demande seulement `PARTIELLEMENT_VALIDEE` —
+ * or le règlement lui-même est désormais possible dans ce cas (cahier des
+ * charges section 4). L'état pertinent ici est celui du RÈGLEMENT précis
+ * (mode CAISSE, confirmé, non annulé — déjà garanti par
+ * `creerRetourCaisseAction` avant qu'un `RetourCaisse` puisse exister), pas
+ * le statut global de validation de la demande : seule la clôture doit
+ * encore bloquer.
  */
 export async function receptionnerRetourAction(retourId: string): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -49,9 +57,7 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   if (retour.estReceptionne) {
     return { status: "error", message: "Ce retour de caisse est déjà réceptionné." };
   }
-  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
-  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
-  if (!STATUTS_VALIDATION_COMPLETE.includes(retour.reglement.demande.statut)) {
+  if (retour.reglement.demande.statut === "CLOTUREE") {
     return {
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${retour.reglement.demande.statut}).`,

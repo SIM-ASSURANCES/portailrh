@@ -2,16 +2,27 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { getEcart, STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
+import { getEcart } from "@/lib/tresorerie";
 import { prisma } from "@/lib/prisma";
 
 import { ARegulariserTable } from "./ARegulariserTable";
 
 /**
- * "Décaissements à régulariser" — demandes `VALIDEE` entièrement décaissées
- * (reste à régler = 0) mais pas encore clôturées, triées par ancienneté de
- * validation croissante. Cible du clic sur l'indicateur du même nom du
- * dashboard (Ticket 8) : même définition exacte (reste à régler = 0).
+ * "Décaissements à régulariser" — demandes ENTIÈREMENT validées et
+ * entièrement décaissées (reste à régler = 0, calculé sur `montantValide`)
+ * mais pas encore clôturées, triées par ancienneté de validation
+ * croissante. Cible du clic sur l'indicateur du même nom du dashboard
+ * (Ticket 8) : même définition exacte, calculée en 2 requêtes groupées
+ * plutôt qu'une par demande (voir `dashboardFinance.ts`).
+ *
+ * REFONTE V1 / Phase C (voir CLAUDE.md "Refonte V1 en cours") : une demande
+ * seulement `PARTIELLEMENT_VALIDEE` dont la part déjà validée est
+ * intégralement réglée n'apparaît PAS ici (exige en plus
+ * `montantValide >= montant demandé`) — elle n'est pas encore prête pour la
+ * clôture puisqu'un reliquat reste à valider (et pourrait ensuite être
+ * réglé à son tour). Voir `getRepartitionDemandesValidees` dans
+ * `dashboardFinance.ts`, qui applique exactement la même règle pour le KPI
+ * du dashboard.
  *
  * L'écart par demande (`getEcart`, Ticket 7) est calculé demande par
  * demande (`Promise.all`), contrairement au dashboard qui agrège le
@@ -27,10 +38,8 @@ export default async function ARegulariserPage() {
     redirect("/?error=acces_refuse_dashboard_finance");
   }
 
-  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
-  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
   const demandes = await prisma.demande.findMany({
-    where: { statut: { in: [...STATUTS_VALIDATION_COMPLETE] } },
+    where: { montantValide: { gt: 0 }, statut: { notIn: ["REJETEE", "CLOTUREE"] } },
     include: { createur: true },
     orderBy: { updatedAt: "asc" },
   });
@@ -45,9 +54,10 @@ export default async function ARegulariserPage() {
 
   const aRegulariser = demandes
     .map((d) => {
-      const montant = Number(d.montant);
+      const montantValide = Number(d.montantValide);
       const totalRegle = totalRegleParDemande.get(d.id) ?? 0;
-      const reste = Math.max(0, montant - totalRegle);
+      const reste = Math.max(0, montantValide - totalRegle);
+      const estEntierementValidee = montantValide >= Number(d.montant);
       return {
         id: d.id,
         reference: d.reference,
@@ -55,9 +65,10 @@ export default async function ARegulariserPage() {
         totalRegle,
         valideeLe: d.updatedAt,
         reste,
+        estEntierementValidee,
       };
     })
-    .filter((d) => d.reste === 0);
+    .filter((d) => d.reste === 0 && d.estEntierementValidee);
 
   const rows = await Promise.all(
     aRegulariser.map(async (d) => ({

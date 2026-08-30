@@ -157,44 +157,18 @@ export default async function CategoriserDemandePage({
             <ValidationActions demandeId={demande.id} montantDemande={Number(demande.montant)} />
           ) : null}
         </>
-      ) : demande.statut === "PARTIELLEMENT_VALIDEE" ? (
-        <>
-          <CategorisationSummary
-            categorieLabel={demande.categorie?.label}
-            objetLabel={demande.objet?.label}
-            budget={demande.budgetDisponible}
-            lockMessage="Cette demande est partiellement validée : catégorie, objet et budget sont verrouillés."
-          />
-          {canValider ? (
-            <ValidationComplementaireActions
-              demandeId={demande.id}
-              montantRestant={Number(demande.montant) - Number(demande.montantValide ?? 0)}
-            />
+      ) : demande.statut === "REJETEE" ? (
+        <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
+          <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
+            Cette demande a été rejetée.
+          </p>
+          {demande.motifRejet ? (
+            <p className="text-sm text-foreground">
+              <span className="font-medium">Motif : </span>
+              {demande.motifRejet}
+            </p>
           ) : null}
-        </>
-      ) : STATUTS_VALIDATION_COMPLETE.includes(demande.statut) ? (
-        // REFONTE V1 (Phase B) : VALIDEE/VALIDEE_NON_REGLEE/
-        // PARTIELLEMENT_REGLEE/REGLEE — voir STATUTS_VALIDATION_COMPLETE
-        // dans src/lib/tresorerie.ts. Le règlement (ReglementsSection) et la
-        // clôture continuent de raisonner sur le montant DEMANDÉ (pas
-        // encore adapté à `montantValide` — périmètre de la phase
-        // "règlement adapté" à venir), ce qui reste exact ici puisque ces
-        // statuts impliquent par construction montantValide === montant.
-        <>
-          <CategorisationSummary
-            categorieLabel={demande.categorie?.label}
-            objetLabel={demande.objet?.label}
-            budget={demande.budgetDisponible}
-            lockMessage="Cette demande est validée : catégorie, objet et budget sont définitivement verrouillés et ne peuvent plus être modifiés."
-          />
-          <ReglementsSection
-            demandeId={demande.id}
-            montantDemande={Number(demande.montant)}
-            canEffectuerReglement={canEffectuerReglement}
-          />
-          <RegularisationSummary demandeId={demande.id} montantDemande={Number(demande.montant)} />
-          {canCloturerDemande ? <ClotureActions demandeId={demande.id} /> : null}
-        </>
+        </div>
       ) : demande.statut === "CLOTUREE" ? (
         // REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :
         // CLOTUREE_TOTALE/CLOTUREE_PARTIELLE fusionnées en un unique statut
@@ -210,7 +184,7 @@ export default async function CategoriserDemandePage({
             budget={demande.budgetDisponible}
             lockMessage="Catégorie, objet et budget sont définitivement verrouillés."
           />
-          <RegularisationSummary demandeId={demande.id} montantDemande={Number(demande.montant)} />
+          <RegularisationSummary demandeId={demande.id} montantValide={Number(demande.montantValide ?? 0)} />
           {demande.motifCloture ? (
             <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -220,18 +194,42 @@ export default async function CategoriserDemandePage({
             </div>
           ) : null}
         </>
-      ) : demande.statut === "REJETEE" ? (
-        <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
-          <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
-            Cette demande a été rejetée.
-          </p>
-          {demande.motifRejet ? (
-            <p className="text-sm text-foreground">
-              <span className="font-medium">Motif : </span>
-              {demande.motifRejet}
-            </p>
+      ) : demande.montantValide != null && Number(demande.montantValide) > 0 ? (
+        // REFONTE V1 / Phase C (voir CLAUDE.md "Refonte V1 en cours") :
+        // regroupe PARTIELLEMENT_VALIDEE + la famille "montant entièrement
+        // validé" (VALIDEE/VALIDEE_NON_REGLEE/PARTIELLEMENT_REGLEE/REGLEE) —
+        // dès qu'un montant est validé, le règlement est possible sur ce
+        // montant (`ReglementsSection`), que la validation soit totale ou
+        // seulement partielle (cahier des charges section 4). Seule la
+        // validation complémentaire (reliquat) et la clôture distinguent
+        // encore ces deux cas.
+        <>
+          <CategorisationSummary
+            categorieLabel={demande.categorie?.label}
+            objetLabel={demande.objet?.label}
+            budget={demande.budgetDisponible}
+            lockMessage={
+              demande.statut === "PARTIELLEMENT_VALIDEE"
+                ? "Cette demande est partiellement validée : catégorie, objet et budget sont verrouillés."
+                : "Cette demande est validée : catégorie, objet et budget sont définitivement verrouillés et ne peuvent plus être modifiés."
+            }
+          />
+          {demande.statut === "PARTIELLEMENT_VALIDEE" && canValider ? (
+            <ValidationComplementaireActions
+              demandeId={demande.id}
+              montantRestant={Number(demande.montant) - Number(demande.montantValide)}
+            />
           ) : null}
-        </div>
+          <ReglementsSection
+            demandeId={demande.id}
+            montantValide={Number(demande.montantValide)}
+            canEffectuerReglement={canEffectuerReglement}
+          />
+          <RegularisationSummary demandeId={demande.id} montantValide={Number(demande.montantValide)} />
+          {STATUTS_VALIDATION_COMPLETE.includes(demande.statut) && canCloturerDemande ? (
+            <ClotureActions demandeId={demande.id} />
+          ) : null}
+        </>
       ) : (
         <p className="rounded-lg border border-border bg-muted px-4 py-6 text-center text-sm text-muted-foreground">
           Cette demande est au statut «&nbsp;{STATUT_DEMANDE_LABEL[demande.statut]}&nbsp;» : aucune

@@ -8,7 +8,7 @@ interface ADecaisserRow {
   id: string;
   reference: string;
   createurNom: string;
-  montant: number;
+  montantValide: number;
   reste: number;
   valideeLe: Date;
 }
@@ -27,11 +27,11 @@ export function ADecaisserTable({ demandes }: { demandes: ADecaisserRow[] }) {
         { key: "reference", header: "Référence", sortable: true, accessor: (d) => d.reference },
         { key: "createurNom", header: "Créateur", sortable: true, accessor: (d) => d.createurNom },
         {
-          key: "montant",
-          header: "Montant",
+          key: "montantValide",
+          header: "Montant validé",
           sortable: true,
-          accessor: (d) => d.montant,
-          render: (d) => `${d.montant.toLocaleString("fr-FR")} FCFA`,
+          accessor: (d) => d.montantValide,
+          render: (d) => `${d.montantValide.toLocaleString("fr-FR")} FCFA`,
         },
         {
           key: "reste",

@@ -15,11 +15,11 @@ import { getDepensesDeclarees, getRetoursRecus, getTotalRegle } from "@/lib/tres
  */
 export async function RegularisationSummary({
   demandeId,
-  montantDemande,
+  montantValide,
   title = "Régularisation",
 }: {
   demandeId: string;
-  montantDemande: number;
+  montantValide: number;
   title?: string;
 }) {
   const [decaisse, depensesDeclarees, retoursRecus] = await Promise.all([
@@ -65,7 +65,7 @@ export async function RegularisationSummary({
         </div>
       </dl>
       <p className="text-xs text-muted-foreground">
-        Montant validé de la demande : {montantDemande.toLocaleString("fr-FR")} FCFA.
+        Montant validé de la demande : {montantValide.toLocaleString("fr-FR")} FCFA.
       </p>
     </div>
   );

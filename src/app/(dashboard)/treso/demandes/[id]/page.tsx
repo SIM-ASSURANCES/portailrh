@@ -6,7 +6,6 @@ import { RegularisationSummary } from "@/components/tresorerie/RegularisationSum
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 
 import { ReglementsRecusSection } from "./ReglementsRecusSection";
 import { RetoursCaisseSection } from "./RetoursCaisseSection";
@@ -129,7 +128,7 @@ export default async function MaDemandeDetailPage({
           </p>
           <RegularisationSummary
             demandeId={demande.id}
-            montantDemande={Number(demande.montant)}
+            montantValide={Number(demande.montantValide ?? 0)}
             title="Situation finale"
           />
           {demande.motifCloture ? (
@@ -147,7 +146,7 @@ export default async function MaDemandeDetailPage({
 
       <RetoursCaisseSection
         demandeId={demande.id}
-        peutDeclarer={STATUTS_VALIDATION_COMPLETE.includes(demande.statut)}
+        peutDeclarer={demande.statut !== "CLOTUREE"}
       />
 
       <DemandeHistorique demandeId={demande.id} />

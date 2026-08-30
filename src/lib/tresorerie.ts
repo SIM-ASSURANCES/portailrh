@@ -5,17 +5,15 @@ import { prisma } from "@/lib/prisma";
  * Statuts d'une Demande dont le montant est ENTIÈREMENT validé (montantValide
  * === montant demandé), quel que soit l'avancement du règlement — c'est
  * l'ensemble qui, avant la Phase B (validation partielle), tenait entièrement
- * dans l'unique statut `VALIDEE`. Les Tickets 4 à 8 et 10 (règlement, retour
- * de caisse, clôture, dashboard Finance, reporting) ont été écrits contre ce
- * statut unique ; leur logique elle-même (montants basés sur `montant`, pas
- * encore sur `montantValide`) n'a PAS été adaptée à la validation partielle
- * — seul leur point d'entrée (garde de statut) est élargi à cet ensemble
- * pour continuer à fonctionner à l'identique sur une demande validée
- * TOTALEMENT (via `validerTotalementAction`). Une demande seulement
- * `PARTIELLEMENT_VALIDEE` reste hors de cet ensemble : aucun règlement, retour
- * ou clôture n'est encore possible dessus (le "règlement adapté" à la
- * validation partielle est le périmètre d'une phase dédiée). Voir CLAUDE.md
- * "Refonte V1 en cours" / Phase B.
+ * dans l'unique statut `VALIDEE`.
+ *
+ * REFONTE V1 / Phase C (voir CLAUDE.md "Refonte V1 en cours") : **n'est plus
+ * utilisé pour l'éligibilité au règlement ni au retour de caisse** — voir
+ * `peutEffectuerReglement` ci-dessous, qui autorise aussi une demande
+ * seulement `PARTIELLEMENT_VALIDEE` (cahier des charges section 4). Reste
+ * utilisé pour l'éligibilité à la CLÔTURE (`cloturerDemandeAction`, Ticket
+ * 7) et la colonne "Validé" du reporting (Ticket 10), hors périmètre de la
+ * Phase C.
  */
 export const STATUTS_VALIDATION_COMPLETE: readonly StatutDemande[] = [
   "VALIDEE",
@@ -38,18 +36,57 @@ export async function getTotalRegle(demandeId: string): Promise<number> {
 }
 
 /**
- * Reste à régler d'une demande : montant de la demande moins le total déjà
- * réglé (confirmé, non annulé). Jamais négatif — protection défensive,
- * l'invariant "somme réglée <= montant demande" étant normalement garanti
- * à la confirmation de chaque règlement (voir `confirmerReglementAction`).
+ * Reste à régler d'une demande : `montantValide` moins le total déjà réglé
+ * (confirmé, non annulé). Jamais négatif — protection défensive, l'invariant
+ * "somme réglée <= montantValide" étant normalement garanti à la
+ * confirmation de chaque règlement (voir `confirmerReglementAction`).
+ *
+ * REFONTE V1 / Phase C (voir CLAUDE.md "Refonte V1 en cours") : la base de
+ * calcul est `montantValide`, **PAS** le montant demandé — cahier des
+ * charges section 4 : "Montant validé : 250 000 FCFA. Premier règlement :
+ * 200 000 FCFA. Solde validé restant à régler : 50 000 FCFA." Une demande
+ * `PARTIELLEMENT_VALIDEE` (250 000 validés sur 400 000 demandés) est donc
+ * réglable immédiatement sur la base des 250 000 déjà validés, sans
+ * attendre la validation complémentaire du reliquat. Si `montantValide` est
+ * encore `null` (aucune validation), retourne 0 : rien n'est réglable.
  */
 export async function getResteARegler(demandeId: string): Promise<number> {
   const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
-  if (!demande) {
+  if (!demande || demande.montantValide == null) {
     return 0;
   }
   const totalRegle = await getTotalRegle(demandeId);
-  return Math.max(0, Number(demande.montant) - totalRegle);
+  return Math.max(0, Number(demande.montantValide) - totalRegle);
+}
+
+/**
+ * Éligibilité d'une demande au règlement (Phase C) : `montantValide > 0`
+ * ET `getResteARegler(demandeId) > 0`, plus deux verrous terminaux
+ * explicites (`REJETEE`/`CLOTUREE`) que le seul calcul sur les montants ne
+ * suffit pas à couvrir — une demande clôturée avec un écart non résolu
+ * (clôture partielle, Ticket 7) peut avoir un reste > 0 sans qu'aucune
+ * action de règlement ne doive redevenir possible dessus.
+ *
+ * Remplace `STATUTS_VALIDATION_COMPLETE` pour cette logique précise : cet
+ * ensemble figé (VALIDEE/VALIDEE_NON_REGLEE/PARTIELLEMENT_REGLEE/REGLEE)
+ * excluait à tort `PARTIELLEMENT_VALIDEE`, alors que le cahier des charges
+ * (section 4) autorise explicitement le règlement d'une demande seulement
+ * partiellement validée. `STATUTS_VALIDATION_COMPLETE` reste néanmoins
+ * utilisée ailleurs (ex: éligibilité à la clôture, Ticket 7 — hors
+ * périmètre de cette phase).
+ */
+export async function peutEffectuerReglement(demandeId: string): Promise<boolean> {
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return false;
+  }
+  if (demande.statut === "CLOTUREE" || demande.statut === "REJETEE") {
+    return false;
+  }
+  if (demande.montantValide == null || Number(demande.montantValide) <= 0) {
+    return false;
+  }
+  return (await getResteARegler(demandeId)) > 0;
 }
 
 /**

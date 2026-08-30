@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getResteARegler, getTotalRegle, STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
+import { calculerStatutDemande, getResteARegler, getTotalRegle, peutEffectuerReglement } from "@/lib/tresorerie";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
@@ -32,11 +32,17 @@ const creerReglementSchema = z.object({
 
 /**
  * Crée un règlement en brouillon (`estConfirme: false`). Réservée à
- * `treso.effectuer_reglement`, uniquement sur une demande `VALIDEE`. Le
- * montant ne peut pas dépasser le reste à régler — revérifié ici même si
- * le formulaire ne devrait normalement pas le permettre (le reste à
- * régler a pu changer depuis l'affichage de la page : autre règlement
- * confirmé entre-temps par un collègue).
+ * `treso.effectuer_reglement`. Le montant ne peut pas dépasser le reste à
+ * régler — revérifié ici même si le formulaire ne devrait normalement pas
+ * le permettre (le reste à régler a pu changer depuis l'affichage de la
+ * page : autre règlement confirmé entre-temps par un collègue).
+ *
+ * REFONTE V1 / Phase C (voir CLAUDE.md "Refonte V1 en cours") : l'éligibilité
+ * n'est plus liée au statut `VALIDEE` (ni à `STATUTS_VALIDATION_COMPLETE`),
+ * mais à `peutEffectuerReglement` — `montantValide > 0` ET reste à régler
+ * (calculé sur `montantValide`, pas le montant demandé) `> 0`. Une demande
+ * `PARTIELLEMENT_VALIDEE` est donc éligible dès sa validation partielle,
+ * sans attendre le reliquat (cahier des charges section 4).
  */
 export async function creerReglementAction(
   _prevState: ActionState,
@@ -66,10 +72,11 @@ export async function creerReglementAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
-  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
-  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
-  if (!STATUTS_VALIDATION_COMPLETE.includes(demande.statut)) {
-    return { status: "error", message: "Cette demande n'est pas validée : aucun règlement possible." };
+  if (!(await peutEffectuerReglement(demandeId))) {
+    return {
+      status: "error",
+      message: "Cette demande n'est pas éligible au règlement (aucun montant validé restant à régler).",
+    };
   }
 
   const reste = await getResteARegler(demandeId);
@@ -121,9 +128,8 @@ export async function modifierReglementAction(
     return { status: "error", message: "Ce règlement n'est plus modifiable." };
   }
 
-  const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
-  if (!demande || !STATUTS_VALIDATION_COMPLETE.includes(demande.statut)) {
-    return { status: "error", message: "Cette demande n'est plus validée : règlement non modifiable." };
+  if (!(await peutEffectuerReglement(reglement.demandeId))) {
+    return { status: "error", message: "Cette demande n'est plus éligible au règlement : modification impossible." };
   }
 
   const reste = await getResteARegler(reglement.demandeId);
@@ -147,17 +153,23 @@ export async function modifierReglementAction(
 /**
  * Confirme un règlement en brouillon. Réservée à `treso.effectuer_reglement`.
  *
- * Défense en profondeur : revérifie que la demande est toujours `VALIDEE`,
- * que le règlement n'est ni déjà confirmé ni annulé, et recalcule côté
- * serveur que la confirmation ne ferait pas dépasser le montant de la
- * demande (jamais confiance dans l'UI). Si `mode = CAISSE`, l'écriture
- * `JournalCaisse` (SORTIE) est créée dans la même transaction que la
- * confirmation — les deux réussissent ou échouent ensemble. Un règlement
- * BANQUE n'a strictement aucun effet sur `JournalCaisse`.
+ * Défense en profondeur : revérifie l'éligibilité au règlement
+ * (`peutEffectuerReglement`, Phase C), que le règlement n'est ni déjà
+ * confirmé ni annulé, et recalcule côté serveur que la confirmation ne
+ * ferait pas dépasser **`montantValide`** (jamais le montant demandé, ni
+ * confiance dans l'UI). Si `mode = CAISSE`, l'écriture `JournalCaisse`
+ * (SORTIE) est créée dans la même transaction que la confirmation — les
+ * deux réussissent ou échouent ensemble. Un règlement BANQUE n'a
+ * strictement aucun effet sur `JournalCaisse`.
  *
  * `confirmeAt` (Ticket 9) enregistre la date de confirmation elle-même,
  * distincte de `createdAt` (date de création du brouillon) — c'est cette
  * date qui doit apparaître sur le reçu PDF, jamais la date du brouillon.
+ *
+ * Phase C, Tâche 3 : appelle `calculerStatutDemande` en fin d'action —
+ * fait passer le statut à `PARTIELLEMENT_REGLEE`/`REGLEE` (ou laisse
+ * `PARTIELLEMENT_VALIDEE` inchangé si la demande n'est pas encore
+ * entièrement validée, voir `calculerStatutDemande`).
  */
 export async function confirmerReglementAction(reglementId: string): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -176,14 +188,14 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
     return { status: "error", message: "Ce règlement est annulé, il ne peut pas être confirmé." };
   }
 
-  const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
-  if (!demande || !STATUTS_VALIDATION_COMPLETE.includes(demande.statut)) {
-    return { status: "error", message: "Cette demande n'est plus validée : confirmation impossible." };
+  if (!(await peutEffectuerReglement(reglement.demandeId))) {
+    return { status: "error", message: "Cette demande n'est plus éligible au règlement : confirmation impossible." };
   }
 
+  const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId } });
   const totalConfirme = await getTotalRegle(reglement.demandeId);
   const montantReglement = Number(reglement.montant);
-  if (totalConfirme + montantReglement > Number(demande.montant)) {
+  if (totalConfirme + montantReglement > Number(demande.montantValide)) {
     return {
       status: "error",
       message: "Ce règlement dépasserait le montant validé de la demande — confirmation refusée.",
@@ -218,6 +230,7 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
     }),
   ]);
 
+  await calculerStatutDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);
 
   return { status: "success", message: "Règlement confirmé." };
@@ -237,10 +250,20 @@ const motifAnnulationSchema = z
  * le solde, dans le grand livre immuable `JournalCaisse`. Le règlement
  * annulé reste visible dans la liste (statut "Annulé"), jamais supprimé.
  *
- * Défense en profondeur (Ticket 7) : revérifie aussi que la demande liée
- * est toujours `VALIDEE` — une fois clôturée, plus aucune action sur ses
+ * Défense en profondeur (Ticket 7) : revérifie que la demande n'est ni
+ * `CLOTUREE` ni `REJETEE` — une fois clôturée, plus aucune action sur ses
  * règlements n'est possible, y compris une annulation (`estConfirme` ne
  * change jamais après clôture, ce n'était donc pas suffisant à lui seul).
+ *
+ * **Volontairement PAS `peutEffectuerReglement` ici** (Phase C) : cette
+ * garde exigerait un reste à régler > 0 AVANT l'annulation, ce qui
+ * bloquerait à tort l'annulation du tout dernier règlement d'une demande
+ * `REGLEE` (reste = 0 par définition) — l'annulation est précisément le
+ * mécanisme qui doit pouvoir faire repasser le reste au-dessus de 0.
+ *
+ * Phase C, Tâche 3 : appelle `calculerStatutDemande` en fin d'action — fait
+ * revenir le statut à `PARTIELLEMENT_REGLEE`/`VALIDEE_NON_REGLEE` (ou
+ * laisse `PARTIELLEMENT_VALIDEE` inchangé) selon le nouveau total réglé.
  */
 export async function annulerReglementAction(
   reglementId: string,
@@ -266,9 +289,7 @@ export async function annulerReglementAction(
   if (reglement.estAnnule) {
     return { status: "error", message: "Ce règlement est déjà annulé." };
   }
-  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
-  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
-  if (!STATUTS_VALIDATION_COMPLETE.includes(reglement.demande.statut)) {
+  if (reglement.demande.statut === "CLOTUREE" || reglement.demande.statut === "REJETEE") {
     return {
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).`,
@@ -303,6 +324,7 @@ export async function annulerReglementAction(
     }),
   ]);
 
+  await calculerStatutDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);
 
   return { status: "success", message: "Règlement annulé." };

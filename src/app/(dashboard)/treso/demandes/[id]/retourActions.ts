@@ -5,7 +5,6 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
 const retourSchema = z
@@ -43,11 +42,20 @@ const retourSchema = z
  * Finance (Ticket 6, pas celui-ci) aura cet effet. Déclarer un retour
  * n'enregistre qu'une intention/justification côté collaborateur.
  *
- * Défense en profondeur (Ticket 7) : `reglement.demande.statut === "VALIDEE"`
- * est revérifiée ici — une fois la demande clôturée (`CLOTUREE_TOTALE` ou
- * `CLOTUREE_PARTIELLE`), plus aucun nouveau retour ne peut être déclaré,
- * même si le règlement d'origine reste `estConfirme` (ce champ ne change
- * jamais après clôture, ce n'était donc pas suffisant pour bloquer l'accès).
+ * Défense en profondeur (Ticket 7, corrigée Phase C) : la demande ne doit
+ * pas être `CLOTUREE` — une fois clôturée, plus aucun nouveau retour ne
+ * peut être déclaré, même si le règlement d'origine reste `estConfirme`
+ * (ce champ ne change jamais après clôture, ce n'était donc pas suffisant
+ * pour bloquer l'accès).
+ *
+ * REFONTE V1 / Phase C (voir CLAUDE.md "Refonte V1 en cours") : cette garde
+ * dépendait de `STATUTS_VALIDATION_COMPLETE` (Phase B), donc bloquait à
+ * tort la déclaration d'un retour sur un règlement confirmé pour une
+ * demande seulement `PARTIELLEMENT_VALIDEE` — or le règlement est
+ * désormais possible dans ce cas (cahier des charges section 4). Ce qui
+ * conditionne réellement la déclaration, c'est l'état du RÈGLEMENT précis
+ * (mode CAISSE, confirmé, non annulé — déjà vérifié juste au-dessus), pas
+ * le statut global de validation de la demande.
  */
 export async function creerRetourCaisseAction(
   _prevState: ActionState,
@@ -87,9 +95,7 @@ export async function creerRetourCaisseAction(
   if (reglement.mode !== "CAISSE" || !reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est pas éligible à un retour de caisse." };
   }
-  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
-  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
-  if (!STATUTS_VALIDATION_COMPLETE.includes(reglement.demande.statut)) {
+  if (reglement.demande.statut === "CLOTUREE") {
     return {
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).`,

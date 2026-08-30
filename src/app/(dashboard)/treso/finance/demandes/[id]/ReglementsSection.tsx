@@ -5,19 +5,22 @@ import { ReglementForm } from "./ReglementForm";
 import { ReglementRow } from "./ReglementRow";
 
 /**
- * Section "Règlements" d'une demande VALIDEE : montant validé / total réglé
- * / reste à régler, liste des règlements (brouillon/confirmé/annulé), et le
- * formulaire d'ajout si l'utilisateur a `treso.effectuer_reglement` et qu'il
- * reste quelque chose à régler. Server Component autonome : requête
- * lui-même règlements + totaux à partir du seul id de la demande.
+ * Section "Règlements" d'une demande ayant un montant validé (`montantValide
+ * > 0` — totalement ou partiellement, Phase C) : montant validé / total
+ * réglé / reste à régler (calculé sur `montantValide`, PAS le montant
+ * demandé — cahier des charges section 4), liste des règlements
+ * (brouillon/confirmé/annulé), et le formulaire d'ajout si l'utilisateur a
+ * `treso.effectuer_reglement` et qu'il reste quelque chose à régler. Server
+ * Component autonome : requête lui-même règlements + totaux à partir du
+ * seul id de la demande.
  */
 export async function ReglementsSection({
   demandeId,
-  montantDemande,
+  montantValide,
   canEffectuerReglement,
 }: {
   demandeId: string;
-  montantDemande: number;
+  montantValide: number;
   canEffectuerReglement: boolean;
 }) {
   const [reglements, totalRegle, resteARegler] = await Promise.all([
@@ -40,7 +43,7 @@ export async function ReglementsSection({
             Montant validé
           </dt>
           <dd className="text-sm font-semibold text-foreground">
-            {montantDemande.toLocaleString("fr-FR")} FCFA
+            {montantValide.toLocaleString("fr-FR")} FCFA
           </dd>
         </div>
         <div>

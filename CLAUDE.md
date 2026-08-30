@@ -801,6 +801,174 @@ règlement/retour/clôture n'a été mené** (hors périmètre de cette phase) :
 ces écrans restent dans l'état transitoire décrit ci-dessus tant que la
 phase "règlement adapté" n'a pas repris leur logique.
 
+## Phase C — Règlement adapté à la validation partielle (terminée)
+
+Adapte le Règlement (Ticket 4) et le Retour de caisse (Tickets 5/6) au
+modèle de validation partielle posé en Phase B, en corrigeant une
+restriction introduite par erreur à la Phase B elle-même.
+
+### Correction du périmètre de la Phase B
+
+Cahier des charges, section 4 : *"Montant demandé : 400 000 FCFA. Montant
+validé : 250 000 FCFA. Premier règlement : 200 000 FCFA. Solde validé
+restant à régler : 50 000 FCFA. Les 50 000 FCFA peuvent être réglés
+ultérieurement sans nouvelle validation."* Une demande `PARTIELLEMENT_VALIDEE`
+est donc réglable **immédiatement** sur la base du montant déjà validé,
+sans attendre que le reliquat soit validé à son tour.
+
+`STATUTS_VALIDATION_COMPLETE` (posé en Phase B pour la compatibilité des
+Tickets 4-8-10 avec le nouveau `calculerStatutDemande`) excluait à tort
+`PARTIELLEMENT_VALIDEE` de l'éligibilité au règlement — trop restrictif et
+contraire à cet exemple. Cette phase corrige ce point partout où il
+s'appliquait à tort (règlement, retour de caisse, dashboard, listes) ; il
+reste utilisé, lui, pour l'éligibilité à la **clôture** (Ticket 7, hors
+périmètre de cette phase — la clôture continue de n'être possible qu'une
+fois le montant demandé *entièrement* validé).
+
+### `getResteARegler` — nouvelle base de calcul
+
+[src/lib/tresorerie.ts](src/lib/tresorerie.ts) : la base devient
+**`montantValide`**, plus le montant demandé. `null` (aucune validation) →
+0 (rien n'est réglable). Formule : `max(0, montantValide - getTotalRegle())`.
+
+### `peutEffectuerReglement` — nouvelle fonction d'éligibilité
+
+Remplace `STATUTS_VALIDATION_COMPLETE` pour l'éligibilité au règlement :
+`montantValide > 0` **ET** `getResteARegler() > 0`, **ET** la demande n'est
+ni `REJETEE` ni `CLOTUREE` (ce dernier verrou est nécessaire : une demande
+clôturée avec un écart non résolu — clôture partielle, Ticket 7 — peut
+avoir un reste > 0 sans qu'aucune action de règlement ne doive redevenir
+possible dessus ; le calcul sur les seuls montants ne suffit pas à couvrir
+ce cas). Utilisée par `creerReglementAction`, `modifierReglementAction` et
+`confirmerReglementAction`.
+
+**Cas particulier volontaire : `annulerReglementAction` n'utilise PAS
+`peutEffectuerReglement`.** Cette garde exigerait un reste à régler > 0
+*avant* l'annulation, ce qui bloquerait à tort l'annulation du tout dernier
+règlement d'une demande `REGLEE` (reste = 0 par définition) — l'annulation
+est précisément le mécanisme qui doit pouvoir faire repasser le reste
+au-dessus de 0. Elle utilise donc un contrôle plus simple : la demande ne
+doit être ni `CLOTUREE` ni `REJETEE`.
+
+### Recalcul du statut après règlement (Tâche 3)
+
+`confirmerReglementAction` et `annulerReglementAction` appellent désormais
+`calculerStatutDemande(demandeId)` (fonction centrale, Phase B) en fin
+d'action, au lieu d'une logique de statut ad hoc. Le comportement dépend
+de l'état de validation :
+
+- Si la demande est `PARTIELLEMENT_VALIDEE` (montant demandé pas encore
+  entièrement validé) : le statut **reste `PARTIELLEMENT_VALIDEE`**, quel
+  que soit l'avancement du règlement sur la part déjà validée — c'est
+  `calculerStatutDemande` qui l'impose (la branche "validation partielle"
+  est prioritaire sur la branche "règlement", voir Phase B). Le règlement
+  progresse "silencieusement" en arrière-plan (visible dans la section
+  Règlements — reste à régler, liste des règlements confirmés) sans que le
+  badge de statut ne change, tant que le reliquat n'est pas validé.
+- Une fois le montant demandé entièrement validé (validation totale, ou
+  validations partielle + complémentaire(s) cumulées) : `VALIDEE_NON_REGLEE`
+  / `PARTIELLEMENT_REGLEE` / `REGLEE` selon `getTotalRegle`, comme déjà
+  posé en Phase B.
+
+### Retour de caisse (Ticket 5/6) — même correction (Tâche 4)
+
+`retourActions.ts` (déclaration, Collaborateur) et
+`retourActions.ts` (réception, Finance) dépendaient eux aussi de
+`STATUTS_VALIDATION_COMPLETE`, bloquant à tort la déclaration/réception
+d'un retour lié à un règlement confirmé sur une demande seulement
+`PARTIELLEMENT_VALIDEE`. Corrigé : ce qui conditionne réellement ces deux
+actions, c'est l'état du **règlement précis concerné** (mode `CAISSE`,
+confirmé, non annulé — déjà vérifié indépendamment du statut de la
+demande), pas le statut global de validation. Seule la clôture
+(`demande.statut === "CLOTUREE"`) doit encore bloquer.
+
+### Dashboard Finance et listes (Ticket 8, Tâche 5)
+
+[src/lib/dashboardFinance.ts](src/lib/dashboardFinance.ts),
+`a-decaisser/page.tsx` et `a-regulariser/page.tsx` : sélection et calcul du
+reste basés sur `montantValide` (`{ gt: 0 }`), plus l'exclusion explicite
+de `REJETEE`/`CLOTUREE` — une demande `PARTIELLEMENT_VALIDEE` apparaît donc
+dans "Demandes à décaisser" dès que son montant validé dépasse ce qui est
+déjà réglé.
+
+**Distinction ajoutée pour "Décaissements à régulariser"** (pas
+explicitement demandée mais nécessaire pour rester cohérent) : cette liste
+exige en plus que le montant demandé soit **entièrement** validé
+(`montantValide >= montant`). Sans cette condition, une demande
+`PARTIELLEMENT_VALIDEE` dont la part déjà validée est intégralement réglée
+(reste = 0 sur ces 250 000, par exemple) serait apparue comme "prête pour
+la clôture" alors qu'un reliquat reste à valider et pourrait ensuite être
+réglé à son tour. Une telle demande n'apparaît donc, à ce stade, dans
+**aucune des deux listes** — état transitoire correct, ni actionnable
+("rien à décaisser dans l'immédiat") ni clôturable.
+
+### Renommages de props (clarté, sans changement de comportement)
+
+`ReglementsSection`/`RegularisationSummary` : la prop `montantDemande`
+devient `montantValide` (elle affichait déjà le libellé "Montant validé" —
+Phase A/B avaient changé le contenu affiché sans renommer la prop). Tous
+les appelants mis à jour ( `treso/finance/demandes/[id]/page.tsx`,
+`treso/demandes/[id]/page.tsx`).
+
+### Interface (Finance/DG)
+
+`treso/finance/demandes/[id]/page.tsx` : les branches `PARTIELLEMENT_VALIDEE`
+et "montant entièrement validé" (`STATUTS_VALIDATION_COMPLETE`) sont
+regroupées en une seule branche de rendu (`demande.montantValide != null &&
+Number(demande.montantValide) > 0`) : `ReglementsSection` s'affiche dans
+les deux cas désormais, `ValidationComplementaireActions` uniquement si
+`PARTIELLEMENT_VALIDEE`, `ClotureActions` uniquement si
+`STATUTS_VALIDATION_COMPLETE.includes(statut)`.
+
+### Vérifié explicitement (Phase C) — parcours utilisateur réel dans le navigateur
+
+**Fait par de vraies actions utilisateur pilotées par un navigateur Chromium
+headless (Playwright), PAS par un script isolé appelant les fonctions
+serveur directement** — contrairement à la Phase B (où `getSession()`
+dépend de `next/headers`, indisponible hors requête Next.js réelle). Ici,
+le serveur `next dev` tournait réellement et chaque étape a été exécutée en
+remplissant les vrais formulaires et en cliquant les vrais boutons de
+l'interface, exactement comme un utilisateur — pas de contournement de
+l'authentification ni des Server Actions.
+
+Playwright n'est pas une dépendance du projet (pas ajoutée à
+`package.json`) : exécutée depuis le cache npx local existant sur la
+machine, aucune trace laissée dans les fichiers du projet.
+
+Parcours reproduit (comptes réels `collaborateur@simassurances.test` /
+`finance@simassurances.test`), reproduisant exactement l'exemple du cahier
+des charges section 4 puis le prolongeant :
+
+1. Collaborateur crée une demande de 400 000 FCFA.
+2. Finance valide **partiellement** 250 000 FCFA → statut
+   `Partiellement validée`, montant restant à valider affiché = 150 000 FCFA.
+3. Finance confirme un règlement Caisse de 200 000 FCFA **sans attendre de
+   validation complémentaire** (point clé de cette phase — vérifié que ça
+   fonctionne) → reste à régler = 50 000 FCFA, montant restant à valider
+   toujours 150 000 FCFA (inchangé), statut toujours `Partiellement
+   validée`, bouton de validation complémentaire toujours disponible.
+4. Règlement Banque des 50 000 FCFA restants → reste à régler = 0 FCFA,
+   statut toujours `Partiellement validée` (150 000 FCFA restent à
+   valider), formulaire d'ajout de règlement disparu.
+5. Validation complémentaire des 150 000 FCFA restants → montant validé =
+   400 000 FCFA, montant restant à valider = 0, statut `Partiellement
+   réglée`, reste à régler recalculé = 150 000 FCFA (400 000 - 250 000),
+   formulaire de règlement réapparu.
+6. Règlement Caisse final des 150 000 FCFA → reste à régler = 0, statut
+   final `Réglée`.
+7. Le compte `collaborateur@simassurances.test` (aucune des 5 permissions
+   de `treso/finance/layout.tsx`) tentant d'accéder directement à
+   `/treso/finance/demandes/{id}` est bien redirigé vers
+   `/?error=acces_refuse_categoriser`.
+
+`npx tsc --noEmit` et `npx eslint .` passent sans erreur. Données de test
+nettoyées après coup (suppression directe en base de la demande créée par
+le parcours — aucune fonctionnalité de suppression n'existe dans
+l'application, comme pour les tickets précédents) ; la base ne contient
+plus qu'une demande préexistante sans rapport avec cette vérification,
+non créée par cette session et volontairement non touchée. Serveur `next
+dev` arrêté après vérification.
+
 ## Module Trésorerie : Ticket 1 — Création de demande (Collaborateur)
 
 **Statut : terminé.** Routes sous
