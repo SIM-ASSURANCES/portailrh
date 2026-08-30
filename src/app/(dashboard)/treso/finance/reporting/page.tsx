@@ -102,6 +102,7 @@ export default async function ReportingPage({
           objetId: filters.objetId,
           mode: filters.mode,
           statut: filters.statut,
+          typeDemande: filters.typeDemande,
         }}
       />
 

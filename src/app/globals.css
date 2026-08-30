@@ -141,3 +141,44 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }
+
+/* Entrée en fondu/léger décalage des cartes cliquables du dashboard Finance
+   (Phase G, zone "À traiter") — un seul keyframe partagé, décalé par carte
+   via nth-child plutôt qu'une librairie d'animation (GSAP serait
+   disproportionné pour 6 cartes statiques). Neutralisé sous
+   prefers-reduced-motion : les cartes s'affichent alors directement dans
+   leur état final, sans que le contenu ne bouge. */
+@media (prefers-reduced-motion: no-preference) {
+  .stat-card-enter {
+    animation: stat-card-in 0.35s ease-out both;
+  }
+  .stat-card-enter:nth-child(1) {
+    animation-delay: 0ms;
+  }
+  .stat-card-enter:nth-child(2) {
+    animation-delay: 40ms;
+  }
+  .stat-card-enter:nth-child(3) {
+    animation-delay: 80ms;
+  }
+  .stat-card-enter:nth-child(4) {
+    animation-delay: 120ms;
+  }
+  .stat-card-enter:nth-child(5) {
+    animation-delay: 160ms;
+  }
+  .stat-card-enter:nth-child(6) {
+    animation-delay: 200ms;
+  }
+}
+
+@keyframes stat-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

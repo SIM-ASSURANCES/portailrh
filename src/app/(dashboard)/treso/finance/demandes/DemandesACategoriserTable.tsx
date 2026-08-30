@@ -4,16 +4,20 @@ import Link from "next/link";
 
 import { Badge, Button, DataTable } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
-import type { StatutDemande } from "@/generated/prisma/client";
+import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
+import type { NatureDepenseDirecte, StatutDemande, TypeDemande } from "@/generated/prisma/client";
 
 interface DemandeRow {
   id: string;
   reference: string;
   createurNom: string;
+  beneficiaireNom: string;
   montant: number;
   description: string;
   createdAt: Date;
   statut: StatutDemande;
+  typeDemande: TypeDemande;
+  natureDepenseDirecte: NatureDepenseDirecte | null;
 }
 
 function truncate(text: string, max = 50): string {
@@ -32,6 +36,7 @@ export function DemandesACategoriserTable({ demandes }: { demandes: DemandeRow[]
       columns={[
         { key: "reference", header: "Référence", sortable: true, accessor: (d) => d.reference },
         { key: "createurNom", header: "Créateur", sortable: true, accessor: (d) => d.createurNom },
+        { key: "beneficiaireNom", header: "Bénéficiaire", sortable: true, accessor: (d) => d.beneficiaireNom },
         {
           key: "montant",
           header: "Montant",
@@ -40,6 +45,16 @@ export function DemandesACategoriserTable({ demandes }: { demandes: DemandeRow[]
           render: (d) => `${d.montant.toLocaleString("fr-FR")} FCFA`,
         },
         { key: "description", header: "Description", render: (d) => truncate(d.description) },
+        {
+          key: "type",
+          header: "Type",
+          render: (d) =>
+            d.typeDemande === "DEPENSE_DIRECTE" && d.natureDepenseDirecte ? (
+              <DepenseDirecteBadge nature={d.natureDepenseDirecte} />
+            ) : (
+              "—"
+            ),
+        },
         {
           key: "createdAt",
           header: "Créée le",
@@ -61,7 +76,7 @@ export function DemandesACategoriserTable({ demandes }: { demandes: DemandeRow[]
           header: "Actions",
           render: (d) => (
             <Link href={`/treso/finance/demandes/${d.id}`}>
-              <Button variant="secondary">Catégoriser</Button>
+              <Button variant="secondary">Traiter</Button>
             </Link>
           ),
         },

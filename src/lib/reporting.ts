@@ -1,4 +1,4 @@
-import type { ModeReglement, Prisma, StatutDemande } from "@/generated/prisma/client";
+import type { ModeReglement, Prisma, StatutDemande, TypeDemande } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -17,6 +17,8 @@ export interface ReportingFilters {
   objetId?: string;
   mode?: ModeReglement;
   statut?: StatutDemande;
+  /** Standard / Dépense directe (Phase F, section 15 du cahier des charges). */
+  typeDemande?: TypeDemande;
 }
 
 type SearchParamsLike = Record<string, string | string[] | undefined>;
@@ -36,6 +38,7 @@ export function parseReportingFilters(searchParams: SearchParamsLike): Reporting
   const au = firstString(searchParams.au);
   const mode = firstString(searchParams.mode);
   const statut = firstString(searchParams.statut);
+  const typeDemande = firstString(searchParams.typeDemande);
 
   return {
     du: du ? new Date(du) : undefined,
@@ -67,6 +70,8 @@ export function parseReportingFilters(searchParams: SearchParamsLike): Reporting
     ).includes(statut as StatutDemande)
       ? (statut as StatutDemande)
       : undefined,
+    typeDemande:
+      typeDemande === "STANDARD" || typeDemande === "DEPENSE_DIRECTE" ? typeDemande : undefined,
   };
 }
 
@@ -81,6 +86,7 @@ export function reportingFiltersToQueryString(filters: ReportingFilters): string
   if (filters.objetId) params.set("objetId", filters.objetId);
   if (filters.mode) params.set("mode", filters.mode);
   if (filters.statut) params.set("statut", filters.statut);
+  if (filters.typeDemande) params.set("typeDemande", filters.typeDemande);
   return params.toString();
 }
 
@@ -94,6 +100,7 @@ function buildDemandeWhere(filters: ReportingFilters): Prisma.DemandeWhereInput 
     ...(filters.categorieId ? { categorieId: filters.categorieId } : {}),
     ...(filters.objetId ? { objetId: filters.objetId } : {}),
     ...(filters.statut ? { statut: filters.statut } : {}),
+    ...(filters.typeDemande ? { typeDemande: filters.typeDemande } : {}),
   };
 }
 

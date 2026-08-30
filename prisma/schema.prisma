@@ -131,6 +131,32 @@ enum BeneficiaireType {
   ENTREPRISE
 }
 
+/// Phase F (saisie directe, cahier des charges section 11) : une demande
+/// STANDARD suit le circuit habituel (créée par le bénéficiaire ou pour son
+/// compte) ; une DEPENSE_DIRECTE est saisie par un utilisateur habilité
+/// (Finance, `treso.saisir_depense_directe`) sans intervention du
+/// bénéficiaire — le créateur (`Demande.createur`) et le bénéficiaire
+/// (`Demande.beneficiaireType`/`beneficiaireUserId`/`beneficiaireNom`,
+/// Phase A) sont alors deux personnes distinctes par construction. Une fois
+/// créée, une DEPENSE_DIRECTE suit EXACTEMENT le même circuit qu'une
+/// demande STANDARD (validation, règlement, fonds remis, clôture) — ce
+/// champ ne sert qu'à distinguer l'origine de la création, jamais à
+/// dévier la logique des phases suivantes.
+enum TypeDemande {
+  STANDARD
+  DEPENSE_DIRECTE
+}
+
+/// Nature d'une dépense saisie directement (Phase F, section 11) —
+/// renseignée uniquement si `Demande.typeDemande = DEPENSE_DIRECTE`.
+enum NatureDepenseDirecte {
+  PRIME_STAGE
+  DOTATION_CARBURANT
+  DEPENSE_ENTREPRISE
+  DEPENSE_COLLECTIVE
+  AUTRE
+}
+
 enum ModeReglement {
   CAISSE
   BANQUE
@@ -175,6 +201,12 @@ model Demande {
   description String
   commentaire String?
   statut      StatutDemande @default(EN_ATTENTE_VALIDATION)
+
+  /// Phase F (saisie directe) — voir le commentaire de l'enum
+  /// `TypeDemande`. `natureDepenseDirecte` n'est renseignée que si
+  /// `typeDemande = DEPENSE_DIRECTE`, jamais pour une demande STANDARD.
+  typeDemande          TypeDemande           @default(STANDARD)
+  natureDepenseDirecte NatureDepenseDirecte?
 
   /// Cumul du montant validé à date — nul tant qu'aucune validation
   /// (même partielle) n'a eu lieu. Peut être mis à jour par plusieurs

@@ -4,7 +4,8 @@ import Link from "next/link";
 
 import { Badge, Button, DataTable } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
-import type { StatutDemande } from "@/generated/prisma/client";
+import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
+import type { NatureDepenseDirecte, StatutDemande, TypeDemande } from "@/generated/prisma/client";
 
 interface DemandeRow {
   id: string;
@@ -13,6 +14,9 @@ interface DemandeRow {
   montant: number;
   statut: StatutDemande;
   createdAt: Date;
+  typeDemande: TypeDemande;
+  natureDepenseDirecte: NatureDepenseDirecte | null;
+  beneficiaireNom: string;
 }
 
 function truncate(text: string, max = 60): string {
@@ -36,6 +40,17 @@ export function MesDemandesTable({ demandes }: { demandes: DemandeRow[] }) {
           key: "description",
           header: "Description",
           render: (d) => truncate(d.description),
+        },
+        { key: "beneficiaireNom", header: "Bénéficiaire", sortable: true, accessor: (d) => d.beneficiaireNom },
+        {
+          key: "type",
+          header: "Type",
+          render: (d) =>
+            d.typeDemande === "DEPENSE_DIRECTE" && d.natureDepenseDirecte ? (
+              <DepenseDirecteBadge nature={d.natureDepenseDirecte} />
+            ) : (
+              "—"
+            ),
         },
         {
           key: "montant",

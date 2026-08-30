@@ -4,11 +4,12 @@ import Link from "next/link";
 
 import { Button, DataTable } from "@/components/ui";
 
-interface ADecaisserRow {
+interface ReglementPartielRow {
   id: string;
   reference: string;
   createurNom: string;
   montantValide: number;
+  totalRegle: number;
   reste: number;
   valideeLe: Date;
 }
@@ -18,11 +19,11 @@ interface ADecaisserRow {
  * (Ticket 1) pour l'explication (colonnes avec accessor/render : fonctions
  * non sérialisables entre Server et Client Component).
  */
-export function ADecaisserTable({ demandes }: { demandes: ADecaisserRow[] }) {
+export function ReglementsPartielsTable({ demandes }: { demandes: ReglementPartielRow[] }) {
   return (
     <DataTable
       rowKey={(d) => d.id}
-      emptyMessage="Aucun montant validé restant à régler pour l'instant."
+      emptyMessage="Aucun règlement partiel à compléter pour l'instant."
       columns={[
         { key: "reference", header: "Référence", sortable: true, accessor: (d) => d.reference },
         { key: "createurNom", header: "Créateur", sortable: true, accessor: (d) => d.createurNom },
@@ -32,6 +33,13 @@ export function ADecaisserTable({ demandes }: { demandes: ADecaisserRow[] }) {
           sortable: true,
           accessor: (d) => d.montantValide,
           render: (d) => `${d.montantValide.toLocaleString("fr-FR")} FCFA`,
+        },
+        {
+          key: "totalRegle",
+          header: "Déjà réglé",
+          sortable: true,
+          accessor: (d) => d.totalRegle,
+          render: (d) => `${d.totalRegle.toLocaleString("fr-FR")} FCFA`,
         },
         {
           key: "reste",

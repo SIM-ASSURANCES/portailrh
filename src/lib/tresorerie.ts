@@ -185,25 +185,53 @@ export async function getMontantARetourner(retourCaisseId: string): Promise<numb
  * plusieurs règlements Caisse, chacun avec son propre cycle fonds remis).
  */
 export async function getSoldeARegulariser(reglementId: string): Promise<number> {
-  const reglement = await prisma.reglement.findUnique({ where: { id: reglementId } });
-  if (!reglement) {
-    return 0;
+  const soldes = await getSoldesARegulariserParReglements([reglementId]);
+  return soldes.get(reglementId) ?? 0;
+}
+
+/**
+ * Variante en masse de `getSoldeARegulariser`, pour plusieurs règlements à
+ * la fois SANS requête par règlement (Phase G, dashboard Finance — indicateurs
+ * "Fonds remis à régulariser" et "Dépenses non justifiées à suivre") : une
+ * seule requête `DepenseLigne`/`RetourCaisse` pour l'ensemble des règlements
+ * demandés, réduite en mémoire (volume modeste, même convention que le
+ * reste du reporting/dashboard). `getSoldeARegulariser` ci-dessus n'est
+ * plus qu'un appel à celle-ci avec un seul id — jamais deux implémentations
+ * de la même formule.
+ */
+export async function getSoldesARegulariserParReglements(
+  reglementIds: string[]
+): Promise<Map<string, number>> {
+  if (reglementIds.length === 0) {
+    return new Map();
   }
-  const [depensesDeclarees, retoursRecus] = await Promise.all([
-    prisma.depenseLigne.aggregate({
-      where: { retourCaisse: { reglementId } },
-      _sum: { montant: true },
-    }),
-    prisma.retourCaisse.aggregate({
-      where: { reglementId, estReceptionne: true },
-      _sum: { montantARetourner: true },
-    }),
-  ]);
-  return (
-    Number(reglement.montant) -
-    Number(depensesDeclarees._sum.montant ?? 0) -
-    Number(retoursRecus._sum.montantARetourner ?? 0)
-  );
+
+  const reglements = await prisma.reglement.findMany({
+    where: { id: { in: reglementIds } },
+    select: { id: true, montant: true },
+  });
+
+  const retours = await prisma.retourCaisse.findMany({
+    where: { reglementId: { in: reglementIds } },
+    select: {
+      reglementId: true,
+      estReceptionne: true,
+      montantARetourner: true,
+      depenses: { select: { montant: true } },
+    },
+  });
+
+  const soldes = new Map<string, number>();
+  for (const r of reglements) {
+    soldes.set(r.id, Number(r.montant));
+  }
+  for (const retour of retours) {
+    const depensesDeclarees = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
+    const retourRecu = retour.estReceptionne ? Number(retour.montantARetourner) : 0;
+    const courant = soldes.get(retour.reglementId) ?? 0;
+    soldes.set(retour.reglementId, courant - depensesDeclarees - retourRecu);
+  }
+  return soldes;
 }
 
 /**

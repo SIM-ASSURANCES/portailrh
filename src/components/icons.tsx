@@ -161,6 +161,13 @@ const PATHS = {
       <path d="m15 5 4 4" />
     </>
   ),
+  "plus-circle": (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 12h8" />
+      <path d="M12 8v8" />
+    </>
+  ),
   menu: (
     <>
       <line x1="4" x2="20" y1="12" y2="12" />

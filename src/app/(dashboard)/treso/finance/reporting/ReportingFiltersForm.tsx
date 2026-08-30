@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import { TYPE_DEMANDE_OPTIONS } from "@/components/tresorerie/depenseDirecte";
 
 interface Option {
   id: string;
@@ -34,6 +35,7 @@ export interface ReportingFiltersInitial {
   objetId?: string;
   mode?: string;
   statut?: string;
+  typeDemande?: string;
 }
 
 /**
@@ -119,6 +121,13 @@ export function ReportingFiltersForm({
         placeholder="Tous"
         defaultValue={initial.statut ?? ""}
         options={STATUT_OPTIONS}
+      />
+      <Select
+        name="typeDemande"
+        label="Type de demande"
+        placeholder="Tous"
+        defaultValue={initial.typeDemande ?? ""}
+        options={TYPE_DEMANDE_OPTIONS}
       />
       <div className="flex items-end gap-3 sm:col-span-3">
         <Button type="submit">Filtrer</Button>

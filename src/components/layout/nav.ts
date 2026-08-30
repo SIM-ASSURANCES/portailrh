@@ -49,6 +49,8 @@ export interface NavFlags {
   canVoirDashboardFinance: boolean;
   /** `treso.voir_reporting` : ajoute "Reporting". */
   canVoirReporting: boolean;
+  /** `treso.saisir_depense_directe` (Phase F) : ajoute "Nouvelle dépense directe". */
+  canSaisirDepenseDirecte: boolean;
 }
 
 /**
@@ -67,6 +69,7 @@ export function getNavBranches({
   canReceptionnerRetour,
   canVoirDashboardFinance,
   canVoirReporting,
+  canSaisirDepenseDirecte,
 }: NavFlags): NavBranch[] {
   return [
     {
@@ -87,6 +90,15 @@ export function getNavBranches({
                 ]
               : []),
             { label: "Demandes", href: "/treso/demandes", icon: "file-text" },
+            ...(canSaisirDepenseDirecte
+              ? [
+                  {
+                    label: "Nouvelle dépense directe",
+                    href: "/treso/finance/depenses-directes/nouvelle",
+                    icon: "plus-circle",
+                  } satisfies NavItem,
+                ]
+              : []),
             ...(canAccesFinanceDemandes
               ? [
                   {

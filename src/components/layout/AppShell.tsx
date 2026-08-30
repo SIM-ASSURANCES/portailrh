@@ -19,6 +19,8 @@ interface AppShellProps {
   canVoirDashboardFinance?: boolean;
   /** Affiche "Reporting" (treso.voir_reporting). */
   canVoirReporting?: boolean;
+  /** Affiche "Nouvelle dépense directe" (treso.saisir_depense_directe, Phase F). */
+  canSaisirDepenseDirecte?: boolean;
   children: ReactNode;
 }
 
@@ -38,6 +40,7 @@ export function AppShell({
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
   canVoirReporting = false,
+  canSaisirDepenseDirecte = false,
   children,
 }: AppShellProps) {
   // Rendu initial (serveur + première passe client) toujours « déployé »
@@ -81,6 +84,7 @@ export function AppShell({
         canReceptionnerRetour={canReceptionnerRetour}
         canVoirDashboardFinance={canVoirDashboardFinance}
         canVoirReporting={canVoirReporting}
+        canSaisirDepenseDirecte={canSaisirDepenseDirecte}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />

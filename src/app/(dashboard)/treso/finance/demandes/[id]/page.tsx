@@ -2,7 +2,9 @@ import { notFound } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom } from "@/components/tresorerie/beneficiaire";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
+import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import type { Prisma } from "@/generated/prisma/client";
 import { getSession, hasPermission } from "@/lib/auth";
@@ -30,7 +32,7 @@ export default async function CategoriserDemandePage({
 
   const demande = await prisma.demande.findUnique({
     where: { id },
-    include: { createur: true, categorie: true, objet: true },
+    include: { createur: true, categorie: true, objet: true, beneficiaireUser: true },
   });
 
   if (!demande) {
@@ -74,6 +76,11 @@ export default async function CategoriserDemandePage({
       <PageHeader
         title={`Demande ${demande.reference}`}
         description={`Créée par ${demande.createur.fullName} le ${demande.createdAt.toLocaleDateString("fr-FR")}`}
+        actions={
+          demande.typeDemande === "DEPENSE_DIRECTE" && demande.natureDepenseDirecte ? (
+            <DepenseDirecteBadge nature={demande.natureDepenseDirecte} />
+          ) : undefined
+        }
       />
 
       <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
@@ -94,6 +101,19 @@ export default async function CategoriserDemandePage({
               <Badge variant={STATUT_DEMANDE_BADGE_VARIANT[demande.statut]}>
                 {STATUT_DEMANDE_LABEL[demande.statut]}
               </Badge>
+            </dd>
+          </div>
+          {/* Phase F (saisie directe) : bénéficiaire toujours affiché, y
+              compris pour une demande STANDARD (où il vaut généralement le
+              créateur) — distinction visible immédiatement pour une
+              DEPENSE_DIRECTE, où créateur et bénéficiaire diffèrent. */}
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Bénéficiaire
+            </dt>
+            <dd className="text-sm text-foreground">
+              {getBeneficiaireNom(demande)}{" "}
+              <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
             </dd>
           </div>
           {/* Phase B (validation partielle) : montant validé/restant visible

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 
+import { getBeneficiaireNom } from "@/components/tresorerie/beneficiaire";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { BonDeCaisseDocument, type BonDeCaisseData } from "@/lib/pdf/BonDeCaisseDocument";
@@ -65,14 +66,9 @@ export async function GET(
     });
   }
 
-  // Bénéficiaire (Phase A) : nom de l'utilisateur du système si
-  // `beneficiaireUserId` est renseigné, sinon le texte libre
-  // `beneficiaireNom` (fournisseur/prestataire, ou "SIM ASSURANCES CI").
-  const beneficiaireNom = reglement.demande.beneficiaireUser?.fullName ?? reglement.demande.beneficiaireNom ?? "—";
-
   const data: BonDeCaisseData = {
     demandeReference: reglement.demande.reference,
-    beneficiaireNom,
+    beneficiaireNom: getBeneficiaireNom(reglement.demande),
     confirmeLe: reglement.confirmeAt ?? reglement.createdAt,
     montant: Number(reglement.montant),
     auteurNom: reglement.auteur.fullName,

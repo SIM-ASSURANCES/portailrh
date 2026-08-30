@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Button, PageHeader, ToastOnMount } from "@/components/ui";
+import { getBeneficiaireNom } from "@/components/tresorerie/beneficiaire";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -17,6 +18,7 @@ export default async function MesDemandesPage({
   const rawDemandes = session
     ? await prisma.demande.findMany({
         where: { createurId: session.user.id },
+        include: { beneficiaireUser: true },
         orderBy: { createdAt: "desc" },
       })
     : [];
@@ -28,6 +30,9 @@ export default async function MesDemandesPage({
     montant: Number(d.montant),
     statut: d.statut,
     createdAt: d.createdAt,
+    typeDemande: d.typeDemande,
+    natureDepenseDirecte: d.natureDepenseDirecte,
+    beneficiaireNom: getBeneficiaireNom(d),
   }));
 
   const canCreate = hasPermission(session, "treso.creer_demande");

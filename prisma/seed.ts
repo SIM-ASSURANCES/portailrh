@@ -69,6 +69,7 @@ async function main() {
     { key: "treso.declarer_retour", label: "Déclarer un retour de caisse", moduleId: moduleTresorerie.id },
     { key: "treso.receptionner_retour", label: "Réceptionner un retour de caisse", moduleId: moduleTresorerie.id },
     { key: "treso.cloturer_demande", label: "Clôturer une demande", moduleId: moduleTresorerie.id },
+    { key: "treso.saisir_depense_directe", label: "Saisir une dépense directe", moduleId: moduleTresorerie.id },
     { key: "treso.voir_dashboard_finance", label: "Voir le dashboard finance", moduleId: moduleTresorerie.id },
     { key: "treso.voir_reporting", label: "Voir le reporting", moduleId: moduleTresorerie.id },
     { key: "pointage.pointer", label: "Pointer (arrivée / départ)", moduleId: modulePointage.id },
@@ -114,11 +115,16 @@ async function main() {
       "treso.cloturer_demande",
       "treso.voir_dashboard_finance",
       "treso.voir_reporting",
+      "treso.saisir_depense_directe",
     ],
     [roleDG.id]: [
       "treso.valider_demande",
       "treso.voir_dashboard_finance",
       "treso.voir_reporting",
+      // Pas treso.saisir_depense_directe : comme categoriser_demande/
+      // effectuer_reglement/cloturer_demande, la saisie directe est une
+      // action opérationnelle réservée à Finance — le DG garde son rôle de
+      // validation/consultation (cohérent avec le reste du seed).
       // Consultation seule côté RH pour la Direction générale, cohérent avec
       // "consultation selon les droits accordés" du cahier des charges.
       "pointage.consulter_tous",

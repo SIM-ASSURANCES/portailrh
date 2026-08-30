@@ -1229,6 +1229,340 @@ nettoyées après coup ; la base ne contient plus que la même demande
 préexistante sans rapport, non touchée. Serveur `next dev` arrêté après
 vérification.
 
+## Phase F — Saisie directe d'une dépense (terminée)
+
+Ajoute le dernier flux de création manquant (cahier des charges section
+11) : certaines dépenses sont saisies directement par Finance, sans
+intervention du bénéficiaire (prime de stage, dotation carburant, dépense
+pour l'entreprise, dépense collective/administrative). Le champ
+bénéficiaire (Phase A) existait déjà en base mais n'avait encore jamais
+été exercé par une vraie interface — toutes les demandes de test avaient
+jusqu'ici bénéficiaire = créateur par défaut.
+
+**Règle centrale, respectée à la lettre** : une fois créée, une dépense
+directe suit EXACTEMENT le même circuit qu'une demande standard
+(validation, règlement, fonds remis, clôture) — rien de spécifique
+construit sur ces étapes, seule la Server Action de création diffère.
+Vérifié explicitement de bout en bout (voir plus bas).
+
+### Nouvelle permission et nouveaux champs
+
+- `treso.saisir_depense_directe` — attribuée au rôle **Finance uniquement**
+  dans le seed. **Choix documenté : pas au DG.** Comme
+  `categoriser_demande`/`effectuer_reglement`/`cloturer_demande`, la
+  saisie directe est une action opérationnelle ; le DG garde son rôle de
+  validation/consultation (`valider_demande`, `voir_dashboard_finance`,
+  `voir_reporting`), cohérent avec le reste du seed. Pas au Collaborateur
+  non plus (le principe même de cette phase est qu'il n'intervient pas).
+- `Demande.typeDemande` (enum `TypeDemande` : `STANDARD` / `DEPENSE_DIRECTE`,
+  défaut `STANDARD`) et `Demande.natureDepenseDirecte` (enum
+  `NatureDepenseDirecte` : `PRIME_STAGE`/`DOTATION_CARBURANT`/
+  `DEPENSE_ENTREPRISE`/`DEPENSE_COLLECTIVE`/`AUTRE`, nullable, renseigné
+  uniquement si `typeDemande = DEPENSE_DIRECTE`). Migration
+  `phase_f_depense_directe`.
+
+### Écran de saisie (`treso/finance/depenses-directes/nouvelle/`)
+
+Réservé à `treso.saisir_depense_directe`, gardé à la page ET revérifié
+dans `creerDepenseDirecteAction` (jamais uniquement la garde partagée de
+`finance/layout.tsx`, désormais élargie à cette permission en plus des
+cinq précédentes).
+
+**Le bénéficiaire s'adapte au type choisi** (`beneficiaireType`, suivi en
+état local pour le rendu conditionnel côté client, `defaultValue`/
+`onChange` — jamais `value`, même piège Select déjà documenté au Ticket 2) :
+
+- `COLLABORATEUR` — a toujours un compte : sélecteur d'utilisateur
+  uniquement (obligatoire).
+- `STAGIAIRE` — peut avoir un compte ou non : **les deux champs sont
+  proposés** (sélecteur ET nom libre), l'utilisateur remplit celui qui
+  s'applique ; la cohérence (au moins l'un des deux) est revérifiée côté
+  serveur.
+- `FOURNISSEUR` — jamais de compte : nom libre uniquement (obligatoire).
+- `ENTREPRISE` — nom libre, pré-rempli "SIM ASSURANCES CI" (éditable).
+
+**Liste des utilisateurs proposée au sélecteur** : tous les utilisateurs
+actifs, quel que soit leur rôle applicatif — il n'existe pas de rôle
+"Stagiaire" dédié dans le Socle (un stagiaire avec compte reçoit
+simplement un compte de rôle Collaborateur), donc aucune distinction de
+rôle ne permettrait de restreindre cette liste plus finement en V1.
+
+Pièce jointe : champ visuellement présent mais désactivé, comme partout
+ailleurs dans le projet (pas de solution de stockage — voir Ticket 1).
+
+### Server Action `creerDepenseDirecteAction`
+
+`createurId` = utilisateur Finance connecté, `typeDemande =
+DEPENSE_DIRECTE`, `natureDepenseDirecte` renseignée, **statut initial
+`EN_ATTENTE_VALIDATION`** (jamais pré-validée automatiquement — le circuit
+de validation normal s'applique intégralement, y compris la possibilité
+d'un rejet). Référence générée comme d'habitude
+(`generateDemandeReference`, même retry sur conflit que la création
+standard). `HistoriqueEntry` (`action: "creation"`) précise qu'il s'agit
+d'une dépense saisie directement, avec la nature et le bénéficiaire.
+
+### Affichage du bénéficiaire (Tâche 4)
+
+Factorisé dans `src/components/tresorerie/beneficiaire.ts`
+(`BENEFICIAIRE_TYPE_LABEL`, `getBeneficiaireNom` — réutilisée aussi par la
+route du bon de caisse, Phase E, qui dupliquait cette même logique) et
+`depenseDirecte.ts` (`NATURE_DEPENSE_DIRECTE_LABEL`,
+`DepenseDirecteBadge.tsx` pour le badge "Dépense directe — {nature}").
+Affiché sur : le détail Finance, le détail Collaborateur, la liste "Mes
+demandes" et la liste "Demandes à traiter (Finance)" (nouvelle colonne
+"Bénéficiaire", distincte de "Créateur" — essentiel pour ne jamais
+confondre les deux sur une dépense directe).
+
+**Cohérence de `/treso/demandes/[id]` documentée (Tâche 4)** : pour une
+`DEPENSE_DIRECTE`, le créateur est Finance, jamais le bénéficiaire réel.
+Conséquence : cet écran reste mécaniquement accessible et fonctionnel
+(Finance EST le créateur, la garde `createurId === session.user.id`
+passe), mais **le bénéficiaire, même s'il a un compte Collaborateur, ne
+voit jamais "sa" dépense directe dans son propre "Mes demandes"** (filtré
+par `createurId`, jamais par bénéficiaire). Aucun onglet "Dépenses dont je
+suis bénéficiaire" n'existe à ce stade — volontairement hors périmètre de
+cette phase, à évaluer avec le maître de stage si le besoin se confirme.
+
+**Bug préexistant corrigé au passage** : `RetoursCaisseSection` sur cet
+écran affichait le bouton "Déclarer un retour de caisse"
+(`peutDeclarer={demande.statut !== "CLOTUREE"}`) sans jamais vérifier
+`treso.declarer_retour` — sans conséquence tant que le créateur était
+toujours un Collaborateur (qui l'a systématiquement dans le seed), mais
+une dépense directe créée par Finance (qui ne l'a pas) aurait affiché un
+bouton voué à échouer côté serveur. Corrigé :
+`peutDeclarerRetour = statut !== "CLOTUREE" && hasPermission(session,
+"treso.declarer_retour")` — même principe que `canEffectuerReglement`
+ailleurs dans le projet.
+
+### Navigation (Tâche 5)
+
+"Nouvelle dépense directe" (icône `plus-circle`, nouvelle entrée dans
+`src/components/icons.tsx`) ajouté dans la branche "Demande d'Achat",
+visible avec le nouveau booléen `canSaisirDepenseDirecte` (`NavFlags`),
+propagé comme les précédents via `(dashboard)/layout.tsx` → `AppShell` →
+`Sidebar`.
+
+### Filtre reporting par type de demande (Tâche 6)
+
+`ReportingFilters.typeDemande` ajouté (Ticket 10) — parsing, query string
+et `buildDemandeWhere` mis à jour dans `reporting.ts`, nouveau Select
+"Type de demande" dans `ReportingFiltersForm.tsx` (options dérivées de
+`TYPE_DEMANDE_LABEL`, même principe que le Select "Statut"). L'export
+Excel en bénéficie automatiquement (mêmes fonctions partagées).
+
+### Vérifié explicitement (Phase F) — vrai parcours navigateur
+
+Chromium headless (Playwright, non ajouté au projet) contre le vrai
+serveur `next dev`, avec `finance@simassurances.test` et
+`collaborateur@simassurances.test` :
+
+1. `collaborateur@` tente `/treso/finance/depenses-directes/nouvelle` →
+   redirigé (`/?error=acces_refuse_saisir_depense_directe`).
+2. Finance crée une dépense directe (nature "Prime de stage", bénéficiaire
+   Stagiaire sans compte — nom libre "Jean Kouassi", 50 000 FCFA).
+3. Liste "Demandes à traiter (Finance)" : badge "Dépense directe — Prime
+   de stage" visible, bénéficiaire "Jean Kouassi" affiché **distinctement**
+   du créateur "Finance Test".
+4. Détail : bénéficiaire "Jean Kouassi (Stagiaire)" affiché, jamais
+   confondu avec Finance.
+5. Circuit normal identique à une demande standard : validation totale,
+   règlement Caisse de 50 000 confirmé → statut final **Réglée**.
+6. Filtre reporting `typeDemande=DEPENSE_DIRECTE` vérifié par appel direct
+   de `getReportingRows` (fonction sans dépendance de session, comme en
+   Phase B) sur les données produites par le parcours navigateur : exactement
+   1 ligne, montant demandé/validé/réglé = 50 000, reste = 0 ; filtre
+   `typeDemande=STANDARD` sur les mêmes données : 0 ligne (aucune demande
+   standard en base à ce moment).
+
+`npx tsc --noEmit` et `npx eslint .` passent sans erreur (après un `rm -rf
+.next` + `npm run build` pour régénérer les types Next.js auto-générés,
+même piège transitoire déjà documenté en Phase A).
+
+**⚠️ Effet de bord signalé par transparence** : l'ajout de la permission
+`treso.saisir_depense_directe` a nécessité de relancer `npx prisma db
+seed` pour qu'elle existe en base et soit attribuée au rôle Finance — ce
+seed fait un `deleteMany` sur `Demande` (entre autres) avant de
+resemer, comme documenté dans `DEPLOIEMENT.md`/CLAUDE.md ("ne jamais
+lancer en routine"). Cela a supprimé la demande de test préexistante
+(`DEM-2026-000001`, "Payez le carburant") qui subsistait depuis les phases
+précédentes — sans lien avec le code de cette phase, mais une perte de
+données réelle qu'il convient de signaler explicitement plutôt que de la
+passer sous silence. La base ne contient plus aucune demande après le
+nettoyage de cette phase.
+
+## Phase G — Dashboard Finance enrichi : zone "À traiter" (terminée)
+
+Refond le dashboard Finance (Ticket 8, 4 indicateurs) en une zone "À
+traiter" à **6 indicateurs cliquables**, conformément à la section 12 du
+cahier des charges. Le Solde de caisse reste affiché mais devient une
+information de **contexte** distincte (bandeau dédié, pas une carte "à
+traiter" — ce n'est pas une action).
+
+### Les 6 indicateurs — définitions exactes (`src/lib/dashboardFinance.ts`)
+
+| # | Indicateur | Définition | Cible |
+|---|---|---|---|
+| 1 | Demandes en attente de validation | `statut ∈ {EN_ATTENTE_VALIDATION, PARTIELLEMENT_VALIDEE}` | `/treso/finance/demandes` |
+| 2 | Montants validés restant à régler | `montantValide > 0`, reste à régler > 0, **rien réglé encore** (`getTotalRegle = 0`) | `/treso/finance/a-decaisser` |
+| 3 | Règlements partiels à compléter | reste à régler > 0, **déjà réglé en partie** (`getTotalRegle > 0`) | `/treso/finance/reglements-partiels` (nouveau) |
+| 4 | Fonds remis à régulariser | règlements CAISSE confirmés non annulés dont `getSoldeARegulariser(reglementId) ≠ 0` | `/treso/finance/fonds-a-regulariser` (nouveau) |
+| 5 | Retours de fonds en attente de réception | reprend `RETOUR_EN_ATTENTE_WHERE` (Ticket 6/8), inchangé | `/treso/finance/retours` |
+| 6 | Dépenses non justifiées à suivre | `DepenseLigne` `SANS_PIECE` dont le règlement lié a un solde à régulariser ≠ 0 | `/treso/finance/depenses-non-justifiees` (nouveau) |
+
+Les indicateurs 2 et 3 sont **mutuellement exclusifs** par construction
+(`getTotalRegle = 0` vs `> 0`) : une même demande ne peut jamais apparaître
+dans les deux à la fois — vérifié explicitement (voir plus bas). Les
+indicateurs 4, 5 et 6 en revanche **peuvent se recouper sur un même
+règlement** (ex: un règlement Caisse peut simultanément avoir un solde non
+nul, un retour en attente de réception, ET une ligne non justifiée) — ce
+n'est PAS une contradiction, ce sont trois angles différents d'un même
+cycle de régularisation non terminé.
+
+**Point non intuitif vérifié explicitement** : l'indicateur 4 compte TOUT
+règlement Caisse confirmé dont le solde n'est pas nul — y compris un
+règlement pour lequel **aucun retour n'a même encore été déclaré**. En
+pratique, cela signifie qu'un règlement Caisse fraîchement confirmé
+apparaît immédiatement ici (son solde vaut son montant intégral tant que
+rien n'est déclaré/reçu), pas seulement les règlements où un retour est
+resté bloqué. C'est la définition littérale donnée pour cette phase, pas
+un raffinement de ma part — confirmé par le jeu de test (un règlement de
+80 000 sans aucun retour déclaré comptait bien dans cet indicateur, aux
+côtés d'un autre à 50 000 avec un retour en attente).
+
+### Ancien indicateur "Décaissements à régulariser" (Ticket 8) : conservé, mais plus dans les 6
+
+`getDecaissementsARegulariser()` (demandes entièrement réglées, candidates
+à la clôture Ticket 7) n'est pas mentionné par la section 12 du nouveau
+cahier des charges — il ne fait donc plus partie des 6 cartes "À traiter".
+**Choix délibéré : ni retiré ni relégué dans un coin invisible.** La
+clôture (Ticket 7) doit rester praticable, donc `/treso/finance/a-regulariser`
+reste pleinement fonctionnelle et accessible via un **lien secondaire
+discret** en bas de la page du dashboard (texte simple, pas une carte) —
+évite de rendre cette liste orpheline tout en respectant la hiérarchie
+visuelle demandée (6 cartes au premier plan, ce lien nettement en retrait).
+
+### Écart corrigé sur les listes existantes (Tâche 3)
+
+- `/treso/finance/a-decaisser` — s'appelait "Demandes à décaisser" et
+  incluait AUSSI les règlements partiels avant cette phase ; filtre
+  resserré à `totalRegle === 0` et retitré "Montants validés restant à
+  régler" pour correspondre exactement à l'indicateur 2.
+- `/treso/finance/demandes` — s'appelait "Demandes à catégoriser" et ne
+  listait que `EN_ATTENTE_VALIDATION` ; élargi à `EN_ATTENTE_VALIDATION`
+  **et** `PARTIELLEMENT_VALIDEE` pour correspondre exactement à
+  l'indicateur 1, retitré "Demandes en attente de validation". Le bouton
+  d'action de sa table (`DemandesACategoriserTable`) est renommé
+  "Catégoriser" → "Traiter" (une demande partiellement validée n'a plus
+  rien à "catégoriser" au sens propre, elle attend une validation
+  complémentaire).
+- `/treso/finance/retours` — inchangée, déjà exactement l'indicateur 5.
+
+### Nouvelles listes (Tâche 3)
+
+`reglements-partiels/`, `fonds-a-regulariser/` et `depenses-non-justifiees/`
+— même pattern que toutes les listes Finance existantes (wrapper Client
+autour de `DataTable`, garde `treso.voir_dashboard_finance`, tri par
+ancienneté). `fonds-a-regulariser` et `depenses-non-justifiees` renvoient
+vers le détail de la demande ("Voir la demande") plutôt qu'un écran dédié
+par règlement, qui n'existe pas dans le portail — la demande reste le
+point d'entrée naturel pour agir (réceptionner un retour se fait depuis
+`/treso/finance/retours`, indicateur #5 distinct).
+
+### Fonction batch partagée (`getSoldesARegulariserParReglements`)
+
+`getSoldeARegulariser(reglementId)` (Phase D) est devenue un simple appel à
+`getSoldesARegulariserParReglements([reglementId])` (`src/lib/tresorerie.ts`) :
+une seule requête `DepenseLigne`/`RetourCaisse` pour plusieurs règlements à
+la fois (réduite en mémoire), réutilisée par les indicateurs 4 et 6 pour
+éviter une requête par règlement — jamais deux implémentations de la même
+formule.
+
+### Tâche 4 — Navigation : choix d'ergonomie documenté
+
+**Les 3 nouvelles listes ne sont PAS ajoutées à la sidebar**, uniquement
+accessibles via les cartes du dashboard — même principe déjà en place pour
+`a-decaisser`/`a-regulariser`/`retours` avant cette phase (jamais dans
+`nav.ts`, seulement des cibles de clic). Ajouter 3 entrées de plus
+surchargerait la branche "Demande d'Achat" (déjà 5 entrées conditionnelles)
+sans bénéfice réel : le dashboard est l'écran d'atterrissage naturel de
+Finance/DG (déjà dans la sidebar, "Tableau de bord Finance"), donc ces
+listes restent à un clic de distance en toute circonstance.
+
+### Choix design (rendu professionnel demandé explicitement)
+
+Skill `ui-ux-pro-max` consultée avant codage (style "Data-Dense Dashboard"
+— grille dense, KPI cards, feedback hover/focus, stagger d'entrée standard
+300-450 ms) : guidance structurelle retenue, palette/typographie NON
+reprises (la charte SIM Assurances — Montserrat, tokens `sim-*` — reste la
+seule source de vérité chromatique du portail).
+
+- **`StatCard`** (`src/components/ui/StatCard.tsx`) gagne un prop `href`
+  optionnel : rendue comme `next/link` avec micro-interactions (léger
+  soulèvement `-translate-y-0.5`, icône `scale-110`, halo de focus/hover
+  teinté selon `tone`, invite "Voir le détail" avec flèche animée) —
+  gardée rétro-compatible (sans `href`, comportement statique inchangé,
+  toujours utilisée telle quelle par le dashboard général
+  `(dashboard)/page.tsx`). Toutes les transforms (translate/scale) sont
+  gardées par `motion-safe:` — inertes sous `prefers-reduced-motion`, sans
+  JavaScript. Au passage, corrigé un oubli préexistant : `StatCard`
+  codait ses couleurs en dur (`slate-*`, `bg-white`) au lieu des tokens
+  sémantiques du projet (`border-border`, `bg-surface`,
+  `text-muted-foreground`, `text-foreground`) — même rendu visuel, mais
+  conforme à la règle du projet ("ne jamais coder une couleur en dur").
+  Nouveau tone `"danger"` ajouté à `StatTone` (`bg-danger-bg`/`text-danger`),
+  jusqu'ici absent — nécessaire pour l'indicateur 6.
+- **Teinte adaptative selon l'urgence réelle** (auto-critique appliquée
+  après une première passe) : une carte ne s'allume dans sa teinte
+  d'urgence (warning/info/danger) que si son nombre est `> 0` — à 0, elle
+  repasse en `neutral`. Sans ce garde-fou, "Dépenses non justifiées à
+  suivre" se serait affichée en rouge alarmant même à zéro dépense non
+  justifiée : la hiérarchie visuelle ne doit signaler que ce qui est
+  réellement actionnable (`toneSiActif()`, `treso/finance/page.tsx`).
+- **Entrée en fondu/décalage** des 6 cartes (`.stat-card-enter` /
+  `@keyframes stat-card-in`, `globals.css`) : un seul keyframe CSS partagé,
+  décalé par carte via `:nth-child` (40 ms de pas, ~200 ms max) — pas de
+  librairie d'animation (GSAP serait disproportionné pour 6 cartes
+  statiques). Entièrement neutralisée sous `prefers-reduced-motion:
+  reduce` (media query dédiée) : rendu direct dans l'état final.
+- **Bandeau Solde de caisse** délibérément distinct des 6 cartes : pas de
+  bordure `border-border` neutre ni de lien cliquable, teinte primaire
+  (identité SIM Assurances) avec icône dans un cercle plein plutôt que la
+  pastille arrondie des `StatCard` — signale visuellement "ceci est un
+  chiffre de référence, pas une action" avant même de lire le texte.
+- Badge de synthèse "X points au total" (ou "Tout est à jour" en vert si
+  0) en tête de la zone "À traiter" — vue d'ensemble immédiate sans
+  addition mentale.
+
+### Vérifié explicitement (Phase G) — vrai parcours navigateur
+
+Chromium headless (Playwright) contre le vrai serveur `next dev`. Jeu de
+données couvrant les 6 cas simultanément (4 demandes) :
+
+- Demande A (100 000) laissée `EN_ATTENTE_VALIDATION` → indicateur 1.
+- Demande B (100 000) validée totalement, aucun règlement → indicateur 2
+  (100 000 FCFA).
+- Demande C (200 000) validée totalement + règlement Caisse de 80 000
+  confirmé → indicateur 3 (reste 120 000 FCFA) — règlement également
+  compté dans l'indicateur 4 (aucun retour déclaré, solde = 80 000).
+- Demande D (150 000) validée totalement + réglée intégralement (Caisse) +
+  retour déclaré (2 lignes : 70 000 avec facture, 30 000 sans pièce) mais
+  **non réceptionné** → indicateurs 4 (solde 50 000), 5 (retour en
+  attente), et 6 (30 000 FCFA non justifiés).
+
+Dashboard vérifié : 7 points au total, chaque carte affiche le bon
+nombre/montant (indicateur 4 = 2 règlements/130 000 FCFA, voir
+l'explication ci-dessus), solde de caisse = −230 000 FCFA
+(−80 000 − 150 000), lien secondaire "Décaissements... en attente de
+clôture" = 1 (D). Chaque carte cliquée mène à la bonne liste avec les
+bonnes données. **Non-contradiction vérifiée explicitement** : B absente
+de "Règlements partiels à compléter", C et D absentes de "Montants validés
+restant à régler" — les indicateurs 2/3 restent mutuellement exclusifs en
+pratique, pas seulement en théorie.
+
+`npx tsc --noEmit` et `npx eslint .` passent sans erreur. Données de test
+nettoyées après coup (0 demande restante). Serveur `next dev` arrêté après
+vérification.
+
 ## Module Trésorerie : Ticket 1 — Création de demande (Collaborateur)
 
 **Statut : terminé.** Routes sous
