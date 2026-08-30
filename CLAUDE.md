@@ -969,6 +969,266 @@ plus qu'une demande préexistante sans rapport avec cette vérification,
 non créée par cette session et volontairement non touchée. Serveur `next
 dev` arrêté après vérification.
 
+## Phase D — Fonds remis : lignes de dépenses détaillées (terminée)
+
+Restructure la déclaration de retour de caisse (Tickets 5/6) selon les
+sections 8-9 du cahier des charges : un `RetourCaisse` ne stocke plus un
+montant dépensé agrégé unique avec une seule justification, mais une liste
+de `DepenseLigne` détaillées (une par dépense réelle).
+
+### Choix documenté : `montantARetourner` CALCULÉ, jamais saisi
+
+Le cahier des charges est en tension entre deux phrases : la section 9.3
+dit que l'utilisateur "enregistre" un montant à retourner (suggérant une
+saisie), la section 9.5 dit explicitement "le solde ne doit pas être
+modifiable manuellement". **Tranché en faveur du calcul automatique** :
+`montantARetourner` = montant du règlement lié moins la somme des
+`DepenseLigne` déclarées (`getMontantARetourner`, `src/lib/tresorerie.ts`),
+jamais reçu du formulaire ni de la Server Action en paramètre. Cohérent
+avec le principe déjà appliqué ailleurs dans le projet : `getSoldeCaisse()`
+(Ticket 4) est également toujours recalculé à partir du grand livre, jamais
+saisi — aucun solde financier ne doit être modifiable à la main. Le
+formulaire de déclaration affiche ce montant en LECTURE SEULE (aperçu
+calculé côté client, recalculé côté serveur — l'aperçu client n'est jamais
+la source de vérité).
+
+### Modèle `DepenseLigne`
+
+Nouveau modèle (migration `phase_d_depense_ligne`) : `montant`, `objet`,
+`date`, `nature` (texte libre optionnel), `justification`
+(`TypeJustification`, comme avant), `commentaire` (obligatoire si
+`justification = SANS_PIECE`, même règle que le Ticket 5). `RetourCaisse`
+perd `montantDepense`/`justification`/`commentaire` (remplacés par la
+relation `depenses DepenseLigne[]`), garde `montantARetourner` (désormais
+calculé, voir ci-dessus) et `estReceptionne`. Aucune donnée de seed à
+adapter : `prisma/seed.ts` ne crée aucun `RetourCaisse` (vérifié).
+
+### Nouvelles fonctions de calcul (`src/lib/tresorerie.ts`)
+
+- `getTotalDepensesDeclarees(retourCaisseId)` — somme des `DepenseLigne`
+  d'un retour précis.
+- `getMontantNonJustifie(retourCaisseId)` — somme des lignes
+  `justification = SANS_PIECE` d'un retour précis (mise en évidence à
+  l'affichage, Tâche 5).
+- `getMontantARetourner(retourCaisseId)` — montant du règlement lié moins
+  `getTotalDepensesDeclarees`, jamais négatif. Utilisée à la création du
+  retour (`creerRetourCaisseAction`), jamais recalculée ensuite (les
+  dépenses sont figées une fois le retour déclaré — V1 volontairement
+  simple, pas d'édition de dépenses après coup).
+- `getSoldeARegulariser(reglementId)` — montant du règlement moins les
+  dépenses déclarées (toutes les `DepenseLigne` de tous les retours liés à
+  CE règlement) moins les retours effectivement reçus (`montantARetourner`
+  des retours `estReceptionne: true`). **Doit valoir 0 une fois que tout
+  est correctement justifié et/ou retourné** — équivalent de `getEcart`
+  (Ticket 7) mais à l'échelle d'un règlement précis plutôt que d'une
+  demande entière (une demande peut avoir plusieurs règlements Caisse,
+  chacun son propre cycle fonds remis). Vérifié explicitement (voir plus
+  bas) : 0 après un cycle complet déclaration + réception.
+- `getDepensesDeclarees(demandeId)` (Ticket 7, déjà existante) adaptée pour
+  sommer les `DepenseLigne` via la relation imbriquée
+  `retourCaisse.reglement.demandeId`, au lieu de l'ancien
+  `retourCaisse.montantDepense`.
+
+### Formulaire de déclaration reconstruit (`RetourCaisseForm.tsx`)
+
+Remplace le formulaire à un seul montant (Ticket 5, `<form action=
+{formAction}>` + `useActionState`/`FormData`) par une liste dynamique de
+lignes gérée en état local React (`useState<LigneEdit[]>`, "Ajouter une
+ligne de dépense" / "Retirer" par ligne, au moins une ligne obligatoire).
+Un tableau de lignes ne se prête pas nativement à `FormData` : le
+formulaire appelle donc directement `creerRetourCaisseAction(reglementId,
+lignes)` (arguments simples + `useTransition`), même pattern que
+`validerComplementaireAction`/`confirmerReglementAction` plutôt que le
+pattern `useActionState` du Ticket 5.
+
+**Piège Select évité** (déjà documenté au Ticket 2) : le champ
+"Justification" de chaque ligne utilise `defaultValue`, jamais `value` —
+`Select` fixe déjà `defaultValue` en interne, et chaque ligne a une `key`
+stable pour sa durée de vie, donc pas besoin de la remonter pour refléter
+un changement programmatique.
+
+Total déclaré et montant à retourner recalculés à chaque frappe et
+affichés en lecture seule (aperçu — la Server Action revalide et calcule
+la valeur définitive côté serveur).
+
+### Server Action reconstruite (`creerRetourCaisseAction`)
+
+Signature changée : `(reglementId, lignes: LigneDepenseInput[])` au lieu de
+`(prevState, formData)`. Dans une seule transaction (`prisma.$transaction`
+avec callback, pas un tableau d'opérations — nécessaire ici car l'id du
+`RetourCaisse` créé doit être réutilisé pour `depenseLigne.createMany`) :
+crée le `RetourCaisse` (`montantARetourner` calculé), crée toutes les
+`DepenseLigne` (`createMany`), crée l'entrée `HistoriqueEntry` (résumé :
+nombre de lignes, total déclaré, montant à retourner calculé). Contrôles
+d'éligibilité inchangés (permission, règlement Caisse confirmé non annulé,
+demande non `CLOTUREE`, propriété de la demande, un seul retour par
+règlement).
+
+### Affichage mis à jour (Tâche 5)
+
+- `RetourCaisseRow` (Collaborateur) : nouveau sous-composant
+  `DetailDepenses` — liste chaque ligne (objet, montant, date,
+  justification, nature, commentaire), puis un résumé (total déclaré, à
+  retourner, **non justifié en `text-warning`** si > 0 — couleur d'alerte
+  de la charte, cohérente avec le reste du projet : reste à régler,
+  écart de régularisation).
+- `RetoursEnAttenteTable` (Finance, Ticket 6) : colonnes
+  "Montant dépensé"/"Justification"/"Commentaire" remplacées par "Détail
+  des dépenses" (liste compacte par ligne), "Total déclaré" et
+  "Non justifié" (même mise en évidence `text-warning`).
+- Reporting (Ticket 10) et son export Excel : feuille "Retours de caisse"
+  adaptée (`montantDepenseTotal`/`montantNonJustifie` remplacent
+  `montantDepense`/`justification`, agrégés en mémoire depuis les
+  `DepenseLigne` incluses — même convention que le reste du reporting).
+
+### Réception (Ticket 6) — vérifiée inchangée (Tâche 6)
+
+`receptionnerRetourAction` lit `retour.montantARetourner` directement (même
+colonne qu'avant) : aucune modification nécessaire, seule la façon dont ce
+champ est rempli à la création a changé (calcul plutôt que saisie).
+Structurellement identique : écriture `JournalCaisse` `ENTREE` du montant,
+marquage `estReceptionne`, dans la même transaction.
+
+### Vérifié explicitement (Phase D) — vrai parcours navigateur
+
+Même méthode que la Phase C : Chromium headless piloté par Playwright
+(non ajouté au projet) contre le vrai serveur `next dev`, formulaires
+réellement remplis et boutons réellement cliqués avec les comptes
+`collaborateur@`/`finance@simassurances.test`.
+
+1. Règlement Caisse de 100 000 FCFA confirmé (demande validée totalement).
+2. Déclaration d'un retour avec 3 lignes : 40 000 FCFA (Facture), 30 000
+   FCFA (Reçu), 10 000 FCFA (Sans pièce, commentaire obligatoire renseigné).
+3. Aperçu client (avant soumission) : total déclaré = 80 000 FCFA, montant
+   à retourner = 20 000 FCFA — conforme.
+4. Après déclaration : détail des 3 lignes affiché, total déclaré 80 000
+   FCFA, à retourner 20 000 FCFA, **non justifié 10 000 FCFA** mis en
+   évidence.
+5. Liste Finance "Retours en attente" : mêmes montants affichés.
+6. Réception du retour côté Finance.
+7. Contrôle direct en base (après le parcours navigateur, sur les données
+   qu'il a produites) : `retour.estReceptionne = true`,
+   `montantARetourner = 20000` en base, écriture `JournalCaisse` `ENTREE`
+   de 20 000 FCFA (`source: "retour_caisse_receptionne"`), **`getSoldeARegulariser(reglementId) = 0`**
+   (100 000 − 80 000 déclarés − 20 000 reçus), solde de caisse global
+   cohérent (−80 000 FCFA après ce cycle : −100 000 SORTIE + 20 000 ENTREE).
+
+`npx tsc --noEmit` et `npx eslint .` passent sans erreur. Données de test
+nettoyées après coup ; la base ne contient plus que la même demande
+préexistante sans rapport, non touchée. Serveur `next dev` arrêté après
+vérification.
+
+## Phase E — Bon de caisse (terminée)
+
+Ajoute un DEUXIÈME document PDF, distinct du reçu complet (Ticket 9),
+spécifique aux règlements en mode CAISSE uniquement (cahier des charges
+section 12.1).
+
+### Différence essentielle avec le reçu complet (Ticket 9)
+
+Le bon de caisse est **volontairement minimaliste** : il n'indique QUE le
+montant effectivement réglé lors de cette opération précise — jamais le
+montant demandé, le total réglé à ce jour, ni le reste à régler (réservés
+au reçu complet). Exemple du cahier des charges : montant validé
+250 000 FCFA, ce règlement précis 200 000 FCFA → le bon de caisse
+n'affiche que "200 000 FCFA", rien de plus sur les montants. Vérifié
+explicitement (voir plus bas) que ces trois libellés sont absents du PDF
+généré.
+
+### Route `GET /api/treso/reglements/[id]/bon-de-caisse`
+
+[src/app/api/treso/reglements/\[id\]/bon-de-caisse/route.tsx](<src/app/api/treso/reglements/[id]/bon-de-caisse/route.tsx>) —
+même modèle technique et **mêmes règles d'accès EXACTEMENT** que le reçu
+(Ticket 9) : 401 non authentifié, 404 règlement introuvable/non confirmé,
+403 si ni Finance/DG (n'importe laquelle des 5 permissions du dashboard
+Finance) ni créateur de la demande. **Nouveau : 400 si le règlement n'est
+pas en mode CAISSE**, avec message explicite ("Le bon de caisse n'est
+disponible que pour les règlements en Caisse.") — un règlement Banque n'a
+pas de sens pour ce document.
+
+**Bénéficiaire (Phase A)** : `beneficiaireUser.fullName` si
+`beneficiaireUserId` est renseigné, sinon `beneficiaireNom` (texte libre —
+fournisseur, ou "SIM ASSURANCES CI"), sinon "—". Nom de fichier :
+`bon-de-caisse-{référence demande}.pdf`.
+
+### Gabarit `BonDeCaisseDocument.tsx`
+
+En-tête identique au reçu (bandeau bleu, wordmark texte "SIM ASSURANCES" —
+pas d'image, même choix documenté au Ticket 9), puis : référence de la
+demande, bénéficiaire, date du règlement, le montant réglé en évidence
+(grand, centré), mention du régleur. Rien d'autre.
+
+### Refactoring partagé PDF (motivé par ce deuxième document)
+
+Avant cette phase, `ReceiptDocument.tsx` embarquait tout en un seul
+fichier (police, couleurs, formatage). Avec un deuxième document,
+factorisé en modules partagés — `src/lib/pdf/` :
+
+- `registerFonts.ts` — effet de bord `Font.register` (Montserrat), exécuté
+  une seule fois grâce au cache de modules Node ; les deux documents font
+  `import "./registerFonts"`. Renommé (pas `fonts.ts`) pour éviter toute
+  ambiguïté de résolution avec le dossier `src/lib/pdf/fonts/` existant
+  (fichiers `.ttf`).
+- `colors.ts` — `COLORS`, mêmes valeurs hexadécimales que `globals.css`.
+- `format.ts` — `formatMontant`/`formatDate`, voir le bug corrigé
+  ci-dessous.
+
+### Bug latent corrigé (préexistant depuis le Ticket 9, découvert ici)
+
+`montant.toLocaleString("fr-FR")` utilise par défaut une **espace fine
+insécable** (U+202F) comme séparateur de milliers. Constaté en
+vérification manuelle (extraction du texte du bon de caisse via
+`pdftotext`) : ce caractère précis est **absent des glyphes de la police
+Montserrat embarquée** dans les PDF — le rendu affichait "2000/ 00 FCFA"
+au lieu de "200 000 FCFA", le glyphe manquant perturbant le calcul des
+positions par le moteur de `@react-pdf/renderer`. **Ce bug existait déjà
+dans le reçu complet du Ticket 9** (même fonction `formatMontant`, jamais
+remarqué car l'audit de conformité de l'époque n'avait apparemment pas
+généré de montant produisant ce glyphe de façon visible, ou l'artefact
+était passé inaperçu à la relecture) — reproduit et confirmé directement
+sur le reçu existant en le régénérant après coup (200 000/400 000/300 000/
+100 000 FCFA, tous auparavant à risque). Corrigé à la source, dans
+`format.ts`, pour les DEUX documents : `formatMontant` construit le
+séparateur de milliers manuellement avec une espace ordinaire (U+0020),
+garantie présente dans la police. Vérifié explicitement que le reçu
+existant (Ticket 9) affiche désormais correctement tous ses montants
+après ce correctif.
+
+### Tâche 2 — Bouton de téléchargement
+
+Ajouté à côté de "Télécharger le reçu", **uniquement si
+`mode === "CAISSE"` et le règlement est confirmé et non annulé** : sur
+`ReglementRow.tsx` (Finance, Ticket 4) et `ReglementsRecusSection.tsx`
+(Collaborateur, Ticket 9). Masqué pour les règlements Banque — la route le
+refuserait de toute façon (400), mais autant ne pas proposer une action
+vouée à échouer (même principe que les autres boutons conditionnels du
+projet).
+
+### Vérifié explicitement (Phase E) — vrai parcours navigateur + inspection PDF réelle
+
+Chromium headless (Playwright) pour tout le parcours UI (création
+demande, validation totale, règlement Caisse 200 000 + règlement Banque
+100 000, tous deux confirmés), puis téléchargement des PDF via
+`context.request` (mêmes cookies de session que le navigateur — vraie
+authentification, pas de contournement) et inspection du contenu réel via
+`pdftotext` (poppler, déjà présent sur la machine) :
+
+- Bon de caisse du règlement Caisse (200 000 FCFA) : contient "BON DE
+  CAISSE", le bénéficiaire ("Collaborateur Test", créateur par défaut —
+  Phase A), "200 000 FCFA", le régleur ("Finance Test") ; **ne contient
+  PAS** "400 000" (montant demandé), ni les libellés "Montant demandé",
+  "Total réglé", "Reste à régler".
+- Bon de caisse du règlement Banque : refusé, statut **400**, message
+  explicite.
+- Règles d'accès : compte RH (aucune permission Finance, non créateur)
+  refusé en **403** ; le collaborateur créateur autorisé en **200** ;
+  requête non authentifiée refusée en **401**.
+
+`npx tsc --noEmit` et `npx eslint .` passent sans erreur. Données de test
+nettoyées après coup ; la base ne contient plus que la même demande
+préexistante sans rapport, non touchée. Serveur `next dev` arrêté après
+vérification.
+
 ## Module Trésorerie : Ticket 1 — Création de demande (Collaborateur)
 
 **Statut : terminé.** Routes sous
@@ -1667,6 +1927,13 @@ aucune dépendance réseau ni résolution de chemin fragile au moment du
 rendu. **Point de vigilance pour un build de production** : cette approche
 suppose que `process.cwd()` reste la racine du projet ; à revérifier si le
 déploiement change ce répertoire de travail (ex: mode `standalone`).
+
+**Mise à jour Phase E** : ce chargement de police est désormais factorisé
+dans `src/lib/pdf/registerFonts.ts` (partagé avec le nouveau bon de
+caisse). Un bug latent de `formatMontant` (espace fine insécable absente
+des glyphes de cette police, montants mal rendus) affectait aussi ce reçu
+depuis l'origine — corrigé dans `src/lib/pdf/format.ts`, voir la section
+"Phase E — Bon de caisse" pour le détail complet.
 
 **Pas de logo image** — `logo-sim-blanc.webp` pose deux problèmes distincts
 pour ce reçu : (1) format WebP non fiablement supporté par le moteur de

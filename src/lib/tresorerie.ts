@@ -104,17 +104,106 @@ export async function getSoldeCaisse(): Promise<number> {
 }
 
 /**
- * Somme des `montantDepense` de TOUS les `RetourCaisse` liés aux règlements
+ * Somme des `DepenseLigne` de TOUS les `RetourCaisse` liés aux règlements
  * d'une demande — peu importe qu'ils soient déjà réceptionnés ou non : c'est
  * ce que le collaborateur affirme avoir dépensé, indépendamment du
  * traitement de Finance. Ticket 7 (régularisation/clôture).
+ *
+ * REFONTE V1 / Phase D (voir CLAUDE.md "Refonte V1 en cours") : un
+ * `RetourCaisse` n'a plus de `montantDepense` agrégé unique — remplacé par
+ * ses lignes de dépenses détaillées (`DepenseLigne`), sommées ici via la
+ * relation imbriquée `retourCaisse.reglement.demandeId`.
  */
 export async function getDepensesDeclarees(demandeId: string): Promise<number> {
-  const result = await prisma.retourCaisse.aggregate({
-    where: { reglement: { demandeId } },
-    _sum: { montantDepense: true },
+  const result = await prisma.depenseLigne.aggregate({
+    where: { retourCaisse: { reglement: { demandeId } } },
+    _sum: { montant: true },
   });
-  return Number(result._sum.montantDepense ?? 0);
+  return Number(result._sum.montant ?? 0);
+}
+
+/**
+ * Somme des montants de TOUTES les `DepenseLigne` d'un `RetourCaisse`
+ * précis — c'est le total qui sert à calculer `montantARetourner`
+ * (`getMontantARetourner` ci-dessous). Phase D (fonds remis, cahier des
+ * charges sections 8-9).
+ */
+export async function getTotalDepensesDeclarees(retourCaisseId: string): Promise<number> {
+  const result = await prisma.depenseLigne.aggregate({
+    where: { retourCaisseId },
+    _sum: { montant: true },
+  });
+  return Number(result._sum.montant ?? 0);
+}
+
+/**
+ * Somme des montants des `DepenseLigne` d'un `RetourCaisse` dont la
+ * justification est `SANS_PIECE` — la part de la dépense déclarée qui
+ * n'est appuyée par aucun justificatif formel, mise en évidence à
+ * l'affichage (Tâche 5).
+ */
+export async function getMontantNonJustifie(retourCaisseId: string): Promise<number> {
+  const result = await prisma.depenseLigne.aggregate({
+    where: { retourCaisseId, justification: "SANS_PIECE" },
+    _sum: { montant: true },
+  });
+  return Number(result._sum.montant ?? 0);
+}
+
+/**
+ * Montant à retourner d'un `RetourCaisse` : montant du règlement lié moins
+ * le total de ses `DepenseLigne` déclarées, jamais négatif. **Toujours
+ * calculé, jamais saisi manuellement** — voir le commentaire de
+ * `RetourCaisse.montantARetourner` dans `schema.prisma` et CLAUDE.md
+ * "Refonte V1 en cours" / Phase D pour la justification de ce choix
+ * (tension cahier des charges section 9.3 vs 9.5, tranchée en faveur du
+ * calcul automatique, cohérent avec `getSoldeCaisse`).
+ */
+export async function getMontantARetourner(retourCaisseId: string): Promise<number> {
+  const retour = await prisma.retourCaisse.findUnique({
+    where: { id: retourCaisseId },
+    include: { reglement: true },
+  });
+  if (!retour) {
+    return 0;
+  }
+  const totalDepenses = await getTotalDepensesDeclarees(retourCaisseId);
+  return Math.max(0, Number(retour.reglement.montant) - totalDepenses);
+}
+
+/**
+ * Solde à régulariser d'un règlement précis : montant du règlement moins
+ * les dépenses déclarées (toutes les `DepenseLigne` de TOUS les
+ * `RetourCaisse` liés à ce règlement) moins les retours effectivement
+ * reçus (`montantARetourner` des retours `estReceptionne: true` liés à ce
+ * règlement). **Doit valoir 0 une fois que tout est correctement justifié
+ * et/ou retourné** — un solde non nul signale un écart (dépense non
+ * couverte par une ligne déclarée, ou retour déclaré mais pas encore
+ * réceptionné). Phase D (fonds remis, cahier des charges sections 8-9) —
+ * équivalent de `getEcart` (Ticket 7) mais à l'échelle d'un règlement
+ * précis plutôt que d'une demande entière (une demande peut avoir
+ * plusieurs règlements Caisse, chacun avec son propre cycle fonds remis).
+ */
+export async function getSoldeARegulariser(reglementId: string): Promise<number> {
+  const reglement = await prisma.reglement.findUnique({ where: { id: reglementId } });
+  if (!reglement) {
+    return 0;
+  }
+  const [depensesDeclarees, retoursRecus] = await Promise.all([
+    prisma.depenseLigne.aggregate({
+      where: { retourCaisse: { reglementId } },
+      _sum: { montant: true },
+    }),
+    prisma.retourCaisse.aggregate({
+      where: { reglementId, estReceptionne: true },
+      _sum: { montantARetourner: true },
+    }),
+  ]);
+  return (
+    Number(reglement.montant) -
+    Number(depensesDeclarees._sum.montant ?? 0) -
+    Number(retoursRecus._sum.montantARetourner ?? 0)
+  );
 }
 
 /**

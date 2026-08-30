@@ -50,7 +50,10 @@ function ReglementStatutBadge({ reglement }: { reglement: ReglementRowData }) {
  * Finance/DG (pas seulement `treso.effectuer_reglement`), donc tout
  * utilisateur qui voit cette page (garde du layout Finance partagé) a de
  * toute façon le droit de télécharger — masquer le lien pour le DG serait
- * incohérent avec ce que le serveur accepterait réellement.
+ * incohérent avec ce que le serveur accepterait réellement. "Télécharger le
+ * bon de caisse" (Phase E) apparaît à côté, en plus, uniquement si
+ * `mode === "CAISSE"` — un bon de caisse n'a pas de sens pour un règlement
+ * Banque, la Route Handler le refuserait de toute façon (400).
  */
 export function ReglementRow({
   reglement,
@@ -136,6 +139,13 @@ export function ReglementRow({
             <a href={`/api/treso/reglements/${reglement.id}/recu`}>
               <Button type="button" variant="secondary">
                 Télécharger le reçu
+              </Button>
+            </a>
+          ) : null}
+          {reglement.estConfirme && !reglement.estAnnule && reglement.mode === "CAISSE" ? (
+            <a href={`/api/treso/reglements/${reglement.id}/bon-de-caisse`}>
+              <Button type="button" variant="secondary">
+                Télécharger le bon de caisse
               </Button>
             </a>
           ) : null}

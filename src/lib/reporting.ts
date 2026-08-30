@@ -1,4 +1,4 @@
-import type { ModeReglement, Prisma, StatutDemande, TypeJustification } from "@/generated/prisma/client";
+import type { ModeReglement, Prisma, StatutDemande } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -354,14 +354,24 @@ export async function getReportingReglementsDetail(filters: ReportingFilters): P
 
 export interface ReportingRetourDetail {
   demandeReference: string;
-  montantDepense: number;
+  montantDepenseTotal: number;
   montantARetourner: number;
-  justification: TypeJustification;
+  montantNonJustifie: number;
   estReceptionne: boolean;
   declareLe: Date;
 }
 
-/** Feuille "Retours de caisse" de l'export : retours liés aux demandes filtrées. */
+/**
+ * Feuille "Retours de caisse" de l'export : retours liés aux demandes
+ * filtrées.
+ *
+ * REFONTE V1 / Phase D (voir CLAUDE.md "Refonte V1 en cours") : un retour
+ * n'a plus de montant dépensé/justification uniques (Ticket 5) — remplacés
+ * par `montantDepenseTotal` (somme des `DepenseLigne`) et
+ * `montantNonJustifie` (somme des lignes `SANS_PIECE`), agrégés en mémoire
+ * via l'`include` ci-dessous (volume modeste, même convention que le reste
+ * du reporting).
+ */
 export async function getReportingRetoursDetail(filters: ReportingFilters): Promise<ReportingRetourDetail[]> {
   const { demandes } = await getDemandesFiltrees(filters);
   const demandeIds = demandes.map((d) => d.id);
@@ -372,15 +382,17 @@ export async function getReportingRetoursDetail(filters: ReportingFilters): Prom
 
   const retours = await prisma.retourCaisse.findMany({
     where: { reglement: { demandeId: { in: demandeIds } } },
-    include: { reglement: true },
+    include: { reglement: true, depenses: true },
     orderBy: { createdAt: "asc" },
   });
 
   return retours.map((r) => ({
     demandeReference: referenceParDemande.get(r.reglement.demandeId) ?? "—",
-    montantDepense: Number(r.montantDepense),
+    montantDepenseTotal: r.depenses.reduce((sum, d) => sum + Number(d.montant), 0),
     montantARetourner: Number(r.montantARetourner),
-    justification: r.justification,
+    montantNonJustifie: r.depenses
+      .filter((d) => d.justification === "SANS_PIECE")
+      .reduce((sum, d) => sum + Number(d.montant), 0),
     estReceptionne: r.estReceptionne,
     declareLe: r.createdAt,
   }));

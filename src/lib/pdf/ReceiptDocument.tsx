@@ -1,71 +1,8 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { Document, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 
-import { Document, Font, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
-
-/**
- * Montserrat n'est disponible côté serveur que via `next/font/google` (qui
- * ne produit qu'une classe CSS pour le navigateur, inutilisable par
- * @react-pdf/renderer). Le rendu PDF tourne dans un Route Handler Node.
- *
- * **Fichiers bundlés localement (`./fonts/*.ttf`), pas d'URL distante,
- * pas de `__dirname`.** Deux incidents constatés en vérification manuelle
- * avant ce choix : (1) les URLs `fonts.gstatic.com` (documentées comme
- * stables au Ticket 9) ont provoqué un `ConnectTimeoutError` reproductible
- * lors de la génération d'un reçu, y compris après redémarrage du serveur
- * — un souci réseau ponctuel au premier rendu suffit à rendre
- * `Font.register` en échec pour toute la durée de vie du process (react-pdf
- * ne retente jamais un chargement de police en échec) ; (2) une première
- * correction via `path.join(__dirname, ...)` a échoué à son tour :
- * Turbopack réécrit `__dirname` vers un chemin racine virtuel
- * (`C:\ROOT\...`) qui n'existe pas sur le disque réel (`ENOENT`). Solution
- * robuste retenue : lire chaque fichier en `Buffer` une seule fois au
- * chargement du module via `process.cwd()` (toujours la racine du projet
- * pour `next dev`/`next start`, jamais virtualisé par le bundler), puis
- * l'encoder en data URL base64 passée à `src` (`@react-pdf/font` accepte
- * nativement ce format) — les données de police vivent alors entièrement
- * en mémoire, sans plus jamais retoucher le disque ni le réseau au moment
- * du rendu.
- */
-const FONTS_DIR = path.join(process.cwd(), "src/lib/pdf/fonts");
-
-function fontDataUrl(fileName: string): string {
-  const buffer = readFileSync(path.join(FONTS_DIR, fileName));
-  return `data:font/ttf;base64,${buffer.toString("base64")}`;
-}
-
-Font.register({
-  family: "Montserrat",
-  fonts: [
-    { src: fontDataUrl("Montserrat-Regular.ttf"), fontWeight: 400 },
-    { src: fontDataUrl("Montserrat-Medium.ttf"), fontWeight: 500 },
-    { src: fontDataUrl("Montserrat-SemiBold.ttf"), fontWeight: 600 },
-    { src: fontDataUrl("Montserrat-Bold.ttf"), fontWeight: 700 },
-  ],
-});
-
-/**
- * Mêmes valeurs hexadécimales exactes que les tokens sémantiques de
- * `globals.css` (bg-primary, text-info, border-neutral...) — @react-pdf/renderer
- * ne peut pas lire les classes Tailwind du projet, donc dupliquées ici
- * littéralement plutôt que réinventées, pour un rendu cohérent avec le reste
- * du portail.
- */
-const COLORS = {
-  primary: "#004b9c",
-  primaryForeground: "#ffffff",
-  info: "#1d78ab",
-  infoBg: "#f1f9fd",
-  infoBorder: "#cbe7f6",
-  neutral: "#475569",
-  neutralBg: "#f1f5f9",
-  neutralBorder: "#e2e8f0",
-  border: "#e2e8f0",
-  mutedForeground: "#64748b",
-  foreground: "#0f172a",
-  warning: "#bf470c",
-  success: "#16a34a",
-};
+import { COLORS } from "./colors";
+import { formatDate, formatMontant } from "./format";
+import "./registerFonts";
 
 const styles = StyleSheet.create({
   page: {
@@ -222,14 +159,6 @@ export interface ReceiptData {
   totalRegleADate: number;
   /** getResteARegler(demandeId), même logique de fraîcheur. */
   resteARegler: number;
-}
-
-function formatMontant(montant: number): string {
-  return `${montant.toLocaleString("fr-FR")} FCFA`;
-}
-
-function formatDate(date: Date): string {
-  return date.toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
 }
 
 /**

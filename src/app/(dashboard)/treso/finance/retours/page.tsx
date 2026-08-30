@@ -36,22 +36,40 @@ export default async function RetoursEnAttentePage() {
     include: {
       declarant: true,
       reglement: { include: { demande: true } },
+      depenses: true,
     },
     orderBy: { createdAt: "asc" },
   });
 
-  const retours = rawRetours.map((r) => ({
-    id: r.id,
-    demandeReference: r.reglement.demande.reference,
-    declarantNom: r.declarant.fullName,
-    reglementMontant: Number(r.reglement.montant),
-    reglementMode: r.reglement.mode,
-    montantDepense: Number(r.montantDepense),
-    montantARetourner: Number(r.montantARetourner),
-    justification: r.justification,
-    commentaire: r.commentaire,
-    createdAt: r.createdAt,
-  }));
+  // REFONTE V1 / Phase D (voir CLAUDE.md "Refonte V1 en cours") : un retour
+  // n'a plus de montant dépensé/justification/commentaire uniques — chaque
+  // ligne de dépense (`depenses`) porte désormais sa propre justification.
+  const retours = rawRetours.map((r) => {
+    const totalDeclare = r.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
+    const montantNonJustifie = r.depenses
+      .filter((d) => d.justification === "SANS_PIECE")
+      .reduce((sum, d) => sum + Number(d.montant), 0);
+    return {
+      id: r.id,
+      demandeReference: r.reglement.demande.reference,
+      declarantNom: r.declarant.fullName,
+      reglementMontant: Number(r.reglement.montant),
+      reglementMode: r.reglement.mode,
+      totalDeclare,
+      montantARetourner: Number(r.montantARetourner),
+      montantNonJustifie,
+      depenses: r.depenses.map((d) => ({
+        id: d.id,
+        montant: Number(d.montant),
+        objet: d.objet,
+        date: d.date,
+        nature: d.nature,
+        justification: d.justification,
+        commentaire: d.commentaire,
+      })),
+      createdAt: r.createdAt,
+    };
+  });
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">

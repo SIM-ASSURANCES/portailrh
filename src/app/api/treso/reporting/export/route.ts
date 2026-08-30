@@ -2,7 +2,6 @@ import ExcelJS from "exceljs";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
-import { JUSTIFICATION_LABEL } from "@/components/tresorerie/justification";
 import { getSession, hasPermission } from "@/lib/auth";
 import {
   getReportingDemandesDetail,
@@ -102,21 +101,24 @@ export async function GET(request: NextRequest) {
   );
   styleHeaderRow(sheetReglements);
 
+  // REFONTE V1 / Phase D (voir CLAUDE.md "Refonte V1 en cours") : un retour
+  // n'a plus de justification unique (une par DepenseLigne) — remplacée
+  // par le total déclaré et le montant non justifié (lignes SANS_PIECE).
   const sheetRetours = workbook.addWorksheet("Retours de caisse");
   sheetRetours.columns = [
     { header: "Référence demande", key: "reference", width: 20 },
-    { header: "Montant dépensé (FCFA)", key: "montantDepense", width: 18 },
+    { header: "Total dépenses déclarées (FCFA)", key: "montantDepenseTotal", width: 24 },
     { header: "Montant à retourner (FCFA)", key: "montantARetourner", width: 20 },
-    { header: "Justification", key: "justification", width: 22 },
+    { header: "Dont non justifié (FCFA)", key: "montantNonJustifie", width: 22 },
     { header: "Statut", key: "statut", width: 18 },
     { header: "Déclaré le", key: "declareLe", width: 14 },
   ];
   retours.forEach((r) =>
     sheetRetours.addRow({
       reference: r.demandeReference,
-      montantDepense: r.montantDepense,
+      montantDepenseTotal: r.montantDepenseTotal,
       montantARetourner: r.montantARetourner,
-      justification: JUSTIFICATION_LABEL[r.justification],
+      montantNonJustifie: r.montantNonJustifie,
       statut: r.estReceptionne ? "Réceptionné" : "En attente",
       declareLe: r.declareLe.toLocaleDateString("fr-FR"),
     })

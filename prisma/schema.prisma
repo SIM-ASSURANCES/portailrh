@@ -245,13 +245,23 @@ model Reglement {
   confirmeAt DateTime?
 }
 
+/// Fonds remis (cahier des charges sections 8-9, Phase D) : un retour de
+/// caisse ne stocke plus un montant dépensé agrégé unique, mais une liste de
+/// `DepenseLigne` détaillées.
 model RetourCaisse {
-  id                String            @id @default(cuid())
-  montantDepense    Decimal           @db.Decimal(14, 2)
-  montantARetourner Decimal           @db.Decimal(14, 2)
-  justification     TypeJustification
-  commentaire       String?
-  estReceptionne    Boolean           @default(false)
+  id String @id @default(cuid())
+  /// CALCULÉ AUTOMATIQUEMENT, jamais saisi manuellement (voir
+  /// `getMontantARetourner` dans src/lib/tresorerie.ts) : montant du
+  /// règlement lié moins la somme des `DepenseLigne` déclarées. Choix
+  /// documenté dans CLAUDE.md "Refonte V1 en cours" / Phase D — le cahier
+  /// des charges (section 9.3 vs 9.5) est en tension entre "l'utilisateur
+  /// enregistre un montant à retourner" et "le solde ne doit pas être
+  /// modifiable manuellement" ; tranché en faveur du calcul automatique,
+  /// cohérent avec le principe déjà appliqué au solde de caisse
+  /// (`getSoldeCaisse`) qu'aucun solde financier ne se saisit à la main.
+  montantARetourner Decimal        @db.Decimal(14, 2)
+  estReceptionne    Boolean        @default(false)
+  depenses          DepenseLigne[]
 
   reglementId String
   reglement   Reglement @relation(fields: [reglementId], references: [id])
@@ -264,6 +274,25 @@ model RetourCaisse {
 
   createdAt     DateTime  @default(now())
   receptionneAt DateTime?
+}
+
+/// Une ligne de dépense détaillée d'un `RetourCaisse` (cahier des charges
+/// section 8-9) : remplace l'ancien montant dépensé agrégé unique du
+/// Ticket 5 — une dépense réelle par ligne (montant, objet, date, nature,
+/// justificatif, commentaire), pas un total.
+model DepenseLigne {
+  id            String            @id @default(cuid())
+  montant       Decimal           @db.Decimal(14, 2)
+  objet         String
+  date          DateTime
+  nature        String?
+  justification TypeJustification
+  commentaire   String?
+
+  retourCaisseId String
+  retourCaisse   RetourCaisse @relation(fields: [retourCaisseId], references: [id])
+
+  createdAt DateTime @default(now())
 }
 
 model JournalCaisse {

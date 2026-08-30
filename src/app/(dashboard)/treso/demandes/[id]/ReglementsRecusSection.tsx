@@ -12,6 +12,9 @@ const MODE_LABEL: Record<"CAISSE" | "BANQUE", string> = { CAISSE: "Caisse", BANQ
  * reçu" pointant vers la même Route Handler que côté Finance
  * (`/api/treso/reglements/[id]/recu`) — le collaborateur créateur de la
  * demande y est autorisé (vérifié côté serveur dans la route elle-même).
+ * Phase E : bouton "Télécharger le bon de caisse" ajouté à côté, visible
+ * uniquement pour les règlements en mode CAISSE (`/api/treso/reglements/
+ * [id]/bon-de-caisse` — n'a pas de sens pour un règlement Banque).
  * Server Component autonome, aucune action possible ici (aucun bouton
  * Modifier/Confirmer/Annuler : réservés à Finance).
  */
@@ -39,11 +42,20 @@ export async function ReglementsRecusSection({ demandeId }: { demandeId: string 
                 Réglé le {(r.confirmeAt ?? r.createdAt).toLocaleDateString("fr-FR")}
               </p>
             </div>
-            <a href={`/api/treso/reglements/${r.id}/recu`}>
-              <Button type="button" variant="secondary">
-                Télécharger le reçu
-              </Button>
-            </a>
+            <div className="flex flex-wrap gap-2">
+              <a href={`/api/treso/reglements/${r.id}/recu`}>
+                <Button type="button" variant="secondary">
+                  Télécharger le reçu
+                </Button>
+              </a>
+              {r.mode === "CAISSE" ? (
+                <a href={`/api/treso/reglements/${r.id}/bon-de-caisse`}>
+                  <Button type="button" variant="secondary">
+                    Télécharger le bon de caisse
+                  </Button>
+                </a>
+              ) : null}
+            </div>
           </li>
         ))}
       </ul>

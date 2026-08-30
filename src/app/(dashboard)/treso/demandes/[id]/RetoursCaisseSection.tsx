@@ -23,7 +23,7 @@ export async function RetoursCaisseSection({
 }) {
   const reglements = await prisma.reglement.findMany({
     where: { demandeId, mode: "CAISSE", estConfirme: true, estAnnule: false },
-    include: { retours: true },
+    include: { retours: { include: { depenses: true } } },
     orderBy: { createdAt: "asc" },
   });
 
@@ -35,15 +35,34 @@ export async function RetoursCaisseSection({
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
       <h2 className="text-sm font-semibold text-foreground">Retours de caisse</h2>
       <ul className="space-y-3">
-        {reglements.map((r) => (
-          <RetourCaisseRow
-            key={r.id}
-            reglementId={r.id}
-            montant={Number(r.montant)}
-            retour={r.retours[0] ? { estReceptionne: r.retours[0].estReceptionne } : null}
-            peutDeclarer={peutDeclarer}
-          />
-        ))}
+        {reglements.map((r) => {
+          const retour = r.retours[0];
+          return (
+            <RetourCaisseRow
+              key={r.id}
+              reglementId={r.id}
+              montant={Number(r.montant)}
+              retour={
+                retour
+                  ? {
+                      estReceptionne: retour.estReceptionne,
+                      montantARetourner: Number(retour.montantARetourner),
+                      depenses: retour.depenses.map((d) => ({
+                        id: d.id,
+                        montant: Number(d.montant),
+                        objet: d.objet,
+                        date: d.date,
+                        nature: d.nature,
+                        justification: d.justification,
+                        commentaire: d.commentaire,
+                      })),
+                    }
+                  : null
+              }
+              peutDeclarer={peutDeclarer}
+            />
+          );
+        })}
       </ul>
     </div>
   );
