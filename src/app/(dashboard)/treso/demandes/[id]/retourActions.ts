@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
 const retourSchema = z
@@ -86,7 +87,9 @@ export async function creerRetourCaisseAction(
   if (reglement.mode !== "CAISSE" || !reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est pas éligible à un retour de caisse." };
   }
-  if (reglement.demande.statut !== "VALIDEE") {
+  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
+  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
+  if (!STATUTS_VALIDATION_COMPLETE.includes(reglement.demande.statut)) {
     return {
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).`,

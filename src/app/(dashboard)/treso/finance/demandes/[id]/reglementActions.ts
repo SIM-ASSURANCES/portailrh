@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getResteARegler, getTotalRegle } from "@/lib/tresorerie";
+import { getResteARegler, getTotalRegle, STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
@@ -66,7 +66,9 @@ export async function creerReglementAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
-  if (demande.statut !== "VALIDEE") {
+  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
+  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
+  if (!STATUTS_VALIDATION_COMPLETE.includes(demande.statut)) {
     return { status: "error", message: "Cette demande n'est pas validée : aucun règlement possible." };
   }
 
@@ -120,7 +122,7 @@ export async function modifierReglementAction(
   }
 
   const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
-  if (!demande || demande.statut !== "VALIDEE") {
+  if (!demande || !STATUTS_VALIDATION_COMPLETE.includes(demande.statut)) {
     return { status: "error", message: "Cette demande n'est plus validée : règlement non modifiable." };
   }
 
@@ -175,7 +177,7 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   }
 
   const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
-  if (!demande || demande.statut !== "VALIDEE") {
+  if (!demande || !STATUTS_VALIDATION_COMPLETE.includes(demande.statut)) {
     return { status: "error", message: "Cette demande n'est plus validée : confirmation impossible." };
   }
 
@@ -264,7 +266,9 @@ export async function annulerReglementAction(
   if (reglement.estAnnule) {
     return { status: "error", message: "Ce règlement est déjà annulé." };
   }
-  if (reglement.demande.statut !== "VALIDEE") {
+  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
+  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
+  if (!STATUTS_VALIDATION_COMPLETE.includes(reglement.demande.statut)) {
     return {
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).`,

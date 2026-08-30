@@ -7,11 +7,13 @@ import { RegularisationSummary } from "@/components/tresorerie/RegularisationSum
 import type { Prisma } from "@/generated/prisma/client";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 
 import { CategorisationForm } from "./CategorisationForm";
 import { ClotureActions } from "./ClotureActions";
 import { ReglementsSection } from "./ReglementsSection";
 import { ValidationActions } from "./ValidationActions";
+import { ValidationComplementaireActions } from "./ValidationComplementaireActions";
 
 export default async function CategoriserDemandePage({
   params,
@@ -94,6 +96,26 @@ export default async function CategoriserDemandePage({
               </Badge>
             </dd>
           </div>
+          {/* Phase B (validation partielle) : montant validé/restant visible
+              partout où le statut de validation est affiché — voir CLAUDE.md
+              "Refonte V1 en cours" / Phase B, règle impérative 6. */}
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Montant validé
+            </dt>
+            <dd className="text-sm text-foreground">
+              {demande.montantValide != null ? Number(demande.montantValide).toLocaleString("fr-FR") : "0"} FCFA
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Montant restant à valider
+            </dt>
+            <dd className="text-sm text-foreground">
+              {Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0)).toLocaleString("fr-FR")}{" "}
+              FCFA
+            </dd>
+          </div>
           <div className="sm:col-span-2">
             <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Description du besoin
@@ -131,9 +153,33 @@ export default async function CategoriserDemandePage({
             />
           )}
 
-          {canValider ? <ValidationActions demandeId={demande.id} /> : null}
+          {canValider ? (
+            <ValidationActions demandeId={demande.id} montantDemande={Number(demande.montant)} />
+          ) : null}
         </>
-      ) : demande.statut === "VALIDEE" ? (
+      ) : demande.statut === "PARTIELLEMENT_VALIDEE" ? (
+        <>
+          <CategorisationSummary
+            categorieLabel={demande.categorie?.label}
+            objetLabel={demande.objet?.label}
+            budget={demande.budgetDisponible}
+            lockMessage="Cette demande est partiellement validée : catégorie, objet et budget sont verrouillés."
+          />
+          {canValider ? (
+            <ValidationComplementaireActions
+              demandeId={demande.id}
+              montantRestant={Number(demande.montant) - Number(demande.montantValide ?? 0)}
+            />
+          ) : null}
+        </>
+      ) : STATUTS_VALIDATION_COMPLETE.includes(demande.statut) ? (
+        // REFONTE V1 (Phase B) : VALIDEE/VALIDEE_NON_REGLEE/
+        // PARTIELLEMENT_REGLEE/REGLEE — voir STATUTS_VALIDATION_COMPLETE
+        // dans src/lib/tresorerie.ts. Le règlement (ReglementsSection) et la
+        // clôture continuent de raisonner sur le montant DEMANDÉ (pas
+        // encore adapté à `montantValide` — périmètre de la phase
+        // "règlement adapté" à venir), ce qui reste exact ici puisque ces
+        // statuts impliquent par construction montantValide === montant.
         <>
           <CategorisationSummary
             categorieLabel={demande.categorie?.label}

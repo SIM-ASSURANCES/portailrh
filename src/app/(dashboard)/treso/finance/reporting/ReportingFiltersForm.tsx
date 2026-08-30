@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { Button, Input, Select } from "@/components/ui";
+import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 
 interface Option {
   id: string;
@@ -13,17 +14,11 @@ interface ObjetOption extends Option {
   categorieId: string;
 }
 
-// REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") : valeurs
-// alignées sur le nouvel enum StatutDemande (11 valeurs), mais ce filtre
-// n'expose encore que les statuts produits par la logique applicative
-// actuelle (EN_ATTENTE -> EN_ATTENTE_VALIDATION, CLOTUREE_TOTALE/
-// CLOTUREE_PARTIELLE -> CLOTUREE) — à enrichir phase par phase.
-const STATUT_OPTIONS = [
-  { value: "EN_ATTENTE_VALIDATION", label: "En attente de validation" },
-  { value: "VALIDEE", label: "Validée" },
-  { value: "REJETEE", label: "Rejetée" },
-  { value: "CLOTUREE", label: "Clôturée" },
-];
+// REFONTE V1 (voir CLAUDE.md "Refonte V1 en cours") : dérivé de
+// STATUT_DEMANDE_LABEL (source unique) plutôt que dupliqué en dur — reste
+// synchronisé automatiquement à mesure que les phases B à H introduisent de
+// nouveaux statuts réellement produits par l'application.
+const STATUT_OPTIONS = Object.entries(STATUT_DEMANDE_LABEL).map(([value, label]) => ({ value, label }));
 
 const MODE_OPTIONS = [
   { value: "CAISSE", label: "Caisse" },

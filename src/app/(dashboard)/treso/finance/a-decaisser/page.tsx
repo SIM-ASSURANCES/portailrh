@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 
 import { ADecaisserTable } from "./ADecaisserTable";
 
@@ -21,8 +22,10 @@ export default async function ADecaisserPage() {
     redirect("/?error=acces_refuse_dashboard_finance");
   }
 
+  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
+  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
   const demandes = await prisma.demande.findMany({
-    where: { statut: "VALIDEE" },
+    where: { statut: { in: [...STATUTS_VALIDATION_COMPLETE] } },
     include: { createur: true },
     orderBy: { updatedAt: "asc" },
   });

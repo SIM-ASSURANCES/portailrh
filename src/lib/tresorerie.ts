@@ -1,4 +1,28 @@
+import type { StatutDemande } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+
+/**
+ * Statuts d'une Demande dont le montant est ENTIÈREMENT validé (montantValide
+ * === montant demandé), quel que soit l'avancement du règlement — c'est
+ * l'ensemble qui, avant la Phase B (validation partielle), tenait entièrement
+ * dans l'unique statut `VALIDEE`. Les Tickets 4 à 8 et 10 (règlement, retour
+ * de caisse, clôture, dashboard Finance, reporting) ont été écrits contre ce
+ * statut unique ; leur logique elle-même (montants basés sur `montant`, pas
+ * encore sur `montantValide`) n'a PAS été adaptée à la validation partielle
+ * — seul leur point d'entrée (garde de statut) est élargi à cet ensemble
+ * pour continuer à fonctionner à l'identique sur une demande validée
+ * TOTALEMENT (via `validerTotalementAction`). Une demande seulement
+ * `PARTIELLEMENT_VALIDEE` reste hors de cet ensemble : aucun règlement, retour
+ * ou clôture n'est encore possible dessus (le "règlement adapté" à la
+ * validation partielle est le périmètre d'une phase dédiée). Voir CLAUDE.md
+ * "Refonte V1 en cours" / Phase B.
+ */
+export const STATUTS_VALIDATION_COMPLETE: readonly StatutDemande[] = [
+  "VALIDEE",
+  "VALIDEE_NON_REGLEE",
+  "PARTIELLEMENT_REGLEE",
+  "REGLEE",
+];
 
 /**
  * Somme des règlements confirmés et non annulés d'une demande — c'est le
@@ -85,4 +109,76 @@ export async function getEcart(demandeId: string): Promise<number> {
     getRetoursRecus(demandeId),
   ]);
   return totalRegle - depensesDeclarees - retoursRecus;
+}
+
+/** Convertit un montant en centimes entiers pour des comparaisons fiables
+ * (évite les artefacts de virgule flottante sur des `Number(Prisma.Decimal)`
+ * lors d'une égalité stricte, ex: montantValide === montant demandé). */
+function toCents(montant: number): number {
+  return Math.round(montant * 100);
+}
+
+/**
+ * Calcule le statut d'une Demande à partir de ses montants réels (montant
+ * demandé, `montantValide`, total réglé — `getTotalRegle`) et l'enregistre
+ * en base. Fonction centrale de la Phase B (validation partielle) : à
+ * appeler à la fin de CHAQUE action qui modifie `montantValide` ou les
+ * règlements d'une demande (validation initiale/complémentaire, et plus
+ * tard règlement/clôture dans les phases suivantes), plutôt que de fixer
+ * `statut` à la main à chaque endroit.
+ *
+ * Interprétation retenue (le cahier des charges laisse une marge sur
+ * l'articulation exacte de ces statuts — voir CLAUDE.md "Refonte V1 en
+ * cours" / Phase B pour la discussion complète) :
+ *
+ * - `REJETEE` et `CLOTUREE` sont des états TERMINAUX, gérés par leurs
+ *   propres actions dédiées (`rejeterDemandeAction`,
+ *   `cloturerDemandeAction`) : cette fonction ne les modifie jamais,
+ *   même si les montants changeraient techniquement le calcul.
+ * - `montantValide` nul ou 0 : `EN_ATTENTE_VALIDATION` (rien n'a encore
+ *   été validé).
+ * - `0 < montantValide < montant demandé` : `PARTIELLEMENT_VALIDEE`.
+ * - `montantValide === montant demandé` (entièrement validé, en une ou
+ *   plusieurs fois) : le statut dépend alors de `getTotalRegle` —
+ *   `VALIDEE_NON_REGLEE` (rien réglé), `PARTIELLEMENT_REGLEE` (réglé
+ *   partiel), `REGLEE` (réglé >= validé). **Le statut `VALIDEE` n'est donc
+ *   plus jamais produit par cette fonction** : il reste dans l'enum pour la
+ *   compatibilité (voir `STATUTS_VALIDATION_COMPLETE` ci-dessus) mais
+ *   correspond à un état transitoire immédiatement remplacé par l'un de
+ *   ces trois statuts plus précis dès que `calculerStatutDemande` tourne.
+ */
+export async function calculerStatutDemande(demandeId: string): Promise<StatutDemande> {
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    throw new Error(`calculerStatutDemande : demande ${demandeId} introuvable.`);
+  }
+
+  if (demande.statut === "REJETEE" || demande.statut === "CLOTUREE") {
+    return demande.statut;
+  }
+
+  const montantDemandeCents = toCents(Number(demande.montant));
+  const montantValideCents = toCents(Number(demande.montantValide ?? 0));
+
+  let nouveauStatut: StatutDemande;
+  if (montantValideCents <= 0) {
+    nouveauStatut = "EN_ATTENTE_VALIDATION";
+  } else if (montantValideCents < montantDemandeCents) {
+    nouveauStatut = "PARTIELLEMENT_VALIDEE";
+  } else {
+    const totalRegleCents = toCents(await getTotalRegle(demandeId));
+    if (totalRegleCents <= 0) {
+      nouveauStatut = "VALIDEE_NON_REGLEE";
+    } else if (totalRegleCents < montantValideCents) {
+      nouveauStatut = "PARTIELLEMENT_REGLEE";
+    } else {
+      nouveauStatut = "REGLEE";
+    }
+  }
+
+  if (nouveauStatut !== demande.statut) {
+    await prisma.demande.update({ where: { id: demandeId }, data: { statut: nouveauStatut } });
+  }
+
+  return nouveauStatut;
 }

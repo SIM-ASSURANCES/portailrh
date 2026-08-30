@@ -185,8 +185,18 @@ async function getDemandesFiltrees(
   return { demandes: demandesFiltrees, montantsRegleParDemande };
 }
 
-// REFONTE V1 (temporaire) : CLOTUREE_TOTALE/CLOTUREE_PARTIELLE -> CLOTUREE.
-const STATUTS_VALIDES: readonly StatutDemande[] = ["VALIDEE", "CLOTUREE"];
+// REFONTE V1 (Phase A : CLOTUREE_TOTALE/CLOTUREE_PARTIELLE -> CLOTUREE.
+// Phase B : la validation totale ne produit plus jamais VALIDEE — voir
+// STATUTS_VALIDATION_COMPLETE dans src/lib/tresorerie.ts. Une demande
+// seulement PARTIELLEMENT_VALIDEE ne compte volontairement pas comme
+// "validée" ici : ce n'est pas le montant demandé qui est réellement acquis.
+const STATUTS_VALIDES: readonly StatutDemande[] = [
+  "VALIDEE",
+  "VALIDEE_NON_REGLEE",
+  "PARTIELLEMENT_REGLEE",
+  "REGLEE",
+  "CLOTUREE",
+];
 
 export interface ReportingRow {
   categorieId: string | null;

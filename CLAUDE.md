@@ -600,6 +600,10 @@ phases à venir. Endroits précis à revisiter :
   `type` (`"TOTALE"`/`"PARTIELLE"`, toujours accepté en paramètre, motif
   toujours obligatoire pour `"PARTIELLE"`) — la distinction totale/partielle
   n'existe plus dans le statut lui-même, seulement dans `motifCloture`.
+  **Superseded par la Phase B ci-dessous** : `validerDemandeAction` a été
+  remplacée par `validerTotalementAction`/`validerPartiellementAction`/
+  `validerComplementaireAction` — ce paragraphe reste pour l'historique de
+  la Phase A, voir la section Phase B pour l'état actuel.
 - [treso/finance/demandes/[id]/page.tsx](<src/app/(dashboard)/treso/finance/demandes/[id]/page.tsx>)
   et [treso/demandes/[id]/page.tsx](<src/app/(dashboard)/treso/demandes/[id]/page.tsx>)
   — branches de rendu sur `"EN_ATTENTE_VALIDATION"`/`"CLOTUREE"` ; l'affichage
@@ -623,12 +627,179 @@ test seront ajoutées au seed.
 
 ### Vérifié explicitement (fondations)
 
-`npx prisma migrate dev` et `npx prisma db seed` passent, `npx tsc --noEmit`
-et `npx eslint .` passent sans erreur, `npm run dev` démarre et `GET
-/login` répond 200. **Aucun test fonctionnel du cycle métier n'a été
-mené** (validation, règlement, retour, clôture...) : ces écrans compilent
-mais restent volontairement dans un état transitoire tant que les phases
-B à H n'ont pas repris leur logique.
+`npx prisma migrate dev` (migration `refonte_v1_demande_beneficiaire_statut`)
+et `npx prisma db seed` ont réellement été exécutés contre la base de dev,
+`npx tsc --noEmit` et `npx eslint .` passent sans erreur, `npm run dev`
+démarre et `GET /login` répond 200.
+
+## Phase B — Validation partielle et complémentaire (terminée)
+
+Implémente la section 3 du nouveau cahier des charges : un validateur
+(`treso.valider_demande`, Finance et DG) peut désormais valider
+**totalement**, valider **partiellement** (montant inférieur au montant
+demandé), ou **rejeter** une demande `EN_ATTENTE_VALIDATION` ; une demande
+`PARTIELLEMENT_VALIDEE` peut ensuite recevoir une ou plusieurs
+**validations complémentaires** sur le reliquat, jusqu'à couvrir
+entièrement le montant demandé.
+
+### `calculerStatutDemande` — fonction centrale du statut
+
+[src/lib/tresorerie.ts](src/lib/tresorerie.ts) exporte
+`calculerStatutDemande(demandeId)` : lit les montants réels de la demande
+(`montant`, `montantValide`, `getTotalRegle`), déduit le statut correct et
+l'enregistre en base. **Aucune Server Action ne fixe plus `statut` à la
+main pour les transitions qu'elle couvre** — chacune appelle cette fonction
+à sa toute fin (`validerTotalementAction`, `validerPartiellementAction`,
+`validerComplementaireAction`, via l'helper interne partagé
+`enregistrerValidation`).
+
+Interprétation retenue (le cahier des charges laisse une marge sur
+l'articulation exacte de ces statuts — documentée en détail dans le
+docstring de la fonction) :
+
+| Condition | Statut déduit |
+|---|---|
+| `statut` actuel est `REJETEE` ou `CLOTUREE` | inchangé (états terminaux, gérés par leurs propres actions) |
+| `montantValide` nul ou 0 | `EN_ATTENTE_VALIDATION` |
+| `0 < montantValide < montant demandé` | `PARTIELLEMENT_VALIDEE` |
+| `montantValide === montant demandé`, et `getTotalRegle() === 0` | `VALIDEE_NON_REGLEE` |
+| `montantValide === montant demandé`, et `0 < réglé < montantValide` | `PARTIELLEMENT_REGLEE` |
+| `montantValide === montant demandé`, et `réglé >= montantValide` | `REGLEE` |
+
+**Conséquence importante : le statut `VALIDEE` n'est plus jamais produit**
+par cette fonction — une validation totale (en une fois ou par
+validations complémentaires successives) transite directement vers
+`VALIDEE_NON_REGLEE` dès que `calculerStatutDemande` tourne (le règlement
+n'existe pas encore au moment de la validation). `VALIDEE` reste dans
+l'enum et dans `STATUTS_VALIDATION_COMPLETE` (voir ci-dessous) uniquement
+pour compatibilité/historique. Les comparaisons de montants utilisent des
+centimes entiers (`Math.round(montant * 100)`) plutôt que l'égalité directe
+sur des `Number` flottants, pour éviter tout artefact de virgule flottante
+sur une égalité stricte (`montantValide === montant demandé`).
+
+### Compatibilité avec les Tickets 4 à 8 et 10 (`STATUTS_VALIDATION_COMPLETE`)
+
+Les Tickets 4 (règlement), 5/6 (retour de caisse), 7 (clôture), 8 (dashboard
+Finance) et 10 (reporting) ont tous été écrits contre l'ancien statut
+unique `VALIDEE`. Comme la validation totale ne produit plus ce statut
+(voir ci-dessus), **toutes leurs gardes de statut ont dû être élargies**
+pour continuer à fonctionner sans régression — pas juste les Server
+Actions de validation demandées explicitement. `STATUTS_VALIDATION_COMPLETE`
+(`src/lib/tresorerie.ts`) = `["VALIDEE", "VALIDEE_NON_REGLEE",
+"PARTIELLEMENT_REGLEE", "REGLEE"]`, substitué à chaque `statut === "VALIDEE"`
+/`statut !== "VALIDEE"` dans :
+
+- `reglementActions.ts` (création, modification, confirmation, annulation
+  d'un règlement — 4 gardes).
+- `retourActions.ts` côté Finance (réception d'un retour) et côté
+  Collaborateur (déclaration d'un retour).
+- `dashboardFinance.ts` (`RETOUR_EN_ATTENTE_WHERE`,
+  `getRepartitionDemandesValidees`) et les listes filtrées
+  `a-decaisser`/`a-regulariser` (Ticket 8).
+- `reporting.ts` (`STATUTS_VALIDES`, colonne "Validé").
+- `cloturerDemandeAction` (Ticket 7).
+- `treso/demandes/[id]/page.tsx` (bouton "Déclarer un retour de caisse").
+
+Ces écrans eux-mêmes (montants basés sur `montant demandé`, pas encore sur
+`montantValide`) **n'ont pas été réécrits** — seul leur point d'entrée
+(garde de statut) est élargi. Cela reste exact tant qu'ils ne sont
+atteignables que via ces 4 statuts, qui impliquent tous
+`montantValide === montant demandé` par construction : une demande
+seulement `PARTIELLEMENT_VALIDEE` reste hors de cet ensemble, donc aucun
+règlement/retour/clôture n'est possible dessus avant que son reliquat soit
+validé (ou une validation complémentaire ultérieure). L'adaptation réelle
+de ces écrans à un montant réglable potentiellement inférieur au montant
+demandé (via `montantValide`) est le périmètre de la phase "règlement
+adapté", pas de celle-ci.
+
+### Nouvelles Server Actions (`treso/finance/demandes/[id]/actions.ts`)
+
+- **`validerTotalementAction(demandeId)`** — `montantValide` = montant
+  demandé, en une fois. Réservée à `EN_ATTENTE_VALIDATION`.
+- **`validerPartiellementAction(demandeId, montant)`** — réservée à
+  `EN_ATTENTE_VALIDATION`. Règle impérative : un montant strictement
+  supérieur au montant demandé est **refusé** côté serveur (jamais
+  plafonné silencieusement). Cas limite : un montant exactement égal au
+  montant demandé est accepté et appliqué comme une validation totale
+  (évite un aller-retour inutile entre les deux boutons pour ce cas précis
+  — ce n'est plus une validation "partielle" au sens strict).
+- **`validerComplementaireAction(demandeId, montant)`** — réservée à
+  `PARTIELLEMENT_VALIDEE`. Le montant ne peut jamais faire dépasser le
+  montant demandé une fois ajouté à `montantValide` existant (refusé côté
+  serveur si c'est le cas) ; aucune restriction sur l'auteur (le même
+  validateur ou un autre habilité peut l'exécuter).
+- Les trois partagent l'helper interne `enregistrerValidation` : met à jour
+  `montantValide`, crée une `HistoriqueEntry` (`action: "validation"` ou
+  `"validation_complementaire"`, `detail` incluant le montant validé à
+  cette étape précise ET le cumul), puis appelle `calculerStatutDemande`.
+- **`rejeterDemandeAction`** — inchangée dans son fonctionnement (motif
+  obligatoire, min 3 caractères), mais **reste réservée à
+  `EN_ATTENTE_VALIDATION`** : une demande déjà `PARTIELLEMENT_VALIDEE` ne
+  peut plus être rejetée. Choix documenté : une fois qu'un montant a été
+  validé (et potentiellement déjà réglé/retourné dans le circuit), revenir
+  en arrière sur la totalité de la demande n'a plus de sens — le montant
+  déjà validé est acquis. Le seul chemin en avant pour le reliquat est une
+  validation complémentaire. **Aucune action de "rejet du reliquat"
+  n'existe à ce stade** : si un validateur veut abandonner la partie non
+  encore validée d'une demande `PARTIELLEMENT_VALIDEE`, ce cas reste sans
+  réponse applicative — à traiter explicitement dans une phase ultérieure
+  (clôture/régularisation) plutôt que résolu par un raccourci ici.
+- `cloturerDemandeAction` — sa garde de statut est élargie à
+  `STATUTS_VALIDATION_COMPLETE` (voir ci-dessus) ; elle-même n'appelle pas
+  `calculerStatutDemande` (écrit toujours `CLOTUREE` explicitement, état
+  terminal que la fonction ne modifierait de toute façon jamais).
+
+### Interface (Finance/DG)
+
+`treso/finance/demandes/[id]/page.tsx` affiche désormais, en plus du
+montant demandé et du statut : **Montant validé** et **Montant restant à
+valider**, sur cette page ET sur `treso/demandes/[id]/page.tsx`
+(Collaborateur) — visible partout où le statut de validation est affiché
+(règle impérative 6). Trois branches de rendu :
+
+- `EN_ATTENTE_VALIDATION` → `ValidationActions` (nouveau : boutons "Valider
+  totalement" / "Valider partiellement" avec saisie de montant / "Rejeter"
+  avec motif — remplace l'ancien bouton "Valider" unique du Ticket 3).
+- `PARTIELLEMENT_VALIDEE` → résumé catégorisation verrouillé (lecture
+  seule) + `ValidationComplementaireActions` (nouveau composant) si
+  `canValider` : saisie plafonnée côté client au reliquat, revalidée côté
+  serveur.
+- Statut ∈ `STATUTS_VALIDATION_COMPLETE` → inchangé (règlement, clôture).
+
+L'historique générique (`DemandeHistorique`) affiche chaque validation
+(initiale ou complémentaire) comme une entrée distincte avec son propre
+montant, sans modification du composant — `validation_complementaire`
+ajouté à `ACTION_LABELS`.
+
+### Vérifié explicitement (Phase B)
+
+`npx tsc --noEmit` et `npx eslint .` passent sans erreur. Script de
+vérification exécuté directement contre la base de dev (créant puis
+nettoyant ses propres demandes de test, via les vraies fonctions
+`calculerStatutDemande`/`getTotalRegle` et en reproduisant exactement les
+écritures Prisma des Server Actions — celles-ci n'ont pas pu être invoquées
+directement hors requête Next.js, `getSession()` dépendant de
+`next/headers`) :
+
+- Demande de 100 000 FCFA validée totalement → `VALIDEE_NON_REGLEE`,
+  `montantValide = 100 000`.
+- Demande de 400 000 FCFA validée partiellement à 250 000 →
+  `PARTIELLEMENT_VALIDEE`, montant restant à valider = 150 000 ; validation
+  complémentaire de 150 000 → `VALIDEE_NON_REGLEE`, `montantValide = 400 000`.
+  Deux `HistoriqueEntry` distinctes créées, chacune avec le bon montant
+  ("250000" puis "150000" dans leur `detail` respectif).
+- Validation partielle de 150 000 sur une demande de 100 000 : détectée et
+  refusée par le garde-fou serveur (`montantValide` reste `null`, aucune
+  écriture).
+- Validation complémentaire de 200 000 sur un reliquat de 150 000 (demande
+  de 400 000 déjà validée à 250 000) : détectée et refusée (`montantValide`
+  reste à 250 000, aucune écriture supplémentaire).
+
+Toutes les données de test nettoyées après vérification (0 demande
+restante, les 5 comptes de test intacts). **Aucun test fonctionnel du
+règlement/retour/clôture n'a été mené** (hors périmètre de cette phase) :
+ces écrans restent dans l'état transitoire décrit ci-dessus tant que la
+phase "règlement adapté" n'a pas repris leur logique.
 
 ## Module Trésorerie : Ticket 1 — Création de demande (Collaborateur)
 

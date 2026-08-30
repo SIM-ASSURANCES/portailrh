@@ -11,6 +11,7 @@ const ACTION_LABELS: Record<string, string> = {
   CREATE: "Création de la demande",
   CATEGORISER: "Catégorisation",
   validation: "Validation",
+  validation_complementaire: "Validation complémentaire",
   rejet: "Rejet",
   reglement: "Règlement",
   annulation_reglement: "Annulation de règlement",

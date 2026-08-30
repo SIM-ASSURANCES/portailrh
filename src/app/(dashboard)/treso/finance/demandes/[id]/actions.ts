@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getEcart } from "@/lib/tresorerie";
+import { calculerStatutDemande, getEcart, STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
 const categorisationSchema = z.object({
@@ -107,17 +107,54 @@ function revalidateDemandePaths(demandeId: string) {
   revalidatePath("/treso/finance", "layout");
 }
 
+const montantValidationSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
+
 /**
- * Valide une demande. Réservée à `treso.valider_demande`.
- *
- * Verrouillage DÉFINITIF (règle impérative) : une fois VALIDEE, plus aucune
- * action ne peut la faire revenir en arrière — il n'existe volontairement
- * aucune fonction de "dévalidation" dans tout le portail. Défense en
- * profondeur : le statut EN_ATTENTE est revérifié ici juste avant
- * l'écriture, jamais uniquement via le masquage du bouton dans l'UI (même
- * principe que `categoriserDemandeAction` ci-dessus).
+ * Enregistre une étape de validation (initiale totale/partielle, ou
+ * complémentaire) : met à jour `montantValide`, crée l'entrée d'historique
+ * dédiée à CETTE étape précise (montant validé à cette occasion + cumul),
+ * puis appelle `calculerStatutDemande` pour déduire le nouveau statut à
+ * partir des montants réels — jamais fixé à la main ici. Partagée par les
+ * trois Server Actions de validation ci-dessous.
  */
-export async function validerDemandeAction(demandeId: string): Promise<SimpleActionResult> {
+async function enregistrerValidation(
+  demandeId: string,
+  userId: string,
+  montantValideCumule: number,
+  montantCetteEtape: number,
+  action: "validation" | "validation_complementaire"
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.demande.update({
+      where: { id: demandeId },
+      data: { montantValide: montantValideCumule },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action,
+        detail: `Montant validé à cette étape : ${montantCetteEtape.toLocaleString("fr-FR")} FCFA (cumul validé : ${montantValideCumule.toLocaleString("fr-FR")} FCFA)`,
+        userId,
+      },
+    }),
+  ]);
+
+  await calculerStatutDemande(demandeId);
+}
+
+/**
+ * Valide TOTALEMENT une demande `EN_ATTENTE_VALIDATION` : `montantValide`
+ * est porté au montant demandé en une seule fois. Réservée à
+ * `treso.valider_demande`. Défense en profondeur : le statut est revérifié
+ * ici juste avant l'écriture (même principe que `categoriserDemandeAction`).
+ *
+ * Pas de "dévalidation" : une fois le montant entièrement validé, il n'y a
+ * plus d'action pour revenir en arrière sur ce montant (seuls le rejet —
+ * avant toute validation — et la clôture d'une phase ultérieure ferment le
+ * dossier).
+ */
+export async function validerTotalementAction(demandeId: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.valider_demande")) {
     return { status: "error", message: "Action non autorisée." };
@@ -134,31 +171,132 @@ export async function validerDemandeAction(demandeId: string): Promise<SimpleAct
     };
   }
 
-  await prisma.$transaction([
-    // REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :
-    // montantValide est renseigné intégralement au montant demandé — cette
-    // action ne gère encore que la validation totale. La validation
-    // partielle (montant inférieur, statut PARTIELLEMENT_VALIDEE, puis
-    // validation complémentaire sur le reliquat) est le périmètre de la
-    // phase B, pas encore implémentée.
-    prisma.demande.update({
-      where: { id: demandeId },
-      data: { statut: "VALIDEE", montantValide: demande.montant },
-    }),
-    prisma.historiqueEntry.create({
-      data: {
-        entity: "Demande",
-        entityId: demandeId,
-        action: "validation",
-        detail: null,
-        userId: session.user.id,
-      },
-    }),
-  ]);
-
+  const montantDemande = Number(demande.montant);
+  await enregistrerValidation(demandeId, session.user.id, montantDemande, montantDemande, "validation");
   revalidateDemandePaths(demandeId);
 
-  return { status: "success", message: `Demande ${demande.reference} validée.` };
+  return { status: "success", message: `Demande ${demande.reference} validée totalement.` };
+}
+
+/**
+ * Valide PARTIELLEMENT une demande `EN_ATTENTE_VALIDATION`, pour un montant
+ * inférieur au montant demandé.
+ *
+ * Règle impérative : le montant validé ne peut JAMAIS dépasser le montant
+ * demandé — un montant strictement supérieur est **refusé** côté serveur
+ * (jamais plafonné silencieusement). Cas limite documenté : un montant
+ * EXACTEMENT égal au montant demandé n'est plus une validation "partielle"
+ * au sens strict, mais reste accepté et appliqué comme une validation
+ * TOTALE (redirection de la logique), plutôt que refusé pour une saisie par
+ * ailleurs légitime — évite un aller-retour inutile entre les deux boutons
+ * pour ce cas précis.
+ */
+export async function validerPartiellementAction(
+  demandeId: string,
+  montant: number
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.valider_demande")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedMontant = montantValidationSchema.safeParse(montant);
+  if (!parsedMontant.success) {
+    return { status: "error", message: parsedMontant.error.issues[0].message };
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.statut !== "EN_ATTENTE_VALIDATION") {
+    return {
+      status: "error",
+      message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
+    };
+  }
+
+  const montantDemande = Number(demande.montant);
+
+  // Règle impérative : le montant validé ne peut JAMAIS dépasser le montant
+  // demandé — un montant strictement supérieur est refusé, jamais plafonné
+  // silencieusement.
+  if (Math.round(parsedMontant.data * 100) > Math.round(montantDemande * 100)) {
+    return {
+      status: "error",
+      message: `Le montant (${parsedMontant.data.toLocaleString("fr-FR")} FCFA) dépasse le montant demandé (${montantDemande.toLocaleString("fr-FR")} FCFA).`,
+    };
+  }
+
+  const estFinalementTotale = Math.round(parsedMontant.data * 100) >= Math.round(montantDemande * 100);
+
+  await enregistrerValidation(demandeId, session.user.id, parsedMontant.data, parsedMontant.data, "validation");
+  revalidateDemandePaths(demandeId);
+
+  return {
+    status: "success",
+    message: `Demande ${demande.reference} validée ${estFinalementTotale ? "totalement" : "partiellement"} (${parsedMontant.data.toLocaleString("fr-FR")} FCFA).`,
+  };
+}
+
+/**
+ * Validation COMPLÉMENTAIRE sur le reliquat d'une demande déjà
+ * `PARTIELLEMENT_VALIDEE` — peut être exécutée par le même validateur ou un
+ * autre habilité (`treso.valider_demande`), aucune restriction sur
+ * l'auteur de la validation initiale. Le montant complémentaire ne peut
+ * jamais faire dépasser le montant demandé une fois ajouté au montant déjà
+ * validé (contrôle serveur, pas seulement l'UI qui plafonne déjà la saisie).
+ */
+export async function validerComplementaireAction(
+  demandeId: string,
+  montant: number
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.valider_demande")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedMontant = montantValidationSchema.safeParse(montant);
+  if (!parsedMontant.success) {
+    return { status: "error", message: parsedMontant.error.issues[0].message };
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.statut !== "PARTIELLEMENT_VALIDEE") {
+    return {
+      status: "error",
+      message: `Une validation complémentaire n'est possible que sur une demande partiellement validée (statut actuel : ${demande.statut}).`,
+    };
+  }
+
+  const montantDemande = Number(demande.montant);
+  const montantValideActuel = Number(demande.montantValide ?? 0);
+  const montantRestant = montantDemande - montantValideActuel;
+
+  if (Math.round(parsedMontant.data * 100) > Math.round(montantRestant * 100)) {
+    return {
+      status: "error",
+      message: `Le montant complémentaire (${parsedMontant.data.toLocaleString("fr-FR")} FCFA) dépasse le reliquat à valider (${montantRestant.toLocaleString("fr-FR")} FCFA).`,
+    };
+  }
+
+  const montantValideFinal = montantValideActuel + parsedMontant.data;
+  await enregistrerValidation(
+    demandeId,
+    session.user.id,
+    montantValideFinal,
+    parsedMontant.data,
+    "validation_complementaire"
+  );
+  revalidateDemandePaths(demandeId);
+
+  return {
+    status: "success",
+    message: `Demande ${demande.reference} : validation complémentaire de ${parsedMontant.data.toLocaleString("fr-FR")} FCFA enregistrée.`,
+  };
 }
 
 const motifRejetSchema = z
@@ -170,7 +308,22 @@ const motifRejetSchema = z
  * Rejette une demande. Réservée à `treso.valider_demande` (même permission
  * que valider — la décision valider/rejeter est un seul et même pouvoir).
  * Motif obligatoire (validé ici, jamais uniquement côté client) ; même
- * défense en profondeur sur le statut EN_ATTENTE que `validerDemandeAction`.
+ * défense en profondeur sur le statut que les actions de validation
+ * ci-dessus.
+ *
+ * **Choix Phase B, documenté ici et dans CLAUDE.md** : le rejet reste
+ * réservé au statut `EN_ATTENTE_VALIDATION` — une demande déjà
+ * `PARTIELLEMENT_VALIDEE` ne peut plus être "rejetée" au sens strict. Une
+ * fois qu'un montant a été validé (donc potentiellement déjà réglé — les
+ * Tickets 4+ n'attendent pas la clôture pour créer un règlement dès que le
+ * statut fait partie de `STATUTS_VALIDATION_COMPLETE`), revenir en arrière
+ * sur la totalité de la demande n'a plus de sens : le montant déjà validé
+ * est acquis. Le seul chemin en avant pour le reliquat est une validation
+ * complémentaire (`validerComplementaireAction`) ; aucune action de "rejet
+ * du reliquat" n'existe à ce stade — si le validateur souhaite abandonner
+ * la partie non encore validée, ce cas restera sans réponse applicative
+ * tant qu'une phase ultérieure (clôture/régularisation) n'introduit pas un
+ * mécanisme dédié pour l'acter explicitement.
  */
 export async function rejeterDemandeAction(
   demandeId: string,
@@ -269,7 +422,11 @@ export async function cloturerDemandeAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
-  if (demande.statut !== "VALIDEE") {
+  // REFONTE V1 (Phase B) : `VALIDEE` seul ne suffit plus — la validation
+  // totale produit désormais VALIDEE_NON_REGLEE/PARTIELLEMENT_REGLEE/REGLEE
+  // selon l'avancement du règlement (voir `calculerStatutDemande`). Voir
+  // `STATUTS_VALIDATION_COMPLETE` dans src/lib/tresorerie.ts.
+  if (!STATUTS_VALIDATION_COMPLETE.includes(demande.statut)) {
     return {
       status: "error",
       message: `Cette demande ne peut pas être clôturée (statut actuel : ${demande.statut}).`,

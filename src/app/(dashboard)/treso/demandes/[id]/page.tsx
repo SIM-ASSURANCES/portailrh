@@ -6,6 +6,7 @@ import { RegularisationSummary } from "@/components/tresorerie/RegularisationSum
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 
 import { ReglementsRecusSection } from "./ReglementsRecusSection";
 import { RetoursCaisseSection } from "./RetoursCaisseSection";
@@ -62,6 +63,26 @@ export default async function MaDemandeDetailPage({
               <Badge variant={STATUT_DEMANDE_BADGE_VARIANT[demande.statut]}>
                 {STATUT_DEMANDE_LABEL[demande.statut]}
               </Badge>
+            </dd>
+          </div>
+          {/* Phase B (validation partielle) : montant validé/restant visible
+              partout où le statut de validation est affiché — voir CLAUDE.md
+              "Refonte V1 en cours" / Phase B, règle impérative 6. */}
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Montant validé
+            </dt>
+            <dd className="text-sm text-foreground">
+              {demande.montantValide != null ? Number(demande.montantValide).toLocaleString("fr-FR") : "0"} FCFA
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Montant restant à valider
+            </dt>
+            <dd className="text-sm text-foreground">
+              {Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0)).toLocaleString("fr-FR")}{" "}
+              FCFA
             </dd>
           </div>
           <div className="sm:col-span-2">
@@ -124,7 +145,10 @@ export default async function MaDemandeDetailPage({
 
       <ReglementsRecusSection demandeId={demande.id} />
 
-      <RetoursCaisseSection demandeId={demande.id} peutDeclarer={demande.statut === "VALIDEE"} />
+      <RetoursCaisseSection
+        demandeId={demande.id}
+        peutDeclarer={STATUTS_VALIDATION_COMPLETE.includes(demande.statut)}
+      />
 
       <DemandeHistorique demandeId={demande.id} />
     </div>

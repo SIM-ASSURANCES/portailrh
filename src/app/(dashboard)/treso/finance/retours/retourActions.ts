@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -48,7 +49,9 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   if (retour.estReceptionne) {
     return { status: "error", message: "Ce retour de caisse est déjà réceptionné." };
   }
-  if (retour.reglement.demande.statut !== "VALIDEE") {
+  // REFONTE V1 (Phase B) : voir STATUTS_VALIDATION_COMPLETE dans
+  // src/lib/tresorerie.ts — remplace l'ancien statut unique VALIDEE.
+  if (!STATUTS_VALIDATION_COMPLETE.includes(retour.reglement.demande.statut)) {
     return {
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${retour.reglement.demande.statut}).`,

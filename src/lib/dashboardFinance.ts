@@ -1,19 +1,25 @@
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 
 /**
  * Filtre partagé des retours de caisse "en attente" : non réceptionnés ET
- * dont la demande est toujours `VALIDEE` (une fois la demande clôturée,
- * même partiellement, un retour resté en attente ne peut plus jamais être
- * réceptionné — voir Ticket 7 / `receptionnerRetourAction`). Factorisé ici
- * pour que le compteur du dashboard et la liste "Retours en attente"
- * (Ticket 6, `treso/finance/retours/page.tsx`) désignent exactement le même
- * ensemble de lignes — jamais de dérive entre le chiffre affiché et ce que
+ * dont la demande est toujours entièrement validée, non clôturée (une fois
+ * la demande clôturée, même partiellement, un retour resté en attente ne
+ * peut plus jamais être réceptionné — voir Ticket 7 /
+ * `receptionnerRetourAction`). Factorisé ici pour que le compteur du
+ * dashboard et la liste "Retours en attente" (Ticket 6,
+ * `treso/finance/retours/page.tsx`) désignent exactement le même ensemble
+ * de lignes — jamais de dérive entre le chiffre affiché et ce que
  * l'utilisateur voit en cliquant dessus.
+ *
+ * REFONTE V1 (Phase B) : `statut: "VALIDEE"` devient
+ * `statut: { in: STATUTS_VALIDATION_COMPLETE } }` — voir
+ * `STATUTS_VALIDATION_COMPLETE` dans src/lib/tresorerie.ts.
  */
 export const RETOUR_EN_ATTENTE_WHERE = {
   estReceptionne: false,
-  reglement: { demande: { statut: "VALIDEE" } },
+  reglement: { demande: { statut: { in: [...STATUTS_VALIDATION_COMPLETE] } } },
 } satisfies Prisma.RetourCaisseWhereInput;
 
 export interface CompteEtMontant {
@@ -32,7 +38,7 @@ export interface CompteEtMontant {
  */
 async function getRepartitionDemandesValidees() {
   const demandes = await prisma.demande.findMany({
-    where: { statut: "VALIDEE" },
+    where: { statut: { in: [...STATUTS_VALIDATION_COMPLETE] } },
     select: { id: true, montant: true },
   });
 
