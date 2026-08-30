@@ -5,7 +5,7 @@ import { DemandesACategoriserTable } from "./DemandesACategoriserTable";
 
 export default async function FinanceDemandesPage() {
   const rawDemandes = await prisma.demande.findMany({
-    where: { statut: "EN_ATTENTE" },
+    where: { statut: "EN_ATTENTE_VALIDATION" },
     include: { createur: true },
     orderBy: { createdAt: "asc" },
   });

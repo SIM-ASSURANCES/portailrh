@@ -13,12 +13,16 @@ interface ObjetOption extends Option {
   categorieId: string;
 }
 
+// REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") : valeurs
+// alignées sur le nouvel enum StatutDemande (11 valeurs), mais ce filtre
+// n'expose encore que les statuts produits par la logique applicative
+// actuelle (EN_ATTENTE -> EN_ATTENTE_VALIDATION, CLOTUREE_TOTALE/
+// CLOTUREE_PARTIELLE -> CLOTUREE) — à enrichir phase par phase.
 const STATUT_OPTIONS = [
-  { value: "EN_ATTENTE", label: "En attente" },
+  { value: "EN_ATTENTE_VALIDATION", label: "En attente de validation" },
   { value: "VALIDEE", label: "Validée" },
   { value: "REJETEE", label: "Rejetée" },
-  { value: "CLOTUREE_TOTALE", label: "Clôturée" },
-  { value: "CLOTUREE_PARTIELLE", label: "Clôturée (partielle)" },
+  { value: "CLOTUREE", label: "Clôturée" },
 ];
 
 const MODE_OPTIONS = [

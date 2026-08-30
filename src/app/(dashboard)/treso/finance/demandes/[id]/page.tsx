@@ -39,7 +39,7 @@ export default async function CategoriserDemandePage({
   // une nouvelle catégorisation (soft-delete, jamais de suppression
   // définitive — voir admin/categories).
   const [categoriesActives, objetsActives] =
-    demande.statut === "EN_ATTENTE" && canCategoriser
+    demande.statut === "EN_ATTENTE_VALIDATION" && canCategoriser
       ? await Promise.all([
           prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
           prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
@@ -111,7 +111,7 @@ export default async function CategoriserDemandePage({
         </dl>
       </div>
 
-      {demande.statut === "EN_ATTENTE" ? (
+      {demande.statut === "EN_ATTENTE_VALIDATION" ? (
         <>
           {canCategoriser ? (
             <CategorisationForm
@@ -149,11 +149,14 @@ export default async function CategoriserDemandePage({
           <RegularisationSummary demandeId={demande.id} montantDemande={Number(demande.montant)} />
           {canCloturerDemande ? <ClotureActions demandeId={demande.id} /> : null}
         </>
-      ) : demande.statut === "CLOTUREE_TOTALE" || demande.statut === "CLOTUREE_PARTIELLE" ? (
+      ) : demande.statut === "CLOTUREE" ? (
+        // REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :
+        // CLOTUREE_TOTALE/CLOTUREE_PARTIELLE fusionnées en un unique statut
+        // CLOTUREE — motifCloture reste affiché tel quel s'il est renseigné.
         <>
           <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-            Ce dossier est clôturé{demande.statut === "CLOTUREE_PARTIELLE" ? " (partiellement)" : ""} :
-            plus aucune action n&apos;est possible (règlement, retour de caisse, re-clôture).
+            Ce dossier est clôturé : plus aucune action n&apos;est possible (règlement, retour de
+            caisse, re-clôture).
           </p>
           <CategorisationSummary
             categorieLabel={demande.categorie?.label}
@@ -162,10 +165,10 @@ export default async function CategoriserDemandePage({
             lockMessage="Catégorie, objet et budget sont définitivement verrouillés."
           />
           <RegularisationSummary demandeId={demande.id} montantDemande={Number(demande.montant)} />
-          {demande.statut === "CLOTUREE_PARTIELLE" && demande.motifCloture ? (
+          {demande.motifCloture ? (
             <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Motif de la clôture partielle
+                Motif de la clôture
               </p>
               <p className="mt-1 text-sm text-foreground">{demande.motifCloture}</p>
             </div>

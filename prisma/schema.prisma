@@ -33,6 +33,7 @@ model User {
   role   Role   @relation(fields: [roleId], references: [id])
 
   demandesCreees      Demande[]         @relation("DemandeCreateur")
+  demandesBeneficiees Demande[]         @relation("DemandeBeneficiaire")
   reglementsFaits     Reglement[]       @relation("ReglementAuteur")
   retoursDeclares     RetourCaisse[]    @relation("RetourDeclarant")
   retoursReceptionnes RetourCaisse[]    @relation("RetourReceptionnaire")
@@ -97,12 +98,37 @@ model HistoriqueEntry {
 // MODULE 1 — TRÉSORERIE
 // ============================================================
 
+/// Refonte V1 (cahier des charges réécrit) : remplace l'ancien enum à 5
+/// valeurs. Les statuts intermédiaires (PARTIELLEMENT_VALIDEE,
+/// VALIDEE_NON_REGLEE, PARTIELLEMENT_REGLEE, REGLEE, EN_ATTENTE_REGULARISATION,
+/// REGULARISEE) ne sont pas encore produits par la logique applicative
+/// actuelle (celle-ci reste, pour l'instant, mappée sur les anciennes
+/// transitions EN_ATTENTE_VALIDATION -> VALIDEE -> CLOTUREE — voir CLAUDE.md,
+/// section "Refonte V1 en cours") : ils sont posés ici en fondation pour les
+/// phases B à H (validation partielle, règlement adapté, régularisation).
 enum StatutDemande {
-  EN_ATTENTE
+  BROUILLON
+  EN_ATTENTE_VALIDATION
   VALIDEE
+  PARTIELLEMENT_VALIDEE
+  VALIDEE_NON_REGLEE
+  PARTIELLEMENT_REGLEE
+  REGLEE
   REJETEE
-  CLOTUREE_TOTALE
-  CLOTUREE_PARTIELLE
+  EN_ATTENTE_REGULARISATION
+  REGULARISEE
+  CLOTUREE
+}
+
+/// Type de bénéficiaire d'une Demande — distinct du Demandeur (créateur).
+/// Rempli uniquement pour COLLABORATEUR/STAGIAIRE ayant un compte
+/// (`beneficiaireUserId`) ; sinon le nom est saisi librement
+/// (`beneficiaireNom`), y compris pour ENTREPRISE ("SIM ASSURANCES CI").
+enum BeneficiaireType {
+  COLLABORATEUR
+  STAGIAIRE
+  FOURNISSEUR
+  ENTREPRISE
 }
 
 enum ModeReglement {
@@ -143,11 +169,35 @@ model Objet {
 model Demande {
   id          String        @id @default(cuid())
   reference   String        @unique
+  /// Montant demandé (nom de champ conservé pour limiter la casse — voir
+  /// CLAUDE.md "Refonte V1"). Distinct de `montantValide` ci-dessous.
   montant     Decimal       @db.Decimal(14, 2)
   description String
   commentaire String?
-  statut      StatutDemande @default(EN_ATTENTE)
+  statut      StatutDemande @default(EN_ATTENTE_VALIDATION)
 
+  /// Cumul du montant validé à date — nul tant qu'aucune validation
+  /// (même partielle) n'a eu lieu. Peut être mis à jour par plusieurs
+  /// validations successives (validation complémentaire sur le reliquat,
+  /// phase B "validation partielle" — pas encore implémentée).
+  montantValide Decimal? @db.Decimal(14, 2)
+
+  /// Bénéficiaire de la dépense, distinct du Demandeur (`createur`) — peut
+  /// être différent (ex: le collaborateur demande pour un stagiaire, un
+  /// fournisseur, ou l'entreprise elle-même).
+  beneficiaireType   BeneficiaireType
+  /// Renseigné uniquement si `beneficiaireType` = COLLABORATEUR ou
+  /// STAGIAIRE ET que la personne a un compte dans le système.
+  beneficiaireUserId String?
+  beneficiaireUser   User?            @relation("DemandeBeneficiaire", fields: [beneficiaireUserId], references: [id])
+  /// Renseigné si le bénéficiaire n'est pas un utilisateur du système
+  /// (nom du fournisseur/prestataire, ou "SIM ASSURANCES CI" pour ENTREPRISE).
+  beneficiaireNom    String?
+
+  /// Concept Catégorie/Objet/Budget retiré du cahier des charges V1 —
+  /// champs conservés en base (nullables, non utilisés par le flux
+  /// principal) le temps de décider de leur sort avec le maître de stage.
+  /// Voir CLAUDE.md "Refonte V1 en cours".
   categorieId      String?
   categorie        Categorie? @relation(fields: [categorieId], references: [id])
   objetId          String?

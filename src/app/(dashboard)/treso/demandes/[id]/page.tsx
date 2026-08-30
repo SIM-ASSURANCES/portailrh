@@ -97,21 +97,24 @@ export default async function MaDemandeDetailPage({
         </dl>
       </div>
 
-      {demande.statut === "CLOTUREE_TOTALE" || demande.statut === "CLOTUREE_PARTIELLE" ? (
+      {/* REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :
+          CLOTUREE_TOTALE/CLOTUREE_PARTIELLE fusionnées en un unique statut
+          CLOTUREE — la distinction totale/partielle sera réintroduite par
+          la phase de régularisation (EN_ATTENTE_REGULARISATION/REGULARISEE). */}
+      {demande.statut === "CLOTUREE" ? (
         <>
           <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-            Ce dossier est clôturé{demande.statut === "CLOTUREE_PARTIELLE" ? " (partiellement)" : ""} :
-            plus aucune action n&apos;est possible dessus.
+            Ce dossier est clôturé : plus aucune action n&apos;est possible dessus.
           </p>
           <RegularisationSummary
             demandeId={demande.id}
             montantDemande={Number(demande.montant)}
             title="Situation finale"
           />
-          {demande.statut === "CLOTUREE_PARTIELLE" && demande.motifCloture ? (
+          {demande.motifCloture ? (
             <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Motif de la clôture partielle
+                Motif de la clôture
               </p>
               <p className="mt-1 text-sm text-foreground">{demande.motifCloture}</p>
             </div>

@@ -65,6 +65,15 @@ export async function creerDemandeAction(
           description,
           commentaire: commentaire || null,
           createurId: session.user.id,
+          // REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :
+          // beneficiaireType est désormais obligatoire, mais ce formulaire
+          // (Ticket 1) n'a pas encore d'UI pour choisir un bénéficiaire
+          // distinct du créateur — on le renseigne par défaut comme étant
+          // le créateur lui-même. Un vrai sélecteur (collaborateur/
+          // stagiaire/fournisseur/entreprise) reste à construire dans une
+          // phase dédiée.
+          beneficiaireType: "COLLABORATEUR",
+          beneficiaireUserId: session.user.id,
         },
       });
 

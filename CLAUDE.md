@@ -524,6 +524,112 @@ Ces règles sont non négociables et doivent guider toute implémentation
    déclaration/réception de retour, clôture, annulation...), avec l'auteur
    (`userId`) et un `detail` exploitable.
 
+## Refonte V1 en cours
+
+Le cahier des charges du Module Trésorerie a été **entièrement réécrit**
+par le maître de stage (document "CAHIER DES CHARGES — V1"). Les tickets
+1 à 10 documentés ci-dessous restent la trace de **comment** le module a
+été construit (patterns, pièges, décisions techniques toujours valables),
+mais leur description **fonctionnelle** ne reflète plus exactement les
+règles métier actuelles sur plusieurs points — voir cette section avant
+de s'y fier pour le comportement attendu.
+
+**Étape actuelle : fondations de données uniquement.** Le schéma et les
+mappings minimaux nécessaires à la compilation sont en place ; la vraie
+logique métier des nouveaux concepts (validation partielle, règlement
+adapté, fonds remis détaillés, bon de caisse, dashboard enrichi) sera
+reprise phase par phase (B à H), une par une, avec le maître de stage.
+
+### Changements structurels actés dans le schéma (fait)
+
+- **Catégorie/Objet/Budget disparaissent du cahier des charges.** Les
+  modèles `Categorie`/`Objet`, le CRUD `admin/categories`, l'écran de
+  catégorisation Finance (`CategorisationForm`), le regroupement et les
+  filtres du reporting/export (Ticket 10), et l'affichage catégorie/objet
+  sur le reçu PDF (Ticket 9) **restent tous en place et fonctionnels**,
+  volontairement non touchés à cette étape (portée choisie explicitement
+  avec l'utilisateur : nettoyage complet différé aux phases B-H, pour ne
+  pas défricher un écran dont la vraie logique de remplacement n'est pas
+  encore spécifiée). `categorieId`/`objetId`/`budgetDisponible` restent en
+  base sur `Demande`, nullables, non requis par le flux principal.
+- **`Demande.montantValide`** (Decimal, nullable) — cumul du montant
+  validé à date, distinct de `montant` (montant demandé). Alimenté pour la
+  première fois par `validerDemandeAction` (mise à hauteur du montant
+  demandé en entier — voir mapping temporaire ci-dessous).
+- **Bénéficiaire distinct du Demandeur** — `Demande.beneficiaireType`
+  (enum `BeneficiaireType` : `COLLABORATEUR`/`STAGIAIRE`/`FOURNISSEUR`/
+  `ENTREPRISE`), `beneficiaireUserId` (relation `User` optionnelle,
+  uniquement si collaborateur/stagiaire avec un compte) et
+  `beneficiaireNom` (texte libre sinon, y compris "SIM ASSURANCES CI").
+- **`StatutDemande`** passe de 5 à 11 valeurs : `BROUILLON`,
+  `EN_ATTENTE_VALIDATION`, `VALIDEE`, `PARTIELLEMENT_VALIDEE`,
+  `VALIDEE_NON_REGLEE`, `PARTIELLEMENT_REGLEE`, `REGLEE`, `REJETEE`,
+  `EN_ATTENTE_REGULARISATION`, `REGULARISEE`, `CLOTUREE`. Migration
+  `refonte_v1_demande_beneficiaire_statut`.
+
+### Mappings temporaires effectués pour recompiler (à reprendre phase par phase)
+
+La logique applicative existante (Tickets 1 à 10) ne produit et ne
+comprend encore que les 4 statuts qu'elle connaissait avant la refonte,
+translittérés vers les nouvelles valeurs les plus proches :
+`EN_ATTENTE -> EN_ATTENTE_VALIDATION`, `VALIDEE` inchangé, `REJETEE`
+inchangé, `CLOTUREE_TOTALE`/`CLOTUREE_PARTIELLE -> CLOTUREE` (fusionnés).
+Aucun code ne produit encore `BROUILLON`, `PARTIELLEMENT_VALIDEE`,
+`VALIDEE_NON_REGLEE`, `PARTIELLEMENT_REGLEE`, `REGLEE`,
+`EN_ATTENTE_REGULARISATION` ni `REGULARISEE` — posés en fondation pour les
+phases à venir. Endroits précis à revisiter :
+
+- [demandeStatut.ts](src/components/tresorerie/demandeStatut.ts) —
+  `STATUT_DEMANDE_BADGE_VARIANT`/`STATUT_DEMANDE_LABEL` couvrent les 11
+  valeurs (exigé par `Record<StatutDemande, ...>`), mais le variant/libellé
+  des 7 statuts encore inutilisés est provisoire — à revoir quand chaque
+  phase commencera à les produire réellement.
+- [treso/demandes/nouvelle/actions.ts](<src/app/(dashboard)/treso/demandes/nouvelle/actions.ts>)
+  — `creerDemandeAction` fixe `beneficiaireType: "COLLABORATEUR"` et
+  `beneficiaireUserId: session.user.id` par défaut : **aucune UI n'existe
+  encore** pour choisir un bénéficiaire différent du créateur
+  (collaborateur tiers, stagiaire, fournisseur, ou l'entreprise). À
+  construire dans une phase dédiée.
+- [treso/finance/demandes/[id]/actions.ts](<src/app/(dashboard)/treso/finance/demandes/[id]/actions.ts>)
+  — `categoriserDemandeAction`/`validerDemandeAction`/`rejeterDemandeAction`
+  revérifient `statut !== "EN_ATTENTE_VALIDATION"` (au lieu de
+  `EN_ATTENTE`) ; `validerDemandeAction` valide toujours le **montant
+  entier** (`montantValide = demande.montant`) — pas encore de validation
+  partielle ni de validation complémentaire sur un reliquat ;
+  `cloturerDemandeAction` écrit toujours `statut: "CLOTUREE"` quel que soit
+  `type` (`"TOTALE"`/`"PARTIELLE"`, toujours accepté en paramètre, motif
+  toujours obligatoire pour `"PARTIELLE"`) — la distinction totale/partielle
+  n'existe plus dans le statut lui-même, seulement dans `motifCloture`.
+- [treso/finance/demandes/[id]/page.tsx](<src/app/(dashboard)/treso/finance/demandes/[id]/page.tsx>)
+  et [treso/demandes/[id]/page.tsx](<src/app/(dashboard)/treso/demandes/[id]/page.tsx>)
+  — branches de rendu sur `"EN_ATTENTE_VALIDATION"`/`"CLOTUREE"` ; l'affichage
+  du motif de clôture n'est plus conditionné à un ancien statut partiel
+  (affiché dès que `motifCloture` est non nul).
+- [treso/finance/demandes/page.tsx](<src/app/(dashboard)/treso/finance/demandes/page.tsx>)
+  — filtre `findMany` sur `EN_ATTENTE_VALIDATION`.
+- [reporting.ts](src/lib/reporting.ts) — whitelist de `parseReportingFilters`
+  mise à jour aux 11 valeurs ; `STATUTS_VALIDES` devient
+  `["VALIDEE", "CLOTUREE"]`. Le regroupement Catégorie/Objet du reporting
+  lui-même n'a pas été retouché (voir ci-dessus).
+- [ReportingFiltersForm.tsx](<src/app/(dashboard)/treso/finance/reporting/ReportingFiltersForm.tsx>)
+  — `STATUT_OPTIONS` aligné (`EN_ATTENTE_VALIDATION`, `CLOTUREE` unique).
+
+**Seed (`prisma/seed.ts`) non modifié pour le bénéficiaire** — vérifié
+explicitement : le seed actuel ne crée **aucune** `Demande` de test (seuls
+rôles/permissions/utilisateurs/catégories/objets/paramétrage horaire sont
+semés), donc aucune donnée de démonstration n'avait besoin d'un
+bénéficiaire cohérent à cette étape. À faire le jour où des demandes de
+test seront ajoutées au seed.
+
+### Vérifié explicitement (fondations)
+
+`npx prisma migrate dev` et `npx prisma db seed` passent, `npx tsc --noEmit`
+et `npx eslint .` passent sans erreur, `npm run dev` démarre et `GET
+/login` répond 200. **Aucun test fonctionnel du cycle métier n'a été
+mené** (validation, règlement, retour, clôture...) : ces écrans compilent
+mais restent volontairement dans un état transitoire tant que les phases
+B à H n'ont pas repris leur logique.
+
 ## Module Trésorerie : Ticket 1 — Création de demande (Collaborateur)
 
 **Statut : terminé.** Routes sous

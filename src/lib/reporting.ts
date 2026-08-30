@@ -45,9 +45,26 @@ export function parseReportingFilters(searchParams: SearchParamsLike): Reporting
     categorieId: firstString(searchParams.categorieId),
     objetId: firstString(searchParams.objetId),
     mode: mode === "CAISSE" || mode === "BANQUE" ? mode : undefined,
-    statut: (["EN_ATTENTE", "VALIDEE", "REJETEE", "CLOTUREE_TOTALE", "CLOTUREE_PARTIELLE"] as const).includes(
-      statut as StatutDemande
-    )
+    // REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") : liste
+    // des valeurs mise à jour pour le nouvel enum à 11 statuts, mais le
+    // reporting lui-même (regroupement par Catégorie/Objet) n'a pas encore
+    // été repensé pour la refonte — périmètre laissé pour la phase
+    // "dashboard enrichi".
+    statut: (
+      [
+        "BROUILLON",
+        "EN_ATTENTE_VALIDATION",
+        "VALIDEE",
+        "PARTIELLEMENT_VALIDEE",
+        "VALIDEE_NON_REGLEE",
+        "PARTIELLEMENT_REGLEE",
+        "REGLEE",
+        "REJETEE",
+        "EN_ATTENTE_REGULARISATION",
+        "REGULARISEE",
+        "CLOTUREE",
+      ] as const
+    ).includes(statut as StatutDemande)
       ? (statut as StatutDemande)
       : undefined,
   };
@@ -168,7 +185,8 @@ async function getDemandesFiltrees(
   return { demandes: demandesFiltrees, montantsRegleParDemande };
 }
 
-const STATUTS_VALIDES: readonly StatutDemande[] = ["VALIDEE", "CLOTUREE_TOTALE", "CLOTUREE_PARTIELLE"];
+// REFONTE V1 (temporaire) : CLOTUREE_TOTALE/CLOTUREE_PARTIELLE -> CLOTUREE.
+const STATUTS_VALIDES: readonly StatutDemande[] = ["VALIDEE", "CLOTUREE"];
 
 export interface ReportingRow {
   categorieId: string | null;

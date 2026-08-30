@@ -57,7 +57,7 @@ export async function categoriserDemandeAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
-  if (demande.statut !== "EN_ATTENTE") {
+  if (demande.statut !== "EN_ATTENTE_VALIDATION") {
     return {
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
@@ -127,7 +127,7 @@ export async function validerDemandeAction(demandeId: string): Promise<SimpleAct
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
-  if (demande.statut !== "EN_ATTENTE") {
+  if (demande.statut !== "EN_ATTENTE_VALIDATION") {
     return {
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
@@ -135,7 +135,16 @@ export async function validerDemandeAction(demandeId: string): Promise<SimpleAct
   }
 
   await prisma.$transaction([
-    prisma.demande.update({ where: { id: demandeId }, data: { statut: "VALIDEE" } }),
+    // REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :
+    // montantValide est renseigné intégralement au montant demandé — cette
+    // action ne gère encore que la validation totale. La validation
+    // partielle (montant inférieur, statut PARTIELLEMENT_VALIDEE, puis
+    // validation complémentaire sur le reliquat) est le périmètre de la
+    // phase B, pas encore implémentée.
+    prisma.demande.update({
+      where: { id: demandeId },
+      data: { statut: "VALIDEE", montantValide: demande.montant },
+    }),
     prisma.historiqueEntry.create({
       data: {
         entity: "Demande",
@@ -181,7 +190,7 @@ export async function rejeterDemandeAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
-  if (demande.statut !== "EN_ATTENTE") {
+  if (demande.statut !== "EN_ATTENTE_VALIDATION") {
     return {
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
@@ -279,7 +288,13 @@ export async function cloturerDemandeAction(
     prisma.demande.update({
       where: { id: demandeId },
       data: {
-        statut: type === "TOTALE" ? "CLOTUREE_TOTALE" : "CLOTUREE_PARTIELLE",
+        // REFONTE V1 (temporaire) : CLOTUREE_TOTALE/CLOTUREE_PARTIELLE
+        // fusionnés dans l'unique statut CLOTUREE — voir CLAUDE.md
+        // "Refonte V1 en cours". La distinction totale/partielle reste
+        // portée par `motifCloture` (rempli seulement pour une clôture
+        // partielle avant cette refonte) en attendant la phase de
+        // régularisation (EN_ATTENTE_REGULARISATION/REGULARISEE).
+        statut: "CLOTUREE",
         motifCloture: motifValide,
       },
     }),
