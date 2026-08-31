@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession, hasPermission } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, QRCodeDownload } from "@/components/ui";
 import { PointageForm } from "./PointageForm";
 import { detectPointageDevice, getClientIp, isOfficeIpAllowed } from "@/lib/pointage-utils";
 
@@ -18,6 +18,7 @@ export default async function PointagePage({
   const requestHeaders = await headers();
   const device = detectPointageDevice(requestHeaders.get("user-agent") ?? "");
   const clientIp = getClientIp(requestHeaders);
+  console.log("Client IP:", clientIp); // Log the client IP for debugging
   const officeNetworkAllowed = isOfficeIpAllowed(clientIp, process.env.ALLOWED_OFFICE_IPS ?? "");
 
   if (device === "ORDINATEUR" && !officeNetworkAllowed) {
@@ -50,16 +51,37 @@ export default async function PointagePage({
   });
 
   const resolvedParams = await searchParams;
+  const qrUrl = `${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}/pointage/qr`;
+
   return (
     <div className="container mx-auto max-w-xl px-4 py-8 font-sans">
       <PageHeader title="Pointage Quotidien" description="SIM Assurances — Enregistrement de votre temps de présence" />
-      <div className="mt-6">
-        <PointageForm
-          config={config}
-          todayPointages={todayPointages}
-          isQrSource={resolvedParams.source === "QR_CODE"}
-          device={device}
-        />
+      
+      <div className="mt-8 grid gap-6 lg:grid-cols-2">
+        {/* Colonne gauche : Formulaire de pointage */}
+        <div>
+          <h3 className="mb-4 text-lg font-bold text-foreground">Votre pointage</h3>
+          <PointageForm
+            config={config}
+            todayPointages={todayPointages}
+            isQrSource={resolvedParams.source === "QR_CODE"}
+            device={device}
+          />
+        </div>
+
+        {/* Colonne droite : QR Code */}
+        <div className="flex flex-col gap-6">
+          <div>
+            <h3 className="mb-4 text-lg font-bold text-foreground">Code QR du pointage</h3>
+            <QRCodeDownload
+              url={qrUrl}
+              fileName="pointage-sim-assurances"
+              title="Pointage par QR"
+              description="Scannez ce code pour accéder à votre écran de pointage"
+              size={200}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

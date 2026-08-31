@@ -30,3 +30,6 @@ export type { DataTableProps, DataTableColumn } from "./DataTable";
 
 export { ToastOnMount } from "./ToastOnMount";
 export type { ToastOnMountProps } from "./ToastOnMount";
+
+export { QRCodeDownload } from "./QRCodeDownload";
+export type { QRCodeDownloadProps } from "./QRCodeDownload";

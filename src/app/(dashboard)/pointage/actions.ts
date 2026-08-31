@@ -13,7 +13,7 @@ import { revalidatePath } from "next/cache";
 const pointageSchema = z.object({
   type: z.nativeEnum(TypePointage),
   source: z.nativeEnum(SourcePointage),
-  motif: z.string().optional(),
+  motif: z.string().optional().nullable(),
 });
 
 export type PointageSuccessData = {
@@ -89,8 +89,50 @@ export async function enregistrerPointageAction(
       return { status: "error", message: "Aucune configuration horaire active trouvée." };
     }
 
+    // Validation pour DEPART : vérifier qu'une ARRIVEE existe aujourd'hui
+    if (type === TypePointage.DEPART) {
+      const startOfToday = new Date(now);
+      startOfToday.setHours(0, 0, 0, 0);
+      const endOfToday = new Date(now);
+      endOfToday.setHours(23, 59, 59, 999);
+
+      const todayArrival = await prisma.pointage.findFirst({
+        where: {
+          userId: session.user.id,
+          type: TypePointage.ARRIVEE,
+          heure: { gte: startOfToday, lte: endOfToday },
+        },
+      });
+
+      if (!todayArrival) {
+        return {
+          status: "error",
+          message: "Vous devez d'abord pointer votre arrivée avant de pouvoir pointer votre départ.",
+        };
+      }
+
+      // Vérifier que le départ n'est pas avant heureFinApresMidi
+      const [finHeure, finMinute] = config.heureFinApresMidi.split(":").map(Number);
+      const finDate = new Date(now);
+      finDate.setHours(finHeure, finMinute, 0, 0);
+
+      if (now < finDate) {
+        // Avant l'heure de fin, motif est obligatoire
+        if (!motif || motif.trim().length === 0) {
+          return {
+            status: "error",
+            message: `Vous ne pouvez pointer votre départ avant ${config.heureFinApresMidi}. Un motif est obligatoire si vous souhaitez pointer avant cette heure.`,
+            fieldErrors: {
+              motif: `Motif obligatoire pour un départ avant ${config.heureFinApresMidi}.`,
+            },
+          };
+        }
+      }
+    }
+
     let estRetard = false;
     let minutesRetard = null;
+    let motifAConserver = null;
 
     // Validation spécifique du retard pour l'ARRIVEE
     if (type === TypePointage.ARRIVEE) {
@@ -106,7 +148,11 @@ export async function enregistrerPointageAction(
             fieldErrors: { motif: "Veuillez renseigner un motif pour justifier votre retard." },
           };
         }
+        motifAConserver = motif;
       }
+    } else if (type === TypePointage.DEPART && motif && motif.trim().length > 0) {
+      // Pour un départ, conserver le motif s'il est fourni
+      motifAConserver = motif;
     }
 
     const recordedSource = isMobile ? SourcePointage.QR_CODE : SourcePointage.ORDINATEUR;
@@ -118,7 +164,7 @@ export async function enregistrerPointageAction(
           heure: now,
           estRetard,
           minutesRetard,
-          motif: estRetard ? motif : null,
+          motif: motifAConserver,
           userId: session.user.id,
           effectueParId: session.user.id,
         },

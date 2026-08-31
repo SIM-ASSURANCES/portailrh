@@ -12,10 +12,46 @@ export function getClientIp(headersList: Headers): string {
   return forwardedFor?.split(",")[0].trim() || headersList.get("x-real-ip") || "127.0.0.1";
 }
 
+// export function isOfficeIpAllowed(clientIp: string, whitelist: string): boolean {
+//   const allowedIps = whitelist.split(",").map((ip) => ip.trim()).filter(Boolean);
+//   return allowedIps.length > 0 && allowedIps.includes(clientIp);
+// }
+import ipaddr from 'ipaddr.js';
+
 export function isOfficeIpAllowed(clientIp: string, whitelist: string): boolean {
+  if (!whitelist) return false;
+
+  // 1. Nettoyage de l'IP du client (on retire ::ffff:)
+  let cleanClientIp = clientIp.trim();
+  if (cleanClientIp.startsWith('::ffff:')) {
+    cleanClientIp = cleanClientIp.replace('::ffff:', '');
+  }
+
+  // 2. Traitement de la liste blanche du .env
   const allowedIps = whitelist.split(",").map((ip) => ip.trim()).filter(Boolean);
-  return allowedIps.length > 0 && allowedIps.includes(clientIp);
+
+  try {
+    // On convertit l'IP du client en objet IP exploitable par la librairie
+    const parsedClientIp = ipaddr.parse(cleanClientIp);
+
+    // 3. On parcourt le tableau pour vérifier les correspondances (IP ou CIDR)
+    return allowedIps.some((allowedIp) => {
+      if (allowedIp.includes('/')) {
+        // C'est une plage CIDR (ex: 192.168.1.0/24)
+        const [range, bits] = allowedIp.split('/');
+        const parsedRange = ipaddr.parse(range);
+        return parsedClientIp.match(parsedRange, parseInt(bits, 10));
+      } else {
+        // C'est une IP exacte (ex: 127.0.0.1)
+        return cleanClientIp === allowedIp;
+      }
+    });
+  } catch (error) {
+    console.error("Erreur lors de la vérification de la plage IP :", error);
+    return false;
+  }
 }
+
 
 /**
  * Convertit une chaîne au format "HH:MM" en minutes depuis minuit
