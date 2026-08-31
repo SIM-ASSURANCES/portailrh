@@ -121,6 +121,11 @@ export default async function ReportingPage({
 
       <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Demandes par catégorie / objet</h2>
+        {/* Tableau analytique (colonnes numériques + ligne de total) : reste un
+            tableau classique même sur mobile plutôt qu'un mode carte (peu
+            adapté à une lecture en grille avec total) — défilement horizontal
+            avec indice explicite, voir CLAUDE.md (stratégie DataTable). */}
+        <p className="text-xs text-muted-foreground md:hidden">Faites glisser pour voir plus de colonnes →</p>
         <div className="overflow-x-auto rounded-md border border-border">
           <table className="w-full min-w-full divide-y divide-border text-sm">
             <thead className="bg-muted">
@@ -224,7 +229,9 @@ export default async function ReportingPage({
             statut de cette section à confirmer avec le maître de stage.
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-md border border-border">
+          <>
+            <p className="text-xs text-muted-foreground md:hidden">Faites glisser pour voir plus de colonnes →</p>
+            <div className="overflow-x-auto rounded-md border border-border">
             <table className="w-full min-w-full divide-y divide-border text-sm">
               <thead className="bg-muted">
                 <tr>
@@ -258,7 +265,8 @@ export default async function ReportingPage({
                 })}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
       </div>
     </div>

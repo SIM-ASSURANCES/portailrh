@@ -3075,6 +3075,143 @@ le dashboard, le tiroir de navigation ouvert, et le formulaire de nouvelle
 demande. Toutes les données de test créées pendant la vérification
 supprimées après coup.
 
+## Audit et corrections responsive mobile (post-polish visuel)
+
+**Statut : terminé.** Audit systématique à 375px (mobile), 768px (tablette)
+et 1280px (desktop) de tout le Socle (login, dashboard général, `admin/*`)
+et tout le Module Trésorerie (`treso/*`, y compris les 8 listes Finance de
+la Phase G/H et le reporting). **Hors périmètre, non touché** : le Module
+Pointage RH (développé séparément) — voir la note dédiée en fin de section.
+
+### Méthode
+
+Audit fait **avant** toute correction : sweep Playwright automatisé (21
+routes × 3 largeurs, détection de dépassement horizontal au niveau du
+document via `scrollWidth`/`clientWidth`) puis revue visuelle systématique
+de chaque capture à 375px. Le sweep automatisé n'a révélé aucun
+dépassement au niveau du document — attendu, puisque `DataTable` masquait
+déjà son propre débordement interne via `overflow-x-auto` (le symptôme
+n'est pas un scroll de page, mais un tableau illisible/tronqué à
+l'intérieur de son cadre) : seule la revue visuelle l'a fait apparaître,
+confirmant que la métrique automatisée seule est insuffisante pour ce
+genre de régression.
+
+### Constat principal : `DataTable` (point de rupture confirmé)
+
+À 375px, chaque écran utilisant `DataTable` (10 wrappers : `UsersTable`,
+`ModulesTable`, `MesDemandesTable`, `ADecaisserTable`, `ARegulariserTable`,
+`DemandesACategoriserTable`, `DepensesNonJustifieesTable`,
+`FondsARegulariserTable`, `ReglementsPartielsTable`,
+`RetoursEnAttenteTable`) ne laissait voir que les 2-3 premières colonnes ;
+le reste (Montant, Statut, et surtout la colonne **Actions** — le bouton
+"Voir"/"Traiter" qui est le seul point d'entrée de l'écran) était poussé
+hors écran **sans aucun indice de défilement**. Bug induit constaté au
+passage : l'état vide (`EmptyState`, rendu dans un `<td colSpan>`) héritait
+de la largeur totale (large) de la table débordante et s'affichait
+décentré/tronqué plutôt que proprement centré.
+
+**Stratégie retenue : Option B, cartes empilées** (`src/components/ui/DataTable.tsx`)
+plutôt que défilement horizontal avec indice visuel. Choisie parce que ces
+10 écrans sont tous des *listes d'éléments cliquables* (chaque ligne mène à
+un détail via son bouton d'action) — le mode carte, où chaque ligne devient
+un bloc autonome avec toutes ses informations et son bouton d'action
+directement visibles, sert mieux ce usage qu'un tableau qu'il faudrait
+faire défiler horizontalement avant de trouver le bouton. Implémentation :
+
+- En dessous de `md`, le tableau HTML est remplacé par une liste de cartes
+  (`space-y-3`) : **première colonne** rendue en titre (`font-medium`),
+  colonnes suivantes en paires libellé/valeur (`<dl>`, `flex justify-between`),
+  et toute colonne dont l'en-tête correspond à `/^actions?$/i` détachée en
+  pied de carte sous un séparateur (`border-t`) — jamais mélangée aux
+  paires libellé/valeur, pour que le(s) bouton(s) restent immédiatement
+  identifiables. Fonctionne sans configuration supplémentaire : les 10
+  wrappers existants ont tous, par construction, une première colonne
+  significative (référence/nom) et une dernière colonne "Actions" — aucun
+  n'a eu besoin d'être modifié pour bénéficier du nouveau rendu.
+- **Tri par colonne préservé** : les en-têtes cliquables disparaissant en
+  mode carte, un sélecteur "Trier par" (natif `<select>`, visible
+  uniquement sous `md`) liste les colonnes `sortable`, pilotant le même
+  état de tri (`sort`/`setSort`) que le clic d'en-tête en mode tableau — un
+  seul état de tri, deux façons de le déclencher selon la largeur d'écran.
+- À partir de `md`, comportement strictement inchangé (tableau HTML avec
+  `overflow-x-auto`, tri par clic d'en-tête). Le bug d'`EmptyState`
+  décentré est résolu au passage : l'état vide sort désormais du tableau
+  (rendu directement dans le conteneur, plus jamais dans un `<td>`), quelle
+  que soit la largeur d'écran.
+
+**Exception délibérée, hors du composant `DataTable`** : les deux tableaux
+analytiques de `treso/finance/reporting/page.tsx` ("Demandes par
+catégorie/objet" — 10 colonnes numériques + ligne de total — et "Suivi
+budgétaire") sont écrits en HTML brut, pas via le composant `DataTable`, et
+**ne sont pas passés en mode carte**. Choix assumé : une carte par ligne
+n'a pas de sens pour une grille de reporting dense avec une ligne "Total
+général" à comparer visuellement colonne par colonne — l'usage attendu
+reste la lecture en tableau, y compris sur mobile. **Stratégie A** retenue
+ici à la place : indice textuel explicite "Faites glisser pour voir plus de
+colonnes →" (visible uniquement sous `md`, au-dessus du tableau), le
+`overflow-x-auto` existant assurant le défilement. Les autres écrans
+Finance n'ont pas ce problème : ils utilisent tous le composant `DataTable`
+partagé, jamais un tableau réécrit à la main.
+
+### Autres corrections (Tâches 3 à 6)
+
+Le reste de l'audit (formulaires multi-colonnes, grilles de `StatCard`,
+panneaux d'action déclenchés au clic, zones à plusieurs boutons) était
+**déjà conforme avant cet audit** — vérifié visuellement à 375px, aucune
+correction de code nécessaire au-delà de `DataTable` et du reporting
+ci-dessus :
+
+- Tous les formulaires (`ReglementForm`, `RetourCaisseForm` — y compris ses
+  lignes de dépense dynamiques (Phase D), dépense directe, filtres de
+  reporting, formulaires admin) utilisent déjà `grid-cols-1 sm:grid-cols-2`
+  ou une simple pile verticale : aucun formulaire ne force plusieurs
+  colonnes sous `sm`.
+- Les grilles de `StatCard` (dashboard général, dashboard Finance à 6
+  indicateurs de la Phase G) sont déjà `grid-cols-1 sm:grid-cols-2 lg:...` :
+  reflow correct à toutes les largeurs testées.
+- Les panneaux d'action révélés au clic (`ValidationActions`,
+  `ClotureActions`, formulaire de règlement, validation complémentaire,
+  formulaire de retour de caisse) restent entièrement visibles et lisibles
+  à 375px sans zoom ni débordement.
+- Les zones à plusieurs boutons (reçu + bon de caisse + Annuler sur
+  `ReglementRow`/`ReglementsRecusSection` ; Valider/Rejeter ; Clôturer
+  totalement/partiellement) utilisaient déjà `flex flex-wrap gap-3` :
+  empilement propre sur mobile, déjà vérifié à l'écran avant cet audit.
+- `admin/categories` (`CategoriesList.tsx`) : le motif visuellement
+  inconsistant repéré sur une première capture (bouton "Désactiver" tantôt
+  sur sa propre ligne, tantôt accolé au badge) a été revérifié
+  spécifiquement — le code utilise bien `flex flex-wrap items-center
+  justify-between gap-3` de façon identique sur toutes les lignes ; l'
+  inconsistance apparente n'était pas reproductible sur une capture
+  fraîche et est attribuée à un artefact de mise à l'échelle du
+  screenshot pleine page, pas à un défaut de code. Aucune modification.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur sur `src/`. Sweep
+automatisé Playwright (21 routes × 375/768/1280px) sans dépassement de
+document avant ET après les corrections. Parcours complet à 375px piloté
+par un vrai navigateur (Playwright, non ajouté au projet) : connexion,
+ouverture du tiroir de navigation mobile, création d'une demande,
+consultation de la liste (nouveau mode carte de `DataTable`), ouverture du
+détail avec ses sections (Règlements, Retours, Historique), validation
+totale par Finance, ajout et confirmation d'un règlement Caisse — **zéro
+erreur console** sur l'ensemble du parcours. Bascule à 768px vérifiée sans
+régression sur le même détail de demande (retour au mode tableau/grille
+classique). Toutes les données de test créées pendant cet audit
+supprimées (3 demandes et leurs règlements/écritures de caisse/historique
+associés) ; serveur `next dev` arrêté après vérification.
+
+### Signalé pour le Module Pointage RH (hors périmètre, non corrigé)
+
+Aucune route de ce module n'a d'écran développé à ce jour (voir
+[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données)) :
+rien n'a donc pu être audité ni corrigé ici. À traiter par le binôme en
+charge de ce module au moment où ses écrans seront construits — en
+particulier `DataTable` (désormais réutilisable telle quelle en mode carte
+mobile) sera probablement le composant de liste à privilégier pour rester
+cohérent avec le reste du portail.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
