@@ -3,6 +3,8 @@ import { Icon } from "@/components/icons";
 interface TopbarProps {
   user: { fullName: string; email: string };
   role: string;
+  /** Ouvre le tiroir de navigation mobile (bouton visible seulement < lg). */
+  onOpenMobileMenu: () => void;
 }
 
 function initials(fullName: string) {
@@ -17,14 +19,23 @@ function initials(fullName: string) {
  * de système de notifications) et bloc profil (avatar initiales, nom, email,
  * rôle). Reste blanche, au-dessus du contenu, alignée à droite.
  */
-export function Topbar({ user, role }: TopbarProps) {
+export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
   return (
-    <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-4 border-b border-slate-200 bg-white px-6">
+    <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-4 border-b border-border bg-surface px-4 sm:px-6">
+      <button
+        type="button"
+        onClick={onOpenMobileMenu}
+        aria-label="Ouvrir le menu"
+        className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-[background-color,transform] duration-150 ease-out-strong motion-safe:active:scale-[0.95] hover:bg-muted lg:hidden"
+      >
+        <Icon name="menu" className="size-5" />
+      </button>
+
       <div className="ml-auto flex items-center gap-4">
         <button
           type="button"
           aria-label="Notifications"
-          className="grid size-10 place-items-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:bg-slate-50"
+          className="grid size-10 place-items-center rounded-lg border border-border text-muted-foreground transition-[background-color,transform] duration-150 ease-out-strong motion-safe:active:scale-[0.95] hover:bg-muted"
         >
           <Icon name="bell" className="size-5" />
         </button>
@@ -37,13 +48,13 @@ export function Topbar({ user, role }: TopbarProps) {
             {initials(user.fullName)}
           </span>
           <div className="hidden leading-tight sm:block">
-            <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
               {user.fullName}
               <span className="rounded-full bg-info-bg px-2 py-0.5 text-[11px] font-medium text-info">
                 {role}
               </span>
             </p>
-            <p className="text-xs text-slate-500">{user.email}</p>
+            <p className="text-xs text-muted-foreground">{user.email}</p>
           </div>
         </div>
       </div>

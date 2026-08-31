@@ -1,0 +1,45 @@
+# Dépendances (réinstallées dans l'image, jamais copiées depuis l'hôte :
+# des node_modules Windows contiendraient des binaires natifs incompatibles
+# avec le conteneur Linux).
+node_modules
+npm-debug.log*
+
+# Build Next.js (régénéré dans l'image ; le build local peut viser une
+# plateforme différente du conteneur).
+.next
+out
+
+# Client Prisma généré (régénéré via `prisma generate` dans l'image, jamais
+# copié depuis l'hôte — même raison que node_modules : binaires potentiels
+# pour la mauvaise plateforme).
+src/generated/prisma
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Environnement et secrets — ne doivent jamais entrer dans une image Docker,
+# les variables d'environnement réelles sont injectées par docker-compose.
+.env
+.env.local
+.env.*.local
+
+# Artefacts locaux non pertinents pour le build applicatif.
+graphify-out
+coverage
+*.tsbuildinfo
+
+# Outils de dev / IDE
+.vscode
+.idea
+*.log
+
+# Documentation et fichiers Docker eux-mêmes (inutiles à l'intérieur de
+# l'image ; le contexte de build les lit depuis le disque, pas depuis
+# l'image).
+README.md
+DEPLOIEMENT.md
+Dockerfile
+.dockerignore
+docker-compose.yml

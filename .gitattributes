@@ -1,0 +1,5 @@
+# Les scripts shell doivent toujours rester en LF, quelle que soit la
+# configuration core.autocrlf de la machine qui clone le repo — un script
+# shell en CRLF échoue au démarrage dans le conteneur Linux avec une erreur
+# "bad interpreter" (le shebang #!/bin/sh devient #!/bin/sh\r, introuvable).
+*.sh text eol=lf

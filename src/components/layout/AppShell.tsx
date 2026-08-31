@@ -11,6 +11,16 @@ interface AppShellProps {
   role: string;
   /** Affiche la section « Administration » dans la sidebar (rôle Admin). */
   canAdmin?: boolean;
+  /** Affiche "Demandes à traiter (Finance)" (categoriser_demande OU valider_demande). */
+  canAccesFinanceDemandes?: boolean;
+  /** Affiche "Retours en attente" (treso.receptionner_retour). */
+  canReceptionnerRetour?: boolean;
+  /** Affiche "Tableau de bord Finance" (treso.voir_dashboard_finance). */
+  canVoirDashboardFinance?: boolean;
+  /** Affiche "Reporting" (treso.voir_reporting). */
+  canVoirReporting?: boolean;
+  /** Affiche "Nouvelle dépense directe" (treso.saisir_depense_directe, Phase F). */
+  canSaisirDepenseDirecte?: boolean;
   children: ReactNode;
 }
 
@@ -22,11 +32,25 @@ const STORAGE_KEY = "sim-sidebar-collapsed";
  * que la largeur du contenu s'ajuste. Le layout serveur ne fait que lui
  * transmettre l'utilisateur et son rôle.
  */
-export function AppShell({ user, role, canAdmin = false, children }: AppShellProps) {
+export function AppShell({
+  user,
+  role,
+  canAdmin = false,
+  canAccesFinanceDemandes = false,
+  canReceptionnerRetour = false,
+  canVoirDashboardFinance = false,
+  canVoirReporting = false,
+  canSaisirDepenseDirecte = false,
+  children,
+}: AppShellProps) {
   // Rendu initial (serveur + première passe client) toujours « déployé »
   // pour éviter tout écart d'hydratation ; on relit la préférence persistée
   // juste après le montage, côté client uniquement.
   const [collapsed, setCollapsed] = useState(false);
+  // Tiroir mobile (< lg) : caché par défaut, ouvert via le bouton menu de la
+  // Topbar. N'a aucun effet au-dessus de lg (la sidebar y est toujours en
+  // flux normal, cf. Sidebar.tsx).
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -52,10 +76,21 @@ export function AppShell({ user, role, canAdmin = false, children }: AppShellPro
 
   return (
     <div className="flex min-h-screen bg-app-bg">
-      <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapse} canAdmin={canAdmin} />
+      <Sidebar
+        collapsed={collapsed}
+        onToggleCollapse={toggleCollapse}
+        canAdmin={canAdmin}
+        canAccesFinanceDemandes={canAccesFinanceDemandes}
+        canReceptionnerRetour={canReceptionnerRetour}
+        canVoirDashboardFinance={canVoirDashboardFinance}
+        canVoirReporting={canVoirReporting}
+        canSaisirDepenseDirecte={canSaisirDepenseDirecte}
+        mobileOpen={mobileOpen}
+        onCloseMobile={() => setMobileOpen(false)}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar user={user} role={role} />
-        <main className="flex-1 px-6 py-8">{children}</main>
+        <Topbar user={user} role={role} onOpenMobileMenu={() => setMobileOpen(true)} />
+        <main className="flex-1 px-4 py-6 sm:px-6 sm:py-8">{children}</main>
       </div>
     </div>
   );

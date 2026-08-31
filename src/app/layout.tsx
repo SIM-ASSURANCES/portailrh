@@ -33,7 +33,23 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         {children}
-        <Toaster position="top-right" richColors closeButton />
+        {/* Couleurs alignées sur les tokens sémantiques du portail (plutôt
+            que le thème richColors par défaut de sonner, qui utilise sa
+            propre palette rouge/vert/bleu) — mêmes teintes que les Badge de
+            statut ailleurs dans l'app, pour une cohérence visuelle totale. */}
+        <Toaster
+          position="top-right"
+          closeButton
+          toastOptions={{
+            classNames: {
+              toast: "font-sans !rounded-lg !shadow-md",
+              success: "!bg-success-bg !text-success !border-success-border",
+              error: "!bg-danger-bg !text-danger !border-danger-border",
+              info: "!bg-info-bg !text-info !border-info-border",
+              warning: "!bg-warning-bg !text-warning !border-warning-border",
+            },
+          }}
+        />
       </body>
     </html>
   );

@@ -1,0 +1,562 @@
+import { getBeneficiaireNom } from "@/components/tresorerie/beneficiaire";
+import type { ModeReglement, Prisma, StatutDemande, TypeDemande, TypeJustification } from "@/generated/prisma/client";
+import { prisma } from "@/lib/prisma";
+
+/**
+ * Filtres du reporting Trésorerie (Ticket 10), partagés entre l'écran
+ * (`treso/finance/reporting/page.tsx`) et l'export Excel
+ * (`api/treso/reporting/export/route.ts`) — les deux DOIVENT désigner
+ * exactement le même jeu de données pour un même jeu de filtres, donc
+ * jamais deux implémentations séparées des mêmes requêtes.
+ */
+export interface ReportingFilters {
+  du?: Date;
+  au?: Date;
+  demandeurId?: string;
+  service?: string;
+  categorieId?: string;
+  objetId?: string;
+  mode?: ModeReglement;
+  statut?: StatutDemande;
+  /** Standard / Dépense directe (Phase F, section 15 du cahier des charges). */
+  typeDemande?: TypeDemande;
+  /**
+   * Bénéficiaire (Phase A/H), DISTINCT du filtre "demandeur"
+   * (`demandeurId`, toujours un `User` — le créateur). Le bénéficiaire
+   * n'est pas toujours un utilisateur du système (Phase A) : au plus un
+   * seul des deux champs ci-dessous est renseigné à la fois, jamais les
+   * deux — voir `parseReportingFilters` pour le décodage du paramètre
+   * unique `beneficiaire` qui les distingue (préfixe `u:`/`n:`).
+   */
+  beneficiaireUserId?: string;
+  beneficiaireNom?: string;
+}
+
+type SearchParamsLike = Record<string, string | string[] | undefined>;
+
+function firstString(value: string | string[] | undefined): string | undefined {
+  const v = Array.isArray(value) ? value[0] : value;
+  return v && v.trim() ? v.trim() : undefined;
+}
+
+/**
+ * Parse les filtres depuis les search params de l'URL (GET, partageable) —
+ * aucune valeur absente ou vide n'est retenue (filtre non appliqué).
+ * `au` est traité comme fin de journée incluse (23:59:59.999).
+ */
+export function parseReportingFilters(searchParams: SearchParamsLike): ReportingFilters {
+  const du = firstString(searchParams.du);
+  const au = firstString(searchParams.au);
+  const mode = firstString(searchParams.mode);
+  const statut = firstString(searchParams.statut);
+  const typeDemande = firstString(searchParams.typeDemande);
+  const beneficiaire = firstString(searchParams.beneficiaire);
+  const beneficiaireUserId = beneficiaire?.startsWith("u:") ? beneficiaire.slice(2) : undefined;
+  const beneficiaireNom = beneficiaire?.startsWith("n:")
+    ? decodeURIComponent(beneficiaire.slice(2))
+    : undefined;
+
+  return {
+    du: du ? new Date(du) : undefined,
+    au: au ? new Date(`${au}T23:59:59.999`) : undefined,
+    demandeurId: firstString(searchParams.demandeurId),
+    service: firstString(searchParams.service),
+    categorieId: firstString(searchParams.categorieId),
+    objetId: firstString(searchParams.objetId),
+    mode: mode === "CAISSE" || mode === "BANQUE" ? mode : undefined,
+    // REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") : liste
+    // des valeurs mise à jour pour le nouvel enum à 11 statuts, mais le
+    // reporting lui-même (regroupement par Catégorie/Objet) n'a pas encore
+    // été repensé pour la refonte — périmètre laissé pour la phase
+    // "dashboard enrichi".
+    statut: (
+      [
+        "BROUILLON",
+        "EN_ATTENTE_VALIDATION",
+        "VALIDEE",
+        "PARTIELLEMENT_VALIDEE",
+        "VALIDEE_NON_REGLEE",
+        "PARTIELLEMENT_REGLEE",
+        "REGLEE",
+        "REJETEE",
+        "EN_ATTENTE_REGULARISATION",
+        "REGULARISEE",
+        "CLOTUREE",
+      ] as const
+    ).includes(statut as StatutDemande)
+      ? (statut as StatutDemande)
+      : undefined,
+    typeDemande:
+      typeDemande === "STANDARD" || typeDemande === "DEPENSE_DIRECTE" ? typeDemande : undefined,
+    beneficiaireUserId,
+    beneficiaireNom,
+  };
+}
+
+/** Reconstruit la query string des filtres actifs (pour le lien d'export). */
+export function reportingFiltersToQueryString(filters: ReportingFilters): string {
+  const params = new URLSearchParams();
+  if (filters.du) params.set("du", filters.du.toISOString().slice(0, 10));
+  if (filters.au) params.set("au", filters.au.toISOString().slice(0, 10));
+  if (filters.demandeurId) params.set("demandeurId", filters.demandeurId);
+  if (filters.service) params.set("service", filters.service);
+  if (filters.categorieId) params.set("categorieId", filters.categorieId);
+  if (filters.objetId) params.set("objetId", filters.objetId);
+  if (filters.mode) params.set("mode", filters.mode);
+  if (filters.statut) params.set("statut", filters.statut);
+  if (filters.typeDemande) params.set("typeDemande", filters.typeDemande);
+  if (filters.beneficiaireUserId) params.set("beneficiaire", `u:${filters.beneficiaireUserId}`);
+  else if (filters.beneficiaireNom) params.set("beneficiaire", `n:${encodeURIComponent(filters.beneficiaireNom)}`);
+  return params.toString();
+}
+
+function buildDemandeWhere(filters: ReportingFilters): Prisma.DemandeWhereInput {
+  return {
+    ...(filters.du || filters.au
+      ? { createdAt: { ...(filters.du ? { gte: filters.du } : {}), ...(filters.au ? { lte: filters.au } : {}) } }
+      : {}),
+    ...(filters.demandeurId ? { createurId: filters.demandeurId } : {}),
+    ...(filters.service ? { createur: { service: filters.service } } : {}),
+    ...(filters.categorieId ? { categorieId: filters.categorieId } : {}),
+    ...(filters.objetId ? { objetId: filters.objetId } : {}),
+    ...(filters.statut ? { statut: filters.statut } : {}),
+    ...(filters.typeDemande ? { typeDemande: filters.typeDemande } : {}),
+    ...(filters.beneficiaireUserId ? { beneficiaireUserId: filters.beneficiaireUserId } : {}),
+    ...(filters.beneficiaireNom ? { beneficiaireNom: filters.beneficiaireNom } : {}),
+  };
+}
+
+/**
+ * Bénéficiaires connus (Phase H) pour le sélecteur du formulaire de
+ * filtres — DISTINCT du filtre "demandeur" (toujours un `User`, le
+ * créateur). Combine les utilisateurs déjà bénéficiaires d'au moins une
+ * demande (`beneficiaireUserId`) et les noms libres déjà utilisés
+ * (`beneficiaireNom` — fournisseurs, "SIM ASSURANCES CI", stagiaires sans
+ * compte...), chacun encodé avec un préfixe (`u:`/`n:`) pour que
+ * `parseReportingFilters` sache lequel des deux champs renseigner. Deux
+ * `findMany distinct` légers (pas de jointure lourde), le nombre de
+ * bénéficiaires distincts restant modeste pour une application interne.
+ */
+export async function getBeneficiairesConnus(): Promise<{ value: string; label: string }[]> {
+  const [avecCompte, sansCompte] = await Promise.all([
+    prisma.demande.findMany({
+      where: { beneficiaireUserId: { not: null } },
+      distinct: ["beneficiaireUserId"],
+      select: { beneficiaireUserId: true, beneficiaireUser: { select: { fullName: true } } },
+    }),
+    prisma.demande.findMany({
+      where: { beneficiaireNom: { not: null } },
+      distinct: ["beneficiaireNom"],
+      select: { beneficiaireNom: true },
+    }),
+  ]);
+
+  const options = [
+    ...avecCompte
+      .filter((d): d is typeof d & { beneficiaireUserId: string; beneficiaireUser: { fullName: string } } =>
+        Boolean(d.beneficiaireUserId && d.beneficiaireUser)
+      )
+      .map((d) => ({ value: `u:${d.beneficiaireUserId}`, label: d.beneficiaireUser.fullName })),
+    ...sansCompte
+      .filter((d): d is { beneficiaireNom: string } => Boolean(d.beneficiaireNom))
+      .map((d) => ({ value: `n:${encodeURIComponent(d.beneficiaireNom)}`, label: d.beneficiaireNom })),
+  ];
+
+  return options.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+export interface MontantsRegle {
+  total: number;
+  caisse: number;
+  banque: number;
+}
+
+/**
+ * Montants réglés par demande (règlements confirmés, non annulés), groupés
+ * par demande ET par mode en **une seule requête** `groupBy` — jamais une
+ * requête par demande. Renvoie systématiquement les trois totaux (global,
+ * Caisse, Banque) pour que `Réglé = Réglé Caisse + Réglé Banque` reste vrai
+ * pour CHAQUE ligne du reporting, quel que soit le filtre `mode` actif :
+ * ce dernier ne sert plus qu'à sélectionner QUELLES demandes apparaissent
+ * (celles ayant au moins un règlement de ce mode), jamais à tronquer les
+ * montants affichés d'une demande déjà retenue.
+ */
+async function getMontantsRegleParDemande(demandeIds: string[]): Promise<Map<string, MontantsRegle>> {
+  if (demandeIds.length === 0) {
+    return new Map();
+  }
+  const sommes = await prisma.reglement.groupBy({
+    by: ["demandeId", "mode"],
+    where: { demandeId: { in: demandeIds }, estConfirme: true, estAnnule: false },
+    _sum: { montant: true },
+  });
+
+  const map = new Map<string, MontantsRegle>();
+  for (const s of sommes) {
+    const montant = Number(s._sum.montant ?? 0);
+    const entry = map.get(s.demandeId) ?? { total: 0, caisse: 0, banque: 0 };
+    entry.total += montant;
+    if (s.mode === "CAISSE") {
+      entry.caisse += montant;
+    } else {
+      entry.banque += montant;
+    }
+    map.set(s.demandeId, entry);
+  }
+  return map;
+}
+
+interface DemandeAvecRelations {
+  id: string;
+  reference: string;
+  montant: Prisma.Decimal;
+  /** Phase H : base de la colonne "Validé" du tableau agrégé (capture aussi les validations partielles). */
+  montantValide: Prisma.Decimal | null;
+  statut: StatutDemande;
+  budgetDisponible: Prisma.Decimal | null;
+  createdAt: Date;
+  categorieId: string | null;
+  objetId: string | null;
+  categorie: { label: string } | null;
+  objet: { label: string } | null;
+  createur: { fullName: string; service: string | null };
+  beneficiaireUserId: string | null;
+  beneficiaireNom: string | null;
+  beneficiaireUser: { fullName: string } | null;
+}
+
+/**
+ * Demandes correspondant aux filtres, **après application du filtre
+ * `mode`** (exclusion des demandes sans aucun règlement confirmé de ce
+ * mode précis) — fonction interne partagée par `getReportingRows` et
+ * `getReportingDemandesDetail`, pour ne calculer cette liste qu'une fois
+ * par appel et garantir que le tableau agrégé et le détail Excel désignent
+ * toujours le même ensemble de demandes. Le filtre `mode` ne sert qu'à
+ * SÉLECTIONNER les demandes retenues ; les montants renvoyés
+ * (`montantsRegleParDemande`) restent les totaux complets (tous modes) de
+ * chaque demande retenue — voir `getMontantsRegleParDemande`.
+ */
+async function getDemandesFiltrees(
+  filters: ReportingFilters
+): Promise<{ demandes: DemandeAvecRelations[]; montantsRegleParDemande: Map<string, MontantsRegle> }> {
+  const demandes = await prisma.demande.findMany({
+    where: buildDemandeWhere(filters),
+    include: { categorie: true, objet: true, createur: true, beneficiaireUser: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const montantsRegleParDemande = await getMontantsRegleParDemande(demandes.map((d) => d.id));
+
+  const demandesFiltrees = filters.mode
+    ? demandes.filter((d) => {
+        const montants = montantsRegleParDemande.get(d.id);
+        if (!montants) return false;
+        return filters.mode === "CAISSE" ? montants.caisse > 0 : montants.banque > 0;
+      })
+    : demandes;
+
+  return { demandes: demandesFiltrees, montantsRegleParDemande };
+}
+
+export interface ReportingRow {
+  categorieId: string | null;
+  categorieLabel: string;
+  objetId: string | null;
+  objetLabel: string;
+  nombreDemandes: number;
+  /** Somme des montants de TOUTES les demandes du groupe, quel que soit leur statut. */
+  montantDemande: number;
+  /**
+   * Phase H (voir CLAUDE.md "Refonte V1 en cours") : somme du champ
+   * `Demande.montantValide` lui-même, PAS une somme conditionnée par le
+   * statut comme avant cette phase — capture donc aussi les validations
+   * partielles (une demande `PARTIELLEMENT_VALIDEE` contribue son
+   * `montantValide` réel, pas 0 et pas son montant demandé en entier).
+   */
+  montantValide: number;
+  /**
+   * Phase H — montant RESTANT À VALIDER : `max(0, montantDemande -
+   * montantValide)`. À NE JAMAIS CONFONDRE avec `valideResteARegler`
+   * ci-dessous : celui-ci porte sur la validation (rien à voir avec le
+   * règlement), celui-là sur le règlement du montant déjà validé.
+   */
+  montantRestantAValider: number;
+  /** Somme de tous les règlements confirmés et non annulés (Caisse + Banque) — `getTotalRegle`. */
+  montantRegle: number;
+  /**
+   * Montant VALIDÉ restant à RÉGLER : `max(0, montantValide -
+   * montantRegle)`, jamais négatif. Renommé depuis `resteARegler` (Phase H)
+   * pour ne pas le confondre avec `montantRestantAValider` — deux notions
+   * distinctes qui n'ont jamais le même sens.
+   */
+  valideResteARegler: number;
+  /** Règlements confirmés et non annulés en mode CAISSE uniquement. */
+  montantRegleCaisse: number;
+  /** Règlements confirmés et non annulés en mode BANQUE uniquement. */
+  montantRegleBanque: number;
+  /** null si aucune demande de ce groupe n'a de `budgetDisponible` renseigné. */
+  budgetAlloue: number | null;
+}
+
+/**
+ * Tableau agrégé par Catégorie puis Objet (Ticket 10, Tâche 1 ; complété
+ * lors de l'audit de conformité — section 15 — puis à la Phase H pour le
+ * nouveau modèle de validation partielle) : nombre de demandes, montant
+ * demandé (toutes demandes), montant validé (`Demande.montantValide`),
+ * montant restant à valider, montant réglé (Caisse + Banque confondus),
+ * montant validé restant à régler, et la répartition Caisse/Banque du
+ * réglé — plus le budget alloué cumulé (Ticket 10, suivi budgétaire).
+ * Calculés en mémoire à partir d'une seule requête `findMany` + un seul
+ * `groupBy`, jamais une requête par demande.
+ *
+ * Convention documentée (CLAUDE.md) : "Demandé" inclut TOUTES les demandes
+ * correspondant aux filtres actifs, quel que soit leur statut (y compris
+ * REJETEE et EN_ATTENTE_VALIDATION) — c'est la colonne qui répond à
+ * "combien a-t-on demandé au total", par opposition à "Validé"/"Réglé" qui
+ * ne comptent que ce qui a réellement avancé dans le circuit. Une demande
+ * REJETEE ou jamais validée a `montantValide = 0` (ou `null` en base),
+ * donc ne contribue jamais à "Validé", "Réglé", "Validé restant à régler"
+ * ni aux colonnes Caisse/Banque — uniquement à "Demandé", "Restant à
+ * valider" (égal au montant demandé dans ce cas) et au nombre de demandes.
+ */
+export async function getReportingRows(filters: ReportingFilters): Promise<ReportingRow[]> {
+  const { demandes, montantsRegleParDemande } = await getDemandesFiltrees(filters);
+
+  const buckets = new Map<string, ReportingRow>();
+  for (const d of demandes) {
+    const key = `${d.categorieId ?? "none"}|${d.objetId ?? "none"}`;
+    const montants = montantsRegleParDemande.get(d.id) ?? { total: 0, caisse: 0, banque: 0 };
+    const montantValideContribution = Number(d.montantValide ?? 0);
+    const budget = d.budgetDisponible != null ? Number(d.budgetDisponible) : null;
+
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.nombreDemandes += 1;
+      existing.montantDemande += Number(d.montant);
+      existing.montantValide += montantValideContribution;
+      existing.montantRegle += montants.total;
+      existing.montantRegleCaisse += montants.caisse;
+      existing.montantRegleBanque += montants.banque;
+      if (budget != null) {
+        existing.budgetAlloue = (existing.budgetAlloue ?? 0) + budget;
+      }
+    } else {
+      buckets.set(key, {
+        categorieId: d.categorieId,
+        categorieLabel: d.categorie?.label ?? "Non catégorisée",
+        objetId: d.objetId,
+        objetLabel: d.objet?.label ?? "Non renseigné",
+        nombreDemandes: 1,
+        montantDemande: Number(d.montant),
+        montantValide: montantValideContribution,
+        montantRestantAValider: 0,
+        montantRegle: montants.total,
+        valideResteARegler: 0,
+        montantRegleCaisse: montants.caisse,
+        montantRegleBanque: montants.banque,
+        budgetAlloue: budget,
+      });
+    }
+  }
+
+  const rows = Array.from(buckets.values());
+  for (const row of rows) {
+    row.montantRestantAValider = Math.max(0, row.montantDemande - row.montantValide);
+    row.valideResteARegler = Math.max(0, row.montantValide - row.montantRegle);
+  }
+
+  return rows.sort(
+    (a, b) => a.categorieLabel.localeCompare(b.categorieLabel) || a.objetLabel.localeCompare(b.objetLabel)
+  );
+}
+
+export interface ReportingDemandeDetail {
+  reference: string;
+  createurNom: string;
+  service: string | null;
+  categorieLabel: string;
+  objetLabel: string;
+  montant: number;
+  statut: StatutDemande;
+  createdAt: Date;
+}
+
+/** Feuille "Demandes" de l'export — même ensemble que `getReportingRows`. */
+export async function getReportingDemandesDetail(filters: ReportingFilters): Promise<ReportingDemandeDetail[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  return demandes.map((d) => ({
+    reference: d.reference,
+    createurNom: d.createur.fullName,
+    service: d.createur.service,
+    categorieLabel: d.categorie?.label ?? "Non catégorisée",
+    objetLabel: d.objet?.label ?? "Non renseigné",
+    montant: Number(d.montant),
+    statut: d.statut,
+    createdAt: d.createdAt,
+  }));
+}
+
+export interface ReportingReglementDetail {
+  demandeReference: string;
+  montant: number;
+  mode: ModeReglement;
+  confirmeLe: Date;
+  auteurNom: string;
+}
+
+/** Feuille "Règlements" de l'export : règlements confirmés des demandes filtrées. */
+export async function getReportingReglementsDetail(filters: ReportingFilters): Promise<ReportingReglementDetail[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const demandeIds = demandes.map((d) => d.id);
+  if (demandeIds.length === 0) {
+    return [];
+  }
+  const referenceParDemande = new Map(demandes.map((d) => [d.id, d.reference]));
+
+  const reglements = await prisma.reglement.findMany({
+    where: {
+      demandeId: { in: demandeIds },
+      estConfirme: true,
+      estAnnule: false,
+      ...(filters.mode ? { mode: filters.mode } : {}),
+    },
+    include: { auteur: true },
+    orderBy: { confirmeAt: "asc" },
+  });
+
+  return reglements.map((r) => ({
+    demandeReference: referenceParDemande.get(r.demandeId) ?? "—",
+    montant: Number(r.montant),
+    mode: r.mode,
+    confirmeLe: r.confirmeAt ?? r.createdAt,
+    auteurNom: r.auteur.fullName,
+  }));
+}
+
+export interface ReportingRetourDetail {
+  demandeReference: string;
+  montantDepenseTotal: number;
+  montantARetourner: number;
+  montantNonJustifie: number;
+  estReceptionne: boolean;
+  declareLe: Date;
+}
+
+/**
+ * Feuille "Retours de caisse" de l'export : retours liés aux demandes
+ * filtrées.
+ *
+ * REFONTE V1 / Phase D (voir CLAUDE.md "Refonte V1 en cours") : un retour
+ * n'a plus de montant dépensé/justification uniques (Ticket 5) — remplacés
+ * par `montantDepenseTotal` (somme des `DepenseLigne`) et
+ * `montantNonJustifie` (somme des lignes `SANS_PIECE`), agrégés en mémoire
+ * via l'`include` ci-dessous (volume modeste, même convention que le reste
+ * du reporting).
+ */
+export async function getReportingRetoursDetail(filters: ReportingFilters): Promise<ReportingRetourDetail[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const demandeIds = demandes.map((d) => d.id);
+  if (demandeIds.length === 0) {
+    return [];
+  }
+  const referenceParDemande = new Map(demandes.map((d) => [d.id, d.reference]));
+
+  const retours = await prisma.retourCaisse.findMany({
+    where: { reglement: { demandeId: { in: demandeIds } } },
+    include: { reglement: true, depenses: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return retours.map((r) => ({
+    demandeReference: referenceParDemande.get(r.reglement.demandeId) ?? "—",
+    montantDepenseTotal: r.depenses.reduce((sum, d) => sum + Number(d.montant), 0),
+    montantARetourner: Number(r.montantARetourner),
+    montantNonJustifie: r.depenses
+      .filter((d) => d.justification === "SANS_PIECE")
+      .reduce((sum, d) => sum + Number(d.montant), 0),
+    estReceptionne: r.estReceptionne,
+    declareLe: r.createdAt,
+  }));
+}
+
+export interface ReportingDepenseDetail {
+  demandeReference: string;
+  beneficiaireNom: string;
+  montant: number;
+  objet: string;
+  date: Date;
+  nature: string | null;
+  justification: TypeJustification;
+  nonJustifiee: boolean;
+}
+
+/**
+ * Feuille "Dépenses déclarées" de l'export (Phase H) : chaque
+ * `DepenseLigne` (Phase D, fonds remis) des retours liés aux demandes
+ * filtrées — une ligne par dépense réelle, pas agrégée par retour comme
+ * `getReportingRetoursDetail`. `nonJustifiee` reflète directement
+ * `justification === "SANS_PIECE"`, redondant avec `justification`
+ * elle-même mais exposé comme booléen dédié pour que la route d'export
+ * puisse mettre ces lignes en évidence sans réinterpréter l'enum à chaque
+ * fois (Tâche 3 : "Oui"/"Non" + surlignage).
+ */
+export async function getReportingDepensesDetail(filters: ReportingFilters): Promise<ReportingDepenseDetail[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const demandeIds = demandes.map((d) => d.id);
+  if (demandeIds.length === 0) {
+    return [];
+  }
+  const infoParDemande = new Map(
+    demandes.map((d) => [d.id, { reference: d.reference, beneficiaireNom: getBeneficiaireNom(d) }])
+  );
+
+  const lignes = await prisma.depenseLigne.findMany({
+    where: { retourCaisse: { reglement: { demandeId: { in: demandeIds } } } },
+    include: { retourCaisse: { include: { reglement: true } } },
+    orderBy: { date: "asc" },
+  });
+
+  return lignes.map((l) => {
+    const info = infoParDemande.get(l.retourCaisse.reglement.demandeId);
+    return {
+      demandeReference: info?.reference ?? "—",
+      beneficiaireNom: info?.beneficiaireNom ?? "—",
+      montant: Number(l.montant),
+      objet: l.objet,
+      date: l.date,
+      nature: l.nature,
+      justification: l.justification,
+      nonJustifiee: l.justification === "SANS_PIECE",
+    };
+  });
+}
+
+export interface ReportingJournalDetail {
+  type: string;
+  montant: number;
+  source: string;
+  createdAt: Date;
+}
+
+/**
+ * Feuille "Journal de caisse" de l'export : grand livre `JournalCaisse`,
+ * filtré **uniquement par période** — la catégorie/l'objet/le mode n'ont
+ * pas de sens à ce niveau (une écriture n'a pas de catégorie), demande
+ * explicite du cahier des charges.
+ */
+export async function getReportingJournalDetail(filters: ReportingFilters): Promise<ReportingJournalDetail[]> {
+  const entries = await prisma.journalCaisse.findMany({
+    where: {
+      ...(filters.du || filters.au
+        ? { createdAt: { ...(filters.du ? { gte: filters.du } : {}), ...(filters.au ? { lte: filters.au } : {}) } }
+        : {}),
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  return entries.map((e) => ({
+    type: e.type,
+    montant: Number(e.montant),
+    source: e.source,
+    createdAt: e.createdAt,
+  }));
+}

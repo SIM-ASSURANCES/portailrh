@@ -157,10 +157,10 @@ export function PointageForm({ config, todayPointages, isQrSource, device }: Poi
             label="Type de pointage"
             required
             options={[
-              { value: "ARRIVEE", label: "🔵 Arrivée" },
+              { value: "ARRIVEE", label: "Arrivée" },
               { 
                 value: "DEPART", 
-                label: `🔴 Départ${!hasArrival ? " (non disponible)" : ""}`,
+                label: `Départ${!hasArrival ? " (non disponible)" : ""}`,
                 // On ne peut pas désactiver avec Select, donc on va gérer via onChange
               },
             ]} 

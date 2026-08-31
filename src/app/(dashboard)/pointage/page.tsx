@@ -51,7 +51,7 @@ export default async function PointagePage({
   });
 
   const resolvedParams = await searchParams;
-  const qrUrl = `${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}/pointage/qr`;
+  const qrUrl = `${process.env.NEXT_PUBLIC_BASE_URL || "http://192.168.1.98:3000"}/pointage/qr`;
 
   return (
     <div className="container mx-auto max-w-xl px-4 py-8 font-sans">

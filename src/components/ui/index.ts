@@ -33,3 +33,5 @@ export type { ToastOnMountProps } from "./ToastOnMount";
 
 export { QRCodeDownload } from "./QRCodeDownload";
 export type { QRCodeDownloadProps } from "./QRCodeDownload";
+export { EmptyState } from "./EmptyState";
+export type { EmptyStateProps } from "./EmptyState";
