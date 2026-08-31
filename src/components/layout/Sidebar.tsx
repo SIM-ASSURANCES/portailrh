@@ -84,11 +84,11 @@ export function Sidebar({
         <div
           onClick={onCloseMobile}
           aria-hidden="true"
-          className="fixed inset-0 z-20 bg-slate-900/40 lg:hidden"
+          className="animate-fade-in fixed inset-0 z-20 bg-slate-900/40 lg:hidden"
         />
       ) : null}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 flex h-screen shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-transform duration-200 lg:sticky lg:top-0 lg:translate-x-0 lg:transition-[width] ${
+        className={`fixed inset-y-0 left-0 z-30 flex h-screen shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-transform duration-300 ease-drawer motion-reduce:transition-none lg:sticky lg:top-0 lg:translate-x-0 lg:transition-[width] lg:duration-200 lg:ease-out-strong ${
           collapsed ? "w-[72px]" : "w-64"
         } ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
@@ -107,7 +107,7 @@ export function Sidebar({
             type="button"
             onClick={onCloseMobile}
             aria-label="Fermer le menu"
-            className="grid size-8 shrink-0 place-items-center rounded-lg text-primary-foreground/80 hover:bg-white/10 lg:hidden"
+            className="grid size-8 shrink-0 place-items-center rounded-lg text-primary-foreground/80 transition-[background-color,transform] duration-150 ease-out-strong motion-safe:active:scale-90 hover:bg-white/10 lg:hidden"
           >
             <Icon name="x" className="size-5" />
           </button>
@@ -154,19 +154,19 @@ export function Sidebar({
                   onClick={() => setOpenBranch(open ? null : branch.key)}
                   aria-expanded={open}
                   className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-                    hasActive ? "text-primary" : "text-slate-800"
-                  } hover:bg-slate-100`}
+                    hasActive ? "text-primary" : "text-foreground"
+                  } hover:bg-muted`}
                 >
                   <Icon name={branch.icon} className="size-[18px] shrink-0" />
                   <span className="flex-1 truncate text-left">{branch.label}</span>
                   <Icon
                     name="chevron-down"
-                    className={`size-4 shrink-0 text-slate-400 transition-transform ${open ? "" : "-rotate-90"}`}
+                    className={`size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out-strong motion-reduce:transition-none ${open ? "" : "-rotate-90"}`}
                   />
                 </button>
 
                 {open ? (
-                  <div className="mt-1 space-y-2 pb-1">
+                  <div className="animate-fade-in mt-1 space-y-2 pb-1">
                     {branch.groups.map((group, index) => (
                       <div key={group.title ?? `g-${index}`}>
                         {group.title ? (
@@ -225,13 +225,13 @@ export function Sidebar({
             onClick={onToggleCollapse}
             title={collapsed ? "Déployer le menu" : "Réduire le menu"}
             aria-label={collapsed ? "Déployer le menu" : "Réduire le menu"}
-            className={`hidden w-full items-center rounded-lg text-sm font-medium text-slate-500 transition-colors hover:bg-slate-100 lg:flex ${
+            className={`hidden w-full items-center rounded-lg text-sm font-medium text-muted-foreground transition-[background-color,transform] duration-150 ease-out-strong motion-safe:active:scale-[0.97] hover:bg-muted lg:flex ${
               collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2"
             }`}
           >
             <Icon
               name="chevrons-left"
-              className={`size-[18px] shrink-0 transition-transform ${collapsed ? "rotate-180" : ""}`}
+              className={`size-[18px] shrink-0 transition-transform duration-200 ease-out-strong motion-reduce:transition-none ${collapsed ? "rotate-180" : ""}`}
             />
             {!collapsed ? <span>Réduire</span> : null}
           </button>
@@ -240,7 +240,7 @@ export function Sidebar({
             <button
               type="submit"
               title={collapsed ? "Déconnexion" : undefined}
-              className={`flex w-full items-center rounded-lg text-sm font-medium text-danger transition-colors hover:bg-danger-bg ${
+              className={`flex w-full items-center rounded-lg text-sm font-medium text-danger transition-[background-color,transform] duration-150 ease-out-strong motion-safe:active:scale-[0.97] hover:bg-danger-bg ${
                 collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2"
               }`}
             >
@@ -273,9 +273,9 @@ function ItemLink({
       title={collapsed ? item.label : undefined}
       aria-current={active ? "page" : undefined}
       onClick={onNavigate}
-      className={`flex items-center rounded-lg text-sm font-medium transition-colors ${
+      className={`flex items-center rounded-lg text-sm font-medium transition-[background-color,color,transform] duration-150 ease-out-strong motion-safe:active:scale-[0.98] ${
         collapsed ? "justify-center p-2.5" : `gap-3 py-2 ${nested ? "pl-8 pr-3" : "px-3"}`
-      } ${active ? "bg-primary text-primary-foreground" : "text-slate-700 hover:bg-slate-100"}`}
+      } ${active ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-muted"}`}
     >
       <Icon name={item.icon} className="size-[18px] shrink-0" />
       {!collapsed ? <span className="truncate">{item.label}</span> : null}

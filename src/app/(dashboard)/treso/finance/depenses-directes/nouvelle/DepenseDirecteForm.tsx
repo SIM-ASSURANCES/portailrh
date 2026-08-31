@@ -72,32 +72,36 @@ export function DepenseDirecteForm({ users }: { users: UserOption[] }) {
       />
 
       {afficheSelecteurUtilisateur ? (
-        <Select
-          key={`user-${beneficiaireType}`}
-          name="beneficiaireUserId"
-          label={beneficiaireType === "STAGIAIRE" ? "Compte existant (si le stagiaire en a un)" : "Collaborateur"}
-          placeholder="Sélectionner un utilisateur..."
-          required={beneficiaireType === "COLLABORATEUR"}
-          options={users.map((u) => ({ value: u.id, label: u.label }))}
-          error={state.status === "error" ? state.fieldErrors?.beneficiaireUserId : undefined}
-        />
+        <div className="animate-fade-in-up">
+          <Select
+            key={`user-${beneficiaireType}`}
+            name="beneficiaireUserId"
+            label={beneficiaireType === "STAGIAIRE" ? "Compte existant (si le stagiaire en a un)" : "Collaborateur"}
+            placeholder="Sélectionner un utilisateur..."
+            required={beneficiaireType === "COLLABORATEUR"}
+            options={users.map((u) => ({ value: u.id, label: u.label }))}
+            error={state.status === "error" ? state.fieldErrors?.beneficiaireUserId : undefined}
+          />
+        </div>
       ) : null}
 
       {afficheNomLibre ? (
-        <Input
-          key={`nom-${beneficiaireType}`}
-          name="beneficiaireNom"
-          label={
-            beneficiaireType === "STAGIAIRE"
-              ? "Ou nom du stagiaire (s'il n'a pas de compte)"
-              : beneficiaireType === "ENTREPRISE"
-                ? "Nom de l'entreprise"
-                : "Nom du fournisseur / prestataire"
-          }
-          required={beneficiaireType === "FOURNISSEUR" || beneficiaireType === "ENTREPRISE"}
-          defaultValue={beneficiaireType === "ENTREPRISE" ? "SIM ASSURANCES CI" : undefined}
-          error={state.status === "error" ? state.fieldErrors?.beneficiaireNom : undefined}
-        />
+        <div className="animate-fade-in-up">
+          <Input
+            key={`nom-${beneficiaireType}`}
+            name="beneficiaireNom"
+            label={
+              beneficiaireType === "STAGIAIRE"
+                ? "Ou nom du stagiaire (s'il n'a pas de compte)"
+                : beneficiaireType === "ENTREPRISE"
+                  ? "Nom de l'entreprise"
+                  : "Nom du fournisseur / prestataire"
+            }
+            required={beneficiaireType === "FOURNISSEUR" || beneficiaireType === "ENTREPRISE"}
+            defaultValue={beneficiaireType === "ENTREPRISE" ? "SIM ASSURANCES CI" : undefined}
+            error={state.status === "error" ? state.fieldErrors?.beneficiaireNom : undefined}
+          />
+        </div>
       ) : null}
 
       <Textarea

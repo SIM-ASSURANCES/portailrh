@@ -114,10 +114,10 @@ export function RetourCaisseForm({
   }
 
   return (
-    <div className="space-y-4 border-t border-border pt-4">
+    <div className="animate-fade-in-up space-y-4 border-t border-border pt-4">
       <div className="space-y-4">
         {lignes.map((ligne, index) => (
-          <div key={ligne.key} className="space-y-3 rounded-md border border-border p-3">
+          <div key={ligne.key} className="animate-fade-in-up space-y-3 rounded-md border border-border p-3">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Dépense {index + 1}

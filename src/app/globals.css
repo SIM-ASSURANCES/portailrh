@@ -81,6 +81,18 @@
   --color-sidebar: #ffffff;
   --color-sidebar-border: #e2e8f0;
   --color-sidebar-section: #94a3b8;
+
+  /* --- Courbes d'accélération (polish visuel global) ---
+     Les easings CSS natifs (ease-out, ease-in-out) sont trop "mous" pour
+     des micro-interactions qui doivent se sentir intentionnelles. Ces trois
+     courbes personnalisées (recommandées par la doc de design engineering
+     du projet) sont la référence unique pour toute transition ajoutée :
+     ne pas inventer d'autre cubic-bezier ailleurs dans le code. Exposées
+     comme utilitaires Tailwind natifs (ease-out-strong, etc.) via @theme
+     inline ci-dessous. */
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1); /* entrées/sorties */
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1); /* déplacement à l'écran */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1); /* tiroir/panneau (style iOS) */
 }
 
 @theme inline {
@@ -134,6 +146,10 @@
   --color-sidebar: var(--color-sidebar);
   --color-sidebar-border: var(--color-sidebar-border);
   --color-sidebar-section: var(--color-sidebar-section);
+
+  --ease-out-strong: var(--ease-out-strong);
+  --ease-in-out-strong: var(--ease-in-out-strong);
+  --ease-drawer: var(--ease-drawer);
 }
 
 body {
@@ -180,5 +196,44 @@ body {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* Entrée générique (carte de connexion, panneaux ponctuels...) : même
+   principe que .stat-card-enter ci-dessus (fondu + léger décalage vertical,
+   neutralisé sous prefers-reduced-motion), réutilisable partout où une
+   apparition "occasionnelle" (au sens de la fréquence d'affichage — pas un
+   élément vu des dizaines de fois par jour) mérite un peu de soin. */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-fade-in-up {
+    animation: fade-in-up 0.25s var(--ease-out-strong) both;
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Fondu pur (sans décalage), pour les fonds d'estompage (overlay mobile,
+   futur modal) : un plein écran qui "glisse" serait incohérent, seule
+   l'opacité doit varier. Pas de garde prefers-reduced-motion nécessaire :
+   c'est une simple transition d'opacité, déjà tolérée en mode "réduit". */
+.animate-fade-in {
+  animation: fade-in 0.2s ease both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }

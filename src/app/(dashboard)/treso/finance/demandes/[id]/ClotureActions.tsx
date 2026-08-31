@@ -61,7 +61,7 @@ export function ClotureActions({ demandeId }: { demandeId: string }) {
       ) : null}
 
       {mode === "totale" ? (
-        <div className="space-y-3">
+        <div className="animate-fade-in-up space-y-3">
           <p className="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
             Confirmer la clôture totale ? Cette action est <strong>définitive</strong> : plus aucun
             règlement, retour ou clôture ne sera possible sur cette demande.
@@ -93,7 +93,7 @@ export function ClotureActions({ demandeId }: { demandeId: string }) {
       ) : null}
 
       {mode === "partielle" ? (
-        <div className="space-y-3">
+        <div className="animate-fade-in-up space-y-3">
           <p className="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
             Confirmer la clôture partielle ? Cette action est <strong>définitive</strong> : plus aucun
             règlement, retour ou clôture ne sera possible sur cette demande.

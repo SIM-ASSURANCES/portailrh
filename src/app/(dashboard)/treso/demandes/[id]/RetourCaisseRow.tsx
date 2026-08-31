@@ -41,7 +41,7 @@ function DetailDepenses({ depenses, montantARetourner }: { depenses: DepenseLign
     .reduce((sum, d) => sum + d.montant, 0);
 
   return (
-    <div className="space-y-3 border-t border-border pt-3">
+    <div className="animate-fade-in-up space-y-3 border-t border-border pt-3">
       <ul className="space-y-2">
         {depenses.map((d) => (
           <li key={d.id} className="rounded-md bg-muted p-2 text-sm">

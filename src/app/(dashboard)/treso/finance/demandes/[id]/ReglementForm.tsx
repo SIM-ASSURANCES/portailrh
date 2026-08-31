@@ -39,7 +39,7 @@ export function ReglementForm({ demandeId, resteARegler }: { demandeId: string; 
   }
 
   return (
-    <form action={formAction} className="space-y-4 rounded-md border border-border p-4">
+    <form action={formAction} className="animate-fade-in-up space-y-4 rounded-md border border-border p-4">
       <input type="hidden" name="demandeId" value={demandeId} />
       <Input
         name="montant"

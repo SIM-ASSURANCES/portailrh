@@ -63,7 +63,7 @@ export function ValidationComplementaireActions({
           Validation complémentaire
         </Button>
       ) : (
-        <div className="space-y-3">
+        <div className="animate-fade-in-up space-y-3">
           <Input
             label="Montant validé à cette étape"
             type="number"

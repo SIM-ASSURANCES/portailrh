@@ -54,7 +54,7 @@ const toneAccentClasses: Record<StatTone, string> = {
 export function StatCard({ icon, label, value, hint, tone = "info", href }: StatCardProps) {
   const iconPill = (
     <span
-      className={`mb-3 inline-grid size-10 place-items-center rounded-xl transition-transform duration-200 ${
+      className={`mb-3 inline-grid size-10 place-items-center rounded-xl transition-transform duration-200 ease-out-strong ${
         href ? "motion-safe:group-hover:scale-110" : ""
       } ${toneClasses[tone]}`}
     >
@@ -75,14 +75,14 @@ export function StatCard({ icon, label, value, hint, tone = "info", href }: Stat
     return (
       <Link
         href={href}
-        className={`group block rounded-2xl border border-border bg-surface p-5 outline-offset-2 transition-all duration-200 hover:shadow-md motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 ${toneAccentClasses[tone]}`}
+        className={`group block rounded-2xl border border-border bg-surface p-5 outline-offset-2 transition-[border-color,box-shadow,transform] duration-200 ease-out-strong hover:shadow-md motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 ${toneAccentClasses[tone]}`}
       >
         {body}
         <span className="mt-3 flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors duration-200 group-hover:text-foreground">
           Voir le détail
           <Icon
             name="arrow-up-right"
-            className="size-3 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+            className="size-3 transition-transform duration-200 ease-out-strong motion-safe:group-hover:translate-x-0.5 motion-safe:group-hover:-translate-y-0.5"
           />
         </span>
       </Link>

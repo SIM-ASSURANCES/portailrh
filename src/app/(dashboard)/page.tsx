@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-import { Card, PageHeader, StatCard, ToastOnMount } from "@/components/ui";
+import { Icon } from "@/components/icons";
+import { Card, EmptyState, PageHeader, StatCard, ToastOnMount } from "@/components/ui";
 import { getAccessibleModules, getSession } from "@/lib/auth";
 
 export default async function DashboardHomePage({
@@ -37,20 +38,20 @@ export default async function DashboardHomePage({
 
       {/* Filtre par période */}
       <Card>
-        <h2 className="text-base font-bold text-slate-900">Filtrer par période</h2>
+        <h2 className="text-base font-bold text-foreground">Filtrer par période</h2>
         <div className="mt-4 flex flex-wrap items-end gap-4">
           <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium text-slate-600">Du</span>
+            <span className="font-medium text-muted-foreground">Du</span>
             <input
               type="date"
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-2 focus:outline-offset-2 focus:outline-primary"
+              className="rounded-lg border border-border px-3 py-2 text-sm text-foreground transition-colors duration-150 ease-out-strong hover:border-muted-foreground/60 focus:outline-2 focus:outline-offset-2 focus:outline-primary"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium text-slate-600">Au</span>
+            <span className="font-medium text-muted-foreground">Au</span>
             <input
               type="date"
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:outline-2 focus:outline-offset-2 focus:outline-primary"
+              className="rounded-lg border border-border px-3 py-2 text-sm text-foreground transition-colors duration-150 ease-out-strong hover:border-muted-foreground/60 focus:outline-2 focus:outline-offset-2 focus:outline-primary"
             />
           </label>
           <button
@@ -64,34 +65,48 @@ export default async function DashboardHomePage({
 
       {/* Indicateurs — valeurs indicatives tant que le module Trésorerie n'est pas câblé */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon="file-text" tone="info" label="Demandes en attente" value="0" />
-        <StatCard icon="wallet" tone="success" label="Montant à régler" value="0 FCFA" />
-        <StatCard icon="book-text" tone="neutral" label="Règlements du mois" value="0" />
-        <StatCard
-          icon="rotate-ccw"
-          tone="warning"
-          label="Retours de caisse en attente"
-          value="0"
-        />
+        <div className="stat-card-enter">
+          <StatCard icon="file-text" tone="info" label="Demandes en attente" value="0" />
+        </div>
+        <div className="stat-card-enter">
+          <StatCard icon="wallet" tone="success" label="Montant à régler" value="0 FCFA" />
+        </div>
+        <div className="stat-card-enter">
+          <StatCard icon="book-text" tone="neutral" label="Règlements du mois" value="0" />
+        </div>
+        <div className="stat-card-enter">
+          <StatCard
+            icon="rotate-ccw"
+            tone="warning"
+            label="Retours de caisse en attente"
+            value="0"
+          />
+        </div>
       </div>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-foreground">Vos modules</h2>
         {modules.length === 0 ? (
-          <p className="rounded-md border border-border bg-muted px-4 py-8 text-center text-sm text-muted-foreground">
-            Aucun module ne vous est accessible pour le moment. Contactez un
-            administrateur si vous pensez qu&apos;il s&apos;agit d&apos;une erreur.
-          </p>
+          <EmptyState
+            icon="folder-tree"
+            message="Aucun module ne vous est accessible pour le moment. Contactez un administrateur si vous pensez qu'il s'agit d'une erreur."
+          />
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {modules.map((module_) => (
               <Link
                 key={module_.id}
                 href={`/${module_.key}`}
-                className="rounded-lg border border-border bg-surface p-5 shadow-sm transition-shadow hover:shadow-md"
+                className="group rounded-lg border border-border bg-surface p-5 shadow-sm transition-[box-shadow,transform] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:shadow-md"
               >
                 <h3 className="font-semibold text-foreground">{module_.label}</h3>
-                <p className="mt-1 text-sm text-muted-foreground">Accéder au module</p>
+                <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
+                  Accéder au module
+                  <Icon
+                    name="arrow-up-right"
+                    className="size-3 transition-transform duration-200 ease-out-strong motion-safe:group-hover:translate-x-0.5 motion-safe:group-hover:-translate-y-0.5"
+                  />
+                </p>
               </Link>
             ))}
           </div>
@@ -104,18 +119,14 @@ export default async function DashboardHomePage({
           {/* Zone préparée pour le Module Trésorerie (ex: demandes en attente
               de validation, retours de caisse non réceptionnés). Vide pour
               l'instant. */}
-          <div className="rounded-md border border-border bg-muted px-4 py-8 text-center text-sm text-muted-foreground">
-            Aucune notification pour le moment.
-          </div>
+          <EmptyState icon="bell" message="Aucune notification pour le moment." compact />
         </section>
 
         <section className="space-y-3">
           <h2 className="text-lg font-semibold text-foreground">Actions à effectuer</h2>
           {/* Zone préparée pour le Module Trésorerie (ex: demandes à
               catégoriser, règlements à effectuer). Vide pour l'instant. */}
-          <div className="rounded-md border border-border bg-muted px-4 py-8 text-center text-sm text-muted-foreground">
-            Aucune action en attente pour le moment.
-          </div>
+          <EmptyState icon="shield-check" message="Aucune action en attente pour le moment." compact />
         </section>
       </div>
     </div>

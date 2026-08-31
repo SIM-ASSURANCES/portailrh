@@ -168,7 +168,7 @@ export function ReglementRow({
       </div>
 
       {uiMode === "edit" ? (
-        <form onSubmit={handleSubmitEdition} className="space-y-3 border-t border-border pt-3">
+        <form onSubmit={handleSubmitEdition} className="animate-fade-in-up space-y-3 border-t border-border pt-3">
           <Input
             name="montant"
             label="Montant"
@@ -200,7 +200,7 @@ export function ReglementRow({
       ) : null}
 
       {uiMode === "annuler" ? (
-        <div className="space-y-3 border-t border-border pt-3">
+        <div className="animate-fade-in-up space-y-3 border-t border-border pt-3">
           <Textarea
             label="Motif de l'annulation"
             required

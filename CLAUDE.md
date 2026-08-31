@@ -2974,6 +2974,107 @@ façon (voir
 Aucun écran n'est encore développé pour ce module : c'est le prochain
 chantier du deuxième développeur, sur le même modèle que Trésorerie.
 
+## Polish visuel global (post-Refonte V1)
+
+**Statut : terminé.** Une fois le backlog métier (Refonte V1, Tickets 1-10
++ Phases A-H) entièrement posé et vérifié, passage de polish visuel sur
+**toute l'application** — aucune logique métier, Server Action ni requête
+de données modifiée : uniquement CSS/Tailwind, structure de mise en page,
+transitions et micro-interactions. Instructions de design suivies :
+principes de design engineering (courbes d'accélération, budgets de durée,
+justification de chaque animation par sa fréquence d'usage) et check-list
+UX/accessibilité (contraste, zones tactiles, retour visuel des formulaires).
+
+**Fondation transversale** — trois nouvelles courbes d'accélération dans
+`globals.css` (`--ease-out-strong`, `--ease-in-out-strong`, `--ease-drawer`,
+exposées comme utilitaires Tailwind natifs `ease-out-strong` etc. via
+`@theme inline`) : les easings CSS natifs sont trop "mous" pour des
+micro-interactions volontaires. **Seule référence à utiliser pour toute
+nouvelle transition** — ne pas en réinventer d'autres. Deux classes
+d'entrée réutilisables : `.animate-fade-in-up` (fondu + léger décalage
+vertical, 250ms, pour les panneaux qui se révèlent : formulaire qui
+s'ouvre, décision qui se confirme) et `.animate-fade-in` (fondu pur, pour
+les fonds d'estompage). Les deux sont neutralisées sous
+`prefers-reduced-motion` (comme `.stat-card-enter` du Ticket 8). Toute
+transition basée sur `transform` (hover, press, chevrons) est systématiquement
+gardée par `motion-safe:` — jamais de mouvement non gardé.
+
+- **Login** — carte recentrée avec décor discret (dégradé radial dérivé de
+  `--color-primary` via `color-mix`, aucune nouvelle couleur), entrée en
+  fondu de la carte, bannière d'erreur avec icône. Bouton de connexion
+  câblé sur un état de chargement réel (`LoginSubmitButton.tsx`,
+  `useFormStatus` — purement visuel, aucune logique d'auth dupliquée).
+  Couleurs brutes (`slate-*`, `bg-white`) remplacées par les tokens du
+  design system.
+- **AppShell (Sidebar + Topbar)** — mêmes tokens partout (fin des couleurs
+  `slate-*` restantes), retour de pression (`active:scale`) sur tous les
+  boutons icône (bascule réduire/déployer, déconnexion, menu mobile,
+  notifications), tiroir mobile sur la courbe `--ease-drawer` (300ms) avec
+  fondu du fond d'estompage, chevrons d'accordéon et de bascule sur
+  `ease-out-strong`. Le tiroir mobile est explicitement neutralisé sous
+  `prefers-reduced-motion` (`motion-reduce:transition-none`) — seule sa
+  position change, plus de transition animée.
+- **Composants génériques `ui/`** — `Button` gagne un retour de pression
+  (`scale(0.97)` sur `:active`, gardé par `motion-safe:`) et remplace son
+  `transition-colors` implicite par une liste de propriétés explicite ;
+  `Input`/`Textarea`/`Select` gagnent une transition de bordure au survol ;
+  `Card` perd ses couleurs brutes ; `DataTable` gagne une transition sur le
+  survol de ligne (jusque-là instantané) et un nouveau composant
+  **`EmptyState`** (icône dans une pastille neutre + message) remplace le
+  texte gris centré pour toute liste vide — DataTable expose son
+  `emptyMessage` existant à travers ce composant, donc **toutes** les
+  listes du portail en profitent sans modification individuelle.
+  `StatCard` (Ticket 8) est corrigé pour respecter les standards : son
+  `transition-all` est remplacé par une liste de propriétés explicite, et
+  l'icône flèche du lien "Voir le détail" (mouvement non gardé jusqu'ici)
+  est désormais sous `motion-safe:`.
+- **Formulaires d'action** — les boutons de soumission utilisaient déjà
+  systématiquement `loading={isPending}` (convention déjà en place depuis
+  le Ticket 1) : aucun changement nécessaire là. Le vrai manque identifié
+  était l'apparition **instantanée** des panneaux révélés par un clic
+  (Valider/Rejeter, Clôturer, Modifier/Annuler un règlement, Validation
+  complémentaire, formulaire de retour de caisse, champs conditionnels de
+  la dépense directe) : `.animate-fade-in-up` appliquée uniformément à ces
+  panneaux et aux lignes de dépense ajoutées dynamiquement.
+- **Listes et tableaux** — héritent automatiquement du polish de
+  `DataTable` (survol de ligne, `EmptyState`) : aucune modification
+  nécessaire sur les tableaux spécifiques (`MesDemandesTable`,
+  `ADecaisserTable`, `RetoursEnAttenteTable`, etc.), qui ne font que lui
+  passer des colonnes/données.
+- **Toasts (sonner)** — le `<Toaster>` utilisait `richColors` (palette
+  générique rouge/vert/bleu de sonner, incohérente avec la charte).
+  Remplacé par `toastOptions.classNames` mappé sur les tokens sémantiques
+  du projet (`success`/`danger`/`info`/`warning`) — mêmes teintes que les
+  `Badge` de statut ailleurs dans l'app.
+- **États vides** — au-delà de `DataTable`, le tableau de bord général
+  (`(dashboard)/page.tsx`) gagne le même traitement `EmptyState` sur ses
+  trois zones vides ("Aucun module", "Aucune notification", "Aucune action
+  en attente"), plus une entrée en fondu échelonnée (`.stat-card-enter`,
+  déjà utilisée sur le dashboard Finance du Ticket 8) sur ses 4 indicateurs
+  et un survol/press sur les cartes de module.
+
+**Point délibérément non touché** — la transition de largeur de la Sidebar
+au repli/déploiement (`lg:transition-[width]`, préexistante) anime une
+propriété hors GPU (`width`), techniquement déconseillé. Corriger cela
+proprement demanderait de restructurer le mécanisme de repli (ex: mesure
+JS + `transform: scaleX` ou grid-template-columns animé), un chantier plus
+invasif que ce qu'un passage de polish justifie — l'impact réel reste
+négligeable (transition rare, déclenchée par un clic explicite, jamais en
+boucle ni au chargement de page). Signalé ici pour référence future plutôt
+que corrigé silencieusement.
+
+**Vérifié explicitement** : `tsc --noEmit` et `eslint` sans erreur sur tout
+`src/`. Parcours Playwright complet (login → dashboard admin → dashboard
+Finance → reporting → création d'une demande → détail Collaborateur →
+détail Finance avec validation/règlement/régularisation/clôture) sans
+erreur console. Scénario de bout en bout vérifié : demande créée,
+validée totalement, réglée en Caisse, règlement confirmé — chaque section
+(Règlements, Régularisation, Clôture, Historique) s'affiche correctement
+avec les nouvelles transitions. Rendu mobile (390px) vérifié sur le login,
+le dashboard, le tiroir de navigation ouvert, et le formulaire de nouvelle
+demande. Toutes les données de test créées pendant la vérification
+supprimées après coup.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

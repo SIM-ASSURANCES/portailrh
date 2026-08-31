@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
+import { EmptyState } from "./EmptyState";
+
 export interface DataTableColumn<T> {
   key: string;
   header: string;
@@ -86,7 +88,7 @@ export function DataTable<T>({ columns, data, rowKey, emptyMessage = "Aucune don
                   <button
                     type="button"
                     onClick={() => toggleSort(column)}
-                    className="inline-flex items-center gap-1 hover:text-foreground"
+                    className="inline-flex items-center gap-1 transition-colors duration-150 hover:text-foreground"
                   >
                     {column.header}
                     <SortIcon direction={sort?.key === column.key ? sort.direction : undefined} />
@@ -101,8 +103,8 @@ export function DataTable<T>({ columns, data, rowKey, emptyMessage = "Aucune don
         <tbody className="divide-y divide-border bg-surface">
           {sortedData.length === 0 ? (
             <tr>
-              <td colSpan={columns.length} className="px-4 py-6 text-center text-muted-foreground">
-                {emptyMessage}
+              <td colSpan={columns.length}>
+                <EmptyState icon="inbox" message={emptyMessage} bordered={false} />
               </td>
             </tr>
           ) : (

@@ -114,7 +114,7 @@ export function ValidationActions({
       ) : null}
 
       {mode === "confirm-totale" ? (
-        <div className="space-y-3">
+        <div className="animate-fade-in-up space-y-3">
           <p className="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
             Confirmer la validation totale ({montantDemande.toLocaleString("fr-FR")} FCFA) ? Le montant
             validé ne pourra plus être réduit ensuite, par personne.
@@ -131,7 +131,7 @@ export function ValidationActions({
       ) : null}
 
       {mode === "partielle" ? (
-        <div className="space-y-3">
+        <div className="animate-fade-in-up space-y-3">
           <Input
             label="Montant validé"
             type="number"
@@ -168,7 +168,7 @@ export function ValidationActions({
       ) : null}
 
       {mode === "rejeter" ? (
-        <div className="space-y-3">
+        <div className="animate-fade-in-up space-y-3">
           <Textarea
             label="Motif du rejet"
             required
