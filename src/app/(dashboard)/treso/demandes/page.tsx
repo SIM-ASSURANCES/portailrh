@@ -28,6 +28,7 @@ export default async function MesDemandesPage({
     reference: d.reference,
     description: d.description,
     montant: Number(d.montant),
+    devise: d.devise,
     statut: d.statut,
     createdAt: d.createdAt,
     typeDemande: d.typeDemande,

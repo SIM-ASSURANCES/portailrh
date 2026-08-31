@@ -1563,6 +1563,76 @@ pratique, pas seulement en théorie.
 nettoyées après coup (0 demande restante). Serveur `next dev` arrêté après
 vérification.
 
+## Formulaire Demande d'Achat — en-tête + lignes d'articles
+
+Refonte du formulaire de création de demande (`treso/demandes/nouvelle`,
+branche « Demande d'Achat ») d'après une maquette fournie : un bloc
+**en-tête** + un **tableau des articles** dynamique, à la place de l'ancien
+couple `montant` + `description`.
+
+### Schéma (migration `demande_achat_entete_lignes`)
+
+- **`Demande.dateLivraisonSouhaitee`** (`DateTime?`) — date de livraison
+  souhaitée, facultative.
+- **`Demande.devise`** (`String`, défaut `"XOF"`) — code ISO. Options
+  gérées dans [devise.ts](src/components/tresorerie/devise.ts) (`XOF`/`EUR`/
+  `USD`) ; `formatMontantDevise(montant, devise)` pour l'affichage.
+- **`Demande.posteBudgetaireId`** → `Categorie` (relation nommée
+  `"DemandePosteBudgetaire"`). Le « poste budgétaire concerné (facultatif) »
+  **réutilise la table `Categorie`**, comme la catégorie d'achat — d'où les
+  deux relations `Demande` ↔ `Categorie` (`"DemandeCategorie"` +
+  `"DemandePosteBudgetaire"`), toutes deux nommées.
+- **`LigneDemande`** (`libelle`, `quantite` Int, `prixUnitaire` Decimal,
+  `demandeId`) — les articles. `Demande.montant` = **somme des
+  `quantite × prixUnitaire`**, recalculée côté serveur, jamais saisie
+  (même principe que le solde de caisse). L'aperçu « Total général » du
+  formulaire n'est qu'un calcul client.
+
+### Réactivation de « Catégorie d'achat » à la création
+
+La refonte V1 avait sorti Catégorie/Objet/Budget du flux principal (voir
+[Refonte V1 en cours](#refonte-v1-en-cours)) tout en gardant la table et le
+CRUD `admin/categories`. Ce formulaire **remet la catégorie d'achat comme
+champ d'en-tête obligatoire à la création** (alimentée par les
+`Categorie` actives). `objetId`/`budgetDisponible` restent inutilisés.
+
+### Bénéficiaire (choix acté avec l'utilisateur)
+
+Le select « Entité bénéficiaire » liste les 4 valeurs de `BeneficiaireType`
+([beneficiaire.ts](src/components/tresorerie/beneficiaire.ts)). Mapping à la
+création (`creerDemandeAction`), pas encore de sélecteur de tiers :
+
+| Choix | `beneficiaireUserId` | `beneficiaireNom` |
+|---|---|---|
+| Collaborateur / Stagiaire | créateur connecté | `null` |
+| SIM Assurances CI | `null` | `"SIM Assurances CI"` |
+| Fournisseur / prestataire | `null` | `null` (champ nom à ajouter plus tard) |
+
+### Affichage (liste + détail)
+
+`formatMontantDevise(montant, devise)` est l'unique point de formatage :
+`XOF` → suffixe usuel « FCFA » (aucune régression sur l'existant), toute
+autre devise → code ISO (« 900 EUR »). Propagé sur « Mes demandes »
+([MesDemandesTable.tsx](<src/app/(dashboard)/treso/demandes/MesDemandesTable.tsx>))
+et le détail Collaborateur
+([[id]/page.tsx](<src/app/(dashboard)/treso/demandes/[id]/page.tsx>) —
+montant / montant validé / restant à valider + tableau « Articles » +
+poste budgétaire + date de livraison). **Pas encore propagé** : écrans
+Finance (`treso/finance/demandes/[id]`, tables Finance) et reçu/bon de
+caisse PDF, qui affichent toujours « FCFA » en dur.
+
+### Form ↔ action
+
+`DemandeForm` est un Client Component à état local (`useState` pour
+l'en-tête + `LigneEdit[]` pour les lignes, ≥ 1 obligatoire) qui appelle
+**directement** `creerDemandeAction(input)` via `useTransition` — **pas**
+`<form action={...}>` : un tableau de lignes ne se sérialise pas en
+`FormData` (même pattern que `RetourCaisseForm`, Phase D). L'action
+revérifie `treso.creer_demande`, valide en zod (en-tête + `z.array`),
+recompose `montant`, contrôle que la catégorie existe et est active, puis
+crée `Demande` + `lignes` (nested `create`) + `HistoriqueEntry` dans la
+boucle de retry sur collision de référence déjà en place.
+
 ## Phase H — Reporting et Export adaptés au nouveau modèle (terminée)
 
 Dernière phase de la refonte V1 : adapte le Reporting/Export (Ticket 10)
