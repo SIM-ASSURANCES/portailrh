@@ -4,6 +4,7 @@ import { Button, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
+  getBeneficiairesConnus,
   getReportingRows,
   parseReportingFilters,
   reportingFiltersToQueryString,
@@ -17,17 +18,16 @@ function rawString(value: string | string[] | undefined): string | undefined {
 }
 
 /**
- * Écran de reporting Trésorerie (Ticket 10) — dernier écran du backlog
- * initial du module. Protégé par `treso.voir_reporting`, revérifié ici même
- * si le layout Finance partagé accepte déjà cette permission parmi les
- * cinq possibles.
+ * Écran de reporting Trésorerie (Ticket 10, adapté au nouveau modèle de
+ * validation partielle/bénéficiaire à la Phase H). Protégé par
+ * `treso.voir_reporting`, revérifié ici même si le layout Finance partagé
+ * accepte déjà cette permission parmi les six possibles.
  *
  * Filtres en GET (search params), partageables/rechargeables tels quels —
  * `parseReportingFilters`/`getReportingRows` (src/lib/reporting.ts) sont
  * exactement les mêmes fonctions que celles utilisées par l'export Excel
- * (Tâche 3) : le tableau affiché ici et les feuilles "Reporting"/"Suivi
- * budgétaire" du classeur téléchargé désignent toujours le même jeu de
- * données pour un même jeu de filtres.
+ * (Tâche 3) : le tableau affiché ici et les feuilles du classeur téléchargé
+ * désignent toujours le même jeu de données pour un même jeu de filtres.
  */
 export default async function ReportingPage({
   searchParams,
@@ -46,12 +46,13 @@ export default async function ReportingPage({
   // (soft-delete) — les demandes historiques liées à une catégorie
   // désactivée depuis continuent d'apparaître normalement dans les
   // résultats, ce filtre ne porte que sur les OPTIONS du formulaire.
-  const [rows, categories, objets, users, servicesRaw] = await Promise.all([
+  const [rows, categories, objets, users, servicesRaw, beneficiaires] = await Promise.all([
     getReportingRows(filters),
     prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
     prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
     prisma.user.findMany({ orderBy: { fullName: "asc" } }),
     prisma.user.findMany({ where: { service: { not: null } }, distinct: ["service"], select: { service: true } }),
+    getBeneficiairesConnus(),
   ]);
 
   const services = servicesRaw.map((u) => u.service).filter((s): s is string => !!s).sort();
@@ -67,14 +68,24 @@ export default async function ReportingPage({
     }),
     { nombreDemandes: 0, montantDemande: 0, montantValide: 0, montantRegle: 0, montantRegleCaisse: 0, montantRegleBanque: 0 }
   );
-  // "Reste à régler" du total général recalculé à partir des totaux
-  // agrégés (jamais négatif) — cohérent avec le calcul par ligne.
-  const totalResteARegler = Math.max(0, total.montantValide - total.montantRegle);
+  // "Restant à valider" et "Validé restant à régler" du total général
+  // recalculés à partir des totaux agrégés (jamais négatifs) — cohérent
+  // avec le calcul par ligne, jamais une simple somme des colonnes déjà
+  // arrondies au max(0, ...) de chaque ligne (Phase H : deux notions
+  // distinctes, voir `ReportingRow` dans reporting.ts).
+  const totalRestantAValider = Math.max(0, total.montantDemande - total.montantValide);
+  const totalValideResteARegler = Math.max(0, total.montantValide - total.montantRegle);
 
   const rowsAvecBudget = rows.filter((r): r is ReportingRow & { budgetAlloue: number } => r.budgetAlloue != null);
 
   const queryString = reportingFiltersToQueryString(filters);
   const exportHref = `/api/treso/reporting/export${queryString ? `?${queryString}` : ""}`;
+
+  const beneficiaireValue = filters.beneficiaireUserId
+    ? `u:${filters.beneficiaireUserId}`
+    : filters.beneficiaireNom
+      ? `n:${encodeURIComponent(filters.beneficiaireNom)}`
+      : undefined;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
@@ -93,6 +104,7 @@ export default async function ReportingPage({
         objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
         users={users.map((u) => ({ id: u.id, label: u.fullName }))}
         services={services}
+        beneficiaires={beneficiaires}
         initial={{
           du: rawString(rawParams.du),
           au: rawString(rawParams.au),
@@ -103,6 +115,7 @@ export default async function ReportingPage({
           mode: filters.mode,
           statut: filters.statut,
           typeDemande: filters.typeDemande,
+          beneficiaire: beneficiaireValue,
         }}
       />
 
@@ -117,8 +130,9 @@ export default async function ReportingPage({
                 <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Nb. demandes</th>
                 <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Demandé</th>
                 <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Validé</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Restant à valider</th>
                 <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Réglé</th>
-                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Reste à régler</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Validé restant à régler</th>
                 <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Réglé Caisse</th>
                 <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Réglé Banque</th>
               </tr>
@@ -126,7 +140,7 @@ export default async function ReportingPage({
             <tbody className="divide-y divide-border bg-surface">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-6 text-center text-muted-foreground">
+                  <td colSpan={10} className="px-4 py-6 text-center text-muted-foreground">
                     Aucune demande ne correspond à ces filtres.
                   </td>
                 </tr>
@@ -143,10 +157,13 @@ export default async function ReportingPage({
                       {r.montantValide.toLocaleString("fr-FR")} FCFA
                     </td>
                     <td className="px-4 py-2 text-right text-foreground">
+                      {r.montantRestantAValider.toLocaleString("fr-FR")} FCFA
+                    </td>
+                    <td className="px-4 py-2 text-right text-foreground">
                       {r.montantRegle.toLocaleString("fr-FR")} FCFA
                     </td>
                     <td className="px-4 py-2 text-right text-foreground">
-                      {r.resteARegler.toLocaleString("fr-FR")} FCFA
+                      {r.valideResteARegler.toLocaleString("fr-FR")} FCFA
                     </td>
                     <td className="px-4 py-2 text-right text-foreground">
                       {r.montantRegleCaisse.toLocaleString("fr-FR")} FCFA
@@ -170,10 +187,13 @@ export default async function ReportingPage({
                     {total.montantValide.toLocaleString("fr-FR")} FCFA
                   </td>
                   <td className="px-4 py-2 text-right text-foreground">
+                    {totalRestantAValider.toLocaleString("fr-FR")} FCFA
+                  </td>
+                  <td className="px-4 py-2 text-right text-foreground">
                     {total.montantRegle.toLocaleString("fr-FR")} FCFA
                   </td>
                   <td className="px-4 py-2 text-right text-foreground">
-                    {totalResteARegler.toLocaleString("fr-FR")} FCFA
+                    {totalValideResteARegler.toLocaleString("fr-FR")} FCFA
                   </td>
                   <td className="px-4 py-2 text-right text-foreground">
                     {total.montantRegleCaisse.toLocaleString("fr-FR")} FCFA
@@ -190,9 +210,18 @@ export default async function ReportingPage({
 
       <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Suivi budgétaire</h2>
+        {/* Phase A (voir CLAUDE.md "Refonte V1 en cours") : Catégorie/Objet/
+            Budget ne sont plus au cœur du nouveau cahier des charges — une
+            demande créée depuis la refonte V1 n'a normalement plus de
+            `budgetDisponible` renseigné, donc cette section reste vide en
+            pratique pour toute donnée récente. Statut à confirmer avec le
+            maître de stage (voir CLAUDE.md) ; ni la fonctionnalité ni la
+            feuille d'export correspondante ne sont supprimées pour autant. */}
         {rowsAvecBudget.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Aucune demande de ces filtres n&apos;a de budget disponible renseigné.
+            Aucune demande de ces filtres n&apos;a de budget disponible renseigné. Le concept
+            Catégorie/Objet/Budget n&apos;est plus utilisé par le flux principal depuis la refonte V1 —
+            statut de cette section à confirmer avec le maître de stage.
           </p>
         ) : (
           <div className="overflow-x-auto rounded-md border border-border">

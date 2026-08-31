@@ -2,9 +2,11 @@ import ExcelJS from "exceljs";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import { JUSTIFICATION_LABEL } from "@/components/tresorerie/justification";
 import { getSession, hasPermission } from "@/lib/auth";
 import {
   getReportingDemandesDetail,
+  getReportingDepensesDetail,
   getReportingJournalDetail,
   getReportingReglementsDetail,
   getReportingRetoursDetail,
@@ -45,10 +47,11 @@ export async function GET(request: NextRequest) {
   const searchParams = Object.fromEntries(request.nextUrl.searchParams.entries());
   const filters = parseReportingFilters(searchParams);
 
-  const [demandes, reglements, retours, journal, rows] = await Promise.all([
+  const [demandes, reglements, retours, depenses, journal, rows] = await Promise.all([
     getReportingDemandesDetail(filters),
     getReportingReglementsDetail(filters),
     getReportingRetoursDetail(filters),
+    getReportingDepensesDetail(filters),
     getReportingJournalDetail(filters),
     getReportingRows(filters),
   ]);
@@ -125,6 +128,45 @@ export async function GET(request: NextRequest) {
   );
   styleHeaderRow(sheetRetours);
 
+  // Phase H : détail ligne par ligne des dépenses déclarées (Phase D,
+  // "fonds remis") — une ligne par DepenseLigne, pas agrégée par retour
+  // comme la feuille "Retours de caisse" ci-dessus. Les lignes non
+  // justifiées (SANS_PIECE) sont surlignées (fond jaune pâle) pour un
+  // repérage visuel rapide dans Excel, en plus de la colonne "Non justifiée".
+  const NON_JUSTIFIEE_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3ED" } };
+  const NON_JUSTIFIEE_FONT: Partial<ExcelJS.Font> = { color: { argb: "FFBF470C" }, bold: true };
+
+  const sheetDepenses = workbook.addWorksheet("Dépenses déclarées");
+  sheetDepenses.columns = [
+    { header: "Référence demande", key: "reference", width: 20 },
+    { header: "Bénéficiaire", key: "beneficiaire", width: 24 },
+    { header: "Montant (FCFA)", key: "montant", width: 16 },
+    { header: "Objet", key: "objet", width: 28 },
+    { header: "Date", key: "date", width: 14 },
+    { header: "Nature", key: "nature", width: 20 },
+    { header: "Justification", key: "justification", width: 22 },
+    { header: "Non justifiée", key: "nonJustifiee", width: 14 },
+  ];
+  depenses.forEach((d) => {
+    const row = sheetDepenses.addRow({
+      reference: d.demandeReference,
+      beneficiaire: d.beneficiaireNom,
+      montant: d.montant,
+      objet: d.objet,
+      date: d.date.toLocaleDateString("fr-FR"),
+      nature: d.nature ?? "—",
+      justification: JUSTIFICATION_LABEL[d.justification],
+      nonJustifiee: d.nonJustifiee ? "Oui" : "Non",
+    });
+    if (d.nonJustifiee) {
+      row.eachCell((cell) => {
+        cell.fill = NON_JUSTIFIEE_FILL;
+        cell.font = NON_JUSTIFIEE_FONT;
+      });
+    }
+  });
+  styleHeaderRow(sheetDepenses);
+
   const sheetJournal = workbook.addWorksheet("Journal de caisse");
   sheetJournal.columns = [
     { header: "Type", key: "type", width: 12 },
@@ -142,6 +184,11 @@ export async function GET(request: NextRequest) {
   );
   styleHeaderRow(sheetJournal);
 
+  // Phase H : "Validé" est désormais la somme de Demande.montantValide
+  // (capture les validations partielles) ; "Reste à régler" renommée
+  // "Validé restant à régler" et nouvelle colonne "Restant à valider" —
+  // voir ReportingRow dans reporting.ts, les deux notions ne se confondent
+  // jamais.
   const sheetReporting = workbook.addWorksheet("Reporting");
   sheetReporting.columns = [
     { header: "Catégorie", key: "categorie", width: 18 },
@@ -149,8 +196,9 @@ export async function GET(request: NextRequest) {
     { header: "Nb. demandes", key: "nombre", width: 14 },
     { header: "Demandé (FCFA)", key: "montantDemande", width: 18 },
     { header: "Validé (FCFA)", key: "montantValide", width: 18 },
+    { header: "Restant à valider (FCFA)", key: "montantRestantAValider", width: 20 },
     { header: "Réglé (FCFA)", key: "montantRegle", width: 18 },
-    { header: "Reste à régler (FCFA)", key: "resteARegler", width: 20 },
+    { header: "Validé restant à régler (FCFA)", key: "valideResteARegler", width: 24 },
     { header: "Réglé Caisse (FCFA)", key: "montantRegleCaisse", width: 18 },
     { header: "Réglé Banque (FCFA)", key: "montantRegleBanque", width: 18 },
   ];
@@ -161,22 +209,25 @@ export async function GET(request: NextRequest) {
       nombre: r.nombreDemandes,
       montantDemande: r.montantDemande,
       montantValide: r.montantValide,
+      montantRestantAValider: r.montantRestantAValider,
       montantRegle: r.montantRegle,
-      resteARegler: r.resteARegler,
+      valideResteARegler: r.valideResteARegler,
       montantRegleCaisse: r.montantRegleCaisse,
       montantRegleBanque: r.montantRegleBanque,
     })
   );
+  const totalMontantDemande = rows.reduce((s, r) => s + r.montantDemande, 0);
   const totalMontantValide = rows.reduce((s, r) => s + r.montantValide, 0);
   const totalMontantRegle = rows.reduce((s, r) => s + r.montantRegle, 0);
   const totalRow = sheetReporting.addRow({
     categorie: "Total général",
     objet: "",
     nombre: rows.reduce((s, r) => s + r.nombreDemandes, 0),
-    montantDemande: rows.reduce((s, r) => s + r.montantDemande, 0),
+    montantDemande: totalMontantDemande,
     montantValide: totalMontantValide,
+    montantRestantAValider: Math.max(0, totalMontantDemande - totalMontantValide),
     montantRegle: totalMontantRegle,
-    resteARegler: Math.max(0, totalMontantValide - totalMontantRegle),
+    valideResteARegler: Math.max(0, totalMontantValide - totalMontantRegle),
     montantRegleCaisse: rows.reduce((s, r) => s + r.montantRegleCaisse, 0),
     montantRegleBanque: rows.reduce((s, r) => s + r.montantRegleBanque, 0),
   });
@@ -194,6 +245,24 @@ export async function GET(request: NextRequest) {
     { header: "Montant réglé (FCFA)", key: "montantRegle", width: 18 },
     { header: "Écart (FCFA)", key: "ecart", width: 16 },
   ];
+  // Phase H, Tâche 4 (voir CLAUDE.md "Refonte V1 en cours") : Catégorie/
+  // Objet/Budget ne sont plus au cœur du nouveau cahier des charges depuis
+  // la Phase A — une demande créée depuis la refonte V1 n'a normalement
+  // plus de `budgetDisponible` renseigné, donc cette feuille reste vide
+  // pour tout jeu de filtres portant sur des données récentes. Note
+  // explicite ajoutée dans la feuille elle-même plutôt que de la supprimer
+  // (elle reste pertinente pour d'éventuelles données antérieures à la
+  // refonte qui auraient encore un budget renseigné).
+  if (rowsAvecBudget.length === 0) {
+    const noteRow = sheetBudget.addRow({
+      categorie:
+        "Fonctionnalité liée à Catégorie/Objet/Budget, statut à confirmer avec le maître de stage — voir CLAUDE.md (\"Refonte V1 en cours\", section Catégorie/Objet/Budget). Aucune demande de ces filtres n'a de budget disponible renseigné.",
+    });
+    sheetBudget.mergeCells(noteRow.number, 1, noteRow.number, 5);
+    noteRow.getCell(1).alignment = { wrapText: true, vertical: "top" };
+    noteRow.getCell(1).font = { italic: true, color: { argb: "FF64748B" } };
+    sheetBudget.getRow(noteRow.number).height = 45;
+  }
   rowsAvecBudget.forEach((r) => {
     const ecart = r.budgetAlloue - r.montantRegle;
     const row = sheetBudget.addRow({

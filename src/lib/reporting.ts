@@ -1,4 +1,5 @@
-import type { ModeReglement, Prisma, StatutDemande, TypeDemande } from "@/generated/prisma/client";
+import { getBeneficiaireNom } from "@/components/tresorerie/beneficiaire";
+import type { ModeReglement, Prisma, StatutDemande, TypeDemande, TypeJustification } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -19,6 +20,16 @@ export interface ReportingFilters {
   statut?: StatutDemande;
   /** Standard / Dépense directe (Phase F, section 15 du cahier des charges). */
   typeDemande?: TypeDemande;
+  /**
+   * Bénéficiaire (Phase A/H), DISTINCT du filtre "demandeur"
+   * (`demandeurId`, toujours un `User` — le créateur). Le bénéficiaire
+   * n'est pas toujours un utilisateur du système (Phase A) : au plus un
+   * seul des deux champs ci-dessous est renseigné à la fois, jamais les
+   * deux — voir `parseReportingFilters` pour le décodage du paramètre
+   * unique `beneficiaire` qui les distingue (préfixe `u:`/`n:`).
+   */
+  beneficiaireUserId?: string;
+  beneficiaireNom?: string;
 }
 
 type SearchParamsLike = Record<string, string | string[] | undefined>;
@@ -39,6 +50,11 @@ export function parseReportingFilters(searchParams: SearchParamsLike): Reporting
   const mode = firstString(searchParams.mode);
   const statut = firstString(searchParams.statut);
   const typeDemande = firstString(searchParams.typeDemande);
+  const beneficiaire = firstString(searchParams.beneficiaire);
+  const beneficiaireUserId = beneficiaire?.startsWith("u:") ? beneficiaire.slice(2) : undefined;
+  const beneficiaireNom = beneficiaire?.startsWith("n:")
+    ? decodeURIComponent(beneficiaire.slice(2))
+    : undefined;
 
   return {
     du: du ? new Date(du) : undefined,
@@ -72,6 +88,8 @@ export function parseReportingFilters(searchParams: SearchParamsLike): Reporting
       : undefined,
     typeDemande:
       typeDemande === "STANDARD" || typeDemande === "DEPENSE_DIRECTE" ? typeDemande : undefined,
+    beneficiaireUserId,
+    beneficiaireNom,
   };
 }
 
@@ -87,6 +105,8 @@ export function reportingFiltersToQueryString(filters: ReportingFilters): string
   if (filters.mode) params.set("mode", filters.mode);
   if (filters.statut) params.set("statut", filters.statut);
   if (filters.typeDemande) params.set("typeDemande", filters.typeDemande);
+  if (filters.beneficiaireUserId) params.set("beneficiaire", `u:${filters.beneficiaireUserId}`);
+  else if (filters.beneficiaireNom) params.set("beneficiaire", `n:${encodeURIComponent(filters.beneficiaireNom)}`);
   return params.toString();
 }
 
@@ -101,7 +121,48 @@ function buildDemandeWhere(filters: ReportingFilters): Prisma.DemandeWhereInput 
     ...(filters.objetId ? { objetId: filters.objetId } : {}),
     ...(filters.statut ? { statut: filters.statut } : {}),
     ...(filters.typeDemande ? { typeDemande: filters.typeDemande } : {}),
+    ...(filters.beneficiaireUserId ? { beneficiaireUserId: filters.beneficiaireUserId } : {}),
+    ...(filters.beneficiaireNom ? { beneficiaireNom: filters.beneficiaireNom } : {}),
   };
+}
+
+/**
+ * Bénéficiaires connus (Phase H) pour le sélecteur du formulaire de
+ * filtres — DISTINCT du filtre "demandeur" (toujours un `User`, le
+ * créateur). Combine les utilisateurs déjà bénéficiaires d'au moins une
+ * demande (`beneficiaireUserId`) et les noms libres déjà utilisés
+ * (`beneficiaireNom` — fournisseurs, "SIM ASSURANCES CI", stagiaires sans
+ * compte...), chacun encodé avec un préfixe (`u:`/`n:`) pour que
+ * `parseReportingFilters` sache lequel des deux champs renseigner. Deux
+ * `findMany distinct` légers (pas de jointure lourde), le nombre de
+ * bénéficiaires distincts restant modeste pour une application interne.
+ */
+export async function getBeneficiairesConnus(): Promise<{ value: string; label: string }[]> {
+  const [avecCompte, sansCompte] = await Promise.all([
+    prisma.demande.findMany({
+      where: { beneficiaireUserId: { not: null } },
+      distinct: ["beneficiaireUserId"],
+      select: { beneficiaireUserId: true, beneficiaireUser: { select: { fullName: true } } },
+    }),
+    prisma.demande.findMany({
+      where: { beneficiaireNom: { not: null } },
+      distinct: ["beneficiaireNom"],
+      select: { beneficiaireNom: true },
+    }),
+  ]);
+
+  const options = [
+    ...avecCompte
+      .filter((d): d is typeof d & { beneficiaireUserId: string; beneficiaireUser: { fullName: string } } =>
+        Boolean(d.beneficiaireUserId && d.beneficiaireUser)
+      )
+      .map((d) => ({ value: `u:${d.beneficiaireUserId}`, label: d.beneficiaireUser.fullName })),
+    ...sansCompte
+      .filter((d): d is { beneficiaireNom: string } => Boolean(d.beneficiaireNom))
+      .map((d) => ({ value: `n:${encodeURIComponent(d.beneficiaireNom)}`, label: d.beneficiaireNom })),
+  ];
+
+  return options.sort((a, b) => a.label.localeCompare(b.label));
 }
 
 export interface MontantsRegle {
@@ -149,6 +210,8 @@ interface DemandeAvecRelations {
   id: string;
   reference: string;
   montant: Prisma.Decimal;
+  /** Phase H : base de la colonne "Validé" du tableau agrégé (capture aussi les validations partielles). */
+  montantValide: Prisma.Decimal | null;
   statut: StatutDemande;
   budgetDisponible: Prisma.Decimal | null;
   createdAt: Date;
@@ -157,6 +220,9 @@ interface DemandeAvecRelations {
   categorie: { label: string } | null;
   objet: { label: string } | null;
   createur: { fullName: string; service: string | null };
+  beneficiaireUserId: string | null;
+  beneficiaireNom: string | null;
+  beneficiaireUser: { fullName: string } | null;
 }
 
 /**
@@ -175,7 +241,7 @@ async function getDemandesFiltrees(
 ): Promise<{ demandes: DemandeAvecRelations[]; montantsRegleParDemande: Map<string, MontantsRegle> }> {
   const demandes = await prisma.demande.findMany({
     where: buildDemandeWhere(filters),
-    include: { categorie: true, objet: true, createur: true },
+    include: { categorie: true, objet: true, createur: true, beneficiaireUser: true },
     orderBy: { createdAt: "asc" },
   });
 
@@ -192,19 +258,6 @@ async function getDemandesFiltrees(
   return { demandes: demandesFiltrees, montantsRegleParDemande };
 }
 
-// REFONTE V1 (Phase A : CLOTUREE_TOTALE/CLOTUREE_PARTIELLE -> CLOTUREE.
-// Phase B : la validation totale ne produit plus jamais VALIDEE — voir
-// STATUTS_VALIDATION_COMPLETE dans src/lib/tresorerie.ts. Une demande
-// seulement PARTIELLEMENT_VALIDEE ne compte volontairement pas comme
-// "validée" ici : ce n'est pas le montant demandé qui est réellement acquis.
-const STATUTS_VALIDES: readonly StatutDemande[] = [
-  "VALIDEE",
-  "VALIDEE_NON_REGLEE",
-  "PARTIELLEMENT_REGLEE",
-  "REGLEE",
-  "CLOTUREE",
-];
-
 export interface ReportingRow {
   categorieId: string | null;
   categorieLabel: string;
@@ -213,12 +266,30 @@ export interface ReportingRow {
   nombreDemandes: number;
   /** Somme des montants de TOUTES les demandes du groupe, quel que soit leur statut. */
   montantDemande: number;
-  /** Somme des montants des demandes ayant au moins atteint VALIDEE (VALIDEE, CLOTUREE_TOTALE, CLOTUREE_PARTIELLE). */
+  /**
+   * Phase H (voir CLAUDE.md "Refonte V1 en cours") : somme du champ
+   * `Demande.montantValide` lui-même, PAS une somme conditionnée par le
+   * statut comme avant cette phase — capture donc aussi les validations
+   * partielles (une demande `PARTIELLEMENT_VALIDEE` contribue son
+   * `montantValide` réel, pas 0 et pas son montant demandé en entier).
+   */
   montantValide: number;
-  /** Somme de tous les règlements confirmés et non annulés (Caisse + Banque). */
+  /**
+   * Phase H — montant RESTANT À VALIDER : `max(0, montantDemande -
+   * montantValide)`. À NE JAMAIS CONFONDRE avec `valideResteARegler`
+   * ci-dessous : celui-ci porte sur la validation (rien à voir avec le
+   * règlement), celui-là sur le règlement du montant déjà validé.
+   */
+  montantRestantAValider: number;
+  /** Somme de tous les règlements confirmés et non annulés (Caisse + Banque) — `getTotalRegle`. */
   montantRegle: number;
-  /** max(0, montantValide - montantRegle) — jamais négatif. */
-  resteARegler: number;
+  /**
+   * Montant VALIDÉ restant à RÉGLER : `max(0, montantValide -
+   * montantRegle)`, jamais négatif. Renommé depuis `resteARegler` (Phase H)
+   * pour ne pas le confondre avec `montantRestantAValider` — deux notions
+   * distinctes qui n'ont jamais le même sens.
+   */
+  valideResteARegler: number;
   /** Règlements confirmés et non annulés en mode CAISSE uniquement. */
   montantRegleCaisse: number;
   /** Règlements confirmés et non annulés en mode BANQUE uniquement. */
@@ -229,22 +300,24 @@ export interface ReportingRow {
 
 /**
  * Tableau agrégé par Catégorie puis Objet (Ticket 10, Tâche 1 ; complété
- * lors de l'audit de conformité avec les 4 colonnes explicitement exigées
- * par le cahier des charges — section 15) : nombre de demandes, montant
- * demandé (toutes demandes), montant validé (VALIDEE ou clôturée), montant
- * réglé (Caisse + Banque confondus), reste à régler, et la répartition
- * Caisse/Banque du réglé — plus le budget alloué cumulé (Tâche 2, suivi
- * budgétaire). Calculés en mémoire à partir d'une seule requête `findMany`
- * + un seul `groupBy`, jamais une requête par demande.
+ * lors de l'audit de conformité — section 15 — puis à la Phase H pour le
+ * nouveau modèle de validation partielle) : nombre de demandes, montant
+ * demandé (toutes demandes), montant validé (`Demande.montantValide`),
+ * montant restant à valider, montant réglé (Caisse + Banque confondus),
+ * montant validé restant à régler, et la répartition Caisse/Banque du
+ * réglé — plus le budget alloué cumulé (Ticket 10, suivi budgétaire).
+ * Calculés en mémoire à partir d'une seule requête `findMany` + un seul
+ * `groupBy`, jamais une requête par demande.
  *
  * Convention documentée (CLAUDE.md) : "Demandé" inclut TOUTES les demandes
  * correspondant aux filtres actifs, quel que soit leur statut (y compris
- * REJETEE et EN_ATTENTE) — c'est la colonne qui répond à "combien a-t-on
- * demandé au total", par opposition à "Validé"/"Réglé" qui ne comptent que
- * ce qui a réellement avancé dans le circuit. Une demande REJETEE ne
- * contribue donc jamais à "Validé", "Réglé", "Reste à régler" ni aux
- * colonnes Caisse/Banque — uniquement à "Demandé" (et au nombre de
- * demandes).
+ * REJETEE et EN_ATTENTE_VALIDATION) — c'est la colonne qui répond à
+ * "combien a-t-on demandé au total", par opposition à "Validé"/"Réglé" qui
+ * ne comptent que ce qui a réellement avancé dans le circuit. Une demande
+ * REJETEE ou jamais validée a `montantValide = 0` (ou `null` en base),
+ * donc ne contribue jamais à "Validé", "Réglé", "Validé restant à régler"
+ * ni aux colonnes Caisse/Banque — uniquement à "Demandé", "Restant à
+ * valider" (égal au montant demandé dans ce cas) et au nombre de demandes.
  */
 export async function getReportingRows(filters: ReportingFilters): Promise<ReportingRow[]> {
   const { demandes, montantsRegleParDemande } = await getDemandesFiltrees(filters);
@@ -253,8 +326,7 @@ export async function getReportingRows(filters: ReportingFilters): Promise<Repor
   for (const d of demandes) {
     const key = `${d.categorieId ?? "none"}|${d.objetId ?? "none"}`;
     const montants = montantsRegleParDemande.get(d.id) ?? { total: 0, caisse: 0, banque: 0 };
-    const estValidee = STATUTS_VALIDES.includes(d.statut);
-    const montantValideContribution = estValidee ? Number(d.montant) : 0;
+    const montantValideContribution = Number(d.montantValide ?? 0);
     const budget = d.budgetDisponible != null ? Number(d.budgetDisponible) : null;
 
     const existing = buckets.get(key);
@@ -277,8 +349,9 @@ export async function getReportingRows(filters: ReportingFilters): Promise<Repor
         nombreDemandes: 1,
         montantDemande: Number(d.montant),
         montantValide: montantValideContribution,
+        montantRestantAValider: 0,
         montantRegle: montants.total,
-        resteARegler: 0,
+        valideResteARegler: 0,
         montantRegleCaisse: montants.caisse,
         montantRegleBanque: montants.banque,
         budgetAlloue: budget,
@@ -288,7 +361,8 @@ export async function getReportingRows(filters: ReportingFilters): Promise<Repor
 
   const rows = Array.from(buckets.values());
   for (const row of rows) {
-    row.resteARegler = Math.max(0, row.montantValide - row.montantRegle);
+    row.montantRestantAValider = Math.max(0, row.montantDemande - row.montantValide);
+    row.valideResteARegler = Math.max(0, row.montantValide - row.montantRegle);
   }
 
   return rows.sort(
@@ -403,6 +477,58 @@ export async function getReportingRetoursDetail(filters: ReportingFilters): Prom
     estReceptionne: r.estReceptionne,
     declareLe: r.createdAt,
   }));
+}
+
+export interface ReportingDepenseDetail {
+  demandeReference: string;
+  beneficiaireNom: string;
+  montant: number;
+  objet: string;
+  date: Date;
+  nature: string | null;
+  justification: TypeJustification;
+  nonJustifiee: boolean;
+}
+
+/**
+ * Feuille "Dépenses déclarées" de l'export (Phase H) : chaque
+ * `DepenseLigne` (Phase D, fonds remis) des retours liés aux demandes
+ * filtrées — une ligne par dépense réelle, pas agrégée par retour comme
+ * `getReportingRetoursDetail`. `nonJustifiee` reflète directement
+ * `justification === "SANS_PIECE"`, redondant avec `justification`
+ * elle-même mais exposé comme booléen dédié pour que la route d'export
+ * puisse mettre ces lignes en évidence sans réinterpréter l'enum à chaque
+ * fois (Tâche 3 : "Oui"/"Non" + surlignage).
+ */
+export async function getReportingDepensesDetail(filters: ReportingFilters): Promise<ReportingDepenseDetail[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const demandeIds = demandes.map((d) => d.id);
+  if (demandeIds.length === 0) {
+    return [];
+  }
+  const infoParDemande = new Map(
+    demandes.map((d) => [d.id, { reference: d.reference, beneficiaireNom: getBeneficiaireNom(d) }])
+  );
+
+  const lignes = await prisma.depenseLigne.findMany({
+    where: { retourCaisse: { reglement: { demandeId: { in: demandeIds } } } },
+    include: { retourCaisse: { include: { reglement: true } } },
+    orderBy: { date: "asc" },
+  });
+
+  return lignes.map((l) => {
+    const info = infoParDemande.get(l.retourCaisse.reglement.demandeId);
+    return {
+      demandeReference: info?.reference ?? "—",
+      beneficiaireNom: info?.beneficiaireNom ?? "—",
+      montant: Number(l.montant),
+      objet: l.objet,
+      date: l.date,
+      nature: l.nature,
+      justification: l.justification,
+      nonJustifiee: l.justification === "SANS_PIECE",
+    };
+  });
 }
 
 export interface ReportingJournalDetail {

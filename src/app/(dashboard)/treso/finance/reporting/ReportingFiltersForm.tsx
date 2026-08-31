@@ -36,6 +36,8 @@ export interface ReportingFiltersInitial {
   mode?: string;
   statut?: string;
   typeDemande?: string;
+  /** Valeur encodée `u:<userId>` ou `n:<nom>` — voir `parseReportingFilters`. */
+  beneficiaire?: string;
 }
 
 /**
@@ -54,12 +56,15 @@ export function ReportingFiltersForm({
   objets,
   users,
   services,
+  beneficiaires,
   initial,
 }: {
   categories: Option[];
   objets: ObjetOption[];
   users: Option[];
   services: string[];
+  /** `value` déjà encodé (`u:<userId>` / `n:<nom>`) — voir `getBeneficiairesConnus`. */
+  beneficiaires: { value: string; label: string }[];
   initial: ReportingFiltersInitial;
 }) {
   const [categorieId, setCategorieId] = useState(initial.categorieId ?? "");
@@ -83,6 +88,20 @@ export function ReportingFiltersForm({
         defaultValue={initial.demandeurId ?? ""}
         options={users.map((u) => ({ value: u.id, label: u.label }))}
       />
+      {/* Bénéficiaire (Phase A/H) : DISTINCT du demandeur — le créateur et le
+          bénéficiaire d'une dépense directe (Phase F) sont deux personnes
+          différentes. Options pré-encodées (u:<userId> / n:<nom>) par
+          `getBeneficiairesConnus`, décodées telles quelles par
+          `parseReportingFilters`. */}
+      {beneficiaires.length > 0 ? (
+        <Select
+          name="beneficiaire"
+          label="Bénéficiaire"
+          placeholder="Tous"
+          defaultValue={initial.beneficiaire ?? ""}
+          options={beneficiaires}
+        />
+      ) : null}
       {services.length > 0 ? (
         <Select
           name="service"

@@ -1563,6 +1563,179 @@ pratique, pas seulement en théorie.
 nettoyées après coup (0 demande restante). Serveur `next dev` arrêté après
 vérification.
 
+## Phase H — Reporting et Export adaptés au nouveau modèle (terminée)
+
+Dernière phase de la refonte V1 : adapte le Reporting/Export (Ticket 10)
+au nouveau modèle (validation partielle, bénéficiaire, dépenses détaillées).
+
+### Nouvelles colonnes du tableau agrégé (`ReportingRow`, `src/lib/reporting.ts`)
+
+**Changement de fond sur "Validé"** : devient la somme du champ
+`Demande.montantValide` lui-même, plus une somme conditionnée par le
+statut (l'ancien calcul, hérité d'avant la Phase B, ignorait les
+validations partielles — une demande `PARTIELLEMENT_VALIDEE` contribuait
+0 à "Validé" au lieu de son montant réellement validé). `STATUTS_VALIDES`
+(devenu inutile avec ce changement) supprimé.
+
+Deux notions à ne jamais confondre, l'une sur la VALIDATION, l'autre sur
+le RÈGLEMENT :
+
+| Colonne | Formule | Porte sur |
+|---|---|---|
+| Restant à valider (nouvelle) | `max(0, Demandé − Validé)` | validation |
+| Validé restant à régler (renommée depuis "Reste à régler") | `max(0, Validé − Réglé)` | règlement |
+
+"Réglé" reste basé sur `getTotalRegle` (via le `groupBy` déjà existant),
+inchangé.
+
+### Nouveaux filtres
+
+- **Bénéficiaire** (Tâche 2) — DISTINCT du filtre "Demandeur" (toujours le
+  créateur). Un seul paramètre `beneficiaire` encodé (`u:<userId>` /
+  `n:<nom>`, voir `parseReportingFilters`/`getBeneficiairesConnus`) pour
+  couvrir les deux cas (bénéficiaire avec ou sans compte, Phase A).
+- **Type de demande** (Standard / Dépense directe, Phase F) — déjà
+  fonctionnel, vérifié à nouveau ici (aucun changement nécessaire).
+
+### Nouvelle feuille d'export "Dépenses déclarées" (`getReportingDepensesDetail`)
+
+Une ligne par `DepenseLigne` (Phase D) des demandes filtrées — référence,
+bénéficiaire, montant, objet, date, nature, justification, colonne
+"Non justifiée" (Oui/Non). Les lignes `SANS_PIECE` sont surlignées (fond
+`#FEF3ED`, police orange) dans le classeur Excel pour un repérage visuel
+immédiat, en plus de la colonne dédiée.
+
+### Feuille "Suivi budgétaire" : note ajoutée, pas supprimée (Tâche 4)
+
+Vérifié explicitement : une demande créée depuis la refonte V1 n'a plus de
+`budgetDisponible` renseigné (Catégorie/Objet/Budget écartés depuis la
+Phase A), donc cette feuille — et la section correspondante de l'écran —
+restent vides pour toute donnée récente. Une note explicite est insérée
+dans la feuille elle-même quand c'est le cas ("Fonctionnalité liée à
+Catégorie/Objet/Budget, statut à confirmer avec le maître de stage — voir
+CLAUDE.md"), la feuille et son code restant intacts pour d'éventuelles
+données antérieures à la refonte.
+
+### Vérifié explicitement (Phase H) — vrai parcours navigateur + export réel
+
+Chromium headless (Playwright) + lecture programmatique du classeur
+téléchargé via `exceljs` (déjà une dépendance du projet — pas d'outil
+supplémentaire nécessaire). Jeu de données : une demande standard de
+400 000 validée partiellement à 250 000, réglée à 200 000 (Caisse), avec
+un retour déclaré (120 000 FCFA avec facture + 30 000 FCFA sans pièce) ;
+une dépense directe de 60 000 pour un bénéficiaire externe ("Fournisseur
+ABC"), validée et réglée intégralement (Banque).
+
+- Tableau agrégé (sans filtre) : Demandé 460 000, Validé 310 000, Restant
+  à valider 150 000, Réglé 260 000, Validé restant à régler 50 000, Réglé
+  Caisse 200 000, Réglé Banque 60 000 — **Demandé = Validé + Restant à
+  valider** vérifié (460 000 = 310 000 + 150 000).
+- Filtre Type de demande = Dépense directe : isole exactement la demande à
+  60 000 (Restant à valider = 0, entièrement réglée).
+- Filtre Bénéficiaire = "Fournisseur ABC" : isole la même demande, DISTINCT
+  du filtre Demandeur (qui aurait renvoyé "Finance Test", le créateur).
+- Export Excel : feuille "Reporting" relue programmatiquement, chiffres du
+  Total général strictement identiques à l'écran pour les mêmes filtres
+  (cohérence Tâche 5). Feuille "Dépenses déclarées" : 2 lignes, la ligne
+  30 000 marquée "Oui"/surlignée, la ligne 120 000 marquée "Non"/non
+  surlignée. Feuille "Suivi budgétaire" : note explicite présente.
+
+`npx tsc --noEmit` et `npx eslint .` passent sans erreur. Données de test
+nettoyées après coup (0 demande restante). Serveur `next dev` arrêté après
+vérification.
+
+---
+
+# Refonte V1 — TERMINÉE
+
+Les 8 phases (A à H) de la réécriture du Module Trésorerie selon le
+nouveau cahier des charges sont maintenant complètes et vérifiées par de
+vrais parcours navigateur. Récapitulatif, une ligne par phase :
+
+- **Phase A** — Fondations de données : nouveau `StatutDemande` (11
+  valeurs), bénéficiaire (`BeneficiaireType`/`beneficiaireUserId`/
+  `beneficiaireNom`), `montantValide`, Catégorie/Objet/Budget retirés du
+  flux principal (conservés en base).
+- **Phase B** — Validation partielle et complémentaire : fonction centrale
+  `calculerStatutDemande`, `validerTotalementAction`/
+  `validerPartiellementAction`/`validerComplementaireAction`.
+- **Phase C** — Règlement adapté à la validation partielle : correction
+  du périmètre de la Phase B (`getResteARegler` basé sur `montantValide`,
+  pas le montant demandé), un règlement est possible dès qu'un montant est
+  validé, même partiellement.
+- **Phase D** — Fonds remis (lignes de dépenses détaillées) : modèle
+  `DepenseLigne` remplace le montant dépensé agrégé unique ; montant à
+  retourner calculé automatiquement, jamais saisi.
+- **Phase E** — Bon de caisse : second document PDF minimaliste pour les
+  règlements Caisse, distinct du reçu complet ; bug latent de formatage
+  des montants dans les PDF corrigé au passage (affectait aussi le reçu
+  du Ticket 9 depuis l'origine).
+- **Phase F** — Saisie directe d'une dépense : Finance peut créer une
+  demande pour un bénéficiaire qui n'intervient pas lui-même (prime de
+  stage, dotation carburant, dépense entreprise...), circuit ensuite
+  identique à une demande standard.
+- **Phase G** — Dashboard Finance enrichi : zone "À traiter" à 6
+  indicateurs cliquables (validation, règlement non commencé/partiel,
+  fonds à régulariser, retours en attente, dépenses non justifiées), solde
+  de caisse gardé comme contexte distinct.
+- **Phase H** — Reporting et Export adaptés : colonnes Validé/Restant à
+  valider/Validé restant à régler clarifiées, filtres Bénéficiaire et Type
+  de demande, feuille d'export "Dépenses déclarées".
+
+## Points d'interprétation en attente — synthèse pour le maître de stage
+
+Accumulés au fil des 8 phases, tous déjà documentés à l'endroit où ils ont
+été rencontrés (voir les sections de phase correspondantes) — regroupés
+ici pour n'avoir qu'un seul point de synthèse à soumettre :
+
+1. **Sort de Catégorie/Objet/Budget** (Phase A) — retirés du cahier des
+   charges et du flux principal (formulaires, règlement, dashboard,
+   filtres), mais les modèles, le CRUD admin (`/admin/categories`), et la
+   feuille "Suivi budgétaire" du reporting restent en place par
+   précaution. Décision à prendre : supprimer définitivement, ou garder
+   en dormance pour un usage futur ?
+2. **Statut `VALIDEE` devenu invisible en pratique** (Phase B) — n'est
+   plus jamais produit par `calculerStatutDemande` : une validation totale
+   transite directement vers `VALIDEE_NON_REGLEE` (puis
+   `PARTIELLEMENT_REGLEE`/`REGLEE`). `VALIDEE` reste dans l'enum
+   uniquement pour compatibilité (`STATUTS_VALIDATION_COMPLETE`). Est-ce
+   le comportement voulu, ou `VALIDEE` devrait-il réapparaître comme statut
+   affiché explicitement à un moment du circuit ?
+3. **Rejet impossible après une validation partielle** (Phase B) — une
+   demande déjà `PARTIELLEMENT_VALIDEE` ne peut plus être "rejetée" au
+   sens strict (seul le reliquat peut encore recevoir une validation
+   complémentaire). Aucune action de "rejet du reliquat" n'existe : si un
+   validateur veut abandonner la partie non encore validée d'une demande,
+   ce cas reste sans réponse applicative à ce stade.
+4. **Bénéficiaire d'une dépense directe invisible dans son propre espace**
+   (Phase F) — un bénéficiaire ayant un compte Collaborateur ne voit
+   jamais "sa" dépense directe dans "Mes demandes" (filtré par créateur,
+   jamais par bénéficiaire). Aucun onglet "Dépenses dont je suis
+   bénéficiaire" n'existe.
+5. **Ancien indicateur "Décaissements à régulariser" hors des 6 nouveaux**
+   (Phase G) — les demandes entièrement réglées candidates à la clôture
+   (Ticket 7) ne font plus partie de la zone "À traiter" (absentes de la
+   section 12 du nouveau cahier des charges), mais restent accessibles via
+   un lien secondaire discret en bas du dashboard. À confirmer que cet
+   emplacement convient, ou si un traitement différent est attendu.
+6. **Indicateur "Fonds remis à régulariser" potentiellement très large**
+   (Phase G) — compte TOUT règlement Caisse dont le solde n'est pas nul,
+   y compris ceux pour lesquels aucun retour n'a même encore été déclaré.
+   En pratique, la quasi-totalité des règlements Caisse récents y
+   apparaîtront tant que leur cycle de fonds remis n'est pas bouclé. C'est
+   la définition littérale donnée pour cette phase — à valider que ce
+   comportement correspond bien à l'intention du cahier des charges, ou si
+   un délai de grâce (ex: N jours après confirmation) devrait s'appliquer
+   avant qu'un règlement n'y apparaisse.
+7. **Feuille "Suivi budgétaire" vide pour toute donnée récente** (Phase H,
+   conséquence directe du point 1) — une note explicite y a été ajoutée,
+   mais son sort final (conserver, retirer, ou remplacer par autre chose)
+   dépend entièrement de la décision sur Catégorie/Objet/Budget.
+8. **Pièce jointe toujours non implémentée** (Ticket 1, antérieur à la
+   refonte V1 mais toujours vrai) — champ visuellement présent mais
+   désactivé partout où il apparaît (demande standard, dépense directe) :
+   aucune solution de stockage de fichiers choisie à ce jour.
+
 ## Module Trésorerie : Ticket 1 — Création de demande (Collaborateur)
 
 **Statut : terminé.** Routes sous
