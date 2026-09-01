@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { Badge, Button, DataTable } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import type { NatureDepenseDirecte, StatutDemande, TypeDemande } from "@/generated/prisma/client";
 
@@ -12,6 +13,7 @@ interface DemandeRow {
   reference: string;
   description: string;
   montant: number;
+  devise: string;
   statut: StatutDemande;
   createdAt: Date;
   typeDemande: TypeDemande;
@@ -57,7 +59,7 @@ export function MesDemandesTable({ demandes }: { demandes: DemandeRow[] }) {
           header: "Montant",
           sortable: true,
           accessor: (d) => d.montant,
-          render: (d) => `${d.montant.toLocaleString("fr-FR")} FCFA`,
+          render: (d) => formatMontantDevise(d.montant, d.devise),
         },
         {
           key: "statut",

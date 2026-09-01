@@ -47,8 +47,8 @@ model User {
 }
 
 model Role {
-  id          String            @id @default(cuid())
-  name        String            @unique
+  id          String           @id @default(cuid())
+  name        String           @unique
   description String?
   users       User[]
   permissions RolePermission[]
@@ -170,16 +170,22 @@ enum TypeJustification {
 }
 
 model Categorie {
-  id       String    @id @default(cuid())
-  label    String    @unique
+  id       String  @id @default(cuid())
+  label    String  @unique
   /// Soft-delete : une catégorie désactivée n'apparaît plus dans les
   /// sélecteurs de nouvelle catégorisation ni les filtres de reporting,
   /// mais reste affichée normalement sur les demandes qui la référencent
   /// déjà (jamais de suppression définitive — Categorie/Objet sont
   /// potentiellement référencés par des Demande existantes).
-  isActive Boolean   @default(true)
+  isActive Boolean @default(true)
   objets   Objet[]
-  demandes Demande[]
+
+  /// Deux usages distincts sur Demande depuis le formulaire "Demande
+  /// d'Achat" : la catégorie d'achat (`Demande.categorie`) et le poste
+  /// budgétaire concerné (`Demande.posteBudgetaire`) pointent tous deux
+  /// vers cette table — d'où les deux relations nommées.
+  demandes            Demande[] @relation("DemandeCategorie")
+  demandesPosteBudget Demande[] @relation("DemandePosteBudgetaire")
 }
 
 model Objet {
@@ -226,15 +232,28 @@ model Demande {
   /// (nom du fournisseur/prestataire, ou "SIM ASSURANCES CI" pour ENTREPRISE).
   beneficiaireNom    String?
 
-  /// Concept Catégorie/Objet/Budget retiré du cahier des charges V1 —
-  /// champs conservés en base (nullables, non utilisés par le flux
-  /// principal) le temps de décider de leur sort avec le maître de stage.
-  /// Voir CLAUDE.md "Refonte V1 en cours".
+  /// Catégorie d'achat, choisie à la création dans le formulaire "Demande
+  /// d'Achat" (réactivée : le cahier des charges V1 l'avait sortie du flux
+  /// principal, elle y revient comme champ d'en-tête — voir CLAUDE.md
+  /// "Formulaire Demande d'Achat"). `objetId`/`budgetDisponible` restent
+  /// conservés nullables, non utilisés par ce formulaire.
   categorieId      String?
-  categorie        Categorie? @relation(fields: [categorieId], references: [id])
+  categorie        Categorie? @relation("DemandeCategorie", fields: [categorieId], references: [id])
   objetId          String?
   objet            Objet?     @relation(fields: [objetId], references: [id])
   budgetDisponible Decimal?   @db.Decimal(14, 2)
+
+  /// Champs d'en-tête du formulaire "Demande d'Achat".
+  /// `posteBudgetaire` (facultatif) réutilise la table Categorie.
+  /// `devise` : code ISO (XOF par défaut, EUR, USD).
+  dateLivraisonSouhaitee DateTime?
+  posteBudgetaireId      String?
+  posteBudgetaire        Categorie? @relation("DemandePosteBudgetaire", fields: [posteBudgetaireId], references: [id])
+  devise                 String     @default("XOF")
+
+  /// Lignes d'articles (Libellé / Nombre / Prix unitaire). `montant` ci-dessus
+  /// est la somme des (quantite × prixUnitaire) — jamais saisi directement.
+  lignes LigneDemande[]
 
   motifRejet   String?
   motifCloture String?
@@ -254,6 +273,22 @@ model PieceJointe {
   url       String
   demandeId String
   demande   Demande  @relation(fields: [demandeId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+/// Ligne d'article d'une Demande d'Achat ("Tableau des articles" du
+/// formulaire de création). Le `montant` de la Demande est la somme des
+/// (quantite × prixUnitaire) de ses lignes — recalculé côté serveur,
+/// jamais saisi directement (même principe que le solde de caisse).
+model LigneDemande {
+  id           String  @id @default(cuid())
+  libelle      String
+  quantite     Int
+  prixUnitaire Decimal @db.Decimal(14, 2)
+
+  demandeId String
+  demande   Demande @relation(fields: [demandeId], references: [id])
+
   createdAt DateTime @default(now())
 }
 
@@ -281,7 +316,7 @@ model Reglement {
 /// caisse ne stocke plus un montant dépensé agrégé unique, mais une liste de
 /// `DepenseLigne` détaillées.
 model RetourCaisse {
-  id String @id @default(cuid())
+  id                String         @id @default(cuid())
   /// CALCULÉ AUTOMATIQUEMENT, jamais saisi manuellement (voir
   /// `getMontantARetourner` dans src/lib/tresorerie.ts) : montant du
   /// règlement lié moins la somme des `DepenseLigne` déclarées. Choix
