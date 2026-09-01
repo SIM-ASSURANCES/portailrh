@@ -40,6 +40,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
         "pointage.voir_dashboard_rh",
         "pointage.voir_reporting",
       ].some((permission) => hasPermission(session, permission))}
+      canAccessPointageRH={
+        hasPermission(session, "pointage.consulter_tous") ||
+        hasPermission(session, "pointage.pointage_exceptionnel") ||
+        hasPermission(session, "pointage.corriger_pointage") ||
+        hasPermission(session, "pointage.gerer_horaires") ||
+        hasPermission(session, "pointage.voir_dashboard_rh") ||
+        hasPermission(session, "pointage.voir_reporting")
+      }
     >
       {children}
     </AppShell>

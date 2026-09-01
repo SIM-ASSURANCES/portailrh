@@ -161,6 +161,12 @@ const PATHS = {
       <path d="m15 5 4 4" />
     </>
   ),
+  copy: (
+    <>
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <rect width="8" height="8" x="8" y="2" rx="1" />
+    </>
+  ),
   "plus-circle": (
     <>
       <circle cx="12" cy="12" r="10" />

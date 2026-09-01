@@ -12,9 +12,8 @@ retours de caisse.
 
 Un deuxième module est en préparation : **Pointage RH**, suivi des
 arrivées/départs, retards et absences du personnel. Les fondations de
-données sont en place (voir
-[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données)) ;
-aucun écran n'est encore développé.
+données et le parcours de pointage collaborateur par QR code sont en place
+(voir [Module Pointage RH : fondations de données et parcours QR](#module-pointage-rh--fondations-de-données-et-parcours-qr)).
 
 ## Stack technique
 
@@ -2867,14 +2866,13 @@ est entièrement complété** — sections 2 à 15 du cahier des charges :
 demande → catégorisation → validation → règlement → retour → réception →
 clôture → dashboard → reçu PDF → reporting/export.
 
-## Module Pointage RH : fondations de données
+## Module Pointage RH : fondations de données et parcours QR
 
-**Statut : fondations posées, aucun écran développé.** Modèles, enums,
-module, permissions et rôle sont en place dans le schéma et le seed —
-le deuxième développeur peut démarrer les écrans directement dessus, sans
-rien changer au Socle. Suivre le même pattern que Trésorerie : routes sous
-`src/app/(dashboard)/pointage/`, composants métier sous
-`src/components/pointage/`.
+**Statut : tickets 1 et 2 implémentés.** Les modèles, enums, module,
+permissions et rôle sont en place dans le schéma. Le parcours collaborateur
+est disponible à `/pointage` et la destination du QR code à `/pointage/qr`.
+Les pointages et les scans QR authentifiés sont journalisés dans
+`HistoriqueEntry`.
 
 Modèles (dans [prisma/schema.prisma](prisma/schema.prisma), section
 "MODULE 2 — POINTAGE RH") :
@@ -2920,6 +2918,134 @@ Module et permissions (seed) :
   (accès admin via `isAdmin()`, pas via permissions — voir
   [Administration](#administration-console-admin)).
 - Compte de test : `rh@simassurances.test` / `password123`.
+
+### Tester le parcours QR
+
+1. Démarrer l'application avec `npm run dev`. Si le port 3000 est déjà pris,
+  utiliser le port indiqué par Next.js.
+2. Depuis un navigateur, ouvrir `/pointage/qr`.
+3. Vérifier qu'un utilisateur non connecté est envoyé vers `/login` avec un
+  `callbackUrl` contenant `/pointage?source=QR_CODE`.
+4. Se connecter avec `collaborateur@simassurances.test` / `password123`.
+5. Vérifier le retour automatique vers `/pointage?source=QR_CODE`, l'affichage
+  du bandeau « Pointage par QR code », puis valider une arrivée ou un départ.
+6. Vérifier que l'écran affiche immédiatement la date et l'heure retournées
+  par le serveur. En cas d'arrivée après l'horaire de référence, le motif
+  de retard doit être obligatoire et les minutes doivent être calculées.
+
+Pour tester avec un téléphone connecté au même réseau que le PC, le QR code
+doit contenir l'URL réseau du PC, par exemple
+`http://192.168.1.22:3000/pointage/qr`, et non `localhost`. Le port réel est
+celui affiché par `npm run dev`.
+
+En développement, l'adresse réseau du PC est aussi déclarée dans
+`next.config.ts` via `allowedDevOrigins` pour autoriser les ressources HMR
+(`/_next/hmr`) chargées depuis le téléphone. Si l'adresse IP du PC change,
+mettre à jour cette liste et redémarrer Next.js.
+
+Après un pointage réussi, contrôler dans PostgreSQL qu'il existe :
+
+- une ligne `Pointage` avec `source = QR_CODE` et l'heure serveur ;
+- une ligne `HistoriqueEntry` avec `entity = Pointage`, le même `entityId`
+  et `action = CREATE` ;
+- une ligne `HistoriqueEntry` avec `entity = PointageQR` et `action = SCAN`
+  pour un scan effectué avec une session existante.
+
+La création du pointage et sa ligne d'historique sont réalisées dans une
+transaction Prisma : elles réussissent ou échouent ensemble. Un scan anonyme
+est redirigé vers la connexion et ne peut pas être attribué à un utilisateur ;
+le pointage réalisé après connexion, lui, est toujours journalisé.
+
+### Contrôle du terminal et du réseau (Ticket 3)
+
+Le serveur détecte le terminal via l'en-tête `User-Agent` avant d'afficher les
+paramètres de pointage : téléphone (`TELEPHONE`) ou ordinateur
+(`ORDINATEUR`). Un ordinateur n'affiche pas le formulaire et ne peut pas
+pointer si son adresse IP n'est pas présente dans `ALLOWED_OFFICE_IPS`, une
+liste séparée par des virgules. Le même contrôle est répété dans la Server
+Action : une valeur `source` modifiée dans le navigateur ne permet donc pas de
+contourner la restriction. Un refus réseau authentifié est historisé avec
+`entity = PointageAccess` et `action = ACCESS_DENIED`.
+
+Pour tester ce ticket en local, définir par exemple
+`ALLOWED_OFFICE_IPS=127.0.0.1` dans `.env`, redémarrer Next.js, puis ouvrir
+`/pointage` sur le PC. Pour tester un refus, retirer l'adresse de la liste.
+Pour un téléphone, utiliser l'URL réseau du PC et le port de Next.js ; le
+téléphone est détecté séparément et n'est pas soumis à la restriction IP du
+poste ordinateur.
+
+Les liens RH tels que `/pointage/rh` peuvent encore retourner `404` tant que
+les tickets d'espace RH (à partir du ticket 8) ne sont pas implémentés. Le
+parcours collaborateur à tester reste `/pointage` ou `/pointage/qr`.
+
+### Intégration du Module Pointage RH (fusion du 2026-09-01)
+
+Le binôme en charge de ce module (`origin/thierry-kouame`) a poussé les
+écrans ci-dessus ; fusionnés dans `aristide` le 2026-09-01. **Cette
+sous-section documente uniquement l'intégration technique côté Socle
+(navigation, dashboard général, permissions) — la logique métier du
+Pointage (formulaires, Server Actions, calculs de retard, etc.) reste hors
+périmètre de cette documentation, à la charge du binôme qui la maintient.**
+
+Vérifié au moment de la fusion : les routes suivantes répondent réellement
+(200), les autres 404 encore —
+
+| Route | État |
+|---|---|
+| `/pointage/pointer` (et son alias `/pointage`, qui y redirige) | 200 — réel |
+| `/pointage/historique` | 200 — réel |
+| `/pointage/rh` | 200 — réel, mais contenu "en construction" |
+| `/pointage/rh/generer-qr` | 200 — réel |
+| `/pointage/rh/pointages`, `/retards`, `/reporting`, `/corrections`, `/horaires` | 404 — pas encore construits |
+
+Conséquences côté Socle :
+
+- **`nav.ts`** distingue désormais deux permissions plutôt qu'une seule :
+  `hasPointageAccess` (au moins une permission `pointage.*`, y compris les
+  deux permissions de base du Collaborateur) affiche la branche "Pointage
+  de Présence" et son groupe "Mon espace" (Pointer, Mon historique) ;
+  `canAccessPointageRH` (les 6 permissions RH uniquement) ajoute en plus le
+  groupe "RH", où seuls "Présence du jour" et "Générer un QR code" sont de
+  vrais liens — les 5 autres restent `comingSoon: true` (voir "Tâche 5" plus
+  haut) puisque leurs routes 404 aujourd'hui. Un ancien tableau
+  `NAV_BRANCHES` mort (jamais importé nulle part, contredisant le
+  commentaire juste au-dessus qui expliquait pourquoi ces mêmes liens
+  avaient été retirés lors de l'audit des habilitations) réapparu comme
+  artefact de fusion a été supprimé au passage.
+- **Dashboard général** (`(dashboard)/page.tsx`) : la carte "Pointage RH"
+  pointe désormais vers `/pointage/pointer` (écran réel, sans garde de
+  permission côté route à ce jour — accessible à toute session
+  authentifiée) au lieu du badge "Bientôt disponible" fixe précédent.
+- **`src/lib/auth.ts`** : la branche `origin/thierry-kouame` ajoutait un
+  bypass `if (session?.role === "Admin") return true;` dans
+  `hasPermission()`. **Volontairement non repris à la fusion** : ceci
+  contredit directement le choix documenté dans "Administration" plus haut
+  (`hasPermission()` doit rester la seule source de vérité pour les
+  permissions de module ; le bypass Admin est scopé à `isAdmin()`/`/admin`
+  uniquement, jamais aux modules métier). Aucun écran Pointage actuel ne
+  s'appuyait sur ce bypass (vérifié : aucun appel à `hasPermission` dans ce
+  module ne dépend d'un accès Admin implicite). **Point à confirmer avec le
+  binôme concerné** si un besoin d'accès Admin transverse au Pointage RH
+  apparaît plus tard — la bonne solution serait alors un accès explicite,
+  pas un bypass générique dans `hasPermission()`.
+- Deux fichiers volumineux non liés au code applicatif sont arrivés avec
+  cette fusion (`CAHIER DE CHARGES  POINTAGE.docx`, `backups/sim_bd-before-pointage-*.dump`,
+  22 et 25 Ko) — conservés tels quels (petite taille, pas de risque de
+  gonflement du dépôt), mais un dump de base de données committé dans le
+  dépôt reste une pratique à éviter à l'avenir.
+
+Vérifié explicitement à la fusion : `npx tsc --noEmit` et `npx eslint .`
+sans erreur sur l'ensemble du projet (`prisma migrate status` déjà à jour —
+aucune migration nouvelle nécessaire, les modèles Pointage RH étaient déjà
+en base depuis les fondations). Parcours navigateur réel : cycle Trésorerie
+complet (connexion Collaborateur → création d'une demande d'achat →
+apparition dans "Mes demandes" → dashboard général) sans régression ni
+erreur console ; connexion Finance/RH/Admin/DG sans erreur ; les 4 routes
+Pointage réelles répondent 200 pour un compte RH, les 5 routes RH pas
+encore construites répondent 404 comme attendu (et ne sont plus liées nulle
+part dans la sidebar) ; `/admin` toujours accessible à l'Admin après le
+retrait du bypass ci-dessus. Donnée de test nettoyée après vérification,
+serveur `next dev` arrêté.
 
 ## Authentification
 
@@ -3153,13 +3279,18 @@ composants métier sous `src/components/tresorerie/`, composants `ui/`,
 trésorerie" sur le dashboard — un patron directement réutilisable pour tout
 futur module métier du portail (à commencer par Pointage RH ci-dessous).
 
-Les **fondations de données du Module Pointage RH** sont posées de la même
-façon (voir
-[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données))
+Les **fondations de données du Module Pointage RH** ainsi que le parcours
+collaborateur (pointer, historique, QR code) et les premiers écrans RH sont
+en place (voir
+[Module Pointage RH : fondations de données et parcours QR](#module-pointage-rh--fondations-de-données-et-parcours-qr) et
+[Intégration du Module Pointage RH (fusion du 2026-09-01)](#intégration-du-module-pointage-rh-fusion-du-2026-09-01))
 — rôle RH, module `pointage`, ses 8 permissions, modèles `Pointage` /
 `CorrectionPointage` / `Absence` / `ParametrageHoraire`, compte de test.
-Aucun écran n'est encore développé pour ce module : c'est le prochain
-chantier du deuxième développeur, sur le même modèle que Trésorerie.
+Les prochains écrans à développer (côté binôme en charge de ce module)
+concernent le dashboard RH détaillé, le pointage exceptionnel, les
+corrections de pointage, la gestion des absences, le reporting et l'export
+— non détaillés ici (hors périmètre de cette documentation, voir la
+sous-section d'intégration ci-dessus).
 
 ## Polish visuel global (post-Refonte V1)
 
@@ -3391,12 +3522,15 @@ associés) ; serveur `next dev` arrêté après vérification.
 
 ### Signalé pour le Module Pointage RH (hors périmètre, non corrigé)
 
-Aucune route de ce module n'a d'écran développé à ce jour (voir
-[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données)) :
-rien n'a donc pu être audité ni corrigé ici. À traiter par le binôme en
-charge de ce module au moment où ses écrans seront construits — en
-particulier `DataTable` (désormais réutilisable telle quelle en mode carte
-mobile) sera probablement le composant de liste à privilégier pour rester
+Aucune route de ce module n'avait d'écran développé au moment de cet audit :
+rien n'avait donc pu être audité ni corrigé ici. **Mise à jour (fusion du
+2026-09-01)** : ce n'est plus vrai — voir
+[Module Pointage RH : fondations de données et parcours QR](#module-pointage-rh--fondations-de-données-et-parcours-qr)
+pour l'état actuel (parcours collaborateur QR + tickets 1/2 réellement
+construits). L'audit responsive ci-dessus n'a pas été repris sur ces
+nouveaux écrans (hors périmètre de cette fusion, qui n'a vérifié que
+l'intégration technique — voir plus bas) ; `DataTable` reste le composant
+de liste à privilégier pour toute future liste Pointage RH, pour rester
 cohérent avec le reste du portail.
 
 ## Clarification des dashboards par rôle (dashboard général vs dashboards métier)
@@ -3730,8 +3864,8 @@ début de la session). Serveur `next dev` arrêté après vérification
 
 **Module Pointage RH dans son intégralité** — fondations de données
 posées (modèles, module, 8 permissions, rôle RH, compte de test — voir
-[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données)),
-**aucun écran construit**. Concrètement aujourd'hui :
+[Module Pointage RH : fondations de données et parcours QR](#module-pointage-rh--fondations-de-données-et-parcours-qr)),
+**aucun écran construit**. Concrètement à ce moment de l'audit :
 
 - La branche "Pointage de Présence" n'apparaît dans la sidebar que pour une
   session ayant au moins une permission `pointage.*` (Collaborateur, RH,
@@ -3744,6 +3878,18 @@ posées (modèles, module, 8 permissions, rôle RH, compte de test — voir
 - Aucune route sous `/pointage/*` ne répond aujourd'hui (aucun `page.tsx`
   n'existe) : normal, cohérent avec l'absence totale d'écran, jamais
   exposé nulle part comme un lien cliquable dans l'état actuel de l'audit.
+
+**Mise à jour (fusion du Module Pointage RH, 2026-09-01)** : ce constat ne
+vaut plus tel quel. "Pointer" et "Mon historique" sont désormais des écrans
+réels (accessibles à toute session ayant une permission `pointage.*`,
+Collaborateur inclus), de même que "Présence du jour" et "Générer un QR
+code" côté RH. Les 5 autres items RH (Pointages, Retards & absences,
+Reporting, Corrections, Horaires) n'ont, eux, toujours pas d'écran et
+restent donc en "Bientôt disponible" — le même mécanisme documenté ci-dessus
+continue de s'appliquer, item par item plutôt que branche entière. Voir
+"Intégration du Module Pointage RH (fusion du 2026-09-01)" plus loin pour
+le détail de ce qui a changé côté navigation/dashboard général à cette
+occasion.
 
 **Autre point resté en l'état, hors périmètre de cet audit (déjà signalé
 au point 1 de la synthèse "Points d'interprétation en attente")** :

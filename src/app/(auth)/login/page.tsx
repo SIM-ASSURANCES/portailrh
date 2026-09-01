@@ -12,14 +12,16 @@ async function authenticate(formData: FormData) {
   "use server";
 
   try {
+    const callbackUrl = String(formData.get("callbackUrl") || "/");
     await signIn("credentials", {
       email: formData.get("email"),
       password: formData.get("password"),
-      redirectTo: "/",
+      redirectTo: callbackUrl.startsWith("/") ? callbackUrl : "/",
     });
   } catch (error) {
     if (error instanceof AuthError) {
-      redirect("/login?error=1");
+      const callbackUrl = String(formData.get("callbackUrl") || "/");
+      redirect(`/login?error=1&callbackUrl=${encodeURIComponent(callbackUrl)}`);
     }
     throw error;
   }
@@ -28,9 +30,9 @@ async function authenticate(formData: FormData) {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; callbackUrl?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, callbackUrl } = await searchParams;
 
   return (
     <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-app-bg px-4 py-12">
@@ -74,6 +76,7 @@ export default async function LoginPage({
             required
             autoComplete="current-password"
           />
+          <input type="hidden" name="callbackUrl" value={callbackUrl ?? "/"} />
 
           <LoginSubmitButton />
         </form>

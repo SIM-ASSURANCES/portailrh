@@ -23,8 +23,10 @@ interface AppShellProps {
   canVoirReporting?: boolean;
   /** Affiche "Nouvelle dépense directe" (treso.saisir_depense_directe, Phase F). */
   canSaisirDepenseDirecte?: boolean;
-  /** Affiche la branche "Pointage de Présence" (au moins une permission pointage.*), items en "Bientôt disponible". */
+  /** Affiche la branche "Pointage de Présence" et "Mon espace" (au moins une permission pointage.*). */
   hasPointageAccess?: boolean;
+  /** Ajoute le groupe "RH" du Pointage (permissions RH uniquement). */
+  canAccessPointageRH?: boolean;
   children: ReactNode;
 }
 
@@ -47,6 +49,7 @@ export function AppShell({
   canVoirReporting = false,
   canSaisirDepenseDirecte = false,
   hasPointageAccess = false,
+  canAccessPointageRH = false,
   children,
 }: AppShellProps) {
   // Rendu initial (serveur + première passe client) toujours « déployé »
@@ -93,6 +96,7 @@ export function AppShell({
         canVoirReporting={canVoirReporting}
         canSaisirDepenseDirecte={canSaisirDepenseDirecte}
         hasPointageAccess={hasPointageAccess}
+        canAccessPointageRH={canAccessPointageRH}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />
