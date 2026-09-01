@@ -130,9 +130,10 @@ export async function getSession(): Promise<{
  * retourne alors `false` sans lever d'erreur.
  */
 export function hasPermission(
-  session: { permissions: string[] } | null,
+  session: { role?: string; permissions: string[] } | null,
   permissionKey: string
 ): boolean {
+  if (session?.role === "Admin") return true;
   return session?.permissions.includes(permissionKey) ?? false;
 }
 

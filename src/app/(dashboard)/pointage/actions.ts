@@ -228,7 +228,7 @@ import { z } from "zod";
 import { getSession } from "@/lib/auth";
 import {prisma} from "@/lib/prisma";
 import { headers } from "next/headers";
-import { timeToMinutes } from "@/lib/pointage-utils";
+import { timeToMinutes, isOfficeIpAllowed } from "@/lib/pointage-utils";
 import { revalidatePath } from "next/cache";
 import { ActionState, fieldErrorsFromZod } from "@/lib/validation";
 
@@ -255,8 +255,16 @@ export async function enregistrerPointageAction(
   const headersList = await headers();
   const ip = headersList.get("x-forwarded-for") || "IP_INCONNUE";
 
-  // TODO pour le Ticket 3 : Insérer ici la vérification stricte de l'IP 
-  // si source === "ORDINATEUR" avec ALLOWED_OFFICE_IPS.
+  // Vérification de l'IP pour le Ticket 3
+  if (source === "ORDINATEUR") {
+    const whitelistEnv = process.env.ALLOWED_OFFICE_IPS || "";
+    if (!isOfficeIpAllowed(ip, whitelistEnv)) {
+      return { 
+        status: "error", 
+        message: "Le pointage depuis un ordinateur n'est autorisé que depuis le réseau de l'entreprise." 
+      };
+    }
+  }
 
   // 2. Vérification côté serveur des règles d'horaires
   const parametrage = await prisma.parametrageHoraire.findFirst({
