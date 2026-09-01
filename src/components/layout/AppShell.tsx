@@ -11,6 +11,8 @@ interface AppShellProps {
   role: string;
   /** Affiche la section « Administration » dans la sidebar (rôle Admin). */
   canAdmin?: boolean;
+  /** Affiche "Demandes" (treso.creer_demande OU treso.declarer_retour). */
+  canAccesDemandes?: boolean;
   /** Affiche "Demandes à traiter (Finance)" (categoriser_demande OU valider_demande). */
   canAccesFinanceDemandes?: boolean;
   /** Affiche "Retours en attente" (treso.receptionner_retour). */
@@ -23,6 +25,8 @@ interface AppShellProps {
   canSaisirDepenseDirecte?: boolean;
   /** Affiche la section RH du Pointage (pointage.* permissions). */
   canAccessPointageRH?: boolean;
+  /** Affiche la branche "Pointage de Présence" (au moins une permission pointage.*), items en "Bientôt disponible". */
+  hasPointageAccess?: boolean;
   children: ReactNode;
 }
 
@@ -38,12 +42,14 @@ export function AppShell({
   user,
   role,
   canAdmin = false,
+  canAccesDemandes = false,
   canAccesFinanceDemandes = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
   canVoirReporting = false,
   canSaisirDepenseDirecte = false,
   canAccessPointageRH = false,
+  hasPointageAccess = false,
   children,
 }: AppShellProps) {
   // Rendu initial (serveur + première passe client) toujours « déployé »
@@ -83,11 +89,15 @@ export function AppShell({
         collapsed={collapsed}
         onToggleCollapse={toggleCollapse}
         canAdmin={canAdmin}
+        canAccesDemandes={canAccesDemandes}
         canAccesFinanceDemandes={canAccesFinanceDemandes}
         canReceptionnerRetour={canReceptionnerRetour}
         canVoirDashboardFinance={canVoirDashboardFinance}
         canVoirReporting={canVoirReporting}
-        canSaisirDepenseDirecte={canSaisirDepenseDirecte}        canAccessPointageRH={canAccessPointageRH}        mobileOpen={mobileOpen}
+        canSaisirDepenseDirecte={canSaisirDepenseDirecte}
+        canAccessPointageRH={canAccessPointageRH}
+        hasPointageAccess={hasPointageAccess}
+        mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />
       <div className="flex min-w-0 flex-1 flex-col">

@@ -1563,6 +1563,188 @@ pratique, pas seulement en théorie.
 nettoyées après coup (0 demande restante). Serveur `next dev` arrêté après
 vérification.
 
+## Formulaire Demande d'Achat — en-tête + lignes d'articles
+
+Refonte du formulaire de création de demande (`treso/demandes/nouvelle`,
+branche « Demande d'Achat ») d'après une maquette fournie : un bloc
+**en-tête** + un **tableau des articles** dynamique, à la place de l'ancien
+couple `montant` + `description`.
+
+### Schéma (migration `demande_achat_entete_lignes`)
+
+- **`Demande.dateLivraisonSouhaitee`** (`DateTime?`) — date de livraison
+  souhaitée, facultative.
+- **`Demande.devise`** (`String`, défaut `"XOF"`) — code ISO. Options
+  gérées dans [devise.ts](src/components/tresorerie/devise.ts) (`XOF`/`EUR`/
+  `USD`) ; `formatMontantDevise(montant, devise)` pour l'affichage.
+- **`Demande.posteBudgetaireId`** → `Categorie` (relation nommée
+  `"DemandePosteBudgetaire"`). Le « poste budgétaire concerné (facultatif) »
+  **réutilise la table `Categorie`**, comme la catégorie d'achat — d'où les
+  deux relations `Demande` ↔ `Categorie` (`"DemandeCategorie"` +
+  `"DemandePosteBudgetaire"`), toutes deux nommées.
+- **`LigneDemande`** (`libelle`, `quantite` Int, `prixUnitaire` Decimal,
+  `demandeId`) — les articles. `Demande.montant` = **somme des
+  `quantite × prixUnitaire`**, recalculée côté serveur, jamais saisie
+  (même principe que le solde de caisse). L'aperçu « Total général » du
+  formulaire n'est qu'un calcul client.
+
+### Réactivation de « Catégorie d'achat » à la création
+
+La refonte V1 avait sorti Catégorie/Objet/Budget du flux principal (voir
+[Refonte V1 en cours](#refonte-v1-en-cours)) tout en gardant la table et le
+CRUD `admin/categories`. Ce formulaire **remet la catégorie d'achat comme
+champ d'en-tête obligatoire à la création** (alimentée par les
+`Categorie` actives). `objetId`/`budgetDisponible` restent inutilisés.
+
+### Bénéficiaire (choix acté avec l'utilisateur)
+
+Le select « Entité bénéficiaire » liste les 4 valeurs de `BeneficiaireType`
+([beneficiaire.ts](src/components/tresorerie/beneficiaire.ts)). Mapping à la
+création (`creerDemandeAction`), pas encore de sélecteur de tiers :
+
+| Choix | `beneficiaireUserId` | `beneficiaireNom` |
+|---|---|---|
+| Collaborateur / Stagiaire | créateur connecté | `null` |
+| SIM Assurances CI | `null` | `"SIM Assurances CI"` |
+| Fournisseur / prestataire | `null` | `null` (champ nom à ajouter plus tard) |
+
+### Affichage (liste + détail)
+
+`formatMontantDevise(montant, devise)` est l'unique point de formatage :
+`XOF` → suffixe usuel « FCFA » (aucune régression sur l'existant), toute
+autre devise → code ISO (« 900 EUR »). Propagé sur « Mes demandes »
+([MesDemandesTable.tsx](<src/app/(dashboard)/treso/demandes/MesDemandesTable.tsx>))
+et le détail Collaborateur
+([[id]/page.tsx](<src/app/(dashboard)/treso/demandes/[id]/page.tsx>) —
+montant / montant validé / restant à valider + tableau « Articles » +
+poste budgétaire + date de livraison). **Pas encore propagé** : écrans
+Finance (`treso/finance/demandes/[id]`, tables Finance) et reçu/bon de
+caisse PDF, qui affichent toujours « FCFA » en dur.
+
+### Form ↔ action
+
+`DemandeForm` est un Client Component à état local (`useState` pour
+l'en-tête + `LigneEdit[]` pour les lignes, ≥ 1 obligatoire) qui appelle
+**directement** `creerDemandeAction(input)` via `useTransition` — **pas**
+`<form action={...}>` : un tableau de lignes ne se sérialise pas en
+`FormData` (même pattern que `RetourCaisseForm`, Phase D). L'action
+revérifie `treso.creer_demande`, valide en zod (en-tête + `z.array`),
+recompose `montant`, contrôle que la catégorie existe et est active, puis
+crée `Demande` + `lignes` (nested `create`) + `HistoriqueEntry` dans la
+boucle de retry sur collision de référence déjà en place.
+
+### Fusion dans `aristide` (statut : terminée, vérifiée)
+
+Ce formulaire a été développé par le maître de stage directement sur
+`main` (commit `e087a9d`, construit sur l'état de `aristide` **avant**
+l'audit d'habilitations qui le suit dans l'historique — les deux branches
+avaient donc légèrement divergé, pas `main = aristide + son commit` comme
+supposé initialement), puis fusionné dans `aristide` via `git merge
+origin/main` (`--no-edit`, stratégie `ort`). **Aucun conflit** : les deux
+branches ne touchaient aucune ligne commune, à une exception près
+(`treso/demandes/page.tsx`, modifié par les deux — sur des lignes
+disjointes, fusion automatique propre) — un simple `git merge` était donc
+la bonne stratégie, pas besoin de cherry-pick ni de reconstruction manuelle.
+
+**Point clé qui a évité une adaptation en cascade** : `Demande.montant`
+reste une colonne réelle, toujours peuplée (désormais calculée côté
+serveur comme la somme des lignes, plutôt que saisie) — jamais remplacée
+par une relation pure vers `LigneDemande`. Conséquence vérifiée
+explicitement : **aucune fonction ni écran qui lisait déjà `demande.montant`
+n'a eu besoin d'être modifié** — `getResteARegler`/`getTotalRegle`/
+`calculerStatutDemande` (`src/lib/tresorerie.ts`), le dashboard Finance, le
+reporting, le reçu PDF et le bon de caisse continuent de lire ce même champ
+exactement comme avant Phase A. Le cycle complet (validation partielle →
+règlement → fonds remis → clôture) a été rejoué de bout en bout sur une
+demande créée par ce nouveau formulaire pour le confirmer (voir
+"Vérifié explicitement" ci-dessous).
+
+**Deux bugs réels trouvés et corrigés pendant l'intégration** (pas de
+simple résolution mécanique de conflit Git — les deux n'apparaissaient pas
+comme des conflits, seulement à l'usage réel du formulaire) :
+
+1. **Couleurs Tailwind brutes dans `DemandeForm.tsx`** (`text-slate-900`,
+   `text-slate-500`, `text-slate-400`, `border-slate-200`, `border-slate-100`)
+   — viole la règle du projet ("ne jamais coder une couleur en dur",
+   déjà appliquée partout ailleurs y compris lors du polish visuel global
+   post-Refonte V1). Remplacées par les tokens sémantiques déjà en usage
+   sur cette même page côté détail ([id]/page.tsx, écrit par le même
+   commit avec les bons tokens) : `text-foreground`, `text-muted-foreground`,
+   `border-border`. Au passage, le total par ligne du tableau d'articles
+   (jusque-là un nombre brut sans devise) utilise désormais
+   `formatMontantDevise` comme le total général, pour rester cohérent.
+2. **`<Select>` utilisés en mode contrôlé (`value=`) dans `DemandeForm.tsx`**
+   (Entité bénéficiaire, Catégorie d'achat, Poste budgétaire, Devise) — le
+   composant partagé `Select` (`src/components/ui/Select.tsx`) fixe
+   toujours `defaultValue` en interne (ligne 43), donc lui passer `value`
+   en plus produit un vrai avertissement React ("Select elements must be
+   either controlled or uncontrolled"), **constaté dans la console du
+   navigateur pendant la vérification**, exactement le piège déjà
+   documenté à plusieurs reprises dans ce fichier (Ticket 2, Phase D,
+   Phase F : "toujours `defaultValue`, jamais `value`, sur ce composant").
+   Corrigé en remplaçant les 4 `value={...}` par `defaultValue={...}` —
+   aucune perte de fonctionnalité, ces champs n'ont jamais eu besoin d'être
+   resynchronisés depuis l'extérieur après le montage initial.
+
+**Volontairement non retouché**, conformément à la portée déjà actée par
+le commit d'origine : les écrans Finance
+(`treso/finance/demandes/[id]/page.tsx`, tables Finance) et les deux PDF
+(reçu, bon de caisse) affichent toujours « FCFA » en dur, sans passer par
+`formatMontantDevise`. Sans conséquence pratique tant que `devise` vaut
+`"XOF"` par défaut sur toute demande créée à ce jour, mais deviendrait
+trompeur (affichage "FCFA" sur un montant réellement en EUR/USD) le jour
+où quelqu'un choisit une autre devise dans le formulaire — à reprendre
+dans une phase dédiée si ce cas d'usage se confirme. De même, le mapping
+bénéficiaire "Fournisseur / prestataire" reste sans nom de tiers
+(`beneficiaireNom: null`) faute de champ dédié dans ce formulaire — reste
+un point ouvert déjà signalé par le commit d'origine, pas une régression
+introduite par la fusion.
+
+**Vérifié explicitement (fusion)** — `npx prisma migrate dev` a appliqué la
+migration `demande_achat_entete_lignes` sans avertissement de perte de
+données (relue avant application : uniquement des `ADD COLUMN` nullables
+ou à défaut, et une nouvelle table — aucun `DROP`) ; `npx prisma generate`
+requis en plus (le client généré ne se régénère pas tout seul après une
+migration appliquée hors `next dev`, constaté par des erreurs de type
+`Unknown argument devise` avant régénération explicite). `npx tsc --noEmit`
+et `npx eslint .` sans erreur après la fusion et les deux corrections
+ci-dessus.
+
+Parcours complet piloté par un vrai navigateur Chromium headless
+(Playwright, non ajouté au projet — même méthode que toutes les phases
+précédentes), zéro erreur console sur l'ensemble du parcours :
+
+1. Collaborateur crée une demande via le nouveau formulaire : catégorie
+   d'achat "Carburant", devise XOF, 2 lignes (10 × 2 500 FCFA + 4 × 15 000
+   FCFA) → total calculé et affiché **85 000 FCFA**, cohérent côté client
+   et après création (liste "Mes demandes" et détail, tableau "Articles"
+   avec les 2 lignes).
+2. Finance ouvre la demande (catégorie et montant bien visibles), valide
+   **partiellement** 50 000 FCFA → statut `Partiellement validée`, restant
+   à valider 35 000 FCFA.
+3. Règlement Caisse de 50 000 FCFA créé puis confirmé **sans attendre la
+   validation complémentaire** (Phase C) — statut toujours `Partiellement
+   validée`.
+4. Collaborateur déclare un retour de caisse sur ce règlement (30 000 FCFA
+   dépensés, justificatif Facture) → montant à retourner calculé
+   **20 000 FCFA** (50 000 − 30 000), conforme.
+5. Finance réceptionne le retour (visible dans "Retours en attente").
+6. Validation complémentaire du reliquat (35 000 FCFA) → montant validé
+   cumulé 85 000 FCFA (= montant total), statut `Partiellement réglée`.
+7. Second règlement Banque de 35 000 FCFA (solde), confirmé → statut final
+   `Réglée`.
+8. Clôture totale → demande clôturée.
+9. Dashboard Finance et Reporting rechargés sans erreur, montant de
+   85 000 FCFA retrouvé de façon cohérente dans le reporting.
+
+Toutes les données de test (demande, lignes, règlements, retour, écritures
+`JournalCaisse`, `HistoriqueEntry`) nettoyées après coup — base revenue à 0
+demande, confirmé par requête directe. Serveur `next dev` arrêté après
+vérification. Un run intermédiaire (avant la correction du bug Select
+ci-dessus) avait laissé une demande de test orpheline par un script de
+vérification imparfait plutôt que par l'application elle-même — repéré et
+nettoyé avant le run final retenu comme preuve.
+
 ## Phase H — Reporting et Export adaptés au nouveau modèle (terminée)
 
 Dernière phase de la refonte V1 : adapte le Reporting/Export (Ticket 10)
@@ -1688,12 +1870,17 @@ Accumulés au fil des 8 phases, tous déjà documentés à l'endroit où ils ont
 été rencontrés (voir les sections de phase correspondantes) — regroupés
 ici pour n'avoir qu'un seul point de synthèse à soumettre :
 
-1. **Sort de Catégorie/Objet/Budget** (Phase A) — retirés du cahier des
-   charges et du flux principal (formulaires, règlement, dashboard,
-   filtres), mais les modèles, le CRUD admin (`/admin/categories`), et la
-   feuille "Suivi budgétaire" du reporting restent en place par
-   précaution. Décision à prendre : supprimer définitivement, ou garder
-   en dormance pour un usage futur ?
+1. **Sort de Catégorie/Objet/Budget** (Phase A) — **partiellement tranché
+   depuis** (voir "Formulaire Demande d'Achat — en-tête + lignes
+   d'articles" plus haut) : `Categorie` est revenue dans le flux principal
+   comme « catégorie
+   d'achat », champ d'en-tête **obligatoire** à la création, et sert même
+   une seconde fois comme « poste budgétaire » (relation nommée distincte).
+   `Objet` et `Demande.budgetDisponible`, en revanche, restent inutilisés
+   par ce nouveau formulaire — toujours en dormance. Décision encore
+   ouverte sur ces deux-là précisément : supprimer définitivement, ou
+   garder pour un usage futur (la feuille "Suivi budgétaire" du reporting
+   en dépend directement) ?
 2. **Statut `VALIDEE` devenu invisible en pratique** (Phase B) — n'est
    plus jamais produit par `calculerStatutDemande` : une validation totale
    transite directement vers `VALIDEE_NON_REGLEE` (puis
@@ -3269,6 +3456,762 @@ charge de ce module au moment où ses écrans seront construits — en
 particulier `DataTable` (désormais réutilisable telle quelle en mode carte
 mobile) sera probablement le composant de liste à privilégier pour rester
 cohérent avec le reste du portail.
+
+## Clarification des dashboards par rôle (dashboard général vs dashboards métier)
+
+**Statut : terminé.** Après une navigation réelle dans l'application, un
+problème de clarté a été identifié pour un utilisateur Finance : deux
+écrans ressemblant chacun à un "dashboard" existaient sans relation claire
+entre eux — le dashboard général (`/`, Socle) et le dashboard Finance dédié
+(`/treso/finance`, Phase G, 6 indicateurs "À traiter"). Audit factuel fait
+AVANT toute correction (navigation réelle avec les 5 comptes de test),
+détaillé ci-dessous, avant la description des corrections.
+
+### Audit — état constaté avant correction, par rôle
+
+- **Zone "Filtre par période" + 4 indicateurs du dashboard général** (`/`) —
+  **non fonctionnelle et trompeuse pour TOUS les rôles**, pas seulement
+  Finance : les champs de date et le bouton "Toutes périodes" n'avaient
+  aucun gestionnaire d'événement (ne filtraient rien), et les 4 `StatCard`
+  ("Demandes en attente", "Montant à régler", "Règlements du mois",
+  "Retours de caisse en attente") étaient des **valeurs codées en dur à 0**
+  — un commentaire dans le code le confirmait explicitement : "valeurs
+  indicatives tant que le module Trésorerie n'est pas câblé" (placeholder
+  posé avant la Phase G, jamais retiré). Ces 4 libellés sont visuellement
+  et conceptuellement un doublon des indicateurs réels du dashboard
+  Finance, mais figés à zéro pour tout le monde y compris les rôles sans
+  aucun rapport avec la Trésorerie (RH, par exemple, les voyait aussi).
+- **"Vos modules"** — seule zone réellement connectée à de vraies données
+  (`getAccessibleModules(session)`), mais **lien cassé pour TOUS les
+  rôles et tous les modules** : chaque carte pointait vers `href={\`/${module_.key}\`}`,
+  soit `/tresorerie` et `/pointage` — or le module Trésorerie a pour clé
+  `"tresorerie"` en base mais ses vraies routes vivent sous `/treso/*`
+  (`/treso/demandes`, `/treso/finance`), et `/pointage` n'a **aucune route**
+  du tout (fondations de données uniquement, aucun écran construit). Chaque
+  clic sur une carte de module, pour n'importe quel rôle, menait donc à une
+  page 404 — vérifié explicitement dans cet audit (aucune vérification
+  précédente n'avait cliqué sur ces cartes jusqu'ici).
+- **"Notifications et alertes" / "Actions à effectuer"** — deux zones
+  **systématiquement vides** pour tous les rôles, avec des commentaires
+  dans le code confirmant qu'elles étaient de simples emplacements réservés
+  ("Zone préparée pour le Module Trésorerie... Vide pour l'instant"),
+  jamais alimentées. "Actions à effectuer" en particulier porte un nom qui
+  fait directement écho à la zone "À traiter" du dashboard Finance (Phase
+  G) sans en reprendre le contenu — source de confusion ("est-ce que je
+  dois regarder ici ou là-bas ?") sans apporter d'information propre.
+
+**Par rôle, ce que montrait concrètement `/` avant correction** (au-delà
+des zones communes ci-dessus, identiques pour tous) :
+
+| Rôle | Cartes "Vos modules" (avant fix, toutes cassées) | Dashboard métier dédié existant |
+|---|---|---|
+| Collaborateur | Trésorerie (`/tresorerie` → 404), Pointage RH (`/pointage` → 404) | Aucun — `/treso/demandes` est sa liste, pas un "dashboard" |
+| Finance | Trésorerie (`/tresorerie` → 404) | `/treso/finance` (Phase G, 6 indicateurs) |
+| DG | Trésorerie (`/tresorerie` → 404), Pointage RH (`/pointage` → 404) | `/treso/finance` (accès en lecture via `voir_dashboard_finance`) |
+| RH | Pointage RH (`/pointage` → 404) | Aucun écran construit (fondations seulement) |
+| Admin | Trésorerie (`/tresorerie` → 404), Pointage RH (`/pointage` → 404) | Aucun — et aucune carte ne menait non plus vers `/admin` : la console d'administration (bypass `isAdmin()`, pas un module `getAccessibleModules`) n'apparaissait nulle part sur `/`, seulement dans la sidebar. Incohérence relevée : Trésorerie a une carte d'accès rapide sur le dashboard, mais pas la console d'admin, alors que les deux sont des points d'entrée équivalents pour l'Admin. |
+
+### Principe retenu
+
+**Le dashboard général (`/`) est un point d'entrée simple** (accès rapide
+aux modules disponibles, éventuellement une zone transverse générique) ;
+**les dashboards de module (`/treso/finance`) portent la vraie richesse
+fonctionnelle** (indicateurs détaillés, actions à traiter). Ce ne sont pas
+deux dashboards concurrents mais un point d'entrée général + un tableau de
+bord métier par module accédé au clic. Conséquence directe : le dashboard
+général ne doit plus jamais réafficher, même partiellement ou à titre
+d'aperçu, les indicateurs d'un dashboard de module — il doit seulement y
+mener clairement.
+
+### Corrections (`(dashboard)/page.tsx`, seul fichier modifié)
+
+- **Zone "Filtre par période" + 4 indicateurs codés en dur — supprimée
+  entièrement.** Non fonctionnelle, redondante avec les vrais indicateurs
+  de `/treso/finance`, et trompeuse (affichait "0" partout, y compris pour
+  des rôles sans aucun rapport avec la Trésorerie). Rien ne la remplace :
+  ce n'était que du bruit, pas une fonctionnalité incomplète à terminer.
+- **"Vos modules" → "Vos accès", lien par module corrigé, jamais générique.**
+  Nouvelle fonction `getTresorerieHref(session)` : renvoie `/treso/finance`
+  si la session a `treso.voir_dashboard_finance` (exactement la permission
+  qui garde cette page, donc jamais de redirection en boucle une fois
+  dessus — Finance et DG uniquement dans le seed actuel), sinon
+  `/treso/demandes` (Collaborateur, et solution de repli sûre pour l'Admin
+  qui n'a aucune permission `treso.*` par construction — liste vide mais
+  jamais cassée). Généralisé via `getModuleHref(moduleKey, session)` :
+  retourne `null` pour tout module sans point d'entrée connu (Pointage RH
+  aujourd'hui) plutôt que de deviner une route qui n'existe pas.
+- **Carte non cliquable pour un module sans écran ("Bientôt disponible").**
+  Quand `getModuleHref` renvoie `null`, la carte reste affichée (le module
+  existe bel et bien et est accessible au rôle) mais devient un simple
+  `<div>` avec un `Badge` "Bientôt disponible" et un message explicite —
+  jamais un lien mort. C'est la correction demandée explicitement pour RH :
+  "vérifie juste que rien n'affiche une erreur ou un lien cassé" pour
+  Pointage RH tant que le module n'a pas d'écrans.
+- **Incohérence Admin corrigée : carte "Administration" ajoutée** à la
+  grille "Vos accès", visible uniquement si `isAdmin(session)`, vers
+  `/admin` — l'Admin dispose désormais d'un accès rapide à la console au
+  même titre que les modules métier, plutôt que de dépendre uniquement de
+  la sidebar.
+- **"Actions à effectuer" — supprimée.** N'apportait rien de plus que "Vos
+  accès" (déjà le point d'entrée vers chaque module) et faisait écho, par
+  son nom, à la zone "À traiter" du dashboard Finance sans en être une
+  vraie synthèse — risque de confusion sans valeur ajoutée, retenu comme le
+  cas "supprimée si elle n'apporte rien de plus" plutôt que "généralisée".
+- **"Notifications et alertes" — conservée, mais recadrée par la
+  documentation du code** : explicitement réservée aux notifications
+  **transverses** du Socle (annonces, maintenance, expiration de mot de
+  passe...), jamais aux indicateurs "à traiter" d'un module métier précis
+  (ceux-ci vivent sur le dashboard de leur module). Reste vide aujourd'hui
+  faute de producteur de notifications transverses — un inbox vide est un
+  état normal et honnête, pas une zone qui semble inachevée, tant que son
+  message ne prétend pas à autre chose.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur. Reconnexion réelle avec
+chacun des 5 comptes de test (Collaborateur, Finance, DG, RH, Admin) :
+capture du dashboard général de chacun, énumération programmatique de
+toutes les cartes cliquables de "Vos accès" et clic réel sur chacune pour
+confirmer l'absence de 404 — résultat pour chaque rôle :
+
+| Rôle | Cartes cliquables (toutes résolues sans 404) | Carte "Bientôt disponible" |
+|---|---|---|
+| Collaborateur | Trésorerie → `/treso/demandes` | Pointage RH |
+| Finance | Trésorerie → `/treso/finance` | — (module Pointage non accessible à ce rôle) |
+| DG | Trésorerie → `/treso/finance` | Pointage RH |
+| RH | — (module Trésorerie non accessible à ce rôle) | Pointage RH |
+| Admin | Trésorerie → `/treso/demandes`, Administration → `/admin` | Pointage RH |
+
+Zéro erreur console sur l'ensemble des 5 parcours. Aucune donnée de test
+créée pendant cet audit (navigation seule) : rien à nettoyer en base.
+Serveur `next dev` arrêté après vérification.
+
+**Mise à jour par l'audit habilitations ci-dessous** : la ligne Admin de ce
+tableau est devenue inexacte après correction de l'audit suivant — voir
+"Aucun accès" au lieu de "Trésorerie → `/treso/demandes`" (`/treso/demandes`
+est désormais protégée par une permission qu'Admin n'a jamais). Conservé
+tel quel ici pour l'historique de CE ticket précis ; état réellement à jour
+dans la section suivante.
+
+## Audit des habilitations (matrice Rôle x Fonctionnalité)
+
+**Statut : terminé.** Reprise d'une session interrompue par un problème de
+connexion (le travail déjà présent dans l'arbre de travail au moment de la
+reprise — nettoyage du dashboard général ci-dessus, suppression des liens
+morts de `nav.ts`, permission `canAccesDemandes` sur l'item "Demandes",
+branche Pointage RH gardée par `hasPointageAccess` et items `comingSoon` —
+correspondait déjà à une partie des Tâches 2-3 de cet audit ; repris et
+complété ici plutôt que refait).
+
+### Tâche 1 — Matrice d'habilitations attendue
+
+Reconstituée à partir des règles métier disséminées dans ce document (seule
+trace disponible du cahier des charges pour cette session — le document
+source lui-même n'est pas dans le dépôt) et du seed actuel
+(`prisma/seed.ts`, revérifié en base live avant tout audit : les 18
+permissions et leur attribution par rôle correspondent exactement à ce que
+ce fichier décrit, aucune dérive entre le code du seed et la base).
+
+**Socle** :
+
+| Fonctionnalité | Collaborateur | Finance | DG | RH | Admin |
+|---|---|---|---|---|---|
+| Se connecter, dashboard général (`/`) | Oui | Oui | Oui | Oui | Oui |
+| Console d'administration (`/admin/*`) | Non | Non | Non | Non | **Oui** (bypass `isAdmin()`, pas une `RolePermission`) |
+
+**Module Trésorerie** (permission → rôles autorisés dans le seed actuel) :
+
+| # | Fonctionnalité | Permission | Collaborateur | Finance | DG | RH | Admin |
+|---|---|---|---|---|---|---|---|
+| 1 | Créer une demande | `treso.creer_demande` | **Oui** | Non | Non | Non | Non |
+| 2 | Consulter "Mes demandes" (`/treso/demandes`) | `creer_demande` OU `declarer_retour` | **Oui** | Non | Non | Non | Non |
+| 3 | Déclarer un retour de caisse | `treso.declarer_retour` | **Oui** | Non | Non | Non | Non |
+| 4 | Catégoriser une demande | `treso.categoriser_demande` | Non | **Oui** | Non | Non | Non |
+| 5 | Valider / rejeter / valider partiellement ou en complément une demande | `treso.valider_demande` | Non | **Oui** | **Oui** | Non | Non |
+| 6 | Effectuer un règlement (créer/modifier/confirmer/annuler) | `treso.effectuer_reglement` | Non | **Oui** | Non | Non | Non |
+| 7 | Réceptionner un retour de caisse | `treso.receptionner_retour` | Non | **Oui** | Non | Non | Non |
+| 8 | Clôturer une demande (totale/partielle) | `treso.cloturer_demande` | Non | **Oui** | Non | Non | Non |
+| 9 | Saisir une dépense directe (Phase F) | `treso.saisir_depense_directe` | Non | **Oui** | Non | Non | Non |
+| 10 | Voir le dashboard Finance (`/treso/finance`, 6 indicateurs + solde) | `treso.voir_dashboard_finance` | Non | **Oui** | **Oui** | Non | Non |
+| 11 | Voir le reporting et exporter en Excel | `treso.voir_reporting` | Non | **Oui** | **Oui** | Non | Non |
+| 12 | Accès à l'espace partagé `/treso/finance/*` (layout) | au moins une des permissions 4-5-7-9-10-11 | Non | **Oui** | **Oui** (via 5+10+11) | Non | Non |
+| 13 | Télécharger le reçu PDF / le bon de caisse d'un règlement | une des permissions 4/5/6/7/10, **OU** être le créateur de la demande | Oui (si créateur) | **Oui** | **Oui** | Non (sauf créateur) | Non (sauf créateur) |
+| 14 | Gérer les Catégories/Objets (`/admin/categories`) | `isAdmin()` | Non | Non | Non | Non | **Oui** |
+
+**Module Pointage RH** (fondations de données uniquement, **aucun écran
+construit** — voir plus bas "Bientôt disponible") : la permission existe et
+gouverne uniquement la visibilité de la branche de nav (`hasPointageAccess`)
+et du badge "Bientôt disponible" sur le dashboard général, jamais un accès
+fonctionnel réel puisqu'aucune route n'existe.
+
+| Permission | Collaborateur | Finance | DG | RH | Admin |
+|---|---|---|---|---|---|
+| `pointage.pointer` / `consulter_historique` | Oui | Non | Non | Oui | Non |
+| `pointage.consulter_tous` / `voir_dashboard_rh` / `voir_reporting` | Non | Non | Oui | Oui | Non |
+| `pointage.pointage_exceptionnel` / `corriger_pointage` / `gerer_horaires` | Non | Non | Non | Oui | Non |
+
+### Tâche 2 — Écarts trouvés (état constaté avant correction de cette session)
+
+Audit fait par grep systématique de tous les `hasPermission()`/`isAdmin()`/
+`redirect()` sous `src/app`, puis confirmé par de vrais appels HTTP
+authentifiés (script Node, flux Credentials complet d'Auth.js — CSRF token
+réel, cookies de session réels, **pas de contournement de l'authentification**)
+contre un `next dev` réellement démarré, un compte par rôle, chaque route
+protégée testée en accès direct par URL. Le détail complet (90 vérifications
+= 18 routes × 5 rôles) est dans "Tâche 4" ci-dessous ; cette section ne liste
+que les écarts.
+
+| Écart | Rôle(s) concerné(s) | Problème exact | Cause |
+|---|---|---|---|
+| Liens morts dans `nav.ts` : "Règlements" (`/reglements`), "Retours de caisse" (`/retours`), "Journal de caisse" (`/journal`), "Catégories" (`/objets`) | Finance, DG (espace `/treso/finance/*`) | Visible dans la sidebar, mène à une page qui n'a jamais existé sous cette forme (404) — stubs de maquette du Ticket 1, la fonctionnalité réelle ayant fini par vivre ailleurs (inline, ou sous `/treso/finance/*`) | Aucune (bug de nav, pas de permission en cause) |
+| Item "Demandes" (`/treso/demandes`) visible dans la sidebar sans condition | Finance, DG, RH, Admin | Visible à tort : ces rôles n'ont ni `creer_demande` ni `declarer_retour`, la page ne leur sert à rien | Nav non gardée par permission (la page elle-même ne l'était pas non plus, voir ligne suivante) |
+| `/treso/demandes` accessible par URL directe sans aucune vérification serveur | Finance, DG, RH, Admin | Accès serveur non protégé (retournait 200 avec une liste vide plutôt qu'un refus explicite) — pas de fuite de données (filtrée par `createurId`), mais contraire au principe de défense en profondeur appliqué partout ailleurs dans le module | Page jamais gardée depuis sa création (Ticket 1) |
+| Branche "Pointage de Présence" toujours visible, 8 liens vers des routes qui n'existent pas encore | Tous les rôles, y compris ceux sans aucune permission `pointage.*` | 8 liens 404 systématiques (aucun écran construit) | Nav statique, jamais reliée aux permissions ni à l'état "aucun écran" |
+| Cartes "Vos modules" du dashboard général (`href={\`/${key}\`}`) | Tous les rôles | Lien cassé (404) pour Trésorerie ET Pointage, pour tout le monde | Route générique inventée, jamais alignée sur les vraies routes `/treso/*` |
+| Carte "Retours de fonds en attente de réception" du dashboard Finance (indicateur #5, Phase G) cliquable sans condition | **DG** | Visible et cliquable avec un vrai chiffre (calculé, pas 0 par erreur), mais mène à `/treso/finance/retours` qui refuse le DG (`receptionner_retour` manquant) — trouvé en confirmant par un vrai appel HTTP authentifié DG sur cette route précise | Les 6 `StatCard` du dashboard Finance sont rendues sans distinguer la permission propre à chacune de leur cible, seulement celle du dashboard lui-même (`voir_dashboard_finance`) |
+| Aucune carte d'accès rapide vers `/admin` sur le dashboard général | Admin | Fonctionnalité autorisée mais invisible depuis le point d'entrée principal (seulement dans la sidebar) | Oubli lors de la construction du dashboard général |
+| 4 indicateurs + filtre par période codés en dur à 0 sur le dashboard général | Tous les rôles | Trompeur (affichait "0" y compris pour des rôles sans rapport avec la Trésorerie), non fonctionnel | Placeholder posé avant la Phase G, jamais retiré |
+
+**Aucune faille de sécurité serveur trouvée sur le reste du périmètre** : les
+90 vérifications HTTP directes (Tâche 4) confirment que toutes les autres
+routes (`/treso/finance/*`, `/admin/*`, Server Actions listées par le grep)
+étaient déjà correctement protégées avant cette session — la rigueur de
+défense en profondeur documentée à chaque Ticket/Phase de ce fichier
+(revérification systématique dans la Server Action, jamais uniquement le
+layout) s'est confirmée exacte à l'audit. Les écarts trouvés sont tous des
+problèmes de **visibilité** (lien visible à tort, ou fonctionnalité
+correctement protégée mais pas assez clairement signalée) plutôt que
+d'**accès réel non protégé** — à la seule exception de `/treso/demandes`
+(ligne 3 ci-dessus), un accès sans conséquence réelle (liste vide) mais
+corrigé par principe.
+
+### Tâche 3 — Corrections appliquées
+
+- **`nav.ts`** — les 5 liens morts retirés définitivement (pas remplacés,
+  c'était du code mort, pas une fonctionnalité "à venir"). Nouveau flag
+  `NavFlags.canAccesDemandes` (`creer_demande` OU `declarer_retour`) gardant
+  l'item "Demandes". Nouveau flag `NavFlags.hasPointageAccess` (au moins une
+  permission `pointage.*`) gardant l'apparition de toute la branche
+  "Pointage de Présence" ; chaque item de cette branche gagne `comingSoon:
+  true` (nouveau champ de `NavItem`) et un rendu non cliquable dédié dans
+  `Sidebar.tsx` (`ItemLink`, badge "Bientôt") plutôt qu'un `<Link>` vers une
+  route inexistante. `getNavBranches()` ne retourne plus jamais une branche
+  entièrement vide. Item "Demandes à traiter (Finance)" renommé "Demandes en
+  attente de validation" au passage, pour rester cohérent avec le titre de
+  cet écran depuis la Phase G (jamais renommé côté nav à l'époque).
+- **`(dashboard)/layout.tsx` / `AppShell.tsx` / `Sidebar.tsx`** — propagation
+  des deux nouveaux flags (`canAccesDemandes`, `hasPointageAccess`) depuis la
+  session jusqu'à `getNavBranches()`, même chemin que tous les flags
+  existants.
+- **`treso/demandes/page.tsx`** — garde serveur ajoutée (**correction la
+  plus importante, seul point touchant une protection d'accès réelle** :
+  `redirect("/?error=acces_refuse_demandes")` si la session n'a ni
+  `treso.creer_demande` ni `treso.declarer_retour`, exactement symétrique de
+  la condition de nav — même principe de défense en profondeur que partout
+  ailleurs dans le module (jamais uniquement le masquage du lien). Nouveau
+  message de toast correspondant sur `(dashboard)/page.tsx`.
+- **`(dashboard)/page.tsx`** — zone "Filtre par période" + 4 indicateurs
+  factices supprimés ; "Vos modules" → "Vos accès" avec un lien par module
+  réellement résolu (`getTresorerieHref`) plutôt qu'une route générique
+  inventée ; carte "Administration" ajoutée pour l'Admin. **Affiné pendant
+  cette session** : `getTresorerieHref` retourne désormais `null` (au lieu
+  de retomber sur `/treso/demandes` par défaut) pour une session sans AUCUNE
+  permission `treso.*` — c'est le cas de l'Admin, qui aurait sinon reçu un
+  lien "Accéder au module" menant tout droit à un refus d'accès depuis que
+  `/treso/demandes` est gardée (ligne ci-dessus). Nouveau distingo
+  `ModuleCardState.reason` (`"coming_soon"` vs `"no_access"`) : même carte
+  non cliquable, mais message différent selon la cause — "Bientôt
+  disponible / écrans en construction" (Pointage RH) n'est jamais le bon
+  message pour "ce module existe et fonctionne, votre rôle n'y a
+  simplement aucune permission opérationnelle" (Trésorerie pour l'Admin).
+- **`treso/finance/page.tsx`** — la carte "Retours de fonds en attente de
+  réception" ne reçoit `href="/treso/finance/retours"` que si la session a
+  `treso.receptionner_retour` ; sinon `href` omis, `StatCard` retombe sur
+  son rendu statique déjà pris en charge (Phase G, rétro-compatible) — le
+  DG voit toujours le chiffre (information de consultation légitime, il
+  garde `voir_dashboard_finance`) mais sans promesse de clic vers une page
+  qui le refuserait.
+
+### Tâche 4 — Vérification
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur sur `src/` après chaque
+lot de corrections. Base de dev vérifiée propre avant tout test (0 demande,
+5 comptes de test, permissions en base identiques au seed — confirmé par
+requête Prisma directe).
+
+**Toutes les vérifications ci-dessous sont de vrais appels HTTP contre un
+`next dev` réellement démarré, authentifiés par le flux Credentials complet
+d'Auth.js** (CSRF token obtenu via `/api/auth/csrf`, connexion via
+`/api/auth/callback/credentials`, cookies de session réels rejoués sur
+chaque requête suivante) — jamais un contournement de l'authentification ni
+un appel direct aux fonctions serveur. Script Node jetable, jamais ajouté au
+projet. 18 routes × 5 rôles = 90 vérifications d'accès direct par URL,
+refaites une dernière fois après toutes les corrections :
+
+| Route testée | Collaborateur | Finance | DG | RH | Admin |
+|---|---|---|---|---|---|
+| `/` | 200 | 200 | 200 | 200 | 200 |
+| `/treso/demandes` | 200 | 307 `acces_refuse_demandes` | 307 `acces_refuse_demandes` | 307 `acces_refuse_demandes` | 307 `acces_refuse_demandes` |
+| `/treso/demandes/nouvelle` | 200 | 307 `acces_refuse_creer_demande` | 307 `acces_refuse_creer_demande` | 307 `acces_refuse_creer_demande` | 307 `acces_refuse_creer_demande` |
+| `/treso/finance` | 307 `acces_refuse_categoriser` | 200 | 200 | 307 `acces_refuse_categoriser` | 307 `acces_refuse_categoriser` |
+| `/treso/finance/demandes` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/retours` | 307 | 200 | 307 `acces_refuse_receptionner_retour` | 307 | 307 |
+| `/treso/finance/a-decaisser` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/a-regulariser` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/reglements-partiels` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/fonds-a-regulariser` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/depenses-non-justifiees` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/depenses-directes/nouvelle` | 307 | 200 | 307 `acces_refuse_saisir_depense_directe` | 307 | 307 |
+| `/treso/finance/reporting` | 307 | 200 | 200 | 307 | 307 |
+| `/admin` | 307 `acces_refuse_admin` | 307 | 307 | 307 | 200 |
+| `/admin/users` | 307 | 307 | 307 | 307 | 200 |
+| `/admin/roles` | 307 | 307 | 307 | 307 | 200 |
+| `/admin/modules` | 307 | 307 | 307 | 307 | 200 |
+| `/admin/categories` | 307 | 307 | 307 | 307 | 200 |
+
+**Les 90 résultats correspondent exactement à la matrice de la Tâche 1**,
+sans exception. Vérification complémentaire par lecture du HTML réellement
+renvoyé (mêmes sessions authentifiées) : sidebar de chaque rôle limitée aux
+items attendus par sa permission (ex: RH ne voit que "Pointer"/"Mon
+historique"/"Présence du jour"/... tous en "Bientôt", Admin ne voit que
+"Administration" dans la zone module) ; carte Trésorerie du dashboard
+général rendue en `<div>` non cliquable "Aucun accès" pour Admin et en
+`<a>` cliquable pour Collaborateur/Finance/DG ; carte "Retours de fonds"
+du dashboard Finance rendue en `<div>` (pas de lien) pour DG et en `<a>`
+pour Finance. Aucune donnée de test créée pendant cet audit (uniquement des
+requêtes `GET` en lecture — aucun formulaire soumis) : rien à nettoyer en
+base, confirmé par un dernier comptage (`demandes: 0`, inchangé depuis le
+début de la session). Serveur `next dev` arrêté après vérification
+(processus terminé explicitement).
+
+### Tâche 5 — Ce qui reste volontairement en "Bientôt disponible"
+
+**Module Pointage RH dans son intégralité** — fondations de données
+posées (modèles, module, 8 permissions, rôle RH, compte de test — voir
+[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données)),
+**aucun écran construit**. Concrètement aujourd'hui :
+
+- La branche "Pointage de Présence" n'apparaît dans la sidebar que pour une
+  session ayant au moins une permission `pointage.*` (Collaborateur, RH,
+  DG — jamais Finance ni Admin), mais **chaque** item y est rendu non
+  cliquable ("Bientôt"), quelle que soit la permission précise.
+- Sur le dashboard général, la carte "Pointage RH" est visible pour ces
+  mêmes rôles (visibilité pilotée par `getAccessibleModules()`, pas par
+  `hasPointageAccess`) avec le badge "Bientôt disponible" — jamais un lien
+  qui échouerait.
+- Aucune route sous `/pointage/*` ne répond aujourd'hui (aucun `page.tsx`
+  n'existe) : normal, cohérent avec l'absence totale d'écran, jamais
+  exposé nulle part comme un lien cliquable dans l'état actuel de l'audit.
+
+**Autre point resté en l'état, hors périmètre de cet audit (déjà signalé
+au point 1 de la synthèse "Points d'interprétation en attente")** :
+Catégorie/Objet/Budget (CRUD `/admin/categories`, feuille "Suivi
+budgétaire" du reporting) restent accessibles à l'Admin bien qu'écartés du
+flux principal de la Refonte V1 — décision volontairement différée au
+maître de stage, non retouchée ici (aucune incohérence d'habilitation
+trouvée sur ce point précis : `/admin/categories` suit exactement la même
+règle `isAdmin()` que le reste de la console).
+
+## Mon tableau de bord (Collaborateur)
+
+**Statut : terminé.** Cahier des charges section 14 (Dashboard) : la
+vision synthétique générale — 5 indicateurs (Demandé/Validé/Restant à
+valider/Réglé/Validé restant à régler) + une zone "À TRAITER" cliquable —
+n'est pas réservée à Finance. `/treso/tableau-de-bord` en est le pendant
+personnel : mêmes 5 indicateurs et même principe de zone actionnable, mais
+**scopés aux seules demandes du Collaborateur connecté**, jamais à
+l'échelle de toute l'organisation (`/treso/finance` reste, lui,
+strictement organisationnel — les deux ne se recoupent jamais, voir
+"Distinction avec les deux autres dashboards" plus bas).
+
+### Fonctions d'agrégation (`src/lib/tresorerie.ts`)
+
+Ajoutées à côté de `getTotalRegle`/`getResteARegler`, jamais dans
+`dashboardFinance.ts` (qui reste dédié aux agrégats organisationnels de
+Finance) — chaque nom est explicitement préfixé "Mes"/scopé pour ne jamais
+se confondre avec son équivalent Finance :
+
+- **`getMesIndicateurs(userId)`** → `{ demande, valide, restantAValider,
+  regle, valideRestantARegler }`. Formules **strictement identiques** à
+  celles de `getReportingRows` (Phase H) — jamais une deuxième définition
+  de ces mêmes calculs — juste agrégées en un seul total au lieu d'être
+  groupées par Catégorie/Objet : `demande` = somme de `Demande.montant` sur
+  TOUTES les demandes de l'utilisateur quel que soit leur statut ; `valide`
+  = somme de `Demande.montantValide` (0/null compté 0) ; `restantAValider`
+  = `max(0, demande - valide)` ; `regle` = somme des règlements confirmés
+  et non annulés (Caisse + Banque) de ces mêmes demandes ; `valideRestantARegler`
+  = `max(0, valide - regle)`. Calculée en 2 requêtes (`findMany` +
+  `groupBy`), jamais une requête par demande.
+- **`getMesDemandesEnAttente(userId)`** → `{ nombre }` : demandes créées par
+  l'utilisateur encore `EN_ATTENTE_VALIDATION` ou `PARTIELLEMENT_VALIDEE`.
+  Même définition que `getDemandesEnAttenteValidation`
+  (`dashboardFinance.ts`), scopée par `createurId`.
+- **`getReglementsCaisseADeclarer(userId)`** → liste détaillée (règlement,
+  demande, référence, montant, date de confirmation) des règlements Caisse
+  confirmés et non annulés des demandes de l'utilisateur, pour lesquels
+  **aucun** `RetourCaisse` n'a encore été déclaré — même règle
+  d'éligibilité que le bouton "Déclarer un retour de caisse" (Ticket 5,
+  `RetoursCaisseSection.tsx` : un seul retour par règlement), plus le même
+  verrou `statut !== "CLOTUREE"` que `peutDeclarer` sur cet écran. C'est
+  cette liste qui détermine où mène le clic sur la carte "Mes retours de
+  caisse à déclarer" (voir plus bas).
+- **`getMesRetoursADeclarer(userId)`** → `{ nombre }`, un simple dérivé de
+  `getReglementsCaisseADeclarer` (`.length`) — jamais deux implémentations
+  de la même règle d'éligibilité.
+
+**Choix documenté : scope par `createurId`, jamais `beneficiaireUserId`.**
+Deux raisons : (1) c'est déjà le filtre de "Mes demandes"
+(`treso/demandes/page.tsx`, Ticket 1) — un tableau de bord qui compterait
+différemment de la liste juste en dessous serait incohérent pour
+l'utilisateur ; (2) `beneficiaireUserId` n'est renseigné que pour un
+bénéficiaire `COLLABORATEUR`/`STAGIAIRE` (Phase A) — une demande dont le
+créateur choisit un bénéficiaire `ENTREPRISE`/`FOURNISSEUR` (le nouveau
+formulaire "Demande d'Achat" le permet) aurait disparu du tableau de bord
+de son propre créateur. Cohérent avec le principe directeur confirmé : le
+cycle démarre de la demande du Collaborateur, qui en est l'auteur — pas
+nécessairement le bénéficiaire final.
+
+**Limite connue, héritée, pas introduite ici** : les 5 indicateurs agrègent
+les montants de toutes les demandes de l'utilisateur sans distinction de
+devise (`Demande.devise`, voir "Formulaire Demande d'Achat" plus haut) —
+même simplification déjà acceptée par `getReportingRows` (jamais rendu
+devise-aware). Sans conséquence tant que XOF reste la devise par défaut de
+facto ; à reprendre si un usage multi-devises réel apparaît.
+
+### Écran (`treso/tableau-de-bord/page.tsx`)
+
+Distinct de `/treso/demandes` ("Mes demandes", une simple liste, Ticket 1)
+— même choix structurel que Finance (`/treso/finance` = tableau de bord,
+`/treso/finance/demandes` = liste) plutôt que de surcharger la liste
+existante avec des indicateurs et une zone "à traiter" étrangers à son
+rôle de simple historique. Gardé par la même permission que "Mes
+demandes" (`treso.creer_demande` OU `treso.declarer_retour`), jamais
+uniquement masqué côté nav — revérifié dans la page.
+
+- **5 `StatCard` non cliquables** ("Vue d'ensemble") pour les indicateurs
+  de synthèse — informationnels, pas des actions. `Restant à valider` et
+  `Validé restant à régler` passent en `warning` uniquement si > 0
+  (`toneSiActif`, même garde-fou que le dashboard Finance, Phase G) ; les
+  trois autres restent `success`/`neutral`.
+- **Zone "À traiter"**, 2 `StatCard` cliquables :
+  - *"Mes demandes en attente de validation"* → `/treso/demandes?statut=EN_ATTENTE_VALIDATION,PARTIELLEMENT_VALIDEE`.
+    Nécessite un filtre `?statut=` (nouveau, whitelist stricte contre les
+    11 valeurs de `StatutDemande` — même principe que
+    `parseReportingFilters`) ajouté à `treso/demandes/page.tsx` : une
+    demande créée pour cette occasion, jamais un filtre ad hoc dupliqué
+    ailleurs, réutilisable par tout futur lien filtré vers cette liste.
+    Bandeau "Filtré : ..." + lien "Voir toutes mes demandes" affiché
+    quand le filtre est actif.
+  - *"Mes retours de caisse à déclarer"* → **si exactement 1** règlement
+    éligible, lien **direct** vers le détail de cette demande précise
+    (`/treso/demandes/{id}`, là où vit réellement le bouton "Déclarer un
+    retour de caisse", Ticket 5) ; **si plusieurs**, lien vers
+    `/treso/demandes/retours-a-declarer` (nouvel écran, liste simple sans
+    `DataTable` — volume toujours modeste pour un seul utilisateur, même
+    principe que `RetoursCaisseSection` — chaque ligne renvoie vers le
+    détail de sa demande, cet écran ne duplique jamais le formulaire de
+    déclaration lui-même). Cet écran reste accessible même à 0 résultat
+    (`EmptyState`).
+- Actions d'en-tête : "Mes demandes" (lien vers la liste) et "Nouvelle
+  demande" (si `treso.creer_demande`) — la liste complète et la création
+  restent toujours à portée de clic depuis ce nouvel écran.
+
+### Distinction avec les deux autres dashboards
+
+Trois écrans distincts, jamais redondants :
+
+| Écran | Portée | Rôle |
+|---|---|---|
+| `/` (dashboard général) | Aucune donnée métier | Point d'entrée simple vers les modules accessibles (voir "Clarification des dashboards par rôle") |
+| `/treso/tableau-de-bord` | Les demandes d'**un seul** Collaborateur | Vrai tableau de bord personnel du module Trésorerie |
+| `/treso/finance` | **Toute l'organisation** | Vrai tableau de bord Finance (Phase G) |
+
+**Point d'entrée du module mis à jour** : `getTresorerieHref` (dashboard
+général, `(dashboard)/page.tsx`) envoie désormais un Collaborateur vers
+`/treso/tableau-de-bord` plutôt que directement vers `/treso/demandes` —
+même symétrie que Finance/DG, qui atterrissent sur `/treso/finance` (leur
+tableau de bord) et non sur `/treso/finance/demandes` (une liste). Nouvelle
+entrée de sidebar "Mon tableau de bord" (`nav.ts`, icône `layout-grid`,
+`exact: true`), gardée par le même flag `canAccesDemandes` que "Demandes",
+positionnée juste avant dans la branche "Demande d'Achat" — même
+convention que "Tableau de bord Finance" précédant les items Finance.
+**Route choisie à dessein hors de `/treso/demandes/*`** (`/treso/tableau-de-bord`,
+pas `/treso/demandes/tableau-de-bord`) : nichée sous `/treso/demandes/`,
+elle aurait été un sous-chemin de l'item de nav "Demandes"
+(`/treso/demandes`), qui l'aurait alors fait s'allumer simultanément avec
+"Mon tableau de bord" (même piège de préfixe déjà documenté au Ticket 8 et
+à l'audit habilitations) — évité en la sortant complètement de cette
+arborescence plutôt qu'en jonglant avec des exceptions dans `isActive()`.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur. Base vérifiée propre (0
+demande) avant tout test. Parcours complet piloté par un vrai navigateur
+Chromium headless (Playwright, non ajouté au projet), avec
+`collaborateur@simassurances.test` et `finance@simassurances.test` :
+
+1. Collaborateur crée 3 demandes (1 ligne chacune, catégorie identique) :
+   A = 20 000 FCFA (laissée `EN_ATTENTE_VALIDATION`), B = 50 000 FCFA,
+   C = 40 000 FCFA.
+2. Finance valide B **partiellement** à 30 000 FCFA (`PARTIELLEMENT_VALIDEE`).
+3. Finance valide C **totalement** (40 000 FCFA) puis confirme un
+   règlement Caisse de 40 000 FCFA dessus, sans déclarer de retour
+   (`REGLEE`).
+4. "Mon tableau de bord" du Collaborateur affiche exactement : Demandé
+   **110 000 FCFA** (20 000+50 000+40 000), Validé **70 000 FCFA**
+   (0+30 000+40 000), Restant à valider **40 000 FCFA** (110 000−70 000),
+   Réglé **40 000 FCFA**, Validé restant à régler **30 000 FCFA**
+   (70 000−40 000) — les 5 valeurs correspondent au centime près à ce qui
+   est attendu du scénario.
+5. Zone "À traiter" : "Mes demandes en attente de validation" = **2** (A +
+   B), "Mes retours de caisse à déclarer" = **1** (le règlement Caisse de
+   C).
+6. Clic sur "Mes demandes en attente de validation" → `/treso/demandes?statut=...`,
+   bandeau "Filtré" affiché, A et B présentes, **C absente** (confirmé
+   explicitement — elle est `REGLEE`, hors filtre).
+7. Clic sur "Mes retours de caisse à déclarer" (exactement 1) → mène
+   **directement** à la demande C (vérifié par l'URL et la référence
+   affichée), où le bouton "Déclarer un retour de caisse" est bien présent.
+8. Visite directe de `/treso/demandes/retours-a-declarer` : affiche
+   correctement la même ligne (référence C, 40 000 FCFA, date de
+   confirmation) avec son lien vers le détail.
+
+Toutes les données de test (3 demandes, leurs lignes, le règlement, les
+écritures `JournalCaisse`, l'historique) nettoyées après coup — base
+revenue à 0 demande, confirmé par requête directe. Serveur `next dev`
+arrêté après vérification.
+
+## Audit de conformité — sections 10, 12.2, 13, 15, 16 du cahier des charges
+
+**Statut : terminé.** Audit précis du Module Trésorerie contre 5 exigences
+explicites du cahier des charges, chacune vérifiée par lecture du code réel
+**avant** toute correction, puis par un vrai parcours navigateur après
+correction (une seule demande de bout en bout : créée, validée totalement,
+réglée en Caisse, retour de 70 000 FCFA déclaré sur un règlement de
+100 000 FCFA — 30 000 FCFA à retourner —, retour réceptionné, demande
+clôturée — mêmes montants réutilisés pour vérifier les 5 points d'un
+seul geste). Recense, pour chaque point, l'état constaté puis la
+correction.
+
+### 1. Reçu PDF (section 12.2) — champs manquants trouvés et ajoutés
+
+**Constaté avant correction** : le reçu (`ReceiptDocument.tsx`,
+`api/treso/reglements/[id]/recu/route.tsx`) affichait déjà montant
+demandé, total réglé à ce jour, reste à régler, montant du règlement,
+mode, date, demandeur, catégorie/objet, régleur — mais **ni le montant
+validé** (distinct du montant demandé, jamais affiché séparément), **ni le
+bénéficiaire** (le demandeur seul était affiché, alors que Phase A
+distingue les deux), **ni le validateur**.
+
+**Corrigé** :
+
+- **`ReceiptData`** gagne `montantValide` (récupéré depuis
+  `demande.montantValide`) et `beneficiaireNom` (`getBeneficiaireNom`,
+  déjà utilisée ailleurs dans le projet — la route inclut désormais
+  `beneficiaireUser` dans sa requête).
+- **`validateursNoms`** — **choix documenté** : pas de nouveau champ sur
+  `Demande`/`Reglement`, dérivé des `HistoriqueEntry` `validation`/
+  `validation_complementaire` (Phase B) via une nouvelle fonction
+  `getValidateursNoms(demandeId)` (route.tsx). Une demande peut avoir été
+  validée en plusieurs étapes par des personnes différentes (validation
+  initiale puis complémentaire, aucune contrainte d'auteur) : les noms
+  distincts sont dédupliqués et joints par une virgule, dans l'ordre
+  chronologique de première apparition — jamais un seul nom supposé.
+- **Gabarit** (`ReceiptDocument.tsx`) : "Montant validé" ajouté à côté de
+  "Montant demandé" (section "Situation de la demande", passée de 3 à 4
+  cellules réparties sur 2 lignes) ; "Reste à régler" renommé **"Solde
+  validé restant à régler"**, terminologie exacte du cahier des charges
+  (valeur inchangée — `getResteARegler` porte déjà sur `montantValide`
+  depuis la Phase C, seul le libellé était imprécis) ; "Bénéficiaire"
+  ajouté dans "Détails de la demande" ; la ligne de bas de page devient
+  "Validé par {validateurs} — Règlement effectué par {auteur}."
+
+### 2. Journal de caisse (section 13) — traçabilité incomplète
+
+**Constaté avant correction** : `JournalCaisse` (id/type/montant/source/
+refId/createdAt) ne permettait de répondre ni à "quelle demande" ni "quel
+utilisateur" pour un mouvement donné — seul `refId` (id du `Reglement`/
+`RetourCaisse` d'origine) existait, sans relation directe vers `Demande`
+ni `User`. Aucun écran "Journal de caisse" dédié n'existe dans
+l'application (seulement une feuille d'export du même nom) — rien à
+adapter côté écran, conformément au "s'il existe déjà" de la consigne.
+
+**Corrigé** :
+
+- **Migration `journal_caisse_tracabilite`** : `JournalCaisse` gagne
+  `demandeId` (relation vers `Demande`) et `userId` (relation nommée
+  `"JournalCaisseUser"` vers `User`), tous deux **non nullables** —
+  possible sans backfill, la table était vide en base de dev au moment de
+  la migration (vérifié explicitement avant d'appliquer). Migration
+  purement additive (`ADD COLUMN` + `FOREIGN KEY`), aucune perte de
+  donnée possible même si la table avait été peuplée.
+- **Les 3 points de création d'une écriture** adaptés, `userId` choisi
+  précisément selon qui a réellement déclenché CETTE écriture (pas
+  toujours la même personne que sur l'écriture d'origine) :
+  - `confirmerReglementAction` (SORTIE) → `userId = reglement.auteurId`
+    (l'auteur du règlement, pas forcément celui qui le confirme — Ticket 4
+    n'impose aucune contrainte là-dessus).
+  - `annulerReglementAction` (ENTRÉE compensatoire) → `userId =
+    session.user.id` (celui qui annule, distinct de l'auteur du règlement
+    d'origine — déjà tracé sur la SORTIE initiale).
+  - `receptionnerRetourAction` (ENTRÉE) → `userId = session.user.id`,
+    identique à `receptionneParId` sur le `RetourCaisse` mis à jour dans
+    la même transaction.
+  - `demandeId` toujours pris directement sur le `Reglement`/`RetourCaisse`
+    déjà chargé (`reglement.demandeId` / `retour.reglement.demandeId`),
+    jamais recalculé après coup.
+- **`getReportingJournalDetail`** (feuille d'export) inclut désormais
+  `demande`/`user` et expose `demandeReference`/`userNom` ; la feuille
+  Excel "Journal de caisse" gagne les colonnes "Référence demande" et
+  "Utilisateur".
+
+### 3. Clôture — personnes intervenantes (section 10)
+
+**Constaté avant correction** : la branche `CLOTUREE` de
+`treso/finance/demandes/[id]/page.tsx` affichait les montants
+(`RegularisationSummary`), la catégorisation verrouillée et le motif de
+clôture, mais **aucune liste explicite des personnes intervenues** —
+seul l'historique générique (`DemandeHistorique`, format libre) permettait
+de le reconstituer en le lisant en entier.
+
+**Corrigé** : nouveau composant partagé
+[PersonnesIntervenantes.tsx](src/components/tresorerie/PersonnesIntervenantes.tsx)
+(Server Component, ne prend que l'id de la demande), inséré dans la
+branche `CLOTUREE`, juste après `RegularisationSummary`. Aucun nouveau
+champ : entièrement dérivé des relations et de `HistoriqueEntry` déjà en
+place — **Demandeur** (`Demande.createur`, passé en prop par la page qui
+l'a déjà chargé), **Validateur(s)** (`HistoriqueEntry` `validation`/
+`validation_complementaire`), **Régleur(s)** (`Reglement.auteur` des
+règlements confirmés et non annulés — pris directement sur la relation,
+jamais reconstruit depuis un texte), **Clôturé par** (dernière
+`HistoriqueEntry` `cloture_totale`/`cloture_partielle` — ajouté en bonus,
+naturel dans cet écran précis, en plus des trois rôles explicitement
+demandés). Chaque liste dédupliquée, "—" si aucune personne trouvée pour
+un rôle.
+
+### 4. Reporting fonds remis dédié (section 15)
+
+**Constaté avant correction** : l'écran de reporting n'avait qu'un
+tableau agrégé général (`getReportingRows`, Demandé/Validé/Restant à
+valider/Réglé/Validé restant à régler/Réglé Caisse/Réglé Banque) — aucun
+tableau spécifique "Fonds remis" avec les colonnes exactes du cahier des
+charges (nombre d'opérations, montant demandé, montant validé, montant
+remis, dépenses déclarées, retours reçus, montant restant à régulariser).
+
+**Corrigé** : nouvelle fonction `getReportingFondsRemis(filters)`
+(`src/lib/reporting.ts`), groupée par Catégorie/Objet **comme le tableau
+général** mais restreinte aux demandes ayant au moins un règlement Caisse
+confirmé (les seules à avoir un cycle de fonds remis — un "fonds remis" =
+une remise d'espèces, donc un règlement Caisse précisément, jamais
+Banque). **`montantRestantARegulariser` n'est jamais plafonné à 0**
+(contrairement à `montantRestantAValider`/`valideResteARegler` du tableau
+général) — même convention que `getEcart`/`getSoldeARegulariser`
+(`tresorerie.ts`) : un solde négatif signale une vraie anomalie
+(sur-retour), à ne jamais masquer par un `max(0, ...)`. Nouvelle section
+"Fonds remis" ajoutée à l'écran (`treso/finance/reporting/page.tsx`,
+entre le tableau général et "Suivi budgétaire") et nouvelle feuille
+"Fonds remis" dans l'export Excel, mêmes colonnes, même fonction
+partagée — jamais deux implémentations.
+
+### 5. Exports manquants (section 16)
+
+**Constaté avant correction** : l'export ne comptait que 7 feuilles
+(Demandes, Règlements, Retours de caisse, Dépenses déclarées, Journal de
+caisse, Reporting, Suivi budgétaire) — manquaient Validations, Fonds
+remis, Régularisations et Données du dashboard ; "Dépenses non
+justifiées" n'existait que comme une colonne booléenne au sein de
+"Dépenses déclarées", jamais comme feuille séparée.
+
+**5 nouvelles feuilles ajoutées** (`src/lib/reporting.ts` +
+`api/treso/reporting/export/route.ts`) :
+
+- **"Validations"** — une ligne par `HistoriqueEntry` `validation`/
+  `validation_complementaire`/`rejet` des demandes filtrées : référence,
+  action, validateur, date, montant validé à cette étape, détail brut.
+  **Point technique documenté** : ni `HistoriqueEntry` ni les Server
+  Actions de validation n'ont de champ numérique dédié pour "le montant
+  validé à cette étape précise" (seul le cumul est sur `Demande.montantValide`)
+  — ce montant est extrait par une regex ciblée
+  (`parseMontantValideCetteEtape`) du texte `detail`, **toujours généré
+  par l'application elle-même dans un format fixe et contrôlé** (jamais
+  une saisie utilisateur), donc fiable tant que ce format ne change pas ;
+  `null` en cas de non-correspondance plutôt qu'une exception qui ferait
+  échouer tout l'export pour une seule ligne.
+- **"Fonds remis"** — voir point 4 ci-dessus.
+- **"Régularisations"** — une ligne par demande **`CLOTUREE`** parmi les
+  demandes filtrées, avec le détail du solde à régulariser final (montant
+  validé, total réglé, dépenses déclarées, retours reçus, écart, motif de
+  clôture, date de clôture — dernière `HistoriqueEntry`
+  `cloture_totale`/`cloture_partielle`, ou `updatedAt` de la demande à
+  défaut). Calculé par demande via `Promise.all` (pas de version batchée) :
+  même principe déjà accepté pour `a-regulariser` (Ticket 8) — l'ensemble
+  des demandes clôturées reste par nature une file bornée.
+- **"Dépenses non justifiées"** — **séparée** de "Dépenses déclarées"
+  comme demandé : une ligne **par demande** (pas par `DepenseLigne`)
+  regroupant ses dépenses `SANS_PIECE`, avec exactement les colonnes
+  voulues (nombre d'opérations, montant total, demandeur, bénéficiaire,
+  service, période — cette dernière affichée comme une date unique si une
+  seule ligne, sinon un intervalle min–max).
+- **"Dashboard"** — instantané des 6 indicateurs "À traiter" du dashboard
+  Finance (Phase G) + le solde de caisse, calculés **au moment de
+  l'export**, volontairement **non filtrés** par les paramètres du
+  reporting (période/catégorie/...) : ce sont des indicateurs
+  organisationnels globaux, pas des données qui se prêtent à un découpage
+  — mêmes fonctions que `treso/finance/page.tsx` (`dashboardFinance.ts` +
+  `getSoldeCaisse`), jamais une deuxième formule.
+
+### Vérifié explicitement
+
+`npx prisma migrate dev` (migration `journal_caisse_tracabilite`) —
+relue avant application : uniquement des `ADD COLUMN NOT NULL` sans
+défaut (possible car la table `JournalCaisse` était vide, vérifié
+explicitement) et deux `FOREIGN KEY`, aucun `DROP`. `npx prisma generate`
+requis en plus (le client ne se régénère pas seul après une migration
+appliquée hors `next dev`, même piège déjà rencontré lors de la fusion du
+formulaire Demande d'Achat). `npx tsc --noEmit` et `npx eslint .` sans
+erreur après l'ensemble des corrections.
+
+Parcours réel (Chromium headless, Playwright, non ajouté au projet) —
+**une seule demande, réutilisée pour vérifier les 5 points en un seul
+scénario cohérent** : collaborateur crée une demande de 100 000 FCFA,
+Finance valide totalement puis règle 100 000 FCFA en Caisse (confirmé),
+collaborateur déclare un retour (70 000 FCFA dépensés, facture jointe →
+30 000 FCFA à retourner, calcul confirmé correct), Finance réceptionne
+puis clôture totalement (écart nul : 100 000 − 70 000 − 30 000 = 0).
+
+- **Reçu PDF** téléchargé et relu (extraction de texte réelle du PDF,
+  `pdftotext -enc UTF-8`) : contient bien "MONTANT VALIDÉ — 100 000 FCFA",
+  "SOLDE VALIDÉ RESTANT À RÉGLER — 0 FCFA", "Bénéficiaire — Collaborateur
+  Test", et "Validé par Finance Test — Règlement effectué par Finance
+  Test." — les 4 éléments manquants avant correction sont tous présents
+  et correctement valorisés.
+- **Personnes intervenantes** (écran de clôture Finance) : "Demandeur —
+  Collaborateur Test", "Validateur(s) — Finance Test", "Régleur(s) —
+  Finance Test", "Clôturé par — Finance Test" — cohérent avec le scénario
+  (Finance a tout fait de bout en bout).
+- **Tableau "Fonds remis"** (écran de reporting) : une ligne "Carburant /
+  Non renseigné" avec exactement 1 opération, Demandé 100 000, Validé
+  100 000, Remis 100 000, Dépenses déclarées 70 000, Retours reçus
+  30 000, **Restant à régulariser 0 FCFA** — arithmétique vérifiée
+  correcte au FCFA près.
+- **Export Excel** téléchargé et relu programmatiquement (`exceljs`) :
+  les 12 feuilles attendues sont présentes (7 précédentes + Validations,
+  Fonds remis, Régularisations, Dépenses non justifiées, Dashboard) ; la
+  feuille "Journal de caisse" a bien les colonnes "Référence demande" et
+  "Utilisateur" ; "Validations" contient une ligne pour la demande de
+  test ; "Régularisations" contient une ligne exacte (montant validé
+  100 000, total réglé 100 000, dépenses déclarées 70 000, retours reçus
+  30 000, écart 0, date de clôture correcte) ; "Dashboard" contient 7
+  lignes (6 indicateurs + solde de caisse).
+
+Toutes les données de test (1 demande, sa ligne, son règlement, son
+retour, ses écritures `JournalCaisse`, son historique) nettoyées après
+coup — **la demande pré-existante de l'utilisateur réel**
+(`DEM-2026-000001`, "Ravitaillement de la voiture de service", découverte
+en base au début de cette vérification et jamais touchée) confirmée
+intacte à la fin (base revenue à exactement 1 demande, 0 écriture
+`JournalCaisse`, 1 `HistoriqueEntry` — sa création). Serveur `next dev`
+arrêté après vérification.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

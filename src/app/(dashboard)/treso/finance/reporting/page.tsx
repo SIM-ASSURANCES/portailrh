@@ -5,6 +5,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
   getBeneficiairesConnus,
+  getReportingFondsRemis,
   getReportingRows,
   parseReportingFilters,
   reportingFiltersToQueryString,
@@ -46,8 +47,9 @@ export default async function ReportingPage({
   // (soft-delete) — les demandes historiques liées à une catégorie
   // désactivée depuis continuent d'apparaître normalement dans les
   // résultats, ce filtre ne porte que sur les OPTIONS du formulaire.
-  const [rows, categories, objets, users, servicesRaw, beneficiaires] = await Promise.all([
+  const [rows, fondsRemisRows, categories, objets, users, servicesRaw, beneficiaires] = await Promise.all([
     getReportingRows(filters),
+    getReportingFondsRemis(filters),
     prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
     prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
     prisma.user.findMany({ orderBy: { fullName: "asc" } }),
@@ -211,6 +213,70 @@ export default async function ReportingPage({
             ) : null}
           </table>
         </div>
+      </div>
+
+      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
+        <h2 className="text-sm font-semibold text-foreground">Fonds remis</h2>
+        {/* Section 15 du cahier des charges : distinct du tableau général
+            ci-dessus — restreint aux demandes ayant au moins un règlement
+            Caisse confirmé (voir `getReportingFondsRemis`, reporting.ts). */}
+        {fondsRemisRows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Aucun règlement Caisse confirmé pour ces filtres.
+          </p>
+        ) : (
+          <>
+            <p className="text-xs text-muted-foreground md:hidden">Faites glisser pour voir plus de colonnes →</p>
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full min-w-full divide-y divide-border text-sm">
+                <thead className="bg-muted">
+                  <tr>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Catégorie</th>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Objet</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Nb. opérations</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Demandé</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Validé</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Remis</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Dépenses déclarées</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Retours reçus</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Restant à régulariser</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border bg-surface">
+                  {fondsRemisRows.map((f) => (
+                    <tr key={`${f.categorieId ?? "none"}|${f.objetId ?? "none"}`} className="hover:bg-muted/50">
+                      <td className="px-4 py-2 text-foreground">{f.categorieLabel}</td>
+                      <td className="px-4 py-2 text-foreground">{f.objetLabel}</td>
+                      <td className="px-4 py-2 text-right text-foreground">{f.nombreOperations}</td>
+                      <td className="px-4 py-2 text-right text-foreground">
+                        {f.montantDemande.toLocaleString("fr-FR")} FCFA
+                      </td>
+                      <td className="px-4 py-2 text-right text-foreground">
+                        {f.montantValide.toLocaleString("fr-FR")} FCFA
+                      </td>
+                      <td className="px-4 py-2 text-right text-foreground">
+                        {f.montantRemis.toLocaleString("fr-FR")} FCFA
+                      </td>
+                      <td className="px-4 py-2 text-right text-foreground">
+                        {f.depensesDeclarees.toLocaleString("fr-FR")} FCFA
+                      </td>
+                      <td className="px-4 py-2 text-right text-foreground">
+                        {f.retoursRecus.toLocaleString("fr-FR")} FCFA
+                      </td>
+                      <td
+                        className={`px-4 py-2 text-right font-semibold ${
+                          f.montantRestantARegulariser !== 0 ? "text-warning" : "text-success"
+                        }`}
+                      >
+                        {f.montantRestantARegulariser.toLocaleString("fr-FR")} FCFA
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">

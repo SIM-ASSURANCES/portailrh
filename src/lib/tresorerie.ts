@@ -265,6 +265,153 @@ export async function getEcart(demandeId: string): Promise<number> {
   return totalRegle - depensesDeclarees - retoursRecus;
 }
 
+export interface MesIndicateurs {
+  /** Somme des montants de TOUTES les demandes créées par cet utilisateur, quel que soit leur statut. */
+  demande: number;
+  /** Somme de `Demande.montantValide` (0/null compte pour 0) sur ces mêmes demandes. */
+  valide: number;
+  /** `max(0, demande - valide)`. */
+  restantAValider: number;
+  /** Somme des règlements confirmés et non annulés (Caisse + Banque) de ces demandes. */
+  regle: number;
+  /** `max(0, valide - regle)`. */
+  valideRestantARegler: number;
+}
+
+/**
+ * Synthèse personnelle d'un Collaborateur pour "Mon tableau de bord"
+ * (cahier des charges section 14) — les 5 mêmes indicateurs que la vision
+ * synthétique générale, scopés à un seul utilisateur au lieu de toute
+ * l'organisation. Formules strictement identiques à `getReportingRows`
+ * (Phase H, `src/lib/reporting.ts`), juste agrégées en un seul total plutôt
+ * que groupées par Catégorie/Objet — jamais une deuxième définition de ces
+ * mêmes calculs.
+ *
+ * **Scope choisi : `createurId`, jamais `beneficiaireUserId`.** Deux
+ * raisons : (1) c'est déjà le filtre de "Mes demandes"
+ * (`treso/demandes/page.tsx`, Ticket 1) — un tableau de bord personnel qui
+ * compterait différemment de la liste juste en dessous serait incohérent
+ * pour l'utilisateur ; (2) `beneficiaireUserId` n'est renseigné que pour un
+ * bénéficiaire `COLLABORATEUR`/`STAGIAIRE` (Phase A) — une demande dont le
+ * créateur est bénéficiaire `ENTREPRISE`/`FOURNISSEUR` (cas normal, pas
+ * seulement les dépenses directes de Finance) aurait disparu du tableau de
+ * bord de son propre créateur. Cohérent avec le principe directeur : le
+ * cycle démarre de la demande du Collaborateur, qui en est l'auteur, pas
+ * nécessairement le bénéficiaire final.
+ *
+ * Calculée en 2 requêtes (jamais une par demande) : la liste des demandes
+ * de l'utilisateur, puis un `groupBy` des règlements confirmés/non-annulés
+ * sur ces mêmes demandes — même pattern que `getRepartitionDemandesValidees`
+ * (`dashboardFinance.ts`) et `getReportingRows`.
+ */
+export async function getMesIndicateurs(userId: string): Promise<MesIndicateurs> {
+  const demandes = await prisma.demande.findMany({
+    where: { createurId: userId },
+    select: { id: true, montant: true, montantValide: true },
+  });
+
+  if (demandes.length === 0) {
+    return { demande: 0, valide: 0, restantAValider: 0, regle: 0, valideRestantARegler: 0 };
+  }
+
+  const ids = demandes.map((d) => d.id);
+  const sommes = await prisma.reglement.groupBy({
+    by: ["demandeId"],
+    where: { demandeId: { in: ids }, estConfirme: true, estAnnule: false },
+    _sum: { montant: true },
+  });
+  const regleParDemande = new Map(sommes.map((s) => [s.demandeId, Number(s._sum.montant ?? 0)]));
+
+  let demande = 0;
+  let valide = 0;
+  let regle = 0;
+  for (const d of demandes) {
+    demande += Number(d.montant);
+    valide += Number(d.montantValide ?? 0);
+    regle += regleParDemande.get(d.id) ?? 0;
+  }
+
+  return {
+    demande,
+    valide,
+    restantAValider: Math.max(0, demande - valide),
+    regle,
+    valideRestantARegler: Math.max(0, valide - regle),
+  };
+}
+
+/**
+ * Zone "À traiter" personnelle, indicateur #1 — nombre de demandes créées
+ * par l'utilisateur encore en attente d'une décision de validation
+ * (`EN_ATTENTE_VALIDATION` : rien validé, ou `PARTIELLEMENT_VALIDEE` : un
+ * reliquat non validé subsiste). Même définition que
+ * `getDemandesEnAttenteValidation` (`dashboardFinance.ts`), scopée par
+ * `createurId`.
+ */
+export async function getMesDemandesEnAttente(userId: string): Promise<{ nombre: number }> {
+  const nombre = await prisma.demande.count({
+    where: { createurId: userId, statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] } },
+  });
+  return { nombre };
+}
+
+/**
+ * Règlements Caisse confirmés (non annulés) des demandes créées par cet
+ * utilisateur, pour lesquels **aucun** `RetourCaisse` n'a encore été
+ * déclaré — même règle d'éligibilité que le bouton "Déclarer un retour de
+ * caisse" (Ticket 5, `RetoursCaisseSection.tsx` : un seul retour par
+ * règlement) : `mode: CAISSE`, `estConfirme: true`, `estAnnule: false`,
+ * aucune ligne dans `retours`. Exclut aussi les demandes déjà `CLOTUREE`
+ * (Ticket 7 : un retour resté en attente sur une demande clôturée ne peut
+ * plus jamais être déclaré — même verrou que `peutDeclarer` sur cet écran).
+ *
+ * Retourne la liste complète (pas seulement un compte) : c'est elle qui
+ * détermine, à l'écran, si le clic sur la carte "Mes retours de caisse à
+ * déclarer" doit mener directement à l'unique demande concernée ou à
+ * l'écran de liste `retours-a-declarer` (plusieurs règlements en attente).
+ * `getMesRetoursADeclarer` ci-dessous n'est qu'un `{ nombre }` dérivé de
+ * cette même requête — jamais deux implémentations de la même règle.
+ */
+export async function getReglementsCaisseADeclarer(userId: string): Promise<
+  { reglementId: string; demandeId: string; reference: string; montant: number; confirmeAt: Date | null }[]
+> {
+  const reglements = await prisma.reglement.findMany({
+    where: {
+      mode: "CAISSE",
+      estConfirme: true,
+      estAnnule: false,
+      demande: { createurId: userId, statut: { not: "CLOTUREE" } },
+      retours: { none: {} },
+    },
+    select: {
+      id: true,
+      montant: true,
+      confirmeAt: true,
+      demande: { select: { id: true, reference: true } },
+    },
+    orderBy: { confirmeAt: "asc" },
+  });
+
+  return reglements.map((r) => ({
+    reglementId: r.id,
+    demandeId: r.demande.id,
+    reference: r.demande.reference,
+    montant: Number(r.montant),
+    confirmeAt: r.confirmeAt,
+  }));
+}
+
+/**
+ * Zone "À traiter" personnelle, indicateur #2 — nombre de règlements Caisse
+ * en attente de déclaration d'un retour (voir `getReglementsCaisseADeclarer`
+ * pour la règle d'éligibilité complète). C'est une action qui revient au
+ * Collaborateur lui-même, jamais à Finance.
+ */
+export async function getMesRetoursADeclarer(userId: string): Promise<{ nombre: number }> {
+  const reglements = await getReglementsCaisseADeclarer(userId);
+  return { nombre: reglements.length };
+}
+
 /** Convertit un montant en centimes entiers pour des comparaisons fiables
  * (évite les artefacts de virgule flottante sur des `Number(Prisma.Decimal)`
  * lors d'une égalité stricte, ex: montantValide === montant demandé). */

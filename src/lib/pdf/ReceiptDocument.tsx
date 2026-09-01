@@ -146,18 +146,24 @@ export interface ReceiptData {
   recuReference: string;
   demandeReference: string;
   demandeurNom: string;
+  /** Distinct du demandeur (Phase A) — voir `getBeneficiaireNom`. */
+  beneficiaireNom: string;
   categorieLabel: string | null;
   objetLabel: string | null;
   montant: number;
   mode: "CAISSE" | "BANQUE";
   confirmeLe: Date;
   auteurNom: string;
+  /** Section 12.2 : nom(s) du/des validateur(s) — voir `getValidateursNoms` (route.tsx). */
+  validateursNoms: string;
   genereLe: Date;
   /** Montant total de la Demande (pas seulement ce règlement). */
   montantDemande: number;
+  /** Section 12.2 : `Demande.montantValide`, distinct du montant demandé. */
+  montantValide: number;
   /** getTotalRegle(demandeId) au moment de la génération — état le plus à jour, pas figé à la date du règlement. */
   totalRegleADate: number;
-  /** getResteARegler(demandeId), même logique de fraîcheur. */
+  /** getResteARegler(demandeId) — "solde validé restant à régler" (section 12.2), même logique de fraîcheur. */
   resteARegler: number;
 }
 
@@ -232,11 +238,17 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
                 <Text style={styles.statValueMedium}>{formatMontant(data.montantDemande)}</Text>
               </View>
               <View style={styles.statCell}>
+                <Text style={styles.statLabel}>Montant validé</Text>
+                <Text style={styles.statValueMedium}>{formatMontant(data.montantValide)}</Text>
+              </View>
+            </View>
+            <View style={styles.statsRow}>
+              <View style={styles.statCell}>
                 <Text style={styles.statLabel}>Total réglé à ce jour</Text>
                 <Text style={styles.statValueMedium}>{formatMontant(data.totalRegleADate)}</Text>
               </View>
               <View style={styles.statCell}>
-                <Text style={styles.statLabel}>Reste à régler</Text>
+                <Text style={styles.statLabel}>Solde validé restant à régler</Text>
                 <Text
                   style={[
                     styles.statValueMedium,
@@ -256,6 +268,10 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
               <Text style={styles.detailValue}>{data.demandeurNom}</Text>
             </View>
             <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Bénéficiaire</Text>
+              <Text style={styles.detailValue}>{data.beneficiaireNom}</Text>
+            </View>
+            <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Catégorie</Text>
               <Text style={styles.detailValue}>{data.categorieLabel ?? "Non renseignée"}</Text>
             </View>
@@ -266,7 +282,8 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
           </View>
 
           <Text style={styles.auteurLine}>
-            Règlement effectué par <Text style={styles.auteurNom}>{data.auteurNom}</Text>.
+            Validé par <Text style={styles.auteurNom}>{data.validateursNoms}</Text> — Règlement effectué par{" "}
+            <Text style={styles.auteurNom}>{data.auteurNom}</Text>.
           </Text>
         </View>
 

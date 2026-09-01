@@ -5,6 +5,7 @@ import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components
 import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom } from "@/components/tresorerie/beneficiaire";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
+import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesIntervenantes";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import type { Prisma } from "@/generated/prisma/client";
 import { getSession, hasPermission } from "@/lib/auth";
@@ -205,6 +206,7 @@ export default async function CategoriserDemandePage({
             lockMessage="Catégorie, objet et budget sont définitivement verrouillés."
           />
           <RegularisationSummary demandeId={demande.id} montantValide={Number(demande.montantValide ?? 0)} />
+          <PersonnesIntervenantes demandeId={demande.id} demandeurNom={demande.createur.fullName} />
           {demande.motifCloture ? (
             <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">

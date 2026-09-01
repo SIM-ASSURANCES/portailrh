@@ -1,6 +1,15 @@
 import { getBeneficiaireNom } from "@/components/tresorerie/beneficiaire";
 import type { ModeReglement, Prisma, StatutDemande, TypeDemande, TypeJustification } from "@/generated/prisma/client";
+import {
+  getDemandesEnAttenteValidation,
+  getDepensesNonJustifiees,
+  getFondsRemisARegulariser,
+  getMontantsValidesNonRegles,
+  getReglementsPartielsACompleter,
+  getRetoursEnAttenteReception,
+} from "@/lib/dashboardFinance";
 import { prisma } from "@/lib/prisma";
+import { getDepensesDeclarees, getRetoursRecus, getSoldeCaisse, getTotalRegle } from "@/lib/tresorerie";
 
 /**
  * Filtres du reporting Trésorerie (Ticket 10), partagés entre l'écran
@@ -256,6 +265,155 @@ async function getDemandesFiltrees(
     : demandes;
 
   return { demandes: demandesFiltrees, montantsRegleParDemande };
+}
+
+interface FondsRemis {
+  nombreOperations: number;
+  montantRemis: number;
+  depensesDeclarees: number;
+  retoursRecus: number;
+}
+
+/**
+ * "Fonds remis" par demande — section 15 du cahier des charges (batché,
+ * jamais une requête par demande, même principe que
+ * `getMontantsRegleParDemande`) :
+ * - `nombreOperations`/`montantRemis` : règlements CAISSE confirmés et non
+ *   annulés (un "fonds remis" = une remise d'espèces à un collaborateur,
+ *   donc un règlement Caisse précisément — jamais les règlements Banque,
+ *   qui n'ont aucun cycle de fonds remis).
+ * - `depensesDeclarees` : somme des `DepenseLigne` de tous les
+ *   `RetourCaisse` liés à ces règlements (réceptionnés ou non — même
+ *   convention que `getDepensesDeclarees`, `tresorerie.ts`).
+ * - `retoursRecus` : somme des `montantARetourner` des retours
+ *   **réceptionnés uniquement** (même convention que `getRetoursRecus`).
+ *
+ * Une demande absente de la Map n'a aucun règlement Caisse confirmé — donc
+ * aucun fonds remis à régulariser, à exclure de `getReportingFondsRemis`.
+ */
+async function getFondsRemisParDemande(demandeIds: string[]): Promise<Map<string, FondsRemis>> {
+  if (demandeIds.length === 0) {
+    return new Map();
+  }
+
+  const reglementsCaisse = await prisma.reglement.groupBy({
+    by: ["demandeId"],
+    where: { demandeId: { in: demandeIds }, mode: "CAISSE", estConfirme: true, estAnnule: false },
+    _count: { _all: true },
+    _sum: { montant: true },
+  });
+  if (reglementsCaisse.length === 0) {
+    return new Map();
+  }
+
+  const map = new Map<string, FondsRemis>();
+  for (const r of reglementsCaisse) {
+    map.set(r.demandeId, {
+      nombreOperations: r._count._all,
+      montantRemis: Number(r._sum.montant ?? 0),
+      depensesDeclarees: 0,
+      retoursRecus: 0,
+    });
+  }
+
+  const [lignes, retours] = await Promise.all([
+    prisma.depenseLigne.findMany({
+      where: { retourCaisse: { reglement: { demandeId: { in: demandeIds } } } },
+      select: { montant: true, retourCaisse: { select: { reglement: { select: { demandeId: true } } } } },
+    }),
+    prisma.retourCaisse.findMany({
+      where: { estReceptionne: true, reglement: { demandeId: { in: demandeIds } } },
+      select: { montantARetourner: true, reglement: { select: { demandeId: true } } },
+    }),
+  ]);
+
+  for (const l of lignes) {
+    const entry = map.get(l.retourCaisse.reglement.demandeId);
+    if (entry) entry.depensesDeclarees += Number(l.montant);
+  }
+  for (const r of retours) {
+    const entry = map.get(r.reglement.demandeId);
+    if (entry) entry.retoursRecus += Number(r.montantARetourner);
+  }
+
+  return map;
+}
+
+export interface ReportingFondsRemisRow {
+  categorieId: string | null;
+  categorieLabel: string;
+  objetId: string | null;
+  objetLabel: string;
+  /** Nombre de règlements Caisse confirmés (pas de demandes — une demande peut en avoir plusieurs). */
+  nombreOperations: number;
+  montantDemande: number;
+  montantValide: number;
+  /** Somme des règlements Caisse confirmés du groupe — les fonds effectivement remis en espèces. */
+  montantRemis: number;
+  depensesDeclarees: number;
+  retoursRecus: number;
+  /**
+   * `montantRemis - depensesDeclarees - retoursRecus` — **jamais plafonné à
+   * 0** (contrairement à `montantRestantAValider`/`valideResteARegler` de
+   * `getReportingRows`) : un solde négatif signale une anomalie réelle
+   * (sur-retour), la même convention que `getSoldeARegulariser`/`getEcart`
+   * (`tresorerie.ts`), jamais masquée par un `max(0, ...)`.
+   */
+  montantRestantARegulariser: number;
+}
+
+/**
+ * Tableau "Fonds remis" dédié (section 15 du cahier des charges) — distinct
+ * du tableau agrégé général (`getReportingRows`) : ne retient que les
+ * demandes ayant au moins un règlement Caisse confirmé (les seules à avoir
+ * un cycle de fonds remis), groupées par Catégorie/Objet comme le tableau
+ * général, avec les colonnes exactes demandées : nombre d'opérations,
+ * montant demandé, montant validé, montant remis, dépenses déclarées,
+ * retours reçus, montant restant à régulariser.
+ */
+export async function getReportingFondsRemis(filters: ReportingFilters): Promise<ReportingFondsRemisRow[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const fondsParDemande = await getFondsRemisParDemande(demandes.map((d) => d.id));
+
+  const buckets = new Map<string, ReportingFondsRemisRow>();
+  for (const d of demandes) {
+    const fonds = fondsParDemande.get(d.id);
+    if (!fonds) continue; // Aucun règlement Caisse confirmé : hors périmètre "fonds remis".
+
+    const key = `${d.categorieId ?? "none"}|${d.objetId ?? "none"}`;
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.nombreOperations += fonds.nombreOperations;
+      existing.montantDemande += Number(d.montant);
+      existing.montantValide += Number(d.montantValide ?? 0);
+      existing.montantRemis += fonds.montantRemis;
+      existing.depensesDeclarees += fonds.depensesDeclarees;
+      existing.retoursRecus += fonds.retoursRecus;
+    } else {
+      buckets.set(key, {
+        categorieId: d.categorieId,
+        categorieLabel: d.categorie?.label ?? "Non catégorisée",
+        objetId: d.objetId,
+        objetLabel: d.objet?.label ?? "Non renseigné",
+        nombreOperations: fonds.nombreOperations,
+        montantDemande: Number(d.montant),
+        montantValide: Number(d.montantValide ?? 0),
+        montantRemis: fonds.montantRemis,
+        depensesDeclarees: fonds.depensesDeclarees,
+        retoursRecus: fonds.retoursRecus,
+        montantRestantARegulariser: 0,
+      });
+    }
+  }
+
+  const rows = Array.from(buckets.values());
+  for (const row of rows) {
+    row.montantRestantARegulariser = row.montantRemis - row.depensesDeclarees - row.retoursRecus;
+  }
+
+  return rows.sort(
+    (a, b) => a.categorieLabel.localeCompare(b.categorieLabel) || a.objetLabel.localeCompare(b.objetLabel)
+  );
 }
 
 export interface ReportingRow {
@@ -536,13 +694,19 @@ export interface ReportingJournalDetail {
   montant: number;
   source: string;
   createdAt: Date;
+  /** Section 13 (traçabilité) : demande concernée. */
+  demandeReference: string;
+  /** Section 13 (traçabilité) : utilisateur ayant déclenché l'écriture. */
+  userNom: string;
 }
 
 /**
  * Feuille "Journal de caisse" de l'export : grand livre `JournalCaisse`,
  * filtré **uniquement par période** — la catégorie/l'objet/le mode n'ont
  * pas de sens à ce niveau (une écriture n'a pas de catégorie), demande
- * explicite du cahier des charges.
+ * explicite du cahier des charges. `demandeReference`/`userNom` (section 13)
+ * viennent des relations `demande`/`user` ajoutées à `JournalCaisse` —
+ * renseignées à la création de chaque écriture, jamais recalculées ici.
  */
 export async function getReportingJournalDetail(filters: ReportingFilters): Promise<ReportingJournalDetail[]> {
   const entries = await prisma.journalCaisse.findMany({
@@ -551,6 +715,7 @@ export async function getReportingJournalDetail(filters: ReportingFilters): Prom
         ? { createdAt: { ...(filters.du ? { gte: filters.du } : {}), ...(filters.au ? { lte: filters.au } : {}) } }
         : {}),
     },
+    include: { demande: { select: { reference: true } }, user: { select: { fullName: true } } },
     orderBy: { createdAt: "asc" },
   });
   return entries.map((e) => ({
@@ -558,5 +723,278 @@ export async function getReportingJournalDetail(filters: ReportingFilters): Prom
     montant: Number(e.montant),
     source: e.source,
     createdAt: e.createdAt,
+    demandeReference: e.demande.reference,
+    userNom: e.user.fullName,
   }));
+}
+
+/**
+ * Extrait le montant validé "à cette étape" (par opposition au cumul) du
+ * texte `HistoriqueEntry.detail` produit par `enregistrerValidation`
+ * (`treso/finance/demandes/[id]/actions.ts`, Phase B) : toujours au format
+ * exact `"Montant validé à cette étape : 250 000 FCFA (cumul validé : ...)"`
+ * — jamais un texte saisi par un utilisateur, donc l'extraction par regex
+ * est fiable tant que ce format ne change pas. Ni `HistoriqueEntry` ni les
+ * Server Actions de validation n'ont de champ numérique dédié pour cette
+ * valeur (hors périmètre de cette tâche d'en ajouter un) ; `null` si le
+ * format ne correspond pas (jamais une exception qui ferait échouer tout
+ * l'export pour une seule ligne).
+ */
+function parseMontantValideCetteEtape(detail: string | null): number | null {
+  if (!detail) return null;
+  const match = detail.match(/Montant validé à cette étape\s*:\s*([\d\s  ]+)\s*FCFA/);
+  if (!match) return null;
+  const digits = match[1].replace(/[^\d]/g, "");
+  return digits ? Number(digits) : null;
+}
+
+export interface ReportingValidationDetail {
+  demandeReference: string;
+  /** "validation" | "validation_complementaire" | "rejet" — libellé humain géré côté appelant (mêmes `ACTION_LABELS` que `DemandeHistorique`). */
+  action: string;
+  userNom: string;
+  date: Date;
+  /** `null` pour un rejet (rien n'est validé), ou si le texte de l'entrée ne correspond pas au format attendu. */
+  montant: number | null;
+  detail: string | null;
+}
+
+/**
+ * Feuille "Validations" de l'export (section 16) : une ligne par événement
+ * de validation, validation complémentaire ou rejet (`HistoriqueEntry`,
+ * Phase B/Ticket 3), pour les demandes filtrées.
+ */
+export async function getReportingValidationsDetail(
+  filters: ReportingFilters
+): Promise<ReportingValidationDetail[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const demandeIds = demandes.map((d) => d.id);
+  if (demandeIds.length === 0) {
+    return [];
+  }
+  const referenceParDemande = new Map(demandes.map((d) => [d.id, d.reference]));
+
+  const entries = await prisma.historiqueEntry.findMany({
+    where: {
+      entity: "Demande",
+      entityId: { in: demandeIds },
+      action: { in: ["validation", "validation_complementaire", "rejet"] },
+    },
+    include: { user: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return entries.map((e) => ({
+    demandeReference: referenceParDemande.get(e.entityId) ?? "—",
+    action: e.action,
+    userNom: e.user.fullName,
+    date: e.createdAt,
+    montant: parseMontantValideCetteEtape(e.detail),
+    detail: e.detail,
+  }));
+}
+
+export interface ReportingRegularisationDetail {
+  demandeReference: string;
+  montantValide: number;
+  /** Total réglé, tous modes confondus — `getTotalRegle`. */
+  totalRegle: number;
+  depensesDeclarees: number;
+  retoursRecus: number;
+  /** `totalRegle - depensesDeclarees - retoursRecus` — même formule que `getEcart` (`tresorerie.ts`), jamais plafonnée à 0. */
+  ecart: number;
+  motifCloture: string | null;
+  /** Date de la dernière `HistoriqueEntry` `cloture_totale`/`cloture_partielle` ; à défaut (donnée historique sans cette entrée), `updatedAt` de la demande. */
+  clotureeLe: Date;
+}
+
+/**
+ * Feuille "Régularisations" de l'export (section 16) : une ligne par
+ * demande **clôturée** (`CLOTUREE`) parmi les demandes filtrées, avec le
+ * détail du solde à régulariser final — mêmes fonctions que celles déjà
+ * affichées à l'écran (`RegularisationSummary`), jamais une deuxième
+ * formule. Calcul par demande via `Promise.all` (pas de version batchée) :
+ * même principe déjà accepté pour `a-regulariser` (Ticket 8, CLAUDE.md) —
+ * l'ensemble des demandes clôturées reste par nature une file bornée, pas
+ * "toutes les demandes" de l'organisation.
+ */
+export async function getReportingRegularisationsDetail(
+  filters: ReportingFilters
+): Promise<ReportingRegularisationDetail[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const cloturees = demandes.filter((d) => d.statut === "CLOTUREE");
+  if (cloturees.length === 0) {
+    return [];
+  }
+
+  const clotureIds = cloturees.map((d) => d.id);
+  const [clotureEntries, motifsEtDates] = await Promise.all([
+    prisma.historiqueEntry.findMany({
+      where: {
+        entity: "Demande",
+        entityId: { in: clotureIds },
+        action: { in: ["cloture_totale", "cloture_partielle"] },
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.demande.findMany({
+      where: { id: { in: clotureIds } },
+      select: { id: true, motifCloture: true, updatedAt: true },
+    }),
+  ]);
+
+  const clotureDateParDemande = new Map<string, Date>();
+  for (const e of clotureEntries) {
+    clotureDateParDemande.set(e.entityId, e.createdAt); // ordonné asc : la dernière écriture gagne.
+  }
+  const infoParDemande = new Map(motifsEtDates.map((d) => [d.id, d]));
+
+  const details = await Promise.all(
+    cloturees.map(async (d) => {
+      const [totalRegle, depensesDeclarees, retoursRecus] = await Promise.all([
+        getTotalRegle(d.id),
+        getDepensesDeclarees(d.id),
+        getRetoursRecus(d.id),
+      ]);
+      const info = infoParDemande.get(d.id);
+      return {
+        demandeReference: d.reference,
+        montantValide: Number(d.montantValide ?? 0),
+        totalRegle,
+        depensesDeclarees,
+        retoursRecus,
+        ecart: totalRegle - depensesDeclarees - retoursRecus,
+        motifCloture: info?.motifCloture ?? null,
+        clotureeLe: clotureDateParDemande.get(d.id) ?? info?.updatedAt ?? d.createdAt,
+      };
+    })
+  );
+
+  return details;
+}
+
+export interface ReportingDepenseNonJustifieeDetail {
+  demandeReference: string;
+  demandeurNom: string;
+  beneficiaireNom: string;
+  service: string | null;
+  nombreOperations: number;
+  montantTotal: number;
+  periodeDebut: Date;
+  periodeFin: Date;
+}
+
+/**
+ * Feuille "Dépenses non justifiées" de l'export (section 16) — **dédiée**,
+ * distincte de la colonne "Non justifiée" de la feuille "Dépenses
+ * déclarées" (celle-ci reste une ligne par `DepenseLigne`, cahier des
+ * charges Phase H) : ici, une ligne PAR DEMANDE regroupant ses dépenses
+ * `SANS_PIECE`, avec les colonnes exactes demandées (nombre d'opérations,
+ * montant total, demandeur, bénéficiaire, service, période) — `service`
+ * et `bénéficiaire` n'ayant de sens qu'au niveau d'une demande, pas d'une
+ * ligne de dépense isolée.
+ */
+export async function getReportingDepensesNonJustifieesDetail(
+  filters: ReportingFilters
+): Promise<ReportingDepenseNonJustifieeDetail[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const demandeIds = demandes.map((d) => d.id);
+  if (demandeIds.length === 0) {
+    return [];
+  }
+  const infoParDemande = new Map(
+    demandes.map((d) => [
+      d.id,
+      {
+        reference: d.reference,
+        demandeurNom: d.createur.fullName,
+        beneficiaireNom: getBeneficiaireNom(d),
+        service: d.createur.service,
+      },
+    ])
+  );
+
+  const lignes = await prisma.depenseLigne.findMany({
+    where: { justification: "SANS_PIECE", retourCaisse: { reglement: { demandeId: { in: demandeIds } } } },
+    include: { retourCaisse: { include: { reglement: true } } },
+    orderBy: { date: "asc" },
+  });
+
+  const buckets = new Map<string, ReportingDepenseNonJustifieeDetail>();
+  for (const l of lignes) {
+    const demandeId = l.retourCaisse.reglement.demandeId;
+    const info = infoParDemande.get(demandeId);
+    if (!info) continue;
+
+    const existing = buckets.get(demandeId);
+    if (existing) {
+      existing.nombreOperations += 1;
+      existing.montantTotal += Number(l.montant);
+      if (l.date < existing.periodeDebut) existing.periodeDebut = l.date;
+      if (l.date > existing.periodeFin) existing.periodeFin = l.date;
+    } else {
+      buckets.set(demandeId, {
+        demandeReference: info.reference,
+        demandeurNom: info.demandeurNom,
+        beneficiaireNom: info.beneficiaireNom,
+        service: info.service,
+        nombreOperations: 1,
+        montantTotal: Number(l.montant),
+        periodeDebut: l.date,
+        periodeFin: l.date,
+      });
+    }
+  }
+
+  return Array.from(buckets.values()).sort((a, b) => a.demandeReference.localeCompare(b.demandeReference));
+}
+
+export interface ReportingDashboardIndicateur {
+  indicateur: string;
+  nombre: number | null;
+  montant: number | null;
+}
+
+/**
+ * Feuille "Dashboard" de l'export (section 16) : les 6 indicateurs "À
+ * traiter" du dashboard Finance (Phase G) + le solde de caisse, calculés
+ * **au moment de l'export** — un instantané non filtré (les mêmes
+ * fonctions que `treso/finance/page.tsx`, jamais une deuxième formule),
+ * puisque ce sont par nature des indicateurs organisationnels globaux, pas
+ * des données qui se prêtent aux filtres période/catégorie/demandeur du
+ * reste du reporting.
+ */
+export async function getReportingDashboardSnapshot(): Promise<ReportingDashboardIndicateur[]> {
+  const [solde, enAttenteValidation, montantsNonRegles, reglementsPartiels, fondsARegulariser, retoursEnAttente, depensesNonJustifiees] =
+    await Promise.all([
+      getSoldeCaisse(),
+      getDemandesEnAttenteValidation(),
+      getMontantsValidesNonRegles(),
+      getReglementsPartielsACompleter(),
+      getFondsRemisARegulariser(),
+      getRetoursEnAttenteReception(),
+      getDepensesNonJustifiees(),
+    ]);
+
+  return [
+    { indicateur: "Solde de caisse", nombre: null, montant: solde },
+    { indicateur: "Demandes en attente de validation", nombre: enAttenteValidation.nombre, montant: null },
+    {
+      indicateur: "Montants validés restant à régler",
+      nombre: montantsNonRegles.nombre,
+      montant: montantsNonRegles.montant,
+    },
+    {
+      indicateur: "Règlements partiels à compléter",
+      nombre: reglementsPartiels.nombre,
+      montant: reglementsPartiels.montant,
+    },
+    { indicateur: "Fonds remis à régulariser", nombre: fondsARegulariser.nombre, montant: fondsARegulariser.montant },
+    { indicateur: "Retours de fonds en attente de réception", nombre: retoursEnAttente.nombre, montant: null },
+    {
+      indicateur: "Dépenses non justifiées à suivre",
+      nombre: depensesNonJustifiees.nombre,
+      montant: depensesNonJustifiees.montant,
+    },
+  ];
 }

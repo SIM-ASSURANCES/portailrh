@@ -70,6 +70,16 @@ export default async function DashboardFinancePage() {
     getDecaissementsARegulariser(),
   ]);
 
+  // Le DG a `voir_dashboard_finance` mais jamais `receptionner_retour`
+  // (rôle validation/consultation, voir seed) : sans ce garde-fou, la carte
+  // "Retours de fonds en attente" lui promettrait un clic vers une page qui
+  // le refuse aussitôt (`/treso/finance/retours`, gardée par cette
+  // permission précise) — même principe que "Bientôt disponible" sur le
+  // dashboard général, appliqué ici à une carte réellement construite mais
+  // pas actionnable par ce rôle précis : reste visible (chiffre de
+  // consultation), devient simplement non cliquable.
+  const canReceptionnerRetour = hasPermission(session, "treso.receptionner_retour");
+
   const totalATraiter =
     enAttenteValidation.nombre +
     montantsNonRegles.nombre +
@@ -165,7 +175,7 @@ export default async function DashboardFinancePage() {
           </div>
           <div className="stat-card-enter">
             <StatCard
-              href="/treso/finance/retours"
+              href={canReceptionnerRetour ? "/treso/finance/retours" : undefined}
               icon="rotate-ccw"
               tone={toneSiActif(retoursEnAttente.nombre, "warning")}
               label="Retours de fonds en attente de réception"

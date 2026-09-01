@@ -5,14 +5,25 @@ import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { JUSTIFICATION_LABEL } from "@/components/tresorerie/justification";
 import { getSession, hasPermission } from "@/lib/auth";
 import {
+  getReportingDashboardSnapshot,
   getReportingDemandesDetail,
   getReportingDepensesDetail,
+  getReportingDepensesNonJustifieesDetail,
+  getReportingFondsRemis,
   getReportingJournalDetail,
   getReportingReglementsDetail,
+  getReportingRegularisationsDetail,
   getReportingRetoursDetail,
   getReportingRows,
+  getReportingValidationsDetail,
   parseReportingFilters,
 } from "@/lib/reporting";
+
+const VALIDATION_ACTION_LABEL: Record<string, string> = {
+  validation: "Validation",
+  validation_complementaire: "Validation complémentaire",
+  rejet: "Rejet",
+};
 
 const MODE_LABEL: Record<"CAISSE" | "BANQUE", string> = { CAISSE: "Caisse", BANQUE: "Banque" };
 
@@ -47,14 +58,20 @@ export async function GET(request: NextRequest) {
   const searchParams = Object.fromEntries(request.nextUrl.searchParams.entries());
   const filters = parseReportingFilters(searchParams);
 
-  const [demandes, reglements, retours, depenses, journal, rows] = await Promise.all([
-    getReportingDemandesDetail(filters),
-    getReportingReglementsDetail(filters),
-    getReportingRetoursDetail(filters),
-    getReportingDepensesDetail(filters),
-    getReportingJournalDetail(filters),
-    getReportingRows(filters),
-  ]);
+  const [demandes, reglements, retours, depenses, journal, rows, validations, fondsRemis, regularisations, depensesNonJustifiees, dashboard] =
+    await Promise.all([
+      getReportingDemandesDetail(filters),
+      getReportingReglementsDetail(filters),
+      getReportingRetoursDetail(filters),
+      getReportingDepensesDetail(filters),
+      getReportingJournalDetail(filters),
+      getReportingRows(filters),
+      getReportingValidationsDetail(filters),
+      getReportingFondsRemis(filters),
+      getReportingRegularisationsDetail(filters),
+      getReportingDepensesNonJustifieesDetail(filters),
+      getReportingDashboardSnapshot(),
+    ]);
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Portail SIM Assurances";
@@ -84,6 +101,29 @@ export async function GET(request: NextRequest) {
     })
   );
   styleHeaderRow(sheetDemandes);
+
+  // Section 16 du cahier des charges : une ligne par événement de
+  // validation/validation complémentaire/rejet (HistoriqueEntry, Phase B).
+  const sheetValidations = workbook.addWorksheet("Validations");
+  sheetValidations.columns = [
+    { header: "Référence demande", key: "reference", width: 20 },
+    { header: "Action", key: "action", width: 22 },
+    { header: "Validateur", key: "validateur", width: 22 },
+    { header: "Date", key: "date", width: 14 },
+    { header: "Montant validé à cette étape (FCFA)", key: "montant", width: 26 },
+    { header: "Détail", key: "detail", width: 40 },
+  ];
+  validations.forEach((v) =>
+    sheetValidations.addRow({
+      reference: v.demandeReference,
+      action: VALIDATION_ACTION_LABEL[v.action] ?? v.action,
+      validateur: v.userNom,
+      date: v.date.toLocaleDateString("fr-FR"),
+      montant: v.montant,
+      detail: v.detail ?? "",
+    })
+  );
+  styleHeaderRow(sheetValidations);
 
   const sheetReglements = workbook.addWorksheet("Règlements");
   sheetReglements.columns = [
@@ -128,6 +168,67 @@ export async function GET(request: NextRequest) {
   );
   styleHeaderRow(sheetRetours);
 
+  // Section 15 du cahier des charges : tableau "Fonds remis" dédié, groupé
+  // par Catégorie/Objet comme la feuille "Reporting" mais restreint aux
+  // demandes ayant au moins un règlement Caisse confirmé (voir
+  // `getReportingFondsRemis`, reporting.ts).
+  const sheetFondsRemis = workbook.addWorksheet("Fonds remis");
+  sheetFondsRemis.columns = [
+    { header: "Catégorie", key: "categorie", width: 18 },
+    { header: "Objet", key: "objet", width: 26 },
+    { header: "Nb. opérations", key: "nombre", width: 16 },
+    { header: "Montant demandé (FCFA)", key: "montantDemande", width: 20 },
+    { header: "Montant validé (FCFA)", key: "montantValide", width: 20 },
+    { header: "Montant remis (FCFA)", key: "montantRemis", width: 20 },
+    { header: "Dépenses déclarées (FCFA)", key: "depensesDeclarees", width: 22 },
+    { header: "Retours reçus (FCFA)", key: "retoursRecus", width: 20 },
+    { header: "Restant à régulariser (FCFA)", key: "restant", width: 24 },
+  ];
+  fondsRemis.forEach((f) =>
+    sheetFondsRemis.addRow({
+      categorie: f.categorieLabel,
+      objet: f.objetLabel,
+      nombre: f.nombreOperations,
+      montantDemande: f.montantDemande,
+      montantValide: f.montantValide,
+      montantRemis: f.montantRemis,
+      depensesDeclarees: f.depensesDeclarees,
+      retoursRecus: f.retoursRecus,
+      restant: f.montantRestantARegulariser,
+    })
+  );
+  styleHeaderRow(sheetFondsRemis);
+
+  // Section 16 : une ligne par demande CLÔTURÉE, avec le solde à
+  // régulariser final (même formule que `RegularisationSummary` à l'écran).
+  const sheetRegularisations = workbook.addWorksheet("Régularisations");
+  sheetRegularisations.columns = [
+    { header: "Référence demande", key: "reference", width: 20 },
+    { header: "Montant validé (FCFA)", key: "montantValide", width: 20 },
+    { header: "Total réglé (FCFA)", key: "totalRegle", width: 18 },
+    { header: "Dépenses déclarées (FCFA)", key: "depensesDeclarees", width: 22 },
+    { header: "Retours reçus (FCFA)", key: "retoursRecus", width: 20 },
+    { header: "Écart (FCFA)", key: "ecart", width: 16 },
+    { header: "Motif de clôture", key: "motif", width: 32 },
+    { header: "Clôturée le", key: "clotureeLe", width: 14 },
+  ];
+  regularisations.forEach((r) => {
+    const row = sheetRegularisations.addRow({
+      reference: r.demandeReference,
+      montantValide: r.montantValide,
+      totalRegle: r.totalRegle,
+      depensesDeclarees: r.depensesDeclarees,
+      retoursRecus: r.retoursRecus,
+      ecart: r.ecart,
+      motif: r.motifCloture ?? "—",
+      clotureeLe: r.clotureeLe.toLocaleDateString("fr-FR"),
+    });
+    if (r.ecart !== 0) {
+      row.getCell("ecart").font = { bold: true, color: { argb: "FFF16622" } };
+    }
+  });
+  styleHeaderRow(sheetRegularisations);
+
   // Phase H : détail ligne par ligne des dépenses déclarées (Phase D,
   // "fonds remis") — une ligne par DepenseLigne, pas agrégée par retour
   // comme la feuille "Retours de caisse" ci-dessus. Les lignes non
@@ -167,11 +268,44 @@ export async function GET(request: NextRequest) {
   });
   styleHeaderRow(sheetDepenses);
 
+  // Section 16 : feuille DÉDIÉE "Dépenses non justifiées", distincte de la
+  // colonne "Non justifiée" ci-dessus — une ligne PAR DEMANDE (nombre
+  // d'opérations + montant total, jamais une ligne par DepenseLigne comme
+  // "Dépenses déclarées") avec demandeur/bénéficiaire/service/période.
+  const sheetDepensesNonJustifiees = workbook.addWorksheet("Dépenses non justifiées");
+  sheetDepensesNonJustifiees.columns = [
+    { header: "Référence demande", key: "reference", width: 20 },
+    { header: "Demandeur", key: "demandeur", width: 22 },
+    { header: "Bénéficiaire", key: "beneficiaire", width: 24 },
+    { header: "Service", key: "service", width: 18 },
+    { header: "Nb. opérations", key: "nombre", width: 16 },
+    { header: "Montant total (FCFA)", key: "montant", width: 20 },
+    { header: "Période", key: "periode", width: 26 },
+  ];
+  depensesNonJustifiees.forEach((d) => {
+    const periode =
+      d.periodeDebut.getTime() === d.periodeFin.getTime()
+        ? d.periodeDebut.toLocaleDateString("fr-FR")
+        : `${d.periodeDebut.toLocaleDateString("fr-FR")} – ${d.periodeFin.toLocaleDateString("fr-FR")}`;
+    sheetDepensesNonJustifiees.addRow({
+      reference: d.demandeReference,
+      demandeur: d.demandeurNom,
+      beneficiaire: d.beneficiaireNom,
+      service: d.service ?? "—",
+      nombre: d.nombreOperations,
+      montant: d.montantTotal,
+      periode,
+    });
+  });
+  styleHeaderRow(sheetDepensesNonJustifiees);
+
   const sheetJournal = workbook.addWorksheet("Journal de caisse");
   sheetJournal.columns = [
     { header: "Type", key: "type", width: 12 },
     { header: "Montant (FCFA)", key: "montant", width: 16 },
     { header: "Source", key: "source", width: 28 },
+    { header: "Référence demande", key: "reference", width: 20 },
+    { header: "Utilisateur", key: "utilisateur", width: 22 },
     { header: "Date", key: "date", width: 14 },
   ];
   journal.forEach((j) =>
@@ -179,6 +313,8 @@ export async function GET(request: NextRequest) {
       type: j.type,
       montant: j.montant,
       source: j.source,
+      reference: j.demandeReference,
+      utilisateur: j.userNom,
       date: j.createdAt.toLocaleDateString("fr-FR"),
     })
   );
@@ -277,6 +413,25 @@ export async function GET(request: NextRequest) {
     }
   });
   styleHeaderRow(sheetBudget);
+
+  // Section 16 : instantané des indicateurs du dashboard Finance (Phase G)
+  // au moment de l'export — jamais filtré par les paramètres du reporting
+  // (voir `getReportingDashboardSnapshot`), ce sont des indicateurs
+  // organisationnels globaux, pas des données découpables par période.
+  const sheetDashboard = workbook.addWorksheet("Dashboard");
+  sheetDashboard.columns = [
+    { header: "Indicateur", key: "indicateur", width: 40 },
+    { header: "Nombre", key: "nombre", width: 14 },
+    { header: "Montant (FCFA)", key: "montant", width: 18 },
+  ];
+  dashboard.forEach((d) =>
+    sheetDashboard.addRow({
+      indicateur: d.indicateur,
+      nombre: d.nombre ?? "",
+      montant: d.montant ?? "",
+    })
+  );
+  styleHeaderRow(sheetDashboard);
 
   const buffer = await workbook.xlsx.writeBuffer();
   const dateStr = new Date().toISOString().slice(0, 10);

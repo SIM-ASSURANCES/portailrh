@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom } from "@/components/tresorerie/beneficiaire";
+import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
@@ -42,7 +43,13 @@ export default async function MaDemandeDetailPage({
 
   const demande = await prisma.demande.findUnique({
     where: { id },
-    include: { categorie: true, objet: true, beneficiaireUser: true },
+    include: {
+      categorie: true,
+      objet: true,
+      posteBudgetaire: true,
+      beneficiaireUser: true,
+      lignes: { orderBy: { createdAt: "asc" } },
+    },
   });
 
   if (!demande) {
@@ -80,7 +87,7 @@ export default async function MaDemandeDetailPage({
               Montant
             </dt>
             <dd className="text-base font-semibold text-foreground">
-              {Number(demande.montant).toLocaleString("fr-FR")} FCFA
+              {formatMontantDevise(Number(demande.montant), demande.devise)}
             </dd>
           </div>
           <div>
@@ -110,7 +117,7 @@ export default async function MaDemandeDetailPage({
               Montant validé
             </dt>
             <dd className="text-sm text-foreground">
-              {demande.montantValide != null ? Number(demande.montantValide).toLocaleString("fr-FR") : "0"} FCFA
+              {formatMontantDevise(Number(demande.montantValide ?? 0), demande.devise)}
             </dd>
           </div>
           <div>
@@ -118,8 +125,10 @@ export default async function MaDemandeDetailPage({
               Montant restant à valider
             </dt>
             <dd className="text-sm text-foreground">
-              {Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0)).toLocaleString("fr-FR")}{" "}
-              FCFA
+              {formatMontantDevise(
+                Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0)),
+                demande.devise
+              )}
             </dd>
           </div>
           <div className="sm:col-span-2">
@@ -139,11 +148,35 @@ export default async function MaDemandeDetailPage({
           {demande.categorie ? (
             <div>
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Catégorie
+                Catégorie d&apos;achat
               </dt>
               <dd className="text-sm text-foreground">{demande.categorie.label}</dd>
             </div>
           ) : null}
+          {demande.posteBudgetaire ? (
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Poste budgétaire
+              </dt>
+              <dd className="text-sm text-foreground">{demande.posteBudgetaire.label}</dd>
+            </div>
+          ) : null}
+          {demande.dateLivraisonSouhaitee ? (
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Date de livraison souhaitée
+              </dt>
+              <dd className="text-sm text-foreground">
+                {demande.dateLivraisonSouhaitee.toLocaleDateString("fr-FR")}
+              </dd>
+            </div>
+          ) : null}
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Devise
+            </dt>
+            <dd className="text-sm text-foreground">{demande.devise}</dd>
+          </div>
           {demande.objet ? (
             <div>
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -153,6 +186,40 @@ export default async function MaDemandeDetailPage({
             </div>
           ) : null}
         </dl>
+
+        {demande.lignes.length > 0 ? (
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Articles
+            </p>
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full min-w-full divide-y divide-border text-sm">
+                <thead className="bg-muted">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Libellé</th>
+                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">Nombre</th>
+                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">Prix unitaire</th>
+                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border bg-surface">
+                  {demande.lignes.map((ligne) => (
+                    <tr key={ligne.id}>
+                      <td className="px-3 py-2 text-foreground">{ligne.libelle}</td>
+                      <td className="px-3 py-2 text-right text-foreground">{ligne.quantite}</td>
+                      <td className="px-3 py-2 text-right text-foreground">
+                        {formatMontantDevise(Number(ligne.prixUnitaire), demande.devise)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium text-foreground">
+                        {formatMontantDevise(ligne.quantite * Number(ligne.prixUnitaire), demande.devise)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :
