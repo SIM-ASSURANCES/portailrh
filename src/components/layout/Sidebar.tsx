@@ -14,6 +14,8 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   /** Rôle Admin : ajoute la section « Administration » au bas de la navigation. */
   canAdmin?: boolean;
+  /** treso.creer_demande OU treso.declarer_retour : ajoute "Demandes". */
+  canAccesDemandes?: boolean;
   /** categoriser_demande OU valider_demande : ajoute "Demandes à traiter (Finance)". */
   canAccesFinanceDemandes?: boolean;
   /** treso.receptionner_retour : ajoute "Retours en attente". */
@@ -24,6 +26,8 @@ interface SidebarProps {
   canVoirReporting?: boolean;
   /** treso.saisir_depense_directe (Phase F) : ajoute "Nouvelle dépense directe". */
   canSaisirDepenseDirecte?: boolean;
+  /** Au moins une permission pointage.* : affiche la branche "Pointage de Présence" (items en "Bientôt disponible"). */
+  hasPointageAccess?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -58,24 +62,28 @@ export function Sidebar({
   collapsed,
   onToggleCollapse,
   canAdmin = false,
+  canAccesDemandes = false,
   canAccesFinanceDemandes = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
   canVoirReporting = false,
   canSaisirDepenseDirecte = false,
+  hasPointageAccess = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
   const pathname = usePathname();
   const navBranches = getNavBranches({
+    canAccesDemandes,
     canAccesFinanceDemandes,
     canReceptionnerRetour,
     canVoirDashboardFinance,
     canVoirReporting,
     canSaisirDepenseDirecte,
+    hasPointageAccess,
   });
   const [openBranch, setOpenBranch] = useState<string | null>(
-    () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0].key
+    () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0]?.key ?? null
   );
 
   return (
@@ -267,6 +275,29 @@ function ItemLink({
   nested?: boolean;
   onNavigate?: () => void;
 }) {
+  if (item.comingSoon) {
+    const title = collapsed ? `${item.label} — Bientôt disponible` : "Bientôt disponible";
+    return (
+      <div
+        title={title}
+        aria-disabled="true"
+        className={`flex cursor-not-allowed items-center rounded-lg text-sm font-medium text-muted-foreground/60 ${
+          collapsed ? "justify-center p-2.5" : `gap-3 py-2 ${nested ? "pl-8 pr-3" : "px-3"}`
+        }`}
+      >
+        <Icon name={item.icon} className="size-[18px] shrink-0" />
+        {!collapsed ? (
+          <>
+            <span className="truncate">{item.label}</span>
+            <span className="ml-auto shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Bientôt
+            </span>
+          </>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <Link
       href={item.href}

@@ -11,6 +11,13 @@ export interface NavItem {
    * — sans quoi les deux s'allumeraient simultanément sur une sous-route.
    */
   exact?: boolean;
+  /**
+   * Aucun écran construit à `href` pour l'instant (Module Pointage RH :
+   * fondations de données seulement, voir CLAUDE.md) — l'item reste visible
+   * pour annoncer la fonctionnalité aux rôles concernés, mais rendu non
+   * cliquable ("Bientôt disponible") plutôt qu'un lien mort vers une 404.
+   */
+  comingSoon?: boolean;
 }
 
 export interface NavGroup {
@@ -42,6 +49,8 @@ export const DASHBOARD_ITEM: NavItem = {
  * dans ce fichier, purement statique et sans accès à la session).
  */
 export interface NavFlags {
+  /** `treso.creer_demande` OU `treso.declarer_retour` : ajoute "Demandes" (espace Collaborateur). */
+  canAccesDemandes: boolean;
   canAccesFinanceDemandes: boolean;
   /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
   canReceptionnerRetour: boolean;
@@ -51,27 +60,48 @@ export interface NavFlags {
   canVoirReporting: boolean;
   /** `treso.saisir_depense_directe` (Phase F) : ajoute "Nouvelle dépense directe". */
   canSaisirDepenseDirecte: boolean;
+  /**
+   * Au moins une permission `pointage.*` : affiche la branche "Pointage de
+   * Présence" (sinon masquée entièrement — aucune permission de ce module
+   * ne rend la branche pertinente). Tous ses items restent `comingSoon`
+   * quelle que soit la permission tant qu'aucun écran n'est construit.
+   */
+  hasPointageAccess: boolean;
 }
 
 /**
  * Les deux branches fonctionnelles du portail. Chaque branche est un
  * accordéon dans la sidebar (déployée) ou un bloc d'icônes séparé par un
- * filet (sidebar réduite).
+ * filet (sidebar réduite). Une branche entièrement vide pour la session
+ * (aucun item gagné par ses permissions) n'est jamais retournée — mieux
+ * vaut l'absence totale de la branche qu'un accordéon vide ou rempli
+ * d'items sans rapport avec le rôle (audit habilitations, voir CLAUDE.md).
  *
- * - « Demande d'Achat » : circuit demande → règlement → trésorerie.
- * - « Pointage de Présence » : pointage RH (voir cahier des charges V1).
- *
- * Les routes non encore implémentées renvoient un 404 tant que l'écran
- * correspondant n'existe pas — l'entrée fige la structure de navigation.
+ * - « Demande d'Achat » : circuit demande → règlement → trésorerie. Chaque
+ *   item correspond à une permission précise, jamais affiché sans elle —
+ *   les anciens items non gardés ("Règlements", "Retours de caisse",
+ *   "Journal de caisse", "Catégories", "Objets" à la racine) ont été
+ *   retirés : c'étaient des stubs de maquette du Ticket 1 pointant vers des
+ *   routes qui n'ont jamais été construites sous cette forme, la fonction
+ *   réelle ayant fini par vivre ailleurs (inline dans le détail d'une
+ *   demande, ou sous `/treso/finance/*`) — pas des fonctionnalités "à
+ *   venir", du vrai code mort.
+ * - « Pointage de Présence » : visible uniquement si la session a au moins
+ *   une permission `pointage.*` (`hasPointageAccess`), mais CHAQUE item
+ *   reste `comingSoon` quelle que soit la permission : aucun écran n'existe
+ *   encore pour ce module (fondations de données seulement), donc aucun
+ *   lien ne doit jamais résoudre vers une page inexistante.
  */
 export function getNavBranches({
+  canAccesDemandes,
   canAccesFinanceDemandes,
   canReceptionnerRetour,
   canVoirDashboardFinance,
   canVoirReporting,
   canSaisirDepenseDirecte,
+  hasPointageAccess,
 }: NavFlags): NavBranch[] {
-  return [
+  const branches: NavBranch[] = [
     {
       key: "achat",
       label: "Demande d'Achat",
@@ -89,7 +119,9 @@ export function getNavBranches({
                   } satisfies NavItem,
                 ]
               : []),
-            { label: "Demandes", href: "/treso/demandes", icon: "file-text" },
+            ...(canAccesDemandes
+              ? [{ label: "Demandes", href: "/treso/demandes", icon: "file-text" } satisfies NavItem]
+              : []),
             ...(canSaisirDepenseDirecte
               ? [
                   {
@@ -102,7 +134,7 @@ export function getNavBranches({
             ...(canAccesFinanceDemandes
               ? [
                   {
-                    label: "Demandes à traiter (Finance)",
+                    label: "Demandes en attente de validation",
                     href: "/treso/finance/demandes",
                     icon: "folder-tree",
                   } satisfies NavItem,
@@ -126,16 +158,6 @@ export function getNavBranches({
                   } satisfies NavItem,
                 ]
               : []),
-            { label: "Règlements", href: "/reglements", icon: "wallet" },
-            { label: "Retours de caisse", href: "/retours", icon: "rotate-ccw" },
-          ],
-        },
-        {
-          title: "Trésorerie",
-          items: [
-            { label: "Journal de caisse", href: "/journal", icon: "book-text" },
-            { label: "Catégories", href: "/categories", icon: "folder-tree" },
-            { label: "Objets", href: "/objets", icon: "package" },
           ],
         },
       ],
@@ -146,26 +168,29 @@ export function getNavBranches({
       icon: "clock",
       groups: [
         {
-          title: "Mon espace",
           items: [
-            { label: "Pointer", href: "/pointage/pointer", icon: "qr-code" },
-            { label: "Mon historique", href: "/pointage/historique", icon: "book-text" },
-          ],
-        },
-        {
-          title: "RH",
-          items: [
-            { label: "Présence du jour", href: "/pointage/rh", icon: "layout-grid" },
-            { label: "Pointages", href: "/pointage/rh/pointages", icon: "file-text" },
-            { label: "Retards & absences", href: "/pointage/rh/retards", icon: "alert-triangle" },
-            { label: "Reporting", href: "/pointage/rh/reporting", icon: "download" },
-            { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil" },
-            { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings" },
+            { label: "Pointer", href: "/pointage/pointer", icon: "qr-code", comingSoon: true },
+            { label: "Mon historique", href: "/pointage/historique", icon: "book-text", comingSoon: true },
+            { label: "Présence du jour", href: "/pointage/rh", icon: "layout-grid", comingSoon: true },
+            { label: "Pointages", href: "/pointage/rh/pointages", icon: "file-text", comingSoon: true },
+            { label: "Retards & absences", href: "/pointage/rh/retards", icon: "alert-triangle", comingSoon: true },
+            { label: "Reporting", href: "/pointage/rh/reporting", icon: "download", comingSoon: true },
+            { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil", comingSoon: true },
+            { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings", comingSoon: true },
           ],
         },
       ],
     },
   ];
+
+  if (!hasPointageAccess) {
+    branches.splice(
+      branches.findIndex((b) => b.key === "pointage"),
+      1
+    );
+  }
+
+  return branches.filter((branch) => branch.groups.some((group) => group.items.length > 0));
 }
 
 /**

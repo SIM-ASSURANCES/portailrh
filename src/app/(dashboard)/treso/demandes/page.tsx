@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { Button, PageHeader, ToastOnMount } from "@/components/ui";
 import { getBeneficiaireNom } from "@/components/tresorerie/beneficiaire";
@@ -7,6 +8,13 @@ import { prisma } from "@/lib/prisma";
 
 import { MesDemandesTable } from "./MesDemandesTable";
 
+/**
+ * Écran de l'espace Collaborateur (créer/suivre ses propres demandes,
+ * déclarer un retour de caisse) — jamais uniquement masqué côté nav
+ * (`canAccesDemandes`, voir nav.ts), toujours revérifié ici, même principe
+ * de défense en profondeur que le reste du module (audit habilitations,
+ * voir CLAUDE.md).
+ */
 export default async function MesDemandesPage({
   searchParams,
 }: {
@@ -15,13 +23,18 @@ export default async function MesDemandesPage({
   const { error } = await searchParams;
   const session = await getSession();
 
-  const rawDemandes = session
-    ? await prisma.demande.findMany({
-        where: { createurId: session.user.id },
-        include: { beneficiaireUser: true },
-        orderBy: { createdAt: "desc" },
-      })
-    : [];
+  if (
+    !session ||
+    !(hasPermission(session, "treso.creer_demande") || hasPermission(session, "treso.declarer_retour"))
+  ) {
+    redirect("/?error=acces_refuse_demandes");
+  }
+
+  const rawDemandes = await prisma.demande.findMany({
+    where: { createurId: session.user.id },
+    include: { beneficiaireUser: true },
+    orderBy: { createdAt: "desc" },
+  });
 
   const demandes = rawDemandes.map((d) => ({
     id: d.id,

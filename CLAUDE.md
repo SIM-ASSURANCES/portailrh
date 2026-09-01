@@ -3212,6 +3212,361 @@ particulier `DataTable` (désormais réutilisable telle quelle en mode carte
 mobile) sera probablement le composant de liste à privilégier pour rester
 cohérent avec le reste du portail.
 
+## Clarification des dashboards par rôle (dashboard général vs dashboards métier)
+
+**Statut : terminé.** Après une navigation réelle dans l'application, un
+problème de clarté a été identifié pour un utilisateur Finance : deux
+écrans ressemblant chacun à un "dashboard" existaient sans relation claire
+entre eux — le dashboard général (`/`, Socle) et le dashboard Finance dédié
+(`/treso/finance`, Phase G, 6 indicateurs "À traiter"). Audit factuel fait
+AVANT toute correction (navigation réelle avec les 5 comptes de test),
+détaillé ci-dessous, avant la description des corrections.
+
+### Audit — état constaté avant correction, par rôle
+
+- **Zone "Filtre par période" + 4 indicateurs du dashboard général** (`/`) —
+  **non fonctionnelle et trompeuse pour TOUS les rôles**, pas seulement
+  Finance : les champs de date et le bouton "Toutes périodes" n'avaient
+  aucun gestionnaire d'événement (ne filtraient rien), et les 4 `StatCard`
+  ("Demandes en attente", "Montant à régler", "Règlements du mois",
+  "Retours de caisse en attente") étaient des **valeurs codées en dur à 0**
+  — un commentaire dans le code le confirmait explicitement : "valeurs
+  indicatives tant que le module Trésorerie n'est pas câblé" (placeholder
+  posé avant la Phase G, jamais retiré). Ces 4 libellés sont visuellement
+  et conceptuellement un doublon des indicateurs réels du dashboard
+  Finance, mais figés à zéro pour tout le monde y compris les rôles sans
+  aucun rapport avec la Trésorerie (RH, par exemple, les voyait aussi).
+- **"Vos modules"** — seule zone réellement connectée à de vraies données
+  (`getAccessibleModules(session)`), mais **lien cassé pour TOUS les
+  rôles et tous les modules** : chaque carte pointait vers `href={\`/${module_.key}\`}`,
+  soit `/tresorerie` et `/pointage` — or le module Trésorerie a pour clé
+  `"tresorerie"` en base mais ses vraies routes vivent sous `/treso/*`
+  (`/treso/demandes`, `/treso/finance`), et `/pointage` n'a **aucune route**
+  du tout (fondations de données uniquement, aucun écran construit). Chaque
+  clic sur une carte de module, pour n'importe quel rôle, menait donc à une
+  page 404 — vérifié explicitement dans cet audit (aucune vérification
+  précédente n'avait cliqué sur ces cartes jusqu'ici).
+- **"Notifications et alertes" / "Actions à effectuer"** — deux zones
+  **systématiquement vides** pour tous les rôles, avec des commentaires
+  dans le code confirmant qu'elles étaient de simples emplacements réservés
+  ("Zone préparée pour le Module Trésorerie... Vide pour l'instant"),
+  jamais alimentées. "Actions à effectuer" en particulier porte un nom qui
+  fait directement écho à la zone "À traiter" du dashboard Finance (Phase
+  G) sans en reprendre le contenu — source de confusion ("est-ce que je
+  dois regarder ici ou là-bas ?") sans apporter d'information propre.
+
+**Par rôle, ce que montrait concrètement `/` avant correction** (au-delà
+des zones communes ci-dessus, identiques pour tous) :
+
+| Rôle | Cartes "Vos modules" (avant fix, toutes cassées) | Dashboard métier dédié existant |
+|---|---|---|
+| Collaborateur | Trésorerie (`/tresorerie` → 404), Pointage RH (`/pointage` → 404) | Aucun — `/treso/demandes` est sa liste, pas un "dashboard" |
+| Finance | Trésorerie (`/tresorerie` → 404) | `/treso/finance` (Phase G, 6 indicateurs) |
+| DG | Trésorerie (`/tresorerie` → 404), Pointage RH (`/pointage` → 404) | `/treso/finance` (accès en lecture via `voir_dashboard_finance`) |
+| RH | Pointage RH (`/pointage` → 404) | Aucun écran construit (fondations seulement) |
+| Admin | Trésorerie (`/tresorerie` → 404), Pointage RH (`/pointage` → 404) | Aucun — et aucune carte ne menait non plus vers `/admin` : la console d'administration (bypass `isAdmin()`, pas un module `getAccessibleModules`) n'apparaissait nulle part sur `/`, seulement dans la sidebar. Incohérence relevée : Trésorerie a une carte d'accès rapide sur le dashboard, mais pas la console d'admin, alors que les deux sont des points d'entrée équivalents pour l'Admin. |
+
+### Principe retenu
+
+**Le dashboard général (`/`) est un point d'entrée simple** (accès rapide
+aux modules disponibles, éventuellement une zone transverse générique) ;
+**les dashboards de module (`/treso/finance`) portent la vraie richesse
+fonctionnelle** (indicateurs détaillés, actions à traiter). Ce ne sont pas
+deux dashboards concurrents mais un point d'entrée général + un tableau de
+bord métier par module accédé au clic. Conséquence directe : le dashboard
+général ne doit plus jamais réafficher, même partiellement ou à titre
+d'aperçu, les indicateurs d'un dashboard de module — il doit seulement y
+mener clairement.
+
+### Corrections (`(dashboard)/page.tsx`, seul fichier modifié)
+
+- **Zone "Filtre par période" + 4 indicateurs codés en dur — supprimée
+  entièrement.** Non fonctionnelle, redondante avec les vrais indicateurs
+  de `/treso/finance`, et trompeuse (affichait "0" partout, y compris pour
+  des rôles sans aucun rapport avec la Trésorerie). Rien ne la remplace :
+  ce n'était que du bruit, pas une fonctionnalité incomplète à terminer.
+- **"Vos modules" → "Vos accès", lien par module corrigé, jamais générique.**
+  Nouvelle fonction `getTresorerieHref(session)` : renvoie `/treso/finance`
+  si la session a `treso.voir_dashboard_finance` (exactement la permission
+  qui garde cette page, donc jamais de redirection en boucle une fois
+  dessus — Finance et DG uniquement dans le seed actuel), sinon
+  `/treso/demandes` (Collaborateur, et solution de repli sûre pour l'Admin
+  qui n'a aucune permission `treso.*` par construction — liste vide mais
+  jamais cassée). Généralisé via `getModuleHref(moduleKey, session)` :
+  retourne `null` pour tout module sans point d'entrée connu (Pointage RH
+  aujourd'hui) plutôt que de deviner une route qui n'existe pas.
+- **Carte non cliquable pour un module sans écran ("Bientôt disponible").**
+  Quand `getModuleHref` renvoie `null`, la carte reste affichée (le module
+  existe bel et bien et est accessible au rôle) mais devient un simple
+  `<div>` avec un `Badge` "Bientôt disponible" et un message explicite —
+  jamais un lien mort. C'est la correction demandée explicitement pour RH :
+  "vérifie juste que rien n'affiche une erreur ou un lien cassé" pour
+  Pointage RH tant que le module n'a pas d'écrans.
+- **Incohérence Admin corrigée : carte "Administration" ajoutée** à la
+  grille "Vos accès", visible uniquement si `isAdmin(session)`, vers
+  `/admin` — l'Admin dispose désormais d'un accès rapide à la console au
+  même titre que les modules métier, plutôt que de dépendre uniquement de
+  la sidebar.
+- **"Actions à effectuer" — supprimée.** N'apportait rien de plus que "Vos
+  accès" (déjà le point d'entrée vers chaque module) et faisait écho, par
+  son nom, à la zone "À traiter" du dashboard Finance sans en être une
+  vraie synthèse — risque de confusion sans valeur ajoutée, retenu comme le
+  cas "supprimée si elle n'apporte rien de plus" plutôt que "généralisée".
+- **"Notifications et alertes" — conservée, mais recadrée par la
+  documentation du code** : explicitement réservée aux notifications
+  **transverses** du Socle (annonces, maintenance, expiration de mot de
+  passe...), jamais aux indicateurs "à traiter" d'un module métier précis
+  (ceux-ci vivent sur le dashboard de leur module). Reste vide aujourd'hui
+  faute de producteur de notifications transverses — un inbox vide est un
+  état normal et honnête, pas une zone qui semble inachevée, tant que son
+  message ne prétend pas à autre chose.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur. Reconnexion réelle avec
+chacun des 5 comptes de test (Collaborateur, Finance, DG, RH, Admin) :
+capture du dashboard général de chacun, énumération programmatique de
+toutes les cartes cliquables de "Vos accès" et clic réel sur chacune pour
+confirmer l'absence de 404 — résultat pour chaque rôle :
+
+| Rôle | Cartes cliquables (toutes résolues sans 404) | Carte "Bientôt disponible" |
+|---|---|---|
+| Collaborateur | Trésorerie → `/treso/demandes` | Pointage RH |
+| Finance | Trésorerie → `/treso/finance` | — (module Pointage non accessible à ce rôle) |
+| DG | Trésorerie → `/treso/finance` | Pointage RH |
+| RH | — (module Trésorerie non accessible à ce rôle) | Pointage RH |
+| Admin | Trésorerie → `/treso/demandes`, Administration → `/admin` | Pointage RH |
+
+Zéro erreur console sur l'ensemble des 5 parcours. Aucune donnée de test
+créée pendant cet audit (navigation seule) : rien à nettoyer en base.
+Serveur `next dev` arrêté après vérification.
+
+**Mise à jour par l'audit habilitations ci-dessous** : la ligne Admin de ce
+tableau est devenue inexacte après correction de l'audit suivant — voir
+"Aucun accès" au lieu de "Trésorerie → `/treso/demandes`" (`/treso/demandes`
+est désormais protégée par une permission qu'Admin n'a jamais). Conservé
+tel quel ici pour l'historique de CE ticket précis ; état réellement à jour
+dans la section suivante.
+
+## Audit des habilitations (matrice Rôle x Fonctionnalité)
+
+**Statut : terminé.** Reprise d'une session interrompue par un problème de
+connexion (le travail déjà présent dans l'arbre de travail au moment de la
+reprise — nettoyage du dashboard général ci-dessus, suppression des liens
+morts de `nav.ts`, permission `canAccesDemandes` sur l'item "Demandes",
+branche Pointage RH gardée par `hasPointageAccess` et items `comingSoon` —
+correspondait déjà à une partie des Tâches 2-3 de cet audit ; repris et
+complété ici plutôt que refait).
+
+### Tâche 1 — Matrice d'habilitations attendue
+
+Reconstituée à partir des règles métier disséminées dans ce document (seule
+trace disponible du cahier des charges pour cette session — le document
+source lui-même n'est pas dans le dépôt) et du seed actuel
+(`prisma/seed.ts`, revérifié en base live avant tout audit : les 18
+permissions et leur attribution par rôle correspondent exactement à ce que
+ce fichier décrit, aucune dérive entre le code du seed et la base).
+
+**Socle** :
+
+| Fonctionnalité | Collaborateur | Finance | DG | RH | Admin |
+|---|---|---|---|---|---|
+| Se connecter, dashboard général (`/`) | Oui | Oui | Oui | Oui | Oui |
+| Console d'administration (`/admin/*`) | Non | Non | Non | Non | **Oui** (bypass `isAdmin()`, pas une `RolePermission`) |
+
+**Module Trésorerie** (permission → rôles autorisés dans le seed actuel) :
+
+| # | Fonctionnalité | Permission | Collaborateur | Finance | DG | RH | Admin |
+|---|---|---|---|---|---|---|---|
+| 1 | Créer une demande | `treso.creer_demande` | **Oui** | Non | Non | Non | Non |
+| 2 | Consulter "Mes demandes" (`/treso/demandes`) | `creer_demande` OU `declarer_retour` | **Oui** | Non | Non | Non | Non |
+| 3 | Déclarer un retour de caisse | `treso.declarer_retour` | **Oui** | Non | Non | Non | Non |
+| 4 | Catégoriser une demande | `treso.categoriser_demande` | Non | **Oui** | Non | Non | Non |
+| 5 | Valider / rejeter / valider partiellement ou en complément une demande | `treso.valider_demande` | Non | **Oui** | **Oui** | Non | Non |
+| 6 | Effectuer un règlement (créer/modifier/confirmer/annuler) | `treso.effectuer_reglement` | Non | **Oui** | Non | Non | Non |
+| 7 | Réceptionner un retour de caisse | `treso.receptionner_retour` | Non | **Oui** | Non | Non | Non |
+| 8 | Clôturer une demande (totale/partielle) | `treso.cloturer_demande` | Non | **Oui** | Non | Non | Non |
+| 9 | Saisir une dépense directe (Phase F) | `treso.saisir_depense_directe` | Non | **Oui** | Non | Non | Non |
+| 10 | Voir le dashboard Finance (`/treso/finance`, 6 indicateurs + solde) | `treso.voir_dashboard_finance` | Non | **Oui** | **Oui** | Non | Non |
+| 11 | Voir le reporting et exporter en Excel | `treso.voir_reporting` | Non | **Oui** | **Oui** | Non | Non |
+| 12 | Accès à l'espace partagé `/treso/finance/*` (layout) | au moins une des permissions 4-5-7-9-10-11 | Non | **Oui** | **Oui** (via 5+10+11) | Non | Non |
+| 13 | Télécharger le reçu PDF / le bon de caisse d'un règlement | une des permissions 4/5/6/7/10, **OU** être le créateur de la demande | Oui (si créateur) | **Oui** | **Oui** | Non (sauf créateur) | Non (sauf créateur) |
+| 14 | Gérer les Catégories/Objets (`/admin/categories`) | `isAdmin()` | Non | Non | Non | Non | **Oui** |
+
+**Module Pointage RH** (fondations de données uniquement, **aucun écran
+construit** — voir plus bas "Bientôt disponible") : la permission existe et
+gouverne uniquement la visibilité de la branche de nav (`hasPointageAccess`)
+et du badge "Bientôt disponible" sur le dashboard général, jamais un accès
+fonctionnel réel puisqu'aucune route n'existe.
+
+| Permission | Collaborateur | Finance | DG | RH | Admin |
+|---|---|---|---|---|---|
+| `pointage.pointer` / `consulter_historique` | Oui | Non | Non | Oui | Non |
+| `pointage.consulter_tous` / `voir_dashboard_rh` / `voir_reporting` | Non | Non | Oui | Oui | Non |
+| `pointage.pointage_exceptionnel` / `corriger_pointage` / `gerer_horaires` | Non | Non | Non | Oui | Non |
+
+### Tâche 2 — Écarts trouvés (état constaté avant correction de cette session)
+
+Audit fait par grep systématique de tous les `hasPermission()`/`isAdmin()`/
+`redirect()` sous `src/app`, puis confirmé par de vrais appels HTTP
+authentifiés (script Node, flux Credentials complet d'Auth.js — CSRF token
+réel, cookies de session réels, **pas de contournement de l'authentification**)
+contre un `next dev` réellement démarré, un compte par rôle, chaque route
+protégée testée en accès direct par URL. Le détail complet (90 vérifications
+= 18 routes × 5 rôles) est dans "Tâche 4" ci-dessous ; cette section ne liste
+que les écarts.
+
+| Écart | Rôle(s) concerné(s) | Problème exact | Cause |
+|---|---|---|---|
+| Liens morts dans `nav.ts` : "Règlements" (`/reglements`), "Retours de caisse" (`/retours`), "Journal de caisse" (`/journal`), "Catégories" (`/objets`) | Finance, DG (espace `/treso/finance/*`) | Visible dans la sidebar, mène à une page qui n'a jamais existé sous cette forme (404) — stubs de maquette du Ticket 1, la fonctionnalité réelle ayant fini par vivre ailleurs (inline, ou sous `/treso/finance/*`) | Aucune (bug de nav, pas de permission en cause) |
+| Item "Demandes" (`/treso/demandes`) visible dans la sidebar sans condition | Finance, DG, RH, Admin | Visible à tort : ces rôles n'ont ni `creer_demande` ni `declarer_retour`, la page ne leur sert à rien | Nav non gardée par permission (la page elle-même ne l'était pas non plus, voir ligne suivante) |
+| `/treso/demandes` accessible par URL directe sans aucune vérification serveur | Finance, DG, RH, Admin | Accès serveur non protégé (retournait 200 avec une liste vide plutôt qu'un refus explicite) — pas de fuite de données (filtrée par `createurId`), mais contraire au principe de défense en profondeur appliqué partout ailleurs dans le module | Page jamais gardée depuis sa création (Ticket 1) |
+| Branche "Pointage de Présence" toujours visible, 8 liens vers des routes qui n'existent pas encore | Tous les rôles, y compris ceux sans aucune permission `pointage.*` | 8 liens 404 systématiques (aucun écran construit) | Nav statique, jamais reliée aux permissions ni à l'état "aucun écran" |
+| Cartes "Vos modules" du dashboard général (`href={\`/${key}\`}`) | Tous les rôles | Lien cassé (404) pour Trésorerie ET Pointage, pour tout le monde | Route générique inventée, jamais alignée sur les vraies routes `/treso/*` |
+| Carte "Retours de fonds en attente de réception" du dashboard Finance (indicateur #5, Phase G) cliquable sans condition | **DG** | Visible et cliquable avec un vrai chiffre (calculé, pas 0 par erreur), mais mène à `/treso/finance/retours` qui refuse le DG (`receptionner_retour` manquant) — trouvé en confirmant par un vrai appel HTTP authentifié DG sur cette route précise | Les 6 `StatCard` du dashboard Finance sont rendues sans distinguer la permission propre à chacune de leur cible, seulement celle du dashboard lui-même (`voir_dashboard_finance`) |
+| Aucune carte d'accès rapide vers `/admin` sur le dashboard général | Admin | Fonctionnalité autorisée mais invisible depuis le point d'entrée principal (seulement dans la sidebar) | Oubli lors de la construction du dashboard général |
+| 4 indicateurs + filtre par période codés en dur à 0 sur le dashboard général | Tous les rôles | Trompeur (affichait "0" y compris pour des rôles sans rapport avec la Trésorerie), non fonctionnel | Placeholder posé avant la Phase G, jamais retiré |
+
+**Aucune faille de sécurité serveur trouvée sur le reste du périmètre** : les
+90 vérifications HTTP directes (Tâche 4) confirment que toutes les autres
+routes (`/treso/finance/*`, `/admin/*`, Server Actions listées par le grep)
+étaient déjà correctement protégées avant cette session — la rigueur de
+défense en profondeur documentée à chaque Ticket/Phase de ce fichier
+(revérification systématique dans la Server Action, jamais uniquement le
+layout) s'est confirmée exacte à l'audit. Les écarts trouvés sont tous des
+problèmes de **visibilité** (lien visible à tort, ou fonctionnalité
+correctement protégée mais pas assez clairement signalée) plutôt que
+d'**accès réel non protégé** — à la seule exception de `/treso/demandes`
+(ligne 3 ci-dessus), un accès sans conséquence réelle (liste vide) mais
+corrigé par principe.
+
+### Tâche 3 — Corrections appliquées
+
+- **`nav.ts`** — les 5 liens morts retirés définitivement (pas remplacés,
+  c'était du code mort, pas une fonctionnalité "à venir"). Nouveau flag
+  `NavFlags.canAccesDemandes` (`creer_demande` OU `declarer_retour`) gardant
+  l'item "Demandes". Nouveau flag `NavFlags.hasPointageAccess` (au moins une
+  permission `pointage.*`) gardant l'apparition de toute la branche
+  "Pointage de Présence" ; chaque item de cette branche gagne `comingSoon:
+  true` (nouveau champ de `NavItem`) et un rendu non cliquable dédié dans
+  `Sidebar.tsx` (`ItemLink`, badge "Bientôt") plutôt qu'un `<Link>` vers une
+  route inexistante. `getNavBranches()` ne retourne plus jamais une branche
+  entièrement vide. Item "Demandes à traiter (Finance)" renommé "Demandes en
+  attente de validation" au passage, pour rester cohérent avec le titre de
+  cet écran depuis la Phase G (jamais renommé côté nav à l'époque).
+- **`(dashboard)/layout.tsx` / `AppShell.tsx` / `Sidebar.tsx`** — propagation
+  des deux nouveaux flags (`canAccesDemandes`, `hasPointageAccess`) depuis la
+  session jusqu'à `getNavBranches()`, même chemin que tous les flags
+  existants.
+- **`treso/demandes/page.tsx`** — garde serveur ajoutée (**correction la
+  plus importante, seul point touchant une protection d'accès réelle** :
+  `redirect("/?error=acces_refuse_demandes")` si la session n'a ni
+  `treso.creer_demande` ni `treso.declarer_retour`, exactement symétrique de
+  la condition de nav — même principe de défense en profondeur que partout
+  ailleurs dans le module (jamais uniquement le masquage du lien). Nouveau
+  message de toast correspondant sur `(dashboard)/page.tsx`.
+- **`(dashboard)/page.tsx`** — zone "Filtre par période" + 4 indicateurs
+  factices supprimés ; "Vos modules" → "Vos accès" avec un lien par module
+  réellement résolu (`getTresorerieHref`) plutôt qu'une route générique
+  inventée ; carte "Administration" ajoutée pour l'Admin. **Affiné pendant
+  cette session** : `getTresorerieHref` retourne désormais `null` (au lieu
+  de retomber sur `/treso/demandes` par défaut) pour une session sans AUCUNE
+  permission `treso.*` — c'est le cas de l'Admin, qui aurait sinon reçu un
+  lien "Accéder au module" menant tout droit à un refus d'accès depuis que
+  `/treso/demandes` est gardée (ligne ci-dessus). Nouveau distingo
+  `ModuleCardState.reason` (`"coming_soon"` vs `"no_access"`) : même carte
+  non cliquable, mais message différent selon la cause — "Bientôt
+  disponible / écrans en construction" (Pointage RH) n'est jamais le bon
+  message pour "ce module existe et fonctionne, votre rôle n'y a
+  simplement aucune permission opérationnelle" (Trésorerie pour l'Admin).
+- **`treso/finance/page.tsx`** — la carte "Retours de fonds en attente de
+  réception" ne reçoit `href="/treso/finance/retours"` que si la session a
+  `treso.receptionner_retour` ; sinon `href` omis, `StatCard` retombe sur
+  son rendu statique déjà pris en charge (Phase G, rétro-compatible) — le
+  DG voit toujours le chiffre (information de consultation légitime, il
+  garde `voir_dashboard_finance`) mais sans promesse de clic vers une page
+  qui le refuserait.
+
+### Tâche 4 — Vérification
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur sur `src/` après chaque
+lot de corrections. Base de dev vérifiée propre avant tout test (0 demande,
+5 comptes de test, permissions en base identiques au seed — confirmé par
+requête Prisma directe).
+
+**Toutes les vérifications ci-dessous sont de vrais appels HTTP contre un
+`next dev` réellement démarré, authentifiés par le flux Credentials complet
+d'Auth.js** (CSRF token obtenu via `/api/auth/csrf`, connexion via
+`/api/auth/callback/credentials`, cookies de session réels rejoués sur
+chaque requête suivante) — jamais un contournement de l'authentification ni
+un appel direct aux fonctions serveur. Script Node jetable, jamais ajouté au
+projet. 18 routes × 5 rôles = 90 vérifications d'accès direct par URL,
+refaites une dernière fois après toutes les corrections :
+
+| Route testée | Collaborateur | Finance | DG | RH | Admin |
+|---|---|---|---|---|---|
+| `/` | 200 | 200 | 200 | 200 | 200 |
+| `/treso/demandes` | 200 | 307 `acces_refuse_demandes` | 307 `acces_refuse_demandes` | 307 `acces_refuse_demandes` | 307 `acces_refuse_demandes` |
+| `/treso/demandes/nouvelle` | 200 | 307 `acces_refuse_creer_demande` | 307 `acces_refuse_creer_demande` | 307 `acces_refuse_creer_demande` | 307 `acces_refuse_creer_demande` |
+| `/treso/finance` | 307 `acces_refuse_categoriser` | 200 | 200 | 307 `acces_refuse_categoriser` | 307 `acces_refuse_categoriser` |
+| `/treso/finance/demandes` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/retours` | 307 | 200 | 307 `acces_refuse_receptionner_retour` | 307 | 307 |
+| `/treso/finance/a-decaisser` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/a-regulariser` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/reglements-partiels` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/fonds-a-regulariser` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/depenses-non-justifiees` | 307 | 200 | 200 | 307 | 307 |
+| `/treso/finance/depenses-directes/nouvelle` | 307 | 200 | 307 `acces_refuse_saisir_depense_directe` | 307 | 307 |
+| `/treso/finance/reporting` | 307 | 200 | 200 | 307 | 307 |
+| `/admin` | 307 `acces_refuse_admin` | 307 | 307 | 307 | 200 |
+| `/admin/users` | 307 | 307 | 307 | 307 | 200 |
+| `/admin/roles` | 307 | 307 | 307 | 307 | 200 |
+| `/admin/modules` | 307 | 307 | 307 | 307 | 200 |
+| `/admin/categories` | 307 | 307 | 307 | 307 | 200 |
+
+**Les 90 résultats correspondent exactement à la matrice de la Tâche 1**,
+sans exception. Vérification complémentaire par lecture du HTML réellement
+renvoyé (mêmes sessions authentifiées) : sidebar de chaque rôle limitée aux
+items attendus par sa permission (ex: RH ne voit que "Pointer"/"Mon
+historique"/"Présence du jour"/... tous en "Bientôt", Admin ne voit que
+"Administration" dans la zone module) ; carte Trésorerie du dashboard
+général rendue en `<div>` non cliquable "Aucun accès" pour Admin et en
+`<a>` cliquable pour Collaborateur/Finance/DG ; carte "Retours de fonds"
+du dashboard Finance rendue en `<div>` (pas de lien) pour DG et en `<a>`
+pour Finance. Aucune donnée de test créée pendant cet audit (uniquement des
+requêtes `GET` en lecture — aucun formulaire soumis) : rien à nettoyer en
+base, confirmé par un dernier comptage (`demandes: 0`, inchangé depuis le
+début de la session). Serveur `next dev` arrêté après vérification
+(processus terminé explicitement).
+
+### Tâche 5 — Ce qui reste volontairement en "Bientôt disponible"
+
+**Module Pointage RH dans son intégralité** — fondations de données
+posées (modèles, module, 8 permissions, rôle RH, compte de test — voir
+[Module Pointage RH : fondations de données](#module-pointage-rh--fondations-de-données)),
+**aucun écran construit**. Concrètement aujourd'hui :
+
+- La branche "Pointage de Présence" n'apparaît dans la sidebar que pour une
+  session ayant au moins une permission `pointage.*` (Collaborateur, RH,
+  DG — jamais Finance ni Admin), mais **chaque** item y est rendu non
+  cliquable ("Bientôt"), quelle que soit la permission précise.
+- Sur le dashboard général, la carte "Pointage RH" est visible pour ces
+  mêmes rôles (visibilité pilotée par `getAccessibleModules()`, pas par
+  `hasPointageAccess`) avec le badge "Bientôt disponible" — jamais un lien
+  qui échouerait.
+- Aucune route sous `/pointage/*` ne répond aujourd'hui (aucun `page.tsx`
+  n'existe) : normal, cohérent avec l'absence totale d'écran, jamais
+  exposé nulle part comme un lien cliquable dans l'état actuel de l'audit.
+
+**Autre point resté en l'état, hors périmètre de cet audit (déjà signalé
+au point 1 de la synthèse "Points d'interprétation en attente")** :
+Catégorie/Objet/Budget (CRUD `/admin/categories`, feuille "Suivi
+budgétaire" du reporting) restent accessibles à l'Admin bien qu'écartés du
+flux principal de la Refonte V1 — décision volontairement différée au
+maître de stage, non retouchée ici (aucune incohérence d'habilitation
+trouvée sur ce point précis : `/admin/categories` suit exactement la même
+règle `isAdmin()` que le reste de la console).
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
