@@ -3,7 +3,6 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, StatCard } from "@/components/ui";
 import { HistoriqueFilters } from "./HistoriqueFilters";
-import { TypePointage } from "@/generated/prisma/client";
 
 import { Icon } from "@/components/icons";
 import { AbsencesTable, PointagesTable, type AbsenceRow, type PointageRow } from "./HistoriqueTables";
@@ -54,9 +53,9 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
   }
 
   if (type === "ARRIVEE") {
-    pointageWhere.type = TypePointage.ARRIVEE;
+    pointageWhere.type = "ARRIVEE";
   } else if (type === "DEPART") {
-    pointageWhere.type = TypePointage.DEPART;
+    pointageWhere.type = "DEPART";
   } else if (type === "RETARD") {
     pointageWhere.estRetard = true;
   }
@@ -162,8 +161,8 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
   }));
 
   // Statistiques
-  const totalArrivees = allUserPointagesForStats.filter((p) => p.type === TypePointage.ARRIVEE).length;
-  const totalDeparts = allUserPointagesForStats.filter((p) => p.type === TypePointage.DEPART).length;
+  const totalArrivees = allUserPointagesForStats.filter((p) => p.type === "ARRIVEE").length;
+  const totalDeparts = allUserPointagesForStats.filter((p) => p.type === "DEPART").length;
   const retardsList = allUserPointagesForStats.filter((p) => p.estRetard);
   const nombreJoursRetard = retardsList.length;
   const totalMinutesRetard = retardsList.reduce((acc, p) => acc + (p.minutesRetard || 0), 0);

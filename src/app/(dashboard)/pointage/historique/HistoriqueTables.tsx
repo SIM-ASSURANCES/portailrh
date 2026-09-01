@@ -2,7 +2,10 @@
 
 import { Badge, DataTable, type DataTableColumn } from "@/components/ui";
 import { Icon } from "@/components/icons";
-import { SourcePointage, StatutAbsence, TypePointage } from "@/generated/prisma/client";
+
+type TypePointage = "ARRIVEE" | "DEPART";
+type SourcePointage = "QR_CODE" | "ORDINATEUR" | "RH_EXCEPTIONNEL";
+type StatutAbsence = "A_CONTROLER" | "CONFIRMEE" | "JUSTIFIEE";
 
 export type PointageRow = {
   id: string;
@@ -76,8 +79,8 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       sortable: true,
       accessor: (row) => row.type,
       render: (row) => (
-        <Badge variant={row.type === TypePointage.ARRIVEE ? "info" : "neutral"}>
-          {row.type === TypePointage.ARRIVEE ? "Arrivée" : "Départ"}
+        <Badge variant={row.type === "ARRIVEE" ? "info" : "neutral"}>
+          {row.type === "ARRIVEE" ? "Arrivée" : "Départ"}
         </Badge>
       ),
     },
@@ -85,7 +88,7 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       key: "retard",
       header: "Statut / Retard",
       render: (row) => {
-        if (row.type === TypePointage.DEPART) {
+        if (row.type === "DEPART") {
           return row.motif ? (
             <div className="space-y-1">
               <Badge variant="warning">Départ anticipé</Badge>
@@ -120,7 +123,7 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
           <span className="text-xs font-medium text-foreground">
             {SOURCE_LABELS[row.source] ?? row.source}
           </span>
-          {row.source === SourcePointage.RH_EXCEPTIONNEL && row.effectueParNom ? (
+          {row.source === "RH_EXCEPTIONNEL" && row.effectueParNom ? (
             <span className="text-[11px] text-muted-foreground">
               Par : {row.effectueParNom}
             </span>
@@ -171,9 +174,9 @@ export function AbsencesTable({ absences }: { absences: AbsenceRow[] }) {
       accessor: (row) => row.statut,
       render: (row) => {
         const variant =
-          row.statut === StatutAbsence.JUSTIFIEE
+          row.statut === "JUSTIFIEE"
             ? "success"
-            : row.statut === StatutAbsence.CONFIRMEE
+            : row.statut === "CONFIRMEE"
               ? "danger"
               : "warning";
         return <Badge variant={variant}>{STATUT_ABSENCE_LABELS[row.statut]}</Badge>;

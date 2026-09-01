@@ -51,6 +51,8 @@ export interface NavFlags {
   canVoirReporting: boolean;
   /** `treso.saisir_depense_directe` (Phase F) : ajoute "Nouvelle dépense directe". */
   canSaisirDepenseDirecte: boolean;
+  /** `pointage.*` : affiche la section RH du pointage. */
+  canAccessPointageRH: boolean;
 }
 
 /**
@@ -87,31 +89,6 @@ export const NAV_BRANCHES: NavBranch[] = [
       },
     ],
   },
-  {
-    key: "pointage",
-    label: "Pointage de Présence",
-    icon: "clock",
-    groups: [
-      {
-        title: "Mon espace",
-        items: [
-          { label: "Pointer", href: "/pointage", icon: "qr-code" },
-          { label: "Mon historique", href: "/pointage/historique", icon: "book-text" },
-        ],
-      },
-      {
-        title: "RH",
-        items: [
-          { label: "Présence du jour", href: "/pointage/rh", icon: "layout-grid" },
-          { label: "Pointages", href: "/pointage/rh/pointages", icon: "file-text" },
-          { label: "Retards & absences", href: "/pointage/rh/retards", icon: "alert-triangle" },
-          { label: "Reporting", href: "/pointage/rh/reporting", icon: "download" },
-          { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil" },
-          { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings" },
-        ],
-      },
-    ],
-  },
 ];
 export function getNavBranches({
   canAccesFinanceDemandes,
@@ -119,6 +96,7 @@ export function getNavBranches({
   canVoirDashboardFinance,
   canVoirReporting,
   canSaisirDepenseDirecte,
+  canAccessPointageRH,
 }: NavFlags): NavBranch[] {
   return [
     {
@@ -197,21 +175,25 @@ export function getNavBranches({
         {
           title: "Mon espace",
           items: [
-            { label: "Pointer", href: "/pointage", icon: "qr-code" },
+            { label: "Pointer", href: "/pointage/pointer", icon: "qr-code" },
             { label: "Mon historique", href: "/pointage/historique", icon: "book-text" },
           ],
         },
-        {
-          title: "RH",
-          items: [
-            { label: "Présence du jour", href: "/pointage/rh", icon: "layout-grid" },
-            { label: "Pointages", href: "/pointage/rh/pointages", icon: "file-text" },
-            { label: "Retards & absences", href: "/pointage/rh/retards", icon: "alert-triangle" },
-            { label: "Reporting", href: "/pointage/rh/reporting", icon: "download" },
-            { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil" },
-            { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings" },
-          ],
-        },
+        ...(canAccessPointageRH
+          ? [
+              {
+                title: "RH",
+                items: [
+                  { label: "Présence du jour", href: "/pointage/rh", icon: "layout-grid" },
+                  { label: "Pointages", href: "/pointage/rh/pointages", icon: "file-text" },
+                  { label: "Retards & absences", href: "/pointage/rh/retards", icon: "alert-triangle" },
+                  { label: "Reporting", href: "/pointage/rh/reporting", icon: "download" },
+                  { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil" },
+                  { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings" },
+                ],
+              } satisfies NavGroup,
+            ]
+          : []),
       ],
     },
   ];

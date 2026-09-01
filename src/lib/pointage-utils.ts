@@ -99,3 +99,22 @@ export function checkLateStatus(
     minutesRetard: 0,
   };
 }
+/**
+ * Convertit une heure "HH:MM" en minutes écoulées depuis minuit
+ * pour faciliter les comparaisons mathématiques.
+ */
+export function timeToMinutes(timeStr: string): number {
+  const [hours, minutes] = timeStr.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+/**
+ * Génère le message dynamique de fin de journée.
+ */
+export function getMessageDepart(): string {
+  const jourSemaine = new Date().getDay(); // 0 = Dimanche ... 5 = Vendredi, 6 = Samedi
+  if (jourSemaine === 5) {
+    return "Pointage validé. Bon week-end et à lundi !";
+  }
+  return "Pointage validé. Bonne fin de journée et à demain !";
+}
