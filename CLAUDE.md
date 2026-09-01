@@ -4628,6 +4628,64 @@ l'utilisateur lui-même entre deux sessions de travail) retrouvés intacts
 et non touchés — vérifié explicitement avant de conclure le nettoyage.
 Serveur `next dev` arrêté après vérification.
 
+## Historique remonté juste après l'en-tête (bug de visibilité, cycle terminé)
+
+**Statut : terminé.** Signalé comme hypothèse à vérifier : l'historique
+générique (`DemandeHistorique`, Ticket 3) semblait "disparaître" une fois
+une demande clôturée. **Aucun bug de données** — le composant affiche
+toujours son contenu correctement (vérifié dans le code : jamais de retour
+`null`, toujours un titre + soit la liste, soit un message d'état vide) —
+c'est un problème de **placement**, confirmé par un vrai parcours
+navigateur sur un cycle complet (création → validation totale → règlement
+Caisse confirmé → retour déclaré → réceptionné → approbation DG →
+clôture totale) :
+
+| Écran | Avant (position Y du titre) | Après |
+|---|---|---|
+| `/treso/finance/demandes/[id]` | 1284 px (~1,6 écran de défilement) | 524 px (premier écran) |
+| `/treso/demandes/[id]` (Collaborateur) | 1442 px (~1,8 écran) | 691 px (premier écran) |
+
+**Cause** : `<DemandeHistorique />` était codé en tout dernier élément des
+deux pages, après tout ce qui s'accumule pour une demande clôturée
+(régularisation, personnes intervenantes, motif de clôture, règlements
+reçus, retours de caisse). Sur une demande simple encore
+`EN_ATTENTE_VALIDATION`, presque rien ne le précède et il reste visible
+sans scroller — d'où l'écart perçu selon le statut, jamais un vrai bug
+d'affichage.
+
+**Correction** : `<DemandeHistorique />` déplacé juste après le bloc
+d'en-tête (montant/statut/bénéficiaire...) sur les deux pages
+(`treso/finance/demandes/[id]/page.tsx` et `treso/demandes/[id]/page.tsx`),
+avant toutes les sections spécifiques au statut (verrou DG, régularisation,
+règlements, retours...) — position désormais fixe et uniforme quel que
+soit le statut de la demande, plutôt qu'un ordre qui dépendait
+implicitement de la quantité de contenu accumulé.
+
+**Vérifié explicitement** : `npx tsc --noEmit` et `npx eslint .` sans
+erreur. Même parcours navigateur réel rejoué après correction (nouvelle
+demande, cycle complet identique) : position du titre "Historique" mesurée
+à 524 px (Finance) et 691 px (Collaborateur), toutes deux **dans le premier
+écran** (800 px) sans scroller. Données de test nettoyées après chaque
+mesure ; la demande réelle pré-existante (`DEM-2026-000001`) et ses
+écritures `JournalCaisse` confirmées intactes. Serveur `next dev` arrêté
+après vérification.
+
+### Complétude des exports (section 16) — reconfirmée sans régression
+
+Re-vérification demandée après la fusion du Module Pointage RH et les
+changements récents (verrou de clôture, corrections retour de caisse/pièce
+jointe) : téléchargement réel de l'export (compte Finance, données réelles
+en base) puis relecture programmatique du classeur (`exceljs`). **12/12
+feuilles présentes**, colonnes conformes à ce qui est documenté ci-dessus
+(section "Module Trésorerie : Ticket 10" et "Audit de conformité — sections
+10, 12.2, 13, 15, 16") : Demandes, Validations, Règlements, Retours de
+caisse, Fonds remis, Régularisations, Dépenses déclarées, Dépenses non
+justifiées, Journal de caisse (colonnes "Référence demande"/"Utilisateur"
+présentes), Reporting, Suivi budgétaire, Dashboard (7 lignes : 6
+indicateurs + solde de caisse). Aucune régression trouvée — la fusion avec
+`origin/thierry-kouame` et les corrections récentes n'ont rien cassé côté
+export.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

@@ -241,6 +241,15 @@ export default async function MaDemandeDetailPage({
         ) : null}
       </div>
 
+      {/* Historique remonté juste après l'en-tête (au lieu du bas de page) :
+          une fois le dossier clôturé, tout ce qui suit (situation finale,
+          règlements reçus, retours de caisse...) pouvait repousser ce titre
+          à près de 2 écrans de défilement, le rendant quasiment invisible
+          sans scroller volontairement — vérifié explicitement par un
+          parcours navigateur réel sur un cycle complet. Position désormais
+          fixe, uniforme quel que soit le statut. */}
+      <DemandeHistorique demandeId={demande.id} />
+
       {/* REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :
           CLOTUREE_TOTALE/CLOTUREE_PARTIELLE fusionnées en un unique statut
           CLOTUREE — la distinction totale/partielle sera réintroduite par
@@ -269,8 +278,6 @@ export default async function MaDemandeDetailPage({
       <ReglementsRecusSection demandeId={demande.id} />
 
       <RetoursCaisseSection demandeId={demande.id} peutDeclarer={peutDeclarerRetour} userId={session.user.id} />
-
-      <DemandeHistorique demandeId={demande.id} />
     </div>
   );
 }

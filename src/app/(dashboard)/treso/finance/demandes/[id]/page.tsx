@@ -181,6 +181,15 @@ export default async function CategoriserDemandePage({
         </dl>
       </div>
 
+      {/* Historique remonté juste après l'en-tête (au lieu du bas de page) :
+          une fois le dossier clôturé, tout ce qui suit (régularisation,
+          personnes intervenantes, règlements, retours...) pouvait repousser
+          ce titre à près de 2 écrans de défilement, le rendant quasiment
+          invisible sans scroller volontairement — vérifié explicitement par
+          un parcours navigateur réel sur un cycle complet. Position
+          désormais fixe, uniforme quel que soit le statut. */}
+      <DemandeHistorique demandeId={demande.id} />
+
       {/* Verrou de clôture (Ticket 7) — indépendant du circuit de
           validation/règlement des Phases B/C, qui reste inchangé (n'affecte
           jamais l'éligibilité au règlement, seulement la clôture) : visible
@@ -326,8 +335,6 @@ export default async function CategoriserDemandePage({
           catégorisation n&apos;est possible à ce stade.
         </p>
       )}
-
-      <DemandeHistorique demandeId={demande.id} />
     </div>
   );
 }
