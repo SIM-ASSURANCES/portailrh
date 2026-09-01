@@ -1633,6 +1633,118 @@ recompose `montant`, contrôle que la catégorie existe et est active, puis
 crée `Demande` + `lignes` (nested `create`) + `HistoriqueEntry` dans la
 boucle de retry sur collision de référence déjà en place.
 
+### Fusion dans `aristide` (statut : terminée, vérifiée)
+
+Ce formulaire a été développé par le maître de stage directement sur
+`main` (commit `e087a9d`, construit sur l'état de `aristide` **avant**
+l'audit d'habilitations qui le suit dans l'historique — les deux branches
+avaient donc légèrement divergé, pas `main = aristide + son commit` comme
+supposé initialement), puis fusionné dans `aristide` via `git merge
+origin/main` (`--no-edit`, stratégie `ort`). **Aucun conflit** : les deux
+branches ne touchaient aucune ligne commune, à une exception près
+(`treso/demandes/page.tsx`, modifié par les deux — sur des lignes
+disjointes, fusion automatique propre) — un simple `git merge` était donc
+la bonne stratégie, pas besoin de cherry-pick ni de reconstruction manuelle.
+
+**Point clé qui a évité une adaptation en cascade** : `Demande.montant`
+reste une colonne réelle, toujours peuplée (désormais calculée côté
+serveur comme la somme des lignes, plutôt que saisie) — jamais remplacée
+par une relation pure vers `LigneDemande`. Conséquence vérifiée
+explicitement : **aucune fonction ni écran qui lisait déjà `demande.montant`
+n'a eu besoin d'être modifié** — `getResteARegler`/`getTotalRegle`/
+`calculerStatutDemande` (`src/lib/tresorerie.ts`), le dashboard Finance, le
+reporting, le reçu PDF et le bon de caisse continuent de lire ce même champ
+exactement comme avant Phase A. Le cycle complet (validation partielle →
+règlement → fonds remis → clôture) a été rejoué de bout en bout sur une
+demande créée par ce nouveau formulaire pour le confirmer (voir
+"Vérifié explicitement" ci-dessous).
+
+**Deux bugs réels trouvés et corrigés pendant l'intégration** (pas de
+simple résolution mécanique de conflit Git — les deux n'apparaissaient pas
+comme des conflits, seulement à l'usage réel du formulaire) :
+
+1. **Couleurs Tailwind brutes dans `DemandeForm.tsx`** (`text-slate-900`,
+   `text-slate-500`, `text-slate-400`, `border-slate-200`, `border-slate-100`)
+   — viole la règle du projet ("ne jamais coder une couleur en dur",
+   déjà appliquée partout ailleurs y compris lors du polish visuel global
+   post-Refonte V1). Remplacées par les tokens sémantiques déjà en usage
+   sur cette même page côté détail ([id]/page.tsx, écrit par le même
+   commit avec les bons tokens) : `text-foreground`, `text-muted-foreground`,
+   `border-border`. Au passage, le total par ligne du tableau d'articles
+   (jusque-là un nombre brut sans devise) utilise désormais
+   `formatMontantDevise` comme le total général, pour rester cohérent.
+2. **`<Select>` utilisés en mode contrôlé (`value=`) dans `DemandeForm.tsx`**
+   (Entité bénéficiaire, Catégorie d'achat, Poste budgétaire, Devise) — le
+   composant partagé `Select` (`src/components/ui/Select.tsx`) fixe
+   toujours `defaultValue` en interne (ligne 43), donc lui passer `value`
+   en plus produit un vrai avertissement React ("Select elements must be
+   either controlled or uncontrolled"), **constaté dans la console du
+   navigateur pendant la vérification**, exactement le piège déjà
+   documenté à plusieurs reprises dans ce fichier (Ticket 2, Phase D,
+   Phase F : "toujours `defaultValue`, jamais `value`, sur ce composant").
+   Corrigé en remplaçant les 4 `value={...}` par `defaultValue={...}` —
+   aucune perte de fonctionnalité, ces champs n'ont jamais eu besoin d'être
+   resynchronisés depuis l'extérieur après le montage initial.
+
+**Volontairement non retouché**, conformément à la portée déjà actée par
+le commit d'origine : les écrans Finance
+(`treso/finance/demandes/[id]/page.tsx`, tables Finance) et les deux PDF
+(reçu, bon de caisse) affichent toujours « FCFA » en dur, sans passer par
+`formatMontantDevise`. Sans conséquence pratique tant que `devise` vaut
+`"XOF"` par défaut sur toute demande créée à ce jour, mais deviendrait
+trompeur (affichage "FCFA" sur un montant réellement en EUR/USD) le jour
+où quelqu'un choisit une autre devise dans le formulaire — à reprendre
+dans une phase dédiée si ce cas d'usage se confirme. De même, le mapping
+bénéficiaire "Fournisseur / prestataire" reste sans nom de tiers
+(`beneficiaireNom: null`) faute de champ dédié dans ce formulaire — reste
+un point ouvert déjà signalé par le commit d'origine, pas une régression
+introduite par la fusion.
+
+**Vérifié explicitement (fusion)** — `npx prisma migrate dev` a appliqué la
+migration `demande_achat_entete_lignes` sans avertissement de perte de
+données (relue avant application : uniquement des `ADD COLUMN` nullables
+ou à défaut, et une nouvelle table — aucun `DROP`) ; `npx prisma generate`
+requis en plus (le client généré ne se régénère pas tout seul après une
+migration appliquée hors `next dev`, constaté par des erreurs de type
+`Unknown argument devise` avant régénération explicite). `npx tsc --noEmit`
+et `npx eslint .` sans erreur après la fusion et les deux corrections
+ci-dessus.
+
+Parcours complet piloté par un vrai navigateur Chromium headless
+(Playwright, non ajouté au projet — même méthode que toutes les phases
+précédentes), zéro erreur console sur l'ensemble du parcours :
+
+1. Collaborateur crée une demande via le nouveau formulaire : catégorie
+   d'achat "Carburant", devise XOF, 2 lignes (10 × 2 500 FCFA + 4 × 15 000
+   FCFA) → total calculé et affiché **85 000 FCFA**, cohérent côté client
+   et après création (liste "Mes demandes" et détail, tableau "Articles"
+   avec les 2 lignes).
+2. Finance ouvre la demande (catégorie et montant bien visibles), valide
+   **partiellement** 50 000 FCFA → statut `Partiellement validée`, restant
+   à valider 35 000 FCFA.
+3. Règlement Caisse de 50 000 FCFA créé puis confirmé **sans attendre la
+   validation complémentaire** (Phase C) — statut toujours `Partiellement
+   validée`.
+4. Collaborateur déclare un retour de caisse sur ce règlement (30 000 FCFA
+   dépensés, justificatif Facture) → montant à retourner calculé
+   **20 000 FCFA** (50 000 − 30 000), conforme.
+5. Finance réceptionne le retour (visible dans "Retours en attente").
+6. Validation complémentaire du reliquat (35 000 FCFA) → montant validé
+   cumulé 85 000 FCFA (= montant total), statut `Partiellement réglée`.
+7. Second règlement Banque de 35 000 FCFA (solde), confirmé → statut final
+   `Réglée`.
+8. Clôture totale → demande clôturée.
+9. Dashboard Finance et Reporting rechargés sans erreur, montant de
+   85 000 FCFA retrouvé de façon cohérente dans le reporting.
+
+Toutes les données de test (demande, lignes, règlements, retour, écritures
+`JournalCaisse`, `HistoriqueEntry`) nettoyées après coup — base revenue à 0
+demande, confirmé par requête directe. Serveur `next dev` arrêté après
+vérification. Un run intermédiaire (avant la correction du bug Select
+ci-dessus) avait laissé une demande de test orpheline par un script de
+vérification imparfait plutôt que par l'application elle-même — repéré et
+nettoyé avant le run final retenu comme preuve.
+
 ## Phase H — Reporting et Export adaptés au nouveau modèle (terminée)
 
 Dernière phase de la refonte V1 : adapte le Reporting/Export (Ticket 10)
@@ -1758,12 +1870,17 @@ Accumulés au fil des 8 phases, tous déjà documentés à l'endroit où ils ont
 été rencontrés (voir les sections de phase correspondantes) — regroupés
 ici pour n'avoir qu'un seul point de synthèse à soumettre :
 
-1. **Sort de Catégorie/Objet/Budget** (Phase A) — retirés du cahier des
-   charges et du flux principal (formulaires, règlement, dashboard,
-   filtres), mais les modèles, le CRUD admin (`/admin/categories`), et la
-   feuille "Suivi budgétaire" du reporting restent en place par
-   précaution. Décision à prendre : supprimer définitivement, ou garder
-   en dormance pour un usage futur ?
+1. **Sort de Catégorie/Objet/Budget** (Phase A) — **partiellement tranché
+   depuis** (voir "Formulaire Demande d'Achat — en-tête + lignes
+   d'articles" plus haut) : `Categorie` est revenue dans le flux principal
+   comme « catégorie
+   d'achat », champ d'en-tête **obligatoire** à la création, et sert même
+   une seconde fois comme « poste budgétaire » (relation nommée distincte).
+   `Objet` et `Demande.budgetDisponible`, en revanche, restent inutilisés
+   par ce nouveau formulaire — toujours en dormance. Décision encore
+   ouverte sur ces deux-là précisément : supprimer définitivement, ou
+   garder pour un usage futur (la feuille "Suivi budgétaire" du reporting
+   en dépend directement) ?
 2. **Statut `VALIDEE` devenu invisible en pratique** (Phase B) — n'est
    plus jamais produit par `calculerStatutDemande` : une validation totale
    transite directement vers `VALIDEE_NON_REGLEE` (puis

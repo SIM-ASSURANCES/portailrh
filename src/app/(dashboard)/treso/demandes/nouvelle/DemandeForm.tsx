@@ -136,14 +136,14 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
     <div className="space-y-6">
       {/* En-tête de la demande */}
       <Card>
-        <h2 className="text-base font-bold text-slate-900">En-tête de la demande</h2>
+        <h2 className="text-base font-bold text-foreground">En-tête de la demande</h2>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <Select
             label="Entité bénéficiaire"
             placeholder="Sélectionner..."
             options={[...BENEFICIAIRE_TYPE_OPTIONS]}
-            value={beneficiaireType}
+            defaultValue={beneficiaireType}
             onChange={(e) => setBeneficiaireType(e.target.value)}
             error={fieldErrors.beneficiaireType}
           />
@@ -151,7 +151,7 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
             label="Catégorie d'achat"
             placeholder="Sélectionner..."
             options={categorieOptions}
-            value={categorieId}
+            defaultValue={categorieId}
             onChange={(e) => setCategorieId(e.target.value)}
             error={fieldErrors.categorieId}
           />
@@ -166,14 +166,14 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
             label="Poste budgétaire concerné (facultatif)"
             placeholder="Aucun / non déterminé"
             options={categorieOptions}
-            value={posteBudgetaireId}
+            defaultValue={posteBudgetaireId}
             onChange={(e) => setPosteBudgetaireId(e.target.value)}
             error={fieldErrors.posteBudgetaireId}
           />
           <Select
             label="Devise"
             options={[...DEVISE_OPTIONS]}
-            value={devise}
+            defaultValue={devise}
             onChange={(e) => setDevise(e.target.value)}
             error={fieldErrors.devise}
           />
@@ -193,7 +193,7 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
       {/* Tableau des articles */}
       <Card>
         <div className="flex items-center justify-between gap-4">
-          <h2 className="text-base font-bold text-slate-900">Tableau des articles</h2>
+          <h2 className="text-base font-bold text-foreground">Tableau des articles</h2>
           <Button type="button" onClick={ajouterLigne} className="shrink-0">
             <Icon name="plus-circle" className="size-4" />
             Ajouter une ligne
@@ -202,7 +202,7 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
 
         <div className="mt-4 space-y-3">
           {/* En-têtes de colonnes (desktop) */}
-          <div className="hidden gap-3 border-b border-slate-200 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 sm:grid sm:grid-cols-[1fr_90px_140px_120px_36px]">
+          <div className="hidden gap-3 border-b border-border pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:grid sm:grid-cols-[1fr_90px_140px_120px_36px]">
             <span>Libellé</span>
             <span>Nombre</span>
             <span>Prix unitaire</span>
@@ -215,10 +215,10 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
             return (
               <div
                 key={ligne.key}
-                className="grid gap-2 border-b border-slate-100 pb-3 last:border-b-0 last:pb-0 sm:grid-cols-[1fr_90px_140px_120px_36px] sm:items-center sm:gap-3 sm:border-b-0 sm:pb-0"
+                className="grid gap-2 border-b border-border pb-3 last:border-b-0 last:pb-0 sm:grid-cols-[1fr_90px_140px_120px_36px] sm:items-center sm:gap-3 sm:border-b-0 sm:pb-0"
               >
                 <div>
-                  <span className="mb-1 block text-xs font-medium text-slate-500 sm:hidden">Libellé</span>
+                  <span className="mb-1 block text-xs font-medium text-muted-foreground sm:hidden">Libellé</span>
                   <Input
                     aria-label="Libellé de l'article"
                     value={ligne.libelle}
@@ -226,7 +226,7 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
                   />
                 </div>
                 <div>
-                  <span className="mb-1 block text-xs font-medium text-slate-500 sm:hidden">Nombre</span>
+                  <span className="mb-1 block text-xs font-medium text-muted-foreground sm:hidden">Nombre</span>
                   <Input
                     aria-label="Nombre"
                     type="number"
@@ -238,7 +238,7 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
                   />
                 </div>
                 <div>
-                  <span className="mb-1 block text-xs font-medium text-slate-500 sm:hidden">Prix unitaire</span>
+                  <span className="mb-1 block text-xs font-medium text-muted-foreground sm:hidden">Prix unitaire</span>
                   <Input
                     aria-label="Prix unitaire"
                     type="number"
@@ -249,9 +249,9 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
                     onChange={(e) => updateLigne(ligne.key, { prixUnitaire: Number(e.target.value) })}
                   />
                 </div>
-                <div className="text-sm font-semibold text-slate-900 sm:text-right">
-                  <span className="mr-2 text-xs font-medium text-slate-500 sm:hidden">Total</span>
-                  {total.toLocaleString("fr-FR")}
+                <div className="text-sm font-semibold text-foreground sm:text-right">
+                  <span className="mr-2 text-xs font-medium text-muted-foreground sm:hidden">Total</span>
+                  {formatMontantDevise(total, devise)}
                 </div>
                 <div className="flex justify-end">
                   {lignes.length > 1 ? (
@@ -259,7 +259,7 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
                       type="button"
                       onClick={() => retirerLigne(ligne.key)}
                       aria-label="Retirer la ligne"
-                      className="grid size-8 place-items-center rounded-md text-slate-400 transition-colors hover:bg-danger-bg hover:text-danger"
+                      className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-danger-bg hover:text-danger"
                     >
                       <Icon name="x" className="size-4" />
                     </button>
@@ -270,8 +270,8 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
           })}
         </div>
 
-        <div className="mt-4 flex flex-col items-end border-t border-slate-200 pt-4">
-          <span className="text-sm text-slate-500">Total général</span>
+        <div className="mt-4 flex flex-col items-end border-t border-border pt-4">
+          <span className="text-sm text-muted-foreground">Total général</span>
           <span className="text-xl font-bold text-primary">
             {formatMontantDevise(totalGeneral, devise)}
           </span>
