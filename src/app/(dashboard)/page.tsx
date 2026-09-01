@@ -55,6 +55,12 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
     const href = getTresorerieHref(session);
     return href ? { href, reason: "no_access" } : { href: null, reason: "no_access" };
   }
+  if (moduleKey === "pointage") {
+    if (hasPermission(session, "pointage.voir_dashboard_rh")) {
+      return { href: "/pointage/rh", reason: "no_access" };
+    }
+    return { href: null, reason: "no_access" };
+  }
   return { href: null, reason: "coming_soon" };
 }
 

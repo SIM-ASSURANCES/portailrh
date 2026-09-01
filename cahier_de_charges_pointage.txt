@@ -1,0 +1,178 @@
+CAHIER DES CHARGES
+APPLICATION DE POINTAGE RH-V1
+
+1. OBJECTIF
+Créer une application simple de pointage du personnel, utilisable sur téléphone et
+ordinateur, permettant de suivre les arrivées, départs, retards et absences.
+V1 limitée au pointage. Les congés et évaluations seront ajoutés ultérieurement.
+
+2. UTILISATEURS
+Collaborateur
+Pointe son arrivée et son départ.
+Consulte son historique de pointage.
+Renseigne le motif en cas de retard.
+
+RH
+Consulte les pointages de tous les collaborateurs.
+Consulte les retards et absences.
+Peut effectuer exceptionnellement un pointage à la place d'un collaborateur.
+Peut corriger une erreur avec traçabilité.
+Produit les reportings.
+
+Direction / Responsable
+Consultation des pointages selon les droits accordés.
+
+3. POINTAGE PAR QR CODE
+Un QR Code imprimé sur papier est placé à l'entrée des locaux.
+Le collaborateur:
+1. scanne le QR Code avec son téléphone;
+2. s'identifie avec son compte personnel;
+3. l'application affiche automatiquement la date et l'heure ;
+4. il valide son pointage.
+L'heure est enregistrée automatiquement et ne peut pas être saisie ou modifiée par le
+collaborateur.
+L'heure enregistrée doit être immédiatement visible à l'écran.
+
+4. POINTAGE SUR ORDINATEUR
+Le collaborateur peut également pointer depuis son ordinateur.
+Pour éviter un pointage depuis l'extérieur, le système doit vérifier que le pointage est
+effectué depuis les locaux de l'entreprise, notamment par le réseau autorisé.
+L'heure est enregistrée automatiquement.
+
+5. HORAIRES
+Horaires de référence:
+07h45-12h15
+13h15-16h45
+Les horaires doivent être paramétrables par la RH.
+
+6. RETARDS
+Tout pointage d'arrivée après 07h45 est automatiquement identifié comme RETARD.
+Le système calcule automatiquement le nombre de minutes de retard.
+Exemple:
+Heure prévue: 07h45
+Heure réelle: 08h15
+Retard: 30 minutes
+Motif obligatoire
+En cas de retard, le collaborateur doit renseigner le motif avant de valider son
+pointage.
+Le motif ne peut pas modifier l'heure réelle enregistrée.
+
+7. POINTAGE DE DÉPART
+Le collaborateur pointe également son départ.
+Le système enregistre automatiquement:
+date;
+heure;
+collaborateur.
+L'horaire de référence de fin de journée est 16h45.
+Le système permet d'identifier les départs avant l'heure prévue.
+
+8. ABSENCES
+Si aucun pointage d'arrivée n'est enregistré pour une journée travaillée:
+→ Absence à contrôler
+La RH peut ensuite confirmer ou corriger le statut avec un motif.
+
+9. POINTAGE EXCEPTIONNEL PAR LA RH
+Si, pour une raison quelconque, le collaborateur ne peut pas pointer lui-même :
+téléphone indisponible;
+batterie déchargée;
+problème technique;
+ordinateur indisponible;
+autre situation exceptionnelle.
+La RH peut enregistrer le pointage à sa place.
+Elle renseigne:
+collaborateur concerné;
+heure réelle;
+motif.
+Le système indique que le pointage a été effectué par la RH et conserve cette opération
+dans l'historique.
+
+10. CORRECTION DES POINTAGES
+Le collaborateur ne peut pas modifier son pointage.
+La RH peut exceptionnellement corriger une erreur.
+Toute correction doit conserver:
+ancienne information;
+nouvelle information;
+motif;
+utilisateur ayant effectué la correction;
+date et heure de la modification.
+Aucune modification ne doit être effectuée sans laisser de trace.
+
+11. ESPACE COLLABORATEUR
+Chaque collaborateur peut consulter :
+ses heures d'arrivée;
+ses heures de départ;
+ses retards;
+les motifs renseignés;
+ses absences;
+son historique.
+
+12. DASHBOARD RH
+Le tableau de bord doit permettre de voir rapidement:
+Présence du jour
+Présents;
+Absents;
+Retardataires;
+Pointages manquants.
+Retards
+nombre de jours de retard;
+total des minutes de retard.
+
+13. REPORTING RH
+La RH doit pouvoir sélectionner une période librement définie.
+Exemple:
+Du 01/09/2026 au 30/09/2026
+Pour chaque collaborateur, afficher:
+Jours
+Collaborateur
+travaillés
+Jours de
+Minutes de
+Présences Absences
+retard
+retard
+Le système doit impérativement distinguer:
+Nombre de jours de retard
+et
+Total des minutes de retard.
+Exemple:
+Collaborateur A: 5 jours de retard / 150 minutes
+Collaborateur B: 1 jour de retard / 120 minutes
+La RH peut ainsi distinguer les retards fréquents des retards ponctuels importants.
+Détail des retards
+Pour chaque collaborateur:
+Date | Heure prévue | Heure réelle | Minutes de retard | Motif
+
+14. EXPORT
+Le reporting doit pouvoir être exporté en Excel.
+Filtres:
+période;
+collaborateur;
+service.
+
+15. RÈGLES ESSENTIELLES
+1. Chaque collaborateur dispose de son compte personnel.
+2. Le QR Code est placé à l'entrée des locaux.
+3. La date et l'heure sont générées automatiquement.
+4. Le collaborateur ne peut pas modifier son heure.
+5. Après 07h45, le système génère automatiquement un retard.
+6. Le motif du retard est obligatoire avant validation.
+7. Le motif ne modifie jamais l'heure réelle.
+8. Le pointage sur ordinateur doit être contrôlé par le réseau autorisé des locaux.
+9. La RH peut exceptionnellement effectuer un pointage pour un collaborateur.
+10. Toute intervention ou correction de la RH est historisée.
+11. L'absence de pointage est signalée à la RH.
+12. Le Dashboard est mis à jour automatiquement.
+13. Le reporting peut être établi sur toute période choisie.
+14. Le reporting distingue jours de retard et minutes de retard.
+15. Les pointages ne peuvent pas être supprimés sans conserver leur trace.
+
+16. V1
+QR Code + pointage téléphone + pointage ordinateur + heure automatique + retards
++ motifs + absences + pointage exceptionnel RH + historique + Dashboard +
+reporting Excel.
+
+V2
+Demandes de congés;
+permissions;
+évaluations du personnel;
+autres fonctionnalités RH.

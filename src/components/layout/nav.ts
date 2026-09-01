@@ -215,9 +215,9 @@ export function getNavBranches({
                 items: [
                   { label: "Générateur QR", href: "/pointage/rh/generer-qr", icon: "qr-code" },
                   { label: "Pointage exceptionnel", href: "/pointage/rh/pointages/nouveau", icon: "plus-circle" },
-                  { label: "Présence du jour", href: "/pointage/rh", icon: "layout-grid", comingSoon: true },
+                  { label: "Présence du jour", href: "/pointage/rh", icon: "layout-grid", exact: true },
                   { label: "Pointages", href: "/pointage/rh/pointages", icon: "file-text", comingSoon: true },
-                  { label: "Retards & absences", href: "/pointage/rh/retards", icon: "alert-triangle", comingSoon: true },
+                  { label: "Retards & absences", href: "/pointage/rh/absences", icon: "alert-triangle" },
                   { label: "Reporting", href: "/pointage/rh/reporting", icon: "download", comingSoon: true },
                   { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil" },
                   { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings", comingSoon: true },
