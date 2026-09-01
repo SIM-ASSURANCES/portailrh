@@ -36,7 +36,7 @@ export default async function RetoursEnAttentePage() {
     include: {
       declarant: true,
       reglement: { include: { demande: true } },
-      depenses: true,
+      depenses: { include: { pieceJointe: true } },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -66,6 +66,7 @@ export default async function RetoursEnAttentePage() {
         nature: d.nature,
         justification: d.justification,
         commentaire: d.commentaire,
+        pieceJointeId: d.pieceJointe?.id ?? null,
       })),
       createdAt: r.createdAt,
     };

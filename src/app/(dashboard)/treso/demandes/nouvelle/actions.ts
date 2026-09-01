@@ -26,6 +26,8 @@ export interface CreerDemandeInput {
   /** "Motif de l'achat" — stocké dans `Demande.description`. */
   motif: string;
   lignes: LigneDemandeInput[];
+  /** Nom de fichier renvoyé par `POST /api/treso/pieces-jointes/upload`, le cas échéant (facultatif). */
+  pieceJointeUrl?: string;
 }
 
 const ligneSchema = z.object({
@@ -71,7 +73,9 @@ function isReferenceConflict(error: unknown): boolean {
  * Le `montant` de la demande n'est pas saisi : il est recalculé ici comme
  * la somme des (quantite × prixUnitaire) des lignes.
  */
-export async function creerDemandeAction(input: CreerDemandeInput): Promise<ActionState> {
+export async function creerDemandeAction(
+  input: CreerDemandeInput
+): Promise<ActionState<{ demandeId: string }>> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.creer_demande")) {
     return { status: "error", message: "Action non autorisée." };
@@ -160,6 +164,13 @@ export async function creerDemandeAction(input: CreerDemandeInput): Promise<Acti
               prixUnitaire: l.prixUnitaire,
             })),
           },
+          // Pièce jointe (facultative) : le fichier est déjà sur disque
+          // (déposé par la route d'upload au moment de la sélection dans
+          // le formulaire) — cette écriture ne fait qu'associer son nom
+          // généré à la demande qui vient d'être créée.
+          ...(input.pieceJointeUrl
+            ? { pieces: { create: [{ url: input.pieceJointeUrl }] } }
+            : {}),
         },
       });
 
@@ -173,7 +184,11 @@ export async function creerDemandeAction(input: CreerDemandeInput): Promise<Acti
         },
       });
 
-      return { status: "success", message: `Demande ${demande.reference} créée.` };
+      return {
+        status: "success",
+        message: `Demande ${demande.reference} créée.`,
+        data: { demandeId: demande.id },
+      };
     } catch (error) {
       if (!isReferenceConflict(error) || attempt === MAX_ATTEMPTS - 1) {
         throw error;

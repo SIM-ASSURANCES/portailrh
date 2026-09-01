@@ -60,7 +60,7 @@ export default async function RetoursADeclarerPage() {
                 </p>
               </div>
               <Link href={`/treso/demandes/${r.demandeId}`}>
-                <Button variant="secondary">Déclarer un retour de caisse</Button>
+                <Button>Déclarer un retour de caisse</Button>
               </Link>
             </li>
           ))}

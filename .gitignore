@@ -46,3 +46,8 @@ next-env.d.ts
 
 /src/generated/prisma
 graphify-out/
+
+# stockage local des pièces jointes (Demande/DepenseLigne) — jamais commité,
+# correspond au volume Docker nommé "uploads" monté sur /app/uploads (voir
+# docker-compose.yml/Dockerfile, DEPLOIEMENT.md)
+/uploads/

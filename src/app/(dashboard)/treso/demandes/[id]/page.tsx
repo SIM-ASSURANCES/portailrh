@@ -49,6 +49,7 @@ export default async function MaDemandeDetailPage({
       posteBudgetaire: true,
       beneficiaireUser: true,
       lignes: { orderBy: { createdAt: "asc" } },
+      pieces: true,
     },
   });
 
@@ -143,6 +144,24 @@ export default async function MaDemandeDetailPage({
                 Commentaire
               </dt>
               <dd className="text-sm text-foreground">{demande.commentaire}</dd>
+            </div>
+          ) : null}
+          {demande.pieces.length > 0 ? (
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Pièce jointe
+              </dt>
+              <dd className="space-x-3 text-sm text-foreground">
+                {demande.pieces.map((piece, index) => (
+                  <a
+                    key={piece.id}
+                    href={`/api/treso/pieces-jointes/${piece.id}`}
+                    className="text-info underline-offset-4 transition-colors hover:text-primary hover:underline"
+                  >
+                    Télécharger{demande.pieces.length > 1 ? ` (${index + 1})` : ""}
+                  </a>
+                ))}
+              </dd>
             </div>
           ) : null}
           {demande.categorie ? (
@@ -249,7 +268,7 @@ export default async function MaDemandeDetailPage({
 
       <ReglementsRecusSection demandeId={demande.id} />
 
-      <RetoursCaisseSection demandeId={demande.id} peutDeclarer={peutDeclarerRetour} />
+      <RetoursCaisseSection demandeId={demande.id} peutDeclarer={peutDeclarerRetour} userId={session.user.id} />
 
       <DemandeHistorique demandeId={demande.id} />
     </div>

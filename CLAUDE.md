@@ -4155,6 +4155,333 @@ intacte à la fin (base revenue à exactement 1 demande, 0 écriture
 `JournalCaisse`, 1 `HistoriqueEntry` — sa création). Serveur `next dev`
 arrêté après vérification.
 
+## Verrou de clôture — approbation "validation complète" du DG (Ticket 7)
+
+**Statut : terminé.**
+
+**Ce mécanisme n'affecte QUE la clôture, jamais le règlement.** Point à
+ne jamais perdre de vue en le lisant : le circuit de validation/règlement
+des Phases B/C (Finance valide totalement/partiellement/en complément,
+`montantValide` mis à jour immédiatement, `peutEffectuerReglement`
+débloqué dès que `montantValide > 0` — voir "Refonte V1 en cours" / Phases
+B et C) reste **strictement inchangé**. Un règlement peut être créé,
+confirmé, intégralement réglé — la demande peut même passer `REGLEE` —
+**sans aucune intervention du DG**, exactement comme avant cette phase.
+Seule l'action de **clôture** (`cloturerDemandeAction`, Ticket 7) est
+concernée par ce nouveau verrou, ajouté en tout début de fonction, avant
+même la vérification du statut de la demande.
+
+### Schéma (migration `validation_complete_dg_verrou_cloture`)
+
+Trois nouveaux champs sur `Demande`, indépendants de `montantValide` :
+
+- **`validationCompleteParDG`** (`Boolean`, défaut `false`) — le verrou
+  lui-même.
+- **`dgApprobateurId`** (`String?`, relation nommée
+  `"DgApprobateurValidationComplete"` vers `User`) — qui a approuvé.
+- **`dgApprouveAt`** (`DateTime?`) — quand.
+
+Migration purement additive (`ADD COLUMN` + `FOREIGN KEY`), appliquée sans
+perte de données. **La nouvelle permission `treso.approuver_validation_complete`
+n'a volontairement PAS été ajoutée via `npx prisma db seed`** — cette
+commande fait un `deleteMany` sur `Demande` (déjà signalé comme un piège
+lors de la Phase F) et aurait supprimé la demande réelle de l'utilisateur
+présente en base au moment de cette phase. À la place, un script ciblé a
+inséré directement la `Permission` et son unique `RolePermission` (DG),
+état final strictement identique à ce que produirait le seed — `prisma/seed.ts`
+lui-même est bien mis à jour pour tout futur environnement reseedé
+(nouvelle base, CI, etc.), seule l'exécution immédiate du seed a été
+évitée sur cette base de dev précise.
+
+### Permission (`prisma/seed.ts`)
+
+`treso.approuver_validation_complete` — attribuée **uniquement au rôle
+DG**, jamais à Finance (même si Finance a déjà tout réglé, elle ne peut
+jamais s'auto-approuver ce verrou) ni à aucun autre rôle.
+
+### Server Action (`approuverValidationCompleteAction`, `actions.ts`)
+
+Gardes, dans l'ordre :
+
+1. `treso.approuver_validation_complete` (401/403 applicatif — "Action non
+   autorisée.").
+2. `demande.montantValide > 0` — une demande encore `EN_ATTENTE_VALIDATION`
+   (rien validé) ou `REJETEE` n'a rien de significatif à approuver ici.
+   **Volontairement PAS** de condition sur `montantValide === montant
+   demandé` : le DG peut approuver dès qu'un montant — même partiel — est
+   validé, cohérent avec le fait que le règlement lui-même est déjà
+   possible sur un montant partiellement validé depuis la Phase C. Le nom
+   "validation complète" désigne l'aval complet du DG sur le dossier, pas
+   une condition sur l'avancement de `montantValide`.
+3. Pas de double approbation (`validationCompleteParDG` déjà `true` →
+   refusé). Aucune action de retrait n'existe, même principe que
+   l'absence de "dévalidation" ailleurs dans le module.
+
+Écrit les trois champs + une `HistoriqueEntry` (`action:
+"validation_complete_dg"`, ajoutée à `ACTION_LABELS` dans
+`DemandeHistorique.tsx` : "Validation complète approuvée par le DG") dans
+une transaction Prisma, puis `revalidateDemandePaths`.
+
+### Verrou (`cloturerDemandeAction`)
+
+Une seule condition ajoutée, **avant** la vérification de
+`STATUTS_VALIDATION_COMPLETE` (donc avant tout le reste de la logique
+métier existante de cette action, qui n'a par ailleurs pas été modifiée) :
+si `!demande.validationCompleteParDG`, refus immédiat avec le message
+"La clôture nécessite l'approbation complète du DG au préalable." —
+s'applique identiquement à la clôture totale et partielle (même
+vérification, avant la branche `type === "PARTIELLE"` vs `"TOTALE"`).
+
+### Interface (`treso/finance/demandes/[id]/page.tsx`)
+
+- **Bloc "Validation complète (DG)"** — nouveau, juste après le bloc de
+  détails principal, **visible dès que `montantValide > 0`** (même
+  condition que le bloc `ReglementsSection`/`RegularisationSummary` un peu
+  plus bas, mais rendu indépendamment de la branche de statut — une
+  demande `PARTIELLEMENT_VALIDEE` peut donc aussi afficher ce bloc, le DG
+  n'a pas à attendre la validation complémentaire du reliquat). Affiche
+  soit un `Badge` "Validation complète : en attente du DG" (`warning`),
+  soit "Validation complète : approuvée le {date} par {nom}" une fois
+  approuvée.
+- **`ValidationCompleteDGButton.tsx`** (nouveau Client Component,
+  `useTransition` + toast, même pattern que `ClotureActions`) — bouton
+  "Approuver la validation complète", affiché uniquement si la session a
+  `treso.approuver_validation_complete` **et** que ce n'est pas encore
+  approuvé.
+- **Section clôture** (branche "montant validé", `STATUTS_VALIDATION_COMPLETE`) :
+  quand `canCloturerDemande` est vrai mais `validationCompleteParDG` est
+  `false`, **`ClotureActions` est remplacé par un message explicatif**
+  ("La clôture nécessite l'approbation complète du DG au préalable...")
+  plutôt que simplement masqué sans explication — même principe déjà
+  appliqué ailleurs dans le module (jamais un bouton disparu sans dire
+  pourquoi).
+
+### Vérifié explicitement
+
+`npx prisma migrate dev` (migration purement additive) ; `npx tsc --noEmit`
+et `npx eslint .` sans erreur. Parcours réel (Chromium headless,
+Playwright, non ajouté au projet) :
+
+1. Collaborateur crée une demande (80 000 FCFA). Finance valide totalement
+   puis règle intégralement en Caisse (confirmé) — **sans aucune
+   intervention du DG** : statut `Réglée` atteint normalement, **confirme
+   que le circuit de règlement des Phases B/C n'a subi aucune régression**.
+2. Sur cette même demande : badge "Validation complète : en attente du
+   DG" affiché, boutons de clôture absents, remplacés par le message
+   explicatif, bouton "Approuver" absent pour Finance (n'a pas la
+   permission).
+3. DG se connecte, ouvre la demande : bouton "Approuver la validation
+   complète" visible (lui seul). Clic → badge mis à jour "approuvée le
+   01/09/2026 par DG Test".
+4. **Défense en profondeur — test le plus rigoureux de cette
+   vérification** : la requête réseau du clic du DG a été interceptée
+   (Server Action Next.js, header `Next-Action` + corps capturés), puis
+   **rejouée à l'identique avec les cookies de session de Finance**
+   (`context.request.post`, mêmes URL/headers/corps). Réponse HTTP 200
+   contenant "Action non autorisée." — jamais le message de succès :
+   confirme que la protection est bien appliquée **côté serveur** dans la
+   Server Action elle-même, pas seulement par l'absence du bouton dans
+   l'interface de Finance.
+5. Finance retourne sur la demande : boutons de clôture maintenant
+   visibles. Clôture totale → réussie. Section "Personnes intervenantes"
+   toujours cohérente (Demandeur Collaborateur Test, Validateur(s) et
+   Régleur(s) Finance Test).
+
+Donnée de test (1 demande, sa ligne, son règlement, son historique)
+nettoyée après coup ; la demande réelle pré-existante de l'utilisateur
+(`DEM-2026-000001`) confirmée intacte. Serveur `next dev` arrêté après
+vérification.
+
+## Corrections suite à un vrai test utilisateur (bon de caisse, modification de retour, pièce jointe, navigation)
+
+**Statut : terminé.** Cinq sujets distincts issus d'un vrai parcours
+utilisateur du cycle complet (création → validation → règlement Caisse →
+déclaration de retour), qui a globalement fonctionné mais révélé des
+points précis.
+
+### 1. Bon de caisse "inaccessible" côté Collaborateur — aucun bug de code trouvé
+
+**Investigation** : comparaison ligne à ligne de `recu/route.tsx` et
+`bon-de-caisse/route.tsx` — logique d'accès **strictement identique**
+(mêmes 5 permissions Finance/DG, même vérification `createurId`). Un vrai
+test authentifié (`collaborateur@simassurances.test`) contre les deux
+routes sur un règlement Caisse confirmé réel a renvoyé **200 pour les
+deux**. Aucune incohérence de code trouvée. Cause la plus probable du
+symptôme signalé : un cache de build (`.next`) obsolète au moment du test
+initial de l'utilisateur — piège déjà rencontré et documenté plusieurs
+fois dans ce fichier (systématiquement un `rm -rf .next` avant toute
+vérification depuis). Reconfirmé une troisième fois lors du parcours de
+la Tâche 5 ci-dessous (statut 200).
+
+### 2. Modification d'un retour de caisse avant réception
+
+**Nouvelle Server Action `modifierRetourCaisseAction`**
+(`treso/demandes/[id]/retourActions.ts`) :
+
+- Modifiable **uniquement** si `estReceptionne = false` — une fois
+  réceptionné, verrouillé exactement comme avant (aucune fonction de
+  "dévalidation" ni de correction rétroactive, même principe que le reste
+  du module).
+- Réservée au **déclarant original** (`retour.declarantId === session.user.id`),
+  jamais un autre collaborateur, revérifié côté serveur.
+- **Diff par id, jamais un `deleteMany` + `createMany` en bloc** : une
+  ligne du payload avec un `id` connu est mise à jour EN PLACE (préserve
+  sa pièce jointe éventuelle — voir point 3) ; une ligne sans `id` est
+  créée ; une ligne existante en base mais absente du payload est
+  supprimée. `montantARetourner` recalculé exactement comme à la création,
+  toujours côté serveur.
+- Crée une `HistoriqueEntry` (`action: "modification_retour"`, ajoutée à
+  `ACTION_LABELS` — "Retour de caisse modifié") résumant l'ancien total
+  déclaré et le nouveau.
+- **`RetourCaisseForm.tsx` généralisé** pour servir les deux modes
+  (`mode="create"` par défaut, `mode="edit"` avec `retourId` +
+  `lignesInitiales`) — un seul formulaire, jamais deux implémentations.
+  Bouton "Modifier" ajouté sur `RetourCaisseRow.tsx`, visible uniquement
+  si `!estReceptionne && declarantId === userId` (calculé côté serveur
+  dans `RetoursCaisseSection.tsx`, passé en prop `peutModifier` — jamais
+  une vérification côté client seule).
+
+### 3. Pièce jointe — stockage local sur disque, enfin fonctionnel
+
+**Constaté avant correction** : un seul des 3 formulaires annoncés
+(dépense directe) avait réellement un champ désactivé — le nouveau
+formulaire "Demande d'Achat" (réécrit par le maître de stage) et
+`RetourCaisseForm.tsx` (réécrit à la Phase D) n'en avaient plus du tout
+(perdu lors de ces réécritures). Les trois ont donc été construits comme
+fonctionnels directement, pas seulement "activés".
+
+- **Stockage** : `./uploads/` à la racine du projet (`process.cwd()`) —
+  **volontairement pas `./storage/uploads/`** comme suggéré en exemple :
+  correspond exactement au volume Docker nommé `uploads` déjà monté sur
+  `/app/uploads` depuis le Ticket 1 (`docker-compose.yml`, `Dockerfile`,
+  DEPLOIEMENT.md — préparé mais jamais utilisé jusqu'ici), pour ne
+  nécessiter **aucun changement de configuration Docker**. Ajouté à
+  `.gitignore` et `.dockerignore`.
+- **Schéma** (migration `piece_jointe_depense_ligne`) : `PieceJointe`
+  gagne `depenseLigneId` (`String?`, `@unique`, `onDelete: Cascade`) —
+  relation optionnelle 1:1 vers `DepenseLigne` (champ virtuel
+  `DepenseLigne.pieceJointe`, aucune colonne de ce côté). `demandeId`
+  reste **toujours renseigné**, même quand la pièce est en réalité
+  attachée à une ligne précise (dérivé de
+  `retourCaisse.reglement.demandeId` au moment de l'upload) — un seul
+  `include` suffit à la route de téléchargement pour retrouver la demande
+  propriétaire quel que soit le parent direct, et le contrôle d'accès
+  reste uniforme.
+- **`POST /api/treso/pieces-jointes/upload`** — dépose le fichier sur
+  disque (nom entièrement généré, `randomUUID().extension`, extension
+  dérivée du type MIME **autorisé**, jamais du nom fourni par le client —
+  élimine par construction toute collision et tout risque de traversée de
+  chemin), 10 Mo max, PDF/JPG/PNG uniquement. **Ne crée aucune ligne
+  `PieceJointe`** : c'est la Server Action qui crée ensuite la
+  Demande/DepenseLigne qui associe ce nom généré à l'entité réellement
+  créée. Un fichier uploadé puis jamais rattaché (formulaire abandonné)
+  reste orphelin sur disque — V1 volontairement simple, pas de tâche de
+  nettoyage.
+- **`GET /api/treso/pieces-jointes/[id]`** — sert le fichier depuis le
+  disque local, jamais d'accès public direct. Accès élargi par rapport au
+  reçu/bon de caisse (demande explicite de cette tâche) : Finance/DG, OU
+  le créateur, OU **le bénéficiaire** de la demande (s'il a un compte).
+- **`PieceJointeUpload.tsx`** (`src/components/tresorerie/`) — composant
+  client partagé par les 3 formulaires (upload immédiat au choix du
+  fichier, avant même que la Demande/DepenseLigne n'existe). Sur
+  `RetourCaisseForm.tsx`, le champ n'apparaît **que pour une ligne
+  réellement nouvelle** (`!ligne.id`) : modifier la pièce jointe d'une
+  ligne déjà déclarée n'est pas dans le périmètre du point 2 ci-dessus
+  (seuls montant/objet/date/nature/justification/commentaire le sont), et
+  l'afficher sur une ligne existante aurait laissé croire à tort qu'il
+  agit.
+- **Affichage** : lien "Télécharger" ajouté partout où une demande ou une
+  ligne de dépense est consultée — détail Collaborateur, détail Finance
+  (pièce de la demande), `RetourCaisseRow`/`RetoursEnAttenteTable` (pièce
+  par ligne, Collaborateur et Finance).
+
+### 4. Navigation et expérience utilisateur — corrections ciblées
+
+**Couleurs** : 3 boutons identifiés comme la SEULE action possible de leur
+section mais rendus en gris secondaire plutôt qu'en bleu primaire de la
+charte — corrigés (couleur primaire = comportement par défaut de
+`Button`, il suffit de retirer `variant="secondary"`) :
+`ReglementForm.tsx` ("Ajouter un règlement"), `RetourCaisseRow.tsx`
+("Déclarer un retour de caisse"), `retours-a-declarer/page.tsx` (même
+bouton, écran de liste). **Délibérément non touchés** : les paires
+totalement/partiellement de `ValidationActions`/`ClotureActions` (un seul
+primaire + un secondaire est un choix de hiérarchie déjà correct, pas un
+bug) et les boutons "Voir"/"Traiter" des listes `DataTable` (en changer la
+couleur sur 7 tableaux différents aurait été le genre de refonte visuelle
+large que cette tâche demandait explicitement d'éviter).
+
+**Redirections contextuelles après succès** : `DemandeForm.tsx` et
+`DepenseDirecteForm.tsx` ne naviguent plus automatiquement à la liste
+après une création réussie — un panneau de succès affiche désormais
+**deux** boutons ("Voir ma demande" / "Voir la demande" **et** "Retour à
+la liste"), l'utilisateur choisit. Nécessite que
+`creerDemandeAction`/`creerDepenseDirecteAction` renvoient l'id de la
+demande créée (`ActionState<{ demandeId: string }>`, déjà prévu par le
+type générique — jamais un nouveau type de retour ad hoc). **Cas de la
+déclaration d'un retour non modifié** : elle se fait déjà en place, sur la
+page de détail de la demande elle-même (pas une page séparée) — aucune
+redirection n'était nécessaire, le résultat est visible immédiatement au
+même endroit.
+
+**Dashboards "À traiter"** — audit fait, aucun changement nécessaire :
+"Mon tableau de bord" (Collaborateur) route déjà intelligemment sa carte
+"Mes retours de caisse à déclarer" (lien direct si un seul, liste dédiée
+sinon — déjà construit ainsi lors de la tâche précédente). Sur le
+dashboard Finance, l'indicateur "Retours de fonds en attente de
+réception" mène à une liste dont **chaque ligne a déjà son propre bouton
+"Réceptionner"** (un clic direct, pas de fouille) ; les autres indicateurs
+mènent à des listes où une décision de l'utilisateur est nécessaire avant
+d'agir (aucune action à un clic possible par nature) — déjà conforme au
+principe demandé.
+
+### Vérifié explicitement (Tâche 5)
+
+`npx prisma migrate dev` pour la migration `piece_jointe_depense_ligne` —
+**note d'environnement** : dans cette session, `prisma migrate dev`
+refusait systématiquement de s'exécuter ("environnement non interactif
+non supporté"), y compris avec `--create-only` ou une confirmation
+poussée via stdin — contournement utilisé : migration écrite à la main
+(SQL strictement équivalent à ce que Prisma aurait généré, table cible
+vérifiée vide au préalable) puis appliquée via `npx prisma migrate
+deploy` (non-interactif par conception). `npx tsc --noEmit` et `npx eslint
+.` sans erreur après l'ensemble des corrections.
+
+Parcours réel (Chromium headless, Playwright, non ajouté au projet),
+reproduisant **exactement** le scénario rapporté par l'utilisateur :
+
+1. Collaborateur crée une demande de 50 000 FCFA **avec une pièce jointe**
+   sur le formulaire de création → succès, panneau avec "Voir ma
+   demande"/"Retour à la liste", pièce jointe visible et téléchargeable
+   sur le détail (confirmé par inspection directe du DOM : `<dt>Pièce
+   jointe</dt>` présent, lien `href="/api/treso/pieces-jointes/{id}"`
+   correct — un premier essai basé sur `innerText()` avait signalé un
+   faux négatif sur ce texte précis, écarté après vérification directe des
+   éléments `<dt>` un par un).
+2. Finance valide totalement puis règle 50 000 FCFA en Caisse (confirmé).
+3. Collaborateur déclare un retour avec **une ligne à 2 000 FCFA par
+   erreur** ("carburant", avec pièce jointe) → total déclaré 2 000 FCFA,
+   48 000 FCFA à retourner (calcul correct pour cette saisie erronée).
+4. Collaborateur clique **"Modifier"**, corrige le montant de 2 000 à
+   48 000 FCFA, enregistre → total déclaré recalculé à **48 000 FCFA**,
+   montant à retourner recalculé à **2 000 FCFA** (50 000 − 48 000) — les
+   deux valeurs se sont bien inversées comme attendu. Entrée d'historique
+   "Retour de caisse modifié" présente, avec le résumé ancien/nouveau
+   total.
+5. Bon de caisse téléchargé par le Collaborateur sur ce même règlement →
+   **200** (reconfirme le point 1 dans le contexte réel du scénario).
+6. Dépense directe créée par Finance avec pièce jointe → succès, bouton
+   "Voir la demande", pièce jointe visible sur le détail (même
+   vérification DOM directe que le point 1).
+
+Toutes les données de test (2 demandes créées pendant cette vérification,
+leurs lignes/règlements/retours/historique, les 4 fichiers uploadés sur
+disque) nettoyées après coup. **La demande réelle pré-existante de
+l'utilisateur** (`DEM-2026-000001`) et son règlement Caisse de 50 000 FCFA
+confirmé (avec sa véritable écriture `JournalCaisse`, créée par
+l'utilisateur lui-même entre deux sessions de travail) retrouvés intacts
+et non touchés — vérifié explicitement avant de conclure le nettoyage.
+Serveur `next dev` arrêté après vérification.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

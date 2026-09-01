@@ -17,6 +17,7 @@ interface DepenseLigneRow {
   nature: string | null;
   justification: TypeJustification;
   commentaire: string | null;
+  pieceJointeId: string | null;
 }
 
 interface RetourRow {
@@ -87,6 +88,17 @@ export function RetoursEnAttenteTable({ retours }: { retours: RetourRow[] }) {
               {r.depenses.map((d) => (
                 <li key={d.id}>
                   {d.objet} — {d.montant.toLocaleString("fr-FR")} FCFA ({JUSTIFICATION_LABEL[d.justification]})
+                  {d.pieceJointeId ? (
+                    <>
+                      {" — "}
+                      <a
+                        href={`/api/treso/pieces-jointes/${d.pieceJointeId}`}
+                        className="text-info underline-offset-4 hover:text-primary hover:underline"
+                      >
+                        Pièce jointe
+                      </a>
+                    </>
+                  ) : null}
                 </li>
               ))}
             </ul>

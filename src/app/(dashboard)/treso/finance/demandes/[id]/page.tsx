@@ -17,6 +17,7 @@ import { ClotureActions } from "./ClotureActions";
 import { ReglementsSection } from "./ReglementsSection";
 import { ValidationActions } from "./ValidationActions";
 import { ValidationComplementaireActions } from "./ValidationComplementaireActions";
+import { ValidationCompleteDGButton } from "./ValidationCompleteDGButton";
 
 export default async function CategoriserDemandePage({
   params,
@@ -30,10 +31,18 @@ export default async function CategoriserDemandePage({
   const canValider = hasPermission(session, "treso.valider_demande");
   const canEffectuerReglement = hasPermission(session, "treso.effectuer_reglement");
   const canCloturerDemande = hasPermission(session, "treso.cloturer_demande");
+  const canApprouverValidationComplete = hasPermission(session, "treso.approuver_validation_complete");
 
   const demande = await prisma.demande.findUnique({
     where: { id },
-    include: { createur: true, categorie: true, objet: true, beneficiaireUser: true },
+    include: {
+      createur: true,
+      categorie: true,
+      objet: true,
+      beneficiaireUser: true,
+      dgApprobateur: true,
+      pieces: true,
+    },
   });
 
   if (!demande) {
@@ -151,8 +160,57 @@ export default async function CategoriserDemandePage({
               <dd className="text-sm text-foreground">{demande.commentaire}</dd>
             </div>
           ) : null}
+          {demande.pieces.length > 0 ? (
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Pièce jointe
+              </dt>
+              <dd className="space-x-3 text-sm text-foreground">
+                {demande.pieces.map((piece, index) => (
+                  <a
+                    key={piece.id}
+                    href={`/api/treso/pieces-jointes/${piece.id}`}
+                    className="text-info underline-offset-4 transition-colors hover:text-primary hover:underline"
+                  >
+                    Télécharger{demande.pieces.length > 1 ? ` (${index + 1})` : ""}
+                  </a>
+                ))}
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </div>
+
+      {/* Verrou de clôture (Ticket 7) — indépendant du circuit de
+          validation/règlement des Phases B/C, qui reste inchangé (n'affecte
+          jamais l'éligibilité au règlement, seulement la clôture) : visible
+          dès qu'un montant est validé, peu importe l'avancement du
+          règlement — jamais uniquement dans la branche "montant entièrement
+          validé", une demande PARTIELLEMENT_VALIDEE peut aussi être
+          approuvée par le DG. */}
+      {demande.montantValide != null && Number(demande.montantValide) > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Validation complète (DG)
+            </p>
+            {demande.validationCompleteParDG ? (
+              <p className="mt-1 text-sm text-foreground">
+                Validation complète : approuvée le{" "}
+                <span className="font-semibold">{demande.dgApprouveAt?.toLocaleDateString("fr-FR")}</span> par{" "}
+                <span className="font-semibold">{demande.dgApprobateur?.fullName ?? "—"}</span>
+              </p>
+            ) : (
+              <div className="mt-1">
+                <Badge variant="warning">Validation complète : en attente du DG</Badge>
+              </div>
+            )}
+          </div>
+          {canApprouverValidationComplete && !demande.validationCompleteParDG ? (
+            <ValidationCompleteDGButton demandeId={demande.id} />
+          ) : null}
+        </div>
+      ) : null}
 
       {demande.statut === "EN_ATTENTE_VALIDATION" ? (
         <>
@@ -249,7 +307,17 @@ export default async function CategoriserDemandePage({
           />
           <RegularisationSummary demandeId={demande.id} montantValide={Number(demande.montantValide)} />
           {STATUTS_VALIDATION_COMPLETE.includes(demande.statut) && canCloturerDemande ? (
-            <ClotureActions demandeId={demande.id} />
+            demande.validationCompleteParDG ? (
+              <ClotureActions demandeId={demande.id} />
+            ) : (
+              // Ticket 7 + verrou de clôture : jamais un simple masquage
+              // silencieux des boutons — le message explique explicitement
+              // pourquoi la clôture n'est pas encore possible.
+              <div className="rounded-lg border border-border bg-warning-bg px-4 py-3 text-sm text-warning">
+                La clôture nécessite l&apos;approbation complète du DG au préalable (voir «&nbsp;Validation
+                complète&nbsp;» ci-dessus).
+              </div>
+            )
           ) : null}
         </>
       ) : (

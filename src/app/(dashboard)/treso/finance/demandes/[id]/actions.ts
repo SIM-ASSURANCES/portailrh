@@ -422,6 +422,19 @@ export async function cloturerDemandeAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
+
+  // Verrou de clôture (indépendant du circuit de validation/règlement des
+  // Phases B/C, qui reste inchangé — voir `validationCompleteParDG` sur
+  // `Demande`) : avant tout le reste, une demande ne peut être clôturée
+  // (totale ou partielle) que si le DG a donné son approbation complète,
+  // même si Finance a déjà intégralement réglé.
+  if (!demande.validationCompleteParDG) {
+    return {
+      status: "error",
+      message: "La clôture nécessite l'approbation complète du DG au préalable.",
+    };
+  }
+
   // REFONTE V1 (Phase B) : `VALIDEE` seul ne suffit plus — la validation
   // totale produit désormais VALIDEE_NON_REGLEE/PARTIELLEMENT_REGLEE/REGLEE
   // selon l'avancement du règlement (voir `calculerStatutDemande`). Voir
@@ -472,4 +485,65 @@ export async function cloturerDemandeAction(
     status: "success",
     message: `Demande ${demande.reference} clôturée${type === "PARTIELLE" ? " (partielle)" : ""}.`,
   };
+}
+
+/**
+ * Approuve la "validation complète" du DG — verrou de clôture (Ticket 7),
+ * totalement indépendant du circuit de validation/règlement des Phases
+ * B/C : n'affecte JAMAIS `montantValide` ni l'éligibilité au règlement
+ * (`peutEffectuerReglement`, toujours basée uniquement sur `montantValide` /
+ * `getResteARegler`), seulement la possibilité de clôturer ensuite. Réservée
+ * à `treso.approuver_validation_complete` (DG uniquement selon le seed
+ * actuel — jamais Finance, même si Finance a déjà tout réglé).
+ *
+ * Deux gardes métier avant l'écriture :
+ * - `montantValide > 0` — une demande encore `EN_ATTENTE_VALIDATION` (rien
+ *   validé) ou `REJETEE` n'a rien de significatif à approuver ici.
+ * - Pas de double approbation : `validationCompleteParDG` ne peut être
+ *   fixé qu'une seule fois (aucune action de "retrait" n'existe non plus,
+ *   même principe que l'absence de "dévalidation").
+ */
+export async function approuverValidationCompleteAction(demandeId: string): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.approuver_validation_complete")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.montantValide == null || Number(demande.montantValide) <= 0) {
+    return {
+      status: "error",
+      message: "Cette demande n'a encore aucun montant validé — rien à approuver.",
+    };
+  }
+  if (demande.validationCompleteParDG) {
+    return { status: "error", message: "La validation complète a déjà été approuvée pour cette demande." };
+  }
+
+  await prisma.$transaction([
+    prisma.demande.update({
+      where: { id: demandeId },
+      data: {
+        validationCompleteParDG: true,
+        dgApprobateurId: session.user.id,
+        dgApprouveAt: new Date(),
+      },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "validation_complete_dg",
+        detail: `Validation complète approuvée par ${session.user.fullName}`,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+
+  revalidateDemandePaths(demandeId);
+
+  return { status: "success", message: `Validation complète approuvée pour la demande ${demande.reference}.` };
 }

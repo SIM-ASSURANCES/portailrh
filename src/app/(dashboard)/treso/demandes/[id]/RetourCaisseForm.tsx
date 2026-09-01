@@ -5,8 +5,9 @@ import { toast } from "sonner";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { JUSTIFICATION_OPTIONS } from "@/components/tresorerie/justification";
+import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
-import { creerRetourCaisseAction, type LigneDepenseInput } from "./retourActions";
+import { creerRetourCaisseAction, modifierRetourCaisseAction, type LigneDepenseInput } from "./retourActions";
 
 type LigneEdit = LigneDepenseInput & { key: string };
 
@@ -36,23 +37,45 @@ function nouvelleLigne(): LigneEdit {
  * **jamais saisis** : `montantARetourner` est calculé côté serveur (voir
  * `creerRetourCaisseAction`), ce calcul côté client n'est qu'un aperçu.
  *
- * Appelle directement `creerRetourCaisseAction` (arguments simples, comme
- * `validerComplementaireAction`/`confirmerReglementAction`), pas via
- * `<form action={...}>` : un tableau de lignes ne se prête pas nativement à
- * `FormData`, contrairement à un formulaire à champs plats.
+ * Appelle directement `creerRetourCaisseAction`/`modifierRetourCaisseAction`
+ * (arguments simples, comme `validerComplementaireAction`/
+ * `confirmerReglementAction`), pas via `<form action={...}>` : un tableau
+ * de lignes ne se prête pas nativement à `FormData`, contrairement à un
+ * formulaire à champs plats.
+ *
+ * Sert aussi bien la **déclaration** (`mode="create"`, défaut) que la
+ * **modification** d'un retour existant, pas encore réceptionné
+ * (`mode="edit"`, `retourId` + `lignesInitiales` requis) — même formulaire,
+ * seule l'action appelée à la soumission diffère. `lignesInitiales`
+ * conserve l'`id` de chaque ligne déjà en base : c'est ce qui permet à
+ * `modifierRetourCaisseAction` de mettre à jour les lignes conservées EN
+ * PLACE plutôt que tout recréer (préserve une éventuelle pièce jointe déjà
+ * attachée à une ligne inchangée).
  */
 export function RetourCaisseForm({
+  mode = "create",
   reglementId,
+  retourId,
   montantReglement,
+  lignesInitiales,
   onCancel,
   onSuccess,
 }: {
+  mode?: "create" | "edit";
   reglementId: string;
+  /** Requis si `mode === "edit"`. */
+  retourId?: string;
   montantReglement: number;
+  /** Requis si `mode === "edit"` : lignes déjà en base, avec leur `id`. */
+  lignesInitiales?: (LigneDepenseInput & { id: string })[];
   onCancel: () => void;
   onSuccess: () => void;
 }) {
-  const [lignes, setLignes] = useState<LigneEdit[]>([nouvelleLigne()]);
+  const [lignes, setLignes] = useState<LigneEdit[]>(() =>
+    lignesInitiales && lignesInitiales.length > 0
+      ? lignesInitiales.map((l) => ({ ...l, key: l.id }))
+      : [nouvelleLigne()]
+  );
   const [erreur, setErreur] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
@@ -93,17 +116,20 @@ export function RetourCaisseForm({
     setErreur(undefined);
 
     startTransition(async () => {
-      const result = await creerRetourCaisseAction(
-        reglementId,
-        lignes.map((l) => ({
-          montant: l.montant,
-          objet: l.objet,
-          date: l.date,
-          nature: l.nature,
-          justification: l.justification,
-          commentaire: l.commentaire,
-        }))
-      );
+      const lignesPayload = lignes.map((l) => ({
+        id: mode === "edit" ? l.id : undefined,
+        montant: l.montant,
+        objet: l.objet,
+        date: l.date,
+        nature: l.nature,
+        justification: l.justification,
+        commentaire: l.commentaire,
+        pieceJointeUrl: l.pieceJointeUrl,
+      }));
+      const result =
+        mode === "edit" && retourId
+          ? await modifierRetourCaisseAction(retourId, lignesPayload)
+          : await creerRetourCaisseAction(reglementId, lignesPayload);
       if (result.status === "success") {
         toast.success(result.message);
         onSuccess();
@@ -182,6 +208,18 @@ export function RetourCaisseForm({
               value={ligne.commentaire ?? ""}
               onChange={(e) => updateLigne(ligne.key, { commentaire: e.target.value })}
             />
+            {/* Pièce jointe : uniquement pour une ligne réellement NOUVELLE
+                (pas encore en base, `ligne.id` absent) — modifier la pièce
+                jointe d'une ligne déjà déclarée n'est pas dans le périmètre
+                de la modification d'un retour (seuls montant/objet/date/
+                nature/justification/commentaire le sont) ; afficher ce
+                champ dessus aurait laissé croire à tort qu'il agit. */}
+            {!ligne.id ? (
+              <PieceJointeUpload
+                label="Pièce jointe (facultatif)"
+                onChange={(url) => updateLigne(ligne.key, { pieceJointeUrl: url ?? undefined })}
+              />
+            ) : null}
           </div>
         ))}
       </div>
@@ -209,7 +247,7 @@ export function RetourCaisseForm({
 
       <div className="flex flex-wrap gap-3">
         <Button type="button" loading={isPending} onClick={handleSubmit}>
-          Déclarer le retour
+          {mode === "edit" ? "Enregistrer les modifications" : "Déclarer le retour"}
         </Button>
         <Button type="button" variant="secondary" disabled={isPending} onClick={onCancel}>
           Annuler

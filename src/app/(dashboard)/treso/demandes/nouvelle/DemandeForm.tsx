@@ -4,10 +4,13 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
+import Link from "next/link";
+
 import { Button, Card, Input, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { BENEFICIAIRE_TYPE_OPTIONS } from "@/components/tresorerie/beneficiaire";
 import { DEVISE_OPTIONS, formatMontantDevise } from "@/components/tresorerie/devise";
+import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import { creerDemandeAction } from "./actions";
 
@@ -59,9 +62,11 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
   const [devise, setDevise] = useState("XOF");
   const [motif, setMotif] = useState("");
   const [lignes, setLignes] = useState<LigneEdit[]>([nouvelleLigne()]);
+  const [pieceJointeUrl, setPieceJointeUrl] = useState<string | null>(null);
 
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [erreurLignes, setErreurLignes] = useState<string | undefined>();
+  const [demandeCreeeId, setDemandeCreeeId] = useState<string | null>(null);
 
   const categorieOptions = useMemo(
     () => categories.map((c) => ({ value: c.id, label: c.label })),
@@ -117,11 +122,15 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
           quantite: l.quantite,
           prixUnitaire: l.prixUnitaire,
         })),
+        pieceJointeUrl: pieceJointeUrl ?? undefined,
       });
 
       if (result.status === "success") {
         toast.success(result.message ?? "Demande créée.");
-        router.push("/treso/demandes");
+        // Reste sur place pour proposer les deux redirections possibles
+        // (voir la demande créée, ou revenir à la liste) plutôt qu'une
+        // navigation automatique unique.
+        setDemandeCreeeId(result.data?.demandeId ?? null);
       } else if (result.status === "error") {
         if (result.fieldErrors) {
           setFieldErrors(result.fieldErrors);
@@ -130,6 +139,22 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
         toast.error(result.message);
       }
     });
+  }
+
+  if (demandeCreeeId) {
+    return (
+      <div className="animate-fade-in-up space-y-4 rounded-lg border border-success/30 bg-success-bg p-6 text-center">
+        <p className="text-sm font-medium text-success">Demande créée avec succès.</p>
+        <div className="flex flex-wrap justify-center gap-3">
+          <Link href={`/treso/demandes/${demandeCreeeId}`}>
+            <Button type="button">Voir ma demande</Button>
+          </Link>
+          <Button type="button" variant="secondary" onClick={() => router.push("/treso/demandes")}>
+            Retour à la liste
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -187,6 +212,9 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
             onChange={(e) => setMotif(e.target.value)}
             error={fieldErrors.motif}
           />
+        </div>
+        <div className="mt-4">
+          <PieceJointeUpload onChange={setPieceJointeUrl} />
         </div>
       </Card>
 
