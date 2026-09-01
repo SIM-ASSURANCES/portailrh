@@ -1,10 +1,33 @@
 import { NextResponse } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 
+import { getBeneficiaireNom } from "@/components/tresorerie/beneficiaire";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { ReceiptDocument, type ReceiptData } from "@/lib/pdf/ReceiptDocument";
 import { getResteARegler, getTotalRegle } from "@/lib/tresorerie";
+
+/**
+ * Nom(s) du/des validateur(s) de la demande (section 12.2 du cahier des
+ * charges) — dérivés des `HistoriqueEntry` `validation`/
+ * `validation_complementaire` (Phase B), jamais un nouveau champ dédié : une
+ * demande peut avoir été validée en plusieurs étapes par des personnes
+ * différentes (validation initiale puis complémentaire, aucune contrainte
+ * sur l'auteur — voir `validerComplementaireAction`), donc plusieurs noms
+ * distincts sont possibles ; joints par une virgule, dans l'ordre
+ * chronologique de première apparition. "—" si aucune validation trouvée
+ * (cas normalement impossible au moment du reçu : un règlement suppose déjà
+ * `montantValide > 0`, mais ce champ ne doit jamais faire planter le reçu).
+ */
+async function getValidateursNoms(demandeId: string): Promise<string> {
+  const entries = await prisma.historiqueEntry.findMany({
+    where: { entity: "Demande", entityId: demandeId, action: { in: ["validation", "validation_complementaire"] } },
+    include: { user: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const noms = [...new Set(entries.map((e) => e.user.fullName))];
+  return noms.length > 0 ? noms.join(", ") : "—";
+}
 
 /**
  * Génère le reçu PDF d'un règlement confirmé (Ticket 9).
@@ -34,7 +57,7 @@ export async function GET(
   const reglement = await prisma.reglement.findUnique({
     where: { id },
     include: {
-      demande: { include: { createur: true, categorie: true, objet: true } },
+      demande: { include: { createur: true, categorie: true, objet: true, beneficiaireUser: true } },
       auteur: true,
     },
   });
@@ -70,23 +93,27 @@ export async function GET(
   // reçu, jamais figés à la date de ce règlement précis — un même règlement
   // téléchargé à deux moments différents peut donc afficher un "reste à
   // régler" différent si d'autres règlements sont intervenus depuis.
-  const [totalRegleADate, resteARegler] = await Promise.all([
+  const [totalRegleADate, resteARegler, validateursNoms] = await Promise.all([
     getTotalRegle(reglement.demandeId),
     getResteARegler(reglement.demandeId),
+    getValidateursNoms(reglement.demandeId),
   ]);
 
   const data: ReceiptData = {
     recuReference,
     demandeReference: reglement.demande.reference,
     demandeurNom: reglement.demande.createur.fullName,
+    beneficiaireNom: getBeneficiaireNom(reglement.demande),
     categorieLabel: reglement.demande.categorie?.label ?? null,
     objetLabel: reglement.demande.objet?.label ?? null,
     montant: Number(reglement.montant),
     mode: reglement.mode,
     confirmeLe: reglement.confirmeAt ?? reglement.createdAt,
     auteurNom: reglement.auteur.fullName,
+    validateursNoms,
     genereLe: new Date(),
     montantDemande: Number(reglement.demande.montant),
+    montantValide: Number(reglement.demande.montantValide ?? 0),
     totalRegleADate,
     resteARegler,
   };

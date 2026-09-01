@@ -12,7 +12,10 @@ import { getAccessibleModules, getSession, hasPermission, isAdmin } from "@/lib/
  * directement sur le tableau de bord Finance (Phase G, `treso.voir_dashboard_finance`,
  * exactement la permission qui garde `treso/finance/page.tsx` — jamais de
  * redirection en boucle une fois ici) ; Collaborateur (`treso.creer_demande`
- * ou `treso.declarer_retour`) atterrit sur `/treso/demandes`. Une session
+ * ou `treso.declarer_retour`) atterrit sur `/treso/tableau-de-bord` (son
+ * propre tableau de bord, cahier des charges section 14 — voir CLAUDE.md
+ * "Mon tableau de bord"), pas directement sur la liste "Mes demandes". Une
+ * session
  * sans aucune de ces permissions (Admin, qui n'a délibérément aucune
  * permission `treso.*` — voir CLAUDE.md "Administration") n'a **aucun**
  * point d'entrée fonctionnel réel : `null`, distinct du cas "module sans
@@ -24,7 +27,10 @@ import { getAccessibleModules, getSession, hasPermission, isAdmin } from "@/lib/
 function getTresorerieHref(session: { permissions: string[] } | null): string | null {
   if (hasPermission(session, "treso.voir_dashboard_finance")) return "/treso/finance";
   if (hasPermission(session, "treso.creer_demande") || hasPermission(session, "treso.declarer_retour")) {
-    return "/treso/demandes";
+    // Mon tableau de bord (cahier des charges section 14) est désormais le
+    // point d'entrée du Collaborateur — même symétrie que Finance/DG
+    // (tableau de bord, pas directement la liste "Mes demandes").
+    return "/treso/tableau-de-bord";
   }
   return null;
 }

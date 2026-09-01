@@ -38,6 +38,11 @@ model User {
   retoursDeclares     RetourCaisse[]    @relation("RetourDeclarant")
   retoursReceptionnes RetourCaisse[]    @relation("RetourReceptionnaire")
   historique          HistoriqueEntry[]
+  /// Écritures JournalCaisse déclenchées par cet utilisateur (auteur du
+  /// règlement pour une SORTIE, receptionneParId pour une ENTRÉE de retour,
+  /// ou l'utilisateur ayant annulé un règlement pour une ENTRÉE
+  /// compensatoire — section 13 du cahier des charges, traçabilité).
+  ecrituresJournalCaisse JournalCaisse[] @relation("JournalCaisseUser")
 
   pointagesEffectues    Pointage[]           @relation("PointageEmploye")
   pointagesRealises     Pointage[]           @relation("PointageEffectuePar")
@@ -264,8 +269,9 @@ model Demande {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  pieces     PieceJointe[]
-  reglements Reglement[]
+  pieces        PieceJointe[]
+  reglements    Reglement[]
+  journalCaisse JournalCaisse[]
 }
 
 model PieceJointe {
@@ -362,6 +368,14 @@ model DepenseLigne {
   createdAt DateTime @default(now())
 }
 
+/// Section 13 du cahier des charges (traçabilité) : chaque écriture doit
+/// pouvoir répondre à "quelle demande concernée" et "quel utilisateur" —
+/// `demandeId` remonte depuis le `Reglement`/`RetourCaisse` d'origine
+/// (via `refId`) au moment de la création de l'écriture (jamais recalculé
+/// après coup), `userId` est l'utilisateur qui a déclenché l'opération
+/// précise (auteur du règlement pour une SORTIE, `receptionneParId` pour
+/// une ENTRÉE de retour, l'utilisateur ayant annulé pour une ENTRÉE
+/// compensatoire d'annulation).
 model JournalCaisse {
   id        String   @id @default(cuid())
   type      String
@@ -369,6 +383,12 @@ model JournalCaisse {
   source    String
   refId     String
   createdAt DateTime @default(now())
+
+  demandeId String
+  demande   Demande @relation(fields: [demandeId], references: [id])
+
+  userId String
+  user   User   @relation("JournalCaisseUser", fields: [userId], references: [id])
 }
 
 // ============================================================

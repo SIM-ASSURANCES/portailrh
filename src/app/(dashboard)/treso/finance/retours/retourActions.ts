@@ -82,6 +82,11 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
         montant,
         source: "retour_caisse_receptionne",
         refId: retourId,
+        // Traçabilité (section 13) : la demande d'origine (via
+        // Reglement -> Demande) et l'utilisateur qui réceptionne, identique
+        // à `receptionneParId` sur le RetourCaisse mis à jour ci-dessus.
+        demandeId,
+        userId: session.user.id,
       },
     }),
     prisma.historiqueEntry.create({

@@ -120,7 +120,15 @@ export function getNavBranches({
                 ]
               : []),
             ...(canAccesDemandes
-              ? [{ label: "Demandes", href: "/treso/demandes", icon: "file-text" } satisfies NavItem]
+              ? [
+                  {
+                    label: "Mon tableau de bord",
+                    href: "/treso/tableau-de-bord",
+                    icon: "layout-grid",
+                    exact: true,
+                  } satisfies NavItem,
+                  { label: "Demandes", href: "/treso/demandes", icon: "file-text" } satisfies NavItem,
+                ]
               : []),
             ...(canSaisirDepenseDirecte
               ? [

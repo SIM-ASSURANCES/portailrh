@@ -3754,6 +3754,407 @@ maître de stage, non retouchée ici (aucune incohérence d'habilitation
 trouvée sur ce point précis : `/admin/categories` suit exactement la même
 règle `isAdmin()` que le reste de la console).
 
+## Mon tableau de bord (Collaborateur)
+
+**Statut : terminé.** Cahier des charges section 14 (Dashboard) : la
+vision synthétique générale — 5 indicateurs (Demandé/Validé/Restant à
+valider/Réglé/Validé restant à régler) + une zone "À TRAITER" cliquable —
+n'est pas réservée à Finance. `/treso/tableau-de-bord` en est le pendant
+personnel : mêmes 5 indicateurs et même principe de zone actionnable, mais
+**scopés aux seules demandes du Collaborateur connecté**, jamais à
+l'échelle de toute l'organisation (`/treso/finance` reste, lui,
+strictement organisationnel — les deux ne se recoupent jamais, voir
+"Distinction avec les deux autres dashboards" plus bas).
+
+### Fonctions d'agrégation (`src/lib/tresorerie.ts`)
+
+Ajoutées à côté de `getTotalRegle`/`getResteARegler`, jamais dans
+`dashboardFinance.ts` (qui reste dédié aux agrégats organisationnels de
+Finance) — chaque nom est explicitement préfixé "Mes"/scopé pour ne jamais
+se confondre avec son équivalent Finance :
+
+- **`getMesIndicateurs(userId)`** → `{ demande, valide, restantAValider,
+  regle, valideRestantARegler }`. Formules **strictement identiques** à
+  celles de `getReportingRows` (Phase H) — jamais une deuxième définition
+  de ces mêmes calculs — juste agrégées en un seul total au lieu d'être
+  groupées par Catégorie/Objet : `demande` = somme de `Demande.montant` sur
+  TOUTES les demandes de l'utilisateur quel que soit leur statut ; `valide`
+  = somme de `Demande.montantValide` (0/null compté 0) ; `restantAValider`
+  = `max(0, demande - valide)` ; `regle` = somme des règlements confirmés
+  et non annulés (Caisse + Banque) de ces mêmes demandes ; `valideRestantARegler`
+  = `max(0, valide - regle)`. Calculée en 2 requêtes (`findMany` +
+  `groupBy`), jamais une requête par demande.
+- **`getMesDemandesEnAttente(userId)`** → `{ nombre }` : demandes créées par
+  l'utilisateur encore `EN_ATTENTE_VALIDATION` ou `PARTIELLEMENT_VALIDEE`.
+  Même définition que `getDemandesEnAttenteValidation`
+  (`dashboardFinance.ts`), scopée par `createurId`.
+- **`getReglementsCaisseADeclarer(userId)`** → liste détaillée (règlement,
+  demande, référence, montant, date de confirmation) des règlements Caisse
+  confirmés et non annulés des demandes de l'utilisateur, pour lesquels
+  **aucun** `RetourCaisse` n'a encore été déclaré — même règle
+  d'éligibilité que le bouton "Déclarer un retour de caisse" (Ticket 5,
+  `RetoursCaisseSection.tsx` : un seul retour par règlement), plus le même
+  verrou `statut !== "CLOTUREE"` que `peutDeclarer` sur cet écran. C'est
+  cette liste qui détermine où mène le clic sur la carte "Mes retours de
+  caisse à déclarer" (voir plus bas).
+- **`getMesRetoursADeclarer(userId)`** → `{ nombre }`, un simple dérivé de
+  `getReglementsCaisseADeclarer` (`.length`) — jamais deux implémentations
+  de la même règle d'éligibilité.
+
+**Choix documenté : scope par `createurId`, jamais `beneficiaireUserId`.**
+Deux raisons : (1) c'est déjà le filtre de "Mes demandes"
+(`treso/demandes/page.tsx`, Ticket 1) — un tableau de bord qui compterait
+différemment de la liste juste en dessous serait incohérent pour
+l'utilisateur ; (2) `beneficiaireUserId` n'est renseigné que pour un
+bénéficiaire `COLLABORATEUR`/`STAGIAIRE` (Phase A) — une demande dont le
+créateur choisit un bénéficiaire `ENTREPRISE`/`FOURNISSEUR` (le nouveau
+formulaire "Demande d'Achat" le permet) aurait disparu du tableau de bord
+de son propre créateur. Cohérent avec le principe directeur confirmé : le
+cycle démarre de la demande du Collaborateur, qui en est l'auteur — pas
+nécessairement le bénéficiaire final.
+
+**Limite connue, héritée, pas introduite ici** : les 5 indicateurs agrègent
+les montants de toutes les demandes de l'utilisateur sans distinction de
+devise (`Demande.devise`, voir "Formulaire Demande d'Achat" plus haut) —
+même simplification déjà acceptée par `getReportingRows` (jamais rendu
+devise-aware). Sans conséquence tant que XOF reste la devise par défaut de
+facto ; à reprendre si un usage multi-devises réel apparaît.
+
+### Écran (`treso/tableau-de-bord/page.tsx`)
+
+Distinct de `/treso/demandes` ("Mes demandes", une simple liste, Ticket 1)
+— même choix structurel que Finance (`/treso/finance` = tableau de bord,
+`/treso/finance/demandes` = liste) plutôt que de surcharger la liste
+existante avec des indicateurs et une zone "à traiter" étrangers à son
+rôle de simple historique. Gardé par la même permission que "Mes
+demandes" (`treso.creer_demande` OU `treso.declarer_retour`), jamais
+uniquement masqué côté nav — revérifié dans la page.
+
+- **5 `StatCard` non cliquables** ("Vue d'ensemble") pour les indicateurs
+  de synthèse — informationnels, pas des actions. `Restant à valider` et
+  `Validé restant à régler` passent en `warning` uniquement si > 0
+  (`toneSiActif`, même garde-fou que le dashboard Finance, Phase G) ; les
+  trois autres restent `success`/`neutral`.
+- **Zone "À traiter"**, 2 `StatCard` cliquables :
+  - *"Mes demandes en attente de validation"* → `/treso/demandes?statut=EN_ATTENTE_VALIDATION,PARTIELLEMENT_VALIDEE`.
+    Nécessite un filtre `?statut=` (nouveau, whitelist stricte contre les
+    11 valeurs de `StatutDemande` — même principe que
+    `parseReportingFilters`) ajouté à `treso/demandes/page.tsx` : une
+    demande créée pour cette occasion, jamais un filtre ad hoc dupliqué
+    ailleurs, réutilisable par tout futur lien filtré vers cette liste.
+    Bandeau "Filtré : ..." + lien "Voir toutes mes demandes" affiché
+    quand le filtre est actif.
+  - *"Mes retours de caisse à déclarer"* → **si exactement 1** règlement
+    éligible, lien **direct** vers le détail de cette demande précise
+    (`/treso/demandes/{id}`, là où vit réellement le bouton "Déclarer un
+    retour de caisse", Ticket 5) ; **si plusieurs**, lien vers
+    `/treso/demandes/retours-a-declarer` (nouvel écran, liste simple sans
+    `DataTable` — volume toujours modeste pour un seul utilisateur, même
+    principe que `RetoursCaisseSection` — chaque ligne renvoie vers le
+    détail de sa demande, cet écran ne duplique jamais le formulaire de
+    déclaration lui-même). Cet écran reste accessible même à 0 résultat
+    (`EmptyState`).
+- Actions d'en-tête : "Mes demandes" (lien vers la liste) et "Nouvelle
+  demande" (si `treso.creer_demande`) — la liste complète et la création
+  restent toujours à portée de clic depuis ce nouvel écran.
+
+### Distinction avec les deux autres dashboards
+
+Trois écrans distincts, jamais redondants :
+
+| Écran | Portée | Rôle |
+|---|---|---|
+| `/` (dashboard général) | Aucune donnée métier | Point d'entrée simple vers les modules accessibles (voir "Clarification des dashboards par rôle") |
+| `/treso/tableau-de-bord` | Les demandes d'**un seul** Collaborateur | Vrai tableau de bord personnel du module Trésorerie |
+| `/treso/finance` | **Toute l'organisation** | Vrai tableau de bord Finance (Phase G) |
+
+**Point d'entrée du module mis à jour** : `getTresorerieHref` (dashboard
+général, `(dashboard)/page.tsx`) envoie désormais un Collaborateur vers
+`/treso/tableau-de-bord` plutôt que directement vers `/treso/demandes` —
+même symétrie que Finance/DG, qui atterrissent sur `/treso/finance` (leur
+tableau de bord) et non sur `/treso/finance/demandes` (une liste). Nouvelle
+entrée de sidebar "Mon tableau de bord" (`nav.ts`, icône `layout-grid`,
+`exact: true`), gardée par le même flag `canAccesDemandes` que "Demandes",
+positionnée juste avant dans la branche "Demande d'Achat" — même
+convention que "Tableau de bord Finance" précédant les items Finance.
+**Route choisie à dessein hors de `/treso/demandes/*`** (`/treso/tableau-de-bord`,
+pas `/treso/demandes/tableau-de-bord`) : nichée sous `/treso/demandes/`,
+elle aurait été un sous-chemin de l'item de nav "Demandes"
+(`/treso/demandes`), qui l'aurait alors fait s'allumer simultanément avec
+"Mon tableau de bord" (même piège de préfixe déjà documenté au Ticket 8 et
+à l'audit habilitations) — évité en la sortant complètement de cette
+arborescence plutôt qu'en jonglant avec des exceptions dans `isActive()`.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur. Base vérifiée propre (0
+demande) avant tout test. Parcours complet piloté par un vrai navigateur
+Chromium headless (Playwright, non ajouté au projet), avec
+`collaborateur@simassurances.test` et `finance@simassurances.test` :
+
+1. Collaborateur crée 3 demandes (1 ligne chacune, catégorie identique) :
+   A = 20 000 FCFA (laissée `EN_ATTENTE_VALIDATION`), B = 50 000 FCFA,
+   C = 40 000 FCFA.
+2. Finance valide B **partiellement** à 30 000 FCFA (`PARTIELLEMENT_VALIDEE`).
+3. Finance valide C **totalement** (40 000 FCFA) puis confirme un
+   règlement Caisse de 40 000 FCFA dessus, sans déclarer de retour
+   (`REGLEE`).
+4. "Mon tableau de bord" du Collaborateur affiche exactement : Demandé
+   **110 000 FCFA** (20 000+50 000+40 000), Validé **70 000 FCFA**
+   (0+30 000+40 000), Restant à valider **40 000 FCFA** (110 000−70 000),
+   Réglé **40 000 FCFA**, Validé restant à régler **30 000 FCFA**
+   (70 000−40 000) — les 5 valeurs correspondent au centime près à ce qui
+   est attendu du scénario.
+5. Zone "À traiter" : "Mes demandes en attente de validation" = **2** (A +
+   B), "Mes retours de caisse à déclarer" = **1** (le règlement Caisse de
+   C).
+6. Clic sur "Mes demandes en attente de validation" → `/treso/demandes?statut=...`,
+   bandeau "Filtré" affiché, A et B présentes, **C absente** (confirmé
+   explicitement — elle est `REGLEE`, hors filtre).
+7. Clic sur "Mes retours de caisse à déclarer" (exactement 1) → mène
+   **directement** à la demande C (vérifié par l'URL et la référence
+   affichée), où le bouton "Déclarer un retour de caisse" est bien présent.
+8. Visite directe de `/treso/demandes/retours-a-declarer` : affiche
+   correctement la même ligne (référence C, 40 000 FCFA, date de
+   confirmation) avec son lien vers le détail.
+
+Toutes les données de test (3 demandes, leurs lignes, le règlement, les
+écritures `JournalCaisse`, l'historique) nettoyées après coup — base
+revenue à 0 demande, confirmé par requête directe. Serveur `next dev`
+arrêté après vérification.
+
+## Audit de conformité — sections 10, 12.2, 13, 15, 16 du cahier des charges
+
+**Statut : terminé.** Audit précis du Module Trésorerie contre 5 exigences
+explicites du cahier des charges, chacune vérifiée par lecture du code réel
+**avant** toute correction, puis par un vrai parcours navigateur après
+correction (une seule demande de bout en bout : créée, validée totalement,
+réglée en Caisse, retour de 70 000 FCFA déclaré sur un règlement de
+100 000 FCFA — 30 000 FCFA à retourner —, retour réceptionné, demande
+clôturée — mêmes montants réutilisés pour vérifier les 5 points d'un
+seul geste). Recense, pour chaque point, l'état constaté puis la
+correction.
+
+### 1. Reçu PDF (section 12.2) — champs manquants trouvés et ajoutés
+
+**Constaté avant correction** : le reçu (`ReceiptDocument.tsx`,
+`api/treso/reglements/[id]/recu/route.tsx`) affichait déjà montant
+demandé, total réglé à ce jour, reste à régler, montant du règlement,
+mode, date, demandeur, catégorie/objet, régleur — mais **ni le montant
+validé** (distinct du montant demandé, jamais affiché séparément), **ni le
+bénéficiaire** (le demandeur seul était affiché, alors que Phase A
+distingue les deux), **ni le validateur**.
+
+**Corrigé** :
+
+- **`ReceiptData`** gagne `montantValide` (récupéré depuis
+  `demande.montantValide`) et `beneficiaireNom` (`getBeneficiaireNom`,
+  déjà utilisée ailleurs dans le projet — la route inclut désormais
+  `beneficiaireUser` dans sa requête).
+- **`validateursNoms`** — **choix documenté** : pas de nouveau champ sur
+  `Demande`/`Reglement`, dérivé des `HistoriqueEntry` `validation`/
+  `validation_complementaire` (Phase B) via une nouvelle fonction
+  `getValidateursNoms(demandeId)` (route.tsx). Une demande peut avoir été
+  validée en plusieurs étapes par des personnes différentes (validation
+  initiale puis complémentaire, aucune contrainte d'auteur) : les noms
+  distincts sont dédupliqués et joints par une virgule, dans l'ordre
+  chronologique de première apparition — jamais un seul nom supposé.
+- **Gabarit** (`ReceiptDocument.tsx`) : "Montant validé" ajouté à côté de
+  "Montant demandé" (section "Situation de la demande", passée de 3 à 4
+  cellules réparties sur 2 lignes) ; "Reste à régler" renommé **"Solde
+  validé restant à régler"**, terminologie exacte du cahier des charges
+  (valeur inchangée — `getResteARegler` porte déjà sur `montantValide`
+  depuis la Phase C, seul le libellé était imprécis) ; "Bénéficiaire"
+  ajouté dans "Détails de la demande" ; la ligne de bas de page devient
+  "Validé par {validateurs} — Règlement effectué par {auteur}."
+
+### 2. Journal de caisse (section 13) — traçabilité incomplète
+
+**Constaté avant correction** : `JournalCaisse` (id/type/montant/source/
+refId/createdAt) ne permettait de répondre ni à "quelle demande" ni "quel
+utilisateur" pour un mouvement donné — seul `refId` (id du `Reglement`/
+`RetourCaisse` d'origine) existait, sans relation directe vers `Demande`
+ni `User`. Aucun écran "Journal de caisse" dédié n'existe dans
+l'application (seulement une feuille d'export du même nom) — rien à
+adapter côté écran, conformément au "s'il existe déjà" de la consigne.
+
+**Corrigé** :
+
+- **Migration `journal_caisse_tracabilite`** : `JournalCaisse` gagne
+  `demandeId` (relation vers `Demande`) et `userId` (relation nommée
+  `"JournalCaisseUser"` vers `User`), tous deux **non nullables** —
+  possible sans backfill, la table était vide en base de dev au moment de
+  la migration (vérifié explicitement avant d'appliquer). Migration
+  purement additive (`ADD COLUMN` + `FOREIGN KEY`), aucune perte de
+  donnée possible même si la table avait été peuplée.
+- **Les 3 points de création d'une écriture** adaptés, `userId` choisi
+  précisément selon qui a réellement déclenché CETTE écriture (pas
+  toujours la même personne que sur l'écriture d'origine) :
+  - `confirmerReglementAction` (SORTIE) → `userId = reglement.auteurId`
+    (l'auteur du règlement, pas forcément celui qui le confirme — Ticket 4
+    n'impose aucune contrainte là-dessus).
+  - `annulerReglementAction` (ENTRÉE compensatoire) → `userId =
+    session.user.id` (celui qui annule, distinct de l'auteur du règlement
+    d'origine — déjà tracé sur la SORTIE initiale).
+  - `receptionnerRetourAction` (ENTRÉE) → `userId = session.user.id`,
+    identique à `receptionneParId` sur le `RetourCaisse` mis à jour dans
+    la même transaction.
+  - `demandeId` toujours pris directement sur le `Reglement`/`RetourCaisse`
+    déjà chargé (`reglement.demandeId` / `retour.reglement.demandeId`),
+    jamais recalculé après coup.
+- **`getReportingJournalDetail`** (feuille d'export) inclut désormais
+  `demande`/`user` et expose `demandeReference`/`userNom` ; la feuille
+  Excel "Journal de caisse" gagne les colonnes "Référence demande" et
+  "Utilisateur".
+
+### 3. Clôture — personnes intervenantes (section 10)
+
+**Constaté avant correction** : la branche `CLOTUREE` de
+`treso/finance/demandes/[id]/page.tsx` affichait les montants
+(`RegularisationSummary`), la catégorisation verrouillée et le motif de
+clôture, mais **aucune liste explicite des personnes intervenues** —
+seul l'historique générique (`DemandeHistorique`, format libre) permettait
+de le reconstituer en le lisant en entier.
+
+**Corrigé** : nouveau composant partagé
+[PersonnesIntervenantes.tsx](src/components/tresorerie/PersonnesIntervenantes.tsx)
+(Server Component, ne prend que l'id de la demande), inséré dans la
+branche `CLOTUREE`, juste après `RegularisationSummary`. Aucun nouveau
+champ : entièrement dérivé des relations et de `HistoriqueEntry` déjà en
+place — **Demandeur** (`Demande.createur`, passé en prop par la page qui
+l'a déjà chargé), **Validateur(s)** (`HistoriqueEntry` `validation`/
+`validation_complementaire`), **Régleur(s)** (`Reglement.auteur` des
+règlements confirmés et non annulés — pris directement sur la relation,
+jamais reconstruit depuis un texte), **Clôturé par** (dernière
+`HistoriqueEntry` `cloture_totale`/`cloture_partielle` — ajouté en bonus,
+naturel dans cet écran précis, en plus des trois rôles explicitement
+demandés). Chaque liste dédupliquée, "—" si aucune personne trouvée pour
+un rôle.
+
+### 4. Reporting fonds remis dédié (section 15)
+
+**Constaté avant correction** : l'écran de reporting n'avait qu'un
+tableau agrégé général (`getReportingRows`, Demandé/Validé/Restant à
+valider/Réglé/Validé restant à régler/Réglé Caisse/Réglé Banque) — aucun
+tableau spécifique "Fonds remis" avec les colonnes exactes du cahier des
+charges (nombre d'opérations, montant demandé, montant validé, montant
+remis, dépenses déclarées, retours reçus, montant restant à régulariser).
+
+**Corrigé** : nouvelle fonction `getReportingFondsRemis(filters)`
+(`src/lib/reporting.ts`), groupée par Catégorie/Objet **comme le tableau
+général** mais restreinte aux demandes ayant au moins un règlement Caisse
+confirmé (les seules à avoir un cycle de fonds remis — un "fonds remis" =
+une remise d'espèces, donc un règlement Caisse précisément, jamais
+Banque). **`montantRestantARegulariser` n'est jamais plafonné à 0**
+(contrairement à `montantRestantAValider`/`valideResteARegler` du tableau
+général) — même convention que `getEcart`/`getSoldeARegulariser`
+(`tresorerie.ts`) : un solde négatif signale une vraie anomalie
+(sur-retour), à ne jamais masquer par un `max(0, ...)`. Nouvelle section
+"Fonds remis" ajoutée à l'écran (`treso/finance/reporting/page.tsx`,
+entre le tableau général et "Suivi budgétaire") et nouvelle feuille
+"Fonds remis" dans l'export Excel, mêmes colonnes, même fonction
+partagée — jamais deux implémentations.
+
+### 5. Exports manquants (section 16)
+
+**Constaté avant correction** : l'export ne comptait que 7 feuilles
+(Demandes, Règlements, Retours de caisse, Dépenses déclarées, Journal de
+caisse, Reporting, Suivi budgétaire) — manquaient Validations, Fonds
+remis, Régularisations et Données du dashboard ; "Dépenses non
+justifiées" n'existait que comme une colonne booléenne au sein de
+"Dépenses déclarées", jamais comme feuille séparée.
+
+**5 nouvelles feuilles ajoutées** (`src/lib/reporting.ts` +
+`api/treso/reporting/export/route.ts`) :
+
+- **"Validations"** — une ligne par `HistoriqueEntry` `validation`/
+  `validation_complementaire`/`rejet` des demandes filtrées : référence,
+  action, validateur, date, montant validé à cette étape, détail brut.
+  **Point technique documenté** : ni `HistoriqueEntry` ni les Server
+  Actions de validation n'ont de champ numérique dédié pour "le montant
+  validé à cette étape précise" (seul le cumul est sur `Demande.montantValide`)
+  — ce montant est extrait par une regex ciblée
+  (`parseMontantValideCetteEtape`) du texte `detail`, **toujours généré
+  par l'application elle-même dans un format fixe et contrôlé** (jamais
+  une saisie utilisateur), donc fiable tant que ce format ne change pas ;
+  `null` en cas de non-correspondance plutôt qu'une exception qui ferait
+  échouer tout l'export pour une seule ligne.
+- **"Fonds remis"** — voir point 4 ci-dessus.
+- **"Régularisations"** — une ligne par demande **`CLOTUREE`** parmi les
+  demandes filtrées, avec le détail du solde à régulariser final (montant
+  validé, total réglé, dépenses déclarées, retours reçus, écart, motif de
+  clôture, date de clôture — dernière `HistoriqueEntry`
+  `cloture_totale`/`cloture_partielle`, ou `updatedAt` de la demande à
+  défaut). Calculé par demande via `Promise.all` (pas de version batchée) :
+  même principe déjà accepté pour `a-regulariser` (Ticket 8) — l'ensemble
+  des demandes clôturées reste par nature une file bornée.
+- **"Dépenses non justifiées"** — **séparée** de "Dépenses déclarées"
+  comme demandé : une ligne **par demande** (pas par `DepenseLigne`)
+  regroupant ses dépenses `SANS_PIECE`, avec exactement les colonnes
+  voulues (nombre d'opérations, montant total, demandeur, bénéficiaire,
+  service, période — cette dernière affichée comme une date unique si une
+  seule ligne, sinon un intervalle min–max).
+- **"Dashboard"** — instantané des 6 indicateurs "À traiter" du dashboard
+  Finance (Phase G) + le solde de caisse, calculés **au moment de
+  l'export**, volontairement **non filtrés** par les paramètres du
+  reporting (période/catégorie/...) : ce sont des indicateurs
+  organisationnels globaux, pas des données qui se prêtent à un découpage
+  — mêmes fonctions que `treso/finance/page.tsx` (`dashboardFinance.ts` +
+  `getSoldeCaisse`), jamais une deuxième formule.
+
+### Vérifié explicitement
+
+`npx prisma migrate dev` (migration `journal_caisse_tracabilite`) —
+relue avant application : uniquement des `ADD COLUMN NOT NULL` sans
+défaut (possible car la table `JournalCaisse` était vide, vérifié
+explicitement) et deux `FOREIGN KEY`, aucun `DROP`. `npx prisma generate`
+requis en plus (le client ne se régénère pas seul après une migration
+appliquée hors `next dev`, même piège déjà rencontré lors de la fusion du
+formulaire Demande d'Achat). `npx tsc --noEmit` et `npx eslint .` sans
+erreur après l'ensemble des corrections.
+
+Parcours réel (Chromium headless, Playwright, non ajouté au projet) —
+**une seule demande, réutilisée pour vérifier les 5 points en un seul
+scénario cohérent** : collaborateur crée une demande de 100 000 FCFA,
+Finance valide totalement puis règle 100 000 FCFA en Caisse (confirmé),
+collaborateur déclare un retour (70 000 FCFA dépensés, facture jointe →
+30 000 FCFA à retourner, calcul confirmé correct), Finance réceptionne
+puis clôture totalement (écart nul : 100 000 − 70 000 − 30 000 = 0).
+
+- **Reçu PDF** téléchargé et relu (extraction de texte réelle du PDF,
+  `pdftotext -enc UTF-8`) : contient bien "MONTANT VALIDÉ — 100 000 FCFA",
+  "SOLDE VALIDÉ RESTANT À RÉGLER — 0 FCFA", "Bénéficiaire — Collaborateur
+  Test", et "Validé par Finance Test — Règlement effectué par Finance
+  Test." — les 4 éléments manquants avant correction sont tous présents
+  et correctement valorisés.
+- **Personnes intervenantes** (écran de clôture Finance) : "Demandeur —
+  Collaborateur Test", "Validateur(s) — Finance Test", "Régleur(s) —
+  Finance Test", "Clôturé par — Finance Test" — cohérent avec le scénario
+  (Finance a tout fait de bout en bout).
+- **Tableau "Fonds remis"** (écran de reporting) : une ligne "Carburant /
+  Non renseigné" avec exactement 1 opération, Demandé 100 000, Validé
+  100 000, Remis 100 000, Dépenses déclarées 70 000, Retours reçus
+  30 000, **Restant à régulariser 0 FCFA** — arithmétique vérifiée
+  correcte au FCFA près.
+- **Export Excel** téléchargé et relu programmatiquement (`exceljs`) :
+  les 12 feuilles attendues sont présentes (7 précédentes + Validations,
+  Fonds remis, Régularisations, Dépenses non justifiées, Dashboard) ; la
+  feuille "Journal de caisse" a bien les colonnes "Référence demande" et
+  "Utilisateur" ; "Validations" contient une ligne pour la demande de
+  test ; "Régularisations" contient une ligne exacte (montant validé
+  100 000, total réglé 100 000, dépenses déclarées 70 000, retours reçus
+  30 000, écart 0, date de clôture correcte) ; "Dashboard" contient 7
+  lignes (6 indicateurs + solde de caisse).
+
+Toutes les données de test (1 demande, sa ligne, son règlement, son
+retour, ses écritures `JournalCaisse`, son historique) nettoyées après
+coup — **la demande pré-existante de l'utilisateur réel**
+(`DEM-2026-000001`, "Ravitaillement de la voiture de service", découverte
+en base au début de cette vérification et jamais touchée) confirmée
+intacte à la fin (base revenue à exactement 1 demande, 0 écriture
+`JournalCaisse`, 1 `HistoriqueEntry` — sa création). Serveur `next dev`
+arrêté après vérification.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

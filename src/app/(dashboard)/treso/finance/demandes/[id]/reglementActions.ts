@@ -215,6 +215,13 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
               montant: reglement.montant,
               source: "reglement_caisse",
               refId: reglementId,
+              // Traçabilité (section 13) : la demande concernée, et
+              // l'utilisateur qui a déclenché cette SORTIE — l'auteur du
+              // règlement, pas forcément celui qui le confirme (Ticket 4 :
+              // aucune contrainte sur qui confirme un règlement créé par
+              // un autre utilisateur Finance).
+              demandeId: reglement.demandeId,
+              userId: reglement.auteurId,
             },
           }),
         ]
@@ -309,6 +316,11 @@ export async function annulerReglementAction(
               montant: reglement.montant,
               source: "annulation_reglement_caisse",
               refId: reglementId,
+              // Traçabilité (section 13) : cette écriture compensatoire est
+              // déclenchée par l'utilisateur qui annule, pas par l'auteur du
+              // règlement d'origine (déjà tracé sur la SORTIE initiale).
+              demandeId: reglement.demandeId,
+              userId: session.user.id,
             },
           }),
         ]
