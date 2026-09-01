@@ -60,7 +60,7 @@ const tools: DashboardItem[] = [
     description: "Traiter les demandes de correction de pointage.",
     href: "/pointage/rh/corrections",
     icon: "pencil",
-    available: false,
+    available: true,
   },
   {
     title: "Horaires",

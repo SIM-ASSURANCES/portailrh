@@ -109,7 +109,7 @@ export async function enregistrerPointageRHAction(
 
     revalidatePath("/pointage");
     return { status: "success", message: "Le pointage exceptionnel a été enregistré avec succès." };
-  } catch (error) {
+  } catch {
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };
   }
 }

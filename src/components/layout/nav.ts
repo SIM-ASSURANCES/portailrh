@@ -219,7 +219,7 @@ export function getNavBranches({
                   { label: "Pointages", href: "/pointage/rh/pointages", icon: "file-text", comingSoon: true },
                   { label: "Retards & absences", href: "/pointage/rh/retards", icon: "alert-triangle", comingSoon: true },
                   { label: "Reporting", href: "/pointage/rh/reporting", icon: "download", comingSoon: true },
-                  { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil", comingSoon: true },
+                  { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil" },
                   { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings", comingSoon: true },
                 ],
               } satisfies NavGroup,
