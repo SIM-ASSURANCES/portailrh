@@ -44,9 +44,9 @@ const tools: DashboardItem[] = [
   {
     title: "Retards & absences",
     description: "Suivi des anomalies, validation des justifications.",
-    href: "/pointage/rh/retards",
+    href: "/pointage/rh/absences",
     icon: "alert-triangle",
-    available: false,
+    available: true,
   },
   {
     title: "Reporting",
