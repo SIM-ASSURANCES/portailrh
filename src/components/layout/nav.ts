@@ -214,6 +214,7 @@ export function getNavBranches({
                 title: "RH",
                 items: [
                   { label: "Générateur QR", href: "/pointage/rh/generer-qr", icon: "qr-code" },
+                  { label: "Pointage exceptionnel", href: "/pointage/rh/pointages/nouveau", icon: "plus-circle" },
                   { label: "Présence du jour", href: "/pointage/rh", icon: "layout-grid", comingSoon: true },
                   { label: "Pointages", href: "/pointage/rh/pointages", icon: "file-text", comingSoon: true },
                   { label: "Retards & absences", href: "/pointage/rh/retards", icon: "alert-triangle", comingSoon: true },

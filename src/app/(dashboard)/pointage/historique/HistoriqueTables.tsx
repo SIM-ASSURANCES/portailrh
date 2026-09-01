@@ -112,6 +112,16 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
             </div>
           );
         }
+        if (row.motif) {
+          return (
+            <div className="space-y-1">
+              <Badge variant="success">À l&apos;heure</Badge>
+              <p className="text-xs text-muted-foreground italic truncate max-w-xs" title={row.motif}>
+                Motif : {row.motif}
+              </p>
+            </div>
+          );
+        }
         return <Badge variant="success">À l&apos;heure</Badge>;
       },
     },
