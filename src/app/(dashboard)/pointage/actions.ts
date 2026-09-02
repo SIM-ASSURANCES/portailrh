@@ -29,7 +29,8 @@ export async function enregistrerPointageAction(
 
   // 1. Capture de l'IP du terminal 
   const headersList = await headers();
-  const ip = headersList.get("x-forwarded-for") || "IP_INCONNUE";
+  const rawIp = headersList.get("x-forwarded-for") || "IP_INCONNUE";
+  const ip = rawIp.replace(/^::ffff:/, "");
 
   // Vérification de l'IP pour le Ticket 3
   if (source === "ORDINATEUR") {
@@ -87,6 +88,7 @@ export async function enregistrerPointageAction(
           estRetard,
           minutesRetard,
           motif: motif || null,
+          ipAddress: ip,
           userId: session.user.id
         }
       });
@@ -118,7 +120,7 @@ export async function enregistrerPointageAction(
 
     revalidatePath("/pointage");
     return { status: "success", message: "Pointage enregistré avec succès." };
-  } catch (_error) {
+  } catch {
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };
   }
 }

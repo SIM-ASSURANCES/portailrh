@@ -54,8 +54,10 @@ export default async function ReportingRHPage({
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Reporting RH - Pointage"
-        description="Consultez les statistiques de retards et les détails par collaborateur."
+        title="Reporting & Export"
+        description="Générez des rapports détaillés sur les présences, retards et heures effectives."
+        backHref="/pointage/rh"
+        backLabel="Retour à la Boîte à Outils"
         actions={
           <a
             href={exportUrl}

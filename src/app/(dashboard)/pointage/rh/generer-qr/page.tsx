@@ -14,8 +14,10 @@ export default async function GenererQRPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       <PageHeader 
-        title="Générateur de QR Code" 
-        description="Générez et téléchargez le QR code officiel pour le pointage des collaborateurs sur mobile."
+        title="Générateur QR Code" 
+        description="Créez ou téléchargez le QR code officiel pour le pointage des collaborateurs." 
+        backHref="/pointage/rh"
+        backLabel="Retour à la Boîte à Outils"
       />
       
       <div className="mt-8">

@@ -58,8 +58,10 @@ export default async function CorrectionsPage({ searchParams }: CorrectionsPageP
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 font-sans">
       <PageHeader
-        title="Correction des pointages"
-        description="Recherchez un collaborateur ou sélectionnez un pointage du jour pour le modifier."
+        title="Corrections"
+        description="Traitez les demandes de correction des pointages."
+        backHref="/pointage/rh"
+        backLabel="Retour à la Boîte à Outils"
       />
       <CorrectionsClient initialData={pointages} search={search} />
     </div>

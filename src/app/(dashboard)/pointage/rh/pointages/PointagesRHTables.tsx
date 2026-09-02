@@ -18,6 +18,7 @@ export type PointageRHRow = {
   effectueParNom: string | null;
   correctionsCount: number;
   dernierMotifCorrection: string | null;
+  ipAddress: string | null;
 };
 
 const SOURCE_LABELS: Record<SourcePointage, string> = {
@@ -130,6 +131,11 @@ export function PointagesRHTables({ pointages }: { pointages: PointageRHRow[] })
           <span className="text-xs font-medium text-foreground">
             {SOURCE_LABELS[row.source] ?? row.source}
           </span>
+          {row.ipAddress && (
+            <span className="text-[10px] text-muted-foreground font-mono">
+              IP: {row.ipAddress}
+            </span>
+          )}
           {row.source === "RH_EXCEPTIONNEL" && row.effectueParNom ? (
             <span className="text-[11px] text-muted-foreground">
               Par : {row.effectueParNom}

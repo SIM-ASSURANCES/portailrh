@@ -173,14 +173,7 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
       />
 
       {/* Cartes d'indicateurs / KPI */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          icon="clock"
-          tone="info"
-          label="Total arrivées"
-          value={totalArrivees}
-          hint={`${totalDeparts} départ(s) enregistré(s)`}
-        />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard
           icon="alert-triangle"
           tone={nombreJoursRetard > 0 ? "warning" : "success"}
@@ -190,14 +183,14 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
         />
         <StatCard
           icon="calendar"
-          tone="warning"
+          tone={totalMinutesRetard > 0 ? "warning" : "success"}
           label="Minutes de retard"
           value={`${totalMinutesRetard} min`}
           hint="Cumul du temps de retard"
         />
         <StatCard
           icon="inbox"
-          tone={totalAbsences > 0 ? "danger" : "neutral"}
+          tone={totalAbsences > 0 ? "warning" : "success"}
           label="Absences signalées"
           value={totalAbsences}
           hint="Sur la période sélectionnée"

@@ -34,10 +34,10 @@ export default async function AbsencesPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 font-sans">
       <PageHeader
-        title="Gestion des Absences"
-        description="Analysez les pointages manquants et traitez les justificatifs d'absence."
+        title="Retards & Absences"
+        description="Consultez et validez les anomalies de pointage (retards, absences non justifiées)."
         backHref="/pointage/rh"
-        backLabel="Retour RH"
+        backLabel="Retour à la Boîte à Outils"
       />
       <AbsencesClient initialAbsences={absences} />
     </div>

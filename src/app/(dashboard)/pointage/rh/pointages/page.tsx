@@ -102,6 +102,7 @@ export default async function PointagesRHPage({ searchParams }: PointagesRHPageP
     effectueParNom: p.effectuePar?.fullName ?? null,
     correctionsCount: p.corrections.length,
     dernierMotifCorrection: p.corrections[0]?.motif ?? null,
+    ipAddress: p.ipAddress ?? null,
   }));
 
   return (
@@ -109,6 +110,8 @@ export default async function PointagesRHPage({ searchParams }: PointagesRHPageP
       <PageHeader
         title="Consultation des pointages"
         description="Vue globale de tous les pointages (arrivées, départs) de l'ensemble des collaborateurs."
+        backHref="/pointage/rh"
+        backLabel="Retour à la Boîte à Outils"
       />
 
       <PointagesRHFilters

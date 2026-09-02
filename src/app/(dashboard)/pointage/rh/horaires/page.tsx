@@ -22,7 +22,9 @@ export default async function ParametrageHorairesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Paramétrage des horaires"
-        description="Définissez les horaires de référence par défaut pour le pointage des collaborateurs."
+        description="Définissez les heures officielles d'arrivée et de départ. Ces paramètres affectent le calcul automatique des retards."
+        backHref="/pointage/rh"
+        backLabel="Retour à la Boîte à Outils"
       />
       <HorairesForm config={config} />
     </div>

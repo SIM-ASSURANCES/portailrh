@@ -431,6 +431,7 @@ model Pointage {
   estRetard     Boolean        @default(false)
   minutesRetard Int?
   motif         String?
+  ipAddress     String?
 
   userId String
   user   User   @relation("PointageEmploye", fields: [userId], references: [id])

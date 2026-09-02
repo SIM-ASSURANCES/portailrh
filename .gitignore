@@ -46,3 +46,8 @@ next-env.d.ts
 
 /src/generated/prisma
 graphify-out/
+
+#own file
+audit_pointage.md 
+audit_module_pointage.md
+src/app/(dashboard)/pointage/ticket.txt

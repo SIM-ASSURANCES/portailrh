@@ -3,6 +3,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { PointageExceptionnelForm } from "./PointageExceptionnelForm";
+import { PageHeader } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: "Pointage Exceptionnel - SIM PORTAIL",
@@ -36,14 +37,12 @@ export default async function PointageExceptionnelPage() {
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto py-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Pointage Exceptionnel</h1>
-          <p className="text-muted-foreground mt-1">
-            Enregistrez un pointage manuel pour un collaborateur.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Pointage Exceptionnel"
+        description="Enregistrez un pointage manuel pour un collaborateur."
+        backHref="/pointage/rh"
+        backLabel="Retour à la Boîte à Outils"
+      />
 
       <PointageExceptionnelForm users={users} />
     </div>

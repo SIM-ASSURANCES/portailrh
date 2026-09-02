@@ -63,7 +63,7 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <PageHeader 
-        title="Pointage Collaborateur" 
+        title={`Pointage de ${session.user.fullName}`} 
         description="Enregistrement de votre présence."
       />
       
