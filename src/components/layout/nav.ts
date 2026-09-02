@@ -60,15 +60,25 @@ export interface NavFlags {
   canVoirReporting: boolean;
   /** `treso.saisir_depense_directe` (Phase F) : ajoute "Nouvelle dépense directe". */
   canSaisirDepenseDirecte: boolean;
-  /** `pointage.*` : affiche la section RH du pointage. */
-  canAccessPointageRH: boolean;
+
   /**
-   * Au moins une permission `pointage.*` : affiche la branche "Pointage de
-   * Présence" (sinon masquée entièrement — aucune permission de ce module
-   * ne rend la branche pertinente). Tous ses items restent `comingSoon`
-   * quelle que soit la permission tant qu'aucun écran n'est construit.
+   * Au moins une permission `pointage.*` (y compris les deux permissions de
+   * base `pointer`/`consulter_historique`) : affiche la branche "Pointage
+   * de Présence" et son groupe "Mon espace" (sinon la branche entière est
+   * masquée). Écrans réels depuis la fusion du Module Pointage RH
+   * (2026-09-01, voir CLAUDE.md) — plus aucun item `comingSoon`.
    */
   hasPointageAccess: boolean;
+  /**
+   * Au moins une des 6 permissions RH (`consulter_tous`,
+   * `pointage_exceptionnel`, `corriger_pointage`, `gerer_horaires`,
+   * `voir_dashboard_rh`, `voir_reporting`) : ajoute le groupe "RH" en plus
+   * de "Mon espace" — distinct de `hasPointageAccess` pour qu'un
+   * Collaborateur (qui n'a que `pointer`/`consulter_historique`) garde
+   * "Mon espace" sans jamais voir les entrées RH. Même garde revérifiée
+   * côté serveur par `pointage/rh/layout.tsx`, jamais que côté nav.
+   */
+  canAccessPointageRH: boolean;
 }
 
 /**
@@ -89,35 +99,12 @@ export interface NavFlags {
  *   demande, ou sous `/treso/finance/*`) — pas des fonctionnalités "à
  *   venir", du vrai code mort.
  * - « Pointage de Présence » : visible uniquement si la session a au moins
- *   une permission `pointage.*` (`hasPointageAccess`), mais CHAQUE item
- *   reste `comingSoon` quelle que soit la permission : aucun écran n'existe
- *   encore pour ce module (fondations de données seulement), donc aucun
- *   lien ne doit jamais résoudre vers une page inexistante.
+ *   une permission `pointage.*` (`hasPointageAccess`) — écrans réels
+ *   depuis la fusion du Module Pointage RH (2026-09-01, voir CLAUDE.md),
+ *   plus aucun item `comingSoon`. "Mon espace" est visible à tout
+ *   titulaire d'une permission `pointage.*`, "RH" en plus uniquement si
+ *   `canAccessPointageRH` (voir `NavFlags`).
  */
-export const NAV_BRANCHES: NavBranch[] = [
-  {
-    key: "achat",
-    label: "Demande d'Achat",
-    icon: "shopping-cart",
-    groups: [
-      {
-        items: [
-          { label: "Demandes", href: "/demandes", icon: "file-text" },
-          { label: "Règlements", href: "/reglements", icon: "wallet" },
-          { label: "Retours de caisse", href: "/retours", icon: "rotate-ccw" },
-        ],
-      },
-      {
-        title: "Trésorerie",
-        items: [
-          { label: "Journal de caisse", href: "/journal", icon: "book-text" },
-          { label: "Catégories", href: "/categories", icon: "folder-tree" },
-          { label: "Objets", href: "/objets", icon: "package" },
-        ],
-      },
-    ],
-  },
-];
 export function getNavBranches({
   canAccesDemandes,
   canAccesFinanceDemandes,
@@ -125,8 +112,8 @@ export function getNavBranches({
   canVoirDashboardFinance,
   canVoirReporting,
   canSaisirDepenseDirecte,
-  canAccessPointageRH,
   hasPointageAccess,
+  canAccessPointageRH,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -215,8 +202,12 @@ export function getNavBranches({
                 items: [
                   { label: "Boîte à Outils", href: "/pointage/rh", icon: "layout-grid", exact: true },
                   { label: "Présence du jour", href: "/pointage/rh/presence", icon: "check-circle", exact: true },
+                  { label: "Générer un QR code", href: "/pointage/rh/generer-qr", icon: "qr-code" },
                   { label: "Tous les pointages", href: "/pointage/rh/pointages", icon: "file-text", exact: true },
                   { label: "Retards & absences", href: "/pointage/rh/absences", icon: "alert-triangle" },
+                  { label: "Reporting", href: "/pointage/rh/reporting", icon: "download" },
+                  { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil" },
+                  { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings" },
                 ],
               } satisfies NavGroup,
             ]

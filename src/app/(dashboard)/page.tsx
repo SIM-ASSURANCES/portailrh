@@ -44,11 +44,17 @@ interface ModuleCardState {
 /**
  * État de carte par module : `href` non nul si un point d'entrée
  * fonctionnel existe pour cette session ; sinon `reason` distingue "aucun
- * écran construit" (Pointage RH — même badge "Bientôt disponible" pour
- * tous) de "le module existe mais ce rôle n'y a structurellement aucun
- * accès opérationnel" (Trésorerie pour l'Admin) — deux causes différentes,
- * jamais le même message : la première annonce une fonctionnalité à venir,
- * la seconde ne doit rien promettre.
+ * écran construit" de "le module existe mais ce rôle n'y a structurellement
+ * aucun accès opérationnel" (Trésorerie pour l'Admin) — deux causes
+ * différentes, jamais le même message : la première annonce une
+ * fonctionnalité à venir, la seconde ne doit rien promettre.
+ *
+ * Pointage RH : depuis la fusion du module (2026-09-01, voir CLAUDE.md),
+ * "Pointer" (`/pointage/pointer`) est un écran réel — la carte y renvoie
+ * directement, comme pour Trésorerie. Le reste du module (dashboard RH,
+ * pointages/retards/reporting/corrections/horaires) reste "à venir" et vit
+ * uniquement dans la sidebar (`comingSoon`, voir nav.ts), jamais sur cette
+ * carte générale qui n'a qu'un seul point d'entrée par module.
  */
 function getModuleCardState(moduleKey: string, session: { permissions: string[] } | null): ModuleCardState {
   if (moduleKey === "tresorerie") {
@@ -59,7 +65,7 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
     if (hasPermission(session, "pointage.voir_dashboard_rh")) {
       return { href: "/pointage/rh", reason: "no_access" };
     }
-    return { href: null, reason: "no_access" };
+    return { href: "/pointage/pointer", reason: "no_access" };
   }
   return { href: null, reason: "coming_soon" };
 }

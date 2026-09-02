@@ -16,12 +16,22 @@ export interface DepenseLigneData {
   nature: string | null;
   justification: TypeJustification;
   commentaire: string | null;
+  pieceJointeId: string | null;
 }
 
 export interface RetourCaisseRowData {
   reglementId: string;
   montant: number;
-  retour: { estReceptionne: boolean; montantARetourner: number; depenses: DepenseLigneData[] } | null;
+  retour:
+    | {
+        id: string;
+        estReceptionne: boolean;
+        montantARetourner: number;
+        /** Non réceptionné, demande non clôturée, ET utilisateur connecté = déclarant original. */
+        peutModifier: boolean;
+        depenses: DepenseLigneData[];
+      }
+    | null;
   /** Masque le bouton de déclaration une fois la demande clôturée (Ticket 7). */
   peutDeclarer: boolean;
 }
@@ -55,6 +65,14 @@ function DetailDepenses({ depenses, montantARetourner }: { depenses: DepenseLign
             </div>
             {d.nature ? <p className="mt-1 text-xs text-muted-foreground">{d.nature}</p> : null}
             {d.commentaire ? <p className="mt-1 text-xs text-foreground">{d.commentaire}</p> : null}
+            {d.pieceJointeId ? (
+              <a
+                href={`/api/treso/pieces-jointes/${d.pieceJointeId}`}
+                className="mt-1 inline-block text-xs text-info underline-offset-4 hover:text-primary hover:underline"
+              >
+                Télécharger la pièce jointe
+              </a>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -103,17 +121,41 @@ function DetailDepenses({ depenses, montantARetourner }: { depenses: DepenseLign
  */
 export function RetourCaisseRow({ reglementId, montant, retour, peutDeclarer }: RetourCaisseRowData) {
   const [formOpen, setFormOpen] = useState(false);
+  const [editMode, setEditMode] = useState(false);
 
   return (
     <li className="space-y-3 rounded-md border border-border p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="font-medium text-foreground">{montant.toLocaleString("fr-FR")} FCFA — Caisse</p>
         {formOpen ? null : retour ? (
-          <Badge variant={retour.estReceptionne ? "success" : "warning"}>
-            {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={retour.estReceptionne ? "success" : "warning"}>
+              {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
+            </Badge>
+            {retour.peutModifier ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setEditMode(true);
+                  setFormOpen(true);
+                }}
+              >
+                Modifier
+              </Button>
+            ) : null}
+          </div>
         ) : peutDeclarer ? (
-          <Button type="button" variant="secondary" onClick={() => setFormOpen(true)}>
+          // Couleur primaire (Tâche navigation/UX) : seule action possible
+          // sur ce règlement tant qu'aucun retour n'est déclaré — même
+          // principe que "Ajouter un règlement".
+          <Button
+            type="button"
+            onClick={() => {
+              setEditMode(false);
+              setFormOpen(true);
+            }}
+          >
             Déclarer un retour de caisse
           </Button>
         ) : (
@@ -121,7 +163,25 @@ export function RetourCaisseRow({ reglementId, montant, retour, peutDeclarer }: 
         )}
       </div>
 
-      {formOpen ? (
+      {formOpen && editMode && retour ? (
+        <RetourCaisseForm
+          mode="edit"
+          reglementId={reglementId}
+          retourId={retour.id}
+          montantReglement={montant}
+          lignesInitiales={retour.depenses.map((d) => ({
+            id: d.id,
+            montant: d.montant,
+            objet: d.objet,
+            date: d.date.toISOString().slice(0, 10),
+            nature: d.nature ?? "",
+            justification: d.justification,
+            commentaire: d.commentaire ?? "",
+          }))}
+          onCancel={() => setFormOpen(false)}
+          onSuccess={() => setFormOpen(false)}
+        />
+      ) : formOpen ? (
         <RetourCaisseForm
           reglementId={reglementId}
           montantReglement={montant}

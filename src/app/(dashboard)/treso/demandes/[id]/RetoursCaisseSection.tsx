@@ -17,13 +17,16 @@ import { RetourCaisseRow } from "./RetourCaisseRow";
 export async function RetoursCaisseSection({
   demandeId,
   peutDeclarer,
+  userId,
 }: {
   demandeId: string;
   peutDeclarer: boolean;
+  /** Utilisateur connecté — sert à réserver le bouton "Modifier" au déclarant original de chaque retour. */
+  userId: string;
 }) {
   const reglements = await prisma.reglement.findMany({
     where: { demandeId, mode: "CAISSE", estConfirme: true, estAnnule: false },
-    include: { retours: { include: { depenses: true } } },
+    include: { retours: { include: { depenses: { include: { pieceJointe: true } } } } },
     orderBy: { createdAt: "asc" },
   });
 
@@ -45,8 +48,12 @@ export async function RetoursCaisseSection({
               retour={
                 retour
                   ? {
+                      id: retour.id,
                       estReceptionne: retour.estReceptionne,
                       montantARetourner: Number(retour.montantARetourner),
+                      // Modification (avant réception) réservée au déclarant
+                      // original — cohérent avec la déclaration elle-même.
+                      peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer,
                       depenses: retour.depenses.map((d) => ({
                         id: d.id,
                         montant: Number(d.montant),
@@ -55,6 +62,7 @@ export async function RetoursCaisseSection({
                         nature: d.nature,
                         justification: d.justification,
                         commentaire: d.commentaire,
+                        pieceJointeId: d.pieceJointe?.id ?? null,
                       })),
                     }
                   : null

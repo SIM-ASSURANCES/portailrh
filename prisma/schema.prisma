@@ -34,6 +34,8 @@ model User {
 
   demandesCreees      Demande[]         @relation("DemandeCreateur")
   demandesBeneficiees Demande[]         @relation("DemandeBeneficiaire")
+  /// Demandes dont ce DG a approuvé la "validation complète" (verrou de clôture, Ticket 7).
+  demandesApprouveesDG Demande[]        @relation("DgApprobateurValidationComplete")
   reglementsFaits     Reglement[]       @relation("ReglementAuteur")
   retoursDeclares     RetourCaisse[]    @relation("RetourDeclarant")
   retoursReceptionnes RetourCaisse[]    @relation("RetourReceptionnaire")
@@ -263,6 +265,16 @@ model Demande {
   motifRejet   String?
   motifCloture String?
 
+  /// Verrou de clôture (Ticket 7, indépendant du circuit de validation
+  /// partielle/complémentaire des Phases B/C — celui-ci reste inchangé et
+  /// continue de débloquer le RÈGLEMENT via `montantValide` seul). Une
+  /// demande ne peut être CLÔTURÉE (totale ou partielle) que si le DG a
+  /// donné cette approbation, même si Finance a déjà tout réglé.
+  validationCompleteParDG Boolean   @default(false)
+  dgApprobateurId         String?
+  dgApprobateur           User?     @relation("DgApprobateurValidationComplete", fields: [dgApprobateurId], references: [id])
+  dgApprouveAt            DateTime?
+
   createurId String
   createur   User   @relation("DemandeCreateur", fields: [createurId], references: [id])
 
@@ -274,11 +286,31 @@ model Demande {
   journalCaisse JournalCaisse[]
 }
 
+/// Stockage local sur disque (`./uploads/`, hors dépôt git — voir
+/// `api/treso/pieces-jointes/upload/route.ts`). `url` est un nom de
+/// fichier généré côté serveur (jamais dérivé d'une entrée utilisateur),
+/// résolu par la route de téléchargement.
 model PieceJointe {
   id        String   @id @default(cuid())
   url       String
+  /// Toujours renseigné, y compris quand la pièce est attachée à une seule
+  /// ligne de dépense (`depenseLigneId` ci-dessous) plutôt qu'à la demande
+  /// elle-même — dérivé du contexte au moment de l'upload (via
+  /// `retourCaisse.reglement.demandeId`), pour une traçabilité uniforme et
+  /// un contrôle d'accès simple (toujours "la demande", jamais à distinguer
+  /// selon le type de parent direct).
   demandeId String
   demande   Demande  @relation(fields: [demandeId], references: [id])
+  /// Renseigné uniquement si cette pièce est attachée à une ligne de
+  /// dépense précise d'un retour de caisse, plutôt qu'à la demande
+  /// elle-même (formulaire de création / dépense directe). `@unique` : une
+  /// seule pièce jointe par ligne. `onDelete: Cascade` : si la ligne est
+  /// supprimée (modification d'un retour avant réception), sa pièce jointe
+  /// disparaît avec elle plutôt que de rester orpheline en base (le
+  /// fichier lui-même reste sur disque — V1 volontairement simple, pas de
+  /// tâche de nettoyage des fichiers orphelins).
+  depenseLigneId String?       @unique
+  depenseLigne   DepenseLigne? @relation(fields: [depenseLigneId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 }
 
@@ -364,6 +396,11 @@ model DepenseLigne {
 
   retourCaisseId String
   retourCaisse   RetourCaisse @relation(fields: [retourCaisseId], references: [id])
+
+  /// Pièce jointe optionnelle (une par ligne — voir `PieceJointe.depenseLigneId`,
+  /// côté 1:1 unique). Champ virtuel (aucune colonne ici) : la relation
+  /// inverse de `PieceJointe.depenseLigne`.
+  pieceJointe PieceJointe?
 
   createdAt DateTime @default(now())
 }

@@ -69,6 +69,11 @@ async function main() {
     { key: "treso.declarer_retour", label: "Déclarer un retour de caisse", moduleId: moduleTresorerie.id },
     { key: "treso.receptionner_retour", label: "Réceptionner un retour de caisse", moduleId: moduleTresorerie.id },
     { key: "treso.cloturer_demande", label: "Clôturer une demande", moduleId: moduleTresorerie.id },
+    {
+      key: "treso.approuver_validation_complete",
+      label: "Approuver la validation complète (verrou de clôture)",
+      moduleId: moduleTresorerie.id,
+    },
     { key: "treso.saisir_depense_directe", label: "Saisir une dépense directe", moduleId: moduleTresorerie.id },
     { key: "treso.voir_dashboard_finance", label: "Voir le dashboard finance", moduleId: moduleTresorerie.id },
     { key: "treso.voir_reporting", label: "Voir le reporting", moduleId: moduleTresorerie.id },
@@ -121,6 +126,11 @@ async function main() {
       "treso.valider_demande",
       "treso.voir_dashboard_finance",
       "treso.voir_reporting",
+      // Verrou de clôture (indépendant du circuit de validation/règlement
+      // des Phases B/C, qui reste inchangé) : seul le DG peut approuver la
+      // "validation complète" qui débloque la clôture — jamais Finance,
+      // même si Finance a déjà tout réglé.
+      "treso.approuver_validation_complete",
       // Pas treso.saisir_depense_directe : comme categoriser_demande/
       // effectuer_reglement/cloturer_demande, la saisie directe est une
       // action opérationnelle réservée à Finance — le DG garde son rôle de

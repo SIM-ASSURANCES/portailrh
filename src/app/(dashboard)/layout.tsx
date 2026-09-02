@@ -30,6 +30,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canVoirDashboardFinance={hasPermission(session, "treso.voir_dashboard_finance")}
       canVoirReporting={hasPermission(session, "treso.voir_reporting")}
       canSaisirDepenseDirecte={hasPermission(session, "treso.saisir_depense_directe")}
+      hasPointageAccess={[
+        "pointage.pointer",
+        "pointage.consulter_historique",
+        "pointage.consulter_tous",
+        "pointage.pointage_exceptionnel",
+        "pointage.corriger_pointage",
+        "pointage.gerer_horaires",
+        "pointage.voir_dashboard_rh",
+        "pointage.voir_reporting",
+      ].some((permission) => hasPermission(session, permission))}
       canAccessPointageRH={
         hasPermission(session, "pointage.consulter_tous") ||
         hasPermission(session, "pointage.pointage_exceptionnel") ||
@@ -38,7 +48,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "pointage.voir_dashboard_rh") ||
         hasPermission(session, "pointage.voir_reporting")
       }
-      hasPointageAccess={true}
+
     >
       {children}
     </AppShell>

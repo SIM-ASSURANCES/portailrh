@@ -84,9 +84,9 @@ function isReferenceConflict(error: unknown): boolean {
  * Seule cette action de création est spécifique.
  */
 export async function creerDepenseDirecteAction(
-  _prevState: ActionState,
+  _prevState: ActionState<{ demandeId: string }>,
   formData: FormData
-): Promise<ActionState> {
+): Promise<ActionState<{ demandeId: string }>> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.saisir_depense_directe")) {
     return { status: "error", message: "Action non autorisée." };
@@ -137,6 +137,8 @@ export async function creerDepenseDirecteAction(
     const reference = await generateDemandeReference();
 
     try {
+      const pieceJointeUrl = (formData.get("pieceJointeUrl") as string | null) || undefined;
+
       const demande = await prisma.demande.create({
         data: {
           reference,
@@ -149,6 +151,7 @@ export async function creerDepenseDirecteAction(
           beneficiaireType,
           beneficiaireUserId: beneficiaireUserIdFinal,
           beneficiaireNom: beneficiaireNomFinal,
+          ...(pieceJointeUrl ? { pieces: { create: [{ url: pieceJointeUrl }] } } : {}),
         },
       });
 
@@ -162,7 +165,11 @@ export async function creerDepenseDirecteAction(
         },
       });
 
-      return { status: "success", message: `Dépense directe ${demande.reference} créée.` };
+      return {
+        status: "success",
+        message: `Dépense directe ${demande.reference} créée.`,
+        data: { demandeId: demande.id },
+      };
     } catch (error) {
       if (!isReferenceConflict(error) || attempt === MAX_ATTEMPTS - 1) {
         throw error;

@@ -31,8 +31,13 @@ export function ReglementForm({ demandeId, resteARegler }: { demandeId: string; 
   }, [state]);
 
   if (!open) {
+    // Couleur primaire (Tâche navigation/UX) : c'est la seule action
+    // proposée par cette section tant qu'aucun règlement n'existe encore
+    // — mérite la même visibilité que "Confirmer" une fois le formulaire
+    // ouvert, pas un gris secondaire pour l'action qui déclenche tout le
+    // reste du cycle de règlement.
     return (
-      <Button type="button" variant="secondary" onClick={() => setOpen(true)}>
+      <Button type="button" onClick={() => setOpen(true)}>
         Ajouter un règlement
       </Button>
     );

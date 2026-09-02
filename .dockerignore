@@ -30,6 +30,10 @@ graphify-out
 coverage
 *.tsbuildinfo
 
+# Stockage local des pièces jointes — jamais copié dans l'image, le volume
+# nommé "uploads" (docker-compose.yml) prend le relais à /app/uploads.
+uploads
+
 # Outils de dev / IDE
 .vscode
 .idea

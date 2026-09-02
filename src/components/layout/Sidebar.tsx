@@ -26,10 +26,10 @@ interface SidebarProps {
   canVoirReporting?: boolean;
   /** treso.saisir_depense_directe (Phase F) : ajoute "Nouvelle dépense directe". */
   canSaisirDepenseDirecte?: boolean;
-  /** Affiche la section RH du Pointage (pointage.* permissions). */
-  canAccessPointageRH?: boolean;
-  /** Au moins une permission pointage.* : affiche la branche "Pointage de Présence" (items en "Bientôt disponible"). */
+  /** Au moins une permission pointage.* : affiche la branche "Pointage de Présence" et "Mon espace". */
   hasPointageAccess?: boolean;
+  /** Ajoute le groupe "RH" du Pointage (permissions RH uniquement). */
+  canAccessPointageRH?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -70,8 +70,8 @@ export function Sidebar({
   canVoirDashboardFinance = false,
   canVoirReporting = false,
   canSaisirDepenseDirecte = false,
-  canAccessPointageRH = false,
   hasPointageAccess = false,
+  canAccessPointageRH = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
@@ -83,8 +83,8 @@ export function Sidebar({
     canVoirDashboardFinance,
     canVoirReporting,
     canSaisirDepenseDirecte,
-    canAccessPointageRH,
     hasPointageAccess,
+    canAccessPointageRH,
   });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0]?.key ?? null

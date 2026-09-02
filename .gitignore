@@ -51,3 +51,8 @@ graphify-out/
 audit_pointage.md 
 audit_module_pointage.md
 src/app/(dashboard)/pointage/ticket.txt
+
+# stockage local des pièces jointes (Demande/DepenseLigne) — jamais commité,
+# correspond au volume Docker nommé "uploads" monté sur /app/uploads (voir
+# docker-compose.yml/Dockerfile, DEPLOIEMENT.md)
+/uploads/

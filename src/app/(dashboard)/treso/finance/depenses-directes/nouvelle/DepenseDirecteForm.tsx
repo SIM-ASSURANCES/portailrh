@@ -1,11 +1,13 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { BENEFICIAIRE_TYPE_OPTIONS } from "@/components/tresorerie/beneficiaire";
 import { NATURE_DEPENSE_DIRECTE_OPTIONS } from "@/components/tresorerie/depenseDirecte";
-import { Button, FormField, Input, Select, Textarea } from "@/components/ui";
+import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
+import { Button, Input, Select, Textarea } from "@/components/ui";
 import type { BeneficiaireType } from "@/generated/prisma/client";
 import { useActionFeedback } from "@/lib/hooks/useActionFeedback";
 import { IDLE_ACTION_STATE } from "@/lib/validation";
@@ -39,12 +41,34 @@ export function DepenseDirecteForm({ users }: { users: UserOption[] }) {
   const router = useRouter();
   useActionFeedback(state);
   const [beneficiaireType, setBeneficiaireType] = useState<BeneficiaireType>("COLLABORATEUR");
+  const [pieceJointeUrl, setPieceJointeUrl] = useState<string | null>(null);
+  const [demandeCreeeId, setDemandeCreeeId] = useState<string | null>(null);
 
   useEffect(() => {
     if (state.status === "success") {
-      router.push("/treso/finance/demandes");
+      // Reste sur place pour proposer les deux redirections possibles
+      // (voir la demande créée, ou revenir à la liste des demandes à
+      // traiter) plutôt qu'une navigation automatique unique.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- réaction ponctuelle à un ActionState de succès, pas un état dérivé du rendu
+      setDemandeCreeeId(state.data?.demandeId ?? null);
     }
-  }, [state, router]);
+  }, [state]);
+
+  if (demandeCreeeId) {
+    return (
+      <div className="animate-fade-in-up space-y-4 rounded-lg border border-success/30 bg-success-bg p-6 text-center">
+        <p className="text-sm font-medium text-success">Dépense directe créée avec succès.</p>
+        <div className="flex flex-wrap justify-center gap-3">
+          <Link href={`/treso/finance/demandes/${demandeCreeeId}`}>
+            <Button type="button">Voir la demande</Button>
+          </Link>
+          <Button type="button" variant="secondary" onClick={() => router.push("/treso/finance/demandes")}>
+            Retour à la liste
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const afficheSelecteurUtilisateur = beneficiaireType === "COLLABORATEUR" || beneficiaireType === "STAGIAIRE";
   const afficheNomLibre =
@@ -133,17 +157,8 @@ export function DepenseDirecteForm({ users }: { users: UserOption[] }) {
         error={state.status === "error" ? state.fieldErrors?.commentaire : undefined}
       />
 
-      <FormField
-        label="Pièce jointe"
-        hint="Import de fichiers à venir — le stockage de fichiers n'est pas encore configuré dans le projet."
-      >
-        <input
-          type="file"
-          disabled
-          aria-disabled="true"
-          className="block w-full cursor-not-allowed rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
-        />
-      </FormField>
+      <input type="hidden" name="pieceJointeUrl" value={pieceJointeUrl ?? ""} />
+      <PieceJointeUpload onChange={setPieceJointeUrl} />
 
       <Button type="submit" loading={isPending} className="w-full sm:w-auto">
         Créer la dépense directe
