@@ -202,12 +202,8 @@ export function getNavBranches({
                 items: [
                   { label: "Boîte à Outils", href: "/pointage/rh", icon: "layout-grid", exact: true },
                   { label: "Présence du jour", href: "/pointage/rh/presence", icon: "check-circle", exact: true },
-                  { label: "Générer un QR code", href: "/pointage/rh/generer-qr", icon: "qr-code" },
                   { label: "Tous les pointages", href: "/pointage/rh/pointages", icon: "file-text", exact: true },
                   { label: "Retards & absences", href: "/pointage/rh/absences", icon: "alert-triangle" },
-                  { label: "Reporting", href: "/pointage/rh/reporting", icon: "download" },
-                  { label: "Corrections", href: "/pointage/rh/corrections", icon: "pencil" },
-                  { label: "Horaires", href: "/pointage/rh/horaires", icon: "settings" },
                 ],
               } satisfies NavGroup,
             ]

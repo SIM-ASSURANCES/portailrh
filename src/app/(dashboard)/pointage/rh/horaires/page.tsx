@@ -10,7 +10,7 @@ export const metadata = {
 
 export default async function ParametrageHorairesPage() {
   const session = await getSession();
-  if (!session || !hasPermission(session, "pointage.gerer_parametrage")) {
+  if (!session || !hasPermission(session, "pointage.gerer_horaires")) {
     redirect("/?error=acces_refuse");
   }
 
