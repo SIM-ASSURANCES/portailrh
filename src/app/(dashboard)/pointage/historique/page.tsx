@@ -18,9 +18,6 @@ interface HistoriquePageProps {
 export default async function PointageHistoriquePage({ searchParams }: HistoriquePageProps) {
   const session = await getSession();
   if (!session) redirect("/login");
-  if (!hasPermission(session, "pointage.consulter_historique")) {
-    redirect("/?error=acces_refuse");
-  }
 
   const { du, au, type } = await searchParams;
 

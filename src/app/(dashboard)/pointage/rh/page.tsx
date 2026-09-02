@@ -35,7 +35,7 @@ const tools: DashboardItem[] = [
     description: "Historique et gestion de tous les pointages enregistrés.",
     href: "/pointage/rh/pointages",
     icon: "file-text",
-    available: false,
+    available: true,
   },
   {
     title: "Retards & absences",
@@ -49,7 +49,7 @@ const tools: DashboardItem[] = [
     description: "Extraction de données et synthèses d'heures.",
     href: "/pointage/rh/reporting",
     icon: "download",
-    available: false,
+    available: true,
   },
   {
     title: "Corrections",
@@ -63,7 +63,7 @@ const tools: DashboardItem[] = [
     description: "Paramétrage des règles horaires et limites de retard.",
     href: "/pointage/rh/horaires",
     icon: "settings",
-    available: false,
+    available: true,
   },
 ];
 

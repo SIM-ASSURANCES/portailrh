@@ -33,7 +33,9 @@ conservant l'ancienne valeur, la nouvelle valeur, le motif,
 l'auteur et la date — jamais d'écrasement silencieux
 
 ## Ticket 7 — Gestion des absences
-- Si aucun pointage d'arrivée n'existe pour un collaborateur sur une journée travaillée, le système doit le signaler (statut A_CONTROLER) — probablement via une tâche planifiée ou un calcul à la demande sur le dashboard RH (à trancher techniquement selon la stack disponible)
+- Si aucun pointage d'arrivée n'existe pour un collaborateur sur une journée travaillée,
+ le système doit le signaler (statut A_CONTROLER) — probablement via une tâche planifiée 
+ ou un calcul à la demande sur le dashboard RH (à trancher techniquement selon la stack disponible)
 - Écran RH pour confirmer ou corriger le statut d'une absence, avec motif
 
 ## Ticket 8 — Dashboard RH

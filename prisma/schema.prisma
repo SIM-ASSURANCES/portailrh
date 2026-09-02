@@ -427,6 +427,7 @@ model Pointage {
   type          TypePointage
   source        SourcePointage
   heure         DateTime
+  heurePrevue   String?
   estRetard     Boolean        @default(false)
   minutesRetard Int?
   motif         String?

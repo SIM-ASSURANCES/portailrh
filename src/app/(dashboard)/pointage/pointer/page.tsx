@@ -4,7 +4,6 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { timeToMinutes, getMessageDepart } from "@/lib/pointage-utils";
 import { SmartPointage, PointageMode } from "../SmartPointage";
-import { QRCodeDownload } from "@/components/ui";
 
 export default async function PointagePage({ searchParams }: { searchParams: Promise<{ source?: string }> }) {
   const session = await getSession();
@@ -57,7 +56,7 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
       mode = "AUTO_DEPART";
       messageAuto = getMessageDepart();
     } else {
-      mode = "ANTICIPE_DEPART";
+      mode = "EN_POSTE";
     }
   }
 
@@ -68,21 +67,14 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
         description="Enregistrement de votre présence."
       />
       
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="flex flex-col gap-6">
-          <h3 className="text-lg font-bold text-foreground">Votre pointage</h3>
-          <SmartPointage 
-            mode={mode} 
-            messageAuto={messageAuto} 
-            type={typePointage}
-            source={isQR ? "QR_CODE" : "ORDINATEUR"}
-          />
-        </div>
-        
-        <div className="flex flex-col gap-6">
-          <h3 className="text-lg font-bold text-foreground">Code QR du pointage</h3>
-          <QRCodeDownload />
-        </div>
+      <div className="flex flex-col gap-6">
+        <h3 className="text-lg font-bold text-foreground">Votre pointage</h3>
+        <SmartPointage 
+          mode={mode} 
+          messageAuto={messageAuto} 
+          type={typePointage}
+          source={isQR ? "QR_CODE" : "ORDINATEUR"}
+        />
       </div>
     </div>
   );
