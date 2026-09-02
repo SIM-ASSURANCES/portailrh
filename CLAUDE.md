@@ -4686,6 +4686,131 @@ indicateurs + solde de caisse). Aucune régression trouvée — la fusion avec
 `origin/thierry-kouame` et les corrections récentes n'ont rien cassé côté
 export.
 
+## Console admin — création de rôle et modification du rôle d'un utilisateur
+
+**Statut : terminé.** Deux capacités manquaient à la console `/admin` pour
+une vraie administration : les rôles étaient limités aux 5 posés par le
+seed (Admin/Collaborateur/Finance/DG/RH), et le rôle d'un utilisateur créé
+restait figé (seule sa désactivation était possible). Besoin concret à
+l'origine : une même personne peut cumuler Trésorerie (Finance) et
+Pointage RH — il faut alors un rôle combiné assignable à son unique
+compte, sans passer par deux comptes séparés.
+
+### Créer un rôle (`admin/roles`)
+
+`RoleCreateForm.tsx` (Client, `useActionState`, même pattern que
+`UserCreateForm.tsx`) au-dessus de la liste des rôles existants — nom +
+description facultative. `creerRoleAction` (`admin/roles/actions.ts`) :
+`isAdmin()`, unicité du nom revérifiée côté serveur (en plus de la
+contrainte `@unique` de `Role.name`, pour un message d'erreur de champ
+plutôt qu'une exception Prisma brute), création avec **aucune permission
+accordée** — le nouveau rôle apparaît immédiatement dans la liste
+au-dessous, toutes les cases décochées, prêt à être configuré exactement
+comme les 5 rôles du seed (même `PermissionToggle`, aucune distinction de
+traitement entre un rôle du seed et un rôle créé après coup). `HistoriqueEntry`
+(`entity: "Role"`, `action: "CREATE"`), `revalidatePath("/admin/roles")`.
+
+**Pas de suppression de rôle** — cohérent avec le principe déjà en place
+pour Catégorie/Objet/Module/User (soft-delete ou aucune suppression) : un
+rôle créé par erreur reste en base, simplement inutilisé si aucun
+utilisateur ne lui est assigné. Aucune fonctionnalité de suppression
+demandée ni construite ici.
+
+### Modifier le rôle d'un utilisateur (`admin/users`)
+
+La colonne "Rôle" du tableau des comptes (`UsersTable.tsx`) était un simple
+texte (`u.role.name`) — remplacée par `UserRoleSelect.tsx`, un `<select>`
+inline qui applique le changement immédiatement au `onChange` (même
+principe d'action directe que `PermissionToggle`/`UserActiveToggle`, pas de
+bouton "Enregistrer" séparé). `modifierRoleUtilisateurAction`
+(`admin/users/actions.ts`) : `isAdmin()`, vérifie que l'utilisateur et le
+nouveau rôle existent réellement (jamais un `roleId` de formulaire accepté
+tel quel), `User.roleId` mis à jour, `HistoriqueEntry` (`entity: "User"`,
+`action: "CHANGE_ROLE"`, détail avec l'ancien et le nouveau nom de rôle —
+le mécanisme générique de traçabilité admin existait déjà, réutilisé sans
+modification). `revalidatePath` sur `/admin/users` **et** `/` — même
+raison que `toggleRolePermissionAction` : un changement de rôle peut
+changer tout ce que l'utilisateur voit (sidebar, dashboard, modules
+accessibles), pas seulement la ligne du tableau admin.
+
+**Select délibérément contrôlé (`value`, pas `defaultValue`)** — piège déjà
+documenté à plusieurs reprises dans ce fichier pour le composant `Select`
+partagé, mais dans l'autre sens ici : `Select.tsx` n'ajoute son
+`defaultValue` interne **que si** `props.value` est `undefined` (voir son
+code), donc passer `value` explicitement est sûr et ne produit aucun
+conflit — nécessaire précisément parce qu'en cas d'échec serveur (rôle
+introuvable, session non admin rejouée...), la sélection visuelle doit
+revenir à l'ancien rôle plutôt que rester sur un choix qui n'a en réalité
+pas été appliqué en base ; un select non contrôlé ne l'aurait pas permis.
+
+**Aucun garde-fou contre l'auto-modification** — un Admin changeant son
+propre rôle perdrait aussitôt son accès à `/admin` (`isAdmin()` étant un
+bypass strict sur `role.name === "Admin"`). Choix délibéré de rester
+cohérent avec `toggleUserActiveAction`, qui ne protège pas non plus contre
+l'auto-désactivation : aucune des deux actions admin existantes n'a de
+garde-fou sur `userId === session.user.id`, je n'en ai donc pas ajouté un
+seul pour celle-ci. Point à surveiller si ce cas se présente en pratique.
+
+### Vérifié explicitement — vrai parcours navigateur
+
+Chromium headless (Playwright, non ajouté au projet), reproduisant
+exactement le besoin métier motivant cette tâche :
+
+1. Admin crée le rôle "Finance / RH", coche les 8 permissions de Finance
+   (Trésorerie) **et** les 8 permissions de RH (Pointage) — persistance
+   confirmée après rechargement de la page (14 permissions au total,
+   `voir_reporting` étant distinct entre Trésorerie et Pointage RH : les
+   deux cases correspondantes, bien que de libellé proche, sont
+   indépendantes et toutes deux cochées sans se marcher dessus).
+2. Rôle de `rh@simassurances.test` changé vers "Finance / RH" depuis
+   `admin/users` — persistant après rechargement.
+3. Reconnexion avec `rh@simassurances.test` : la sidebar affiche
+   désormais **simultanément** la branche "Demande d'Achat" (Trésorerie,
+   nouvelle) et "Pointage de Présence" (déjà présente avant).
+4. **Preuve fonctionnelle réelle, pas seulement la navigation** : une
+   demande de test créée par le Collaborateur a été **effectivement
+   validée totalement par `rh@simassurances.test`** (bouton "Valider
+   totalement" → "Confirmer la validation totale", statut de la demande
+   réellement changé en base) — confirme que `treso.valider_demande`,
+   accordé uniquement via ce nouveau rôle combiné, passe bien la
+   vérification côté serveur de `validerTotalementAction`, pas seulement
+   l'affichage du bouton. Côté Pointage, `/pointage/pointer` reste
+   accessible et fonctionnel sans régression.
+5. **Défense en profondeur** : la requête réseau réelle des deux nouvelles
+   Server Actions (`creerRoleAction`, `modifierRoleUtilisateurAction`,
+   capturée pendant l'exécution admin réelle) rejouée à l'identique avec
+   les cookies de session de `collaborateur@simassurances.test` (non-admin)
+   → réponse contenant "Action non autorisée." dans les deux cas, et
+   aucun rôle parasite créé en double par la tentative de rejeu.
+
+`npx tsc --noEmit` et `npx eslint .` : **zéro erreur ni avertissement
+introduits par ce travail** (vérifié explicitement en comparant avec/sans
+les fichiers de cette tâche via `git stash`). En revanche, le projet dans
+son état actuel a **5 erreurs `tsc` et 6 erreurs `eslint` préexistantes**,
+toutes dans le Module Pointage RH (`pointage/actions.ts`,
+`pointage/rh/horaires/actions.ts`, `pointage/rh/pointages/page.tsx`,
+`pointage/rh/presence/page.tsx`, `pointage/rh/presence/PresenceTabs.tsx`,
+`src/lib/pointageReporting.ts`) — apparues via une seconde fusion
+`origin/thierry-kouame` (`d943a7e`) et un commit de synchronisation de
+schéma (`5685730`, ajout local d'`ipAddress`) intervenus dans l'historique
+sans lien avec cette tâche. Hors périmètre (logique métier Pointage RH, à
+la charge du binôme qui la maintient — voir "Intégration du Module
+Pointage RH"), signalé ici pour que `tsc`/`eslint` project-wide ne soient
+pas supposés propres tant que ces fichiers n'ont pas été corrigés par
+ailleurs.
+
+**Nettoyage** : demande de test et rôle parasite (créé uniquement pour
+capturer la requête réseau de l'étape 5) supprimés directement en base
+(aucune fonctionnalité de suppression de demande ni de rôle n'existe dans
+l'application). `rh@simassurances.test` restauré à son rôle **RH**
+d'origine après vérification — un compte de seed utilisé dans de nombreux
+autres parcours de ce fichier ne doit pas rester dans un état non
+standard. Le rôle **"Finance / RH" lui-même est conservé** (14 permissions)
+plutôt que supprimé : il correspond au besoin métier réel décrit en
+introduction, pas seulement à un scénario de test — à réassigner
+manuellement à un vrai compte le jour où ce besoin se concrétise. Serveur
+`next dev` arrêté après vérification.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

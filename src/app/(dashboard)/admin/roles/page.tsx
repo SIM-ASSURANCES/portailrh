@@ -2,6 +2,7 @@ import { PageHeader } from "@/components/ui";
 import { prisma } from "@/lib/prisma";
 
 import { PermissionToggle } from "./PermissionToggle";
+import { RoleCreateForm } from "./RoleCreateForm";
 
 export default async function AdminRolesPage() {
   const [roles, modules] = await Promise.all([
@@ -21,6 +22,11 @@ export default async function AdminRolesPage() {
         title="Rôles"
         description="Cocher ou décocher les permissions accordées à chaque rôle, groupées par module."
       />
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-foreground">Nouveau rôle</h2>
+        <RoleCreateForm />
+      </section>
 
       <div className="space-y-6">
         {roles.map((role) => {

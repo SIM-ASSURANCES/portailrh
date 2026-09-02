@@ -111,3 +111,63 @@ export async function toggleUserActiveAction(
 
   return { status: "success", message: active ? "Compte réactivé." : "Compte désactivé." };
 }
+
+/**
+ * Modifie le rôle d'un utilisateur existant — jusqu'ici figé à la création
+ * (seule la désactivation était possible). Appelée directement depuis un
+ * composant client (pas via <form>), comme toggleUserActiveAction.
+ *
+ * Aucun garde-fou contre l'auto-modification (un Admin changeant son propre
+ * rôle perdrait son accès à `/admin`, `isAdmin()` étant un bypass sur
+ * `role.name === "Admin"`) : cohérent avec `toggleUserActiveAction`, qui ne
+ * protège pas non plus contre l'auto-désactivation. Point à surveiller si
+ * ce cas se présente en pratique — voir CLAUDE.md.
+ */
+export async function modifierRoleUtilisateurAction(
+  userId: string,
+  nouveauRoleId: string
+): Promise<{ status: "success" | "error"; message: string }> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const [user, nouveauRole] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, include: { role: true } }),
+    prisma.role.findUnique({ where: { id: nouveauRoleId } }),
+  ]);
+
+  if (!user) {
+    return { status: "error", message: "Utilisateur introuvable." };
+  }
+  if (!nouveauRole) {
+    return { status: "error", message: "Rôle introuvable." };
+  }
+
+  if (nouveauRole.id === user.roleId) {
+    return { status: "success", message: "Rôle inchangé." };
+  }
+
+  const ancienRoleNom = user.role.name;
+
+  await prisma.user.update({ where: { id: userId }, data: { roleId: nouveauRoleId } });
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "User",
+      entityId: user.id,
+      action: "CHANGE_ROLE",
+      detail: `Rôle modifié pour ${user.email} : "${ancienRoleNom}" → "${nouveauRole.name}"`,
+      userId: session.user.id,
+    },
+  });
+
+  revalidatePath("/admin/users");
+  // Un changement de rôle peut affecter tout ce que voit l'utilisateur
+  // concerné (sidebar, dashboard, accès aux modules) — même principe que
+  // toggleRolePermissionAction, qui revalide aussi "/" en plus de sa propre
+  // page admin.
+  revalidatePath("/");
+
+  return { status: "success", message: `Rôle de ${user.fullName} mis à jour : ${nouveauRole.name}.` };
+}
