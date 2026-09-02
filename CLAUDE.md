@@ -4811,6 +4811,188 @@ introduction, pas seulement à un scénario de test — à réassigner
 manuellement à un vrai compte le jour où ce besoin se concrétise. Serveur
 `next dev` arrêté après vérification.
 
+## Rehaussement visuel — dashboards, typographie, couleur (post-polish)
+
+**Statut : terminé.** Le premier passage de polish (transitions, cohérence
+des tokens — voir "Polish visuel global" plus haut) avait corrigé les
+incohérences mais laissait un rendu jugé **"fade"** : toute l'information
+portait sensiblement le même poids visuel, les couleurs de la charte
+n'étaient exploitées qu'en aplats très pâles, la police institutionnelle
+(Montserrat, 6 graisses chargées depuis le début — voir "Typographie")
+restait sous-utilisée. Ce ticket retravaille en profondeur les 3
+dashboards, l'échelle typographique et l'usage de la couleur, **sans
+toucher à aucune logique métier, Server Action ni requête de données** —
+uniquement des classes Tailwind et les tokens `globals.css`.
+
+Skills `frontend-design` et `ui-ux-pro-max` consultées en profondeur avant
+codage (pas seulement leur existence) : plan de design formalisé avant
+d'écrire une ligne de CSS (palette/typo/layout/principes), confronté
+explicitement aux "tells" génériques documentés par `frontend-design`
+(carte-kit SaaS avec ombre grise uniforme, libellés tout-caps répétés,
+police mono pour les données, dégradés décoratifs gratuits) avant de
+retenir chaque choix — voir le détail des arbitrages ci-dessous.
+
+### Principe directeur
+
+**Rester strictement dans la famille SIM Assurances (bleu + Montserrat)
+tout en l'exploitant avec plus d'assurance** — jamais une palette ou une
+police étrangère à la charte. La distinction ne vient donc pas d'un choix
+de identité visuelle différente, mais de la **discipline typographique**
+(vraie hiérarchie de graisses), de la **confiance colorimétrique** (aplats
+pleins plutôt que teintes pâles pour ce qui doit attirer l'œil) et d'une
+**"encre" de marque** (texte teinté bleu plutôt que gris Tailwind
+générique) appliquée à toute l'application.
+
+### Typographie — échelle établie
+
+Aucune nouvelle graisse chargée (les 6 étaient déjà là, voir
+`src/app/layout.tsx`) : le seul changement est la **discipline d'usage**,
+désormais cohérente à travers tout le module :
+
+| Rôle | Taille | Graisse | Exemple |
+|---|---|---|---|
+| Titre de page (`PageHeader` h1) | 28–30px | `font-black` (900) | "Tableau de bord Finance" |
+| Chiffre héros (solde de caisse) | 40–48px | `font-black` (900) | "-48 000 FCFA" |
+| Valeur de StatCard | 28px | `font-black` (900) | "12" / "1 250 000 FCFA" |
+| Titre de section (h2) | 20px | `font-black` (900) | "À traiter" |
+| Montant principal (détail demande) | 24px | `font-black` (900) | "Montant : 400 000 FCFA" |
+| Montant secondaire (Montant validé, régularisation) | 16–20px | `font-bold` (700) | |
+| Libellé de StatCard / `<dt>` | 12–13px | `font-semibold` (600) | "Montant décaissé" |
+| Bouton | 14px | `font-semibold` (600) | (était `font-medium`) |
+| Corps de texte | 14–15px | `font-normal`/`font-medium` | inchangé |
+
+**Règle simple à reproduire** : tout montant financier qui EST
+l'information (pas une donnée annexe dans une phrase) reçoit `font-black`
+ou `font-bold` + `tabular-nums` + une taille nettement supérieure au texte
+qui l'entoure — jamais le même poids que son libellé. `tabular-nums`
+(utilitaire Tailwind natif, `font-variant-numeric: tabular-nums`) est
+systématique sur tout montant/chiffre affiché en évidence : les chiffres
+s'alignent verticalement entre eux, rendu plus "financier"/précis.
+
+**Volontairement évité** : les libellés de `StatCard` restent en casse
+normale (`font-semibold`, pas de majuscules) — le "tout en majuscules"
+répété sur chaque carte est un des tells génériques documentés par
+`frontend-design` (accessoire à ne pas porter partout). Seul le libellé du
+bandeau "Solde de caisse actuel" (le seul moment vraiment héroïque de
+l'écran) reste en petites capitales trackées — exception délibérée pour UN
+seul élément, pas une convention généralisée.
+
+### Couleur — principes
+
+- **`--foreground` (encre du portail)** devient `#0a2140` (bleu très
+  sombre dérivé de sim-blue-dark) au lieu de `#0f172a` (gris ardoise
+  générique) — tout le texte courant de l'application porte ainsi un peu
+  de l'identité de marque. `--color-border`/`--color-muted`/`--color-app-bg`
+  reçoivent le même léger virage bleu. `--color-muted-foreground` n'est
+  **volontairement pas retouché** : sa valeur est calibrée précisément
+  pour le contraste AA du texte secondaire, aucune raison de la retoucher
+  pour une nuance de "température" qui ne s'y voit presque pas.
+- **Pastilles d'icône : aplat plein, jamais le fond pâle `*-bg`** — les
+  cinq teintes sémantiques (`info`/`success`/`warning`/`neutral`/`danger`)
+  sont déjà calibrées ≥4.5:1 en texte sur blanc (voir "Palette officielle
+  SIM Assurances" plus haut), donc a fortiori assez soutenues pour porter
+  une icône blanche en fond plein — bien plus présent qu'une pastille
+  pâle avec une icône à peine teintée. Le fond pâle `*-bg` reste réservé
+  aux surfaces d'arrière-plan (badges, bandeaux d'alerte).
+- **Le filet de tête de `StatCard`** (3px en haut de la carte) porte la
+  couleur avant même l'icône ou le chiffre — premier signal visuel. Reste
+  neutre (`bg-border`, quasi invisible) quand la carte n'a rien
+  d'actionnable (`toneSiActif`, déjà en place depuis la Phase G) : la
+  couleur ne s'allume que si elle a un sens, jamais par défaut.
+- **Le bandeau "Solde de caisse"** (dashboard Finance) est désormais un
+  vrai moment fort : dégradé plein `sim-blue-light → sim-blue-dark →
+  marine profond`, chiffre en blanc à 40-48px, deux halos radiaux très
+  discrets (`blur-2xl`/`blur-3xl`, opacité ≤20%) pour la profondeur — la
+  seule décoration franche de tout le rehaussement, délibérément réservée
+  au chiffre le plus important de l'écran (« spend your boldness in one
+  place », pas une carte parmi d'autres).
+- **Icônes propres par module** sur le dashboard général (`wallet` pour
+  Trésorerie, `clock` pour Pointage RH, `shield-check` pour
+  Administration — mêmes symboles que leurs branches de sidebar, voir
+  `nav.ts`) plutôt qu'une flèche générique répétée sur chaque carte.
+
+### Ombres et rayons — un langage cohérent
+
+- **`.shadow-elevated` / `.shadow-elevated-lg`** (`globals.css`) : deux
+  paliers d'ombre teintée bleu primaire (`rgba(0, 75, 156, ...)`) plutôt
+  que le gris générique `shadow-sm`/`shadow-md` par défaut de Tailwind —
+  réservées aux surfaces de contenu (`StatCard`, `Card`, cartes de
+  module), jamais aux boutons/inputs. `Card.tsx` et `StatCard.tsx`
+  l'utilisent déjà ; à reprendre pour tout nouveau panneau/carte.
+- **Rayons** : `rounded-2xl` pour les cartes/panneaux (déjà la convention
+  de `Card`/`StatCard`, non retouchée), `rounded-lg` pour les contrôles
+  interactifs (`Button`/`Input`/`Select`/`Textarea`, remontés depuis
+  `rounded-md` pour un peu plus de présence), `rounded-full` pour les
+  badges/pastilles. Ne pas introduire un troisième rayon ailleurs sans
+  raison — ce système à 3 paliers doit rester la seule référence.
+
+### Accent de section (petit trait vertical coloré)
+
+Motif répété devant chaque titre de section (`h2`) à travers les 3
+dashboards et le formulaire de demande : un trait vertical de 4-5px
+(`bg-primary` en général, `bg-warning` pour une section "À traiter" — la
+couleur porte un sens, informationnel vs actionnable) juste avant le
+texte. Dispositif structurel low-key (marque le début d'une section,
+cohérent avec toutes les sections du même écran) plutôt que décoratif —
+à reprendre pour tout nouveau titre de section, jamais pour un titre de
+page (`PageHeader`, qui n'en a pas besoin, déjà assez affirmé par sa
+taille).
+
+### Ce qui n'a volontairement pas été retouché
+
+- **`DataTable`** — aucune modification directe : bénéficie automatiquement
+  de la cascade des tokens (`border-border` reteinté, etc.), mais son
+  système de rendu (table desktop / cartes mobile, tri, `EmptyState`) n'a
+  pas été retravaillé pour cette tâche. À reprendre séparément si un
+  rendu "fade" y est signalé spécifiquement.
+- **`Badge`** — non retouché : déjà correctement construit (aplat pâle +
+  bordure + texte teinté), bénéficie de la cascade de tokens sans besoin
+  de changement structurel.
+- **Aucune nouvelle animation** — le motif d'entrée déjà en place
+  (`.stat-card-enter`, `.animate-fade-in-up`) reste inchangé ; le
+  rehaussement porte sur la présence statique des éléments, pas sur le
+  mouvement.
+
+### Auto-critique honnête
+
+Dans les contraintes données (rester Montserrat + famille de bleus SIM,
+aucune police ni palette étrangère), une différenciation "signature" au
+sens plein du terme (comme un site vitrine sans contrainte de marque)
+n'est pas atteignable — ce rehaussement est un travail d'**intensité**
+(hiérarchie, confiance colorimétrique, poids typographique) plutôt que de
+**réinvention**. Le risque générique le plus réel identifié en cours de
+travail : une grille de `StatCard` reste structurellement un "carte-kit"
+(inhérent au contenu — la section 12/14 du cahier des charges exige
+littéralement une grille d'indicateurs cliquables) ; désamorcé par une
+différenciation réelle entre les cartes (filet de tête coloré, pastille
+pleine, un seul élément vraiment héroïque par écran) plutôt que des cartes
+identiques avec juste une icône pâle différente.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (comparé
+explicitement avec/sans les fichiers de cette tâche via `git stash` — les
+seules erreurs restantes appartiennent au Module Pointage RH, déjà
+signalées comme préexistantes et hors périmètre ailleurs dans ce fichier).
+
+Captures d'écran avant/après des 3 dashboards et du formulaire de nouvelle
+demande, prises par un vrai navigateur Chromium headless (Playwright, non
+ajouté au projet) — état "avant" obtenu en mettant temporairement de côté
+les modifications (`git stash`) le temps de la capture, jamais en
+recréant l'ancien rendu de mémoire. Vérifié explicitement que le système
+de teinte (`toneSiActif`) reste lisible en pratique : une demande de test
+laissée `EN_ATTENTE_VALIDATION` fait ressortir sa carte en orange plein
+contre les 5 autres cartes neutres du dashboard Finance, confirmant que la
+couleur guide bien l'attention plutôt que de décorer uniformément.
+
+Parcours fonctionnel réel rejoué après le rehaussement (collaborateur crée
+une demande → apparition dans "Mes demandes" → Finance ouvre, valide
+totalement) sans erreur console, confirmant qu'aucune Server Action ni
+logique de permission n'a été affectée par ces changements purement
+visuels. Données de test nettoyées après chaque vérification ; la demande
+réelle pré-existante (`DEM-2026-000001`) confirmée intacte. Serveur
+`next dev` arrêté après vérification.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

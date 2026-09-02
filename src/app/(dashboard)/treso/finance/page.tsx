@@ -104,26 +104,42 @@ export default async function DashboardFinancePage() {
         description="Vue d'ensemble de la trésorerie, recalculée en temps réel."
       />
 
-      {/* Solde de caisse : information de CONTEXTE, volontairement distincte
-          visuellement des cartes "à traiter" ci-dessous (pas de bordure
-          neutre ni de lien cliquable — un chiffre de référence, pas une
-          action). Teinte primaire (identité SIM Assurances), icône dans un
-          cercle plein plutôt que la pastille arrondie des StatCard. */}
-      <div className="flex flex-col gap-4 rounded-2xl border border-primary/15 bg-primary/[0.04] p-5 sm:flex-row sm:items-center sm:gap-5 sm:p-6">
-        <span className="inline-grid size-12 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
-          <Icon name="wallet" className="size-6" />
-        </span>
-        <div>
-          <p className="text-sm font-medium text-muted-foreground">Solde de caisse actuel</p>
-          <p className="mt-0.5 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-            {solde.toLocaleString("fr-FR")} FCFA
-          </p>
+      {/* Solde de caisse : LE chiffre le plus important de l'écran, traité
+          comme tel — bandeau plein dégradé (identité SIM Assurances),
+          jamais une simple carte parmi d'autres. Volontairement distinct
+          des StatCard "à traiter" ci-dessous (pas de bordure fine ni de
+          lien cliquable : un chiffre de référence, pas une action). */}
+      <div className="relative overflow-hidden rounded-2xl bg-[linear-gradient(135deg,#0063c9_0%,#004b9c_48%,#00203f_100%)] px-6 py-7 shadow-elevated-lg sm:px-8 sm:py-8">
+        <div
+          className="pointer-events-none absolute -right-10 -top-16 size-56 rounded-full bg-sim-blue-light/20 blur-2xl"
+          aria-hidden="true"
+        />
+        <div
+          className="pointer-events-none absolute -bottom-20 left-1/3 size-64 rounded-full bg-white/5 blur-3xl"
+          aria-hidden="true"
+        />
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
+          <span className="inline-grid size-14 shrink-0 place-items-center rounded-2xl bg-white/15 text-white ring-1 ring-inset ring-white/25">
+            <Icon name="wallet" className="size-7" />
+          </span>
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-white/70">
+              Solde de caisse actuel
+            </p>
+            <p className="mt-1 text-[40px] font-black leading-none tracking-tight text-white tabular-nums sm:text-5xl">
+              {solde.toLocaleString("fr-FR")}
+              <span className="ml-2 text-lg font-bold text-white/60 sm:text-xl">FCFA</span>
+            </p>
+          </div>
         </div>
       </div>
 
       <section className="space-y-4">
         <div className="flex items-baseline justify-between gap-3">
-          <h2 className="text-lg font-bold text-foreground">À traiter</h2>
+          <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+            <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
+            À traiter
+          </h2>
           {totalATraiter > 0 ? (
             <span className="rounded-full bg-warning-bg px-2.5 py-1 text-xs font-semibold text-warning">
               {totalATraiter} point{totalATraiter > 1 ? "s" : ""} au total

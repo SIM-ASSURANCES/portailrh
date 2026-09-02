@@ -161,7 +161,10 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
     <div className="space-y-6">
       {/* En-tête de la demande */}
       <Card>
-        <h2 className="text-base font-bold text-foreground">En-tête de la demande</h2>
+        <h2 className="flex items-center gap-2 text-base font-bold text-foreground">
+          <span className="h-4 w-1 rounded-full bg-primary" aria-hidden="true" />
+          En-tête de la demande
+        </h2>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <Select
@@ -221,7 +224,10 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
       {/* Tableau des articles */}
       <Card>
         <div className="flex items-center justify-between gap-4">
-          <h2 className="text-base font-bold text-foreground">Tableau des articles</h2>
+          <h2 className="flex items-center gap-2 text-base font-bold text-foreground">
+            <span className="h-4 w-1 rounded-full bg-primary" aria-hidden="true" />
+            Tableau des articles
+          </h2>
           <Button type="button" onClick={ajouterLigne} className="shrink-0">
             <Icon name="plus-circle" className="size-4" />
             Ajouter une ligne
@@ -277,7 +283,7 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
                     onChange={(e) => updateLigne(ligne.key, { prixUnitaire: Number(e.target.value) })}
                   />
                 </div>
-                <div className="text-sm font-semibold text-foreground sm:text-right">
+                <div className="text-sm font-bold text-foreground tabular-nums sm:text-right">
                   <span className="mr-2 text-xs font-medium text-muted-foreground sm:hidden">Total</span>
                   {formatMontantDevise(total, devise)}
                 </div>
@@ -298,9 +304,11 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
           })}
         </div>
 
-        <div className="mt-4 flex flex-col items-end border-t border-border pt-4">
-          <span className="text-sm text-muted-foreground">Total général</span>
-          <span className="text-xl font-bold text-primary">
+        <div className="mt-4 flex flex-col items-end rounded-xl bg-primary/[0.05] px-4 py-3.5 sm:px-5">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Total général
+          </span>
+          <span className="text-3xl font-black leading-tight tracking-tight text-primary tabular-nums">
             {formatMontantDevise(totalGeneral, devise)}
           </span>
         </div>

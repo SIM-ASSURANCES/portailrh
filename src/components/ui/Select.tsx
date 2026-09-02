@@ -43,7 +43,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
           {...(props.value === undefined && {
             defaultValue: props.defaultValue ?? (placeholder ? "" : undefined),
           })}
-          className={`block w-full rounded-md border bg-surface px-3 py-2 text-sm text-foreground transition-colors duration-150 ease-out-strong hover:border-muted-foreground/60 focus:outline-2 focus:outline-offset-2 focus:outline-primary disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:hover:border-border ${
+          className={`block w-full rounded-lg border bg-surface px-3 py-2 text-sm text-foreground transition-colors duration-150 ease-out-strong hover:border-muted-foreground/60 focus:outline-2 focus:outline-offset-2 focus:outline-primary disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:hover:border-border ${
             error ? "border-danger" : "border-border"
           } ${className}`}
           {...props}

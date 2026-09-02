@@ -89,7 +89,10 @@ export default async function MonTableauDeBordPage() {
       />
 
       <section className="space-y-4">
-        <h2 className="text-lg font-bold text-foreground">Vue d&apos;ensemble</h2>
+        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+          <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
+          Vue d&apos;ensemble
+        </h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="stat-card-enter">
             <StatCard icon="shopping-cart" tone="neutral" label="Demandé" value={fmt(indicateurs.demande)} />
@@ -120,7 +123,10 @@ export default async function MonTableauDeBordPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="text-lg font-bold text-foreground">À traiter</h2>
+        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+          <span className="h-5 w-1 rounded-full bg-warning" aria-hidden="true" />
+          À traiter
+        </h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="stat-card-enter">
             <StatCard

@@ -81,31 +81,31 @@ export default async function MaDemandeDetailPage({
         }
       />
 
-      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
-        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="space-y-4 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
+        <dl className="grid grid-cols-1 gap-5 sm:grid-cols-2">
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Montant
             </dt>
-            <dd className="text-base font-semibold text-foreground">
+            <dd className="mt-1 text-2xl font-black tracking-tight text-foreground tabular-nums">
               {formatMontantDevise(Number(demande.montant), demande.devise)}
             </dd>
           </div>
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Statut
             </dt>
-            <dd>
+            <dd className="mt-1.5">
               <Badge variant={STATUT_DEMANDE_BADGE_VARIANT[demande.statut]}>
                 {STATUT_DEMANDE_LABEL[demande.statut]}
               </Badge>
             </dd>
           </div>
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Bénéficiaire
             </dt>
-            <dd className="text-sm text-foreground">
+            <dd className="mt-1 text-sm text-foreground">
               {getBeneficiaireNom(demande)}{" "}
               <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
             </dd>
@@ -114,18 +114,18 @@ export default async function MaDemandeDetailPage({
               partout où le statut de validation est affiché — voir CLAUDE.md
               "Refonte V1 en cours" / Phase B, règle impérative 6. */}
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Montant validé
             </dt>
-            <dd className="text-sm text-foreground">
+            <dd className="mt-1 text-base font-bold text-foreground tabular-nums">
               {formatMontantDevise(Number(demande.montantValide ?? 0), demande.devise)}
             </dd>
           </div>
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Montant restant à valider
             </dt>
-            <dd className="text-sm text-foreground">
+            <dd className="mt-1 text-base font-bold text-foreground tabular-nums">
               {formatMontantDevise(
                 Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0)),
                 demande.devise
@@ -133,7 +133,7 @@ export default async function MaDemandeDetailPage({
             </dd>
           </div>
           <div className="sm:col-span-2">
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Description du besoin
             </dt>
             <dd className="text-sm text-foreground">{demande.description}</dd>

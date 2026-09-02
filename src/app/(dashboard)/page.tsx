@@ -1,8 +1,17 @@
 import Link from "next/link";
 
-import { Icon } from "@/components/icons";
+import { Icon, type IconName } from "@/components/icons";
 import { Badge, EmptyState, PageHeader, ToastOnMount } from "@/components/ui";
 import { getAccessibleModules, getSession, hasPermission, isAdmin } from "@/lib/auth";
+
+/** Icône propre à chaque module (même symbole que sa branche de sidebar,
+ * voir nav.ts) plutôt qu'une flèche générique répétée sur toutes les
+ * cartes — la carte se reconnaît au premier coup d'œil, pas seulement au
+ * texte de son titre. */
+const MODULE_ICON: Record<string, IconName> = {
+  tresorerie: "wallet",
+  pointage: "clock",
+};
 
 /**
  * Point d'entrée le plus pertinent du module Trésorerie selon les
@@ -112,8 +121,11 @@ export default async function DashboardHomePage({
         description={session ? `Bonjour, ${session.user.fullName} — ${session.role}` : undefined}
       />
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-foreground">Vos accès</h2>
+      <section className="space-y-4">
+        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+          <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
+          Vos accès
+        </h2>
         {moduleCards.length === 0 && !isAdmin(session) ? (
           <EmptyState
             icon="folder-tree"
@@ -126,10 +138,14 @@ export default async function DashboardHomePage({
                 <Link
                   key={module_.id}
                   href={module_.href}
-                  className="group rounded-lg border border-border bg-surface p-5 shadow-sm transition-[box-shadow,transform] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:shadow-md"
+                  className="group relative overflow-hidden rounded-2xl border border-border bg-surface p-5 shadow-elevated transition-[box-shadow,transform] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:shadow-elevated-lg"
                 >
-                  <h3 className="font-semibold text-foreground">{module_.label}</h3>
-                  <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
+                  <span className="absolute inset-x-0 top-0 h-[3px] bg-primary" aria-hidden="true" />
+                  <span className="inline-grid size-11 place-items-center rounded-xl bg-primary text-white shadow-[0_4px_10px_-2px_rgba(0,0,0,0.25)] transition-transform duration-200 ease-out-strong motion-safe:group-hover:scale-110">
+                    <Icon name={MODULE_ICON[module_.key] ?? "folder-tree"} className="size-5" />
+                  </span>
+                  <h3 className="mt-4 text-lg font-bold text-foreground">{module_.label}</h3>
+                  <p className="mt-1 flex items-center gap-1 text-sm font-semibold text-muted-foreground transition-colors duration-200 group-hover:text-primary">
                     Accéder au module
                     <Icon
                       name="arrow-up-right"
@@ -138,13 +154,20 @@ export default async function DashboardHomePage({
                   </p>
                 </Link>
               ) : (
-                <div key={module_.id} className="rounded-lg border border-border bg-surface p-5 opacity-70">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="font-semibold text-foreground">{module_.label}</h3>
+                <div
+                  key={module_.id}
+                  className="relative overflow-hidden rounded-2xl border border-border bg-surface p-5 opacity-75"
+                >
+                  <span className="absolute inset-x-0 top-0 h-[3px] bg-border" aria-hidden="true" />
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="inline-grid size-11 place-items-center rounded-xl bg-neutral-bg text-neutral">
+                      <Icon name={MODULE_ICON[module_.key] ?? "folder-tree"} className="size-5" />
+                    </span>
                     <Badge variant="neutral">
                       {module_.reason === "coming_soon" ? "Bientôt disponible" : "Aucun accès"}
                     </Badge>
                   </div>
+                  <h3 className="mt-4 text-lg font-bold text-foreground">{module_.label}</h3>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {module_.reason === "coming_soon"
                       ? "Les écrans de ce module sont en cours de construction."
@@ -156,10 +179,14 @@ export default async function DashboardHomePage({
             {isAdmin(session) ? (
               <Link
                 href="/admin"
-                className="group rounded-lg border border-border bg-surface p-5 shadow-sm transition-[box-shadow,transform] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:shadow-md"
+                className="group relative overflow-hidden rounded-2xl border border-border bg-surface p-5 shadow-elevated transition-[box-shadow,transform] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:shadow-elevated-lg"
               >
-                <h3 className="font-semibold text-foreground">Administration</h3>
-                <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
+                <span className="absolute inset-x-0 top-0 h-[3px] bg-primary" aria-hidden="true" />
+                <span className="inline-grid size-11 place-items-center rounded-xl bg-primary text-white shadow-[0_4px_10px_-2px_rgba(0,0,0,0.25)] transition-transform duration-200 ease-out-strong motion-safe:group-hover:scale-110">
+                  <Icon name="shield-check" className="size-5" />
+                </span>
+                <h3 className="mt-4 text-lg font-bold text-foreground">Administration</h3>
+                <p className="mt-1 flex items-center gap-1 text-sm font-semibold text-muted-foreground transition-colors duration-200 group-hover:text-primary">
                   Utilisateurs, rôles et modules du portail
                   <Icon
                     name="arrow-up-right"
@@ -172,8 +199,11 @@ export default async function DashboardHomePage({
         )}
       </section>
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-foreground">Notifications et alertes</h2>
+      <section className="space-y-4">
+        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+          <span className="h-5 w-1 rounded-full bg-border" aria-hidden="true" />
+          Notifications et alertes
+        </h2>
         {/* Zone réservée aux notifications transverses du Socle (annonces,
             maintenance, expiration de mot de passe...), pas aux indicateurs
             "à traiter" d'un module métier précis — ceux-ci vivent sur le
