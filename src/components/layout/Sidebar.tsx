@@ -16,6 +16,8 @@ interface SidebarProps {
   canAdmin?: boolean;
   /** treso.creer_demande OU treso.declarer_retour : ajoute "Demandes". */
   canAccesDemandes?: boolean;
+  /** treso.creer_demande seule : ajoute "Mon tableau de bord". */
+  canAccesMonTableauDeBord?: boolean;
   /** categoriser_demande OU valider_demande : ajoute "Demandes à traiter (Finance)". */
   canAccesFinanceDemandes?: boolean;
   /** treso.receptionner_retour : ajoute "Retours en attente". */
@@ -65,6 +67,7 @@ export function Sidebar({
   onToggleCollapse,
   canAdmin = false,
   canAccesDemandes = false,
+  canAccesMonTableauDeBord = false,
   canAccesFinanceDemandes = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
@@ -78,6 +81,7 @@ export function Sidebar({
   const pathname = usePathname();
   const navBranches = getNavBranches({
     canAccesDemandes,
+    canAccesMonTableauDeBord,
     canAccesFinanceDemandes,
     canReceptionnerRetour,
     canVoirDashboardFinance,

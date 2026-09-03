@@ -20,26 +20,39 @@ const MODULE_ICON: Record<string, IconName> = {
  * endroit : les vraies routes vivent sous `/treso/*`). Finance/DG atterrit
  * directement sur le tableau de bord Finance (Phase G, `treso.voir_dashboard_finance`,
  * exactement la permission qui garde `treso/finance/page.tsx` — jamais de
- * redirection en boucle une fois ici) ; Collaborateur (`treso.creer_demande`
- * ou `treso.declarer_retour`) atterrit sur `/treso/tableau-de-bord` (son
- * propre tableau de bord, cahier des charges section 14 — voir CLAUDE.md
- * "Mon tableau de bord"), pas directement sur la liste "Mes demandes". Une
- * session
- * sans aucune de ces permissions (Admin, qui n'a délibérément aucune
- * permission `treso.*` — voir CLAUDE.md "Administration") n'a **aucun**
- * point d'entrée fonctionnel réel : `null`, distinct du cas "module sans
- * écran" (Pointage RH) — l'audit habilitations a montré que renvoyer
- * `/treso/demandes` par défaut y redirigeait aussitôt avec un refus d'accès
- * (la page revérifie désormais cette même permission côté serveur), un
- * lien tout aussi trompeur qu'un 404.
+ * redirection en boucle une fois ici) ; un Collaborateur avec
+ * `treso.creer_demande` atterrit sur `/treso/tableau-de-bord` (son propre
+ * tableau de bord, cahier des charges section 14 — voir CLAUDE.md
+ * "Mon tableau de bord"), pas directement sur la liste "Mes demandes".
+ *
+ * **`treso.declarer_retour` seule (sans `creer_demande`)** — ex: un rôle
+ * combiné Finance/RH qui ne crée jamais ses propres demandes — atterrit
+ * directement sur `/treso/demandes` : `/treso/tableau-de-bord` est
+ * désormais gardée par `creer_demande` seule (voir CLAUDE.md "Sidebar
+ * Trésorerie — un seul tableau de bord par profil"), l'y envoyer
+ * provoquerait le même refus d'accès en boucle que l'ancien défaut
+ * `/treso/demandes` documenté ci-dessous pour un tout autre cas.
+ *
+ * Une session sans aucune de ces permissions (Admin, qui n'a délibérément
+ * aucune permission `treso.*` — voir CLAUDE.md "Administration") n'a
+ * **aucun** point d'entrée fonctionnel réel : `null`, distinct du cas
+ * "module sans écran" (Pointage RH) — l'audit habilitations a montré que
+ * renvoyer `/treso/demandes` par défaut à une session qui n'a RIEN y
+ * redirigeait aussitôt avec un refus d'accès (la page revérifie désormais
+ * cette même permission côté serveur), un lien tout aussi trompeur qu'un
+ * 404.
  */
 function getTresorerieHref(session: { permissions: string[] } | null): string | null {
   if (hasPermission(session, "treso.voir_dashboard_finance")) return "/treso/finance";
-  if (hasPermission(session, "treso.creer_demande") || hasPermission(session, "treso.declarer_retour")) {
-    // Mon tableau de bord (cahier des charges section 14) est désormais le
-    // point d'entrée du Collaborateur — même symétrie que Finance/DG
-    // (tableau de bord, pas directement la liste "Mes demandes").
+  if (hasPermission(session, "treso.creer_demande")) {
+    // Mon tableau de bord (cahier des charges section 14) est le point
+    // d'entrée d'un Collaborateur créant ses propres demandes — même
+    // symétrie que Finance/DG (tableau de bord, pas directement la liste
+    // "Mes demandes").
     return "/treso/tableau-de-bord";
+  }
+  if (hasPermission(session, "treso.declarer_retour")) {
+    return "/treso/demandes";
   }
   return null;
 }

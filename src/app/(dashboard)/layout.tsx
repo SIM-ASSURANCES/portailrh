@@ -22,6 +22,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canAccesDemandes={
         hasPermission(session, "treso.creer_demande") || hasPermission(session, "treso.declarer_retour")
       }
+      canAccesMonTableauDeBord={hasPermission(session, "treso.creer_demande")}
       canAccesFinanceDemandes={
         hasPermission(session, "treso.categoriser_demande") ||
         hasPermission(session, "treso.valider_demande")

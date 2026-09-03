@@ -26,15 +26,20 @@ import {
  * Trésorerie pour un Collaborateur depuis le dashboard général (`/`, voir
  * `getTresorerieHref`) — au même titre que `/treso/finance` pour Finance/DG.
  *
- * Gardée par la même permission que "Mes demandes" (`creer_demande` OU
- * `declarer_retour`) — jamais uniquement masquée côté nav, revérifiée ici.
+ * Gardée par `treso.creer_demande` **seule** — délibérément pas le même
+ * critère que "Mes demandes" (`creer_demande` OU `declarer_retour`) :
+ * les 5 indicateurs et la zone "À traiter" ne portent que sur les demandes
+ * dont l'utilisateur est le créateur (`createurId`), jamais sur son rôle
+ * dans le circuit de retour de caisse. Un rôle combiné avec
+ * `declarer_retour` mais sans `creer_demande` (ex: Finance/RH, voir
+ * CLAUDE.md "Sidebar Trésorerie — un seul tableau de bord par profil")
+ * n'a par construction jamais créé de demande : cette page lui serait
+ * vide et redondante avec les autres tableaux de bord déjà visibles
+ * (général, Finance). Jamais uniquement masquée côté nav, revérifiée ici.
  */
 export default async function MonTableauDeBordPage() {
   const session = await getSession();
-  if (
-    !session ||
-    !(hasPermission(session, "treso.creer_demande") || hasPermission(session, "treso.declarer_retour"))
-  ) {
+  if (!session || !hasPermission(session, "treso.creer_demande")) {
     redirect("/?error=acces_refuse_demandes");
   }
 
