@@ -33,15 +33,13 @@ export async function enregistrerPointageAction(
   const rawIp = headersList.get("x-forwarded-for") || "IP_INCONNUE";
   const ip = rawIp.replace(/^::ffff:/, "");
 
-  // Vérification de l'IP pour le Ticket 3
-  if (source === "ORDINATEUR") {
-    const whitelistEnv = process.env.ALLOWED_OFFICE_IPS || "";
-    if (!isOfficeIpAllowed(ip, whitelistEnv)) {
-      return {
-        status: "error",
-        message: "Le pointage depuis un ordinateur n'est autorisé que depuis le réseau de l'entreprise."
-      };
-    }
+  // Vérification de l'IP pour sécuriser le pointage (Ordinateur + Smartphone)
+  const whitelistEnv = process.env.ALLOWED_OFFICE_IPS || "";
+  if (!isOfficeIpAllowed(ip, whitelistEnv)) {
+    return {
+      status: "error",
+      message: "Le pointage n'est autorisé que depuis le réseau (Wi-Fi) de l'entreprise."
+    };
   }
 
   // 2. Vérification côté serveur des règles d'horaires
