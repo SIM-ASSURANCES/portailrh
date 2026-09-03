@@ -1,3 +1,8 @@
+"use client";
+
+import { useTransition } from "react";
+import { useRouter } from "next/navigation";
+
 import { Icon } from "@/components/icons";
 
 interface TopbarProps {
@@ -15,11 +20,29 @@ function initials(fullName: string) {
 }
 
 /**
- * Barre supérieure : cloche de notifications (décorative pour l'instant, pas
- * de système de notifications) et bloc profil (avatar initiales, nom, email,
- * rôle). Reste blanche, au-dessus du contenu, alignée à droite.
+ * Barre supérieure : bouton d'actualisation, cloche de notifications
+ * (décorative pour l'instant, pas de système de notifications) et bloc
+ * profil (avatar initiales, nom, email, rôle). Reste blanche, au-dessus du
+ * contenu, alignée à droite.
  */
 export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
+  const router = useRouter();
+  const [isRefreshing, startRefresh] = useTransition();
+
+  // `router.refresh()` recharge les données serveur de la page courante
+  // (nouvelle requête RSC) sans rechargement complet du navigateur ni perte
+  // d'état client (ex: formulaire en cours de saisie ailleurs sur la page).
+  // Bouton unique dans le Topbar partagé plutôt que dupliqué sur chaque
+  // écran : couvre tout l'AppShell (Socle, Trésorerie, Pointage) en un seul
+  // endroit. `startTransition` fait refléter `isRefreshing` sur la durée
+  // réelle du rechargement (Next.js intègre `router.refresh()` au mécanisme
+  // de transition), pas un délai arbitraire.
+  function handleRefresh() {
+    startRefresh(() => {
+      router.refresh();
+    });
+  }
+
   return (
     <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-4 border-b border-border bg-surface px-4 sm:px-6">
       <button
@@ -32,6 +55,17 @@ export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
       </button>
 
       <div className="ml-auto flex items-center gap-4">
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          aria-label="Actualiser la page"
+          aria-busy={isRefreshing}
+          className="grid size-10 place-items-center rounded-lg border border-border text-muted-foreground transition-[background-color,transform] duration-150 ease-out-strong motion-safe:active:scale-[0.95] hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100"
+        >
+          <Icon name="refresh-cw" className={`size-5 ${isRefreshing ? "animate-spin" : ""}`} />
+        </button>
+
         <button
           type="button"
           aria-label="Notifications"
