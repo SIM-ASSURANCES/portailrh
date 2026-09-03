@@ -21,12 +21,27 @@ export interface StatCardProps {
   href?: string;
 }
 
-const toneClasses: Record<StatTone, string> = {
-  info: "bg-info-bg text-info",
-  success: "bg-success-bg text-success",
-  warning: "bg-warning-bg text-warning",
-  neutral: "bg-neutral-bg text-neutral",
-  danger: "bg-danger-bg text-danger",
+/** Pastille d'icône : aplat plein dans la teinte (jamais le fond pâle
+ * `*-bg`, réservé aux surfaces d'arrière-plan) — les cinq teintes
+ * sémantiques sont toutes assez soutenues pour rester lisibles en blanc
+ * dessus (elles sont déjà calibrées ≥4.5:1 en texte sur blanc, donc a
+ * fortiori en fond plein avec du blanc dessus). */
+const toneSolidClasses: Record<StatTone, string> = {
+  info: "bg-info",
+  success: "bg-success",
+  warning: "bg-warning",
+  neutral: "bg-neutral",
+  danger: "bg-danger",
+};
+
+/** Filet de tête (3px) en haut de la carte : premier signal de couleur,
+ * lisible avant même l'icône ou le chiffre. */
+const toneBarClasses: Record<StatTone, string> = {
+  info: "bg-info",
+  success: "bg-success",
+  warning: "bg-warning",
+  neutral: "bg-border",
+  danger: "bg-danger",
 };
 
 /** Halo de focus et bordure au survol assortis au `tone` — un indicateur
@@ -40,9 +55,11 @@ const toneAccentClasses: Record<StatTone, string> = {
 };
 
 /**
- * Carte d'indicateur du tableau de bord : pastille d'icône teintée, libellé,
- * valeur en gras et sous-texte optionnel. La couleur (`tone`) n'a qu'une
- * valeur visuelle — la choisir de façon cohérente entre indicateurs proches.
+ * Carte d'indicateur du tableau de bord. Hiérarchie délibérée : le chiffre
+ * est l'élément le plus affirmé de la carte (grand, très gras, chiffres
+ * tabulaires), le libellé reste discret au-dessus — jamais l'inverse. La
+ * couleur (`tone`) porte le sens à elle seule (filet de tête + pastille
+ * pleine), sans dépendre de l'icône pour se faire remarquer.
  *
  * Exemple (statique) :
  *   <StatCard icon="wallet" tone="success" label="Montant à régler" value="1 250 000 FCFA" />
@@ -54,9 +71,9 @@ const toneAccentClasses: Record<StatTone, string> = {
 export function StatCard({ icon, label, value, hint, tone = "info", href }: StatCardProps) {
   const iconPill = (
     <span
-      className={`mb-3 inline-grid size-10 place-items-center rounded-xl transition-transform duration-200 ease-out-strong ${
+      className={`mb-4 inline-grid size-11 place-items-center rounded-xl text-white shadow-[0_4px_10px_-2px_rgba(0,0,0,0.25)] transition-transform duration-200 ease-out-strong ${
         href ? "motion-safe:group-hover:scale-110" : ""
-      } ${toneClasses[tone]}`}
+      } ${toneSolidClasses[tone]}`}
     >
       <Icon name={icon} className="size-5" />
     </span>
@@ -65,9 +82,11 @@ export function StatCard({ icon, label, value, hint, tone = "info", href }: Stat
   const body = (
     <>
       {iconPill}
-      <p className="text-sm text-muted-foreground">{label}</p>
-      <p className="mt-1 text-xl font-bold text-foreground">{value}</p>
-      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
+      <p className="text-[13px] font-semibold text-muted-foreground">{label}</p>
+      <p className="mt-1.5 text-[28px] font-black leading-none tracking-tight text-foreground tabular-nums">
+        {value}
+      </p>
+      {hint ? <p className="mt-2 text-xs font-medium text-muted-foreground tabular-nums">{hint}</p> : null}
     </>
   );
 
@@ -75,10 +94,11 @@ export function StatCard({ icon, label, value, hint, tone = "info", href }: Stat
     return (
       <Link
         href={href}
-        className={`group block rounded-2xl border border-border bg-surface p-5 outline-offset-2 transition-[border-color,box-shadow,transform] duration-200 ease-out-strong hover:shadow-md motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 ${toneAccentClasses[tone]}`}
+        className={`group relative block overflow-hidden rounded-2xl border border-border bg-surface p-5 pt-6 shadow-elevated outline-offset-2 transition-[border-color,box-shadow,transform] duration-200 ease-out-strong hover:shadow-elevated-lg motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 ${toneAccentClasses[tone]}`}
       >
+        <span className={`absolute inset-x-0 top-0 h-[3px] ${toneBarClasses[tone]}`} aria-hidden="true" />
         {body}
-        <span className="mt-3 flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors duration-200 group-hover:text-foreground">
+        <span className="mt-3 flex items-center gap-1 text-xs font-semibold text-muted-foreground transition-colors duration-200 group-hover:text-primary">
           Voir le détail
           <Icon
             name="arrow-up-right"
@@ -89,5 +109,10 @@ export function StatCard({ icon, label, value, hint, tone = "info", href }: Stat
     );
   }
 
-  return <div className="rounded-2xl border border-border bg-surface p-5">{body}</div>;
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-border bg-surface p-5 pt-6 shadow-elevated">
+      <span className={`absolute inset-x-0 top-0 h-[3px] ${toneBarClasses[tone]}`} aria-hidden="true" />
+      {body}
+    </div>
+  );
 }

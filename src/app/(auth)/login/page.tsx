@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { AuthError } from "next-auth";
 
 import { Icon } from "@/components/icons";
-import { Input } from "@/components/ui";
+import { BrandBackdrop, Input } from "@/components/ui";
 import { signIn } from "@/lib/auth";
 
 import { LoginSubmitButton } from "./LoginSubmitButton";
@@ -35,19 +35,19 @@ export default async function LoginPage({
   const { error, callbackUrl } = await searchParams;
 
   return (
-    <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-app-bg px-4 py-12">
-      {/* Décor discret : simple accent de la couleur institutionnelle, jamais
-          une nouvelle couleur — dérivé de --color-primary via color-mix,
-          purement décoratif (aucun contenu, aria-hidden). */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_15%,color-mix(in_srgb,var(--color-primary)_10%,transparent),transparent_55%),radial-gradient(circle_at_85%_85%,color-mix(in_srgb,var(--color-primary)_6%,transparent),transparent_50%)]"
-      />
+    <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-primary px-4 py-12">
+      {/* Traitement de marque riche (page de connexion = première
+          impression, le seul endroit de l'application qui se le permet —
+          voir CLAUDE.md "Logo et fond de marque"). Le bandeau du logo dans
+          la carte ci-dessous reste, lui, en aplat uni : jamais le motif
+          directement derrière le logo, pour ne jamais nuire à sa
+          lisibilité (règle de la charte graphique). */}
+      <BrandBackdrop variant="hero" className="absolute inset-0 h-full w-full" />
 
-      <div className="animate-fade-in-up relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+      <div className="animate-fade-in-up relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-surface shadow-elevated-lg">
         <div className="flex items-center justify-center bg-primary px-6 py-5">
           <Image
-            src="/logo-sim-blanc.webp"
+            src="/logo-sim-blanc.svg"
             alt="SIM Assurances"
             width={190}
             height={28}

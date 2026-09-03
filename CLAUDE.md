@@ -4686,6 +4686,465 @@ indicateurs + solde de caisse). Aucune régression trouvée — la fusion avec
 `origin/thierry-kouame` et les corrections récentes n'ont rien cassé côté
 export.
 
+## Console admin — création de rôle et modification du rôle d'un utilisateur
+
+**Statut : terminé.** Deux capacités manquaient à la console `/admin` pour
+une vraie administration : les rôles étaient limités aux 5 posés par le
+seed (Admin/Collaborateur/Finance/DG/RH), et le rôle d'un utilisateur créé
+restait figé (seule sa désactivation était possible). Besoin concret à
+l'origine : une même personne peut cumuler Trésorerie (Finance) et
+Pointage RH — il faut alors un rôle combiné assignable à son unique
+compte, sans passer par deux comptes séparés.
+
+### Créer un rôle (`admin/roles`)
+
+`RoleCreateForm.tsx` (Client, `useActionState`, même pattern que
+`UserCreateForm.tsx`) au-dessus de la liste des rôles existants — nom +
+description facultative. `creerRoleAction` (`admin/roles/actions.ts`) :
+`isAdmin()`, unicité du nom revérifiée côté serveur (en plus de la
+contrainte `@unique` de `Role.name`, pour un message d'erreur de champ
+plutôt qu'une exception Prisma brute), création avec **aucune permission
+accordée** — le nouveau rôle apparaît immédiatement dans la liste
+au-dessous, toutes les cases décochées, prêt à être configuré exactement
+comme les 5 rôles du seed (même `PermissionToggle`, aucune distinction de
+traitement entre un rôle du seed et un rôle créé après coup). `HistoriqueEntry`
+(`entity: "Role"`, `action: "CREATE"`), `revalidatePath("/admin/roles")`.
+
+**Pas de suppression de rôle** — cohérent avec le principe déjà en place
+pour Catégorie/Objet/Module/User (soft-delete ou aucune suppression) : un
+rôle créé par erreur reste en base, simplement inutilisé si aucun
+utilisateur ne lui est assigné. Aucune fonctionnalité de suppression
+demandée ni construite ici.
+
+### Modifier le rôle d'un utilisateur (`admin/users`)
+
+La colonne "Rôle" du tableau des comptes (`UsersTable.tsx`) était un simple
+texte (`u.role.name`) — remplacée par `UserRoleSelect.tsx`, un `<select>`
+inline qui applique le changement immédiatement au `onChange` (même
+principe d'action directe que `PermissionToggle`/`UserActiveToggle`, pas de
+bouton "Enregistrer" séparé). `modifierRoleUtilisateurAction`
+(`admin/users/actions.ts`) : `isAdmin()`, vérifie que l'utilisateur et le
+nouveau rôle existent réellement (jamais un `roleId` de formulaire accepté
+tel quel), `User.roleId` mis à jour, `HistoriqueEntry` (`entity: "User"`,
+`action: "CHANGE_ROLE"`, détail avec l'ancien et le nouveau nom de rôle —
+le mécanisme générique de traçabilité admin existait déjà, réutilisé sans
+modification). `revalidatePath` sur `/admin/users` **et** `/` — même
+raison que `toggleRolePermissionAction` : un changement de rôle peut
+changer tout ce que l'utilisateur voit (sidebar, dashboard, modules
+accessibles), pas seulement la ligne du tableau admin.
+
+**Select délibérément contrôlé (`value`, pas `defaultValue`)** — piège déjà
+documenté à plusieurs reprises dans ce fichier pour le composant `Select`
+partagé, mais dans l'autre sens ici : `Select.tsx` n'ajoute son
+`defaultValue` interne **que si** `props.value` est `undefined` (voir son
+code), donc passer `value` explicitement est sûr et ne produit aucun
+conflit — nécessaire précisément parce qu'en cas d'échec serveur (rôle
+introuvable, session non admin rejouée...), la sélection visuelle doit
+revenir à l'ancien rôle plutôt que rester sur un choix qui n'a en réalité
+pas été appliqué en base ; un select non contrôlé ne l'aurait pas permis.
+
+**Aucun garde-fou contre l'auto-modification** — un Admin changeant son
+propre rôle perdrait aussitôt son accès à `/admin` (`isAdmin()` étant un
+bypass strict sur `role.name === "Admin"`). Choix délibéré de rester
+cohérent avec `toggleUserActiveAction`, qui ne protège pas non plus contre
+l'auto-désactivation : aucune des deux actions admin existantes n'a de
+garde-fou sur `userId === session.user.id`, je n'en ai donc pas ajouté un
+seul pour celle-ci. Point à surveiller si ce cas se présente en pratique.
+
+### Vérifié explicitement — vrai parcours navigateur
+
+Chromium headless (Playwright, non ajouté au projet), reproduisant
+exactement le besoin métier motivant cette tâche :
+
+1. Admin crée le rôle "Finance / RH", coche les 8 permissions de Finance
+   (Trésorerie) **et** les 8 permissions de RH (Pointage) — persistance
+   confirmée après rechargement de la page (14 permissions au total,
+   `voir_reporting` étant distinct entre Trésorerie et Pointage RH : les
+   deux cases correspondantes, bien que de libellé proche, sont
+   indépendantes et toutes deux cochées sans se marcher dessus).
+2. Rôle de `rh@simassurances.test` changé vers "Finance / RH" depuis
+   `admin/users` — persistant après rechargement.
+3. Reconnexion avec `rh@simassurances.test` : la sidebar affiche
+   désormais **simultanément** la branche "Demande d'Achat" (Trésorerie,
+   nouvelle) et "Pointage de Présence" (déjà présente avant).
+4. **Preuve fonctionnelle réelle, pas seulement la navigation** : une
+   demande de test créée par le Collaborateur a été **effectivement
+   validée totalement par `rh@simassurances.test`** (bouton "Valider
+   totalement" → "Confirmer la validation totale", statut de la demande
+   réellement changé en base) — confirme que `treso.valider_demande`,
+   accordé uniquement via ce nouveau rôle combiné, passe bien la
+   vérification côté serveur de `validerTotalementAction`, pas seulement
+   l'affichage du bouton. Côté Pointage, `/pointage/pointer` reste
+   accessible et fonctionnel sans régression.
+5. **Défense en profondeur** : la requête réseau réelle des deux nouvelles
+   Server Actions (`creerRoleAction`, `modifierRoleUtilisateurAction`,
+   capturée pendant l'exécution admin réelle) rejouée à l'identique avec
+   les cookies de session de `collaborateur@simassurances.test` (non-admin)
+   → réponse contenant "Action non autorisée." dans les deux cas, et
+   aucun rôle parasite créé en double par la tentative de rejeu.
+
+`npx tsc --noEmit` et `npx eslint .` : **zéro erreur ni avertissement
+introduits par ce travail** (vérifié explicitement en comparant avec/sans
+les fichiers de cette tâche via `git stash`). En revanche, le projet dans
+son état actuel a **5 erreurs `tsc` et 6 erreurs `eslint` préexistantes**,
+toutes dans le Module Pointage RH (`pointage/actions.ts`,
+`pointage/rh/horaires/actions.ts`, `pointage/rh/pointages/page.tsx`,
+`pointage/rh/presence/page.tsx`, `pointage/rh/presence/PresenceTabs.tsx`,
+`src/lib/pointageReporting.ts`) — apparues via une seconde fusion
+`origin/thierry-kouame` (`d943a7e`) et un commit de synchronisation de
+schéma (`5685730`, ajout local d'`ipAddress`) intervenus dans l'historique
+sans lien avec cette tâche. Hors périmètre (logique métier Pointage RH, à
+la charge du binôme qui la maintient — voir "Intégration du Module
+Pointage RH"), signalé ici pour que `tsc`/`eslint` project-wide ne soient
+pas supposés propres tant que ces fichiers n'ont pas été corrigés par
+ailleurs.
+
+**Nettoyage** : demande de test et rôle parasite (créé uniquement pour
+capturer la requête réseau de l'étape 5) supprimés directement en base
+(aucune fonctionnalité de suppression de demande ni de rôle n'existe dans
+l'application). `rh@simassurances.test` restauré à son rôle **RH**
+d'origine après vérification — un compte de seed utilisé dans de nombreux
+autres parcours de ce fichier ne doit pas rester dans un état non
+standard. Le rôle **"Finance / RH" lui-même est conservé** (14 permissions)
+plutôt que supprimé : il correspond au besoin métier réel décrit en
+introduction, pas seulement à un scénario de test — à réassigner
+manuellement à un vrai compte le jour où ce besoin se concrétise. Serveur
+`next dev` arrêté après vérification.
+
+## Rehaussement visuel — dashboards, typographie, couleur (post-polish)
+
+**Statut : terminé.** Le premier passage de polish (transitions, cohérence
+des tokens — voir "Polish visuel global" plus haut) avait corrigé les
+incohérences mais laissait un rendu jugé **"fade"** : toute l'information
+portait sensiblement le même poids visuel, les couleurs de la charte
+n'étaient exploitées qu'en aplats très pâles, la police institutionnelle
+(Montserrat, 6 graisses chargées depuis le début — voir "Typographie")
+restait sous-utilisée. Ce ticket retravaille en profondeur les 3
+dashboards, l'échelle typographique et l'usage de la couleur, **sans
+toucher à aucune logique métier, Server Action ni requête de données** —
+uniquement des classes Tailwind et les tokens `globals.css`.
+
+Skills `frontend-design` et `ui-ux-pro-max` consultées en profondeur avant
+codage (pas seulement leur existence) : plan de design formalisé avant
+d'écrire une ligne de CSS (palette/typo/layout/principes), confronté
+explicitement aux "tells" génériques documentés par `frontend-design`
+(carte-kit SaaS avec ombre grise uniforme, libellés tout-caps répétés,
+police mono pour les données, dégradés décoratifs gratuits) avant de
+retenir chaque choix — voir le détail des arbitrages ci-dessous.
+
+### Principe directeur
+
+**Rester strictement dans la famille SIM Assurances (bleu + Montserrat)
+tout en l'exploitant avec plus d'assurance** — jamais une palette ou une
+police étrangère à la charte. La distinction ne vient donc pas d'un choix
+de identité visuelle différente, mais de la **discipline typographique**
+(vraie hiérarchie de graisses), de la **confiance colorimétrique** (aplats
+pleins plutôt que teintes pâles pour ce qui doit attirer l'œil) et d'une
+**"encre" de marque** (texte teinté bleu plutôt que gris Tailwind
+générique) appliquée à toute l'application.
+
+### Typographie — échelle établie
+
+Aucune nouvelle graisse chargée (les 6 étaient déjà là, voir
+`src/app/layout.tsx`) : le seul changement est la **discipline d'usage**,
+désormais cohérente à travers tout le module :
+
+| Rôle | Taille | Graisse | Exemple |
+|---|---|---|---|
+| Titre de page (`PageHeader` h1) | 28–30px | `font-black` (900) | "Tableau de bord Finance" |
+| Chiffre héros (solde de caisse) | 40–48px | `font-black` (900) | "-48 000 FCFA" |
+| Valeur de StatCard | 28px | `font-black` (900) | "12" / "1 250 000 FCFA" |
+| Titre de section (h2) | 20px | `font-black` (900) | "À traiter" |
+| Montant principal (détail demande) | 24px | `font-black` (900) | "Montant : 400 000 FCFA" |
+| Montant secondaire (Montant validé, régularisation) | 16–20px | `font-bold` (700) | |
+| Libellé de StatCard / `<dt>` | 12–13px | `font-semibold` (600) | "Montant décaissé" |
+| Bouton | 14px | `font-semibold` (600) | (était `font-medium`) |
+| Corps de texte | 14–15px | `font-normal`/`font-medium` | inchangé |
+
+**Règle simple à reproduire** : tout montant financier qui EST
+l'information (pas une donnée annexe dans une phrase) reçoit `font-black`
+ou `font-bold` + `tabular-nums` + une taille nettement supérieure au texte
+qui l'entoure — jamais le même poids que son libellé. `tabular-nums`
+(utilitaire Tailwind natif, `font-variant-numeric: tabular-nums`) est
+systématique sur tout montant/chiffre affiché en évidence : les chiffres
+s'alignent verticalement entre eux, rendu plus "financier"/précis.
+
+**Volontairement évité** : les libellés de `StatCard` restent en casse
+normale (`font-semibold`, pas de majuscules) — le "tout en majuscules"
+répété sur chaque carte est un des tells génériques documentés par
+`frontend-design` (accessoire à ne pas porter partout). Seul le libellé du
+bandeau "Solde de caisse actuel" (le seul moment vraiment héroïque de
+l'écran) reste en petites capitales trackées — exception délibérée pour UN
+seul élément, pas une convention généralisée.
+
+### Couleur — principes
+
+- **`--foreground` (encre du portail)** devient `#0a2140` (bleu très
+  sombre dérivé de sim-blue-dark) au lieu de `#0f172a` (gris ardoise
+  générique) — tout le texte courant de l'application porte ainsi un peu
+  de l'identité de marque. `--color-border`/`--color-muted`/`--color-app-bg`
+  reçoivent le même léger virage bleu. `--color-muted-foreground` n'est
+  **volontairement pas retouché** : sa valeur est calibrée précisément
+  pour le contraste AA du texte secondaire, aucune raison de la retoucher
+  pour une nuance de "température" qui ne s'y voit presque pas.
+- **Pastilles d'icône : aplat plein, jamais le fond pâle `*-bg`** — les
+  cinq teintes sémantiques (`info`/`success`/`warning`/`neutral`/`danger`)
+  sont déjà calibrées ≥4.5:1 en texte sur blanc (voir "Palette officielle
+  SIM Assurances" plus haut), donc a fortiori assez soutenues pour porter
+  une icône blanche en fond plein — bien plus présent qu'une pastille
+  pâle avec une icône à peine teintée. Le fond pâle `*-bg` reste réservé
+  aux surfaces d'arrière-plan (badges, bandeaux d'alerte).
+- **Le filet de tête de `StatCard`** (3px en haut de la carte) porte la
+  couleur avant même l'icône ou le chiffre — premier signal visuel. Reste
+  neutre (`bg-border`, quasi invisible) quand la carte n'a rien
+  d'actionnable (`toneSiActif`, déjà en place depuis la Phase G) : la
+  couleur ne s'allume que si elle a un sens, jamais par défaut.
+- **Le bandeau "Solde de caisse"** (dashboard Finance) est désormais un
+  vrai moment fort : dégradé plein `sim-blue-light → sim-blue-dark →
+  marine profond`, chiffre en blanc à 40-48px, deux halos radiaux très
+  discrets (`blur-2xl`/`blur-3xl`, opacité ≤20%) pour la profondeur — la
+  seule décoration franche de tout le rehaussement, délibérément réservée
+  au chiffre le plus important de l'écran (« spend your boldness in one
+  place », pas une carte parmi d'autres).
+- **Icônes propres par module** sur le dashboard général (`wallet` pour
+  Trésorerie, `clock` pour Pointage RH, `shield-check` pour
+  Administration — mêmes symboles que leurs branches de sidebar, voir
+  `nav.ts`) plutôt qu'une flèche générique répétée sur chaque carte.
+
+### Ombres et rayons — un langage cohérent
+
+- **`.shadow-elevated` / `.shadow-elevated-lg`** (`globals.css`) : deux
+  paliers d'ombre teintée bleu primaire (`rgba(0, 75, 156, ...)`) plutôt
+  que le gris générique `shadow-sm`/`shadow-md` par défaut de Tailwind —
+  réservées aux surfaces de contenu (`StatCard`, `Card`, cartes de
+  module), jamais aux boutons/inputs. `Card.tsx` et `StatCard.tsx`
+  l'utilisent déjà ; à reprendre pour tout nouveau panneau/carte.
+- **Rayons** : `rounded-2xl` pour les cartes/panneaux (déjà la convention
+  de `Card`/`StatCard`, non retouchée), `rounded-lg` pour les contrôles
+  interactifs (`Button`/`Input`/`Select`/`Textarea`, remontés depuis
+  `rounded-md` pour un peu plus de présence), `rounded-full` pour les
+  badges/pastilles. Ne pas introduire un troisième rayon ailleurs sans
+  raison — ce système à 3 paliers doit rester la seule référence.
+
+### Accent de section (petit trait vertical coloré)
+
+Motif répété devant chaque titre de section (`h2`) à travers les 3
+dashboards et le formulaire de demande : un trait vertical de 4-5px
+(`bg-primary` en général, `bg-warning` pour une section "À traiter" — la
+couleur porte un sens, informationnel vs actionnable) juste avant le
+texte. Dispositif structurel low-key (marque le début d'une section,
+cohérent avec toutes les sections du même écran) plutôt que décoratif —
+à reprendre pour tout nouveau titre de section, jamais pour un titre de
+page (`PageHeader`, qui n'en a pas besoin, déjà assez affirmé par sa
+taille).
+
+### Ce qui n'a volontairement pas été retouché
+
+- **`DataTable`** — aucune modification directe : bénéficie automatiquement
+  de la cascade des tokens (`border-border` reteinté, etc.), mais son
+  système de rendu (table desktop / cartes mobile, tri, `EmptyState`) n'a
+  pas été retravaillé pour cette tâche. À reprendre séparément si un
+  rendu "fade" y est signalé spécifiquement.
+- **`Badge`** — non retouché : déjà correctement construit (aplat pâle +
+  bordure + texte teinté), bénéficie de la cascade de tokens sans besoin
+  de changement structurel.
+- **Aucune nouvelle animation** — le motif d'entrée déjà en place
+  (`.stat-card-enter`, `.animate-fade-in-up`) reste inchangé ; le
+  rehaussement porte sur la présence statique des éléments, pas sur le
+  mouvement.
+
+### Auto-critique honnête
+
+Dans les contraintes données (rester Montserrat + famille de bleus SIM,
+aucune police ni palette étrangère), une différenciation "signature" au
+sens plein du terme (comme un site vitrine sans contrainte de marque)
+n'est pas atteignable — ce rehaussement est un travail d'**intensité**
+(hiérarchie, confiance colorimétrique, poids typographique) plutôt que de
+**réinvention**. Le risque générique le plus réel identifié en cours de
+travail : une grille de `StatCard` reste structurellement un "carte-kit"
+(inhérent au contenu — la section 12/14 du cahier des charges exige
+littéralement une grille d'indicateurs cliquables) ; désamorcé par une
+différenciation réelle entre les cartes (filet de tête coloré, pastille
+pleine, un seul élément vraiment héroïque par écran) plutôt que des cartes
+identiques avec juste une icône pâle différente.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (comparé
+explicitement avec/sans les fichiers de cette tâche via `git stash` — les
+seules erreurs restantes appartiennent au Module Pointage RH, déjà
+signalées comme préexistantes et hors périmètre ailleurs dans ce fichier).
+
+Captures d'écran avant/après des 3 dashboards et du formulaire de nouvelle
+demande, prises par un vrai navigateur Chromium headless (Playwright, non
+ajouté au projet) — état "avant" obtenu en mettant temporairement de côté
+les modifications (`git stash`) le temps de la capture, jamais en
+recréant l'ancien rendu de mémoire. Vérifié explicitement que le système
+de teinte (`toneSiActif`) reste lisible en pratique : une demande de test
+laissée `EN_ATTENTE_VALIDATION` fait ressortir sa carte en orange plein
+contre les 5 autres cartes neutres du dashboard Finance, confirmant que la
+couleur guide bien l'attention plutôt que de décorer uniformément.
+
+Parcours fonctionnel réel rejoué après le rehaussement (collaborateur crée
+une demande → apparition dans "Mes demandes" → Finance ouvre, valide
+totalement) sans erreur console, confirmant qu'aucune Server Action ni
+logique de permission n'a été affectée par ces changements purement
+visuels. Données de test nettoyées après chaque vérification ; la demande
+réelle pré-existante (`DEM-2026-000001`) confirmée intacte. Serveur
+`next dev` arrêté après vérification.
+
+## Logo vectoriel et fond de marque
+
+**Statut : terminé.** Le seul asset logo du projet était
+`public/logo-sim-blanc.webp` : une image bitmap, floue à l'agrandissement,
+en une seule version (blanche). Ce ticket le remplace par de vrais assets
+vectoriels fidèles à la charte graphique officielle SIM Assurances, et
+introduit un composant de fond de marque réutilisable inspiré de la page
+de couverture de cette même charte — sans jamais inventer un nouveau logo
+ni une nouvelle identité visuelle.
+
+### Comment le logo a été vectorisé
+
+Aucun fichier source vectoriel n'existait pour le logo — seul le bitmap
+blanc. Pour garantir une fidélité géométrique réelle (pas une
+réinterprétation à l'œil, qui aurait risqué de produire un logo légèrement
+différent), le contour a été **tracé automatiquement** à partir du bitmap
+existant (`potrace`, exécuté ponctuellement hors du projet — jamais ajouté
+aux dépendances) plutôt que redessiné à la main :
+
+1. Canal alpha du WebP extrait et suréchantillonné (×6, filtre Lanczos)
+   pour donner à `potrace` un contour net à partir d'un bitmap
+   originellement flou.
+2. Tracé automatique → un chemin vectoriel unique combinant l'icône
+   (triangle stylisé) et le texte ("SIM ASSURANCES" /
+   "SOCIÉTÉ IVOIRIENNE DE MICRO-ASSURANCES"), garanti fidèle puisque
+   dérivé directement des pixels réels du logo existant.
+3. Les 3 sous-tracés de l'icône (une forme principale + deux petits
+   triangles latéraux, géométriquement disjoints dans le tracé — voir
+   ci-dessous) **nettoyés en polygones à arêtes droites** (Douglas-Peucker
+   sur les courbes de Bézier aplaties) : élimine le léger tremblement dû à
+   l'anti-crénelage du bitmap source, sans changer la silhouette. Le texte,
+   lui, garde les courbes de Bézier tracées telles quelles (les lettres ont
+   de vraies courbes, contrairement à l'icône).
+4. Recomposé en deux fichiers finaux, `viewBox="0 0 635 94"` (proportions
+   exactes de l'original) :
+   - **`public/logo-sim-couleur.svg`** — pour fond clair. Icône bicolore +
+     texte `#004B9C`.
+   - **`public/logo-sim-blanc.svg`** — pour fond bleu foncé (usage actuel
+     du header/sidebar). Tout en blanc, remplace directement le webp.
+
+**Interprétation à confirmer, signalée explicitement** : le bitmap source
+est **monochrome** (blanc uniforme) — aucune limite de couleur n'y est
+visible entre les deux tons officiels (`#004B9C`/`#51AEE2`). Le tracé
+révèle que l'icône se décompose en **3 formes géométriquement disjointes**
+(une forme principale — la silhouette "montagne" avec son échancrure — et
+deux petits triangles séparés de part et d'autre) : la répartition
+bicolore retenue pour `logo-sim-couleur.svg` attribue `#004B9C` à la forme
+principale (dominante) et `#51AEE2` aux deux petits triangles (accent) —
+un choix motivé par la structure réelle du tracé, pas arbitraire, mais
+**non vérifié contre le fichier source couleur officiel** (non disponible
+dans ce projet). À confirmer/ajuster si ce fichier existe quelque part
+chez le maître d'ouvrage.
+
+### Icône seule (sidebar réduite)
+
+`LogoMark` (fonction interne à `Sidebar.tsx`) affichait jusqu'ici un
+triangle générique de substitution (`<path d="m12 3 10 18H2z"/>`), sans
+rapport avec le vrai logo. Remplacé par la géométrie réelle de l'icône
+(les mêmes 3 polygones nettoyés ci-dessus, combinés), en `fill="currentColor"`
+pour continuer à suivre la classe `text-primary` déjà appliquée par
+l'appelant — améliore la fidélité de la sidebar réduite au passage, pas
+seulement demandé explicitement mais cohérent avec l'esprit de la tâche
+("améliorer la qualité et l'usage du logo existant").
+
+### `BrandBackdrop` — fond de marque réutilisable
+
+`src/components/ui/BrandBackdrop.tsx` : dégradé diagonal
+`sim-blue-light → sim-blue-dark` (135°) avec des triangles superposés en
+transparence, **inspiré de la page de couverture de la charte graphique**
+(dégradé + formes triangulaires géométriques agrandies en arrière-plan
+décoratif) — jamais un nouveau design. Les triangles ne sont pas des
+formes inventées au hasard : leur angle au sommet (~62°) reproduit celui
+de la silhouette englobante de l'icône du logo elle-même (rapport
+base/hauteur similaire), simplement agrandi et décliné en plusieurs
+tailles/opacités pour la profondeur — cohérent avec la consigne "le même
+motif géométrique que le logo".
+
+- `variant="hero"` — traitement riche, utilisé **uniquement sur la page de
+  connexion** (`/login`, première impression, le seul endroit qui s'en
+  permet un traitement marqué — voir "Priorité 1" du polish visuel
+  précédent : "spend your boldness in one place").
+- `variant="subtle"` — prévu pour un usage quotidien très atténué (mêmes
+  formes, opacités divisées par ~2), **non utilisé actuellement** — voir
+  "Décision délibérément non appliquée" ci-dessous.
+
+### Décision délibérément non appliquée : sidebar / dashboard général
+
+La consigne proposait *"éventuellement"* un traitement `variant="subtle"`
+sur l'en-tête du dashboard général ou de la sidebar. **Choix : ne pas
+l'appliquer**, pour deux raisons cumulatives :
+
+1. **Conflit avec la protection du logo** — le bandeau `bg-primary` de la
+   sidebar contient directement le logo blanc. Y poser le motif reviendrait
+   à enfreindre la règle de la charte elle-même ("ne jamais poser le logo
+   sur un fond visuel qui perturbe sa lisibilité") à l'endroit précis censé
+   la respecter le mieux.
+2. **Écran d'usage quotidien** — sidebar et dashboard général sont vus des
+   dizaines de fois par jour par les mêmes utilisateurs (contrairement à
+   `/login`, un point de passage bref et peu fréquent). Le rehaussement
+   visuel précédent (voir "Rehaussement visuel — dashboards...") a
+   délibérément construit ces écrans sur des neutres bleu-teintés sobres ;
+   y superposer un dégradé de marque, même atténué, aurait réintroduit de
+   la charge visuelle exactement là où la consigne elle-même met en garde
+   ("ne pas nuire à la lisibilité du contenu au quotidien").
+
+`variant="subtle"` reste implémenté et prêt à l'emploi si un besoin précis
+apparaît (ex: un futur écran d'accueil ponctuel), mais n'est appelé nulle
+part dans l'application aujourd'hui.
+
+### Vérifié explicitement — règles d'usage de la charte (Tâche 3)
+
+- **Espace protégé** : bandeau logo de la sidebar (`h-16`, `px-5`) et de la
+  carte de connexion (`px-6 py-5`) laissent ≥18px de marge verticale
+  autour du logo (hauteur totale 28px) — supérieur à la hauteur du "S" du
+  logotype (~15px, le mot-symbole "SIM ASSURANCES" n'occupant que la
+  fraction haute du bloc logo, la légende institutionnelle en dessous).
+  Aucun élément de l'interface ne touche le logo sur les deux écrans où il
+  apparaît.
+- **Logo couleur jamais sur un fond qui nuit à sa lisibilité** :
+  `logo-sim-couleur.svg` existe mais **n'est actuellement utilisé nulle
+  part** dans l'application (seule la version blanche l'est, sur le bandeau
+  `bg-primary` plein de la sidebar/connexion) — risque nul aujourd'hui. Le
+  fond de marque (`BrandBackdrop`) n'est lui-même jamais placé directement
+  derrière le logo (toujours derrière la carte/le bandeau qui l'encadre,
+  jamais dans le même calque).
+- **Aucune déformation ni rotation** : les deux logos sont posés via
+  `next/image` avec `width`/`height` respectant le ratio exact du
+  `viewBox` (635:94), aucune classe `rotate-*` ni `scale-*` non uniforme
+  appliquée nulle part.
+- **`tsc --noEmit`/`eslint`** : aucune erreur nouvelle (mêmes 9
+  avertissements/erreurs préexistants du Module Pointage RH, déjà
+  documentés plus haut, hors périmètre).
+- **Captures avant/après** (Chromium headless, Playwright, non ajouté au
+  projet) : page de connexion desktop et mobile (375px) — dégradé +
+  triangles bien visibles en arrière-plan, carte de connexion et formulaire
+  restent parfaitement lisibles aux deux tailles, aucun élément du
+  formulaire chevauché. Sidebar déployée et réduite (nouvelle icône seule)
+  vérifiées après une vraie connexion.
+- **Parcours fonctionnel réel** : connexion collaborateur → navigation vers
+  "Mon tableau de bord" sans erreur console ; `GET /logo-sim-blanc.svg` et
+  `GET /logo-sim-couleur.svg` confirmés servis en 200. Aucune Server Action
+  ni logique métier touchée par ce ticket (uniquement des assets statiques
+  et un composant purement décoratif).
+
+**Nettoyage** : `public/logo-sim-blanc.webp` supprimé (plus aucune
+référence dans le code après le remplacement, confirmé par recherche
+explicite). Le commentaire de `ReceiptDocument.tsx` (Ticket 9) expliquant
+l'absence de logo image dans le reçu PDF mis à jour en conséquence : le
+blocage n'est plus "format WebP non supporté" mais "`@react-pdf/renderer`
+ne rend pas nativement un SVG arbitraire" — le choix du nom en texte stylé
+reste inchangé pour ce document, non repris dans ce ticket.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

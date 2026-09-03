@@ -27,7 +27,7 @@ export default async function AdminUsersPage() {
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-foreground">Comptes existants</h2>
-        <UsersTable users={users} />
+        <UsersTable users={users} roles={roles} />
       </section>
     </div>
   );

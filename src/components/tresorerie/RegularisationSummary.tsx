@@ -30,42 +30,49 @@ export async function RegularisationSummary({
   const ecart = decaisse - depensesDeclarees - retoursRecus;
 
   return (
-    <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
-      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-      <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div className="space-y-5 rounded-2xl border border-border bg-surface p-5 shadow-elevated sm:p-6">
+      <h2 className="flex items-center gap-2 text-base font-bold text-foreground">
+        <span className="h-4 w-1 rounded-full bg-primary" aria-hidden="true" />
+        {title}
+      </h2>
+      <dl className="grid grid-cols-1 gap-5 sm:grid-cols-2">
         <div>
-          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Montant décaissé
           </dt>
-          <dd className="text-sm font-semibold text-foreground">
-            {decaisse.toLocaleString("fr-FR")} FCFA
+          <dd className="mt-1 text-xl font-black tracking-tight text-foreground tabular-nums">
+            {decaisse.toLocaleString("fr-FR")} <span className="text-sm font-bold text-muted-foreground">FCFA</span>
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Dépenses déclarées
           </dt>
-          <dd className="text-sm font-semibold text-foreground">
-            {depensesDeclarees.toLocaleString("fr-FR")} FCFA
+          <dd className="mt-1 text-xl font-black tracking-tight text-foreground tabular-nums">
+            {depensesDeclarees.toLocaleString("fr-FR")}{" "}
+            <span className="text-sm font-bold text-muted-foreground">FCFA</span>
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Retours reçus
           </dt>
-          <dd className="text-sm font-semibold text-foreground">
-            {retoursRecus.toLocaleString("fr-FR")} FCFA
+          <dd className="mt-1 text-xl font-black tracking-tight text-foreground tabular-nums">
+            {retoursRecus.toLocaleString("fr-FR")} <span className="text-sm font-bold text-muted-foreground">FCFA</span>
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Écart</dt>
-          <dd className={`text-sm font-semibold ${ecart === 0 ? "text-success" : "text-warning"}`}>
-            {ecart.toLocaleString("fr-FR")} FCFA
+          <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Écart</dt>
+          <dd
+            className={`mt-1 text-xl font-black tracking-tight tabular-nums ${ecart === 0 ? "text-success" : "text-warning"}`}
+          >
+            {ecart.toLocaleString("fr-FR")} <span className="text-sm font-bold opacity-70">FCFA</span>
           </dd>
         </div>
       </dl>
-      <p className="text-xs text-muted-foreground">
-        Montant validé de la demande : {montantValide.toLocaleString("fr-FR")} FCFA.
+      <p className="border-t border-border pt-3 text-xs font-medium text-muted-foreground">
+        Montant validé de la demande :{" "}
+        <span className="font-bold text-foreground">{montantValide.toLocaleString("fr-FR")} FCFA</span>.
       </p>
     </div>
   );

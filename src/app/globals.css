@@ -2,7 +2,12 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #0f172a;
+  /* "Encre" du portail : bleu très sombre dérivé de sim-blue-dark plutôt
+     qu'un gris ardoise générique (#0f172a) — tout le texte courant (titres,
+     corps, montants) porte ainsi un peu de l'identité de marque au lieu de
+     lire comme un gris Tailwind par défaut. Contraste sur blanc > 15:1,
+     très loin au-dessus du seuil AA (4.5:1) : aucune perte d'accessibilité. */
+  --foreground: #0a2140;
 
   /* Palette "design system" du portail : sobre, professionnelle, cohérente
      avec une application interne d'assurance. Ne pas coder de couleurs en
@@ -23,8 +28,14 @@
   --color-sim-orange: #f16622; /* État "Accident" / avertissement */
 
   --color-surface: #ffffff;
-  --color-border: #e2e8f0;
-  --color-muted: #f1f5f9;
+  /* Bordures et fonds neutres légèrement teintés bleu (au lieu du gris
+     ardoise neutre) pour rester cohérent avec --foreground ci-dessus —
+     même principe de "température" de marque appliqué aux surfaces, pas
+     seulement au texte. --color-muted-foreground reste inchangé : sa
+     valeur est calibrée précisément pour le contraste AA sur texte
+     secondaire, pas de raison de la retoucher. */
+  --color-border: #dbe6f2;
+  --color-muted: #eef4fb;
   --color-muted-foreground: #64748b;
 
   /* primary = sim-blue-dark, utilisable tel quel : 8.45:1 avec du texte
@@ -77,9 +88,9 @@
   /* --- Coquille applicative (sidebar + topbar + fond de contenu) ---
      Reproduit la mise en page de référence : sidebar blanche à en-tête
      bleu, fond de contenu gris clair, cartes blanches. */
-  --color-app-bg: #f1f5f9;
+  --color-app-bg: #eef4fb;
   --color-sidebar: #ffffff;
-  --color-sidebar-border: #e2e8f0;
+  --color-sidebar-border: #dbe6f2;
   --color-sidebar-section: #94a3b8;
 
   /* --- Courbes d'accélération (polish visuel global) ---
@@ -156,6 +167,23 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Ombres "élevées" teintées bleu primaire (au lieu du gris générique
+   shadow-sm/shadow-md par défaut) : donnent du relief aux cartes/panneaux
+   de façon cohérente avec l'identité SIM Assurances plutôt qu'une ombre
+   neutre indifférenciée — réservées aux surfaces de contenu (StatCard,
+   Card, cartes de module), jamais aux boutons/inputs. Deux paliers : repos
+   (.shadow-elevated) et emphase/survol (.shadow-elevated-lg). */
+.shadow-elevated {
+  box-shadow:
+    0 1px 2px rgba(0, 75, 156, 0.06),
+    0 10px 24px -8px rgba(0, 75, 156, 0.16);
+}
+.shadow-elevated-lg {
+  box-shadow:
+    0 2px 4px rgba(0, 75, 156, 0.08),
+    0 18px 36px -10px rgba(0, 75, 156, 0.22);
 }
 
 /* Entrée en fondu/léger décalage des cartes cliquables du dashboard Finance

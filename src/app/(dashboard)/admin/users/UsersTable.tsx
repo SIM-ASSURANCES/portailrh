@@ -3,13 +3,14 @@
 import { Badge, DataTable } from "@/components/ui";
 
 import { UserActiveToggle } from "./UserActiveToggle";
+import { UserRoleSelect } from "./UserRoleSelect";
 
 interface UserRow {
   id: string;
   fullName: string;
   email: string;
   isActive: boolean;
-  role: { name: string };
+  role: { id: string; name: string };
 }
 
 /**
@@ -18,7 +19,7 @@ interface UserRow {
  * Server Component puis passées à un Client Component — elles doivent être
  * définies ici, côté client, qui ne reçoit que les données (sérialisables).
  */
-export function UsersTable({ users }: { users: UserRow[] }) {
+export function UsersTable({ users, roles }: { users: UserRow[]; roles: { id: string; name: string }[] }) {
   return (
     <DataTable
       rowKey={(u) => u.id}
@@ -26,7 +27,11 @@ export function UsersTable({ users }: { users: UserRow[] }) {
       columns={[
         { key: "fullName", header: "Nom", sortable: true, accessor: (u) => u.fullName },
         { key: "email", header: "Email", sortable: true, accessor: (u) => u.email },
-        { key: "role", header: "Rôle", accessor: (u) => u.role.name },
+        {
+          key: "role",
+          header: "Rôle",
+          render: (u) => <UserRoleSelect userId={u.id} roleId={u.role.id} roles={roles} />,
+        },
         {
           key: "isActive",
           header: "Statut",
