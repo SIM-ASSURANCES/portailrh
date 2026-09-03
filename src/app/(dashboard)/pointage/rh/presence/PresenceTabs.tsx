@@ -80,7 +80,7 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
                   </td>
                 )}
                 {activeTab === "retards" && (
-                  <td className="px-4 py-3 text-right text-amber-600 font-bold">
+                  <td className="px-4 py-3 text-right text-primary font-bold">
                     {item.minutesRetard} min
                   </td>
                 )}

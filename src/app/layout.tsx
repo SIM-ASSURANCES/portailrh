@@ -44,7 +44,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           toastOptions={{
             classNames: {
               toast: "font-sans !rounded-lg !shadow-md",
-              success: "!bg-success-bg !text-success !border-success-border",
+              success: "!bg-primary !text-primary-foreground !border-primary-hover",
               error: "!bg-danger-bg !text-danger !border-danger-border",
               info: "!bg-info-bg !text-info !border-info-border",
               warning: "!bg-warning-bg !text-warning !border-warning-border",

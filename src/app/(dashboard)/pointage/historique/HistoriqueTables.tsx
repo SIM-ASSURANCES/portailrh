@@ -79,7 +79,7 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       sortable: true,
       accessor: (row) => row.type,
       render: (row) => (
-        <Badge variant={row.type === "ARRIVEE" ? "info" : "neutral"}>
+        <Badge variant={row.type === "ARRIVEE" ? "primary" : "info"}>
           {row.type === "ARRIVEE" ? "Arrivée" : "Départ"}
         </Badge>
       ),
@@ -91,7 +91,7 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
         if (row.type === "DEPART") {
           return row.motif ? (
             <div className="space-y-1">
-              <Badge variant="warning">Départ anticipé</Badge>
+              <Badge variant="primary">Départ anticipé</Badge>
               <p className="text-xs text-muted-foreground italic truncate max-w-xs">{row.motif}</p>
             </div>
           ) : (
@@ -101,7 +101,7 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
         if (row.estRetard) {
           return (
             <div className="space-y-1">
-              <Badge variant="danger">
+              <Badge variant="primary">
                 Retard (+{row.minutesRetard ?? 0} min)
               </Badge>
               {row.motif ? (
@@ -115,14 +115,14 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
         if (row.motif) {
           return (
             <div className="space-y-1">
-              <Badge variant="success">À l&apos;heure</Badge>
+              <Badge variant="info">À l&apos;heure</Badge>
               <p className="text-xs text-muted-foreground italic truncate max-w-xs" title={row.motif}>
                 Motif : {row.motif}
               </p>
             </div>
           );
         }
-        return <Badge variant="success">À l&apos;heure</Badge>;
+        return <Badge variant="info">À l&apos;heure</Badge>;
       },
     },
     {
@@ -139,7 +139,7 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
             </span>
           ) : null}
           {row.correctionsCount > 0 ? (
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-warning" title={row.dernierMotifCorrection ?? undefined}>
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary" title={row.dernierMotifCorrection ?? undefined}>
               <Icon name="pencil" className="size-3" />
               Corrigé par RH
             </span>
@@ -185,10 +185,10 @@ export function AbsencesTable({ absences }: { absences: AbsenceRow[] }) {
       render: (row) => {
         const variant =
           row.statut === "JUSTIFIEE"
-            ? "success"
+            ? "info"
             : row.statut === "CONFIRMEE"
-              ? "danger"
-              : "warning";
+              ? "primary"
+              : "neutral";
         return <Badge variant={variant}>{STATUT_ABSENCE_LABELS[row.statut]}</Badge>;
       },
     },

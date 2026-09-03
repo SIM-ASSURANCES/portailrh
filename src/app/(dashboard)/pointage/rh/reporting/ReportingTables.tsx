@@ -89,7 +89,7 @@ export function ReportingDetailsTable({ data }: { data: DetailsData[] }) {
           key: "minutesRetard", 
           header: "Minutes", 
           accessor: (r) => r.minutesRetard,
-          render: (r) => <Badge variant="danger">{r.minutesRetard} min</Badge>
+          render: (r) => <Badge variant="primary">{r.minutesRetard} min</Badge>
         },
         { key: "motif", header: "Motif", accessor: (r) => r.motif || "-" },
       ]}

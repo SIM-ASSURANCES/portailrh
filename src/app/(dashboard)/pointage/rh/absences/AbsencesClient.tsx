@@ -125,9 +125,9 @@ export function AbsencesClient({ initialAbsences }: { initialAbsences: AbsenceWi
                       <div className="text-xs text-muted-foreground">{absence.user.email}</div>
                     </td>
                     <td className="px-4 py-3">
-                      {absence.statut === "A_CONTROLER" && <Badge variant="warning">À Contrôler</Badge>}
-                      {absence.statut === "JUSTIFIEE" && <Badge variant="success">Justifiée</Badge>}
-                      {absence.statut === "CONFIRMEE" && <Badge variant="danger">Absence Confirmée</Badge>}
+                      {absence.statut === "A_CONTROLER" && <Badge variant="neutral">À Contrôler</Badge>}
+                      {absence.statut === "JUSTIFIEE" && <Badge variant="info">Justifiée</Badge>}
+                      {absence.statut === "CONFIRMEE" && <Badge variant="primary">Absence Confirmée</Badge>}
                     </td>
                     <td className="px-4 py-3">
                       {absence.motif ? (
