@@ -18,8 +18,23 @@ model User {
   id           String   @id @default(cuid())
   fullName     String
   email        String   @unique
-  passwordHash String
+  /// Nullable : un compte créé par invitation par lien (voir CLAUDE.md
+  /// "Invitation par lien") n'a pas encore de mot de passe tant que la
+  /// personne n'a pas finalisé son compte via `/invitation/[token]`. Un
+  /// compte "en attente" se reconnaît à `invitationToken` non nul ET
+  /// `passwordHash` nul. La création manuelle classique (admin/users,
+  /// `createUserAction`) continue de renseigner ce champ immédiatement,
+  /// comme avant.
+  passwordHash String?
   isActive     Boolean  @default(true)
+  /// Invitation par lien (complémentaire à la création manuelle) : jeton
+  /// aléatoire sécurisé, unique, remis à `null` dès l'activation du compte
+  /// (`activerInvitationAction`) — jamais réutilisable une fois consommé.
+  invitationToken     String?   @unique
+  /// Expire 7 jours après la génération du lien (voir `creerInvitationAction`).
+  /// Un Admin peut régénérer un nouveau lien (nouveau token + nouvelle
+  /// expiration) pour un compte encore en attente si l'ancien a expiré.
+  invitationExpiresAt DateTime?
   /// Service/département de l'utilisateur (ex: "Commercial", "Finance",
   /// "Direction") — facultatif, utilisé comme axe de filtre par le
   /// reporting Trésorerie (Ticket 10). Simple champ texte libre en V1,

@@ -30,9 +30,9 @@ async function authenticate(formData: FormData) {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; callbackUrl?: string }>;
+  searchParams: Promise<{ error?: string; callbackUrl?: string; activated?: string }>;
 }) {
-  const { error, callbackUrl } = await searchParams;
+  const { error, callbackUrl, activated } = await searchParams;
 
   return (
     <div className="relative flex flex-1 items-center justify-center overflow-hidden border-[3px] border-primary bg-surface px-4 py-12">
@@ -65,6 +65,17 @@ export default async function LoginPage({
             <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
               <Icon name="alert-triangle" className="mt-0.5 size-4 shrink-0" />
               Email ou mot de passe incorrect.
+            </p>
+          ) : null}
+
+          {/* Invitation par lien finalisée avec succès (voir CLAUDE.md
+              "Invitation par lien") — redirection directe depuis
+              `activerInvitationAction`, jamais un toast affiché sur une
+              page publique quittée immédiatement après. */}
+          {activated ? (
+            <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-success-border bg-success-bg px-3 py-2 text-sm text-success">
+              <Icon name="check-circle" className="mt-0.5 size-4 shrink-0" />
+              Compte activé avec succès. Vous pouvez maintenant vous connecter.
             </p>
           ) : null}
 

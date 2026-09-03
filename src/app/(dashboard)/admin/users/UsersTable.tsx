@@ -2,6 +2,7 @@
 
 import { Badge, DataTable } from "@/components/ui";
 
+import { RegenererInvitationButton } from "./RegenererInvitationButton";
 import { UserActiveToggle } from "./UserActiveToggle";
 import { UserRoleSelect } from "./UserRoleSelect";
 
@@ -11,6 +12,8 @@ interface UserRow {
   email: string;
   isActive: boolean;
   role: { id: string; name: string };
+  /** Invitation par lien pas encore finalisée (voir CLAUDE.md "Invitation par lien"). */
+  isPending: boolean;
 }
 
 /**
@@ -35,16 +38,22 @@ export function UsersTable({ users, roles }: { users: UserRow[]; roles: { id: st
         {
           key: "isActive",
           header: "Statut",
-          render: (u) => (
-            <Badge variant={u.isActive ? "success" : "neutral"}>
-              {u.isActive ? "Actif" : "Inactif"}
-            </Badge>
-          ),
+          render: (u) =>
+            u.isPending ? (
+              <Badge variant="warning">Invitation envoyée</Badge>
+            ) : (
+              <Badge variant={u.isActive ? "success" : "neutral"}>{u.isActive ? "Actif" : "Inactif"}</Badge>
+            ),
         },
         {
           key: "actions",
           header: "Actions",
-          render: (u) => <UserActiveToggle userId={u.id} isActive={u.isActive} />,
+          render: (u) =>
+            u.isPending ? (
+              <RegenererInvitationButton userId={u.id} />
+            ) : (
+              <UserActiveToggle userId={u.id} isActive={u.isActive} />
+            ),
         },
       ]}
       data={users}

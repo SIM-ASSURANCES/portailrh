@@ -32,7 +32,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           include: { role: true },
         });
 
-        if (!user || !user.isActive) {
+        // `!user.passwordHash` couvre un compte "en attente d'activation"
+        // (invitation par lien pas encore finalisée, voir CLAUDE.md
+        // "Invitation par lien") — `passwordHash` est nullable depuis cette
+        // fonctionnalité, jamais comparable avec bcrypt tant qu'il est nul.
+        if (!user || !user.isActive || !user.passwordHash) {
           return null;
         }
 

@@ -5854,6 +5854,146 @@ par DG Test" après approbation — sans qu'aucune ligne de code n'ait dû
 être modifiée pour cette tâche. Serveur `next dev` arrêté après
 vérification.
 
+## Invitation par lien (deuxième méthode de création de compte)
+
+**Statut : terminé.** Complète la création manuelle de compte
+(`admin/users`, `createUserAction`, toujours en place et utilisée) avec
+une deuxième méthode : l'Admin renseigne juste nom + email + rôle (aucun
+mot de passe), génère un lien, et le transmet **lui-même** (email
+personnel, WhatsApp...) — **aucun système d'envoi d'email automatique
+n'existe dans le projet**, aucune tentative d'en configurer un ici. La
+personne finalise elle-même son mot de passe en ouvrant ce lien.
+
+### Schéma (migration `invitation_par_lien`)
+
+`User.passwordHash` devient **nullable** — un compte "en attente
+d'activation" (invité mais pas encore finalisé) se reconnaît à
+`invitationToken` non nul ET `passwordHash` nul. Deux nouveaux champs :
+`invitationToken` (`String?`, `@unique`) et `invitationExpiresAt`
+(`DateTime?`, 7 jours après génération). Migration purement additive/
+assouplissante (`ADD COLUMN` + `ALTER COLUMN ... DROP NOT NULL` +
+`CREATE UNIQUE INDEX`), aucune perte de donnée possible.
+
+**Correctif obligatoire découvert en touchant ce champ** — `authorize()`
+(`lib/auth.ts`, provider Credentials) faisait `bcrypt.compare(password,
+user.passwordHash)` sans jamais vérifier que `passwordHash` existe : avec
+le type désormais `string | null`, un compte en attente aurait fait
+planter la comparaison (ou, pire, ne compilait plus du tout — TypeScript
+refuse `string | null` là où bcrypt attend `string`). Corrigé par un garde-
+fou explicite (`!user.passwordHash` en plus de `!user.isActive`) — défense
+en profondeur : un compte en attente est de toute façon déjà `isActive:
+false` à la création, mais ce garde-fou reste correct par principe même si
+cet invariant venait à changer.
+
+### Créer une invitation (`creerInvitationAction`, Tâche 2)
+
+Réservée à `isAdmin()`, même garde que `createUserAction`. Vérifie
+l'unicité de l'email, génère un jeton aléatoire sécurisé
+(`randomBytes(32).toString("hex")`, `node:crypto` — 256 bits d'entropie,
+imprévisible), crée le `User` avec `passwordHash: null`, **`isActive:
+false`** (jamais `true` à ce stade — c'est `activerInvitationAction` qui
+le fixe, seulement une fois le mot de passe défini ; un compte en attente
+ne doit jamais pouvoir se connecter entre-temps), `invitationExpiresAt` à
+J+7. Retourne le lien complet dans `data.invitationUrl`
+(`{baseUrl}/invitation/{token}`) — `getBaseUrl()` préfère `AUTH_URL` si
+définie (déjà documentée pour Docker/production, voir `.env.example`),
+sinon la déduit de la requête entrante (`host`/`x-forwarded-proto`) :
+fonctionne sans configuration en dev local, comme le reste d'Auth.js.
+
+**Interface** (`admin/users`) — `NewUserSection.tsx` (nouveau) bascule
+entre "Création manuelle" (`UserCreateForm`, inchangé) et "Inviter par
+lien" (`InvitationCreateForm`, nouveau) via deux boutons, jamais l'une au
+détriment de l'autre. Après succès, `InvitationCreateForm` affiche le lien
+généré dans un encart avec un bouton "Copier le lien"
+(`navigator.clipboard.writeText`) — c'est à l'Admin de le transmettre,
+l'application ne l'envoie jamais elle-même.
+
+### Page publique de finalisation (`/invitation/[token]`, Tâche 3)
+
+`src/app/(auth)/invitation/[token]/page.tsx` — même groupe de routes que
+`/login` (`(auth)`, sans garde de session : aucun `layout.tsx` dans ce
+groupe, la page est donc publique par construction, exactement comme
+`/login`). Trois états déterminés côté serveur pour un affichage correct
+dès le premier chargement :
+
+- **`invalide`** — jeton introuvable. Recouvre DEUX cas indiscernables à
+  ce stade : un jeton qui n'a jamais existé, ET un jeton déjà consommé par
+  une activation précédente (`activerInvitationAction` le remet à `null`
+  à l'activation — un lien réutilisé après coup ne correspond donc plus à
+  aucun `User`). Message générique "invalide ou a déjà été utilisé"
+  plutôt que deux messages qu'il est structurellement impossible de
+  distinguer avec ce design.
+- **`expire`** — jeton trouvé mais `invitationExpiresAt` dépassé.
+- **`ok`** — formulaire de mot de passe (`InvitationForm.tsx`, mot de
+  passe + confirmation, 8 caractères minimum comme le reste de l'app).
+
+`activerInvitationAction(token, motDePasse)` (`actions.ts` colocalisé,
+route PUBLIQUE donc chaque contrôle est revérifié intégralement côté
+serveur — jamais uniquement l'affichage de la page, qui a pu devenir
+obsolète entre le chargement et la soumission) : hash le mot de passe,
+`isActive: true`, `invitationToken`/`invitationExpiresAt` remis à `null`
+(jeton définitivement consommé), puis **redirige elle-même vers
+`/login?activated=1`** — jamais un simple retour d'`ActionState` affiché
+sur cette page publique, la personne doit atterrir directement sur l'écran
+de connexion. `/login` affiche un bandeau vert "Compte activé avec
+succès." sur ce paramètre, symétrique du bandeau rouge déjà existant pour
+`error=1`.
+
+### Invitations en attente (Tâche 4)
+
+`admin/users/page.tsx` calcule `isPending = !passwordHash` côté serveur et
+ne transmet que ce booléen à `UsersTable` (Client Component) — **jamais**
+le `passwordHash` ni l'`invitationToken` bruts, aucune raison d'envoyer un
+hash ou un jeton secret au navigateur même pour un Admin. `UsersTable`
+affiche alors, pour un compte en attente : `Badge` "Invitation envoyée"
+(`variant="warning"`) à la place du badge Actif/Inactif habituel, et un
+bouton "Régénérer le lien" (`RegenererInvitationButton.tsx`) à la place du
+bouton Activer/Désactiver.
+
+`regenererInvitationAction(userId)` — nouveau jeton + nouvelle expiration
+à J+7, refusée sur un compte déjà activé (régénérer un lien n'a de sens
+que pour un compte encore sans mot de passe — jamais un moyen détourné de
+réinitialiser le mot de passe d'un compte actif, hors périmètre). Type de
+retour simple à deux branches (comme `toggleUserActiveAction`), pas
+l'`ActionState` générique de `creerInvitationAction` — celui-ci est pensé
+pour `useActionState` (branche `idle` incluse), sans objet pour un appel
+direct depuis un bouton. Le nouveau lien est copié automatiquement dans le
+presse-papiers au succès (la ligne du tableau n'a pas la place d'afficher
+le lien complet comme le fait `InvitationCreateForm`).
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes erreurs
+préexistantes du Module Pointage RH). `npx prisma migrate dev` non
+disponible en environnement non interactif (piège déjà documenté à
+plusieurs reprises) : migration écrite à la main, vérifiée identique à
+`npx prisma migrate diff` avant application via `npx prisma migrate
+deploy`.
+
+Parcours réel (Chromium headless, Playwright, non ajouté au projet)
+contre le vrai serveur `next dev` :
+
+1. **Régression création manuelle** : compte créé via "Création manuelle"
+   → badge "Actif" (jamais "Invitation envoyée"), connexion immédiate
+   réussie avec le mot de passe saisi par l'Admin — comportement
+   strictement inchangé.
+2. **Parcours d'invitation complet** : Admin bascule sur "Inviter par
+   lien", crée une invitation → lien affiché, compte visible dans la liste
+   avec le badge "Invitation envoyée". Lien ouvert dans un navigateur **non
+   connecté** (contexte Playwright séparé) : nom affiché correctement,
+   mot de passe + confirmation soumis → redirection vers `/login` avec le
+   bandeau vert de succès. Connexion réussie avec le nouveau mot de passe.
+3. **Lien déjà utilisé** : le même lien rouvert après activation → message
+   "invalide ou a déjà été utilisé" (jamais le formulaire de mot de passe).
+4. **Lien expiré** : compte créé avec `invitationExpiresAt` déjà dépassé →
+   message "a expiré" affiché, aucun formulaire proposé. Régénération du
+   lien par l'Admin depuis la liste → toast de succès, nouveau lien généré.
+
+Zéro erreur console sur l'ensemble des parcours. Comptes de test (création
+manuelle, invitation complète, invitation expirée) supprimés après coup ;
+base revenue à exactement les 5 comptes de test du seed. Serveur `next
+dev` arrêté après vérification.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
