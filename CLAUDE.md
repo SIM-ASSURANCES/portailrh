@@ -4543,6 +4543,146 @@ Aucune donnée de test supplémentaire créée pendant cette vérification
 (uniquement les deux demandes réelles, déjà présentes) : rien à nettoyer.
 Serveur `next dev` arrêté après vérification.
 
+## Rejet à l'examen et annulation d'une approbation (Validation complète DG)
+
+**Statut : terminé.** Complète la fonctionnalité "Validation complète DG"
+(section précédente) avec les deux issues qui manquaient : le DG ne
+pouvait qu'approuver, jamais rejeter un dossier pas encore prêt ni revenir
+sur une approbation donnée par erreur.
+
+**Principe directeur, non négociable ("une histoire d'argent")** : aucune
+des deux nouvelles actions ne supprime ni ne réécrit quoi que ce soit.
+Toute décision du DG (approbation, rejet à l'examen, annulation d'une
+approbation) crée une NOUVELLE `HistoriqueEntry` qui vient s'ajouter aux
+précédentes — jamais un `update`/`delete` sur une entrée existante. Seule
+l'annulation modifie un champ de `Demande` (`validationCompleteParDG`
+et ses deux compagnons remis à leur état initial), mais l'entrée
+`validation_complete_dg` d'origine reste intacte dans l'historique :
+l'enchaînement complet (approuvé le [date] par [X], puis annulé le [date]
+par [Y] avec motif [Z]) reste intégralement reconstituable, jamais réécrit
+silencieusement.
+
+### Rejet à l'examen (`rejeterValidationCompleteAction`, demande pas encore approuvée)
+
+Réservée à `treso.approuver_validation_complete`, revérifie
+`!validationCompleteParDG` (sinon message invitant à utiliser l'annulation
+plutôt que ce chemin). Motif obligatoire (zod, min 3 caractères).
+
+**Ne modifie AUCUN champ de la `Demande`** — volontairement, contrairement
+à `rejeterDemandeAction` (rejet de la demande elle-même, avant toute
+validation, Ticket 3) : ce rejet-ci porte uniquement sur l'approbation DG,
+c'est une trace informative pure. La demande reste donc, sans aucun
+changement structurel, dans "Validations complètes en attente" — rien à
+faire réapparaître puisque rien n'a disparu.
+
+### Annulation d'une approbation (`annulerValidationCompleteAction`, demande déjà approuvée)
+
+Réservée à la même permission, revérifie `validationCompleteParDG` (sinon
+"Cette demande n'a pas encore été approuvée"). Motif obligatoire (même
+règle). Remet `validationCompleteParDG` à `false`, `dgApprobateurId` et
+`dgApprouveAt` à `null` — la demande redevient visible dans "Validations
+complètes en attente" par le simple effet de ce changement d'état (même
+filtre que `getValidationsCompletesEnAttente`, aucune logique dupliquée).
+
+**Refusée si `statut === "CLOTUREE"`** (message explicite : "Impossible
+d'annuler : la demande a déjà été clôturée sur la base de cette
+approbation.") — `cloturerDemandeAction` exige déjà cette approbation
+avant d'accepter la clôture (verrou de clôture, section précédente) ;
+l'annuler après coup casserait la cohérence d'une clôture déjà définitive.
+Aucun autre statut n'est bloqué : le circuit de règlement des Phases B/C
+ne dépend jamais de `validationCompleteParDG`, annuler l'approbation ne
+défait donc aucun règlement déjà confirmé.
+
+### Interface (`ValidationCompleteDGActions.tsx`, remplace l'ancien `ValidationCompleteDGButton.tsx`)
+
+Un seul composant, deux usages selon `mode` :
+
+- `"examen"` (`!validationCompleteParDG`) : "Approuver la validation
+  complète" (direct, inchangé) à côté d'un nouveau bouton "Rejeter" —
+  ouvre un `Textarea` de motif (même pattern que `ValidationActions`,
+  Ticket 3), motif revalidé côté client ET côté serveur.
+- `"annulation"` (`validationCompleteParDG`, et **uniquement si `statut
+  !== "CLOTUREE"`** — sinon un message explicatif remplace le bouton,
+  jamais une action vouée à échouer côté serveur, même principe que
+  partout ailleurs dans le module) : "Annuler cette approbation", même
+  pattern de motif obligatoire.
+
+**Motif du dernier évènement négatif affiché en évidence**
+(`treso/finance/demandes/[id]/page.tsx`) : tant que la demande reste en
+attente (`!validationCompleteParDG`), un bandeau `bg-danger-bg` affiche le
+plus RÉCENT des deux évènements `rejet_validation_complete`/
+`annulation_validation_complete` — jamais seulement le dernier rejet.
+Raffinement délibéré au-delà de la demande initiale ("le motif de rejet
+doit être visible") : sans ce choix, un cycle rejet → approbation →
+annulation aurait pu réafficher un motif de rejet devenu obsolète après
+une annulation plus récente et plus pertinente. Disparaît automatiquement
+dès que la demande est de nouveau approuvée (condition déjà suffisante,
+aucun état à réinitialiser explicitement).
+
+### Historique (Tâche 3)
+
+`ACTION_LABELS` (`DemandeHistorique.tsx`) complété :
+`rejet_validation_complete` → "Validation complète rejetée par le DG
+(examen)", `annulation_validation_complete` → "Approbation du DG annulée"
+— le composant générique n'a, comme documenté depuis le Ticket 3, rien
+demandé d'autre qu'une entrée de libellé pour accueillir ces deux nouveaux
+évènements. Chaque entrée affiche déjà auteur + date/heure + motif (`detail`)
+sans aucune modification du composant.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` : aucune nouvelle erreur (mêmes
+erreurs/avertissements préexistants du Module Pointage RH).
+
+**Donnée de test dédiée, créée puis intégralement supprimée** — les deux
+demandes réelles (`DEM-2026-000001`, `DEM-2026-000002`, déjà approuvées
+par le DG lors de la phase précédente) **n'ont pas été rouvertes** : une
+troisième demande (`DEM-2026-000003`, 90 000 FCFA, créée directement en
+base pour ce test uniquement — seule la création l'a été, tout le reste du
+parcours passe par de vraies Server Actions via un vrai navigateur) a servi
+de bout en bout. Parcours réel (Chromium headless, Playwright, non ajouté
+au projet) contre le vrai serveur `next dev` :
+
+1. Finance valide totalement puis règle intégralement en Caisse (confirmé)
+   → statut `Réglée`.
+2. DG : "Confirmer le rejet" avec un motif vide → bloqué côté client
+   (aucun appel serveur). Avec un motif réel → succès, bandeau de rejet
+   visible sur le détail, **demande toujours présente dans "Validations
+   complètes en attente"** (rien n'a structurellement changé, conforme à
+   la Tâche 1).
+3. DG approuve → badge "approuvée".
+4. "Confirmer l'annulation" avec un motif vide → bloqué côté client. Avec
+   un motif réel → succès, badge repasse à "en attente du DG", bandeau
+   "Approbation précédemment annulée" avec le bon motif, **demande de
+   nouveau présente dans la liste**.
+5. Historique relu dans l'ordre chronologique : Création → Validation →
+   Règlement → **Validation complète rejetée par le DG (examen)** →
+   **Validation complète approuvée par le DG** → **Approbation du DG
+   annulée** — les 6 évènements dans le bon ordre, chacun avec son auteur,
+   sa date/heure et son motif le cas échéant.
+6. DG ré-approuve (nécessaire pour pouvoir clôturer). Finance clôture
+   totalement → statut `Clôturée`.
+7. **Refus d'annulation sur une demande déjà clôturée, testé en conditions
+   réelles (pas seulement documenté comme non testable)** : sur l'écran de
+   détail, le bouton "Annuler cette approbation" est bien absent (remplacé
+   par le message explicatif), confirmant le masquage côté UI. Pour
+   prouver que le refus est aussi appliqué **côté serveur** (pas seulement
+   par l'absence du bouton), la requête réseau réelle de l'annulation de
+   l'étape 4 a été interceptée (Server Action Next.js, header `Next-Action`
+   + corps capturés) puis **rejouée à l'identique** contre cette même
+   demande, désormais `CLOTUREE` — même technique déjà utilisée pour
+   vérifier la défense en profondeur du "Verrou de clôture" (section
+   précédente). Réponse HTTP 200 contenant littéralement "Impossible
+   d'annuler..." ; confirmé aussi en base après coup : `validationCompleteParDG`
+   toujours à `true`, statut toujours `CLOTUREE` — le rejeu n'a rien
+   modifié.
+
+Toutes les données de la demande de test (elle-même, son règlement, son
+historique — 6 entrées) supprimées après coup dans une unique transaction ;
+les deux demandes réelles confirmées inchangées (mêmes `dgApprouveAt`
+qu'avant ce test, à la milliseconde près). Serveur `next dev` arrêté après
+vérification.
+
 ## Corrections suite à un vrai test utilisateur (bon de caisse, modification de retour, pièce jointe, navigation)
 
 **Statut : terminé.** Cinq sujets distincts issus d'un vrai parcours

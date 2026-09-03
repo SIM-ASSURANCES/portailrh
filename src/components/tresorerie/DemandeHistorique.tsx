@@ -21,6 +21,8 @@ const ACTION_LABELS: Record<string, string> = {
   cloture_totale: "Clôture totale",
   cloture_partielle: "Clôture partielle",
   validation_complete_dg: "Validation complète approuvée par le DG",
+  rejet_validation_complete: "Validation complète rejetée par le DG (examen)",
+  annulation_validation_complete: "Approbation du DG annulée",
 };
 
 function labelForAction(action: string): string {

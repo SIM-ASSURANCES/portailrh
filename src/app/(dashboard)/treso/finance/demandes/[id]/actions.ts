@@ -547,3 +547,144 @@ export async function approuverValidationCompleteAction(demandeId: string): Prom
 
   return { status: "success", message: `Validation complète approuvée pour la demande ${demande.reference}.` };
 }
+
+const motifValidationCompleteSchema = z
+  .string()
+  .trim()
+  .min(3, "Le motif est obligatoire (3 caractères minimum)");
+
+/**
+ * Rejette une demande lors de l'EXAMEN du verrou de clôture (le DG regarde
+ * le dossier avant d'approuver et décide qu'il n'est pas encore prêt).
+ * **Ne modifie AUCUN champ de la `Demande`** — contrairement à
+ * `rejeterDemandeAction` (rejet de la demande elle-même, avant toute
+ * validation), ce rejet-ci porte uniquement sur l'approbation DG : la
+ * demande reste dans son statut courant, toujours visible dans
+ * "Validations complètes en attente" (rien n'a structurellement changé,
+ * il n'y a rien à "annuler" pour la faire réapparaître). Trace purement
+ * informative — une `HistoriqueEntry` supplémentaire qui vient s'ajouter,
+ * jamais remplacer les précédentes, pour que Finance comprenne pourquoi le
+ * dossier n'avance pas et corrige ce qui doit l'être avant un nouvel
+ * examen par le DG.
+ *
+ * Règle impérative de traçabilité (exigence explicite : "une histoire
+ * d'argent", rien n'est jamais supprimé ni écrasé) : aucune action de
+ * cette fonctionnalité (approbation, rejet, annulation) ne supprime ni ne
+ * modifie une `HistoriqueEntry` existante — chacune s'ajoute à la suite,
+ * avec son auteur, sa date et son motif.
+ */
+export async function rejeterValidationCompleteAction(
+  demandeId: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.approuver_validation_complete")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedMotif = motifValidationCompleteSchema.safeParse(motif);
+  if (!parsedMotif.success) {
+    return { status: "error", message: parsedMotif.error.issues[0].message };
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.validationCompleteParDG) {
+    return {
+      status: "error",
+      message: "Cette demande a déjà été approuvée — utilisez plutôt l'annulation de l'approbation.",
+    };
+  }
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "Demande",
+      entityId: demandeId,
+      action: "rejet_validation_complete",
+      detail: parsedMotif.data,
+      userId: session.user.id,
+    },
+  });
+
+  revalidateDemandePaths(demandeId);
+  revalidatePath("/treso/finance/validations-attente");
+
+  return {
+    status: "success",
+    message: `Examen de la demande ${demande.reference} : motif de rejet enregistré.`,
+  };
+}
+
+/**
+ * Annule une approbation DG déjà donnée (le DG s'est trompé, ou revient sur
+ * sa décision). Contrairement au rejet ci-dessus, cette action modifie bien
+ * la `Demande` — elle redevient éligible à la clôture uniquement après une
+ * nouvelle approbation — mais **jamais en supprimant ou en réécrivant
+ * l'entrée `validation_complete_dg` d'origine** : celle-ci reste intacte et
+ * visible dans l'historique, la nouvelle entrée `annulation_validation_complete`
+ * vient s'ajouter à la suite. L'historique complet permet ainsi de
+ * reconstituer : approuvé le [date] par [DG], puis annulé le [date] par
+ * [DG] avec motif [X] — jamais un état réécrit silencieusement.
+ *
+ * Refusée si la demande est déjà `CLOTUREE` : la clôture a été actée sur la
+ * base de cette approbation (voir `cloturerDemandeAction`, qui exige
+ * `validationCompleteParDG` avant d'accepter) — l'annuler après coup
+ * casserait la cohérence d'une clôture déjà définitive. Aucun autre statut
+ * n'est bloqué : `peutEffectuerReglement`/le circuit de règlement des
+ * Phases B/C ne dépendent jamais de `validationCompleteParDG`, annuler
+ * l'approbation ne défait donc aucun règlement déjà confirmé.
+ */
+export async function annulerValidationCompleteAction(
+  demandeId: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.approuver_validation_complete")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedMotif = motifValidationCompleteSchema.safeParse(motif);
+  if (!parsedMotif.success) {
+    return { status: "error", message: parsedMotif.error.issues[0].message };
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (!demande.validationCompleteParDG) {
+    return { status: "error", message: "Cette demande n'a pas encore été approuvée." };
+  }
+  if (demande.statut === "CLOTUREE") {
+    return {
+      status: "error",
+      message: "Impossible d'annuler : la demande a déjà été clôturée sur la base de cette approbation.",
+    };
+  }
+
+  await prisma.$transaction([
+    prisma.demande.update({
+      where: { id: demandeId },
+      data: { validationCompleteParDG: false, dgApprobateurId: null, dgApprouveAt: null },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "annulation_validation_complete",
+        detail: parsedMotif.data,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+
+  revalidateDemandePaths(demandeId);
+  revalidatePath("/treso/finance/validations-attente");
+
+  return {
+    status: "success",
+    message: `Approbation annulée pour la demande ${demande.reference} — retour en attente de validation complète.`,
+  };
+}

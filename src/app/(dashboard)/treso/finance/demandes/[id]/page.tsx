@@ -17,7 +17,7 @@ import { ClotureActions } from "./ClotureActions";
 import { ReglementsSection } from "./ReglementsSection";
 import { ValidationActions } from "./ValidationActions";
 import { ValidationComplementaireActions } from "./ValidationComplementaireActions";
-import { ValidationCompleteDGButton } from "./ValidationCompleteDGButton";
+import { ValidationCompleteDGActions } from "./ValidationCompleteDGActions";
 
 export default async function CategoriserDemandePage({
   params,
@@ -48,6 +48,24 @@ export default async function CategoriserDemandePage({
   if (!demande) {
     notFound();
   }
+
+  // Verrou de clôture — dernier évènement négatif (rejet lors d'un examen,
+  // ou annulation d'une approbation déjà donnée) affiché en évidence tant
+  // que la demande reste en attente (`validationCompleteParDG = false`) :
+  // le plus récent des deux, jamais seulement le dernier rejet, pour ne
+  // jamais afficher un motif de rejet devenu obsolète après une annulation
+  // ultérieure plus pertinente (ni l'inverse) — voir CLAUDE.md.
+  const dernierEvenementNegatifDG = demande.validationCompleteParDG
+    ? null
+    : await prisma.historiqueEntry.findFirst({
+        where: {
+          entity: "Demande",
+          entityId: demande.id,
+          action: { in: ["rejet_validation_complete", "annulation_validation_complete"] },
+        },
+        include: { user: true },
+        orderBy: { createdAt: "desc" },
+      });
 
   // Ticket A.1 : seules les catégories/objets actifs sont proposables pour
   // une nouvelle catégorisation (soft-delete, jamais de suppression
@@ -199,25 +217,51 @@ export default async function CategoriserDemandePage({
           validé", une demande PARTIELLEMENT_VALIDEE peut aussi être
           approuvée par le DG. */}
       {demande.montantValide != null && Number(demande.montantValide) > 0 ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Validation complète (DG)
-            </p>
-            {demande.validationCompleteParDG ? (
-              <p className="mt-1 text-sm text-foreground">
-                Validation complète : approuvée le{" "}
-                <span className="font-semibold">{demande.dgApprouveAt?.toLocaleDateString("fr-FR")}</span> par{" "}
-                <span className="font-semibold">{demande.dgApprobateur?.fullName ?? "—"}</span>
+        <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Validation complète (DG)
               </p>
-            ) : (
-              <div className="mt-1">
-                <Badge variant="warning">Validation complète : en attente du DG</Badge>
-              </div>
-            )}
+              {demande.validationCompleteParDG ? (
+                <p className="mt-1 text-sm text-foreground">
+                  Validation complète : approuvée le{" "}
+                  <span className="font-semibold">{demande.dgApprouveAt?.toLocaleDateString("fr-FR")}</span> par{" "}
+                  <span className="font-semibold">{demande.dgApprobateur?.fullName ?? "—"}</span>
+                </p>
+              ) : (
+                <div className="mt-1">
+                  <Badge variant="warning">Validation complète : en attente du DG</Badge>
+                </div>
+              )}
+            </div>
+            {canApprouverValidationComplete && !demande.validationCompleteParDG ? (
+              <ValidationCompleteDGActions demandeId={demande.id} mode="examen" />
+            ) : null}
+            {canApprouverValidationComplete &&
+            demande.validationCompleteParDG &&
+            demande.statut !== "CLOTUREE" ? (
+              <ValidationCompleteDGActions demandeId={demande.id} mode="annulation" />
+            ) : null}
           </div>
-          {canApprouverValidationComplete && !demande.validationCompleteParDG ? (
-            <ValidationCompleteDGButton demandeId={demande.id} />
+          {/* Motif du dernier évènement négatif (rejet d'examen ou annulation
+              d'une approbation) — visible tant que la demande reste en
+              attente, pour que Finance sache ce qui doit être corrigé avant
+              un nouvel examen du DG. */}
+          {dernierEvenementNegatifDG ? (
+            <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
+              {dernierEvenementNegatifDG.action === "rejet_validation_complete"
+                ? "Rejeté par le DG lors de l'examen"
+                : "Approbation précédemment annulée par le DG"}{" "}
+              ({dernierEvenementNegatifDG.user.fullName}, le{" "}
+              {dernierEvenementNegatifDG.createdAt.toLocaleDateString("fr-FR")}) — motif :{" "}
+              <span className="font-semibold">{dernierEvenementNegatifDG.detail}</span>
+            </p>
+          ) : null}
+          {canApprouverValidationComplete && demande.validationCompleteParDG && demande.statut === "CLOTUREE" ? (
+            <p className="text-xs text-muted-foreground">
+              Cette approbation ne peut plus être annulée : la demande a déjà été clôturée sur cette base.
+            </p>
           ) : null}
         </div>
       ) : null}
