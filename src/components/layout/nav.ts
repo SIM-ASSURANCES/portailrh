@@ -51,6 +51,16 @@ export const DASHBOARD_ITEM: NavItem = {
 export interface NavFlags {
   /** `treso.creer_demande` OU `treso.declarer_retour` : ajoute "Demandes" (espace Collaborateur). */
   canAccesDemandes: boolean;
+  /**
+   * `treso.creer_demande` seule (pas de OR avec `declarer_retour`) : ajoute
+   * "Mon tableau de bord". Distincte de `canAccesDemandes` — un rôle combiné
+   * (ex: Finance + RH) peut avoir `declarer_retour` sans jamais créer ses
+   * propres demandes ; "Mon tableau de bord" (indicateurs Demandé/Validé/
+   * Réglé sur SES demandes) n'a alors aucun sens et ne doit pas s'ajouter
+   * comme un 3ᵉ "dashboard" redondant à côté de "Tableau de bord" (général)
+   * et "Tableau de bord Finance" — voir CLAUDE.md.
+   */
+  canAccesMonTableauDeBord: boolean;
   canAccesFinanceDemandes: boolean;
   /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
   canReceptionnerRetour: boolean;
@@ -107,6 +117,7 @@ export interface NavFlags {
  */
 export function getNavBranches({
   canAccesDemandes,
+  canAccesMonTableauDeBord,
   canAccesFinanceDemandes,
   canReceptionnerRetour,
   canVoirDashboardFinance,
@@ -133,7 +144,7 @@ export function getNavBranches({
                   } satisfies NavItem,
                 ]
               : []),
-            ...(canAccesDemandes
+            ...(canAccesMonTableauDeBord
               ? [
                   {
                     label: "Mon tableau de bord",
@@ -141,8 +152,10 @@ export function getNavBranches({
                     icon: "layout-grid",
                     exact: true,
                   } satisfies NavItem,
-                  { label: "Demandes", href: "/treso/demandes", icon: "file-text" } satisfies NavItem,
                 ]
+              : []),
+            ...(canAccesDemandes
+              ? [{ label: "Demandes", href: "/treso/demandes", icon: "file-text" } satisfies NavItem]
               : []),
             ...(canSaisirDepenseDirecte
               ? [

@@ -5145,6 +5145,88 @@ blocage n'est plus "format WebP non supporté" mais "`@react-pdf/renderer`
 ne rend pas nativement un SVG arbitraire" — le choix du nom en texte stylé
 reste inchangé pour ce document, non repris dans ce ticket.
 
+## Sidebar Trésorerie — un seul tableau de bord par profil
+
+**Statut : terminé.** Un rôle combiné (ex: "Rh/finances", cumulant
+permissions Finance et Pointage RH sans jamais créer ses propres demandes)
+voyait s'afficher **trois** entrées ressemblant à des tableaux de bord dans
+la sidebar : "Tableau de bord" (général), "Tableau de bord Finance", et
+"Mon tableau de bord" — ce dernier redondant et vide de sens pour un profil
+qui ne crée pas de demandes en son nom propre.
+
+### Cause réelle (pas un rôle en dur, mais une permission trop large)
+
+`nav.ts`/`Sidebar.tsx` ne codaient déjà en dur aucun nom de rôle — le
+principe "toujours se baser sur les permissions" était respecté. Le
+problème : "Mon tableau de bord" partageait le même indicateur
+(`canAccesDemandes`) que l'item "Demandes", lui-même `treso.creer_demande`
+**OU** `treso.declarer_retour`. Un rôle avec `declarer_retour` mais sans
+`creer_demande` (le cas réel de "Rh/finances") faisait donc apparaître
+"Mon tableau de bord" — alors que ses 5 indicateurs (Demandé/Validé/
+Restant à valider/Réglé/Validé restant à régler) et sa zone "À traiter"
+portent tous exclusivement sur les demandes dont l'utilisateur est
+`createurId`, jamais sur son rôle dans le circuit de retour de caisse.
+Une session sans `creer_demande` n'a par construction jamais créé de
+demande : la page lui serait toujours vide.
+
+### Correction
+
+Nouveau flag dédié, distinct de `canAccesDemandes` : **`canAccesMonTableauDeBord`**
+(`treso.creer_demande` **seule**, sans le `OU declarer_retour`) —
+propagé `(dashboard)/layout.tsx` → `AppShell` → `Sidebar` → `getNavBranches`,
+même chemin que tous les autres flags de `NavFlags`. "Demandes" reste,
+lui, gardé par `canAccesDemandes` (inchangé) : un utilisateur qui ne fait
+que déclarer des retours doit toujours pouvoir retrouver la demande
+concernée dans cette liste.
+
+**Route revérifiée côté serveur** (`treso/tableau-de-bord/page.tsx`) —
+jamais uniquement masquée côté nav : la garde passe de
+`creer_demande OU declarer_retour` à `treso.creer_demande` seule, exactement
+symétrique du nouveau flag de nav.
+
+**Effet de bord trouvé et corrigé au passage** — `getTresorerieHref()`
+(dashboard général, `(dashboard)/page.tsx`) envoyait toute session avec
+`creer_demande` OU `declarer_retour` vers `/treso/tableau-de-bord` comme
+point d'entrée du module. Avec la garde resserrée ci-dessus, une session
+`declarer_retour` sans `creer_demande` s'y serait vue **refuser l'accès
+en boucle** dès le clic sur la carte "Gestion des demandes et trésorerie"
+— exactement le même travers que documenté à l'audit des habilitations
+pour l'ancien défaut `/treso/demandes`. Corrigé : ce cas précis (qu'aucun
+rôle réel ne cumule aujourd'hui — `Rh/finances` a aussi
+`voir_dashboard_finance`, qui est vérifiée avant et l'emporte) redirige
+désormais vers `/treso/demandes` plutôt que `/treso/tableau-de-bord`,
+cohérent avec la garde réelle de cette dernière page.
+
+### Vérifié explicitement — vrai parcours navigateur
+
+Chromium headless (Playwright, non ajouté au projet), sur le rôle réel
+**"Rh/finances"** (permissions déjà en base, assigné à `rh@simassurances.test`,
+`treso.creer_demande` décochée au départ — vérifié en base avant toute
+manipulation) :
+
+1. Coché temporairement `treso.creer_demande` via `/admin/roles` → reconnexion
+   `rh@` → "Mon tableau de bord" **apparaît** dans la sidebar.
+2. Décoché à nouveau (persistance confirmée après rechargement) →
+   reconnexion `rh@` → "Mon tableau de bord" **a disparu**, "Demandes"
+   **reste visible** (porté par `declarer_retour`, toujours présent sur ce
+   rôle).
+3. **Accès direct par URL** à `/treso/tableau-de-bord` (toujours sans
+   `creer_demande`) → refusé, redirection vers
+   `/?error=acces_refuse_demandes` avec toast — pas seulement absent de la
+   sidebar.
+4. **Aucune régression Collaborateur** : `collaborateur@simassurances.test`
+   (a `treso.creer_demande`) voit toujours "Mon tableau de bord", y accède
+   en un clic réel, page rendue avec ses vrais indicateurs ("Vue
+   d'ensemble", "Demandé", "À traiter"), zéro erreur console.
+
+État du rôle "Rh/finances" revérifié identique à l'état de départ après le
+test (`treso.creer_demande` toujours absent de ses permissions) — aucune
+donnée de test créée pendant cette vérification (uniquement des cases à
+cocher et des connexions), rien à nettoyer en base. `npx tsc --noEmit` et
+`npx eslint .` sans erreur nouvelle (mêmes 9 avertissements/erreurs
+préexistants du Module Pointage RH). Serveur `next dev` arrêté après
+vérification.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

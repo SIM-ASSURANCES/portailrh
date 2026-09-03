@@ -13,6 +13,8 @@ interface AppShellProps {
   canAdmin?: boolean;
   /** Affiche "Demandes" (treso.creer_demande OU treso.declarer_retour). */
   canAccesDemandes?: boolean;
+  /** Affiche "Mon tableau de bord" (treso.creer_demande seule). */
+  canAccesMonTableauDeBord?: boolean;
   /** Affiche "Demandes à traiter (Finance)" (categoriser_demande OU valider_demande). */
   canAccesFinanceDemandes?: boolean;
   /** Affiche "Retours en attente" (treso.receptionner_retour). */
@@ -43,6 +45,7 @@ export function AppShell({
   role,
   canAdmin = false,
   canAccesDemandes = false,
+  canAccesMonTableauDeBord = false,
   canAccesFinanceDemandes = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
@@ -90,6 +93,7 @@ export function AppShell({
         onToggleCollapse={toggleCollapse}
         canAdmin={canAdmin}
         canAccesDemandes={canAccesDemandes}
+        canAccesMonTableauDeBord={canAccesMonTableauDeBord}
         canAccesFinanceDemandes={canAccesFinanceDemandes}
         canReceptionnerRetour={canReceptionnerRetour}
         canVoirDashboardFinance={canVoirDashboardFinance}
