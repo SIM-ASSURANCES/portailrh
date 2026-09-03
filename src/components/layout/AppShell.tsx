@@ -25,6 +25,8 @@ interface AppShellProps {
   canVoirReporting?: boolean;
   /** Affiche "Nouvelle dépense directe" (treso.saisir_depense_directe, Phase F). */
   canSaisirDepenseDirecte?: boolean;
+  /** Affiche "Validations complètes en attente" (treso.approuver_validation_complete, DG). */
+  canApprouverValidationComplete?: boolean;
   /** Affiche la branche "Pointage de Présence" et "Mon espace" (au moins une permission pointage.*). */
   hasPointageAccess?: boolean;
   /** Ajoute le groupe "RH" du Pointage (permissions RH uniquement). */
@@ -51,6 +53,7 @@ export function AppShell({
   canVoirDashboardFinance = false,
   canVoirReporting = false,
   canSaisirDepenseDirecte = false,
+  canApprouverValidationComplete = false,
   hasPointageAccess = false,
   canAccessPointageRH = false,
   children,
@@ -99,6 +102,7 @@ export function AppShell({
         canVoirDashboardFinance={canVoirDashboardFinance}
         canVoirReporting={canVoirReporting}
         canSaisirDepenseDirecte={canSaisirDepenseDirecte}
+        canApprouverValidationComplete={canApprouverValidationComplete}
         hasPointageAccess={hasPointageAccess}
         canAccessPointageRH={canAccessPointageRH}
         mobileOpen={mobileOpen}

@@ -4438,6 +4438,111 @@ nettoyée après coup ; la demande réelle pré-existante de l'utilisateur
 (`DEM-2026-000001`) confirmée intacte. Serveur `next dev` arrêté après
 vérification.
 
+## Découverte des validations complètes en attente (DG)
+
+**Statut : terminé.** Corrige un manque **présent depuis la construction
+initiale** du "Verrou de clôture" (section précédente) : cette phase avait
+posé l'action d'approbation (`approuverValidationCompleteAction`) et son
+affichage sur le détail d'une demande (badge + bouton), mais **aucun moyen
+pour le DG de découvrir quelles demandes attendaient son approbation** —
+ni liste ni indicateur, seul un accès direct par identifiant fonctionnait.
+En pratique, le DG ne pouvait donc pas utiliser cette fonctionnalité sauf à
+connaître par avance l'identifiant exact de chaque demande.
+
+### Indicateur (`getValidationsCompletesEnAttente`, `src/lib/dashboardFinance.ts`)
+
+`{ nombre }` — demandes où `montantValide > 0` **ET**
+`validationCompleteParDG = false`. Filtre minimal mais suffisant, jamais
+besoin d'exclusion de statut explicite : `montantValide > 0` exclut déjà
+mécaniquement `EN_ATTENTE_VALIDATION` et `REJETEE` (jamais de montant
+validé sur ces deux statuts) ; `validationCompleteParDG = false` exclut
+déjà `CLOTUREE` (la clôture exige cette approbation au préalable depuis le
+"Verrou de clôture" — impossible d'atteindre `CLOTUREE` avec
+`validationCompleteParDG` encore à `false`).
+
+### Liste (`treso/finance/validations-attente/`)
+
+Même pattern que toutes les listes Finance (wrapper Client `DataTable`,
+Server Component pour la garde + la requête). Colonnes : référence,
+bénéficiaire (`getBeneficiaireNom`, Phase A/F), montant validé, statut
+actuel (Badge via `STATUT_DEMANDE_LABEL`), date de la dernière validation.
+
+**"Date de la dernière validation" — dérivée de `HistoriqueEntry`, jamais
+de `demande.updatedAt`** : `action ∈ {"validation", "validation_complementaire"}`
+(les évènements de validation eux-mêmes, Phase B), explicitement **pas**
+`"validation_complete_dg"` (l'approbation du DG, un évènement différent et
+plus tardif) ni `updatedAt` (touché aussi par d'autres actions comme un
+règlement, donc pas fiable pour cette colonne précise). Batchée en une
+seule requête (`entityId: { in: [...] }`) puis réduite en mémoire au
+maximum par demande — jamais une requête par ligne. Triée par cette date,
+les plus anciennes en premier (même convention que les autres listes
+Finance).
+
+Bouton "Approuver" par ligne → `/treso/finance/demandes/{id}`, où l'action
+d'approbation existe déjà depuis le "Verrou de clôture" — aucun nouvel
+écran d'action, seulement un nouveau point de découverte.
+
+Réservée à `treso.approuver_validation_complete` précisément (DG dans le
+seed actuel), jamais supposée acquise du simple fait d'avoir accès à
+l'espace Finance partagé.
+
+### Indicateur sur le dashboard Finance (`treso/finance/page.tsx`)
+
+**Délibérément PAS une 7ème carte mêlée aux 6 indicateurs "À traiter"**
+(Phase G, cahier des charges section 12, périmètre documenté comme fixe) :
+section séparée "Validation complète (DG)", visible uniquement pour
+`treso.approuver_validation_complete` — Finance ne la voit jamais (n'a pas
+cette permission dans le seed), le DG la voit toujours en plus des 6
+indicateurs communs. Même style visuel (accent bar + grille de `StatCard`)
+que la section "À traiter", mais un ensemble distinct plutôt qu'un
+élargissement silencieux d'un ensemble déjà documenté comme fixe ailleurs
+dans ce fichier.
+
+### Navigation et garde de layout
+
+"Validations complètes en attente" ajouté dans la branche "Demande
+d'Achat" (`nav.ts`, nouveau flag `NavFlags.canApprouverValidationComplete`,
+propagé `(dashboard)/layout.tsx` → `AppShell` → `Sidebar`, même chemin que
+tous les flags précédents). `treso/finance/layout.tsx` élargi une sixième
+fois (`treso.approuver_validation_complete` ajoutée à son OR-guard) — même
+principe que les cinq extensions précédentes : le DG y accédait déjà par
+d'autres permissions (`valider_demande`, `voir_dashboard_finance`,
+`voir_reporting`), mais la garde reste correcte par principe pour tout
+futur rôle qui n'aurait que celle-ci.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` : aucune nouvelle erreur (les 5/6
+erreurs et avertissements préexistants du Module Pointage RH, déjà signalés
+plus haut dans ce fichier, restent inchangés).
+
+Vrai parcours navigateur (Chromium headless, Playwright, non ajouté au
+projet) contre le vrai serveur `next dev`, en reprenant **les deux
+demandes réelles de l'utilisateur** déjà en attente de validation complète
+DG depuis la phase précédente (`DEM-2026-000001`, 50 000 FCFA ;
+`DEM-2026-000002`, 500 000 FCFA — confirmées en base avant tout test,
+`validationCompleteParDG = false` sur les deux, aucune autre demande en
+base) :
+
+- Compte `finance@simassurances.test` (sans `approuver_validation_complete`) :
+  ni la carte du dashboard, ni le lien de navigation, ni un accès direct à
+  `/treso/finance/validations-attente` (redirigé vers
+  `/?error=acces_refuse_validations_attente`) — les trois confirmés
+  absents/refusés.
+- Compte `dg@simassurances.test` : carte et lien de navigation présents ;
+  la liste affiche bien les deux demandes réelles avant toute action.
+  Clic "Approuver" sur chacune (via le lien de la liste, menant au détail
+  où l'action existante s'exécute) → badge passe à "Validation complète :
+  approuvée le [date] par DG Test" sur les deux détails, confirmé aussi en
+  base (`validationCompleteParDG = true`, `dgApprouveAt` et
+  `dgApprobateurId` renseignés sur les deux demandes). Liste et indicateur
+  revérifiés après coup : liste vide (`EmptyState`), indicateur à 0 — les
+  deux demandes réelles ont bien disparu de ce nouveau parcours.
+
+Aucune donnée de test supplémentaire créée pendant cette vérification
+(uniquement les deux demandes réelles, déjà présentes) : rien à nettoyer.
+Serveur `next dev` arrêté après vérification.
+
 ## Corrections suite à un vrai test utilisateur (bon de caisse, modification de retour, pièce jointe, navigation)
 
 **Statut : terminé.** Cinq sujets distincts issus d'un vrai parcours
@@ -5059,48 +5164,67 @@ seulement demandé explicitement mais cohérent avec l'esprit de la tâche
 
 ### `BrandBackdrop` — fond de marque réutilisable
 
-`src/components/ui/BrandBackdrop.tsx` : dégradé diagonal
-`sim-blue-light → sim-blue-dark` (135°) avec des triangles superposés en
-transparence, **inspiré de la page de couverture de la charte graphique**
-(dégradé + formes triangulaires géométriques agrandies en arrière-plan
-décoratif) — jamais un nouveau design. Les triangles ne sont pas des
-formes inventées au hasard : leur angle au sommet (~62°) reproduit celui
-de la silhouette englobante de l'icône du logo elle-même (rapport
-base/hauteur similaire), simplement agrandi et décliné en plusieurs
-tailles/opacités pour la profondeur — cohérent avec la consigne "le même
-motif géométrique que le logo".
+**Révisé suite à un retour direct de l'utilisateur** sur un premier essai
+(dégradé bleu diagonal pleine page, façon page de couverture de la
+charte) : *"j'ai pas aimé, laisse le blanc avec le logo SIM Assurances en
+arrière-plan, avoir les bordures en bleu"*. Remplacé par un style fidèle
+au **papier à en-tête officiel** de la charte graphique plutôt qu'à sa
+page de couverture — un registre beaucoup plus sobre, adapté à un écran
+de connexion d'application interne plutôt qu'à un document de présentation.
 
-- `variant="hero"` — traitement riche, utilisé **uniquement sur la page de
-  connexion** (`/login`, première impression, le seul endroit qui s'en
-  permet un traitement marqué — voir "Priorité 1" du polish visuel
-  précédent : "spend your boldness in one place").
-- `variant="subtle"` — prévu pour un usage quotidien très atténué (mêmes
-  formes, opacités divisées par ~2), **non utilisé actuellement** — voir
-  "Décision délibérément non appliquée" ci-dessous.
+`src/components/ui/BrandBackdrop.tsx` ne pose plus de couleur dominante —
+il superpose un calque décoratif à un fond blanc porté par le conteneur
+appelant :
+
+1. **Filigrane du pictogramme seul** (jamais le texte "SIM ASSURANCES") —
+   géométrie exacte extraite de `logo-sim-couleur.svg`/`logo-sim-blanc.svg`
+   (voir ci-dessus), factorisée dans `src/components/ui/brandIcon.ts`
+   (`BRAND_ICON_PATHS`/`BRAND_ICON_VIEWBOX`) — **source unique partagée**
+   avec `LogoMark` (icône de la sidebar réduite, `Sidebar.tsx`), pour ne
+   jamais dupliquer ce chemin vectoriel à deux endroits. Gris très pâle
+   (`text-muted-foreground` + `opacity-[0.09]`, dans la fourchette 8-15%
+   demandée — un token neutre existant, jamais une couleur codée en dur),
+   très agrandi, calé sur le bord haut-gauche et volontairement débordant
+   du cadre (`left` négatif en pourcentage, coupé par `overflow-hidden` du
+   conteneur) — jamais centré, comme sur le vrai papier à en-tête. Deux
+   réglages de position/taille distincts (`sm:` vs défaut) : à pleine
+   largeur le triangle peut être très grand sans gêner (la carte reste loin
+   à droite) ; sur mobile (375px), une version plus petite et davantage
+   décalée évite qu'il ne domine tout l'écran.
+2. **Filet dégradé en bas de page** — `sim-blue-light → sim-blue-dark`,
+   5px de haut seulement (`h-[5px]`) : un trait décoratif, jamais une
+   bande large.
+3. **La bordure bleue autour de la page N'EST PAS dans ce composant** —
+   posée directement comme classe `border-[3px] border-primary` sur le
+   conteneur appelant (`login/page.tsx`) : c'est une propriété de mise en
+   page (le cadre de la page), pas un détail interne du fond décoratif.
+
+**`variant` retiré** — l'ancienne distinction `"hero"`/`"subtle"` existait
+pour doser l'intensité d'un fond bleu dominant ; le nouveau style est déjà
+sobre par construction (fond blanc, filigrane à 9% d'opacité, filet de
+quelques pixels), donc cette distinction n'avait plus de sens. Simplifié
+en conséquence plutôt que gardé "au cas où" (le composant n'a qu'un seul
+consommateur aujourd'hui — `/login` — donc rien n'aurait exercé un second
+réglage).
 
 ### Décision délibérément non appliquée : sidebar / dashboard général
 
-La consigne proposait *"éventuellement"* un traitement `variant="subtle"`
-sur l'en-tête du dashboard général ou de la sidebar. **Choix : ne pas
-l'appliquer**, pour deux raisons cumulatives :
+Ce composant reste réservé à `/login` — jamais posé sur la sidebar ou le
+dashboard général, pour deux raisons cumulatives :
 
 1. **Conflit avec la protection du logo** — le bandeau `bg-primary` de la
-   sidebar contient directement le logo blanc. Y poser le motif reviendrait
-   à enfreindre la règle de la charte elle-même ("ne jamais poser le logo
-   sur un fond visuel qui perturbe sa lisibilité") à l'endroit précis censé
-   la respecter le mieux.
+   sidebar contient directement le logo blanc. Y poser un filigrane
+   reviendrait à enfreindre la règle de la charte elle-même ("ne jamais
+   poser le logo sur un fond visuel qui perturbe sa lisibilité") à
+   l'endroit précis censé la respecter le mieux.
 2. **Écran d'usage quotidien** — sidebar et dashboard général sont vus des
    dizaines de fois par jour par les mêmes utilisateurs (contrairement à
    `/login`, un point de passage bref et peu fréquent). Le rehaussement
    visuel précédent (voir "Rehaussement visuel — dashboards...") a
    délibérément construit ces écrans sur des neutres bleu-teintés sobres ;
-   y superposer un dégradé de marque, même atténué, aurait réintroduit de
-   la charge visuelle exactement là où la consigne elle-même met en garde
-   ("ne pas nuire à la lisibilité du contenu au quotidien").
-
-`variant="subtle"` reste implémenté et prêt à l'emploi si un besoin précis
-apparaît (ex: un futur écran d'accueil ponctuel), mais n'est appelé nulle
-part dans l'application aujourd'hui.
+   y superposer un filigrane, même discret, resterait une charge visuelle
+   ajoutée là où la consigne d'origine met en garde ("ne pas nuire à la
+   lisibilité du contenu au quotidien").
 
 ### Vérifié explicitement — règles d'usage de la charte (Tâche 3)
 
@@ -5126,11 +5250,11 @@ part dans l'application aujourd'hui.
   avertissements/erreurs préexistants du Module Pointage RH, déjà
   documentés plus haut, hors périmètre).
 - **Captures avant/après** (Chromium headless, Playwright, non ajouté au
-  projet) : page de connexion desktop et mobile (375px) — dégradé +
-  triangles bien visibles en arrière-plan, carte de connexion et formulaire
-  restent parfaitement lisibles aux deux tailles, aucun élément du
-  formulaire chevauché. Sidebar déployée et réduite (nouvelle icône seule)
-  vérifiées après une vraie connexion.
+  projet) : page de connexion desktop et mobile (375px) — voir la révision
+  ci-dessous pour le rendu final retenu (fond blanc + filigrane + bordure),
+  différent du premier essai en dégradé bleu décrit initialement ici.
+  Sidebar déployée et réduite (nouvelle icône seule) vérifiées après une
+  vraie connexion.
 - **Parcours fonctionnel réel** : connexion collaborateur → navigation vers
   "Mon tableau de bord" sans erreur console ; `GET /logo-sim-blanc.svg` et
   `GET /logo-sim-couleur.svg` confirmés servis en 200. Aucune Server Action
@@ -5144,6 +5268,54 @@ l'absence de logo image dans le reçu PDF mis à jour en conséquence : le
 blocage n'est plus "format WebP non supporté" mais "`@react-pdf/renderer`
 ne rend pas nativement un SVG arbitraire" — le choix du nom en texte stylé
 reste inchangé pour ce document, non repris dans ce ticket.
+
+## Fond de connexion révisé : papier à en-tête plutôt que couverture
+
+**Statut : terminé.** Retour direct sur le premier rendu du fond de marque
+ci-dessus (dégradé bleu diagonal pleine page, inspiré de la page de
+**couverture** de la charte graphique) : refusé — *"j'ai pas aimé, laisse
+le blanc avec le logo SIM Assurances en arrière-plan, avoir les bordures
+en bleu"*. Reconstruit pour reproduire fidèlement le **papier à en-tête
+officiel** de la charte plutôt que sa couverture — un registre très
+différent (sobre, fond blanc dominant) alors que la couverture est pensée
+pour être visuellement dense (dégradé plein, formes superposées).
+
+Détail technique complet dans la section "Logo vectoriel et fond de
+marque" ci-dessus (`BrandBackdrop` révisé, `brandIcon.ts` nouveau, bordure
+posée sur le conteneur appelant plutôt que dans le composant). Cette
+section-ci ne documente que la vérification de la révision elle-même.
+
+### Vérifié explicitement — rendu final
+
+Chromium headless (Playwright, non ajouté au projet) :
+
+- **Desktop (1400px)** : fond blanc, filigrane du triangle nettement
+  débordant du bord haut-gauche (apex et jambe gauche coupés par le cadre,
+  jamais centré), fine bordure bleue continue sur les 4 côtés, filet
+  dégradé de quelques pixels tout en bas, carte de connexion parfaitement
+  lisible et bien détachée (`shadow-elevated`, allégée depuis la version
+  précédente qui utilisait `shadow-elevated-lg`, cohérent avec un fond
+  désormais sobre qui n'a plus besoin d'une carte à forte présence pour
+  s'en détacher).
+- **Mobile (375px)** : filigrane retaillé spécifiquement pour cet écran
+  (taille et décalage différents du desktop, pas un simple redimensionnement
+  proportionnel) — sur un si petit viewport, les mêmes proportions que le
+  desktop auraient fait dominer tout l'écran par le triangle ; réglé plus
+  petit et plus excentré pour rester un discret élément de coin.
+- **État d'erreur** (mauvais mot de passe) : bandeau d'erreur rouge sur
+  fond rose pâle testé par-dessus le nouveau fond — aucune perte de
+  contraste, se détache aussi nettement qu'avant.
+- **Parcours fonctionnel réel** : connexion réussie et échec de connexion
+  (mauvais mot de passe, bandeau d'erreur affiché) tous deux rejoués sans
+  erreur console. Aucune Server Action touchée par cette révision
+  (uniquement `BrandBackdrop.tsx`, le nouveau `brandIcon.ts` et les classes
+  du conteneur de `login/page.tsx`).
+- **`tsc --noEmit`/`eslint`** : aucune erreur nouvelle (mêmes 9
+  avertissements/erreurs préexistants du Module Pointage RH).
+
+Aucune donnée de test créée pendant cette révision (uniquement des
+captures d'écran et des tentatives de connexion) : rien à nettoyer en
+base. Serveur `next dev` arrêté après vérification.
 
 ## Sidebar Trésorerie — un seul tableau de bord par profil
 

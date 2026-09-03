@@ -128,6 +128,12 @@ export default async function DashboardHomePage({
           message="Vous n'avez pas accès à l'espace Demandes."
         />
       ) : null}
+      {error === "acces_refuse_validations_attente" ? (
+        <ToastOnMount
+          variant="error"
+          message="Vous n'avez pas la permission d'approuver les validations complètes."
+        />
+      ) : null}
 
       <PageHeader
         title="Tableau de bord"

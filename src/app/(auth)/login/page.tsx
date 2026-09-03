@@ -35,16 +35,16 @@ export default async function LoginPage({
   const { error, callbackUrl } = await searchParams;
 
   return (
-    <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-primary px-4 py-12">
-      {/* Traitement de marque riche (page de connexion = première
-          impression, le seul endroit de l'application qui se le permet —
-          voir CLAUDE.md "Logo et fond de marque"). Le bandeau du logo dans
-          la carte ci-dessous reste, lui, en aplat uni : jamais le motif
-          directement derrière le logo, pour ne jamais nuire à sa
-          lisibilité (règle de la charte graphique). */}
-      <BrandBackdrop variant="hero" className="absolute inset-0 h-full w-full" />
+    <div className="relative flex flex-1 items-center justify-center overflow-hidden border-[3px] border-primary bg-surface px-4 py-12">
+      {/* Papier à en-tête institutionnel (page de connexion = première
+          impression) : fond blanc + filigrane du pictogramme + filet
+          dégradé en bas, voir CLAUDE.md "Logo vectoriel et fond de marque".
+          Le bandeau du logo dans la carte ci-dessous reste en aplat uni :
+          jamais le filigrane directement derrière le logo, pour ne jamais
+          nuire à sa lisibilité (règle de la charte graphique). */}
+      <BrandBackdrop className="absolute inset-0 h-full w-full" />
 
-      <div className="animate-fade-in-up relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-surface shadow-elevated-lg">
+      <div className="animate-fade-in-up relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-surface shadow-elevated">
         <div className="flex items-center justify-center bg-primary px-6 py-5">
           <Image
             src="/logo-sim-blanc.svg"

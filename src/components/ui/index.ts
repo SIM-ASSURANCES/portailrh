@@ -36,4 +36,4 @@ export { EmptyState } from "./EmptyState";
 export type { EmptyStateProps } from "./EmptyState";
 
 export { BrandBackdrop } from "./BrandBackdrop";
-export type { BrandBackdropProps, BrandBackdropVariant } from "./BrandBackdrop";
+export type { BrandBackdropProps } from "./BrandBackdrop";

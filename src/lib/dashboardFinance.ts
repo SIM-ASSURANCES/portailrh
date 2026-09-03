@@ -212,6 +212,36 @@ export async function getRetoursEnAttenteReception(): Promise<{ nombre: number }
  * global est soldé). `nombre` = nombre de lignes, `montant` = somme de
  * leurs montants. Cible de `/treso/finance/depenses-non-justifiees`.
  */
+/**
+ * Indicateur "Validation complète (DG)" — demandes ayant un montant validé
+ * (`montantValide > 0`) mais pas encore approuvées par le DG
+ * (`validationCompleteParDG = false`), préalable obligatoire à la clôture
+ * depuis le "Verrou de clôture" (Ticket 7, voir CLAUDE.md). Filtre minimal
+ * mais suffisant : `montantValide > 0` exclut déjà mécaniquement
+ * `EN_ATTENTE_VALIDATION` et `REJETEE` (jamais de montant validé sur ces
+ * deux statuts) ; `validationCompleteParDG = false` exclut déjà `CLOTUREE`
+ * (la clôture exige cette approbation au préalable — impossible d'atteindre
+ * `CLOTUREE` avec `validationCompleteParDG` encore à `false`). Aucun besoin
+ * d'exclusion de statut explicite en plus.
+ *
+ * **Signalé et corrigé ici** : cet indicateur n'existait pas depuis la
+ * construction initiale du verrou de clôture — aucune liste ni compteur ne
+ * permettait au DG de découvrir quelles demandes attendent son approbation,
+ * seul un accès direct par identifiant de demande fonctionnait. Voir
+ * CLAUDE.md "Découverte des validations complètes en attente (DG)".
+ *
+ * Réservé au DG (`treso.approuver_validation_complete`, distincte de
+ * `treso.voir_dashboard_finance` qui garde le reste du dashboard) — la
+ * page appelante revérifie cette permission, jamais supposée acquise du
+ * simple fait d'avoir accès au dashboard Finance.
+ */
+export async function getValidationsCompletesEnAttente(): Promise<{ nombre: number }> {
+  const nombre = await prisma.demande.count({
+    where: { montantValide: { gt: 0 }, validationCompleteParDG: false },
+  });
+  return { nombre };
+}
+
 export async function getDepensesNonJustifiees(): Promise<CompteEtMontant> {
   const lignes = await prisma.depenseLigne.findMany({
     where: { justification: "SANS_PIECE" },
