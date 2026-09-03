@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
+import { pointageEmitter } from "@/lib/events";
 import { prisma } from "@/lib/prisma";
 import { getSession, hasPermission } from "@/lib/auth";
 import type { ActionState } from "@/lib/actions";
@@ -66,6 +67,7 @@ export async function updateHorairesAction(
     }
 
     revalidatePath("/pointage");
+    pointageEmitter.emit("pointage-updated");
     return { success: true, message: "Les horaires ont été mis à jour avec succès." };
   } catch (error) {
     console.error("updateHorairesAction error:", error);

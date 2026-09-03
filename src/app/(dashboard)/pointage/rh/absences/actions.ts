@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { pointageEmitter } from "@/lib/events";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
@@ -78,6 +79,7 @@ export async function analyserAbsences(joursEnArriere: number = 30) {
     }
 
     revalidatePath("/pointage/rh/absences");
+    pointageEmitter.emit("pointage-updated");
     return { 
       status: "success", 
       message: `Analyse terminée. ${nouvellesAbsences} absence(s) à contrôler détectée(s).` 
@@ -114,6 +116,7 @@ export async function traiterAbsence(absenceId: string, statut: StatutAbsence, m
     });
 
     revalidatePath("/pointage/rh/absences");
+    pointageEmitter.emit("pointage-updated");
     return { status: "success", message: "Absence traitée avec succès" };
   } catch (error) {
     console.error("Erreur traiterAbsence:", error);

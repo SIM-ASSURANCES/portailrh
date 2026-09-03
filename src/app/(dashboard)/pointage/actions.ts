@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { headers } from "next/headers";
 import { timeToMinutes, isOfficeIpAllowed } from "@/lib/pointage-utils";
 import { revalidatePath } from "next/cache";
+import { pointageEmitter } from "@/lib/events";
 import { ActionState, fieldErrorsFromZod } from "@/lib/validation";
 
 const pointageSchema = z.object({
@@ -119,6 +120,7 @@ export async function enregistrerPointageAction(
     });
 
     revalidatePath("/pointage");
+    pointageEmitter.emit("pointage-updated");
     return { status: "success", message: "Pointage enregistré avec succès." };
   } catch {
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };

@@ -37,3 +37,6 @@ export type { EmptyStateProps } from "./EmptyState";
 
 export { BrandBackdrop } from "./BrandBackdrop";
 export type { BrandBackdropProps, BrandBackdropVariant } from "./BrandBackdrop";
+
+export { AutoRefresh } from "./AutoRefresh";
+export type { AutoRefreshProps } from "./AutoRefresh";

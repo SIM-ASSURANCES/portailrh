@@ -5,6 +5,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { timeToMinutes } from "@/lib/pointage-utils";
 import { revalidatePath } from "next/cache";
+import { pointageEmitter } from "@/lib/events";
 import { ActionState, fieldErrorsFromZod } from "@/lib/validation";
 
 const pointageExceptionnelSchema = z.object({
@@ -108,6 +109,7 @@ export async function enregistrerPointageRHAction(
     });
 
     revalidatePath("/pointage");
+    pointageEmitter.emit("pointage-updated");
     return { status: "success", message: "Le pointage exceptionnel a été enregistré avec succès." };
   } catch {
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };

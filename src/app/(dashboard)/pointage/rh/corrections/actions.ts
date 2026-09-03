@@ -5,6 +5,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkLateStatus } from "@/lib/pointage-utils";
 import { revalidatePath } from "next/cache";
+import { pointageEmitter } from "@/lib/events";
 import { ActionState, fieldErrorsFromZod } from "@/lib/validation";
 
 const correctionSchema = z.object({
@@ -107,6 +108,7 @@ export async function corrigerPointageAction(
     });
 
     revalidatePath("/pointage");
+    pointageEmitter.emit("pointage-updated");
     return { status: "success", message: "Le pointage a été corrigé avec succès." };
   } catch (error) {
     console.error("Error during correction:", error);

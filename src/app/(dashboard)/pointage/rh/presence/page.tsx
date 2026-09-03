@@ -18,33 +18,58 @@ export default async function PresenceDuJourPage() {
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
 
-  const presentsDb = await prisma.pointage.findMany({
+  const pointagesDb = await prisma.pointage.findMany({
     where: {
-      type: "ARRIVEE",
       heure: {
         gte: todayStart,
         lte: todayEnd,
       },
       user: { isActive: true },
     },
-    distinct: ["userId"],
+    orderBy: { heure: 'asc' },
     select: {
       userId: true,
+      type: true,
+      heure: true,
+      heurePrevue: true,
       estRetard: true,
       minutesRetard: true,
-      heure: true,
       user: { select: { fullName: true, email: true } }
     },
   });
 
-  const presentsCount = presentsDb.length;
-  let retardsCount = 0;
+  const userPointagesMap = new Map<string, PresenceData>();
+  
+  pointagesDb.forEach((p) => {
+    let u = userPointagesMap.get(p.userId);
+    if (!u) {
+      u = {
+        userId: p.userId,
+        fullName: p.user.fullName,
+        email: p.user.email,
+        estRetard: false,
+        minutesRetard: 0,
+      };
+      userPointagesMap.set(p.userId, u);
+    }
 
-  presentsDb.forEach((p) => {
-    if (p.estRetard) {
-      retardsCount++;
+    if (p.type === "ARRIVEE" && !u.arrivee) {
+      u.arrivee = p.heure.toISOString();
+      u.arriveePrevue = p.heurePrevue;
+      if (p.estRetard) {
+        u.estRetard = true;
+        u.minutesRetard = (u.minutesRetard || 0) + (p.minutesRetard || 0);
+      }
+    } else if (p.type === "DEPART" && !u.depart) {
+      u.depart = p.heure.toISOString();
+      u.departPrevu = p.heurePrevue;
     }
   });
+
+  const presents: PresenceData[] = Array.from(userPointagesMap.values());
+  const presentsCount = presents.length;
+  const retardsCount = presents.filter(p => p.estRetard).length;
+  const retards = presents.filter(p => p.estRetard);
 
   const absentsDb = await prisma.absence.findMany({
     where: {
@@ -60,7 +85,7 @@ export default async function PresenceDuJourPage() {
   const absentsCount = absentsDb.length;
 
   // Calcul des manquants (ni présents, ni déclarés absents)
-  const presentsIds = presentsDb.map((p) => p.userId);
+  const presentsIds = presents.map((p) => p.userId);
   const absentsIds = absentsDb.map((a) => a.userId);
   const exclusIds = [...presentsIds, ...absentsIds];
 
@@ -73,18 +98,6 @@ export default async function PresenceDuJourPage() {
   });
 
   const manquantsCount = manquantsDb.length;
-
-  // Formatage pour les onglets
-  const presents: PresenceData[] = presentsDb.map(p => ({
-    userId: p.userId,
-    fullName: p.user.fullName,
-    email: p.user.email,
-    heure: p.heure,
-    estRetard: p.estRetard,
-    minutesRetard: p.minutesRetard
-  }));
-
-  const retards: PresenceData[] = presents.filter(p => p.estRetard);
 
   const absents: PresenceData[] = absentsDb.map(a => ({
     userId: a.userId,
@@ -144,32 +157,32 @@ export default async function PresenceDuJourPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
           icon="check-circle"
-          tone="success"
+          tone="info"
           label="Présents"
           value={presentsCount}
         />
         <StatCard
           icon="clock"
-          tone={retardsCount > 0 ? "warning" : "success"}
+          tone="info"
           label="Retardataires"
           value={retardsCount}
         />
         <StatCard
           icon="x-circle"
-          tone={absentsCount > 0 ? "danger" : "success"}
+          tone="info"
           label="Absents"
           value={absentsCount}
         />
         <StatCard
           icon="help-circle"
-          tone={manquantsCount > 0 ? "warning" : "success"}
+          tone="info"
           label="Manquants"
           value={manquantsCount}
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2">
+      <div className="space-y-8">
+        <div>
           <h2 className="text-lg font-semibold text-foreground mb-4">Détails de la présence</h2>
           <PresenceTabs 
             presents={presents} 
@@ -179,7 +192,7 @@ export default async function PresenceDuJourPage() {
           />
         </div>
         
-        <div className="lg:col-span-1">
+        <div>
           {retardsAvecUsers.length > 0 ? (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
