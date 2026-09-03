@@ -170,14 +170,16 @@ export interface ReceiptData {
 /**
  * Gabarit du reçu de règlement (Ticket 9), un règlement par reçu.
  *
- * Pas de logo image : `logo-sim-blanc.webp` est (a) au format WebP, non
- * fiablement supporté par le moteur de rendu image de @react-pdf/renderer,
- * et (b) une version blanche pensée pour un fond bleu plein — ici le bandeau
- * d'en-tête EST bleu (`COLORS.primary`), donc le problème de contraste ne se
- * serait pas posé, mais le format reste bloquant. Choix : le nom
- * "SIM ASSURANCES" en texte stylé (graisse 700, lettres espacées),
- * exactement le même compromis que documenté dans la demande — pas d'image
- * invisible ou de conversion de format ad hoc pour ce premier reçu.
+ * Pas de logo image : à l'origine `logo-sim-blanc.webp` posait un problème
+ * de format (WebP non fiablement supporté par le moteur de rendu image de
+ * @react-pdf/renderer). Depuis le rehaussement logo/marque (voir CLAUDE.md),
+ * `public/logo-sim-blanc.svg` existe, mais @react-pdf/renderer ne rend pas
+ * nativement un SVG arbitraire (`<Image>` attend un bitmap ou un composant
+ * `react-pdf` dédié, pas un chemin `.svg` — une conversion via une librairie
+ * comme `svg-to-pdfkit` serait nécessaire). Choix inchangé pour ce ticket :
+ * le nom "SIM ASSURANCES" en texte stylé (graisse 700, lettres espacées),
+ * pas de conversion ad hoc. À reprendre si un vrai logo vectoriel dans les
+ * PDF devient une priorité.
  */
 export function ReceiptDocument({ data }: { data: ReceiptData }) {
   const modeIsCaisse = data.mode === "CAISSE";

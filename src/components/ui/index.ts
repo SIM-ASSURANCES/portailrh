@@ -34,3 +34,6 @@ export type { ToastOnMountProps } from "./ToastOnMount";
 export { QRCodeDownload } from "./QRCodeDownload";
 export { EmptyState } from "./EmptyState";
 export type { EmptyStateProps } from "./EmptyState";
+
+export { BrandBackdrop } from "./BrandBackdrop";
+export type { BrandBackdropProps, BrandBackdropVariant } from "./BrandBackdrop";

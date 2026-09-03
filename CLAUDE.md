@@ -4993,6 +4993,158 @@ visuels. Données de test nettoyées après chaque vérification ; la demande
 réelle pré-existante (`DEM-2026-000001`) confirmée intacte. Serveur
 `next dev` arrêté après vérification.
 
+## Logo vectoriel et fond de marque
+
+**Statut : terminé.** Le seul asset logo du projet était
+`public/logo-sim-blanc.webp` : une image bitmap, floue à l'agrandissement,
+en une seule version (blanche). Ce ticket le remplace par de vrais assets
+vectoriels fidèles à la charte graphique officielle SIM Assurances, et
+introduit un composant de fond de marque réutilisable inspiré de la page
+de couverture de cette même charte — sans jamais inventer un nouveau logo
+ni une nouvelle identité visuelle.
+
+### Comment le logo a été vectorisé
+
+Aucun fichier source vectoriel n'existait pour le logo — seul le bitmap
+blanc. Pour garantir une fidélité géométrique réelle (pas une
+réinterprétation à l'œil, qui aurait risqué de produire un logo légèrement
+différent), le contour a été **tracé automatiquement** à partir du bitmap
+existant (`potrace`, exécuté ponctuellement hors du projet — jamais ajouté
+aux dépendances) plutôt que redessiné à la main :
+
+1. Canal alpha du WebP extrait et suréchantillonné (×6, filtre Lanczos)
+   pour donner à `potrace` un contour net à partir d'un bitmap
+   originellement flou.
+2. Tracé automatique → un chemin vectoriel unique combinant l'icône
+   (triangle stylisé) et le texte ("SIM ASSURANCES" /
+   "SOCIÉTÉ IVOIRIENNE DE MICRO-ASSURANCES"), garanti fidèle puisque
+   dérivé directement des pixels réels du logo existant.
+3. Les 3 sous-tracés de l'icône (une forme principale + deux petits
+   triangles latéraux, géométriquement disjoints dans le tracé — voir
+   ci-dessous) **nettoyés en polygones à arêtes droites** (Douglas-Peucker
+   sur les courbes de Bézier aplaties) : élimine le léger tremblement dû à
+   l'anti-crénelage du bitmap source, sans changer la silhouette. Le texte,
+   lui, garde les courbes de Bézier tracées telles quelles (les lettres ont
+   de vraies courbes, contrairement à l'icône).
+4. Recomposé en deux fichiers finaux, `viewBox="0 0 635 94"` (proportions
+   exactes de l'original) :
+   - **`public/logo-sim-couleur.svg`** — pour fond clair. Icône bicolore +
+     texte `#004B9C`.
+   - **`public/logo-sim-blanc.svg`** — pour fond bleu foncé (usage actuel
+     du header/sidebar). Tout en blanc, remplace directement le webp.
+
+**Interprétation à confirmer, signalée explicitement** : le bitmap source
+est **monochrome** (blanc uniforme) — aucune limite de couleur n'y est
+visible entre les deux tons officiels (`#004B9C`/`#51AEE2`). Le tracé
+révèle que l'icône se décompose en **3 formes géométriquement disjointes**
+(une forme principale — la silhouette "montagne" avec son échancrure — et
+deux petits triangles séparés de part et d'autre) : la répartition
+bicolore retenue pour `logo-sim-couleur.svg` attribue `#004B9C` à la forme
+principale (dominante) et `#51AEE2` aux deux petits triangles (accent) —
+un choix motivé par la structure réelle du tracé, pas arbitraire, mais
+**non vérifié contre le fichier source couleur officiel** (non disponible
+dans ce projet). À confirmer/ajuster si ce fichier existe quelque part
+chez le maître d'ouvrage.
+
+### Icône seule (sidebar réduite)
+
+`LogoMark` (fonction interne à `Sidebar.tsx`) affichait jusqu'ici un
+triangle générique de substitution (`<path d="m12 3 10 18H2z"/>`), sans
+rapport avec le vrai logo. Remplacé par la géométrie réelle de l'icône
+(les mêmes 3 polygones nettoyés ci-dessus, combinés), en `fill="currentColor"`
+pour continuer à suivre la classe `text-primary` déjà appliquée par
+l'appelant — améliore la fidélité de la sidebar réduite au passage, pas
+seulement demandé explicitement mais cohérent avec l'esprit de la tâche
+("améliorer la qualité et l'usage du logo existant").
+
+### `BrandBackdrop` — fond de marque réutilisable
+
+`src/components/ui/BrandBackdrop.tsx` : dégradé diagonal
+`sim-blue-light → sim-blue-dark` (135°) avec des triangles superposés en
+transparence, **inspiré de la page de couverture de la charte graphique**
+(dégradé + formes triangulaires géométriques agrandies en arrière-plan
+décoratif) — jamais un nouveau design. Les triangles ne sont pas des
+formes inventées au hasard : leur angle au sommet (~62°) reproduit celui
+de la silhouette englobante de l'icône du logo elle-même (rapport
+base/hauteur similaire), simplement agrandi et décliné en plusieurs
+tailles/opacités pour la profondeur — cohérent avec la consigne "le même
+motif géométrique que le logo".
+
+- `variant="hero"` — traitement riche, utilisé **uniquement sur la page de
+  connexion** (`/login`, première impression, le seul endroit qui s'en
+  permet un traitement marqué — voir "Priorité 1" du polish visuel
+  précédent : "spend your boldness in one place").
+- `variant="subtle"` — prévu pour un usage quotidien très atténué (mêmes
+  formes, opacités divisées par ~2), **non utilisé actuellement** — voir
+  "Décision délibérément non appliquée" ci-dessous.
+
+### Décision délibérément non appliquée : sidebar / dashboard général
+
+La consigne proposait *"éventuellement"* un traitement `variant="subtle"`
+sur l'en-tête du dashboard général ou de la sidebar. **Choix : ne pas
+l'appliquer**, pour deux raisons cumulatives :
+
+1. **Conflit avec la protection du logo** — le bandeau `bg-primary` de la
+   sidebar contient directement le logo blanc. Y poser le motif reviendrait
+   à enfreindre la règle de la charte elle-même ("ne jamais poser le logo
+   sur un fond visuel qui perturbe sa lisibilité") à l'endroit précis censé
+   la respecter le mieux.
+2. **Écran d'usage quotidien** — sidebar et dashboard général sont vus des
+   dizaines de fois par jour par les mêmes utilisateurs (contrairement à
+   `/login`, un point de passage bref et peu fréquent). Le rehaussement
+   visuel précédent (voir "Rehaussement visuel — dashboards...") a
+   délibérément construit ces écrans sur des neutres bleu-teintés sobres ;
+   y superposer un dégradé de marque, même atténué, aurait réintroduit de
+   la charge visuelle exactement là où la consigne elle-même met en garde
+   ("ne pas nuire à la lisibilité du contenu au quotidien").
+
+`variant="subtle"` reste implémenté et prêt à l'emploi si un besoin précis
+apparaît (ex: un futur écran d'accueil ponctuel), mais n'est appelé nulle
+part dans l'application aujourd'hui.
+
+### Vérifié explicitement — règles d'usage de la charte (Tâche 3)
+
+- **Espace protégé** : bandeau logo de la sidebar (`h-16`, `px-5`) et de la
+  carte de connexion (`px-6 py-5`) laissent ≥18px de marge verticale
+  autour du logo (hauteur totale 28px) — supérieur à la hauteur du "S" du
+  logotype (~15px, le mot-symbole "SIM ASSURANCES" n'occupant que la
+  fraction haute du bloc logo, la légende institutionnelle en dessous).
+  Aucun élément de l'interface ne touche le logo sur les deux écrans où il
+  apparaît.
+- **Logo couleur jamais sur un fond qui nuit à sa lisibilité** :
+  `logo-sim-couleur.svg` existe mais **n'est actuellement utilisé nulle
+  part** dans l'application (seule la version blanche l'est, sur le bandeau
+  `bg-primary` plein de la sidebar/connexion) — risque nul aujourd'hui. Le
+  fond de marque (`BrandBackdrop`) n'est lui-même jamais placé directement
+  derrière le logo (toujours derrière la carte/le bandeau qui l'encadre,
+  jamais dans le même calque).
+- **Aucune déformation ni rotation** : les deux logos sont posés via
+  `next/image` avec `width`/`height` respectant le ratio exact du
+  `viewBox` (635:94), aucune classe `rotate-*` ni `scale-*` non uniforme
+  appliquée nulle part.
+- **`tsc --noEmit`/`eslint`** : aucune erreur nouvelle (mêmes 9
+  avertissements/erreurs préexistants du Module Pointage RH, déjà
+  documentés plus haut, hors périmètre).
+- **Captures avant/après** (Chromium headless, Playwright, non ajouté au
+  projet) : page de connexion desktop et mobile (375px) — dégradé +
+  triangles bien visibles en arrière-plan, carte de connexion et formulaire
+  restent parfaitement lisibles aux deux tailles, aucun élément du
+  formulaire chevauché. Sidebar déployée et réduite (nouvelle icône seule)
+  vérifiées après une vraie connexion.
+- **Parcours fonctionnel réel** : connexion collaborateur → navigation vers
+  "Mon tableau de bord" sans erreur console ; `GET /logo-sim-blanc.svg` et
+  `GET /logo-sim-couleur.svg` confirmés servis en 200. Aucune Server Action
+  ni logique métier touchée par ce ticket (uniquement des assets statiques
+  et un composant purement décoratif).
+
+**Nettoyage** : `public/logo-sim-blanc.webp` supprimé (plus aucune
+référence dans le code après le remplacement, confirmé par recherche
+explicite). Le commentaire de `ReceiptDocument.tsx` (Ticket 9) expliquant
+l'absence de logo image dans le reçu PDF mis à jour en conséquence : le
+blocage n'est plus "format WebP non supporté" mais "`@react-pdf/renderer`
+ne rend pas nativement un SVG arbitraire" — le choix du nom en texte stylé
+reste inchangé pour ce document, non repris dans ce ticket.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
