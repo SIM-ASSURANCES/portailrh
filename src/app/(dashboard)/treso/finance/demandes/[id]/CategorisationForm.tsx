@@ -3,7 +3,7 @@
 import { useActionState, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { Button, Input, Select } from "@/components/ui";
+import { Button, Select } from "@/components/ui";
 import { useActionFeedback } from "@/lib/hooks/useActionFeedback";
 import { IDLE_ACTION_STATE } from "@/lib/validation";
 
@@ -33,7 +33,6 @@ export function CategorisationForm({
   objets,
   initialCategorieId = "",
   initialObjetId = "",
-  initialBudget,
 }: {
   demandeId: string;
   categories: CategorieOption[];
@@ -42,7 +41,6 @@ export function CategorisationForm({
    * EN_ATTENTE (Finance peut corriger tant qu'elle n'est pas validée). */
   initialCategorieId?: string;
   initialObjetId?: string;
-  initialBudget?: number;
 }) {
   const [state, formAction, isPending] = useActionState(categoriserDemandeAction, IDLE_ACTION_STATE);
   const router = useRouter();
@@ -97,19 +95,6 @@ export function CategorisationForm({
             ? "Aucun objet n'existe encore pour cette catégorie."
             : undefined
         }
-      />
-
-      <Input
-        name="budgetDisponible"
-        label="Budget disponible (FCFA)"
-        type="number"
-        inputMode="decimal"
-        min="1"
-        step="1"
-        required
-        defaultValue={initialBudget}
-        placeholder="Ex: 100000"
-        error={state.status === "error" ? state.fieldErrors?.budgetDisponible : undefined}
       />
 
       <Button type="submit" loading={isPending} className="w-full sm:w-auto">

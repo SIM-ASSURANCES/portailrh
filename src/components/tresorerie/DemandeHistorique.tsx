@@ -13,6 +13,7 @@ const ACTION_LABELS: Record<string, string> = {
   validation: "Validation",
   validation_complementaire: "Validation complémentaire",
   rejet: "Rejet",
+  rejet_reliquat: "Rejet du reliquat non validé",
   reglement: "Règlement",
   annulation_reglement: "Annulation de règlement",
   declaration_retour: "Retour de caisse déclaré",

@@ -12,7 +12,6 @@ const categorisationSchema = z.object({
   demandeId: z.string().min(1),
   categorieId: z.string().min(1, "Catégorie requise"),
   objetId: z.string().min(1, "Objet requis"),
-  budgetDisponible: z.coerce.number().positive("Le budget doit être supérieur à 0"),
 });
 
 /**
@@ -40,7 +39,6 @@ export async function categoriserDemandeAction(
     demandeId: formData.get("demandeId"),
     categorieId: formData.get("categorieId"),
     objetId: formData.get("objetId"),
-    budgetDisponible: formData.get("budgetDisponible"),
   });
 
   if (!parsed.success) {
@@ -51,7 +49,7 @@ export async function categoriserDemandeAction(
     };
   }
 
-  const { demandeId, categorieId, objetId, budgetDisponible } = parsed.data;
+  const { demandeId, categorieId, objetId } = parsed.data;
 
   const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
   if (!demande) {
@@ -75,7 +73,7 @@ export async function categoriserDemandeAction(
 
   await prisma.demande.update({
     where: { id: demandeId },
-    data: { categorieId, objetId, budgetDisponible },
+    data: { categorieId, objetId },
   });
 
   await prisma.historiqueEntry.create({
@@ -83,7 +81,7 @@ export async function categoriserDemandeAction(
       entity: "Demande",
       entityId: demandeId,
       action: "CATEGORISER",
-      detail: `Catégorie « ${objet.categorie.label} », objet « ${objet.label} », budget ${budgetDisponible.toLocaleString("fr-FR")} FCFA`,
+      detail: `Catégorie « ${objet.categorie.label} », objet « ${objet.label} »`,
       userId: session.user.id,
     },
   });
@@ -271,6 +269,12 @@ export async function validerComplementaireAction(
       message: `Une validation complémentaire n'est possible que sur une demande partiellement validée (statut actuel : ${demande.statut}).`,
     };
   }
+  if (demande.reliquatRejete) {
+    return {
+      status: "error",
+      message: "Le reliquat de cette demande a été rejeté, aucune validation complémentaire n'est plus possible.",
+    };
+  }
 
   const montantDemande = Number(demande.montant);
   const montantValideActuel = Number(demande.montantValide ?? 0);
@@ -296,6 +300,83 @@ export async function validerComplementaireAction(
   return {
     status: "success",
     message: `Demande ${demande.reference} : validation complémentaire de ${parsedMontant.data.toLocaleString("fr-FR")} FCFA enregistrée.`,
+  };
+}
+
+const motifRejetReliquatSchema = z
+  .string()
+  .trim()
+  .min(3, "Le motif est obligatoire (3 caractères minimum)");
+
+/**
+ * Rejette le reliquat NON encore validé d'une demande `PARTIELLEMENT_VALIDEE`
+ * — le seul chemin qui manquait au circuit de validation partielle
+ * (jusqu'ici, une demande partiellement validée ne pouvait recevoir qu'une
+ * validation complémentaire, jamais un rejet du reste). Réservée à
+ * `treso.valider_demande` (Finance ET DG, même permission que la validation
+ * elle-même — pas de restriction sur qui a effectué la validation initiale).
+ *
+ * **N'affecte JAMAIS `montantValide` ni le `statut`** : la part déjà
+ * validée reste acquise et suit son cours normal (règlement, clôture),
+ * exactement comme documenté pour `rejeterValidationCompleteAction` — une
+ * trace de décision, pas une réécriture du montant. Seul effet concret :
+ * `validerComplementaireAction` refuse désormais toute nouvelle tentative
+ * sur cette demande (voir la garde ajoutée ci-dessus).
+ *
+ * Motif obligatoire, revalidé côté serveur. Défense en profondeur : refusée
+ * si la demande n'est pas `PARTIELLEMENT_VALIDEE`, ou si son reliquat est
+ * déjà rejeté (`reliquatRejete` ne peut être fixé qu'une seule fois — même
+ * principe que l'absence de "dévalidation" ailleurs dans le module).
+ */
+export async function rejeterReliquatAction(
+  demandeId: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.valider_demande")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedMotif = motifRejetReliquatSchema.safeParse(motif);
+  if (!parsedMotif.success) {
+    return { status: "error", message: parsedMotif.error.issues[0].message };
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.statut !== "PARTIELLEMENT_VALIDEE") {
+    return {
+      status: "error",
+      message: `Le rejet du reliquat n'est possible que sur une demande partiellement validée (statut actuel : ${demande.statut}).`,
+    };
+  }
+  if (demande.reliquatRejete) {
+    return { status: "error", message: "Le reliquat de cette demande a déjà été rejeté." };
+  }
+
+  await prisma.$transaction([
+    prisma.demande.update({
+      where: { id: demandeId },
+      data: { reliquatRejete: true, motifRejetReliquat: parsedMotif.data },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "rejet_reliquat",
+        detail: parsedMotif.data,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+
+  revalidateDemandePaths(demandeId);
+
+  return {
+    status: "success",
+    message: `Reliquat de la demande ${demande.reference} rejeté — le montant déjà validé suit son cours normal.`,
   };
 }
 

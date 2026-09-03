@@ -265,6 +265,50 @@ export async function getEcart(demandeId: string): Promise<number> {
   return totalRegle - depensesDeclarees - retoursRecus;
 }
 
+/**
+ * Consommation réelle du budget PARTAGÉ d'une Catégorie (voir CLAUDE.md
+ * "Budget partagé par Catégorie") : somme des règlements confirmés et non
+ * annulés de TOUTES les demandes ayant cette `categorieId`, tous
+ * demandeurs et tous bénéficiaires confondus — un Commercial qui achète un
+ * ordinateur et un Marketing qui achète une imprimante, catégorisés tous
+ * les deux "Informatique", puisent dans la même enveloppe. Décomptée au
+ * RÈGLEMENT (pas à la validation) : c'est le moment où l'argent sort
+ * réellement (règle impérative du module, voir CLAUDE.md).
+ *
+ * Équivalent mathématique de "appliquer `getTotalRegle` à chaque demande de
+ * cette catégorie et sommer", mais en une seule requête `aggregate` avec un
+ * filtre de relation (`demande: { categorieId }`) plutôt qu'une boucle —
+ * jamais une requête par demande.
+ */
+export async function getMontantConsommeCategorie(categorieId: string): Promise<number> {
+  const result = await prisma.reglement.aggregate({
+    where: { estConfirme: true, estAnnule: false, demande: { categorieId } },
+    _sum: { montant: true },
+  });
+  return Number(result._sum.montant ?? 0);
+}
+
+/**
+ * Budget restant d'une Catégorie : `null` si `budgetAlloue` est `null`
+ * (aucune limite définie, aucun contrôle appliqué) ; sinon `budgetAlloue -
+ * getMontantConsommeCategorie(categorieId)`. **Retourne la valeur BRUTE,
+ * jamais plafonnée à 0** — un résultat négatif signale un dépassement réel
+ * (utile à `confirmerReglementAction` et au reporting "Suivi budgétaire"
+ * pour le détecter) ; c'est à l'affichage de choisir, au cas par cas, de
+ * clamper avec `Math.max(0, ...)` ou de montrer le dépassement tel quel.
+ */
+export async function getBudgetRestantCategorie(categorieId: string): Promise<number | null> {
+  const categorie = await prisma.categorie.findUnique({
+    where: { id: categorieId },
+    select: { budgetAlloue: true },
+  });
+  if (!categorie || categorie.budgetAlloue == null) {
+    return null;
+  }
+  const consomme = await getMontantConsommeCategorie(categorieId);
+  return Number(categorie.budgetAlloue) - consomme;
+}
+
 export interface MesIndicateurs {
   /** Somme des montants de TOUTES les demandes créées par cet utilisateur, quel que soit leur statut. */
   demande: number;

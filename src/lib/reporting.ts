@@ -9,7 +9,13 @@ import {
   getRetoursEnAttenteReception,
 } from "@/lib/dashboardFinance";
 import { prisma } from "@/lib/prisma";
-import { getDepensesDeclarees, getRetoursRecus, getSoldeCaisse, getTotalRegle } from "@/lib/tresorerie";
+import {
+  getDepensesDeclarees,
+  getMontantConsommeCategorie,
+  getRetoursRecus,
+  getSoldeCaisse,
+  getTotalRegle,
+} from "@/lib/tresorerie";
 
 /**
  * Filtres du reporting Trésorerie (Ticket 10), partagés entre l'écran
@@ -222,7 +228,6 @@ interface DemandeAvecRelations {
   /** Phase H : base de la colonne "Validé" du tableau agrégé (capture aussi les validations partielles). */
   montantValide: Prisma.Decimal | null;
   statut: StatutDemande;
-  budgetDisponible: Prisma.Decimal | null;
   createdAt: Date;
   categorieId: string | null;
   objetId: string | null;
@@ -452,8 +457,6 @@ export interface ReportingRow {
   montantRegleCaisse: number;
   /** Règlements confirmés et non annulés en mode BANQUE uniquement. */
   montantRegleBanque: number;
-  /** null si aucune demande de ce groupe n'a de `budgetDisponible` renseigné. */
-  budgetAlloue: number | null;
 }
 
 /**
@@ -463,9 +466,15 @@ export interface ReportingRow {
  * demandé (toutes demandes), montant validé (`Demande.montantValide`),
  * montant restant à valider, montant réglé (Caisse + Banque confondus),
  * montant validé restant à régler, et la répartition Caisse/Banque du
- * réglé — plus le budget alloué cumulé (Ticket 10, suivi budgétaire).
- * Calculés en mémoire à partir d'une seule requête `findMany` + un seul
- * `groupBy`, jamais une requête par demande.
+ * réglé. Calculés en mémoire à partir d'une seule requête `findMany` + un
+ * seul `groupBy`, jamais une requête par demande.
+ *
+ * Ne porte plus de budget (l'ancien `budgetAlloue` cumulé par groupe,
+ * dérivé de `Demande.budgetDisponible`, a été retiré avec ce champ — voir
+ * CLAUDE.md "Budget partagé par Catégorie") : le budget est désormais une
+ * enveloppe PARTAGÉE par Catégorie, sans lien avec ce regroupement
+ * Catégorie×Objet — voir `getReportingSuiviBudgetaire` ci-dessous, section
+ * dédiée du reporting.
  *
  * Convention documentée (CLAUDE.md) : "Demandé" inclut TOUTES les demandes
  * correspondant aux filtres actifs, quel que soit leur statut (y compris
@@ -485,7 +494,6 @@ export async function getReportingRows(filters: ReportingFilters): Promise<Repor
     const key = `${d.categorieId ?? "none"}|${d.objetId ?? "none"}`;
     const montants = montantsRegleParDemande.get(d.id) ?? { total: 0, caisse: 0, banque: 0 };
     const montantValideContribution = Number(d.montantValide ?? 0);
-    const budget = d.budgetDisponible != null ? Number(d.budgetDisponible) : null;
 
     const existing = buckets.get(key);
     if (existing) {
@@ -495,9 +503,6 @@ export async function getReportingRows(filters: ReportingFilters): Promise<Repor
       existing.montantRegle += montants.total;
       existing.montantRegleCaisse += montants.caisse;
       existing.montantRegleBanque += montants.banque;
-      if (budget != null) {
-        existing.budgetAlloue = (existing.budgetAlloue ?? 0) + budget;
-      }
     } else {
       buckets.set(key, {
         categorieId: d.categorieId,
@@ -512,7 +517,6 @@ export async function getReportingRows(filters: ReportingFilters): Promise<Repor
         valideResteARegler: 0,
         montantRegleCaisse: montants.caisse,
         montantRegleBanque: montants.banque,
-        budgetAlloue: budget,
       });
     }
   }
@@ -525,6 +529,54 @@ export async function getReportingRows(filters: ReportingFilters): Promise<Repor
 
   return rows.sort(
     (a, b) => a.categorieLabel.localeCompare(b.categorieLabel) || a.objetLabel.localeCompare(b.objetLabel)
+  );
+}
+
+export interface ReportingSuiviBudgetaireRow {
+  categorieId: string;
+  categorieLabel: string;
+  budgetAlloue: number;
+  /** Somme des règlements confirmés et non annulés des demandes de cette Catégorie — `getMontantConsommeCategorie`. */
+  montantConsomme: number;
+  /** `budgetAlloue - montantConsomme`, **jamais plafonné à 0** — négatif = dépassement réel. */
+  budgetRestant: number;
+}
+
+/**
+ * "Suivi budgétaire" du reporting (Tâche 6, voir CLAUDE.md "Budget partagé
+ * par Catégorie") — recâblé sur le nouveau mécanisme : le budget appartient
+ * à la Catégorie (nature de la dépense), pas à une demande ni un service.
+ * Une ligne par Catégorie ayant un `budgetAlloue` défini (`null` = illimité,
+ * hors de cette liste), avec sa consommation réelle (règlements confirmés
+ * et non annulés, tous demandeurs confondus — même formule exacte que le
+ * contrôle bloquant de `confirmerReglementAction`, jamais une deuxième
+ * définition) et son restant.
+ *
+ * **Volontairement NON filtré** par les paramètres du reporting (période,
+ * demandeur...) — même principe que `getReportingDashboardSnapshot` : le
+ * budget est une enveloppe cumulative depuis toujours (aucun renouvellement
+ * périodique, voir CLAUDE.md), pas une donnée qui se prête à un découpage
+ * par période. Nombre de catégories modeste (~9) : un `Promise.all` par
+ * catégorie reste largement suffisant, jamais une requête par demande.
+ */
+export async function getReportingSuiviBudgetaire(): Promise<ReportingSuiviBudgetaireRow[]> {
+  const categories = await prisma.categorie.findMany({
+    where: { budgetAlloue: { not: null } },
+    orderBy: { label: "asc" },
+  });
+
+  return Promise.all(
+    categories.map(async (c) => {
+      const budgetAlloue = Number(c.budgetAlloue);
+      const montantConsomme = await getMontantConsommeCategorie(c.id);
+      return {
+        categorieId: c.id,
+        categorieLabel: c.label,
+        budgetAlloue,
+        montantConsomme,
+        budgetRestant: budgetAlloue - montantConsomme,
+      };
+    })
   );
 }
 

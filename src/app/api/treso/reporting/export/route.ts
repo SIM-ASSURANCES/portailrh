@@ -15,6 +15,7 @@ import {
   getReportingRegularisationsDetail,
   getReportingRetoursDetail,
   getReportingRows,
+  getReportingSuiviBudgetaire,
   getReportingValidationsDetail,
   parseReportingFilters,
 } from "@/lib/reporting";
@@ -58,20 +59,33 @@ export async function GET(request: NextRequest) {
   const searchParams = Object.fromEntries(request.nextUrl.searchParams.entries());
   const filters = parseReportingFilters(searchParams);
 
-  const [demandes, reglements, retours, depenses, journal, rows, validations, fondsRemis, regularisations, depensesNonJustifiees, dashboard] =
-    await Promise.all([
-      getReportingDemandesDetail(filters),
-      getReportingReglementsDetail(filters),
-      getReportingRetoursDetail(filters),
-      getReportingDepensesDetail(filters),
-      getReportingJournalDetail(filters),
-      getReportingRows(filters),
-      getReportingValidationsDetail(filters),
-      getReportingFondsRemis(filters),
-      getReportingRegularisationsDetail(filters),
-      getReportingDepensesNonJustifieesDetail(filters),
-      getReportingDashboardSnapshot(),
-    ]);
+  const [
+    demandes,
+    reglements,
+    retours,
+    depenses,
+    journal,
+    rows,
+    validations,
+    fondsRemis,
+    regularisations,
+    depensesNonJustifiees,
+    suiviBudgetaire,
+    dashboard,
+  ] = await Promise.all([
+    getReportingDemandesDetail(filters),
+    getReportingReglementsDetail(filters),
+    getReportingRetoursDetail(filters),
+    getReportingDepensesDetail(filters),
+    getReportingJournalDetail(filters),
+    getReportingRows(filters),
+    getReportingValidationsDetail(filters),
+    getReportingFondsRemis(filters),
+    getReportingRegularisationsDetail(filters),
+    getReportingDepensesNonJustifieesDetail(filters),
+    getReportingSuiviBudgetaire(),
+    getReportingDashboardSnapshot(),
+  ]);
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Portail SIM Assurances";
@@ -370,46 +384,35 @@ export async function GET(request: NextRequest) {
   totalRow.font = { bold: true };
   styleHeaderRow(sheetReporting);
 
-  const rowsAvecBudget = rows.filter(
-    (r): r is typeof r & { budgetAlloue: number } => r.budgetAlloue != null
-  );
+  // Budget PARTAGÉ par Catégorie, décompté au règlement — voir CLAUDE.md
+  // "Budget partagé par Catégorie". Volontairement non filtré par les
+  // paramètres du reporting (même principe que la feuille "Dashboard") :
+  // c'est une enveloppe cumulative, pas une donnée découpable par période.
   const sheetBudget = workbook.addWorksheet("Suivi budgétaire");
   sheetBudget.columns = [
-    { header: "Catégorie", key: "categorie", width: 18 },
-    { header: "Objet", key: "objet", width: 26 },
+    { header: "Catégorie", key: "categorie", width: 22 },
     { header: "Budget alloué (FCFA)", key: "budget", width: 18 },
-    { header: "Montant réglé (FCFA)", key: "montantRegle", width: 18 },
-    { header: "Écart (FCFA)", key: "ecart", width: 16 },
+    { header: "Consommé - réglé (FCFA)", key: "consomme", width: 20 },
+    { header: "Restant (FCFA)", key: "restant", width: 16 },
   ];
-  // Phase H, Tâche 4 (voir CLAUDE.md "Refonte V1 en cours") : Catégorie/
-  // Objet/Budget ne sont plus au cœur du nouveau cahier des charges depuis
-  // la Phase A — une demande créée depuis la refonte V1 n'a normalement
-  // plus de `budgetDisponible` renseigné, donc cette feuille reste vide
-  // pour tout jeu de filtres portant sur des données récentes. Note
-  // explicite ajoutée dans la feuille elle-même plutôt que de la supprimer
-  // (elle reste pertinente pour d'éventuelles données antérieures à la
-  // refonte qui auraient encore un budget renseigné).
-  if (rowsAvecBudget.length === 0) {
+  if (suiviBudgetaire.length === 0) {
     const noteRow = sheetBudget.addRow({
-      categorie:
-        "Fonctionnalité liée à Catégorie/Objet/Budget, statut à confirmer avec le maître de stage — voir CLAUDE.md (\"Refonte V1 en cours\", section Catégorie/Objet/Budget). Aucune demande de ces filtres n'a de budget disponible renseigné.",
+      categorie: "Aucune catégorie n'a de budget alloué défini pour l'instant (voir /admin/categories).",
     });
-    sheetBudget.mergeCells(noteRow.number, 1, noteRow.number, 5);
+    sheetBudget.mergeCells(noteRow.number, 1, noteRow.number, 4);
     noteRow.getCell(1).alignment = { wrapText: true, vertical: "top" };
     noteRow.getCell(1).font = { italic: true, color: { argb: "FF64748B" } };
-    sheetBudget.getRow(noteRow.number).height = 45;
+    sheetBudget.getRow(noteRow.number).height = 30;
   }
-  rowsAvecBudget.forEach((r) => {
-    const ecart = r.budgetAlloue - r.montantRegle;
+  suiviBudgetaire.forEach((r) => {
     const row = sheetBudget.addRow({
       categorie: r.categorieLabel,
-      objet: r.objetLabel,
       budget: r.budgetAlloue,
-      montantRegle: r.montantRegle,
-      ecart,
+      consomme: r.montantConsomme,
+      restant: r.budgetRestant,
     });
-    if (ecart < 0) {
-      row.getCell("ecart").font = { bold: true, color: { argb: "FFDA0101" } };
+    if (r.budgetRestant < 0) {
+      row.getCell("restant").font = { bold: true, color: { argb: "FFDA0101" } };
     }
   });
   styleHeaderRow(sheetBudget);

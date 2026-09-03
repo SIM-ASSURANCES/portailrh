@@ -1576,11 +1576,12 @@ couple `montant` + `description`.
 - **`Demande.devise`** (`String`, défaut `"XOF"`) — code ISO. Options
   gérées dans [devise.ts](src/components/tresorerie/devise.ts) (`XOF`/`EUR`/
   `USD`) ; `formatMontantDevise(montant, devise)` pour l'affichage.
-- **`Demande.posteBudgetaireId`** → `Categorie` (relation nommée
-  `"DemandePosteBudgetaire"`). Le « poste budgétaire concerné (facultatif) »
-  **réutilise la table `Categorie`**, comme la catégorie d'achat — d'où les
-  deux relations `Demande` ↔ `Categorie` (`"DemandeCategorie"` +
-  `"DemandePosteBudgetaire"`), toutes deux nommées.
+- ~~**`Demande.posteBudgetaireId`** → `Categorie`~~ — **retiré** (voir
+  "Budget partagé par Catégorie" plus bas) : s'est révélé être une fausse
+  piste, purement décorative (une étiquette sans aucun montant attaché,
+  jamais reliée au budget réel). Le champ « poste budgétaire concerné » du
+  formulaire a été retiré avec lui. Ce paragraphe reste ici pour
+  l'historique de ce ticket.
 - **`LigneDemande`** (`libelle`, `quantite` Int, `prixUnitaire` Decimal,
   `demandeId`) — les articles. `Demande.montant` = **somme des
   `quantite × prixUnitaire`**, recalculée côté serveur, jamais saisie
@@ -1593,7 +1594,10 @@ La refonte V1 avait sorti Catégorie/Objet/Budget du flux principal (voir
 [Refonte V1 en cours](#refonte-v1-en-cours)) tout en gardant la table et le
 CRUD `admin/categories`. Ce formulaire **remet la catégorie d'achat comme
 champ d'en-tête obligatoire à la création** (alimentée par les
-`Categorie` actives). `objetId`/`budgetDisponible` restent inutilisés.
+`Categorie` actives). `objetId` reste inutilisé par ce formulaire.
+`budgetDisponible` (par demande, Ticket 2) a depuis été **retiré** — voir
+"Budget partagé par Catégorie" plus bas, le budget appartient désormais à
+la Catégorie elle-même, jamais à une demande précise.
 
 ### Bénéficiaire (choix acté avec l'utilisateur)
 
@@ -1788,6 +1792,12 @@ immédiat, en plus de la colonne dédiée.
 
 ### Feuille "Suivi budgétaire" : note ajoutée, pas supprimée (Tâche 4)
 
+**Superseded** : cette section documentait un état transitoire (feuille
+vide, budget par demande abandonné sans remplacement) — depuis "Budget
+partagé par Catégorie" (plus bas), la feuille/section "Suivi budgétaire"
+est de nouveau pleinement active, recâblée sur `Categorie.budgetAlloue`.
+Paragraphe original conservé pour l'historique de la Phase H :
+
 Vérifié explicitement : une demande créée depuis la refonte V1 n'a plus de
 `budgetDisponible` renseigné (Catégorie/Objet/Budget écartés depuis la
 Phase A), donc cette feuille — et la section correspondante de l'écran —
@@ -1869,17 +1879,18 @@ Accumulés au fil des 8 phases, tous déjà documentés à l'endroit où ils ont
 été rencontrés (voir les sections de phase correspondantes) — regroupés
 ici pour n'avoir qu'un seul point de synthèse à soumettre :
 
-1. **Sort de Catégorie/Objet/Budget** (Phase A) — **partiellement tranché
-   depuis** (voir "Formulaire Demande d'Achat — en-tête + lignes
-   d'articles" plus haut) : `Categorie` est revenue dans le flux principal
-   comme « catégorie
-   d'achat », champ d'en-tête **obligatoire** à la création, et sert même
-   une seconde fois comme « poste budgétaire » (relation nommée distincte).
-   `Objet` et `Demande.budgetDisponible`, en revanche, restent inutilisés
-   par ce nouveau formulaire — toujours en dormance. Décision encore
-   ouverte sur ces deux-là précisément : supprimer définitivement, ou
-   garder pour un usage futur (la feuille "Suivi budgétaire" du reporting
-   en dépend directement) ?
+1. **Sort de Catégorie/Objet/Budget** (Phase A) — **définitivement tranché
+   depuis, par le maître de stage lui-même** (voir "Budget partagé par
+   Catégorie" plus bas) : le « poste budgétaire » de `Demande` (champ
+   `posteBudgetaireId`, décrit ci-dessous dans "Formulaire Demande d'Achat")
+   s'est révélé être une fausse piste, purement décorative — **retiré**.
+   Le budget appartient en réalité à la NATURE de la dépense
+   (`Categorie.budgetAlloue`, une enveloppe PARTAGÉE), pas à une demande ni
+   à un service précis. L'ancien `Demande.budgetDisponible` (par demande,
+   Ticket 2) est lui aussi **retiré** — remplacé par ce nouveau mécanisme.
+   `Objet` reste, lui, toujours inutilisé par le nouveau formulaire de
+   création (seul l'ancien écran de catégorisation Finance, Ticket 2, le
+   renseigne encore) — ce point précis reste ouvert.
 2. **Statut `VALIDEE` devenu invisible en pratique** (Phase B) — n'est
    plus jamais produit par `calculerStatutDemande` : une validation totale
    transite directement vers `VALIDEE_NON_REGLEE` (puis
@@ -1887,12 +1898,13 @@ ici pour n'avoir qu'un seul point de synthèse à soumettre :
    uniquement pour compatibilité (`STATUTS_VALIDATION_COMPLETE`). Est-ce
    le comportement voulu, ou `VALIDEE` devrait-il réapparaître comme statut
    affiché explicitement à un moment du circuit ?
-3. **Rejet impossible après une validation partielle** (Phase B) — une
-   demande déjà `PARTIELLEMENT_VALIDEE` ne peut plus être "rejetée" au
-   sens strict (seul le reliquat peut encore recevoir une validation
-   complémentaire). Aucune action de "rejet du reliquat" n'existe : si un
-   validateur veut abandonner la partie non encore validée d'une demande,
-   ce cas reste sans réponse applicative à ce stade.
+3. **Rejet du reliquat — résolu** (Phase B initialement, comblé depuis par
+   "Rejet du reliquat non validé" plus bas) : une demande
+   `PARTIELLEMENT_VALIDEE` ne peut toujours pas être "rejetée" dans son
+   ensemble au sens strict (la part déjà validée reste acquise, c'est
+   volontaire), mais `rejeterReliquatAction` permet désormais d'acter
+   explicitement l'abandon du reliquat non encore validé, sans toucher au
+   montant déjà validé ni au statut.
 4. **Bénéficiaire d'une dépense directe invisible dans son propre espace**
    (Phase F) — un bénéficiaire ayant un compte Collaborateur ne voit
    jamais "sa" dépense directe dans "Mes demandes" (filtré par créateur,
@@ -4683,6 +4695,195 @@ les deux demandes réelles confirmées inchangées (mêmes `dgApprouveAt`
 qu'avant ce test, à la milliseconde près). Serveur `next dev` arrêté après
 vérification.
 
+## Budget partagé par Catégorie
+
+**Statut : terminé. Remplace et annule toute tentative précédente de
+"budget par demande" ou de "poste budgétaire" par étiquette** (voir les
+notes "Superseded"/"retiré" ajoutées rétroactivement aux sections
+"Formulaire Demande d'Achat", "Phase H" et "Points d'interprétation en
+attente" plus haut). Le maître de stage a clarifié le fonctionnement
+attendu : **le budget n'appartient ni au demandeur, ni au bénéficiaire, ni
+à son service — il appartient à la NATURE de la dépense, c'est-à-dire à la
+Catégorie d'achat elle-même.**
+
+### Le principe, avec l'exemple exact du maître de stage
+
+Un Commercial qui achète un ordinateur, et un Marketing qui achète une
+imprimante, catégorisés tous les deux "Informatique", puisent dans **la
+même enveloppe partagée** — peu importe leur service d'origine, peu
+importe qui a créé la demande. L'argent est retiré de cette enveloppe au
+moment du **RÈGLEMENT**, jamais à la validation : c'est le règlement qui
+fait réellement sortir l'argent (même principe que `getSoldeCaisse`,
+`JournalCaisse` — rien n'est jamais débité tant que rien n'est réellement
+décaissé). Une demande peut donc être validée totalement sans qu'aucune
+limite ne s'applique encore ; c'est seulement au moment de confirmer un
+règlement que le budget de la Catégorie est vérifié.
+
+**Aucun renouvellement automatique périodique n'est implémenté.** Un
+budget est un montant total consommable jusqu'à épuisement — jamais remis
+à zéro chaque mois/année tout seul. Si un renouvellement (mensuel, annuel)
+s'avère nécessaire, c'est à l'Admin de réajuster manuellement
+`budgetAlloue` depuis `/admin/categories` ; à confirmer avec le maître de
+stage si un mécanisme automatique doit être construit plus tard.
+
+### Nettoyage de l'ancien mécanisme (Tâche 1)
+
+Deux champs `Demande` retirés **définitivement** (migration
+`budget_partage_categorie_retrait_ancien_budget`), avec tout le code qui
+les référençait :
+
+- **`Demande.budgetDisponible`** (Ticket 2) — l'ancien budget par demande,
+  saisi manuellement par Finance à la catégorisation
+  (`CategorisationForm.tsx`/`categoriserDemandeAction`). Jamais une vraie
+  enveloppe : un simple nombre par demande, sans lien entre deux demandes
+  de la même catégorie — exactement l'incohérence signalée par l'audit
+  précédent ("deux systèmes non reliés").
+- **`Demande.posteBudgetaireId`** (formulaire "Demande d'Achat" du maître
+  de stage) — s'est révélé être une étiquette purement décorative (aucun
+  montant attaché, jamais lue nulle part hors de son propre affichage),
+  décidée comme inutile et retirée avec le champ « Poste budgétaire
+  concerné » du formulaire de création.
+
+`CategorisationForm.tsx` ne demande plus de budget (uniquement
+catégorie/objet, comme avant le Ticket 2) ; `creerDemandeAction` et
+`DemandeForm.tsx` ne connaissent plus de poste budgétaire. Migration
+purement additive/destructive sans donnée orpheline : les deux colonnes ne
+portaient plus aucune logique active après leur retrait du code — vérifié
+qu'aucune référence ne subsistait (`grep` exhaustif) avant d'écrire la
+migration.
+
+### `Categorie.budgetAlloue` (Tâche 2)
+
+`Decimal?`, nullable — **`null` signifie littéralement "pas de limite
+définie, aucun contrôle appliqué pour cette catégorie"**, jamais interprété
+comme 0. C'est l'état par défaut de toutes les catégories existantes
+(seed) : aucune n'a de budget tant que l'Admin n'en définit pas un
+explicitement — comportement du portail strictement inchangé pour toute
+catégorie qui n'en a pas.
+
+### Interface admin (Tâche 3)
+
+`admin/categories` (`CategoriesList.tsx`) gagne un champ éditable "Budget
+alloué" par catégorie (`BudgetAlloueField.tsx`, Client Component) : vide
+= aucune limite, un nombre = la nouvelle enveloppe. Enregistrement
+explicite (bouton "Enregistrer"), pas à chaque frappe — une saisie de
+montant se corrige souvent en cours de route. `modifierBudgetCategorieAction`
+(`admin/categories/actions.ts`), réservée à `isAdmin()` comme le reste de
+cet écran, historise chaque changement (`HistoriqueEntry`, entité
+`Categorie`, action `BUDGET_ALLOUE`).
+
+### Fonctions de calcul (Tâche 4, `src/lib/tresorerie.ts`)
+
+- **`getMontantConsommeCategorie(categorieId)`** — somme des règlements
+  **confirmés et non annulés** de TOUTES les demandes ayant cette
+  `categorieId`, tous demandeurs et bénéficiaires confondus. Une seule
+  requête `aggregate` avec un filtre de relation (`demande: { categorieId
+  } }`) — mathématiquement équivalent à "appliquer `getTotalRegle` à
+  chaque demande de la catégorie et sommer", mais sans boucle ni requête
+  par demande.
+- **`getBudgetRestantCategorie(categorieId)`** — `null` si `budgetAlloue`
+  est `null` (illimité) ; sinon `budgetAlloue - getMontantConsommeCategorie(...)`.
+  **Retourne la valeur BRUTE, jamais plafonnée à 0** : un résultat négatif
+  signale un dépassement réel, utile au contrôle bloquant (Tâche 5) et au
+  reporting (Tâche 6) pour le détecter — c'est à l'affichage de choisir,
+  au cas par cas, de clamper ou de montrer le dépassement tel quel.
+
+### Contrôle bloquant au règlement (Tâche 5, `confirmerReglementAction`)
+
+Ajouté **après** la vérification déjà existante ("ce règlement ne dépasse
+pas `montantValide`"), donc seulement si cette première garde passe déjà.
+Aucune limite ne s'applique si la demande n'a pas encore de `categorieId`
+(pas catégorisée) ou si sa Catégorie n'a pas de `budgetAlloue` défini — le
+comportement de toutes les demandes/catégories existantes, jamais
+touchées par ce mécanisme, reste strictement inchangé.
+
+Le règlement en cours de confirmation est encore un **brouillon**
+(`estConfirme: false`) au moment de ce calcul — `getMontantConsommeCategorie`
+(qui ne compte que les règlements déjà `estConfirme: true`) ne l'inclut
+donc jamais dans la consommation existante : aucun besoin de l'exclure
+explicitement ("hors ce règlement en cours" de la consigne se vérifie
+automatiquement par construction, pas par un filtre ad hoc).
+
+Message de refus explicite, précisant le budget restant AVANT ce
+règlement (ex : *"Ce règlement dépasse le budget disponible de la
+catégorie « Informatique » (600 000 FCFA restants avant ce règlement)."*)
+— jamais un refus muet.
+
+### Reporting "Suivi budgétaire" réactivé (Tâche 6)
+
+`getReportingSuiviBudgetaire()` (`src/lib/reporting.ts`) — une ligne par
+Catégorie ayant un `budgetAlloue` défini, avec budget alloué/consommé/
+restant. **Fonction dédiée, séparée de `getReportingRows`** (le tableau
+agrégé Catégorie×Objet) : le budget n'a plus aucun lien avec ce
+regroupement depuis que `budgetDisponible` (par demande) a disparu —
+`ReportingRow` a perdu son champ `budgetAlloue` cumulé, qui n'aurait plus
+eu aucun sens.
+
+**Volontairement NON filtrée** par les paramètres du reporting (période,
+demandeur...), même principe que `getReportingDashboardSnapshot` : un
+budget est une enveloppe cumulative depuis toujours (pas de renouvellement
+périodique, voir plus haut), pas une donnée qui se prête à un découpage
+par période. Réutilisée à l'identique par l'écran
+(`treso/finance/reporting/page.tsx`) et par l'export Excel
+(`api/treso/reporting/export/route.ts`, feuille "Suivi budgétaire") —
+jamais deux implémentations. Écart mis en évidence (`text-danger`/rouge
+Excel) si le restant est négatif.
+
+### Vérifié explicitement — scénario exact du maître de stage rejoué
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes erreurs
+préexistantes du Module Pointage RH). `npx prisma migrate dev` non
+disponible en environnement non interactif (piège déjà documenté à
+plusieurs reprises dans ce fichier) : migration écrite à la main après
+avoir vérifié qu'elle correspond EXACTEMENT à `npx prisma migrate diff`
+(sortie identique, juste réordonnée), puis appliquée via `npx prisma
+migrate deploy`.
+
+Parcours réel (Chromium headless, Playwright, non ajouté au projet)
+contre le vrai serveur `next dev`, catégorie de test "Informatique"
+(n'existait pas dans le seed, créée pour ce test) budgétée à 1 000 000
+FCFA :
+
+1. Demande 1 (Collaborateur, "Ordinateur portable", 400 000 FCFA,
+   catégorie Informatique) : validée totalement, réglée intégralement en
+   Caisse (confirmé sans blocage) → **budget restant Informatique
+   600 000 FCFA**, confirmé à l'écran de reporting.
+2. Demande 2 ("Imprimante laser", 700 000 FCFA, même catégorie
+   Informatique) : **validée totalement sans aucun blocage** (le contrôle
+   ne s'applique jamais à la validation, uniquement au règlement).
+   Tentative de règlement de 700 000 FCFA → **refusée** (dépasse les
+   600 000 FCFA restants), le règlement reste en brouillon. Modifié à
+   600 000 FCFA exactement → confirmé avec succès → **budget restant
+   Informatique = 0**.
+3. Troisième règlement quelconque sur Informatique (100 000 FCFA, reliquat
+   de la demande 2) → **refusé**, budget épuisé. L'Admin augmente
+   `budgetAlloue` à 1 100 000 FCFA depuis `/admin/categories` → le même
+   règlement, retenté, est **accepté** (démontre le déblocage réel, pas
+   seulement le blocage).
+4. Catégorie "Loyers" (existante, aucun `budgetAlloue` défini) : demande
+   de 5 000 000 FCFA validée et réglée intégralement **sans aucun
+   blocage** — confirme qu'une catégorie sans budget n'est jamais
+   affectée par ce mécanisme.
+5. État final vérifié directement en base : consommation Informatique =
+   400 000 + 600 000 + 100 000 = 1 100 000 FCFA = `budgetAlloue` exact,
+   restant = 0 au centime près.
+
+**Tâche 7 (non-régression) vérifiée explicitement** : les deux demandes
+réelles de l'utilisateur (`DEM-2026-000001`, `DEM-2026-000002`) — déjà
+catégorisées avant ce ticket, avec l'ancien `budgetDisponible` renseigné —
+consultées sur les écrans Finance ET Collaborateur après la migration
+(colonnes supprimées) : statut 200, référence affichée correctement,
+aucune trace d'erreur (`undefined`/`NaN`) dans le texte de la page, zéro
+erreur console. Revérifié une seconde fois après le scénario de test
+complet ci-dessus, résultat identique.
+
+Toutes les données de test supprimées après coup dans des transactions
+dédiées (3 demandes avec leurs lignes/règlements/historique, catégorie de
+test "Informatique" entièrement supprimée avec son historique — n'existait
+pas dans le seed) ; base revenue à exactement les 2 demandes réelles et
+les 9 catégories du seed, toutes avec `budgetAlloue: null`. Serveur `next
+dev` arrêté après vérification.
+
 ## Corrections suite à un vrai test utilisateur (bon de caisse, modification de retour, pièce jointe, navigation)
 
 **Statut : terminé.** Cinq sujets distincts issus d'un vrai parcours
@@ -5537,6 +5738,120 @@ donnée de test créée pendant cette vérification (uniquement des cases à
 cocher et des connexions), rien à nettoyer en base. `npx tsc --noEmit` et
 `npx eslint .` sans erreur nouvelle (mêmes 9 avertissements/erreurs
 préexistants du Module Pointage RH). Serveur `next dev` arrêté après
+vérification.
+
+## Rejet du reliquat non validé (demande partiellement validée)
+
+**Statut : terminé.** Complète le circuit de validation partielle
+(Phases B-C) : jusqu'ici, une demande `PARTIELLEMENT_VALIDEE` ne pouvait
+recevoir qu'une **validation complémentaire** sur son reliquat — aucun
+moyen de rejeter explicitement la partie non encore validée. Un
+validateur qui jugeait le reliquat définitivement injustifié n'avait donc
+aucune action applicative disponible (point déjà signalé comme ouvert
+dans "Points d'interprétation en attente", point 3).
+
+### Champs et Server Action (`rejeterReliquatAction`)
+
+`Demande.reliquatRejete` (`Boolean`, défaut `false`) et
+`Demande.motifRejetReliquat` (`String?`) — migration
+`rejet_reliquat_partiellement_validee`. Réservée à `treso.valider_demande`
+(Finance ET DG, même permission que la validation elle-même — aucune
+restriction sur qui a fait la validation initiale), uniquement sur une
+demande `PARTIELLEMENT_VALIDEE` dont le reliquat n'est pas déjà rejeté
+(`reliquatRejete` ne peut être fixé qu'une seule fois, même principe que
+l'absence de "dévalidation" ailleurs dans le module). Motif obligatoire
+(zod, min 3 caractères).
+
+**N'affecte JAMAIS `montantValide` ni `statut`** — la part déjà validée
+reste acquise et suit son cours normal (règlement, clôture), exactement
+comme `rejeterValidationCompleteAction` (verrou de clôture DG) : une trace
+de décision (`HistoriqueEntry`, action `rejet_reliquat`), jamais une
+réécriture du montant. Seul effet concret côté données :
+`validerComplementaireAction` revérifie désormais `!demande.reliquatRejete`
+avant d'écrire quoi que ce soit, avec le message exact demandé ("Le
+reliquat de cette demande a été rejeté, aucune validation complémentaire
+n'est plus possible").
+
+### Interface (`ValidationComplementaireActions.tsx`)
+
+Un seul composant, étendu (comme `ValidationCompleteDGActions` pour le
+verrou DG) : état `idle` affiche désormais deux boutons — "Validation
+complémentaire" (inchangé) et "Rejeter le reliquat" (`variant="danger"`,
+motif obligatoire dans un panneau dédié). N'est rendu par la page appelante
+(`treso/finance/demandes/[id]/page.tsx`) que si `!demande.reliquatRejete` ;
+une fois rejeté, remplacé entièrement par un bandeau "Reliquat rejeté :
+[motif]" (jamais les deux affichés à la fois) — même principe que le
+bandeau "Rejeté par le DG lors de l'examen" du verrou de clôture.
+
+**"Montant restant à valider" marqué visuellement clos** — sur les DEUX
+écrans de détail (Finance ET Collaborateur, `treso/finance/demandes/[id]/
+page.tsx` et `treso/demandes/[id]/page.tsx`) : barré (`line-through`,
+`text-muted-foreground`) + libellé explicite "Définitivement clos (reliquat
+rejeté)" en dessous, plutôt que de laisser ce montant à l'air "en attente"
+alors qu'aucune validation complémentaire n'est plus possible dessus.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes erreurs
+préexistantes du Module Pointage RH). `npx prisma migrate dev` non
+disponible en environnement non interactif (piège déjà documenté à
+plusieurs reprises) : migration écrite à la main, vérifiée identique à
+`npx prisma migrate diff` avant application via `npx prisma migrate
+deploy`.
+
+Parcours réel (Chromium headless, Playwright, non ajouté au projet)
+contre le vrai serveur `next dev`, demande de test dédiée (500 000 FCFA) :
+
+1. Finance valide partiellement à 300 000 FCFA → `PARTIELLEMENT_VALIDEE`.
+2. "Rejeter le reliquat" avec un motif vide → bloqué côté client (aucun
+   appel serveur). Avec un motif réel → succès.
+3. Rechargement de la page : bouton "Validation complémentaire" **absent
+   du DOM**, remplacé par le bandeau "Reliquat rejeté : [motif exact]" ;
+   "Montant restant à valider" barré avec "Définitivement clos" — vérifié
+   identique côté Collaborateur.
+4. Historique : entrée "Rejet du reliquat non validé" présente avec le
+   bon motif.
+5. État final vérifié directement en base : `montantValide` toujours à
+   300 000 FCFA (strictement inchangé par le rejet), `statut` toujours
+   `PARTIELLEMENT_VALIDEE`, `reliquatRejete = true`.
+
+Donnée de test supprimée après coup ; les deux demandes réelles de
+l'utilisateur confirmées inchangées (mêmes `dgApprouveAt`, à la
+milliseconde près). Serveur `next dev` arrêté après vérification.
+
+## Visibilité du statut de validation complète DG pour Finance — audit (aucun changement nécessaire)
+
+**Statut : vérifié, déjà conforme.** Demande explicite de confirmer que
+l'écran de détail Finance (`treso/finance/demandes/[id]/page.tsx`, partagé
+entre Finance et DG — voir Ticket 3) affiche clairement le statut de
+"validation complète" (verrou de clôture) dans ses 3 états, **pour un
+utilisateur Finance** et pas seulement pour le DG.
+
+**Constat, lecture du code puis confirmé par un vrai parcours navigateur
+avec le compte `finance@simassurances.test`** : le bloc "Validation
+complète (DG)" (badge "en attente"/texte "approuvée le [date] par
+[nom]", et le bandeau du dernier évènement négatif — rejet d'examen ou
+annulation) n'a **jamais été conditionné** à
+`canApprouverValidationComplete` — seuls les BOUTONS D'ACTION
+(`ValidationCompleteDGActions`) le sont, l'affichage informatif est
+inconditionnel dès que `montantValide > 0`. Finance voyait donc déjà,
+sans aucun changement de code nécessaire :
+
+- **En attente** : `Badge` "Validation complète : en attente du DG".
+- **Approuvée** : "approuvée le [date] par [nom du DG]".
+- **Rejetée (lors de l'examen)** : bandeau rouge "Rejeté par le DG lors de
+  l'examen (DG Test, le [date]) — motif : [motif exact]", affiché tant que
+  la demande reste en attente — exactement le cas qui permet à Finance de
+  comprendre d'un coup d'œil pourquoi le dossier n'avance pas vers la
+  clôture.
+
+**Vérifié explicitement** (même parcours navigateur que ci-dessus,
+réutilisant la demande de test de la section précédente) : connecté en
+`finance@simassurances.test`, les 3 états ont été observés successivement
+sur le même écran — badge "en attente" au départ, bandeau de rejet avec le
+motif exact après un rejet d'examen par le DG, puis "approuvée le [date]
+par DG Test" après approbation — sans qu'aucune ligne de code n'ait dû
+être modifiée pour cette tâche. Serveur `next dev` arrêté après
 vérification.
 
 <!-- BEGIN:nextjs-agent-rules -->

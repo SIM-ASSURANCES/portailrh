@@ -21,7 +21,6 @@ export interface CreerDemandeInput {
   beneficiaireType: string;
   categorieId: string;
   dateLivraisonSouhaitee?: string;
-  posteBudgetaireId?: string;
   devise: string;
   /** "Motif de l'achat" — stocké dans `Demande.description`. */
   motif: string;
@@ -45,7 +44,6 @@ const demandeSchema = z.object({
     .string()
     .optional()
     .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Date invalide"),
-  posteBudgetaireId: z.string().optional(),
   devise: z.enum(DEVISE_CODES as [string, ...string[]], { message: "Devise invalide" }),
   motif: z.string().trim().min(3, "Merci de préciser le motif de l'achat (3 caractères minimum)"),
   lignes: z.array(ligneSchema).min(1, "Ajoutez au moins une ligne d'article"),
@@ -90,8 +88,7 @@ export async function creerDemandeAction(
     };
   }
 
-  const { beneficiaireType, categorieId, dateLivraisonSouhaitee, posteBudgetaireId, devise, motif, lignes } =
-    parsed.data;
+  const { beneficiaireType, categorieId, dateLivraisonSouhaitee, devise, motif, lignes } = parsed.data;
 
   const montant = lignes.reduce((sum, l) => sum + l.quantite * l.prixUnitaire, 0);
   if (montant <= 0) {
@@ -102,8 +99,9 @@ export async function creerDemandeAction(
     };
   }
 
-  // La catégorie d'achat doit exister et être active ; le poste budgétaire
-  // (facultatif) doit exister s'il est fourni.
+  // La catégorie d'achat doit exister et être active — c'est elle qui
+  // porte le budget PARTAGÉ (voir CLAUDE.md "Budget partagé par Catégorie"),
+  // jamais une notion propre à cette demande.
   const categorie = await prisma.categorie.findFirst({
     where: { id: categorieId, isActive: true },
     select: { id: true },
@@ -114,19 +112,6 @@ export async function creerDemandeAction(
       message: "Le formulaire contient des erreurs.",
       fieldErrors: { categorieId: "Catégorie d'achat inconnue." },
     };
-  }
-  if (posteBudgetaireId) {
-    const poste = await prisma.categorie.findUnique({
-      where: { id: posteBudgetaireId },
-      select: { id: true },
-    });
-    if (!poste) {
-      return {
-        status: "error",
-        message: "Le formulaire contient des erreurs.",
-        fieldErrors: { posteBudgetaireId: "Poste budgétaire inconnu." },
-      };
-    }
   }
 
   // Bénéficiaire : pour une personne (collaborateur/stagiaire), le
@@ -152,7 +137,6 @@ export async function creerDemandeAction(
           description: motif,
           devise,
           categorieId: categorie.id,
-          posteBudgetaireId: posteBudgetaireId || null,
           dateLivraisonSouhaitee: dateLivraisonSouhaitee ? new Date(dateLivraisonSouhaitee) : null,
           createurId: session.user.id,
           beneficiaireType,

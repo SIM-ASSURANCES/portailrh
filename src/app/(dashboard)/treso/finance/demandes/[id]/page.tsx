@@ -7,7 +7,6 @@ import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesIntervenantes";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
-import type { Prisma } from "@/generated/prisma/client";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
@@ -160,10 +159,21 @@ export default async function CategoriserDemandePage({
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Montant restant à valider
             </dt>
-            <dd className="mt-1 text-base font-bold text-foreground tabular-nums">
+            <dd
+              className={`mt-1 text-base font-bold tabular-nums ${
+                demande.reliquatRejete ? "text-muted-foreground line-through" : "text-foreground"
+              }`}
+            >
               {Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0)).toLocaleString("fr-FR")}{" "}
               FCFA
             </dd>
+            {/* Rejet du reliquat (nouveau) : le montant restant n'est plus
+                "en attente" mais définitivement clos — barré + libellé
+                explicite, jamais laissé à interpréter comme si une
+                validation complémentaire restait possible. */}
+            {demande.reliquatRejete ? (
+              <p className="mt-1 text-xs font-medium text-danger">Définitivement clos (reliquat rejeté)</p>
+            ) : null}
           </div>
           <div className="sm:col-span-2">
             <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -275,14 +285,12 @@ export default async function CategoriserDemandePage({
               objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
               initialCategorieId={demande.categorieId ?? undefined}
               initialObjetId={demande.objetId ?? undefined}
-              initialBudget={demande.budgetDisponible != null ? Number(demande.budgetDisponible) : undefined}
             />
           ) : (
             <CategorisationSummary
               categorieLabel={demande.categorie?.label}
               objetLabel={demande.objet?.label}
-              budget={demande.budgetDisponible}
-              note="Catégorie, objet et budget sont renseignés par l'équipe Finance."
+              note="Catégorie et objet sont renseignés par l'équipe Finance."
             />
           )}
 
@@ -314,8 +322,7 @@ export default async function CategoriserDemandePage({
           <CategorisationSummary
             categorieLabel={demande.categorie?.label}
             objetLabel={demande.objet?.label}
-            budget={demande.budgetDisponible}
-            lockMessage="Catégorie, objet et budget sont définitivement verrouillés."
+            lockMessage="Catégorie et objet sont définitivement verrouillés."
           />
           <RegularisationSummary demandeId={demande.id} montantValide={Number(demande.montantValide ?? 0)} />
           <PersonnesIntervenantes demandeId={demande.id} demandeurNom={demande.createur.fullName} />
@@ -341,14 +348,24 @@ export default async function CategoriserDemandePage({
           <CategorisationSummary
             categorieLabel={demande.categorie?.label}
             objetLabel={demande.objet?.label}
-            budget={demande.budgetDisponible}
             lockMessage={
               demande.statut === "PARTIELLEMENT_VALIDEE"
-                ? "Cette demande est partiellement validée : catégorie, objet et budget sont verrouillés."
-                : "Cette demande est validée : catégorie, objet et budget sont définitivement verrouillés et ne peuvent plus être modifiés."
+                ? "Cette demande est partiellement validée : catégorie et objet sont verrouillés."
+                : "Cette demande est validée : catégorie et objet sont définitivement verrouillés et ne peuvent plus être modifiés."
             }
           />
-          {demande.statut === "PARTIELLEMENT_VALIDEE" && canValider ? (
+          {demande.statut === "PARTIELLEMENT_VALIDEE" && demande.reliquatRejete ? (
+            <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
+              <h2 className="text-sm font-semibold text-foreground">Validation complémentaire</h2>
+              <p className="mt-3 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
+                Reliquat rejeté : {demande.motifRejetReliquat}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Le montant déjà validé reste acquis et suit son cours normal. Aucune validation complémentaire
+                n&apos;est plus possible sur cette demande.
+              </p>
+            </div>
+          ) : demande.statut === "PARTIELLEMENT_VALIDEE" && canValider ? (
             <ValidationComplementaireActions
               demandeId={demande.id}
               montantRestant={Number(demande.montant) - Number(demande.montantValide)}
@@ -385,28 +402,29 @@ export default async function CategoriserDemandePage({
 }
 
 /**
- * Résumé en lecture seule de la catégorisation (catégorie/objet/budget) —
- * utilisé quand aucun formulaire éditable n'est proposé, soit parce que la
- * demande est verrouillée (`lockMessage`), soit parce que l'utilisateur n'a
- * pas la permission de catégoriser (`note`). Colocalisé : uniquement utilisé
- * par cette page, dans deux branches différentes.
+ * Résumé en lecture seule de la catégorisation (catégorie/objet) — utilisé
+ * quand aucun formulaire éditable n'est proposé, soit parce que la demande
+ * est verrouillée (`lockMessage`), soit parce que l'utilisateur n'a pas la
+ * permission de catégoriser (`note`). Colocalisé : uniquement utilisé par
+ * cette page, dans deux branches différentes.
+ *
+ * Le budget lui-même ne se lit plus sur la demande (ancien
+ * `budgetDisponible` par demande, retiré) : c'est désormais une enveloppe
+ * PARTAGÉE par Catégorie (`Categorie.budgetAlloue`), consultable pour
+ * toutes les catégories dans le "Suivi budgétaire" du reporting — voir
+ * CLAUDE.md "Budget partagé par Catégorie".
  */
 function CategorisationSummary({
   categorieLabel,
   objetLabel,
-  budget,
   lockMessage,
   note,
 }: {
   categorieLabel?: string;
   objetLabel?: string;
-  budget: Prisma.Decimal | null;
   lockMessage?: string;
   note?: string;
 }) {
-  const budgetValue =
-    budget != null ? `${Number(budget).toLocaleString("fr-FR")} FCFA` : "—";
-
   return (
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
       {lockMessage ? (
@@ -414,7 +432,7 @@ function CategorisationSummary({
       ) : note ? (
         <p className="text-sm text-muted-foreground">{note}</p>
       ) : null}
-      <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Catégorie
@@ -426,12 +444,6 @@ function CategorisationSummary({
             Objet
           </dt>
           <dd className="text-sm text-foreground">{objetLabel ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Budget disponible
-          </dt>
-          <dd className="text-sm text-foreground">{budgetValue}</dd>
         </div>
       </dl>
     </div>
