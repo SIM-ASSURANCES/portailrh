@@ -58,7 +58,6 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
   const [beneficiaireType, setBeneficiaireType] = useState("");
   const [categorieId, setCategorieId] = useState("");
   const [dateLivraison, setDateLivraison] = useState("");
-  const [posteBudgetaireId, setPosteBudgetaireId] = useState("");
   const [devise, setDevise] = useState("XOF");
   const [motif, setMotif] = useState("");
   const [lignes, setLignes] = useState<LigneEdit[]>([nouvelleLigne()]);
@@ -114,7 +113,6 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
         beneficiaireType,
         categorieId,
         dateLivraisonSouhaitee: dateLivraison || undefined,
-        posteBudgetaireId: posteBudgetaireId || undefined,
         devise,
         motif,
         lignes: lignes.map((l) => ({
@@ -189,14 +187,6 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
             value={dateLivraison}
             onChange={(e) => setDateLivraison(e.target.value)}
             error={fieldErrors.dateLivraisonSouhaitee}
-          />
-          <Select
-            label="Poste budgétaire concerné (facultatif)"
-            placeholder="Aucun / non déterminé"
-            options={categorieOptions}
-            defaultValue={posteBudgetaireId}
-            onChange={(e) => setPosteBudgetaireId(e.target.value)}
-            error={fieldErrors.posteBudgetaireId}
           />
           <Select
             label="Devise"

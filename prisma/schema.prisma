@@ -18,8 +18,23 @@ model User {
   id           String   @id @default(cuid())
   fullName     String
   email        String   @unique
-  passwordHash String
+  /// Nullable : un compte créé par invitation par lien (voir CLAUDE.md
+  /// "Invitation par lien") n'a pas encore de mot de passe tant que la
+  /// personne n'a pas finalisé son compte via `/invitation/[token]`. Un
+  /// compte "en attente" se reconnaît à `invitationToken` non nul ET
+  /// `passwordHash` nul. La création manuelle classique (admin/users,
+  /// `createUserAction`) continue de renseigner ce champ immédiatement,
+  /// comme avant.
+  passwordHash String?
   isActive     Boolean  @default(true)
+  /// Invitation par lien (complémentaire à la création manuelle) : jeton
+  /// aléatoire sécurisé, unique, remis à `null` dès l'activation du compte
+  /// (`activerInvitationAction`) — jamais réutilisable une fois consommé.
+  invitationToken     String?   @unique
+  /// Expire 7 jours après la génération du lien (voir `creerInvitationAction`).
+  /// Un Admin peut régénérer un nouveau lien (nouveau token + nouvelle
+  /// expiration) pour un compte encore en attente si l'ancien a expiré.
+  invitationExpiresAt DateTime?
   /// Service/département de l'utilisateur (ex: "Commercial", "Finance",
   /// "Direction") — facultatif, utilisé comme axe de filtre par le
   /// reporting Trésorerie (Ticket 10). Simple champ texte libre en V1,
@@ -187,12 +202,19 @@ model Categorie {
   isActive Boolean @default(true)
   objets   Objet[]
 
-  /// Deux usages distincts sur Demande depuis le formulaire "Demande
-  /// d'Achat" : la catégorie d'achat (`Demande.categorie`) et le poste
-  /// budgétaire concerné (`Demande.posteBudgetaire`) pointent tous deux
-  /// vers cette table — d'où les deux relations nommées.
-  demandes            Demande[] @relation("DemandeCategorie")
-  demandesPosteBudget Demande[] @relation("DemandePosteBudgetaire")
+  /// Budget partagé de la NATURE de dépense que représente cette catégorie
+  /// (ex: "Informatique"), pas d'une demande ni d'un service précis — voir
+  /// CLAUDE.md "Budget partagé par Catégorie". `null` = aucune limite
+  /// définie, aucun contrôle appliqué pour cette catégorie. Décompté au
+  /// RÈGLEMENT (pas à la validation) via `getMontantConsommeCategorie`
+  /// (`src/lib/tresorerie.ts`) : la somme de tous les règlements confirmés
+  /// et non annulés des demandes de cette catégorie, tous demandeurs et
+  /// tous bénéficiaires confondus. Aucun renouvellement automatique
+  /// périodique : un montant total consommable jusqu'à épuisement, à
+  /// réajuster manuellement par l'Admin (`admin/categories`).
+  budgetAlloue Decimal? @db.Decimal(14, 2)
+
+  demandes Demande[] @relation("DemandeCategorie")
 }
 
 model Objet {
@@ -242,20 +264,21 @@ model Demande {
   /// Catégorie d'achat, choisie à la création dans le formulaire "Demande
   /// d'Achat" (réactivée : le cahier des charges V1 l'avait sortie du flux
   /// principal, elle y revient comme champ d'en-tête — voir CLAUDE.md
-  /// "Formulaire Demande d'Achat"). `objetId`/`budgetDisponible` restent
-  /// conservés nullables, non utilisés par ce formulaire.
-  categorieId      String?
-  categorie        Categorie? @relation("DemandeCategorie", fields: [categorieId], references: [id])
-  objetId          String?
-  objet            Objet?     @relation(fields: [objetId], references: [id])
-  budgetDisponible Decimal?   @db.Decimal(14, 2)
+  /// "Formulaire Demande d'Achat"). C'est cette catégorie, PAS le
+  /// demandeur ni son service, qui porte le budget partagé
+  /// (`Categorie.budgetAlloue` — voir CLAUDE.md "Budget partagé par
+  /// Catégorie") : deux demandeurs différents catégorisant leurs demandes
+  /// dans la même Catégorie tapent dans la même enveloppe. `objetId` reste
+  /// nullable, non utilisé par ce formulaire (toujours renseigné par
+  /// l'ancien écran de catégorisation Finance, Ticket 2).
+  categorieId String?
+  categorie   Categorie? @relation("DemandeCategorie", fields: [categorieId], references: [id])
+  objetId     String?
+  objet       Objet?     @relation(fields: [objetId], references: [id])
 
   /// Champs d'en-tête du formulaire "Demande d'Achat".
-  /// `posteBudgetaire` (facultatif) réutilise la table Categorie.
   /// `devise` : code ISO (XOF par défaut, EUR, USD).
   dateLivraisonSouhaitee DateTime?
-  posteBudgetaireId      String?
-  posteBudgetaire        Categorie? @relation("DemandePosteBudgetaire", fields: [posteBudgetaireId], references: [id])
   devise                 String     @default("XOF")
 
   /// Lignes d'articles (Libellé / Nombre / Prix unitaire). `montant` ci-dessus
@@ -264,6 +287,15 @@ model Demande {
 
   motifRejet   String?
   motifCloture String?
+
+  /// Rejet du reliquat non encore validé d'une demande `PARTIELLEMENT_VALIDEE`
+  /// (Finance ou DG, `treso.valider_demande`) — voir CLAUDE.md "Rejet du
+  /// reliquat". N'affecte JAMAIS `montantValide` ni le statut : la part déjà
+  /// validée reste acquise et suit son cours normal (règlement, clôture).
+  /// Bloque uniquement toute future `validerComplementaireAction` sur cette
+  /// demande, une fois `true`.
+  reliquatRejete     Boolean @default(false)
+  motifRejetReliquat String?
 
   /// Verrou de clôture (Ticket 7, indépendant du circuit de validation
   /// partielle/complémentaire des Phases B/C — celui-ci reste inchangé et

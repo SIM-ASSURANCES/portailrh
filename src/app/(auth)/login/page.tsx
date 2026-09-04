@@ -30,21 +30,21 @@ async function authenticate(formData: FormData) {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; callbackUrl?: string }>;
+  searchParams: Promise<{ error?: string; callbackUrl?: string; activated?: string }>;
 }) {
-  const { error, callbackUrl } = await searchParams;
+  const { error, callbackUrl, activated } = await searchParams;
 
   return (
-    <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-primary px-4 py-12">
-      {/* Traitement de marque riche (page de connexion = première
-          impression, le seul endroit de l'application qui se le permet —
-          voir CLAUDE.md "Logo et fond de marque"). Le bandeau du logo dans
-          la carte ci-dessous reste, lui, en aplat uni : jamais le motif
-          directement derrière le logo, pour ne jamais nuire à sa
-          lisibilité (règle de la charte graphique). */}
-      <BrandBackdrop variant="hero" className="absolute inset-0 h-full w-full" />
+    <div className="relative flex flex-1 items-center justify-center overflow-hidden border-[3px] border-primary bg-surface px-4 py-12">
+      {/* Papier à en-tête institutionnel (page de connexion = première
+          impression) : fond blanc + filigrane du pictogramme + filet
+          dégradé en bas, voir CLAUDE.md "Logo vectoriel et fond de marque".
+          Le bandeau du logo dans la carte ci-dessous reste en aplat uni :
+          jamais le filigrane directement derrière le logo, pour ne jamais
+          nuire à sa lisibilité (règle de la charte graphique). */}
+      <BrandBackdrop className="absolute inset-0 h-full w-full" />
 
-      <div className="animate-fade-in-up relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-surface shadow-elevated-lg">
+      <div className="animate-fade-in-up relative w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-surface shadow-elevated">
         <div className="flex items-center justify-center bg-primary px-6 py-5">
           <Image
             src="/logo-sim-blanc.svg"
@@ -65,6 +65,17 @@ export default async function LoginPage({
             <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
               <Icon name="alert-triangle" className="mt-0.5 size-4 shrink-0" />
               Email ou mot de passe incorrect.
+            </p>
+          ) : null}
+
+          {/* Invitation par lien finalisée avec succès (voir CLAUDE.md
+              "Invitation par lien") — redirection directe depuis
+              `activerInvitationAction`, jamais un toast affiché sur une
+              page publique quittée immédiatement après. */}
+          {activated ? (
+            <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-success-border bg-success-bg px-3 py-2 text-sm text-success">
+              <Icon name="check-circle" className="mt-0.5 size-4 shrink-0" />
+              Compte activé avec succès. Vous pouvez maintenant vous connecter.
             </p>
           ) : null}
 

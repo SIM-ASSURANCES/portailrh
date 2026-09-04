@@ -154,6 +154,62 @@ export async function toggleCategorieActiveAction(
   return { status: "success", message: active ? "Catégorie activée." : "Catégorie désactivée." };
 }
 
+const budgetAlloueSchema = z
+  .number()
+  .positive("Le budget doit être supérieur à 0")
+  .nullable();
+
+/**
+ * Définit ou retire le budget PARTAGÉ (`budgetAlloue`) d'une Catégorie —
+ * voir CLAUDE.md "Budget partagé par Catégorie". `null` = aucune limite,
+ * aucun contrôle appliqué désormais pour cette catégorie (jamais la
+ * consommation déjà enregistrée qui, elle, ne peut techniquement pas être
+ * "retirée" — le grand livre des règlements reste immuable). Réservée aux
+ * administrateurs, comme le reste de cet écran.
+ */
+export async function modifierBudgetCategorieAction(
+  categorieId: string,
+  budgetAlloue: number | null
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsed = budgetAlloueSchema.safeParse(budgetAlloue);
+  if (!parsed.success) {
+    return { status: "error", message: parsed.error.issues[0].message };
+  }
+
+  const categorie = await prisma.categorie.update({
+    where: { id: categorieId },
+    data: { budgetAlloue: parsed.data },
+  });
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "Categorie",
+      entityId: categorie.id,
+      action: "BUDGET_ALLOUE",
+      detail:
+        parsed.data != null
+          ? `Budget alloué de « ${categorie.label} » fixé à ${parsed.data.toLocaleString("fr-FR")} FCFA`
+          : `Budget alloué de « ${categorie.label} » retiré (aucune limite)`,
+      userId: session.user.id,
+    },
+  });
+
+  revalidateCategoriesPaths();
+
+  return {
+    status: "success",
+    message:
+      parsed.data != null
+        ? `Budget de « ${categorie.label} » fixé à ${parsed.data.toLocaleString("fr-FR")} FCFA.`
+        : `Budget de « ${categorie.label} » retiré (aucune limite).`,
+  };
+}
+
 /** Active ou désactive un Objet. Même principe que toggleCategorieActiveAction. */
 export async function toggleObjetActiveAction(
   objetId: string,

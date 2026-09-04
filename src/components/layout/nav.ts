@@ -70,6 +70,15 @@ export interface NavFlags {
   canVoirReporting: boolean;
   /** `treso.saisir_depense_directe` (Phase F) : ajoute "Nouvelle dépense directe". */
   canSaisirDepenseDirecte: boolean;
+  /**
+   * `treso.approuver_validation_complete` (DG uniquement dans le seed) :
+   * ajoute "Validations complètes en attente" — liste des demandes en
+   * attente de l'approbation du DG préalable à leur clôture (verrou de
+   * clôture, voir CLAUDE.md). Manquait depuis la construction initiale de
+   * ce verrou : aucun moyen de découvrir ces demandes sans en connaître
+   * l'identifiant à l'avance.
+   */
+  canApprouverValidationComplete: boolean;
 
   /**
    * Au moins une permission `pointage.*` (y compris les deux permissions de
@@ -123,6 +132,7 @@ export function getNavBranches({
   canVoirDashboardFinance,
   canVoirReporting,
   canSaisirDepenseDirecte,
+  canApprouverValidationComplete,
   hasPointageAccess,
   canAccessPointageRH,
 }: NavFlags): NavBranch[] {
@@ -190,6 +200,15 @@ export function getNavBranches({
                     label: "Reporting",
                     href: "/treso/finance/reporting",
                     icon: "download",
+                  } satisfies NavItem,
+                ]
+              : []),
+            ...(canApprouverValidationComplete
+              ? [
+                  {
+                    label: "Validations complètes en attente",
+                    href: "/treso/finance/validations-attente",
+                    icon: "shield-check",
                   } satisfies NavItem,
                 ]
               : []),

@@ -40,6 +40,7 @@ export default async function AdminCategoriesPage() {
             id: c.id,
             label: c.label,
             isActive: c.isActive,
+            budgetAlloue: c.budgetAlloue != null ? Number(c.budgetAlloue) : null,
             objets: c.objets.map((o) => ({ id: o.id, label: o.label, isActive: o.isActive })),
           }))}
         />

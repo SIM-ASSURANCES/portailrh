@@ -7,9 +7,9 @@ import {
   getBeneficiairesConnus,
   getReportingFondsRemis,
   getReportingRows,
+  getReportingSuiviBudgetaire,
   parseReportingFilters,
   reportingFiltersToQueryString,
-  type ReportingRow,
 } from "@/lib/reporting";
 
 import { ReportingFiltersForm } from "./ReportingFiltersForm";
@@ -47,15 +47,17 @@ export default async function ReportingPage({
   // (soft-delete) — les demandes historiques liées à une catégorie
   // désactivée depuis continuent d'apparaître normalement dans les
   // résultats, ce filtre ne porte que sur les OPTIONS du formulaire.
-  const [rows, fondsRemisRows, categories, objets, users, servicesRaw, beneficiaires] = await Promise.all([
-    getReportingRows(filters),
-    getReportingFondsRemis(filters),
-    prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
-    prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
-    prisma.user.findMany({ orderBy: { fullName: "asc" } }),
-    prisma.user.findMany({ where: { service: { not: null } }, distinct: ["service"], select: { service: true } }),
-    getBeneficiairesConnus(),
-  ]);
+  const [rows, fondsRemisRows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
+    await Promise.all([
+      getReportingRows(filters),
+      getReportingFondsRemis(filters),
+      getReportingSuiviBudgetaire(),
+      prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
+      prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
+      prisma.user.findMany({ orderBy: { fullName: "asc" } }),
+      prisma.user.findMany({ where: { service: { not: null } }, distinct: ["service"], select: { service: true } }),
+      getBeneficiairesConnus(),
+    ]);
 
   const services = servicesRaw.map((u) => u.service).filter((s): s is string => !!s).sort();
 
@@ -77,8 +79,6 @@ export default async function ReportingPage({
   // distinctes, voir `ReportingRow` dans reporting.ts).
   const totalRestantAValider = Math.max(0, total.montantDemande - total.montantValide);
   const totalValideResteARegler = Math.max(0, total.montantValide - total.montantRegle);
-
-  const rowsAvecBudget = rows.filter((r): r is ReportingRow & { budgetAlloue: number } => r.budgetAlloue != null);
 
   const queryString = reportingFiltersToQueryString(filters);
   const exportHref = `/api/treso/reporting/export${queryString ? `?${queryString}` : ""}`;
@@ -281,56 +281,56 @@ export default async function ReportingPage({
 
       <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Suivi budgétaire</h2>
-        {/* Phase A (voir CLAUDE.md "Refonte V1 en cours") : Catégorie/Objet/
-            Budget ne sont plus au cœur du nouveau cahier des charges — une
-            demande créée depuis la refonte V1 n'a normalement plus de
-            `budgetDisponible` renseigné, donc cette section reste vide en
-            pratique pour toute donnée récente. Statut à confirmer avec le
-            maître de stage (voir CLAUDE.md) ; ni la fonctionnalité ni la
-            feuille d'export correspondante ne sont supprimées pour autant. */}
-        {rowsAvecBudget.length === 0 ? (
+        {/* Budget PARTAGÉ par Catégorie (pas par demande, pas par service du
+            demandeur), décompté au RÈGLEMENT — voir CLAUDE.md "Budget
+            partagé par Catégorie". Volontairement non filtré par période :
+            c'est une enveloppe cumulative depuis toujours, pas une donnée
+            découpable dans le temps (voir getReportingSuiviBudgetaire). */}
+        {suiviBudgetaireRows.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Aucune demande de ces filtres n&apos;a de budget disponible renseigné. Le concept
-            Catégorie/Objet/Budget n&apos;est plus utilisé par le flux principal depuis la refonte V1 —
-            statut de cette section à confirmer avec le maître de stage.
+            Aucune catégorie n&apos;a de budget alloué défini pour l&apos;instant — aucune limite
+            n&apos;est donc appliquée. Un budget se définit par catégorie depuis{" "}
+            <a href="/admin/categories" className="text-info underline-offset-4 hover:underline">
+              la console d&apos;administration
+            </a>
+            .
           </p>
         ) : (
           <>
             <p className="text-xs text-muted-foreground md:hidden">Faites glisser pour voir plus de colonnes →</p>
             <div className="overflow-x-auto rounded-md border border-border">
-            <table className="w-full min-w-full divide-y divide-border text-sm">
-              <thead className="bg-muted">
-                <tr>
-                  <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Catégorie</th>
-                  <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Objet</th>
-                  <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Budget alloué</th>
-                  <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Montant réglé</th>
-                  <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Écart</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border bg-surface">
-                {rowsAvecBudget.map((r) => {
-                  const ecart = r.budgetAlloue - r.montantRegle;
-                  const depassement = ecart < 0;
-                  return (
-                    <tr key={`${r.categorieId ?? "none"}|${r.objetId ?? "none"}`} className="hover:bg-muted/50">
-                      <td className="px-4 py-2 text-foreground">{r.categorieLabel}</td>
-                      <td className="px-4 py-2 text-foreground">{r.objetLabel}</td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {r.budgetAlloue.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {r.montantRegle.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td className={`px-4 py-2 text-right font-semibold ${depassement ? "text-danger" : "text-success"}`}>
-                        {depassement ? "Dépassement de " : ""}
-                        {Math.abs(ecart).toLocaleString("fr-FR")} FCFA
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+              <table className="w-full min-w-full divide-y divide-border text-sm">
+                <thead className="bg-muted">
+                  <tr>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Catégorie</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Budget alloué</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Consommé (réglé)</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Restant</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border bg-surface">
+                  {suiviBudgetaireRows.map((r) => {
+                    const depassement = r.budgetRestant < 0;
+                    return (
+                      <tr key={r.categorieId} className="hover:bg-muted/50">
+                        <td className="px-4 py-2 text-foreground">{r.categorieLabel}</td>
+                        <td className="px-4 py-2 text-right text-foreground">
+                          {r.budgetAlloue.toLocaleString("fr-FR")} FCFA
+                        </td>
+                        <td className="px-4 py-2 text-right text-foreground">
+                          {r.montantConsomme.toLocaleString("fr-FR")} FCFA
+                        </td>
+                        <td
+                          className={`px-4 py-2 text-right font-semibold ${depassement ? "text-danger" : "text-success"}`}
+                        >
+                          {depassement ? "Dépassement de " : ""}
+                          {Math.abs(r.budgetRestant).toLocaleString("fr-FR")} FCFA
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </>
         )}

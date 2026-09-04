@@ -1576,11 +1576,12 @@ couple `montant` + `description`.
 - **`Demande.devise`** (`String`, défaut `"XOF"`) — code ISO. Options
   gérées dans [devise.ts](src/components/tresorerie/devise.ts) (`XOF`/`EUR`/
   `USD`) ; `formatMontantDevise(montant, devise)` pour l'affichage.
-- **`Demande.posteBudgetaireId`** → `Categorie` (relation nommée
-  `"DemandePosteBudgetaire"`). Le « poste budgétaire concerné (facultatif) »
-  **réutilise la table `Categorie`**, comme la catégorie d'achat — d'où les
-  deux relations `Demande` ↔ `Categorie` (`"DemandeCategorie"` +
-  `"DemandePosteBudgetaire"`), toutes deux nommées.
+- ~~**`Demande.posteBudgetaireId`** → `Categorie`~~ — **retiré** (voir
+  "Budget partagé par Catégorie" plus bas) : s'est révélé être une fausse
+  piste, purement décorative (une étiquette sans aucun montant attaché,
+  jamais reliée au budget réel). Le champ « poste budgétaire concerné » du
+  formulaire a été retiré avec lui. Ce paragraphe reste ici pour
+  l'historique de ce ticket.
 - **`LigneDemande`** (`libelle`, `quantite` Int, `prixUnitaire` Decimal,
   `demandeId`) — les articles. `Demande.montant` = **somme des
   `quantite × prixUnitaire`**, recalculée côté serveur, jamais saisie
@@ -1593,7 +1594,10 @@ La refonte V1 avait sorti Catégorie/Objet/Budget du flux principal (voir
 [Refonte V1 en cours](#refonte-v1-en-cours)) tout en gardant la table et le
 CRUD `admin/categories`. Ce formulaire **remet la catégorie d'achat comme
 champ d'en-tête obligatoire à la création** (alimentée par les
-`Categorie` actives). `objetId`/`budgetDisponible` restent inutilisés.
+`Categorie` actives). `objetId` reste inutilisé par ce formulaire.
+`budgetDisponible` (par demande, Ticket 2) a depuis été **retiré** — voir
+"Budget partagé par Catégorie" plus bas, le budget appartient désormais à
+la Catégorie elle-même, jamais à une demande précise.
 
 ### Bénéficiaire (choix acté avec l'utilisateur)
 
@@ -1788,6 +1792,12 @@ immédiat, en plus de la colonne dédiée.
 
 ### Feuille "Suivi budgétaire" : note ajoutée, pas supprimée (Tâche 4)
 
+**Superseded** : cette section documentait un état transitoire (feuille
+vide, budget par demande abandonné sans remplacement) — depuis "Budget
+partagé par Catégorie" (plus bas), la feuille/section "Suivi budgétaire"
+est de nouveau pleinement active, recâblée sur `Categorie.budgetAlloue`.
+Paragraphe original conservé pour l'historique de la Phase H :
+
 Vérifié explicitement : une demande créée depuis la refonte V1 n'a plus de
 `budgetDisponible` renseigné (Catégorie/Objet/Budget écartés depuis la
 Phase A), donc cette feuille — et la section correspondante de l'écran —
@@ -1869,17 +1879,18 @@ Accumulés au fil des 8 phases, tous déjà documentés à l'endroit où ils ont
 été rencontrés (voir les sections de phase correspondantes) — regroupés
 ici pour n'avoir qu'un seul point de synthèse à soumettre :
 
-1. **Sort de Catégorie/Objet/Budget** (Phase A) — **partiellement tranché
-   depuis** (voir "Formulaire Demande d'Achat — en-tête + lignes
-   d'articles" plus haut) : `Categorie` est revenue dans le flux principal
-   comme « catégorie
-   d'achat », champ d'en-tête **obligatoire** à la création, et sert même
-   une seconde fois comme « poste budgétaire » (relation nommée distincte).
-   `Objet` et `Demande.budgetDisponible`, en revanche, restent inutilisés
-   par ce nouveau formulaire — toujours en dormance. Décision encore
-   ouverte sur ces deux-là précisément : supprimer définitivement, ou
-   garder pour un usage futur (la feuille "Suivi budgétaire" du reporting
-   en dépend directement) ?
+1. **Sort de Catégorie/Objet/Budget** (Phase A) — **définitivement tranché
+   depuis, par le maître de stage lui-même** (voir "Budget partagé par
+   Catégorie" plus bas) : le « poste budgétaire » de `Demande` (champ
+   `posteBudgetaireId`, décrit ci-dessous dans "Formulaire Demande d'Achat")
+   s'est révélé être une fausse piste, purement décorative — **retiré**.
+   Le budget appartient en réalité à la NATURE de la dépense
+   (`Categorie.budgetAlloue`, une enveloppe PARTAGÉE), pas à une demande ni
+   à un service précis. L'ancien `Demande.budgetDisponible` (par demande,
+   Ticket 2) est lui aussi **retiré** — remplacé par ce nouveau mécanisme.
+   `Objet` reste, lui, toujours inutilisé par le nouveau formulaire de
+   création (seul l'ancien écran de catégorisation Finance, Ticket 2, le
+   renseigne encore) — ce point précis reste ouvert.
 2. **Statut `VALIDEE` devenu invisible en pratique** (Phase B) — n'est
    plus jamais produit par `calculerStatutDemande` : une validation totale
    transite directement vers `VALIDEE_NON_REGLEE` (puis
@@ -1887,12 +1898,13 @@ ici pour n'avoir qu'un seul point de synthèse à soumettre :
    uniquement pour compatibilité (`STATUTS_VALIDATION_COMPLETE`). Est-ce
    le comportement voulu, ou `VALIDEE` devrait-il réapparaître comme statut
    affiché explicitement à un moment du circuit ?
-3. **Rejet impossible après une validation partielle** (Phase B) — une
-   demande déjà `PARTIELLEMENT_VALIDEE` ne peut plus être "rejetée" au
-   sens strict (seul le reliquat peut encore recevoir une validation
-   complémentaire). Aucune action de "rejet du reliquat" n'existe : si un
-   validateur veut abandonner la partie non encore validée d'une demande,
-   ce cas reste sans réponse applicative à ce stade.
+3. **Rejet du reliquat — résolu** (Phase B initialement, comblé depuis par
+   "Rejet du reliquat non validé" plus bas) : une demande
+   `PARTIELLEMENT_VALIDEE` ne peut toujours pas être "rejetée" dans son
+   ensemble au sens strict (la part déjà validée reste acquise, c'est
+   volontaire), mais `rejeterReliquatAction` permet désormais d'acter
+   explicitement l'abandon du reliquat non encore validé, sans toucher au
+   montant déjà validé ni au statut.
 4. **Bénéficiaire d'une dépense directe invisible dans son propre espace**
    (Phase F) — un bénéficiaire ayant un compte Collaborateur ne voit
    jamais "sa" dépense directe dans "Mes demandes" (filtré par créateur,
@@ -4438,6 +4450,440 @@ nettoyée après coup ; la demande réelle pré-existante de l'utilisateur
 (`DEM-2026-000001`) confirmée intacte. Serveur `next dev` arrêté après
 vérification.
 
+## Découverte des validations complètes en attente (DG)
+
+**Statut : terminé.** Corrige un manque **présent depuis la construction
+initiale** du "Verrou de clôture" (section précédente) : cette phase avait
+posé l'action d'approbation (`approuverValidationCompleteAction`) et son
+affichage sur le détail d'une demande (badge + bouton), mais **aucun moyen
+pour le DG de découvrir quelles demandes attendaient son approbation** —
+ni liste ni indicateur, seul un accès direct par identifiant fonctionnait.
+En pratique, le DG ne pouvait donc pas utiliser cette fonctionnalité sauf à
+connaître par avance l'identifiant exact de chaque demande.
+
+### Indicateur (`getValidationsCompletesEnAttente`, `src/lib/dashboardFinance.ts`)
+
+`{ nombre }` — demandes où `montantValide > 0` **ET**
+`validationCompleteParDG = false`. Filtre minimal mais suffisant, jamais
+besoin d'exclusion de statut explicite : `montantValide > 0` exclut déjà
+mécaniquement `EN_ATTENTE_VALIDATION` et `REJETEE` (jamais de montant
+validé sur ces deux statuts) ; `validationCompleteParDG = false` exclut
+déjà `CLOTUREE` (la clôture exige cette approbation au préalable depuis le
+"Verrou de clôture" — impossible d'atteindre `CLOTUREE` avec
+`validationCompleteParDG` encore à `false`).
+
+### Liste (`treso/finance/validations-attente/`)
+
+Même pattern que toutes les listes Finance (wrapper Client `DataTable`,
+Server Component pour la garde + la requête). Colonnes : référence,
+bénéficiaire (`getBeneficiaireNom`, Phase A/F), montant validé, statut
+actuel (Badge via `STATUT_DEMANDE_LABEL`), date de la dernière validation.
+
+**"Date de la dernière validation" — dérivée de `HistoriqueEntry`, jamais
+de `demande.updatedAt`** : `action ∈ {"validation", "validation_complementaire"}`
+(les évènements de validation eux-mêmes, Phase B), explicitement **pas**
+`"validation_complete_dg"` (l'approbation du DG, un évènement différent et
+plus tardif) ni `updatedAt` (touché aussi par d'autres actions comme un
+règlement, donc pas fiable pour cette colonne précise). Batchée en une
+seule requête (`entityId: { in: [...] }`) puis réduite en mémoire au
+maximum par demande — jamais une requête par ligne. Triée par cette date,
+les plus anciennes en premier (même convention que les autres listes
+Finance).
+
+Bouton "Approuver" par ligne → `/treso/finance/demandes/{id}`, où l'action
+d'approbation existe déjà depuis le "Verrou de clôture" — aucun nouvel
+écran d'action, seulement un nouveau point de découverte.
+
+Réservée à `treso.approuver_validation_complete` précisément (DG dans le
+seed actuel), jamais supposée acquise du simple fait d'avoir accès à
+l'espace Finance partagé.
+
+### Indicateur sur le dashboard Finance (`treso/finance/page.tsx`)
+
+**Délibérément PAS une 7ème carte mêlée aux 6 indicateurs "À traiter"**
+(Phase G, cahier des charges section 12, périmètre documenté comme fixe) :
+section séparée "Validation complète (DG)", visible uniquement pour
+`treso.approuver_validation_complete` — Finance ne la voit jamais (n'a pas
+cette permission dans le seed), le DG la voit toujours en plus des 6
+indicateurs communs. Même style visuel (accent bar + grille de `StatCard`)
+que la section "À traiter", mais un ensemble distinct plutôt qu'un
+élargissement silencieux d'un ensemble déjà documenté comme fixe ailleurs
+dans ce fichier.
+
+### Navigation et garde de layout
+
+"Validations complètes en attente" ajouté dans la branche "Demande
+d'Achat" (`nav.ts`, nouveau flag `NavFlags.canApprouverValidationComplete`,
+propagé `(dashboard)/layout.tsx` → `AppShell` → `Sidebar`, même chemin que
+tous les flags précédents). `treso/finance/layout.tsx` élargi une sixième
+fois (`treso.approuver_validation_complete` ajoutée à son OR-guard) — même
+principe que les cinq extensions précédentes : le DG y accédait déjà par
+d'autres permissions (`valider_demande`, `voir_dashboard_finance`,
+`voir_reporting`), mais la garde reste correcte par principe pour tout
+futur rôle qui n'aurait que celle-ci.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` : aucune nouvelle erreur (les 5/6
+erreurs et avertissements préexistants du Module Pointage RH, déjà signalés
+plus haut dans ce fichier, restent inchangés).
+
+Vrai parcours navigateur (Chromium headless, Playwright, non ajouté au
+projet) contre le vrai serveur `next dev`, en reprenant **les deux
+demandes réelles de l'utilisateur** déjà en attente de validation complète
+DG depuis la phase précédente (`DEM-2026-000001`, 50 000 FCFA ;
+`DEM-2026-000002`, 500 000 FCFA — confirmées en base avant tout test,
+`validationCompleteParDG = false` sur les deux, aucune autre demande en
+base) :
+
+- Compte `finance@simassurances.test` (sans `approuver_validation_complete`) :
+  ni la carte du dashboard, ni le lien de navigation, ni un accès direct à
+  `/treso/finance/validations-attente` (redirigé vers
+  `/?error=acces_refuse_validations_attente`) — les trois confirmés
+  absents/refusés.
+- Compte `dg@simassurances.test` : carte et lien de navigation présents ;
+  la liste affiche bien les deux demandes réelles avant toute action.
+  Clic "Approuver" sur chacune (via le lien de la liste, menant au détail
+  où l'action existante s'exécute) → badge passe à "Validation complète :
+  approuvée le [date] par DG Test" sur les deux détails, confirmé aussi en
+  base (`validationCompleteParDG = true`, `dgApprouveAt` et
+  `dgApprobateurId` renseignés sur les deux demandes). Liste et indicateur
+  revérifiés après coup : liste vide (`EmptyState`), indicateur à 0 — les
+  deux demandes réelles ont bien disparu de ce nouveau parcours.
+
+Aucune donnée de test supplémentaire créée pendant cette vérification
+(uniquement les deux demandes réelles, déjà présentes) : rien à nettoyer.
+Serveur `next dev` arrêté après vérification.
+
+## Rejet à l'examen et annulation d'une approbation (Validation complète DG)
+
+**Statut : terminé.** Complète la fonctionnalité "Validation complète DG"
+(section précédente) avec les deux issues qui manquaient : le DG ne
+pouvait qu'approuver, jamais rejeter un dossier pas encore prêt ni revenir
+sur une approbation donnée par erreur.
+
+**Principe directeur, non négociable ("une histoire d'argent")** : aucune
+des deux nouvelles actions ne supprime ni ne réécrit quoi que ce soit.
+Toute décision du DG (approbation, rejet à l'examen, annulation d'une
+approbation) crée une NOUVELLE `HistoriqueEntry` qui vient s'ajouter aux
+précédentes — jamais un `update`/`delete` sur une entrée existante. Seule
+l'annulation modifie un champ de `Demande` (`validationCompleteParDG`
+et ses deux compagnons remis à leur état initial), mais l'entrée
+`validation_complete_dg` d'origine reste intacte dans l'historique :
+l'enchaînement complet (approuvé le [date] par [X], puis annulé le [date]
+par [Y] avec motif [Z]) reste intégralement reconstituable, jamais réécrit
+silencieusement.
+
+### Rejet à l'examen (`rejeterValidationCompleteAction`, demande pas encore approuvée)
+
+Réservée à `treso.approuver_validation_complete`, revérifie
+`!validationCompleteParDG` (sinon message invitant à utiliser l'annulation
+plutôt que ce chemin). Motif obligatoire (zod, min 3 caractères).
+
+**Ne modifie AUCUN champ de la `Demande`** — volontairement, contrairement
+à `rejeterDemandeAction` (rejet de la demande elle-même, avant toute
+validation, Ticket 3) : ce rejet-ci porte uniquement sur l'approbation DG,
+c'est une trace informative pure. La demande reste donc, sans aucun
+changement structurel, dans "Validations complètes en attente" — rien à
+faire réapparaître puisque rien n'a disparu.
+
+### Annulation d'une approbation (`annulerValidationCompleteAction`, demande déjà approuvée)
+
+Réservée à la même permission, revérifie `validationCompleteParDG` (sinon
+"Cette demande n'a pas encore été approuvée"). Motif obligatoire (même
+règle). Remet `validationCompleteParDG` à `false`, `dgApprobateurId` et
+`dgApprouveAt` à `null` — la demande redevient visible dans "Validations
+complètes en attente" par le simple effet de ce changement d'état (même
+filtre que `getValidationsCompletesEnAttente`, aucune logique dupliquée).
+
+**Refusée si `statut === "CLOTUREE"`** (message explicite : "Impossible
+d'annuler : la demande a déjà été clôturée sur la base de cette
+approbation.") — `cloturerDemandeAction` exige déjà cette approbation
+avant d'accepter la clôture (verrou de clôture, section précédente) ;
+l'annuler après coup casserait la cohérence d'une clôture déjà définitive.
+Aucun autre statut n'est bloqué : le circuit de règlement des Phases B/C
+ne dépend jamais de `validationCompleteParDG`, annuler l'approbation ne
+défait donc aucun règlement déjà confirmé.
+
+### Interface (`ValidationCompleteDGActions.tsx`, remplace l'ancien `ValidationCompleteDGButton.tsx`)
+
+Un seul composant, deux usages selon `mode` :
+
+- `"examen"` (`!validationCompleteParDG`) : "Approuver la validation
+  complète" (direct, inchangé) à côté d'un nouveau bouton "Rejeter" —
+  ouvre un `Textarea` de motif (même pattern que `ValidationActions`,
+  Ticket 3), motif revalidé côté client ET côté serveur.
+- `"annulation"` (`validationCompleteParDG`, et **uniquement si `statut
+  !== "CLOTUREE"`** — sinon un message explicatif remplace le bouton,
+  jamais une action vouée à échouer côté serveur, même principe que
+  partout ailleurs dans le module) : "Annuler cette approbation", même
+  pattern de motif obligatoire.
+
+**Motif du dernier évènement négatif affiché en évidence**
+(`treso/finance/demandes/[id]/page.tsx`) : tant que la demande reste en
+attente (`!validationCompleteParDG`), un bandeau `bg-danger-bg` affiche le
+plus RÉCENT des deux évènements `rejet_validation_complete`/
+`annulation_validation_complete` — jamais seulement le dernier rejet.
+Raffinement délibéré au-delà de la demande initiale ("le motif de rejet
+doit être visible") : sans ce choix, un cycle rejet → approbation →
+annulation aurait pu réafficher un motif de rejet devenu obsolète après
+une annulation plus récente et plus pertinente. Disparaît automatiquement
+dès que la demande est de nouveau approuvée (condition déjà suffisante,
+aucun état à réinitialiser explicitement).
+
+### Historique (Tâche 3)
+
+`ACTION_LABELS` (`DemandeHistorique.tsx`) complété :
+`rejet_validation_complete` → "Validation complète rejetée par le DG
+(examen)", `annulation_validation_complete` → "Approbation du DG annulée"
+— le composant générique n'a, comme documenté depuis le Ticket 3, rien
+demandé d'autre qu'une entrée de libellé pour accueillir ces deux nouveaux
+évènements. Chaque entrée affiche déjà auteur + date/heure + motif (`detail`)
+sans aucune modification du composant.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` : aucune nouvelle erreur (mêmes
+erreurs/avertissements préexistants du Module Pointage RH).
+
+**Donnée de test dédiée, créée puis intégralement supprimée** — les deux
+demandes réelles (`DEM-2026-000001`, `DEM-2026-000002`, déjà approuvées
+par le DG lors de la phase précédente) **n'ont pas été rouvertes** : une
+troisième demande (`DEM-2026-000003`, 90 000 FCFA, créée directement en
+base pour ce test uniquement — seule la création l'a été, tout le reste du
+parcours passe par de vraies Server Actions via un vrai navigateur) a servi
+de bout en bout. Parcours réel (Chromium headless, Playwright, non ajouté
+au projet) contre le vrai serveur `next dev` :
+
+1. Finance valide totalement puis règle intégralement en Caisse (confirmé)
+   → statut `Réglée`.
+2. DG : "Confirmer le rejet" avec un motif vide → bloqué côté client
+   (aucun appel serveur). Avec un motif réel → succès, bandeau de rejet
+   visible sur le détail, **demande toujours présente dans "Validations
+   complètes en attente"** (rien n'a structurellement changé, conforme à
+   la Tâche 1).
+3. DG approuve → badge "approuvée".
+4. "Confirmer l'annulation" avec un motif vide → bloqué côté client. Avec
+   un motif réel → succès, badge repasse à "en attente du DG", bandeau
+   "Approbation précédemment annulée" avec le bon motif, **demande de
+   nouveau présente dans la liste**.
+5. Historique relu dans l'ordre chronologique : Création → Validation →
+   Règlement → **Validation complète rejetée par le DG (examen)** →
+   **Validation complète approuvée par le DG** → **Approbation du DG
+   annulée** — les 6 évènements dans le bon ordre, chacun avec son auteur,
+   sa date/heure et son motif le cas échéant.
+6. DG ré-approuve (nécessaire pour pouvoir clôturer). Finance clôture
+   totalement → statut `Clôturée`.
+7. **Refus d'annulation sur une demande déjà clôturée, testé en conditions
+   réelles (pas seulement documenté comme non testable)** : sur l'écran de
+   détail, le bouton "Annuler cette approbation" est bien absent (remplacé
+   par le message explicatif), confirmant le masquage côté UI. Pour
+   prouver que le refus est aussi appliqué **côté serveur** (pas seulement
+   par l'absence du bouton), la requête réseau réelle de l'annulation de
+   l'étape 4 a été interceptée (Server Action Next.js, header `Next-Action`
+   + corps capturés) puis **rejouée à l'identique** contre cette même
+   demande, désormais `CLOTUREE` — même technique déjà utilisée pour
+   vérifier la défense en profondeur du "Verrou de clôture" (section
+   précédente). Réponse HTTP 200 contenant littéralement "Impossible
+   d'annuler..." ; confirmé aussi en base après coup : `validationCompleteParDG`
+   toujours à `true`, statut toujours `CLOTUREE` — le rejeu n'a rien
+   modifié.
+
+Toutes les données de la demande de test (elle-même, son règlement, son
+historique — 6 entrées) supprimées après coup dans une unique transaction ;
+les deux demandes réelles confirmées inchangées (mêmes `dgApprouveAt`
+qu'avant ce test, à la milliseconde près). Serveur `next dev` arrêté après
+vérification.
+
+## Budget partagé par Catégorie
+
+**Statut : terminé. Remplace et annule toute tentative précédente de
+"budget par demande" ou de "poste budgétaire" par étiquette** (voir les
+notes "Superseded"/"retiré" ajoutées rétroactivement aux sections
+"Formulaire Demande d'Achat", "Phase H" et "Points d'interprétation en
+attente" plus haut). Le maître de stage a clarifié le fonctionnement
+attendu : **le budget n'appartient ni au demandeur, ni au bénéficiaire, ni
+à son service — il appartient à la NATURE de la dépense, c'est-à-dire à la
+Catégorie d'achat elle-même.**
+
+### Le principe, avec l'exemple exact du maître de stage
+
+Un Commercial qui achète un ordinateur, et un Marketing qui achète une
+imprimante, catégorisés tous les deux "Informatique", puisent dans **la
+même enveloppe partagée** — peu importe leur service d'origine, peu
+importe qui a créé la demande. L'argent est retiré de cette enveloppe au
+moment du **RÈGLEMENT**, jamais à la validation : c'est le règlement qui
+fait réellement sortir l'argent (même principe que `getSoldeCaisse`,
+`JournalCaisse` — rien n'est jamais débité tant que rien n'est réellement
+décaissé). Une demande peut donc être validée totalement sans qu'aucune
+limite ne s'applique encore ; c'est seulement au moment de confirmer un
+règlement que le budget de la Catégorie est vérifié.
+
+**Aucun renouvellement automatique périodique n'est implémenté.** Un
+budget est un montant total consommable jusqu'à épuisement — jamais remis
+à zéro chaque mois/année tout seul. Si un renouvellement (mensuel, annuel)
+s'avère nécessaire, c'est à l'Admin de réajuster manuellement
+`budgetAlloue` depuis `/admin/categories` ; à confirmer avec le maître de
+stage si un mécanisme automatique doit être construit plus tard.
+
+### Nettoyage de l'ancien mécanisme (Tâche 1)
+
+Deux champs `Demande` retirés **définitivement** (migration
+`budget_partage_categorie_retrait_ancien_budget`), avec tout le code qui
+les référençait :
+
+- **`Demande.budgetDisponible`** (Ticket 2) — l'ancien budget par demande,
+  saisi manuellement par Finance à la catégorisation
+  (`CategorisationForm.tsx`/`categoriserDemandeAction`). Jamais une vraie
+  enveloppe : un simple nombre par demande, sans lien entre deux demandes
+  de la même catégorie — exactement l'incohérence signalée par l'audit
+  précédent ("deux systèmes non reliés").
+- **`Demande.posteBudgetaireId`** (formulaire "Demande d'Achat" du maître
+  de stage) — s'est révélé être une étiquette purement décorative (aucun
+  montant attaché, jamais lue nulle part hors de son propre affichage),
+  décidée comme inutile et retirée avec le champ « Poste budgétaire
+  concerné » du formulaire de création.
+
+`CategorisationForm.tsx` ne demande plus de budget (uniquement
+catégorie/objet, comme avant le Ticket 2) ; `creerDemandeAction` et
+`DemandeForm.tsx` ne connaissent plus de poste budgétaire. Migration
+purement additive/destructive sans donnée orpheline : les deux colonnes ne
+portaient plus aucune logique active après leur retrait du code — vérifié
+qu'aucune référence ne subsistait (`grep` exhaustif) avant d'écrire la
+migration.
+
+### `Categorie.budgetAlloue` (Tâche 2)
+
+`Decimal?`, nullable — **`null` signifie littéralement "pas de limite
+définie, aucun contrôle appliqué pour cette catégorie"**, jamais interprété
+comme 0. C'est l'état par défaut de toutes les catégories existantes
+(seed) : aucune n'a de budget tant que l'Admin n'en définit pas un
+explicitement — comportement du portail strictement inchangé pour toute
+catégorie qui n'en a pas.
+
+### Interface admin (Tâche 3)
+
+`admin/categories` (`CategoriesList.tsx`) gagne un champ éditable "Budget
+alloué" par catégorie (`BudgetAlloueField.tsx`, Client Component) : vide
+= aucune limite, un nombre = la nouvelle enveloppe. Enregistrement
+explicite (bouton "Enregistrer"), pas à chaque frappe — une saisie de
+montant se corrige souvent en cours de route. `modifierBudgetCategorieAction`
+(`admin/categories/actions.ts`), réservée à `isAdmin()` comme le reste de
+cet écran, historise chaque changement (`HistoriqueEntry`, entité
+`Categorie`, action `BUDGET_ALLOUE`).
+
+### Fonctions de calcul (Tâche 4, `src/lib/tresorerie.ts`)
+
+- **`getMontantConsommeCategorie(categorieId)`** — somme des règlements
+  **confirmés et non annulés** de TOUTES les demandes ayant cette
+  `categorieId`, tous demandeurs et bénéficiaires confondus. Une seule
+  requête `aggregate` avec un filtre de relation (`demande: { categorieId
+  } }`) — mathématiquement équivalent à "appliquer `getTotalRegle` à
+  chaque demande de la catégorie et sommer", mais sans boucle ni requête
+  par demande.
+- **`getBudgetRestantCategorie(categorieId)`** — `null` si `budgetAlloue`
+  est `null` (illimité) ; sinon `budgetAlloue - getMontantConsommeCategorie(...)`.
+  **Retourne la valeur BRUTE, jamais plafonnée à 0** : un résultat négatif
+  signale un dépassement réel, utile au contrôle bloquant (Tâche 5) et au
+  reporting (Tâche 6) pour le détecter — c'est à l'affichage de choisir,
+  au cas par cas, de clamper ou de montrer le dépassement tel quel.
+
+### Contrôle bloquant au règlement (Tâche 5, `confirmerReglementAction`)
+
+Ajouté **après** la vérification déjà existante ("ce règlement ne dépasse
+pas `montantValide`"), donc seulement si cette première garde passe déjà.
+Aucune limite ne s'applique si la demande n'a pas encore de `categorieId`
+(pas catégorisée) ou si sa Catégorie n'a pas de `budgetAlloue` défini — le
+comportement de toutes les demandes/catégories existantes, jamais
+touchées par ce mécanisme, reste strictement inchangé.
+
+Le règlement en cours de confirmation est encore un **brouillon**
+(`estConfirme: false`) au moment de ce calcul — `getMontantConsommeCategorie`
+(qui ne compte que les règlements déjà `estConfirme: true`) ne l'inclut
+donc jamais dans la consommation existante : aucun besoin de l'exclure
+explicitement ("hors ce règlement en cours" de la consigne se vérifie
+automatiquement par construction, pas par un filtre ad hoc).
+
+Message de refus explicite, précisant le budget restant AVANT ce
+règlement (ex : *"Ce règlement dépasse le budget disponible de la
+catégorie « Informatique » (600 000 FCFA restants avant ce règlement)."*)
+— jamais un refus muet.
+
+### Reporting "Suivi budgétaire" réactivé (Tâche 6)
+
+`getReportingSuiviBudgetaire()` (`src/lib/reporting.ts`) — une ligne par
+Catégorie ayant un `budgetAlloue` défini, avec budget alloué/consommé/
+restant. **Fonction dédiée, séparée de `getReportingRows`** (le tableau
+agrégé Catégorie×Objet) : le budget n'a plus aucun lien avec ce
+regroupement depuis que `budgetDisponible` (par demande) a disparu —
+`ReportingRow` a perdu son champ `budgetAlloue` cumulé, qui n'aurait plus
+eu aucun sens.
+
+**Volontairement NON filtrée** par les paramètres du reporting (période,
+demandeur...), même principe que `getReportingDashboardSnapshot` : un
+budget est une enveloppe cumulative depuis toujours (pas de renouvellement
+périodique, voir plus haut), pas une donnée qui se prête à un découpage
+par période. Réutilisée à l'identique par l'écran
+(`treso/finance/reporting/page.tsx`) et par l'export Excel
+(`api/treso/reporting/export/route.ts`, feuille "Suivi budgétaire") —
+jamais deux implémentations. Écart mis en évidence (`text-danger`/rouge
+Excel) si le restant est négatif.
+
+### Vérifié explicitement — scénario exact du maître de stage rejoué
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes erreurs
+préexistantes du Module Pointage RH). `npx prisma migrate dev` non
+disponible en environnement non interactif (piège déjà documenté à
+plusieurs reprises dans ce fichier) : migration écrite à la main après
+avoir vérifié qu'elle correspond EXACTEMENT à `npx prisma migrate diff`
+(sortie identique, juste réordonnée), puis appliquée via `npx prisma
+migrate deploy`.
+
+Parcours réel (Chromium headless, Playwright, non ajouté au projet)
+contre le vrai serveur `next dev`, catégorie de test "Informatique"
+(n'existait pas dans le seed, créée pour ce test) budgétée à 1 000 000
+FCFA :
+
+1. Demande 1 (Collaborateur, "Ordinateur portable", 400 000 FCFA,
+   catégorie Informatique) : validée totalement, réglée intégralement en
+   Caisse (confirmé sans blocage) → **budget restant Informatique
+   600 000 FCFA**, confirmé à l'écran de reporting.
+2. Demande 2 ("Imprimante laser", 700 000 FCFA, même catégorie
+   Informatique) : **validée totalement sans aucun blocage** (le contrôle
+   ne s'applique jamais à la validation, uniquement au règlement).
+   Tentative de règlement de 700 000 FCFA → **refusée** (dépasse les
+   600 000 FCFA restants), le règlement reste en brouillon. Modifié à
+   600 000 FCFA exactement → confirmé avec succès → **budget restant
+   Informatique = 0**.
+3. Troisième règlement quelconque sur Informatique (100 000 FCFA, reliquat
+   de la demande 2) → **refusé**, budget épuisé. L'Admin augmente
+   `budgetAlloue` à 1 100 000 FCFA depuis `/admin/categories` → le même
+   règlement, retenté, est **accepté** (démontre le déblocage réel, pas
+   seulement le blocage).
+4. Catégorie "Loyers" (existante, aucun `budgetAlloue` défini) : demande
+   de 5 000 000 FCFA validée et réglée intégralement **sans aucun
+   blocage** — confirme qu'une catégorie sans budget n'est jamais
+   affectée par ce mécanisme.
+5. État final vérifié directement en base : consommation Informatique =
+   400 000 + 600 000 + 100 000 = 1 100 000 FCFA = `budgetAlloue` exact,
+   restant = 0 au centime près.
+
+**Tâche 7 (non-régression) vérifiée explicitement** : les deux demandes
+réelles de l'utilisateur (`DEM-2026-000001`, `DEM-2026-000002`) — déjà
+catégorisées avant ce ticket, avec l'ancien `budgetDisponible` renseigné —
+consultées sur les écrans Finance ET Collaborateur après la migration
+(colonnes supprimées) : statut 200, référence affichée correctement,
+aucune trace d'erreur (`undefined`/`NaN`) dans le texte de la page, zéro
+erreur console. Revérifié une seconde fois après le scénario de test
+complet ci-dessus, résultat identique.
+
+Toutes les données de test supprimées après coup dans des transactions
+dédiées (3 demandes avec leurs lignes/règlements/historique, catégorie de
+test "Informatique" entièrement supprimée avec son historique — n'existait
+pas dans le seed) ; base revenue à exactement les 2 demandes réelles et
+les 9 catégories du seed, toutes avec `budgetAlloue: null`. Serveur `next
+dev` arrêté après vérification.
+
 ## Corrections suite à un vrai test utilisateur (bon de caisse, modification de retour, pièce jointe, navigation)
 
 **Statut : terminé.** Cinq sujets distincts issus d'un vrai parcours
@@ -5059,48 +5505,67 @@ seulement demandé explicitement mais cohérent avec l'esprit de la tâche
 
 ### `BrandBackdrop` — fond de marque réutilisable
 
-`src/components/ui/BrandBackdrop.tsx` : dégradé diagonal
-`sim-blue-light → sim-blue-dark` (135°) avec des triangles superposés en
-transparence, **inspiré de la page de couverture de la charte graphique**
-(dégradé + formes triangulaires géométriques agrandies en arrière-plan
-décoratif) — jamais un nouveau design. Les triangles ne sont pas des
-formes inventées au hasard : leur angle au sommet (~62°) reproduit celui
-de la silhouette englobante de l'icône du logo elle-même (rapport
-base/hauteur similaire), simplement agrandi et décliné en plusieurs
-tailles/opacités pour la profondeur — cohérent avec la consigne "le même
-motif géométrique que le logo".
+**Révisé suite à un retour direct de l'utilisateur** sur un premier essai
+(dégradé bleu diagonal pleine page, façon page de couverture de la
+charte) : *"j'ai pas aimé, laisse le blanc avec le logo SIM Assurances en
+arrière-plan, avoir les bordures en bleu"*. Remplacé par un style fidèle
+au **papier à en-tête officiel** de la charte graphique plutôt qu'à sa
+page de couverture — un registre beaucoup plus sobre, adapté à un écran
+de connexion d'application interne plutôt qu'à un document de présentation.
 
-- `variant="hero"` — traitement riche, utilisé **uniquement sur la page de
-  connexion** (`/login`, première impression, le seul endroit qui s'en
-  permet un traitement marqué — voir "Priorité 1" du polish visuel
-  précédent : "spend your boldness in one place").
-- `variant="subtle"` — prévu pour un usage quotidien très atténué (mêmes
-  formes, opacités divisées par ~2), **non utilisé actuellement** — voir
-  "Décision délibérément non appliquée" ci-dessous.
+`src/components/ui/BrandBackdrop.tsx` ne pose plus de couleur dominante —
+il superpose un calque décoratif à un fond blanc porté par le conteneur
+appelant :
+
+1. **Filigrane du pictogramme seul** (jamais le texte "SIM ASSURANCES") —
+   géométrie exacte extraite de `logo-sim-couleur.svg`/`logo-sim-blanc.svg`
+   (voir ci-dessus), factorisée dans `src/components/ui/brandIcon.ts`
+   (`BRAND_ICON_PATHS`/`BRAND_ICON_VIEWBOX`) — **source unique partagée**
+   avec `LogoMark` (icône de la sidebar réduite, `Sidebar.tsx`), pour ne
+   jamais dupliquer ce chemin vectoriel à deux endroits. Gris très pâle
+   (`text-muted-foreground` + `opacity-[0.09]`, dans la fourchette 8-15%
+   demandée — un token neutre existant, jamais une couleur codée en dur),
+   très agrandi, calé sur le bord haut-gauche et volontairement débordant
+   du cadre (`left` négatif en pourcentage, coupé par `overflow-hidden` du
+   conteneur) — jamais centré, comme sur le vrai papier à en-tête. Deux
+   réglages de position/taille distincts (`sm:` vs défaut) : à pleine
+   largeur le triangle peut être très grand sans gêner (la carte reste loin
+   à droite) ; sur mobile (375px), une version plus petite et davantage
+   décalée évite qu'il ne domine tout l'écran.
+2. **Filet dégradé en bas de page** — `sim-blue-light → sim-blue-dark`,
+   5px de haut seulement (`h-[5px]`) : un trait décoratif, jamais une
+   bande large.
+3. **La bordure bleue autour de la page N'EST PAS dans ce composant** —
+   posée directement comme classe `border-[3px] border-primary` sur le
+   conteneur appelant (`login/page.tsx`) : c'est une propriété de mise en
+   page (le cadre de la page), pas un détail interne du fond décoratif.
+
+**`variant` retiré** — l'ancienne distinction `"hero"`/`"subtle"` existait
+pour doser l'intensité d'un fond bleu dominant ; le nouveau style est déjà
+sobre par construction (fond blanc, filigrane à 9% d'opacité, filet de
+quelques pixels), donc cette distinction n'avait plus de sens. Simplifié
+en conséquence plutôt que gardé "au cas où" (le composant n'a qu'un seul
+consommateur aujourd'hui — `/login` — donc rien n'aurait exercé un second
+réglage).
 
 ### Décision délibérément non appliquée : sidebar / dashboard général
 
-La consigne proposait *"éventuellement"* un traitement `variant="subtle"`
-sur l'en-tête du dashboard général ou de la sidebar. **Choix : ne pas
-l'appliquer**, pour deux raisons cumulatives :
+Ce composant reste réservé à `/login` — jamais posé sur la sidebar ou le
+dashboard général, pour deux raisons cumulatives :
 
 1. **Conflit avec la protection du logo** — le bandeau `bg-primary` de la
-   sidebar contient directement le logo blanc. Y poser le motif reviendrait
-   à enfreindre la règle de la charte elle-même ("ne jamais poser le logo
-   sur un fond visuel qui perturbe sa lisibilité") à l'endroit précis censé
-   la respecter le mieux.
+   sidebar contient directement le logo blanc. Y poser un filigrane
+   reviendrait à enfreindre la règle de la charte elle-même ("ne jamais
+   poser le logo sur un fond visuel qui perturbe sa lisibilité") à
+   l'endroit précis censé la respecter le mieux.
 2. **Écran d'usage quotidien** — sidebar et dashboard général sont vus des
    dizaines de fois par jour par les mêmes utilisateurs (contrairement à
    `/login`, un point de passage bref et peu fréquent). Le rehaussement
    visuel précédent (voir "Rehaussement visuel — dashboards...") a
    délibérément construit ces écrans sur des neutres bleu-teintés sobres ;
-   y superposer un dégradé de marque, même atténué, aurait réintroduit de
-   la charge visuelle exactement là où la consigne elle-même met en garde
-   ("ne pas nuire à la lisibilité du contenu au quotidien").
-
-`variant="subtle"` reste implémenté et prêt à l'emploi si un besoin précis
-apparaît (ex: un futur écran d'accueil ponctuel), mais n'est appelé nulle
-part dans l'application aujourd'hui.
+   y superposer un filigrane, même discret, resterait une charge visuelle
+   ajoutée là où la consigne d'origine met en garde ("ne pas nuire à la
+   lisibilité du contenu au quotidien").
 
 ### Vérifié explicitement — règles d'usage de la charte (Tâche 3)
 
@@ -5126,11 +5591,11 @@ part dans l'application aujourd'hui.
   avertissements/erreurs préexistants du Module Pointage RH, déjà
   documentés plus haut, hors périmètre).
 - **Captures avant/après** (Chromium headless, Playwright, non ajouté au
-  projet) : page de connexion desktop et mobile (375px) — dégradé +
-  triangles bien visibles en arrière-plan, carte de connexion et formulaire
-  restent parfaitement lisibles aux deux tailles, aucun élément du
-  formulaire chevauché. Sidebar déployée et réduite (nouvelle icône seule)
-  vérifiées après une vraie connexion.
+  projet) : page de connexion desktop et mobile (375px) — voir la révision
+  ci-dessous pour le rendu final retenu (fond blanc + filigrane + bordure),
+  différent du premier essai en dégradé bleu décrit initialement ici.
+  Sidebar déployée et réduite (nouvelle icône seule) vérifiées après une
+  vraie connexion.
 - **Parcours fonctionnel réel** : connexion collaborateur → navigation vers
   "Mon tableau de bord" sans erreur console ; `GET /logo-sim-blanc.svg` et
   `GET /logo-sim-couleur.svg` confirmés servis en 200. Aucune Server Action
@@ -5144,6 +5609,54 @@ l'absence de logo image dans le reçu PDF mis à jour en conséquence : le
 blocage n'est plus "format WebP non supporté" mais "`@react-pdf/renderer`
 ne rend pas nativement un SVG arbitraire" — le choix du nom en texte stylé
 reste inchangé pour ce document, non repris dans ce ticket.
+
+## Fond de connexion révisé : papier à en-tête plutôt que couverture
+
+**Statut : terminé.** Retour direct sur le premier rendu du fond de marque
+ci-dessus (dégradé bleu diagonal pleine page, inspiré de la page de
+**couverture** de la charte graphique) : refusé — *"j'ai pas aimé, laisse
+le blanc avec le logo SIM Assurances en arrière-plan, avoir les bordures
+en bleu"*. Reconstruit pour reproduire fidèlement le **papier à en-tête
+officiel** de la charte plutôt que sa couverture — un registre très
+différent (sobre, fond blanc dominant) alors que la couverture est pensée
+pour être visuellement dense (dégradé plein, formes superposées).
+
+Détail technique complet dans la section "Logo vectoriel et fond de
+marque" ci-dessus (`BrandBackdrop` révisé, `brandIcon.ts` nouveau, bordure
+posée sur le conteneur appelant plutôt que dans le composant). Cette
+section-ci ne documente que la vérification de la révision elle-même.
+
+### Vérifié explicitement — rendu final
+
+Chromium headless (Playwright, non ajouté au projet) :
+
+- **Desktop (1400px)** : fond blanc, filigrane du triangle nettement
+  débordant du bord haut-gauche (apex et jambe gauche coupés par le cadre,
+  jamais centré), fine bordure bleue continue sur les 4 côtés, filet
+  dégradé de quelques pixels tout en bas, carte de connexion parfaitement
+  lisible et bien détachée (`shadow-elevated`, allégée depuis la version
+  précédente qui utilisait `shadow-elevated-lg`, cohérent avec un fond
+  désormais sobre qui n'a plus besoin d'une carte à forte présence pour
+  s'en détacher).
+- **Mobile (375px)** : filigrane retaillé spécifiquement pour cet écran
+  (taille et décalage différents du desktop, pas un simple redimensionnement
+  proportionnel) — sur un si petit viewport, les mêmes proportions que le
+  desktop auraient fait dominer tout l'écran par le triangle ; réglé plus
+  petit et plus excentré pour rester un discret élément de coin.
+- **État d'erreur** (mauvais mot de passe) : bandeau d'erreur rouge sur
+  fond rose pâle testé par-dessus le nouveau fond — aucune perte de
+  contraste, se détache aussi nettement qu'avant.
+- **Parcours fonctionnel réel** : connexion réussie et échec de connexion
+  (mauvais mot de passe, bandeau d'erreur affiché) tous deux rejoués sans
+  erreur console. Aucune Server Action touchée par cette révision
+  (uniquement `BrandBackdrop.tsx`, le nouveau `brandIcon.ts` et les classes
+  du conteneur de `login/page.tsx`).
+- **`tsc --noEmit`/`eslint`** : aucune erreur nouvelle (mêmes 9
+  avertissements/erreurs préexistants du Module Pointage RH).
+
+Aucune donnée de test créée pendant cette révision (uniquement des
+captures d'écran et des tentatives de connexion) : rien à nettoyer en
+base. Serveur `next dev` arrêté après vérification.
 
 ## Sidebar Trésorerie — un seul tableau de bord par profil
 
@@ -5226,6 +5739,414 @@ cocher et des connexions), rien à nettoyer en base. `npx tsc --noEmit` et
 `npx eslint .` sans erreur nouvelle (mêmes 9 avertissements/erreurs
 préexistants du Module Pointage RH). Serveur `next dev` arrêté après
 vérification.
+
+## Rejet du reliquat non validé (demande partiellement validée)
+
+**Statut : terminé.** Complète le circuit de validation partielle
+(Phases B-C) : jusqu'ici, une demande `PARTIELLEMENT_VALIDEE` ne pouvait
+recevoir qu'une **validation complémentaire** sur son reliquat — aucun
+moyen de rejeter explicitement la partie non encore validée. Un
+validateur qui jugeait le reliquat définitivement injustifié n'avait donc
+aucune action applicative disponible (point déjà signalé comme ouvert
+dans "Points d'interprétation en attente", point 3).
+
+### Champs et Server Action (`rejeterReliquatAction`)
+
+`Demande.reliquatRejete` (`Boolean`, défaut `false`) et
+`Demande.motifRejetReliquat` (`String?`) — migration
+`rejet_reliquat_partiellement_validee`. Réservée à `treso.valider_demande`
+(Finance ET DG, même permission que la validation elle-même — aucune
+restriction sur qui a fait la validation initiale), uniquement sur une
+demande `PARTIELLEMENT_VALIDEE` dont le reliquat n'est pas déjà rejeté
+(`reliquatRejete` ne peut être fixé qu'une seule fois, même principe que
+l'absence de "dévalidation" ailleurs dans le module). Motif obligatoire
+(zod, min 3 caractères).
+
+**N'affecte JAMAIS `montantValide` ni `statut`** — la part déjà validée
+reste acquise et suit son cours normal (règlement, clôture), exactement
+comme `rejeterValidationCompleteAction` (verrou de clôture DG) : une trace
+de décision (`HistoriqueEntry`, action `rejet_reliquat`), jamais une
+réécriture du montant. Seul effet concret côté données :
+`validerComplementaireAction` revérifie désormais `!demande.reliquatRejete`
+avant d'écrire quoi que ce soit, avec le message exact demandé ("Le
+reliquat de cette demande a été rejeté, aucune validation complémentaire
+n'est plus possible").
+
+### Interface (`ValidationComplementaireActions.tsx`)
+
+Un seul composant, étendu (comme `ValidationCompleteDGActions` pour le
+verrou DG) : état `idle` affiche désormais deux boutons — "Validation
+complémentaire" (inchangé) et "Rejeter le reliquat" (`variant="danger"`,
+motif obligatoire dans un panneau dédié). N'est rendu par la page appelante
+(`treso/finance/demandes/[id]/page.tsx`) que si `!demande.reliquatRejete` ;
+une fois rejeté, remplacé entièrement par un bandeau "Reliquat rejeté :
+[motif]" (jamais les deux affichés à la fois) — même principe que le
+bandeau "Rejeté par le DG lors de l'examen" du verrou de clôture.
+
+**"Montant restant à valider" marqué visuellement clos** — sur les DEUX
+écrans de détail (Finance ET Collaborateur, `treso/finance/demandes/[id]/
+page.tsx` et `treso/demandes/[id]/page.tsx`) : barré (`line-through`,
+`text-muted-foreground`) + libellé explicite "Définitivement clos (reliquat
+rejeté)" en dessous, plutôt que de laisser ce montant à l'air "en attente"
+alors qu'aucune validation complémentaire n'est plus possible dessus.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes erreurs
+préexistantes du Module Pointage RH). `npx prisma migrate dev` non
+disponible en environnement non interactif (piège déjà documenté à
+plusieurs reprises) : migration écrite à la main, vérifiée identique à
+`npx prisma migrate diff` avant application via `npx prisma migrate
+deploy`.
+
+Parcours réel (Chromium headless, Playwright, non ajouté au projet)
+contre le vrai serveur `next dev`, demande de test dédiée (500 000 FCFA) :
+
+1. Finance valide partiellement à 300 000 FCFA → `PARTIELLEMENT_VALIDEE`.
+2. "Rejeter le reliquat" avec un motif vide → bloqué côté client (aucun
+   appel serveur). Avec un motif réel → succès.
+3. Rechargement de la page : bouton "Validation complémentaire" **absent
+   du DOM**, remplacé par le bandeau "Reliquat rejeté : [motif exact]" ;
+   "Montant restant à valider" barré avec "Définitivement clos" — vérifié
+   identique côté Collaborateur.
+4. Historique : entrée "Rejet du reliquat non validé" présente avec le
+   bon motif.
+5. État final vérifié directement en base : `montantValide` toujours à
+   300 000 FCFA (strictement inchangé par le rejet), `statut` toujours
+   `PARTIELLEMENT_VALIDEE`, `reliquatRejete = true`.
+
+Donnée de test supprimée après coup ; les deux demandes réelles de
+l'utilisateur confirmées inchangées (mêmes `dgApprouveAt`, à la
+milliseconde près). Serveur `next dev` arrêté après vérification.
+
+## Visibilité du statut de validation complète DG pour Finance — audit (aucun changement nécessaire)
+
+**Statut : vérifié, déjà conforme.** Demande explicite de confirmer que
+l'écran de détail Finance (`treso/finance/demandes/[id]/page.tsx`, partagé
+entre Finance et DG — voir Ticket 3) affiche clairement le statut de
+"validation complète" (verrou de clôture) dans ses 3 états, **pour un
+utilisateur Finance** et pas seulement pour le DG.
+
+**Constat, lecture du code puis confirmé par un vrai parcours navigateur
+avec le compte `finance@simassurances.test`** : le bloc "Validation
+complète (DG)" (badge "en attente"/texte "approuvée le [date] par
+[nom]", et le bandeau du dernier évènement négatif — rejet d'examen ou
+annulation) n'a **jamais été conditionné** à
+`canApprouverValidationComplete` — seuls les BOUTONS D'ACTION
+(`ValidationCompleteDGActions`) le sont, l'affichage informatif est
+inconditionnel dès que `montantValide > 0`. Finance voyait donc déjà,
+sans aucun changement de code nécessaire :
+
+- **En attente** : `Badge` "Validation complète : en attente du DG".
+- **Approuvée** : "approuvée le [date] par [nom du DG]".
+- **Rejetée (lors de l'examen)** : bandeau rouge "Rejeté par le DG lors de
+  l'examen (DG Test, le [date]) — motif : [motif exact]", affiché tant que
+  la demande reste en attente — exactement le cas qui permet à Finance de
+  comprendre d'un coup d'œil pourquoi le dossier n'avance pas vers la
+  clôture.
+
+**Vérifié explicitement** (même parcours navigateur que ci-dessus,
+réutilisant la demande de test de la section précédente) : connecté en
+`finance@simassurances.test`, les 3 états ont été observés successivement
+sur le même écran — badge "en attente" au départ, bandeau de rejet avec le
+motif exact après un rejet d'examen par le DG, puis "approuvée le [date]
+par DG Test" après approbation — sans qu'aucune ligne de code n'ait dû
+être modifiée pour cette tâche. Serveur `next dev` arrêté après
+vérification.
+
+## Invitation par lien (deuxième méthode de création de compte)
+
+**Statut : terminé.** Complète la création manuelle de compte
+(`admin/users`, `createUserAction`, toujours en place et utilisée) avec
+une deuxième méthode : l'Admin renseigne juste nom + email + rôle (aucun
+mot de passe), génère un lien, et le transmet **lui-même** (email
+personnel, WhatsApp...) — **aucun système d'envoi d'email automatique
+n'existe dans le projet**, aucune tentative d'en configurer un ici. La
+personne finalise elle-même son mot de passe en ouvrant ce lien.
+
+### Schéma (migration `invitation_par_lien`)
+
+`User.passwordHash` devient **nullable** — un compte "en attente
+d'activation" (invité mais pas encore finalisé) se reconnaît à
+`invitationToken` non nul ET `passwordHash` nul. Deux nouveaux champs :
+`invitationToken` (`String?`, `@unique`) et `invitationExpiresAt`
+(`DateTime?`, 7 jours après génération). Migration purement additive/
+assouplissante (`ADD COLUMN` + `ALTER COLUMN ... DROP NOT NULL` +
+`CREATE UNIQUE INDEX`), aucune perte de donnée possible.
+
+**Correctif obligatoire découvert en touchant ce champ** — `authorize()`
+(`lib/auth.ts`, provider Credentials) faisait `bcrypt.compare(password,
+user.passwordHash)` sans jamais vérifier que `passwordHash` existe : avec
+le type désormais `string | null`, un compte en attente aurait fait
+planter la comparaison (ou, pire, ne compilait plus du tout — TypeScript
+refuse `string | null` là où bcrypt attend `string`). Corrigé par un garde-
+fou explicite (`!user.passwordHash` en plus de `!user.isActive`) — défense
+en profondeur : un compte en attente est de toute façon déjà `isActive:
+false` à la création, mais ce garde-fou reste correct par principe même si
+cet invariant venait à changer.
+
+### Créer une invitation (`creerInvitationAction`, Tâche 2)
+
+Réservée à `isAdmin()`, même garde que `createUserAction`. Vérifie
+l'unicité de l'email, génère un jeton aléatoire sécurisé
+(`randomBytes(32).toString("hex")`, `node:crypto` — 256 bits d'entropie,
+imprévisible), crée le `User` avec `passwordHash: null`, **`isActive:
+false`** (jamais `true` à ce stade — c'est `activerInvitationAction` qui
+le fixe, seulement une fois le mot de passe défini ; un compte en attente
+ne doit jamais pouvoir se connecter entre-temps), `invitationExpiresAt` à
+J+7. Retourne le lien complet dans `data.invitationUrl`
+(`{baseUrl}/invitation/{token}`) — `getBaseUrl()` préfère `AUTH_URL` si
+définie (déjà documentée pour Docker/production, voir `.env.example`),
+sinon la déduit de la requête entrante (`host`/`x-forwarded-proto`) :
+fonctionne sans configuration en dev local, comme le reste d'Auth.js.
+
+**Interface** (`admin/users`) — `NewUserSection.tsx` (nouveau) bascule
+entre "Création manuelle" (`UserCreateForm`, inchangé) et "Inviter par
+lien" (`InvitationCreateForm`, nouveau) via deux boutons, jamais l'une au
+détriment de l'autre. Après succès, `InvitationCreateForm` affiche le lien
+généré dans un encart avec un bouton "Copier le lien"
+(`navigator.clipboard.writeText`) — c'est à l'Admin de le transmettre,
+l'application ne l'envoie jamais elle-même.
+
+### Page publique de finalisation (`/invitation/[token]`, Tâche 3)
+
+`src/app/(auth)/invitation/[token]/page.tsx` — même groupe de routes que
+`/login` (`(auth)`, sans garde de session : aucun `layout.tsx` dans ce
+groupe, la page est donc publique par construction, exactement comme
+`/login`). Trois états déterminés côté serveur pour un affichage correct
+dès le premier chargement :
+
+- **`invalide`** — jeton introuvable. Recouvre DEUX cas indiscernables à
+  ce stade : un jeton qui n'a jamais existé, ET un jeton déjà consommé par
+  une activation précédente (`activerInvitationAction` le remet à `null`
+  à l'activation — un lien réutilisé après coup ne correspond donc plus à
+  aucun `User`). Message générique "invalide ou a déjà été utilisé"
+  plutôt que deux messages qu'il est structurellement impossible de
+  distinguer avec ce design.
+- **`expire`** — jeton trouvé mais `invitationExpiresAt` dépassé.
+- **`ok`** — formulaire de mot de passe (`InvitationForm.tsx`, mot de
+  passe + confirmation, 8 caractères minimum comme le reste de l'app).
+
+`activerInvitationAction(token, motDePasse)` (`actions.ts` colocalisé,
+route PUBLIQUE donc chaque contrôle est revérifié intégralement côté
+serveur — jamais uniquement l'affichage de la page, qui a pu devenir
+obsolète entre le chargement et la soumission) : hash le mot de passe,
+`isActive: true`, `invitationToken`/`invitationExpiresAt` remis à `null`
+(jeton définitivement consommé), puis **redirige elle-même vers
+`/login?activated=1`** — jamais un simple retour d'`ActionState` affiché
+sur cette page publique, la personne doit atterrir directement sur l'écran
+de connexion. `/login` affiche un bandeau vert "Compte activé avec
+succès." sur ce paramètre, symétrique du bandeau rouge déjà existant pour
+`error=1`.
+
+### Invitations en attente (Tâche 4)
+
+`admin/users/page.tsx` calcule `isPending = !passwordHash` côté serveur et
+ne transmet que ce booléen à `UsersTable` (Client Component) — **jamais**
+le `passwordHash` ni l'`invitationToken` bruts, aucune raison d'envoyer un
+hash ou un jeton secret au navigateur même pour un Admin. `UsersTable`
+affiche alors, pour un compte en attente : `Badge` "Invitation envoyée"
+(`variant="warning"`) à la place du badge Actif/Inactif habituel, et un
+bouton "Régénérer le lien" (`RegenererInvitationButton.tsx`) à la place du
+bouton Activer/Désactiver.
+
+`regenererInvitationAction(userId)` — nouveau jeton + nouvelle expiration
+à J+7, refusée sur un compte déjà activé (régénérer un lien n'a de sens
+que pour un compte encore sans mot de passe — jamais un moyen détourné de
+réinitialiser le mot de passe d'un compte actif, hors périmètre). Type de
+retour simple à deux branches (comme `toggleUserActiveAction`), pas
+l'`ActionState` générique de `creerInvitationAction` — celui-ci est pensé
+pour `useActionState` (branche `idle` incluse), sans objet pour un appel
+direct depuis un bouton. Le nouveau lien est copié automatiquement dans le
+presse-papiers au succès (la ligne du tableau n'a pas la place d'afficher
+le lien complet comme le fait `InvitationCreateForm`).
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes erreurs
+préexistantes du Module Pointage RH). `npx prisma migrate dev` non
+disponible en environnement non interactif (piège déjà documenté à
+plusieurs reprises) : migration écrite à la main, vérifiée identique à
+`npx prisma migrate diff` avant application via `npx prisma migrate
+deploy`.
+
+Parcours réel (Chromium headless, Playwright, non ajouté au projet)
+contre le vrai serveur `next dev` :
+
+1. **Régression création manuelle** : compte créé via "Création manuelle"
+   → badge "Actif" (jamais "Invitation envoyée"), connexion immédiate
+   réussie avec le mot de passe saisi par l'Admin — comportement
+   strictement inchangé.
+2. **Parcours d'invitation complet** : Admin bascule sur "Inviter par
+   lien", crée une invitation → lien affiché, compte visible dans la liste
+   avec le badge "Invitation envoyée". Lien ouvert dans un navigateur **non
+   connecté** (contexte Playwright séparé) : nom affiché correctement,
+   mot de passe + confirmation soumis → redirection vers `/login` avec le
+   bandeau vert de succès. Connexion réussie avec le nouveau mot de passe.
+3. **Lien déjà utilisé** : le même lien rouvert après activation → message
+   "invalide ou a déjà été utilisé" (jamais le formulaire de mot de passe).
+4. **Lien expiré** : compte créé avec `invitationExpiresAt` déjà dépassé →
+   message "a expiré" affiché, aucun formulaire proposé. Régénération du
+   lien par l'Admin depuis la liste → toast de succès, nouveau lien généré.
+
+Zéro erreur console sur l'ensemble des parcours. Comptes de test (création
+manuelle, invitation complète, invitation expirée) supprimés après coup ;
+base revenue à exactement les 5 comptes de test du seed. Serveur `next
+dev` arrêté après vérification.
+
+## Favicon SIM Assurances
+
+**Statut : terminé.** `src/app/icon.tsx` et `src/app/apple-icon.tsx` —
+convention Next.js App Router de génération programmatique d'icône
+(`next/og`, `ImageResponse`), pas un fichier image statique : réutilise
+directement `BRAND_ICON_PATHS`/`BRAND_ICON_VIEWBOX`
+(`components/ui/brandIcon.ts`), le pictogramme seul (triangle, jamais le
+texte "SIM ASSURANCES") déjà partagé par `Sidebar.tsx` (icône réduite) et
+`BrandBackdrop.tsx` (filigrane) — jamais une quatrième géométrie
+redessinée à la main. Fond `sim-blue-dark` (#004B9C) plein, triangle
+blanc — même traitement que `LogoMark` dans la sidebar réduite.
+
+`icon.tsx` (32×32, favicon d'onglet) et `apple-icon.tsx` (180×180, icône
+"ajouter à l'écran d'accueil" iOS — pertinent pour ce portail, dont le
+cahier des charges insiste sur l'usage mobile des collaborateurs sans
+ordinateur). L'ancien `favicon.ico` (icône par défaut du scaffold
+`create-next-app`, jamais personnalisée depuis la création du projet)
+**supprimé** : une seule source d'icône, jamais deux qui pourraient entrer
+en conflit dans certains navigateurs.
+
+**Vérifié explicitement** : `GET /icon` répond 200 `image/png` ; le HTML
+de toute page contient bien `<link rel="icon" href="/icon?..." type=
+"image/png" sizes="32x32"/>` et `<link rel="apple-touch-icon" .../>` ;
+l'image générée inspectée directement (triangle blanc net sur fond bleu,
+fidèle à la géométrie vectorielle du logo).
+
+## Fond de marque étendu à toute l'application
+
+**Statut : terminé.** Décision explicite de l'utilisateur, **qui revient
+sur la restriction volontaire posée à la phase précédente** ("Logo
+vectoriel et fond de marque" / "Fond de connexion révisé", plus haut) :
+`BrandBackdrop` (fond "papier à en-tête" — filigrane pâle du pictogramme +
+fine bordure bleue) s'applique désormais à **toute l'application**
+(dashboards, listes, formulaires — tout ce qui vit dans l'AppShell), pas
+seulement `/login`. Les deux raisons qui justifiaient la restriction
+initiale (protection du logo blanc sur le bandeau `bg-primary`, charge
+visuelle sur des écrans d'usage quotidien) restent vraies en soi, mais
+l'utilisateur a explicitement tranché en faveur d'une identité de marque
+plus présente, à condition de précautions concrètes de lisibilité —
+détaillées ci-dessous, chacune vérifiée par capture d'écran réelle, pas
+seulement affirmée.
+
+### `BrandBackdrop` — deux variantes désormais (`components/ui/BrandBackdrop.tsx`)
+
+Trois nouvelles props, toutes optionnelles (comportement par défaut =
+strictement celui de `/login`, aucune régression) :
+
+- **`watermarkOpacityClassName`** (défaut `"opacity-[0.09]"`, l'intensité
+  de `/login`) — l'AppShell passe une valeur nettement plus faible (voir
+  plus bas).
+- **`showBottomAccent`** (défaut `true`) — le filet dégradé du bas de
+  `/login` n'a plus de sens en position `fixed` pleine page : il resterait
+  collé en permanence au bas du VIEWPORT (jamais au bas du contenu réel),
+  un artefact non demandé. Désactivé pour l'AppShell.
+- **`watermarkPosition`** (`"bleed-left"` défaut, ou `"corner-br"`) — voir
+  section suivante, un vrai bug trouvé et corrigé, pas un simple réglage
+  cosmétique.
+
+### Piège n°1 trouvé et corrigé : le positionnement de `/login` rendait le filigrane INVISIBLE sur l'AppShell
+
+Le positionnement en **pourcentage** de `/login` (`left-[-55%]`) est pensé
+pour une carte étroite (~384px). Réutilisé tel quel sur un conteneur
+pleine largeur (AppShell, ~1400px desktop), 55% représente un décalage
+absolu bien plus grand, poussant l'icône **entièrement hors du viewport**
+— vérifié explicitement : capture d'écran du dashboard général affichant
+un fond parfaitement vide, aucune trace du filigrane, à n'importe quelle
+opacité testée.
+
+**Corrigé par un second variant dédié, `"corner-br"`** (coin bas-droit,
+décalages en pourcentage mais recalibrés, pas les mêmes valeurs) : c'est
+le seul coin du viewport que ni la Sidebar (hauteur pleine, bord gauche)
+ni la Topbar (largeur pleine du contenu, bord haut) n'occupent déjà —
+`"bleed-left"` (bord gauche) aurait été presque entièrement caché derrière
+la Sidebar. Tailles différenciées mobile/desktop (`h-[38%]` sous `sm:`,
+`sm:h-[48%]` au-dessus) : à taille identique en %, un petit viewport
+(375px) aurait rendu le triangle proportionnellement bien plus présent que
+sur desktop — vérifié par capture d'écran mobile avant/après ce réglage.
+
+### Piège n°2 trouvé et corrigé : `-z-10` sur un `fixed` sans stacking context propre = filigrane invisible à 100%, quelle que soit l'opacité
+
+Après avoir corrigé le positionnement, le filigrane restait **toujours
+invisible, même à 30% d'opacité** — un deuxième bug, distinct du premier,
+découvert par inspection DOM (`getComputedStyle`/`getBoundingClientRect`
+via un script Playwright ciblé, pas une simple relecture de code).
+
+**Cause exacte** : le conteneur racine de l'AppShell (`bg-app-bg`) avait
+`relative` mais **aucun `z-index` explicite** — sans stacking context
+propre à cet endroit, un enfant `position: fixed` à `z-index` négatif
+« s'échappe » au stacking context RACINE du document. Or `bg-app-bg`
+lui-même n'est qu'un contenu normal (non positionné) DE ce même stacking
+context racine — et le contenu normal peint toujours au-dessus des
+enfants à z-index négatif de la racine. Résultat : le fond `bg-app-bg`
+recouvrait intégralement le filigrane, à n'importe quelle opacité,
+peu importe le z-index négatif choisi.
+
+**Corrigé** : `z-0` (valeur explicite, jamais `auto`) ajouté au conteneur
+racine de l'AppShell, en plus de `relative` — crée le stacking context qui
+contient correctement le filigrane et le fait peindre au-dessus du fond
+de CE conteneur précis, comme prévu depuis le départ. Piège CSS classique
+et non-intuitif ("negative z-index + fixed sans stacking context ancêtre
+= invisible"), documenté en commentaire directement dans `AppShell.tsx`
+pour éviter de le reproduire ailleurs dans le portail.
+
+### Précautions de lisibilité appliquées (`AppShell.tsx`)
+
+- **`fixed`, jamais `absolute`** — épinglé au VIEWPORT, jamais à la
+  hauteur totale du contenu. Sur un `absolute` centré via `top-1/2` (comme
+  `/login`), un document très long (reporting, tableau dense) aurait pu
+  placer le filigrane n'importe où dans la hauteur totale du contenu,
+  potentiellement en plein milieu d'un tableau après défilement — jamais
+  reproduit ici : `fixed` garantit qu'il reste au MÊME endroit du
+  viewport, quelle que soit la position de défilement.
+- **`-z-10`** (avec le correctif `z-0` ci-dessus) — strictement derrière
+  tout contenu normal (Sidebar/Topbar/cartes, tous avec leur propre fond
+  opaque `bg-surface`) : jamais au-dessus, jamais de gêne au défilement ni
+  à la lecture.
+- **Opacité `0.05`** (contre `0.09` sur `/login`) — testée et ajustée
+  visuellement sur `/treso/finance/reporting` (l'écran le plus dense du
+  portail : filtres + 3 tableaux). À `0.3` (test de diagnostic), le
+  triangle est clairement visible et distrayant ; à `0.05`, à peine
+  perceptible, uniquement dans le coin vide en bas à droite, jamais
+  superposé à une donnée réelle.
+- **Bordure bleue `border-[3px] border-primary`** sur tout le conteneur
+  AppShell (pas seulement une carte comme `/login`) — 3px, largement
+  inférieur à toute marge de contenu existante (`px-4 sm:px-6` minimum
+  partout) : n'empiète sur aucun texte ni contrôle, vérifié qu'aucun
+  scroll horizontal n'apparaît (box-sizing border-box de Tailwind
+  preflight, la bordure ne s'ajoute jamais à la largeur).
+
+### Vérifié explicitement — captures réelles desktop (1400px) et mobile (375px)
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes erreurs
+préexistantes du Module Pointage RH). Chromium headless (Playwright, non
+ajouté au projet) contre le vrai serveur `next dev` :
+
+- Dashboard général, dashboard Finance (6 indicateurs + bandeau solde de
+  caisse), reporting (filtres + 3 tableaux), formulaire "Nouvelle demande
+  d'achat" — desktop ET mobile (375px) : filigrane à peine perceptible
+  dans le coin bas-droit sur toutes les pages, jamais superposé à un
+  texte, une carte ou un contrôle.
+- **Reporting, l'écran le plus à risque** : capture en haut de page ET
+  après défilement jusqu'en bas — le filigrane reste EXACTEMENT au même
+  endroit du viewport dans les deux captures (fixe, pas de réapparition ni
+  de déplacement inattendu en bas de page).
+- Aucun scroll horizontal introduit (desktop et mobile), aucune erreur
+  console sur l'ensemble du parcours.
+- **Tiroir de navigation mobile** revérifié après le changement de
+  stacking context (`z-0`) : s'ouvre toujours correctement au-dessus du
+  filigrane et de la bordure, aucune régression visuelle.
+
+Aucune donnée de test créée pendant cette vérification (uniquement de la
+navigation et des captures d'écran) : rien à nettoyer en base. Serveur
+`next dev` arrêté après vérification.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

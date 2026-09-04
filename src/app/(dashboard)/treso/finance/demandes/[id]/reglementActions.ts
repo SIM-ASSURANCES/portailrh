@@ -5,7 +5,13 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { calculerStatutDemande, getResteARegler, getTotalRegle, peutEffectuerReglement } from "@/lib/tresorerie";
+import {
+  calculerStatutDemande,
+  getMontantConsommeCategorie,
+  getResteARegler,
+  getTotalRegle,
+  peutEffectuerReglement,
+} from "@/lib/tresorerie";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
@@ -157,7 +163,11 @@ export async function modifierReglementAction(
  * (`peutEffectuerReglement`, Phase C), que le règlement n'est ni déjà
  * confirmé ni annulé, et recalcule côté serveur que la confirmation ne
  * ferait pas dépasser **`montantValide`** (jamais le montant demandé, ni
- * confiance dans l'UI). Si `mode = CAISSE`, l'écriture `JournalCaisse`
+ * confiance dans l'UI), puis, si la demande est catégorisée et que sa
+ * Catégorie a un `budgetAlloue` défini, que ce règlement ne ferait pas
+ * dépasser le budget PARTAGÉ de cette catégorie (voir CLAUDE.md "Budget
+ * partagé par Catégorie" — c'est ici, au règlement, que le contrôle
+ * s'applique, jamais à la validation). Si `mode = CAISSE`, l'écriture `JournalCaisse`
  * (SORTIE) est créée dans la même transaction que la confirmation — les
  * deux réussissent ou échouent ensemble. Un règlement BANQUE n'a
  * strictement aucun effet sur `JournalCaisse`.
@@ -200,6 +210,32 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
       status: "error",
       message: "Ce règlement dépasserait le montant validé de la demande — confirmation refusée.",
     };
+  }
+
+  // Budget partagé par Catégorie (voir CLAUDE.md "Budget partagé par
+  // Catégorie") : contrôle bloquant au RÈGLEMENT, jamais à la validation —
+  // c'est le moment où l'argent sort réellement. Aucune limite ne
+  // s'applique si la demande n'a pas encore de `categorieId` (pas
+  // catégorisée), ou si sa Catégorie n'a pas de `budgetAlloue` défini
+  // (`null` = illimité). Le règlement en cours d'écriture n'est encore
+  // QUE brouillon (`estConfirme: false`) au moment de ce calcul — jamais
+  // besoin de l'exclure explicitement de la consommation déjà existante,
+  // il n'y contribue pas encore.
+  if (demande.categorieId) {
+    const categorie = await prisma.categorie.findUnique({
+      where: { id: demande.categorieId },
+      select: { label: true, budgetAlloue: true },
+    });
+    if (categorie?.budgetAlloue != null) {
+      const consommeExistant = await getMontantConsommeCategorie(demande.categorieId);
+      const restantAvantCeReglement = Number(categorie.budgetAlloue) - consommeExistant;
+      if (montantReglement > restantAvantCeReglement) {
+        return {
+          status: "error",
+          message: `Ce règlement dépasse le budget disponible de la catégorie « ${categorie.label} » (${Math.max(0, restantAvantCeReglement).toLocaleString("fr-FR")} FCFA restants avant ce règlement).`,
+        };
+      }
+    }
   }
 
   await prisma.$transaction([

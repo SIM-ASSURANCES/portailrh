@@ -11,6 +11,7 @@ import {
   getMontantsValidesNonRegles,
   getReglementsPartielsACompleter,
   getRetoursEnAttenteReception,
+  getValidationsCompletesEnAttente,
 } from "@/lib/dashboardFinance";
 import { getSession, hasPermission } from "@/lib/auth";
 import { getSoldeCaisse } from "@/lib/tresorerie";
@@ -50,6 +51,11 @@ export default async function DashboardFinancePage() {
     redirect("/?error=acces_refuse_dashboard_finance");
   }
 
+  const canApprouverValidationComplete = hasPermission(
+    session,
+    "treso.approuver_validation_complete"
+  );
+
   const [
     solde,
     enAttenteValidation,
@@ -59,6 +65,7 @@ export default async function DashboardFinancePage() {
     retoursEnAttente,
     depensesNonJustifiees,
     decaissementsARegulariser,
+    validationsCompletesEnAttente,
   ] = await Promise.all([
     getSoldeCaisse(),
     getDemandesEnAttenteValidation(),
@@ -68,6 +75,9 @@ export default async function DashboardFinancePage() {
     getRetoursEnAttenteReception(),
     getDepensesNonJustifiees(),
     getDecaissementsARegulariser(),
+    canApprouverValidationComplete
+      ? getValidationsCompletesEnAttente()
+      : Promise.resolve({ nombre: 0 }),
   ]);
 
   // Le DG a `voir_dashboard_finance` mais jamais `receptionner_retour`
@@ -210,6 +220,35 @@ export default async function DashboardFinancePage() {
           </div>
         </div>
       </section>
+
+      {/* Distincte des 6 indicateurs "À traiter" ci-dessus (section 12 du
+          cahier des charges, périmètre volontairement figé) : cette carte
+          répond à un besoin différent — le verrou de clôture "Validation
+          complète (DG)" (voir CLAUDE.md) — et n'est visible que pour la
+          permission qui gouverne cette action précise, jamais pour Finance
+          seule (qui n'a pas `approuver_validation_complete`). Section
+          séparée plutôt qu'une 7ème carte mêlée aux 6, pour ne jamais
+          élargir silencieusement ce qui est documenté comme un ensemble
+          fixe. */}
+      {canApprouverValidationComplete ? (
+        <section className="space-y-4">
+          <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+            <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
+            Validation complète (DG)
+          </h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="stat-card-enter">
+              <StatCard
+                href="/treso/finance/validations-attente"
+                icon="shield-check"
+                tone={toneSiActif(validationsCompletesEnAttente.nombre, "warning")}
+                label="Validations complètes en attente"
+                value={validationsCompletesEnAttente.nombre}
+              />
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <p className="text-sm text-muted-foreground">
         <Link

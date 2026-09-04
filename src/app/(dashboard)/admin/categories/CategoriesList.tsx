@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui";
 
 import { ActiveToggleButton } from "./ActiveToggleButton";
 import { toggleCategorieActiveAction, toggleObjetActiveAction } from "./actions";
+import { BudgetAlloueField } from "./BudgetAlloueField";
 import { ObjetCreateForm } from "./ObjetCreateForm";
 
 export interface ObjetRow {
@@ -16,6 +17,8 @@ export interface CategorieRow {
   id: string;
   label: string;
   isActive: boolean;
+  /** Budget partagé — voir CLAUDE.md "Budget partagé par Catégorie". `null` = aucune limite. */
+  budgetAlloue: number | null;
   objets: ObjetRow[];
 }
 
@@ -49,6 +52,13 @@ export function CategoriesList({ categories }: { categories: CategorieRow[] }) {
               isActive={categorie.isActive}
               toggleAction={toggleCategorieActiveAction}
             />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Budget alloué
+            </span>
+            <BudgetAlloueField categorieId={categorie.id} budgetAlloue={categorie.budgetAlloue} />
           </div>
 
           {categorie.objets.length > 0 ? (

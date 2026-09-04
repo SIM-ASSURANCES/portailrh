@@ -46,7 +46,6 @@ export default async function MaDemandeDetailPage({
     include: {
       categorie: true,
       objet: true,
-      posteBudgetaire: true,
       beneficiaireUser: true,
       lignes: { orderBy: { createdAt: "asc" } },
       pieces: true,
@@ -125,12 +124,19 @@ export default async function MaDemandeDetailPage({
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Montant restant à valider
             </dt>
-            <dd className="mt-1 text-base font-bold text-foreground tabular-nums">
+            <dd
+              className={`mt-1 text-base font-bold tabular-nums ${
+                demande.reliquatRejete ? "text-muted-foreground line-through" : "text-foreground"
+              }`}
+            >
               {formatMontantDevise(
                 Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0)),
                 demande.devise
               )}
             </dd>
+            {demande.reliquatRejete ? (
+              <p className="mt-1 text-xs font-medium text-danger">Définitivement clos (reliquat rejeté)</p>
+            ) : null}
           </div>
           <div className="sm:col-span-2">
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -170,14 +176,6 @@ export default async function MaDemandeDetailPage({
                 Catégorie d&apos;achat
               </dt>
               <dd className="text-sm text-foreground">{demande.categorie.label}</dd>
-            </div>
-          ) : null}
-          {demande.posteBudgetaire ? (
-            <div>
-              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Poste budgétaire
-              </dt>
-              <dd className="text-sm text-foreground">{demande.posteBudgetaire.label}</dd>
             </div>
           ) : null}
           {demande.dateLivraisonSouhaitee ? (
