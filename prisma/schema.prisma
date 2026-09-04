@@ -41,6 +41,7 @@ model User {
   /// pas de table de référence dédiée : le volume de services distincts
   /// reste faible pour une application interne.
   service      String?
+  photoUrl     String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -66,6 +67,7 @@ model User {
   correctionsEffectuees CorrectionPointage[] @relation("CorrectionEffectuePar")
   absencesDeclarees     Absence[]            @relation("AbsenceEmploye")
   absencesControlees    Absence[]            @relation("AbsenceControlePar")
+  notifications         Notification[]
 }
 
 model Role {
@@ -114,6 +116,18 @@ model HistoriqueEntry {
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  titre     String
+  message   String
+  lien      String?
+  estLue    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // ============================================================

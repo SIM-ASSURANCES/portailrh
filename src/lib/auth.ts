@@ -51,6 +51,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           fullName: user.fullName,
           email: user.email,
           role: user.role.name,
+          photoUrl: user.photoUrl,
         };
       },
     }),
@@ -63,15 +64,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.id = user.id;
         token.fullName = user.fullName;
         token.role = user.role;
+        token.photoUrl = user.photoUrl;
       }
       return token;
     },
     // Appelé à chaque lecture de session côté serveur/client : on reprojette
     // le contenu du JWT vers l'objet `session` exposé à l'application.
     async session({ session, token }) {
-      session.user.id = token.id;
-      session.user.fullName = token.fullName;
-      session.role = token.role;
+      session.user.id = token.id as string;
+      session.user.fullName = token.fullName as string;
+      session.user.photoUrl = token.photoUrl as string | null;
+      session.role = token.role as string;
       return session;
     },
   },
@@ -94,7 +97,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
  *   if (!session) redirect("/login");
  */
 export const getSession = cache(async (): Promise<{
-  user: { id: string; fullName: string; email: string };
+  user: { id: string; fullName: string; email: string; photoUrl: string | null };
   role: string;
   permissions: string[];
 } | null> => {
@@ -115,6 +118,7 @@ export const getSession = cache(async (): Promise<{
       id: session.user.id,
       fullName: session.user.fullName,
       email: session.user.email,
+      photoUrl: session.user.photoUrl || null,
     },
     role: session.role,
     permissions,

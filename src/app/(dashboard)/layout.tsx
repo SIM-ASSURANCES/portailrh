@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
+import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 
 /**
  * Layout du Socle Portail (écrans authentifiés). Toute route de ce groupe
@@ -13,6 +14,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!session) {
     redirect("/login");
   }
+
+  const unreadCount = await getUnreadNotificationsCount();
 
   return (
     <AppShell
@@ -50,6 +53,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "pointage.voir_dashboard_rh") ||
         hasPermission(session, "pointage.voir_reporting")
       }
+      unreadNotificationsCount={unreadCount}
 
     >
       {children}
