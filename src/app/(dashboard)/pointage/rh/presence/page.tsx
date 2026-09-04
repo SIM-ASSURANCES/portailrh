@@ -7,36 +7,75 @@ import { fr } from "date-fns/locale";
 import { PresenceTabs, PresenceData } from "./PresenceTabs";
 import { Card } from "@/components/ui/Card";
 
-export default async function PresenceDuJourPage() {
+export default async function PresenceDuJourPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const session = await getSession();
 
   if (!session) {
     return null;
   }
 
-  const now = new Date();
+  const resolvedParams = await searchParams;
+  const dateParam = resolvedParams.date as string;
+  const now = dateParam ? new Date(dateParam) : new Date();
+  
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
 
-  const pointagesDb = await prisma.pointage.findMany({
-    where: {
-      heure: {
-        gte: todayStart,
-        lte: todayEnd,
+  const monthStart = startOfMonth(now);
+  const monthEnd = endOfMonth(now);
+
+  const [pointagesDb, absentsDb, retardsDuMois] = await Promise.all([
+    prisma.pointage.findMany({
+      where: {
+        heure: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
+        user: { isActive: true },
       },
-      user: { isActive: true },
-    },
-    orderBy: { heure: 'asc' },
-    select: {
-      userId: true,
-      type: true,
-      heure: true,
-      heurePrevue: true,
-      estRetard: true,
-      minutesRetard: true,
-      user: { select: { fullName: true, email: true } }
-    },
-  });
+      orderBy: { heure: 'asc' },
+      select: {
+        userId: true,
+        type: true,
+        heure: true,
+        heurePrevue: true,
+        estRetard: true,
+        minutesRetard: true,
+        user: { select: { fullName: true, email: true } }
+      },
+    }),
+    prisma.absence.findMany({
+      where: {
+        date: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
+        user: { isActive: true },
+      },
+      include: { user: { select: { fullName: true, email: true } } },
+    }),
+    prisma.pointage.groupBy({
+      by: ["userId"],
+      where: {
+        estRetard: true,
+        heure: {
+          gte: monthStart,
+          lte: monthEnd,
+        },
+        user: { isActive: true },
+      },
+      _sum: {
+        minutesRetard: true,
+      },
+      _count: {
+        id: true,
+      },
+    })
+  ]);
 
   const userPointagesMap = new Map<string, PresenceData>();
   
@@ -70,18 +109,6 @@ export default async function PresenceDuJourPage() {
   const presentsCount = presents.length;
   const retardsCount = presents.filter(p => p.estRetard).length;
   const retards = presents.filter(p => p.estRetard);
-
-  const absentsDb = await prisma.absence.findMany({
-    where: {
-      date: {
-        gte: todayStart,
-        lte: todayEnd,
-      },
-      user: { isActive: true },
-    },
-    include: { user: { select: { fullName: true, email: true } } },
-  });
-
   const absentsCount = absentsDb.length;
 
   // Calcul des manquants (ni présents, ni déclarés absents)
@@ -89,13 +116,21 @@ export default async function PresenceDuJourPage() {
   const absentsIds = absentsDb.map((a) => a.userId);
   const exclusIds = [...presentsIds, ...absentsIds];
 
-  const manquantsDb = await prisma.user.findMany({
-    where: {
-      isActive: true,
-      id: { notIn: exclusIds },
-    },
-    select: { id: true, fullName: true, email: true },
-  });
+  const retardsUserIds = retardsDuMois.map((r) => r.userId);
+
+  const [manquantsDb, users] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        isActive: true,
+        id: { notIn: exclusIds },
+      },
+      select: { id: true, fullName: true, email: true },
+    }),
+    prisma.user.findMany({
+      where: { id: { in: retardsUserIds } },
+      select: { id: true, fullName: true, email: true },
+    })
+  ]);
 
   const manquantsCount = manquantsDb.length;
 
@@ -111,33 +146,6 @@ export default async function PresenceDuJourPage() {
     email: m.email
   }));
 
-  // Top retards du mois
-  const monthStart = startOfMonth(now);
-  const monthEnd = endOfMonth(now);
-
-  const retardsDuMois = await prisma.pointage.groupBy({
-    by: ["userId"],
-    where: {
-      estRetard: true,
-      heure: {
-        gte: monthStart,
-        lte: monthEnd,
-      },
-      user: { isActive: true },
-    },
-    _sum: {
-      minutesRetard: true,
-    },
-    _count: {
-      id: true,
-    },
-  });
-
-  const users = await prisma.user.findMany({
-    where: { id: { in: retardsDuMois.map((r) => r.userId) } },
-    select: { id: true, fullName: true, email: true },
-  });
-
   const retardsAvecUsers = retardsDuMois
     .map((r) => ({
       ...r,
@@ -148,7 +156,7 @@ export default async function PresenceDuJourPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-8 font-sans">
       <PageHeader
-        title="Présence du jour"
+        title={dateParam ? `Présence du ${format(now, "dd/MM/yyyy")}` : "Présence du jour"}
         description="Suivi en temps réel des arrivées, retards et absences de la journée."
         backHref="/pointage/rh"
         backLabel="Retour à la Boîte à Outils"

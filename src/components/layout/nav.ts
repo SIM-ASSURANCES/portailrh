@@ -216,7 +216,7 @@ export function getNavBranches({
                   { label: "Boîte à Outils", href: "/pointage/rh", icon: "layout-grid", exact: true },
                   { label: "Présence du jour", href: "/pointage/rh/presence", icon: "check-circle", exact: true },
                   { label: "Tous les pointages", href: "/pointage/rh/pointages", icon: "file-text", exact: true },
-                  { label: "Retards & absences", href: "/pointage/rh/absences", icon: "alert-triangle" },
+                  { label: "Retards & absences", href: "/pointage/rh/absences", icon: "alert-triangle" }
                 ],
               } satisfies NavGroup,
             ]

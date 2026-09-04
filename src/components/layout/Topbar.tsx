@@ -1,8 +1,10 @@
 import { Icon } from "@/components/icons";
+import { TopbarCalendar } from "./TopbarCalendar";
 
 interface TopbarProps {
   user: { fullName: string; email: string };
   role: string;
+  canAccessPointageRH?: boolean;
   /** Ouvre le tiroir de navigation mobile (bouton visible seulement < lg). */
   onOpenMobileMenu: () => void;
 }
@@ -19,7 +21,7 @@ function initials(fullName: string) {
  * de système de notifications) et bloc profil (avatar initiales, nom, email,
  * rôle). Reste blanche, au-dessus du contenu, alignée à droite.
  */
-export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
+export function Topbar({ user, role, canAccessPointageRH, onOpenMobileMenu }: TopbarProps) {
   return (
     <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-4 border-b border-border bg-surface px-4 sm:px-6">
       <button
@@ -32,6 +34,8 @@ export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
       </button>
 
       <div className="ml-auto flex items-center gap-4">
+        <TopbarCalendar isRH={canAccessPointageRH} />
+        
         <button
           type="button"
           aria-label="Notifications"

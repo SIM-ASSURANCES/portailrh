@@ -7,7 +7,8 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/icons";
-import { analyserAbsences, traiterAbsence } from "./actions";
+import { useRouter } from "next/navigation";
+import { traiterAbsence } from "./actions";
 import { StatutAbsence } from "@/generated/prisma/client";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
@@ -29,21 +30,27 @@ type AbsenceWithUser = {
   } | null;
 };
 
-export function AbsencesClient({ initialAbsences }: { initialAbsences: AbsenceWithUser[] }) {
+export function AbsencesClient({ 
+  initialAbsences, 
+  defaultDebut, 
+  defaultFin 
+}: { 
+  initialAbsences: AbsenceWithUser[];
+  defaultDebut: string;
+  defaultFin: string;
+}) {
+  const router = useRouter();
+  const [debut, setDebut] = useState(defaultDebut);
+  const [fin, setFin] = useState(defaultFin);
   const [isPending, startTransition] = useTransition();
   const [selectedAbsence, setSelectedAbsence] = useState<AbsenceWithUser | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [nouveauStatut, setNouveauStatut] = useState<StatutAbsence>("JUSTIFIEE");
   const [motif, setMotif] = useState("");
 
-  const handleAnalyser = () => {
-    startTransition(async () => {
-      const result = await analyserAbsences(30);
-      if (result.status === "success") {
-        toast.success(result.message);
-      } else {
-        toast.error(result.message);
-      }
+  const handleSearch = () => {
+    startTransition(() => {
+      router.push(`/pointage/rh/absences?debut=${debut}&fin=${fin}`);
     });
   };
 
@@ -80,16 +87,27 @@ export function AbsencesClient({ initialAbsences }: { initialAbsences: AbsenceWi
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center bg-surface p-4 rounded-xl border border-border">
-        <div>
-          <h2 className="text-lg font-bold text-foreground">Détection automatique</h2>
-          <p className="text-sm text-muted-foreground">
-            Recherchez les collaborateurs n&apos;ayant pas pointé sur les 30 derniers jours.
-          </p>
+      <div className="flex flex-wrap gap-4 items-end bg-surface p-4 rounded-xl border border-border">
+        <div className="space-y-1">
+          <label className="text-sm font-medium text-slate-700">Date de début</label>
+          <input
+            type="date"
+            value={debut}
+            onChange={(e) => setDebut(e.target.value)}
+            className="block w-full rounded-md border-slate-300 shadow-sm focus:border-primary focus:ring-primary sm:text-sm px-3 py-2 border"
+          />
         </div>
-        <Button onClick={handleAnalyser} disabled={isPending}>
-          <Icon name="rotate-ccw" className="size-4" />
-          {isPending ? "Analyse en cours..." : "Lancer l'analyse"}
+        <div className="space-y-1">
+          <label className="text-sm font-medium text-slate-700">Date de fin</label>
+          <input
+            type="date"
+            value={fin}
+            onChange={(e) => setFin(e.target.value)}
+            className="block w-full rounded-md border-slate-300 shadow-sm focus:border-primary focus:ring-primary sm:text-sm px-3 py-2 border"
+          />
+        </div>
+        <Button onClick={handleSearch} disabled={isPending}>
+          {isPending ? "Recherche..." : "Rechercher"}
         </Button>
       </div>
 

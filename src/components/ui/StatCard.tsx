@@ -60,19 +60,19 @@ const toneAccentClasses: Record<StatTone, string> = {
 export function StatCard({ icon, label, value, hint, tone = "info", href }: StatCardProps) {
   const iconPill = (
     <span
-      className={`mb-4 inline-grid size-11 place-items-center rounded-xl transition-transform duration-200 ease-out-strong ${
+      className={`mb-3 inline-grid size-8 place-items-center rounded-lg transition-transform duration-200 ease-out-strong ${
         href ? "motion-safe:group-hover:scale-110" : ""
       } ${toneIconClasses[tone]}`}
     >
-      <Icon name={icon} className="size-5" />
+      <Icon name={icon} className="size-4" />
     </span>
   );
 
   const body = (
     <>
       {iconPill}
-      <p className="text-[13px] font-semibold text-muted-foreground">{label}</p>
-      <p className="mt-1.5 text-[28px] font-black leading-none tracking-tight text-foreground tabular-nums">
+      <p className="text-xs font-semibold text-muted-foreground">{label}</p>
+      <p className="mt-1 text-2xl font-black leading-none tracking-tight text-foreground tabular-nums">
         {value}
       </p>
       {hint ? <p className="mt-2 text-xs font-medium text-muted-foreground tabular-nums">{hint}</p> : null}
@@ -83,7 +83,7 @@ export function StatCard({ icon, label, value, hint, tone = "info", href }: Stat
     return (
       <Link
         href={href}
-        className={`group relative block overflow-hidden rounded-2xl border border-border bg-surface p-5 pt-6 shadow-elevated outline-offset-2 transition-[border-color,box-shadow,transform] duration-200 ease-out-strong hover:shadow-elevated-lg motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 ${toneAccentClasses[tone]}`}
+        className={`group relative block overflow-hidden rounded-2xl border border-border bg-surface p-4 shadow-elevated outline-offset-2 transition-[border-color,box-shadow,transform] duration-200 ease-out-strong hover:shadow-elevated-lg motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 ${toneAccentClasses[tone]}`}
       >
         {body}
         <span className="mt-3 flex items-center gap-1 text-xs font-semibold text-muted-foreground transition-colors duration-200 group-hover:text-primary">
@@ -98,7 +98,7 @@ export function StatCard({ icon, label, value, hint, tone = "info", href }: Stat
   }
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-border bg-surface p-5 pt-6 shadow-elevated">
+    <div className="relative overflow-hidden rounded-2xl border border-border bg-surface p-4 shadow-elevated">
       {body}
     </div>
   );

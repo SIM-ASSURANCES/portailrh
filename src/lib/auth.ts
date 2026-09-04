@@ -3,6 +3,7 @@ import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/prisma";
+import { cache } from "react";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: {
@@ -88,11 +89,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
  *   const session = await getSession();
  *   if (!session) redirect("/login");
  */
-export async function getSession(): Promise<{
+export const getSession = cache(async (): Promise<{
   user: { id: string; fullName: string; email: string };
   role: string;
   permissions: string[];
-} | null> {
+} | null> => {
   const session = await auth();
   if (!session?.user) {
     return null;
@@ -114,7 +115,7 @@ export async function getSession(): Promise<{
     role: session.role,
     permissions,
   };
-}
+});
 
 /**
  * Vérifie qu'une session (retournée par `getSession()`) possède une

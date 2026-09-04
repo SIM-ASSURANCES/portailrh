@@ -69,6 +69,13 @@ const tools: DashboardItem[] = [
     icon: "plus-circle",
     available: true,
   },
+  {
+    title: "Calendrier",
+    description: "Vue d'ensemble et gestion des jours fériés et du calendrier.",
+    href: "/pointage/rh/calendrier",
+    icon: "calendar",
+    available: true,
+  }
 ];
 
 export default async function RHToolsPage() {
@@ -91,27 +98,27 @@ export default async function RHToolsPage() {
             if (tool.available) {
               return (
                 <Link key={tool.href} href={tool.href} className="group">
-                  <Card className="h-full flex flex-col items-start p-6 hover:border-primary/50 hover:bg-primary/5 transition-colors border-border/80">
-                    <div className="p-3 bg-primary/10 rounded-lg text-primary mb-4 group-hover:scale-105 transition-transform">
-                      <Icon name={tool.icon} className="size-6" />
+                  <Card className="h-full flex flex-col items-start p-4 hover:border-primary/50 hover:bg-primary/5 transition-colors border-border/80">
+                    <div className="p-2 bg-primary/10 rounded-lg text-primary mb-3 group-hover:scale-105 transition-transform">
+                      <Icon name={tool.icon} className="size-5" />
                     </div>
-                    <h3 className="font-bold text-foreground mb-1">{tool.title}</h3>
-                    <p className="text-sm text-muted-foreground">{tool.description}</p>
+                    <h3 className="font-bold text-sm text-foreground mb-1">{tool.title}</h3>
+                    <p className="text-xs text-muted-foreground">{tool.description}</p>
                   </Card>
                 </Link>
               );
             }
 
             return (
-              <Card key={tool.href} className="h-full flex flex-col items-start p-6 border-dashed border-border/50 bg-surface/50 opacity-70">
-                <div className="p-3 bg-muted rounded-lg text-muted-foreground mb-4">
-                  <Icon name={tool.icon} className="size-6" />
+              <Card key={tool.href} className="h-full flex flex-col items-start p-4 border-dashed border-border/50 bg-surface/50 opacity-70">
+                <div className="p-2 bg-muted rounded-lg text-muted-foreground mb-3">
+                  <Icon name={tool.icon} className="size-5" />
                 </div>
                 <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-bold text-muted-foreground">{tool.title}</h3>
+                  <h3 className="font-bold text-sm text-muted-foreground">{tool.title}</h3>
                   <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground bg-muted px-2 py-0.5 rounded-full">Bientôt</span>
                 </div>
-                <p className="text-sm text-muted-foreground/80">{tool.description}</p>
+                <p className="text-xs text-muted-foreground/80">{tool.description}</p>
               </Card>
             );
           })}
