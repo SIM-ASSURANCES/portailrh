@@ -151,7 +151,12 @@ export function AppShell({
         onCloseMobile={() => setMobileOpen(false)}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar user={user} role={role} onOpenMobileMenu={() => setMobileOpen(true)} />
+        <Topbar 
+          user={user} 
+          role={role} 
+          canAccessPointageRH={canAccessPointageRH}
+          onOpenMobileMenu={() => setMobileOpen(true)} 
+        />
         <main className="flex-1 px-4 py-6 sm:px-6 sm:py-8">{children}</main>
       </div>
     </div>

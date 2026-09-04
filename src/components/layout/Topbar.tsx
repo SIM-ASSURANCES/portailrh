@@ -4,10 +4,12 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 import { Icon } from "@/components/icons";
+import { TopbarCalendar } from "./TopbarCalendar";
 
 interface TopbarProps {
   user: { fullName: string; email: string };
   role: string;
+  canAccessPointageRH?: boolean;
   /** Ouvre le tiroir de navigation mobile (bouton visible seulement < lg). */
   onOpenMobileMenu: () => void;
 }
@@ -40,7 +42,7 @@ const EVENTS_URL = "/api/events";
 // évènement à venir avant longtemps.
 const FORM_FIELD_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 
-export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
+export function Topbar({ user, role, canAccessPointageRH, onOpenMobileMenu }: TopbarProps) {
   const router = useRouter();
   const isEditingRef = useRef(false);
   const pendingRefreshRef = useRef(false);
@@ -108,6 +110,8 @@ export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
       </button>
 
       <div className="ml-auto flex items-center gap-4">
+        <TopbarCalendar isRH={canAccessPointageRH} />
+        
         <button
           type="button"
           aria-label="Notifications"

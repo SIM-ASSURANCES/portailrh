@@ -9,9 +9,12 @@ export interface PresenceData {
   userId: string;
   fullName: string;
   email: string;
-  heure?: Date;
+  arrivee?: string;
+  arriveePrevue?: string | null;
+  depart?: string;
+  departPrevu?: string | null;
   estRetard?: boolean;
-  minutesRetard?: number;
+  minutesRetard?: number | null;
 }
 
 interface PresenceTabsProps {
@@ -52,6 +55,9 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
               {activeTab === "retards" && (
                 <th className="px-4 py-3 font-medium text-right">Retard</th>
               )}
+              {(activeTab === "presents" || activeTab === "retards") && (
+                <th className="px-4 py-3 font-medium text-right">Heure de départ</th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -63,19 +69,38 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
                 </td>
                 {(activeTab === "presents" || activeTab === "retards") && (
                   <td className="px-4 py-3 text-right tabular-nums">
-                    {item.heure ? format(new Date(item.heure), "HH:mm") : "-"}
+                    {item.arrivee ? (
+                      <div className="flex flex-col items-end">
+                        <span className="font-medium text-foreground">{format(new Date(item.arrivee), "HH:mm")}</span>
+                        <span className="text-[10px] text-muted-foreground">Prévu : {item.arriveePrevue || "-"}</span>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
                   </td>
                 )}
                 {activeTab === "retards" && (
-                  <td className="px-4 py-3 text-right text-amber-600 font-bold">
+                  <td className="px-4 py-3 text-right text-primary font-bold">
                     {item.minutesRetard} min
+                  </td>
+                )}
+                {(activeTab === "presents" || activeTab === "retards") && (
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {item.depart ? (
+                      <div className="flex flex-col items-end">
+                        <span className="font-medium text-foreground">{format(new Date(item.depart), "HH:mm")}</span>
+                        <span className="text-[10px] text-muted-foreground">Prévu : {item.departPrevu || "-"}</span>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
                   </td>
                 )}
               </tr>
             ))}
             {data.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
+                <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
                   Aucun collaborateur dans cette liste.
                 </td>
               </tr>

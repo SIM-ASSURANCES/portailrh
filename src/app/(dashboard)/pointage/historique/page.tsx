@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSession, hasPermission } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PageHeader, StatCard } from "@/components/ui";
 import { HistoriqueFilters } from "./HistoriqueFilters";
@@ -158,8 +158,6 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
   }));
 
   // Statistiques
-  const totalArrivees = allUserPointagesForStats.filter((p) => p.type === "ARRIVEE").length;
-  const totalDeparts = allUserPointagesForStats.filter((p) => p.type === "DEPART").length;
   const retardsList = allUserPointagesForStats.filter((p) => p.estRetard);
   const nombreJoursRetard = retardsList.length;
   const totalMinutesRetard = retardsList.reduce((acc, p) => acc + (p.minutesRetard || 0), 0);
@@ -176,21 +174,21 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard
           icon="alert-triangle"
-          tone={nombreJoursRetard > 0 ? "warning" : "success"}
+          tone={nombreJoursRetard > 0 ? "primary" : "info"}
           label="Jours de retard"
           value={nombreJoursRetard}
           hint={nombreJoursRetard > 0 ? `${totalMinutesRetard} min de retard au total` : "Aucun retard sur la période"}
         />
         <StatCard
           icon="calendar"
-          tone={totalMinutesRetard > 0 ? "warning" : "success"}
+          tone={totalMinutesRetard > 0 ? "primary" : "info"}
           label="Minutes de retard"
           value={`${totalMinutesRetard} min`}
           hint="Cumul du temps de retard"
         />
         <StatCard
           icon="inbox"
-          tone={totalAbsences > 0 ? "warning" : "success"}
+          tone={totalAbsences > 0 ? "primary" : "info"}
           label="Absences signalées"
           value={totalAbsences}
           hint="Sur la période sélectionnée"
@@ -232,7 +230,7 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
         <div className="space-y-3 rounded-2xl border border-border bg-surface p-4 sm:p-6 shadow-xs">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Icon name="alert-triangle" className="size-5 text-warning" />
+              <Icon name="alert-triangle" className="size-5 text-primary" />
               <h2 className="text-base font-bold text-foreground">
                 Absences ({absences.length})
               </h2>

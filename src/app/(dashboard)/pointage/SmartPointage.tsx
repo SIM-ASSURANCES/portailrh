@@ -62,7 +62,7 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
   if (mode === "TERMINE" || (isDone && type === "DEPART")) {
     return (
       <Card className="p-8 text-center animate-fade-in-up">
-        <h2 className="text-xl font-bold text-success mb-2">Pointages terminés</h2>
+        <h2 className="text-xl font-bold text-primary mb-2">Pointages terminés</h2>
         <p className="text-muted-foreground">Vous avez enregistré toutes vos présences pour aujourd&apos;hui.</p>
       </Card>
     );

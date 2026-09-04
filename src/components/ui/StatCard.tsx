@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { Icon, type IconName } from "@/components/icons";
 
-export type StatTone = "info" | "success" | "warning" | "neutral" | "danger";
+export type StatTone = "info" | "success" | "warning" | "neutral" | "danger" | "primary";
 
 export interface StatCardProps {
   icon: IconName;
@@ -37,16 +37,24 @@ export interface StatCardProps {
 }
 
 /** Pastille d'icône : aplat plein dans la teinte (jamais le fond pâle
- * `*-bg`, réservé aux surfaces d'arrière-plan) — les cinq teintes
+ * `*-bg`, réservé aux surfaces d'arrière-plan) — les six teintes
  * sémantiques sont toutes assez soutenues pour rester lisibles en blanc
  * dessus (elles sont déjà calibrées ≥4.5:1 en texte sur blanc, donc a
- * fortiori en fond plein avec du blanc dessus). */
+ * fortiori en fond plein avec du blanc dessus). Choix délibéré et documenté
+ * (voir CLAUDE.md "Rehaussement visuel") : conservé lors de la fusion du
+ * Module Pointage RH (Thierry Kouame) plutôt que le fond teinté à 10 % de
+ * sa propre variante — celle-ci n'a aucune contrainte fonctionnelle propre
+ * à Pointage, un simple choix esthétique fait sans connaître ce précédent ;
+ * `Présence du jour`/`Mon historique` (les deux écrans Pointage qui
+ * utilisent StatCard) en héritent donc automatiquement sans aucune
+ * modification de leur côté (mêmes props icon/label/value/tone/href). */
 const toneSolidClasses: Record<StatTone, string> = {
   info: "bg-info",
   success: "bg-success",
   warning: "bg-warning",
   neutral: "bg-neutral",
   danger: "bg-danger",
+  primary: "bg-primary",
 };
 
 /** Filet de tête (3px) en haut de la carte : premier signal de couleur,
@@ -57,16 +65,21 @@ const toneBarClasses: Record<StatTone, string> = {
   warning: "bg-warning",
   neutral: "bg-border",
   danger: "bg-danger",
+  primary: "bg-primary",
 };
 
 /** Halo de focus et bordure au survol assortis au `tone` — un indicateur
- * "danger" ne doit pas se souligner en bleu au clavier, par exemple. */
+ * "danger" ne doit pas se souligner en bleu au clavier, par exemple.
+ * `primary` ajouté lors de la fusion du Module Pointage RH (Thierry
+ * Kouame), seul ajout réellement nouveau de sa variante — une sixième
+ * teinte, purement additive. */
 const toneAccentClasses: Record<StatTone, string> = {
   info: "hover:border-info/40 focus-visible:outline-info",
   success: "hover:border-success/40 focus-visible:outline-success",
   warning: "hover:border-warning/40 focus-visible:outline-warning",
   neutral: "hover:border-neutral/40 focus-visible:outline-neutral",
   danger: "hover:border-danger/40 focus-visible:outline-danger",
+  primary: "hover:border-primary/40 focus-visible:outline-primary",
 };
 
 /**

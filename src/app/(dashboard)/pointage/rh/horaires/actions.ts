@@ -26,7 +26,7 @@ export async function updateHorairesAction(
   if (!session) {
     return { success: false, message: "Non authentifié." };
   }
-  if (!hasPermission(session, "pointage.gerer_parametrage")) {
+  if (!hasPermission(session, "pointage.gerer_horaires")) {
     return { success: false, message: "Accès refusé. Vous n'avez pas la permission de modifier le paramétrage." };
   }
 

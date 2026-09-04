@@ -121,7 +121,7 @@ export function CorrectionsClient({ initialData, search = "" }: CorrectionsClien
       key: "type",
       header: "Type",
       render: (row) => (
-        <Badge variant={row.type === "ARRIVEE" ? "info" : "neutral"}>
+        <Badge variant={row.type === "ARRIVEE" ? "primary" : "info"}>
           {row.type === "ARRIVEE" ? "Arrivée" : "Départ"}
         </Badge>
       ),
@@ -133,7 +133,7 @@ export function CorrectionsClient({ initialData, search = "" }: CorrectionsClien
         if (row.type === "DEPART") {
           return row.motif ? (
             <div className="space-y-1">
-              <Badge variant="warning">Départ anticipé</Badge>
+              <Badge variant="primary">Départ anticipé</Badge>
               <p className="text-xs text-muted-foreground italic truncate max-w-xs">{row.motif}</p>
             </div>
           ) : (
@@ -143,12 +143,12 @@ export function CorrectionsClient({ initialData, search = "" }: CorrectionsClien
         if (row.estRetard) {
           return (
             <div className="space-y-1">
-              <Badge variant="danger">Retard (+{row.minutesRetard}m)</Badge>
+              <Badge variant="primary">Retard (+{row.minutesRetard}m)</Badge>
               {row.motif && <p className="text-xs text-muted-foreground italic truncate max-w-xs">{row.motif}</p>}
             </div>
           );
         }
-        return <Badge variant="success">À l&apos;heure</Badge>;
+        return <Badge variant="info">À l&apos;heure</Badge>;
       }
     },
     {
@@ -176,15 +176,15 @@ export function CorrectionsClient({ initialData, search = "" }: CorrectionsClien
 
           <form onSubmit={handleSubmit} className="space-y-6">
             {error && (
-              <div className="flex items-center gap-2 rounded-md bg-red-50 p-3 text-red-900 border border-red-200">
-                <AlertCircle className="h-5 w-5 text-red-600" />
+              <div className="flex items-center gap-2 rounded-md bg-danger-bg p-3 text-danger border border-danger-border">
+                <AlertCircle className="h-5 w-5 text-danger" />
                 <div className="text-sm font-medium">{error}</div>
               </div>
             )}
 
             {success && (
-              <div className="flex items-center gap-2 rounded-md bg-emerald-50 p-3 text-emerald-900 border border-emerald-200">
-                <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+              <div className="flex items-center gap-2 rounded-md bg-success-bg p-3 text-success border border-success-border">
+                <CheckCircle2 className="h-5 w-5 text-success" />
                 <div className="text-sm font-medium">{success}</div>
               </div>
             )}
@@ -193,7 +193,7 @@ export function CorrectionsClient({ initialData, search = "" }: CorrectionsClien
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <span className="text-muted-foreground block mb-1">Type</span>
-                  <Badge variant={selectedPointage.type === "ARRIVEE" ? "info" : "neutral"}>
+                  <Badge variant={selectedPointage.type === "ARRIVEE" ? "primary" : "info"}>
                     {selectedPointage.type === "ARRIVEE" ? "Arrivée" : "Départ"}
                   </Badge>
                   <p className="text-xs text-muted-foreground mt-2">Le type ne peut pas être modifié.</p>

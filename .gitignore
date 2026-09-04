@@ -56,3 +56,6 @@ src/app/(dashboard)/pointage/ticket.txt
 # correspond au volume Docker nommé "uploads" monté sur /app/uploads (voir
 # docker-compose.yml/Dockerfile, DEPLOIEMENT.md)
 /uploads/
+audit_pointage.md
+audit_module_pointage.md
+cahier_de_charge_pointage.md

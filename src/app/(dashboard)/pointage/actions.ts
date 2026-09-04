@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { headers } from "next/headers";
 import { timeToMinutes, isOfficeIpAllowed } from "@/lib/pointage-utils";
 import { revalidatePath } from "next/cache";
+import { pointageEmitter } from "@/lib/events";
 import { ActionState, fieldErrorsFromZod } from "@/lib/validation";
 
 const pointageSchema = z.object({
@@ -33,15 +34,13 @@ export async function enregistrerPointageAction(
   const rawIp = headersList.get("x-forwarded-for") || "IP_INCONNUE";
   const ip = rawIp.replace(/^::ffff:/, "");
 
-  // Vérification de l'IP pour le Ticket 3
-  if (source === "ORDINATEUR") {
-    const whitelistEnv = process.env.ALLOWED_OFFICE_IPS || "";
-    if (!isOfficeIpAllowed(ip, whitelistEnv)) {
-      return {
-        status: "error",
-        message: "Le pointage depuis un ordinateur n'est autorisé que depuis le réseau de l'entreprise."
-      };
-    }
+  // Vérification de l'IP pour sécuriser le pointage (Ordinateur + Smartphone)
+  const whitelistEnv = process.env.ALLOWED_OFFICE_IPS || "";
+  if (!isOfficeIpAllowed(ip, whitelistEnv)) {
+    return {
+      status: "error",
+      message: "Le pointage n'est autorisé que depuis le réseau (Wi-Fi) de l'entreprise."
+    };
   }
 
   // 2. Vérification côté serveur des règles d'horaires
@@ -121,6 +120,11 @@ export async function enregistrerPointageAction(
 
     revalidatePath("/pointage");
     publishDataChanged();
+    // Seule action Pointage émise en plus sur le bus dédié de Thierry
+    // (pointageEmitter) : c'est le seul flux atteignable depuis la page
+    // publique /pointage/qr (hors AppShell, donc hors de portée de mon
+    // eventBus authentifié) — voir CLAUDE.md "Fusion Module Pointage RH".
+    pointageEmitter.emit("pointage-updated");
     return { status: "success", message: "Pointage enregistré avec succès." };
   } catch {
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };
