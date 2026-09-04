@@ -100,7 +100,7 @@ export function DataTable<T>({ columns, data, rowKey, emptyMessage = "Aucune don
 
   if (sortedData.length === 0) {
     return (
-      <div className="rounded-md border border-border">
+      <div className="rounded-md border border-border shadow-elevated">
         <EmptyState icon="inbox" message={emptyMessage} bordered={false} />
       </div>
     );
@@ -141,7 +141,7 @@ export function DataTable<T>({ columns, data, rowKey, emptyMessage = "Aucune don
       {/* Cartes empilées — sous md uniquement. */}
       <div className="space-y-3 md:hidden">
         {sortedData.map((row) => (
-          <div key={rowKey(row)} className="rounded-md border border-border bg-surface p-4">
+          <div key={rowKey(row)} className="rounded-md border border-border bg-surface p-4 shadow-elevated">
             {titleColumn && <div className="font-medium text-foreground">{renderCell(titleColumn, row)}</div>}
             {valueColumns.length > 0 && (
               <dl className="mt-2 space-y-1.5 text-sm">
@@ -164,8 +164,14 @@ export function DataTable<T>({ columns, data, rowKey, emptyMessage = "Aucune don
         ))}
       </div>
 
-      {/* Tableau classique — à partir de md. */}
-      <div className="hidden overflow-x-auto rounded-md border border-border md:block">
+      {/* Tableau classique — à partir de md. Fond général de l'application
+          désormais blanc (voir CLAUDE.md "Fond blanc uniforme") : le
+          `border-border` seul ne se détache presque plus d'un fond blanc pur
+          (contraste mesuré ~1.26:1, quasi invisible) — `shadow-elevated`
+          (même traitement que Card/StatCard) fait porter la délimitation, et
+          les lignes reçoivent une légère alternance (`even:bg-muted/40`) pour
+          rester lisibles même si l'œil perd le fil d'une ligne à l'autre. */}
+      <div className="hidden overflow-x-auto rounded-md border border-border shadow-elevated md:block">
         <table className="w-full min-w-full divide-y divide-border text-sm">
           <thead className="bg-muted">
             <tr>
@@ -193,7 +199,7 @@ export function DataTable<T>({ columns, data, rowKey, emptyMessage = "Aucune don
           </thead>
           <tbody className="divide-y divide-border bg-surface">
             {sortedData.map((row) => (
-              <tr key={rowKey(row)} className="hover:bg-muted/50">
+              <tr key={rowKey(row)} className="even:bg-muted/40 hover:bg-muted/60">
                 {columns.map((column) => (
                   <td key={column.key} className={`px-4 py-2 text-foreground ${column.className ?? ""}`}>
                     {renderCell(column, row)}

@@ -6148,6 +6148,172 @@ Aucune donnée de test créée pendant cette vérification (uniquement de la
 navigation et des captures d'écran) : rien à nettoyer en base. Serveur
 `next dev` arrêté après vérification.
 
+## Auto-refresh automatique, grille 5 cartes sur une ligne, fond blanc uniforme
+
+**Statut : terminé.** Trois ajustements distincts suite à un retour visuel
+direct sur l'application en conditions réelles (captures faites par
+l'utilisateur lui-même, pas ce projet).
+
+### Tâche A — Rafraîchissement automatique (retire le bouton manuel)
+
+Le bouton d'actualisation manuel du Topbar (ajouté à une itération
+précédente) est retiré : le rafraîchissement est désormais **entièrement
+automatique**, sans aucune action de l'utilisateur — `src/components/layout/Topbar.tsx`.
+
+- **Polling `router.refresh()` toutes les 20 secondes**
+  (`REFRESH_INTERVAL_MS`), au milieu de la fourchette 15-30s demandée :
+  compromis entre "assez proche du temps réel" (cas d'usage explicite —
+  une validation faite par Finance dans un autre onglet doit apparaître
+  vite) et "pas de charge serveur inutile" pour une application interne à
+  quelques dizaines d'utilisateurs simultanés au plus, pour laquelle un
+  polling à 5-10s n'apporterait aucun bénéfice perceptible, seulement plus
+  de requêtes.
+- **Indicateur discret, non cliquable** — un point vert (`bg-success`) qui
+  fait un bref "ping" (`.animate-refresh-pulse`, 0.8s, `globals.css`,
+  gardé par `prefers-reduced-motion` comme toutes les animations du
+  portail) à chaque rafraîchissement réel, jamais une pulsation continue
+  (suggérerait à tort une activité permanente) ; texte "Mis à jour à
+  HH:MM:SS" à côté (masqué sous `sm`, la barre est déjà chargée sur
+  mobile). Aucun `<button>`/`onClick` — purement informatif.
+- **Suspension pendant la saisie d'un formulaire** — détection **générique**
+  par focus (`document.addEventListener("focusin"/"focusout")`, teste
+  `event.target.tagName` contre `INPUT`/`TEXTAREA`/`SELECT`), pas un
+  opt-in à ajouter dans chaque formulaire du portail (des dizaines de
+  formulaires, coût d'intégration prohibitif pour une protection qui reste
+  de toute façon best-effort, pas une garantie stricte — ex: un éditeur de
+  texte riche non standard ne serait pas détecté, mais le portail n'en a
+  aucun). Tant qu'un champ de saisie a le focus quelque part sur la page,
+  le tour de polling en cours est **sauté** (pas annulé ni redémarré) :
+  dès que le focus quitte le champ, le tour suivant s'exécute normalement
+  — l'intervalle lui-même ne se réinitialise jamais sur une saisie, il
+  continue de ticker toutes les 20s depuis le montage.
+- L'horodatage initial est posé après montage uniquement (`useEffect`),
+  jamais pendant le rendu serveur — même précaution d'hydratation déjà en
+  place ailleurs dans l'AppShell (préférence de sidebar réduite).
+
+**Vérifié explicitement — deux onglets, deux comptes réels, vrai serveur
+`next dev`** (Chromium headless, Playwright, non ajouté au projet) :
+
+1. Collaborateur crée une demande de test (77 000 FCFA) via un premier
+   contexte de navigateur, puis un **second contexte** (même compte,
+   session distincte) reste ouvert sur `/treso/tableau-de-bord`, **jamais
+   rafraîchi manuellement** — horodatage relevé : 13:05:36, "Mes demandes
+   en attente de validation" = 1.
+2. Dans un **troisième contexte** (Finance), la demande est validée
+   totalement — action réelle, un vrai clic sur "Valider totalement" puis
+   "Confirmer".
+3. Sans aucune interaction sur le second contexte, attente de 25 secondes
+   (`page.waitForTimeout`, aucun clic, aucune navigation).
+4. Relecture du DOM du second contexte : horodatage passé à 13:05:56
+   (exactement +20s, l'intervalle de polling), "Mes demandes en attente de
+   validation" passé de 1 à **0**, "Validé" et "Validé restant à régler"
+   mis à jour avec les nouveaux montants, la carte correspondante
+   repassée en orange (`warning`) — **tout cela sans un seul clic sur ce
+   second onglet**, confirmant que `router.refresh()` propage bien le
+   changement d'un compte à l'autre via le polling seul.
+5. **Suspension pendant la saisie testée séparément** : un champ "Motif de
+   l'achat" du formulaire de nouvelle demande reçoit le focus et une vraie
+   saisie clavier (`page.type`) ; horodatage relevé avant saisie
+   (13:07:21), puis attente de 23s **champ toujours focus** — horodatage
+   inchangé (tour sauté), texte saisi intact. Le champ perd ensuite le
+   focus (clic ailleurs sur la page) ; nouvelle attente de 23s — horodatage
+   avancé (13:08:01, polling repris), texte toujours intact (aucune perte
+   de saisie à aucun moment du test).
+
+Donnée de test (1 demande, sa ligne) supprimée après coup par un script
+Prisma ciblé ; les deux demandes réelles préexistantes de l'utilisateur
+(`DEM-2026-000001`, `DEM-2026-000002`) confirmées inchangées avant/après.
+Serveur `next dev` arrêté après vérification.
+
+### Tâche B — Grille à 5 `StatCard` sur une seule ligne en desktop large
+
+Seul écran du portail avec exactement 5 `StatCard` dans ce motif : "Mon
+tableau de bord" du Collaborateur
+(`src/app/(dashboard)/treso/tableau-de-bord/page.tsx`, section "Vue
+d'ensemble" — vérifié par recherche exhaustive dans `src/`, le dashboard
+général a une grille de taille variable pour "Vos accès"/modules et le
+dashboard Finance en a 6, tous les deux hors périmètre).
+
+`grid-cols-1 sm:grid-cols-2 lg:grid-cols-3` devient `grid-cols-1
+sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5` — **`xl` (≥1280px) plutôt que
+`lg` (≥1024px)** délibérément : à 1024-1279px, forcer 5 colonnes aurait
+rendu chaque carte trop étroite pour son chiffre (`text-[28px] font-black`,
+ex: "1 250 000 FCFA") sans toucher au padding interne de `StatCard`
+(composant partagé, volontairement non modifié pour un seul écran — le
+dashboard Finance à 6 cartes, qui reste correct tel quel, en dépend aussi).
+Comportement `sm`/`lg` inchangé (empilement puis 2 puis 3 colonnes),
+strictement identique à avant en dessous de `xl`.
+
+**Vérifié explicitement** : capture à 1440px (5 cartes sur une seule
+ligne, chiffres parfaitement lisibles, aucun retour à la ligne dans une
+carte), à 1100px (repli correct en 3 colonnes puis 2, comme avant), et à
+375px (empilement 1 colonne, comme avant) — les trois captures confirment
+le comportement responsive demandé sans aucune régression aux largeurs
+intermédiaires.
+
+### Tâche C — Fond blanc uniforme sur toute l'application
+
+`--color-app-bg` (`src/app/globals.css`) passe de `#eef4fb` (gris-bleu
+pâle) à `#ffffff` — **même couleur que `/login`**, sur tout l'AppShell
+(dashboards, listes, formulaires). Le token est **conservé** comme variable
+distincte de `--color-surface` (plutôt que fusionné/supprimé) : les deux
+valent désormais `#ffffff` mais pourraient être re-différenciées plus tard
+sans toucher au reste du code. Le filigrane et la bordure bleue posés à la
+tâche précédente ("Fond de marque étendu à toute l'application")
+restent en place par-dessus, inchangés.
+
+**Risque identifié et corrigé — le point le plus délicat des trois** :
+`--color-border` (`#dbe6f2`) contre le nouveau blanc pur donne un
+contraste mesuré de **~1.26:1** (calcul WCAG explicite, pas une estimation
+à l'œil) — quasiment invisible. Avant ce changement, le fond de page
+(`#eef4fb`, la même valeur que `--color-muted`) faisait "flotter" les
+surfaces blanches (`Card`/`StatCard`/`DataTable`, `bg-surface`) par
+contraste avec un fond légèrement teinté ; les deux étant maintenant
+identiques, une surface qui ne s'appuyait QUE sur `border-border` pour se
+détacher (comme `DataTable`, avant cette tâche) devenait presque invisible
+sur la page.
+
+- **`Card`/`StatCard`** — déjà construits avec `shadow-elevated` (ombre
+  bleutée dédiée, voir Design system) en plus du `border-border` : leur
+  détachement du fond ne dépendait jamais du seul contraste de bordure,
+  confirmé par capture (dashboard Finance, dashboard Collaborateur) —
+  **aucune modification nécessaire** sur ces deux composants.
+- **`DataTable` (`src/components/ui/DataTable.tsx`) — corrigé**, seul
+  composant qui reposait uniquement sur `border-border` : le conteneur du
+  tableau desktop, les cartes empilées mobile, et l'état vide (`EmptyState`)
+  reçoivent tous `shadow-elevated` (même traitement que `Card`) ; les
+  lignes du tableau desktop gagnent une alternance légère
+  (`even:bg-muted/40`, `hover:bg-muted/60` remplaçant `hover:bg-muted/50`)
+  — combine les deux options suggérées par la consigne ("lignes alternées
+  ou bordures suffisantes") plutôt que de choisir arbitrairement une seule.
+- **Panneaux hand-rolled de `treso/finance/reporting/page.tsx`** (3
+  tableaux HTML bruts, pas via `DataTable` — voir "Audit et corrections
+  responsive mobile" plus haut pour pourquoi ils restent en HTML natif) —
+  même bug exact sur leur conteneur `rounded-lg border border-border
+  bg-surface p-4 sm:p-6` : `shadow-elevated` ajouté, cohérent avec le
+  traitement de `DataTable` ci-dessus.
+- **Formulaires** (`DemandeForm.tsx` et les autres formulaires métier) —
+  déjà construits sur le composant `Card` partagé (`shadow-elevated`
+  inclus) : vérifié par lecture directe du code, aucune modification
+  nécessaire, confirmé par capture (formulaire "Nouvelle demande d'achat").
+
+**Vérifié explicitement** (Chromium headless, Playwright, desktop 1440px
+et mobile 375px) : dashboard Collaborateur (5 cartes), dashboard Finance (6
+cartes + bandeau solde de caisse), une liste réelle avec données
+(`/admin/users`, 5 comptes de test, avant/après le correctif `DataTable`),
+et le formulaire "Nouvelle demande d'achat" — sur toutes les captures,
+`Card`/`StatCard` se détachent nettement du fond blanc (ombre bleutée
+visible), et `DataTable` (après correctif) affiche une alternance de
+lignes clairement perceptible en plus de son ombre de conteneur. Aucune
+erreur console sur l'ensemble des captures.
+
+### Vérifié explicitement (l'ensemble des trois tâches)
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes 9
+avertissements/erreurs préexistants du Module Pointage RH, déjà documentés
+et hors périmètre à plusieurs reprises dans ce fichier). Serveur `next dev`
+arrêté après l'ensemble des vérifications.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

@@ -121,7 +121,7 @@ export default async function ReportingPage({
         }}
       />
 
-      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
+      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Demandes par catégorie / objet</h2>
         {/* Tableau analytique (colonnes numériques + ligne de total) : reste un
             tableau classique même sur mobile plutôt qu'un mode carte (peu
@@ -215,7 +215,7 @@ export default async function ReportingPage({
         </div>
       </div>
 
-      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
+      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Fonds remis</h2>
         {/* Section 15 du cahier des charges : distinct du tableau général
             ci-dessus — restreint aux demandes ayant au moins un règlement
@@ -279,7 +279,7 @@ export default async function ReportingPage({
         )}
       </div>
 
-      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
+      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Suivi budgétaire</h2>
         {/* Budget PARTAGÉ par Catégorie (pas par demande, pas par service du
             demandeur), décompté au RÈGLEMENT — voir CLAUDE.md "Budget

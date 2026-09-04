@@ -98,7 +98,15 @@ export default async function MonTableauDeBordPage() {
           <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
           Vue d&apos;ensemble
         </h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {/* 5 cartes : progression responsive inchangée jusqu'à lg (1/2/3
+            colonnes, comme avant), puis xl (desktop large, ≥1280px) passe
+            aux 5 colonnes sur une seule ligne — retour utilisateur explicite.
+            xl plutôt que lg : à 1024-1279px, 5 colonnes auraient rendu
+            chaque carte trop étroite pour son chiffre (`text-[28px]
+            font-black`, ex: "1 250 000 FCFA") sans toucher au padding
+            interne de StatCard (composant partagé par d'autres grilles,
+            volontairement non modifié pour ce seul écran). */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <div className="stat-card-enter">
             <StatCard icon="shopping-cart" tone="neutral" label="Demandé" value={fmt(indicateurs.demande)} />
           </div>

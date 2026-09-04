@@ -86,9 +86,20 @@
   --color-neutral-border: #e2e8f0;
 
   /* --- Coquille applicative (sidebar + topbar + fond de contenu) ---
-     Reproduit la mise en page de référence : sidebar blanche à en-tête
-     bleu, fond de contenu gris clair, cartes blanches. */
-  --color-app-bg: #eef4fb;
+     Fond de contenu BLANC (retour utilisateur explicite — voir CLAUDE.md
+     "Fond blanc uniforme sur toute l'application") : identique à --color-
+     surface, pour que l'AppShell entier (dashboards, listes, formulaires)
+     partage exactement la même couleur de fond que /login, par-dessus
+     laquelle le filigrane de marque et la bordure bleue restent posés.
+     Auparavant #eef4fb (gris-bleu pâle, seul distinguait visuellement le
+     "fond de page" des cartes blanches qui y flottaient dessus) — les
+     Card/StatCard/DataTable ont été revérifiées pour rester visuellement
+     détachées de ce nouveau fond blanc via leur bordure/ombre propres
+     (voir Card.tsx, StatCard.tsx, DataTable.tsx), jamais par une différence
+     de couleur de fond. Token gardé (pas fusionné avec --color-surface) :
+     nom sémantique distinct ("fond de page" vs "fond de carte"), au cas où
+     une différenciation redeviendrait nécessaire plus tard. */
+  --color-app-bg: #ffffff;
   --color-sidebar: #ffffff;
   --color-sidebar-border: #dbe6f2;
   --color-sidebar-section: #94a3b8;
@@ -262,6 +273,32 @@ body {
     opacity: 0;
   }
   to {
+    opacity: 1;
+  }
+}
+
+/* Point de l'indicateur d'auto-actualisation (Topbar) : un "ping" bref à
+   chaque rafraîchissement automatique réel, jamais une pulsation continue
+   (qui suggérerait à tort une activité permanente) — voir CLAUDE.md
+   "Auto-refresh automatique". Gardé par prefers-reduced-motion comme le
+   reste des animations du portail. */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-refresh-pulse {
+    animation: refresh-pulse 0.8s ease-out;
+  }
+}
+
+@keyframes refresh-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.8);
+    opacity: 0.35;
+  }
+  100% {
+    transform: scale(1);
     opacity: 1;
   }
 }
