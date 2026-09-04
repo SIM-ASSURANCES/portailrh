@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSession, isAdmin } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
@@ -15,6 +16,7 @@ function revalidateCategoriesPaths() {
   // Finance (Ticket 2) et les filtres du reporting (Ticket 10).
   revalidatePath("/treso/finance/demandes", "layout");
   revalidatePath("/treso/finance/reporting");
+  publishDataChanged();
 }
 
 const createCategorieSchema = z.object({

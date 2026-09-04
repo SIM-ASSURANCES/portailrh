@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSession, isAdmin } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
@@ -65,6 +66,7 @@ export async function creerRoleAction(
   });
 
   revalidatePath("/admin/roles");
+  publishDataChanged();
 
   return { status: "success", message: `Rôle "${role.name}" créé.` };
 }
@@ -114,6 +116,7 @@ export async function toggleRolePermissionAction(
   // des utilisateurs ayant ce rôle.
   revalidatePath("/admin/roles");
   revalidatePath("/");
+  publishDataChanged();
 
   return { status: "success", message: granted ? "Permission accordée." : "Permission retirée." };
 }

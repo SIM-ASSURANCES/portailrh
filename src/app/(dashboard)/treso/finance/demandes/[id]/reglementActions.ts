@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import {
   calculerStatutDemande,
@@ -28,6 +29,7 @@ function revalidateDemande(demandeId: string) {
   // Finance en une fois (`type: "layout"` couvre toutes les routes sous
   // `finance/layout.tsx`) plutôt que d'énumérer chaque sous-route une à une.
   revalidatePath("/treso/finance", "layout");
+  publishDataChanged();
 }
 
 const creerReglementSchema = z.object({

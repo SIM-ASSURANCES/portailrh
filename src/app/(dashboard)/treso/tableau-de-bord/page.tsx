@@ -101,20 +101,40 @@ export default async function MonTableauDeBordPage() {
         {/* 5 cartes : progression responsive inchangée jusqu'à lg (1/2/3
             colonnes, comme avant), puis xl (desktop large, ≥1280px) passe
             aux 5 colonnes sur une seule ligne — retour utilisateur explicite.
-            xl plutôt que lg : à 1024-1279px, 5 colonnes auraient rendu
-            chaque carte trop étroite pour son chiffre (`text-[28px]
-            font-black`, ex: "1 250 000 FCFA") sans toucher au padding
-            interne de StatCard (composant partagé par d'autres grilles,
-            volontairement non modifié pour ce seul écran). */}
+            xl plutôt que lg : à 1024-1279px, 5 colonnes resteraient trop
+            étroites même en `size="compact"`.
+            `size="compact"` (StatCard) : gabarit "default" (28px) faisait
+            passer "550 000 FCFA" sur deux lignes de façon inégale d'une
+            carte à l'autre à cette largeur — corrigé par un second gabarit
+            dédié (20px, icône/padding réduits), réservé à cette grille :
+            jamais appliqué au dashboard Finance (6 cartes, jamais plus de 3
+            par ligne) ni au dashboard général, qui gardent le gabarit par
+            défaut inchangé. `h-full` sur chaque StatCard (interne au
+            composant) garantit que les 5 cartes partagent exactement la
+            même hauteur sur la ligne, icône/libellé/montant alignés au même
+            niveau vertical d'une carte à l'autre. */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <div className="stat-card-enter">
-            <StatCard icon="shopping-cart" tone="neutral" label="Demandé" value={fmt(indicateurs.demande)} />
-          </div>
-          <div className="stat-card-enter">
-            <StatCard icon="shield-check" tone="success" label="Validé" value={fmt(indicateurs.valide)} />
+            <StatCard
+              size="compact"
+              icon="shopping-cart"
+              tone="neutral"
+              label="Demandé"
+              value={fmt(indicateurs.demande)}
+            />
           </div>
           <div className="stat-card-enter">
             <StatCard
+              size="compact"
+              icon="shield-check"
+              tone="success"
+              label="Validé"
+              value={fmt(indicateurs.valide)}
+            />
+          </div>
+          <div className="stat-card-enter">
+            <StatCard
+              size="compact"
               icon="clock"
               tone={toneSiActif(indicateurs.restantAValider, "warning")}
               label="Restant à valider"
@@ -122,10 +142,11 @@ export default async function MonTableauDeBordPage() {
             />
           </div>
           <div className="stat-card-enter">
-            <StatCard icon="wallet" tone="success" label="Réglé" value={fmt(indicateurs.regle)} />
+            <StatCard size="compact" icon="wallet" tone="success" label="Réglé" value={fmt(indicateurs.regle)} />
           </div>
           <div className="stat-card-enter">
             <StatCard
+              size="compact"
               icon="book-text"
               tone={toneSiActif(indicateurs.valideRestantARegler, "warning")}
               label="Validé restant à régler"

@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
@@ -94,6 +95,8 @@ export async function activerInvitationAction(
       },
     }),
   ]);
+
+  publishDataChanged();
 
   redirect("/login?activated=1");
 }

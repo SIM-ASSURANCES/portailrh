@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
@@ -162,6 +163,7 @@ export async function creerRetourCaisseAction(
   // Ticket 8 : un nouveau retour déclaré augmente aussitôt l'indicateur
   // "Retours de caisse en attente" du dashboard Finance et sa liste.
   revalidatePath("/treso/finance", "layout");
+  publishDataChanged();
 
   return {
     status: "success",
@@ -283,6 +285,7 @@ export async function modifierRetourCaisseAction(
   revalidatePath(`/treso/demandes/${retour.reglement.demandeId}`);
   revalidatePath("/treso/demandes");
   revalidatePath("/treso/finance", "layout");
+  publishDataChanged();
 
   return {
     status: "success",

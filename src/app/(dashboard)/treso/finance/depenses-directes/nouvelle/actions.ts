@@ -6,6 +6,7 @@ import { NATURE_DEPENSE_DIRECTE_LABEL } from "@/components/tresorerie/depenseDir
 import { BENEFICIAIRE_TYPE_LABEL } from "@/components/tresorerie/beneficiaire";
 import { Prisma } from "@/generated/prisma/client";
 import { getSession, hasPermission } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { generateDemandeReference } from "@/lib/reference";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
@@ -164,6 +165,8 @@ export async function creerDepenseDirecteAction(
           userId: session.user.id,
         },
       });
+
+      publishDataChanged();
 
       return {
         status: "success",

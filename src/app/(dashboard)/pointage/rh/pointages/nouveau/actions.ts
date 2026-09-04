@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { timeToMinutes } from "@/lib/pointage-utils";
 import { revalidatePath } from "next/cache";
@@ -108,6 +109,7 @@ export async function enregistrerPointageRHAction(
     });
 
     revalidatePath("/pointage");
+    publishDataChanged();
     return { status: "success", message: "Le pointage exceptionnel a été enregistré avec succès." };
   } catch {
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };

@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { checkLateStatus } from "@/lib/pointage-utils";
 import { revalidatePath } from "next/cache";
@@ -107,6 +108,7 @@ export async function corrigerPointageAction(
     });
 
     revalidatePath("/pointage");
+    publishDataChanged();
     return { status: "success", message: "Le pointage a été corrigé avec succès." };
   } catch (error) {
     console.error("Error during correction:", error);

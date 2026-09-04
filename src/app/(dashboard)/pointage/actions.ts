@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { getSession } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { headers } from "next/headers";
 import { timeToMinutes, isOfficeIpAllowed } from "@/lib/pointage-utils";
@@ -119,6 +120,7 @@ export async function enregistrerPointageAction(
     });
 
     revalidatePath("/pointage");
+    publishDataChanged();
     return { status: "success", message: "Pointage enregistré avec succès." };
   } catch {
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };

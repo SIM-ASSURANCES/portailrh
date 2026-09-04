@@ -8,6 +8,7 @@ import { headers } from "next/headers";
 import { z } from "zod";
 
 import { getSession, isAdmin } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
 
@@ -98,6 +99,7 @@ export async function createUserAction(
   });
 
   revalidatePath("/admin/users");
+  publishDataChanged();
 
   return { status: "success", message: `Utilisateur ${user.email} créé.` };
 }
@@ -184,6 +186,7 @@ export async function creerInvitationAction(
   });
 
   revalidatePath("/admin/users");
+  publishDataChanged();
 
   const invitationUrl = `${await getBaseUrl()}/invitation/${invitationToken}`;
 
@@ -249,6 +252,7 @@ export async function regenererInvitationAction(
   });
 
   revalidatePath("/admin/users");
+  publishDataChanged();
 
   const invitationUrl = `${await getBaseUrl()}/invitation/${invitationToken}`;
 
@@ -286,6 +290,7 @@ export async function toggleUserActiveAction(
   });
 
   revalidatePath("/admin/users");
+  publishDataChanged();
 
   return { status: "success", message: active ? "Compte réactivé." : "Compte désactivé." };
 }
@@ -346,6 +351,7 @@ export async function modifierRoleUtilisateurAction(
   // toggleRolePermissionAction, qui revalide aussi "/" en plus de sa propre
   // page admin.
   revalidatePath("/");
+  publishDataChanged();
 
   return { status: "success", message: `Rôle de ${user.fullName} mis à jour : ${nouveauRole.name}.` };
 }

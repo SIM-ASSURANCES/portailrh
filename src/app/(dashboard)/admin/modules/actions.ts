@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { getSession, isAdmin } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -36,6 +37,7 @@ export async function toggleModuleActiveAction(
 
   revalidatePath("/admin/modules");
   revalidatePath("/");
+  publishDataChanged();
 
   return { status: "success", message: active ? "Module activé." : "Module désactivé." };
 }

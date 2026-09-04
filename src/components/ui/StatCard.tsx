@@ -19,6 +19,21 @@ export interface StatCardProps {
    * rendue comme un simple bloc statique (comportement historique).
    */
   href?: string;
+  /**
+   * `"compact"` réduit padding/icône/typographie, **uniquement à partir de
+   * `xl`** (≥1280px, via des classes `xl:` — jamais un simple booléen JS) :
+   * réservé à la grille dense "Mon tableau de bord" du Collaborateur (5
+   * colonnes sur une ligne à `xl`), où le gabarit par défaut (28px,
+   * `font-black`) forçait un retour à la ligne inégal d'une carte à l'autre
+   * sur "550 000 FCFA". En dessous de `xl` (empilement/2/3 colonnes, où
+   * cette grille a toujours assez de place), `"compact"` rend **exactement
+   * comme `"default"`** — jamais de cartes plus petites que nécessaire sur
+   * mobile/tablette juste parce que la page les demande en `"compact"`.
+   * Par défaut `"default"` (aucune classe `xl:` ajoutée), comportement
+   * strictement inchangé partout où ce prop n'est pas passé (dashboard
+   * Finance à 6 cartes max 3 colonnes, dashboard général).
+   */
+  size?: "default" | "compact";
 }
 
 /** Pastille d'icône : aplat plein dans la teinte (jamais le fond pâle
@@ -68,37 +83,45 @@ const toneAccentClasses: Record<StatTone, string> = {
  *   <StatCard icon="wallet" tone="warning" href="/treso/finance/a-decaisser"
  *             label="Montants validés non réglés" value={12} hint="4 500 000 FCFA" />
  */
-export function StatCard({ icon, label, value, hint, tone = "info", href }: StatCardProps) {
+export function StatCard({ icon, label, value, hint, tone = "info", href, size = "default" }: StatCardProps) {
+  const compact = size === "compact";
+
   const iconPill = (
     <span
-      className={`mb-4 inline-grid size-11 place-items-center rounded-xl text-white shadow-[0_4px_10px_-2px_rgba(0,0,0,0.25)] transition-transform duration-200 ease-out-strong ${
+      className={`${compact ? "mb-4 size-11 xl:mb-3 xl:size-9" : "mb-4 size-11"} inline-grid shrink-0 place-items-center rounded-xl text-white shadow-[0_4px_10px_-2px_rgba(0,0,0,0.25)] transition-transform duration-200 ease-out-strong ${
         href ? "motion-safe:group-hover:scale-110" : ""
       } ${toneSolidClasses[tone]}`}
     >
-      <Icon name={icon} className="size-5" />
+      <Icon name={icon} className={compact ? "size-5 xl:size-4" : "size-5"} />
     </span>
   );
 
   const body = (
     <>
       {iconPill}
-      <p className="text-[13px] font-semibold text-muted-foreground">{label}</p>
-      <p className="mt-1.5 text-[28px] font-black leading-none tracking-tight text-foreground tabular-nums">
+      <p className={`${compact ? "text-[13px] xl:text-[12px]" : "text-[13px]"} font-semibold text-muted-foreground`}>
+        {label}
+      </p>
+      <p
+        className={`${compact ? "mt-1.5 text-[28px] xl:mt-1 xl:text-[18px]" : "mt-1.5 text-[28px]"} whitespace-nowrap font-black leading-none tracking-tight text-foreground tabular-nums`}
+      >
         {value}
       </p>
       {hint ? <p className="mt-2 text-xs font-medium text-muted-foreground tabular-nums">{hint}</p> : null}
     </>
   );
 
+  const paddingClasses = compact ? "p-5 pt-6 xl:p-4 xl:pt-5" : "p-5 pt-6";
+
   if (href) {
     return (
       <Link
         href={href}
-        className={`group relative block overflow-hidden rounded-2xl border border-border bg-surface p-5 pt-6 shadow-elevated outline-offset-2 transition-[border-color,box-shadow,transform] duration-200 ease-out-strong hover:shadow-elevated-lg motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 ${toneAccentClasses[tone]}`}
+        className={`group relative flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-surface ${paddingClasses} shadow-elevated outline-offset-2 transition-[border-color,box-shadow,transform] duration-200 ease-out-strong hover:shadow-elevated-lg motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 ${toneAccentClasses[tone]}`}
       >
         <span className={`absolute inset-x-0 top-0 h-[3px] ${toneBarClasses[tone]}`} aria-hidden="true" />
         {body}
-        <span className="mt-3 flex items-center gap-1 text-xs font-semibold text-muted-foreground transition-colors duration-200 group-hover:text-primary">
+        <span className="mt-auto flex items-center gap-1 pt-3 text-xs font-semibold text-muted-foreground transition-colors duration-200 group-hover:text-primary">
           Voir le détail
           <Icon
             name="arrow-up-right"
@@ -110,7 +133,7 @@ export function StatCard({ icon, label, value, hint, tone = "info", href }: Stat
   }
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-border bg-surface p-5 pt-6 shadow-elevated">
+    <div className={`relative flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-surface ${paddingClasses} shadow-elevated`}>
       <span className={`absolute inset-x-0 top-0 h-[3px] ${toneBarClasses[tone]}`} aria-hidden="true" />
       {body}
     </div>

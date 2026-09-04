@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { getSession, hasPermission } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
@@ -106,6 +107,7 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   // Ticket 8 : la réception impacte le solde de caisse ET fait baisser le
   // compteur "Retours de caisse en attente" du dashboard Finance.
   revalidatePath("/treso/finance", "layout");
+  publishDataChanged();
 
   return { status: "success", message: "Retour de caisse réceptionné." };
 }

@@ -6156,6 +6156,12 @@ l'utilisateur lui-même, pas ce projet).
 
 ### Tâche A — Rafraîchissement automatique (retire le bouton manuel)
 
+**Superseded** : le mécanisme de polling décrit dans cette sous-section a
+été entièrement remplacé par un flux SSE événementiel — voir "Rafraîchissement
+en temps réel (remplace le polling à 20s)" plus bas. Paragraphe conservé
+pour l'historique de cette tâche précise (pourquoi un bouton manuel a
+d'abord été remplacé par un polling, avant d'être lui-même remplacé).
+
 Le bouton d'actualisation manuel du Topbar (ajouté à une itération
 précédente) est retiré : le rafraîchissement est désormais **entièrement
 automatique**, sans aucune action de l'utilisateur — `src/components/layout/Topbar.tsx`.
@@ -6226,6 +6232,13 @@ Prisma ciblé ; les deux demandes réelles préexistantes de l'utilisateur
 Serveur `next dev` arrêté après vérification.
 
 ### Tâche B — Grille à 5 `StatCard` sur une seule ligne en desktop large
+
+**Superseded** : un retour visuel direct a signalé un rendu "en désordre"
+(montants passant sur deux lignes de façon inégale d'une carte à l'autre) —
+corrigé par un gabarit `StatCard` dédié (`size="compact"`, actif uniquement
+à partir de `xl`) documenté dans "Nettoyage visuel de la grille à 5 cartes"
+plus bas. Paragraphe conservé pour l'historique de cette tâche précise (le
+choix initial de `xl:grid-cols-5`, toujours valable, n'a pas changé).
 
 Seul écran du portail avec exactement 5 `StatCard` dans ce motif : "Mon
 tableau de bord" du Collaborateur
@@ -6313,6 +6326,249 @@ erreur console sur l'ensemble des captures.
 avertissements/erreurs préexistants du Module Pointage RH, déjà documentés
 et hors périmètre à plusieurs reprises dans ce fichier). Serveur `next dev`
 arrêté après l'ensemble des vérifications.
+
+## Rafraîchissement en temps réel (remplace le polling à 20s) et nettoyage visuel de la grille à 5 cartes
+
+**Statut : terminé.** Deux ajustements distincts suite à un nouveau retour :
+remplacer le polling à intervalle fixe (20s, section précédente) par un
+mécanisme événementiel réellement temps réel, et corriger le rendu "en
+désordre" de la grille à 5 `StatCard` (montants passant sur deux lignes de
+façon inégale d'une carte à l'autre).
+
+### Rafraîchissement en temps réel — Server-Sent Events
+
+Remplace entièrement le `setInterval` à 20s (section précédente,
+superseded) par un flux SSE : le rafraîchissement se déclenche **dès
+qu'une donnée change quelque part dans l'application**, pas à intervalle
+fixe. Toujours **complètement invisible** (aucun bouton, aucun texte "Mis
+à jour à...", aucun point qui pulse) — demande explicite reconfirmée à
+cette tâche.
+
+**`src/lib/eventBus.ts`** — émetteur d'évènements en mémoire, singleton du
+process Node courant (`node:events`, pas de dépendance externe). Même
+précaution que le singleton Prisma (`src/lib/prisma.ts`) : conservé sur
+`globalThis` en dev pour survivre au hot-reload de Next.js (sinon chaque
+rechargement de module créerait un nouvel `EventEmitter`, désynchronisant
+les flux SSE déjà ouverts de l'instance que les Server Actions rechargées
+utiliseraient ensuite). Expose `publishDataChanged()` (émission, signal
+générique sans donnée métier) et `subscribeDataChanged(listener)`
+(abonnement, retourne la fonction de désabonnement).
+
+**`src/app/api/events/route.ts`** — Route Handler `GET` exposant le flux
+(`ReadableStream`, `Content-Type: text/event-stream`). Réservée aux
+sessions authentifiées (401 sinon — un utilisateur non connecté est sur
+`/login`, sans AppShell à rafraîchir). Un `heartbeat` toutes les 25s
+(évènement `"ping"`, jamais interprété côté client) garde la connexion
+HTTP ouverte à travers d'éventuels proxys/load balancers qui coupent une
+connexion inactive en production — sans effet en dev. `export const
+dynamic = "force-dynamic"` explicite (la route lit déjà `headers()`/
+`cookies()` via `getSession()`, qui l'imposerait de toute façon — explicite
+plutôt que de compter sur cet opt-in implicite).
+
+**Chaque Server Action qui modifie une donnée affichée quelque part**
+appelle désormais `publishDataChanged()`, **en plus** de ses
+`revalidatePath` existants (jamais à leur place — le cache serveur Next.js
+et la notification temps réel sont deux mécanismes indépendants). Plutôt
+que d'ajouter cet appel à chaque site d'appel individuellement, **inséré
+dans le helper de revalidation partagé** quand un fichier en a un
+(`revalidateDemandePaths`/`revalidateDemande`/`revalidateCategoriesPaths`)
+— une seule modification couvre alors tous les appelants de ce helper.
+Sans helper partagé, ajouté à la suite de chaque `revalidatePath` /
+juste avant le `return` de succès. Fichiers concernés (tous les Server
+Actions du portail qui mutent une donnée d'affichage) :
+
+- `treso/finance/demandes/[id]/actions.ts` — catégorisation, validation
+  totale/partielle/complémentaire, rejet, rejet du reliquat, clôture,
+  approbation/rejet/annulation de la validation complète DG (9 actions,
+  2 sites d'appel : `revalidateDemandePaths` + `categoriserDemandeAction`).
+- `treso/finance/demandes/[id]/reglementActions.ts` — création/
+  modification/confirmation/annulation d'un règlement (4 actions, 1 site
+  via `revalidateDemande`).
+- `treso/demandes/[id]/retourActions.ts` — déclaration et modification
+  d'un retour de caisse (2 actions, 2 sites, pas de helper partagé).
+- `treso/finance/retours/retourActions.ts` — réception d'un retour.
+- `treso/demandes/nouvelle/actions.ts` et
+  `treso/finance/depenses-directes/nouvelle/actions.ts` — création d'une
+  demande/dépense directe (pas de `revalidatePath` du tout dans ces deux
+  fichiers, navigation gérée côté client — publié juste avant le `return`
+  de succès).
+- `admin/categories/actions.ts` (5 actions via `revalidateCategoriesPaths`),
+  `admin/modules/actions.ts`, `admin/roles/actions.ts` (2 sites),
+  `admin/users/actions.ts` (5 sites), `invitation/[token]/actions.ts`
+  (publié juste avant le `redirect()` — le code après `redirect()` ne
+  s'exécute jamais, `redirect()` levant une exception en interne).
+- `pointage/actions.ts`, `pointage/rh/absences/actions.ts` (2 sites),
+  `pointage/rh/corrections/actions.ts`, `pointage/rh/horaires/actions.ts`,
+  `pointage/rh/pointages/nouveau/actions.ts` — le bus est un singleton
+  process-wide partagé par construction, aucune configuration
+  supplémentaire nécessaire pour que le Module Pointage RH émette sur le
+  même canal que la Trésorerie ; `pointage/rh/horaires/actions.ts` a une
+  erreur `tsc` préexistante et non liée (`@/lib/actions` introuvable, déjà
+  documentée ailleurs dans ce fichier) — non touchée, l'ajout du bus
+  n'interfère pas avec cette erreur.
+
+**`src/components/layout/Topbar.tsx`** — plus aucun `setInterval` : un
+`useEffect` ouvre un `EventSource("/api/events")` au montage (persistant
+tant que l'AppShell reste monté, donc tant que la session dure — les
+navigations client-side entre pages de l'AppShell ne recréent pas la
+connexion), écoute l'évènement `"data-changed"` et appelle
+`router.refresh()`. **`EventSource` se reconnecte nativement** (backoff
+intégré du navigateur) sur coupure réseau ou redémarrage du serveur dev —
+aucune logique de reconnexion manuelle écrite, vérifié en conditions
+réelles (voir plus bas).
+
+**Protection anti-perte de saisie adaptée au déclenchement événementiel**
+— même détection générique par focus qu'avant (`focusin`/`focusout` sur
+`INPUT`/`TEXTAREA`/`SELECT`), mais le comportement change de nature :
+avec le polling, un tour "sauté" pendant une saisie n'avait pas besoin
+d'être rattrapé (le tour suivant arrivait de toute façon 20s plus tard).
+**Avec un flux événementiel, un évènement ignoré pourrait rester le seul
+à venir avant longtemps** — donc jamais simplement ignoré : un évènement
+arrivant pendant une saisie est **différé** (`pendingRefreshRef`) et
+appliqué automatiquement dès que le focus quitte le champ (`focusout`),
+plutôt que perdu. Toujours une protection best-effort (détection par
+focus, pas un opt-in par formulaire — même choix et même limite déjà
+documentée à la tâche précédente).
+
+**Limite documentée honnêtement** (demande explicite) : le bus
+`eventBus.ts` est **en mémoire du process Node courant**, ne fonctionne
+que pour **une seule instance de serveur** — exactement le déploiement
+actuel du portail (voir DEPLOIEMENT.md, un unique conteneur `app`). Si
+l'application est un jour déployée derrière plusieurs instances (scaling
+horizontal), un évènement publié sur l'instance A ne notifiera jamais un
+client connecté à l'instance B — il faudrait alors un bus d'évènements
+partagé entre process (ex: Redis pub/sub). Hors périmètre tant qu'une
+seule instance est prévue, signalé ici pour ne pas être redécouvert plus
+tard en pensant que le mécanisme couvre déjà ce cas.
+
+**Vérifié explicitement — deux onglets, deux comptes réels, vrai serveur
+`next dev`, mesure de latence réelle** (Chromium headless, Playwright, non
+ajouté au projet) :
+
+1. Collaborateur crée une demande de test (64 000 FCFA), garde un
+   **second onglet** (même compte, session distincte) ouvert sur "Mon
+   tableau de bord", **jamais rafraîchi manuellement, aucun clic**.
+2. Un **troisième onglet** (Finance) valide totalement cette demande —
+   horodatage relevé au clic de confirmation.
+3. Le second onglet est interrogé en boucle courte (toutes les 250ms,
+   uniquement côté script de vérification — jamais un mécanisme
+   applicatif) jusqu'à détecter le changement de son propre DOM.
+   **Changement détecté après 1 828 ms** depuis la confirmation de
+   validation (contre un délai pouvant aller jusqu'à 20 000 ms avec
+   l'ancien polling) — la marge réelle de latence du mécanisme SSE
+   lui-même est inférieure à cette mesure, qui inclut aussi la
+   granularité de 250ms du script de vérification et le temps de
+   traitement réel de la Server Action. "Mes demandes en attente de
+   validation" passe de 1 à 0, "Validé"/"Réglé"/"Validé restant à régler"
+   mis à jour avec les bons montants — sans aucun clic sur ce second
+   onglet.
+4. **Aucun indicateur visible détecté dans le DOM** (`document.body.innerText`
+   ne contient jamais "Mis à jour à" ni aucun texte équivalent) — confirme
+   l'invisibilité complète demandée.
+5. **5 onglets simultanés** (5 connexions SSE distinctes vers `/api/events`,
+   comptes réels authentifiés) ouverts en parallèle : **aucune erreur
+   console sur aucun des 5**, confirmant que plusieurs abonnés simultanés
+   au bus en mémoire ne posent aucun problème.
+6. **Protection anti-perte de saisie testée avec un vrai évènement SSE** :
+   un champ "Motif de l'achat" reçoit le focus et une vraie saisie
+   clavier ; pendant que le champ reste focus, un module admin est
+   basculé puis rebasculé aussitôt à son état d'origine (vraie Server
+   Action, émet réellement `publishDataChanged()`) — la valeur du champ
+   reste strictement intacte pendant l'évènement, et après le `blur`
+   (rafraîchissement différé alors appliqué). Module remis à son état
+   initial (`isActive: true` inchangé) confirmé directement en base après
+   le test.
+
+Toutes les données de test (1 demande, sa ligne) supprimées après coup ;
+les deux demandes réelles préexistantes de l'utilisateur (`DEM-2026-000001`,
+`DEM-2026-000002`) confirmées inchangées. Serveur `next dev` arrêté après
+vérification.
+
+### Nettoyage visuel de la grille à 5 cartes
+
+Retour direct : à `xl:grid-cols-5` (section précédente), les montants
+("550 000 FCFA") passaient sur deux lignes de façon inégale d'une carte à
+l'autre — le gabarit `"default"` de `StatCard` (28px, `font-black`) ne
+tenait pas dans la largeur réduite de chaque carte à 5 colonnes.
+
+**Nouveau prop `StatCard`, `size?: "default" | "compact"`**
+(`src/components/ui/StatCard.tsx`) — **`"compact"` n'agit qu'à partir de
+`xl`** (classes `xl:`, jamais un booléen JS qui s'appliquerait à toutes
+les largeurs) : en dessous de `xl` (empilement/2/3 colonnes, où cette
+grille a toujours eu assez de place), `"compact"` rend **exactement comme
+`"default"`** — aucune carte plus petite que nécessaire sur mobile/tablette
+juste parce que la page les demande en `"compact"`. À `xl` et au-dessus :
+padding réduit (`p-5 pt-6` → `p-4 pt-5`), pastille d'icône réduite
+(`size-11` → `size-9`, icône `size-5` → `size-4`), libellé légèrement
+réduit (`text-[13px]` → `text-[12px]`), et surtout le montant
+(`text-[28px]` → `text-[18px]`). Par défaut `size="default"` (aucune classe
+`xl:` ajoutée) : comportement strictement inchangé pour tous les autres
+appels de `StatCard` du portail (dashboard Finance à 6 cartes max 3
+colonnes, dashboard général) — jamais une largeur de colonne devinée
+ailleurs que là où elle est explicitement passée.
+
+**Taille choisie par calcul réel, pas à l'œil** : `18px` (et non `20px`,
+premier essai) — mesuré directement dans le navigateur
+(`scrollWidth`/`clientWidth` d'un vrai élément rendu) plutôt que par
+estimation. À `20px`, un montant à 8 chiffres ("12 500 000 FCFA", un cas
+extrême mais pas impossible pour ce portail) débordait silencieusement de
+5px de sa carte, **clippé sans avertissement** par le `overflow-hidden` du
+conteneur (le dernier caractère "A" disparaissait) — un défaut plus grave
+qu'un simple retour à la ligne, puisqu'il masque une partie d'un montant
+financier sans aucun signe visible. Corrigé à `18px` : la même valeur
+extrême laisse 11px de marge (161px de texte pour 172px disponibles), et
+"999 999 999 FCFA" (proche d'un milliard FCFA, une valeur totalement
+irréaliste pour ce portail — aucune demande historique de ce fichier ne
+dépasse 5 000 000 FCFA) resterait la seule valeur théorique à déborder
+encore d'1px, hors du domaine de valeurs réellement attendu par
+l'application.
+
+**`h-full flex flex-col`** ajouté sur le conteneur de chaque `StatCard`
+(les deux variantes, cliquable et statique) : la grille CSS étire déjà par
+défaut ses enfants directs (`align-items: stretch`) à la hauteur de la
+ligne, mais l'élément visuellement visible (bordure/fond de la carte)
+n'héritait pas de cet étirement sans `h-full` explicite — les cartes
+avaient donc des boîtes visibles de hauteurs légèrement différentes
+malgré des wrappers de même hauteur. Corrigé, plus `mt-auto` sur le lien
+"Voir le détail" de la variante cliquable (jamais utilisée dans la grille
+à 5 cartes, mais bénéficie aussi de la même garantie d'alignement pour
+la grille "À traiter", 2 colonnes).
+
+**`treso/tableau-de-bord/page.tsx`** — `size="compact"` passé aux 5
+`StatCard` de la section "Vue d'ensemble" uniquement (jamais aux 2 cartes
+cliquables de la section "À traiter", qui restent en grille 2 colonnes
+sans contrainte de largeur, donc en gabarit `"default"`).
+
+**Vérifié explicitement** (Chromium headless, Playwright, non ajouté au
+projet) — captures et mesures programmatiques (`scrollWidth`/`clientWidth`
+de l'élément réel, pas une estimation) :
+
+- **1440px et 1280px** (les deux largeurs demandées) : 5 cartes sur une
+  seule ligne, montants réels ("614 000 FCFA", "550 000 FCFA",
+  "64 000 FCFA"...) tous sur une seule ligne, hauteurs de carte identiques
+  au pixel (`128px` mesuré sur les 5 cartes), icône/libellé/montant à
+  exactement la même position verticale d'une carte à l'autre (`valueTop`
+  identique sur les 5).
+- **1279px** (juste sous `xl`) : repli en 3 colonnes (2ᵉ ligne à 2 cartes),
+  gabarit redevenu visuellement identique au `"default"` d'avant cette
+  tâche (28px) — confirme que `"compact"` n'agit bien qu'à `xl` et non en
+  dessous.
+- **375px (mobile)** : cartes empilées sur une colonne, mêmes proportions
+  généreuses qu'avant cette tâche (28px) — aucune régression, `"compact"`
+  n'a aucun effet visible en dessous de `xl`.
+- **Cas extrême stress-testé directement dans le navigateur** (montant
+  injecté à 8 chiffres) : confirmé sans clipping à `18px` (161px de texte
+  contre 172px disponibles), alors que `20px` (premier essai) débordait
+  silencieusement de 5px.
+- Dashboard Finance (6 cartes, `lg:grid-cols-3` max) et dashboard général
+  revérifiés inchangés — aucun de leurs appels à `StatCard` ne passe
+  `size`, donc aucune régression possible sur ces deux écrans.
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes 9
+avertissements/erreurs préexistants du Module Pointage RH). Aucune donnée
+de test durable créée pendant cette vérification (une demande créée pour
+la Tâche A ci-dessus, nettoyée avec elle) ; serveur `next dev` arrêté
+après l'ensemble des vérifications des deux tâches.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

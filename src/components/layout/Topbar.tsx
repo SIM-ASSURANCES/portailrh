@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 import { Icon } from "@/components/icons";
@@ -19,51 +19,31 @@ function initials(fullName: string) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-// Auto-refresh (retour utilisateur : le bouton manuel n'était pas assez
-// "vivant" — remplacé par un rafraîchissement automatique en tâche de
-// fond). 20s : compromis entre "assez proche du temps réel" pour qu'un
-// changement fait par un collègue dans un autre onglet apparaisse vite
-// (cas d'usage explicite : validation d'une demande vue par Finance quasi
-// immédiatement) et "pas de charge serveur inutile" pour une application
-// interne à quelques dizaines d'utilisateurs simultanés au plus — un
-// polling à 5-10s n'apporterait pas de bénéfice perceptible pour ce
-// volume, seulement plus de requêtes. Choisi au milieu de la fourchette
-// 15-30s demandée plutôt qu'à une extrémité, sans raison de favoriser
-// l'un ou l'autre bord.
-const REFRESH_INTERVAL_MS = 20_000;
-const PULSE_DURATION_MS = 900;
+// Rafraîchissement en temps réel (remplace le polling à 20s d'une itération
+// précédente — voir CLAUDE.md "Rafraîchissement en temps réel") : ce
+// composant s'abonne au flux SSE de `src/app/api/events/route.ts` et
+// déclenche `router.refresh()` dès qu'un évènement "data-changed" arrive —
+// publié par les Server Actions pertinentes via `src/lib/eventBus.ts`.
+// Complètement invisible pour l'utilisateur (demande explicite) : aucun
+// bouton, aucun indicateur, aucun texte — seul l'effet de bord compte.
+const EVENTS_URL = "/api/events";
 
 // Formulaire en cours de saisie détecté génériquement (focus sur un champ
 // de saisie), plutôt qu'un opt-in à ajouter dans chaque formulaire du
-// portail (des dizaines de formulaires, coût d'intégration prohibitif
-// pour ce qui reste une protection best-effort, pas une garantie stricte).
-// Heuristique volontairement simple : tant qu'un <input>/<textarea>/
-// <select> a le focus quelque part sur la page, le tour de rafraîchissement
-// en cours est simplement SAUTÉ (pas annulé ni redémarré) — dès que le
-// focus quitte le champ, le tour suivant s'exécute normalement.
+// portail (des dizaines de formulaires, coût d'intégration prohibitif pour
+// ce qui reste une protection best-effort, pas une garantie stricte). Un
+// évènement arrivant pendant une saisie n'est jamais perdu ni ignoré : il
+// est simplement DIFFÉRÉ (`pendingRefreshRef`) et appliqué dès que le focus
+// quitte le champ — contrairement au polling précédent, où un tour sauté
+// n'avait pas besoin d'être rattrapé (le suivant arrivait de toute façon
+// 20s plus tard) : ici, un évènement ignoré pourrait rester le SEUL
+// évènement à venir avant longtemps.
 const FORM_FIELD_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 
-/**
- * Barre supérieure : indicateur discret de rafraîchissement automatique,
- * cloche de notifications (décorative pour l'instant, pas de système de
- * notifications) et bloc profil (avatar initiales, nom, email, rôle).
- * Reste blanche, au-dessus du contenu, alignée à droite.
- */
 export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
   const router = useRouter();
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [isPulsing, setIsPulsing] = useState(false);
   const isEditingRef = useRef(false);
-
-  // Horodatage initial posé après le montage seulement (jamais pendant le
-  // rendu serveur) : un `new Date()` calculé côté serveur puis réévalué
-  // côté client produirait un écart et un avertissement d'hydratation —
-  // même précaution déjà appliquée ailleurs dans l'AppShell (préférence de
-  // sidebar réduite, lue après montage uniquement).
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- lecture unique d'un horodatage au montage (même pattern deux passes que la préférence de sidebar réduite dans AppShell.tsx), sûr pour l'hydratation
-    setLastUpdated(new Date());
-  }, []);
+  const pendingRefreshRef = useRef(false);
 
   useEffect(() => {
     function handleFocusIn(event: FocusEvent) {
@@ -76,6 +56,10 @@ export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
       const target = event.target as HTMLElement | null;
       if (target && FORM_FIELD_TAGS.has(target.tagName)) {
         isEditingRef.current = false;
+        if (pendingRefreshRef.current) {
+          pendingRefreshRef.current = false;
+          router.refresh();
+        }
       }
     }
     document.addEventListener("focusin", handleFocusIn);
@@ -84,21 +68,32 @@ export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
       document.removeEventListener("focusin", handleFocusIn);
       document.removeEventListener("focusout", handleFocusOut);
     };
-  }, []);
+  }, [router]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    // `EventSource` se reconnecte nativement (backoff intégré du navigateur)
+    // sur une coupure réseau ou un redémarrage du serveur dev — aucune
+    // logique de reconnexion manuelle nécessaire, vérifié en conditions
+    // réelles (voir CLAUDE.md).
+    const source = new EventSource(EVENTS_URL);
+
+    source.addEventListener("data-changed", () => {
       if (isEditingRef.current) {
-        // Saisie en cours détectée : ce tour est sauté, jamais annulé
-        // définitivement — le suivant retentera dans REFRESH_INTERVAL_MS.
+        // Saisie en cours : différé plutôt que perdu (voir commentaire plus
+        // haut) — appliqué au prochain `focusout`.
+        pendingRefreshRef.current = true;
         return;
       }
       router.refresh();
-      setLastUpdated(new Date());
-      setIsPulsing(true);
-      setTimeout(() => setIsPulsing(false), PULSE_DURATION_MS);
-    }, REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
+    });
+
+    // "ping" (heartbeat serveur) : volontairement aucun handler — la seule
+    // fonction de cet évènement est de garder la connexion HTTP ouverte à
+    // travers d'éventuels proxys, jamais de déclencher un rafraîchissement.
+
+    return () => {
+      source.close();
+    };
   }, [router]);
 
   return (
@@ -113,23 +108,6 @@ export function Topbar({ user, role, onOpenMobileMenu }: TopbarProps) {
       </button>
 
       <div className="ml-auto flex items-center gap-4">
-        {/* Indicateur discret, non cliquable (pas de <button>/onClick) —
-            remplace l'ancien bouton d'actualisation manuel. Le point pulse
-            brièvement à chaque rafraîchissement réel ; le texte reste
-            masqué sous sm pour ne pas surcharger la barre sur mobile. */}
-        <div
-          className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex"
-          title={lastUpdated ? `Dernière actualisation automatique : ${lastUpdated.toLocaleTimeString("fr-FR")}` : undefined}
-        >
-          <span
-            className={`size-1.5 rounded-full bg-success ${isPulsing ? "motion-safe:animate-refresh-pulse" : ""}`}
-            aria-hidden="true"
-          />
-          <span className="tabular-nums">
-            {lastUpdated ? `Mis à jour à ${lastUpdated.toLocaleTimeString("fr-FR")}` : ""}
-          </span>
-        </div>
-
         <button
           type="button"
           aria-label="Notifications"

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { calculerStatutDemande, getEcart, STATUTS_VALIDATION_COMPLETE } from "@/lib/tresorerie";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
@@ -88,6 +89,7 @@ export async function categoriserDemandeAction(
 
   revalidatePath("/treso/finance/demandes");
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
+  publishDataChanged();
 
   return { status: "success", message: "Catégorisation enregistrée." };
 }
@@ -103,6 +105,10 @@ function revalidateDemandePaths(demandeId: string) {
   // demandes VALIDEE — revalider tout l'espace Finance (dashboard + listes
   // "à décaisser"/"à régulariser") en une fois via `type: "layout"`.
   revalidatePath("/treso/finance", "layout");
+  // Rafraîchissement en temps réel (voir CLAUDE.md) : publié ici une seule
+  // fois pour tous les appelants de ce helper, plutôt que dupliqué à chaque
+  // site d'appel.
+  publishDataChanged();
 }
 
 const montantValidationSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");

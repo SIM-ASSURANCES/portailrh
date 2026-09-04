@@ -5,6 +5,7 @@ import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { DEVISE_CODES } from "@/components/tresorerie/devise";
 import { getSession, hasPermission } from "@/lib/auth";
+import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { generateDemandeReference } from "@/lib/reference";
 import { fieldErrorsFromZod, type ActionState } from "@/lib/validation";
@@ -167,6 +168,8 @@ export async function creerDemandeAction(
           userId: session.user.id,
         },
       });
+
+      publishDataChanged();
 
       return {
         status: "success",
