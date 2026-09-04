@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
+import { BrandBackdrop } from "@/components/ui";
+
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 
@@ -90,7 +92,47 @@ export function AppShell({
   }
 
   return (
-    <div className="flex min-h-screen bg-app-bg">
+    <div className="relative z-0 flex min-h-screen border-[3px] border-primary bg-app-bg">
+      {/* Fond de marque étendu à toute l'application (voir CLAUDE.md "Fond
+          de marque étendu à toute l'application" — décision explicite de
+          l'utilisateur, revient sur la restriction initiale à /login).
+          Précautions de lisibilité (écrans denses consultés en continu) :
+          - `fixed` (pas `absolute`) : épinglé au VIEWPORT, jamais à la
+            hauteur du contenu — ne réapparaît jamais en bas de page après
+            défilement d'un long tableau, contrairement à un positionnement
+            centré sur la hauteur totale du document.
+          - `-z-10` : reste strictement DERRIÈRE tout contenu normal
+            (Sidebar/Topbar/cartes, tous avec leur propre fond opaque) —
+            jamais au-dessus, jamais de gêne au défilement/à la lecture.
+            **Nécessite `relative z-0` sur CE conteneur** (piège CSS
+            vérifié explicitement en debug) : sans stacking context propre
+            créé ici, un enfant `fixed` à z-index négatif « s'échappe » au
+            stacking context RACINE du document, où il se retrouve peint
+            EN DESSOUS du fond `bg-app-bg` de ce même conteneur (traité
+            comme un contenu normal du document, qui peint toujours
+            au-dessus d'un enfant à z-index négatif de la racine) — le
+            filigrane devenait alors invisible à 100%, à N'IMPORTE QUELLE
+            opacité, jusqu'à ce test. `z-0` (valeur explicite, pas `auto`)
+            crée le stacking context qui contient le filigrane et le fait
+            peindre au-dessus du fond de CE conteneur précis, comme prévu.
+          - `watermarkPosition="corner-br"` (pas le "bleed-left" de /login) :
+            vérifié explicitement par capture d'écran que le positionnement
+            en pourcentage de /login, pensé pour une carte étroite, plaçait
+            l'icône ENTIÈREMENT hors champ sur un viewport pleine largeur —
+            corrigé en un variant dédié coin bas-droit, seul coin du
+            viewport que ni la Sidebar (hauteur pleine) ni la Topbar
+            (largeur pleine du contenu) n'occupent déjà.
+          - Opacité fortement abaissée par rapport à /login (9% -> 3,5%) :
+            testé visuellement sur le reporting (l'écran le plus dense du
+            portail), ajusté jusqu'à devenir à peine perceptible.
+          - Filet dégradé du bas désactivé : resterait sinon collé en
+            permanence au bas du VIEWPORT plutôt qu'au bas du contenu. */}
+      <BrandBackdrop
+        className="fixed inset-0 -z-10"
+        watermarkOpacityClassName="opacity-[0.05]"
+        watermarkPosition="corner-br"
+        showBottomAccent={false}
+      />
       <Sidebar
         collapsed={collapsed}
         onToggleCollapse={toggleCollapse}

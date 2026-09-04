@@ -5994,6 +5994,160 @@ manuelle, invitation complète, invitation expirée) supprimés après coup ;
 base revenue à exactement les 5 comptes de test du seed. Serveur `next
 dev` arrêté après vérification.
 
+## Favicon SIM Assurances
+
+**Statut : terminé.** `src/app/icon.tsx` et `src/app/apple-icon.tsx` —
+convention Next.js App Router de génération programmatique d'icône
+(`next/og`, `ImageResponse`), pas un fichier image statique : réutilise
+directement `BRAND_ICON_PATHS`/`BRAND_ICON_VIEWBOX`
+(`components/ui/brandIcon.ts`), le pictogramme seul (triangle, jamais le
+texte "SIM ASSURANCES") déjà partagé par `Sidebar.tsx` (icône réduite) et
+`BrandBackdrop.tsx` (filigrane) — jamais une quatrième géométrie
+redessinée à la main. Fond `sim-blue-dark` (#004B9C) plein, triangle
+blanc — même traitement que `LogoMark` dans la sidebar réduite.
+
+`icon.tsx` (32×32, favicon d'onglet) et `apple-icon.tsx` (180×180, icône
+"ajouter à l'écran d'accueil" iOS — pertinent pour ce portail, dont le
+cahier des charges insiste sur l'usage mobile des collaborateurs sans
+ordinateur). L'ancien `favicon.ico` (icône par défaut du scaffold
+`create-next-app`, jamais personnalisée depuis la création du projet)
+**supprimé** : une seule source d'icône, jamais deux qui pourraient entrer
+en conflit dans certains navigateurs.
+
+**Vérifié explicitement** : `GET /icon` répond 200 `image/png` ; le HTML
+de toute page contient bien `<link rel="icon" href="/icon?..." type=
+"image/png" sizes="32x32"/>` et `<link rel="apple-touch-icon" .../>` ;
+l'image générée inspectée directement (triangle blanc net sur fond bleu,
+fidèle à la géométrie vectorielle du logo).
+
+## Fond de marque étendu à toute l'application
+
+**Statut : terminé.** Décision explicite de l'utilisateur, **qui revient
+sur la restriction volontaire posée à la phase précédente** ("Logo
+vectoriel et fond de marque" / "Fond de connexion révisé", plus haut) :
+`BrandBackdrop` (fond "papier à en-tête" — filigrane pâle du pictogramme +
+fine bordure bleue) s'applique désormais à **toute l'application**
+(dashboards, listes, formulaires — tout ce qui vit dans l'AppShell), pas
+seulement `/login`. Les deux raisons qui justifiaient la restriction
+initiale (protection du logo blanc sur le bandeau `bg-primary`, charge
+visuelle sur des écrans d'usage quotidien) restent vraies en soi, mais
+l'utilisateur a explicitement tranché en faveur d'une identité de marque
+plus présente, à condition de précautions concrètes de lisibilité —
+détaillées ci-dessous, chacune vérifiée par capture d'écran réelle, pas
+seulement affirmée.
+
+### `BrandBackdrop` — deux variantes désormais (`components/ui/BrandBackdrop.tsx`)
+
+Trois nouvelles props, toutes optionnelles (comportement par défaut =
+strictement celui de `/login`, aucune régression) :
+
+- **`watermarkOpacityClassName`** (défaut `"opacity-[0.09]"`, l'intensité
+  de `/login`) — l'AppShell passe une valeur nettement plus faible (voir
+  plus bas).
+- **`showBottomAccent`** (défaut `true`) — le filet dégradé du bas de
+  `/login` n'a plus de sens en position `fixed` pleine page : il resterait
+  collé en permanence au bas du VIEWPORT (jamais au bas du contenu réel),
+  un artefact non demandé. Désactivé pour l'AppShell.
+- **`watermarkPosition`** (`"bleed-left"` défaut, ou `"corner-br"`) — voir
+  section suivante, un vrai bug trouvé et corrigé, pas un simple réglage
+  cosmétique.
+
+### Piège n°1 trouvé et corrigé : le positionnement de `/login` rendait le filigrane INVISIBLE sur l'AppShell
+
+Le positionnement en **pourcentage** de `/login` (`left-[-55%]`) est pensé
+pour une carte étroite (~384px). Réutilisé tel quel sur un conteneur
+pleine largeur (AppShell, ~1400px desktop), 55% représente un décalage
+absolu bien plus grand, poussant l'icône **entièrement hors du viewport**
+— vérifié explicitement : capture d'écran du dashboard général affichant
+un fond parfaitement vide, aucune trace du filigrane, à n'importe quelle
+opacité testée.
+
+**Corrigé par un second variant dédié, `"corner-br"`** (coin bas-droit,
+décalages en pourcentage mais recalibrés, pas les mêmes valeurs) : c'est
+le seul coin du viewport que ni la Sidebar (hauteur pleine, bord gauche)
+ni la Topbar (largeur pleine du contenu, bord haut) n'occupent déjà —
+`"bleed-left"` (bord gauche) aurait été presque entièrement caché derrière
+la Sidebar. Tailles différenciées mobile/desktop (`h-[38%]` sous `sm:`,
+`sm:h-[48%]` au-dessus) : à taille identique en %, un petit viewport
+(375px) aurait rendu le triangle proportionnellement bien plus présent que
+sur desktop — vérifié par capture d'écran mobile avant/après ce réglage.
+
+### Piège n°2 trouvé et corrigé : `-z-10` sur un `fixed` sans stacking context propre = filigrane invisible à 100%, quelle que soit l'opacité
+
+Après avoir corrigé le positionnement, le filigrane restait **toujours
+invisible, même à 30% d'opacité** — un deuxième bug, distinct du premier,
+découvert par inspection DOM (`getComputedStyle`/`getBoundingClientRect`
+via un script Playwright ciblé, pas une simple relecture de code).
+
+**Cause exacte** : le conteneur racine de l'AppShell (`bg-app-bg`) avait
+`relative` mais **aucun `z-index` explicite** — sans stacking context
+propre à cet endroit, un enfant `position: fixed` à `z-index` négatif
+« s'échappe » au stacking context RACINE du document. Or `bg-app-bg`
+lui-même n'est qu'un contenu normal (non positionné) DE ce même stacking
+context racine — et le contenu normal peint toujours au-dessus des
+enfants à z-index négatif de la racine. Résultat : le fond `bg-app-bg`
+recouvrait intégralement le filigrane, à n'importe quelle opacité,
+peu importe le z-index négatif choisi.
+
+**Corrigé** : `z-0` (valeur explicite, jamais `auto`) ajouté au conteneur
+racine de l'AppShell, en plus de `relative` — crée le stacking context qui
+contient correctement le filigrane et le fait peindre au-dessus du fond
+de CE conteneur précis, comme prévu depuis le départ. Piège CSS classique
+et non-intuitif ("negative z-index + fixed sans stacking context ancêtre
+= invisible"), documenté en commentaire directement dans `AppShell.tsx`
+pour éviter de le reproduire ailleurs dans le portail.
+
+### Précautions de lisibilité appliquées (`AppShell.tsx`)
+
+- **`fixed`, jamais `absolute`** — épinglé au VIEWPORT, jamais à la
+  hauteur totale du contenu. Sur un `absolute` centré via `top-1/2` (comme
+  `/login`), un document très long (reporting, tableau dense) aurait pu
+  placer le filigrane n'importe où dans la hauteur totale du contenu,
+  potentiellement en plein milieu d'un tableau après défilement — jamais
+  reproduit ici : `fixed` garantit qu'il reste au MÊME endroit du
+  viewport, quelle que soit la position de défilement.
+- **`-z-10`** (avec le correctif `z-0` ci-dessus) — strictement derrière
+  tout contenu normal (Sidebar/Topbar/cartes, tous avec leur propre fond
+  opaque `bg-surface`) : jamais au-dessus, jamais de gêne au défilement ni
+  à la lecture.
+- **Opacité `0.05`** (contre `0.09` sur `/login`) — testée et ajustée
+  visuellement sur `/treso/finance/reporting` (l'écran le plus dense du
+  portail : filtres + 3 tableaux). À `0.3` (test de diagnostic), le
+  triangle est clairement visible et distrayant ; à `0.05`, à peine
+  perceptible, uniquement dans le coin vide en bas à droite, jamais
+  superposé à une donnée réelle.
+- **Bordure bleue `border-[3px] border-primary`** sur tout le conteneur
+  AppShell (pas seulement une carte comme `/login`) — 3px, largement
+  inférieur à toute marge de contenu existante (`px-4 sm:px-6` minimum
+  partout) : n'empiète sur aucun texte ni contrôle, vérifié qu'aucun
+  scroll horizontal n'apparaît (box-sizing border-box de Tailwind
+  preflight, la bordure ne s'ajoute jamais à la largeur).
+
+### Vérifié explicitement — captures réelles desktop (1400px) et mobile (375px)
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes erreurs
+préexistantes du Module Pointage RH). Chromium headless (Playwright, non
+ajouté au projet) contre le vrai serveur `next dev` :
+
+- Dashboard général, dashboard Finance (6 indicateurs + bandeau solde de
+  caisse), reporting (filtres + 3 tableaux), formulaire "Nouvelle demande
+  d'achat" — desktop ET mobile (375px) : filigrane à peine perceptible
+  dans le coin bas-droit sur toutes les pages, jamais superposé à un
+  texte, une carte ou un contrôle.
+- **Reporting, l'écran le plus à risque** : capture en haut de page ET
+  après défilement jusqu'en bas — le filigrane reste EXACTEMENT au même
+  endroit du viewport dans les deux captures (fixe, pas de réapparition ni
+  de déplacement inattendu en bas de page).
+- Aucun scroll horizontal introduit (desktop et mobile), aucune erreur
+  console sur l'ensemble du parcours.
+- **Tiroir de navigation mobile** revérifié après le changement de
+  stacking context (`z-0`) : s'ouvre toujours correctement au-dessus du
+  filigrane et de la bordure, aucune régression visuelle.
+
+Aucune donnée de test créée pendant cette vérification (uniquement de la
+navigation et des captures d'écran) : rien à nettoyer en base. Serveur
+`next dev` arrêté après vérification.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
