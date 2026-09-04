@@ -36,26 +36,26 @@ export interface StatCardProps {
   size?: "default" | "compact";
 }
 
-/** Pastille d'icône : aplat plein dans la teinte (jamais le fond pâle
- * `*-bg`, réservé aux surfaces d'arrière-plan) — les six teintes
- * sémantiques sont toutes assez soutenues pour rester lisibles en blanc
- * dessus (elles sont déjà calibrées ≥4.5:1 en texte sur blanc, donc a
- * fortiori en fond plein avec du blanc dessus). Choix délibéré et documenté
- * (voir CLAUDE.md "Rehaussement visuel") : conservé lors de la fusion du
- * Module Pointage RH (Thierry Kouame) plutôt que le fond teinté à 10 % de
- * sa propre variante — celle-ci n'a aucune contrainte fonctionnelle propre
- * à Pointage, un simple choix esthétique fait sans connaître ce précédent ;
- * `Présence du jour`/`Mon historique` (les deux écrans Pointage qui
- * utilisent StatCard) en héritent donc automatiquement sans aucune
- * modification de leur côté (mêmes props icon/label/value/tone/href). */
-const toneSolidClasses: Record<StatTone, string> = {
-  info: "bg-info",
-  success: "bg-success",
-  warning: "bg-warning",
-  neutral: "bg-neutral",
-  danger: "bg-danger",
-  primary: "bg-primary",
-};
+/** Pastille d'icône : bleu institutionnel SIM Assurances (`bg-primary`,
+ * sim-blue-dark) **uniforme sur toutes les cartes, indépendamment de
+ * `tone`** — changement demandé explicitement par l'utilisateur, qui
+ * revient sur le choix précédent (une couleur par teinte sémantique,
+ * documenté ci-dessous à titre d'historique). `sim-blue-dark` retenu
+ * plutôt que `sim-blue-light` : c'est le seul des deux à passer le
+ * contraste AA avec une icône blanche (8.45:1, voir globals.css ;
+ * `sim-blue-light` seul ne fait que 2.47:1). Le filet de tête
+ * (`toneBarClasses`) et le halo hover/focus (`toneAccentClasses`)
+ * continuent, eux, à varier selon `tone` — c'est là que vit le signal
+ * d'urgence (`toneSiActif`), pas sur l'icône.
+ *
+ * Historique (avant ce changement) : aplat plein dans la teinte (jamais
+ * le fond pâle `*-bg`, réservé aux surfaces d'arrière-plan) — les six
+ * teintes sémantiques étaient toutes assez soutenues pour rester
+ * lisibles en blanc dessus (déjà calibrées ≥4.5:1 en texte sur blanc,
+ * donc a fortiori en fond plein). Voir CLAUDE.md "Rehaussement visuel"
+ * puis "Icônes du dashboard en bleu SIM Assurances" pour le changement
+ * ici documenté. */
+const ICON_PILL_CLASS = "bg-primary";
 
 /** Filet de tête (3px) en haut de la carte : premier signal de couleur,
  * lisible avant même l'icône ou le chiffre. */
@@ -103,7 +103,7 @@ export function StatCard({ icon, label, value, hint, tone = "info", href, size =
     <span
       className={`${compact ? "mb-4 size-11 xl:mb-3 xl:size-9" : "mb-4 size-11"} inline-grid shrink-0 place-items-center rounded-xl text-white shadow-[0_4px_10px_-2px_rgba(0,0,0,0.25)] transition-transform duration-200 ease-out-strong ${
         href ? "motion-safe:group-hover:scale-110" : ""
-      } ${toneSolidClasses[tone]}`}
+      } ${ICON_PILL_CLASS}`}
     >
       <Icon name={icon} className={compact ? "size-5 xl:size-4" : "size-5"} />
     </span>

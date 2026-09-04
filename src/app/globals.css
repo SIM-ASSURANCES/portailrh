@@ -43,6 +43,12 @@
   --color-primary: #004b9c;
   --color-primary-hover: #003773;
   --color-primary-foreground: #ffffff;
+  /* Variante pâle de primary (même principe que danger-bg/info-bg/...) —
+     ajoutée pour le toast de succès en bleu SIM Assurances (voir CLAUDE.md
+     "Toasts de succès en bleu") : `--color-primary` lui-même reste largement
+     AA sur ce fond très clair (8.45:1 sur blanc, a fortiori ici). */
+  --color-primary-bg: #eaf1fb;
+  --color-primary-border: #b9d3ef;
 
   --color-secondary: #f1f5f9;
   --color-secondary-hover: #e2e8f0;
@@ -137,6 +143,8 @@
   --color-primary: var(--color-primary);
   --color-primary-hover: var(--color-primary-hover);
   --color-primary-foreground: var(--color-primary-foreground);
+  --color-primary-bg: var(--color-primary-bg);
+  --color-primary-border: var(--color-primary-border);
 
   --color-secondary: var(--color-secondary);
   --color-secondary-hover: var(--color-secondary-hover);

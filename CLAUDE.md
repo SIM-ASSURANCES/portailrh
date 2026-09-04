@@ -6570,6 +6570,103 @@ de test durable créée pendant cette vérification (une demande créée pour
 la Tâche A ci-dessus, nettoyée avec elle) ; serveur `next dev` arrêté
 après l'ensemble des vérifications des deux tâches.
 
+## Icônes de StatCard et toasts de succès en bleu SIM Assurances
+
+**Statut : terminé.** Deux changements de couleur demandés explicitement
+par l'utilisateur, qui reviennent **en connaissance de cause** sur des
+choix de design précédents documentés plus haut ("Rehaussement visuel —
+dashboards, typographie, couleur" pour les icônes de `StatCard`, "Polish
+visuel global" pour les toasts) : une couleur sémantique par catégorie sur
+les icônes, et un toast de succès vert. Contrairement aux tâches
+précédentes, ceci n'est pas une correction de bug ni un raffinement UX —
+c'est un changement de direction visuelle assumé, à ne pas "corriger" en
+sens inverse par la suite sans nouvelle demande explicite.
+
+### Icônes de `StatCard` : toutes bleu SIM Assurances (`bg-primary`)
+
+Avant ce changement, la pastille d'icône de `StatCard`
+([src/components/ui/StatCard.tsx](src/components/ui/StatCard.tsx))
+utilisait un aplat plein dans la teinte du `tone` de la carte
+(`toneSolidClasses`, une couleur différente par carte : vert `success`,
+orange `warning`, gris `neutral`, rouge `danger`, bleu `info`/`primary`).
+**Remplacé par une seule classe fixe (`ICON_PILL_CLASS = "bg-primary"`,
+sim-blue-dark #004b9c)**, appliquée à la pastille d'icône de **toutes**
+les cartes, indépendamment de `tone` — changement demandé explicitement :
+"les icônes doivent avoir la même couleur bleue, uniforme, quelle que soit
+la carte". `sim-blue-dark` retenu plutôt que `sim-blue-light` : c'est le
+seul des deux à passer le contraste AA avec une icône blanche (8.45:1,
+voir `globals.css` ; `sim-blue-light` seul ne fait que 2.47:1, déjà noté
+insuffisant ailleurs dans ce fichier).
+
+**Ce qui n'a volontairement PAS changé** : le filet de tête (3px,
+`toneBarClasses`) et le halo hover/focus (`toneAccentClasses`) de
+`StatCard` continuent, eux, à varier selon `tone` — c'est là que vit le
+signal d'urgence posé par `toneSiActif` (Phase G puis "Rehaussement
+visuel" : une carte "à traiter" avec un compteur > 0 s'allume dans sa
+teinte, une carte à 0 repasse en neutre). Seule la couleur de l'**icône**
+elle-même est concernée par cette tâche, jamais ce mécanisme de
+hiérarchisation visuelle. Bénéficie automatiquement à tous les écrans
+utilisant `StatCard` (dashboard Finance à 6+1 indicateurs, "Mon tableau de
+bord" Collaborateur à 5+2 indicateurs, et les écrans Pointage RH
+`Présence du jour`/`Mon historique` qui le réutilisent tel quel) — aucune
+modification nécessaire côté appelants.
+
+### Toasts de succès en bleu SIM Assurances (`primary-bg`/`primary`)
+
+[src/app/layout.tsx](src/app/layout.tsx) : la classe `success` du
+`<Toaster>` sonner passe de `!bg-success-bg !text-success
+!border-success-border` (vert) à `!bg-primary-bg !text-primary
+!border-primary-border` (bleu) — **mêmes styles pâle + texte teinté +
+bordure que les trois autres variantes**, seule la couleur change (jamais
+un aplat plein blanc-sur-bleu : `[data-description]` de sonner a une
+couleur `#3f3f3f` codée en dur par la librairie elle-même, illisible sur
+un fond bleu foncé plein — rester sur le style pâle déjà en place évite
+ce piège de contraste sans y avoir jamais touché). `error`/`info`/`warning`
+restent strictement inchangés (rouge/bleu clair/orange) : seule la
+confirmation positive change de couleur, une confirmation ("ça a marché")
+doit rester visuellement distincte d'un échec ("ça a échoué").
+
+**Nouveaux tokens `--color-primary-bg`/`--color-primary-border`**
+([src/app/globals.css](src/app/globals.css)), ajoutés par symétrie avec
+`danger-bg`/`info-bg`/`warning-bg`/`success-bg` déjà existants — aucune
+couleur codée en dur dans le composant, conforme à la règle du projet.
+`--color-primary` (#004b9c) sert directement de couleur de texte (déjà
+8.45:1 sur blanc, a fortiori sur le fond très clair `#eaf1fb`).
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes 6 erreurs
+préexistantes du Module Pointage RH, hors périmètre).
+
+Vrai parcours navigateur (Chromium headless, Playwright, non ajouté au
+projet, même méthode que le reste de ce fichier) contre le vrai serveur
+`next dev` :
+
+- **Dashboard Finance** (`finance@simassurances.test`, 6 cartes "À
+  traiter" + 1 carte "Solde de caisse" hors `StatCard`) : les 6 icônes de
+  `StatCard` toutes `rgb(0, 75, 156)` (`bg-primary`), contraste mesuré
+  8.45:1 avec l'icône blanche — au-dessus du seuil AA. Filet de tête et
+  halo restent bien variés selon `tone` (non touchés).
+- **"Mon tableau de bord"** (`collaborateur@simassurances.test`, 5 cartes
+  "Vue d'ensemble" + 2 cartes "À traiter") : même résultat, 7/7 icônes
+  `rgb(0, 75, 156)`.
+- **Toast de succès réel** (toggle d'un module depuis `/admin/modules`,
+  action réversible reproduite puis immédiatement annulée — état des deux
+  modules confirmé identique avant/après, `Actif`/`Actif`) : fond
+  `rgb(234, 241, 251)` (`primary-bg`), texte `rgb(0, 75, 156)` (`primary`),
+  bordure `rgb(185, 211, 239)` (`primary-border`) — contraste texte/fond
+  mesuré 7.43:1.
+- **Toast d'erreur réel** (redirection `?error=acces_refuse_admin` en
+  session non-admin) : fond `rgb(255, 235, 235)`, texte `rgb(218, 1, 1)`,
+  bordure `rgb(255, 179, 179)` — strictement inchangé, contraste 4.60:1.
+  Comparé côte à côte au toast de succès : les deux sont nettement
+  distincts (bleu pâle vs rose pâle, aucune confusion possible).
+
+Aucune donnée créée pendant cette vérification (uniquement des captures
+d'écran, un toggle de module immédiatement réverti, et une redirection en
+lecture seule) : rien à nettoyer en base. Serveur `next dev` arrêté après
+vérification.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
