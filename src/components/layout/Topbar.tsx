@@ -5,20 +5,16 @@ import { useRouter } from "next/navigation";
 
 import { Icon } from "@/components/icons";
 import { TopbarCalendar } from "./TopbarCalendar";
+import { NotificationBell } from "./NotificationBell";
+import { ProfileMenu } from "./ProfileMenu";
 
 interface TopbarProps {
-  user: { fullName: string; email: string };
+  user: { fullName: string; email: string; photoUrl?: string | null };
   role: string;
   canAccessPointageRH?: boolean;
+  unreadNotificationsCount?: number;
   /** Ouvre le tiroir de navigation mobile (bouton visible seulement < lg). */
   onOpenMobileMenu: () => void;
-}
-
-function initials(fullName: string) {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 // Rafraîchissement en temps réel (remplace le polling à 20s d'une itération
@@ -42,7 +38,7 @@ const EVENTS_URL = "/api/events";
 // évènement à venir avant longtemps.
 const FORM_FIELD_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 
-export function Topbar({ user, role, canAccessPointageRH, onOpenMobileMenu }: TopbarProps) {
+export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCount = 0, onOpenMobileMenu }: TopbarProps) {
   const router = useRouter();
   const isEditingRef = useRef(false);
   const pendingRefreshRef = useRef(false);
@@ -112,31 +108,9 @@ export function Topbar({ user, role, canAccessPointageRH, onOpenMobileMenu }: To
       <div className="ml-auto flex items-center gap-4">
         <TopbarCalendar isRH={canAccessPointageRH} />
         
-        <button
-          type="button"
-          aria-label="Notifications"
-          className="grid size-10 place-items-center rounded-lg border border-border text-muted-foreground transition-[background-color,transform] duration-150 ease-out-strong motion-safe:active:scale-[0.95] hover:bg-muted"
-        >
-          <Icon name="bell" className="size-5" />
-        </button>
+        <NotificationBell initialUnreadCount={unreadNotificationsCount} />
 
-        <div className="flex items-center gap-3">
-          <span
-            className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
-            aria-hidden="true"
-          >
-            {initials(user.fullName)}
-          </span>
-          <div className="hidden leading-tight sm:block">
-            <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              {user.fullName}
-              <span className="rounded-full bg-info-bg px-2 py-0.5 text-[11px] font-medium text-info">
-                {role}
-              </span>
-            </p>
-            <p className="text-xs text-muted-foreground">{user.email}</p>
-          </div>
-        </div>
+        <ProfileMenu user={user} role={role} />
       </div>
     </header>
   );

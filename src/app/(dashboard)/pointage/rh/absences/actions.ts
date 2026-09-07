@@ -18,7 +18,7 @@ import { StatutAbsence } from "@/generated/prisma/client";
 export async function traiterAbsence(absenceId: string, statut: StatutAbsence, motif: string) {
   const session = await getSession();
   
-  if (!session || !hasPermission(session, "pointage.voir_dashboard_rh")) {
+  if (!session || !hasPermission(session, "pointage.traiter_absence")) {
     return { status: "error", message: "Non autorisé" };
   }
 

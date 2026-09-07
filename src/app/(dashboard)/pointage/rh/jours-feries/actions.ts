@@ -18,7 +18,7 @@ export async function getJoursFeries() {
 
 export async function ajouterJoursFeriesBatch(jours: { date: Date, libelle: string }[]) {
   const session = await getSession();
-  if (!session || !hasPermission(session, "pointage.voir_dashboard_rh")) {
+  if (!session || !hasPermission(session, "pointage.gerer_jours_feries")) {
     return { status: "error", message: "Non autorisé" };
   }
 
@@ -55,7 +55,7 @@ export async function ajouterJoursFeriesBatch(jours: { date: Date, libelle: stri
 
 export async function supprimerJourFerie(id: string) {
   const session = await getSession();
-  if (!session || !hasPermission(session, "pointage.voir_dashboard_rh")) {
+  if (!session || !hasPermission(session, "pointage.gerer_jours_feries")) {
     return { status: "error", message: "Non autorisé" };
   }
 

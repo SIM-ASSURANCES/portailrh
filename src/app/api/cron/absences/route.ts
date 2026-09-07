@@ -1,52 +1,26 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 
 export async function GET(request: Request) {
-  // Basic security check (Optional but recommended for Cron jobs)
+  // Basic security check (Mandatory for Cron jobs)
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
   try {
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    // 1. Vérifier si on est avant la date de lancement
-    const systemStartDateStr = process.env.SYSTEM_START_DATE || "2026-09-01";
+    // 1. Date de lancement du système
+    const systemStartDateStr = process.env.SYSTEM_START_DATE || "2026-09-07";
     const systemStartDate = new Date(systemStartDateStr);
+    systemStartDate.setHours(0, 0, 0, 0);
 
-    if (today < systemStartDate) {
-      return NextResponse.json({ message: "Système non encore actif (avant SYSTEM_START_DATE). Ignoré." });
-    }
-
-    // 2. Vérifier si c'est le week-end
-    const dayOfWeek = today.getDay();
-    if (dayOfWeek === 0 || dayOfWeek === 6) {
-      return NextResponse.json({ message: "Week-end. Pas de détection d'absence." });
-    }
-
-    // 3. Vérifier si c'est un jour férié
-    const startOfDay = new Date(today);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(today);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const jourFerie = await prisma.jourFerie.findFirst({
-      where: {
-        date: {
-          gte: startOfDay,
-          lte: endOfDay
-        }
-      }
-    });
-
-    if (jourFerie) {
-      return NextResponse.json({ message: "Jour férié. Pas de détection d'absence." });
-    }
-
-    // 4. Récupérer tous les collaborateurs qui doivent pointer (hors ADMIN)
+    // 2. Récupérer tous les collaborateurs qui doivent pointer (hors ADMIN)
     const users = await prisma.user.findMany({
       where: {
         isActive: true,
@@ -57,47 +31,76 @@ export async function GET(request: Request) {
 
     let nouvellesAbsences = 0;
 
-    for (const user of users) {
-      // 5. Vérifier s'il y a un pointage "ARRIVEE" aujourd'hui
-      const punch = await prisma.pointage.findFirst({
-        where: {
-          userId: user.id,
-          type: "ARRIVEE",
-          heure: {
-            gte: startOfDay,
-            lte: endOfDay
-          }
-        }
-      });
+    // 3. Boucle de rattrapage : on analyse les 5 derniers jours (y compris aujourd'hui)
+    const joursAnalyses = 2;
 
-      if (!punch) {
-        // 6. Vérifier s'il y a déjà une absence pour éviter les doublons
-        const existingAbsence = await prisma.absence.findFirst({
-          where: {
+    const dateMin = new Date(today);
+    dateMin.setDate(today.getDate() - (joursAnalyses - 1));
+    dateMin.setHours(0, 0, 0, 0);
+
+    const startOfPeriod = dateMin < systemStartDate ? systemStartDate : dateMin;
+    const endOfPeriod = new Date(today);
+    endOfPeriod.setHours(23, 59, 59, 999);
+
+    const formatDate = (date: Date) => {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    };
+
+    const joursFeries = await prisma.jourFerie.findMany({
+      where: { date: { gte: startOfPeriod, lte: endOfPeriod } }
+    });
+    const joursFeriesSet = new Set(joursFeries.map(jf => formatDate(jf.date)));
+
+    const pointages = await prisma.pointage.findMany({
+      where: { type: "ARRIVEE", heure: { gte: startOfPeriod, lte: endOfPeriod } },
+      select: { userId: true, heure: true }
+    });
+    const pointagesSet = new Set(pointages.map(p => `${p.userId}_${formatDate(p.heure)}`));
+
+    const absences = await prisma.absence.findMany({
+      where: { date: { gte: startOfPeriod, lte: endOfPeriod } },
+      select: { userId: true, date: true }
+    });
+    const absencesSet = new Set(absences.map(a => `${a.userId}_${formatDate(a.date)}`));
+
+    const absencesToCreate: Prisma.AbsenceCreateManyInput[] = [];
+
+    for (let i = 0; i < joursAnalyses; i++) {
+      const currentDate = new Date(today);
+      currentDate.setDate(today.getDate() - i);
+      currentDate.setHours(0, 0, 0, 0);
+
+      if (currentDate < systemStartDate) continue;
+
+      const dayOfWeek = currentDate.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+
+      const dateStr = formatDate(currentDate);
+      if (joursFeriesSet.has(dateStr)) continue;
+
+      for (const user of users) {
+        const key = `${user.id}_${dateStr}`;
+        if (!pointagesSet.has(key) && !absencesSet.has(key)) {
+          absencesToCreate.push({
             userId: user.id,
-            date: {
-              gte: startOfDay,
-              lte: endOfDay
-            }
-          }
-        });
-
-        if (!existingAbsence) {
-          await prisma.absence.create({
-            data: {
-              userId: user.id,
-              date: startOfDay,
-              statut: "A_CONTROLER"
-            }
+            date: currentDate,
+            statut: "A_CONTROLER"
           });
-          nouvellesAbsences++;
+          absencesSet.add(key);
         }
       }
     }
 
+    if (absencesToCreate.length > 0) {
+      await prisma.absence.createMany({
+        data: absencesToCreate
+      });
+      nouvellesAbsences = absencesToCreate.length;
+    }
+
     return NextResponse.json({
       success: true,
-      message: `Cron exécuté avec succès. ${nouvellesAbsences} absence(s) détectée(s) pour aujourd'hui.`
+      message: `Cron exécuté avec succès. ${nouvellesAbsences} nouvelle(s) absence(s) détectée(s) sur les ${joursAnalyses} derniers jours.`
     });
   } catch (error) {
     console.error("Erreur lors du cron des absences:", error);

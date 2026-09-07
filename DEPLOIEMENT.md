@@ -83,7 +83,7 @@ objets, rôles et comptes de test avant de les recréer — l'exécuter à
 chaque redémarrage supprimerait les vraies données de l'application.
 
 Lancez-le manuellement, une seule fois, juste après le tout premier
-démarrage (base vide) :
+démarrage (base vide) : 
 
 ```bash
 docker compose exec app npx prisma db seed

@@ -69,23 +69,15 @@ export function getMinutesSinceMidnight(date: Date): number {
   return date.getHours() * 60 + date.getMinutes();
 }
 
-/**
- * Détermine si un pointage d'arrivée est en retard et de combien de minutes
- */
 export function checkLateStatus(
   now: Date,
   config: ParametrageHoraire
 ): { estRetard: boolean; minutesRetard: number } {
   const currentMinutes = getMinutesSinceMidnight(now);
-  const finMatinMinutes = parseTimeStringToMinutes(config.heureFinMatin);
-
-  // Si le pointage est effectué après la fin de matinée, on prend le début de l'après-midi comme repère
-  const referenceTimeStr =
-    currentMinutes > finMatinMinutes
-      ? config.heureDebutApresMidi
-      : config.heureDebutMatin;
-
-  const referenceMinutes = parseTimeStringToMinutes(referenceTimeStr);
+  
+  // L'employé est tenu d'être présent dès le matin.
+  // Tout pointage d'arrivée se calcule donc par rapport à l'heure de début de matinée.
+  const referenceMinutes = parseTimeStringToMinutes(config.heureDebutMatin);
 
   if (currentMinutes > referenceMinutes) {
     return {

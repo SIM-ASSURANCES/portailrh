@@ -35,7 +35,12 @@ async function getBaseUrl(): Promise<string> {
 const createUserSchema = z.object({
   fullName: z.string().min(2, "Le nom doit contenir au moins 2 caractères"),
   email: z.string().email("Email invalide"),
-  password: z.string().min(8, "8 caractères minimum"),
+  password: z.string()
+    .min(8, "8 caractères minimum")
+    .regex(/[A-Z]/, "Au moins une majuscule requise")
+    .regex(/[a-z]/, "Au moins une minuscule requise")
+    .regex(/[0-9]/, "Au moins un chiffre requis")
+    .regex(/[^A-Za-z0-9]/, "Au moins un caractère spécial requis"),
   roleId: z.string().min(1, "Rôle requis"),
 });
 
@@ -276,8 +281,17 @@ export async function toggleUserActiveAction(
   if (!session || !isAdmin(session)) {
     return { status: "error", message: "Action non autorisée." };
   }
+  if (userId === session.user.id) {
+    return { status: "error", message: "Impossible de modifier votre propre compte." };
+  }
 
-  const user = await prisma.user.update({ where: { id: userId }, data: { isActive: active } });
+  const user = await prisma.user.update({ 
+    where: { id: userId }, 
+    data: { 
+      isActive: active,
+      tokenVersion: { increment: 1 } 
+    } 
+  });
 
   await prisma.historiqueEntry.create({
     data: {
@@ -314,6 +328,9 @@ export async function modifierRoleUtilisateurAction(
   if (!session || !isAdmin(session)) {
     return { status: "error", message: "Action non autorisée." };
   }
+  if (userId === session.user.id) {
+    return { status: "error", message: "Impossible de modifier votre propre compte." };
+  }
 
   const [user, nouveauRole] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, include: { role: true } }),
@@ -333,7 +350,13 @@ export async function modifierRoleUtilisateurAction(
 
   const ancienRoleNom = user.role.name;
 
-  await prisma.user.update({ where: { id: userId }, data: { roleId: nouveauRoleId } });
+  await prisma.user.update({ 
+    where: { id: userId }, 
+    data: { 
+      roleId: nouveauRoleId,
+      tokenVersion: { increment: 1 }
+    } 
+  });
 
   await prisma.historiqueEntry.create({
     data: {
@@ -354,4 +377,55 @@ export async function modifierRoleUtilisateurAction(
   publishDataChanged();
 
   return { status: "success", message: `Rôle de ${user.fullName} mis à jour : ${nouveauRole.name}.` };
+}
+
+export async function forcerReinitialisationMotDePasseAction(
+  userId: string
+): Promise<
+  | { status: "success"; message: string; data: { invitationUrl: string } }
+  | { status: "error"; message: string }
+> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    return { status: "error", message: "Utilisateur introuvable." };
+  }
+
+  const invitationToken = randomBytes(32).toString("hex");
+  const invitationExpiresAt = new Date(Date.now() + INVITATION_VALIDITY_MS);
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { 
+      invitationToken, 
+      invitationExpiresAt,
+      passwordHash: null,
+      isActive: false
+    },
+  });
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "User",
+      entityId: user.id,
+      action: "RESET_PASSWORD",
+      detail: `Réinitialisation forcée par l'admin. Lien généré pour ${user.email}`,
+      userId: session.user.id,
+    },
+  });
+
+  revalidatePath("/admin/users");
+  publishDataChanged();
+
+  const invitationUrl = `${await getBaseUrl()}/invitation/${invitationToken}`;
+
+  return {
+    status: "success",
+    message: `Réinitialisation forcée pour ${user.email}.`,
+    data: { invitationUrl },
+  };
 }
