@@ -27,6 +27,8 @@ model User {
   /// comme avant.
   passwordHash String?
   isActive     Boolean  @default(true)
+  /// Incrémenté à chaque désactivation ou changement de rôle pour invalider le JWT (SEC-06)
+  tokenVersion Int      @default(0)
   /// Invitation par lien (complémentaire à la création manuelle) : jeton
   /// aléatoire sécurisé, unique, remis à `null` dès l'activation du compte
   /// (`activerInvitationAction`) — jamais réutilisable une fois consommé.
@@ -68,6 +70,7 @@ model User {
   absencesDeclarees     Absence[]            @relation("AbsenceEmploye")
   absencesControlees    Absence[]            @relation("AbsenceControlePar")
   notifications         Notification[]
+  plagesAbsenceAutorisee PlageAbsenceAutorisee[]
 }
 
 model Role {
@@ -330,6 +333,10 @@ model Demande {
   pieces        PieceJointe[]
   reglements    Reglement[]
   journalCaisse JournalCaisse[]
+
+  @@index([createurId])
+  @@index([statut])
+  @@index([beneficiaireUserId])
 }
 
 /// Stockage local sur disque (`./uploads/`, hors dépôt git — voir
@@ -513,6 +520,7 @@ model Pointage {
   heurePrevue   String?
   estRetard     Boolean        @default(false)
   minutesRetard Int?
+  estDepartAnticipe Boolean    @default(false)
   motif         String?
   ipAddress     String?
 
@@ -525,6 +533,8 @@ model Pointage {
   createdAt DateTime @default(now())
 
   corrections CorrectionPointage[]
+
+  @@index([userId, heure])
 }
 
 model CorrectionPointage {
@@ -556,6 +566,8 @@ model Absence {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
 }
 
 model JourFerie {
@@ -563,4 +575,27 @@ model JourFerie {
   date      DateTime @unique
   libelle   String
   createdAt DateTime @default(now())
+}
+
+enum SourceAbsenceAutorisee {
+  PERMISSION
+  CONGE
+}
+
+/// V2: Permissions et Congés créent une plage d'absence autorisée.
+/// Le calcul de retard et le CRON tiendront compte de ces plages.
+model PlageAbsenceAutorisee {
+  id          String                 @id @default(cuid())
+  date        DateTime
+  heureDebut  String                 // ex: "08:00"
+  heureFin    String                 // ex: "12:00"
+  source      SourceAbsenceAutorisee
+  description String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, date])
 }

@@ -4,7 +4,6 @@ import { useState, useRef, useTransition } from "react";
 import Image from "next/image";
 import { Icon } from "@/components/icons";
 import { updateProfilePhoto, updatePassword } from "./actions";
-import { toast } from "sonner"; // Assuming Sonner is used in this project, or I can use standard alert/state
 
 interface ProfileFormProps {
   user: {
@@ -52,7 +51,7 @@ export function ProfileForm({ user, role }: ProfileFormProps) {
       } else {
         alert(data.error || "Erreur lors de l'upload");
       }
-    } catch (err) {
+    } catch {
       alert("Erreur de connexion");
     } finally {
       setIsUploading(false);
@@ -173,7 +172,7 @@ export function ProfileForm({ user, role }: ProfileFormProps) {
               onChange={e => setNewPass(e.target.value)}
               className="mt-1 block w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               required
-              minLength={6}
+              minLength={8}
             />
           </div>
           
@@ -185,7 +184,7 @@ export function ProfileForm({ user, role }: ProfileFormProps) {
               onChange={e => setConfirmPass(e.target.value)}
               className="mt-1 block w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               required
-              minLength={6}
+              minLength={8}
             />
           </div>
 

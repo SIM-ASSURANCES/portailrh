@@ -4,19 +4,37 @@ import { AuthError } from "next-auth";
 
 import { Icon } from "@/components/icons";
 import { BrandBackdrop, Input } from "@/components/ui";
-import { signIn } from "@/lib/auth";
+import { getSession, signIn } from "@/lib/auth";
+import { headers } from "next/headers";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 import { LoginSubmitButton } from "./LoginSubmitButton";
 
 async function authenticate(formData: FormData) {
   "use server";
 
-  try {
+  const email = String(formData.get("email") || "");
+  const headersList = await headers();
+  const rawIp = headersList.get("x-forwarded-for") || "IP_INCONNUE";
+  const ip = rawIp.replace(/^::ffff:/, "");
+
+  // Limite à 5 tentatives par minute par IP+email
+  const rlKey = `login_${ip}_${email}`;
+  if (!checkRateLimit(rlKey, 5, 60 * 1000)) {
     const callbackUrl = String(formData.get("callbackUrl") || "/");
+    redirect(`/login?error=2&callbackUrl=${encodeURIComponent(callbackUrl)}`);
+  }
+
+  try {
+    const rawCallbackUrl = String(formData.get("callbackUrl") || "/");
+    const callbackUrl =
+      rawCallbackUrl.startsWith("/") && !rawCallbackUrl.startsWith("/login")
+        ? rawCallbackUrl
+        : "/";
     await signIn("credentials", {
       email: formData.get("email"),
       password: formData.get("password"),
-      redirectTo: callbackUrl.startsWith("/") ? callbackUrl : "/",
+      redirectTo: callbackUrl,
     });
   } catch (error) {
     if (error instanceof AuthError) {
@@ -32,6 +50,11 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ error?: string; callbackUrl?: string; activated?: string }>;
 }) {
+  const session = await getSession();
+  if (session) {
+    redirect("/");
+  }
+
   const { error, callbackUrl, activated } = await searchParams;
 
   return (
@@ -61,7 +84,12 @@ export default async function LoginPage({
             <p className="mt-1 text-sm text-muted-foreground">Portail interne SIM Assurances</p>
           </div>
 
-          {error ? (
+          {error === "2" ? (
+            <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
+              <Icon name="alert-triangle" className="mt-0.5 size-4 shrink-0" />
+              Trop de tentatives. Veuillez réessayer dans une minute.
+            </p>
+          ) : error ? (
             <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
               <Icon name="alert-triangle" className="mt-0.5 size-4 shrink-0" />
               Email ou mot de passe incorrect.

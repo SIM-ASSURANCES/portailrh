@@ -9,19 +9,12 @@ import { NotificationBell } from "./NotificationBell";
 import { ProfileMenu } from "./ProfileMenu";
 
 interface TopbarProps {
-  user: { fullName: string; email: string };
+  user: { fullName: string; email: string; photoUrl?: string | null };
   role: string;
   canAccessPointageRH?: boolean;
   unreadNotificationsCount?: number;
   /** Ouvre le tiroir de navigation mobile (bouton visible seulement < lg). */
   onOpenMobileMenu: () => void;
-}
-
-function initials(fullName: string) {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 // Rafraîchissement en temps réel (remplace le polling à 20s d'une itération

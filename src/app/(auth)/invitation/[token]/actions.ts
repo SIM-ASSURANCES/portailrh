@@ -13,7 +13,12 @@ const SALT_ROUNDS = 10;
 const activationSchema = z
   .object({
     token: z.string().min(1),
-    password: z.string().min(8, "8 caractères minimum"),
+    password: z.string()
+      .min(8, "8 caractères minimum")
+      .regex(/[A-Z]/, "Au moins une majuscule requise")
+      .regex(/[a-z]/, "Au moins une minuscule requise")
+      .regex(/[0-9]/, "Au moins un chiffre requis")
+      .regex(/[^A-Za-z0-9]/, "Au moins un caractère spécial requis"),
     passwordConfirmation: z.string().min(1, "Confirmation requise"),
   })
   .refine((data) => data.password === data.passwordConfirmation, {

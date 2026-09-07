@@ -9,7 +9,7 @@ import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 
 interface AppShellProps {
-  user: { fullName: string; email: string };
+  user: { fullName: string; email: string; photoUrl?: string | null };
   role: string;
   /** Affiche la section « Administration » dans la sidebar (rôle Admin). */
   canAdmin?: boolean;

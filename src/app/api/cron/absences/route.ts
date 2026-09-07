@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 
 export async function GET(request: Request) {
-  // Basic security check (Optional but recommended for Cron jobs)
+  // Basic security check (Mandatory for Cron jobs)
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
@@ -32,79 +33,69 @@ export async function GET(request: Request) {
 
     // 3. Boucle de rattrapage : on analyse les 5 derniers jours (y compris aujourd'hui)
     const joursAnalyses = 5;
+    
+    const dateMin = new Date(today);
+    dateMin.setDate(today.getDate() - (joursAnalyses - 1));
+    dateMin.setHours(0, 0, 0, 0);
+
+    const startOfPeriod = dateMin < systemStartDate ? systemStartDate : dateMin;
+    const endOfPeriod = new Date(today);
+    endOfPeriod.setHours(23, 59, 59, 999);
+
+    const formatDate = (date: Date) => {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    };
+
+    const joursFeries = await prisma.jourFerie.findMany({
+      where: { date: { gte: startOfPeriod, lte: endOfPeriod } }
+    });
+    const joursFeriesSet = new Set(joursFeries.map(jf => formatDate(jf.date)));
+
+    const pointages = await prisma.pointage.findMany({
+      where: { type: "ARRIVEE", heure: { gte: startOfPeriod, lte: endOfPeriod } },
+      select: { userId: true, heure: true }
+    });
+    const pointagesSet = new Set(pointages.map(p => `${p.userId}_${formatDate(p.heure)}`));
+
+    const absences = await prisma.absence.findMany({
+      where: { date: { gte: startOfPeriod, lte: endOfPeriod } },
+      select: { userId: true, date: true }
+    });
+    const absencesSet = new Set(absences.map(a => `${a.userId}_${formatDate(a.date)}`));
+
+    const absencesToCreate: Prisma.AbsenceCreateManyInput[] = [];
 
     for (let i = 0; i < joursAnalyses; i++) {
       const currentDate = new Date(today);
       currentDate.setDate(today.getDate() - i);
+      currentDate.setHours(0, 0, 0, 0);
 
-      // On ne vérifie pas avant la date de mise en production du système
-      if (currentDate < systemStartDate) {
-        continue;
-      }
+      if (currentDate < systemStartDate) continue;
 
-      // Ignorer les week-ends
       const dayOfWeek = currentDate.getDay();
-      if (dayOfWeek === 0 || dayOfWeek === 6) {
-        continue;
-      }
+      if (dayOfWeek === 0 || dayOfWeek === 6) continue;
 
-      const startOfDay = new Date(currentDate);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(currentDate);
-      endOfDay.setHours(23, 59, 59, 999);
+      const dateStr = formatDate(currentDate);
+      if (joursFeriesSet.has(dateStr)) continue;
 
-      // Vérifier si c'est un jour férié
-      const jourFerie = await prisma.jourFerie.findFirst({
-        where: {
-          date: {
-            gte: startOfDay,
-            lte: endOfDay
-          }
-        }
-      });
-
-      if (jourFerie) {
-        continue; // Pas d'absence sur un jour férié
-      }
-
-      // Pour ce jour précis, on vérifie chaque collaborateur
       for (const user of users) {
-        // A-t-il pointé son arrivée ?
-        const punch = await prisma.pointage.findFirst({
-          where: {
+        const key = `${user.id}_${dateStr}`;
+        if (!pointagesSet.has(key) && !absencesSet.has(key)) {
+          absencesToCreate.push({
             userId: user.id,
-            type: "ARRIVEE",
-            heure: {
-              gte: startOfDay,
-              lte: endOfDay
-            }
-          }
-        });
-
-        if (!punch) {
-          // A-t-il déjà une absence enregistrée pour ce jour ? (pour éviter les doublons)
-          const existingAbsence = await prisma.absence.findFirst({
-            where: {
-              userId: user.id,
-              date: {
-                gte: startOfDay,
-                lte: endOfDay
-              }
-            }
+            date: currentDate,
+            statut: "A_CONTROLER"
           });
-
-          if (!existingAbsence) {
-            await prisma.absence.create({
-              data: {
-                userId: user.id,
-                date: startOfDay, // On stocke la date exacte de l'absence
-                statut: "A_CONTROLER"
-              }
-            });
-            nouvellesAbsences++;
-          }
+          absencesSet.add(key);
         }
       }
+    }
+
+    if (absencesToCreate.length > 0) {
+      await prisma.absence.createMany({
+        data: absencesToCreate
+      });
+      nouvellesAbsences = absencesToCreate.length;
     }
 
     return NextResponse.json({

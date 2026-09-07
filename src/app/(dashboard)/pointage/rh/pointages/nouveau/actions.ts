@@ -54,11 +54,13 @@ export async function enregistrerPointageRHAction(
   });
   
   const limiteArriveeMinutes = timeToMinutes(parametrage?.heureDebutMatin || "07:45");
+  const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
   
   const currentMinutes = pointageDate.getHours() * 60 + pointageDate.getMinutes();
   
   let estRetard = false;
   let minutesRetard = null;
+  const estDepartAnticipe = type === "DEPART" && currentMinutes < limiteDepartMinutes;
   
   if (type === "ARRIVEE" && currentMinutes > limiteArriveeMinutes) {
     estRetard = true;
@@ -74,6 +76,7 @@ export async function enregistrerPointageRHAction(
           heure: pointageDate,
           estRetard,
           minutesRetard,
+          estDepartAnticipe,
           motif,
           userId: collaborateurId,
           effectueParId: session.user.id
@@ -98,12 +101,17 @@ export async function enregistrerPointageRHAction(
         const endOfToday = new Date(pointageDate);
         endOfToday.setHours(23, 59, 59, 999);
 
-        await tx.absence.deleteMany({
+        await tx.absence.updateMany({
           where: {
             userId: collaborateurId,
             date: { gte: startOfToday, lte: endOfToday },
             statut: "A_CONTROLER",
           },
+          data: {
+            statut: "JUSTIFIEE",
+            motif: "Régularisation par pointage exceptionnel",
+            controleParId: session.user.id
+          }
         });
       }
     });

@@ -5,22 +5,17 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { cache } from "react";
 
+import { authConfig } from "./auth.config";
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  session: {
-    // Obligatoire avec le Credentials provider : Auth.js ne supporte pas les
-    // sessions persistées en base (adapter) avec ce provider, uniquement le JWT.
-    strategy: "jwt",
-  },
-  pages: {
-    signIn: "/login",
-  },
+  ...authConfig,
   providers: [
     Credentials({
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Mot de passe", type: "password" },
       },
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         const email = credentials?.email;
         const password = credentials?.password;
 
@@ -33,18 +28,48 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           include: { role: true },
         });
 
-        // `!user.passwordHash` couvre un compte "en attente d'activation"
-        // (invitation par lien pas encore finalisée, voir CLAUDE.md
-        // "Invitation par lien") — `passwordHash` est nullable depuis cette
-        // fonctionnalité, jamais comparable avec bcrypt tant qu'il est nul.
+        const ip = req?.headers?.get("x-forwarded-for") || "Inconnue";
+
         if (!user || !user.isActive || !user.passwordHash) {
+          if (user) {
+            await prisma.historiqueEntry.create({
+              data: {
+                entity: "Auth",
+                entityId: user.id,
+                action: "LOGIN_FAILED",
+                detail: `Échec (compte inactif ou non finalisé). IP: ${ip}`,
+                userId: user.id,
+              }
+            });
+          } else {
+            console.warn(`Tentative de connexion échouée (utilisateur inexistant) : ${email} depuis IP ${ip}`);
+          }
           return null;
         }
 
         const isValidPassword = await bcrypt.compare(password, user.passwordHash);
         if (!isValidPassword) {
+          await prisma.historiqueEntry.create({
+            data: {
+              entity: "Auth",
+              entityId: user.id,
+              action: "LOGIN_FAILED",
+              detail: `Mot de passe incorrect. IP: ${ip}`,
+              userId: user.id,
+            }
+          });
           return null;
         }
+
+        await prisma.historiqueEntry.create({
+          data: {
+            entity: "Auth",
+            entityId: user.id,
+            action: "LOGIN_SUCCESS",
+            detail: `Connexion réussie. IP: ${ip}`,
+            userId: user.id,
+          }
+        });
 
         return {
           id: user.id,
@@ -52,32 +77,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           email: user.email,
           role: user.role.name,
           photoUrl: user.photoUrl,
+          tokenVersion: user.tokenVersion,
         };
       },
     }),
   ],
-  callbacks: {
-    // Appelé à la création/mise à jour du JWT : on y recopie les infos issues
-    // de `authorize` (disponibles uniquement lors du login, via `user`).
-    async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id;
-        token.fullName = user.fullName;
-        token.role = user.role;
-        token.photoUrl = user.photoUrl;
-      }
-      return token;
-    },
-    // Appelé à chaque lecture de session côté serveur/client : on reprojette
-    // le contenu du JWT vers l'objet `session` exposé à l'application.
-    async session({ session, token }) {
-      session.user.id = token.id as string;
-      session.user.fullName = token.fullName as string;
-      session.user.photoUrl = token.photoUrl as string | null;
-      session.role = token.role as string;
-      return session;
-    },
-  },
 });
 
 /**
@@ -110,6 +114,14 @@ export const getSession = cache(async (): Promise<{
     where: { name: session.role },
     include: { permissions: { include: { permission: true } } },
   });
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+  });
+
+  if (!user || !user.isActive || user.tokenVersion !== session.user.tokenVersion) {
+    return null;
+  }
 
   const permissions = role?.permissions.map((rp) => rp.permission.key) ?? [];
 

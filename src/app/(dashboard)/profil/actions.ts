@@ -18,9 +18,23 @@ export async function updateProfilePhoto(photoUrl: string) {
   return { success: true };
 }
 
+import { z } from "zod";
+
+const passwordSchema = z.string()
+  .min(8, "8 caractères minimum")
+  .regex(/[A-Z]/, "Au moins une majuscule requise")
+  .regex(/[a-z]/, "Au moins une minuscule requise")
+  .regex(/[0-9]/, "Au moins un chiffre requis")
+  .regex(/[^A-Za-z0-9]/, "Au moins un caractère spécial requis");
+
 export async function updatePassword(currentPass: string, newPass: string) {
   const session = await getSession();
   if (!session) throw new Error("Non autorisé");
+
+  const parsed = passwordSchema.safeParse(newPass);
+  if (!parsed.success) {
+    throw new Error(parsed.error.errors[0].message);
+  }
 
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },

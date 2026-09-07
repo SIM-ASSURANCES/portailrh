@@ -7,7 +7,7 @@ import { Icon } from "@/components/icons";
 import { signOutAction } from "./actions";
 
 interface ProfileMenuProps {
-  user: { fullName: string; email: string; photoUrl: string | null };
+  user: { fullName: string; email: string; photoUrl?: string | null };
   role: string;
 }
 
