@@ -1,0 +1,75 @@
+# ============================================================
+# sim-portail — déploiement Dokploy ("Docker Compose")
+# ============================================================
+# Une seule image applicative (service "app" : Next.js App Router = front
+# + back + /api dans le même process) + PostgreSQL (service "db").
+#
+# Réseaux :
+#   - "default" : réseau auto-créé par Compose pour ce projet. "db" et
+#     "app" y sont tous les deux -> "app" joint "db" par le nom "db:5432".
+#     (Rien à déclarer : Compose le gère seul.)
+#   - "dokploy-network" (externe, créé par l'installation de Dokploy) :
+#     permet au reverse-proxy Traefik d'atteindre "app".
+#
+# Variables OBLIGATOIRES à mettre dans l'onglet Environment de Dokploy :
+#   APP_DOMAIN  AUTH_URL  AUTH_SECRET  POSTGRES_PASSWORD
+# ============================================================
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sim_portail}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obligatoire}
+      POSTGRES_DB: ${POSTGRES_DB:-sim_portail}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sim_portail} -d ${POSTGRES_DB:-sim_portail}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    # Dokploy utilise le dépôt Git rattaché comme contexte de build.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # --- Variante image pré-construite (registry) ---
+    # Retirer le bloc "build:" ci-dessus et décommenter :
+    # image: ${APP_IMAGE:-ghcr.io/sim-assurances/portailrh:latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sim_portail}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sim_portail}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET obligatoire (openssl rand -base64 32)}
+      AUTH_URL: ${AUTH_URL:?AUTH_URL obligatoire (URL publique https)}
+      AUTH_TRUST_HOST: "true"
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      ALLOWED_OFFICE_IPS: ${ALLOWED_OFFICE_IPS:-}
+      CRON_SECRET: ${CRON_SECRET:-}
+      SYSTEM_START_DATE: ${SYSTEM_START_DATE:-2026-09-01}
+    volumes:
+      - uploads:/app/uploads
+    networks:
+      - default
+      - dokploy-network
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.portailrh.rule=Host(`${APP_DOMAIN}`)
+      - traefik.http.routers.portailrh.entrypoints=websecure
+      - traefik.http.routers.portailrh.tls.certresolver=letsencrypt
+      - traefik.http.services.portailrh.loadbalancer.server.port=3000
+
+volumes:
+  postgres_data:
+  uploads:
+
+networks:
+  dokploy-network:
+    external: true
