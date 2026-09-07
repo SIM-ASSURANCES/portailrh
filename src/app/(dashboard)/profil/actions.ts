@@ -33,7 +33,7 @@ export async function updatePassword(currentPass: string, newPass: string) {
 
   const parsed = passwordSchema.safeParse(newPass);
   if (!parsed.success) {
-    throw new Error(parsed.error.errors[0].message);
+    throw new Error(parsed.error.issues[0].message);
   }
 
   const user = await prisma.user.findUnique({
@@ -64,7 +64,7 @@ export async function getNotifications() {
   if (!session) return [];
 
   return prisma.notification.findMany({
-    where: { userId: session.user.id },
+    where: { userId: session.user.id, estLue: false },
     orderBy: { createdAt: "desc" },
     take: 50,
   });

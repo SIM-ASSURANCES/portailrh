@@ -115,6 +115,7 @@ model HistoriqueEntry {
   entityId  String
   action    String
   detail    String?
+  ipAddress String?
   createdAt DateTime @default(now())
 
   userId String

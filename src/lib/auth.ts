@@ -28,7 +28,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           include: { role: true },
         });
 
-        const ip = req?.headers?.get("x-forwarded-for") || "Inconnue";
+        let rawIp = req?.headers?.get("x-forwarded-for") || req?.headers?.get("x-real-ip") || "Inconnue";
+        if (rawIp.includes(",")) {
+          rawIp = rawIp.split(",")[0].trim();
+        }
+        const ip = rawIp.replace(/^::ffff:/i, "");
 
         if (!user || !user.isActive || !user.passwordHash) {
           if (user) {
@@ -38,6 +42,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
                 entityId: user.id,
                 action: "LOGIN_FAILED",
                 detail: `Échec (compte inactif ou non finalisé). IP: ${ip}`,
+                ipAddress: ip,
                 userId: user.id,
               }
             });
@@ -55,6 +60,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               entityId: user.id,
               action: "LOGIN_FAILED",
               detail: `Mot de passe incorrect. IP: ${ip}`,
+              ipAddress: ip,
               userId: user.id,
             }
           });
@@ -67,6 +73,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             entityId: user.id,
             action: "LOGIN_SUCCESS",
             detail: `Connexion réussie. IP: ${ip}`,
+            ipAddress: ip,
             userId: user.id,
           }
         });

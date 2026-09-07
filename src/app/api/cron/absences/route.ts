@@ -32,8 +32,8 @@ export async function GET(request: Request) {
     let nouvellesAbsences = 0;
 
     // 3. Boucle de rattrapage : on analyse les 5 derniers jours (y compris aujourd'hui)
-    const joursAnalyses = 5;
-    
+    const joursAnalyses = 2;
+
     const dateMin = new Date(today);
     dateMin.setDate(today.getDate() - (joursAnalyses - 1));
     dateMin.setHours(0, 0, 0, 0);

@@ -3,9 +3,10 @@
 import { useState, useRef, useEffect, useTransition } from "react";
 import { Icon } from "@/components/icons";
 import { getNotifications, markAllNotificationsAsRead, markNotificationAsRead } from "@/app/(dashboard)/profil/actions";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
+import type { Notification } from "@/generated/prisma/client";
 
 interface NotificationBellProps {
   initialUnreadCount: number;
@@ -13,9 +14,10 @@ interface NotificationBellProps {
 
 export function NotificationBell({ initialUnreadCount }: NotificationBellProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, startTransition] = useTransition();
   const menuRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -41,12 +43,21 @@ export function NotificationBell({ initialUnreadCount }: NotificationBellProps) 
     e.preventDefault();
     e.stopPropagation();
     await markNotificationAsRead(id);
-    setNotifications((prev) => prev.map(n => n.id === id ? { ...n, estLue: true } : n));
+    setNotifications((prev) => prev.filter(n => n.id !== id));
+  };
+
+  const handleNavigate = async (lien: string | null, id: string, estLue: boolean) => {
+    if (!estLue) {
+      markNotificationAsRead(id); // Fire and forget
+      setNotifications((prev) => prev.filter(n => n.id !== id));
+    }
+    setIsOpen(false);
+    if (lien) router.push(lien);
   };
 
   const handleMarkAllAsRead = async () => {
     await markAllNotificationsAsRead();
-    setNotifications((prev) => prev.map(n => ({ ...n, estLue: true })));
+    setNotifications([]);
   };
 
   return (
@@ -90,13 +101,19 @@ export function NotificationBell({ initialUnreadCount }: NotificationBellProps) 
               </div>
             ) : (
               notifications.map((notif) => (
-                <Link
+                <div
                   key={notif.id}
-                  href={notif.lien || "#"}
-                  onClick={() => !notif.estLue && handleMarkAsRead(notif.id, { preventDefault: () => {}, stopPropagation: () => {} } as any)}
-                  className={`block rounded-lg p-3 transition-colors ${notif.estLue ? 'hover:bg-slate-50' : 'bg-primary/5 hover:bg-primary/10'}`}
+                  onClick={() => handleNavigate(notif.lien, notif.id, notif.estLue)}
+                  className={`group relative block rounded-lg p-3 transition-colors cursor-pointer ${notif.estLue ? 'hover:bg-slate-50' : 'bg-primary/5 hover:bg-primary/10'}`}
                 >
-                  <div className="flex gap-3">
+                  <button 
+                    onClick={(e) => handleMarkAsRead(notif.id, e)} 
+                    className="absolute right-2 top-2 rounded p-1 text-muted-foreground opacity-0 hover:bg-muted group-hover:opacity-100"
+                    title="Masquer la notification"
+                  >
+                    <Icon name="x" className="size-4" />
+                  </button>
+                  <div className="flex gap-3 pr-4">
                     <div className="mt-0.5 shrink-0">
                       {!notif.estLue ? (
                         <div className="size-2 rounded-full bg-primary mt-1.5" />
@@ -116,7 +133,7 @@ export function NotificationBell({ initialUnreadCount }: NotificationBellProps) 
                       </p>
                     </div>
                   </div>
-                </Link>
+                </div>
               ))
             )}
           </div>

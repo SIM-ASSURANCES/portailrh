@@ -9,6 +9,7 @@ import { timeToMinutes, isOfficeIpAllowed, checkLateStatus } from "@/lib/pointag
 import { revalidatePath } from "next/cache";
 import { pointageEmitter } from "@/lib/events";
 import { ActionState, fieldErrorsFromZod } from "@/lib/validation";
+import { createNotification } from "@/lib/notifications";
 
 const pointageSchema = z.object({
   source: z.enum(["QR_CODE", "ORDINATEUR"]),
@@ -37,6 +38,16 @@ export async function enregistrerPointageAction(
   // Vérification de l'IP pour sécuriser le pointage (Ordinateur + Smartphone)
   const whitelistEnv = process.env.ALLOWED_OFFICE_IPS || "";
   if (!isOfficeIpAllowed(ip, whitelistEnv)) {
+    const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
+    for (const rh of rhUsers) {
+      await createNotification({
+        userId: rh.id,
+        titre: "Alerte Sécurité Pointage",
+        message: `${session.user.fullName} a tenté de pointer en dehors du réseau de l'entreprise (IP: ${ip}).`,
+        lien: "/pointage/rh",
+      });
+    }
+
     return {
       status: "error",
       message: "Le pointage n'est autorisé que depuis le réseau (Wi-Fi) de l'entreprise."
@@ -161,6 +172,20 @@ export async function enregistrerPointageAction(
     // publique /pointage/qr (hors AppShell, donc hors de portée de mon
     // eventBus authentifié) — voir CLAUDE.md "Fusion Module Pointage RH".
     pointageEmitter.emit("pointage-updated");
+
+    if (estRetard || estDepartAnticipe) {
+      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
+      const raison = estRetard ? "retard" : "départ anticipé";
+      for (const rh of rhUsers) {
+        await createNotification({
+          userId: rh.id,
+          titre: "Anomalie de pointage signalée",
+          message: `${session.user.fullName} a signalé un ${raison}. Motif : ${motif}`,
+          lien: "/pointage/rh/presence",
+        });
+      }
+    }
+
     return { status: "success", message: "Pointage enregistré avec succès." };
   } catch {
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };
