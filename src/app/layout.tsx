@@ -37,14 +37,21 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         {/* Couleurs alignées sur les tokens sémantiques du portail (plutôt
             que le thème richColors par défaut de sonner, qui utilise sa
             propre palette rouge/vert/bleu) — mêmes teintes que les Badge de
-            statut ailleurs dans l'app, pour une cohérence visuelle totale. */}
+            statut ailleurs dans l'app, pour une cohérence visuelle totale.
+            Toast "success" en bleu institutionnel SIM Assurances
+            (`primary-bg`/`primary`, même style pâle + texte teinté que les
+            trois autres) plutôt que le vert d'origine — changement demandé
+            explicitement par l'utilisateur, voir CLAUDE.md "Toasts de
+            succès en bleu". Erreur/info/warning restent dans leurs teintes
+            d'alerte d'origine : une confirmation ("ça a marché") doit
+            rester visuellement distincte d'un échec ("ça a échoué"). */}
         <Toaster
           position="top-right"
           closeButton
           toastOptions={{
             classNames: {
               toast: "font-sans !rounded-lg !shadow-md",
-              success: "!bg-success-bg !text-success !border-success-border",
+              success: "!bg-primary-bg !text-primary !border-primary-border",
               error: "!bg-danger-bg !text-danger !border-danger-border",
               info: "!bg-info-bg !text-info !border-info-border",
               warning: "!bg-warning-bg !text-warning !border-warning-border",

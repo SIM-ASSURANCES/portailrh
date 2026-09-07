@@ -80,8 +80,8 @@ export function ProfileForm({ user, role }: ProfileFormProps) {
         setCurrentPass("");
         setNewPass("");
         setConfirmPass("");
-      } catch (err: any) {
-        setMessage({ type: "error", text: err.message || "Une erreur est survenue." });
+      } catch (err) {
+        setMessage({ type: "error", text: err instanceof Error ? err.message : "Une erreur est survenue." });
       }
     });
   };
