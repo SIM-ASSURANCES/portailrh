@@ -1,6 +1,6 @@
 # ============================================================
 # sim-portail — Dokploy mode "Raw" (compose collé, sans dépôt Git)
-# Image pré-construite : ghcr.io/sim-assurances/portailrh:v2
+# Image pré-construite : ghcr.io/sim-assurances/portailrh:v3
 # ------------------------------------------------------------
 # Onglet Environment de Dokploy — SEULE variable à renseigner :
 #   AUTH_SECRET        (openssl rand -base64 32)
@@ -57,7 +57,7 @@ services:
   # il ne s'execute qu'une seule fois, au tout premier deploiement.
   # `set-admin.ts` est idempotent : rejoue a chaque deploiement sans risque.
   init:
-    image: ghcr.io/sim-assurances/portailrh:v2
+    image: ghcr.io/sim-assurances/portailrh:v3
     pull_policy: always
     restart: "no"
     depends_on:
@@ -75,6 +75,10 @@ services:
       - -c
       - |
         set -e
+        # Monorepo : le schema et prisma7.config.ts vivent dans backend/,
+        # les commandes Prisma doivent donc s'executer depuis ce dossier
+        # (meme raison que le "cd backend" de docker-entrypoint.sh).
+        cd backend
         echo "[init] migrations..."
         npx prisma migrate deploy
         if [ -f /app/uploads/.seeded ]; then
@@ -90,7 +94,7 @@ services:
 
   # ---------- Application ----------
   app:
-    image: ghcr.io/sim-assurances/portailrh:v2
+    image: ghcr.io/sim-assurances/portailrh:v3
     pull_policy: always
     restart: unless-stopped
     depends_on:
