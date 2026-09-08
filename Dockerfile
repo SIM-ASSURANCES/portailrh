@@ -106,6 +106,14 @@ COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=builder --chown=nextjs:nodejs /app/prisma7.config.ts ./prisma7.config.ts
 
+# Client Prisma généré : requis par les scripts autonomes lancés via tsx
+# (prisma/seed.ts, prisma/set-admin.ts), qui importent explicitement
+# "../src/generated/prisma/client". Le traçage standalone de Next.js ne
+# l'expose qu'à l'intérieur de .next/standalone, chemin que ces scripts
+# n'utilisent pas — sans cette copie, `npx prisma db seed` (commande
+# documentée dans DEPLOIEMENT.md) échoue avec "Cannot find module".
+COPY --from=builder --chown=nextjs:nodejs /app/src/generated/prisma ./src/generated/prisma
+
 # Polices du reçu PDF (src/lib/pdf/fonts/*.ttf), lues au runtime via
 # `readFileSync(path.join(process.cwd(), "src/lib/pdf/fonts", ...))` — pas
 # un import JS. Vérifié que le traçage automatique de Next.js les inclut

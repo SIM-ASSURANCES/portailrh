@@ -1,0 +1,129 @@
+# ============================================================
+# sim-portail — Dokploy mode "Raw" (compose collé, sans dépôt Git)
+# Image pré-construite : ghcr.io/sim-assurances/portailrh:v2
+# ------------------------------------------------------------
+# Onglet Environment de Dokploy — SEULE variable à renseigner :
+#   AUTH_SECRET        (openssl rand -base64 32)
+# ------------------------------------------------------------
+# IMPORTANT — le service de base s'appelle "portailrh-db", PAS "db".
+# Le service "app" est attaché à "dokploy-network", réseau PARTAGÉ par tous les
+# projets Dokploy du serveur. Plusieurs autres projets (demandedachat,
+# protectapp, ...) ont eux aussi un service nommé "db" : sur ce réseau partagé
+# le nom "db" est ambigu et le DNS Docker peut router l'app vers le PostgreSQL
+# d'une AUTRE application -> Prisma P1000 (authentification refusée) alors que
+# la base de ce projet est saine. Ne jamais renommer ce service en "db".
+# ============================================================
+
+services:
+  # ---------- Base de données ----------
+  # Resynchronise le mot de passe et crée la base si besoin à chaque démarrage
+  # (socket locale = auth trust) : robuste même sur un ancien volume.
+  portailrh-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: portailrh_sim
+      POSTGRES_PASSWORD: RepensTOI26
+      POSTGRES_DB: db_portailrh_sim
+    volumes:
+      - pgdata_v2:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U portailrh_sim -d db_portailrh_sim"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        ( until pg_isready -q -h /var/run/postgresql -d postgres 2>/dev/null; do sleep 2; done
+          S="psql -h /var/run/postgresql -U $$POSTGRES_USER -d postgres -tAc"
+          $$S "ALTER USER \"$$POSTGRES_USER\" WITH PASSWORD '$$POSTGRES_PASSWORD'" >/dev/null 2>&1 \
+            && echo "[db-init] mot de passe de $$POSTGRES_USER resynchronise" \
+            || echo "[db-init] resync mot de passe: echec"
+          if [ "$$($$S "SELECT 1 FROM pg_database WHERE datname='$$POSTGRES_DB'")" != "1" ]; then
+            $$S "CREATE DATABASE \"$$POSTGRES_DB\" OWNER \"$$POSTGRES_USER\"" >/dev/null 2>&1 \
+              && echo "[db-init] base $$POSTGRES_DB creee" \
+              || echo "[db-init] creation base $$POSTGRES_DB: echec"
+          else
+            echo "[db-init] base $$POSTGRES_DB deja presente"
+          fi ) &
+        exec docker-entrypoint.sh postgres
+
+  # ---------- Initialisation (one-shot, s'arrête après) ----------
+  # ATTENTION : `prisma db seed` fait des deleteMany() — le relancer sur une
+  # base en production effacerait les vraies donnees. Il est donc protege par
+  # un marqueur (/app/uploads/.seeded, sur le volume persistant "uploads") :
+  # il ne s'execute qu'une seule fois, au tout premier deploiement.
+  # `set-admin.ts` est idempotent : rejoue a chaque deploiement sans risque.
+  init:
+    image: ghcr.io/sim-assurances/portailrh:v2
+    pull_policy: always
+    restart: "no"
+    depends_on:
+      portailrh-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://portailrh_sim:RepensTOI26@portailrh-db:5432/db_portailrh_sim
+      ADMIN_EMAIL: admin@simassurances.com
+      ADMIN_PASSWORD: Simas@2026
+      ADMIN_NAME: Administrateur SIM
+    volumes:
+      - uploads:/app/uploads
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "[init] migrations..."
+        npx prisma migrate deploy
+        if [ -f /app/uploads/.seeded ]; then
+          echo "[init] seed deja effectue precedemment -> ignore (protection des donnees)"
+        else
+          echo "[init] premier deploiement -> seed initial"
+          npx prisma db seed
+          touch /app/uploads/.seeded
+        fi
+        echo "[init] configuration du compte administrateur..."
+        npx tsx prisma/set-admin.ts
+        echo "[init] termine."
+
+  # ---------- Application ----------
+  app:
+    image: ghcr.io/sim-assurances/portailrh:v2
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      portailrh-db:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://portailrh_sim:RepensTOI26@portailrh-db:5432/db_portailrh_sim
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET obligatoire - onglet Environment (openssl rand -base64 32)}
+      AUTH_URL: https://portailrh.mysimassurances.com
+      AUTH_TRUST_HOST: "true"
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      ALLOWED_OFFICE_IPS: "41.66.41.16"
+      SYSTEM_START_DATE: "2026-09-01"
+    volumes:
+      - uploads:/app/uploads
+    networks:
+      - default
+      - dokploy-network
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.portailrh.rule=Host(`portailrh.mysimassurances.com`)
+      - traefik.http.routers.portailrh.entrypoints=websecure
+      - traefik.http.routers.portailrh.tls.certresolver=letsencrypt
+      - traefik.http.services.portailrh.loadbalancer.server.port=3000
+
+volumes:
+  pgdata_v2:
+  uploads:
+
+networks:
+  dokploy-network:
+    external: true
