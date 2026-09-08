@@ -83,10 +83,11 @@ objets, rôles et comptes de test avant de les recréer — l'exécuter à
 chaque redémarrage supprimerait les vraies données de l'application.
 
 Lancez-le manuellement, une seule fois, juste après le tout premier
-démarrage (base vide) :
+démarrage (base vide) — depuis `backend/`, où vivent le schéma et la
+config Prisma (voir CLAUDE.md "Monorepo backend/frontend") :
 
 ```bash
-docker compose exec app npx prisma db seed
+docker compose exec app sh -c "cd backend && npx prisma db seed"
 ```
 
 **Ne relancez cette commande que si vous savez explicitement que vous
@@ -97,7 +98,7 @@ Si besoin d'appliquer les migrations manuellement (normalement inutile,
 elles tournent déjà au démarrage) :
 
 ```bash
-docker compose exec app npx prisma migrate deploy
+docker compose exec app sh -c "cd backend && npx prisma migrate deploy"
 ```
 
 ## 4. Consulter les logs
@@ -155,6 +156,13 @@ sera développée.
   les outils de compilation.
 - **Utilisateur non-root** (`nextjs`, uid 1001) dans le conteneur final.
 - **Migrations automatiques, seed manuel** — voir section 3 ci-dessus.
+- **Monorepo `backend/`/`frontend/`** (voir CLAUDE.md "Monorepo
+  backend/frontend") — le déploiement reste **une seule image, un seul
+  conteneur applicatif**, exactement comme avant : `backend` (schéma
+  Prisma + logique métier) est directement compilé/inliné dans le build
+  Next.js (aucun serveur séparé), seuls son schéma et sa configuration
+  Prisma sont copiés à part dans l'image, pour les migrations/le seed en
+  CLI.
 
 Pour le détail complet des choix d'architecture, voir la section
 "Déploiement Docker" de [CLAUDE.md](CLAUDE.md).

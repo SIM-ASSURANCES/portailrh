@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# sim-portail
 
-## Getting Started
+Portail interne modulaire SIM Assurances (Next.js 16 + Prisma 7). Voir
+[CLAUDE.md](CLAUDE.md) pour la documentation complète (architecture,
+règles métier, historique des tickets/phases) et
+[DEPLOIEMENT.md](DEPLOIEMENT.md) pour le déploiement Docker.
 
-First, run the development server:
+## Structure du dépôt (monorepo)
+
+Le projet est organisé en deux packages npm (workspaces), déclarés depuis
+la racine — voir CLAUDE.md, section "Monorepo backend/frontend" pour le
+détail complet et le raisonnement derrière chaque choix :
+
+- **`backend/`** — schéma Prisma (`prisma/`) et logique métier pure
+  (calculs financiers, permissions, reporting, validation), sans
+  dépendance à Next.js.
+- **`frontend/`** — l'application Next.js elle-même (pages, Server
+  Actions, routes API, composants), qui importe `backend` comme une
+  dépendance npm classique (`import { ... } from "backend"`).
+
+## Démarrer en développement
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install                # installe les deux workspaces depuis la racine
+npm run generate            # génère le client Prisma (backend/src/generated)
+npm run migrate             # applique les migrations sur la base locale
+npm run seed                # peuple la base (rôles, permissions, comptes de test)
+npm run dev                 # démarre le serveur Next.js (frontend), port 3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Prérequis : un fichier `.env` **à la racine du dépôt** (partagé par
+Prisma, Next.js et Docker Compose — voir `.env.example`) avec au minimum
+`DATABASE_URL` (PostgreSQL) et `AUTH_SECRET`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Comptes de test (mot de passe `password123` pour tous) :
+`collaborateur@simassurances.test`, `finance@simassurances.test`,
+`dg@simassurances.test`, `admin@simassurances.test`,
+`rh@simassurances.test`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Autres commandes utiles
 
-## Learn More
+```bash
+npm run build                # build de production (frontend)
+npm run start                 # démarre le serveur de production (après build)
+npm run lint                   # eslint sur les deux workspaces
+npm run migrate:deploy          # migrations en mode non-interactif (CI/CD, Docker)
+```
 
-To learn more about Next.js, take a look at the following resources:
+Chaque commande peut aussi être lancée dans un seul workspace via
+`npm run <script> --workspace=backend` (ou `frontend`), ou directement
+depuis son dossier (`cd backend && npx prisma studio`, par exemple).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Déploiement
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Voir [DEPLOIEMENT.md](DEPLOIEMENT.md) — le projet reste livré comme **une
+seule image Docker** (un seul conteneur applicatif), quelle que soit
+l'organisation interne du code en deux packages.

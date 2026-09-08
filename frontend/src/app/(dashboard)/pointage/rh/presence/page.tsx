@@ -1,0 +1,241 @@
+import { getSession } from "@/lib/auth";
+import { PageHeader } from "@/components/ui";
+import { StatCard } from "@/components/ui/StatCard";
+import { prisma } from "backend";
+import { startOfDay, endOfDay, startOfMonth, endOfMonth, format } from "date-fns";
+import { fr } from "date-fns/locale";
+import { PresenceTabs, PresenceData } from "./PresenceTabs";
+import { Card } from "@/components/ui/Card";
+
+export default async function PresenceDuJourPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const session = await getSession();
+
+  if (!session) {
+    return null;
+  }
+
+  const resolvedParams = await searchParams;
+  const dateParam = resolvedParams.date as string;
+  const now = dateParam ? new Date(dateParam) : new Date();
+  
+  const todayStart = startOfDay(now);
+  const todayEnd = endOfDay(now);
+
+  const monthStart = startOfMonth(now);
+  const monthEnd = endOfMonth(now);
+
+  const [pointagesDb, absentsDb, retardsDuMois] = await Promise.all([
+    prisma.pointage.findMany({
+      where: {
+        heure: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
+        user: { isActive: true },
+      },
+      orderBy: { heure: 'asc' },
+      select: {
+        userId: true,
+        type: true,
+        heure: true,
+        heurePrevue: true,
+        estRetard: true,
+        minutesRetard: true,
+        user: { select: { fullName: true, email: true } }
+      },
+    }),
+    prisma.absence.findMany({
+      where: {
+        date: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
+        user: { isActive: true },
+      },
+      include: { user: { select: { fullName: true, email: true } } },
+    }),
+    prisma.pointage.groupBy({
+      by: ["userId"],
+      where: {
+        estRetard: true,
+        heure: {
+          gte: monthStart,
+          lte: monthEnd,
+        },
+        user: { isActive: true },
+      },
+      _sum: {
+        minutesRetard: true,
+      },
+      _count: {
+        id: true,
+      },
+    })
+  ]);
+
+  const userPointagesMap = new Map<string, PresenceData>();
+  
+  pointagesDb.forEach((p) => {
+    let u = userPointagesMap.get(p.userId);
+    if (!u) {
+      u = {
+        userId: p.userId,
+        fullName: p.user.fullName,
+        email: p.user.email,
+        estRetard: false,
+        minutesRetard: 0,
+      };
+      userPointagesMap.set(p.userId, u);
+    }
+
+    if (p.type === "ARRIVEE" && !u.arrivee) {
+      u.arrivee = p.heure.toISOString();
+      u.arriveePrevue = p.heurePrevue;
+      if (p.estRetard) {
+        u.estRetard = true;
+        u.minutesRetard = (u.minutesRetard || 0) + (p.minutesRetard || 0);
+      }
+    } else if (p.type === "DEPART" && !u.depart) {
+      u.depart = p.heure.toISOString();
+      u.departPrevu = p.heurePrevue;
+    }
+  });
+
+  const presents: PresenceData[] = Array.from(userPointagesMap.values());
+  const presentsCount = presents.length;
+  const retardsCount = presents.filter(p => p.estRetard).length;
+  const retards = presents.filter(p => p.estRetard);
+  const absentsCount = absentsDb.length;
+
+  // Calcul des manquants (ni présents, ni déclarés absents)
+  const presentsIds = presents.map((p) => p.userId);
+  const absentsIds = absentsDb.map((a) => a.userId);
+  const exclusIds = [...presentsIds, ...absentsIds];
+
+  const retardsUserIds = retardsDuMois.map((r) => r.userId);
+
+  const [manquantsDb, users] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        isActive: true,
+        id: { notIn: exclusIds },
+      },
+      select: { id: true, fullName: true, email: true },
+    }),
+    prisma.user.findMany({
+      where: { id: { in: retardsUserIds } },
+      select: { id: true, fullName: true, email: true },
+    })
+  ]);
+
+  const manquantsCount = manquantsDb.length;
+
+  const absents: PresenceData[] = absentsDb.map(a => ({
+    userId: a.userId,
+    fullName: a.user.fullName,
+    email: a.user.email
+  }));
+
+  const manquants: PresenceData[] = manquantsDb.map(m => ({
+    userId: m.id,
+    fullName: m.fullName,
+    email: m.email
+  }));
+
+  const retardsAvecUsers = retardsDuMois
+    .map((r) => ({
+      ...r,
+      user: users.find((u) => u.id === r.userId),
+    }))
+    .sort((a, b) => b._count.id - a._count.id);
+
+  return (
+    <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-8 font-sans">
+      <PageHeader
+        title={dateParam ? `Présence du ${format(now, "dd/MM/yyyy")}` : "Présence du jour"}
+        description="Suivi en temps réel des arrivées, retards et absences de la journée."
+        backHref="/pointage/rh"
+        backLabel="Retour à la Boîte à Outils"
+      />
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard
+          icon="check-circle"
+          tone="info"
+          label="Présents"
+          value={presentsCount}
+        />
+        <StatCard
+          icon="clock"
+          tone="info"
+          label="Retardataires"
+          value={retardsCount}
+        />
+        <StatCard
+          icon="x-circle"
+          tone="info"
+          label="Absents"
+          value={absentsCount}
+        />
+        <StatCard
+          icon="help-circle"
+          tone="info"
+          label="Manquants"
+          value={manquantsCount}
+        />
+      </div>
+
+      <div className="space-y-8">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground mb-4">Détails de la présence</h2>
+          <PresenceTabs 
+            presents={presents} 
+            retards={retards} 
+            absents={absents} 
+            manquants={manquants} 
+          />
+        </div>
+        
+        <div>
+          {retardsAvecUsers.length > 0 ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-foreground">Palmarès des retards</h2>
+                <span className="text-sm text-muted-foreground capitalize">
+                  {format(now, "MMMM", { locale: fr })}
+                </span>
+              </div>
+              <Card className="overflow-hidden p-0">
+                <table className="w-full text-sm text-left">
+                  <tbody className="divide-y divide-border">
+                    {retardsAvecUsers.map((retard) => (
+                      <tr key={retard.userId} className="hover:bg-muted/50 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-foreground">{retard.user?.fullName}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {retard._count.id} retards ({retard._sum.minutesRetard} min)
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            </div>
+          ) : (
+             <div className="space-y-4">
+               <h2 className="text-lg font-semibold text-foreground">Palmarès des retards</h2>
+               <Card className="p-4 text-center text-sm text-muted-foreground">
+                 Aucun retard ce mois-ci.
+               </Card>
+             </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

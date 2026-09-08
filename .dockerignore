@@ -1,18 +1,20 @@
 # Dépendances (réinstallées dans l'image, jamais copiées depuis l'hôte :
 # des node_modules Windows contiendraient des binaires natifs incompatibles
-# avec le conteneur Linux).
+# avec le conteneur Linux). Motif sans chemin : s'applique aux node_modules
+# racine ET à ceux, le cas échéant, de backend/frontend.
 node_modules
 npm-debug.log*
 
 # Build Next.js (régénéré dans l'image ; le build local peut viser une
-# plateforme différente du conteneur).
-.next
-out
+# plateforme différente du conteneur). Monorepo : seul `frontend/` est une
+# app Next.js (voir CLAUDE.md "Monorepo backend/frontend").
+frontend/.next
+frontend/out
 
 # Client Prisma généré (régénéré via `prisma generate` dans l'image, jamais
 # copié depuis l'hôte — même raison que node_modules : binaires potentiels
 # pour la mauvaise plateforme).
-src/generated/prisma
+backend/src/generated/prisma
 
 # Git
 .git
