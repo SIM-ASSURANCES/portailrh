@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import { BrandBackdrop } from "@/components/ui";
 
+import { InactivityLogout } from "./InactivityLogout";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 
@@ -93,6 +94,11 @@ export function AppShell({
 
   return (
     <div className="relative z-0 flex min-h-screen border-[3px] border-primary bg-app-bg">
+      {/* Déconnexion automatique après inactivité (voir CLAUDE.md) — monté
+          ici une seule fois pour rester actif sur toutes les pages
+          authentifiées (tout ce qui passe par l'AppShell), sans avoir à
+          l'ajouter à chaque page individuellement. */}
+      <InactivityLogout />
       {/* Fond de marque étendu à toute l'application (voir CLAUDE.md "Fond
           de marque étendu à toute l'application" — décision explicite de
           l'utilisateur, revient sur la restriction initiale à /login).

@@ -1,15 +1,54 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import { encode as defaultJwtEncode } from "next-auth/jwt";
 import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/prisma";
 import { cache } from "react";
+
+// "Se souvenir de moi" (voir CLAUDE.md "Se souvenir de moi") — deux durées,
+// jamais une troisième valeur ailleurs dans le code.
+const SESSION_MAX_AGE_REMEMBERED = 30 * 24 * 60 * 60; // 30 jours (coché)
+const SESSION_MAX_AGE_DEFAULT = 24 * 60 * 60; // 1 jour (décoché, par défaut)
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: {
     // Obligatoire avec le Credentials provider : Auth.js ne supporte pas les
     // sessions persistées en base (adapter) avec ce provider, uniquement le JWT.
     strategy: "jwt",
+    // Plafond du cookie envoyé au navigateur (Max-Age/Expires) — TOUJOURS la
+    // durée longue, quelle que soit la case "Se souvenir de moi". Limitation
+    // documentée d'Auth.js v5 : cette valeur est résolue une seule fois pour
+    // toute l'app (`@auth/core`, `lib/actions/callback/index.js`), jamais
+    // par requête — impossible d'en faire un vrai cookie de session (sans
+    // Max-Age, supprimé à la fermeture du navigateur) uniquement pour le cas
+    // décoché sans réimplémenter `signIn()` à la main. La durée RÉELLE de la
+    // session est en réalité imposée par `jwt.encode` ci-dessous (le
+    // `exp` chiffré à l'intérieur du JWT, vérifié par Auth.js à chaque
+    // lecture) : un cookie non "mémorisé" reste physiquement dans le
+    // navigateur jusqu'à 30 jours, mais son JWT devient cryptographiquement
+    // invalide au bout de `SESSION_MAX_AGE_DEFAULT` — `getSession()` renvoie
+    // alors `null` comme n'importe quelle session expirée, l'utilisateur est
+    // redirigé vers `/login` à la prochaine page. Choix documenté et
+    // délibéré (voir CLAUDE.md) plutôt qu'une vraie expiration à la
+    // fermeture du navigateur, jugée moins fiable en pratique (restauration
+    // de session par le navigateur, onglets laissés ouverts des jours).
+    maxAge: SESSION_MAX_AGE_REMEMBERED,
+  },
+  jwt: {
+    // Surcharge du `encode` par défaut d'Auth.js : seul point du cycle de vie
+    // où la durée RÉELLE (le `exp` chiffré dans le JWT) peut varier par
+    // utilisateur — `session.maxAge` ci-dessus reste, lui, une valeur unique
+    // pour toute l'app. Lu sur `token.rememberMe`, posé par le callback
+    // `jwt` ci-dessous à partir de `authorize()` (jamais recalculé après le
+    // login initial : `token.rememberMe` persiste tel quel d'un appel à
+    // l'autre du callback `jwt`, jamais réécrit à `undefined`).
+    async encode(params) {
+      const maxAge = params.token?.rememberMe
+        ? SESSION_MAX_AGE_REMEMBERED
+        : SESSION_MAX_AGE_DEFAULT;
+      return defaultJwtEncode({ ...params, maxAge });
+    },
   },
   pages: {
     signIn: "/login",
@@ -19,6 +58,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Mot de passe", type: "password" },
+        // Déclaré ici uniquement pour que TypeScript connaisse la clé sur
+        // `credentials` dans `authorize()` ci-dessous — jamais rendu par un
+        // formulaire NextAuth par défaut (le portail a son propre /login,
+        // voir `pages.signIn`).
+        rememberMe: { label: "Se souvenir de moi", type: "text" },
       },
       async authorize(credentials) {
         const email = credentials?.email;
@@ -51,6 +95,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           fullName: user.fullName,
           email: user.email,
           role: user.role.name,
+          // Champ brut transmis par le formulaire de connexion (voir
+          // `login/page.tsx`), jamais validé par zod ici : une valeur
+          // absente ou invalide retombe simplement sur `false` (session
+          // courte), jamais sur la durée longue par erreur.
+          rememberMe: credentials?.rememberMe === "true",
         };
       },
     }),
@@ -63,6 +112,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.id = user.id;
         token.fullName = user.fullName;
         token.role = user.role;
+        token.rememberMe = user.rememberMe;
       }
       return token;
     },

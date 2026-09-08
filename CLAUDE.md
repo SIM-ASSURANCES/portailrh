@@ -6667,6 +6667,239 @@ d'écran, un toggle de module immédiatement réverti, et une redirection en
 lecture seule) : rien à nettoyer en base. Serveur `next dev` arrêté après
 vérification.
 
+## Déconnexion automatique après inactivité
+
+**Statut : terminé.** La session JWT dure jusqu'à 30 jours (voir "Se
+souvenir de moi" ci-dessous), indépendamment de toute activité réelle —
+sans mécanisme dédié, un poste laissé ouvert et sans surveillance restait
+donc authentifié indéfiniment. Ajoute une déconnexion **côté client**,
+basée sur une vraie inactivité utilisateur, distincte de toute logique
+d'expiration de session (Tâche B) : les deux mécanismes coexistent sans
+interférence, l'un déconnecte après un temps d'inactivité (quel que soit
+l'âge de la session), l'autre après un âge de session (quelle que soit
+l'activité).
+
+### `InactivityLogout.tsx` (`src/components/layout/`)
+
+Client Component monté **une seule fois depuis `AppShell.tsx`**
+(`(dashboard)/layout.tsx` → `AppShell` → ce composant), donc actif sur
+**toutes** les pages authentifiées sans avoir à l'ajouter page par page —
+même principe de montage centralisé que `Sidebar`/`Topbar`. Ne rend rien
+(`return null`), purement un effet de bord.
+
+- **`INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000`** (60 minutes), constante
+  unique du fichier.
+- **Évènements comptant comme une activité réelle** : `mousemove`,
+  `mousedown`, `keydown`, `wheel`, `touchstart`, `scroll` — volontairement
+  restreint à des interactions physiques directes, jamais une notion
+  d'activité réseau. Chaque évènement reset un `setTimeout` unique
+  (`clearTimeout` + nouveau `setTimeout`), throttlé à un reset par seconde
+  maximum (`RESET_THROTTLE_MS`) pour ne pas relancer le minuteur à chaque
+  pixel d'un `mousemove` continu (potentiellement des centaines par
+  seconde).
+- **`event.isTrusted` revérifié dans le handler** (défense en profondeur,
+  en plus du choix des types d'évènements) : rejette tout évènement
+  dispatché par du code plutôt que par le navigateur en réponse à une
+  action physique.
+- **Le rafraîchissement SSE (`Topbar.tsx`, voir "Rafraîchissement en temps
+  réel") ne compte JAMAIS comme de l'activité** — vérifié par construction,
+  pas seulement par intention : `router.refresh()` ne dispatche aucun des
+  évènements écoutés ci-dessus (ni `mousemove`, ni `keydown`, ni `scroll`,
+  etc.), donc rien à filtrer explicitement pour ce cas précis. Confirmé
+  par un vrai parcours navigateur (voir "Vérifié explicitement").
+- **Fonctionne sur un onglet resté en arrière-plan** (délaissé, pas
+  seulement l'écran en veille du PC) : implémenté avec un simple
+  `setTimeout`/`clearTimeout` (jamais `requestAnimationFrame`, qui se met
+  en pause dans un onglet masqué) — un `setTimeout` continue de s'exécuter
+  dans un onglet en arrière-plan, seulement ralenti par le navigateur au-
+  delà de quelques minutes, jamais interrompu, largement dans la marge
+  d'une minuterie de 60 minutes. Vérifié explicitement avec deux onglets
+  (voir plus bas).
+- **Déclenchement** : `logoutForInactivityAction()` (nouvelle Server
+  Action, `src/components/layout/actions.ts`, à côté de `signOutAction`
+  déjà utilisée par le bouton « Déconnexion » de la sidebar) — même
+  `signOut()` server-side de `@/lib/auth`, `redirectTo:
+  "/login?error=inactivite"`. **Écart assumé par rapport à la demande
+  initiale** (qui suggérait `signOut()` de `next-auth/react`) : le projet
+  n'utilise `next-auth/react` nulle part ailleurs (pas de
+  `SessionProvider`, pas de `NEXTAUTH_URL` configuré pour un usage
+  client), alors que le pattern `signOut()` server-side + Server Action
+  appelée directement depuis un Client Component (sans `<form>`, comme
+  `validerTotalementAction`/`confirmerReglementAction` ailleurs dans le
+  projet) est déjà éprouvé dans ce fichier même (`signOutAction`) —
+  réutilisé à l'identique pour un comportement strictement équivalent,
+  sans introduire de nouvelle dépendance client ni de risque de
+  configuration manquante.
+
+### Message affiché (`login/page.tsx`)
+
+`error=inactivite` est une valeur dédiée du paramètre `error` déjà utilisé
+pour l'échec de connexion (`error=1`) — un nouveau `if (error ===
+"inactivite")` avant le cas générique, bandeau `warning` (orange, distinct
+du bandeau `danger` rouge de l'échec de connexion) : « Vous avez été
+déconnecté après une période d'inactivité. »
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle (mêmes erreurs
+préexistantes du Module Pointage RH, hors périmètre). Vrai parcours
+navigateur (Chromium headless, Playwright, non ajouté au projet), délai
+temporairement réduit à 10 secondes le temps du test (remis à 60 minutes
+juste après, confirmé par relecture du fichier) :
+
+- **Inactivité réelle** : connexion puis aucune activité pendant 13s (>
+  10s de test) → déconnexion automatique, redirection vers
+  `/login?error=inactivite`, bandeau « Vous avez été déconnecté après une
+  période d'inactivité. » visible.
+- **Activité réelle réinitialise le minuteur** : connexion puis
+  `mousemove` toutes les 4s pendant 16s (dépasse le délai de test de 10s,
+  mais jamais 4s sans activité) → session toujours active, aucune
+  déconnexion.
+- **Onglet en arrière-plan délaissé** : connexion sur un premier onglet,
+  focus donné à un second onglet (le premier passe en arrière-plan,
+  jamais réactivé pendant le test), 13s sans aucune activité sur le
+  premier → déconnexion automatique quand même, confirmée en ramenant le
+  premier onglet au premier plan après coup (`/login?error=inactivite`).
+- **Non-régression SSE** (vérifiée avec les valeurs de PRODUCTION, 60
+  minutes) : deux onglets admin sur `/admin/modules`, toggle d'un module
+  dans le second → le premier onglet se rafraîchit automatiquement via SSE
+  (statut "Actif"→"Inactif" reflété sans action de l'utilisateur sur ce
+  premier onglet) exactement comme avant cette tâche — aucune régression
+  du mécanisme de `Topbar.tsx`/`src/lib/eventBus.ts`, et ce rafraîchissement
+  ne relance jamais le minuteur d'inactivité (par construction, voir
+  ci-dessus). Zéro erreur console sur l'ensemble de ce parcours.
+
+Piège rencontré et documenté pour référence : un premier test comparant
+les Tâches A et B **en même temps** (délai d'inactivité réduit à 10s ET
+durée de session courte réduite à 5s dans la même session de test) a
+d'abord semblé indiquer un bug côté Tâche B (les deux durées de session,
+courte ET longue, semblaient expirer) — en réalité, c'est le minuteur
+d'inactivité (Tâche A, déjà réduit à 10s pour son propre test) qui
+déconnectait les deux pendant l'attente du test de Tâche B, sans lien avec
+la durée de session elle-même. Corrigé en isolant chaque test (délai
+d'inactivité neutralisé le temps de vérifier la Tâche B, et inversement) —
+à retenir si les deux mécanismes sont retestés ensemble un jour : toujours
+neutraliser l'un pour vérifier l'autre isolément.
+
+Modules réactivés après le test SSE (état identique avant/après, confirmé
+par relecture directe de `/admin/modules`) ; aucune autre donnée de test
+créée (uniquement des connexions et une navigation). Serveur `next dev`
+arrêté après vérification.
+
+## Se souvenir de moi
+
+**Statut : terminé.** Par défaut, une session dure jusqu'à 30 jours
+(`session.maxAge`, stratégie JWT) qu'elle soit utilisée ou non — pas de
+distinction entre une connexion ponctuelle sur un poste partagé et une
+connexion sur un poste personnel. Ajoute une case à cocher « Se souvenir
+de moi » sur `/login`, décochée par défaut (comportement "sécurisé par
+défaut", cohérent avec le reste du portail).
+
+### Limitation d'Auth.js v5 découverte en investiguant l'implémentation (lecture du code source de `@auth/core`/`next-auth`, pas de la documentation — ce module est explicitement marqué "sera refactoré" dans son propre JSDoc)
+
+Un cookie de session JWT porte en réalité **deux durées de vie
+indépendantes**, et Auth.js v5 (`@auth/core`, vérifié dans
+`lib/actions/callback/index.js`/`lib/init.js`) ne permet de rendre
+dynamique par requête que l'une des deux :
+
+1. **Le `Max-Age`/`Expires` du cookie envoyé au navigateur** — calculé à
+   chaque connexion à partir de `options.session.maxAge`, une valeur
+   **unique pour toute l'application**, résolue une seule fois par
+   `@auth/core` (jamais par requête, jamais par utilisateur). Aucun hook
+   du config NextAuth ne permet de la faire varier dynamiquement par
+   connexion sans réimplémenter `signIn()` à la main (bypasser
+   `next-auth/lib/actions.js` pour appeler `@auth/core`'s `Auth()`
+   directement et retoucher les cookies retournés avant de les écrire) —
+   jugé disproportionné et fragile (couplage fort à des détails internes
+   non documentés comme stables) pour ce besoin.
+2. **Le `exp` chiffré à l'intérieur du JWT lui-même** — calculé par
+   `jwt.encode()`, qui **est** personnalisable par requête : Auth.js
+   accepte une fonction `encode` custom dans la config `jwt: {...}`, appelée
+   à chaque (ré)émission du JWT avec le `token` déjà résolu par le callback
+   `jwt` (donc avec toute donnée qu'on y a posée au login). C'est le SEUL
+   point du cycle de vie où une durée dynamique par utilisateur est
+   possible proprement.
+
+**Choix retenu, documenté explicitement (répond à la consigne "propose 1
+jour, documente ton choix")** : `session.maxAge` reste fixé à la durée
+LONGUE (30 jours, `SESSION_MAX_AGE_REMEMBERED`) — c'est le plafond du
+cookie brut, identique dans les deux cas. La durée courte (1 jour,
+`SESSION_MAX_AGE_DEFAULT`, cas décoché) est imposée uniquement via le
+`exp` chiffré du JWT, par un `jwt.encode` personnalisé
+(`src/lib/auth.ts`) qui lit `token.rememberMe` et appelle l'`encode` par
+défaut d'Auth.js (`encode` de `next-auth/jwt`, réexporté tel quel) avec le
+`maxAge` approprié. **Conséquence assumée** : un cookie non « mémorisé »
+reste physiquement présent dans le navigateur jusqu'à 30 jours, mais son
+JWT devient cryptographiquement invalide au bout d'1 jour — `jwtDecrypt`
+(librairie `jose`, utilisée en interne par Auth.js) rejette alors le token
+comme n'importe quel JWT expiré, `getSession()` renvoie `null`,
+l'utilisateur est redirigé vers `/login` à la prochaine page consultée.
+**Pas une vraie expiration "à la fermeture du navigateur"** (l'autre
+option proposée dans la consigne) : jugée moins fiable en pratique de
+toute façon (restauration de session par certains navigateurs, onglets
+laissés ouverts plusieurs jours) que cette durée courte fixe, et surtout
+la seule option atteignable proprement avec l'architecture actuelle
+d'Auth.js v5 sans réimplémenter `signIn()`.
+
+### Propagation de `rememberMe` (`src/lib/auth.ts`)
+
+- `Credentials({ credentials: { email, password, rememberMe } })` —
+  `rememberMe` déclaré dans le schéma **uniquement pour que TypeScript
+  connaisse cette clé** dans `authorize()` (jamais rendu par un formulaire
+  NextAuth par défaut, le portail a son propre `/login`).
+- `authorize()` lit `credentials?.rememberMe === "true"` (chaîne brute
+  transmise par le formulaire, jamais validée par zod ici — une valeur
+  absente ou invalide retombe simplement sur `false`, la durée courte,
+  jamais sur la durée longue par erreur) et l'ajoute au `User` retourné.
+- Callback `jwt` : `token.rememberMe = user.rememberMe` **uniquement**
+  quand `user` est présent (connexion initiale) — persiste ensuite tel
+  quel d'un appel au callback à l'autre (jamais réécrit à `undefined`),
+  donc toujours disponible pour `jwt.encode` à chaque réémission
+  ultérieure du token.
+- **Jamais exposé côté `Session`** (le callback `session` ne le recopie
+  pas) : usage strictement interne au serveur, pour piloter `exp`
+  uniquement — augmentation de type ajoutée à `User`/`JWT`
+  (`src/types/next-auth.d.ts`), pas à `Session`.
+
+### Formulaire (`login/page.tsx`)
+
+Case à cocher native (`<input type="checkbox" name="rememberMe">`, mêmes
+classes que `PermissionToggle.tsx`, `h-4 w-4 rounded border-border
+accent-primary` — aucun composant `Checkbox` partagé n'existait encore
+dans `src/components/ui/`, pas introduit ici pour un usage unique).
+**Décochée par défaut** (pas de `defaultChecked`). La Server Action
+`authenticate` lit `formData.get("rememberMe") === "on"` (une checkbox
+HTML non cochée n'apparaît PAS du tout dans `FormData` — `=== "on"` couvre
+correctement les deux cas sans avoir à tester l'absence séparément) et la
+transmet à `signIn("credentials", { ..., rememberMe: "true" | "false" })`.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` et `npx eslint .` sans erreur nouvelle. Vrai parcours
+navigateur (Chromium headless, Playwright, non ajouté au projet), délai
+court temporairement réduit à 5 secondes le temps du test (remis à 1 jour
+juste après, confirmé par relecture du fichier) :
+
+- **Cookie brut** : `Max-Age` mesuré à ~30 jours dans les deux cas (coché
+  et décoché) — confirme le point 1 ci-dessus (plafond commun, jamais
+  différencié côté cookie).
+- **Comportement fonctionnel réel, décoché** : connexion sans cocher,
+  attente de 25s (> 5s de test + 15s de tolérance d'horloge d'Auth.js,
+  `jose`/`clockTolerance`, voir `@auth/core/jwt.js`) → navigation vers une
+  page protégée redirige bien vers `/login` (session devenue invalide),
+  malgré un cookie brut techniquement encore présent.
+- **Comportement fonctionnel réel, coché** : même scénario avec la case
+  cochée → la page protégée reste accessible après les mêmes 25s (session
+  toujours valide, `jwt.encode` a bien utilisé les 30 jours).
+- **Non-régression du reste de l'authentification** : connexion normale
+  (sans cocher), navigation sur plusieurs pages protégées
+  (`/treso/tableau-de-bord`, `/treso/demandes`) — zéro erreur console,
+  comportement inchangé.
+
+Aucune donnée de test créée (uniquement des connexions avec le compte
+`collaborateur@simassurances.test` déjà existant) : rien à nettoyer en
+base. Serveur `next dev` arrêté après vérification.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

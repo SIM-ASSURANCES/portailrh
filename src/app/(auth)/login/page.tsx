@@ -16,6 +16,11 @@ async function authenticate(formData: FormData) {
     await signIn("credentials", {
       email: formData.get("email"),
       password: formData.get("password"),
+      // "Se souvenir de moi" (voir CLAUDE.md "Se souvenir de moi") : une
+      // case à cocher non cochée n'apparaît PAS dans `formData` (comportement
+      // natif HTML des checkbox) — `=== "on"` couvre les deux cas sans avoir
+      // besoin de tester l'absence explicitement.
+      rememberMe: formData.get("rememberMe") === "on" ? "true" : "false",
       redirectTo: callbackUrl.startsWith("/") ? callbackUrl : "/",
     });
   } catch (error) {
@@ -61,7 +66,17 @@ export default async function LoginPage({
             <p className="mt-1 text-sm text-muted-foreground">Portail interne SIM Assurances</p>
           </div>
 
-          {error ? (
+          {/* Déconnexion automatique après inactivité (voir CLAUDE.md
+              "Déconnexion automatique après inactivité") — message distinct
+              de l'échec de connexion, `error` réutilisé avec une valeur
+              dédiée plutôt qu'un nouveau paramètre séparé (même convention
+              que `activated` ci-dessous, un paramètre par cas de figure). */}
+          {error === "inactivite" ? (
+            <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-warning-border bg-warning-bg px-3 py-2 text-sm text-warning">
+              <Icon name="alert-triangle" className="mt-0.5 size-4 shrink-0" />
+              Vous avez été déconnecté après une période d&apos;inactivité.
+            </p>
+          ) : error ? (
             <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
               <Icon name="alert-triangle" className="mt-0.5 size-4 shrink-0" />
               Email ou mot de passe incorrect.
@@ -88,6 +103,18 @@ export default async function LoginPage({
             autoComplete="current-password"
           />
           <input type="hidden" name="callbackUrl" value={callbackUrl ?? "/"} />
+
+          {/* "Se souvenir de moi" (voir CLAUDE.md) : décochée par défaut
+              (session courte, 1 jour) — jamais pré-cochée, cohérent avec le
+              principe "sécurisé par défaut" du reste du portail. */}
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              name="rememberMe"
+              className="h-4 w-4 rounded border-border accent-primary"
+            />
+            Se souvenir de moi
+          </label>
 
           <LoginSubmitButton />
         </form>

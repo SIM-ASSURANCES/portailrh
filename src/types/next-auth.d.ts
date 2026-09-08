@@ -8,6 +8,11 @@ declare module "next-auth" {
     fullName: string;
     email: string;
     role: string;
+    /** "Se souvenir de moi" (voir CLAUDE.md "Se souvenir de moi") — porté
+     * depuis `authorize()` jusqu'au callback `jwt` pour piloter la durée de
+     * vie réelle du JWT (`src/lib/auth.ts`, `jwt.encode` personnalisé).
+     * Jamais exposé côté `Session` : usage interne serveur uniquement. */
+    rememberMe?: boolean;
   }
 
   interface Session {
@@ -28,5 +33,7 @@ declare module "@auth/core/jwt" {
     id: string;
     fullName: string;
     role: string;
+    /** Voir `User.rememberMe` ci-dessus. */
+    rememberMe?: boolean;
   }
 }
