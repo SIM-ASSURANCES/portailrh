@@ -12,6 +12,18 @@ import { encode as defaultJwtEncode } from "next-auth/jwt";
 // middleware aurait ré-émis un token avec la durée PAR DÉFAUT d'Auth.js
 // (30 jours, aucune notion de `rememberMe`) dès la première navigation
 // après connexion — neutralisant silencieusement la case décochée.
+//
+// Conséquence vérifiée du merge avec le middleware (`src/proxy.ts`,
+// apporté par ailleurs) : ce ré-encodage à chaque requête fait de la durée
+// COURTE (décochée) une fenêtre GLISSANTE, pas une expiration fixe depuis
+// la connexion — chaque navigation repousse l'échéance de
+// `SESSION_MAX_AGE_DEFAULT`. Avant l'introduction du middleware, rien ne
+// rafraîchissait jamais le cookie après la connexion initiale (aucun
+// `SessionProvider`/`middleware.ts` dans le projet), donc la session
+// expirait strictement à `login + SESSION_MAX_AGE_DEFAULT`. Concrètement,
+// "1 jour" décoché signifie maintenant "1 jour depuis la DERNIÈRE page
+// visitée", pas "1 jour depuis la connexion" — comportement plus proche de
+// ce qu'attend un utilisateur actif, vérifié explicitement (voir CLAUDE.md).
 const SESSION_MAX_AGE_REMEMBERED = 30 * 24 * 60 * 60; // 30 jours (coché)
 const SESSION_MAX_AGE_DEFAULT = 24 * 60 * 60; // 1 jour (décoché, par défaut)
 
