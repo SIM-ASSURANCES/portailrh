@@ -6900,6 +6900,345 @@ Aucune donnée de test créée (uniquement des connexions avec le compte
 `collaborateur@simassurances.test` déjà existant) : rien à nettoyer en
 base. Serveur `next dev` arrêté après vérification.
 
+## Monorepo backend/frontend
+
+**Statut : terminé.** Demande explicite du maître de stage : séparer le
+projet en deux dossiers clairs, `backend/` et `frontend/`, pour faciliter
+sa compréhension et son déploiement — un monorepo à deux workspaces npm,
+**déplacement de fichiers, pas une réécriture** : aucune logique métier
+changée, seuls les imports et la configuration ont bougé.
+
+### Structure finale
+
+```
+sim-portail/
+├── package.json          # racine : déclare les workspaces ["backend", "frontend"]
+├── .env                   # UNIQUE, partagé par les deux packages + Docker Compose
+├── Dockerfile / docker-compose.yml / docker-entrypoint.sh   # inchangés de place, adaptés au contenu
+├── backend/
+│   ├── package.json        # nom npm "backend" — @prisma/*, pg, bcryptjs, zod, ipaddr.js, tsx
+│   ├── prisma7.config.ts   # config Prisma 7 (schema/migrations/seed, charge le .env racine)
+│   ├── tsconfig.json / eslint.config.mjs   # config TS pure, sans eslint-config-next
+│   ├── prisma/              # schema.prisma, migrations/, seed.ts, clear_data.ts, set-admin.ts
+│   └── src/
+│       ├── index.ts           # point d'entrée principal : réexporte tout (Prisma généré,
+│       │                       # singleton, logique métier, permissions)
+│       ├── client-safe.ts     # sous-chemin "backend/client" — voir plus bas
+│       ├── prisma.ts          # singleton PrismaClient (driver adapter pg)
+│       ├── permissions.ts     # hasPermission / isAdmin / getAccessibleModules
+│       ├── tresorerie.ts, reporting.ts, dashboardFinance.ts, pointageReporting.ts,
+│       │   pointage-utils.ts, reference.ts, validation.ts, beneficiaire.ts
+│       └── generated/prisma/  # généré par `npx prisma generate` (gitignored)
+└── frontend/
+    ├── package.json        # nom npm "frontend" — dépend de "backend": "*" (référence de workspace)
+    ├── next.config.ts       # outputFileTracingRoot + transpilePackages: ["backend"]
+    ├── tsconfig.json / eslint.config.mjs / postcss.config.mjs / next-env.d.ts
+    └── src/
+        ├── app/               # pages, Server Actions, routes API — INCHANGÉ, Next.js l'impose
+        ├── components/          # composants UI et métier — INCHANGÉ
+        ├── types/               # augmentation de types next-auth.d.ts — INCHANGÉ
+        └── lib/
+            ├── auth.ts, auth.config.ts, proxy.ts (middleware), eventBus.ts, events.ts
+            ├── notifications.ts   # couplé à eventBus.ts, reste ici (voir plus bas)
+            ├── hooks/useActionFeedback.ts
+            └── pdf/                # ReceiptDocument.tsx, BonDeCaisseDocument.tsx, fonts/...
+```
+
+### Où va quoi, et pourquoi (le raisonnement demandé AVANT tout déplacement)
+
+**Contrainte Next.js non négociable, rappelée par le maître de stage** :
+`app/` (pages, Server Actions, routes API) doit rester un seul arbre pour
+que le routeur de fichiers de Next.js fonctionne — aucune tentative de le
+scinder.
+
+**`backend/`** — logique métier pure, sans dépendance à Next.js :
+`tresorerie.ts`, `reporting.ts`, `dashboardFinance.ts`,
+`pointageReporting.ts`, `pointage-utils.ts`, `reference.ts`,
+`validation.ts`, le singleton `prisma.ts`, le schéma Prisma complet
+(`prisma/`). Vérifié fichier par fichier avant tout déplacement (`grep`
+systématique) : aucun de ces fichiers n'importe quoi que ce soit de
+`next`/`react`/`@/app`/`@/components` — confirmé a posteriori par
+`backend/tsconfig.json` (aucune dépendance `next`/`react` dans son
+`package.json`).
+
+**Deux exceptions au découpage `src/lib/` → `backend/`, décidées et
+documentées avant le déplacement :**
+
+1. **`src/components/tresorerie/beneficiaire.ts` → `backend/src/beneficiaire.ts`**
+   (PAS un fichier `src/lib/` à l'origine). Découvert en vérifiant les
+   imports de `reporting.ts` : il importait `getBeneficiaireNom` depuis ce
+   fichier, physiquement rangé sous `src/components/` par convention du
+   projet (colocalisé avec ses composants `.tsx` sœurs) mais 100% pur
+   (aucun import React/Next, seulement un type Prisma effacé à la
+   compilation). Le laisser en `frontend/` aurait créé une dépendance
+   backend → frontend, interdite (le sens de dépendance doit toujours être
+   frontend → backend). Seul CE fichier a été déplacé parmi les 5 fichiers
+   similaires de `src/components/tresorerie/` (`demandeStatut.ts`,
+   `depenseDirecte.ts`, `devise.ts`, `justification.ts` restent en
+   frontend, non nécessaires par le backend) : `demandeStatut.ts` en
+   particulier importe `BadgeVariant` depuis `@/components/ui`, un type
+   frontend — il n'aurait de toute façon pas pu être déplacé proprement.
+
+2. **`hasPermission`/`isAdmin`/`getAccessibleModules` extraites de
+   `frontend/src/lib/auth.ts` vers `backend/src/permissions.ts`** — ce
+   sont des règles de permissions pures (aucune dépendance Next.js/NextAuth,
+   juste des fonctions sur `session`/`prisma`), mais elles vivaient dans le
+   même fichier que l'instance NextAuth elle-même (indéplaçable, voir
+   ci-dessous). Extraites dans leur propre fichier backend, puis
+   **ré-exportées sous le même nom depuis `frontend/src/lib/auth.ts`**
+   (`export { hasPermission, isAdmin, getAccessibleModules }`) : les ~65
+   fichiers qui font `import { getSession, hasPermission, isAdmin } from
+   "@/lib/auth"` n'ont **eu besoin d'aucune modification** — seul le point
+   d'implémentation a changé, jamais leur point d'import. Ce choix a
+   directement réduit la taille de la Tâche 3 (import à mettre à jour) de
+   ~65 fichiers.
+
+**Reste en `frontend/`, alors que ces trois candidats semblaient a priori
+"backend" — cas où forcer le découpage aurait cassé quelque chose :**
+
+- **`src/lib/auth.ts` et `src/lib/auth.config.ts`** — impossibles à
+  déplacer vers `backend/` : `auth.ts` exporte `handlers` consommé
+  directement par `frontend/src/app/api/auth/[...nextauth]/route.ts` (un
+  Route Handler, qui DOIT rester dans `app/`), et `signIn`/`signOut` de
+  NextAuth utilisent en interne `next/headers`/`next/navigation` — des API
+  Next.js pures, inutilisables hors d'une requête Next.js. `auth.config.ts`
+  est en plus directement importé par `frontend/src/proxy.ts` (le
+  middleware Edge, qui doit lui aussi rester dans `frontend/` par
+  construction Next.js). Les deux restent donc des fichiers
+  Next.js/NextAuth à part entière, pas de la "logique métier portable" —
+  malgré leur nom `lib/`.
+- **`src/lib/eventBus.ts` et `src/lib/events.ts`** (mécanisme SSE) —
+  **auraient pu** techniquement déplacer sans casser (aucun import
+  Next.js, juste `node:events`), mais **choix documenté de les garder en
+  frontend** : ce sont des `EventEmitter` en mémoire dont l'unique rôle est
+  de relier entre eux des Server Actions et un Route Handler SSE, tous les
+  deux dans `frontend/src/app/` — de l'infrastructure applicative pour le
+  rafraîchissement temps réel de l'UI, pas une règle métier au sens de la
+  consigne ("calculs financiers, règles de permissions, reporting,
+  validation..."). Les mettre en `backend/` aurait fonctionné (import
+  depuis un package workspace, singleton toujours partagé), mais aurait
+  été un rangement artificiel — ce fichier ne fait aucun calcul, ne touche
+  jamais Prisma. `notifications.ts` (nouveau fichier, hors de l'inventaire
+  initial de `src/lib/`) suit la même logique : il écrit bien en base via
+  Prisma (`backend`), mais appelle aussi directement `publishDataChanged()`
+  d'`eventBus.ts` dans la même fonction — inséparable sans le scinder
+  artificiellement, laissé entier en `frontend/`.
+- **`src/lib/pdf/`** (5 fichiers + `fonts/*.ttf`) — **le cas le plus
+  délicat, résolu autrement que prévu.** Sur le papier, aucune dépendance
+  Next.js (juste `@react-pdf/renderer`, un moteur PDF basé sur React mais
+  indépendant de Next). Mais `registerFonts.ts` charge les polices via
+  `path.join(process.cwd(), "src/lib/pdf/fonts", ...)` — et ce choix précis
+  de `process.cwd()` (plutôt que `__dirname`) est le résultat d'un incident
+  déjà documenté au Ticket 9/Phase E : `__dirname` est réécrit par
+  Turbopack vers un chemin racine virtuel inexistant sur disque dès que le
+  fichier est bundlé par Next.js. Déplacer `pdf/` vers `backend/` (un
+  package distinct, physiquement ailleurs sur disque) aurait cassé le
+  calcul du chemin des polices dans TOUS les contextes où ce code
+  s'exécute réellement (dev, build Docker) puisque `process.cwd()` du
+  serveur Next.js reste toujours la racine de `frontend/`, jamais celle de
+  `backend/` — recréant exactement le problème déjà résolu une fois.
+  **Solution retenue : `pdf/` reste entièrement dans `frontend/`**, comme
+  les deux seuls Route Handlers qui l'utilisent
+  (`api/treso/reglements/[id]/recu` et `.../bon-de-caisse`, vérifié par
+  `grep` exhaustif — aucun autre fichier n'y touche). `@react-pdf/renderer`
+  devient donc une dépendance frontend, pas backend.
+
+### `backend/src/client-safe.ts` — un problème de bundling découvert en marche
+
+**Incident réel rencontré et résolu pendant la Tâche 5 (`npm run build`),
+pas anticipé dans le plan initial.** `backend/src/index.ts` réexporte tout
+en bloc (`export * from "./prisma"`, etc.) — pratique, mais un Client
+Component qui importe une simple VALEUR (pas un type, toujours effacé à la
+compilation) depuis `"backend"` entraîne tout le graphe de `index.ts` dans
+le bundle navigateur, y compris le singleton Prisma et son driver `pg`
+(dépendances Node pures : `tls`, `util/types`...). Concrètement :
+`CategorisationForm.tsx` (Client Component) important
+`IDLE_ACTION_STATE` depuis `"backend"` faisait échouer `next build` avec
+`Module not found: Can't resolve 'tls'`.
+
+**Solution : un second point d'entrée, `backend/src/client-safe.ts`**,
+exposé via `backend/package.json` (`"exports": { ".": "./src/index.ts",
+"./client": "./src/client-safe.ts" }`), qui ne réexporte QUE des valeurs
+prouvées sans aucune dépendance Node : les enums Prisma générés
+(`generated/prisma/enums.ts`, un fichier séparé de `client.ts`,
+explicitement documenté par Prisma comme "safe to import directly"),
+`validation.ts` (`ActionState`/`IDLE_ACTION_STATE`/`fieldErrorsFromZod`,
+ne dépend que de `zod`) et `beneficiaire.ts`. Les ~13 Client Components qui
+importaient une valeur (pas un type) depuis `"backend"` — `IDLE_ACTION_STATE`
+dans la plupart des formulaires, `StatutAbsence`, `BENEFICIAIRE_TYPE_OPTIONS`
+— ont été redirigés vers `"backend/client"`. Les imports de TYPES
+(`import type { StatutDemande } from "backend"`, très nombreux) n'ont,
+eux, jamais eu besoin d'être touchés : `isolatedModules: true` garantit
+qu'ils sont effacés avant même que le bundler ne les voie.
+
+### `.env` unique à la racine du monorepo
+
+**Choix (option B envisagée, écartée) : `.env` DANS `frontend/`** aurait
+été le chemin de moindre résistance pour Next.js (chargement natif, zéro
+code), mais aurait cassé le chargement natif de Docker Compose (qui lit
+`.env` depuis l'endroit où `docker-compose.yml` vit, toujours la racine du
+monorepo) sans argument `--env-file` supplémentaire à chaque commande.
+
+**Choix retenu : `.env` reste à la racine du monorepo**, lu par :
+- **Docker Compose** — nativement, aucun changement (le fichier n'a pas
+  bougé).
+- **`backend/prisma7.config.ts` et les scripts `backend/prisma/*.ts`**
+  (`seed.ts`, `set-admin.ts`, `clear_data.ts`) — `dotenv.config({ path:
+  path.resolve(__dirname, "../.env") })` (ou `"../../.env"` pour les
+  scripts sous `prisma/`), un chemin calculé depuis `__dirname` (fiable ici
+  : ces fichiers ne sont **jamais** bundlés par Turbopack, seulement
+  exécutés directement par `tsx`/la CLI Prisma — le piège `__dirname`
+  documenté plus haut pour `registerFonts.ts` ne s'applique qu'au code
+  bundlé par Next.js).
+- **Next.js (`frontend/`)** — **PAS** via `@next/env`'s `loadEnvConfig()`
+  appelé depuis `next.config.ts` : **essayé en premier, et rejeté après un
+  vrai test de connexion en échec** (`MissingSecret: Please define a
+  secret`, `AUTH_SECRET` invisible du Route Handler NextAuth au runtime).
+  La mutation de `process.env` faite pendant le chargement de
+  `next.config.ts` ne se propage pas de façon fiable au contexte qui
+  exécute réellement les requêtes sous Turbopack — probablement un
+  processus/contexte distinct pour le pool de requêtes. **Solution
+  retenue, robuste et sans hypothèse sur l'architecture interne du
+  serveur de dev** : `frontend/package.json` copie le `.env` racine vers
+  `frontend/.env` juste avant `dev`/`build`/`start`
+  (scripts `predev`/`prebuild`/`prestart`, tolérants à l'absence du
+  fichier source — nécessaire pour le build Docker, où `.env` est exclu de
+  l'image via `.dockerignore`), pour que Next.js le charge par SON PROPRE
+  mécanisme natif, garanti fonctionner dans tous les contextes (Route
+  Handlers, Server Actions, middleware Edge). `frontend/.env` est une
+  copie jetable, jamais commitée (couverte par le motif `.env*` déjà
+  présent dans `.gitignore`).
+
+### Prisma et le monorepo
+
+`prisma/schema.prisma` a un `generator client { output = "../src/generated/prisma"
+}` — un chemin RELATIF à `schema.prisma` lui-même. Déplacer tout le
+dossier `prisma/` en bloc dans `backend/prisma/` a suffi à ce que ce chemin
+continue de résoudre correctement vers `backend/src/generated/prisma`,
+sans éditer cette ligne.
+
+`prisma7.config.ts` a gardé exactement son nom (pas renommé en
+`prisma.config.ts`) : vérifié dans le code source du package
+`@prisma/config` que `prisma7.config.{ext}` est un nom de fichier
+explicitement reconnu par la découverte automatique de la CLI Prisma 7, au
+même titre que `prisma.config.{ext}` — aucun flag `--config` nécessaire,
+la commande fonctionne dès lors qu'elle est lancée avec `backend/` comme
+répertoire de travail (`npm run migrate:deploy --workspace=backend`, ou
+`cd backend && npx prisma ...`).
+
+### Next.js et le package `backend` (`transpilePackages`, `outputFileTracingRoot`)
+
+Turbopack (par défaut depuis Next.js 16) transpile déjà automatiquement les
+packages de workspace — `transpilePackages: ["backend"]` est ajouté dans
+`frontend/next.config.ts` par robustesse (si `next build --webpack` était
+un jour utilisé) plutôt que par nécessité stricte, vérifié dans la doc
+Next.js bundlée (`node_modules/next/dist/docs/.../transpilePackages.md`).
+
+`outputFileTracingRoot: path.join(__dirname, "..")` est en revanche
+**nécessaire**, pas juste défensif (doc Next.js, section monorepo de
+`output.md`) : sans lui, le traçage du build `standalone` se limite par
+défaut au dossier de `next.config.ts` (`frontend/`) et n'inclurait jamais
+les fichiers de `backend/` dont dépend le serveur — vérifié explicitement
+en cherchant une fonction de `backend/src/tresorerie.ts` dans les chunks
+compilés du serveur (`getResteARegler`, trouvée bien présente : `transpilePackages`
+inline effectivement tout le code de `backend/` directement dans les
+chunks Next.js — aucun `node_modules/backend` séparé n'existe dans le
+build `standalone`, donc **aucune copie du code source de `backend/`
+n'est nécessaire dans le Dockerfile pour que l'application tourne** — seuls
+son schéma Prisma et sa config le sont, pour les migrations/le seed en CLI).
+
+### Dockerfile
+
+Adapté à la nouvelle disposition (build multi-étapes inchangé : `deps` →
+`builder` → `prod-deps` → `runner`) :
+- Les stages `deps`/`prod-deps` copient désormais les 3 `package.json`
+  (racine + `backend/` + `frontend/`) avant `npm ci`, nécessaires à npm
+  pour résoudre le graphe de workspaces même avant que le code n'existe.
+- `RUN npm run generate` (au lieu de `npx prisma generate` directement) —
+  le script racine route vers `backend`.
+- Le traçage `standalone` d'un monorepo imbrique la sortie sous le chemin
+  réel du package Next.js — **vérifié explicitement** en inspectant
+  `frontend/.next/standalone/` après un vrai `npm run build` : `server.js`
+  se trouve sous `.../standalone/frontend/server.js`, pas directement à la
+  racine de `standalone/` comme pour un projet single-package. Le
+  Dockerfile copie donc `.../standalone/frontend` (contenu) vers `/app`,
+  et `.../standalone/node_modules` (le node_modules partagé, sibling de
+  `frontend/` dans la sortie tracée) séparément.
+- `backend/prisma/` et `backend/prisma7.config.ts` sont copiés séparément
+  sous `./backend/` dans l'image finale (jamais tracés par Next.js, requis
+  par les migrations/le seed en CLI) — `docker-entrypoint.sh` s'exécute
+  désormais depuis `(cd backend && npx prisma migrate deploy)`.
+- `frontend/src/lib/pdf/fonts/` reste copié explicitement (même précaution
+  défensive qu'avant la restructuration, `pdf/` n'ayant pas bougé de place
+  relative à `frontend/`).
+- `ENV DATABASE_URL=...`/`ENV AUTH_SECRET=...` factices au moment du build
+  (`next build` a besoin qu'`AUTH_SECRET` soit défini pour que
+  `assertConfig` de NextAuth ne bloque pas, même si aucune vraie requête
+  n'est faite au build) — le `.env` racine reste exclu de l'image via
+  `.dockerignore`, jamais de secret figé dans une couche ; les vraies
+  valeurs de production sont injectées au démarrage par `docker-compose.yml`.
+
+`docker-compose.yml` et `docker-compose.dokploy.yml` n'ont nécessité
+**aucune modification** : les deux passent déjà toutes les variables
+d'environnement directement en tant que variables de conteneur
+(`environment:`), jamais via un fichier — indépendant de la restructuration
+interne du code.
+
+### Vérifié explicitement
+
+- `npm install` (racine) : workspaces résolus correctement
+  (`node_modules/backend`/`node_modules/frontend` en symlinks vers les
+  dossiers réels), tout hoisté à la racine, aucun `node_modules` séparé
+  dans `backend/`/`frontend/`.
+- `npm run generate`/`npm run migrate:deploy`/`npm run seed` (scripts
+  racine, routés vers `backend`) : fonctionnent tous, `.env` racine bien
+  chargé (`injected env (6) from ..\.env`).
+- `npx tsc --noEmit` et `npx eslint .` dans `backend/` : **0 erreur**.
+- `npx tsc --noEmit` et `npx eslint .` dans `frontend/` : **identiques au
+  relevé d'avant la restructuration** (5 erreurs `tsc` / 6 problèmes
+  `eslint`, tous dans `PresenceTabs.tsx`/`LogsList.tsx`/
+  `pointage/rh/reporting/export/route.ts` — bugs de Thierry, non liés à ce
+  chantier, **non corrigés** conformément à la consigne).
+- `npm run dev` (racine) : démarre un seul serveur Next.js sur le port
+  3000, `.env` chargé nativement (`Environments: .env` dans les logs).
+- **Parcours navigateur réel complet** (Chromium headless, Playwright, non
+  ajouté au projet), un seul scénario cohérent bout en bout : création
+  d'une demande (50 000 FCFA), validation partielle
+  (30 000), règlement Caisse (20 000) + Banque (10 000), **reçu PDF et bon
+  de caisse téléchargés et non vides**, retour de caisse déclaré puis
+  réceptionné, validation complémentaire du reliquat, approbation de la
+  validation complète par le DG, clôture totale, dashboard Finance et
+  tableau de bord Collaborateur, écran de reporting et export Excel
+  déclenché, les 5 écrans admin (`/admin`, `/users`, `/roles`, `/modules`,
+  `/categories`), rafraîchissement SSE observé entre deux onglets, module
+  Pointage RH (parcours collaborateur + dashboard RH) — **23/23 étapes
+  réussies, zéro erreur console**. Déconnexion après inactivité et "se
+  souvenir de moi" revérifiés séparément (délais temporairement réduits
+  puis restaurés, même méthode que documentée plus haut dans ce fichier) :
+  les deux fonctionnent à l'identique d'avant la restructuration. Toutes
+  les données de test (4 demandes créées pendant les itérations de mise au
+  point du script de test) supprimées après coup ; base revenue à 0
+  demande. Serveur `next dev` arrêté après vérification.
+- `npm run build` : **la compilation Turbopack réussit** ("Compiled
+  successfully"), mais la commande échoue au stade du type-check pour les
+  5 erreurs `tsc` préexistantes ci-dessus. **Vérifié rigoureusement que ce
+  n'est pas une régression de cette restructuration** : un `git worktree`
+  de la branche `aristide` **d'avant** ce chantier a été construit
+  séparément, et `npm run build` y échoue **exactement aux mêmes 5
+  endroits**, avant toute modification. Conformément à la consigne ("aucune
+  correction de bug au passage"), ces 5 erreurs n'ont pas été corrigées ici
+  — elles bloquent `npm run build` (et donc le stage `builder` du
+  Dockerfile) aussi bien avant qu'après la restructuration.
+- **Docker : non vérifié empiriquement.** Le CLI `docker` est présent dans
+  cet environnement mais son daemon n'est pas joignable (`docker info`
+  échoue, Docker Desktop introuvable/non démarré) — impossible d'exécuter
+  un vrai `docker build`/`docker compose up` ici. Le Dockerfile a été
+  adapté par une analyse rigoureuse de la structure RÉELLE de sortie
+  (`frontend/.next/standalone/`, inspectée directement après un vrai
+  `npm run build` local), pas par supposition — mais reste **non testé de
+  bout en bout en conteneur**, à vérifier dès qu'un environnement Docker
+  fonctionnel est disponible.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
