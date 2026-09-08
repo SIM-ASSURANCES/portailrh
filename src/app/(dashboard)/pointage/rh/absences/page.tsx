@@ -53,8 +53,8 @@ export default async function AbsencesPage({
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 font-sans">
       <PageHeader
-        title="Retards & Absences"
-        description="Consultez et validez les anomalies de pointage (retards, absences non justifiées)."
+        title="Absences"
+        description="Consultez et validez les anomalies de pointage (absences non justifiées)."
         backHref="/pointage/rh"
         backLabel="Retour à la Boîte à Outils"
       />

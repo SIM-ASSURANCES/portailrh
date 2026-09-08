@@ -10,7 +10,7 @@ import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 
 interface AppShellProps {
-  user: { fullName: string; email: string };
+  user: { fullName: string; email: string; photoUrl?: string | null };
   role: string;
   /** Affiche la section « Administration » dans la sidebar (rôle Admin). */
   canAdmin?: boolean;
@@ -34,6 +34,7 @@ interface AppShellProps {
   hasPointageAccess?: boolean;
   /** Ajoute le groupe "RH" du Pointage (permissions RH uniquement). */
   canAccessPointageRH?: boolean;
+  unreadNotificationsCount?: number;
   children: ReactNode;
 }
 
@@ -59,6 +60,7 @@ export function AppShell({
   canApprouverValidationComplete = false,
   hasPointageAccess = false,
   canAccessPointageRH = false,
+  unreadNotificationsCount = 0,
   children,
 }: AppShellProps) {
   // Rendu initial (serveur + première passe client) toujours « déployé »
@@ -161,6 +163,7 @@ export function AppShell({
           user={user} 
           role={role} 
           canAccessPointageRH={canAccessPointageRH}
+          unreadNotificationsCount={unreadNotificationsCount}
           onOpenMobileMenu={() => setMobileOpen(true)} 
         />
         <main className="flex-1 px-4 py-6 sm:px-6 sm:py-8">{children}</main>

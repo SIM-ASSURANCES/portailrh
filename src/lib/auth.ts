@@ -1,58 +1,21 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { encode as defaultJwtEncode } from "next-auth/jwt";
 import bcrypt from "bcryptjs";
 
 import { prisma } from "@/lib/prisma";
 import { cache } from "react";
 
-// "Se souvenir de moi" (voir CLAUDE.md "Se souvenir de moi") — deux durées,
-// jamais une troisième valeur ailleurs dans le code.
-const SESSION_MAX_AGE_REMEMBERED = 30 * 24 * 60 * 60; // 30 jours (coché)
-const SESSION_MAX_AGE_DEFAULT = 24 * 60 * 60; // 1 jour (décoché, par défaut)
+import { authConfig } from "./auth.config";
 
+// "Se souvenir de moi" (voir CLAUDE.md "Se souvenir de moi") et la durée
+// réelle du JWT (`jwt.encode` personnalisé) vivent désormais dans
+// `auth.config.ts`, pas ici — ce fichier-là est partagé avec le middleware
+// Edge (`src/proxy.ts`), qui doit appliquer exactement la même logique de
+// durée à chaque ré-encodage du cookie (voir le commentaire détaillé dans
+// `auth.config.ts`). `auth.ts` (ce fichier) ajoute uniquement ce qui a
+// besoin de Node (bcrypt, Prisma) : le provider Credentials.
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  session: {
-    // Obligatoire avec le Credentials provider : Auth.js ne supporte pas les
-    // sessions persistées en base (adapter) avec ce provider, uniquement le JWT.
-    strategy: "jwt",
-    // Plafond du cookie envoyé au navigateur (Max-Age/Expires) — TOUJOURS la
-    // durée longue, quelle que soit la case "Se souvenir de moi". Limitation
-    // documentée d'Auth.js v5 : cette valeur est résolue une seule fois pour
-    // toute l'app (`@auth/core`, `lib/actions/callback/index.js`), jamais
-    // par requête — impossible d'en faire un vrai cookie de session (sans
-    // Max-Age, supprimé à la fermeture du navigateur) uniquement pour le cas
-    // décoché sans réimplémenter `signIn()` à la main. La durée RÉELLE de la
-    // session est en réalité imposée par `jwt.encode` ci-dessous (le
-    // `exp` chiffré à l'intérieur du JWT, vérifié par Auth.js à chaque
-    // lecture) : un cookie non "mémorisé" reste physiquement dans le
-    // navigateur jusqu'à 30 jours, mais son JWT devient cryptographiquement
-    // invalide au bout de `SESSION_MAX_AGE_DEFAULT` — `getSession()` renvoie
-    // alors `null` comme n'importe quelle session expirée, l'utilisateur est
-    // redirigé vers `/login` à la prochaine page. Choix documenté et
-    // délibéré (voir CLAUDE.md) plutôt qu'une vraie expiration à la
-    // fermeture du navigateur, jugée moins fiable en pratique (restauration
-    // de session par le navigateur, onglets laissés ouverts des jours).
-    maxAge: SESSION_MAX_AGE_REMEMBERED,
-  },
-  jwt: {
-    // Surcharge du `encode` par défaut d'Auth.js : seul point du cycle de vie
-    // où la durée RÉELLE (le `exp` chiffré dans le JWT) peut varier par
-    // utilisateur — `session.maxAge` ci-dessus reste, lui, une valeur unique
-    // pour toute l'app. Lu sur `token.rememberMe`, posé par le callback
-    // `jwt` ci-dessous à partir de `authorize()` (jamais recalculé après le
-    // login initial : `token.rememberMe` persiste tel quel d'un appel à
-    // l'autre du callback `jwt`, jamais réécrit à `undefined`).
-    async encode(params) {
-      const maxAge = params.token?.rememberMe
-        ? SESSION_MAX_AGE_REMEMBERED
-        : SESSION_MAX_AGE_DEFAULT;
-      return defaultJwtEncode({ ...params, maxAge });
-    },
-  },
-  pages: {
-    signIn: "/login",
-  },
+  ...authConfig,
   providers: [
     Credentials({
       credentials: {
@@ -64,7 +27,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // voir `pages.signIn`).
         rememberMe: { label: "Se souvenir de moi", type: "text" },
       },
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         const email = credentials?.email;
         const password = credentials?.password;
 
@@ -77,54 +40,77 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           include: { role: true },
         });
 
-        // `!user.passwordHash` couvre un compte "en attente d'activation"
-        // (invitation par lien pas encore finalisée, voir CLAUDE.md
-        // "Invitation par lien") — `passwordHash` est nullable depuis cette
-        // fonctionnalité, jamais comparable avec bcrypt tant qu'il est nul.
+        let rawIp = req?.headers?.get("x-forwarded-for") || req?.headers?.get("x-real-ip") || "Inconnue";
+        if (rawIp.includes(",")) {
+          rawIp = rawIp.split(",")[0].trim();
+        }
+        const ip = rawIp.replace(/^::ffff:/i, "");
+
         if (!user || !user.isActive || !user.passwordHash) {
+          if (user) {
+            await prisma.historiqueEntry.create({
+              data: {
+                entity: "Auth",
+                entityId: user.id,
+                action: "LOGIN_FAILED",
+                detail: `Échec (compte inactif ou non finalisé). IP: ${ip}`,
+                ipAddress: ip,
+                userId: user.id,
+              }
+            });
+          } else {
+            console.warn(`Tentative de connexion échouée (utilisateur inexistant) : ${email} depuis IP ${ip}`);
+          }
           return null;
         }
 
         const isValidPassword = await bcrypt.compare(password, user.passwordHash);
         if (!isValidPassword) {
+          await prisma.historiqueEntry.create({
+            data: {
+              entity: "Auth",
+              entityId: user.id,
+              action: "LOGIN_FAILED",
+              detail: `Mot de passe incorrect. IP: ${ip}`,
+              ipAddress: ip,
+              userId: user.id,
+            }
+          });
           return null;
         }
+
+        await prisma.historiqueEntry.create({
+          data: {
+            entity: "Auth",
+            entityId: user.id,
+            action: "LOGIN_SUCCESS",
+            detail: `Connexion réussie. IP: ${ip}`,
+            ipAddress: ip,
+            userId: user.id,
+          }
+        });
 
         return {
           id: user.id,
           fullName: user.fullName,
           email: user.email,
           role: user.role.name,
+          photoUrl: user.photoUrl,
+          tokenVersion: user.tokenVersion,
           // Champ brut transmis par le formulaire de connexion (voir
           // `login/page.tsx`), jamais validé par zod ici : une valeur
           // absente ou invalide retombe simplement sur `false` (session
-          // courte), jamais sur la durée longue par erreur.
+          // courte), jamais sur la durée longue par erreur. Porté jusqu'au
+          // JWT par le callback `jwt` de `auth.config.ts` (partagé avec le
+          // middleware), qui pilote `jwt.encode` — voir ce fichier.
           rememberMe: credentials?.rememberMe === "true",
         };
       },
     }),
   ],
-  callbacks: {
-    // Appelé à la création/mise à jour du JWT : on y recopie les infos issues
-    // de `authorize` (disponibles uniquement lors du login, via `user`).
-    async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id;
-        token.fullName = user.fullName;
-        token.role = user.role;
-        token.rememberMe = user.rememberMe;
-      }
-      return token;
-    },
-    // Appelé à chaque lecture de session côté serveur/client : on reprojette
-    // le contenu du JWT vers l'objet `session` exposé à l'application.
-    async session({ session, token }) {
-      session.user.id = token.id;
-      session.user.fullName = token.fullName;
-      session.role = token.role;
-      return session;
-    },
-  },
+  // `callbacks.jwt`/`callbacks.session` vivent dans `auth.config.ts`
+  // (`...authConfig` ci-dessus) : partagés avec le middleware Edge, jamais
+  // dupliqués ici.
 });
 
 /**
@@ -144,7 +130,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
  *   if (!session) redirect("/login");
  */
 export const getSession = cache(async (): Promise<{
-  user: { id: string; fullName: string; email: string };
+  user: { id: string; fullName: string; email: string; photoUrl: string | null };
   role: string;
   permissions: string[];
 } | null> => {
@@ -158,6 +144,14 @@ export const getSession = cache(async (): Promise<{
     include: { permissions: { include: { permission: true } } },
   });
 
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+  });
+
+  if (!user || !user.isActive || user.tokenVersion !== session.user.tokenVersion) {
+    return null;
+  }
+
   const permissions = role?.permissions.map((rp) => rp.permission.key) ?? [];
 
   return {
@@ -165,6 +159,7 @@ export const getSession = cache(async (): Promise<{
       id: session.user.id,
       fullName: session.user.fullName,
       email: session.user.email,
+      photoUrl: session.user.photoUrl || null,
     },
     role: session.role,
     permissions,

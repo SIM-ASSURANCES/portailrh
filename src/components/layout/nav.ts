@@ -235,7 +235,8 @@ export function getNavBranches({
                   { label: "Boîte à Outils", href: "/pointage/rh", icon: "layout-grid", exact: true },
                   { label: "Présence du jour", href: "/pointage/rh/presence", icon: "check-circle", exact: true },
                   { label: "Tous les pointages", href: "/pointage/rh/pointages", icon: "file-text", exact: true },
-                  { label: "Retards & absences", href: "/pointage/rh/absences", icon: "alert-triangle" }
+                  { label: "Absences", href: "/pointage/rh/absences", icon: "alert-triangle" },
+                  { label: "Logs Système", href: "/pointage/rh/logs", icon: "scroll-text" },
                 ],
               } satisfies NavGroup,
             ]
@@ -267,5 +268,6 @@ export const ADMIN_GROUP: NavGroup = {
     { label: "Rôles & permissions", href: "/admin/roles", icon: "shield-check" },
     { label: "Modules", href: "/admin/modules", icon: "package" },
     { label: "Catégories", href: "/admin/categories", icon: "folder-tree" },
+    { label: "Logs Système", href: "/admin/logs", icon: "scroll-text" },
   ],
 };

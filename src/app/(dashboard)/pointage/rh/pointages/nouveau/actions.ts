@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { timeToMinutes } from "@/lib/pointage-utils";
 import { revalidatePath } from "next/cache";
 import { ActionState, fieldErrorsFromZod } from "@/lib/validation";
+import { createNotification } from "@/lib/notifications";
 
 const pointageExceptionnelSchema = z.object({
   collaborateurId: z.string().min(1, "Veuillez sélectionner un collaborateur"),
@@ -54,11 +55,13 @@ export async function enregistrerPointageRHAction(
   });
   
   const limiteArriveeMinutes = timeToMinutes(parametrage?.heureDebutMatin || "07:45");
+  const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
   
   const currentMinutes = pointageDate.getHours() * 60 + pointageDate.getMinutes();
   
   let estRetard = false;
   let minutesRetard = null;
+  const estDepartAnticipe = type === "DEPART" && currentMinutes < limiteDepartMinutes;
   
   if (type === "ARRIVEE" && currentMinutes > limiteArriveeMinutes) {
     estRetard = true;
@@ -66,7 +69,7 @@ export async function enregistrerPointageRHAction(
   } 
 
   try {
-    await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const pointage = await tx.pointage.create({
         data: {
           type,
@@ -74,6 +77,7 @@ export async function enregistrerPointageRHAction(
           heure: pointageDate,
           estRetard,
           minutesRetard,
+          estDepartAnticipe,
           motif,
           userId: collaborateurId,
           effectueParId: session.user.id
@@ -91,6 +95,7 @@ export async function enregistrerPointageRHAction(
         }
       });
 
+      let absenceRegularisee = false;
       // Si c'est une arrivée, effacer les absences A_CONTROLER pour cette journée
       if (type === "ARRIVEE") {
         const startOfToday = new Date(pointageDate);
@@ -98,15 +103,40 @@ export async function enregistrerPointageRHAction(
         const endOfToday = new Date(pointageDate);
         endOfToday.setHours(23, 59, 59, 999);
 
-        await tx.absence.deleteMany({
+        const updateResult = await tx.absence.updateMany({
           where: {
             userId: collaborateurId,
             date: { gte: startOfToday, lte: endOfToday },
             statut: "A_CONTROLER",
           },
+          data: {
+            statut: "JUSTIFIEE",
+            motif: "Régularisation par pointage exceptionnel",
+            controleParId: session.user.id
+          }
         });
+        absenceRegularisee = updateResult.count > 0;
       }
+      
+      return { absenceRegularisee };
     });
+
+    // Envoi des notifications au collaborateur
+    await createNotification({
+      userId: collaborateurId,
+      titre: "Pointage exceptionnel",
+      message: `Un pointage (${type === "ARRIVEE" ? "Arrivée" : "Départ"}) a été saisi pour vous par ${session.user.fullName}.`,
+      lien: "/pointage",
+    });
+
+    if (result.absenceRegularisee) {
+      await createNotification({
+        userId: collaborateurId,
+        titre: "Absence régularisée",
+        message: "Votre anomalie de pointage pour aujourd'hui a été régularisée par les RH.",
+        lien: "/pointage",
+      });
+    }
 
     revalidatePath("/pointage");
     publishDataChanged();
