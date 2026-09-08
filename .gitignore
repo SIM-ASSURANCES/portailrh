@@ -58,3 +58,5 @@ src/app/(dashboard)/pointage/ticket.txt
 /uploads/
 prisma/clear_data.ts
 CLAUDE.md
+.env*.backup
+prisma/*.backup

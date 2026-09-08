@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "@/lib/prisma";
 import { getSession, hasPermission } from "@/lib/auth";
-import type { ActionState } from "@/lib/actions";
+import { type ActionState, fieldErrorsFromZod } from "@/lib/validation";
 
 const timeStringSchema = z
   .string()
@@ -24,10 +24,10 @@ export async function updateHorairesAction(
 ): Promise<ActionState> {
   const session = await getSession();
   if (!session) {
-    return { success: false, message: "Non authentifié." };
+    return { status: "error", message: "Non authentifié." };
   }
   if (!hasPermission(session, "pointage.gerer_horaires")) {
-    return { success: false, message: "Accès refusé. Vous n'avez pas la permission de modifier le paramétrage." };
+    return { status: "error", message: "Accès refusé. Vous n'avez pas la permission de modifier le paramétrage." };
   }
 
   const parseResult = updateHorairesSchema.safeParse({
@@ -39,9 +39,9 @@ export async function updateHorairesAction(
 
   if (!parseResult.success) {
     return {
-      success: false,
+      status: "error",
       message: "Veuillez vérifier les heures saisies.",
-      fieldErrors: parseResult.error.flatten().fieldErrors,
+      fieldErrors: fieldErrorsFromZod(parseResult.error),
     };
   }
 
@@ -68,9 +68,9 @@ export async function updateHorairesAction(
 
     revalidatePath("/pointage");
     publishDataChanged();
-    return { success: true, message: "Les horaires ont été mis à jour avec succès." };
+    return { status: "success", message: "Les horaires ont été mis à jour avec succès." };
   } catch (error) {
     console.error("updateHorairesAction error:", error);
-    return { success: false, message: "Une erreur est survenue lors de la mise à jour des horaires." };
+    return { status: "error", message: "Une erreur est survenue lors de la mise à jour des horaires." };
   }
 }

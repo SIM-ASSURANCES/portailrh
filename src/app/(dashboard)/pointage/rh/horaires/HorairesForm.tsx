@@ -1,26 +1,17 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState } from "react";
 import { updateHorairesAction } from "./actions";
 import { Button, Input } from "@/components/ui";
-import { toast } from "sonner";
+import { useActionFeedback } from "@/lib/hooks/useActionFeedback";
+import { IDLE_ACTION_STATE } from "@/lib/validation";
 import type { ParametrageHoraire } from "@/generated/prisma/client";
 
 export function HorairesForm({ config }: { config: ParametrageHoraire | null }) {
-  const [state, formAction, isPending] = useActionState(updateHorairesAction, {
-    success: false,
-    message: "",
-  });
+  const [state, formAction, isPending] = useActionState(updateHorairesAction, IDLE_ACTION_STATE);
+  useActionFeedback(state);
 
-  useEffect(() => {
-    if (state.message) {
-      if (state.success) {
-        toast.success(state.message);
-      } else {
-        toast.error(state.message);
-      }
-    }
-  }, [state]);
+  const fieldErrors = state.status === "error" ? state.fieldErrors : undefined;
 
   // Si on n'a pas de config (cas rare en théorie), on initialise à vide
   const defMatinDeb = config?.heureDebutMatin || "";
@@ -39,7 +30,7 @@ export function HorairesForm({ config }: { config: ParametrageHoraire | null }) 
             type="time"
             defaultValue={defMatinDeb}
             required
-            error={state.fieldErrors?.heureDebutMatin?.[0]}
+            error={fieldErrors?.heureDebutMatin}
           />
           <Input
             label="Heure de fin (Matin)"
@@ -47,7 +38,7 @@ export function HorairesForm({ config }: { config: ParametrageHoraire | null }) 
             type="time"
             defaultValue={defMatinFin}
             required
-            error={state.fieldErrors?.heureFinMatin?.[0]}
+            error={fieldErrors?.heureFinMatin}
           />
         </div>
       </div>
@@ -61,7 +52,7 @@ export function HorairesForm({ config }: { config: ParametrageHoraire | null }) 
             type="time"
             defaultValue={defApremDeb}
             required
-            error={state.fieldErrors?.heureDebutApresMidi?.[0]}
+            error={fieldErrors?.heureDebutApresMidi}
           />
           <Input
             label="Heure de fin (Après-midi)"
@@ -69,7 +60,7 @@ export function HorairesForm({ config }: { config: ParametrageHoraire | null }) 
             type="time"
             defaultValue={defApremFin}
             required
-            error={state.fieldErrors?.heureFinApresMidi?.[0]}
+            error={fieldErrors?.heureFinApresMidi}
           />
         </div>
       </div>
