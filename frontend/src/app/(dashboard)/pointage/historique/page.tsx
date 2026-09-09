@@ -151,6 +151,7 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
       pointages.push({
         id: p.id + "-original",
         heure: originalDate.toISOString(),
+        heurePrevue: p.heurePrevue,
         type: p.type,
         source: p.source,
         estRetard: false, // Inconnu à l'origine (ou on peut le calculer, mais simplifié ici)
@@ -160,6 +161,8 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
         correctionsCount: 0,
         dernierMotifCorrection: null,
         isOriginal: true,
+        groupId: p.id,
+        sortTime: p.heure.toISOString(),
       });
     }
 
@@ -167,6 +170,7 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
     pointages.push({
       id: p.id,
       heure: p.heure.toISOString(),
+      heurePrevue: p.heurePrevue,
       type: p.type,
       source: p.source,
       estRetard: p.estRetard,
@@ -176,6 +180,8 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
       correctionsCount: p.corrections.length,
       dernierMotifCorrection: p.corrections.length > 0 ? p.corrections[p.corrections.length - 1].motif : null,
       isOriginal: false,
+      groupId: p.id,
+      sortTime: p.heure.toISOString(),
     });
   });
 

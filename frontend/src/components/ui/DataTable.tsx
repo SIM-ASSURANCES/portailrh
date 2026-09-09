@@ -21,6 +21,7 @@ export interface DataTableProps<T> {
   data: T[];
   rowKey: (row: T) => string;
   emptyMessage?: string;
+  rowClassName?: (row: T, index: number, array: T[]) => string;
 }
 
 type SortState = { key: string; direction: "asc" | "desc" } | null;
@@ -62,7 +63,7 @@ function renderCell<T>(column: DataTableColumn<T>, row: T): ReactNode {
  *     data={demandes}
  *   />
  */
-export function DataTable<T>({ columns, data, rowKey, emptyMessage = "Aucune donnée." }: DataTableProps<T>) {
+export function DataTable<T>({ columns, data, rowKey, emptyMessage = "Aucune donnée.", rowClassName }: DataTableProps<T>) {
   const [sort, setSort] = useState<SortState>(null);
 
   const sortedData = useMemo(() => {
@@ -140,8 +141,8 @@ export function DataTable<T>({ columns, data, rowKey, emptyMessage = "Aucune don
 
       {/* Cartes empilées — sous md uniquement. */}
       <div className="space-y-3 md:hidden">
-        {sortedData.map((row) => (
-          <div key={rowKey(row)} className="rounded-md border border-border bg-surface p-4 shadow-elevated">
+        {sortedData.map((row, index, arr) => (
+          <div key={rowKey(row)} className={`rounded-md border border-border bg-surface p-4 shadow-elevated ${rowClassName?.(row, index, arr) ?? ""}`}>
             {titleColumn && <div className="font-medium text-foreground">{renderCell(titleColumn, row)}</div>}
             {valueColumns.length > 0 && (
               <dl className="mt-2 space-y-1.5 text-sm">
@@ -198,8 +199,8 @@ export function DataTable<T>({ columns, data, rowKey, emptyMessage = "Aucune don
             </tr>
           </thead>
           <tbody className="divide-y divide-border bg-surface">
-            {sortedData.map((row) => (
-              <tr key={rowKey(row)} className="even:bg-muted/40 hover:bg-muted/60">
+            {sortedData.map((row, index, arr) => (
+              <tr key={rowKey(row)} className={`even:bg-muted/40 hover:bg-muted/60 ${rowClassName?.(row, index, arr) ?? ""}`}>
                 {columns.map((column) => (
                   <td key={column.key} className={`px-4 py-2 text-foreground ${column.className ?? ""}`}>
                     {renderCell(column, row)}

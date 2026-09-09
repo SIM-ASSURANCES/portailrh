@@ -10,6 +10,7 @@ type StatutAbsence = "A_CONTROLER" | "CONFIRMEE" | "JUSTIFIEE";
 export type PointageRow = {
   id: string;
   heure: string; // ISO string pour sérialisation sûre
+  heurePrevue: string | null;
   type: TypePointage;
   source: SourcePointage;
   estRetard: boolean;
@@ -19,6 +20,8 @@ export type PointageRow = {
   correctionsCount: number;
   dernierMotifCorrection: string | null;
   isOriginal?: boolean;
+  groupId?: string;
+  sortTime?: string;
 };
 
 export type AbsenceRow = {
@@ -47,7 +50,7 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       key: "date",
       header: "Date",
       sortable: true,
-      accessor: (row) => row.heure,
+      accessor: (row) => row.sortTime || row.heure,
       render: (row) => (
         <span className={`font-medium ${row.isOriginal ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
           {new Date(row.heure).toLocaleDateString("fr-FR", {
@@ -63,15 +66,22 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       key: "heure",
       header: "Heure",
       sortable: true,
-      accessor: (row) => row.heure,
+      accessor: (row) => row.sortTime || row.heure,
       render: (row) => (
-        <span className={`font-bold ${row.isOriginal ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
-          {new Date(row.heure).toLocaleTimeString("fr-FR", {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          })}
-        </span>
+        <div className="flex flex-col">
+          <span className={`font-bold ${row.isOriginal ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
+            {new Date(row.heure).toLocaleTimeString("fr-FR", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
+          </span>
+          {row.heurePrevue && (
+            <span className="text-[11px] text-muted-foreground mt-0.5">
+              Prévu : {row.heurePrevue}
+            </span>
+          )}
+        </div>
       ),
     },
     {
@@ -161,6 +171,17 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       rowKey={(r) => r.id}
       columns={columns}
       data={pointages}
+      rowClassName={(row) => {
+        if (row.groupId) {
+          if (row.isOriginal) {
+            // Style de l'original (en haut) : pas de bordure basse, fond légèrement distinct
+            return "bg-muted/30 border-b-0";
+          }
+          // Style de la correction (en bas) : pas de bordure haute (écraser divide-y), fond légèrement distinct
+          return "bg-muted/30 !border-t-0";
+        }
+        return "";
+      }}
       emptyMessage="Aucun pointage trouvé pour la période sélectionnée."
     />
   );
