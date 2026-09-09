@@ -82,6 +82,9 @@ export async function enregistrerPointageAction(
   if (type === "ARRIVEE" && hasArrivee) {
     return { status: "error", message: "Vous avez déjà pointé votre arrivée aujourd'hui." };
   }
+  if (type === "ARRIVEE" && currentMinutes >= limiteDepartMinutes) {
+    return { status: "error", message: "La journée de travail est terminée. Vous êtes considéré(e) comme absent(e)." };
+  }
   if (type === "DEPART" && hasDepart) {
     return { status: "error", message: "Vous avez déjà pointé votre départ aujourd'hui." };
   }
@@ -190,4 +193,64 @@ export async function enregistrerPointageAction(
   } catch {
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };
   }
+}
+
+export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState> {
+  const session = await getSession();
+  if (!session) return { status: "error", message: "Non authentifié" };
+
+  const parametrage = await prisma.parametrageHoraire.findFirst({
+    where: { isActive: true }
+  });
+
+  const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  if (currentMinutes < limiteDepartMinutes) {
+    return { status: "error", message: "La journée n'est pas encore terminée." };
+  }
+
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+  const hasPointage = await prisma.pointage.findFirst({
+    where: { userId: session.user.id, heure: { gte: startOfDay, lte: endOfDay } }
+  });
+
+  if (hasPointage) {
+    return { status: "error", message: "Pointages existants trouvés." };
+  }
+
+  const absenceExistante = await prisma.absence.findFirst({
+    where: { userId: session.user.id, date: { gte: startOfDay, lte: endOfDay } }
+  });
+
+  if (!absenceExistante) {
+    const absenceDate = new Date(now);
+    absenceDate.setHours(12, 0, 0, 0);
+
+    await prisma.absence.create({
+      data: {
+        date: absenceDate,
+        statut: "A_CONTROLER",
+        userId: session.user.id,
+      }
+    });
+
+    const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
+    for (const rh of rhUsers) {
+      await createNotification({
+        userId: rh.id,
+        titre: "Absence Automatique",
+        message: `${session.user.fullName} a été marqué(e) absent(e) (fin de journée atteinte sans pointage).`,
+        lien: "/pointage/rh/absences",
+      });
+    }
+
+    revalidatePath("/pointage");
+    publishDataChanged();
+  }
+
+  return { status: "success", message: "Absence automatique enregistrée." };
 }

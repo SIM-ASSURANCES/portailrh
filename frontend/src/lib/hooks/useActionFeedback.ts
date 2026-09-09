@@ -7,7 +7,7 @@ import type { ActionState } from "backend";
 
 /**
  * Relie le retour d'une Server Action (typé `ActionState`, voir
- * `@/lib/validation`) obtenu via `useActionState` à un toast sonner.
+ * `backend/src/validation.ts`) obtenu via `useActionState` à un toast sonner.
  * À appeler dans le Client Component qui pilote le formulaire.
  *
  * Exemple :

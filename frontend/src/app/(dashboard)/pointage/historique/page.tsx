@@ -81,8 +81,7 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
         include: {
           effectuePar: { select: { fullName: true } },
           corrections: {
-            orderBy: { createdAt: "desc" },
-            take: 1,
+            orderBy: { createdAt: "asc" },
           },
         },
       })
@@ -134,19 +133,57 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
     }),
   ]);
 
-  // Formatage sérialisable des lignes de pointage
-  const pointages: PointageRow[] = pointagesDb.map((p) => ({
-    id: p.id,
-    heure: p.heure.toISOString(),
-    type: p.type,
-    source: p.source,
-    estRetard: p.estRetard,
-    minutesRetard: p.minutesRetard,
-    motif: p.motif,
-    effectueParNom: p.effectuePar?.fullName ?? null,
-    correctionsCount: p.corrections.length,
-    dernierMotifCorrection: p.corrections[0]?.motif ?? null,
-  }));
+  function parseFrenchDate(dateStr: string) {
+    const parts = dateStr.split(" ");
+    if (parts.length !== 2) return new Date();
+    const [day, month, year] = parts[0].split("/");
+    const [hours, minutes] = parts[1].split(":");
+    return new Date(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes));
+  }
+
+  const pointages: PointageRow[] = [];
+  pointagesDb.forEach((p) => {
+    // Si le pointage a été corrigé, on ajoute d'abord la ligne d'origine
+    if (p.corrections.length > 0) {
+      const firstCorrection = p.corrections[0];
+      const originalDate = parseFrenchDate(firstCorrection.ancienneValeur);
+      
+      pointages.push({
+        id: p.id + "-original",
+        heure: originalDate.toISOString(),
+        heurePrevue: p.heurePrevue,
+        type: p.type,
+        source: p.source,
+        estRetard: false, // Inconnu à l'origine (ou on peut le calculer, mais simplifié ici)
+        minutesRetard: null,
+        motif: "Pointage d'origine avant correction",
+        effectueParNom: p.effectuePar?.fullName ?? null,
+        correctionsCount: 0,
+        dernierMotifCorrection: null,
+        isOriginal: true,
+        groupId: p.id,
+        sortTime: p.heure.toISOString(),
+      });
+    }
+
+    // Puis on ajoute la ligne actuelle (corrigée ou normale)
+    pointages.push({
+      id: p.id,
+      heure: p.heure.toISOString(),
+      heurePrevue: p.heurePrevue,
+      type: p.type,
+      source: p.source,
+      estRetard: p.estRetard,
+      minutesRetard: p.minutesRetard,
+      motif: p.motif,
+      effectueParNom: p.effectuePar?.fullName ?? null,
+      correctionsCount: p.corrections.length,
+      dernierMotifCorrection: p.corrections.length > 0 ? p.corrections[p.corrections.length - 1].motif : null,
+      isOriginal: false,
+      groupId: p.id,
+      sortTime: p.heure.toISOString(),
+    });
+  });
 
   // Formatage sérialisable des lignes d'absence
   const absences: AbsenceRow[] = absencesDb.map((a) => ({

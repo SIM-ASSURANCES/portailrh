@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 
-export type BadgeVariant = "neutral" | "info" | "success" | "warning" | "danger" | "primary";
+export type BadgeVariant = "neutral" | "info" | "success" | "warning" | "danger" | "primary" | "outline";
 
 export interface BadgeProps {
   variant?: BadgeVariant;
+  className?: string;
   children: ReactNode;
 }
 
@@ -14,6 +15,7 @@ const variantClasses: Record<BadgeVariant, string> = {
   warning: "bg-warning-bg text-warning border border-warning-border",
   danger: "bg-danger-bg text-danger border border-danger-border",
   primary: "bg-primary/10 text-primary border border-primary/20",
+  outline: "bg-transparent text-muted-foreground border border-neutral-border",
 };
 
 /**
@@ -26,10 +28,10 @@ const variantClasses: Record<BadgeVariant, string> = {
  * Exemple :
  *   <Badge variant="success">Validée</Badge>
  */
-export function Badge({ variant = "neutral", children }: BadgeProps) {
+export function Badge({ variant = "neutral", className = "", children }: BadgeProps) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors duration-150 ${variantClasses[variant]}`}
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors duration-150 ${variantClasses[variant]} ${className}`.trim()}
     >
       {children}
     </span>

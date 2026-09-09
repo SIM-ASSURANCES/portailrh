@@ -5,9 +5,9 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { Button, Card } from "@/components/ui";
 import { PointageForm } from "./PointageForm";
-import { enregistrerPointageAction } from "./actions";
+import { enregistrerPointageAction, enregistrerAbsenceAutomatiqueAction } from "./actions";
 
-export type PointageMode = "AUTO_ARRIVEE" | "RETARD_ARRIVEE" | "AUTO_DEPART" | "ANTICIPE_DEPART" | "EN_POSTE" | "TERMINE";
+export type PointageMode = "AUTO_ARRIVEE" | "RETARD_ARRIVEE" | "AUTO_DEPART" | "ANTICIPE_DEPART" | "EN_POSTE" | "TERMINE" | "ABSENCE_AUTO";
 
 interface Props {
   mode: PointageMode;
@@ -25,7 +25,7 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
 
   useEffect(() => {
     // Déclenchement automatique sans friction pour les employés en règle
-    if (mode === "AUTO_ARRIVEE" || mode === "AUTO_DEPART") {
+    if (mode === "AUTO_ARRIVEE" || mode === "AUTO_DEPART" || mode === "ABSENCE_AUTO") {
       const alreadySubmitted = 
         submittedRef.current?.mode === mode && 
         submittedRef.current?.type === type;
@@ -33,13 +33,19 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
       if (!alreadySubmitted) {
         submittedRef.current = { mode, type };
         startTransition(async () => {
-          const result = await enregistrerPointageAction({ source, type });
+          let result;
+          if (mode === "ABSENCE_AUTO") {
+            result = await enregistrerAbsenceAutomatiqueAction();
+          } else {
+            result = await enregistrerPointageAction({ source, type });
+          }
+          
           if (result.status === "success") {
             toast.success(messageAuto);
             setIsDone(true);
             router.refresh();
           } else if (result.status === "error") {
-            toast.error(result.message || "Erreur de pointage");
+            toast.error(result.message || "Erreur de traitement");
             submittedRef.current = null; // Permettre un nouvel essai en cas d'erreur
           }
         });
@@ -68,6 +74,15 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
     );
   }
 
+  if (mode === "ABSENCE_AUTO" && isDone) {
+    return (
+      <Card className="p-8 text-center animate-fade-in-up border-destructive">
+        <h2 className="text-xl font-bold text-destructive mb-2">Journée terminée</h2>
+        <p className="text-muted-foreground">Vous n&apos;avez pas pointé votre arrivée à temps. Une absence a été enregistrée.</p>
+      </Card>
+    );
+  }
+
   if (isEnPoste && !showEarlyForm) {
     return (
       <Card className="p-6 text-center animate-fade-in-up">
@@ -82,7 +97,7 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
     );
   }
 
-  if (mode === "AUTO_ARRIVEE" || mode === "AUTO_DEPART") {
+  if (mode === "AUTO_ARRIVEE" || mode === "AUTO_DEPART" || mode === "ABSENCE_AUTO") {
     return (
       <Card className="p-8 text-center animate-fade-in-up">
         <h2 className="text-xl font-bold mb-4">Analyse en cours...</h2>

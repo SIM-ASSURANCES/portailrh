@@ -47,6 +47,9 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
     if (currentMinutes <= limiteArriveeMinutes) {
       mode = "AUTO_ARRIVEE";
       messageAuto = "Félicitations pour votre ponctualité ! Arrivée validée.";
+    } else if (currentMinutes >= limiteDepartMinutes) {
+      mode = "ABSENCE_AUTO";
+      messageAuto = "Journée terminée sans pointage. Vous avez été marqué(e) comme absent(e).";
     } else {
       mode = "RETARD_ARRIVEE";
     }

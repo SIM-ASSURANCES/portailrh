@@ -10,6 +10,7 @@ type StatutAbsence = "A_CONTROLER" | "CONFIRMEE" | "JUSTIFIEE";
 export type PointageRow = {
   id: string;
   heure: string; // ISO string pour sérialisation sûre
+  heurePrevue: string | null;
   type: TypePointage;
   source: SourcePointage;
   estRetard: boolean;
@@ -18,6 +19,9 @@ export type PointageRow = {
   effectueParNom: string | null;
   correctionsCount: number;
   dernierMotifCorrection: string | null;
+  isOriginal?: boolean;
+  groupId?: string;
+  sortTime?: string;
 };
 
 export type AbsenceRow = {
@@ -46,9 +50,9 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       key: "date",
       header: "Date",
       sortable: true,
-      accessor: (row) => row.heure,
+      accessor: (row) => row.sortTime || row.heure,
       render: (row) => (
-        <span className="font-medium text-foreground">
+        <span className={`font-medium ${row.isOriginal ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
           {new Date(row.heure).toLocaleDateString("fr-FR", {
             weekday: "short",
             day: "2-digit",
@@ -62,15 +66,22 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       key: "heure",
       header: "Heure",
       sortable: true,
-      accessor: (row) => row.heure,
+      accessor: (row) => row.sortTime || row.heure,
       render: (row) => (
-        <span className="font-bold text-foreground">
-          {new Date(row.heure).toLocaleTimeString("fr-FR", {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          })}
-        </span>
+        <div className="flex flex-col">
+          <span className={`font-bold ${row.isOriginal ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
+            {new Date(row.heure).toLocaleTimeString("fr-FR", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
+          </span>
+          {row.heurePrevue && (
+            <span className="text-[11px] text-muted-foreground mt-0.5">
+              Prévu : {row.heurePrevue}
+            </span>
+          )}
+        </div>
       ),
     },
     {
@@ -88,6 +99,9 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       key: "retard",
       header: "Statut / Retard",
       render: (row) => {
+        if (row.isOriginal) {
+          return <span className="text-xs text-muted-foreground italic">Pointage modifié</span>;
+        }
         if (row.type === "DEPART") {
           return row.motif ? (
             <div className="space-y-1">
@@ -130,15 +144,18 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       header: "Source / Mode",
       render: (row) => (
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs font-medium text-foreground">
+          <span className={`text-xs font-medium ${row.isOriginal ? 'text-muted-foreground' : 'text-foreground'}`}>
             {SOURCE_LABELS[row.source] ?? row.source}
           </span>
+          {row.isOriginal && (
+            <Badge variant="outline" className="w-fit text-[10px] mt-1">Valeur d&apos;origine</Badge>
+          )}
           {row.source === "RH_EXCEPTIONNEL" && row.effectueParNom ? (
             <span className="text-[11px] text-muted-foreground">
               Par : {row.effectueParNom}
             </span>
           ) : null}
-          {row.correctionsCount > 0 ? (
+          {row.correctionsCount > 0 && !row.isOriginal ? (
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary" title={row.dernierMotifCorrection ?? undefined}>
               <Icon name="pencil" className="size-3" />
               Corrigé par RH
@@ -154,6 +171,17 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       rowKey={(r) => r.id}
       columns={columns}
       data={pointages}
+      rowClassName={(row) => {
+        if (row.groupId) {
+          if (row.isOriginal) {
+            // Style de l'original (en haut) : pas de bordure basse, fond légèrement distinct
+            return "bg-muted/30 border-b-0";
+          }
+          // Style de la correction (en bas) : pas de bordure haute (écraser divide-y), fond légèrement distinct
+          return "bg-muted/30 !border-t-0";
+        }
+        return "";
+      }}
       emptyMessage="Aucun pointage trouvé pour la période sélectionnée."
     />
   );

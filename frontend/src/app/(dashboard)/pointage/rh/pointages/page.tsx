@@ -93,6 +93,7 @@ export default async function PointagesRHPage({ searchParams }: PointagesRHPageP
   const pointages: PointageRHRow[] = pointagesDb.map((p) => ({
     id: p.id,
     heure: p.heure.toISOString(),
+    heurePrevue: p.heurePrevue,
     type: p.type,
     source: p.source,
     estRetard: p.estRetard,
