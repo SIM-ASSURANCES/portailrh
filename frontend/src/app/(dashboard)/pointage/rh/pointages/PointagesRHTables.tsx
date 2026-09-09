@@ -9,6 +9,7 @@ type SourcePointage = "QR_CODE" | "ORDINATEUR" | "RH_EXCEPTIONNEL";
 export type PointageRHRow = {
   id: string;
   heure: string; // ISO string pour sérialisation sûre
+  heurePrevue: string | null;
   type: TypePointage;
   source: SourcePointage;
   estRetard: boolean;
@@ -62,13 +63,20 @@ export function PointagesRHTables({ pointages }: { pointages: PointageRHRow[] })
       sortable: true,
       accessor: (row) => row.heure,
       render: (row) => (
-        <span className="font-bold text-foreground">
-          {new Date(row.heure).toLocaleTimeString("fr-FR", {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          })}
-        </span>
+        <div className="flex flex-col gap-0.5">
+          <span className="font-bold text-foreground">
+            {new Date(row.heure).toLocaleTimeString("fr-FR", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
+          </span>
+          {row.heurePrevue && (
+            <span className="text-[11px] text-muted-foreground">
+              Prévu: {row.heurePrevue}
+            </span>
+          )}
+        </div>
       ),
     },
     {

@@ -18,6 +18,7 @@ export type PointageRow = {
   effectueParNom: string | null;
   correctionsCount: number;
   dernierMotifCorrection: string | null;
+  isOriginal?: boolean;
 };
 
 export type AbsenceRow = {
@@ -48,7 +49,7 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       sortable: true,
       accessor: (row) => row.heure,
       render: (row) => (
-        <span className="font-medium text-foreground">
+        <span className={`font-medium ${row.isOriginal ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
           {new Date(row.heure).toLocaleDateString("fr-FR", {
             weekday: "short",
             day: "2-digit",
@@ -64,7 +65,7 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       sortable: true,
       accessor: (row) => row.heure,
       render: (row) => (
-        <span className="font-bold text-foreground">
+        <span className={`font-bold ${row.isOriginal ? 'text-muted-foreground line-through' : 'text-foreground'}`}>
           {new Date(row.heure).toLocaleTimeString("fr-FR", {
             hour: "2-digit",
             minute: "2-digit",
@@ -88,6 +89,9 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       key: "retard",
       header: "Statut / Retard",
       render: (row) => {
+        if (row.isOriginal) {
+          return <span className="text-xs text-muted-foreground italic">Pointage modifié</span>;
+        }
         if (row.type === "DEPART") {
           return row.motif ? (
             <div className="space-y-1">
@@ -130,15 +134,18 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       header: "Source / Mode",
       render: (row) => (
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs font-medium text-foreground">
+          <span className={`text-xs font-medium ${row.isOriginal ? 'text-muted-foreground' : 'text-foreground'}`}>
             {SOURCE_LABELS[row.source] ?? row.source}
           </span>
+          {row.isOriginal && (
+            <Badge variant="outline" className="w-fit text-[10px] mt-1">Valeur d&apos;origine</Badge>
+          )}
           {row.source === "RH_EXCEPTIONNEL" && row.effectueParNom ? (
             <span className="text-[11px] text-muted-foreground">
               Par : {row.effectueParNom}
             </span>
           ) : null}
-          {row.correctionsCount > 0 ? (
+          {row.correctionsCount > 0 && !row.isOriginal ? (
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary" title={row.dernierMotifCorrection ?? undefined}>
               <Icon name="pencil" className="size-3" />
               Corrigé par RH

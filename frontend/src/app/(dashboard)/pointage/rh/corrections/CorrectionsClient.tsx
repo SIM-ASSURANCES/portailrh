@@ -17,6 +17,13 @@ export type PointageCorrectionRow = {
   collaborateurNom: string;
   collaborateurService: string | null;
   effectueParNom: string | null;
+  historiqueCorrections?: Array<{
+    ancienneValeur: string;
+    nouvelleValeur: string;
+    motif: string;
+    effectueParNom: string;
+    createdAt: string;
+  }>;
 };
 
 interface CorrectionsClientProps {
@@ -149,6 +156,45 @@ export function CorrectionsClient({ initialData, search = "" }: CorrectionsClien
           );
         }
         return <Badge variant="info">À l&apos;heure</Badge>;
+      }
+    },
+    {
+      key: "historique",
+      header: "Historique / Traçabilité",
+      render: (row) => {
+        if (!row.historiqueCorrections || row.historiqueCorrections.length === 0) {
+          return <span className="text-xs text-muted-foreground">Aucune correction</span>;
+        }
+        
+        // La plus ancienne correction contient la valeur d'origine absolue
+        const originalValue = row.historiqueCorrections[row.historiqueCorrections.length - 1].ancienneValeur;
+
+        return (
+          <div className="space-y-2 max-w-xs">
+            <div className="flex items-center gap-1 text-xs">
+              <span className="font-semibold text-muted-foreground">Valeur d&apos;origine:</span>
+              <span>{originalValue}</span>
+            </div>
+            <div className="space-y-1">
+              {row.historiqueCorrections.map((corr, idx) => (
+                <div key={idx} className="bg-muted p-2 rounded-md text-[11px] border border-border">
+                  <div className="flex justify-between font-medium">
+                    <span>Modifié par {corr.effectueParNom}</span>
+                    <span className="text-muted-foreground">
+                      {new Date(corr.createdAt).toLocaleDateString("fr-FR")}
+                    </span>
+                  </div>
+                  <div className="text-muted-foreground mt-0.5 break-words">
+                    <span className="font-semibold text-foreground">Vers : </span>{corr.nouvelleValeur}
+                  </div>
+                  <div className="text-muted-foreground mt-0.5 italic break-words line-clamp-2" title={corr.motif}>
+                    &quot;{corr.motif}&quot;
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
       }
     },
     {

@@ -38,6 +38,10 @@ export default async function CorrectionsPage({ searchParams }: CorrectionsPageP
     include: {
       user: { select: { fullName: true, service: true } },
       effectuePar: { select: { fullName: true } },
+      corrections: {
+        include: { effectuePar: { select: { fullName: true } } },
+        orderBy: { createdAt: "desc" },
+      },
     },
     take: 200, // On récupère les 200 derniers par défaut
   });
@@ -53,6 +57,13 @@ export default async function CorrectionsPage({ searchParams }: CorrectionsPageP
     collaborateurNom: p.user.fullName,
     collaborateurService: p.user.service,
     effectueParNom: p.effectuePar?.fullName ?? null,
+    historiqueCorrections: p.corrections.map((c) => ({
+      ancienneValeur: c.ancienneValeur,
+      nouvelleValeur: c.nouvelleValeur,
+      motif: c.motif,
+      effectueParNom: c.effectuePar.fullName,
+      createdAt: c.createdAt.toISOString(),
+    })),
   }));
 
   return (

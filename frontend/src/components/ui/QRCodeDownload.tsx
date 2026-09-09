@@ -14,6 +14,13 @@ export function QRCodeDownload() {
   // Hydration safe : récupère l'URL réseau du serveur après le mount
   useEffect(() => {
     const fetchNetworkUrl = async () => {
+      // En production (ou accès via domaine/IP direct), on utilise l'URL actuelle
+      if (window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+        setQrUrl(`${window.location.origin}/pointage/qr`);
+        setIsMounted(true);
+        return;
+      }
+
       try {
         const response = await fetch("/api/network-config");
         const data = await response.json();

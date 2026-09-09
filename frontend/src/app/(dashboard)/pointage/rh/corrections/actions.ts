@@ -92,6 +92,7 @@ export async function corrigerPointageAction(
           heure: newDate,
           estRetard,
           minutesRetard,
+          motif: estRetard ? existingPointage.motif : null,
         }
       });
 

@@ -236,7 +236,6 @@ export function getNavBranches({
                   { label: "Présence du jour", href: "/pointage/rh/presence", icon: "check-circle", exact: true },
                   { label: "Tous les pointages", href: "/pointage/rh/pointages", icon: "file-text", exact: true },
                   { label: "Absences", href: "/pointage/rh/absences", icon: "alert-triangle" },
-                  { label: "Logs Système", href: "/pointage/rh/logs", icon: "scroll-text" },
                 ],
               } satisfies NavGroup,
             ]
