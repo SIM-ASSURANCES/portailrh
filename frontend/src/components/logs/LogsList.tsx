@@ -72,7 +72,7 @@ export default function LogsList() {
         <h2 className="text-lg font-medium text-gray-900">
           Historique d'Activité ({totalCount} événements)
         </h2>
-        <Button variant="outline" onClick={() => fetchLogs()} disabled={loading}>
+        <Button variant="secondary" onClick={() => fetchLogs()} disabled={loading}>
           <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
           Actualiser
         </Button>
@@ -111,7 +111,7 @@ export default function LogsList() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 uppercase text-[10px]">
+                      <Badge variant="info">
                         {log.action}
                       </Badge>
                     </td>
@@ -140,7 +140,7 @@ export default function LogsList() {
       {logs.length < totalCount && (
         <div className="flex justify-center pt-4 pb-8">
           <Button 
-            variant="outline" 
+            variant="secondary" 
             onClick={() => fetchLogs(true)} 
             disabled={loadingMore}
           >
