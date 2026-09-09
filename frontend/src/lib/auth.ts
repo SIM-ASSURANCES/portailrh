@@ -144,6 +144,7 @@ export const getSession = cache(async (): Promise<{
   user: { id: string; fullName: string; email: string; photoUrl: string | null };
   role: string;
   permissions: string[];
+  estAdmin: boolean;
 } | null> => {
   const session = await auth();
   if (!session?.user) {
@@ -174,5 +175,10 @@ export const getSession = cache(async (): Promise<{
     },
     role: session.role,
     permissions,
+    // Voir `isAdmin()` (backend/src/permissions.ts) : recalculé à chaque
+    // appel depuis `Role.estAdmin`, jamais depuis le JWT — même principe
+    // que `permissions` ci-dessus, pour qu'un changement pris via
+    // /admin/roles s'applique immédiatement, sans reconnexion.
+    estAdmin: role?.estAdmin ?? false,
   };
 });

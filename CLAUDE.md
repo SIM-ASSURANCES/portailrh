@@ -5257,6 +5257,176 @@ introduction, pas seulement à un scénario de test — à réassigner
 manuellement à un vrai compte le jour où ce besoin se concrétise. Serveur
 `next dev` arrêté après vérification.
 
+## Suppression définitive d'un compte utilisateur (`admin/users`)
+
+**Statut : terminé. Application en production — traité avec la prudence
+requise.** Jusqu'ici, un compte ne pouvait être que désactivé
+(`toggleUserActiveAction`, réversible, préserve tout l'historique) —
+aucune fonctionnalité de suppression n'existait. Besoin exprimé : pouvoir
+retirer définitivement un compte créé par erreur ou jamais utilisé, sans
+jamais risquer de casser l'intégrité de l'historique financier ou RH d'un
+compte qui a réellement servi.
+
+**Principe non négociable : la suppression n'est possible QUE pour un
+compte qui n'a JAMAIS servi à rien.** Dès qu'une seule donnée réelle lui
+est liée, même une seule ligne d'historique, la suppression est refusée —
+`toggleUserActiveAction` (désactivation) reste alors le seul outil
+disponible, jamais une suppression forcée ni une réécriture des données
+liées pour "faire de la place".
+
+### Liste exhaustive des relations vers `User` vérifiées avant suppression
+
+Reconstituée par lecture complète de `backend/prisma/schema.prisma` (pas
+seulement le Module Trésorerie — également Pointage RH et le Socle), 15
+champs de clé étrangère répartis sur 10 modèles, chacun vérifié par un
+`count()` dédié dans `supprimerUtilisateurAction` :
+
+| # | Modèle | Champ FK → nom de relation | Obligatoire ? | `onDelete` |
+|---|---|---|---|---|
+| 1 | `Demande` | `createurId` → "DemandeCreateur" | oui | aucun |
+| 2 | `Demande` | `beneficiaireUserId` → "DemandeBeneficiaire" | non | aucun |
+| 3 | `Demande` | `dgApprobateurId` → "DgApprobateurValidationComplete" | non | aucun |
+| 4 | `Reglement` | `auteurId` → "ReglementAuteur" | oui | aucun |
+| 5 | `RetourCaisse` | `declarantId` → "RetourDeclarant" | oui | aucun |
+| 6 | `RetourCaisse` | `receptionneParId` → "RetourReceptionnaire" | non | aucun |
+| 7 | `HistoriqueEntry` | `userId` → "user" (l'auteur de l'action) | oui | aucun |
+| 8 | `JournalCaisse` | `userId` → "JournalCaisseUser" | oui | aucun |
+| 9 | `Pointage` | `userId` → "PointageEmploye" | oui | aucun |
+| 10 | `Pointage` | `effectueParId` → "PointageEffectuePar" | non | aucun |
+| 11 | `CorrectionPointage` | `effectueParId` → "CorrectionEffectuePar" | oui | aucun |
+| 12 | `Absence` | `userId` → "AbsenceEmploye" | oui | aucun |
+| 13 | `Absence` | `controleParId` → "AbsenceControlePar" | non | aucun |
+| 14 | `Notification` | `userId` → "user" | oui | **Cascade** |
+| 15 | `PlageAbsenceAutorisee` | `userId` → "user" | oui | aucun |
+
+**Deux modèles n'ont volontairement PAS de vérification directe** :
+`DepenseLigne` et `PieceJointe` n'ont aucune relation directe vers `User`
+dans le schéma — ils sont couverts **transitivement** par les
+vérifications ci-dessus (une `DepenseLigne` appartient toujours à un
+`RetourCaisse`, déjà vérifié via `declarantId`/`receptionneParId` ; une
+`PieceJointe` appartient toujours à une `Demande` ou une `DepenseLigne`,
+déjà couvertes). Un compte qui n'a ni créé/reçu/approuvé de demande, ni
+réglé, ni déclaré/réceptionné de retour ne peut par construction avoir
+aucune `DepenseLigne` ni `PieceJointe` à son nom.
+
+**Seul `Notification.userId` porte `onDelete: Cascade`** dans tout le
+schéma (vérifié explicitement par relecture du fichier) — sans
+conséquence pour cette fonctionnalité : une notification n'est jamais un
+motif de blocage à elle seule dans l'esprit de la règle ("n'a jamais servi
+à rien"), mais elle EST tout de même comptée et bloque comme les 14
+autres relations, par cohérence et par prudence (un compte ayant reçu des
+notifications a nécessairement déjà interagi avec le système d'une façon
+ou d'une autre).
+
+### `supprimerUtilisateurAction(userId)` (`admin/users/actions.ts`)
+
+Dans l'ordre, chaque garde revérifiée côté serveur (jamais seulement
+l'absence du bouton côté UI) :
+
+1. `isAdmin(session)` — sinon "Action non autorisée."
+2. `userId === session.user.id` — auto-suppression toujours refusée
+   ("Impossible de supprimer votre propre compte."), même principe que
+   `toggleUserActiveAction`/`modifierRoleUtilisateurAction`.
+3. **Dernier administrateur** — si le rôle du compte cible a
+   `estAdmin: true` (voir "`estAdmin` remplace le nom de rôle..." plus
+   haut), compte le nombre d'AUTRES utilisateurs dont le rôle a aussi
+   `estAdmin: true` (`prisma.user.count({ where: { id: { not: userId },
+   role: { estAdmin: true } } })`). Si 0, refus ("Impossible de
+   supprimer : ce compte est le dernier administrateur du système.") —
+   jamais se retrouver sans aucun accès à `/admin`.
+4. **Les 15 vérifications d'existence** ci-dessus, en une seule volée
+   (`Promise.all` de `count()`, jamais une requête séquentielle par
+   relation). Si au moins une renvoie un total > 0, la suppression est
+   refusée avec un message **précis et agrégé**, listant explicitement
+   chaque catégorie non nulle (ex: *"Impossible de supprimer : ce compte a
+   créé 3 demande(s) et effectué 1 règlement(s). Désactivez-le plutôt."*)
+   — jamais un message générique qui laisserait deviner la cause.
+5. Si et seulement si les 15 compteurs sont tous à 0 : `prisma.user.delete()`
+   réel, puis une `HistoriqueEntry` (`entity: "User"`, `action: "DELETE"`,
+   `userId: session.user.id` — l'admin qui a agi, le compte supprimé
+   n'existant plus pour porter cette relation lui-même), `revalidatePath`
+   et `publishDataChanged()` comme le reste des actions de ce fichier.
+
+### Interface (`UserDeleteButton.tsx`, `UsersTable.tsx`)
+
+Bouton "Supprimer" (`variant="danger"`) ajouté à côté du bouton
+Activer/Désactiver existant. **Confirmation explicite à deux temps**,
+jamais un seul clic accidentel — même principe que `ClotureActions.tsx`
+(Ticket 7) : un premier clic sur "Supprimer" révèle "Confirmer la
+suppression"/"Annuler" (`.animate-fade-in-up`, convention du projet) à la
+place du bouton unique ; seul le second clic déclenche réellement l'action.
+Un refus serveur affiche le **message précis** de l'action dans un toast
+d'erreur (jamais un message générique) et **laisse le panneau de
+confirmation ouvert** (permet de voir le message et de cliquer "Annuler"
+sans perdre le contexte), alors qu'un succès referme le panneau
+automatiquement (retour à l'état `idle`, la ligne disparaissant de la
+liste au rafraîchissement — SSE, voir "Rafraîchissement en temps réel").
+
+### Vérifié explicitement (production — vérification rigoureuse)
+
+`npx tsc --noEmit` (frontend) et `npx eslint .` (frontend) : **aucune
+nouvelle erreur** — seules les 5 erreurs `tsc` / 6 problèmes `eslint`
+préexistants du Module Pointage RH et de `LogsList.tsx`, déjà documentés à
+plusieurs reprises dans ce fichier, inchangés.
+
+Vrai parcours navigateur (Chromium headless, Playwright, non ajouté au
+projet) contre le vrai serveur `next dev`, en partant d'un état de base
+confirmé à exactement les 5 comptes réels (`collaborateur@`, `finance@`,
+`dg@`, `admin@`, `rh@simassurances.test`) :
+
+- **Compte vierge, jamais utilisé** : créé, supprimé avec succès — confirmé
+  disparu de la liste après un vrai rechargement de page (pas seulement le
+  rafraîchissement SSE, pour éliminer toute ambiguïté de timing) et
+  confirmé supprimé en base par requête directe.
+- **Compte ayant créé une demande** : tentative de suppression refusée,
+  toast affichant exactement *"Impossible de supprimer : ce compte a créé
+  1 demande(s), été bénéficiaire de 1 demande(s) et 2 entrée(s) dans le
+  journal d'historique. Désactivez-le plutôt."* — le compte crée forcément
+  aussi une `HistoriqueEntry` (sa propre création par l'Admin) et est
+  automatiquement son propre bénéficiaire par défaut (Phase A, mapping
+  "Collaborateur" du formulaire de demande), donc ces trois catégories
+  précises sont attendues et cohérentes, pas un signe d'erreur. Compte
+  confirmé toujours présent après le refus (aucune suppression partielle).
+- **Auto-suppression** : tentative sur le compte Admin actuellement
+  connecté, refusée avec le message exact *"Impossible de supprimer votre
+  propre compte."* (toast capturé et vérifié au caractère près). Compte
+  Admin confirmé intact après la tentative.
+- **Suppression d'un compte admin non-dernier** : un second rôle
+  `estAdmin: true` créé pour ce test, son unique compte supprimé avec
+  succès (le vrai compte `admin@` restant, donc ce n'est jamais le dernier
+  admin du système) — confirme que la garde ne bloque pas à tort un compte
+  admin qui n'est pas réellement le dernier.
+- **Cas "dernier administrateur du système"** — **testé, mais pas via un
+  clic réel sur le vrai compte `admin@`** (l'unique compte réel avec
+  `estAdmin: true` à ce jour) : le manipuler, même temporairement, aurait
+  fait perdre l'accès à `/admin` pendant le test, un risque jugé
+  disproportionné en production pour vérifier une seule requête de
+  comptage. Vérifié à la place par une **transaction Prisma dédiée,
+  systématiquement annulée (`ROLLBACK`, jamais validée)** : reproduit
+  exactement la requête `prisma.user.count({ where: { id: { not: userId },
+  role: { estAdmin: true } } })` de l'action réelle dans un scénario
+  simulé où le compte testé serait le seul admin (résultat : `0`, refus
+  correct) puis dans le scénario normal où `admin@` existe toujours
+  (résultat : `1`, autorisation correcte) — les deux vérifiés dans la
+  même transaction avant l'annulation volontaire. Confirmé après coup que
+  rien n'a été persisté : le rôle "Admin" réel a toujours `estAdmin: true`,
+  aucun rôle ni compte de test créé pendant cette transaction n'existe en
+  base.
+- **Défense en profondeur** : la requête réseau réelle de
+  `supprimerUtilisateurAction` (capturée pendant l'exécution admin réelle)
+  rejouée à l'identique avec les cookies de session de
+  `finance@simassurances.test` (sans `isAdmin()`) → réponse contenant
+  "Action non autorisée.", aucune suppression déclenchée.
+
+**Nettoyage** : les 3 comptes de test (vierge, avec-demande,
+admin-non-dernier), la demande de test qu'ils ont produite, et le rôle
+"Admin Test Suppression" créé pour le test 4, tous supprimés directement
+en base après vérification. État final confirmé par comptage direct :
+exactement les 5 comptes réels, avec les mêmes rôles et le même
+`estAdmin` qu'avant le test (`admin@` → Admin/`estAdmin=true`, les 4
+autres → `estAdmin=false`, tous `isActive=true`), et 0 demande en base.
+Serveur `next dev` arrêté après vérification.
+
 ## Rehaussement visuel — dashboards, typographie, couleur (post-polish)
 
 **Statut : terminé.** Le premier passage de polish (transitions, cohérence
@@ -7238,6 +7408,135 @@ interne du code.
   `npm run build` local), pas par supposition — mais reste **non testé de
   bout en bout en conteneur**, à vérifier dès qu'un environnement Docker
   fonctionnel est disponible.
+
+## `estAdmin` remplace le nom de rôle pour l'accès à `/admin`
+
+**Statut : terminé. Changement sur la logique de SÉCURITÉ, appliqué avec
+prudence particulière (application en production).** Besoin métier :
+plusieurs comptes doivent cumuler l'administration ET des permissions
+métier (ex: créer leurs propres demandes) sous un rôle combiné — impossible
+avant ce changement, puisque `isAdmin()` comparait littéralement
+`role.name === "Admin"` : un rôle nommé autrement, même avec les mêmes
+intentions, n'aurait jamais eu accès à `/admin`.
+
+### Le changement
+
+`Role` gagne un champ `estAdmin Boolean @default(false)` (migration
+`role_est_admin`, purement additive : `ADD COLUMN ... DEFAULT false`,
+aucune perte de données possible). `isAdmin()`
+(`backend/src/permissions.ts`) vérifie désormais `session.estAdmin` au lieu
+de `session.role === "Admin"`. Exactement le même principe que
+`hasPermission()` (déjà en place) : **recalculé à chaque appel de
+`getSession()` depuis la base** (`Role.estAdmin`), jamais depuis le contenu
+du JWT — retirer l'accès admin d'un rôle prend effet immédiatement, sans
+reconnexion. `getAccessibleModules()` (qui appelle `isAdmin()` en interne)
+a vu son type de paramètre mis à jour en conséquence (`estAdmin: boolean`
+au lieu de `role: string`).
+
+**`estAdmin` reste indépendant du système de permissions par module**
+(`RolePermission`, `treso.*`/`pointage.*`) — mêmes deux raisons que
+documentées depuis le début pour le bypass "Admin" : (1) un rôle
+`estAdmin: true` garde un accès total à `/admin` même sans permission de
+module attribuée, (2) l'administration du Socle reste orthogonale aux
+permissions métier — cocher `estAdmin` ne donne AUCUNE permission
+`treso.*`/`pointage.*`, et retirer les permissions métier d'un rôle ne
+retire jamais son accès admin.
+
+**Aucun appelant de `isAdmin(session)`/`getAccessibleModules(session)`
+(10 fichiers) n'a eu besoin d'être modifié** : tous passent l'objet
+`session` complet retourné par `getSession()`, qui inclut désormais
+`estAdmin` — seul le type de retour de `getSession()`
+(`frontend/src/lib/auth.ts`) et les deux fonctions de
+`backend/src/permissions.ts` ont changé.
+
+**Seed (`backend/prisma/seed.ts`)** : le rôle "Admin" est créé avec
+`estAdmin: true` explicitement. **Le seed n'a PAS été relancé** sur la base
+existante (il fait des `deleteMany` sur `User`/`Role`, voir les nombreux
+avertissements déjà documentés ailleurs dans ce fichier) — un script ciblé
+et non destructif (`prisma.role.update({ where: { name: "Admin" }, data: {
+estAdmin: true } })`) a mis à jour la ligne existante à la place, même
+principe que pour `treso.approuver_validation_complete` (voir "Verrou de
+clôture" plus haut). **À reproduire à l'identique en production** : après
+avoir appliqué la migration (`prisma migrate deploy`), exécuter cette même
+mise à jour ciblée sur le rôle "Admin" — jamais relancer le seed sur une
+base contenant de vraies données.
+
+### Interface admin (`admin/roles`)
+
+Chaque rôle affiche désormais une case à cocher "Accès à l'administration"
+(`EstAdminToggle.tsx`, même pattern que `PermissionToggle.tsx` : case
+native, `useTransition`, toast), pilotée par une nouvelle Server Action
+`toggleRoleEstAdminAction` (`admin/roles/actions.ts`) — réservée à un
+compte déjà Admin, revérifié dans l'action elle-même (jamais seulement par
+la garde du layout ou le masquage de l'UI), historisée
+(`HistoriqueEntry`, `action: "GRANT_ADMIN"`/`"REVOKE_ADMIN"`). Le texte
+explicatif "accès total à la console, indépendamment des permissions"
+(déjà présent pour le rôle Admin depuis le Ticket A.1) devient conditionnel
+à `role.estAdmin` au lieu d'être codé en dur sur `role.name === "Admin"` —
+s'affiche désormais pour N'IMPORTE QUEL rôle ayant `estAdmin: true`, pas
+seulement celui qui s'appelle littéralement "Admin".
+
+### Rôle "Admin / Collaborateur" (livrable de cette tâche)
+
+Créé via l'interface réelle (`admin/roles`, `creerRoleAction`), pas par
+script : `estAdmin: true` + les deux permissions Trésorerie du
+Collaborateur (`treso.creer_demande`, `treso.declarer_retour`) cochées.
+**Aucun compte utilisateur réel n'a été assigné à ce rôle** — conformément
+à la consigne, il reste disponible, vide, dans `admin/roles` /
+`admin/users`, prêt à être assigné manuellement aux 3 comptes concernés.
+
+### Vérifié explicitement (parcours navigateur réel, Chromium headless via Playwright, non ajouté au projet)
+
+Chaque point de la vérification de sécurité demandée, confirmé
+individuellement :
+
+1. **Compte "Admin / Collaborateur" (nouveau, créé pour ce test)** : crée
+   une demande (50 000 → en réalité 1 000 FCFA, 1 ligne) → apparaît
+   correctement dans "Mes demandes" (référence, description, montant,
+   statut — filtrée par identité, comme pour n'importe quel Collaborateur)
+   ; **aucune trace de cette demande sur `/admin` ou une quelconque vue
+   mélangée** (recherche textuelle explicite dans le corps de la page).
+2. **Séparation des fonctions intacte** : ce même compte, en tentant
+   d'accéder à `/treso/finance/demandes/{id}` de SA PROPRE demande, est
+   **redirigé** (`acces_refuse_categoriser`) — aucun accès aux actions de
+   validation/règlement, cumul Admin+Collaborateur sans effet sur cette
+   séparation.
+3. **Non-régression** : le compte `admin@simassurances.test` (rôle "Admin"
+   classique, déjà en base) garde un accès total à `/admin` après le
+   changement.
+4. **Compte "Admin / Collaborateur"** (nouveau) a bien accès à `/admin` ET
+   a pu créer une demande — les deux capacités cumulées fonctionnent
+   simultanément sur le même compte.
+5. **Compte Finance (sans `estAdmin`)** refusé sur `/admin` par navigation
+   ET par accès direct à l'URL (`/admin/users`) — **et** un test de
+   défense en profondeur plus poussé : la requête réseau RÉELLE de
+   `toggleRoleEstAdminAction` (capturée pendant son exécution légitime par
+   Admin) a été **rejouée à l'identique avec les cookies de session
+   Finance** — réponse "Action non autorisée.", et l'état du rôle ciblé
+   (`estAdmin`) confirmé **inchangé** en base après le rejeu. La protection
+   est bien appliquée côté serveur, pas seulement par l'absence du bouton
+   dans l'UI de Finance.
+6. **Rôle "Admin Seul Test" (`estAdmin: true`, aucune permission de
+   module)**, créé spécifiquement pour ce test d'isolation puis supprimé
+   après coup : le compte associé a accès à `/admin` mais **refusé**
+   (`acces_refuse_creer_demande`) sur la création de demande — confirme
+   que `estAdmin` et les permissions de module restent deux notions
+   totalement indépendantes, dans les deux sens.
+7. `npx tsc --noEmit` et `npx eslint .` sur les deux workspaces : **aucune
+   nouvelle erreur** (mêmes 5 erreurs `tsc`/6 problèmes `eslint`
+   préexistants, déjà documentés ailleurs dans ce fichier, non liés à
+   cette tâche).
+
+**Tâche 5 respectée** : aucun des 5 comptes de test réels
+(`collaborateur@`, `finance@`, `dg@`, `admin@`, `rh@simassurances.test`)
+n'a été modifié — confirmé par un comptage direct en base avant/après
+(5 utilisateurs, inchangé). Les 2 comptes de test créés pour cette
+vérification (`test.admincollab@`/`test.adminseul@simassurances.test`),
+la demande de test, et le rôle "Admin Seul Test" (jamais demandé comme
+livrable, uniquement utile à la vérification du point 6) ont tous été
+supprimés après coup. Seul le rôle "Admin / Collaborateur" reste en base,
+sans aucun utilisateur assigné. Serveur `next dev` arrêté après
+vérification.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

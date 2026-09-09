@@ -4,6 +4,7 @@ import { Badge, DataTable } from "@/components/ui";
 
 import { RegenererInvitationButton } from "./RegenererInvitationButton";
 import { UserActiveToggle } from "./UserActiveToggle";
+import { UserDeleteButton } from "./UserDeleteButton";
 import { UserRoleSelect } from "./UserRoleSelect";
 
 interface UserRow {
@@ -52,7 +53,10 @@ export function UsersTable({ users, roles }: { users: UserRow[]; roles: { id: st
             u.isPending ? (
               <RegenererInvitationButton userId={u.id} />
             ) : (
-              <UserActiveToggle userId={u.id} isActive={u.isActive} />
+              <div className="flex flex-wrap items-center gap-2">
+                <UserActiveToggle userId={u.id} isActive={u.isActive} />
+                <UserDeleteButton userId={u.id} />
+              </div>
             ),
         },
       ]}

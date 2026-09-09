@@ -42,7 +42,9 @@ async function main() {
     prisma.role.create({ data: { name: "Collaborateur", description: "Collaborateur pouvant créer des demandes" } }),
     prisma.role.create({ data: { name: "Finance", description: "Équipe finance / trésorerie" } }),
     prisma.role.create({ data: { name: "DG", description: "Direction générale" } }),
-    prisma.role.create({ data: { name: "Admin", description: "Administrateur du portail" } }),
+    prisma.role.create({
+      data: { name: "Admin", description: "Administrateur du portail", estAdmin: true },
+    }),
     prisma.role.create({
       data: { name: "RH", description: "Gère le pointage, les retards, absences et reportings RH" },
     }),

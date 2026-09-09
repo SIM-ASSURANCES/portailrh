@@ -429,3 +429,128 @@ export async function forcerReinitialisationMotDePasseAction(
     data: { invitationUrl },
   };
 }
+
+/**
+ * Suppression DÉFINITIVE d'un compte — jamais possible tant qu'une seule
+ * donnée réelle y est liée (voir CLAUDE.md "Suppression d'un compte
+ * utilisateur" pour la liste exhaustive des 15 relations vérifiées
+ * ci-dessous). Contrairement à toggleUserActiveAction (désactivation,
+ * réversible, préserve tout l'historique), cette action est irréversible :
+ * un compte qui a la moindre trace d'activité doit être désactivé, jamais
+ * supprimé.
+ */
+export async function supprimerUtilisateurAction(
+  userId: string
+): Promise<{ status: "success" | "error"; message: string }> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  if (userId === session.user.id) {
+    return { status: "error", message: "Impossible de supprimer votre propre compte." };
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, include: { role: true } });
+  if (!user) {
+    return { status: "error", message: "Utilisateur introuvable." };
+  }
+
+  // Jamais se retrouver sans aucun administrateur dans le système.
+  if (user.role.estAdmin) {
+    const autresAdmins = await prisma.user.count({
+      where: { id: { not: userId }, role: { estAdmin: true } },
+    });
+    if (autresAdmins === 0) {
+      return {
+        status: "error",
+        message: "Impossible de supprimer : ce compte est le dernier administrateur du système.",
+      };
+    }
+  }
+
+  // Vérification exhaustive des données liées — les 15 relations vers User
+  // recensées dans le schéma (Trésorerie + Pointage RH + Socle), voir
+  // CLAUDE.md. DepenseLigne et PieceJointe n'ont aucune relation directe
+  // vers User (couvertes transitivement via RetourCaisse/Demande, déjà
+  // vérifiées ci-dessous).
+  const [
+    demandesCreees,
+    demandesBeneficiees,
+    demandesApprouveesDG,
+    reglementsFaits,
+    retoursDeclares,
+    retoursReceptionnes,
+    historique,
+    ecrituresJournalCaisse,
+    pointagesEffectues,
+    pointagesRealises,
+    correctionsEffectuees,
+    absencesDeclarees,
+    absencesControlees,
+    notifications,
+    plagesAbsenceAutorisee,
+  ] = await Promise.all([
+    prisma.demande.count({ where: { createurId: userId } }),
+    prisma.demande.count({ where: { beneficiaireUserId: userId } }),
+    prisma.demande.count({ where: { dgApprobateurId: userId } }),
+    prisma.reglement.count({ where: { auteurId: userId } }),
+    prisma.retourCaisse.count({ where: { declarantId: userId } }),
+    prisma.retourCaisse.count({ where: { receptionneParId: userId } }),
+    prisma.historiqueEntry.count({ where: { userId } }),
+    prisma.journalCaisse.count({ where: { userId } }),
+    prisma.pointage.count({ where: { userId } }),
+    prisma.pointage.count({ where: { effectueParId: userId } }),
+    prisma.correctionPointage.count({ where: { effectueParId: userId } }),
+    prisma.absence.count({ where: { userId } }),
+    prisma.absence.count({ where: { controleParId: userId } }),
+    prisma.notification.count({ where: { userId } }),
+    prisma.plageAbsenceAutorisee.count({ where: { userId } }),
+  ]);
+
+  const blocages: string[] = [];
+  if (demandesCreees > 0) blocages.push(`créé ${demandesCreees} demande(s)`);
+  if (demandesBeneficiees > 0) blocages.push(`été bénéficiaire de ${demandesBeneficiees} demande(s)`);
+  if (demandesApprouveesDG > 0)
+    blocages.push(`approuvé ${demandesApprouveesDG} validation(s) complète(s) en tant que DG`);
+  if (reglementsFaits > 0) blocages.push(`effectué ${reglementsFaits} règlement(s)`);
+  if (retoursDeclares > 0) blocages.push(`déclaré ${retoursDeclares} retour(s) de caisse`);
+  if (retoursReceptionnes > 0) blocages.push(`réceptionné ${retoursReceptionnes} retour(s) de caisse`);
+  if (historique > 0) blocages.push(`${historique} entrée(s) dans le journal d'historique`);
+  if (ecrituresJournalCaisse > 0) blocages.push(`${ecrituresJournalCaisse} écriture(s) de journal de caisse`);
+  if (pointagesEffectues > 0) blocages.push(`${pointagesEffectues} pointage(s)`);
+  if (pointagesRealises > 0) blocages.push(`réalisé ${pointagesRealises} pointage(s) exceptionnel(s) pour autrui`);
+  if (correctionsEffectuees > 0) blocages.push(`effectué ${correctionsEffectuees} correction(s) de pointage`);
+  if (absencesDeclarees > 0) blocages.push(`${absencesDeclarees} absence(s) déclarée(s)`);
+  if (absencesControlees > 0) blocages.push(`contrôlé ${absencesControlees} absence(s)`);
+  if (notifications > 0) blocages.push(`${notifications} notification(s)`);
+  if (plagesAbsenceAutorisee > 0) blocages.push(`${plagesAbsenceAutorisee} plage(s) d'absence autorisée`);
+
+  if (blocages.length > 0) {
+    const liste =
+      blocages.length === 1
+        ? blocages[0]
+        : `${blocages.slice(0, -1).join(", ")} et ${blocages[blocages.length - 1]}`;
+    return {
+      status: "error",
+      message: `Impossible de supprimer : ce compte a ${liste}. Désactivez-le plutôt.`,
+    };
+  }
+
+  // Aucune donnée liée nulle part : suppression réelle et définitive.
+  await prisma.user.delete({ where: { id: userId } });
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "User",
+      entityId: userId,
+      action: "DELETE",
+      detail: `Compte supprimé définitivement (aucune donnée liée) : ${user.email}`,
+      userId: session.user.id,
+    },
+  });
+
+  revalidatePath("/admin/users");
+  publishDataChanged();
+
+  return { status: "success", message: `Le compte ${user.fullName} a été supprimé définitivement.` };
+}

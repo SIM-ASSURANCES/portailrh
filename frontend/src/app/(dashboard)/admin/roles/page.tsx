@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/ui";
 import { prisma } from "backend";
 
+import { EstAdminToggle } from "./EstAdminToggle";
 import { PermissionToggle } from "./PermissionToggle";
 import { RoleCreateForm } from "./RoleCreateForm";
 
@@ -38,13 +39,17 @@ export default async function AdminRolesPage() {
               {role.description ? (
                 <p className="text-sm text-muted-foreground">{role.description}</p>
               ) : null}
-              {role.name === "Admin" ? (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Le rôle Admin a de toute façon un accès total à la console
-                  d&apos;administration, indépendamment des permissions ci-dessous
-                  (voir isAdmin() dans CLAUDE.md).
-                </p>
-              ) : null}
+
+              <div className="mt-3">
+                <EstAdminToggle roleId={role.id} defaultChecked={role.estAdmin} />
+                {role.estAdmin ? (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Ce rôle a un accès total à la console d&apos;administration,
+                    indépendamment des permissions de module ci-dessous (voir
+                    isAdmin() dans CLAUDE.md).
+                  </p>
+                ) : null}
+              </div>
 
               {modules.length === 0 ? (
                 <p className="mt-4 text-sm text-muted-foreground">Aucun module.</p>

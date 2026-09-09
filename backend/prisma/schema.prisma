@@ -77,6 +77,14 @@ model Role {
   id          String           @id @default(cuid())
   name        String           @unique
   description String?
+  /// Accès à la console d'administration (`/admin/*`), voir `isAdmin()`
+  /// dans `backend/src/permissions.ts`. Remplace l'ancienne comparaison
+  /// littérale `role.name === "Admin"` — un rôle combiné (ex: "Admin /
+  /// Collaborateur") peut désormais porter cet accès sans s'appeler
+  /// "Admin". Indépendant du système de permissions par module
+  /// (`RolePermission`) : cocher `estAdmin` ne donne AUCUNE permission
+  /// métier (`treso.*`, `pointage.*`), exactement comme avant.
+  estAdmin    Boolean          @default(false)
   users       User[]
   permissions RolePermission[]
 }

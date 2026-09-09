@@ -72,10 +72,55 @@ export async function creerRoleAction(
 }
 
 /**
+ * Accorde ou retire l'accès à la console d'administration à un rôle
+ * (`Role.estAdmin`) — voir CLAUDE.md "estAdmin remplace le nom de rôle" et
+ * `isAdmin()` (backend/src/permissions.ts). Indépendant de
+ * `RolePermission` : cocher cette case ne donne aucune permission métier
+ * (`treso.*`, `pointage.*`), et retirer les permissions métier d'un rôle
+ * ne retire jamais son accès admin — les deux notions restent séparées.
+ *
+ * Réservée à un compte déjà Admin (revérifié ici, jamais seulement par le
+ * masquage de l'UI ou la garde du layout) — un compte non-admin ne peut
+ * donc jamais s'auto-accorder l'accès en appelant cette action directement.
+ */
+export async function toggleRoleEstAdminAction(
+  roleId: string,
+  estAdmin: boolean
+): Promise<{ status: "success" | "error"; message: string }> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const role = await prisma.role.update({
+    where: { id: roleId },
+    data: { estAdmin },
+  });
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "Role",
+      entityId: role.id,
+      action: estAdmin ? "GRANT_ADMIN" : "REVOKE_ADMIN",
+      detail: `Accès à l'administration ${estAdmin ? "accordé au" : "retiré du"} rôle "${role.name}"`,
+      userId: session.user.id,
+    },
+  });
+
+  revalidatePath("/admin/roles");
+  publishDataChanged();
+
+  return {
+    status: "success",
+    message: estAdmin ? "Accès à l'administration accordé." : "Accès à l'administration retiré.",
+  };
+}
+
+/**
  * Accorde ou retire une permission à un rôle. Appelée directement depuis un
- * composant client (pas via <form>). N'affecte jamais le rôle Admin lui
- * -même : son accès à la console d'administration est un bypass
- * (isAdmin()), indépendant de RolePermission — voir src/lib/auth.ts.
+ * composant client (pas via <form>). N'affecte jamais l'accès admin d'un
+ * rôle (`Role.estAdmin`, voir `toggleRoleEstAdminAction` ci-dessus) —
+ * les deux notions sont volontairement indépendantes.
  */
 export async function toggleRolePermissionAction(
   roleId: string,
