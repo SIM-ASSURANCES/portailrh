@@ -147,6 +147,16 @@ COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/backend/prisma ./backend/prisma
 COPY --from=builder --chown=nextjs:nodejs /app/backend/prisma7.config.ts ./backend/prisma7.config.ts
 
+# Client Prisma généré : requis par les scripts autonomes lancés via tsx
+# (backend/prisma/seed.ts, backend/prisma/set-admin.ts), qui importent
+# explicitement "../src/generated/prisma/client" — soit
+# `backend/src/generated/prisma/client` depuis l'image. Le traçage
+# standalone de Next.js inline ce code dans les chunks du serveur, chemin
+# que ces scripts CLI n'utilisent pas : sans cette copie, `npx prisma db
+# seed` (commande documentée dans DEPLOIEMENT.md) échoue avec "Cannot find
+# module". Le dossier est régénéré à l'étape builder par `npm run generate`.
+COPY --from=builder --chown=nextjs:nodejs /app/backend/src/generated/prisma ./backend/src/generated/prisma
+
 # Polices du reçu PDF (frontend/src/lib/pdf/fonts/*.ttf), lues au runtime
 # via `readFileSync(path.join(process.cwd(), "src/lib/pdf/fonts", ...))` —
 # pas un import JS. `src/lib/pdf/` reste dans `frontend/` (jamais déplacé
