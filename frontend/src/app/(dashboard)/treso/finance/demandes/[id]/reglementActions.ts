@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { createNotification } from "@/lib/notifications";
 import { prisma } from "backend";
 import {
   calculerStatutDemande,
@@ -277,6 +278,18 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
 
   await calculerStatutDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);
+
+  // Un règlement Caisse confirmé ouvre le droit à déclarer un retour de
+  // caisse (Ticket 5) — un règlement Banque n'a jamais de retour associé,
+  // aucune notification dans ce cas.
+  if (reglement.mode === "CAISSE") {
+    await createNotification({
+      userId: demande.createurId,
+      titre: "Retour de caisse à déclarer",
+      message: `Le règlement de ${montantReglement.toLocaleString("fr-FR")} FCFA (Caisse) sur votre demande ${demande.reference} est confirmé — vous pouvez déclarer le retour de caisse correspondant.`,
+      lien: `/treso/demandes/${reglement.demandeId}`,
+    });
+  }
 
   return { status: "success", message: "Règlement confirmé." };
 }

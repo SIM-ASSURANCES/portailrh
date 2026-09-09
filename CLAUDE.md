@@ -5427,6 +5427,120 @@ exactement les 5 comptes réels, avec les mêmes rôles et le même
 autres → `estAdmin=false`, tous `isActive=true`), et 0 demande en base.
 Serveur `next dev` arrêté après vérification.
 
+## Notifications Trésorerie (extension du système de Thierry)
+
+**Statut : terminé.** Un audit de lecture seule préalable (voir
+[Module Pointage RH](#module-pointage-rh--fondations-de-données-et-parcours-qr)
+pour le reste du contexte du binôme) avait cartographié le système de
+notifications construit par Thierry (`frontend/src/lib/notifications.ts`,
+`NotificationBell.tsx`) : générique (`createNotification({ userId, titre,
+message, lien })`), déjà branché sur le SSE existant
+(`publishDataChanged()`), mais ne couvrant jusqu'ici que le Module
+Pointage RH (retards/absences signalés aux RH, pointage exceptionnel et
+régularisation notifiés au collaborateur). Cette tâche y branche les 5
+événements Trésorerie prioritaires, en réutilisant ce même mécanisme sans
+aucune adaptation de structure.
+
+### `notifierParPermission` — généralisation du pattern "tous les RH actifs"
+
+`frontend/src/lib/notifications.ts` gagne
+`notifierParPermission(permissionKey, { titre, message, lien, excludeUserId? })` :
+notifie tous les comptes **actifs** dont le rôle porte la permission
+donnée, un `createNotification` par destinataire (`Promise.all`).
+**Généralisation par permission plutôt que par nom de rôle littéral**
+(contrairement au pattern RH d'origine, `role: { name: "RH" }`) : une
+permission Trésorerie peut être portée par plusieurs rôles à la fois
+(`treso.valider_demande` est partagée par Finance ET DG, un rôle combiné
+comme "Admin / Collaborateur" ou "Finance / RH" peut cumuler plusieurs
+permissions) — filtrer par nom de rôle aurait été incorrect ici.
+`excludeUserId` évite qu'un rôle combiné portant à la fois la permission
+qui déclenche l'action ET la permission destinataire ne s'auto-notifie de
+sa propre décision (utilisé pour les notifications DG ci-dessous).
+
+### Les 5 notifications ajoutées
+
+| # | Événement | Déclenchée dans | Destinataire(s) | Lien |
+|---|---|---|---|---|
+| 1 | Demande validée (totalement, ou partiellement puis complémentaire qui la complète) | `validerTotalementAction`, `validerPartiellementAction`, `validerComplementaireAction` (`treso/finance/demandes/[id]/actions.ts`) | `demande.createurId` | `/treso/demandes/{id}` |
+| 1bis | Demande validée partiellement (reliquat restant) | `validerPartiellementAction`, si le montant reste inférieur au montant demandé | `demande.createurId` | `/treso/demandes/{id}` |
+| 1ter | Demande rejetée | `rejeterDemandeAction` | `demande.createurId`, motif inclus | `/treso/demandes/{id}` |
+| 2 | Retour de caisse à déclarer (règlement Caisse confirmé) | `confirmerReglementAction` (`reglementActions.ts`), uniquement si `mode === "CAISSE"` | `demande.createurId` | `/treso/demandes/{id}` |
+| 3 | Retour de caisse déclaré, en attente de réception | `creerRetourCaisseAction` (`treso/demandes/[id]/retourActions.ts`) | `notifierParPermission("treso.receptionner_retour", ...)` | `/treso/finance/retours` |
+| 4 | Demande entièrement validée, en attente de validation complète DG | même 3 Server Actions que #1, factorisé dans `notifierDemandeEntierementValidee` | `notifierParPermission("treso.approuver_validation_complete", ..., excludeUserId: session.user.id)` | `/treso/finance/validations-attente` |
+| 5a | Validation complète DG rejetée (à l'examen) | `rejeterValidationCompleteAction` | `notifierParPermission("treso.valider_demande", ..., excludeUserId: session.user.id)`, motif inclus | `/treso/finance/demandes/{id}` |
+| 5b | Validation complète DG annulée | `annulerValidationCompleteAction` | idem, motif inclus | `/treso/finance/demandes/{id}` |
+
+**Notification #4 factorisée** (`notifierDemandeEntierementValidee`, en
+tête de `treso/finance/demandes/[id]/actions.ts`) : le même événement
+"demande entièrement validée" (`montantValide === montant demandé`) peut
+être produit par trois Server Actions distinctes — validation totale en
+une fois, validation partielle dont le montant se révèle en réalité égal
+au montant demandé (cas limite déjà documenté en Phase B), ou validation
+complémentaire qui comble le dernier reliquat. **Choix documenté** :
+`validerComplementaireAction` ne notifie QUE si cette étape précise
+comble entièrement le reliquat (`Math.round(montantValideFinal * 100) >=
+Math.round(montantDemande * 100)`) — jamais à chaque étape complémentaire
+partielle, pour ne pas noyer le créateur/le DG de notifications à chaque
+petit versement de validation.
+
+### Vérifié explicitement — vrai parcours navigateur, 3 comptes réels simultanés
+
+`npx tsc --noEmit` (frontend) et `npx eslint .` (frontend) : aucune
+nouvelle erreur (le baseline `tsc` s'est même amélioré entre-temps grâce à
+un correctif externe sur le Module Pointage RH, sans lien avec cette
+tâche — seuls les 6 problèmes `eslint` déjà documentés restent, tous hors
+périmètre).
+
+Chromium headless (Playwright, non ajouté au projet), 3 contextes de
+navigateur simultanés (`collaborateur@`, `finance@`, `dg@simassurances.test`),
+scénario couvrant les 5 événements avec 4 demandes de test créées puis
+entièrement nettoyées :
+
+- Demande A (100 000 FCFA) validée totalement → collaborateur notifié
+  "Demande validée" + DG notifié "Demande à approuver" ; règlement Caisse
+  confirmé → collaborateur notifié "Retour de caisse à déclarer" ; retour
+  déclaré (60 000 FCFA à retourner) → Finance notifiée "Retour de caisse
+  à réceptionner".
+- Demande B (200 000 FCFA) validée partiellement à 50 000 → collaborateur
+  notifié "Demande validée partiellement" **et DG confirmé NON notifié à
+  ce stade** (vérifié par requête directe en base : la notification DG
+  pour B n'existe qu'après l'étape suivante) ; validation complémentaire
+  du reliquat (150 000) → collaborateur notifié "Demande validée"
+  (entièrement) + DG notifié "Demande à approuver" (cette fois
+  déclenchée) ; DG rejette l'examen (motif) → Finance notifiée
+  "Validation complète rejetée par le DG" avec le motif exact ; DG
+  approuve puis annule son approbation (motif) → Finance notifiée
+  "Validation complète annulée par le DG" avec le motif exact ; **le DG
+  n'a jamais reçu de notification pour ses propres décisions**
+  (`excludeUserId`), confirmé par requête directe (seulement les 2
+  notifications légitimes "à approuver" en base pour le DG, jamais un
+  "rejetée par le DG"/"annulée par le DG" sur son propre compte).
+- Demande C (30 000 FCFA) rejetée → collaborateur notifié "Demande
+  rejetée" avec le motif exact.
+- Demande D (15 000 FCFA) rejetée pendant qu'un onglet Collaborateur
+  restait ouvert sur `/treso/tableau-de-bord`, **jamais rechargé
+  manuellement** : le badge de la cloche est apparu via le SSE seul
+  (`publishDataChanged()`, même canal que le reste de l'application).
+
+Chaque notification cliquée a mené au bon endroit (vérifié pour les 5
+catégories : `/treso/demandes/{id}` pour le créateur, `/treso/finance/retours`
+pour la réception, `/treso/finance/validations-attente` pour
+l'approbation DG, `/treso/finance/demandes/{id}` pour le rejet/l'annulation
+DG). **Contrôle final direct en base** (source de vérité, plus fiable
+qu'une lecture d'écran sujette à des racings de fetch client) :
+`Notification.titre`/`.message`/`.lien` de chacun des 3 comptes relus
+un par un après le parcours complet — les 11 notifications attendues
+(6 pour le collaborateur, 3 pour Finance, 2 pour le DG) toutes présentes
+avec le contenu exact attendu, aucune notification parasite, et le DG
+strictement limité aux 2 légitimes.
+
+Toutes les données de test (4 demandes avec leurs lignes/règlements/
+retours/écritures `JournalCaisse`/historique, et les 11 notifications de
+test des 3 comptes réels) supprimées après coup — confirmé par comptage
+direct : 0 demande, 0 notification restante sur les 3 comptes, 5
+utilisateurs réels inchangés. Serveur `next dev` arrêté après
+vérification.
+
 ## Rehaussement visuel — dashboards, typographie, couleur (post-polish)
 
 **Statut : terminé.** Le premier passage de polish (transitions, cohérence

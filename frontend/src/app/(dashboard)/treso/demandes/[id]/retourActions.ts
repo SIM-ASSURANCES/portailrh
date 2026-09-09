@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { notifierParPermission } from "@/lib/notifications";
 import { prisma } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
@@ -164,6 +165,12 @@ export async function creerRetourCaisseAction(
   // "Retours de caisse en attente" du dashboard Finance et sa liste.
   revalidatePath("/treso/finance", "layout");
   publishDataChanged();
+
+  await notifierParPermission("treso.receptionner_retour", {
+    titre: "Retour de caisse à réceptionner",
+    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}.`,
+    lien: "/treso/finance/retours",
+  });
 
   return {
     status: "success",
