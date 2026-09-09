@@ -104,6 +104,59 @@ export async function getSoldeCaisse(): Promise<number> {
 }
 
 /**
+ * Sources `JournalCaisse` du cycle "solde d'ouverture" (voir CLAUDE.md
+ * "Solde d'ouverture de caisse") — seul cas de mouvement de caisse sans
+ * demande d'origine (`demandeId: null`). Trois sources distinctes, jamais
+ * une édition silencieuse d'une écriture existante :
+ * - `SOLDE_OUVERTURE_SOURCE` — la définition initiale (une seule fois).
+ * - `SOLDE_OUVERTURE_CORRECTION_SOURCE` — la nouvelle valeur d'une
+ *   correction (même principe qu'un règlement/retour : jamais réécrit).
+ * - `SOLDE_OUVERTURE_ANNULATION_SOURCE` — l'écriture compensatoire qui
+ *   neutralise le montant précédent au moment d'une correction (même
+ *   mécanisme que `annulation_reglement_caisse`, Ticket 4).
+ */
+export const SOLDE_OUVERTURE_SOURCE = "solde_ouverture";
+export const SOLDE_OUVERTURE_CORRECTION_SOURCE = "correction_solde_ouverture";
+export const SOLDE_OUVERTURE_ANNULATION_SOURCE = "annulation_solde_ouverture";
+
+export interface SoldeOuvertureInfo {
+  /** `false` si aucune écriture `solde_ouverture` n'a jamais été créée. */
+  existe: boolean;
+  /** Montant net actuellement en vigueur (0 si jamais défini). */
+  montantActuel: number;
+  /** Date de la toute première définition (jamais mise à jour par une correction ultérieure). */
+  definiLe: Date | null;
+}
+
+/**
+ * État du solde d'ouverture : jamais un champ dédié, toujours dérivé des
+ * mêmes écritures `JournalCaisse` que `getSoldeCaisse()` (cohérent avec la
+ * règle impérative "le solde de caisse n'est jamais saisi manuellement,
+ * toujours recalculé").
+ */
+export async function getSoldeOuvertureInfo(): Promise<SoldeOuvertureInfo> {
+  const entries = await prisma.journalCaisse.findMany({
+    where: {
+      source: {
+        in: [SOLDE_OUVERTURE_SOURCE, SOLDE_OUVERTURE_CORRECTION_SOURCE, SOLDE_OUVERTURE_ANNULATION_SOURCE],
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (entries.length === 0) {
+    return { existe: false, montantActuel: 0, definiLe: null };
+  }
+
+  const montantActuel = entries.reduce(
+    (somme, e) => somme + (e.type === "ENTREE" ? Number(e.montant) : -Number(e.montant)),
+    0
+  );
+
+  return { existe: true, montantActuel, definiLe: entries[0].createdAt };
+}
+
+/**
  * Somme des `DepenseLigne` de TOUS les `RetourCaisse` liés aux règlements
  * d'une demande — peu importe qu'ils soient déjà réceptionnés ou non : c'est
  * ce que le collaborateur affirme avoir dépensé, indépendamment du

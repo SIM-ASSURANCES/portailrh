@@ -79,6 +79,13 @@ export interface NavFlags {
    * l'identifiant à l'avance.
    */
   canApprouverValidationComplete: boolean;
+  /**
+   * `isAdmin()` OU `treso.effectuer_reglement` : ajoute "Solde d'ouverture
+   * de caisse" — voir CLAUDE.md "Solde d'ouverture de caisse". Réservé à
+   * Finance/Admin, jamais le DG seul (qui a `valider_demande` mais pas
+   * `effectuer_reglement`).
+   */
+  canGererSoldeOuverture: boolean;
 
   /**
    * Au moins une permission `pointage.*` (y compris les deux permissions de
@@ -133,6 +140,7 @@ export function getNavBranches({
   canVoirReporting,
   canSaisirDepenseDirecte,
   canApprouverValidationComplete,
+  canGererSoldeOuverture,
   hasPointageAccess,
   canAccessPointageRH,
 }: NavFlags): NavBranch[] {
@@ -151,6 +159,15 @@ export function getNavBranches({
                     href: "/treso/finance",
                     icon: "layout-grid",
                     exact: true,
+                  } satisfies NavItem,
+                ]
+              : []),
+            ...(canGererSoldeOuverture
+              ? [
+                  {
+                    label: "Solde d'ouverture de caisse",
+                    href: "/treso/finance/solde-ouverture",
+                    icon: "wallet",
                   } satisfies NavItem,
                 ]
               : []),

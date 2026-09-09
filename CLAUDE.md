@@ -5541,6 +5541,253 @@ direct : 0 demande, 0 notification restante sur les 3 comptes, 5
 utilisateurs réels inchangés. Serveur `next dev` arrêté après
 vérification.
 
+## Création d'Objet inline depuis la catégorisation Finance
+
+**Statut : terminé. Correctif d'un bug réel bloquant en production.**
+Quand une Catégorie n'a encore aucun Objet (cas réel : "Loyers",
+"Publicité", "Prestations", "Personnel", "Fournitures", "Missions",
+"Entretien" n'en ont aucun dans le catalogue actuel), le Select "Objet"
+de `CategorisationForm.tsx` (Ticket 2) restait vide et **bloquait
+totalement** la catégorisation de toute demande relevant de ces
+catégories — aucune issue possible sans passer par `/admin/categories`
+(réservé à `isAdmin()`) puis revenir sur l'écran de catégorisation.
+
+### `creerObjetInlineAction(categorieId, label)` (`treso/finance/demandes/[id]/actions.ts`)
+
+Réservée à `treso.categoriser_demande` — **pas `isAdmin()`** : cohérent
+avec le fait que c'est Finance qui agit dans CE contexte précis (le CRUD
+complet de `admin/categories`, lui, reste réservé aux administrateurs,
+inchangé). Vérifie que la Catégorie existe et est active, crée un Objet
+**ORDINAIRE** (même modèle `Objet`, `isActive: true` par défaut — jamais
+une donnée cachée ou parallèle), historise (`HistoriqueEntry`, entité
+`Objet`), puis revalide `/admin/categories` et `/treso/finance/reporting`
+(mêmes chemins que `createObjetAction`, `admin/categories/actions.ts`) :
+le nouvel Objet est immédiatement visible partout où le catalogue est lu,
+exactement comme s'il avait été créé depuis la console admin.
+
+### Interface (`CategorisationForm.tsx`)
+
+- Le Select "Objet" propose toujours une option **"+ Ajouter un nouvel
+  objet"** en dernière position (valeur spéciale `__nouvel_objet__`,
+  jamais soumise telle quelle — la sélectionner rouvre le Select à vide
+  via un changement de `key` et ouvre le panneau de création).
+- **Le panneau de création s'ouvre automatiquement** dès que la catégorie
+  choisie n'a aucun objet (`objetsFiltres.length === 0`) — dérivé du rendu
+  (`afficherCreation`), jamais un `useEffect` + `setState` (évite un rendu
+  en cascade, correctif appliqué directement plutôt que suppressé en
+  `eslint-disable`).
+- Une fois l'objet créé (`creerObjetInlineAction` appelée via
+  `useTransition`, pas `<form action>` — même pattern que
+  `creerRetourCaisseAction`), il est ajouté à l'état local
+  (`objetsLocaux`) et **immédiatement sélectionné dans le formulaire, sans
+  recharger la page** : le Select est re-clé sur `${categorieId}-${objetSelectionneId}`
+  pour forcer son `defaultValue` à refléter la nouvelle sélection (piège
+  Select déjà documenté à plusieurs reprises dans ce fichier : toujours
+  `defaultValue`, jamais `value`).
+- Bouton "Annuler" du panneau de création masqué si la catégorie n'a
+  toujours aucun autre objet — rien à quoi revenir, la création reste la
+  seule issue possible (le panneau se rouvrirait de toute façon).
+
+### Vérifié explicitement — vrai parcours navigateur
+
+`npx tsc --noEmit` et `npx eslint .` (backend et frontend) sans nouvelle
+erreur (le passage direct par une valeur dérivée du rendu, plutôt qu'un
+`useEffect`, a d'ailleurs évité une nouvelle erreur `react-hooks/set-state-in-effect`
+détectée puis corrigée pendant cette même tâche).
+
+Chromium headless (Playwright, non ajouté au projet) contre le vrai
+serveur `next dev` : Collaborateur crée une demande (25 000 FCFA), Finance
+choisit la catégorie **"Loyers"** (0 objet, confirmé en base avant le
+test) → message "Aucun objet n'existe encore pour cette catégorie" +
+panneau de création ouvert automatiquement, confirmés tous les deux ;
+création de l'objet "Loyer bureau test" → toast de succès, Select "Objet"
+affichant bien ce nouvel objet sélectionné sans rechargement de page ;
+catégorisation terminée avec succès ; **l'objet apparaît ensuite dans
+`admin/categories`** comme n'importe quel autre objet de la catégorie
+"Loyers" (vérifié par un compte Admin distinct). Données de test (la
+demande et l'objet créé pour ce test) supprimées après coup.
+
+## Reconfirmation des règles de validation partielle / verrou de clôture DG (post-monorepo, post-estAdmin)
+
+**Statut : vérifié, intact — aucune correction nécessaire.** Demande de
+reconfirmation après la restructuration en monorepo et le remplacement de
+`isAdmin()` par `Role.estAdmin` (voir les deux sections correspondantes
+plus haut) : ces deux chantiers n'ont touché ni `hasPermission()` (un
+simple passthrough sur `session.permissions`, jamais modifié), ni
+`approuverValidationCompleteAction`/`cloturerDemandeAction`/`peutEffectuerReglement`
+(logique métier des Phases B/C, jamais touchée par ces deux tâches) — vérifié
+par lecture directe du code AVANT tout test, puis confirmé par un vrai
+parcours navigateur.
+
+Seed actuel (`backend/prisma/seed.ts`) confirmé inchangé sur ce point
+précis : Finance a `treso.valider_demande`/`effectuer_reglement`/`cloturer_demande`
+mais **jamais** `treso.approuver_validation_complete` ; le DG a
+`treso.valider_demande`/`approuver_validation_complete` mais **jamais**
+`effectuer_reglement`/`cloturer_demande` — répartition strictement
+inchangée depuis sa mise en place (voir "Verrou de clôture" plus haut).
+
+### Vérifié explicitement — vrai parcours navigateur, 3 points reconfirmés individuellement
+
+Chromium headless (Playwright, non ajouté au projet), une demande de test
+(100 000 FCFA) menée jusqu'à la clôture :
+
+1. **Finance ne peut PAS accorder de validation complète** — le bouton
+   "Approuver la validation complète" est absent de l'écran de détail pour
+   Finance (confirmé par inspection DOM). **Défense en profondeur** : la
+   vraie requête réseau de `approuverValidationCompleteAction` (capturée
+   pendant son exécution légitime par le DG) rejouée à l'identique avec
+   les cookies de session Finance → réponse "Action non autorisée.",
+   aucune écriture déclenchée. Le DG, lui, a bien pu approuver.
+2. **Finance valide et règle/décaisse sans attendre le DG** — validation
+   totale par Finance seule, puis règlement Caisse créé et confirmé par
+   Finance seule (aucune intervention du DG à aucun moment de ces deux
+   étapes) : succès dans les deux cas, confirmant que
+   `peutEffectuerReglement` reste strictement indépendant de
+   `validationCompleteParDG`.
+3. **La clôture reste bloquée tant que `validationCompleteParDG` n'est pas
+   `true`** — tentative de clôture par Finance (qui a pourtant
+   `treso.cloturer_demande` et a déjà tout réglé) : bouton "Clôturer
+   totalement" absent, remplacé par le message explicite "La clôture
+   nécessite l'approbation complète du DG au préalable." ; après
+   approbation du DG, le même bouton réapparaît chez Finance et la clôture
+   réussit.
+
+Les 3 points sont confirmés **strictement intacts** — rien n'a été cassé
+par la restructuration en monorepo ni par le remplacement `isAdmin()` →
+`estAdmin`. Donnée de test (1 demande, son règlement, son historique,
+l'écriture `JournalCaisse`) supprimée après coup.
+
+## Solde d'ouverture de caisse
+
+**Statut : terminé.** `getSoldeCaisse()` (Ticket 4) partait implicitement
+de 0 (somme des `JournalCaisse` `ENTREE` moins `SORTIE`) — en conditions
+réelles de production, de l'argent physique peut déjà être présent en
+caisse avant que le portail ne commence à l'utiliser. Cette phase ajoute
+la possibilité de définir ce montant de départ, **sans jamais modifier
+`getSoldeCaisse()` elle-même** : le solde d'ouverture est une écriture
+`JournalCaisse` ORDINAIRE (`type: "ENTREE"`), déjà comptée par la formule
+existante.
+
+### `JournalCaisse.demandeId` devient nullable (migration `journalcaisse_demande_optionnelle`)
+
+**Obstacle de schéma découvert en concevant cette tâche** : `demandeId`
+était une clé étrangère **obligatoire** vers `Demande` — chaque écriture
+du grand livre était jusqu'ici systématiquement liée à une demande
+précise (règlement, retour). Un solde d'ouverture n'a, par nature, AUCUNE
+demande d'origine : impossible de créer une telle écriture sans assouplir
+le schéma. Migration purement permissive (`ALTER COLUMN "demandeId" DROP
+NOT NULL`, `onDelete: SetNull` sur la FK — jamais un `DROP`, aucune perte
+de donnée possible), `schema.prisma` : `demandeId String?` /
+`demande Demande?`. **Seul point d'appel affecté** : `getReportingJournalDetail`
+(`backend/src/reporting.ts`, feuille "Journal de caisse" de l'export) lisait
+`e.demande.reference` sans garde — corrigé en `e.demande?.reference ?? "—"`,
+seule modification requise dans tout le reste du code (vérifié par recherche
+exhaustive des usages de `journalCaisse.findMany`/`.aggregate`/`.groupBy`).
+
+### Trois sources dédiées (`backend/src/tresorerie.ts`)
+
+`SOLDE_OUVERTURE_SOURCE` (`"solde_ouverture"`),
+`SOLDE_OUVERTURE_CORRECTION_SOURCE` (`"correction_solde_ouverture"`),
+`SOLDE_OUVERTURE_ANNULATION_SOURCE` (`"annulation_solde_ouverture"`) —
+même principe que `annulation_reglement_caisse` (Ticket 4) : **jamais une
+édition silencieuse d'une écriture existante**. `getSoldeOuvertureInfo()`
+dérive l'état actuel (`existe`, `montantActuel`, `definiLe`) en sommant
+ces trois sources — jamais un champ dédié stocké ailleurs, cohérent avec
+la règle impérative "le solde de caisse n'est jamais saisi manuellement,
+toujours recalculé".
+
+### `definirSoldeOuvertureAction(montant, motif?)` / `corrigerSoldeOuvertureAction(nouveauMontant, motif)` (`treso/finance/solde-ouverture/actions.ts`)
+
+Réservées à Finance/Admin (`isAdmin(session) || hasPermission(session,
+"treso.effectuer_reglement")`, jamais le DG seul — `treso.valider_demande`
+ne suffit pas) :
+
+- **`definirSoldeOuvertureAction`** — refuse si une écriture
+  `solde_ouverture` existe déjà (`prisma.journalCaisse.count`, défense en
+  profondeur revérifiée juste avant l'écriture, jamais uniquement via le
+  masquage du formulaire) : UNE SEULE définition possible, pour ne jamais
+  fausser le grand livre. Crée l'écriture `JournalCaisse` (`demandeId:
+  null`) + une `HistoriqueEntry` (entité `JournalCaisse`).
+- **`corrigerSoldeOuvertureAction`** — motif obligatoire (min 3
+  caractères, comme `annulerReglementAction`). Calcule le montant
+  actuellement en vigueur (`getSoldeOuvertureInfo`), crée une écriture
+  **compensatoire** (SORTIE du montant actuel, source
+  `annulation_solde_ouverture`) puis une **nouvelle** écriture (ENTREE du
+  montant corrigé, source `correction_solde_ouverture`) — l'écriture
+  d'origine n'est jamais touchée, l'historique complet reste
+  intégralement reconstituable (montant d'origine → annulé → nouveau
+  montant, avec motif).
+
+### Interface (`treso/finance/solde-ouverture/`)
+
+Page dédiée (garde `isAdmin() || treso.effectuer_reglement`, revérifiée
+côté page en plus des Server Actions — jamais supposée acquise du simple
+fait d'avoir passé la garde partagée de `finance/layout.tsx`, qui accepte
+un ensemble de permissions plus large) : `SoldeOuvertureForm.tsx` (première
+définition, montant + motif optionnel) si `!info.existe`, sinon
+`SoldeOuvertureCorrection.tsx` (affiche le montant actuel + date de
+première définition, bouton "Corriger le solde d'ouverture" à deux temps —
+même principe que `ClotureActions.tsx`/`UserDeleteButton.tsx` : jamais un
+clic accidentel). Nouvelle entrée de sidebar "Solde d'ouverture de caisse"
+(`nav.ts`, nouveau flag `NavFlags.canGererSoldeOuverture`, propagé
+`(dashboard)/layout.tsx` → `AppShell` → `Sidebar`, même chemin que tous
+les flags précédents).
+
+**Affichage explicite sur le dashboard Finance** (`treso/finance/page.tsx`) :
+sous le bandeau "Solde de caisse actuel", une ligne indique soit "Inclut
+un solde d'ouverture de X FCFA (défini le ...)" + lien "Corriger" (si
+`canGererSoldeOuverture`), soit "Aucun solde d'ouverture défini — en
+définir un maintenant" (lien visible uniquement pour Finance/Admin ; le DG
+voit le même rappel mais sans lien vers une action qu'il ne peut pas
+effectuer, même principe que `canReceptionnerRetour` déjà en place sur ce
+même écran).
+
+### Vérifié explicitement — vrai parcours navigateur + contrôle direct en base
+
+`npx tsc --noEmit` et `npx eslint .` (backend et frontend) sans nouvelle
+erreur.
+
+Chromium headless (Playwright, non ajouté au projet), comptes réels
+Finance/DG :
+
+- DG : voit "Aucun solde d'ouverture défini" **sans** lien cliquable ;
+  accès direct à `/treso/finance/solde-ouverture` refusé
+  (`?error=acces_refuse_solde_ouverture`).
+- Finance définit un solde d'ouverture de test à 200 000 FCFA → succès,
+  bandeau du dashboard passe à "Inclut un solde d'ouverture de 200 000
+  FCFA".
+- **Tentative d'un second solde d'ouverture** : le formulaire de première
+  définition a disparu (remplacé par l'écran de correction) — la seule
+  voie restante est `corrigerSoldeOuvertureAction`, jamais un second appel
+  à `definirSoldeOuvertureAction`.
+- **Correction tracée** : motif vide bloqué côté client ; avec un motif
+  réel, correction à 250 000 FCFA réussie — **contrôle direct en base**
+  après coup : les 3 écritures distinctes existent bien
+  (`ENTREE 200000 solde_ouverture` → `SORTIE 200000
+  annulation_solde_ouverture` → `ENTREE 250000 correction_solde_ouverture`),
+  l'écriture d'origine strictement intacte, jamais réécrite. Page
+  solde-ouverture affichant bien "250 000 FCFA" après correction.
+- **Intégration réelle avec `getSoldeCaisse()`, vérifiée avec un autre
+  mouvement de caisse déjà présent** (un règlement Caisse de 100 000 FCFA
+  confirmé par ailleurs pendant cette session de vérification) : solde
+  total du dashboard = **150 000 FCFA** (250 000 de solde d'ouverture net
+  − 100 000 de ce règlement), exactement la somme attendue —
+  `getSoldeCaisse()` n'a nécessité AUCUNE modification pour en tenir
+  compte.
+
+**Nettoyage — choix explicite** : les 3 écritures de test du solde
+d'ouverture (200 000 puis 250 000 FCFA, motifs de test explicites)
+**ont été supprimées** après vérification, plutôt que conservées : ce
+sont des montants de test, pas le vrai comptage physique de la caisse en
+production. La fonctionnalité reste donc prête, mais **aucun solde
+d'ouverture réel n'est encore défini** — à faire par Finance avec le
+véritable montant physique dès que souhaité. Les 2 demandes de test (une
+pour cette vérification, une pour la reconfirmation des règles de
+validation ci-dessus) supprimées avec leurs règlements/historique/écritures
+`JournalCaisse`. État final confirmé par comptage direct : 0 demande, 0
+écriture `JournalCaisse`, 5 utilisateurs réels inchangés. Serveur `next
+dev` arrêté après vérification.
+
 ## Rehaussement visuel — dashboards, typographie, couleur (post-polish)
 
 **Statut : terminé.** Le premier passage de polish (transitions, cohérence

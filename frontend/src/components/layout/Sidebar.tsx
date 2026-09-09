@@ -31,6 +31,8 @@ interface SidebarProps {
   canSaisirDepenseDirecte?: boolean;
   /** treso.approuver_validation_complete (DG) : ajoute "Validations complètes en attente". */
   canApprouverValidationComplete?: boolean;
+  /** isAdmin() OU treso.effectuer_reglement : ajoute "Solde d'ouverture de caisse". */
+  canGererSoldeOuverture?: boolean;
   /** Au moins une permission pointage.* : affiche la branche "Pointage de Présence" et "Mon espace". */
   hasPointageAccess?: boolean;
   /** Ajoute le groupe "RH" du Pointage (permissions RH uniquement). */
@@ -77,6 +79,7 @@ export function Sidebar({
   canVoirReporting = false,
   canSaisirDepenseDirecte = false,
   canApprouverValidationComplete = false,
+  canGererSoldeOuverture = false,
   hasPointageAccess = false,
   canAccessPointageRH = false,
   mobileOpen,
@@ -92,6 +95,7 @@ export function Sidebar({
     canVoirReporting,
     canSaisirDepenseDirecte,
     canApprouverValidationComplete,
+    canGererSoldeOuverture,
     hasPointageAccess,
     canAccessPointageRH,
   });

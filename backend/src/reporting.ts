@@ -775,7 +775,9 @@ export async function getReportingJournalDetail(filters: ReportingFilters): Prom
     montant: Number(e.montant),
     source: e.source,
     createdAt: e.createdAt,
-    demandeReference: e.demande.reference,
+    // Solde d'ouverture (voir CLAUDE.md) : seul cas d'écriture sans
+    // demande d'origine (`demandeId: null`) — jamais une exception ici.
+    demandeReference: e.demande?.reference ?? "—",
     userNom: e.user.fullName,
   }));
 }

@@ -30,6 +30,8 @@ interface AppShellProps {
   canSaisirDepenseDirecte?: boolean;
   /** Affiche "Validations complètes en attente" (treso.approuver_validation_complete, DG). */
   canApprouverValidationComplete?: boolean;
+  /** Affiche "Solde d'ouverture de caisse" (isAdmin() OU treso.effectuer_reglement). */
+  canGererSoldeOuverture?: boolean;
   /** Affiche la branche "Pointage de Présence" et "Mon espace" (au moins une permission pointage.*). */
   hasPointageAccess?: boolean;
   /** Ajoute le groupe "RH" du Pointage (permissions RH uniquement). */
@@ -58,6 +60,7 @@ export function AppShell({
   canVoirReporting = false,
   canSaisirDepenseDirecte = false,
   canApprouverValidationComplete = false,
+  canGererSoldeOuverture = false,
   hasPointageAccess = false,
   canAccessPointageRH = false,
   unreadNotificationsCount = 0,
@@ -153,6 +156,7 @@ export function AppShell({
         canVoirReporting={canVoirReporting}
         canSaisirDepenseDirecte={canSaisirDepenseDirecte}
         canApprouverValidationComplete={canApprouverValidationComplete}
+        canGererSoldeOuverture={canGererSoldeOuverture}
         hasPointageAccess={hasPointageAccess}
         canAccessPointageRH={canAccessPointageRH}
         mobileOpen={mobileOpen}

@@ -125,6 +125,79 @@ export async function categoriserDemandeAction(
   return { status: "success", message: "Catégorisation enregistrée." };
 }
 
+const nouvelObjetSchema = z.object({
+  categorieId: z.string().min(1, "Catégorie requise"),
+  label: z.string().trim().min(2, "Le libellé doit contenir au moins 2 caractères"),
+});
+
+export type CreerObjetInlineResult =
+  | { status: "success"; objet: { id: string; label: string; categorieId: string } }
+  | { status: "error"; message: string };
+
+/**
+ * Crée un Objet directement depuis l'écran de catégorisation Finance, sans
+ * quitter le formulaire ni recharger la page — débloque le cas où une
+ * Catégorie n'a encore aucun Objet (le Select "Objet" resterait sinon
+ * vide, bloquant toute catégorisation). Réservée à
+ * `treso.categoriser_demande`, cohérent avec le fait que c'est Finance qui
+ * agit dans CE contexte précis (le CRUD complet de `admin/categories`,
+ * lui, reste réservé à `isAdmin()`, inchangé).
+ *
+ * Le nouvel Objet est un Objet ORDINAIRE (même modèle `Objet`, `isActive:
+ * true` par défaut) — il apparaît ensuite normalement dans
+ * `admin/categories` comme n'importe quel autre, jamais une donnée cachée
+ * ou parallèle.
+ */
+export async function creerObjetInlineAction(
+  categorieId: string,
+  label: string
+): Promise<CreerObjetInlineResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.categoriser_demande")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsed = nouvelObjetSchema.safeParse({ categorieId, label });
+  if (!parsed.success) {
+    return { status: "error", message: parsed.error.issues[0].message };
+  }
+
+  const categorie = await prisma.categorie.findUnique({ where: { id: parsed.data.categorieId } });
+  if (!categorie) {
+    return { status: "error", message: "Catégorie introuvable." };
+  }
+  if (!categorie.isActive) {
+    return { status: "error", message: "Cette catégorie est désactivée : impossible d'y ajouter un objet." };
+  }
+
+  const objet = await prisma.objet.create({
+    data: { label: parsed.data.label, categorieId: parsed.data.categorieId },
+  });
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "Objet",
+      entityId: objet.id,
+      action: "CREATE",
+      detail: `Objet « ${objet.label} » créé depuis l'écran de catégorisation (catégorie « ${categorie.label} »)`,
+      userId: session.user.id,
+    },
+  });
+
+  // Le catalogue d'objets est aussi lu par admin/categories et le
+  // reporting (même revalidation que createObjetAction dans
+  // admin/categories/actions.ts) : le nouvel objet y est donc visible
+  // immédiatement, jamais une donnée cachée ou différente.
+  revalidatePath("/admin/categories");
+  revalidatePath("/treso/finance/reporting");
+  publishDataChanged();
+
+  return {
+    status: "success",
+    objet: { id: objet.id, label: objet.label, categorieId: objet.categorieId },
+  };
+}
+
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
 function revalidateDemandePaths(demandeId: string) {

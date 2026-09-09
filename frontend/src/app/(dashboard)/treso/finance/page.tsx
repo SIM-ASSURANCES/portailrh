@@ -13,8 +13,8 @@ import {
   getRetoursEnAttenteReception,
   getValidationsCompletesEnAttente,
 } from "backend";
-import { getSession, hasPermission } from "@/lib/auth";
-import { getSoldeCaisse } from "backend";
+import { getSession, hasPermission, isAdmin } from "@/lib/auth";
+import { getSoldeCaisse, getSoldeOuvertureInfo } from "backend";
 
 /**
  * Tableau de bord Finance (Phase G, cahier des charges section 12) —
@@ -58,6 +58,7 @@ export default async function DashboardFinancePage() {
 
   const [
     solde,
+    soldeOuverture,
     enAttenteValidation,
     montantsNonRegles,
     reglementsPartiels,
@@ -68,6 +69,7 @@ export default async function DashboardFinancePage() {
     validationsCompletesEnAttente,
   ] = await Promise.all([
     getSoldeCaisse(),
+    getSoldeOuvertureInfo(),
     getDemandesEnAttenteValidation(),
     getMontantsValidesNonRegles(),
     getReglementsPartielsACompleter(),
@@ -79,6 +81,12 @@ export default async function DashboardFinancePage() {
       ? getValidationsCompletesEnAttente()
       : Promise.resolve({ nombre: 0 }),
   ]);
+
+  // Réservé à Finance/Admin (voir CLAUDE.md "Solde d'ouverture de
+  // caisse") — le DG (voir_dashboard_finance sans effectuer_reglement)
+  // voit le rappel mais pas de lien vers une action qu'il ne peut pas
+  // effectuer, même principe que `canReceptionnerRetour` ci-dessous.
+  const canGererSoldeOuverture = isAdmin(session) || hasPermission(session, "treso.effectuer_reglement");
 
   // Le DG a `voir_dashboard_finance` mais jamais `receptionner_retour`
   // (rôle validation/consultation, voir seed) : sans ce garde-fou, la carte
@@ -142,6 +150,40 @@ export default async function DashboardFinancePage() {
             </p>
           </div>
         </div>
+
+        {/* Indicateur explicite du solde d'ouverture (voir CLAUDE.md) :
+            jamais implicite, pour que Finance/Admin sache d'un coup d'œil
+            si le grand livre part bien d'un montant physique réel ou
+            encore de zéro par défaut. */}
+        <p className="relative mt-4 text-sm text-white/80">
+          {soldeOuverture.existe ? (
+            <>
+              Inclut un solde d&apos;ouverture de{" "}
+              <span className="font-semibold text-white">
+                {soldeOuverture.montantActuel.toLocaleString("fr-FR")} FCFA
+              </span>{" "}
+              (défini le {soldeOuverture.definiLe!.toLocaleDateString("fr-FR")}).
+              {canGererSoldeOuverture ? (
+                <>
+                  {" "}
+                  <Link href="/treso/finance/solde-ouverture" className="font-medium underline underline-offset-4 hover:text-white">
+                    Corriger
+                  </Link>
+                </>
+              ) : null}
+            </>
+          ) : canGererSoldeOuverture ? (
+            <>
+              Aucun solde d&apos;ouverture défini —{" "}
+              <Link href="/treso/finance/solde-ouverture" className="font-medium underline underline-offset-4 hover:text-white">
+                en définir un maintenant
+              </Link>
+              .
+            </>
+          ) : (
+            "Aucun solde d'ouverture défini."
+          )}
+        </p>
       </div>
 
       <section className="space-y-4">

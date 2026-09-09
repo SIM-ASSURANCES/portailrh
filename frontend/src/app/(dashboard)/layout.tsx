@@ -35,6 +35,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canVoirReporting={hasPermission(session, "treso.voir_reporting")}
       canSaisirDepenseDirecte={hasPermission(session, "treso.saisir_depense_directe")}
       canApprouverValidationComplete={hasPermission(session, "treso.approuver_validation_complete")}
+      canGererSoldeOuverture={isAdmin(session) || hasPermission(session, "treso.effectuer_reglement")}
       hasPointageAccess={[
         "pointage.pointer",
         "pointage.consulter_historique",

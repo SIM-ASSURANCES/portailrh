@@ -483,8 +483,14 @@ model JournalCaisse {
   refId     String
   createdAt DateTime @default(now())
 
-  demandeId String
-  demande   Demande @relation(fields: [demandeId], references: [id])
+  /// Nullable depuis "Solde d'ouverture de caisse" (voir CLAUDE.md) :
+  /// toutes les écritures avant cette phase portaient une demande réelle
+  /// (règlement/retour), mais une écriture `source = "solde_ouverture"` /
+  /// "correction_solde_ouverture" / "annulation_solde_ouverture" ne se
+  /// rattache à AUCUNE demande — le seul cas de mouvement de caisse sans
+  /// demande d'origine.
+  demandeId String?
+  demande   Demande? @relation(fields: [demandeId], references: [id])
 
   userId String
   user   User   @relation("JournalCaisseUser", fields: [userId], references: [id])
