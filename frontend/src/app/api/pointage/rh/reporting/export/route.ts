@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
     { header: "Motif", key: "motif", width: 40 },
   ];
 
-  details.forEach((d) => {
+  details.data.forEach((d) => {
     sheetDetails.addRow({
       date: d.date.toLocaleDateString("fr-FR"),
       collaborateur: d.collaborateur,
