@@ -20,6 +20,26 @@ export async function GET(request: Request) {
     const systemStartDate = new Date(systemStartDateStr);
     systemStartDate.setHours(0, 0, 0, 0);
 
+    // Fetch ParametrageHoraire to get end of day
+    const parametrage = await prisma.parametrageHoraire.findFirst({
+      where: { isActive: true }
+    });
+
+    // Check if current time has passed heureFinApresMidi
+    let hasPassedEndOfDay = false;
+    const now = new Date();
+    if (parametrage && parametrage.heureFinApresMidi) {
+      const [endHour, endMinute] = parametrage.heureFinApresMidi.split(":").map(Number);
+      if (now.getHours() > endHour || (now.getHours() === endHour && now.getMinutes() >= endMinute)) {
+        hasPassedEndOfDay = true;
+      }
+    } else {
+      // Fallback: 18:00
+      if (now.getHours() >= 18) {
+        hasPassedEndOfDay = true;
+      }
+    }
+
     // 2. Récupérer tous les collaborateurs qui doivent pointer (hors ADMIN)
     const users = await prisma.user.findMany({
       where: {
@@ -31,7 +51,7 @@ export async function GET(request: Request) {
 
     let nouvellesAbsences = 0;
 
-    // 3. Boucle de rattrapage : on analyse les 5 derniers jours (y compris aujourd'hui)
+    // 3. Boucle de rattrapage : on analyse les 2 derniers jours (y compris aujourd'hui)
     const joursAnalyses = 2;
 
     const dateMin = new Date(today);
@@ -71,6 +91,9 @@ export async function GET(request: Request) {
       currentDate.setHours(0, 0, 0, 0);
 
       if (currentDate < systemStartDate) continue;
+
+      // Skip today if the end of the work day hasn't passed yet
+      if (i === 0 && !hasPassedEndOfDay) continue;
 
       const dayOfWeek = currentDate.getDay();
       if (dayOfWeek === 0 || dayOfWeek === 6) continue;

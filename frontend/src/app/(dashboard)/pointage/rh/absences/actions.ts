@@ -18,7 +18,7 @@ import { StatutAbsence } from "backend";
 export async function traiterAbsence(absenceId: string, statut: StatutAbsence, motif: string) {
   const session = await getSession();
   
-  if (!session || !hasPermission(session, "pointage.traiter_absence")) {
+  if (!session || !hasPermission(session, "pointage.corriger_pointage")) {
     return { status: "error", message: "Non autorisé" };
   }
 
