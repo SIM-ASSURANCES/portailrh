@@ -45,7 +45,17 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Client Prisma généré — jamais commité, régénéré par `npx prisma generate`
+# (voir CLAUDE.md "Monorepo backend/frontend" et "Nettoyage d'un résidu
+# src/generated/ orphelin à la racine"). Le seul dossier généré légitime du
+# monorepo est `backend/src/generated/prisma` (ligne explicite ci-dessous,
+# conservée par clarté) ; le filtre générique `**/generated/prisma/` couvre
+# en plus tout résidu qui réapparaîtrait ailleurs dans l'arbre (à la racine,
+# dans frontend/, ou dans un futur workspace) — jamais une seconde fois
+# l'incident du dossier orphelin `src/generated/prisma` fusionné par erreur
+# depuis `origin/thierry-kouame`.
 /backend/src/generated/prisma
+**/generated/prisma/
 graphify-out/
 
 #own file
@@ -53,10 +63,20 @@ audit_pointage.md
 audit_module_pointage.md
 frontend/src/app/(dashboard)/pointage/ticket.txt
 
-# stockage local des pièces jointes (Demande/DepenseLigne) — jamais commité,
-# correspond au volume Docker nommé "uploads" monté sur /app/uploads (voir
-# docker-compose.yml/Dockerfile, DEPLOIEMENT.md)
+# Stockage local des fichiers uploadés (pièces jointes Demande/DepenseLigne,
+# photos de profil) — jamais commité, correspond au volume Docker nommé
+# "uploads" monté sur /app/uploads (voir docker-compose.yml/Dockerfile,
+# DEPLOIEMENT.md). `/uploads/` (ancré à la racine) ne suffisait plus depuis
+# la restructuration en monorepo : les uploads réels de l'application vivent
+# désormais sous `frontend/uploads/`, un chemin que ce motif ne couvrait
+# plus — un vrai fichier utilisateur (photo de profil déjà uploadée) est
+# ainsi resté "untracked" au lieu d'être ignoré, découvert lors du nettoyage
+# du résidu `src/generated/` orphelin ci-dessus. Motif générique
+# `**/uploads/`, même principe que `**/generated/prisma/` : couvre
+# désormais tout dossier `uploads/` à n'importe quelle profondeur de
+# l'arbre, jamais plus seulement la racine.
 /uploads/
+**/uploads/
 .env*.backup
 prisma/*.backup
 backend/prisma/*.backup
