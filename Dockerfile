@@ -117,23 +117,29 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# Build standalone : serveur Next.js minimal + node_modules tracés. Le
-# traçage d'un monorepo npm workspaces imbrique la sortie sous le chemin
-# réel du package Next.js (`frontend/.next/standalone/frontend/...`,
-# vérifié explicitement) plutôt que de la mettre directement à la racine
-# de `standalone/` comme pour un projet single-package — d'où le chemin
-# source `.../standalone/frontend` ci-dessous, à la place de
-# `.../standalone` tel quel dans l'ancienne version mono-package de ce
-# Dockerfile. `backend/` n'apparaît PAS séparément dans ce traçage : son
-# code est directement inliné dans les chunks compilés du serveur Next.js
-# (`transpilePackages`, vérifié explicitement en y retrouvant une fonction
-# de `backend/src/tresorerie.ts`) — seuls son schéma Prisma et sa config
-# (jamais du code applicatif) doivent encore être copiés séparément
-# ci-dessous, pour les migrations/le seed exécutés en CLI.
-COPY --from=builder --chown=nextjs:nodejs /app/frontend/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/standalone/frontend ./
-COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/standalone/node_modules ./node_modules
-COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/static ./.next/static
+# Build standalone : serveur Next.js minimal + node_modules tracés. En
+# monorepo npm workspaces, le traçage (`outputFileTracingRoot` = racine du
+# monorepo, voir frontend/next.config.ts) reproduit la structure du dépôt
+# sous `.next/standalone/` : `standalone/frontend/` (server.js, .next/) et
+# `standalone/node_modules/`, en frères. Cette structure est copiée TELLE
+# QUELLE dans /app, jamais aplatie : Turbopack externalise certains paquets
+# (@prisma/client, pg, @react-pdf/renderer...) via des liens symboliques
+# RELATIFS dans `frontend/.next/node_modules/` (ex :
+# `@prisma/client-<hash> -> ../../../../node_modules/@prisma/client`),
+# calculés pour cette profondeur précise. Une version précédente de ce
+# Dockerfile aplatissait `standalone/frontend` directement dans /app : ces
+# liens perdaient un niveau, pointaient vers /node_modules (inexistant), et
+# TOUTE route touchant Prisma ou le PDF répondait 500 ("Cannot find module
+# '@prisma/client-<hash>/runtime/client'"). Vérifié explicitement : les 4
+# liens se résolvent dans la structure conservée ici.
+# `backend/` n'apparaît pas dans le traçage (code inliné dans les chunks via
+# `transpilePackages`) : seuls son schéma Prisma et sa config sont copiés
+# séparément ci-dessous, pour les migrations/le seed exécutés en CLI.
+# `public/` et `.next/static/` ne sont pas copiés par défaut par le build
+# standalone (doc Next.js, output.md) : ajoutés à côté de server.js.
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/.next/static ./frontend/.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/public ./frontend/public
 
 # node_modules de production complet, fusionné par-dessus celui du build
 # standalone : couvre la CLI Prisma (migrate deploy, db seed) et tsx,
@@ -159,34 +165,45 @@ COPY --from=builder --chown=nextjs:nodejs /app/backend/src/generated/prisma ./ba
 
 # Polices du reçu PDF (frontend/src/lib/pdf/fonts/*.ttf), lues au runtime
 # via `readFileSync(path.join(process.cwd(), "src/lib/pdf/fonts", ...))` —
-# pas un import JS. `src/lib/pdf/` reste dans `frontend/` (jamais déplacé
-# vers `backend/`, voir CLAUDE.md "Monorepo backend/frontend" pour le
-# raisonnement : son chargement de police dépend de `process.cwd()` ==
-# racine de l'app Next.js elle-même). Vérifié que le traçage automatique de
-# Next.js les inclut déjà dans .next/standalone/frontend/src/lib/pdf/fonts,
-# mais cette copie explicite est ajoutée par robustesse : ce comportement
-# du traceur n'est pas garanti contractuellement, et un échec silencieux
-# ici (ENOENT) ne se manifesterait qu'au moment de télécharger un reçu, pas
-# au démarrage.
-COPY --from=builder --chown=nextjs:nodejs /app/frontend/src/lib/pdf/fonts ./src/lib/pdf/fonts
+# pas un import JS. `frontend/server.js` fait `process.chdir(__dirname)` au
+# démarrage : `process.cwd()` vaut donc `/app/frontend` à l'exécution (et
+# non `/app`), d'où la destination `./frontend/src/lib/pdf/fonts`. Le
+# traçage automatique de Next.js les inclut déjà dans
+# `.next/standalone/frontend/src/lib/pdf/fonts`, mais cette copie explicite
+# est conservée par robustesse : ce comportement du traceur n'est pas
+# garanti contractuellement, et un échec silencieux ici (ENOENT) ne se
+# manifesterait qu'au moment de télécharger un reçu, pas au démarrage.
+COPY --from=builder --chown=nextjs:nodejs /app/frontend/src/lib/pdf/fonts ./frontend/src/lib/pdf/fonts
 
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x ./docker-entrypoint.sh
 
-# Répertoire de stockage des futures pièces jointes (Demande/RetourCaisse —
-# voir prisma/schema.prisma modèle PieceJointe, fonctionnalité pas encore
-# implémentée). Créé et possédé par l'utilisateur applicatif AVANT le
-# premier montage du volume nommé correspondant (docker-compose.yml,
-# volume "uploads") : Docker respecte les permissions déjà en place dans
-# l'image lors du tout premier montage d'un volume nommé vide, donc sans
-# cette étape le volume serait possédé par root et inutilisable par le
-# process non-root "nextjs". Chemin inchangé (`/app/uploads`, `process.cwd()`
-# du serveur Next.js reste `/app` dans ce conteneur).
-RUN mkdir -p /app/uploads && chown nextjs:nodejs /app/uploads
+# Répertoire de stockage des pièces jointes (Demande/DepenseLigne, voir
+# api/treso/pieces-jointes). Créé et possédé par l'utilisateur applicatif
+# AVANT le premier montage du volume nommé "uploads" (fichiers compose,
+# monté sur /app/uploads) : Docker respecte les permissions déjà en place
+# dans l'image lors du tout premier montage d'un volume nommé vide, donc
+# sans cette étape le volume serait possédé par root et inutilisable par le
+# process non-root "nextjs".
+# Le code résout ce dossier via `path.join(process.cwd(), "uploads")`, et
+# `process.cwd()` vaut `/app/frontend` (voir `process.chdir` ci-dessus) :
+# `/app/frontend/uploads` est donc un lien vers `/app/uploads`, pour que les
+# fichiers atterrissent dans le volume persistant — sans lui, ils seraient
+# écrits dans le système de fichiers éphémère du conteneur et perdus au
+# redéploiement. Le point de montage reste `/app/uploads` : aucun changement
+# nécessaire dans les fichiers compose (le marqueur `.seeded` du service
+# "init" y vit aussi).
+RUN mkdir -p /app/uploads && chown nextjs:nodejs /app/uploads \
+    && ln -s /app/uploads /app/frontend/uploads \
+    && chown -h nextjs:nodejs /app/frontend/uploads
 
 USER nextjs
 
 EXPOSE 3000
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
-CMD ["node", "server.js"]
+# `frontend/server.js` (et non `server.js`) : structure standalone conservée,
+# voir plus haut. WORKDIR reste /app pour que `cd backend` (dans
+# docker-entrypoint.sh et dans le service "init" des fichiers compose)
+# continue de désigner /app/backend.
+CMD ["node", "frontend/server.js"]
