@@ -3245,7 +3245,8 @@ Choix techniques principaux (détaillés en commentaires dans `Dockerfile`) :
   ajouté** au bloc `generator` de `schema.prisma`, volontairement.
 - **Migrations automatiques, seed manuel jamais automatisé** :
   `docker-entrypoint.sh` lance `prisma migrate deploy` (pas `migrate dev`)
-  avant `node server.js` à chaque démarrage du conteneur `app` ; le seed
+  avant `node frontend/server.js` (monorepo, voir "Déploiement Dokploy et
+  image Docker" en fin de fichier) à chaque démarrage du conteneur `app` ; le seed
   (`prisma/seed.ts`, qui fait des `deleteMany`) ne tourne jamais tout seul
   — commande dédiée documentée dans `DEPLOIEMENT.md`
   (`docker compose exec app npx prisma db seed`), à lancer une seule fois.
@@ -7691,10 +7692,13 @@ Adapté à la nouvelle disposition (build multi-étapes inchangé : `deps` →
   réel du package Next.js — **vérifié explicitement** en inspectant
   `frontend/.next/standalone/` après un vrai `npm run build` : `server.js`
   se trouve sous `.../standalone/frontend/server.js`, pas directement à la
-  racine de `standalone/` comme pour un projet single-package. Le
-  Dockerfile copie donc `.../standalone/frontend` (contenu) vers `/app`,
-  et `.../standalone/node_modules` (le node_modules partagé, sibling de
-  `frontend/` dans la sortie tracée) séparément.
+  racine de `standalone/` comme pour un projet single-package.
+  **Corrigé depuis** : cette première version du Dockerfile aplatissait
+  `.../standalone/frontend` directement dans `/app`, ce qui cassait les
+  liens relatifs de Turbopack (HTTP 500 sur toute route Prisma/PDF). La
+  structure `standalone/` est désormais copiée telle quelle et lancée via
+  `node frontend/server.js` — voir "Déploiement Dokploy et image Docker"
+  en fin de fichier.
 - `backend/prisma/` et `backend/prisma7.config.ts` sont copiés séparément
   sous `./backend/` dans l'image finale (jamais tracés par Next.js, requis
   par les migrations/le seed en CLI) — `docker-entrypoint.sh` s'exécute
@@ -7760,15 +7764,144 @@ interne du code.
   correction de bug au passage"), ces 5 erreurs n'ont pas été corrigées ici
   — elles bloquent `npm run build` (et donc le stage `builder` du
   Dockerfile) aussi bien avant qu'après la restructuration.
-- **Docker : non vérifié empiriquement.** Le CLI `docker` est présent dans
-  cet environnement mais son daemon n'est pas joignable (`docker info`
-  échoue, Docker Desktop introuvable/non démarré) — impossible d'exécuter
-  un vrai `docker build`/`docker compose up` ici. Le Dockerfile a été
-  adapté par une analyse rigoureuse de la structure RÉELLE de sortie
-  (`frontend/.next/standalone/`, inspectée directement après un vrai
-  `npm run build` local), pas par supposition — mais reste **non testé de
-  bout en bout en conteneur**, à vérifier dès qu'un environnement Docker
-  fonctionnel est disponible.
+  **Mise à jour** : corrigées depuis (commit `50158e0`), car elles
+  rendaient toute construction d'image impossible — voir "Déploiement
+  Dokploy et image Docker" en fin de fichier.
+- ~~**Docker : non vérifié empiriquement.**~~ **Superseded** : vérifié
+  depuis en conteneur réel — et ce test a justement révélé que l'image
+  construite par cette version du Dockerfile répondait 500 sur toute
+  route touchant Prisma. Cause, correctif et vérification de bout en bout
+  dans "Déploiement Dokploy et image Docker" ci-dessous.
+
+## Déploiement Dokploy et image Docker
+
+**Statut : terminé.** Production sur Dokploy (`portailrh.mysimassurances.com`)
+à partir d'une **image pré-construite** publiée sur GHCR
+(`ghcr.io/sim-assurances/portailrh:<tag>`), via
+[docker-compose.raw.yml](docker-compose.raw.yml) collé dans le mode "Raw" de
+Dokploy (aucun dépôt Git rattaché côté Dokploy : impossible d'y builder,
+d'où l'image pré-construite). Tag en service : **`v4`**. `v3` est publiée
+mais cassée (voir plus bas) et volontairement **non réécrite** : un tag
+publié qui change de contenu en silence rendrait impossible de savoir
+quelle image tourne réellement.
+
+### Trois pièges de déploiement rencontrés en conditions réelles
+
+1. **Nom de service `db` ambigu sur `dokploy-network`.** L'`app` doit
+   rejoindre `dokploy-network` — réseau partagé par TOUS les projets
+   Dokploy du serveur — pour être atteinte par Traefik. Plusieurs autres
+   projets du même serveur ont eux aussi un service `db` : sur ce réseau,
+   le DNS Docker pouvait router l'app vers le PostgreSQL d'une autre
+   application, d'où une erreur Prisma `P1000` (authentification refusée)
+   alors que la base du projet était saine. Le service de base s'appelle
+   donc **`portailrh-db`**, unique sur le serveur — ne jamais le renommer
+   en `db`.
+2. **Mot de passe PostgreSQL figé au premier démarrage du volume.**
+   `POSTGRES_PASSWORD` n'est appliqué qu'à l'initialisation d'un volume
+   vide ; après plusieurs essais de déploiement, un ancien volume gardait
+   d'autres identifiants. L'entrypoint de `portailrh-db` resynchronise
+   désormais le mot de passe (et crée la base si besoin) à chaque
+   démarrage, via la socket locale (auth `trust`), puis rend la main à
+   `docker-entrypoint.sh postgres`.
+3. **Structure `standalone` aplatie** (bug de l'image `v3`) — voir plus bas.
+
+### Service `init` (one-shot)
+
+Avant l'`app`, un service `init` (même image) exécute depuis `backend/` :
+`prisma migrate deploy`, puis `prisma db seed` **une seule fois** (protégé
+par le marqueur `/app/uploads/.seeded` sur le volume persistant — le seed
+fait des `deleteMany`, le relancer effacerait les vraies données), puis
+`prisma/set-admin.ts` (idempotent : compte admin de production). L'`app`
+attend `service_completed_successfully`.
+
+**Limite connue** (déduite du code, non reproduite) : le marqueur vit sur
+le volume `uploads`, l'état réel du seed sur le volume de la base. Si l'un
+est recréé sans l'autre, ils se désynchronisent : base vide + marqueur
+présent ⇒ seed sauté ⇒ `set-admin.ts` échoue (« Rôle Admin introuvable »)
+⇒ `init` en échec et l'app ne démarre pas. Échec visible, jamais une perte
+de données silencieuse.
+
+### Bug de l'image `v3` : liens relatifs de Turbopack cassés (HTTP 500)
+
+**Symptôme** : `/login`, `/api/auth/*` et toute route touchant Prisma
+répondaient 500 — `Cannot find module '@prisma/client-<hash>/runtime/client'`.
+
+**Cause** : en monorepo, le client Prisma généré vit dans `backend/` (un
+autre package). Turbopack externalise alors `@prisma/client`, `pg` et
+`@react-pdf/renderer` via des **liens symboliques relatifs** dans
+`frontend/.next/node_modules/` (ex : `@prisma/client-<hash> ->
+../../../../node_modules/@prisma/client`), calculés pour la structure
+`standalone/frontend/` + `standalone/node_modules/`. Le Dockerfile
+aplatissait `standalone/frontend` dans `/app` : chaque lien perdait un
+niveau et pointait vers `/node_modules`, inexistant. Vérifié : les 4 liens
+étaient cassés dans `v3`, et tous résolus dans la structure d'origine. Les
+images `v1`/`v2` (mono-package, avant la restructuration) n'étaient pas
+concernées : le client généré vivait alors dans le package Next.js lui-même.
+
+**Correctif** (étage `runner` du Dockerfile) :
+- `standalone/` copié **tel quel** dans `/app` ; `public/` et
+  `.next/static/` placés à côté de `frontend/server.js` (doc Next.js,
+  `output.md`) ; `CMD ["node", "frontend/server.js"]`.
+- `WORKDIR` reste `/app` : le `cd backend` de `docker-entrypoint.sh` et du
+  service `init` désigne toujours `/app/backend` — aucun changement de
+  compose nécessaire pour ce correctif.
+- **Conséquence à connaître** : `server.js` fait `process.chdir(__dirname)`,
+  donc `process.cwd()` vaut `/app/frontend` à l'exécution, et non plus
+  `/app`. Les trois chemins du code basés sur `process.cwd()` ont été
+  recensés : polices PDF (copiées sous `frontend/src/lib/pdf/fonts`) ;
+  pièces jointes (`cwd/uploads` : `/app/frontend/uploads` est un lien vers
+  `/app/uploads`, le point de montage du volume, pour qu'elles restent
+  persistantes) ; photos de profil (voir ci-dessous).
+
+**Limite préexistante signalée, non corrigée** : les photos de profil
+(`api/upload-photo`) s'écrivent dans `public/uploads/profiles` du
+conteneur, jamais sur un volume — perdues à chaque redéploiement, avant
+comme après ce correctif.
+
+### Connexion : email nettoyé et insensible à la casse
+
+Découvert en testant la connexion sur l'image de production :
+`authorize()` (`frontend/src/lib/auth.ts`) cherchait le compte par
+`findUnique({ where: { email } })` — **sensible à la casse** sous
+PostgreSQL, et sans `trim()`. Une majuscule ajoutée automatiquement par un
+clavier mobile (`Admin@...`) ou un espace final (autocomplétion,
+copier-coller) rendait le compte « introuvable » : `CredentialsSignin`
+avec le bon mot de passe. Désormais l'email est nettoyé (`trim()`) puis
+recherché par `findFirst({ where: { email: { equals, mode: "insensitive" } } })`
+— insensible à la casse plutôt qu'un simple `toLowerCase()`, pour rester
+compatible avec d'éventuels comptes déjà enregistrés avec des majuscules.
+Le mot de passe n'est **jamais** normalisé. La clé de limitation de débit
+du formulaire (`authenticate`, `login/page.tsx`) est normalisée de la même
+façon : varier la casse ne donne plus de tentatives supplémentaires.
+
+**Limite restante, non traitée** : seule la connexion a été modifiée — les
+chemins de création de compte (manuelle, par invitation) n'ont pas été
+touchés, et l'unicité en base (`User.email @unique`) reste sensible à la
+casse. Si deux comptes ne différant que par la casse existaient,
+`findFirst` n'en retiendrait qu'un. Sans conséquence de sécurité (le mot
+de passe reste vérifié contre la ligne trouvée) ; à normaliser à la
+création si le cas se présente.
+
+**Vérifié** (même stack, redéploiement de `v4` sur les volumes existants —
+seed sauté par le marqueur, `set-admin.ts` rejoué) : connexion réussie avec
+`admin@simassurances.com`, `Admin@simassurances.com`,
+`admin@simassurances.com ` (espace final), `  ADMIN@SimAssurances.COM  ` et
+`Collaborateur@simassurances.test` ; refus témoin avec le bon email mais le
+mot de passe en minuscules (`simas@2026`) — le mot de passe reste bien
+sensible à la casse.
+
+### Vérifié explicitement
+
+Stack locale reproduisant la production (blocs `portailrh-db` et `init`
+recopiés tels quels de `docker-compose.raw.yml`, image `v4`) : `init` →
+migrations, seed, `Compte administrateur mis à jour : admin@simassurances.com`,
+sortie 0 ; `/login`, `/api/auth/csrf` et `/api/auth/providers` en **200**
+(500 avec `v3`) ; connexion réelle par le flux Auth.js complet (jeton CSRF
+puis `/api/auth/callback/credentials`) réussie pour `admin@simassurances.com`
+et pour un compte de seed, mauvais mot de passe refusé ; **0** occurrence
+de `Cannot find module` ; pièce jointe écrite via le chemin exact du code
+(`path.join(process.cwd(), "uploads")`, utilisateur `nextjs`) retrouvée
+dans le volume depuis un second conteneur.
 
 ## `estAdmin` remplace le nom de rôle pour l'accès à `/admin`
 

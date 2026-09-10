@@ -13,7 +13,11 @@ import { LoginSubmitButton } from "./LoginSubmitButton";
 async function authenticate(formData: FormData) {
   "use server";
 
-  const email = String(formData.get("email") || "");
+  // Normalisé pour la seule clé de limitation de débit : "Admin@x" et
+  // "admin@x " partagent ainsi le même quota (sinon, varier la casse
+  // offrait des tentatives supplémentaires). La recherche du compte, elle,
+  // est normalisée dans authorize() (src/lib/auth.ts).
+  const email = String(formData.get("email") || "").trim().toLowerCase();
   const headersList = await headers();
   const rawIp = headersList.get("x-forwarded-for") || "IP_INCONNUE";
   const ip = rawIp.replace(/^::ffff:/, "");
