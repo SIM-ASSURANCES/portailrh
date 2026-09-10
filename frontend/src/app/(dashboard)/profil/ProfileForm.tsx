@@ -98,7 +98,7 @@ export function ProfileForm({ user, role }: ProfileFormProps) {
               onClick={handlePhotoClick}
             >
               {photoUrl ? (
-                <Image src={photoUrl} alt="Photo de profil" fill className="object-cover" />
+                <Image src={photoUrl} alt="Photo de profil" fill sizes="96px" className="object-cover" />
               ) : (
                 <div className="grid size-full place-items-center bg-primary text-3xl font-semibold text-primary-foreground">
                   {user.fullName.charAt(0)}

@@ -17,6 +17,10 @@ export interface PresenceData {
   estRetard?: boolean;
   minutesRetard?: number | null;
   motif?: string | null;
+  /** Source du pointage d'arrivée (pour le badge géoloc) */
+  sourceArrivee?: string | null;
+  /** Distance au bureau en mètres (si pointage géolocalisé) */
+  geoDistance?: number | null;
 }
 
 interface PresenceTabsProps {
@@ -69,7 +73,17 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
             {data.map((item) => (
               <tr key={item.userId} className="hover:bg-muted/50 transition-colors">
                 <td className="px-3 py-2">
-                  <div className="font-medium text-foreground">{item.fullName}</div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="font-medium text-foreground">{item.fullName}</div>
+                    {item.sourceArrivee === "GEOLOCALISATION" && (
+                      <span
+                        title={item.geoDistance != null ? `Géolocalisé — ${item.geoDistance}m du bureau` : "Pointage géolocalisé"}
+                        className="inline-flex items-center gap-0.5 rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400 border border-blue-500/20 cursor-default"
+                      >
+                        📍{item.geoDistance != null ? ` ${item.geoDistance}m` : " GPS"}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[10px] text-muted-foreground">{item.email}</div>
                 </td>
                 {(activeTab === "presents" || activeTab === "retards") && (
@@ -137,8 +151,8 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
               key={tab.id}
               onClick={() => setActiveTab(tab.id as TabType)}
               className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors border-b-2 ${isActive
-                  ? "border-primary text-primary bg-primary/5"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                ? "border-primary text-primary bg-primary/5"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
                 }`}
             >
               <Icon name={tab.icon as IconName} className="size-4" />
@@ -156,3 +170,4 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
     </div>
   );
 }
+

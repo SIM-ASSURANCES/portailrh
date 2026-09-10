@@ -5,7 +5,7 @@ import { Badge, DataTable, type DataTableColumn } from "@/components/ui";
 import { Icon } from "@/components/icons";
 
 type TypePointage = "ARRIVEE" | "DEPART";
-type SourcePointage = "QR_CODE" | "ORDINATEUR" | "RH_EXCEPTIONNEL";
+type SourcePointage = "QR_CODE" | "ORDINATEUR" | "RH_EXCEPTIONNEL" | "GEOLOCALISATION";
 
 export type PointageRHRow = {
   id: string;
@@ -36,6 +36,7 @@ const SOURCE_LABELS: Record<SourcePointage, string> = {
   QR_CODE: "QR Code",
   ORDINATEUR: "Ordinateur",
   RH_EXCEPTIONNEL: "Saisie RH",
+  GEOLOCALISATION: "Géolocalisation",
 };
 
 function renderHeure(row: PointageRHRow | null) {
@@ -105,7 +106,13 @@ function renderSource(row: PointageRHRow | null) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[11px] font-medium text-foreground whitespace-nowrap">
-        {SOURCE_LABELS[row.source] ?? row.source}
+        {row.source === "GEOLOCALISATION" ? (
+          <span className="inline-flex items-center gap-0.5 text-blue-600 dark:text-blue-400">
+            <span>📍</span> GPS
+          </span>
+        ) : (
+          SOURCE_LABELS[row.source] ?? row.source
+        )}
       </span>
       {row.ipAddress && (
         <span className="text-[9px] text-muted-foreground font-mono truncate max-w-[90px]" title={row.ipAddress}>

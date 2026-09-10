@@ -4,7 +4,7 @@ import { Badge, DataTable, type DataTableColumn } from "@/components/ui";
 import { Icon } from "@/components/icons";
 
 type TypePointage = "ARRIVEE" | "DEPART";
-type SourcePointage = "QR_CODE" | "ORDINATEUR" | "RH_EXCEPTIONNEL";
+type SourcePointage = "QR_CODE" | "ORDINATEUR" | "RH_EXCEPTIONNEL" | "GEOLOCALISATION";
 type StatutAbsence = "A_CONTROLER" | "CONFIRMEE" | "JUSTIFIEE";
 
 export type PointageRow = {
@@ -36,6 +36,7 @@ const SOURCE_LABELS: Record<SourcePointage, string> = {
   QR_CODE: "QR Code (Mobile)",
   ORDINATEUR: "Ordinateur (Bureau)",
   RH_EXCEPTIONNEL: "Saisie RH",
+  GEOLOCALISATION: "📍 Géolocalisation GPS",
 };
 
 const STATUT_ABSENCE_LABELS: Record<StatutAbsence, string> = {

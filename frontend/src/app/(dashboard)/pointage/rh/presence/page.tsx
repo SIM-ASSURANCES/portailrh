@@ -50,6 +50,8 @@ export default async function PresenceDuJourPage({
         estRetard: true,
         minutesRetard: true,
         motif: true,
+        source: true,
+        geoDistance: true,
         user: { select: { fullName: true, email: true } }
       },
     }),
@@ -101,6 +103,8 @@ export default async function PresenceDuJourPage({
       u.arriveeId = p.id;
       u.arrivee = p.heure.toISOString();
       u.arriveePrevue = p.heurePrevue;
+      u.sourceArrivee = p.source;
+      u.geoDistance = p.geoDistance;
       if (p.estRetard) {
         u.estRetard = true;
         u.minutesRetard = (u.minutesRetard || 0) + (p.minutesRetard || 0);

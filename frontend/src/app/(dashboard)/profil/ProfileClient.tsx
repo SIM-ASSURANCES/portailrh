@@ -213,7 +213,7 @@ export function ProfileClient({
                 title="Cliquer pour changer la photo"
               >
                 {photoUrl ? (
-                  <Image src={photoUrl} alt={`Photo de profil de ${user.fullName}`} fill className="object-cover" />
+                  <Image src={photoUrl} alt={`Photo de profil de ${user.fullName}`} fill sizes="96px" className="object-cover" />
                 ) : (
                   <div className="grid size-full place-items-center text-2xl font-bold text-primary-foreground">
                     {initials}

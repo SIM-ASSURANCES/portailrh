@@ -326,6 +326,12 @@ const PATHS = {
       <path d="m10 14 4-4" />
     </>
   ),
+  "map-pin": (
+    <>
+      <path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0Z" />
+      <circle cx="12" cy="10" r="3" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 
