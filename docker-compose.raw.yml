@@ -1,6 +1,6 @@
 # ============================================================
 # sim-portail — Dokploy mode "Raw" (compose collé, sans dépôt Git)
-# Image pré-construite : ghcr.io/sim-assurances/portailrh:v4
+# Image pré-construite : ghcr.io/sim-assurances/portailrh:v5
 # ------------------------------------------------------------
 # Onglet Environment de Dokploy — SEULE variable à renseigner :
 #   AUTH_SECRET        (openssl rand -base64 32)
@@ -57,7 +57,7 @@ services:
   # il ne s'execute qu'une seule fois, au tout premier deploiement.
   # `set-admin.ts` est idempotent : rejoue a chaque deploiement sans risque.
   init:
-    image: ghcr.io/sim-assurances/portailrh:v4
+    image: ghcr.io/sim-assurances/portailrh:v5
     pull_policy: always
     restart: "no"
     depends_on:
@@ -94,7 +94,7 @@ services:
 
   # ---------- Application ----------
   app:
-    image: ghcr.io/sim-assurances/portailrh:v4
+    image: ghcr.io/sim-assurances/portailrh:v5
     pull_policy: always
     restart: unless-stopped
     depends_on:
