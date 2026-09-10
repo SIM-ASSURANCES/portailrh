@@ -49,6 +49,16 @@ async function main() {
       );
     }
 
+    // Rattrapage de Role.estAdmin (voir la migration
+    // 20260910090000_role_admin_est_admin_rattrapage) : isAdmin() lit
+    // désormais ce champ, et non plus le nom du rôle. Garantit que le rôle
+    // "Admin" porte bien l'accès à l'administration, même sur une base seedée
+    // avant l'existence de ce champ. Idempotent.
+    if (!roleAdmin.estAdmin) {
+      await prisma.role.update({ where: { id: roleAdmin.id }, data: { estAdmin: true } });
+      console.log(`Rôle "Admin" : accès à l'administration (estAdmin) rétabli.`);
+    }
+
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
     // Compte Admin déjà présent (celui du seed, ou un précédent passage) :

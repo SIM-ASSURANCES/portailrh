@@ -1,0 +1,13 @@
+-- Rattrapage de Role.estAdmin pour les bases deja existantes.
+--
+-- La migration 20260909081807_role_est_admin ajoute "estAdmin" avec
+-- DEFAULT false, sans rattrapage. Sur toute base seedee AVANT elle, le role
+-- "Admin" (qui donnait l'acces a /admin par son nom : ancienne regle de
+-- isAdmin()) se retrouve donc a false. Consequence : perte de l'acces a
+-- l'administration, irrattrapable depuis l'interface (la case "estAdmin"
+-- est elle-meme dans /admin/roles, donc inaccessible).
+--
+-- Retablit exactement l'ancienne regle pour les donnees existantes : le role
+-- nomme "Admin" garde l'acces. Idempotent. Sans effet sur une base neuve
+-- (seed.ts cree deja ce role avec estAdmin = true).
+UPDATE "Role" SET "estAdmin" = true WHERE "name" = 'Admin';

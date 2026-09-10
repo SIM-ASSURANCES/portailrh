@@ -7867,7 +7867,9 @@ interne du code.
 (`ghcr.io/sim-assurances/portailrh:<tag>`), via
 [docker-compose.raw.yml](docker-compose.raw.yml) collé dans le mode "Raw" de
 Dokploy (aucun dépôt Git rattaché côté Dokploy : impossible d'y builder,
-d'où l'image pré-construite). Tag en service : **`v4`**. `v3` est publiée
+d'où l'image pré-construite). Tag en service : **`v5`** (`v4` + les
+commits de l'équipe jusqu'à `bd2911d` + le rattrapage `estAdmin`, voir
+"estAdmin remplace le nom de rôle"). `v3` est publiée
 mais cassée (voir plus bas) et volontairement **non réécrite** : un tag
 publié qui change de contenu en silence rendrait impossible de savoir
 quelle image tourne réellement.
@@ -8550,6 +8552,62 @@ opération métier. Les fichiers de test uploadés sur disque ne sont pas
 supprimés non plus, pour ne pas casser les liens de téléchargement de ces
 entrées désormais permanentes de l'historique. Serveur `next dev` arrêté
 après vérification.
+## Rattrapage de `Role.estAdmin` pour les bases existantes (déploiement)
+
+**Statut : terminé. Corrige un SECOND scénario de perte d'accès admin,
+distinct de la "Protection du dernier rôle `estAdmin=true`" ci-dessus** —
+là où cette dernière traite d'un décochage réel via l'interface
+`/admin/roles` (`HistoriqueEntry` `REVOKE_ADMIN` retrouvée), ce correctif
+traite d'un problème de migration, découvert indépendamment lors du
+déploiement : la migration `20260909081807_role_est_admin`, qui introduit
+le champ `Role.estAdmin` (voir "`estAdmin` remplace le nom de rôle pour
+l'accès à `/admin`" plus haut), l'a fait avec `DEFAULT false` **sans
+rattrapage des données existantes**. Sur toute base seedée AVANT cette
+migration — la production en tête, où le seed ne se relance jamais
+(marqueur `.seeded`, voir "Déploiement Dokploy et image Docker") — le rôle
+« Admin » se retrouvait donc à `estAdmin = false` : le compte
+administrateur continuait de se connecter, mais perdait `/admin`,
+**irrattrapable depuis l'interface** puisque la seule façon de recocher
+`estAdmin` est `/admin/roles`, elle-même réservée à `isAdmin()`. Même effet
+sur toute base de développement déjà seedée avant cette migration.
+
+**Correctif, en deux temps** :
+- Nouvelle migration `20260910090000_role_admin_est_admin_rattrapage` :
+  `UPDATE "Role" SET "estAdmin" = true WHERE "name" = 'Admin';` — rétablit
+  exactement l'ancienne règle (le rôle nommé « Admin ») pour les données
+  existantes, au moment du `migrate deploy`. Idempotente, sans effet sur une
+  base neuve. La migration d'origine n'a volontairement **pas** été
+  modifiée : elle peut déjà être appliquée sur des bases de l'équipe, et
+  modifier une migration appliquée casse l'historique Prisma.
+- `backend/prisma/set-admin.ts` (lancé à chaque déploiement par le service
+  `init`) repasse aussi le rôle « Admin » à `estAdmin = true` s'il ne l'est
+  pas : la production se répare d'elle-même à chaque redéploiement, même si
+  ce champ était décoché entre-temps — y compris par le scénario de la
+  "Protection du dernier rôle `estAdmin=true`" ci-dessus, bien que ce
+  chemin précis soit désormais rendu structurellement impossible sur un
+  rôle existant depuis "`estAdmin` figé après création" (voir plus haut).
+
+**Vérifié explicitement** :
+- Au niveau SQL, sur une base PostgreSQL neuve, en appliquant les vraies
+  migrations dans l'ordre avec un rôle « Admin » inséré juste avant
+  `role_est_admin` (l'état de la production) : Admin à `estAdmin = false`
+  juste après `role_est_admin` (verrouillage reproduit), puis `true` après
+  le rattrapage ; « Collaborateur » reste à `false` ; rattrapage rejoué une
+  seconde fois sans effet (idempotence).
+- De bout en bout, en conditions de production (stack locale avec les
+  blocs `portailrh-db` et `init` recopiés tels quels de
+  `docker-compose.raw.yml`). **Phase 1**, image `v4` sur volumes neufs :
+  état exact de la production (schéma sans `estAdmin`, dernière migration
+  `add_ipaddress_to_historique`, `/admin` en 200 pour l'admin).
+  **Phase 2**, redéploiement `v5` sur les mêmes volumes : `init` applique
+  `role_est_admin`, `journalcaisse_demande_optionnelle` puis le rattrapage,
+  et saute le seed (marqueur) ; « Admin » à `true`, les 4 autres rôles à
+  `false` ; `admin@simassurances.com` → `/admin` en **200**,
+  `collaborateur@…` → refusé (témoin). **Phase 3** : `estAdmin` du rôle
+  « Admin » forcé à `false` → l'admin connecté est bien **refusé** sur
+  `/admin` (verrouillage reproduit dans l'application réelle) ; une simple
+  relance du service `init` → `set-admin.ts` affiche « accès à
+  l'administration (estAdmin) rétabli » et `/admin` repasse en **200**.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
