@@ -39,15 +39,24 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         rememberMe: { label: "Se souvenir de moi", type: "text" },
       },
       async authorize(credentials, req) {
-        const email = credentials?.email;
+        const rawEmail = credentials?.email;
         const password = credentials?.password;
 
-        if (typeof email !== "string" || typeof password !== "string") {
+        if (typeof rawEmail !== "string" || typeof password !== "string") {
           return null;
         }
 
-        const user = await prisma.user.findUnique({
-          where: { email },
+        // Email nettoyé (trim) et recherché SANS tenir compte de la casse :
+        // sans cela, une majuscule ajoutée automatiquement par un clavier
+        // mobile ("Admin@...") ou un espace final (autocomplétion,
+        // copier-coller) rendait le compte "introuvable" — constaté en
+        // conditions réelles. Recherche insensible à la casse plutôt qu'un
+        // simple toLowerCase() : reste compatible avec d'éventuels comptes
+        // déjà enregistrés avec des majuscules. Le mot de passe, lui, n'est
+        // jamais normalisé.
+        const email = rawEmail.trim();
+        const user = await prisma.user.findFirst({
+          where: { email: { equals: email, mode: "insensitive" } },
           include: { role: true },
         });
 
