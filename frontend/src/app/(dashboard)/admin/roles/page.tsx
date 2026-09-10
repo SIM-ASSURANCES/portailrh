@@ -1,7 +1,6 @@
-import { PageHeader } from "@/components/ui";
+import { Badge, PageHeader } from "@/components/ui";
 import { prisma } from "backend";
 
-import { EstAdminToggle } from "./EstAdminToggle";
 import { PermissionToggle } from "./PermissionToggle";
 import { RoleCreateForm } from "./RoleCreateForm";
 
@@ -40,15 +39,27 @@ export default async function AdminRolesPage() {
                 <p className="text-sm text-muted-foreground">{role.description}</p>
               ) : null}
 
+              {/* estAdmin : affichage en LECTURE SEULE — ce champ ne se
+                  règle plus qu'à la création du rôle (voir CLAUDE.md
+                  "estAdmin figé après création"), jamais modifiable
+                  ensuite. Aucune case à cocher ici, volontairement. */}
               <div className="mt-3">
-                <EstAdminToggle roleId={role.id} defaultChecked={role.estAdmin} />
                 {role.estAdmin ? (
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Ce rôle a un accès total à la console d&apos;administration,
-                    indépendamment des permissions de module ci-dessous (voir
-                    isAdmin() dans CLAUDE.md).
+                  <>
+                    <Badge variant="info">Accès administrateur</Badge>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Ce rôle a un accès total et permanent à la console
+                      d&apos;administration, indépendamment des permissions
+                      de module ci-dessous — non modifiable après sa
+                      création (voir isAdmin() dans CLAUDE.md).
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground/80">
+                    Accès administrateur : non accordé. Ce statut ne peut
+                    être défini qu&apos;à la création d&apos;un rôle.
                   </p>
-                ) : null}
+                )}
               </div>
 
               {modules.length === 0 ? (

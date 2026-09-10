@@ -2,10 +2,11 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { getSoldeOuvertureInfo } from "backend";
+import { getSoldeOuvertureHistorique, getSoldeOuvertureInfo } from "backend";
 
 import { SoldeOuvertureCorrection } from "./SoldeOuvertureCorrection";
 import { SoldeOuvertureForm } from "./SoldeOuvertureForm";
+import { SoldeOuvertureHistorique } from "./SoldeOuvertureHistorique";
 
 /**
  * Écran "Solde d'ouverture de caisse" (voir CLAUDE.md) — réservé à
@@ -20,7 +21,7 @@ export default async function SoldeOuverturePage() {
     redirect("/?error=acces_refuse_solde_ouverture");
   }
 
-  const info = await getSoldeOuvertureInfo();
+  const [info, historique] = await Promise.all([getSoldeOuvertureInfo(), getSoldeOuvertureHistorique()]);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
@@ -34,6 +35,8 @@ export default async function SoldeOuverturePage() {
       ) : (
         <SoldeOuvertureForm />
       )}
+
+      <SoldeOuvertureHistorique entries={historique} />
     </div>
   );
 }

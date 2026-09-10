@@ -11,6 +11,7 @@ import { fieldErrorsFromZod, type ActionState } from "backend";
 const creerRoleSchema = z.object({
   nom: z.string().min(2, "Le nom doit contenir au moins 2 caractères"),
   description: z.string().optional(),
+  estAdmin: z.coerce.boolean().optional().default(false),
 });
 
 /**
@@ -19,6 +20,13 @@ const creerRoleSchema = z.object({
  * utilisateur cumulant plusieurs fonctions. Réservé aux administrateurs ;
  * créé sans aucune permission accordée (RolePermission vide), à cocher
  * ensuite comme n'importe quel autre rôle sur cette même page.
+ *
+ * **`estAdmin` se règle UNIQUEMENT ici, à la création** (voir CLAUDE.md
+ * "estAdmin figé après création") — c'est le seul moment de tout le cycle
+ * de vie d'un rôle où ce champ est modifiable. Une fois le rôle créé,
+ * plus aucune Server Action ne permet de le changer, dans un sens comme
+ * dans l'autre (voir `toggleRoleEstAdminAction` ci-dessous, qui refuse
+ * désormais systématiquement).
  */
 export async function creerRoleAction(
   _prevState: ActionState,
@@ -32,6 +40,7 @@ export async function creerRoleAction(
   const parsed = creerRoleSchema.safeParse({
     nom: formData.get("nom"),
     description: formData.get("description") || undefined,
+    estAdmin: formData.get("estAdmin") === "on",
   });
 
   if (!parsed.success) {
@@ -52,7 +61,11 @@ export async function creerRoleAction(
   }
 
   const role = await prisma.role.create({
-    data: { name: parsed.data.nom, description: parsed.data.description ?? null },
+    data: {
+      name: parsed.data.nom,
+      description: parsed.data.description ?? null,
+      estAdmin: parsed.data.estAdmin,
+    },
   });
 
   await prisma.historiqueEntry.create({
@@ -60,7 +73,7 @@ export async function creerRoleAction(
       entity: "Role",
       entityId: role.id,
       action: "CREATE",
-      detail: `Création du rôle "${role.name}"`,
+      detail: `Création du rôle "${role.name}"${role.estAdmin ? " (avec accès administrateur)" : ""}`,
       userId: session.user.id,
     },
   });
@@ -72,47 +85,45 @@ export async function creerRoleAction(
 }
 
 /**
- * Accorde ou retire l'accès à la console d'administration à un rôle
- * (`Role.estAdmin`) — voir CLAUDE.md "estAdmin remplace le nom de rôle" et
- * `isAdmin()` (backend/src/permissions.ts). Indépendant de
- * `RolePermission` : cocher cette case ne donne aucune permission métier
- * (`treso.*`, `pointage.*`), et retirer les permissions métier d'un rôle
- * ne retire jamais son accès admin — les deux notions restent séparées.
+ * **Toujours refusée depuis "estAdmin figé après création" (voir
+ * CLAUDE.md)** — conservée uniquement comme point d'entrée de défense en
+ * profondeur (message clair en cas de rejeu réseau direct), plutôt que
+ * supprimée entièrement : sans elle, une requête directe vers cette
+ * action renverrait une erreur générique "action introuvable" de Next.js
+ * au lieu d'un message explicite.
  *
- * Réservée à un compte déjà Admin (revérifié ici, jamais seulement par le
- * masquage de l'UI ou la garde du layout) — un compte non-admin ne peut
- * donc jamais s'auto-accorder l'accès en appelant cette action directement.
+ * `Role.estAdmin` ne se règle plus QU'À LA CRÉATION du rôle
+ * (`creerRoleAction` ci-dessus) — un choix définitif, jamais révisable
+ * ensuite, dans aucun des deux sens. **L'ancienne logique "dernier rôle
+ * admin"** (comptage des autres rôles `estAdmin: true` avant d'autoriser
+ * un retrait, voir CLAUDE.md "Protection du dernier rôle estAdmin=true")
+ * **devient sans objet et a été retirée** : plus aucune modification
+ * n'étant possible sur un rôle existant, il n'y a plus jamais de
+ * "dernier rôle" à protéger dynamiquement — l'invariant "au moins un rôle
+ * admin existe" est désormais garanti structurellement (aucun rôle
+ * existant ne peut perdre `estAdmin`), pas par un compteur à chaque appel.
+ *
+ * Signature conservée identique (`roleId`, `estAdmin`, tous deux ignorés)
+ * plutôt que réduite à zéro argument : reste un point de rejeu réseau
+ * réaliste pour la défense en profondeur, dans la même forme qu'avant ce
+ * changement.
  */
 export async function toggleRoleEstAdminAction(
   roleId: string,
   estAdmin: boolean
 ): Promise<{ status: "success" | "error"; message: string }> {
+  void roleId;
+  void estAdmin;
+
   const session = await getSession();
   if (!session || !isAdmin(session)) {
     return { status: "error", message: "Action non autorisée." };
   }
 
-  const role = await prisma.role.update({
-    where: { id: roleId },
-    data: { estAdmin },
-  });
-
-  await prisma.historiqueEntry.create({
-    data: {
-      entity: "Role",
-      entityId: role.id,
-      action: estAdmin ? "GRANT_ADMIN" : "REVOKE_ADMIN",
-      detail: `Accès à l'administration ${estAdmin ? "accordé au" : "retiré du"} rôle "${role.name}"`,
-      userId: session.user.id,
-    },
-  });
-
-  revalidatePath("/admin/roles");
-  publishDataChanged();
-
   return {
-    status: "success",
-    message: estAdmin ? "Accès à l'administration accordé." : "Accès à l'administration retiré.",
+    status: "error",
+    message:
+      "L'accès administrateur (estAdmin) ne peut plus être modifié après la création d'un rôle — c'est un choix définitif fait uniquement à la création.",
   };
 }
 

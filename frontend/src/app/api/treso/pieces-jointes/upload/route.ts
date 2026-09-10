@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { NextResponse } from "next/server";
 
-import { getSession, hasPermission } from "@/lib/auth";
+import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 
 /**
  * Upload d'une pièce jointe (Demande, ligne de dépense d'un retour de
@@ -31,9 +31,11 @@ import { getSession, hasPermission } from "@/lib/auth";
  * Accès : n'importe quel utilisateur authentifié ayant au moins une des
  * permissions qui mènent à un formulaire avec pièce jointe
  * (`treso.creer_demande`, `treso.declarer_retour`,
- * `treso.saisir_depense_directe`) — l'association réelle à une ressource
- * précise est, elle, revérifiée par la Server Action appelée ensuite (qui
- * a ses propres gardes complètes, ex: propriété de la demande).
+ * `treso.saisir_depense_directe`, ou `isAdmin()`/`treso.effectuer_reglement`
+ * pour le solde d'ouverture — voir CLAUDE.md "Pièce jointe obligatoire sur
+ * le solde d'ouverture") — l'association réelle à une ressource précise
+ * est, elle, revérifiée par la Server Action appelée ensuite (qui a ses
+ * propres gardes complètes, ex: propriété de la demande).
  */
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
@@ -54,7 +56,9 @@ export async function POST(request: Request) {
   const peutUploader =
     hasPermission(session, "treso.creer_demande") ||
     hasPermission(session, "treso.declarer_retour") ||
-    hasPermission(session, "treso.saisir_depense_directe");
+    hasPermission(session, "treso.saisir_depense_directe") ||
+    isAdmin(session) ||
+    hasPermission(session, "treso.effectuer_reglement");
   if (!peutUploader) {
     return NextResponse.json({ error: "Action non autorisée." }, { status: 403 });
   }

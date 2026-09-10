@@ -23,6 +23,11 @@ function revalidateSoldeOuverturePaths() {
 
 const montantSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
 
+const pieceJointeUrlSchema = z
+  .string()
+  .trim()
+  .min(1, "Une pièce jointe justificative est obligatoire pour définir le solde d'ouverture.");
+
 /**
  * Définit le solde d'ouverture de caisse — UNE SEULE FOIS (voir CLAUDE.md
  * "Solde d'ouverture de caisse") : en conditions réelles, de l'argent
@@ -39,9 +44,20 @@ const montantSchema = z.coerce.number().positive("Le montant doit être supérie
  * sans distinction de source. `demandeId: null` : seul cas de mouvement de
  * caisse sans demande d'origine (voir la migration
  * `journalcaisse_demande_optionnelle`).
+ *
+ * **`pieceJointeUrl` obligatoire depuis "Pièce jointe obligatoire sur le
+ * solde d'ouverture"** (voir CLAUDE.md) — un montant physique de caisse
+ * affirmé sans aucune preuve (comptage signé, photo du coffre...) n'a pas
+ * sa place dans le grand livre. Revérifié ici, jamais uniquement via le
+ * champ requis du formulaire : le nom de fichier vient de
+ * `POST /api/treso/pieces-jointes/upload` (même route partagée que les 3
+ * autres formulaires du module, voir `PieceJointeUpload.tsx`), cette
+ * action-ci crée la ligne `PieceJointe` elle-même (`journalCaisseId`,
+ * jamais `demandeId` — aucune demande d'origine ici).
  */
 export async function definirSoldeOuvertureAction(
   montant: number,
+  pieceJointeUrl: string,
   motif?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -52,6 +68,10 @@ export async function definirSoldeOuvertureAction(
   const parsedMontant = montantSchema.safeParse(montant);
   if (!parsedMontant.success) {
     return { status: "error", message: parsedMontant.error.issues[0].message };
+  }
+  const parsedPieceJointe = pieceJointeUrlSchema.safeParse(pieceJointeUrl);
+  if (!parsedPieceJointe.success) {
+    return { status: "error", message: parsedPieceJointe.error.issues[0].message };
   }
 
   // Empêche un second solde d'ouverture — fausserait tout le grand livre.
@@ -75,6 +95,9 @@ export async function definirSoldeOuvertureAction(
         userId: session.user.id,
       },
     });
+    await tx.pieceJointe.create({
+      data: { url: parsedPieceJointe.data, journalCaisseId: entree.id },
+    });
     await tx.historiqueEntry.create({
       data: {
         entity: "JournalCaisse",
@@ -82,7 +105,7 @@ export async function definirSoldeOuvertureAction(
         action: "SOLDE_OUVERTURE",
         detail: `Solde d'ouverture défini à ${parsedMontant.data.toLocaleString("fr-FR")} FCFA${
           motif?.trim() ? ` — ${motif.trim()}` : ""
-        }`,
+        } (pièce jointe : ${parsedPieceJointe.data})`,
         userId: session.user.id,
       },
     });
@@ -108,9 +131,18 @@ const motifCorrectionSchema = z
  * compensatoire neutralise le montant actuellement en vigueur (grand livre
  * immuable), puis une nouvelle écriture porte le montant corrigé. Motif
  * obligatoire, comme toute annulation/correction du module.
+ *
+ * **`pieceJointeUrl` obligatoire ici aussi** (voir CLAUDE.md "Pièce jointe
+ * obligatoire sur le solde d'ouverture") — chaque correction est un
+ * nouveau montant affirmé, qui mérite sa PROPRE preuve, jamais la pièce de
+ * la définition initiale réutilisée implicitement. Attachée à la nouvelle
+ * écriture de correction (`SOLDE_OUVERTURE_CORRECTION_SOURCE`), jamais à
+ * l'écriture d'annulation (pure compensation technique, pas le sujet du
+ * justificatif).
  */
 export async function corrigerSoldeOuvertureAction(
   nouveauMontant: number,
+  pieceJointeUrl: string,
   motif: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -121,6 +153,10 @@ export async function corrigerSoldeOuvertureAction(
   const parsedMontant = montantSchema.safeParse(nouveauMontant);
   if (!parsedMontant.success) {
     return { status: "error", message: parsedMontant.error.issues[0].message };
+  }
+  const parsedPieceJointe = pieceJointeUrlSchema.safeParse(pieceJointeUrl);
+  if (!parsedPieceJointe.success) {
+    return { status: "error", message: parsedPieceJointe.error.issues[0].message };
   }
   const parsedMotif = motifCorrectionSchema.safeParse(motif);
   if (!parsedMotif.success) {
@@ -158,12 +194,16 @@ export async function corrigerSoldeOuvertureAction(
       },
     });
 
+    await tx.pieceJointe.create({
+      data: { url: parsedPieceJointe.data, journalCaisseId: nouvelleEcriture.id },
+    });
+
     await tx.historiqueEntry.create({
       data: {
         entity: "JournalCaisse",
         entityId: nouvelleEcriture.id,
         action: "CORRECTION_SOLDE_OUVERTURE",
-        detail: `Solde d'ouverture corrigé : ${montantActuel.toLocaleString("fr-FR")} FCFA → ${parsedMontant.data.toLocaleString("fr-FR")} FCFA — ${parsedMotif.data}`,
+        detail: `Solde d'ouverture corrigé : ${montantActuel.toLocaleString("fr-FR")} FCFA → ${parsedMontant.data.toLocaleString("fr-FR")} FCFA — ${parsedMotif.data} (pièce jointe : ${parsedPieceJointe.data})`,
         userId: session.user.id,
       },
     });

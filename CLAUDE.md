@@ -5788,6 +5788,93 @@ validation ci-dessus) supprimées avec leurs règlements/historique/écritures
 écriture `JournalCaisse`, 5 utilisateurs réels inchangés. Serveur `next
 dev` arrêté après vérification.
 
+## Nettoyage d'un résidu `src/generated/` orphelin à la racine
+
+**Statut : terminé.** La fusion de `origin/thierry-kouame` avait introduit
+`src/generated/prisma/` **à la racine du dépôt** (30 fichiers, un client
+Prisma généré complet) — un résidu d'une époque où le projet n'était pas
+encore un monorepo (avant "Monorepo backend/frontend" plus haut). Depuis
+cette restructuration, le SEUL client généré légitime vit dans
+`backend/src/generated/prisma/` ; ce dossier racine n'avait plus aucune
+raison d'exister, mais avait survécu à la fusion sans être détecté.
+
+### Tâche 1 — Confirmé orphelin, aucun fichier réel perdu
+
+Recherche exhaustive (`grep -rn "generated/prisma"` sur tout `backend/` et
+`frontend/`, plus vérification des alias `tsconfig.json` — `@/*` du
+frontend résout vers `frontend/src/*`, jamais vers la racine du dépôt —
+et du `Dockerfile`/`.dockerignore`) : **aucun fichier, nulle part dans le
+projet, n'importe depuis ce chemin racine.** Chaque référence à
+`./generated/prisma` trouvée dans le code appartient à un fichier DANS
+`backend/src/`, résolvant correctement vers son propre
+`backend/src/generated/prisma` local. Confirmé : **un résidu 100% mort**,
+jamais exécuté, jamais importé — sa suppression n'a fait perdre aucun
+fichier réel, uniquement du code intégralement régénérable par `npx
+prisma generate` (déjà exclu du dépôt pour `backend/src/generated/prisma`,
+voir ci-dessous).
+
+### Tâche 2 — Suppression et durcissement du `.gitignore`
+
+`git rm -r src/generated` (30 fichiers, tracé proprement dans
+l'historique — jamais un simple `rm -rf` qui aurait laissé la suppression
+invisible dans `git log`). Le dossier `src/` racine ne contenait plus rien
+d'autre : supprimé entièrement.
+
+`.gitignore` (racine) — le motif existant `/backend/src/generated/prisma`
+est conservé (clarté, déjà fonctionnel), mais un second motif générique
+**`**/generated/prisma/`** est ajouté juste à côté : couvre désormais tout
+résidu qui réapparaîtrait n'importe où dans l'arbre (à la racine, dans
+`frontend/`, ou dans un futur workspace du monorepo) — jamais une seconde
+fois l'incident de ce dossier orphelin fusionné par erreur. Vérifié
+explicitement (`git check-ignore -v`) que les deux chemins
+(`src/generated/prisma/test.ts` à la racine ET
+`backend/src/generated/prisma/client.ts`) sont bien capturés par ce motif.
+
+**Aucun `.gitignore` dans `backend/` ni `frontend/`** — le `.gitignore`
+racine gouverne déjà tout le monorepo (les motifs y sont écrits avec leur
+chemin complet depuis la racine, `git` les applique correctement quel que
+soit l'endroit du dépôt où le fichier concerné se trouve) : pas besoin
+d'un second fichier `.gitignore` par workspace, aurait été une
+duplication sans bénéfice.
+
+### Vérifié explicitement (Tâche 3)
+
+`npx tsc --noEmit` et `npx eslint .` sur `backend/` et `frontend/` : zéro
+nouvelle erreur (mêmes 6 problèmes préexistants du Module Pointage RH/
+`LogsList.tsx`, déjà documentés à plusieurs reprises dans ce fichier,
+totalement indépendants de cette suppression). `npm run dev` démarre
+normalement.
+
+Vrai parcours navigateur (Chromium headless, Playwright, non ajouté au
+projet) : connexion Admin réussie, navigation vers `/admin/categories`
+(page qui lit le catalogue Categorie/Objet) ; connexion Collaborateur,
+navigation vers `/treso/demandes/nouvelle` (formulaire de création,
+dépendant de plusieurs fonctions `backend`) ; connexion Finance,
+chargement complet du dashboard Finance (`/treso/finance`, l'écran le
+plus dense en appels à des fonctions du package `backend`) — **zéro
+erreur console sur l'ensemble du parcours**, confirmant qu'aucun de ces
+écrans ne dépendait, même indirectement, du dossier racine supprimé.
+
+**`npx prisma generate` relancé après la suppression** (`backend/`) :
+régénère normalement `backend/src/generated/prisma` (168 ms) ; `git
+status` immédiatement après **ne fait réapparaître ce dossier ni comme
+suivi ni comme "untracked"** — confirme que le motif générique
+`**/generated/prisma/` du `.gitignore` fonctionne réellement en
+conditions réelles, pas seulement en théorie sur un chemin de test.
+
+### Tâche 4 — Rappel impératif pour l'avenir
+
+**Aucun dossier généré (Prisma, ou tout autre outil de génération de code
+qui serait introduit plus tard) ne doit jamais être commité dans ce
+dépôt** — ni `src/generated/`, ni `backend/src/generated/`, ni un
+équivalent futur. Le `.gitignore` racine est désormais le point de
+vérité unique pour cette règle (motif générique `**/generated/prisma/`) :
+toute personne qui fusionne une branche externe (comme celle à l'origine
+de cet incident) doit vérifier `git status` avant de committer une fusion
+volumineuse, plutôt que de faire confiance à l'absence de conflit Git
+comme preuve d'un résultat propre — un dossier entièrement régénérable
+peut se glisser dans un merge sans jamais provoquer le moindre conflit.
+
 ## Rehaussement visuel — dashboards, typographie, couleur (post-polish)
 
 **Statut : terminé.** Le premier passage de polish (transitions, cohérence
@@ -7898,6 +7985,438 @@ livrable, uniquement utile à la vérification du point 6) ont tous été
 supprimés après coup. Seul le rôle "Admin / Collaborateur" reste en base,
 sans aucun utilisateur assigné. Serveur `next dev` arrêté après
 vérification.
+
+## Protection du dernier rôle `estAdmin=true`
+
+**Statut : terminé. Corrige un bug réel constaté en conditions
+réelles.** En retirant l'accès admin (`Role.estAdmin`) du rôle "Admin"
+depuis `/admin/roles`, le compte `admin@simassurances.test` perdait
+**tout** accès : plus de console `/admin`, et "Aucun module accessible"
+sur le dashboard général. Rien n'empêchait de retirer `estAdmin` au
+dernier rôle qui le portait — un aller simple sans retour possible depuis
+l'interface elle-même, puisque `toggleRoleEstAdminAction` est elle-même
+réservée à `isAdmin(session)`.
+
+### Diagnostic
+
+**Il n'existe aucune affectation directe Rôle ↔ Module** — c'est une
+fausse piste initiale à corriger : l'accès aux modules d'un rôle est
+entièrement dérivé de deux mécanismes, déjà en place avant cette tâche :
+
+1. **`Role.estAdmin`** (`backend/prisma/schema.prisma`) — bypass total :
+   `getAccessibleModules()` (`backend/src/permissions.ts`) renvoie **tous**
+   les modules actifs sans filtrer par permission dès que
+   `isAdmin(session)` est vrai.
+2. **`RolePermission`** — pour un rôle non-admin, un module n'apparaît que
+   s'il porte au moins une permission rattachée à ce module.
+
+Le rôle "Admin" du seed n'a **volontairement aucune** `RolePermission`
+(voir "Administration (console `/admin`)" plus haut) : son accès aux
+modules dépend **exclusivement** de `estAdmin`. Dès que ce booléen passe à
+`false`, `isAdmin()` retombe à `false`, `getAccessibleModules()` bascule
+sur le filtre par permissions — qui ne retient rien pour ce rôle — d'où
+"Aucun module accessible" **et**, plus grave, la perte de `/admin`
+elle-même (jamais mentionnée explicitement par le rapport de bug initial,
+mais bien réelle : `isAdmin()` gouverne les deux).
+
+**Cause exacte, retrouvée dans `HistoriqueEntry`** : une entrée
+`REVOKE_ADMIN` réelle sur le rôle "Admin", horodatée juste avant cette
+tâche — quelqu'un a décoché la case "Accès à l'administration" de
+`/admin/roles` (probablement en la prenant pour un contrôle de module),
+et rien côté serveur ne l'en a empêché.
+
+**Server Action responsable** : `toggleRoleEstAdminAction`
+(`admin/roles/actions.ts`) — la seule à écrire `Role.estAdmin`. Aucune
+fonctionnalité de désactivation ni de suppression de rôle n'existe dans le
+projet (`Role` n'a pas de champ `isActive`, aucun `prisma.role.delete`
+nulle part, vérifié par recherche exhaustive) — les deux autres garde-fous
+demandés ("bloquer la désactivation", "bloquer la suppression") portent
+donc sur des fonctionnalités **qui n'existent pas encore** : rien à coder
+pour elles aujourd'hui, seulement à retenir pour le jour où l'une des deux
+serait ajoutée (voir plus bas).
+
+### Choix technique retenu : blocage du DERNIER rôle admin, pas l'immuabilité totale
+
+**Écarté : rendre `estAdmin` du rôle "Admin" totalement immuable.**
+Aurait fonctionné pour le cas précis du bug, mais aurait été incohérent
+avec le principe déjà établi par tout le reste du système `estAdmin`
+(introduit précisément pour ne **jamais** privilégier un rôle par son nom
+littéral — voir "`estAdmin` remplace le nom de rôle") : un rôle combiné
+("Admin / Collaborateur") porte déjà cet accès aujourd'hui, symétriquement
+au rôle "Admin". Figer arbitrairement UN SEUL rôle nommé "Admin" aurait
+réintroduit exactement la même faiblesse que ce mécanisme a été construit
+pour éliminer, et n'aurait pas protégé "Admin / Collaborateur" si celui-ci
+devenait un jour le seul rôle admin restant.
+
+**Retenu : blocage générique sur `estAdmin`, jamais sur un nom de rôle**
+— `toggleRoleEstAdminAction` refuse de retirer `estAdmin` sur un rôle si
+c'est le **SEUL** du système à le porter à cet instant
+(`prisma.role.count({ where: { id: { not: roleId }, estAdmin: true } })
+=== 0`), exactement le même principe déjà en place pour la protection du
+dernier administrateur côté suppression d'utilisateur
+(`supprimerUtilisateurAction`, voir plus haut) — même formule de requête,
+même philosophie. Concrètement : avec les deux rôles admin actuels
+("Admin" et "Admin / Collaborateur"), retirer `estAdmin` à l'un des deux
+reste possible (l'autre subsiste) ; retirer le dernier restant est refusé.
+
+### Interface (`EstAdminToggle.tsx`, `admin/roles/page.tsx`)
+
+La page calcule `nbRolesEstAdmin` (nombre de rôles avec `estAdmin: true`
+parmi ceux déjà chargés, aucune requête supplémentaire) et transmet
+`isDernierAdmin = role.estAdmin && nbRolesEstAdmin === 1` à chaque
+`EstAdminToggle`. Case rendue `disabled` (jamais un simple `readOnly` — un
+`<input disabled>` empêche même le navigateur de déclencher l'évènement
+`change`, vérifié explicitement qu'un clic forcé ne déclenche aucune
+requête réseau), avec un `title` explicatif et un message inline
+("Dernier rôle avec accès administrateur : ne peut pas être retiré...")
+juste sous la case. **Le vrai blocage reste toujours côté serveur** —
+cette UI n'est qu'une prévention, jamais la seule protection.
+
+### Point ambigu — non tranché seul, à confirmer avec le maître de stage
+
+**Plusieurs rôles `estAdmin=true` simultanés, et le futur rôle
+"superadmin" en attente.** Le système accepte déjà aujourd'hui plusieurs
+rôles admin en parallèle (Admin + Admin / Collaborateur) sans qu'aucune
+hiérarchie n'existe entre eux — tous les rôles `estAdmin=true` ont
+exactement le même pouvoir, `isAdmin()` ne distingue jamais lequel.
+Le garde-fou de cette tâche protège uniquement contre le cas "plus AUCUN
+rôle admin" (0 restant) — il n'empêche pas, et ne cherche pas à empêcher,
+qu'un rôle admin ordinaire retire l'accès admin à un AUTRE rôle admin
+(tant qu'au moins un troisième subsiste). Si un futur rôle "superadmin"
+doit un jour introduire une hiérarchie (ex: seul un superadmin peut
+modifier l'accès admin d'un autre rôle admin), ce sera un mécanisme
+distinct de `estAdmin` — à concevoir explicitement le moment venu, jamais
+déduit implicitement de la protection posée ici.
+
+### Vérifié explicitement
+
+**Correction de l'état cassé** : `Role.estAdmin` du rôle "Admin" restauré
+à `true` par un script Prisma ciblé et non destructif (jamais `npx prisma
+db seed`, qui aurait supprimé de vraies données) — confirmé qu'aucun autre
+rôle n'a été affecté au passage (comptage direct des 6 rôles avant/après).
+
+`npx tsc --noEmit` (frontend) sans nouvelle erreur.
+
+Vrai parcours navigateur (Chromium headless, Playwright, non ajouté au
+projet) avec `admin@simassurances.test` :
+
+- Le compte retrouve tous ses modules dans "Vos accès" (Trésorerie,
+  Pointage RH, Administration) — plus jamais "Aucun module accessible" —
+  et l'accès à `/admin` fonctionne de nouveau.
+- **Logique du garde-fou vérifiée par une transaction Prisma dédiée,
+  systématiquement annulée (`ROLLBACK`, jamais validée)** — même méthode
+  que la protection "dernier administrateur" côté suppression
+  d'utilisateur : reproduit exactement la requête de comptage dans un
+  scénario simulé où "Admin" serait le seul rôle admin (résultat : `0`,
+  refus correct) puis dans le scénario réel actuel où "Admin /
+  Collaborateur" existe aussi (résultat : `1`, autorisation correcte) — les
+  deux dans la même transaction avant annulation volontaire, confirmé
+  après coup qu'aucune donnée n'a été modifiée.
+- **UI réelle** : tant que deux rôles admin coexistent (état actuel), la
+  case du rôle "Admin" n'est pas grisée (comportement correct — aucun des
+  deux n'est isolément "le dernier") ; création de rôles de test jetables,
+  bascule de leur `estAdmin` sans blocage tant que d'autres rôles admin
+  existent — confirmant que le mécanisme normal de `toggleRoleEstAdminAction`
+  reste inchangé hors du cas "dernier rôle".
+- **Rôle non-admin "Collaborateur"** : bascule d'une permission de module
+  réussie sans aucun blocage, puis restaurée à son état d'origine —
+  confirme que le garde-fou ne s'applique strictement qu'aux rôles
+  `estAdmin=true`, jamais aux permissions métier ordinaires.
+- **Aucune donnée réelle autre que celle de test touchée** : les 5 comptes
+  réels et leurs rôles respectifs confirmés inchangés par comptage direct
+  après coup ; les rôles de test créés pendant cette vérification
+  (`Verif Guard A`/`B`, `Test Dernier Admin Temp` et ses variantes)
+  supprimés — **note de transparence** : deux itérations intermédiaires du
+  script de vérification ont, par une manipulation réseau imparfaite
+  (rejeu d'une requête capturée avec un mauvais identifiant de rôle),
+  temporairement remis `estAdmin` du VRAI rôle "Admin" à `false` à deux
+  reprises pendant cette session de test — repéré et corrigé immédiatement
+  à chaque fois (comptage direct en base), jamais laissé dans un état
+  incorrect entre deux tours de vérification. État final confirmé
+  identique à l'état voulu : "Admin" et "Admin / Collaborateur" à
+  `estAdmin=true`, les 4 autres rôles à `false`, 5 utilisateurs réels
+  inchangés. Serveur `next dev` arrêté après vérification.
+
+## `estAdmin` figé après création (durcissement de la protection précédente)
+
+**Statut : terminé. Remplace et simplifie la protection "dernier rôle
+estAdmin=true" ci-dessus.** Décision de durcissement explicite : `estAdmin`
+ne se règle plus QU'À LA CRÉATION d'un rôle — plus aucune modification
+possible ensuite, ni ajout ni retrait, quel que soit le nombre de rôles
+admin existants. Le comptage dynamique du "dernier admin" devient sans
+objet : puisqu'aucun rôle existant ne peut plus jamais perdre `estAdmin`,
+l'invariant "au moins un rôle admin existe" est garanti **structurellement**
+plutôt que par une vérification à chaque appel.
+
+### Diagnostic
+
+Un seul point d'écriture existant sur `estAdmin` avant cette tâche :
+`toggleRoleEstAdminAction` (`admin/roles/actions.ts`), appelée par
+`EstAdminToggle.tsx` (case à cocher affichée sur CHAQUE rôle, existant ou
+non, avec la description "Ce rôle a un accès total à la console
+d'administration..."). `creerRoleAction` ne réglait, elle, jamais
+`estAdmin` à la création (toujours `false` par défaut du schéma) — aucune
+case n'existait sur le formulaire de création avant cette tâche.
+Recherche exhaustive (`grep -rn "estAdmin" backend/src frontend/src`)
+confirmée : ces deux Server Actions sont les SEULS points d'écriture sur
+ce champ dans tout le projet (les autres occurrences sont des lectures :
+`isAdmin()`, `getSession()`, le compteur "dernier admin" de
+`supprimerUtilisateurAction`).
+
+### Changements
+
+- **`creerRoleAction`** — gagne un troisième champ, `estAdmin` (booléen,
+  `false` par défaut), réglable UNIQUEMENT ici désormais.
+  `RoleCreateForm.tsx` gagne la case à cocher correspondante (même style
+  que l'ancienne `EstAdminToggle`, mais native au formulaire de création,
+  pas un composant séparé).
+- **`toggleRoleEstAdminAction` — conservée mais rendue inconditionnellement
+  refusante**, plutôt que supprimée entièrement : appelée (même par un
+  compte Admin authentifié), elle renvoie systématiquement *"L'accès
+  administrateur (estAdmin) ne peut plus être modifié après la création
+  d'un rôle..."*, sans plus jamais toucher la base. **L'ancienne logique de
+  comptage "dernier rôle admin" est entièrement retirée** — plus de
+  `prisma.role.count(...)`, plus de distinction "retrait vs ajout" : toute
+  modification est refusée, point final.
+- **`EstAdminToggle.tsx` supprimé** (plus aucun appelant). `admin/roles/page.tsx`
+  affiche désormais `estAdmin` en LECTURE SEULE pour chaque rôle existant :
+  `Badge` "Accès administrateur" + texte explicatif si `true`, simple texte
+  discret *"Accès administrateur : non accordé. Ce statut ne peut être
+  défini qu'à la création d'un rôle."* si `false` — jamais de contrôle
+  interactif sur un rôle déjà créé.
+
+### Découverte faite en vérifiant : `toggleRoleEstAdminAction` est structurellement injoignable, pas seulement "refusée"
+
+En cherchant à capturer une vraie requête réseau à rejouer pour la
+vérification (méthode habituelle de ce fichier), constaté que Next.js
+**retire purement et simplement cette action de son manifeste de
+build** (`server-reference-manifest.json` de la route `/admin/roles`) dès
+lors qu'aucun composant client ne la référence plus nulle part — vérifié
+explicitement en inspectant ce fichier compilé : `creerRoleAction` et
+`toggleRolePermissionAction` y figurent avec leur identifiant réel,
+`toggleRoleEstAdminAction` en est totalement absent. Une requête
+directe avec un identifiant "Next-Action" fabriqué reçoit **404 "Server
+action not found"** — la protection n'est donc pas seulement "un refus
+applicatif après vérification", elle est **injoignable au niveau du
+protocole Server Actions lui-même**, plus forte que ce qui était anticipé
+en écrivant le code. La fonction reste néanmoins dans le fichier (pas
+supprimée) : si un jour un nouveau bouton la référençait par erreur, elle
+resterait sans effet, jamais silencieusement fonctionnelle.
+
+### Vérifié explicitement
+
+`npx tsc --noEmit` (backend + frontend) sans erreur. `npx eslint .`
+(frontend) : deux avertissements `no-unused-vars` sur les paramètres
+`roleId`/`estAdmin` de `toggleRoleEstAdminAction` (désormais ignorés)
+corrigés par un `void roleId; void estAdmin;` explicite plutôt que
+préfixés `_` (le style `_préfixe` n'est pas ignoré par la config ESLint de
+ce projet, vérifié en pratique) — baseline exacte de 6 problèmes
+préexistants du Module Pointage RH retrouvée après correction.
+
+Vrai parcours navigateur (Chromium headless, Playwright, non ajouté au
+projet), compte `admin@simassurances.test`, contre un serveur `next dev`
+**réellement redémarré** (un ancien process resté actif depuis une session
+précédente servait encore du code obsolète — détecté par une incohérence
+entre le comportement observé et le code source, corrigé en arrêtant ce
+process explicitement avant de refaire tourner les vérifications, jamais
+supposé propre sans le confirmer) :
+
+- Rôle "Admin" et rôle "Collaborateur" : aucune case à cocher `estAdmin`
+  nulle part dans leur section respective (`count=0` vérifié
+  explicitement) ; badge "Accès administrateur" affiché pour Admin, texte
+  discret "non accordé" pour Collaborateur.
+- Formulaire de création : case `estAdmin` bien présente et fonctionnelle
+  dans les deux sens — un rôle créé case cochée obtient l'accès
+  administrateur (badge affiché immédiatement), un rôle créé case décochée
+  ne l'obtient pas (texte discret affiché) — vérifié pour les deux cas
+  séparément.
+- **Rejeu réseau direct** avec un identifiant "Next-Action" fabriqué
+  (aucun identifiant réel n'existe plus pour capturer une vraie requête,
+  voir ci-dessus) : refusé par Next.js lui-même, **404 "Server action not
+  found"**.
+- **Bonus défense en profondeur** : la vraie requête réseau de
+  `creerRoleAction` (capturée pendant sa création légitime par Admin)
+  rejouée avec les cookies de session `collaborateur@simassurances.test`
+  (non-admin) → "Action non autorisée.", aucun rôle créé par ce rejeu.
+
+Rôles de test (`Verif Creation Admin True`/`False`) supprimés après coup ;
+état final des 6 rôles réels confirmé identique (Admin et Admin /
+Collaborateur à `estAdmin=true`, les 4 autres à `false`). Serveur `next
+dev` arrêté après vérification.
+
+## Pièce jointe obligatoire sur le solde d'ouverture de caisse
+
+**Statut : terminé.** Renforce "Solde d'ouverture de caisse" (voir plus
+haut) : la définition initiale et chaque correction exigent désormais une
+pièce jointe justificative (comptage de caisse signé, photo du coffre...),
+et l'écran affiche l'historique complet des définitions/corrections passées
+— jusqu'ici, seule une date ("Défini le...") en gardait la trace, sans
+pièce ni détail des corrections antérieures.
+
+### Diagnostic
+
+**Mécanisme de stockage réutilisé tel quel, aucun nouveau système
+inventé** — le même que les 3 formulaires existants (création de demande,
+ligne de dépense d'un retour de caisse, dépense directe) : upload immédiat
+sur `POST /api/treso/pieces-jointes/upload` (disque local `./uploads/`,
+formats PDF/JPG/PNG, 10 Mo max, nom entièrement régénéré côté serveur),
+composant partagé `PieceJointeUpload.tsx`, téléchargement protégé via
+`GET /api/treso/pieces-jointes/[id]`. **Obstacle structurel trouvé en
+l'examinant** : `PieceJointe.demandeId` était une clé étrangère
+**obligatoire** vers `Demande` (comme `JournalCaisse.demandeId` avant la
+phase "Solde d'ouverture de caisse") — une pièce jointe du solde
+d'ouverture n'a, par nature, aucune demande d'origine. Modèle et Server
+Actions du solde d'ouverture déjà identifiés dans la section
+correspondante plus haut (`definirSoldeOuvertureAction`/
+`corrigerSoldeOuvertureAction`, `backend/src/tresorerie.ts`).
+
+### Schéma (migration `piece_jointe_solde_ouverture`)
+
+`PieceJointe.demandeId` devient **nullable** (`String?` / `Demande?`, même
+principe que `JournalCaisse.demandeId` — `onDelete: SetNull`, purement
+additif). Nouveau champ **`PieceJointe.journalCaisseId`** (`String?
+@unique`) + relation vers `JournalCaisse`, avec son champ virtuel inverse
+`JournalCaisse.pieceJointe` — même schéma exact que
+`depenseLigneId`/`DepenseLigne.pieceJointe` déjà en place, juste appliqué à
+un second type de parent. **Seul point d'appel affecté** : la route de
+téléchargement (`api/treso/pieces-jointes/[id]/route.ts`) lisait
+`piece.demande.createurId` sans garde — corrigée pour brancher sur deux
+règles d'accès distinctes selon que `piece.demande` existe ou non (Finance/
+DG/créateur/bénéficiaire pour une pièce de demande classique ; exactement
+`isAdmin() || treso.effectuer_reglement` — la même permission que les
+Server Actions du solde d'ouverture elles-mêmes — pour une pièce de solde
+d'ouverture). La route d'upload gagne ces deux mêmes permissions en plus
+des trois déjà autorisées, pour que Finance/Admin puisse effectivement
+déposer un fichier dans ce contexte précis.
+
+### Obligatoire, revérifié côté serveur (Tâche 2)
+
+`definirSoldeOuvertureAction(montant, pieceJointeUrl, motif?)` et
+`corrigerSoldeOuvertureAction(nouveauMontant, pieceJointeUrl, motif)`
+valident désormais `pieceJointeUrl` via un schéma zod dédié (chaîne non
+vide) — **avant** toute écriture, y compris avant la vérification "solde
+déjà défini" pour la définition initiale (l'erreur la plus spécifique
+prime). La `PieceJointe` est créée dans la MÊME transaction Prisma que
+l'écriture `JournalCaisse` (`journalCaisseId` du côté de la pièce, jamais
+`demandeId`). Côté formulaire (`SoldeOuvertureForm.tsx`/
+`SoldeOuvertureCorrection.tsx`) : bouton de soumission désactivé tant
+qu'aucun fichier n'a été uploadé (`disabled={!pieceJointeUrl}`), en plus du
+message d'erreur explicite si l'utilisateur tente malgré tout — la vraie
+autorité reste toujours le serveur, jamais ce seul masquage.
+
+**Motif déjà existant, non réinventé** — `definirSoldeOuvertureAction`
+avait déjà un `motif?: string` optionnel, `corrigerSoldeOuvertureAction` un
+`motif: string` obligatoire (min 3 caractères) depuis leur construction
+initiale : rien à ajouter ici, la consigne "sinon ne l'invente pas sans me
+le signaler" ne s'applique donc pas — déjà conforme au pattern déjà en
+place ailleurs dans le module (`annulerReglementAction`, etc.).
+
+### Traçabilité (Tâche 3) — dérivée du grand livre, jamais un nouveau champ sur `HistoriqueEntry`
+
+**Choix documenté, cohérent avec le reste du fichier** : plutôt que
+d'ajouter des colonnes structurées "ancien montant"/"nouveau montant"/
+"pièce jointe" sur `HistoriqueEntry` (table générique réutilisée par des
+dizaines de fonctionnalités, jamais étendue avec des champs dédiés à une
+seule d'entre elles — voir par exemple `parseMontantValideCetteEtape`,
+Phase H, qui extrait un montant d'un texte libre plutôt que d'ajouter un
+champ), les faits demandés (qui, quand, ancien montant, nouveau montant,
+référence de la pièce jointe) sont **entièrement dérivables** des
+écritures `JournalCaisse` elles-mêmes : chacune porte déjà `userId`
+(auteur), `createdAt` (horodatage), `montant`, et désormais sa `pieceJointe`
+directement liée. `HistoriqueEntry` continue d'être créée (même esprit que
+partout ailleurs, `detail` enrichi avec le nom du fichier joint) mais n'est
+plus la source de l'écran d'historique — c'est `getSoldeOuvertureHistorique()`
+(nouvelle fonction, `backend/src/tresorerie.ts`) qui reconstruit
+directement, depuis le grand livre : une ligne par action utilisateur
+(définition ou correction), appariant chaque écriture d'ANNULATION
+(jamais affichée seule, pure compensation technique) avec la CORRECTION
+qui la suit immédiatement dans la même transaction — l'annulation
+neutralise toujours exactement l'ancien montant, c'est donc littéralement
+la valeur "ancien montant" recherchée.
+
+### Affichage (Tâche 4, `SoldeOuvertureHistorique.tsx`)
+
+Nouveau composant Server Component autonome (même esprit que
+`DemandeHistorique.tsx`), listant chaque entrée du plus récent au plus
+ancien : badge "Définition initiale"/"Correction", date + auteur, "ancien
+→ nouveau montant" (ancien omis pour la définition initiale), lien
+"Télécharger la pièce jointe" (`/api/treso/pieces-jointes/{id}`) — ou une
+mention explicite "Aucune pièce jointe (antérieure à cette exigence)" pour
+toute écriture qui précéderait cette tâche (le type
+`pieceJointe: {...} | null` reste honnête plutôt que de prétendre à une
+garantie rétroactive qui n'existe pas). Affiché sur l'écran
+`/treso/finance/solde-ouverture`, sous le formulaire/l'affichage du montant
+actuel, quel que soit son état (`!info.existe` ou non) — jamais seulement
+la dernière valeur comme avant cette tâche.
+
+### Vérifié explicitement — vrai parcours navigateur + rejeu réseau direct, sur une VRAIE donnée de production
+
+**Contexte particulier de cette vérification** : contrairement aux
+vérifications précédentes de ce fichier, un solde d'ouverture RÉEL
+existait déjà en base au moment de ce travail (3 000 000 FCFA, défini puis
+corrigé par `finance@simassurances.test` entre deux sessions de travail,
+sans pièce jointe — antérieur à cette exigence). La fonctionnalité ne
+permettant qu'UN SEUL solde d'ouverture actif à la fois, il était
+impossible de tester le chemin "définition initiale" sans perturber cette
+donnée réelle : vérifié à la place via le chemin "correction" (strictement
+symétrique en code — même transaction, même validation zod, même création
+de `PieceJointe`), en terminant explicitement par une correction qui
+restaure la valeur réelle exacte, motif "Restauration finale du montant
+réel (3 000 000 FCFA) après vérification complète" — choix assumé,
+cohérent avec le principe même d'un grand livre immuable (rien n'est
+jamais caché, seulement compensé).
+
+**Piège rencontré et corrigé pendant la vérification, signalé pour
+référence future** : une première tentative de "rejeu réseau sans pièce
+jointe" construisait le corps de la requête en cherchant à remplacer le
+nom du fichier LOCAL uploadé (`test-justificatif.png`) dans le corps
+capturé — **échec silencieux** : le serveur renomme toujours le fichier en
+un UUID généré (`b17a33ce-....png`, voir la route d'upload, "jamais dérivé
+du nom original") avant de le renvoyer au client, donc ce remplacement ne
+correspondait jamais à rien et le corps rejoué était en réalité identique
+à l'original — un second appel légitime a donc été accidentellement
+exécuté (net neutre sur le montant final, mais laisse deux écritures
+supplémentaires bénignes dans le grand livre, visibles et tracées comme
+n'importe quelle autre). Corrigé en inspectant d'abord le format réel du
+corps (`[nouveauMontant, pieceJointeUrl, motif]`, un simple tableau JSON)
+puis en construisant un corps avec `pieceJointeUrl: ""` explicitement.
+
+`npx tsc --noEmit` (backend + frontend) sans erreur. Chromium headless
+(Playwright, non ajouté au projet), compte `finance@simassurances.test` :
+
+- UI : bouton "Confirmer la correction" désactivé tant qu'aucun fichier
+  n'est choisi.
+- **Rejeu réseau direct, corps `[montant, "", motif]` (pièce jointe
+  explicitement vide)** : refusé, réponse `{"status":"error","message":"Une
+  pièce jointe justificative est obligatoire..."}` — **confirmé en base
+  qu'aucune écriture supplémentaire n'a été créée par cette tentative**
+  (comptage exact avant/après).
+- Correction réelle avec pièce jointe (fichier PNG de test réel uploadé) :
+  acceptée, montant affiché immédiatement, entrée d'historique correcte
+  (auteur, date, ancien → nouveau montant, lien de téléchargement
+  fonctionnel).
+- **Deux corrections successives** : historique affichant bien les 3
+  entrées dans l'ordre (définition d'origine + 2 corrections), chacune
+  avec sa propre pièce jointe distincte (3 liens de téléchargement
+  distincts vérifiés).
+- Restauration finale : montant confirmé de nouveau à 3 000 000 FCFA,
+  identique à la valeur réelle d'origine — vérifié à la fois à l'écran et
+  par requête directe en base (`montantActuel` recalculé = 3 000 000).
+
+**Nettoyage — choix explicite, différent des vérifications précédentes** :
+contrairement aux données de test habituelles de ce fichier (toujours
+supprimées après coup), les écritures `JournalCaisse` et `PieceJointe` de
+cette vérification **restent en base**, par nature : le grand livre du
+solde d'ouverture est un historique unique et continu, il n'existe aucune
+fonctionnalité (ni aucune volonté) de "supprimer une correction passée" —
+la valeur NETTE finale est exactement restaurée (3 000 000 FCFA, identique
+à avant toute vérification), mais la trace de ce test reste visible dans
+l'historique, avec des motifs explicites ("Test verification...",
+"Restauration finale...") qui la distinguent sans ambiguïté d'une vraie
+opération métier. Les fichiers de test uploadés sur disque ne sont pas
+supprimés non plus, pour ne pas casser les liens de téléchargement de ces
+entrées désormais permanentes de l'historique. Serveur `next dev` arrêté
+après vérification.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

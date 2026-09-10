@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { NextResponse } from "next/server";
 
-import { getSession, hasPermission } from "@/lib/auth";
+import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { prisma } from "backend";
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
@@ -19,11 +19,19 @@ const MIME_PAR_EXTENSION: Record<string, string> = {
  * dossier `./uploads/` (aucune route statique ne l'expose), toujours via
  * cette route protégée qui vérifie l'accès avant de lire le fichier.
  *
- * `PieceJointe.demandeId` est TOUJOURS renseigné (voir schema.prisma),
- * même quand la pièce est en réalité attachée à une `DepenseLigne`
- * précise plutôt qu'à la demande elle-même — dérivé au moment de l'upload
- * (`retourCaisse.reglement.demandeId`). Un seul `include` suffit donc pour
- * retrouver la demande propriétaire, quel que soit le parent direct.
+ * `PieceJointe.demandeId` est renseigné pour toute pièce liée à une
+ * Demande (voir schema.prisma), même quand la pièce est en réalité
+ * attachée à une `DepenseLigne` précise plutôt qu'à la demande elle-même —
+ * dérivé au moment de l'upload (`retourCaisse.reglement.demandeId`). Un
+ * seul `include` suffit donc pour retrouver la demande propriétaire, quel
+ * que soit le parent direct.
+ *
+ * **Nullable depuis "Pièce jointe obligatoire sur le solde d'ouverture"**
+ * (voir CLAUDE.md) : une pièce liée à une écriture `JournalCaisse` du
+ * cycle solde d'ouverture (`journalCaisseId`) n'a, par nature, aucune
+ * demande d'origine — règles d'accès distinctes pour ce cas (voir
+ * ci-dessous), jamais le même chemin "créateur/bénéficiaire" qui n'a pas
+ * de sens ici.
  *
  * Mêmes règles d'accès que les autres ressources liées à une demande
  * (reçu, bon de caisse) — élargies ici au **bénéficiaire** de la demande
@@ -48,16 +56,25 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return new NextResponse("Pièce jointe introuvable.", { status: 404 });
   }
 
-  const estFinanceOuDG =
-    hasPermission(session, "treso.effectuer_reglement") ||
-    hasPermission(session, "treso.categoriser_demande") ||
-    hasPermission(session, "treso.valider_demande") ||
-    hasPermission(session, "treso.receptionner_retour") ||
-    hasPermission(session, "treso.voir_dashboard_finance");
-  const estCreateurOuBeneficiaire =
-    piece.demande.createurId === session.user.id || piece.demande.beneficiaireUserId === session.user.id;
+  let accesAutorise: boolean;
+  if (piece.demande) {
+    const estFinanceOuDG =
+      hasPermission(session, "treso.effectuer_reglement") ||
+      hasPermission(session, "treso.categoriser_demande") ||
+      hasPermission(session, "treso.valider_demande") ||
+      hasPermission(session, "treso.receptionner_retour") ||
+      hasPermission(session, "treso.voir_dashboard_finance");
+    const estCreateurOuBeneficiaire =
+      piece.demande.createurId === session.user.id || piece.demande.beneficiaireUserId === session.user.id;
+    accesAutorise = estFinanceOuDG || estCreateurOuBeneficiaire;
+  } else {
+    // Pièce du solde d'ouverture (`journalCaisseId`, pas de demande
+    // d'origine) — même permission EXACTE que definirSoldeOuvertureAction/
+    // corrigerSoldeOuvertureAction, jamais élargie au reste de Finance/DG.
+    accesAutorise = isAdmin(session) || hasPermission(session, "treso.effectuer_reglement");
+  }
 
-  if (!estFinanceOuDG && !estCreateurOuBeneficiaire) {
+  if (!accesAutorise) {
     return new NextResponse("Accès refusé.", { status: 403 });
   }
 

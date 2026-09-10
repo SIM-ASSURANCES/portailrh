@@ -355,14 +355,18 @@ model Demande {
 model PieceJointe {
   id        String   @id @default(cuid())
   url       String
-  /// Toujours renseigné, y compris quand la pièce est attachée à une seule
-  /// ligne de dépense (`depenseLigneId` ci-dessous) plutôt qu'à la demande
-  /// elle-même — dérivé du contexte au moment de l'upload (via
-  /// `retourCaisse.reglement.demandeId`), pour une traçabilité uniforme et
-  /// un contrôle d'accès simple (toujours "la demande", jamais à distinguer
-  /// selon le type de parent direct).
-  demandeId String
-  demande   Demande  @relation(fields: [demandeId], references: [id])
+  /// Renseigné pour toute pièce rattachée à une Demande (y compris quand
+  /// elle est en réalité attachée à une seule ligne de dépense,
+  /// `depenseLigneId` ci-dessous, plutôt qu'à la demande elle-même —
+  /// dérivé du contexte au moment de l'upload via
+  /// `retourCaisse.reglement.demandeId`). **Nullable depuis "Pièce jointe
+  /// obligatoire sur le solde d'ouverture" (voir CLAUDE.md)** : une pièce
+  /// rattachée à une écriture `JournalCaisse` du solde d'ouverture
+  /// (`journalCaisseId` ci-dessous) n'a, par nature, aucune demande
+  /// d'origine — même raisonnement que `JournalCaisse.demandeId`,
+  /// assoupli pour la même raison.
+  demandeId String?
+  demande   Demande? @relation(fields: [demandeId], references: [id])
   /// Renseigné uniquement si cette pièce est attachée à une ligne de
   /// dépense précise d'un retour de caisse, plutôt qu'à la demande
   /// elle-même (formulaire de création / dépense directe). `@unique` : une
@@ -373,6 +377,12 @@ model PieceJointe {
   /// tâche de nettoyage des fichiers orphelins).
   depenseLigneId String?       @unique
   depenseLigne   DepenseLigne? @relation(fields: [depenseLigneId], references: [id], onDelete: Cascade)
+  /// Renseigné uniquement pour une pièce jointe attachée à une écriture
+  /// `JournalCaisse` du cycle "solde d'ouverture" (`definirSoldeOuvertureAction`/
+  /// `corrigerSoldeOuvertureAction`) — le seul cas de pièce jointe sans
+  /// Demande d'origine. `@unique` : une seule pièce par écriture.
+  journalCaisseId String?        @unique
+  journalCaisse   JournalCaisse? @relation(fields: [journalCaisseId], references: [id])
   createdAt DateTime @default(now())
 }
 
@@ -494,6 +504,15 @@ model JournalCaisse {
 
   userId String
   user   User   @relation("JournalCaisseUser", fields: [userId], references: [id])
+
+  /// Pièce jointe obligatoire pour une écriture du cycle "solde
+  /// d'ouverture" (voir CLAUDE.md "Pièce jointe obligatoire sur le solde
+  /// d'ouverture") — champ virtuel (aucune colonne ici), relation inverse
+  /// de `PieceJointe.journalCaisse`. Jamais renseigné pour les autres
+  /// sources (règlement, retour) : ce grand livre reste par ailleurs
+  /// immuable, aucune écriture n'est jamais éditée pour y ajouter une
+  /// pièce a posteriori.
+  pieceJointe PieceJointe?
 }
 
 // ============================================================

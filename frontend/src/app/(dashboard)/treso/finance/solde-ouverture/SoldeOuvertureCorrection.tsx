@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { Button, Input, Textarea } from "@/components/ui";
+import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import { corrigerSoldeOuvertureAction } from "./actions";
 
@@ -14,7 +15,9 @@ import { corrigerSoldeOuvertureAction } from "./actions";
  * un clic accidentel) — même principe que `ClotureActions.tsx`/
  * `UserDeleteButton.tsx`. La correction ne réécrit jamais l'écriture
  * existante (voir `corrigerSoldeOuvertureAction`) : une nouvelle écriture
- * compensatoire + une nouvelle écriture corrigée, motif obligatoire.
+ * compensatoire + une nouvelle écriture corrigée, motif ET pièce jointe
+ * obligatoires (voir CLAUDE.md "Pièce jointe obligatoire sur le solde
+ * d'ouverture").
  */
 export function SoldeOuvertureCorrection({
   montantActuel,
@@ -28,29 +31,46 @@ export function SoldeOuvertureCorrection({
   const [ouvert, setOuvert] = useState(false);
   const [nouveauMontant, setNouveauMontant] = useState("");
   const [montantError, setMontantError] = useState<string | undefined>();
+  const [pieceJointeUrl, setPieceJointeUrl] = useState<string | null>(null);
+  const [pieceJointeError, setPieceJointeError] = useState<string | undefined>();
   const [motif, setMotif] = useState("");
   const [motifError, setMotifError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
+  function resetFormulaire() {
+    setOuvert(false);
+    setNouveauMontant("");
+    setPieceJointeUrl(null);
+    setMotif("");
+    setMontantError(undefined);
+    setPieceJointeError(undefined);
+    setMotifError(undefined);
+  }
+
   function handleCorriger() {
     const valeur = Number(nouveauMontant);
+    let bloque = false;
     if (!valeur || valeur <= 0) {
       setMontantError("Le montant doit être supérieur à 0.");
-      return;
+      bloque = true;
+    }
+    if (!pieceJointeUrl) {
+      setPieceJointeError("Une pièce jointe justificative est obligatoire pour cette correction.");
+      bloque = true;
     }
     if (motif.trim().length < 3) {
       setMotifError("Le motif est obligatoire (3 caractères minimum).");
-      return;
+      bloque = true;
     }
+    if (bloque) return;
     setMontantError(undefined);
+    setPieceJointeError(undefined);
     setMotifError(undefined);
     startTransition(async () => {
-      const result = await corrigerSoldeOuvertureAction(valeur, motif.trim());
+      const result = await corrigerSoldeOuvertureAction(valeur, pieceJointeUrl!, motif.trim());
       if (result.status === "success") {
         toast.success(result.message);
-        setOuvert(false);
-        setNouveauMontant("");
-        setMotif("");
+        resetFormulaire();
         router.refresh();
       } else {
         toast.error(result.message);
@@ -80,7 +100,7 @@ export function SoldeOuvertureCorrection({
         <div className="animate-fade-in-up space-y-3 border-t border-border pt-4">
           <p className="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning">
             L&apos;écriture d&apos;origine n&apos;est jamais modifiée : cette correction crée une nouvelle écriture
-            tracée (annulation du montant actuel + nouveau montant), motif obligatoire.
+            tracée (annulation du montant actuel + nouveau montant), pièce jointe et motif obligatoires.
           </p>
           <Input
             label="Nouveau montant (FCFA)"
@@ -96,6 +116,15 @@ export function SoldeOuvertureCorrection({
             }}
             error={montantError}
           />
+          <PieceJointeUpload
+            label="Pièce justificative (obligatoire)"
+            hint="PDF, JPG ou PNG — 10 Mo maximum. Justifie le nouveau montant."
+            onChange={(url) => {
+              setPieceJointeUrl(url);
+              if (url && pieceJointeError) setPieceJointeError(undefined);
+            }}
+            error={pieceJointeError}
+          />
           <Textarea
             label="Motif de la correction"
             required
@@ -109,21 +138,16 @@ export function SoldeOuvertureCorrection({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" variant="danger" loading={isPending} onClick={handleCorriger}>
-              Confirmer la correction
-            </Button>
             <Button
               type="button"
-              variant="secondary"
-              disabled={isPending}
-              onClick={() => {
-                setOuvert(false);
-                setNouveauMontant("");
-                setMotif("");
-                setMontantError(undefined);
-                setMotifError(undefined);
-              }}
+              variant="danger"
+              loading={isPending}
+              disabled={!pieceJointeUrl}
+              onClick={handleCorriger}
             >
+              Confirmer la correction
+            </Button>
+            <Button type="button" variant="secondary" disabled={isPending} onClick={resetFormulaire}>
               Annuler
             </Button>
           </div>

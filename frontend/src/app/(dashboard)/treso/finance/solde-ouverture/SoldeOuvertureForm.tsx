@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { Button, Input, Textarea } from "@/components/ui";
+import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import { definirSoldeOuvertureAction } from "./actions";
 
@@ -11,10 +12,17 @@ import { definirSoldeOuvertureAction } from "./actions";
  * Formulaire de première définition du solde d'ouverture — n'est rendu par
  * la page appelante que si `!info.existe` (aucun solde jamais défini,
  * jamais un second formulaire par-dessus un solde déjà en vigueur).
+ *
+ * **Pièce jointe obligatoire** (voir CLAUDE.md "Pièce jointe obligatoire
+ * sur le solde d'ouverture") — bloque la soumission côté client (bouton
+ * désactivé + message explicite), revérifié côté serveur dans
+ * `definirSoldeOuvertureAction` (jamais uniquement ce masquage).
  */
 export function SoldeOuvertureForm() {
   const [montant, setMontant] = useState("");
   const [montantError, setMontantError] = useState<string | undefined>();
+  const [pieceJointeUrl, setPieceJointeUrl] = useState<string | null>(null);
+  const [pieceJointeError, setPieceJointeError] = useState<string | undefined>();
   const [motif, setMotif] = useState("");
   const [isPending, startTransition] = useTransition();
 
@@ -24,9 +32,14 @@ export function SoldeOuvertureForm() {
       setMontantError("Le montant doit être supérieur à 0.");
       return;
     }
+    if (!pieceJointeUrl) {
+      setPieceJointeError("Une pièce jointe justificative est obligatoire (comptage signé, photo du coffre...).");
+      return;
+    }
     setMontantError(undefined);
+    setPieceJointeError(undefined);
     startTransition(async () => {
-      const result = await definirSoldeOuvertureAction(valeur, motif.trim() || undefined);
+      const result = await definirSoldeOuvertureAction(valeur, pieceJointeUrl, motif.trim() || undefined);
       if (result.status === "success") {
         toast.success(result.message);
       } else {
@@ -56,6 +69,15 @@ export function SoldeOuvertureForm() {
         }}
         error={montantError}
       />
+      <PieceJointeUpload
+        label="Pièce justificative (obligatoire)"
+        hint="PDF, JPG ou PNG — 10 Mo maximum. Ex : comptage de caisse signé, photo du coffre."
+        onChange={(url) => {
+          setPieceJointeUrl(url);
+          if (url && pieceJointeError) setPieceJointeError(undefined);
+        }}
+        error={pieceJointeError}
+      />
       <Textarea
         label="Motif / commentaire"
         rows={2}
@@ -63,7 +85,7 @@ export function SoldeOuvertureForm() {
         value={motif}
         onChange={(e) => setMotif(e.target.value)}
       />
-      <Button type="button" loading={isPending} onClick={handleSubmit}>
+      <Button type="button" loading={isPending} disabled={!pieceJointeUrl} onClick={handleSubmit}>
         Définir le solde d&apos;ouverture
       </Button>
     </div>

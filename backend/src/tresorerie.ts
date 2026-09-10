@@ -156,6 +156,81 @@ export async function getSoldeOuvertureInfo(): Promise<SoldeOuvertureInfo> {
   return { existe: true, montantActuel, definiLe: entries[0].createdAt };
 }
 
+export interface SoldeOuvertureHistoriqueEntry {
+  id: string;
+  type: "definition" | "correction";
+  /** `null` pour la définition initiale. */
+  ancienMontant: number | null;
+  nouveauMontant: number;
+  auteurNom: string;
+  createdAt: Date;
+  /** Toujours renseignée depuis "Pièce jointe obligatoire sur le solde
+   * d'ouverture" (voir CLAUDE.md) — `null` uniquement pour une entrée
+   * antérieure à ce changement (aucune en pratique sur cette base, mais le
+   * type reste honnête plutôt que de mentir sur une garantie qui n'a pas
+   * toujours existé). */
+  pieceJointe: { id: string; url: string } | null;
+}
+
+/**
+ * Historique complet du cycle "solde d'ouverture" — une ligne par ACTION
+ * utilisateur (définition ou correction), jamais une ligne par écriture
+ * `JournalCaisse` brute : reconstruit "ancien → nouveau montant" en
+ * appariant chaque écriture `SOLDE_OUVERTURE_ANNULATION_SOURCE` (jamais
+ * affichée seule, purement une compensation technique) avec la
+ * `SOLDE_OUVERTURE_CORRECTION_SOURCE` qui la suit immédiatement dans la
+ * même transaction — l'`annulation` neutralise toujours exactement le
+ * montant en vigueur avant la correction, c'est donc littéralement
+ * "l'ancien montant" recherché. Trié du plus ancien au plus récent (ordre
+ * chronologique naturel pour un historique lu de haut en bas).
+ */
+export async function getSoldeOuvertureHistorique(): Promise<SoldeOuvertureHistoriqueEntry[]> {
+  const entries = await prisma.journalCaisse.findMany({
+    where: {
+      source: {
+        in: [SOLDE_OUVERTURE_SOURCE, SOLDE_OUVERTURE_CORRECTION_SOURCE, SOLDE_OUVERTURE_ANNULATION_SOURCE],
+      },
+    },
+    orderBy: { createdAt: "asc" },
+    include: {
+      user: { select: { fullName: true } },
+      pieceJointe: { select: { id: true, url: true } },
+    },
+  });
+
+  const historique: SoldeOuvertureHistoriqueEntry[] = [];
+  let dernierMontantAnnule: number | null = null;
+
+  for (const e of entries) {
+    if (e.source === SOLDE_OUVERTURE_SOURCE) {
+      historique.push({
+        id: e.id,
+        type: "definition",
+        ancienMontant: null,
+        nouveauMontant: Number(e.montant),
+        auteurNom: e.user.fullName,
+        createdAt: e.createdAt,
+        pieceJointe: e.pieceJointe,
+      });
+    } else if (e.source === SOLDE_OUVERTURE_ANNULATION_SOURCE) {
+      dernierMontantAnnule = Number(e.montant);
+    } else if (e.source === SOLDE_OUVERTURE_CORRECTION_SOURCE) {
+      historique.push({
+        id: e.id,
+        type: "correction",
+        ancienMontant: dernierMontantAnnule,
+        nouveauMontant: Number(e.montant),
+        auteurNom: e.user.fullName,
+        createdAt: e.createdAt,
+        pieceJointe: e.pieceJointe,
+      });
+      dernierMontantAnnule = null;
+    }
+  }
+
+  return historique;
+}
+
 /**
  * Somme des `DepenseLigne` de TOUS les `RetourCaisse` liés aux règlements
  * d'une demande — peu importe qu'ils soient déjà réceptionnés ou non : c'est
