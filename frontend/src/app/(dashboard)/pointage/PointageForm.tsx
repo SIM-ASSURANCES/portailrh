@@ -5,10 +5,19 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { Button, Textarea } from "@/components/ui";
 import { enregistrerPointageAction } from "./actions";
+import { useGeolocation } from "@/hooks/useGeolocation";
 
-export function PointageForm({ type, source }: { type: "ARRIVEE" | "DEPART", source: "QR_CODE" | "ORDINATEUR" }) {
+export function PointageForm({
+  type,
+  source,
+}: {
+  type: "ARRIVEE" | "DEPART";
+  source: "QR_CODE" | "ORDINATEUR";
+}) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  // On pré-charge la géoloc pour les cas de retard/départ anticipé hors réseau
+  const { position } = useGeolocation();
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -16,7 +25,15 @@ export function PointageForm({ type, source }: { type: "ARRIVEE" | "DEPART", sou
     const motif = formData.get("motif") as string;
 
     startTransition(async () => {
-      const result = await enregistrerPointageAction({ source, type, motif });
+      const result = await enregistrerPointageAction({
+        source,
+        type,
+        motif,
+        // Si une position GPS est disponible, on l'envoie pour le fallback
+        geoLatitude: position?.latitude,
+        geoLongitude: position?.longitude,
+        geoPrecision: position?.accuracy,
+      });
       if (result.status === "success") {
         toast.success("Pointage enregistré avec succès");
         router.refresh();

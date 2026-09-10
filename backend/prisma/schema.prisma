@@ -528,6 +528,8 @@ enum SourcePointage {
   QR_CODE
   ORDINATEUR
   RH_EXCEPTIONNEL
+  /// Pointage validé par géolocalisation GPS (fallback hors réseau Wi-Fi)
+  GEOLOCALISATION
 }
 
 enum StatutAbsence {
@@ -543,6 +545,14 @@ model ParametrageHoraire {
   heureDebutApresMidi String
   heureFinApresMidi   String
   isActive            Boolean  @default(true)
+  /// Activer le pointage par géolocalisation GPS comme fallback réseau
+  geolocalisationActive Boolean @default(false)
+  /// Latitude GPS du bureau (point de référence pour le calcul de distance)
+  bureauLatitude      Float?   @default(5.3628189)
+  /// Longitude GPS du bureau
+  bureauLongitude     Float?   @default(-3.9374753)
+  /// Rayon autorisé en mètres autour du bureau (min: 30, max: 200, défaut: 50)
+  rayonAutorise       Int      @default(50)
   updatedAt           DateTime @updatedAt
 }
 
@@ -557,6 +567,15 @@ model Pointage {
   estDepartAnticipe Boolean    @default(false)
   motif         String?
   ipAddress     String?
+
+  /// Latitude GPS du collaborateur au moment du pointage (mode géoloc)
+  geoLatitude   Float?
+  /// Longitude GPS du collaborateur au moment du pointage (mode géoloc)
+  geoLongitude  Float?
+  /// Précision GPS en mètres fournie par le navigateur
+  geoPrecision  Float?
+  /// Distance calculée en mètres entre le collaborateur et le bureau
+  geoDistance   Int?
 
   userId String
   user   User   @relation("PointageEmploye", fields: [userId], references: [id])

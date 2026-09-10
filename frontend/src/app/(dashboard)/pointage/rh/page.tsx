@@ -75,6 +75,13 @@ const tools: DashboardItem[] = [
     href: "/pointage/rh/calendrier",
     icon: "calendar",
     available: true,
+  },
+  {
+    title: "Géolocalisation",
+    description: "Pointage hors réseau par GPS — configurez les coordonnées du bureau et le rayon autorisé.",
+    href: "/pointage/rh/geolocalisation",
+    icon: "map-pin",
+    available: true,
   }
 ];
 

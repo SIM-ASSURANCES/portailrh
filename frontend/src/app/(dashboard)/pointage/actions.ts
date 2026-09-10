@@ -5,7 +5,14 @@ import { getSession } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
 import { headers } from "next/headers";
-import { timeToMinutes, isOfficeIpAllowed, checkLateStatus } from "backend";
+import {
+  timeToMinutes,
+  isOfficeIpAllowed,
+  checkLateStatus,
+  isWithinRadius,
+  isGeoPrecisionAcceptable,
+  BUREAU_DEFAULT_COORDS,
+} from "backend";
 import { revalidatePath } from "next/cache";
 import { pointageEmitter } from "@/lib/events";
 import { ActionState, fieldErrorsFromZod } from "backend";
@@ -14,11 +21,22 @@ import { createNotification } from "@/lib/notifications";
 const pointageSchema = z.object({
   source: z.enum(["QR_CODE", "ORDINATEUR"]),
   type: z.enum(["ARRIVEE", "DEPART"]),
-  motif: z.string().optional()
+  motif: z.string().optional(),
+  // Coordonnées GPS (envoyées uniquement en mode fallback géolocalisation)
+  geoLatitude: z.number().optional(),
+  geoLongitude: z.number().optional(),
+  geoPrecision: z.number().optional(),
 });
 
 export async function enregistrerPointageAction(
-  input: { source: "QR_CODE" | "ORDINATEUR", type: "ARRIVEE" | "DEPART", motif?: string }
+  input: {
+    source: "QR_CODE" | "ORDINATEUR";
+    type: "ARRIVEE" | "DEPART";
+    motif?: string;
+    geoLatitude?: number;
+    geoLongitude?: number;
+    geoPrecision?: number;
+  }
 ): Promise<ActionState> {
   const session = await getSession();
   if (!session) return { status: "error", message: "Non authentifié" };
@@ -28,37 +46,99 @@ export async function enregistrerPointageAction(
     return { status: "error", message: "Données invalides", fieldErrors: fieldErrorsFromZod(parsed.error) };
   }
 
-  const { source, type, motif } = parsed.data;
+  const { source, type, motif, geoLatitude, geoLongitude, geoPrecision } = parsed.data;
 
-  // 1. Capture de l'IP du terminal 
+  // ─────────────────────────────────────────────────────────────────────────
+  // 1. Capture de l'IP du terminal
+  // ─────────────────────────────────────────────────────────────────────────
   const headersList = await headers();
   const rawIp = headersList.get("x-forwarded-for") || "IP_INCONNUE";
   const ip = rawIp.replace(/^::ffff:/, "");
 
-  // Vérification de l'IP pour sécuriser le pointage (Ordinateur + Smartphone)
   const whitelistEnv = process.env.ALLOWED_OFFICE_IPS || "";
-  if (!isOfficeIpAllowed(ip, whitelistEnv)) {
-    const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
-    for (const rh of rhUsers) {
-      await createNotification({
-        userId: rh.id,
-        titre: "Alerte Sécurité Pointage",
-        message: `${session.user.fullName} a tenté de pointer en dehors du réseau de l'entreprise (IP: ${ip}).`,
-        lien: "/pointage/rh",
-      });
-    }
+  const ipAutorisee = isOfficeIpAllowed(ip, whitelistEnv);
 
-    return {
-      status: "error",
-      message: "Le pointage n'est autorisé que depuis le réseau (Wi-Fi) de l'entreprise."
-    };
-  }
-
-  // 2. Vérification côté serveur des règles d'horaires
+  // ─────────────────────────────────────────────────────────────────────────
+  // 2. Récupérer le paramétrage horaire (inclut config géoloc)
+  // ─────────────────────────────────────────────────────────────────────────
   const parametrage = await prisma.parametrageHoraire.findFirst({
-    where: { isActive: true }
+    where: { isActive: true },
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // 3. Si l'IP n'est pas dans la whitelist → tenter le fallback géolocalisation
+  // ─────────────────────────────────────────────────────────────────────────
+  let geoFallbackUsed = false;
+  let geoDistance: number | null = null;
+
+  if (!ipAutorisee) {
+    const geoActive = parametrage?.geolocalisationActive ?? false;
+
+    // La géolocalisation est désactivée par les RH
+    if (!geoActive) {
+      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
+      for (const rh of rhUsers) {
+        await createNotification({
+          userId: rh.id,
+          titre: "⚠️ Alerte Sécurité Pointage",
+          message: `${session.user.fullName} a tenté de pointer hors réseau (IP: ${ip}). La géolocalisation est désactivée.`,
+          lien: "/pointage/rh",
+        });
+      }
+      return {
+        status: "error",
+        message: "Le pointage n'est autorisé que depuis le réseau Wi-Fi de l'entreprise.",
+      };
+    }
+
+    // Coordonnées GPS non transmises par le client
+    if (geoLatitude === undefined || geoLongitude === undefined) {
+      return {
+        status: "error",
+        message: "GEOLOCATION_REQUIRED",
+      };
+    }
+
+    // Précision GPS insuffisante (trop imprécis pour garantir la position)
+    if (geoPrecision !== undefined && !isGeoPrecisionAcceptable(geoPrecision)) {
+      return {
+        status: "error",
+        message: `Signal GPS trop faible (précision : ${Math.round(geoPrecision)}m). Déplacez-vous en extérieur et réessayez.`,
+      };
+    }
+
+    // Coordonnées du bureau : paramétrage BD ou valeurs par défaut SIM Assurances
+    const officeLat = parametrage?.bureauLatitude ?? BUREAU_DEFAULT_COORDS.latitude;
+    const officeLon = parametrage?.bureauLongitude ?? BUREAU_DEFAULT_COORDS.longitude;
+    const rayon = parametrage?.rayonAutorise ?? 50;
+
+    const geoCheck = isWithinRadius(geoLatitude, geoLongitude, officeLat, officeLon, rayon);
+    geoDistance = geoCheck.distanceMetres;
+
+    if (!geoCheck.allowed) {
+      // ── GARDE-FOU : collaborateur hors réseau ET hors du rayon géographique ──
+      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
+      for (const rh of rhUsers) {
+        await createNotification({
+          userId: rh.id,
+          titre: "🚨 Tentative de pointage non autorisée",
+          message: `${session.user.fullName} a tenté de pointer hors réseau et hors périmètre. IP: ${ip} | Distance au bureau: ${geoDistance}m (rayon: ${rayon}m). Aucun pointage enregistré.`,
+          lien: "/pointage/rh",
+        });
+      }
+      return {
+        status: "error",
+        message: `Pointage impossible : vous êtes à ${geoDistance}m du bureau. Le rayon autorisé est de ${rayon}m. Rapprochez-vous du bureau et réessayez.`,
+      };
+    }
+
+    // Géoloc valide → on bascule en mode GEOLOCALISATION
+    geoFallbackUsed = true;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 4. Vérification des règles d'horaires
+  // ─────────────────────────────────────────────────────────────────────────
   const limiteArriveeMinutes = timeToMinutes(parametrage?.heureDebutMatin || "07:45");
   const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
 
@@ -71,13 +151,13 @@ export async function enregistrerPointageAction(
   const allToday = await prisma.pointage.findMany({
     where: {
       userId: session.user.id,
-      heure: { gte: startOfDay, lte: endOfDay }
+      heure: { gte: startOfDay, lte: endOfDay },
     },
-    select: { type: true }
+    select: { type: true },
   });
 
-  const hasArrivee = allToday.some(p => p.type === "ARRIVEE");
-  const hasDepart = allToday.some(p => p.type === "DEPART");
+  const hasArrivee = allToday.some((p) => p.type === "ARRIVEE");
+  const hasDepart = allToday.some((p) => p.type === "DEPART");
 
   if (type === "ARRIVEE" && hasArrivee) {
     return { status: "error", message: "Vous avez déjà pointé votre arrivée aujourd'hui." };
@@ -95,9 +175,10 @@ export async function enregistrerPointageAction(
     return { status: "error", message: "Vous avez déjà complété vos pointages pour aujourd'hui." };
   }
 
-  const heurePrevue = type === "ARRIVEE"
-    ? (parametrage?.heureDebutMatin || "07:45")
-    : (parametrage?.heureFinApresMidi || "16:45");
+  const heurePrevue =
+    type === "ARRIVEE"
+      ? parametrage?.heureDebutMatin || "07:45"
+      : parametrage?.heureFinApresMidi || "16:45";
 
   let estRetard = false;
   let minutesRetard: number | null = null;
@@ -111,7 +192,9 @@ export async function enregistrerPointageAction(
     minutesRetard = currentMinutes - limiteArriveeMinutes;
   }
 
-  // 3. Défense en profondeur : Empêcher le bypass via requêtes cURL
+  // ─────────────────────────────────────────────────────────────────────────
+  // 5. Défense en profondeur : motif obligatoire en cas d'anomalie
+  // ─────────────────────────────────────────────────────────────────────────
   if (type === "ARRIVEE" && estRetard) {
     if (!motif || motif.trim().length < 3) {
       return { status: "error", message: "Un motif explicatif est obligatoire en cas de retard." };
@@ -125,13 +208,18 @@ export async function enregistrerPointageAction(
     }
   }
 
-  // 4. Écriture atomique (Pointage + Traces d'historique)
+  // Source effective : GEOLOCALISATION si fallback, sinon source déclarée
+  const sourceEffective = geoFallbackUsed ? "GEOLOCALISATION" : source;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 6. Écriture atomique (Pointage + Traces d'historique)
+  // ─────────────────────────────────────────────────────────────────────────
   try {
     await prisma.$transaction(async (tx) => {
       const pointage = await tx.pointage.create({
         data: {
           type,
-          source,
+          source: sourceEffective,
           heure: now,
           heurePrevue,
           estRetard,
@@ -139,43 +227,62 @@ export async function enregistrerPointageAction(
           estDepartAnticipe,
           motif: motif || null,
           ipAddress: ip,
-          userId: session.user.id
-        }
+          // Données GPS (nulles si pointage réseau normal)
+          geoLatitude: geoFallbackUsed ? (geoLatitude ?? null) : null,
+          geoLongitude: geoFallbackUsed ? (geoLongitude ?? null) : null,
+          geoPrecision: geoFallbackUsed ? (geoPrecision ?? null) : null,
+          geoDistance: geoFallbackUsed ? geoDistance : null,
+          userId: session.user.id,
+        },
       });
 
-      // Historisation générale requise par la sécurité
+      // Trace d'historique générale
+      const geoDetail = geoFallbackUsed
+        ? ` | GPS: (${geoLatitude?.toFixed(6)}, ${geoLongitude?.toFixed(6)}), distance: ${geoDistance}m, précision: ${geoPrecision ? Math.round(geoPrecision) : "?"}m`
+        : "";
+
       await tx.historiqueEntry.create({
         data: {
           entity: "Pointage",
           entityId: pointage.id,
           action: "CREATE",
-          detail: `Type: ${type}, Source: ${source}, IP: ${ip}`,
-          userId: session.user.id
-        }
+          detail: `Type: ${type}, Source: ${sourceEffective}, IP: ${ip}${geoDetail}`,
+          userId: session.user.id,
+        },
       });
 
-      // Trace spécifique au QR Code (utile en cas d'audit)
-      if (source === "QR_CODE") {
+      // Trace spécifique QR Code
+      if (source === "QR_CODE" && !geoFallbackUsed) {
         await tx.historiqueEntry.create({
           data: {
             entity: "PointageQR",
             entityId: pointage.id,
             action: "SCAN",
             detail: `Scan QR authentifié. Terminal IP: ${ip}`,
-            userId: session.user.id
-          }
+            userId: session.user.id,
+          },
+        });
+      }
+
+      // Trace spécifique géolocalisation
+      if (geoFallbackUsed) {
+        await tx.historiqueEntry.create({
+          data: {
+            entity: "PointageGeo",
+            entityId: pointage.id,
+            action: "GEO_VALIDATE",
+            detail: `Pointage hors réseau validé par GPS. Distance bureau: ${geoDistance}m, précision GPS: ${geoPrecision ? Math.round(geoPrecision) : "?"}m`,
+            userId: session.user.id,
+          },
         });
       }
     });
 
     revalidatePath("/pointage");
     publishDataChanged();
-    // Seule action Pointage émise en plus sur le bus dédié de Thierry
-    // (pointageEmitter) : c'est le seul flux atteignable depuis la page
-    // publique /pointage/qr (hors AppShell, donc hors de portée de mon
-    // eventBus authentifié) — voir CLAUDE.md "Fusion Module Pointage RH".
     pointageEmitter.emit("pointage-updated");
 
+    // Notification RH pour les anomalies classiques (retard / départ anticipé)
     if (estRetard || estDepartAnticipe) {
       const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
       const raison = estRetard ? "retard" : "départ anticipé";
@@ -184,6 +291,19 @@ export async function enregistrerPointageAction(
           userId: rh.id,
           titre: "Anomalie de pointage signalée",
           message: `${session.user.fullName} a signalé un ${raison}. Motif : ${motif}`,
+          lien: "/pointage/rh/presence",
+        });
+      }
+    }
+
+    // Notification RH pour information : pointage validé par géolocalisation
+    if (geoFallbackUsed) {
+      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
+      for (const rh of rhUsers) {
+        await createNotification({
+          userId: rh.id,
+          titre: "📍 Pointage par géolocalisation",
+          message: `${session.user.fullName} a pointé hors réseau Wi-Fi. Validé par GPS à ${geoDistance}m du bureau (précision: ${geoPrecision ? Math.round(geoPrecision) : "?"}m).`,
           lien: "/pointage/rh/presence",
         });
       }
@@ -200,7 +320,7 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
   if (!session) return { status: "error", message: "Non authentifié" };
 
   const parametrage = await prisma.parametrageHoraire.findFirst({
-    where: { isActive: true }
+    where: { isActive: true },
   });
 
   const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
@@ -215,7 +335,7 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
   const hasPointage = await prisma.pointage.findFirst({
-    where: { userId: session.user.id, heure: { gte: startOfDay, lte: endOfDay } }
+    where: { userId: session.user.id, heure: { gte: startOfDay, lte: endOfDay } },
   });
 
   if (hasPointage) {
@@ -223,7 +343,7 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
   }
 
   const absenceExistante = await prisma.absence.findFirst({
-    where: { userId: session.user.id, date: { gte: startOfDay, lte: endOfDay } }
+    where: { userId: session.user.id, date: { gte: startOfDay, lte: endOfDay } },
   });
 
   if (!absenceExistante) {
@@ -235,7 +355,7 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
         date: absenceDate,
         statut: "A_CONTROLER",
         userId: session.user.id,
-      }
+      },
     });
 
     const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });

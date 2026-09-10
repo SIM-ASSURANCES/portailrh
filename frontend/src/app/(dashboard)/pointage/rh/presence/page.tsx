@@ -6,6 +6,7 @@ import { startOfDay, endOfDay, startOfMonth, endOfMonth, format } from "date-fns
 import { fr } from "date-fns/locale";
 import { PresenceTabs, PresenceData } from "./PresenceTabs";
 import { Card } from "@/components/ui/Card";
+import { MonthFilter } from "./MonthFilter";
 
 export default async function PresenceDuJourPage({
   searchParams,
@@ -20,13 +21,15 @@ export default async function PresenceDuJourPage({
 
   const resolvedParams = await searchParams;
   const dateParam = resolvedParams.date as string;
+  const moisParam = resolvedParams.mois as string;
   const now = dateParam ? new Date(dateParam) : new Date();
   
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
 
-  const monthStart = startOfMonth(now);
-  const monthEnd = endOfMonth(now);
+  const palmaresDate = moisParam ? new Date(`${moisParam}-01`) : now;
+  const monthStart = startOfMonth(palmaresDate);
+  const monthEnd = endOfMonth(palmaresDate);
 
   const [pointagesDb, absentsDb, retardsDuMois] = await Promise.all([
     prisma.pointage.findMany({
@@ -39,12 +42,16 @@ export default async function PresenceDuJourPage({
       },
       orderBy: { heure: 'asc' },
       select: {
+        id: true,
         userId: true,
         type: true,
         heure: true,
         heurePrevue: true,
         estRetard: true,
         minutesRetard: true,
+        motif: true,
+        source: true,
+        geoDistance: true,
         user: { select: { fullName: true, email: true } }
       },
     }),
@@ -93,11 +100,15 @@ export default async function PresenceDuJourPage({
     }
 
     if (p.type === "ARRIVEE" && !u.arrivee) {
+      u.arriveeId = p.id;
       u.arrivee = p.heure.toISOString();
       u.arriveePrevue = p.heurePrevue;
+      u.sourceArrivee = p.source;
+      u.geoDistance = p.geoDistance;
       if (p.estRetard) {
         u.estRetard = true;
         u.minutesRetard = (u.minutesRetard || 0) + (p.minutesRetard || 0);
+        u.motif = p.motif;
       }
     } else if (p.type === "DEPART" && !u.depart) {
       u.depart = p.heure.toISOString();
@@ -201,22 +212,21 @@ export default async function PresenceDuJourPage({
         </div>
         
         <div>
-          {retardsAvecUsers.length > 0 ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-foreground">Palmarès des retards</h2>
-                <span className="text-sm text-muted-foreground capitalize">
-                  {format(now, "MMMM", { locale: fr })}
-                </span>
-              </div>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-foreground">Palmarès des retards</h2>
+              <MonthFilter dateParam={dateParam} defaultValue={moisParam || format(now, "yyyy-MM")} />
+            </div>
+            
+            {retardsAvecUsers.length > 0 ? (
               <Card className="overflow-hidden p-0">
-                <table className="w-full text-sm text-left">
+                <table className="w-full text-xs text-left">
                   <tbody className="divide-y divide-border">
                     {retardsAvecUsers.map((retard) => (
                       <tr key={retard.userId} className="hover:bg-muted/50 transition-colors">
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-2 flex justify-between items-center">
                           <div className="font-medium text-foreground">{retard.user?.fullName}</div>
-                          <div className="text-xs text-muted-foreground">
+                          <div className="text-[10px] font-semibold text-primary">
                             {retard._count.id} retards ({retard._sum.minutesRetard} min)
                           </div>
                         </td>
@@ -225,15 +235,12 @@ export default async function PresenceDuJourPage({
                   </tbody>
                 </table>
               </Card>
-            </div>
-          ) : (
-             <div className="space-y-4">
-               <h2 className="text-lg font-semibold text-foreground">Palmarès des retards</h2>
-               <Card className="p-4 text-center text-sm text-muted-foreground">
-                 Aucun retard ce mois-ci.
-               </Card>
-             </div>
-          )}
+            ) : (
+              <Card className="p-4 text-center text-sm text-muted-foreground">
+                Aucun retard ce mois-ci.
+              </Card>
+            )}
+          </div>
         </div>
       </div>
     </div>

@@ -18,6 +18,7 @@ export * from "./reporting";
 export * from "./dashboardFinance";
 export * from "./pointageReporting";
 export * from "./pointage-utils";
+export * from "./geo-utils";
 export * from "./reference";
 export * from "./validation";
 export * from "./beneficiaire";

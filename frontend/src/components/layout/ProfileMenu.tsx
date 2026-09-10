@@ -44,6 +44,7 @@ export function ProfileMenu({ user, role }: ProfileMenuProps) {
               src={user.photoUrl} 
               alt={user.fullName} 
               fill 
+              sizes="40px"
               className="object-cover"
             />
           </div>
