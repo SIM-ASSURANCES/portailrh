@@ -39,7 +39,13 @@ async function main() {
   console.log("Création des rôles...");
 
   const [roleCollaborateur, roleFinance, roleDG, roleAdmin, roleRH] = await Promise.all([
-    prisma.role.create({ data: { name: "Collaborateur", description: "Collaborateur pouvant créer des demandes" } }),
+    prisma.role.create({
+      data: {
+        name: "Collaborateur",
+        description: "Collaborateur pouvant créer des demandes",
+        peutEtreBeneficiaireDelegation: true,
+      },
+    }),
     prisma.role.create({ data: { name: "Finance", description: "Équipe finance / trésorerie" } }),
     prisma.role.create({ data: { name: "DG", description: "Direction générale" } }),
     prisma.role.create({
@@ -85,6 +91,11 @@ async function main() {
     { key: "treso.saisir_depense_directe", label: "Saisir une dépense directe", moduleId: moduleTresorerie.id },
     { key: "treso.voir_dashboard_finance", label: "Voir le dashboard finance", moduleId: moduleTresorerie.id },
     { key: "treso.voir_reporting", label: "Voir le reporting", moduleId: moduleTresorerie.id },
+    {
+      key: "treso.gerer_categories",
+      label: "Gérer les catégories et objets d'achat (créer/supprimer)",
+      moduleId: moduleTresorerie.id,
+    },
     { key: "pointage.pointer", label: "Pointer (arrivée / départ)", moduleId: modulePointage.id },
     { key: "pointage.consulter_historique", label: "Consulter son propre historique de pointage", moduleId: modulePointage.id },
     { key: "pointage.consulter_tous", label: "Consulter les pointages de tous les employés", moduleId: modulePointage.id },
@@ -129,6 +140,7 @@ async function main() {
       "treso.voir_dashboard_finance",
       "treso.voir_reporting",
       "treso.saisir_depense_directe",
+      "treso.gerer_categories",
     ],
     [roleDG.id]: [
       "treso.valider_demande",

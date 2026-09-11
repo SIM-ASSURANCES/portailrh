@@ -164,7 +164,7 @@ export async function GET(request: NextRequest) {
   const sheetRetours = workbook.addWorksheet("Retours de caisse");
   sheetRetours.columns = [
     { header: "Référence demande", key: "reference", width: 20 },
-    { header: "Total dépenses déclarées (FCFA)", key: "montantDepenseTotal", width: 24 },
+    { header: "Total dépenses effectuées (FCFA)", key: "montantDepenseTotal", width: 24 },
     { header: "Montant à retourner (FCFA)", key: "montantARetourner", width: 20 },
     { header: "Dont non justifié (FCFA)", key: "montantNonJustifie", width: 22 },
     { header: "Statut", key: "statut", width: 18 },
@@ -194,7 +194,7 @@ export async function GET(request: NextRequest) {
     { header: "Montant demandé (FCFA)", key: "montantDemande", width: 20 },
     { header: "Montant validé (FCFA)", key: "montantValide", width: 20 },
     { header: "Montant remis (FCFA)", key: "montantRemis", width: 20 },
-    { header: "Dépenses déclarées (FCFA)", key: "depensesDeclarees", width: 22 },
+    { header: "Dépenses effectuées (FCFA)", key: "depensesDeclarees", width: 22 },
     { header: "Retours reçus (FCFA)", key: "retoursRecus", width: 20 },
     { header: "Restant à régulariser (FCFA)", key: "restant", width: 24 },
   ];
@@ -220,9 +220,9 @@ export async function GET(request: NextRequest) {
     { header: "Référence demande", key: "reference", width: 20 },
     { header: "Montant validé (FCFA)", key: "montantValide", width: 20 },
     { header: "Total réglé (FCFA)", key: "totalRegle", width: 18 },
-    { header: "Dépenses déclarées (FCFA)", key: "depensesDeclarees", width: 22 },
+    { header: "Dépenses effectuées (FCFA)", key: "depensesDeclarees", width: 22 },
     { header: "Retours reçus (FCFA)", key: "retoursRecus", width: 20 },
-    { header: "Écart (FCFA)", key: "ecart", width: 16 },
+    { header: "Solde à régulariser (FCFA)", key: "ecart", width: 22 },
     { header: "Motif de clôture", key: "motif", width: 32 },
     { header: "Clôturée le", key: "clotureeLe", width: 14 },
   ];
@@ -251,7 +251,7 @@ export async function GET(request: NextRequest) {
   const NON_JUSTIFIEE_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3ED" } };
   const NON_JUSTIFIEE_FONT: Partial<ExcelJS.Font> = { color: { argb: "FFBF470C" }, bold: true };
 
-  const sheetDepenses = workbook.addWorksheet("Dépenses déclarées");
+  const sheetDepenses = workbook.addWorksheet("Dépenses effectuées");
   sheetDepenses.columns = [
     { header: "Référence demande", key: "reference", width: 20 },
     { header: "Bénéficiaire", key: "beneficiaire", width: 24 },
@@ -285,7 +285,7 @@ export async function GET(request: NextRequest) {
   // Section 16 : feuille DÉDIÉE "Dépenses non justifiées", distincte de la
   // colonne "Non justifiée" ci-dessus — une ligne PAR DEMANDE (nombre
   // d'opérations + montant total, jamais une ligne par DepenseLigne comme
-  // "Dépenses déclarées") avec demandeur/bénéficiaire/service/période.
+  // "Dépenses effectuées") avec demandeur/bénéficiaire/service/période.
   const sheetDepensesNonJustifiees = workbook.addWorksheet("Dépenses non justifiées");
   sheetDepensesNonJustifiees.columns = [
     { header: "Référence demande", key: "reference", width: 20 },

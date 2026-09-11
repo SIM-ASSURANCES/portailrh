@@ -32,10 +32,14 @@ interface AppShellProps {
   canApprouverValidationComplete?: boolean;
   /** Affiche "Solde d'ouverture de caisse" (isAdmin() OU treso.effectuer_reglement). */
   canGererSoldeOuverture?: boolean;
+  /** isAdmin() OU treso.gerer_categories : ajoute "Catégories" (Finance). */
+  canGererCategories?: boolean;
   /** Affiche la branche "Pointage de Présence" et "Mon espace" (au moins une permission pointage.*). */
   hasPointageAccess?: boolean;
   /** Ajoute le groupe "RH" du Pointage (permissions RH uniquement). */
   canAccessPointageRH?: boolean;
+  /** Affiche "Déléguer des accès" (au moins une permission treso.x ou pointage.x via son propre rôle). */
+  canDelegerAcces?: boolean;
   unreadNotificationsCount?: number;
   children: ReactNode;
 }
@@ -61,8 +65,10 @@ export function AppShell({
   canSaisirDepenseDirecte = false,
   canApprouverValidationComplete = false,
   canGererSoldeOuverture = false,
+  canGererCategories = false,
   hasPointageAccess = false,
   canAccessPointageRH = false,
+  canDelegerAcces = false,
   unreadNotificationsCount = 0,
   children,
 }: AppShellProps) {
@@ -157,8 +163,10 @@ export function AppShell({
         canSaisirDepenseDirecte={canSaisirDepenseDirecte}
         canApprouverValidationComplete={canApprouverValidationComplete}
         canGererSoldeOuverture={canGererSoldeOuverture}
+        canGererCategories={canGererCategories}
         hasPointageAccess={hasPointageAccess}
         canAccessPointageRH={canAccessPointageRH}
+        canDelegerAcces={canDelegerAcces}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />

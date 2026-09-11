@@ -71,6 +71,18 @@ model User {
   absencesControlees    Absence[]            @relation("AbsenceControlePar")
   notifications         Notification[]
   plagesAbsenceAutorisee PlageAbsenceAutorisee[]
+
+  /// Délégations individuelles de permission Trésorerie/Pointage RH que cet
+  /// utilisateur a ACCORDÉES à d'autres comptes (voir CLAUDE.md "Délégation
+  /// individuelle de permissions"). Toujours des permissions qu'il possède
+  /// lui-même via son propre rôle.
+  delegationsAccordees PermissionDelegation[] @relation("DelegationDonneur")
+  /// Délégations que cet utilisateur a REÇUES d'un autre compte.
+  delegationsRecues    PermissionDelegation[] @relation("DelegationBeneficiaire")
+  /// Délégations que cet utilisateur a RÉVOQUÉES (en tant que donneur
+  /// d'origine, ou en tant qu'Admin) — distinct de `delegationsAccordees` :
+  /// un Admin peut révoquer une délégation accordée par quelqu'un d'autre.
+  delegationsRevoquees PermissionDelegation[] @relation("DelegationRevoquePar")
 }
 
 model Role {
@@ -85,6 +97,16 @@ model Role {
   /// (`RolePermission`) : cocher `estAdmin` ne donne AUCUNE permission
   /// métier (`treso.*`, `pointage.*`), exactement comme avant.
   estAdmin    Boolean          @default(false)
+  /// Éligibilité à être BÉNÉFICIAIRE d'une délégation individuelle de
+  /// permission (voir CLAUDE.md "Délégation individuelle de permissions").
+  /// Champ dédié plutôt qu'une comparaison sur le nom du rôle
+  /// (`role.name === "Collaborateur"`) — même principe que `estAdmin`
+  /// ci-dessus ("estAdmin remplace le nom de rôle") : un rôle combiné ou
+  /// renommé peut porter cette éligibilité sans s'appeler littéralement
+  /// "Collaborateur". Indépendant de `estAdmin` et de `RolePermission` :
+  /// ne donne AUCUN droit, contrôle uniquement qui peut apparaître comme
+  /// bénéficiaire sélectionnable sur `/delegations`.
+  peutEtreBeneficiaireDelegation Boolean @default(false)
   users       User[]
   permissions RolePermission[]
 }
@@ -104,7 +126,8 @@ model Permission {
   moduleId String
   module   Module @relation(fields: [moduleId], references: [id])
 
-  roles RolePermission[]
+  roles       RolePermission[]
+  delegations PermissionDelegation[]
 }
 
 model RolePermission {
@@ -115,6 +138,48 @@ model RolePermission {
   permission Permission @relation(fields: [permissionId], references: [id])
 
   @@id([roleId, permissionId])
+}
+
+/// Délégation individuelle d'une permission Trésorerie/Pointage RH à un
+/// compte utilisateur DÉJÀ EXISTANT — aucune création de compte ici (voir
+/// CLAUDE.md "Délégation individuelle de permissions"). Accordée par un
+/// utilisateur qui possède lui-même cette permission via son propre rôle
+/// (`session.rolePermissions`, jamais via une délégation qu'il aurait
+/// lui-même reçue — interdit toute chaîne de délégation en cascade, vérifié
+/// dans `accorderDelegationAction`).
+///
+/// **L'accès effectif du bénéficiaire est recalculé DYNAMIQUEMENT à chaque
+/// session** (voir `getSession()`, `frontend/src/lib/auth.ts`) : une ligne
+/// `estActive: true` ne suffit pas — le donneur doit ENCORE posséder cette
+/// permission via son rôle au moment de la vérification. Si le rôle du
+/// donneur change et perd cette permission, le bénéficiaire perd
+/// automatiquement l'accès délégué correspondant, sans révocation manuelle.
+///
+/// **Jamais d'édition silencieuse** (même principe que `RetourCaisse.estAnnule`/
+/// `Reglement.estAnnule`, voir "Règles métier impératives") : une révocation
+/// ne supprime ni ne réécrit la ligne, elle la marque `estActive: false` avec
+/// `revokedAt`/`revokedById`. Un nouvel octroi après révocation crée une
+/// NOUVELLE ligne (jamais de réactivation de l'ancienne) : l'historique
+/// complet de tous les octrois/révocations reste intégralement
+/// reconstituable, jamais réécrit.
+model PermissionDelegation {
+  id             String   @id @default(cuid())
+  beneficiaireId String
+  beneficiaire   User     @relation("DelegationBeneficiaire", fields: [beneficiaireId], references: [id])
+  donneurId      String
+  donneur        User     @relation("DelegationDonneur", fields: [donneurId], references: [id])
+  permissionId   String
+  permission     Permission @relation(fields: [permissionId], references: [id])
+
+  estActive   Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+  revokedById String?
+  revokedBy   User?     @relation("DelegationRevoquePar", fields: [revokedById], references: [id], onDelete: SetNull)
+
+  @@index([beneficiaireId])
+  @@index([donneurId])
+  @@index([permissionId])
 }
 
 model HistoriqueEntry {

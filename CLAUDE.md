@@ -8609,6 +8609,861 @@ sur toute base de développement déjà seedée avant cette migration.
   relance du service `init` → `set-admin.ts` affiche « accès à
   l'administration (estAdmin) rétabli » et `/admin` repasse en **200**.
 
+## Délégation individuelle de permissions (Trésorerie/Pointage RH)
+
+**Statut : terminé. Application en production — traité avec la prudence
+requise.** Besoin métier : un utilisateur cumulant l'accès RH et/ou Finance
+(ex: le rôle "Rh/finances") doit pouvoir accorder à un compte **déjà
+existant** un accès en lecture ou en écriture sur des fonctionnalités
+précises des branches Trésorerie ou Pointage RH, sans créer de nouveau
+compte ni jamais dépasser ce qu'il possède lui-même.
+
+### Diagnostic (fait avant tout code)
+
+Le modèle de permissions du portail est **plat, sans distinction
+Lecture/Écriture structurelle** : `Permission` est une simple clé
+(`treso.valider_demande`, `pointage.pointer`...) rattachée à un `Module`
+(`tresorerie`/`pointage`), accordée à un `Role` via `RolePermission`
+(`admin/roles`, case à cocher unique par permission — voir
+`PermissionToggle.tsx`/`toggleRolePermissionAction`) ; l'accès effectif est
+`hasPermission(session, key) = session.permissions.includes(key)`
+(`backend/src/permissions.ts`), `session.permissions` étant calculée dans
+`getSession()` (`frontend/src/lib/auth.ts`) à partir de `Role.permissions`.
+**Aucune permission existante n'encode séparément un axe lecture/écriture**
+— chaque clé EST déjà une fonctionnalité précise, son libellé porte
+implicitement ce sens ("Consulter..."/"Voir..." = lecture,
+"Valider..."/"Corriger..." = écriture). Construire une case
+"Lecture"/"Écriture" par permission aurait donc dupliqué un axe qu'aucune
+Server Action ne vérifie réellement (elles testent une clé précise, jamais
+un couple clé+mode) — voir "Point de conception non tranché seul" plus bas
+pour la décision retenue sur ce point exact.
+
+### Modèle retenu (`PermissionDelegation`, migration `permission_delegation`)
+
+Une ligne = une délégation d'UNE permission précise, d'un `donneur` (User)
+vers un `beneficiaire` (User) déjà existant :
+
+```prisma
+model PermissionDelegation {
+  id             String   @id
+  beneficiaireId String   // User qui reçoit l'accès
+  donneurId      String   // User qui accorde (doit posséder la permission via son rôle)
+  permissionId   String   // la fonctionnalité précise déléguée
+  estActive      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  revokedAt      DateTime?
+  revokedById    String?  // qui a révoqué (le donneur, ou un Admin) — onDelete: SetNull
+}
+```
+
+**Jamais d'édition silencieuse** (même principe que `RetourCaisse.estAnnule`/
+`Reglement.estAnnule`) : une révocation ne supprime ni ne réécrit la ligne,
+elle la marque `estActive: false` avec `revokedAt`/`revokedById`. Un nouvel
+octroi après révocation crée une NOUVELLE ligne — l'historique complet de
+tous les octrois/révocations reste intégralement reconstituable.
+
+### Calcul dynamique de l'accès effectif (`getSession()`)
+
+**Point de conception le plus important de cette tâche.** L'accès délégué
+n'est jamais figé au moment de l'octroi : à chaque appel de `getSession()`,
+pour chaque délégation active reçue, le serveur revérifie que le donneur
+**possède ENCORE** cette permission via son propre rôle actuel, et qu'il
+est **toujours actif** (`isActive: true`). Si le rôle du donneur a changé
+entre-temps et ne porte plus cette permission, la délégation est
+silencieusement ignorée dans le calcul — **sans jamais toucher la ligne en
+base** (elle reste `estActive: true`, seule la vérification dynamique la
+neutralise). Conséquence directe : si le donneur retrouve cette permission
+plus tard (rôle réajusté), le bénéficiaire retrouve l'accès automatiquement,
+sans nouvel octroi.
+
+`getSession()` expose désormais deux listes distinctes, jamais confondues :
+- **`permissions`** — effective, UNION du rôle et des délégations actives
+  (encore valides dynamiquement). C'est celle que `hasPermission()`
+  consulte partout dans l'application : une permission déléguée se comporte
+  exactement comme si elle avait été accordée au rôle lui-même, sans
+  modification d'aucun contrôle d'accès existant (dashboard, `hasPermission`
+  dans les Server Actions, gardes de layout...).
+- **`rolePermissions`** — brute, UNIQUEMENT le rôle (`RolePermission`),
+  jamais les délégations reçues. Réservée à l'éligibilité à DÉLÉGUER : un
+  bénéficiaire ne peut jamais redéléguer une permission qu'il n'a reçue que
+  par délégation — **interdit toute chaîne de délégation en cascade**,
+  seul ce qu'un compte possède via son propre rôle est délégable.
+
+**Point de performance signalé, pas contourné à l'aveugle** : ce calcul
+ajoute une requête `permissionDelegation.findMany` (avec le rôle du donneur
+inclus) à CHAQUE résolution de session, même pour un utilisateur sans
+aucune délégation reçue (requête indexée sur `beneficiaireId`, vide et bon
+marché dans ce cas). Jugé acceptable pour le volume de cette application
+interne (même ordre de grandeur que les deux requêtes déjà existantes —
+rôle + utilisateur — dans cette même fonction) ; à revisiter seulement si
+un jour le nombre de délégations actives par utilisateur devenait important.
+
+### Plafonnement strict (`accorderDelegationAction`, `(dashboard)/delegations/actions.ts`)
+
+Revérifié **côté serveur**, jamais seulement via les cases proposées à
+l'écran :
+1. La permission ciblée appartient à un module délégable (`tresorerie` ou
+   `pointage` — les deux seules branches concernées, filtre explicite par
+   défense en profondeur plutôt qu'une absence implicite de 3ᵉ module).
+2. Le donneur possède cette permission **via `session.rolePermissions`**
+   (jamais `session.permissions`) — refus avec message explicite sinon :
+   *"Action non autorisée : vous ne pouvez déléguer que des droits que vous
+   possédez vous-même."*
+3. Bénéficiaire ≠ donneur (pas d'auto-délégation), bénéficiaire actif et
+   déjà activé (`passwordHash` non nul — voir "Invitation par lien" : pas
+   de délégation vers un compte encore en attente d'activation).
+
+`revoquerDelegationAction` : utilisable par le **donneur d'origine** de la
+ligne précise, **OU par un Admin** (`isAdmin(session)`) — point 3 des règles
+non négociables de cette tâche, l'Admin peut révoquer n'importe quelle
+délégation, pas seulement les siennes.
+
+### Écrans
+
+- **`/delegations`** (`(dashboard)/delegations/`) — accessible à toute
+  session ayant, via son **propre rôle**, au moins une permission
+  `treso.*` ou `pointage.*` (`session.rolePermissions`, généralisation par
+  permission plutôt que par nom de rôle — même principe que tout le reste
+  du portail, ex: "estAdmin remplace le nom de rôle" : "Rh/finances" n'est
+  qu'UN rôle qui cumule ces permissions, jamais un cas spécial). Gardée à
+  la page ET revérifiée dans la Server Action. Sélection d'un bénéficiaire
+  existant (`<Select>`, tout compte actif et activé hors soi-même — voir
+  point ambigu ci-dessous), puis cases à cocher groupées par module,
+  **strictement limitées aux permissions que le donneur possède lui-même**
+  (jamais une case visible pour un droit qu'il n'a pas). Persistance
+  immédiate par case (`DelegationCheckbox`, même pattern instantané que
+  `PermissionToggle.tsx`), état optimiste revenu en arrière en cas de refus
+  serveur.
+- **`/admin/delegations`** — vue Admin de **toutes** les délégations, tous
+  donneurs confondus, séparées en "Actives" et "Révoquées" (avec qui a
+  révoqué et quand), bouton "Révoquer" sur chaque ligne active. Gardée par
+  `admin/layout.tsx` (`isAdmin()`), comme le reste de la console.
+- **Nav** — "Déléguer des accès" : item flottant (comme `ADMIN_GROUP`),
+  jamais dans une des deux branches Trésorerie/Pointage RH puisque la
+  fonctionnalité s'applique aux deux à la fois. "Délégations" ajouté dans
+  `ADMIN_GROUP`.
+
+### Traçabilité
+
+Chaque octroi/révocation crée une `HistoriqueEntry` (`entity:
+"PermissionDelegation"`, `action: "GRANT"`/`"REVOKE"`, `detail` nommant la
+permission, le donneur et le bénéficiaire). Notification (`createNotification`,
+mécanisme déjà en place — voir "Notifications Trésorerie") au bénéficiaire à
+chaque octroi et à chaque révocation : mécanisme réutilisé tel quel, aucune
+adaptation nécessaire — confirme qu'il s'y prêtait facilement, comme demandé.
+
+### Suppression d'un compte impliqué dans une délégation
+
+`supprimerUtilisateurAction` (`admin/users/actions.ts`) étendue de 15 à 17
+relations vérifiées : un compte ayant accordé OU reçu au moins une
+délégation (active ou révoquée — même une délégation révoquée reste une
+trace réelle d'utilisation) ne peut plus être supprimé, seulement désactivé
+— même principe que les 15 relations précédentes. `revokedById` seul n'est,
+lui, pas bloquant (`onDelete: SetNull` sur cette relation précise dans le
+schéma) : avoir simplement révoqué la délégation de quelqu'un d'autre en
+tant qu'Admin n'est pas un motif de blocage.
+
+### Éligibilité au bénéfice d'une délégation (`Role.peutEtreBeneficiaireDelegation`) — resserrement du 2026-09-11
+
+**Superseded : ce qui suit remplace le choix initial documenté juste en
+dessous ("Point de conception non tranché seul", conservé pour
+l'historique).** Décision explicite reçue après coup : seul le rôle
+"Collaborateur" doit pouvoir être bénéficiaire — jamais Finance, RH, DG,
+un rôle combiné ("Rh/finances"), Admin ni "Admin / Collaborateur", même
+sans `estAdmin`. **Codé sans jamais comparer le nom du rôle** (même
+consigne, même principe que `estAdmin` : "estAdmin remplace le nom de
+rôle") : nouveau champ dédié `Role.peutEtreBeneficiaireDelegation`
+(`Boolean @default(false)`, migration additive
+`role_peut_etre_beneficiaire_delegation`), avec une migration de
+rattrapage (`role_collaborateur_beneficiaire_delegation_rattrapage`, même
+esprit que `20260910090000_role_admin_est_admin_rattrapage` pour
+`estAdmin`) qui met ce champ à `true` uniquement sur le rôle actuellement
+nommé "Collaborateur" — pour les bases déjà seedées avant l'ajout du champ.
+`seed.ts` crée désormais directement ce rôle avec
+`peutEtreBeneficiaireDelegation: true`, pour toute base future.
+
+Deux points de vérification déjà exigés à l'écran (`/delegations`,
+`page.tsx`) et côté serveur (`accorderDelegationAction`) vérifient
+désormais `role.peutEtreBeneficiaireDelegation` au lieu de "tout compte
+actif" — jamais l'absence d'`estAdmin` ni un autre critère indirect (un
+rôle peut très bien n'avoir ni `estAdmin` ni cette éligibilité, ex: DG,
+Finance, RH).
+
+**Éditabilité choisie et justifiée (demande explicite de ne pas trancher
+silencieusement)** : contrairement à `estAdmin` (figé après création, voir
+plus haut), `peutEtreBeneficiaireDelegation` reste **librement modifiable à
+tout moment** depuis `/admin/roles`
+(`PeutEtreBeneficiaireToggle.tsx`/`toggleRolePeutEtreBeneficiaireDelegationAction`,
+même pattern de persistance immédiate que `PermissionToggle.tsx`). Raison :
+`estAdmin` a été figé à la suite d'un INCIDENT RÉEL (perte totale d'accès
+`/admin`, voir "Protection du dernier rôle `estAdmin=true`") et protège un
+invariant fragile ("au moins un rôle admin doit toujours exister") — rien
+de comparable ici : ce champ ne donne AUCUN droit par lui-même (le vrai
+plafonnement reste entièrement dans `accorderDelegationAction`, qui vérifie
+ce que le DONNEUR possède), et il n'y a aucun scénario de verrouillage à
+protéger en le retirant à un rôle (au pire, ce rôle disparaît de la liste
+des bénéficiaires possibles — jamais une perte d'accès pour qui que ce
+soit). Le rendre librement éditable permet aussi à l'Admin d'étendre cette
+éligibilité à un futur rôle (ex: un rôle "Stagiaire") sans nouvelle
+migration — cohérent avec le fonctionnement normal de `RolePermission`,
+dont ce champ se rapproche bien plus que d'`estAdmin`.
+
+**Délégations existantes affectées par ce resserrement : aucune.** Base
+vérifiée directement avant d'appliquer le changement : **0 délégation
+active en base** au moment de cette tâche (toutes les délégations créées
+lors de la vérification de la tâche précédente avaient déjà été nettoyées).
+Rien à signaler, rien à faire trancher côté délégations existantes.
+
+#### Vérifié explicitement (resserrement) — parcours réel navigateur + rejeu réseau direct, comptes de test uniquement
+
+`npx tsc --noEmit`/`npx eslint .` (backend + frontend) : aucune nouvelle
+erreur (même baseline préexistante : 5 erreurs `tsc`/2 erreurs+3
+avertissements `eslint` du Module Pointage RH et de `LogsList.tsx`).
+Migrations vérifiées purement additives (`ADD COLUMN ... DEFAULT false`,
+puis un simple `UPDATE`) avant application ; état des rôles confirmé après
+coup par requête directe : `Collaborateur` seul à
+`peutEtreBeneficiaireDelegation: true`, les 5 autres rôles (dont
+"Admin / Collaborateur", qui contient pourtant le mot "Collaborateur" dans
+son nom — preuve que le filtre est bien basé sur le champ, jamais sur une
+correspondance de nom) à `false`.
+
+Chromium headless (Playwright, non ajouté au projet), 1 donneur de test
+(`treso.categoriser_demande` + `pointage.pointer`) et 7 bénéficiaires de
+test, un par rôle réel du seed **plus** un rôle combiné jetable (`Test Rh
+Finance Combo`, ni "Collaborateur" ni "Admin" dans le nom, pour couvrir le
+cas "Rh/finances" explicitement demandé) :
+
+- **Sélecteur `/delegations`** : seul "Test Benef Collaborateur" (rôle
+  Collaborateur) apparaît dans la liste déroulante des bénéficiaires ; les
+  6 autres (Finance, RH, DG, le rôle combiné RH+Finance, Admin,
+  Admin / Collaborateur) en sont **tous** absents — confirmé
+  individuellement pour chacun.
+- **Octroi réel vers le bénéficiaire éligible** (Collaborateur) : accepté,
+  toast "Accès accordé.", accès effectif confirmé immédiatement
+  (`/treso/finance/demandes`).
+- **Rejeu réseau direct, 6 tentatives distinctes** (requête réelle d'octroi
+  capturée puis rejouée avec le `beneficiaireId` substitué par chacun des 6
+  comptes non éligibles, permission et donneur inchangés) : **les 6
+  refusées** côté serveur, message exact *"Ce compte ne peut pas être
+  bénéficiaire d'une délégation (rôle non éligible)."* — pour Finance, RH,
+  DG, le rôle combiné RH+Finance, Admin et Admin / Collaborateur
+  individuellement.
+- **Toggle `/admin/roles`** ("Éligible comme bénéficiaire de délégation") :
+  coché puis décoché sur le rôle RH (état initial `false` confirmé avant
+  test) — les deux sens fonctionnent, toasts "Rôle rendu éligible..."/"Rôle
+  rendu inéligible...", rôle RH revenu exactement à son état initial
+  (`false`) après le test.
+
+**Délégations existantes potentiellement affectées par le resserrement**
+— **aucune à signaler** : la base ne contenait **0 délégation active** au
+moment d'appliquer ce changement (toutes les délégations de la tâche
+précédente avaient déjà été nettoyées) ; la seule délégation créée
+pendant CETTE vérification visait un bénéficiaire déjà éligible
+(Collaborateur), et a été supprimée avec le reste des données de test.
+
+**Nettoyage** : les 8 comptes de test (1 donneur + 7 bénéficiaires), les 2
+rôles de test ("Test Delegation Donneur", "Test Rh Finance Combo"), et
+l'unique délégation créée pendant ce test, tous supprimés directement en
+base après vérification (comptage final : 0 compte de test, 0 rôle de
+test, 0 délégation restante). Le rôle réel "Admin / Collaborateur" confirmé
+toujours sans aucun utilisateur assigné, comme avant ce test. Serveur
+`next dev` arrêté après vérification.
+
+### Point de conception non tranché seul (historique, superseded ci-dessus)
+
+**Qui peut être choisi comme bénéficiaire ?** La consigne parle d'"un
+compte utilisateur déjà existant" / "collaborateur" (au sens générique, pas
+le rôle "Collaborateur" du seed). Deux lectures possibles : (a) n'importe
+quel compte actif de l'application, ou (b) seulement les comptes portant
+le rôle "Collaborateur" au sens strict. **Retenu à l'origine : (a), la
+version la plus générale** — tout compte actif et déjà activé, hors
+soi-même — cohérente avec le principe "jamais un nom de rôle en dur"
+ailleurs dans ce fichier, mais jugée après coup trop large pour ce cas
+précis. **Tranché depuis par l'utilisateur en faveur de (b)** — voir la
+section ci-dessus, implémentée sans jamais comparer de nom de rôle
+(`Role.peutEtreBeneficiaireDelegation`), donc sans réintroduire la
+fragilité que le principe "jamais de nom en dur" visait à éviter.
+
+### Vérifié explicitement — parcours réel navigateur + rejeu réseau direct, comptes de test uniquement
+
+`npx tsc --noEmit` et `npx eslint .` (backend et frontend) : **aucune
+nouvelle erreur** (mêmes 5 erreurs `tsc`/2 erreurs+3 avertissements `eslint`
+préexistants du Module Pointage RH et de `LogsList.tsx`, déjà documentés à
+plusieurs reprises dans ce fichier).
+
+Chromium headless (Playwright, non ajouté au projet), 4 comptes de test
+dédiés (2 rôles "donneur" à permissions distinctes et volontairement
+limitées — `treso.categoriser_demande`+`pointage.pointer` pour l'un,
+`treso.valider_demande` pour l'autre —, 2 "bénéficiaires" sans aucune
+permission propre) :
+
+- **Cases visibles limitées au donneur** : le donneur ne possédant que
+  `treso.categoriser_demande`/`pointage.pointer` ne voit **jamais** la case
+  "Valider une demande" à l'écran.
+- **Octroi réel** (case cochée) → toast "Accès accordé.", ligne
+  `PermissionDelegation` créée, bénéficiaire accède immédiatement à
+  `/treso/finance/demandes` (categoriser_demande) et `/pointage/pointer`
+  (pointage.pointer) — sans plus (`/treso/finance`, la page du dashboard
+  Finance, exige spécifiquement `voir_dashboard_finance`, non délégué ici :
+  confirmé refusé, comportement exact du plafonnement).
+- **Plafonnement, testé par UI ET par rejeu réseau direct** : requête réelle
+  de `accorderDelegationAction` capturée puis rejouée à l'identique avec le
+  `permissionId` de "Valider une demande" substitué (permission hors du
+  périmètre du donneur) → refusée côté serveur, message exact *"...vous ne
+  pouvez déléguer que des droits que vous possédez vous-même."*
+- **Compte sans AUCUNE permission `treso.*`/`pointage.*`** : refusé sur
+  `/delegations` (redirection `?error=acces_refuse_delegations`) ; rejeu
+  réseau direct d'une requête d'octroi capturée, avec les cookies de ce
+  compte → refusé ("Action non autorisée.").
+- **Révocation par le donneur** (décocher la case) → toast "Accès révoqué.",
+  bénéficiaire refusé immédiatement sur la route concernée ; une AUTRE
+  délégation du même bénéficiaire (permission différente, non révoquée)
+  reste active — confirme une révocation strictement ciblée.
+- **Révocation par l'Admin** (bouton "Révoquer" sur `/admin/delegations`,
+  délégation accordée par quelqu'un d'autre) → accès retiré immédiatement.
+- **Perte automatique du droit chez le donneur** (permission décochée sur
+  son RÔLE depuis `/admin/roles` — un vrai changement de rôle, pas une
+  simulation) : le bénéficiaire perd l'accès délégué **immédiatement, sans
+  aucun appel à `revoquerDelegationAction`** ; contrôle direct en base :
+  la ligne `PermissionDelegation` reste `estActive: true` (jamais réécrite
+  par ce mécanisme) — confirmé aussi que `/admin/delegations` continue de
+  la lister comme "Active" (traçabilité honnête : la ligne dit toujours
+  "ce qui a été accordé", la neutralisation est un fait dynamique, pas un
+  évènement à historiser séparément). Une délégation SANS RAPPORT (autre
+  donneur, rôle inchangé) reste active pendant ce même test.
+- **Admin voit les délégations de PLUSIEURS donneurs distincts** (pas
+  seulement les siennes) : les deux délégations de test (donneurs
+  différents) apparaissent toutes les deux sur `/admin/delegations`.
+- **Non-régression** : `finance@simassurances.test` (rôle classique, sans
+  aucune délégation) accède toujours normalement à `/treso/finance`.
+
+**Nettoyage** : les 4 comptes de test, les 3 rôles de test ("Test
+Delegation Donneur", "Test Delegation Donneur 2", "Test Delegation
+Beneficiaire"), les 10 lignes `PermissionDelegation` et leurs
+`HistoriqueEntry` associées, tous supprimés directement en base après
+vérification (comptage final : 0 compte de test, 0 rôle de test, 0
+délégation restante). Les 5 comptes réels et leurs rôles/permissions
+confirmés strictement inchangés avant/après (y compris une anomalie
+préexistante et sans rapport, signalée par transparence ci-dessous, jamais
+touchée). Serveur `next dev` arrêté après vérification.
+
+**Anomalie préexistante constatée, hors périmètre de cette tâche, signalée
+par transparence** : le rôle "Admin" (`admin@simassurances.test`) porte
+aujourd'hui, en base, l'intégralité des permissions `treso.*`/`pointage.*`
+(23 lignes `RolePermission`, `HistoriqueEntry` confirmant des `GRANT` réels
+par `admin@simassurances.test` lui-même le 2026-09-10) — alors que ce
+fichier documente ailleurs, comme invariant volontaire, que "le rôle Admin
+n'a **aucune** `RolePermission`" (voir "Administration (console `/admin`)"
+plus haut : l'accès module de l'Admin passe uniquement par le bypass
+`estAdmin`, jamais par des permissions métier propres). Cet état n'a pas
+été modifié par cette tâche (aucune raison de le faire, hors sujet) — signalé
+ici seulement pour qu'il ne soit pas découvert par surprise plus tard :
+soit une décision délibérée prise entre-temps (à documenter explicitement
+si c'est le cas), soit une dérive à corriger.
+
+## Diagnostic — 23 `RolePermission` sur le rôle "Admin" (lecture seule, aucune modification)
+
+**Statut : diagnostic effectué, RIEN modifié en base ni dans le code — la
+tâche demandait explicitement de ne rien corriger.** Reprend l'anomalie
+signalée par transparence à la fin de la section précédente : le rôle
+"Admin" possède aujourd'hui 23 lignes `RolePermission` (toutes les
+permissions `treso.*`/`pointage.*` existantes), alors que ce fichier
+documente ailleurs (voir "Administration (console `/admin`)") l'invariant
+volontaire "le rôle Admin n'a aucune `RolePermission`, son accès passe
+uniquement par `estAdmin`".
+
+### Ce que montre `HistoriqueEntry`
+
+**Qui, quand, comment** — 21 entrées `entity: "RolePermission"` ciblant le
+rôle Admin (`entityId` préfixé par son id), **toutes** attribuées au compte
+`admin@simassurances.test`, **toutes** créées via l'action réelle
+`toggleRolePermissionAction` (chaque ligne `RolePermission` correspondante
+existe bien en base, cohérent avec un vrai passage par cette Server
+Action — une modification directe en base par script SQL n'aurait jamais
+produit ces `HistoriqueEntry`, qui ne sont créées que par le code applicatif).
+Deux évènements distincts, séparés de plusieurs heures :
+
+1. **2026-09-10T10:30:47Z → 10:30:51Z** — GRANT puis REVOKE (3,6s d'écart)
+   de la seule permission "Approuver la validation complète". Situé dans la
+   même fenêtre qu'un `REVOKE_ADMIN` réel sur le rôle Admin
+   (10:30:56Z) et qu'une `LOGIN_SUCCESS`/`LOGIN_FAILED` du même compte
+   quelques minutes avant (10:29:33Z–10:29:47Z) — cette fenêtre précise
+   correspond exactement à l'incident déjà documenté et déjà corrigé dans
+   "Protection du dernier rôle `estAdmin=true`" (le rattrapage associé,
+   commit `e528a337`, est horodaté 10:36:26Z, juste après). **Déjà connu,
+   déjà expliqué, rien de nouveau ici.**
+2. **2026-09-10T14:12:24Z → 14:12:44Z** — **20 secondes, 20 `GRANT`
+   consécutifs** (0,8 à 2,1s d'écart entre chacun), couvrant **la totalité**
+   des permissions `treso.*` (10) et `pointage.*` (9, plus la première déjà
+   accordée à l'étape précédente) — c'est-à-dire littéralement TOUTES les
+   permissions existantes des deux modules métier. **Point notable : l'ordre
+   exact des 20 lignes suit l'ordre alphabétique des libellés** ("Catégoriser
+   une demande", "Clôturer une demande", "Créer une demande"...), qui est
+   précisément l'ordre de rendu de chaque case à cocher sur `/admin/roles`
+   (`orderBy: { label: "asc" }` dans la requête de la page) — cohérent avec
+   quelqu'un cochant les cases dans l'ordre où elles apparaissent à l'écran,
+   du haut vers le bas, pas avec un script qui les traiterait dans un ordre
+   arbitraire (ex: l'ordre de création en base/seed, différent).
+
+**Aucune entrée `ipAddress` n'est renseignée sur ces 21 lignes** — mais
+c'est une caractéristique **générale** de `toggleRolePermissionAction`/
+`creerRoleAction` (`admin/roles/actions.ts`), vérifiée par lecture directe
+du code : cette Server Action ne capture jamais l'adresse IP dans ses
+`HistoriqueEntry`, contrairement aux entrées `entity: "Auth"` (qui, elles,
+l'incluent dans leur `detail` textuel, ex: "IP: ::1"). **Ce n'est donc pas
+un indice suspect propre à cet évènement** — aucune des 23 lignes de
+`RolePermission` de tout l'historique du projet n'a jamais eu d'IP,
+peu importe qui les a créées.
+
+**Contexte immédiat (fenêtre 13:45–14:30Z le même jour)** : la dernière
+action de ce compte avant la rafale de 14:12 est une `LOGIN_SUCCESS` à
+13:47:15Z, suivie à la seconde près d'un `GRANT_ADMIN`/`REVOKE_ADMIN` sur
+le rôle "Collaborateur" (13:47:16–17Z — manipulation de test déjà
+documentée et déjà attribuée à la vérification de "Protection du dernier
+rôle `estAdmin=true`", pas un évènement nouveau). Puis **25 minutes
+d'inactivité totale** de ce compte (aucune entrée `HistoriqueEntry`
+quelconque entre 13:47:17Z et 14:12:24Z), avant la rafale des 20 `GRANT`.
+Rien d'autre ne se produit dans cette fenêtre après la rafale.
+
+### Corrélation avec l'historique Git
+
+La rafale de 14:12Z tombe dans un intervalle de près de 5 heures
+**sans aucun commit** sur le dépôt : le commit précédent
+(`e528a337`, rattrapage `estAdmin`) est à 10:36:26Z, le suivant
+(`cf99babb`, *"feat(pointage): finalisation du système de pointage
+géolocalisé et validation du build"*) est à 15:22:00Z. Aucune preuve
+directe ne relie formellement la rafale à ce commit précis (aucun message
+de commit ne mentionne les permissions du rôle Admin), mais la
+coïncidence temporelle — un travail actif et non commité sur le Module
+Pointage RH dans cette même fenêtre — est le candidat le plus plausible
+pour expliquer un besoin ponctuel du type "donner temporairement tous les
+droits métier à mon compte Admin pour tester sans avoir à jongler entre
+plusieurs comptes de rôle".
+
+### Ce qui est établi avec certitude, et ce qui reste une hypothèse
+
+**Établi (faits, pas des suppositions)** :
+- L'auteur du compte est `admin@simassurances.test` — aucun autre compte
+  n'apparaît dans ces 21 entrées.
+- L'action est passée par le vrai chemin applicatif (`toggleRolePermissionAction`,
+  UI `/admin/roles`), jamais par une modification directe en base (un
+  script SQL brut ne produit aucune `HistoriqueEntry`).
+- L'ordre des clics correspond à l'ordre d'affichage réel des cases à
+  cocher sur la page, pas à un ordre arbitraire.
+- Le rythme (moins de 3s entre deux clics, tenu sur 20 permissions
+  consécutives) est cohérent aussi bien avec un humain cliquant vite qu'avec
+  un script automatisé espaçant volontairement ses actions — **rien ne
+  permet de trancher entre les deux avec certitude** à partir des seules
+  données disponibles.
+
+**Hypothèse, non confirmée** : un test ou une manipulation liée aux travaux
+en cours sur le Module Pointage RH (geolocalisation), dans la même fenêtre
+temporelle que le commit de finalisation de cette fonctionnalité, sans lien
+avec les tâches de cette session (aucune de mes vérifications précédentes
+n'a jamais touché aux `RolePermission` du rôle "Admin" — uniquement des
+rôles de test jetables, toujours nommés explicitement "Test..." et
+supprimés après coup, vérifié par relecture de mes propres actions dans ce
+fichier).
+
+**Rien n'a été modifié** : les 23 `RolePermission` du rôle Admin restent
+exactement en l'état trouvé, en attente d'une décision (retirer ces
+permissions pour revenir à l'invariant documenté, ou documenter
+explicitement que l'Admin porte désormais aussi ces permissions métier par
+choix assumé).
+
+## Gestion des Catégories/Objets ouverte à Finance, avec suppression sécurisée
+
+**Statut : terminé.** Jusqu'ici, la gestion des Catégories/Objets
+(création, activation/désactivation, budget alloué) était réservée à
+`isAdmin()` (`/admin/categories`, Ticket A.1) — trop restrictif au
+quotidien pour Finance, qui catégorise des demandes en continu et doit
+souvent créer une catégorie/un objet manquant sans passer par l'Admin.
+Deux changements distincts : (1) ouvrir la CRÉATION à Finance/DG-combiné
+via le système `RolePermission` existant, jamais un accès en dur sur un
+nom de rôle ; (2) ajouter la SUPPRESSION définitive (fonctionnalité qui
+n'existait pas du tout, même pour l'Admin), avec le même principe de
+blocage sécurisé déjà en place pour les comptes utilisateur
+(`supprimerUtilisateurAction`, voir plus haut).
+
+### Diagnostic préalable
+
+- Gestion existante repérée dans `admin/categories/` (Ticket A.1,
+  `actions.ts`/`CategoriesList.tsx`/`CategorieCreateForm.tsx`) : création
+  de Catégorie/Objet réservée à `isAdmin()`, toggle actif/inactif
+  (soft-delete `isActive`), champ `Categorie.budgetAlloue` (Admin
+  uniquement, voir "Budget partagé par Catégorie"). **Aucune suppression
+  définitive n'existait** — confirmé par recherche exhaustive
+  (`prisma.categorie.delete`/`prisma.objet.delete` absents de tout le
+  code avant cette tâche).
+- Création d'Objet "à la volée" déjà en place (voir "Création d'Objet
+  inline depuis la catégorisation Finance" plus haut,
+  `creerObjetInlineAction`) : déjà réservée à `treso.categoriser_demande`,
+  pas `isAdmin()` — précédent direct montrant que Finance a déjà, par un
+  autre chemin, un droit de création d'Objet. Cette tâche généralise ce
+  principe à la Catégorie elle-même et à un écran dédié, plutôt que de
+  dupliquer une seconde logique de création.
+- Relations réelles vers `Categorie`/`Objet` vérifiées exhaustivement dans
+  `schema.prisma` (toutes les occurrences de `categorieId`/`objetId`) :
+  `Objet.categorieId` (FK obligatoire), `Demande.categorieId` (FK
+  nullable), `Demande.objetId` (FK nullable). Aucun autre modèle ne
+  référence directement l'un ou l'autre — `Reglement`/`JournalCaisse`/
+  `DepenseLigne` ne les atteignent que transitivement via `Demande`, déjà
+  couverts par la vérification sur `Demande`.
+
+### Permission `treso.gerer_categories` (mécanisme réutilisé, pas nouveau système)
+
+Nouvelle permission ajoutée au système `RolePermission` déjà en place
+(`prisma/seed.ts`), plutôt qu'un accès en dur sur `"Finance"` — cohérent
+avec la règle du projet de ne jamais baser un comportement sur le nom
+d'un rôle (déjà appliquée à `estAdmin`,
+`peutEtreBeneficiaireDelegation`...) : `treso.gerer_categories` (« Gérer
+les catégories et objets d'achat (créer/supprimer) »), module
+Trésorerie, attribuée au rôle **Finance** dans le seed. **Choix d'une
+permission DÉDIÉE plutôt que de réutiliser `treso.categoriser_demande`** :
+les permissions déjà larges de l'espace Finance (`voir_reporting`,
+`approuver_validation_complete`...) seraient trop permissives pour un
+CRUD de catégories si réutilisées telles quelles, et une permission
+dédiée permet à tout futur rôle combiné (ex: une vraie "Rh/finances") de
+gagner ce droit précis sans dépendre d'une autre permission qui porterait
+un sens différent. `peutGererCategories(session)` (`admin/categories/actions.ts`)
+= `isAdmin(session) || hasPermission(session, "treso.gerer_categories")` —
+un seul point de vérité, utilisé par toutes les Server Actions concernées
+ET par la garde de la nouvelle page Finance.
+
+### Route `/treso/finance/categories` (réutilisation des composants Admin)
+
+Nouvelle page (`treso/finance/categories/page.tsx`), gardée par
+`peutGererCategories(session)`
+(`redirect("/?error=acces_refuse_gerer_categories")` sinon) — **réutilise
+telles quelles** `CategoriesList`/`CategorieCreateForm` d'`admin/categories/`
+via un import cross-route absolu (même précédent déjà établi par
+`RevoquerDelegationButton.tsx` important `@/app/(dashboard)/delegations/actions`),
+jamais une duplication d'écran. `CategoriesList` gagne un prop `isAdmin:
+boolean` (calculé par le vrai `isAdmin(session)` de chaque route — `true`
+sur `/admin/categories`, `true` seulement pour un Admin sur
+`/treso/finance/categories`) : conditionne l'affichage du toggle Activer/
+Désactiver et du champ Budget alloué, qui **restent réservés à l'Admin**
+(scope limité, choix documenté ci-dessous), tandis que le bouton
+Supprimer (`DeleteButton`, nouveau) est visible pour tout utilisateur
+ayant `peutGererCategories`.
+
+**Choix explicite : lecture/édition du Budget alloué et
+Activer/Désactiver restent Admin-only, pas ouverts à Finance.** Ni la
+demande ni l'usage quotidien de Finance (créer/supprimer une catégorie
+manquante) ne nécessitent ces deux leviers ; le budget est un paramétrage
+financier structurant (impacte le blocage de règlement de toute
+l'organisation, voir "Budget partagé par Catégorie") et le
+toggle actif/inactif conditionne la disponibilité de la catégorie pour
+tout le monde — gardés comme des leviers de configuration globale
+distincts du geste quotidien "créer/supprimer une catégorie de travail"
+visé par cette tâche. `toggleCategorieActiveAction`/`toggleObjetActiveAction`/
+`modifierBudgetCategorieAction` restent donc `isAdmin()`-only, non touchés.
+
+### Suppression définitive (`supprimerCategorieAction`/`supprimerObjetAction`)
+
+**Nouvelle fonctionnalité — n'existait pour personne, pas même l'Admin,
+avant cette tâche.** Suit exactement le pattern déjà établi par
+`supprimerUtilisateurAction` (comptage agrégé des relations, message de
+blocage précis, "Désactivez plutôt" en repli) :
+
+- **`supprimerCategorieAction(categorieId)`** — réservée à
+  `peutGererCategories(session)`. Bloquée si `_count` révèle au moins un
+  Objet rattaché **OU** au moins une Demande référençant directement cette
+  Catégorie (`categorieId`) — les deux comptés en une seule requête
+  agrégée. Bloquée aussi si `budgetAlloue` n'est pas `null` (pas une
+  relation, mais un risque de perte de configuration financière — retirer
+  silencieusement une catégorie budgétée effacerait cette enveloppe sans
+  trace). Message précis, ex: *"Impossible de supprimer « Déplacements » :
+  elle a 3 objet(s) rattaché(s) et 1 demande(s) l'utilisant. Désactivez-la
+  plutôt."* Si tous les compteurs sont à 0 : `prisma.categorie.delete()`
+  réel + `HistoriqueEntry` (`entity: "Categorie"`, `action: "DELETE"`).
+- **`supprimerObjetAction(objetId)`** — même principe, bloquée si au moins
+  une Demande référence directement cet Objet (`objetId`). `Reglement`/
+  `JournalCaisse`/`DepenseLigne` n'ont aucune relation directe vers
+  `Objet` : couverts transitivement (ils n'existent que via une `Demande`,
+  déjà vérifiée).
+- Les deux appellent `revalidateCategoriesPaths()` — **corrigée au
+  passage** : elle ne revalidait jusqu'ici que `/admin/categories`, jamais
+  `/treso/finance/categories` (route inexistante avant cette tâche) —
+  ajoutée, de même que dans `creerObjetInlineAction`
+  (`treso/finance/demandes/[id]/actions.ts`), qui revalidait déjà
+  `/admin/categories`/`/treso/finance/reporting` mais pas cette nouvelle
+  route.
+
+### Interface (`DeleteButton.tsx`, nouveau)
+
+Bouton générique à deux temps ("Supprimer" → "Confirmer la suppression"/
+"Annuler"), mirroir exact d'`UserDeleteButton.tsx` (`admin/users`) —
+`deleteAction` en prop, réutilisable pour Catégorie et Objet sans
+dupliquer le composant. **Même caractéristique déjà documentée pour
+`UserDeleteButton.tsx`** : pas de suppression optimiste de la ligne, la
+disparition réelle dépend d'un nouveau rendu du Server Component
+(round-trip SSE ~1-2s, ou rechargement explicite) — comportement connu et
+accepté du pattern, pas un défaut introduit ici.
+
+### Navigation
+
+Nouvelle entrée "Catégories" (icône `folder-tree`, `/treso/finance/categories`)
+dans la branche "Demande d'Achat" de `nav.ts`, visible avec le nouveau
+booléen `NavFlags.canGererCategories`, propagé
+`(dashboard)/layout.tsx` → `AppShell` → `Sidebar`, même chemin que tous
+les flags précédents. `treso/finance/layout.tsx` élargi (garde partagée
+OR) pour inclure `treso.gerer_categories`, par le même principe que ses
+six extensions précédentes.
+
+### Vérifié explicitement — vrai parcours navigateur + rejeu réseau direct
+
+Chromium headless (Playwright, non ajouté au projet), 4 comptes de test
+dédiés (Finance, rôle combiné "Rh/finances" de test portant
+`treso.gerer_categories` + `treso.categoriser_demande` +
+`pointage.consulter_tous`, RH seul, DG seul — tous supprimés après
+vérification), contre le vrai serveur `next dev` :
+
+- Finance accède à `/treso/finance/categories`, crée une Catégorie puis
+  un Objet — **aucun contrôle "Budget alloué" ni "Désactiver" visible**
+  pour ce compte (réservés Admin, confirmé par inspection du DOM).
+- Finance supprime l'Objet puis la Catégorie qu'elle vient de créer (non
+  utilisés) : succès, disparition confirmée après un vrai rechargement de
+  page (même précaution méthodologique que la vérification originale de
+  `UserDeleteButton.tsx` — round-trip SSE non utilisé pour éliminer toute
+  ambiguïté de timing).
+- **Rejeu réseau direct** : la requête réelle de suppression de Catégorie
+  (capturée pendant son exécution légitime) rejouée avec l'id de la
+  catégorie réelle « Déplacements » (3 objets, 1 demande réelle l'utilisant)
+  → refusée, réponse contenant exactement *"Impossible de supprimer «
+  Déplacements » : elle a 3 objet(s) rattaché(s) et 1 demande(s)
+  l'utilisant. Désactivez-la plutôt."* — confirmé aussi en UI (le bouton
+  seul n'aurait pas suffi à le prouver).
+- Le rôle combiné "Rh/finances" de test a les mêmes droits que Finance
+  (création/suppression fonctionnelles).
+- RH seul et DG seul : redirection refusée sur `/treso/finance/categories`
+  (`error=` présent dans l'URL), confirmée pour les deux comptes.
+- **Non-régression Admin** (`admin@simassurances.test`, `/admin/categories`) :
+  toujours le contrôle "Budget alloué" et "Désactiver" visibles, création
+  de Catégorie/Objet toujours fonctionnelle, toggle Activer/Désactiver
+  toujours fonctionnel, et le nouveau droit de suppression fonctionne
+  aussi pour l'Admin (Objet puis Catégorie supprimés avec succès,
+  confirmés disparus après rechargement).
+- `Categorie réelle 'Déplacements'` et sa vraie Demande/ses vrais Objets
+  confirmés intacts après l'ensemble de la vérification (jamais touchés,
+  seule une tentative de suppression — refusée — les a visés).
+
+Toutes les données de test (4 comptes, 1 rôle combiné de test, les
+Catégories/Objets créés puis supprimés pendant la vérification, plus 2
+catégories orphelines laissées par une itération de mise au point
+précédente du script de vérification) nettoyées après coup en base —
+confirmé par comptage direct (8 catégories réelles du seed, 5 comptes de
+test réels, inchangés). Serveur `next dev` laissé actif (session de
+vérification suivante immédiate, Tâche 2 ci-dessous).
+
+## Renommage de libellés — Régularisation / Retour de caisse
+
+**Statut : terminé.** Renomme trois libellés **affichés à l'utilisateur
+uniquement** (écran, PDF, export Excel), sans toucher aux champs Prisma
+ni aux noms de variables internes : « Écart » → « Solde à régulariser »,
+« Dépense déclarée » → « Dépense effectuée », « Montant décaissé » →
+« Fonds remis ».
+
+### Diagnostic — recherche exhaustive avant modification
+
+Grep global des 3 termes exacts et de leurs variantes proches
+(composants React, templates PDF, génération Excel, commentaires) sur
+tout `frontend/src` et `backend/src`, chaque occurrence relue en contexte
+avant de trancher renommer ou non :
+
+| Fichier | Occurrence(s) renommée(s) |
+|---|---|
+| `frontend/src/components/tresorerie/RegularisationSummary.tsx` | "Montant décaissé"→"Fonds remis", "Dépenses déclarées"→"Dépenses effectuées", "Écart"→"Solde à régulariser" (3 `<dt>`) |
+| `frontend/src/app/(dashboard)/treso/finance/a-regulariser/ARegulariserTable.tsx` | en-tête "Montant décaissé"→"Fonds remis", en-tête "Écart"→"Solde à régulariser" (clés `totalRegle`/`ecart` inchangées) |
+| `frontend/src/app/(dashboard)/treso/finance/fonds-a-regulariser/FondsARegulariserTable.tsx` | en-tête "Dépenses déclarées"→"Dépenses effectuées" (clé `depensesDeclarees` inchangée) |
+| `frontend/src/app/(dashboard)/treso/finance/reporting/page.tsx` | `<th>Dépenses déclarées</th>`→`<th>Dépenses effectuées</th>` (table "Fonds remis" à l'écran) |
+| `frontend/src/app/api/treso/reporting/export/route.ts` | 5 occurrences : "Total dépenses déclarées"→"...effectuées" (feuille Retours de caisse), "Dépenses déclarées"→"...effectuées" (feuille Fonds remis), en-tête + titre colonne "Écart"→"Solde à régulariser" (feuille Régularisations, largeur de colonne élargie 16→22), **titre de la feuille elle-même** "Dépenses déclarées"→"Dépenses effectuées", un commentaire de code |
+| `frontend/src/app/(dashboard)/treso/demandes/[id]/RetourCaisseForm.tsx` | "Total des dépenses déclarées"→"Total des dépenses effectuées" |
+
+**Aucun changement nécessaire dans les deux gabarits PDF**
+(`frontend/src/lib/pdf/ReceiptDocument.tsx`, `BonDeCaisseDocument.tsx`) —
+confirmé par lecture intégrale des deux fichiers (tous les `<Text>`) :
+aucun des trois termes n'y apparaît (le reçu affiche "Montant validé",
+"Solde validé restant à régler", jamais ces trois libellés précis — voir
+"Audit de conformité — sections 10, 12.2..." plus haut).
+
+**Délibérément NON renommé — termes voisins mais distincts, signalés
+plutôt que renommés par automatisme :**
+- `RetourCaisseRow.tsx` (`<dt>Total déclaré</dt>`) et
+  `RetoursEnAttenteTable.tsx` (`header: "Total déclaré"`) — libellé plus
+  court et différent de "Dépense déclarée" (au singulier, un type de
+  dépense), hors du périmètre strict de la consigne.
+- "Restant à régulariser" (page reporting + feuille Excel "Fonds remis")
+  — terme différent des 3 demandés, déjà utilisé pour un calcul distinct
+  (peut être négatif, jamais plafonné — voir "Fonds remis à régulariser").
+- "Montant réglé (Caisse)" (`FondsARegulariserTable.tsx`) — phrase
+  différente de "Montant décaissé", non touchée.
+- Tous les commentaires de code et messages internes des fichiers
+  `backend/src/dashboardFinance.ts`/`reporting.ts`/`tresorerie.ts`
+  utilisant "écart"/"décaissé"/"dépenses déclarées" en prose technique —
+  jamais affichés à l'utilisateur, hors périmètre par instruction
+  explicite (uniquement les libellés UI/PDF/Excel).
+- **Aucun champ Prisma ni nom de variable renommé** : `ecart`, `decaisse`,
+  `depensesDeclarees`, `montantDepenseTotal`, la clé `key: "ecart"`/
+  `key: "totalRegle"`/`key: "depensesDeclarees"` des colonnes `DataTable`
+  — tous laissés intacts, seul le `header:`/texte affiché change.
+
+**Point ambigu signalé initialement, résolu depuis** : "Montant décaissé" →
+"Fonds remis" a d'abord été renommé partout où trouvé sans distinction, ce
+qui entrait en tension avec le "Fonds remis" déjà présent dans le
+reporting/l'export Excel (sens strictement **Caisse**). Résolu par un
+libellé dédié pour le cas Caisse+Banque — voir "Distinction Fonds remis
+(Caisse + Banque) vs Fonds remis (Caisse seule)" plus bas pour le détail
+complet de l'arbitrage retenu et sa vérification.
+
+### Vérifié explicitement — vrai parcours navigateur, PDF réels, export réel
+
+Chromium headless (Playwright, non ajouté au projet), cycle complet sur
+une demande de test (100 000 FCFA, catégorie Carburant) : validation
+totale, règlement Caisse confirmé, retour de caisse déclaré (70 000 FCFA
+dépensés, 30 000 FCFA à retourner), retour réceptionné.
+
+- **Écran Finance** (section Régularisation) : extraction directe du DOM
+  confirme "FONDS REMIS — 100 000 FCFA", "DÉPENSES EFFECTUÉES — 70 000
+  FCFA", "RETOURS REÇUS — 30 000 FCFA", "SOLDE À RÉGULARISER — 0 FCFA"
+  (capitales dues à la classe CSS `uppercase` du libellé, texte réel bien
+  "Fonds remis"/"Dépenses effectuées"/"Solde à régulariser") ; aucun des
+  anciens termes ("Écart", "Montant décaissé", "Dépenses déclarées")
+  présent. Composant `RegularisationSummary` partagé avec l'écran
+  Collaborateur ("Situation finale") — même code, donc même libellé
+  garanti des deux côtés sans vérification redondante.
+- **`ARegulariserTable`** (`/treso/finance/a-regulariser`) : en-têtes
+  réels "Fonds remis"/"Solde à régulariser" confirmés à l'écran, aucune
+  trace de "Montant décaissé".
+- **Reporting** (écran + section "Fonds remis") : "Dépenses effectuées"
+  confirmé présent, "Dépenses déclarées" confirmé absent.
+- **Reçu PDF et bon de caisse PDF** : téléchargés via requête authentifiée
+  réelle (200 dans les deux cas) — aucune régression, confirmés déjà
+  exempts des 3 termes (pas de changement de gabarit nécessaire, voir
+  diagnostic).
+- **Export Excel** (`exceljs`, fichier téléchargé puis relu
+  programmatiquement) : **12/12 feuilles présentes**, feuille renommée
+  "Dépenses effectuées" (plus de feuille "Dépenses déclarées"), en-têtes
+  "Total dépenses effectuées (FCFA)" (Retours de caisse), "Dépenses
+  effectuées (FCFA)" (Fonds remis, Régularisations, Dépenses effectuées),
+  "Solde à régulariser (FCFA)" (Régularisations). Ligne de données
+  vérifiée : agrégat "Carburant" = 3 opérations de test (300 000 remis,
+  210 000 dépenses effectuées, 90 000 retours reçus, 0 restant à
+  régulariser) — arithmétique cohérente, aucune régression de calcul,
+  seul le texte affiché change.
+
+Toutes les données de test (4 demandes créées pendant la mise au point de
+cette vérification — une orpheline d'un premier run interrompu, trois
+menées à terme — avec leurs lignes/règlements/retours/écritures
+`JournalCaisse`/historique) supprimées après coup ; les deux demandes
+réelles préexistantes (`DEM-2026-000001`, `DEM-2026-000002`) confirmées
+intactes par comptage direct. Serveur `next dev` arrêté après
+vérification.
+
+## Distinction "Fonds remis (Caisse + Banque)" vs "Fonds remis" (Caisse seule)
+
+**Statut : terminé.** Résout le point ambigu signalé à la tâche précédente
+("Renommage de libellés — Régularisation / Retour de caisse") : le
+renommage "Montant décaissé" → "Fonds remis" avait été appliqué sans
+distinction sur `RegularisationSummary.tsx`/`ARegulariserTable.tsx`, alors
+que le terme "Fonds remis" existait déjà dans le reporting/l'export Excel
+avec un sens strictement **Caisse**.
+
+### Diagnostic — quelles occurrences peuvent inclure du Banque
+
+Vérifié directement dans le code, pas supposé :
+
+| Fichier / fonction | Portée réelle du montant | Preuve |
+|---|---|---|
+| `RegularisationSummary.tsx` (`decaisse = getTotalRegle(demandeId)`) | **Caisse + Banque** | `getTotalRegle` (`backend/src/tresorerie.ts`) agrège `prisma.reglement.aggregate({ where: { demandeId, estConfirme: true, estAnnule: false } })` — **aucun filtre `mode`**, tous les règlements confirmés d'une demande, quel que soit leur mode. |
+| `ARegulariserTable.tsx` (colonne `totalRegle`, alimentée par `getDecaissementsARegulariser`) | **Caisse + Banque** | `getRepartitionDemandesValidees` (`backend/src/dashboardFinance.ts`) calcule `totalRegleParDemande` via `prisma.reglement.groupBy({ where: { demandeId: { in: ids }, estConfirme: true, estAnnule: false } })` — même absence de filtre `mode`. |
+| `api/treso/reporting/export/route.ts` (feuille Excel "Fonds remis") + `treso/finance/reporting/page.tsx` (section "Fonds remis" à l'écran) | **Caisse seule** | `getReportingFondsRemis`/`getFondsRemisParDemande` (`backend/src/reporting.ts`) filtrent explicitement `where: { ..., mode: "CAISSE", ... }` — commentaire du code : "un 'fonds remis' = une remise d'espèces... donc un règlement Caisse précisément". |
+| `treso/finance/page.tsx` (StatCard "Fonds remis à régulariser") et `treso/finance/fonds-a-regulariser/page.tsx` (titre identique) | **Caisse seule** | `getFondsRemisARegulariser` (`backend/src/dashboardFinance.ts`) : `prisma.reglement.findMany({ where: { mode: "CAISSE", ... } })` avant d'appeler `getSoldesARegulariserParReglements`. Libellé de toute façon différent ("Fonds remis **à régulariser**"), hors du périmètre de l'ambiguïté signalée. |
+| `FondsARegulariserTable.tsx` (colonne "Montant réglé (Caisse)") | **Caisse seule**, déjà explicite | Libellé déjà différent ("Montant réglé (Caisse)", pas "Fonds remis"), aucune ambiguïté possible, non touché. |
+
+### Occurrences modifiées
+
+- **`RegularisationSummary.tsx`** — `<dt>Fonds remis</dt>` →
+  `<dt>Fonds remis (Caisse + Banque)</dt>`. Composant partagé entre l'écran
+  Finance (section "Régularisation") et l'écran Collaborateur (section
+  "Situation finale") : un seul changement de code couvre les deux
+  affichages. JSDoc en tête du fichier mis à jour pour expliciter que
+  `decaisse` (`getTotalRegle`, jamais renommé — variable interne) porte sur
+  tous les modes, d'où le libellé précisé, et renvoie vers cette section de
+  CLAUDE.md pour la distinction complète.
+- **`ARegulariserTable.tsx`** — `header: "Fonds remis"` →
+  `header: "Fonds remis (Caisse + Banque)"` (colonne `totalRegle`, clé
+  inchangée). Commentaire ajouté au-dessus de la définition de la colonne
+  expliquant pourquoi ce libellé diffère de celui du reporting/export.
+
+### Occurrences laissées en "Fonds remis" simple (Caisse seule, non touchées)
+
+- Feuille Excel "Fonds remis" (`api/treso/reporting/export/route.ts`) et
+  section "Fonds remis" du reporting à l'écran
+  (`treso/finance/reporting/page.tsx`) — strictement Caisse par
+  construction (`getReportingFondsRemis`), instruction explicite de ne pas
+  y toucher.
+- StatCard "Fonds remis à régulariser" (dashboard Finance) et titre
+  identique de `/treso/finance/fonds-a-regulariser` — Caisse seule
+  (`getFondsRemisARegulariser`), et de toute façon un libellé distinct
+  ("... à régulariser"), jamais la source de l'ambiguïté signalée.
+- "Montant réglé (Caisse)" (`FondsARegulariserTable.tsx`) — déjà explicite,
+  jamais nommé "Fonds remis" tout court.
+
+**Pourquoi deux libellés proches coexistent (à ne pas re-fusionner par
+erreur plus tard)** : "Fonds remis" (bare) désigne toujours, dans ce
+portail, un montant **strictement Caisse** — cohérent avec la définition
+métier du cahier des charges ("un fonds remis est une remise d'espèces").
+"Fonds remis (Caisse + Banque)" est un libellé **spécifique à
+`RegularisationSummary`/`ARegulariserTable`**, où le montant affiché
+(`getTotalRegle`) agrège réellement les deux modes de règlement — ces deux
+écrans répondent à une question différente ("combien a été réglé au total
+sur cette demande", peu importe le mode) que le reporting/l'indicateur
+"Fonds remis à régulariser" ("combien d'espèces ont été remises et
+doivent être justifiées"). Si un nouvel écran affiche un jour un montant
+basé sur `getTotalRegle`/`getDecaissementsARegulariser` (tous modes), lui
+donner le même libellé "Fonds remis (Caisse + Banque)" ; si basé sur
+`getReportingFondsRemis`/`getFondsRemisARegulariser`/tout calcul filtré
+`mode: "CAISSE"`, le libellé "Fonds remis" simple reste correct.
+
+### Vérifié explicitement — vrai parcours navigateur, calculs réels mixtes Caisse+Banque
+
+Chromium headless (Playwright, non ajouté au projet), demande de test
+dédiée (150 000 FCFA, catégorie Carburant) : validée totalement, réglée
+par **deux règlements distincts et confirmés** — 100 000 FCFA en Caisse et
+50 000 FCFA en Banque (reste exact) — pour produire un cas réel où le
+montant Caisse+Banque (150 000) diffère du montant Caisse seule (100 000).
+
+- **`RegularisationSummary`** (détail Finance) : inspection DOM directe —
+  "FONDS REMIS (CAISSE + BANQUE) — 150 000 FCFA" (majuscules dues à la
+  classe CSS `uppercase`, texte réel "Fonds remis (Caisse + Banque)"),
+  cohérent avec `getTotalRegle` = 100 000 + 50 000.
+- **`ARegulariserTable`** (`/treso/finance/a-regulariser`) : en-tête réel
+  "Fonds remis (Caisse + Banque)" confirmé, ligne de la demande de test
+  affichant bien **150 000 FCFA** (tous modes confondus, la demande étant
+  entièrement réglée).
+- **Reporting** (`/treso/finance/reporting`, section "Fonds remis") :
+  inchangé — la ligne "Carburant" affiche **100 000 FCFA** de "Remis"
+  (Caisse seule, exclut les 50 000 Banque), confirmant que ce montant
+  reste strictement Caisse malgré le règlement Banque supplémentaire sur
+  la même demande. **Aucune régression de calcul** : l'export Excel n'a
+  pas été retéléchargé pour cette vérification précise (fonction partagée
+  et déjà vérifiée identique à l'écran lors de la tâche précédente, aucun
+  changement de code ne touche `reporting.ts`).
+- Un premier passage du script de vérification a signalé deux faux
+  échecs (regex de contrôle ayant accidentellement matché le texte du
+  motif de la demande de test, qui contenait lui-même la chaîne "Fonds
+  remis" dans sa description) — écarté après inspection directe du DOM
+  (`innerText` scopé à la section "Régularisation" précisément), qui
+  confirme le rendu correct dans les deux cas. Signalé ici par
+  transparence méthodologique, pas comme un défaut de l'application.
+
+`npx tsc --noEmit` (frontend) sans erreur nouvelle. Donnée de test (1
+demande, sa ligne, ses 2 règlements) supprimée après coup ; les deux
+demandes réelles préexistantes (`DEM-2026-000001`, `DEM-2026-000002`)
+confirmées intactes (base revenue à exactement 2 demandes). Serveur
+`next dev` arrêté après vérification.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

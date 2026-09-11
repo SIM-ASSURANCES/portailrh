@@ -468,11 +468,16 @@ export async function supprimerUtilisateurAction(
     }
   }
 
-  // Vérification exhaustive des données liées — les 15 relations vers User
+  // Vérification exhaustive des données liées — les 17 relations vers User
   // recensées dans le schéma (Trésorerie + Pointage RH + Socle), voir
   // CLAUDE.md. DepenseLigne et PieceJointe n'ont aucune relation directe
   // vers User (couvertes transitivement via RetourCaisse/Demande, déjà
-  // vérifiées ci-dessous).
+  // vérifiées ci-dessous). `delegationsAccordees`/`delegationsRecues`
+  // (Socle, "Délégation individuelle de permissions") comptent TOUTES les
+  // lignes, actives ou révoquées : même une délégation révoquée reste une
+  // trace réelle d'utilisation du compte, jamais un motif de suppression
+  // (`revokedById` seul, lui, n'est pas bloquant — voir `onDelete: SetNull`
+  // sur cette relation précise dans le schéma).
   const [
     demandesCreees,
     demandesBeneficiees,
@@ -489,6 +494,8 @@ export async function supprimerUtilisateurAction(
     absencesControlees,
     notifications,
     plagesAbsenceAutorisee,
+    delegationsAccordees,
+    delegationsRecues,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -505,6 +512,8 @@ export async function supprimerUtilisateurAction(
     prisma.absence.count({ where: { controleParId: userId } }),
     prisma.notification.count({ where: { userId } }),
     prisma.plageAbsenceAutorisee.count({ where: { userId } }),
+    prisma.permissionDelegation.count({ where: { donneurId: userId } }),
+    prisma.permissionDelegation.count({ where: { beneficiaireId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -524,6 +533,8 @@ export async function supprimerUtilisateurAction(
   if (absencesControlees > 0) blocages.push(`contrôlé ${absencesControlees} absence(s)`);
   if (notifications > 0) blocages.push(`${notifications} notification(s)`);
   if (plagesAbsenceAutorisee > 0) blocages.push(`${plagesAbsenceAutorisee} plage(s) d'absence autorisée`);
+  if (delegationsAccordees > 0) blocages.push(`accordé ${delegationsAccordees} délégation(s) de permission`);
+  if (delegationsRecues > 0) blocages.push(`reçu ${delegationsRecues} délégation(s) de permission`);
 
   if (blocages.length > 0) {
     const liste =

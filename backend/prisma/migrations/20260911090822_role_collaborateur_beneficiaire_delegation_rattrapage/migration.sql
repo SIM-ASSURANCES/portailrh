@@ -1,0 +1,15 @@
+-- Rattrapage de Role.peutEtreBeneficiaireDelegation pour les bases deja
+-- existantes, meme esprit que 20260910090000_role_admin_est_admin_rattrapage
+-- (rattrapage de Role.estAdmin) : la migration precedente
+-- (role_peut_etre_beneficiaire_delegation) ajoute la colonne avec
+-- DEFAULT false, sans rattrapage. Sur toute base deja seedee (production en
+-- tete), le role "Collaborateur" se retrouverait donc a
+-- peutEtreBeneficiaireDelegation = false, rendant tous les comptes
+-- Collaborateur inegibles comme beneficiaire de delegation alors que c'est
+-- precisement le seul role vise par cette regle.
+--
+-- Retablit la regle voulue pour les donnees existantes : le role nomme
+-- "Collaborateur" devient eligible. Idempotent. Sans effet sur une base
+-- neuve (seed.ts cree deja ce role avec peutEtreBeneficiaireDelegation =
+-- true).
+UPDATE "Role" SET "peutEtreBeneficiaireDelegation" = true WHERE "name" = 'Collaborateur';

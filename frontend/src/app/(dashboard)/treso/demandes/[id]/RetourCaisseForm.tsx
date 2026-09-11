@@ -231,7 +231,7 @@ export function RetourCaisseForm({
       <div className="grid grid-cols-1 gap-4 rounded-md bg-muted p-3 sm:grid-cols-2">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Total des dépenses déclarées
+            Total des dépenses effectuées
           </p>
           <p className="text-sm font-semibold text-foreground">{totalDeclare.toLocaleString("fr-FR")} FCFA</p>
         </div>

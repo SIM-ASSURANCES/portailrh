@@ -36,6 +36,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canSaisirDepenseDirecte={hasPermission(session, "treso.saisir_depense_directe")}
       canApprouverValidationComplete={hasPermission(session, "treso.approuver_validation_complete")}
       canGererSoldeOuverture={isAdmin(session) || hasPermission(session, "treso.effectuer_reglement")}
+      canGererCategories={isAdmin(session) || hasPermission(session, "treso.gerer_categories")}
       hasPointageAccess={[
         "pointage.pointer",
         "pointage.consulter_historique",
@@ -54,6 +55,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "pointage.voir_dashboard_rh") ||
         hasPermission(session, "pointage.voir_reporting")
       }
+      // Basé sur `rolePermissions` (jamais `permissions`, qui inclurait les
+      // permissions seulement déléguées) : voir CLAUDE.md "Délégation
+      // individuelle de permissions" — seul ce qu'un compte possède via son
+      // propre rôle rend ce lien visible, jamais une permission reçue par
+      // délégation (interdit toute chaîne de redélégation).
+      canDelegerAcces={session.rolePermissions.some(
+        (key) => key.startsWith("treso.") || key.startsWith("pointage.")
+      )}
       unreadNotificationsCount={unreadCount}
 
     >

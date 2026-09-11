@@ -11,7 +11,9 @@ import { getSession, hasPermission } from "@/lib/auth";
  * **OU** `treso.receptionner_retour` **OU** `treso.voir_dashboard_finance`
  * **OU** `treso.voir_reporting` **OU** `treso.saisir_depense_directe`
  * (Phase F) **OU** `treso.approuver_validation_complete` (verrou de clôture
- * DG, voir CLAUDE.md) (pas besoin de toutes) : Finance catégorise et réceptionne les
+ * DG) **OU** `treso.gerer_categories` (gestion des Catégories/Objets ouverte
+ * à Finance, voir CLAUDE.md "Gestion des Catégories/Objets ouverte à
+ * Finance") (pas besoin de toutes) : Finance catégorise et réceptionne les
  * retours (généralement sans `valider_demande`), le DG valide/rejette et
  * voit le dashboard/reporting (généralement sans les autres, cf. seed) —
  * ces profils partagent cet espace, mais les pages qu'il contient doivent
@@ -35,7 +37,8 @@ export default async function FinanceLayout({ children }: { children: React.Reac
       hasPermission(session, "treso.voir_dashboard_finance") ||
       hasPermission(session, "treso.voir_reporting") ||
       hasPermission(session, "treso.saisir_depense_directe") ||
-      hasPermission(session, "treso.approuver_validation_complete"));
+      hasPermission(session, "treso.approuver_validation_complete") ||
+      hasPermission(session, "treso.gerer_categories"));
 
   if (!canAccess) {
     redirect("/?error=acces_refuse_categoriser");

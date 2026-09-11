@@ -86,6 +86,14 @@ export interface NavFlags {
    * `effectuer_reglement`).
    */
   canGererSoldeOuverture: boolean;
+  /**
+   * `isAdmin()` OU `treso.gerer_categories` : ajoute "Catégories" — voir
+   * CLAUDE.md "Gestion des Catégories/Objets ouverte à Finance". Cible
+   * `/treso/finance/categories`, distincte de `/admin/categories`
+   * (toujours accessible séparément à l'Admin via la section
+   * "Administration" de la sidebar).
+   */
+  canGererCategories: boolean;
 
   /**
    * Au moins une permission `pointage.*` (y compris les deux permissions de
@@ -106,6 +114,20 @@ export interface NavFlags {
    */
   canAccessPointageRH: boolean;
 }
+
+/**
+ * Entrée de navigation hors branche (comme `ADMIN_GROUP`, jamais dans
+ * `NavFlags`/`getNavBranches` : c'est un item flottant, pas un contenu de
+ * branche) : la délégation individuelle de permissions s'adresse à
+ * quiconque possède au moins une permission Trésorerie/Pointage RH via son
+ * propre rôle, jamais un rôle en particulier — voir `SidebarProps.canDelegerAcces`
+ * et CLAUDE.md "Délégation individuelle de permissions".
+ */
+export const DELEGATIONS_ITEM: NavItem = {
+  label: "Déléguer des accès",
+  href: "/delegations",
+  icon: "users",
+};
 
 /**
  * Les deux branches fonctionnelles du portail. Chaque branche est un
@@ -141,6 +163,7 @@ export function getNavBranches({
   canSaisirDepenseDirecte,
   canApprouverValidationComplete,
   canGererSoldeOuverture,
+  canGererCategories,
   hasPointageAccess,
   canAccessPointageRH,
 }: NavFlags): NavBranch[] {
@@ -168,6 +191,15 @@ export function getNavBranches({
                     label: "Solde d'ouverture de caisse",
                     href: "/treso/finance/solde-ouverture",
                     icon: "wallet",
+                  } satisfies NavItem,
+                ]
+              : []),
+            ...(canGererCategories
+              ? [
+                  {
+                    label: "Catégories",
+                    href: "/treso/finance/categories",
+                    icon: "folder-tree",
                   } satisfies NavItem,
                 ]
               : []),
@@ -282,6 +314,7 @@ export const ADMIN_GROUP: NavGroup = {
     { label: "Vue d'ensemble", href: "/admin", icon: "layout-grid", exact: true },
     { label: "Utilisateurs", href: "/admin/users", icon: "users" },
     { label: "Rôles & permissions", href: "/admin/roles", icon: "shield-check" },
+    { label: "Délégations", href: "/admin/delegations", icon: "shield" },
     { label: "Modules", href: "/admin/modules", icon: "package" },
     { label: "Catégories", href: "/admin/categories", icon: "folder-tree" },
     { label: "Logs Système", href: "/admin/logs", icon: "scroll-text" },

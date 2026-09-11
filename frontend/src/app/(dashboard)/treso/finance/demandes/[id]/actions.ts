@@ -184,11 +184,14 @@ export async function creerObjetInlineAction(
     },
   });
 
-  // Le catalogue d'objets est aussi lu par admin/categories et le
-  // reporting (même revalidation que createObjetAction dans
-  // admin/categories/actions.ts) : le nouvel objet y est donc visible
-  // immédiatement, jamais une donnée cachée ou différente.
+  // Le catalogue d'objets est aussi lu par admin/categories, son second
+  // point d'entrée Finance (/treso/finance/categories, voir CLAUDE.md
+  // "Gestion des Catégories/Objets ouverte à Finance") et le reporting
+  // (même revalidation que createObjetAction dans admin/categories/actions.ts) :
+  // le nouvel objet y est donc visible immédiatement, jamais une donnée
+  // cachée ou différente.
   revalidatePath("/admin/categories");
+  revalidatePath("/treso/finance/categories");
   revalidatePath("/treso/finance/reporting");
   publishDataChanged();
 

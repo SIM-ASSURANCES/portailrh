@@ -176,3 +176,53 @@ export async function toggleRolePermissionAction(
 
   return { status: "success", message: granted ? "Permission accordée." : "Permission retirée." };
 }
+
+/**
+ * Accorde ou retire l'éligibilité d'un rôle à être BÉNÉFICIAIRE d'une
+ * délégation individuelle de permission (voir CLAUDE.md "Délégation
+ * individuelle de permissions", `Role.peutEtreBeneficiaireDelegation`).
+ *
+ * **Volontairement librement modifiable à tout moment** (contrairement à
+ * `estAdmin`, figé après création) : ce champ ne donne par lui-même AUCUN
+ * droit, il ne fait qu'autoriser un rôle à apparaître dans la liste des
+ * bénéficiaires possibles sur `/delegations` — le vrai plafonnement (ce que
+ * le donneur peut réellement accorder) reste entièrement porté par
+ * `accorderDelegationAction`. Aucun risque de verrouillage comparable à
+ * `estAdmin` (pas d'invariant "au moins un rôle éligible" à protéger),
+ * donc pas de raison de le figer : un Admin doit pouvoir étendre ou
+ * resserrer cette éligibilité à tout moment, exactement comme une
+ * permission de module ordinaire (`toggleRolePermissionAction` ci-dessus).
+ */
+export async function toggleRolePeutEtreBeneficiaireDelegationAction(
+  roleId: string,
+  eligible: boolean
+): Promise<{ status: "success" | "error"; message: string }> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const role = await prisma.role.update({
+    where: { id: roleId },
+    data: { peutEtreBeneficiaireDelegation: eligible },
+  });
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "Role",
+      entityId: role.id,
+      action: eligible ? "GRANT_BENEFICIAIRE_DELEGATION" : "REVOKE_BENEFICIAIRE_DELEGATION",
+      detail: `Rôle "${role.name}" ${eligible ? "rendu éligible" : "rendu inéligible"} comme bénéficiaire de délégation`,
+      userId: session.user.id,
+    },
+  });
+
+  revalidatePath("/admin/roles");
+  revalidatePath("/delegations");
+  publishDataChanged();
+
+  return {
+    status: "success",
+    message: eligible ? "Rôle rendu éligible comme bénéficiaire." : "Rôle rendu inéligible comme bénéficiaire.",
+  };
+}

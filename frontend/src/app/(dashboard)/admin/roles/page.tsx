@@ -2,6 +2,7 @@ import { Badge, PageHeader } from "@/components/ui";
 import { prisma } from "backend";
 
 import { PermissionToggle } from "./PermissionToggle";
+import { PeutEtreBeneficiaireToggle } from "./PeutEtreBeneficiaireToggle";
 import { RoleCreateForm } from "./RoleCreateForm";
 
 export default async function AdminRolesPage() {
@@ -60,6 +61,18 @@ export default async function AdminRolesPage() {
                     être défini qu&apos;à la création d&apos;un rôle.
                   </p>
                 )}
+              </div>
+
+              {/* Éligibilité comme bénéficiaire de délégation (voir
+                  CLAUDE.md "Délégation individuelle de permissions") —
+                  librement modifiable à tout moment, contrairement à
+                  estAdmin ci-dessus (aucun risque de verrouillage
+                  comparable, ce champ ne donne aucun droit par lui-même). */}
+              <div className="mt-2">
+                <PeutEtreBeneficiaireToggle
+                  roleId={role.id}
+                  defaultChecked={role.peutEtreBeneficiaireDelegation}
+                />
               </div>
 
               {modules.length === 0 ? (

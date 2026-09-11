@@ -40,7 +40,7 @@ export function FondsARegulariserTable({ reglements }: { reglements: FondsARegul
         },
         {
           key: "depensesDeclarees",
-          header: "Dépenses déclarées",
+          header: "Dépenses effectuées",
           sortable: true,
           accessor: (r) => r.depensesDeclarees,
           render: (r) => `${r.depensesDeclarees.toLocaleString("fr-FR")} FCFA`,

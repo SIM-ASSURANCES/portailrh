@@ -28,14 +28,20 @@ export function ARegulariserTable({ demandes }: { demandes: ARegulariserRow[] })
         { key: "createurNom", header: "Créateur", sortable: true, accessor: (d) => d.createurNom },
         {
           key: "totalRegle",
-          header: "Montant décaissé",
+          // "Fonds remis (Caisse + Banque)" et non "Fonds remis" simple :
+          // ce montant vient de getTotalRegle (dashboardFinance.ts), tous
+          // modes de règlement confondus — distinct du "Fonds remis" du
+          // reporting/export Excel, strictement Caisse (voir CLAUDE.md
+          // "Distinction Fonds remis (Caisse + Banque) vs Fonds remis
+          // (Caisse seule)").
+          header: "Fonds remis (Caisse + Banque)",
           sortable: true,
           accessor: (d) => d.totalRegle,
           render: (d) => `${d.totalRegle.toLocaleString("fr-FR")} FCFA`,
         },
         {
           key: "ecart",
-          header: "Écart",
+          header: "Solde à régulariser",
           sortable: true,
           accessor: (d) => d.ecart,
           render: (d) =>

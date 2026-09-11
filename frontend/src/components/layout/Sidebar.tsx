@@ -7,7 +7,14 @@ import { useState } from "react";
 
 import { Icon } from "@/components/icons";
 import { BRAND_ICON_PATHS, BRAND_ICON_VIEWBOX } from "@/components/ui/brandIcon";
-import { ADMIN_GROUP, DASHBOARD_ITEM, getNavBranches, type NavBranch, type NavItem } from "./nav";
+import {
+  ADMIN_GROUP,
+  DASHBOARD_ITEM,
+  DELEGATIONS_ITEM,
+  getNavBranches,
+  type NavBranch,
+  type NavItem,
+} from "./nav";
 import { signOutAction } from "./actions";
 
 interface SidebarProps {
@@ -33,10 +40,14 @@ interface SidebarProps {
   canApprouverValidationComplete?: boolean;
   /** isAdmin() OU treso.effectuer_reglement : ajoute "Solde d'ouverture de caisse". */
   canGererSoldeOuverture?: boolean;
+  /** isAdmin() OU treso.gerer_categories : ajoute "Catégories" (Finance). */
+  canGererCategories?: boolean;
   /** Au moins une permission pointage.* : affiche la branche "Pointage de Présence" et "Mon espace". */
   hasPointageAccess?: boolean;
   /** Ajoute le groupe "RH" du Pointage (permissions RH uniquement). */
   canAccessPointageRH?: boolean;
+  /** Affiche "Déléguer des accès" (au moins une permission treso.x ou pointage.x via son propre rôle). */
+  canDelegerAcces?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -80,8 +91,10 @@ export function Sidebar({
   canSaisirDepenseDirecte = false,
   canApprouverValidationComplete = false,
   canGererSoldeOuverture = false,
+  canGererCategories = false,
   hasPointageAccess = false,
   canAccessPointageRH = false,
+  canDelegerAcces = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
@@ -96,6 +109,7 @@ export function Sidebar({
     canSaisirDepenseDirecte,
     canApprouverValidationComplete,
     canGererSoldeOuverture,
+    canGererCategories,
     hasPointageAccess,
     canAccessPointageRH,
   });
@@ -219,6 +233,17 @@ export function Sidebar({
               </div>
             );
           })}
+
+          {canDelegerAcces ? (
+            <div className="mt-2 border-t border-sidebar-border pt-2">
+              <ItemLink
+                item={DELEGATIONS_ITEM}
+                active={isActive(pathname, DELEGATIONS_ITEM)}
+                collapsed={collapsed}
+                onNavigate={onCloseMobile}
+              />
+            </div>
+          ) : null}
 
           {canAdmin ? (
             <div className="mt-2 border-t border-sidebar-border pt-2">

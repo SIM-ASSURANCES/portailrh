@@ -3,8 +3,14 @@
 import { Badge } from "@/components/ui";
 
 import { ActiveToggleButton } from "./ActiveToggleButton";
-import { toggleCategorieActiveAction, toggleObjetActiveAction } from "./actions";
+import {
+  supprimerCategorieAction,
+  supprimerObjetAction,
+  toggleCategorieActiveAction,
+  toggleObjetActiveAction,
+} from "./actions";
 import { BudgetAlloueField } from "./BudgetAlloueField";
+import { DeleteButton } from "./DeleteButton";
 import { ObjetCreateForm } from "./ObjetCreateForm";
 
 export interface ObjetRow {
@@ -25,10 +31,24 @@ export interface CategorieRow {
 /**
  * Liste des catégories avec leurs objets imbriqués (liste indentée en
  * dessous de chaque catégorie, comme demandé). Les inactives sont
- * distinguées par une opacité réduite en plus du Badge de statut — pas de
- * suppression définitive dans cette interface : uniquement Activer/Désactiver.
+ * distinguées par une opacité réduite en plus du Badge de statut.
+ *
+ * **Suppression définitive** (voir CLAUDE.md "Gestion des Catégories/Objets
+ * ouverte à Finance") : disponible pour quiconque a atteint cette page — la
+ * garde d'accès (Admin ou `treso.gerer_categories`) est déjà assurée par la
+ * page appelante, jamais revérifiée ici (composant purement de
+ * présentation). **Activer/Désactiver et le budget partagé restent
+ * réservés à l'Admin** (`isAdmin`, prop) : masqués entièrement plutôt que
+ * désactivés pour un non-admin, jamais un bouton voué à échouer côté
+ * serveur.
  */
-export function CategoriesList({ categories }: { categories: CategorieRow[] }) {
+export function CategoriesList({
+  categories,
+  isAdmin,
+}: {
+  categories: CategorieRow[];
+  isAdmin: boolean;
+}) {
   if (categories.length === 0) {
     return <p className="text-sm text-muted-foreground">Aucune catégorie pour l&apos;instant.</p>;
   }
@@ -47,19 +67,26 @@ export function CategoriesList({ categories }: { categories: CategorieRow[] }) {
                 {categorie.isActive ? "Active" : "Inactive"}
               </Badge>
             </div>
-            <ActiveToggleButton
-              id={categorie.id}
-              isActive={categorie.isActive}
-              toggleAction={toggleCategorieActiveAction}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              {isAdmin ? (
+                <ActiveToggleButton
+                  id={categorie.id}
+                  isActive={categorie.isActive}
+                  toggleAction={toggleCategorieActiveAction}
+                />
+              ) : null}
+              <DeleteButton id={categorie.id} deleteAction={supprimerCategorieAction} />
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Budget alloué
-            </span>
-            <BudgetAlloueField categorieId={categorie.id} budgetAlloue={categorie.budgetAlloue} />
-          </div>
+          {isAdmin ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Budget alloué
+              </span>
+              <BudgetAlloueField categorieId={categorie.id} budgetAlloue={categorie.budgetAlloue} />
+            </div>
+          ) : null}
 
           {categorie.objets.length > 0 ? (
             <ul className="space-y-2 border-l-2 border-border pl-4">
@@ -76,11 +103,16 @@ export function CategoriesList({ categories }: { categories: CategorieRow[] }) {
                       {objet.isActive ? "Actif" : "Inactif"}
                     </Badge>
                   </div>
-                  <ActiveToggleButton
-                    id={objet.id}
-                    isActive={objet.isActive}
-                    toggleAction={toggleObjetActiveAction}
-                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    {isAdmin ? (
+                      <ActiveToggleButton
+                        id={objet.id}
+                        isActive={objet.isActive}
+                        toggleAction={toggleObjetActiveAction}
+                      />
+                    ) : null}
+                    <DeleteButton id={objet.id} deleteAction={supprimerObjetAction} />
+                  </div>
                 </li>
               ))}
             </ul>

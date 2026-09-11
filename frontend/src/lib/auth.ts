@@ -139,11 +139,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
  * ET ses permissions effectives.
  *
  * - Retourne `null` si personne n'est authentifié.
- * - `permissions` est la liste des clés (`Permission.key`, ex: "treso.valider_demande")
- *   attribuées au rôle de l'utilisateur, recalculée à chaque appel (source de
- *   vérité = table RolePermission, pas le contenu du JWT) : une modification
- *   des droits d'un rôle est donc prise en compte immédiatement, sans
- *   nécessiter une reconnexion.
+ * - `permissions` est la liste EFFECTIVE des clés (`Permission.key`, ex:
+ *   "treso.valider_demande") — celles du rôle **plus** celles obtenues par
+ *   une délégation individuelle active (voir CLAUDE.md "Délégation
+ *   individuelle de permissions"), recalculée à chaque appel (jamais depuis
+ *   le JWT) : une modification des droits d'un rôle, ou une délégation
+ *   accordée/révoquée, est donc prise en compte immédiatement, sans
+ *   reconnexion. C'est cette liste que `hasPermission()` consulte partout
+ *   dans l'application — une permission déléguée se comporte donc, pour
+ *   tout contrôle d'accès existant, exactement comme si elle avait été
+ *   accordée au rôle lui-même.
+ * - `rolePermissions` est la liste BRUTE, issue UNIQUEMENT du rôle
+ *   (`RolePermission`), sans les délégations reçues. Réservée à l'éligibilité
+ *   à DÉLÉGUER une permission à autrui (voir `accorderDelegationAction`,
+ *   `admin/delegations`) : un bénéficiaire ne peut jamais redéléguer une
+ *   permission qu'il n'a reçue que par délégation — seul ce qu'un compte
+ *   possède via son propre rôle est délégable, ce qui interdit toute chaîne
+ *   de délégation en cascade.
  *
  * Exemple :
  *   const session = await getSession();
@@ -153,6 +165,7 @@ export const getSession = cache(async (): Promise<{
   user: { id: string; fullName: string; email: string; photoUrl: string | null };
   role: string;
   permissions: string[];
+  rolePermissions: string[];
   estAdmin: boolean;
 } | null> => {
   const session = await auth();
@@ -173,7 +186,37 @@ export const getSession = cache(async (): Promise<{
     return null;
   }
 
-  const permissions = role?.permissions.map((rp) => rp.permission.key) ?? [];
+  const rolePermissions = role?.permissions.map((rp) => rp.permission.key) ?? [];
+
+  // Délégations individuelles actives reçues par cet utilisateur — voir
+  // CLAUDE.md "Délégation individuelle de permissions". Recalculées à
+  // chaque appel, jamais mises en cache au-delà de cette requête : le
+  // donneur doit ENCORE posséder cette permission via son propre rôle (et
+  // être toujours actif) au moment précis de cette vérification, sinon la
+  // délégation n'est pas prise en compte — aucune action manuelle de
+  // révocation n'est nécessaire quand le donneur perd le droit sous-jacent.
+  const delegations = await prisma.permissionDelegation.findMany({
+    where: { beneficiaireId: user.id, estActive: true },
+    select: {
+      permission: { select: { key: true } },
+      donneur: {
+        select: {
+          isActive: true,
+          role: { select: { permissions: { select: { permission: { select: { key: true } } } } } },
+        },
+      },
+    },
+  });
+
+  const delegatedKeys = delegations
+    .filter(
+      (d) =>
+        d.donneur.isActive &&
+        d.donneur.role.permissions.some((rp) => rp.permission.key === d.permission.key)
+    )
+    .map((d) => d.permission.key);
+
+  const permissions = Array.from(new Set([...rolePermissions, ...delegatedKeys]));
 
   return {
     user: {
@@ -184,6 +227,7 @@ export const getSession = cache(async (): Promise<{
     },
     role: session.role,
     permissions,
+    rolePermissions,
     // Voir `isAdmin()` (backend/src/permissions.ts) : recalculé à chaque
     // appel depuis `Role.estAdmin`, jamais depuis le JWT — même principe
     // que `permissions` ci-dessus, pour qu'un changement pris via
