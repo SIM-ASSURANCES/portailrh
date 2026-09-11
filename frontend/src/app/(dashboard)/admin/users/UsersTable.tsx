@@ -6,6 +6,7 @@ import { RegenererInvitationButton } from "./RegenererInvitationButton";
 import { UserActiveToggle } from "./UserActiveToggle";
 import { UserDeleteButton } from "./UserDeleteButton";
 import { UserRoleSelect } from "./UserRoleSelect";
+import { UserServiceSelect } from "./UserServiceSelect";
 
 interface UserRow {
   id: string;
@@ -13,6 +14,7 @@ interface UserRow {
   email: string;
   isActive: boolean;
   role: { id: string; name: string };
+  service: { id: string; name: string } | null;
   /** Invitation par lien pas encore finalisée (voir CLAUDE.md "Invitation par lien"). */
   isPending: boolean;
 }
@@ -23,7 +25,15 @@ interface UserRow {
  * Server Component puis passées à un Client Component — elles doivent être
  * définies ici, côté client, qui ne reçoit que les données (sérialisables).
  */
-export function UsersTable({ users, roles }: { users: UserRow[]; roles: { id: string; name: string }[] }) {
+export function UsersTable({
+  users,
+  roles,
+  services,
+}: {
+  users: UserRow[];
+  roles: { id: string; name: string }[];
+  services: { id: string; name: string }[];
+}) {
   return (
     <DataTable
       rowKey={(u) => u.id}
@@ -35,6 +45,11 @@ export function UsersTable({ users, roles }: { users: UserRow[]; roles: { id: st
           key: "role",
           header: "Rôle",
           render: (u) => <UserRoleSelect userId={u.id} roleId={u.role.id} roles={roles} />,
+        },
+        {
+          key: "service",
+          header: "Service",
+          render: (u) => <UserServiceSelect userId={u.id} currentServiceId={u.service?.id || null} services={services} />,
         },
         {
           key: "isActive",

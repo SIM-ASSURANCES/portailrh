@@ -16,7 +16,13 @@ import { creerInvitationAction } from "./actions";
  * après succès, à l'Admin de le transmettre lui-même (aucun envoi
  * automatique d'email dans le projet).
  */
-export function InvitationCreateForm({ roles }: { roles: { id: string; name: string }[] }) {
+export function InvitationCreateForm({
+  roles,
+  services,
+}: {
+  roles: { id: string; name: string }[];
+  services: { id: string; name: string }[];
+}) {
   const [state, formAction, isPending] = useActionState(creerInvitationAction, IDLE_ACTION_STATE);
   useActionFeedback(state);
 
@@ -56,6 +62,15 @@ export function InvitationCreateForm({ roles }: { roles: { id: string; name: str
           required
           options={roles.map((role) => ({ value: role.id, label: role.name }))}
           error={state.status === "error" ? state.fieldErrors?.roleId : undefined}
+        />
+        <Select
+          name="serviceId"
+          label="Service"
+          options={[
+            { value: "", label: "Aucun service" },
+            ...services.map((s) => ({ value: s.id, label: s.name })),
+          ]}
+          error={state.status === "error" ? state.fieldErrors?.serviceId : undefined}
         />
         <div className="sm:col-span-2">
           <Button type="submit" loading={isPending}>

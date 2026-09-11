@@ -36,7 +36,7 @@ export default async function CorrectionsPage({ searchParams }: CorrectionsPageP
     where: whereClause,
     orderBy: { heure: "desc" },
     include: {
-      user: { select: { fullName: true, service: true } },
+      user: { select: { fullName: true, service: { select: { name: true } } } },
       effectuePar: { select: { fullName: true } },
       corrections: {
         include: { effectuePar: { select: { fullName: true } } },
@@ -55,7 +55,7 @@ export default async function CorrectionsPage({ searchParams }: CorrectionsPageP
     minutesRetard: p.minutesRetard,
     motif: p.motif,
     collaborateurNom: p.user.fullName,
-    collaborateurService: p.user.service,
+    collaborateurService: p.user.service?.name ?? null,
     effectueParNom: p.effectuePar?.fullName ?? null,
     historiqueCorrections: p.corrections.map((c) => ({
       ancienneValeur: c.ancienneValeur,

@@ -14,6 +14,11 @@ const sections = [
     description: "Consulter et modifier les permissions de chaque rôle.",
   },
   {
+    href: "/admin/services",
+    title: "Services",
+    description: "Gérer les services de l'entreprise et les affectations.",
+  },
+  {
     href: "/admin/modules",
     title: "Modules",
     description: "Activer ou désactiver les modules du portail.",

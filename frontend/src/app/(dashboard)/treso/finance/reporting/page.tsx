@@ -55,11 +55,12 @@ export default async function ReportingPage({
       prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
       prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
       prisma.user.findMany({ orderBy: { fullName: "asc" } }),
-      prisma.user.findMany({ where: { service: { not: null } }, distinct: ["service"], select: { service: true } }),
+      prisma.service.findMany({ orderBy: { name: "asc" }, select: { name: true } }),
       getBeneficiairesConnus(),
     ]);
 
-  const services = servicesRaw.map((u) => u.service).filter((s): s is string => !!s).sort();
+  const services = servicesRaw.map((s) => s.name);
+
 
   const total = rows.reduce(
     (acc, r) => ({

@@ -131,7 +131,7 @@ function buildDemandeWhere(filters: ReportingFilters): Prisma.DemandeWhereInput 
       ? { createdAt: { ...(filters.du ? { gte: filters.du } : {}), ...(filters.au ? { lte: filters.au } : {}) } }
       : {}),
     ...(filters.demandeurId ? { createurId: filters.demandeurId } : {}),
-    ...(filters.service ? { createur: { service: filters.service } } : {}),
+    ...(filters.service ? { createur: { service: { name: filters.service } } } : {}),
     ...(filters.categorieId ? { categorieId: filters.categorieId } : {}),
     ...(filters.objetId ? { objetId: filters.objetId } : {}),
     ...(filters.statut ? { statut: filters.statut } : {}),
@@ -255,22 +255,31 @@ async function getDemandesFiltrees(
 ): Promise<{ demandes: DemandeAvecRelations[]; montantsRegleParDemande: Map<string, MontantsRegle> }> {
   const demandes = await prisma.demande.findMany({
     where: buildDemandeWhere(filters),
-    include: { categorie: true, objet: true, createur: true, beneficiaireUser: true },
+    include: { categorie: true, objet: true, createur: { include: { service: true } }, beneficiaireUser: true },
     orderBy: { createdAt: "asc" },
   });
+
+  const demandesFormatees: DemandeAvecRelations[] = demandes.map((d) => ({
+    ...d,
+    createur: {
+      fullName: d.createur.fullName,
+      service: d.createur.service?.name ?? null,
+    },
+  }));
 
   const montantsRegleParDemande = await getMontantsRegleParDemande(demandes.map((d) => d.id));
 
   const demandesFiltrees = filters.mode
-    ? demandes.filter((d) => {
+    ? demandesFormatees.filter((d) => {
         const montants = montantsRegleParDemande.get(d.id);
         if (!montants) return false;
         return filters.mode === "CAISSE" ? montants.caisse > 0 : montants.banque > 0;
       })
-    : demandes;
+    : demandesFormatees;
 
   return { demandes: demandesFiltrees, montantsRegleParDemande };
 }
+
 
 interface FondsRemis {
   nombreOperations: number;

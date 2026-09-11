@@ -8,7 +8,13 @@ import { IDLE_ACTION_STATE } from "backend/client";
 
 import { createUserAction } from "./actions";
 
-export function UserCreateForm({ roles }: { roles: { id: string; name: string }[] }) {
+export function UserCreateForm({
+  roles,
+  services,
+}: {
+  roles: { id: string; name: string }[];
+  services: { id: string; name: string }[];
+}) {
   const [state, formAction, isPending] = useActionState(createUserAction, IDLE_ACTION_STATE);
   useActionFeedback(state);
 
@@ -41,10 +47,18 @@ export function UserCreateForm({ roles }: { roles: { id: string; name: string }[
       <Select
         name="roleId"
         label="Rôle"
-        placeholder="Sélectionner..."
+        options={roles.map((r) => ({ value: r.id, label: r.name }))}
         required
-        options={roles.map((role) => ({ value: role.id, label: role.name }))}
         error={state.status === "error" ? state.fieldErrors?.roleId : undefined}
+      />
+      <Select
+        name="serviceId"
+        label="Service"
+        options={[
+          { value: "", label: "Aucun service" },
+          ...services.map((s) => ({ value: s.id, label: s.name })),
+        ]}
+        error={state.status === "error" ? state.fieldErrors?.serviceId : undefined}
       />
       <div className="sm:col-span-2">
         <Button type="submit" loading={isPending}>

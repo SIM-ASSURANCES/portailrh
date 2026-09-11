@@ -286,8 +286,10 @@ export const ADMIN_GROUP: NavGroup = {
     { label: "Vue d'ensemble", href: "/admin", icon: "layout-grid", exact: true },
     { label: "Utilisateurs", href: "/admin/users", icon: "users" },
     { label: "Rôles & permissions", href: "/admin/roles", icon: "shield-check" },
+    { label: "Services", href: "/admin/services", icon: "briefcase" },
     { label: "Modules", href: "/admin/modules", icon: "package" },
     { label: "Catégories", href: "/admin/categories", icon: "folder-tree" },
     { label: "Logs Système", href: "/admin/logs", icon: "scroll-text" },
   ],
 };
+

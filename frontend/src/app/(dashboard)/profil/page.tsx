@@ -3,33 +3,44 @@ import { prisma } from "backend";
 import { redirect } from "next/navigation";
 import { ProfileClient } from "./ProfileClient";
 
+import { format } from "date-fns";
+
 export const metadata = {
   title: "Mon Profil | SIM Assurances",
   description: "Gérez vos informations personnelles, votre activité et vos paramètres de sécurité.",
 };
 
-export default async function ProfilPage() {
+export default async function ProfilPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const session = await getSession();
   if (!session) {
     redirect("/login");
   }
 
-  // Bornes du mois en cours
+  const resolvedParams = await searchParams;
+  const moisParam = resolvedParams.mois as string;
+
+  // Bornes du mois sélectionné (ou actuel)
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const referenceDate = moisParam ? new Date(`${moisParam}-01T00:00:00`) : now;
+  const startOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
+  const endOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0, 23, 59, 59, 999);
+  const selectedMonth = format(referenceDate, "yyyy-MM");
 
   // Données utilisateur complètes (service)
   const userDb = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { service: true, createdAt: true },
+    select: { service: { select: { name: true } }, createdAt: true },
   });
 
   const canPointer = hasPermission(session, "pointage.pointer");
   const canCreerDemande = hasPermission(session, "treso.creer_demande");
 
   // Statistiques pointage du mois (seulement si pertinent pour ce rôle)
-  const [nbRetardsMois, nbAbsencesMois] = canPointer && !isAdmin(session)
+  const [nbRetardsMois, nbAbsencesMois] = canPointer
     ? await Promise.all([
         prisma.pointage.count({
           where: {
@@ -48,7 +59,7 @@ export default async function ProfilPage() {
     : [0, 0];
 
   // Demandes de trésorerie en cours (seulement si pertinent)
-  const nbDemandesEnCours = canCreerDemande && !isAdmin(session)
+  const nbDemandesEnCours = canCreerDemande
     ? await prisma.demande.count({
         where: {
           createurId: session.user.id,
@@ -87,10 +98,11 @@ export default async function ProfilPage() {
       <ProfileClient
         user={session.user}
         role={session.role}
-        service={userDb?.service ?? null}
+        service={userDb?.service?.name ?? null}
         membreDepuis={userDb?.createdAt?.toISOString() ?? null}
-        showPointageStats={canPointer && !isAdmin(session)}
-        showTresoStats={canCreerDemande && !isAdmin(session)}
+        selectedMonth={selectedMonth}
+        showPointageStats={canPointer}
+        showTresoStats={canCreerDemande}
         nbRetardsMois={nbRetardsMois}
         nbAbsencesMois={nbAbsencesMois}
         nbDemandesEnCours={nbDemandesEnCours}
