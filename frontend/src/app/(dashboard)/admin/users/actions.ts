@@ -11,6 +11,7 @@ import { getSession, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
+import { logAuditAction } from "@/lib/auditLog";
 
 const SALT_ROUNDS = 10;
 const INVITATION_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -42,6 +43,7 @@ const createUserSchema = z.object({
     .regex(/[0-9]/, "Au moins un chiffre requis")
     .regex(/[^A-Za-z0-9]/, "Au moins un caractère spécial requis"),
   roleId: z.string().min(1, "Rôle requis"),
+  serviceId: z.string().optional().transform(v => v === "" ? null : v),
 });
 
 /**
@@ -90,17 +92,24 @@ export async function createUserAction(
       email: parsed.data.email,
       passwordHash,
       roleId: parsed.data.roleId,
+      serviceId: parsed.data.serviceId,
     },
   });
 
-  await prisma.historiqueEntry.create({
-    data: {
-      entity: "User",
-      entityId: user.id,
-      action: "CREATE",
-      detail: `Création de l'utilisateur ${user.email}`,
-      userId: session.user.id,
-    },
+  const service = parsed.data.serviceId
+    ? await prisma.service.findUnique({ where: { id: parsed.data.serviceId } })
+    : null;
+  const serviceDetail = service ? ` (Service : « ${service.name} »)` : "";
+
+  await logAuditAction({
+    entity: "User",
+    entityId: user.id,
+    action: "CREATE",
+    detail: `Création de l'utilisateur ${user.email}${serviceDetail}`,
+    userId: session.user.id,
+    userFullName: session.user.fullName,
+    userEmail: session.user.email,
+    logFileName: service ? "services.log" : undefined,
   });
 
   revalidatePath("/admin/users");
@@ -113,6 +122,7 @@ const createInvitationSchema = z.object({
   fullName: z.string().min(2, "Le nom doit contenir au moins 2 caractères"),
   email: z.string().email("Email invalide"),
   roleId: z.string().min(1, "Rôle requis"),
+  serviceId: z.string().optional().transform(v => v === "" ? null : v),
 });
 
 /**
@@ -146,6 +156,7 @@ export async function creerInvitationAction(
     fullName: formData.get("fullName"),
     email: formData.get("email"),
     roleId: formData.get("roleId"),
+    serviceId: formData.get("serviceId"),
   });
 
   if (!parsed.success) {
@@ -175,19 +186,26 @@ export async function creerInvitationAction(
       passwordHash: null,
       isActive: false,
       roleId: parsed.data.roleId,
+      serviceId: parsed.data.serviceId,
       invitationToken,
       invitationExpiresAt,
     },
   });
 
-  await prisma.historiqueEntry.create({
-    data: {
-      entity: "User",
-      entityId: user.id,
-      action: "INVITE",
-      detail: `Invitation par lien créée pour ${user.email} (expire le ${invitationExpiresAt.toLocaleDateString("fr-FR")})`,
-      userId: session.user.id,
-    },
+  const service = parsed.data.serviceId
+    ? await prisma.service.findUnique({ where: { id: parsed.data.serviceId } })
+    : null;
+  const serviceDetail = service ? ` (Service : « ${service.name} »)` : "";
+
+  await logAuditAction({
+    entity: "User",
+    entityId: user.id,
+    action: "INVITE",
+    detail: `Invitation par lien créée pour ${user.email}${serviceDetail} (expire le ${invitationExpiresAt.toLocaleDateString("fr-FR")})`,
+    userId: session.user.id,
+    userFullName: session.user.fullName,
+    userEmail: session.user.email,
+    logFileName: service ? "services.log" : undefined,
   });
 
   revalidatePath("/admin/users");
@@ -378,6 +396,76 @@ export async function modifierRoleUtilisateurAction(
 
   return { status: "success", message: `Rôle de ${user.fullName} mis à jour : ${nouveauRole.name}.` };
 }
+
+export async function updateUserServiceAction(
+  userId: string,
+  serviceId: string | null
+): Promise<ActionState> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { service: true },
+    });
+    if (!user) {
+      return { status: "error", message: "Utilisateur introuvable." };
+    }
+
+    if (user.serviceId === serviceId) {
+      return { status: "success", message: "Service inchangé." };
+    }
+
+    let newService = null;
+    if (serviceId) {
+      newService = await prisma.service.findUnique({ where: { id: serviceId } });
+      if (!newService) {
+        return { status: "error", message: "Service sélectionné introuvable." };
+      }
+    }
+
+    const ancienServiceNom = user.service?.name ?? null;
+    const nouveauServiceNom = newService?.name ?? null;
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { serviceId },
+    });
+
+    let detail = "";
+    if (ancienServiceNom && nouveauServiceNom) {
+      detail = `Changement de service pour ${user.fullName} (${user.email}) : « ${ancienServiceNom} » → « ${nouveauServiceNom} »`;
+    } else if (nouveauServiceNom) {
+      detail = `Attribution du service « ${nouveauServiceNom} » à ${user.fullName} (${user.email})`;
+    } else {
+      detail = `Retrait du service pour ${user.fullName} (${user.email}) (anciennement « ${ancienServiceNom} »)`;
+    }
+
+    await logAuditAction({
+      entity: "Service",
+      entityId: serviceId ?? user.serviceId ?? user.id,
+      action: "CHANGE_SERVICE",
+      detail,
+      userId: session.user.id,
+      userFullName: session.user.fullName,
+      userEmail: session.user.email,
+      logFileName: "services.log",
+    });
+
+    revalidatePath("/admin/users");
+    revalidatePath("/profil");
+    publishDataChanged();
+
+    return { status: "success", message: "Service mis à jour." };
+  } catch (error) {
+    console.error(error);
+    return { status: "error", message: "Erreur serveur" };
+  }
+}
+
 
 export async function forcerReinitialisationMotDePasseAction(
   userId: string

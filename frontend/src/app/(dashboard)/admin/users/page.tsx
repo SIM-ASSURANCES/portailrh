@@ -5,12 +5,13 @@ import { NewUserSection } from "./NewUserSection";
 import { UsersTable } from "./UsersTable";
 
 export default async function AdminUsersPage() {
-  const [usersRaw, roles] = await Promise.all([
+  const [usersRaw, roles, services] = await Promise.all([
     prisma.user.findMany({
-      include: { role: true },
+      include: { role: true, service: true },
       orderBy: { fullName: "asc" },
     }),
     prisma.role.findMany({ orderBy: { name: "asc" } }),
+    prisma.service.findMany({ orderBy: { name: "asc" } }),
   ]);
 
   // "En attente d'activation" (invitation par lien pas encore finalisée) —
@@ -24,6 +25,7 @@ export default async function AdminUsersPage() {
     email: u.email,
     isActive: u.isActive,
     role: u.role,
+    service: u.service,
     isPending: !u.passwordHash,
   }));
 
@@ -36,12 +38,12 @@ export default async function AdminUsersPage() {
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-foreground">Nouvel utilisateur</h2>
-        <NewUserSection roles={roles} />
+        <NewUserSection roles={roles} services={services} />
       </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-foreground">Comptes existants</h2>
-        <UsersTable users={users} roles={roles} />
+        <UsersTable users={users} roles={roles} services={services} />
       </section>
     </div>
   );

@@ -2,9 +2,11 @@
 
 import { useState, useRef, useTransition } from "react";
 import Image from "next/image";
-import { Icon } from "@/components/icons";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { Icon, type IconName } from "@/components/icons";
 import { updateProfilePhoto, updatePassword } from "./actions";
-import { Badge, StatCard, PageHeader, DataTable, type DataTableColumn } from "@/components/ui";
+import { Badge, PageHeader, DataTable, type DataTableColumn } from "@/components/ui";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -25,6 +27,7 @@ interface ProfileClientProps {
   role: string;
   service: string | null;
   membreDepuis: string | null;
+  selectedMonth: string;
   showPointageStats: boolean;
   showTresoStats: boolean;
   nbRetardsMois: number;
@@ -88,6 +91,53 @@ const sessionColumns: DataTableColumn<ConnexionEntry>[] = [
   },
 ];
 
+// ─── MiniCard Component ──────────────────────────────────────────────────────
+
+function MiniCard({
+  icon,
+  label,
+  value,
+  tone = "neutral",
+  href,
+}: {
+  icon: IconName;
+  label: string;
+  value: React.ReactNode;
+  tone?: "info" | "success" | "warning" | "neutral" | "danger" | "primary";
+  href?: string;
+}) {
+  const toneClasses = {
+    info: "text-info bg-info/10 border-info/20",
+    success: "text-success bg-success/10 border-success/20",
+    warning: "text-warning bg-warning/10 border-warning/20",
+    danger: "text-danger bg-danger/10 border-danger/20",
+    neutral: "text-muted-foreground bg-muted/50 border-border",
+    primary: "text-primary bg-primary/10 border-primary/20",
+  };
+
+  const Content = () => (
+    <div className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${toneClasses[tone]} hover:bg-opacity-80`}>
+      <div className={`flex items-center justify-center size-10 rounded-full bg-background/50 shadow-sm`}>
+        <Icon name={icon} className="size-5" />
+      </div>
+      <div className="flex-1">
+        <p className="text-xs font-semibold uppercase tracking-wider opacity-80">{label}</p>
+        <p className="text-xl font-bold leading-tight">{value}</p>
+      </div>
+    </div>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className="block hover:-translate-y-0.5 transition-transform">
+        <Content />
+      </Link>
+    );
+  }
+
+  return <Content />;
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 type Tab = "overview" | "security";
@@ -97,6 +147,7 @@ export function ProfileClient({
   role,
   service,
   membreDepuis,
+  selectedMonth,
   showPointageStats,
   showTresoStats,
   nbRetardsMois,
@@ -108,6 +159,16 @@ export function ProfileClient({
   const [isUploading, setIsUploading] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const handleMonthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("mois", e.target.value);
+    router.push(`${pathname}?${params.toString()}`);
+  };
 
   // Password form
   const [currentPass, setCurrentPass] = useState("");
@@ -357,38 +418,44 @@ export function ProfileClient({
               {/* Activité du mois — uniquement si pertinent */}
               {(showPointageStats || showTresoStats) && (
                 <section className="rounded-2xl border border-border bg-surface p-6 shadow-elevated space-y-4">
-                  <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
-                    <Icon name="chart-bar" className="size-4 text-primary" />
-                    Mon activité — ce mois-ci
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+                      <Icon name="chart-bar" className="size-4 text-primary" />
+                      Mon activité
+                    </h3>
+                    <input
+                      type="month"
+                      value={selectedMonth}
+                      onChange={handleMonthChange}
+                      className="text-sm rounded-lg border border-border px-3 py-1.5 bg-background text-foreground shadow-sm focus:ring-2 focus:ring-primary focus:outline-none"
+                    />
+                  </div>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                     {showPointageStats && (
                       <>
-                        <StatCard
+                        <MiniCard
                           icon="clock"
-                          label="Retards ce mois"
+                          label="Retards"
                           value={nbRetardsMois}
                           tone={nbRetardsMois > 0 ? "warning" : "success"}
-                          hint={nbRetardsMois === 0 ? "Aucun retard 🎉" : undefined}
                           href="/pointage/historique"
                         />
-                        <StatCard
+                        <MiniCard
                           icon="calendar-x"
-                          label="Absences ce mois"
+                          label="Absences"
                           value={nbAbsencesMois}
                           tone={nbAbsencesMois > 0 ? "danger" : "success"}
-                          hint={nbAbsencesMois === 0 ? "Aucune absence" : undefined}
                           href="/pointage/historique"
                         />
                       </>
                     )}
                     {showTresoStats && (
-                      <StatCard
+                      <MiniCard
                         icon="wallet"
                         label="Demandes en cours"
                         value={nbDemandesEnCours}
                         tone={nbDemandesEnCours > 0 ? "info" : "neutral"}
-                        hint={nbDemandesEnCours === 0 ? "Aucune en attente" : undefined}
                         href="/treso/demandes"
                       />
                     )}

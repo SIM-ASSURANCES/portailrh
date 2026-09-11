@@ -23,27 +23,31 @@ export function getReportingPeriodConstraints(dateDebut?: string, dateFin?: stri
   return { error: null };
 }
 
-export async function getServicesUniques() {
-  const users = await prisma.user.findMany({
-    where: { service: { not: null } },
-    select: { service: true },
-    distinct: ["service"],
+export async function getServicesUniques(): Promise<string[]> {
+  const services = await prisma.service.findMany({
+    orderBy: { name: "asc" },
+    select: { name: true },
   });
-  return users.map((u) => u.service as string).filter(Boolean);
+  return services.map((s) => s.name);
 }
 
 export async function getCollaborateursFiltres() {
-  return await prisma.user.findMany({
+  const users = await prisma.user.findMany({
     where: { isActive: true },
-    select: { id: true, fullName: true, service: true },
+    select: { id: true, fullName: true, service: { select: { name: true } } },
     orderBy: { fullName: "asc" },
   });
+  return users.map((u) => ({
+    id: u.id,
+    fullName: u.fullName,
+    service: u.service?.name ?? null,
+  }));
 }
 
 export async function getReportingAgrégé(filters: PointageReportingFilters) {
   const whereUser: Prisma.UserWhereInput = {};
   if (filters.userId) whereUser.id = filters.userId;
-  if (filters.service) whereUser.service = filters.service;
+  if (filters.service) whereUser.service = { name: filters.service };
 
   const wherePointage: Prisma.PointageWhereInput = {};
   if (filters.dateDebut || filters.dateFin) {
@@ -72,7 +76,7 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
     select: {
       id: true,
       fullName: true,
-      service: true,
+      service: { select: { name: true } },
       pointagesEffectues: {
         where: {
           ...wherePointage,
@@ -103,7 +107,7 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
     return {
       id: u.id,
       fullName: u.fullName,
-      service: u.service,
+      service: u.service?.name ?? null,
       joursTravailles,
       presences,
       absences,
@@ -117,7 +121,7 @@ export async function getDetailsRetards(filters: PointageReportingFilters, skip 
   const where: Prisma.PointageWhereInput = { type: "ARRIVEE", estRetard: true };
 
   if (filters.userId) where.userId = filters.userId;
-  if (filters.service) where.user = { service: filters.service };
+  if (filters.service) where.user = { service: { name: filters.service } };
 
   if (filters.dateDebut || filters.dateFin) {
     where.heure = {};
@@ -133,7 +137,7 @@ export async function getDetailsRetards(filters: PointageReportingFilters, skip 
     where,
     include: {
       user: {
-        select: { fullName: true, service: true },
+        select: { fullName: true, service: { select: { name: true } } },
       },
     },
     orderBy: { heure: "desc" },
@@ -147,7 +151,7 @@ export async function getDetailsRetards(filters: PointageReportingFilters, skip 
     data: retards.map((r) => ({
       id: r.id,
       collaborateur: r.user.fullName,
-      service: r.user.service,
+      service: r.user.service?.name ?? null,
       date: r.heure,
       heurePrevue: r.heurePrevue,
       heureReelle: r.heure,
@@ -157,3 +161,4 @@ export async function getDetailsRetards(filters: PointageReportingFilters, skip 
     total,
   };
 }
+

@@ -17,7 +17,7 @@ type Mode = "manuel" | "invitation";
  * de passe). Les deux restent pleinement disponibles, jamais l'une au
  * détriment de l'autre.
  */
-export function NewUserSection({ roles }: { roles: { id: string; name: string }[] }) {
+export function NewUserSection({ roles, services }: { roles: { id: string; name: string }[], services: { id: string; name: string }[] }) {
   const [mode, setMode] = useState<Mode>("manuel");
 
   return (
@@ -35,7 +35,7 @@ export function NewUserSection({ roles }: { roles: { id: string; name: string }[
         </Button>
       </div>
 
-      {mode === "manuel" ? <UserCreateForm roles={roles} /> : <InvitationCreateForm roles={roles} />}
+      {mode === "manuel" ? <UserCreateForm roles={roles} services={services} /> : <InvitationCreateForm roles={roles} services={services} />}
     </div>
   );
 }

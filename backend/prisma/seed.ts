@@ -194,16 +194,33 @@ async function main() {
 
   console.log(`${rolePermissionCount} attributions rôle-permission créées.`);
 
+  console.log("Création des services...");
+
+  const servicesData = [
+    { name: "Commercial" },
+    { name: "Finance" },
+    { name: "Direction" },
+    { name: "Ressources Humaines" },
+    { name: "Technique" },
+  ];
+
+  const createdServices = await Promise.all(
+    servicesData.map((s) => prisma.service.create({ data: s }))
+  );
+
+  const serviceByName = Object.fromEntries(createdServices.map((s) => [s.name, s]));
+  console.log(`${createdServices.length} services créés.`);
+
   console.log("Création des utilisateurs de test...");
 
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, SALT_ROUNDS);
 
   const testUsers = [
-    { fullName: "Collaborateur Test", email: "collaborateur@simassurances.test", roleId: roleCollaborateur.id, service: "Commercial" },
-    { fullName: "Finance Test", email: "finance@simassurances.test", roleId: roleFinance.id, service: "Finance" },
-    { fullName: "DG Test", email: "dg@simassurances.test", roleId: roleDG.id, service: "Direction" },
-    { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id, service: null },
-    { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id, service: "Ressources Humaines" },
+    { fullName: "Collaborateur Test", email: "collaborateur@simassurances.test", roleId: roleCollaborateur.id, serviceId: serviceByName["Commercial"].id },
+    { fullName: "Finance Test", email: "finance@simassurances.test", roleId: roleFinance.id, serviceId: serviceByName["Finance"].id },
+    { fullName: "DG Test", email: "dg@simassurances.test", roleId: roleDG.id, serviceId: serviceByName["Direction"].id },
+    { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id, serviceId: null },
+    { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id, serviceId: serviceByName["Ressources Humaines"].id },
   ];
 
   const createdUsers = await Promise.all(
@@ -214,7 +231,7 @@ async function main() {
           email: u.email,
           passwordHash,
           roleId: u.roleId,
-          service: u.service,
+          serviceId: u.serviceId,
         },
       })
     )

@@ -23,17 +23,24 @@ export default async function PointageExceptionnelPage() {
   }
 
   // Récupérer la liste des collaborateurs actifs, triés par nom
-  const users = await prisma.user.findMany({
+  const usersDb = await prisma.user.findMany({
     where: { isActive: true },
     select: {
       id: true,
       fullName: true,
-      service: true,
+      service: { select: { name: true } },
     },
     orderBy: {
       fullName: "asc",
     },
   });
+
+  const users = usersDb.map((u) => ({
+    id: u.id,
+    fullName: u.fullName,
+    service: u.service?.name ?? null,
+  }));
+
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto py-6">
