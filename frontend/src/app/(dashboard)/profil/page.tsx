@@ -25,16 +25,11 @@ export default async function ProfilPage() {
     select: { service: true, createdAt: true },
   });
 
-  const canSeePointage =
-    hasPermission(session, "pointage.pointer") ||
-    hasPermission(session, "pointage.voir_dashboard_rh");
-
-  const canSeeTreso =
-    hasPermission(session, "treso.creer_demande") ||
-    hasPermission(session, "treso.voir_dashboard_finance");
+  const canPointer = hasPermission(session, "pointage.pointer");
+  const canCreerDemande = hasPermission(session, "treso.creer_demande");
 
   // Statistiques pointage du mois (seulement si pertinent pour ce rôle)
-  const [nbRetardsMois, nbAbsencesMois] = canSeePointage && !isAdmin(session)
+  const [nbRetardsMois, nbAbsencesMois] = canPointer && !isAdmin(session)
     ? await Promise.all([
         prisma.pointage.count({
           where: {
@@ -53,7 +48,7 @@ export default async function ProfilPage() {
     : [0, 0];
 
   // Demandes de trésorerie en cours (seulement si pertinent)
-  const nbDemandesEnCours = canSeeTreso && !isAdmin(session)
+  const nbDemandesEnCours = canCreerDemande && !isAdmin(session)
     ? await prisma.demande.count({
         where: {
           createurId: session.user.id,
@@ -94,8 +89,8 @@ export default async function ProfilPage() {
         role={session.role}
         service={userDb?.service ?? null}
         membreDepuis={userDb?.createdAt?.toISOString() ?? null}
-        showPointageStats={canSeePointage && !isAdmin(session)}
-        showTresoStats={canSeeTreso && !isAdmin(session)}
+        showPointageStats={canPointer && !isAdmin(session)}
+        showTresoStats={canCreerDemande && !isAdmin(session)}
         nbRetardsMois={nbRetardsMois}
         nbAbsencesMois={nbAbsencesMois}
         nbDemandesEnCours={nbDemandesEnCours}
