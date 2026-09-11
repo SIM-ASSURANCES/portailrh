@@ -87,7 +87,13 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
     if (hasPermission(session, "pointage.voir_dashboard_rh")) {
       return { href: "/pointage/rh", reason: "no_access" };
     }
-    return { href: "/pointage/pointer", reason: "no_access" };
+    if (hasPermission(session, "pointage.pointer")) {
+      return { href: "/pointage/pointer", reason: "no_access" };
+    }
+    if (hasPermission(session, "pointage.consulter_historique")) {
+      return { href: "/pointage/historique", reason: "no_access" };
+    }
+    return { href: null, reason: "no_access" };
   }
   return { href: null, reason: "coming_soon" };
 }
@@ -132,6 +138,18 @@ export default async function DashboardHomePage({
         <ToastOnMount
           variant="error"
           message="Vous n'avez pas la permission d'approuver les validations complètes."
+        />
+      ) : null}
+      {error === "acces_refuse_pointer" ? (
+        <ToastOnMount
+          variant="error"
+          message="Vous n'avez pas la permission de pointer."
+        />
+      ) : null}
+      {error === "acces_refuse_historique" ? (
+        <ToastOnMount
+          variant="error"
+          message="Vous n'avez pas la permission de consulter l'historique de pointage."
         />
       ) : null}
 

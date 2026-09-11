@@ -81,3 +81,11 @@ frontend/src/app/(dashboard)/pointage/ticket.txt
 prisma/*.backup
 backend/prisma/*.backup
 .next
+backend/prisma/clean_pointages.ts
+backend/prisma/clearData.ts
+
+# Photos de profil ignorées
+!frontend/public/uploads/
+!frontend/public/uploads/profiles/
+frontend/public/uploads/profiles/*
+!frontend/public/uploads/profiles/.gitkeep

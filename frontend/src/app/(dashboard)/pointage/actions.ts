@@ -1,7 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { getSession } from "@/lib/auth";
+import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
 import { headers } from "next/headers";
@@ -40,6 +40,7 @@ export async function enregistrerPointageAction(
 ): Promise<ActionState> {
   const session = await getSession();
   if (!session) return { status: "error", message: "Non authentifié" };
+  if (!hasPermission(session, "pointage.pointer")) return { status: "error", message: "Vous n'avez pas la permission de pointer." };
 
   const parsed = pointageSchema.safeParse(input);
   if (!parsed.success) {

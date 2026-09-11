@@ -40,11 +40,19 @@ export async function GET(request: Request) {
       }
     }
 
-    // 2. Récupérer tous les collaborateurs qui doivent pointer (hors ADMIN)
+    // 2. Récupérer tous les collaborateurs qui doivent pointer (ceux qui ont la permission pointage.pointer)
     const users = await prisma.user.findMany({
       where: {
         isActive: true,
-        role: { name: { not: "ADMIN" } }
+        role: {
+          permissions: {
+            some: {
+              permission: {
+                key: "pointage.pointer"
+              }
+            }
+          }
+        }
       },
       select: { id: true }
     });
@@ -186,9 +194,15 @@ export async function GET(request: Request) {
       }
     }
 
+    let baseMessage = `Cron exécuté avec succès. ${nouvellesAbsences} nouvelle(s) absence(s) détectée(s) sur les ${joursAnalyses} derniers jours. ${oublisDetectes} oubli(s) de pointage notifié(s).`;
+    
+    if (!hasPassedEndOfDay) {
+      baseMessage += " L'heure de fin de journée n'est pas encore passée. Seules les absences des jours précédents ont été analysées.";
+    }
+
     return NextResponse.json({
       success: true,
-      message: `Cron exécuté avec succès. ${nouvellesAbsences} nouvelle(s) absence(s) détectée(s) sur les ${joursAnalyses} derniers jours. ${oublisDetectes} oubli(s) de pointage notifié(s).`
+      message: baseMessage
     });
   } catch (error) {
     console.error("Erreur lors du cron des absences:", error);

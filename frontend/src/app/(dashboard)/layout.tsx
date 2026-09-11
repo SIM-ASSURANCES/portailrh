@@ -63,6 +63,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canDelegerAcces={session.rolePermissions.some(
         (key) => key.startsWith("treso.") || key.startsWith("pointage.")
       )}
+      canPointer={hasPermission(session, "pointage.pointer")}
+      canConsulterHistorique={hasPermission(session, "pointage.consulter_historique")}
       unreadNotificationsCount={unreadCount}
 
     >

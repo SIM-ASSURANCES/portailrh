@@ -48,6 +48,10 @@ interface SidebarProps {
   canAccessPointageRH?: boolean;
   /** Affiche "Déléguer des accès" (au moins une permission treso.x ou pointage.x via son propre rôle). */
   canDelegerAcces?: boolean;
+  /** `pointage.pointer` : ajoute "Pointer" au groupe "Mon espace". */
+  canPointer?: boolean;
+  /** `pointage.consulter_historique` : ajoute "Mon historique" au groupe "Mon espace". */
+  canConsulterHistorique?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -95,6 +99,8 @@ export function Sidebar({
   hasPointageAccess = false,
   canAccessPointageRH = false,
   canDelegerAcces = false,
+  canPointer = false,
+  canConsulterHistorique = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
@@ -112,6 +118,8 @@ export function Sidebar({
     canGererCategories,
     hasPointageAccess,
     canAccessPointageRH,
+    canPointer,
+    canConsulterHistorique,
   });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0]?.key ?? null
