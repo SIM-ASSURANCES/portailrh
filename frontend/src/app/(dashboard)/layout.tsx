@@ -54,6 +54,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "pointage.voir_dashboard_rh") ||
         hasPermission(session, "pointage.voir_reporting")
       }
+      canPointer={hasPermission(session, "pointage.pointer")}
+      canConsulterHistorique={hasPermission(session, "pointage.consulter_historique")}
       unreadNotificationsCount={unreadCount}
 
     >

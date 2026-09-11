@@ -36,6 +36,8 @@ interface AppShellProps {
   hasPointageAccess?: boolean;
   /** Ajoute le groupe "RH" du Pointage (permissions RH uniquement). */
   canAccessPointageRH?: boolean;
+  canPointer?: boolean;
+  canConsulterHistorique?: boolean;
   unreadNotificationsCount?: number;
   children: ReactNode;
 }
@@ -63,6 +65,8 @@ export function AppShell({
   canGererSoldeOuverture = false,
   hasPointageAccess = false,
   canAccessPointageRH = false,
+  canPointer = false,
+  canConsulterHistorique = false,
   unreadNotificationsCount = 0,
   children,
 }: AppShellProps) {
@@ -159,6 +163,8 @@ export function AppShell({
         canGererSoldeOuverture={canGererSoldeOuverture}
         hasPointageAccess={hasPointageAccess}
         canAccessPointageRH={canAccessPointageRH}
+        canPointer={canPointer}
+        canConsulterHistorique={canConsulterHistorique}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />

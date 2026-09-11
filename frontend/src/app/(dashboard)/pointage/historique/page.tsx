@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth";
+import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { PageHeader, StatCard } from "@/components/ui";
 import { HistoriqueFilters } from "./HistoriqueFilters";
@@ -18,6 +18,7 @@ interface HistoriquePageProps {
 export default async function PointageHistoriquePage({ searchParams }: HistoriquePageProps) {
   const session = await getSession();
   if (!session) redirect("/login");
+  if (!hasPermission(session, "pointage.consulter_historique")) redirect("/?error=acces_refuse_historique");
 
   const { du, au, type } = await searchParams;
 

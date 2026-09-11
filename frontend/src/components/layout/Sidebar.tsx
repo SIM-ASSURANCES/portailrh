@@ -37,6 +37,8 @@ interface SidebarProps {
   hasPointageAccess?: boolean;
   /** Ajoute le groupe "RH" du Pointage (permissions RH uniquement). */
   canAccessPointageRH?: boolean;
+  canPointer?: boolean;
+  canConsulterHistorique?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -82,6 +84,8 @@ export function Sidebar({
   canGererSoldeOuverture = false,
   hasPointageAccess = false,
   canAccessPointageRH = false,
+  canPointer = false,
+  canConsulterHistorique = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
@@ -98,6 +102,8 @@ export function Sidebar({
     canGererSoldeOuverture,
     hasPointageAccess,
     canAccessPointageRH,
+    canPointer,
+    canConsulterHistorique,
   });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0]?.key ?? null

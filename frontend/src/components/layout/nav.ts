@@ -105,6 +105,8 @@ export interface NavFlags {
    * côté serveur par `pointage/rh/layout.tsx`, jamais que côté nav.
    */
   canAccessPointageRH: boolean;
+  canPointer: boolean;
+  canConsulterHistorique: boolean;
 }
 
 /**
@@ -143,6 +145,8 @@ export function getNavBranches({
   canGererSoldeOuverture,
   hasPointageAccess,
   canAccessPointageRH,
+  canPointer,
+  canConsulterHistorique,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -240,8 +244,8 @@ export function getNavBranches({
       groups: [
         {
           items: [
-            { label: "Pointer", href: "/pointage/pointer", icon: "qr-code" },
-            { label: "Mon historique", href: "/pointage/historique", icon: "book-text" },
+            ...(canPointer ? [{ label: "Pointer", href: "/pointage/pointer", icon: "qr-code" } satisfies NavItem] : []),
+            ...(canConsulterHistorique ? [{ label: "Mon historique", href: "/pointage/historique", icon: "book-text" } satisfies NavItem] : []),
           ],
         },
         ...(canAccessPointageRH

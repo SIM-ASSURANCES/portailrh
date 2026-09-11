@@ -1,4 +1,4 @@
-import { getSession } from "@/lib/auth";
+import { getSession, hasPermission } from "@/lib/auth";
 import {prisma} from "backend";
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -8,6 +8,7 @@ import { SmartPointage, PointageMode } from "../SmartPointage";
 export default async function PointagePage({ searchParams }: { searchParams: Promise<{ source?: string }> }) {
   const session = await getSession();
   if (!session) redirect("/login");
+  if (!hasPermission(session, "pointage.pointer")) redirect("/?error=acces_refuse_pointer");
 
   const { source } = await searchParams;
   const isQR = source === "QR_CODE";

@@ -134,6 +134,15 @@ export default async function PresenceDuJourPage({
       where: {
         isActive: true,
         id: { notIn: exclusIds },
+        role: {
+          permissions: {
+            some: {
+              permission: {
+                key: "pointage.pointer"
+              }
+            }
+          }
+        }
       },
       select: { id: true, fullName: true, email: true },
     }),
