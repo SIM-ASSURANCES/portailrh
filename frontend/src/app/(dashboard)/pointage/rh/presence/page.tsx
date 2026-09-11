@@ -7,6 +7,7 @@ import { fr } from "date-fns/locale";
 import { PresenceTabs, PresenceData } from "./PresenceTabs";
 import { Card } from "@/components/ui/Card";
 import { MonthFilter } from "./MonthFilter";
+import { RecoverAbsencesButton } from "./RecoverAbsencesButton";
 
 export default async function PresenceDuJourPage({
   searchParams,
@@ -31,7 +32,7 @@ export default async function PresenceDuJourPage({
   const monthStart = startOfMonth(palmaresDate);
   const monthEnd = endOfMonth(palmaresDate);
 
-  const [pointagesDb, absentsDb, retardsDuMois] = await Promise.all([
+  const [pointagesDb, absentsDb, retardsDuMois, parametrage] = await Promise.all([
     prisma.pointage.findMany({
       where: {
         heure: {
@@ -81,6 +82,9 @@ export default async function PresenceDuJourPage({
       _count: {
         id: true,
       },
+    }),
+    prisma.parametrageHoraire.findFirst({
+      where: { isActive: true },
     })
   ]);
 
@@ -173,14 +177,34 @@ export default async function PresenceDuJourPage({
     }))
     .sort((a, b) => b._count.id - a._count.id);
 
+  let isEndOfDayPassed = false;
+  const realNow = new Date();
+  const isToday = now.toDateString() === realNow.toDateString();
+
+  if (now < startOfDay(realNow)) {
+    isEndOfDayPassed = true;
+  } else if (isToday) {
+    if (parametrage && parametrage.heureFinApresMidi) {
+      const [endHour, endMinute] = parametrage.heureFinApresMidi.split(":").map(Number);
+      if (realNow.getHours() > endHour || (realNow.getHours() === endHour && realNow.getMinutes() >= endMinute)) {
+        isEndOfDayPassed = true;
+      }
+    } else if (realNow.getHours() >= 18) {
+      isEndOfDayPassed = true;
+    }
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-8 font-sans">
-      <PageHeader
-        title={dateParam ? `Présence du ${format(now, "dd/MM/yyyy")}` : "Présence du jour"}
-        description="Suivi en temps réel des arrivées, retards et absences de la journée."
-        backHref="/pointage/rh"
-        backLabel="Retour à la Boîte à Outils"
-      />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <PageHeader
+          title={dateParam ? `Présence du ${format(now, "dd/MM/yyyy")}` : "Présence du jour"}
+          description="Suivi en temps réel des arrivées, retards et absences de la journée."
+          backHref="/pointage/rh"
+          backLabel="Retour à la Boîte à Outils"
+        />
+        <RecoverAbsencesButton dateStr={format(now, "yyyy-MM-dd")} isEndOfDayPassed={isEndOfDayPassed} />
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard

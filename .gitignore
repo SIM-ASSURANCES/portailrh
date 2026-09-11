@@ -82,4 +82,4 @@ prisma/*.backup
 backend/prisma/*.backup
 .next
 backend/prisma/clean_pointages.ts
-backend/prisma/clear_data.ts
+backend/prisma/clearData.ts
