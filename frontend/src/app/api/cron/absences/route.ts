@@ -54,8 +54,24 @@ export async function GET(request: Request) {
           }
         }
       },
-      select: { id: true }
+      select: { id: true, createdAt: true }
     });
+
+    // 2b. Récupérer la dernière date d'activation/réactivation pour chaque compte
+    const dernieresActivations = await prisma.historiqueEntry.findMany({
+      where: {
+        entity: "User",
+        action: { in: ["ACTIVATE", "INVITATION_ACTIVATED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { entityId: true, createdAt: true },
+    });
+    const derniereActivationMap = new Map<string, Date>();
+    for (const entry of dernieresActivations) {
+      if (entry.entityId && !derniereActivationMap.has(entry.entityId)) {
+        derniereActivationMap.set(entry.entityId, entry.createdAt);
+      }
+    }
 
     let nouvellesAbsences = 0;
 
@@ -110,6 +126,19 @@ export async function GET(request: Request) {
       if (joursFeriesSet.has(dateStr)) continue;
 
       for (const user of users) {
+        // Date d'entrée en vigueur : dernière réactivation (si plus récente) ou date de création
+        const derniereActivation = derniereActivationMap.get(user.id);
+        const dateReference = (derniereActivation && derniereActivation > user.createdAt)
+          ? derniereActivation
+          : user.createdAt;
+
+        // Règle Option B : Un utilisateur ne peut pas être absent avant ou le jour même de sa création/réactivation
+        const userEffectiveDate = new Date(dateReference);
+        userEffectiveDate.setHours(0, 0, 0, 0);
+        if (currentDate <= userEffectiveDate) {
+          continue;
+        }
+
         const key = `${user.id}_${dateStr}`;
         if (!pointagesSet.has(key) && !absencesSet.has(key)) {
           absencesToCreate.push({

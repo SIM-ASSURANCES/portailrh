@@ -3,7 +3,6 @@ import { PageHeader } from "@/components/ui";
 import { StatCard } from "@/components/ui/StatCard";
 import { prisma } from "backend";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth, format } from "date-fns";
-import { fr } from "date-fns/locale";
 import { PresenceTabs, PresenceData } from "./PresenceTabs";
 import { Card } from "@/components/ui/Card";
 import { MonthFilter } from "./MonthFilter";
@@ -133,11 +132,13 @@ export default async function PresenceDuJourPage({
 
   const retardsUserIds = retardsDuMois.map((r) => r.userId);
 
-  const [manquantsDb, users] = await Promise.all([
+  const [manquantsDb, users, activationsRecentes] = await Promise.all([
     prisma.user.findMany({
       where: {
         isActive: true,
         id: { notIn: exclusIds },
+        // Option B : Le collaborateur n'est attendu que s'il a été créé avant ce jour
+        createdAt: { lt: todayStart },
         role: {
           permissions: {
             some: {
@@ -153,10 +154,21 @@ export default async function PresenceDuJourPage({
     prisma.user.findMany({
       where: { id: { in: retardsUserIds } },
       select: { id: true, fullName: true, email: true },
-    })
+    }),
+    prisma.historiqueEntry.findMany({
+      where: {
+        entity: "User",
+        action: { in: ["ACTIVATE", "INVITATION_ACTIVATED"] },
+        createdAt: { gte: todayStart },
+      },
+      select: { entityId: true },
+    }),
   ]);
 
-  const manquantsCount = manquantsDb.length;
+  const activationsApresDateIds = new Set(activationsRecentes.map((a) => a.entityId).filter(Boolean));
+  const manquantsEffectifs = manquantsDb.filter((m) => !activationsApresDateIds.has(m.id));
+
+  const manquantsCount = manquantsEffectifs.length;
 
   const absents: PresenceData[] = absentsDb.map(a => ({
     userId: a.userId,
@@ -164,7 +176,7 @@ export default async function PresenceDuJourPage({
     email: a.user.email
   }));
 
-  const manquants: PresenceData[] = manquantsDb.map(m => ({
+  const manquants: PresenceData[] = manquantsEffectifs.map(m => ({
     userId: m.id,
     fullName: m.fullName,
     email: m.email

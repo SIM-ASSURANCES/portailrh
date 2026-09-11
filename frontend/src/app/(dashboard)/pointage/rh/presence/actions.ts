@@ -74,8 +74,23 @@ export async function recoverAbsencesAction(dateStr: string) {
         isActive: true,
         role: { permissions: { some: { permission: { key: "pointage.pointer" } } } }
       },
-      select: { id: true }
+      select: { id: true, createdAt: true }
     });
+
+    const dernieresActivations = await prisma.historiqueEntry.findMany({
+      where: {
+        entity: "User",
+        action: { in: ["ACTIVATE", "INVITATION_ACTIVATED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { entityId: true, createdAt: true },
+    });
+    const derniereActivationMap = new Map<string, Date>();
+    for (const entry of dernieresActivations) {
+      if (entry.entityId && !derniereActivationMap.has(entry.entityId)) {
+        derniereActivationMap.set(entry.entityId, entry.createdAt);
+      }
+    }
 
     const pointages = await prisma.pointage.findMany({
       where: { type: "ARRIVEE", heure: { gte: dateStart, lte: dateEnd } },
@@ -92,6 +107,17 @@ export async function recoverAbsencesAction(dateStr: string) {
     const absencesToCreate: Prisma.AbsenceCreateManyInput[] = [];
 
     for (const user of users) {
+      // Règle Option B : Un utilisateur ne peut pas être absent avant ou le jour même de sa création/réactivation
+      const derniereActivation = derniereActivationMap.get(user.id);
+      const dateReference = (derniereActivation && derniereActivation > user.createdAt)
+        ? derniereActivation
+        : user.createdAt;
+
+      const userEffectiveDate = startOfDay(dateReference);
+      if (dateStart <= userEffectiveDate) {
+        continue;
+      }
+
       if (!pointagesSet.has(user.id) && !absencesSet.has(user.id)) {
         absencesToCreate.push({
           userId: user.id,
