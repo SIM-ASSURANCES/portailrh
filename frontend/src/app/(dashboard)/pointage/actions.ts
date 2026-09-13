@@ -320,12 +320,41 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
   const session = await getSession();
   if (!session) return { status: "error", message: "Non authentifié" };
 
+  const now = new Date();
+
+  // Option B : Le jour de création ou de réactivation du compte n'est pas pénalisé par l'absence automatique
+  const userDb = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { createdAt: true },
+  });
+  if (userDb) {
+    const derniereActivation = await prisma.historiqueEntry.findFirst({
+      where: {
+        entity: "User",
+        entityId: session.user.id,
+        action: { in: ["ACTIVATE", "INVITATION_ACTIVATED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    });
+    const dateReference = (derniereActivation && derniereActivation.createdAt > userDb.createdAt)
+      ? derniereActivation.createdAt
+      : userDb.createdAt;
+
+    const userEffectiveDay = new Date(dateReference);
+    userEffectiveDay.setHours(0, 0, 0, 0);
+    const todayDay = new Date(now);
+    todayDay.setHours(0, 0, 0, 0);
+    if (todayDay <= userEffectiveDay) {
+      return { status: "error", message: "Le jour de création ou d'activation du compte n'est pas soumis à l'absence automatique." };
+    }
+  }
+
   const parametrage = await prisma.parametrageHoraire.findFirst({
     where: { isActive: true },
   });
 
   const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
-  const now = new Date();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
   if (currentMinutes < limiteDepartMinutes) {

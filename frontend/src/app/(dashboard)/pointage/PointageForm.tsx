@@ -74,6 +74,26 @@ export function PointageForm({
             Réseau Wi-Fi non détecté. Géolocalisation requise.
           </p>
           {error && <p className="text-sm text-destructive text-center">{error}</p>}
+          
+          <details className="rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+            <summary className="font-medium text-foreground cursor-pointer select-none">
+              📱 Comment autoriser la position sur smartphone ?
+            </summary>
+            <div className="mt-2.5 space-y-2 text-left">
+              <div>
+                <strong className="text-foreground">Sur Chrome (Android) :</strong>
+                <p className="mt-0.5">1. Touchez l&apos;icône à gauche de la barre d&apos;adresse (icône réglages ou cadenas).</p>
+                <p>2. Touchez <em>Autorisations</em> ou <em>Paramètres du site</em> puis <em>Position</em>.</p>
+                <p>3. Sélectionnez <em>Autoriser</em> puis réessayez.</p>
+              </div>
+              <div className="pt-1 border-t border-border/50">
+                <strong className="text-foreground">Sur Safari (iPhone) :</strong>
+                <p className="mt-0.5">1. Touchez l&apos;icône <em>aA</em> à gauche de la barre d&apos;adresse.</p>
+                <p>2. Touchez <em>Réglages du site web</em> ➔ <em>Emplacement</em> ➔ <em>Autoriser</em>.</p>
+              </div>
+            </div>
+          </details>
+
           <Button 
             type="button" 
             variant="secondary" 

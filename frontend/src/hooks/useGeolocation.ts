@@ -35,6 +35,17 @@ export function useGeolocation(): GeoState & { requestPosition: () => void } {
   const watchIdRef = useRef<number | null>(null);
 
   const requestPosition = useCallback(() => {
+    // Vérifier si le navigateur bloque la géolocalisation à cause d'un contexte HTTP non sécurisé (ex: IP locale sur mobile)
+    if (typeof window !== "undefined" && !window.isSecureContext && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+      setState((s) => ({
+        ...s,
+        error: "Contexte non sécurisé (HTTP) : Les navigateurs mobiles bloquent le GPS sur une adresse HTTP non sécurisée. Pour tester en local sur téléphone, autorisez cette adresse dans le navigateur ou utilisez HTTPS.",
+        loading: false,
+        permissionState: "denied",
+      }));
+      return;
+    }
+
     if (!navigator.geolocation) {
       setState((s) => ({
         ...s,
