@@ -1,5 +1,5 @@
 import { PageHeader } from "@/components/ui";
-import { getBeneficiaireNom } from "backend";
+import { DEMANDES_EN_ATTENTE_VALIDATION_WHERE, getBeneficiaireNom } from "backend";
 import { prisma } from "backend";
 
 import { DemandesACategoriserTable } from "./DemandesACategoriserTable";
@@ -7,16 +7,19 @@ import { DemandesACategoriserTable } from "./DemandesACategoriserTable";
 /**
  * "Demandes en attente de validation" — cible de l'indicateur #1 de la
  * zone "À traiter" du dashboard Finance (Phase G, cahier des charges
- * section 12). Inclut `EN_ATTENTE_VALIDATION` (rien validé) ET
- * `PARTIELLEMENT_VALIDEE` (un reliquat non validé subsiste — même
- * définition exacte que `getDemandesEnAttenteValidation`,
- * `dashboardFinance.ts`) : cette dernière n'était pas incluse avant la
- * Phase G, alors qu'une demande partiellement validée reste, par
- * définition, "en attente de validation" pour sa partie non validée.
+ * section 12). Utilise `DEMANDES_EN_ATTENTE_VALIDATION_WHERE`
+ * (`tresorerie.ts`), jamais un filtre dupliqué ici — pour que ce chiffre
+ * du dashboard et cette liste désignent toujours exactement le même
+ * ensemble de lignes (même principe que `RETOUR_EN_ATTENTE_WHERE`).
+ * Inclut `EN_ATTENTE_VALIDATION` (rien validé) ET `PARTIELLEMENT_VALIDEE`
+ * (un reliquat non validé subsiste), à l'EXCLUSION d'un reliquat déjà
+ * explicitement rejeté (`reliquatRejete: true`, voir "Rejet du reliquat
+ * non validé") : cette demande n'a plus aucune action de validation
+ * possible dessus, elle ne doit donc plus apparaître ici (bug corrigé).
  */
 export default async function FinanceDemandesPage() {
   const rawDemandes = await prisma.demande.findMany({
-    where: { statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] } },
+    where: DEMANDES_EN_ATTENTE_VALIDATION_WHERE,
     include: { createur: true, beneficiaireUser: true },
     orderBy: { createdAt: "asc" },
   });

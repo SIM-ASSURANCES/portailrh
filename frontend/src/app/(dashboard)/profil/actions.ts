@@ -4,6 +4,86 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "backend";
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
+import { logAuditAction } from "@/lib/auditLog";
+import { publishDataChanged } from "@/lib/eventBus";
+
+/**
+ * Permet à un utilisateur de renseigner/modifier LIBREMENT son propre
+ * service (`User.serviceId`), sans validation d'un tiers — distinct
+ * d'`updateUserServiceAction` (`admin/users/actions.ts`, réservée à
+ * `isAdmin()`, `userId` arbitraire passé en paramètre). Ici, **aucun
+ * `userId` n'est accepté en paramètre** : la cible est toujours
+ * `session.user.id`, jamais un id fourni par l'appelant — élimine par
+ * construction tout risque de modifier le service d'un autre compte par ce
+ * chemin (contrairement à une simple vérification `userId ===
+ * session.user.id`, qui resterait correcte mais laisserait la possibilité
+ * structurelle d'un paramètre erroné). Même logique d'audit que la version
+ * Admin (`logAuditAction`, fichier `services.log`), pas dupliquée à
+ * l'identique mais délibérément proche pour que les entrées d'historique
+ * des deux chemins restent cohérentes à la lecture.
+ */
+export async function updateMyServiceAction(
+  serviceId: string | null
+): Promise<{ status: "success" | "error"; message: string }> {
+  const session = await getSession();
+  if (!session) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    include: { service: true },
+  });
+  if (!user) {
+    return { status: "error", message: "Utilisateur introuvable." };
+  }
+
+  if (user.serviceId === serviceId) {
+    return { status: "success", message: "Service inchangé." };
+  }
+
+  let nouveauService = null;
+  if (serviceId) {
+    nouveauService = await prisma.service.findUnique({ where: { id: serviceId } });
+    if (!nouveauService) {
+      return { status: "error", message: "Service sélectionné introuvable." };
+    }
+  }
+
+  const ancienServiceNom = user.service?.name ?? null;
+  const nouveauServiceNom = nouveauService?.name ?? null;
+
+  await prisma.user.update({
+    where: { id: session.user.id },
+    data: { serviceId },
+  });
+
+  let detail = "";
+  if (ancienServiceNom && nouveauServiceNom) {
+    detail = `${user.fullName} (${user.email}) a changé son propre service : « ${ancienServiceNom} » → « ${nouveauServiceNom} »`;
+  } else if (nouveauServiceNom) {
+    detail = `${user.fullName} (${user.email}) a renseigné son propre service : « ${nouveauServiceNom} »`;
+  } else {
+    detail = `${user.fullName} (${user.email}) a retiré son propre service (anciennement « ${ancienServiceNom} »)`;
+  }
+
+  await logAuditAction({
+    entity: "Service",
+    entityId: serviceId ?? user.serviceId ?? user.id,
+    action: "CHANGE_SERVICE",
+    detail,
+    userId: session.user.id,
+    userFullName: session.user.fullName,
+    userEmail: session.user.email,
+    logFileName: "services.log",
+  });
+
+  revalidatePath("/profil");
+  revalidatePath("/admin/users");
+  publishDataChanged();
+
+  return { status: "success", message: nouveauServiceNom ? `Service mis à jour : ${nouveauServiceNom}.` : "Service retiré." };
+}
 
 export async function updateProfilePhoto(photoUrl: string) {
   const session = await getSession();

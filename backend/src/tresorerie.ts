@@ -1,4 +1,4 @@
-import type { StatutDemande } from "./generated/prisma/client";
+import type { Prisma, StatutDemande } from "./generated/prisma/client";
 import { prisma } from "./prisma";
 
 /**
@@ -21,6 +21,33 @@ export const STATUTS_VALIDATION_COMPLETE: readonly StatutDemande[] = [
   "PARTIELLEMENT_REGLEE",
   "REGLEE",
 ];
+
+/**
+ * Filtre partagé "demande en attente d'une décision de validation" —
+ * `EN_ATTENTE_VALIDATION` (rien validé) OU `PARTIELLEMENT_VALIDEE` (un
+ * reliquat non validé subsiste). Factorisé ici pour que le compteur du
+ * dashboard et la liste sur laquelle on atterrit en cliquant dessus
+ * désignent toujours exactement le même ensemble de lignes — même principe
+ * que `RETOUR_EN_ATTENTE_WHERE` (`dashboardFinance.ts`).
+ *
+ * **Corrige un bug réel constaté en production** : `PARTIELLEMENT_VALIDEE`
+ * seule ne suffit plus à qualifier une demande comme "en attente" depuis
+ * l'introduction de `rejeterReliquatAction` (voir "Rejet du reliquat non
+ * validé") — cette action laisse volontairement `statut` inchangé
+ * (`PARTIELLEMENT_VALIDEE`, la part déjà validée reste acquise) et ne fait
+ * que poser `reliquatRejete: true`. Une demande dans cet état n'a plus
+ * AUCUNE action de validation possible dessus (`validerComplementaireAction`
+ * la refuse explicitement), donc elle ne doit plus jamais compter comme "en
+ * attente de validation" — d'où l'exclusion `reliquatRejete: false`
+ * ci-dessous. Sans effet sur `EN_ATTENTE_VALIDATION` : `reliquatRejete` ne
+ * peut être mis à `true` que depuis `PARTIELLEMENT_VALIDEE` (garde de
+ * `rejeterReliquatAction`), donc une demande encore `EN_ATTENTE_VALIDATION`
+ * a toujours `reliquatRejete = false` par construction.
+ */
+export const DEMANDES_EN_ATTENTE_VALIDATION_WHERE = {
+  statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] },
+  reliquatRejete: false,
+} satisfies Prisma.DemandeWhereInput;
 
 /**
  * Somme des règlements confirmés et non annulés d'une demande — c'est le
@@ -514,15 +541,16 @@ export async function getMesIndicateurs(userId: string): Promise<MesIndicateurs>
 
 /**
  * Zone "À traiter" personnelle, indicateur #1 — nombre de demandes créées
- * par l'utilisateur encore en attente d'une décision de validation
- * (`EN_ATTENTE_VALIDATION` : rien validé, ou `PARTIELLEMENT_VALIDEE` : un
- * reliquat non validé subsiste). Même définition que
- * `getDemandesEnAttenteValidation` (`dashboardFinance.ts`), scopée par
- * `createurId`.
+ * par l'utilisateur encore en attente d'une décision de validation. Même
+ * définition exacte que `getDemandesEnAttenteValidation`
+ * (`dashboardFinance.ts`, via `DEMANDES_EN_ATTENTE_VALIDATION_WHERE`
+ * ci-dessus — inclut désormais l'exclusion `reliquatRejete: false`),
+ * simplement scopée par `createurId` : un reliquat rejeté ne doit pas non
+ * plus compter comme "à traiter" pour le Collaborateur qui l'a créé.
  */
 export async function getMesDemandesEnAttente(userId: string): Promise<{ nombre: number }> {
   const nombre = await prisma.demande.count({
-    where: { createurId: userId, statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] } },
+    where: { createurId: userId, ...DEMANDES_EN_ATTENTE_VALIDATION_WHERE },
   });
   return { nombre };
 }

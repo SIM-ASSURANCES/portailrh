@@ -4,8 +4,9 @@ import { useState, useRef, useTransition } from "react";
 import Image from "next/image";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/icons";
-import { updateProfilePhoto, updatePassword } from "./actions";
+import { updateProfilePhoto, updatePassword, updateMyServiceAction } from "./actions";
 import { Badge, PageHeader, DataTable, type DataTableColumn } from "@/components/ui";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -17,6 +18,11 @@ interface ConnexionEntry {
   detail: string;
 }
 
+interface ServiceOption {
+  id: string;
+  name: string;
+}
+
 interface ProfileClientProps {
   user: {
     id: string;
@@ -25,7 +31,8 @@ interface ProfileClientProps {
     photoUrl: string | null;
   };
   role: string;
-  service: string | null;
+  serviceId: string | null;
+  services: ServiceOption[];
   membreDepuis: string | null;
   selectedMonth: string;
   showPointageStats: boolean;
@@ -145,7 +152,8 @@ type Tab = "overview" | "security";
 export function ProfileClient({
   user,
   role,
-  service,
+  serviceId,
+  services,
   membreDepuis,
   selectedMonth,
   showPointageStats,
@@ -159,6 +167,25 @@ export function ProfileClient({
   const [isUploading, setIsUploading] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Service (modifiable librement par l'utilisateur lui-même) ──────────────
+  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(serviceId);
+  const [isSavingService, startServiceTransition] = useTransition();
+
+  const handleServiceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const nouveauServiceId = e.target.value === "" ? null : e.target.value;
+    const precedent = selectedServiceId;
+    setSelectedServiceId(nouveauServiceId); // optimiste, revenu en arrière si refus serveur
+    startServiceTransition(async () => {
+      const res = await updateMyServiceAction(nouveauServiceId);
+      if (res.status === "error") {
+        setSelectedServiceId(precedent);
+        toast.error(res.message);
+      } else {
+        toast.success(res.message);
+      }
+    });
+  };
 
   const router = useRouter();
   const pathname = usePathname();
@@ -250,6 +277,11 @@ export function ProfileClient({
     .join("")
     .toUpperCase();
 
+  // Nom du service actuellement sélectionné, dérivé de l'état local (jamais
+  // du prop `serviceId` directement) — reflète immédiatement le choix de
+  // l'utilisateur, y compris pendant la sauvegarde optimiste.
+  const serviceNomActuel = services.find((s) => s.id === selectedServiceId)?.name ?? null;
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -305,8 +337,8 @@ export function ProfileClient({
             <div className="space-y-1.5">
               <h2 className="text-xl font-bold text-foreground leading-tight">{user.fullName}</h2>
               <Badge variant={getBadgeVariant(role)}>{role}</Badge>
-              {service && (
-                <p className="text-sm text-muted-foreground mt-1">{service}</p>
+              {serviceNomActuel && (
+                <p className="text-sm text-muted-foreground mt-1">{serviceNomActuel}</p>
               )}
               {membreDepuis && (
                 <p className="text-xs text-muted-foreground">
@@ -386,13 +418,39 @@ export function ProfileClient({
                     </div>
                   </div>
 
-                  {/* Service */}
+                  {/* Service — modifiable librement par l'utilisateur lui-même,
+                      sans validation d'un tiers (voir CLAUDE.md "Modification
+                      du service par l'utilisateur lui-même depuis son profil").
+                      Distinct de la gestion Admin (/admin/users), qui reste le
+                      seul autre chemin possible — les deux appellent des
+                      Server Actions séparées mais écrivent le même champ. */}
                   <div>
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Service</p>
-                    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground">
-                      <Icon name="building" className="size-4 text-muted-foreground shrink-0" />
-                      <span>{service ?? <span className="text-muted-foreground italic">Non renseigné</span>}</span>
-                    </div>
+                    {services.length === 0 ? (
+                      <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground italic">
+                        <Icon name="building" className="size-4 shrink-0" />
+                        <span>Aucun service n&apos;a encore été créé (voir un administrateur).</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus-within:ring-2 focus-within:ring-primary">
+                        <Icon name="building" className="size-4 text-muted-foreground shrink-0" />
+                        <select
+                          value={selectedServiceId ?? ""}
+                          onChange={handleServiceChange}
+                          disabled={isSavingService}
+                          aria-label="Mon service"
+                          className="w-full bg-transparent text-sm text-foreground focus:outline-none disabled:opacity-50"
+                        >
+                          <option value="">Non renseigné</option>
+                          {services.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                        </select>
+                        {isSavingService ? <Icon name="loader" className="size-4 shrink-0 animate-spin text-muted-foreground" /> : null}
+                      </div>
+                    )}
                   </div>
 
                   {/* Rôle */}

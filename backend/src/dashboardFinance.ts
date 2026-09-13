@@ -1,6 +1,6 @@
 import type { Prisma } from "./generated/prisma/client";
 import { prisma } from "./prisma";
-import { getSoldesARegulariserParReglements } from "./tresorerie";
+import { DEMANDES_EN_ATTENTE_VALIDATION_WHERE, getSoldesARegulariserParReglements } from "./tresorerie";
 
 /**
  * Filtre partagé des retours de caisse "en attente" : non réceptionnés ET
@@ -107,11 +107,16 @@ async function getRepartitionDemandesValidees() {
  * `EN_ATTENTE_VALIDATION` (rien validé) OU `PARTIELLEMENT_VALIDEE` (un
  * reliquat non validé subsiste — elle reste donc "en attente de
  * validation" pour sa partie non validée, même si une partie a déjà été
- * validée et potentiellement réglée).
+ * validée et potentiellement réglée). Voir
+ * `DEMANDES_EN_ATTENTE_VALIDATION_WHERE` (`tresorerie.ts`) pour l'exclusion
+ * `reliquatRejete: false` (bug corrigé : un reliquat explicitement rejeté
+ * n'est plus "à traiter", même si `statut` reste `PARTIELLEMENT_VALIDEE`).
+ * Cette même fonction alimente aussi la feuille "Dashboard" de l'export
+ * Excel (`reporting.ts`) — un seul point de calcul, jamais deux.
  */
 export async function getDemandesEnAttenteValidation(): Promise<{ nombre: number }> {
   const nombre = await prisma.demande.count({
-    where: { statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] } },
+    where: DEMANDES_EN_ATTENTE_VALIDATION_WHERE,
   });
   return { nombre };
 }
