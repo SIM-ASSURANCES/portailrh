@@ -2,6 +2,7 @@ import LogsList from "@/components/logs/LogsList";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { redirect } from "next/navigation";
 import { getSession, isAdmin } from "@/lib/auth";
+import { getLogsAction } from "@/app/(dashboard)/logs/actions";
 
 export const metadata = {
   title: "Logs Système - RH",
@@ -15,13 +16,15 @@ export default async function RHLogsPage() {
     redirect("/pointage/rh?error=acces_refuse");
   }
 
+  const { logs, totalCount } = await getLogsAction(0, 50);
+
   return (
     <div className="space-y-6">
       <PageHeader 
         title="Logs Système" 
         description="Traçabilité des actions effectuées sur le portail."
       />
-      <LogsList />
+      <LogsList initialLogs={logs} initialTotalCount={totalCount} />
     </div>
   );
 }

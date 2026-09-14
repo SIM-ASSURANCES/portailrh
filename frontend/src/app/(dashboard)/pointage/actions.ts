@@ -322,6 +322,23 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
 
   const now = new Date();
 
+  // 1. Contrôle des week-ends (Samedi 6 et Dimanche 0)
+  const dayOfWeek = now.getDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    return { status: "error", message: "Aucune absence ne peut être enregistrée le week-end." };
+  }
+
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+  // 2. Contrôle des jours fériés
+  const jourFerie = await prisma.jourFerie.findFirst({
+    where: { date: { gte: startOfDay, lte: endOfDay } },
+  });
+  if (jourFerie) {
+    return { status: "error", message: `Aujourd'hui est un jour férié (${jourFerie.libelle}). Aucune absence automatique enregistrée.` };
+  }
+
   // Option B : Le jour de création ou de réactivation du compte n'est pas pénalisé par l'absence automatique
   const userDb = await prisma.user.findUnique({
     where: { id: session.user.id },
@@ -360,9 +377,6 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
   if (currentMinutes < limiteDepartMinutes) {
     return { status: "error", message: "La journée n'est pas encore terminée." };
   }
-
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
   const hasPointage = await prisma.pointage.findFirst({
     where: { userId: session.user.id, heure: { gte: startOfDay, lte: endOfDay } },
