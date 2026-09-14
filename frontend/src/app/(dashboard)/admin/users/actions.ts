@@ -65,6 +65,7 @@ export async function createUserAction(
     email: formData.get("email"),
     password: formData.get("password"),
     roleId: formData.get("roleId"),
+    serviceId: formData.get("serviceId"),
   });
 
   if (!parsed.success) {

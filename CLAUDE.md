@@ -1285,6 +1285,48 @@ projet**. `User.passwordHash` est nullable ; un compte « en attente »
 la personne n'a pas finalisé son mot de passe via ce lien. Régénération de
 lien possible pour un compte encore en attente.
 
+### Service d'un utilisateur (`/admin/users`)
+
+Chaque compte porte un `Service` optionnel (`User.serviceId`, nullable —
+géré via `/admin/services`, ajouté par Thierry). Deux points d'écriture :
+
+- **À la création** (`createUserAction`, `creerInvitationAction`) —
+  **bug corrigé** : `createUserAction` omettait `serviceId` de l'objet
+  passé à `safeParse()` (le schéma le déclarait, le `prisma.user.create`
+  le référençait, mais `parsed.data.serviceId` valait toujours `undefined`
+  faute d'être dans l'objet validé) — un service choisi dans le formulaire
+  de création manuelle n'était donc **jamais** appliqué, quel que soit le
+  choix de l'Admin. `creerInvitationAction`, elle, l'incluait déjà
+  correctement. Corrigé en ajoutant `serviceId: formData.get("serviceId")`
+  à l'objet de `createUserAction`.
+- **Après création** (`updateUserServiceAction`, select inline dans le
+  tableau des comptes, `UserServiceSelect.tsx`) — **bug signalé, non
+  reproduit malgré un diagnostic approfondi** (dev et build de production
+  standalone réel, vue bureau et carte mobile, changement isolé et
+  rafales, navigation dure et douce, rechargement complet, et une
+  simulation délibérée de course avec une mutation concurrente générant
+  du bruit SSE ambiant) : dans chaque tentative, l'écriture en base
+  réussissait et l'UI reflétait correctement la nouvelle valeur, y
+  compris après rechargement complet. Cause exacte non confirmée
+  empiriquement. **Durcissement appliqué par relecture de code** :
+  `UserServiceSelect` resynchronisait sa sélection locale depuis
+  `currentServiceId` via un `useEffect` à CHAQUE rendu du tableau — y
+  compris ceux déclenchés par le SSE global `publishDataChanged()`
+  (diffusé à TOUT changement, n'importe où dans l'app, jamais scopé à la
+  ligne modifiée, voir "Rafraîchissement en temps réel"). Si une réponse
+  réseau retardée d'un tel rafraîchissement sans rapport reflétait un état
+  antérieur à l'écriture en cours sur cette ligne précise (course
+  plausible sous activité concurrente réelle, seulement en production
+  avec plusieurs utilisateurs simultanés — jamais reconstituée en local),
+  la sélection revenait visuellement en arrière bien que l'écriture ait
+  réussi. Retiré : `UserServiceSelect` s'initialise désormais UNE SEULE
+  fois depuis `currentServiceId` (`useState`, jamais resynchronisé), même
+  principe que `UserRoleSelect.tsx` (non affecté par ce bug) — la seule
+  correction de valeur reste désormais le rollback explicite en cas
+  d'échec réel de l'action, jamais un effet de bord d'un rafraîchissement
+  global sans rapport. **À confirmer si le bug réapparaît malgré ce
+  changement** : signe qu'une autre cause reste à trouver.
+
 ### Console admin (`/admin`)
 
 Routes : `/admin/users` (créer manuellement ou par invitation, activer/
