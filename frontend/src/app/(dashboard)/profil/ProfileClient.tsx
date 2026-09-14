@@ -270,13 +270,6 @@ export function ProfileClient({
     });
   };
 
-  const initials = user.fullName
-    .split(" ")
-    .map((n) => n[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-
   // Nom du service actuellement sélectionné, dérivé de l'état local (jamais
   // du prop `serviceId` directement) — reflète immédiatement le choix de
   // l'utilisateur, y compris pendant la sauvegarde optimiste.
@@ -305,13 +298,13 @@ export function ProfileClient({
                 onClick={handlePhotoClick}
                 title="Cliquer pour changer la photo"
               >
-                {photoUrl ? (
-                  <Image src={photoUrl} alt={`Photo de profil de ${user.fullName}`} fill sizes="96px" className="object-cover" />
-                ) : (
-                  <div className="grid size-full place-items-center text-2xl font-bold text-primary-foreground">
-                    {initials}
-                  </div>
-                )}
+                <Image
+                  src={photoUrl || "/default-avatar.svg"}
+                  alt={`Photo de profil de ${user.fullName}`}
+                  fill
+                  sizes="96px"
+                  className="object-cover"
+                />
                 {/* Overlay hover */}
                 <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   <Icon name="camera" className="size-6 text-white" />

@@ -98,7 +98,11 @@ export const authConfig = {
     authorized({ auth, request: { nextUrl } }) {
       const isLoggedIn = !!auth?.user;
       const isApiRoute = nextUrl.pathname.startsWith('/api');
-      const isAuthRoute = nextUrl.pathname.startsWith('/login') || nextUrl.pathname.startsWith('/invitation');
+      const isAuthRoute =
+        nextUrl.pathname.startsWith('/login') ||
+        nextUrl.pathname.startsWith('/invitation') ||
+        nextUrl.pathname.startsWith('/forgot-password') ||
+        nextUrl.pathname.startsWith('/reset-password');
 
       if (isApiRoute) {
         return true; // API routes handle their own auth

@@ -37,9 +37,13 @@ model User {
   /// Un Admin peut régénérer un nouveau lien (nouveau token + nouvelle
   /// expiration) pour un compte encore en attente si l'ancien a expiré.
   invitationExpiresAt DateTime?
+  /// Jeton de réinitialisation de mot de passe (unique, sécurisé, remis à null après usage)
+  resetPasswordToken     String?   @unique
+  /// Expire 1 heure après la demande de réinitialisation
+  resetPasswordExpiresAt DateTime?
   serviceId    String?
   service      Service? @relation(fields: [serviceId], references: [id])
-  photoUrl     String?
+  photoUrl     String?  @default("/default-avatar.svg")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

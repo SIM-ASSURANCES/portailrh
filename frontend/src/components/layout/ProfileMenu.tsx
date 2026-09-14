@@ -2,20 +2,13 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { Icon } from "@/components/icons";
+import { UserAvatar } from "@/components/ui";
 import { signOutAction } from "./actions";
 
 interface ProfileMenuProps {
   user: { fullName: string; email: string; photoUrl?: string | null };
   role: string;
-}
-
-function initials(fullName: string) {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 export function ProfileMenu({ user, role }: ProfileMenuProps) {
@@ -38,24 +31,7 @@ export function ProfileMenu({ user, role }: ProfileMenuProps) {
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-3 rounded-full hover:bg-slate-100 p-1 pr-2 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50"
       >
-        {user.photoUrl ? (
-          <div className="relative size-10 overflow-hidden rounded-full border border-border">
-            <Image 
-              src={user.photoUrl} 
-              alt={user.fullName} 
-              fill 
-              sizes="40px"
-              className="object-cover"
-            />
-          </div>
-        ) : (
-          <span
-            className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
-            aria-hidden="true"
-          >
-            {initials(user.fullName)}
-          </span>
-        )}
+        <UserAvatar user={user} size="md" />
         
         <div className="hidden leading-tight sm:block text-left">
           <p className="flex items-center gap-2 text-sm font-semibold text-foreground">

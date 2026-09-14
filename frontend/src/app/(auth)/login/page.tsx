@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthError } from "next-auth";
 
@@ -57,14 +58,19 @@ async function authenticate(formData: FormData) {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; callbackUrl?: string; activated?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    callbackUrl?: string;
+    activated?: string;
+    reset?: string;
+  }>;
 }) {
   const session = await getSession();
   if (session) {
     redirect("/");
   }
 
-  const { error, callbackUrl, activated } = await searchParams;
+  const { error, callbackUrl, activated, reset } = await searchParams;
 
   return (
     <div className="relative flex flex-1 items-center justify-center overflow-hidden border-[3px] border-primary bg-surface px-4 py-12">
@@ -130,6 +136,13 @@ export default async function LoginPage({
             </p>
           ) : null}
 
+          {reset === "success" ? (
+            <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-success-border bg-success-bg px-3 py-2 text-sm text-success">
+              <Icon name="check-circle" className="mt-0.5 size-4 shrink-0" />
+              Votre mot de passe a été réinitialisé avec succès. Vous pouvez maintenant vous connecter.
+            </p>
+          ) : null}
+
           <Input label="Email" name="email" type="email" required autoComplete="email" />
           <Input
             label="Mot de passe"
@@ -140,17 +153,23 @@ export default async function LoginPage({
           />
           <input type="hidden" name="callbackUrl" value={callbackUrl ?? "/"} />
 
-          {/* "Se souvenir de moi" (voir CLAUDE.md) : décochée par défaut
-              (session courte, 1 jour) — jamais pré-cochée, cohérent avec le
-              principe "sécurisé par défaut" du reste du portail. */}
-          <label className="flex items-center gap-2 text-sm text-foreground">
-            <input
-              type="checkbox"
-              name="rememberMe"
-              className="h-4 w-4 rounded border-border accent-primary"
-            />
-            Se souvenir de moi
-          </label>
+          {/* "Se souvenir de moi" + Lien "Mot de passe oublié ?" */}
+          <div className="flex items-center justify-between text-sm">
+            <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                name="rememberMe"
+                className="h-4 w-4 rounded border-border accent-primary"
+              />
+              Se souvenir de moi
+            </label>
+            <Link
+              href="/forgot-password"
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              Mot de passe oublié ?
+            </Link>
+          </div>
 
           <LoginSubmitButton />
         </form>
