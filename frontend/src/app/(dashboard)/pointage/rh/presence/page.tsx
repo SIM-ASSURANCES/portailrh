@@ -31,7 +31,9 @@ export default async function PresenceDuJourPage({
   const monthStart = startOfMonth(palmaresDate);
   const monthEnd = endOfMonth(palmaresDate);
 
-  const [pointagesDb, absentsDb, retardsDuMois, parametrage] = await Promise.all([
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+
+  const [pointagesDb, absentsDb, retardsDuMois, parametrage, jourFerie] = await Promise.all([
     prisma.pointage.findMany({
       where: {
         heure: {
@@ -84,8 +86,18 @@ export default async function PresenceDuJourPage({
     }),
     prisma.parametrageHoraire.findFirst({
       where: { isActive: true },
-    })
+    }),
+    prisma.jourFerie.findFirst({
+      where: {
+        date: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
+      },
+    }),
   ]);
+
+  const isJourNonOuvre = isWeekend || !!jourFerie;
 
   const userPointagesMap = new Map<string, PresenceData>();
   
@@ -166,7 +178,9 @@ export default async function PresenceDuJourPage({
   ]);
 
   const activationsApresDateIds = new Set(activationsRecentes.map((a) => a.entityId).filter(Boolean));
-  const manquantsEffectifs = manquantsDb.filter((m) => !activationsApresDateIds.has(m.id));
+  const manquantsEffectifs = isJourNonOuvre
+    ? []
+    : manquantsDb.filter((m) => !activationsApresDateIds.has(m.id));
 
   const manquantsCount = manquantsEffectifs.length;
 
@@ -193,25 +207,31 @@ export default async function PresenceDuJourPage({
   const realNow = new Date();
   const isToday = now.toDateString() === realNow.toDateString();
 
-  if (now < startOfDay(realNow)) {
-    isEndOfDayPassed = true;
-  } else if (isToday) {
-    if (parametrage && parametrage.heureFinApresMidi) {
-      const [endHour, endMinute] = parametrage.heureFinApresMidi.split(":").map(Number);
-      if (realNow.getHours() > endHour || (realNow.getHours() === endHour && realNow.getMinutes() >= endMinute)) {
+  if (!isJourNonOuvre) {
+    if (now < startOfDay(realNow)) {
+      isEndOfDayPassed = true;
+    } else if (isToday) {
+      if (parametrage && parametrage.heureFinApresMidi) {
+        const [endHour, endMinute] = parametrage.heureFinApresMidi.split(":").map(Number);
+        if (realNow.getHours() > endHour || (realNow.getHours() === endHour && realNow.getMinutes() >= endMinute)) {
+          isEndOfDayPassed = true;
+        }
+      } else if (realNow.getHours() >= 18) {
         isEndOfDayPassed = true;
       }
-    } else if (realNow.getHours() >= 18) {
-      isEndOfDayPassed = true;
     }
   }
+
+  const pageDescription = isJourNonOuvre
+    ? (jourFerie ? `Jour férié (${jourFerie.libelle}) — Aucun pointage attendu.` : "Jour de repos (week-end) — Aucun pointage attendu.")
+    : "Suivi en temps réel des arrivées, retards et absences de la journée.";
 
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-8 font-sans">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <PageHeader
           title={dateParam ? `Présence du ${format(now, "dd/MM/yyyy")}` : "Présence du jour"}
-          description="Suivi en temps réel des arrivées, retards et absences de la journée."
+          description={pageDescription}
           backHref="/pointage/rh"
           backLabel="Retour à la Boîte à Outils"
         />

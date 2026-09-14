@@ -18,6 +18,15 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
+  // 1b. Vérifier si c'est un week-end ou un jour férié
+  const dayOfWeek = now.getDay();
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+  const jourFerie = await prisma.jourFerie.findFirst({
+    where: { date: { gte: startOfDay, lte: endOfDay } }
+  });
+  const isJourNonOuvre = isWeekend || !!jourFerie;
+
   // 2. Récupérer les pointages d'aujourd'hui pour le collaborateur
   const pointagesDuJour = await prisma.pointage.findMany({
     where: {
@@ -45,7 +54,12 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
 
   if (pointagesDuJour.length === 0) {
     typePointage = "ARRIVEE";
-    if (currentMinutes <= limiteArriveeMinutes) {
+    if (isJourNonOuvre) {
+      mode = "NON_OUVRABLE";
+      messageAuto = jourFerie
+        ? `Aujourd'hui est un jour férié (${jourFerie.libelle}). Aucun pointage obligatoire.`
+        : "Aujourd'hui est un jour de repos (week-end). Aucun pointage obligatoire.";
+    } else if (currentMinutes <= limiteArriveeMinutes) {
       mode = "AUTO_ARRIVEE";
       messageAuto = "Félicitations pour votre ponctualité ! Arrivée validée.";
     } else if (currentMinutes >= limiteDepartMinutes) {

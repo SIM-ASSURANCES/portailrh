@@ -30,6 +30,24 @@ import { toast } from "sonner";
  * chemin de rollback explicite ci-dessous en cas d'échec réel de CETTE
  * action précise — jamais par un effet de bord d'un rafraîchissement
  * global sans rapport.
+ *
+ * **À VALIDER AVEC THIERRY** : son commit `1addb0d` ("fix(logs): corriger
+ * le rendu en cascade dans LogsList et précharger les logs côté serveur")
+ * avait ENTRE-TEMPS remplacé le `useEffect` d'origine par un ajustement
+ * d'état pendant le rendu (`if (currentServiceId !== prevServiceId) {
+ * setPrevServiceId(...); setValue(...); }`) — même resynchronisation
+ * depuis `currentServiceId`, juste sans `useEffect` (probablement pour
+ * éviter le rendu supplémentaire qu'un effet provoque, motivation générale
+ * de son commit, sans rapport apparent avec CE bug précis). Ce fichier n'a
+ * jamais été le sujet déclaré de son commit — la modif semble une
+ * retombée d'un balayage plus large du pattern `useEffect` de
+ * resynchronisation dans le projet. Lors du merge du 2026-09-14, ce
+ * retrait complet (plutôt que sa version sans effet) a été conservé : il
+ * corrige un bug de production signalé (le select revenait visuellement à
+ * "Aucun" après une écriture pourtant réussie), alors que la version de
+ * Thierry aurait réintroduit exactement le mécanisme de resynchronisation
+ * suspecté d'en être la cause — juste implémenté différemment. À
+ * confirmer avec lui avant de considérer la question réglée.
  */
 export function UserServiceSelect({
   userId,
@@ -56,7 +74,6 @@ export function UserServiceSelect({
       } else if (res.status === "success" && res.message) {
         toast.success(res.message);
       }
-
     });
   };
 

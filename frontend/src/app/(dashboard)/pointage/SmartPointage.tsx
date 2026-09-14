@@ -4,11 +4,12 @@ import { useEffect, useState, useTransition, useRef } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { Button, Card } from "@/components/ui";
+import { Calendar } from "lucide-react";
 import { PointageForm } from "./PointageForm";
 import { enregistrerPointageAction, enregistrerAbsenceAutomatiqueAction } from "./actions";
 import { useGeolocation } from "@/hooks/useGeolocation";
 
-export type PointageMode = "AUTO_ARRIVEE" | "RETARD_ARRIVEE" | "AUTO_DEPART" | "ANTICIPE_DEPART" | "EN_POSTE" | "TERMINE" | "ABSENCE_AUTO";
+export type PointageMode = "AUTO_ARRIVEE" | "RETARD_ARRIVEE" | "AUTO_DEPART" | "ANTICIPE_DEPART" | "EN_POSTE" | "TERMINE" | "ABSENCE_AUTO" | "NON_OUVRABLE";
 
 interface Props {
   mode: PointageMode;
@@ -126,6 +127,8 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
   const [needsGeo, setNeedsGeo] = useState(false);
   // Indicateur visuel : pointage effectué via géoloc
   const [geoDistance, setGeoDistance] = useState<number | null>(null);
+  // Possibilité de forcer le pointage lors d'un jour non ouvré (présence exceptionnelle)
+  const [forcePointage, setForcePointage] = useState(false);
 
   const router = useRouter();
   const submittedRef = useRef<{ mode: string; type: string } | null>(null);
@@ -199,6 +202,25 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
   const isEnPoste = mode === "EN_POSTE" || (isDone && type === "ARRIVEE");
 
   // ── Écrans terminaux ───────────────────────────────────────────────────────
+  if (mode === "NON_OUVRABLE" && !forcePointage) {
+    return (
+      <Card className="p-8 text-center animate-fade-in-up space-y-4">
+        <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+          <Calendar className="w-6 h-6 text-primary" />
+        </div>
+        <div>
+          <h2 className="text-xl font-bold text-primary mb-2">Jour non ouvré</h2>
+          <p className="text-muted-foreground">{messageAuto || "Aucun pointage n'est requis aujourd'hui."}</p>
+        </div>
+        <div className="pt-2">
+          <Button variant="secondary" onClick={() => setForcePointage(true)}>
+            Pointer une présence exceptionnelle
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
   if (mode === "TERMINE" || (isDone && type === "DEPART")) {
     return (
       <Card className="p-8 text-center animate-fade-in-up">
