@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Icon, type IconName } from "@/components/icons";
 import { Badge, EmptyState, PageHeader, ToastOnMount } from "@/components/ui";
 import { getAccessibleModules, getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { prisma } from "backend";
+import { prisma, getMesRetoursADeclarer } from "backend";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 import { DashboardNotificationsSection, type DashboardAlertItem } from "@/components/dashboard/DashboardNotificationsSection";
 
@@ -157,12 +157,7 @@ export default async function DashboardHomePage({
 
     // Collaborateur : Retours de caisse à déclarer
     if (hasPermission(session, "treso.declarer_retour")) {
-      const retoursADeclarer = await prisma.retourCaisse.count({
-        where: {
-          declarantId: session.user.id,
-          statut: "A_DECLARER",
-        },
-      });
+      const { nombre: retoursADeclarer } = await getMesRetoursADeclarer(session.user.id);
       if (retoursADeclarer > 0) {
         alerts.push({
           id: "retours_a_declarer",
