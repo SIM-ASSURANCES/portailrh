@@ -115,7 +115,7 @@ function MiniCard({
     primary: "text-primary bg-primary/10 border-primary/20",
   };
 
-  const Content = () => (
+  const content = (
     <div className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${toneClasses[tone]} hover:bg-opacity-80`}>
       <div className={`flex items-center justify-center size-10 rounded-full bg-background/50 shadow-sm`}>
         <Icon name={icon} className="size-5" />
@@ -130,12 +130,12 @@ function MiniCard({
   if (href) {
     return (
       <Link href={href} className="block hover:-translate-y-0.5 transition-transform">
-        <Content />
+        {content}
       </Link>
     );
   }
 
-  return <Content />;
+  return content;
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────

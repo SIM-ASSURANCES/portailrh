@@ -1,4 +1,4 @@
-import { getSession, hasPermission, isAdmin } from "@/lib/auth";
+import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { redirect } from "next/navigation";
 import { ProfileClient } from "./ProfileClient";

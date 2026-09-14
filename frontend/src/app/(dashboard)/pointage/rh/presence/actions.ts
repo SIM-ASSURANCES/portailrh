@@ -4,7 +4,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import type { Prisma } from "backend";
 import { revalidatePath } from "next/cache";
-import { endOfDay, startOfDay, format } from "date-fns";
+import { endOfDay, startOfDay } from "date-fns";
 
 export async function ajouterMotifRetard(pointageId: string, motif: string) {
   const session = await getSession();

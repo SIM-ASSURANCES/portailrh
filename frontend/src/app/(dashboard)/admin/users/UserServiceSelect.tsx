@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition, useState, useEffect } from "react";
+import { useTransition, useState } from "react";
 import { Select } from "@/components/ui";
 import { updateUserServiceAction } from "./actions";
 import { toast } from "sonner";
@@ -16,25 +16,27 @@ export function UserServiceSelect({
 }) {
   const [isPending, startTransition] = useTransition();
   const [value, setValue] = useState(currentServiceId || "");
+  const [prevServiceId, setPrevServiceId] = useState(currentServiceId);
 
-  // Si currentServiceId change de l'extérieur
-  useEffect(() => {
+  // Synchronisation si currentServiceId change de l'extérieur sans effet en cascade
+  if (currentServiceId !== prevServiceId) {
+    setPrevServiceId(currentServiceId);
     setValue(currentServiceId || "");
-  }, [currentServiceId]);
+  }
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newServiceId = e.target.value === "" ? null : e.target.value;
+    const prev = value;
     setValue(e.target.value);
 
     startTransition(async () => {
       const res = await updateUserServiceAction(userId, newServiceId);
       if (res.status === "error") {
         toast.error(res.message);
-        setValue(currentServiceId || ""); // Rollback UI
+        setValue(prev); // Rollback UI
       } else if (res.status === "success" && res.message) {
         toast.success(res.message);
       }
-
     });
   };
 

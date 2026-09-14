@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getLogsAction } from "@/app/(dashboard)/logs/actions";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -10,28 +10,34 @@ import { fr } from "date-fns/locale";
 
 type LogEntry = Awaited<ReturnType<typeof getLogsAction>>["logs"][0];
 
-export default function LogsList() {
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [loading, setLoading] = useState(true);
+const TAKE = 50;
+
+interface LogsListProps {
+  initialLogs?: LogEntry[];
+  initialTotalCount?: number;
+}
+
+export default function LogsList({
+  initialLogs,
+  initialTotalCount = 0,
+}: LogsListProps = {}) {
+  const [logs, setLogs] = useState<LogEntry[]>(initialLogs ?? []);
+  const [totalCount, setTotalCount] = useState(initialTotalCount);
+  const [loading, setLoading] = useState(initialLogs === undefined);
   const [loadingMore, setLoadingMore] = useState(false);
   const [skip, setSkip] = useState(0);
-  const take = 50;
 
-  const fetchLogs = async (isLoadMore = false) => {
+  const loadLogs = useCallback(async (targetSkip = 0, append = false) => {
     try {
-      if (isLoadMore) setLoadingMore(true);
-      
-      const newSkip = isLoadMore ? skip + take : 0;
-      const { logs: newLogs, totalCount: newTotal } = await getLogsAction(newSkip, take);
-      
-      if (isLoadMore) {
-        setLogs(prev => [...prev, ...newLogs]);
+      const { logs: newLogs, totalCount: newTotal } = await getLogsAction(targetSkip, TAKE);
+
+      if (append) {
+        setLogs((prev) => [...prev, ...newLogs]);
       } else {
         setLogs(newLogs);
       }
-      
-      setSkip(newSkip);
+
+      setSkip(targetSkip);
       setTotalCount(newTotal);
     } catch (error) {
       console.error("Erreur lors de la récupération des logs", error);
@@ -39,24 +45,46 @@ export default function LogsList() {
       setLoading(false);
       setLoadingMore(false);
     }
-  };
-
-  // Premier chargement
-  useEffect(() => {
-    fetchLogs();
   }, []);
 
-  // Polling (Actualisation automatique) toutes les 15 secondes
+  // Premier chargement uniquement si les données ne sont pas fournies par le serveur
+  useEffect(() => {
+    if (initialLogs !== undefined) return;
+
+    let ignore = false;
+    (async () => {
+      try {
+        const { logs: newLogs, totalCount: newTotal } = await getLogsAction(0, TAKE);
+        if (!ignore) {
+          setLogs(newLogs);
+          setTotalCount(newTotal);
+        }
+      } catch (error) {
+        if (!ignore) {
+          console.error("Erreur lors de la récupération des logs", error);
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      ignore = true;
+    };
+  }, [initialLogs]);
+
+  // Polling (Actualisation automatique) toutes les 15 secondes sur la première page
   useEffect(() => {
     const interval = setInterval(() => {
-      // Pour le polling on recharge juste les premiers 50 (si on est au début)
       if (skip === 0) {
-        fetchLogs();
+        loadLogs(0, false);
       }
     }, 15000);
 
     return () => clearInterval(interval);
-  }, [skip]);
+  }, [skip, loadLogs]);
 
   if (loading && logs.length === 0) {
     return (
@@ -70,9 +98,16 @@ export default function LogsList() {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-lg font-medium text-gray-900">
-          Historique d'Activité ({totalCount} événements)
+          Historique d&apos;Activité ({totalCount} événements)
         </h2>
-        <Button variant="secondary" onClick={() => fetchLogs()} disabled={loading}>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            setLoading(true);
+            loadLogs(0, false);
+          }}
+          disabled={loading}
+        >
           <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
           Actualiser
         </Button>
@@ -139,9 +174,12 @@ export default function LogsList() {
 
       {logs.length < totalCount && (
         <div className="flex justify-center pt-4 pb-8">
-          <Button 
-            variant="secondary" 
-            onClick={() => fetchLogs(true)} 
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setLoadingMore(true);
+              loadLogs(skip + TAKE, true);
+            }}
             disabled={loadingMore}
           >
             {loadingMore && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
