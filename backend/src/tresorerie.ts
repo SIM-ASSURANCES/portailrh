@@ -1,4 +1,4 @@
-import type { StatutDemande } from "./generated/prisma/client";
+import type { Prisma, StatutDemande } from "./generated/prisma/client";
 import { prisma } from "./prisma";
 
 /**
@@ -21,6 +21,33 @@ export const STATUTS_VALIDATION_COMPLETE: readonly StatutDemande[] = [
   "PARTIELLEMENT_REGLEE",
   "REGLEE",
 ];
+
+/**
+ * Filtre partagé "demande en attente d'une décision de validation" —
+ * `EN_ATTENTE_VALIDATION` (rien validé) OU `PARTIELLEMENT_VALIDEE` (un
+ * reliquat non validé subsiste). Factorisé ici pour que le compteur du
+ * dashboard et la liste sur laquelle on atterrit en cliquant dessus
+ * désignent toujours exactement le même ensemble de lignes — même principe
+ * que `RETOUR_EN_ATTENTE_WHERE` (`dashboardFinance.ts`).
+ *
+ * **Corrige un bug réel constaté en production** : `PARTIELLEMENT_VALIDEE`
+ * seule ne suffit plus à qualifier une demande comme "en attente" depuis
+ * l'introduction de `rejeterReliquatAction` (voir "Rejet du reliquat non
+ * validé") — cette action laisse volontairement `statut` inchangé
+ * (`PARTIELLEMENT_VALIDEE`, la part déjà validée reste acquise) et ne fait
+ * que poser `reliquatRejete: true`. Une demande dans cet état n'a plus
+ * AUCUNE action de validation possible dessus (`validerComplementaireAction`
+ * la refuse explicitement), donc elle ne doit plus jamais compter comme "en
+ * attente de validation" — d'où l'exclusion `reliquatRejete: false`
+ * ci-dessous. Sans effet sur `EN_ATTENTE_VALIDATION` : `reliquatRejete` ne
+ * peut être mis à `true` que depuis `PARTIELLEMENT_VALIDEE` (garde de
+ * `rejeterReliquatAction`), donc une demande encore `EN_ATTENTE_VALIDATION`
+ * a toujours `reliquatRejete = false` par construction.
+ */
+export const DEMANDES_EN_ATTENTE_VALIDATION_WHERE = {
+  statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] },
+  reliquatRejete: false,
+} satisfies Prisma.DemandeWhereInput;
 
 /**
  * Somme des règlements confirmés et non annulés d'une demande — c'est le
@@ -49,14 +76,30 @@ export async function getTotalRegle(demandeId: string): Promise<number> {
  * réglable immédiatement sur la base des 250 000 déjà validés, sans
  * attendre la validation complémentaire du reliquat. Si `montantValide` est
  * encore `null` (aucune validation), retourne 0 : rien n'est réglable.
+ *
+ * `montantValideConnu`/`totalRegleConnu` (optionnels) évitent de refaire un
+ * `findUnique`/un `aggregate` déjà exécutés par l'appelant juste avant (ex:
+ * `confirmerReglementAction`, qui a de toute façon besoin de la demande et
+ * du total réglé pour ses propres vérifications) — jamais un changement de
+ * comportement, uniquement l'évitement d'une requête redondante. Omis :
+ * comportement strictement inchangé (auto-fetch), tous les appelants
+ * existants (dont `reporting.ts`) ne sont donc pas affectés.
  */
-export async function getResteARegler(demandeId: string): Promise<number> {
-  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
-  if (!demande || demande.montantValide == null) {
+export async function getResteARegler(
+  demandeId: string,
+  montantValideConnu?: Prisma.Decimal | number | null,
+  totalRegleConnu?: number
+): Promise<number> {
+  let montantValide = montantValideConnu;
+  if (montantValide === undefined) {
+    const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+    montantValide = demande?.montantValide ?? null;
+  }
+  if (montantValide == null) {
     return 0;
   }
-  const totalRegle = await getTotalRegle(demandeId);
-  return Math.max(0, Number(demande.montantValide) - totalRegle);
+  const totalRegle = totalRegleConnu ?? (await getTotalRegle(demandeId));
+  return Math.max(0, Number(montantValide) - totalRegle);
 }
 
 /**
@@ -74,9 +117,18 @@ export async function getResteARegler(demandeId: string): Promise<number> {
  * partiellement validée. `STATUTS_VALIDATION_COMPLETE` reste néanmoins
  * utilisée ailleurs (ex: éligibilité à la clôture, Ticket 7 — hors
  * périmètre de cette phase).
+ *
+ * `demandeConnue`/`totalRegleConnu` (optionnels) : même principe que sur
+ * `getResteARegler` ci-dessus — évitent de refaire un `findUnique`/un
+ * `aggregate` que l'appelant a déjà exécutés. Omis : comportement
+ * strictement inchangé (auto-fetch).
  */
-export async function peutEffectuerReglement(demandeId: string): Promise<boolean> {
-  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+export async function peutEffectuerReglement(
+  demandeId: string,
+  demandeConnue?: { statut: StatutDemande; montantValide: Prisma.Decimal | number | null },
+  totalRegleConnu?: number
+): Promise<boolean> {
+  const demande = demandeConnue ?? (await prisma.demande.findUnique({ where: { id: demandeId } }));
   if (!demande) {
     return false;
   }
@@ -86,7 +138,7 @@ export async function peutEffectuerReglement(demandeId: string): Promise<boolean
   if (demande.montantValide == null || Number(demande.montantValide) <= 0) {
     return false;
   }
-  return (await getResteARegler(demandeId)) > 0;
+  return (await getResteARegler(demandeId, demande.montantValide, totalRegleConnu)) > 0;
 }
 
 /**
@@ -229,6 +281,58 @@ export async function getSoldeOuvertureHistorique(): Promise<SoldeOuvertureHisto
   }
 
   return historique;
+}
+
+/**
+ * Source `JournalCaisse` d'une alimentation de caisse (Tâche "Nouvelle
+ * alimentation de caisse") — apport d'argent physique en caisse en cours
+ * d'exploitation, distinct du solde d'ouverture (unique, au tout début) :
+ * peut se répéter autant de fois que nécessaire, jamais plafonné à une
+ * seule occurrence. Même rigueur de traçabilité (pièce jointe obligatoire,
+ * historique dédié) mais un cycle indépendant, jamais mélangé aux trois
+ * sources `SOLDE_OUVERTURE_*` ci-dessus.
+ */
+export const ALIMENTATION_CAISSE_SOURCE = "alimentation_caisse";
+
+export interface AlimentationCaisseEntry {
+  id: string;
+  montant: number;
+  /** Date réelle de l'alimentation (`JournalCaisse.dateOperation`),
+   * potentiellement différente de `enregistreLe` (date de saisie). */
+  dateOperation: Date;
+  enregistreLe: Date;
+  auteurNom: string;
+  pieceJointe: { id: string; url: string };
+}
+
+/**
+ * Historique des alimentations de caisse, la plus récente en premier —
+ * inverse de `getSoldeOuvertureHistorique` (chronologique croissant) : une
+ * alimentation est un évènement répétable dont seules les toutes
+ * dernières occurrences intéressent Finance au quotidien, contrairement au
+ * solde d'ouverture (un seul évènement fondateur, plus naturel à lire du
+ * début vers la fin).
+ */
+export async function getAlimentationsCaisseHistorique(): Promise<AlimentationCaisseEntry[]> {
+  const entries = await prisma.journalCaisse.findMany({
+    where: { source: ALIMENTATION_CAISSE_SOURCE },
+    orderBy: { dateOperation: "desc" },
+    include: {
+      user: { select: { fullName: true } },
+      pieceJointe: { select: { id: true, url: true } },
+    },
+  });
+
+  return entries.map((e) => ({
+    id: e.id,
+    montant: Number(e.montant),
+    dateOperation: e.dateOperation!,
+    enregistreLe: e.createdAt,
+    auteurNom: e.user.fullName,
+    // Toujours renseignée : `alimenterCaisseAction` la rend obligatoire à
+    // la création, jamais d'entrée existante sans elle.
+    pieceJointe: e.pieceJointe!,
+  }));
 }
 
 /**
@@ -512,17 +616,84 @@ export async function getMesIndicateurs(userId: string): Promise<MesIndicateurs>
   };
 }
 
+export interface MaDemandeDetail {
+  id: string;
+  reference: string;
+  statut: StatutDemande;
+  montant: number;
+  montantValide: number | null;
+  /** Fonds remis pour cette demande précise (`getTotalRegle`, Caisse +
+   * Banque confondues — même définition que `RegularisationSummary`). */
+  montantRecu: number;
+  /** Solde à régulariser de cette demande précise (`decaisse -
+   * depensesDeclarees - retoursRecus`, formule identique à `getEcart` —
+   * voir note sur la duplication ci-dessous). `0` tant qu'aucun règlement
+   * n'a été effectué (rien à régulariser). */
+  soldeARegulariser: number;
+  createdAt: Date;
+}
+
+/**
+ * "Mon tableau de bord" détaillé (Tâche "Tableau de bord collaborateur
+ * détaillé") — chaque demande de l'utilisateur listée séparément (jamais
+ * agrégée comme `getMesIndicateurs` ci-dessus), avec son statut, le
+ * montant qu'elle a effectivement reçu (fonds remis) et son état de
+ * régularisation.
+ *
+ * Réutilise directement `getTotalRegle`/`getDepensesDeclarees`/
+ * `getRetoursRecus` — les mêmes trois fonctions déjà partagées par
+ * `RegularisationSummary` et `getEcart` ci-dessous — plutôt que d'appeler
+ * `getEcart` telle quelle : `getEcart` recalculerait `getTotalRegle` une
+ * deuxième fois en interne pour arriver au même total déjà nécessaire ici
+ * pour `montantRecu` (voir CLAUDE.md "Diagnostic de latence — requêtes
+ * redondantes") — la formule reste rigoureusement identique
+ * (`totalRegle - depensesDeclarees - retoursRecus`), seul le double appel
+ * est évité.
+ *
+ * N+1 assumé (3 agrégats par demande) : le volume de demandes d'un seul
+ * Collaborateur reste toujours modeste (même hypothèse que
+ * `getReglementsCaisseADeclarer`/`RetoursADeclarerPage`), pas la même
+ * échelle qu'un écran Finance portant sur toute l'organisation.
+ */
+export async function getMesDemandesDetail(userId: string): Promise<MaDemandeDetail[]> {
+  const demandes = await prisma.demande.findMany({
+    where: { createurId: userId },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return Promise.all(
+    demandes.map(async (d) => {
+      const [montantRecu, depensesDeclarees, retoursRecus] = await Promise.all([
+        getTotalRegle(d.id),
+        getDepensesDeclarees(d.id),
+        getRetoursRecus(d.id),
+      ]);
+      return {
+        id: d.id,
+        reference: d.reference,
+        statut: d.statut,
+        montant: Number(d.montant),
+        montantValide: d.montantValide == null ? null : Number(d.montantValide),
+        montantRecu,
+        soldeARegulariser: montantRecu - depensesDeclarees - retoursRecus,
+        createdAt: d.createdAt,
+      };
+    })
+  );
+}
+
 /**
  * Zone "À traiter" personnelle, indicateur #1 — nombre de demandes créées
- * par l'utilisateur encore en attente d'une décision de validation
- * (`EN_ATTENTE_VALIDATION` : rien validé, ou `PARTIELLEMENT_VALIDEE` : un
- * reliquat non validé subsiste). Même définition que
- * `getDemandesEnAttenteValidation` (`dashboardFinance.ts`), scopée par
- * `createurId`.
+ * par l'utilisateur encore en attente d'une décision de validation. Même
+ * définition exacte que `getDemandesEnAttenteValidation`
+ * (`dashboardFinance.ts`, via `DEMANDES_EN_ATTENTE_VALIDATION_WHERE`
+ * ci-dessus — inclut désormais l'exclusion `reliquatRejete: false`),
+ * simplement scopée par `createurId` : un reliquat rejeté ne doit pas non
+ * plus compter comme "à traiter" pour le Collaborateur qui l'a créé.
  */
 export async function getMesDemandesEnAttente(userId: string): Promise<{ nombre: number }> {
   const nombre = await prisma.demande.count({
-    where: { createurId: userId, statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] } },
+    where: { createurId: userId, ...DEMANDES_EN_ATTENTE_VALIDATION_WHERE },
   });
   return { nombre };
 }

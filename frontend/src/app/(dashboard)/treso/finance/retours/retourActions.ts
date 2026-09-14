@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
@@ -110,4 +111,105 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   publishDataChanged();
 
   return { status: "success", message: "Retour de caisse réceptionné." };
+}
+
+const motifNonJustifieSchema = z
+  .string()
+  .trim()
+  .min(3, "Le motif est obligatoire (3 caractères minimum)");
+
+/**
+ * Finance marque une `DepenseLigne` d'un retour encore en attente comme
+ * non justifiée, avec un motif obligatoire expliquant pourquoi Finance ne
+ * la considère pas justifiée — voir CLAUDE.md "Motif Finance sur dépense
+ * non justifiée". Réservée à `treso.receptionner_retour` (même permission
+ * que le traitement/la réception du retour lui-même).
+ *
+ * Distinct de `DepenseLigne.commentaire` : ce dernier reste la
+ * justification donnée par le COLLABORATEUR déclarant (déjà obligatoire de
+ * son côté si `justification = SANS_PIECE` dès la déclaration,
+ * `creerRetourCaisseAction`) — `motifNonJustifie` est la propre explication
+ * de FINANCE, jamais réécrite par le collaborateur (aucune action
+ * collaborateur ne touche ce champ). Applicable à une ligne QUELLE QUE SOIT
+ * sa justification actuelle (y compris déjà `SANS_PIECE` déclarée par le
+ * collaborateur — Finance peut alors simplement y ajouter son propre
+ * motif) : force `justification: "SANS_PIECE"` dans tous les cas, pour que
+ * la ligne apparaisse dans le suivi "Dépenses non justifiées"
+ * (`depenses-non-justifiees/page.tsx`, indicateur #6 du dashboard Finance)
+ * même si le collaborateur l'avait initialement déclarée avec pièce.
+ *
+ * Verrouillée dès que le retour est réceptionné — même principe que
+ * `modifierRetourCaisseAction` : plus aucune correction possible après
+ * réception, l'écart constaté à ce moment-là fait foi.
+ */
+export async function marquerDepenseNonJustifieeAction(
+  depenseLigneId: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.receptionner_retour")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedMotif = motifNonJustifieSchema.safeParse(motif);
+  if (!parsedMotif.success) {
+    return { status: "error", message: parsedMotif.error.issues[0].message };
+  }
+
+  const ligne = await prisma.depenseLigne.findUnique({
+    where: { id: depenseLigneId },
+    include: { retourCaisse: { include: { reglement: { include: { demande: true } } } } },
+  });
+
+  if (!ligne) {
+    return { status: "error", message: "Ligne de dépense introuvable." };
+  }
+  if (ligne.retourCaisse.estReceptionne) {
+    return {
+      status: "error",
+      message: "Ce retour de caisse a déjà été réceptionné : ses lignes ne sont plus modifiables.",
+    };
+  }
+  if (ligne.retourCaisse.reglement.demande.statut === "CLOTUREE") {
+    return {
+      status: "error",
+      message: `Cette demande n'est plus modifiable (statut actuel : ${ligne.retourCaisse.reglement.demande.statut}).`,
+    };
+  }
+
+  const demandeId = ligne.retourCaisse.reglement.demandeId;
+  const ancienneJustification = ligne.justification;
+
+  await prisma.$transaction([
+    prisma.depenseLigne.update({
+      where: { id: depenseLigneId },
+      data: {
+        justification: "SANS_PIECE",
+        motifNonJustifie: parsedMotif.data,
+        motifNonJustifieParId: session.user.id,
+        motifNonJustifieAt: new Date(),
+      },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "marquage_non_justifie",
+        detail:
+          ancienneJustification === "SANS_PIECE"
+            ? `Dépense "${ligne.objet}" (${Number(ligne.montant).toLocaleString("fr-FR")} FCFA) confirmée non justifiée par Finance : ${parsedMotif.data}`
+            : `Dépense "${ligne.objet}" (${Number(ligne.montant).toLocaleString("fr-FR")} FCFA) marquée non justifiée par Finance (était : ${ancienneJustification}) : ${parsedMotif.data}`,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+
+  revalidatePath("/treso/finance/retours");
+  revalidatePath("/treso/finance/depenses-non-justifiees");
+  revalidatePath(`/treso/demandes/${demandeId}`);
+  revalidatePath(`/treso/finance/demandes/${demandeId}`);
+  revalidatePath("/treso/finance", "layout");
+  publishDataChanged();
+
+  return { status: "success", message: "Dépense marquée non justifiée." };
 }

@@ -31,7 +31,18 @@ const ligneDepenseSchema = z
     }
   });
 
-const lignesSchema = z.array(ligneDepenseSchema).min(1, "Au moins une ligne de dépense est obligatoire.");
+// Zéro ligne est désormais un cas légitime (Tâche "Retour de caisse
+// optionnel" — voir CLAUDE.md) : un collaborateur qui n'a RIEN dépensé et
+// restitue l'intégralité du règlement n'a aucune dépense à déclarer.
+// `montantARetourner` vaut alors `reglement.montant` (calcul inchangé, la
+// somme des lignes valant 0) — jamais un cas d'erreur.
+const lignesSchema = z.array(ligneDepenseSchema);
+
+const dateRetourSchema = z
+  .string()
+  .trim()
+  .optional()
+  .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Date invalide");
 
 export interface LigneDepenseInput {
   /**
@@ -79,10 +90,19 @@ export interface LigneDepenseInput {
  * peut être déclaré, même si le règlement d'origine reste `estConfirme`
  * (ce champ ne change jamais après clôture, ce n'était donc pas suffisant
  * pour bloquer l'accès).
+ *
+ * `dateRetour` (optionnel) : uniquement renseigné par le formulaire
+ * SIMPLIFIÉ ("Retour simple : date + montant", voir CLAUDE.md) — le
+ * formulaire détaillé ne l'envoie jamais (chaque `DepenseLigne` porte déjà
+ * sa propre date). `lignes` peut être un tableau VIDE : un collaborateur
+ * qui n'a rien dépensé et restitue l'intégralité du règlement n'a aucune
+ * dépense à déclarer — `montantARetourner` vaut alors le montant complet
+ * du règlement (calcul inchangé, la somme des lignes valant 0).
  */
 export async function creerRetourCaisseAction(
   reglementId: string,
-  lignes: LigneDepenseInput[]
+  lignes: LigneDepenseInput[],
+  dateRetour?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.declarer_retour")) {
@@ -92,6 +112,10 @@ export async function creerRetourCaisseAction(
   const parsedLignes = lignesSchema.safeParse(lignes);
   if (!parsedLignes.success) {
     return { status: "error", message: parsedLignes.error.issues[0].message };
+  }
+  const parsedDateRetour = dateRetourSchema.safeParse(dateRetour);
+  if (!parsedDateRetour.success) {
+    return { status: "error", message: parsedDateRetour.error.issues[0].message };
   }
 
   const reglement = await prisma.reglement.findUnique({
@@ -123,7 +147,12 @@ export async function creerRetourCaisseAction(
 
   await prisma.$transaction(async (tx) => {
     const retour = await tx.retourCaisse.create({
-      data: { reglementId, declarantId: session.user.id, montantARetourner },
+      data: {
+        reglementId,
+        declarantId: session.user.id,
+        montantARetourner,
+        dateRetour: parsedDateRetour.data ? new Date(parsedDateRetour.data) : null,
+      },
     });
 
     // `create` individuel par ligne (pas `createMany`) : nécessaire pour
@@ -153,7 +182,10 @@ export async function creerRetourCaisseAction(
         entity: "Demande",
         entityId: reglement.demandeId,
         action: "declaration_retour",
-        detail: `Retour de caisse déclaré : ${parsedLignes.data.length} ligne(s) de dépense, ${totalDeclare.toLocaleString("fr-FR")} FCFA déclarés, ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner`,
+        detail:
+          parsedLignes.data.length > 0
+            ? `Retour de caisse déclaré : ${parsedLignes.data.length} ligne(s) de dépense, ${totalDeclare.toLocaleString("fr-FR")} FCFA déclarés, ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner`
+            : `Retour de caisse déclaré : aucune dépense (retour intégral), ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner`,
         userId: session.user.id,
       },
     });
@@ -277,7 +309,15 @@ export async function modifierRetourCaisseAction(
         });
       }
     }
-    await tx.retourCaisse.update({ where: { id: retourId }, data: { montantARetourner } });
+    await tx.retourCaisse.update({
+      where: { id: retourId },
+      // `dateRetour` toujours remise à `null` ici : la modification passe
+      // par le formulaire DÉTAILLÉ (chaque ligne porte sa propre date,
+      // voir `RetourCaisseRow.tsx`) — une valeur posée par une déclaration
+      // initiale "simple" n'a plus de sens dès qu'on modifie via ce
+      // formulaire, jamais affichée ni utilisée dans ce mode.
+      data: { montantARetourner, dateRetour: null },
+    });
     await tx.historiqueEntry.create({
       data: {
         entity: "Demande",

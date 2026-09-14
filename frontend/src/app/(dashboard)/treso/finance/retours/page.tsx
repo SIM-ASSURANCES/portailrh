@@ -36,7 +36,7 @@ export default async function RetoursEnAttentePage() {
     include: {
       declarant: true,
       reglement: { include: { demande: true } },
-      depenses: { include: { pieceJointe: true } },
+      depenses: { include: { pieceJointe: true, motifNonJustifiePar: true } },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -58,6 +58,7 @@ export default async function RetoursEnAttentePage() {
       totalDeclare,
       montantARetourner: Number(r.montantARetourner),
       montantNonJustifie,
+      dateRetour: r.dateRetour,
       depenses: r.depenses.map((d) => ({
         id: d.id,
         montant: Number(d.montant),
@@ -67,6 +68,8 @@ export default async function RetoursEnAttentePage() {
         justification: d.justification,
         commentaire: d.commentaire,
         pieceJointeId: d.pieceJointe?.id ?? null,
+        motifNonJustifie: d.motifNonJustifie,
+        motifNonJustifiePar: d.motifNonJustifiePar?.fullName ?? null,
       })),
       createdAt: r.createdAt,
     };

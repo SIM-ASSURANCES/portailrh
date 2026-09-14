@@ -8,11 +8,12 @@ import { getSession, hasPermission } from "@/lib/auth";
  * Finance et ses listes filtrées, reporting/export).
  *
  * Accessible avec `treso.categoriser_demande` **OU** `treso.valider_demande`
- * **OU** `treso.receptionner_retour` **OU** `treso.voir_dashboard_finance`
- * **OU** `treso.voir_reporting` **OU** `treso.saisir_depense_directe`
- * (Phase F) **OU** `treso.approuver_validation_complete` (verrou de clôture
- * DG) **OU** `treso.gerer_categories` (gestion des Catégories/Objets ouverte
- * à Finance, voir CLAUDE.md "Gestion des Catégories/Objets ouverte à
+ * **OU** `treso.effectuer_reglement` **OU** `treso.receptionner_retour`
+ * **OU** `treso.voir_dashboard_finance` **OU** `treso.voir_reporting`
+ * **OU** `treso.saisir_depense_directe` (Phase F) **OU**
+ * `treso.approuver_validation_complete` (verrou de clôture DG) **OU**
+ * `treso.gerer_categories` (gestion des Catégories/Objets ouverte à
+ * Finance, voir CLAUDE.md "Gestion des Catégories/Objets ouverte à
  * Finance") (pas besoin de toutes) : Finance catégorise et réceptionne les
  * retours (généralement sans `valider_demande`), le DG valide/rejette et
  * voit le dashboard/reporting (généralement sans les autres, cf. seed) —
@@ -33,6 +34,7 @@ export default async function FinanceLayout({ children }: { children: React.Reac
     !!session &&
     (hasPermission(session, "treso.categoriser_demande") ||
       hasPermission(session, "treso.valider_demande") ||
+      hasPermission(session, "treso.effectuer_reglement") ||
       hasPermission(session, "treso.receptionner_retour") ||
       hasPermission(session, "treso.voir_dashboard_finance") ||
       hasPermission(session, "treso.voir_reporting") ||

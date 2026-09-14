@@ -173,40 +173,41 @@ export const getSession = cache(async (): Promise<{
     return null;
   }
 
-  const role = await prisma.role.findUnique({
-    where: { name: session.role },
-    include: { permissions: { include: { permission: true } } },
-  });
-
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-  });
+  // Les 3 requêtes ci-dessous sont mutuellement indépendantes (aucune ne
+  // dépend du résultat d'une autre — `delegations` utilise
+  // `session.user.id`, déjà connu depuis le JWT, jamais le résultat de
+  // `user`) : exécutées en parallèle plutôt qu'en 3 allers-retours DB
+  // séquentiels. `getSession()` étant appelée à CHAQUE page/Server Action
+  // authentifiée (mémoïsée par requête via `cache()`, mais recalculée à
+  // chaque nouvelle requête), ce changement réduit la latence de base de
+  // strictement TOUT bouton du portail, sans changer le résultat.
+  const [role, user, delegations] = await Promise.all([
+    prisma.role.findUnique({
+      where: { name: session.role },
+      include: { permissions: { include: { permission: true } } },
+    }),
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+    }),
+    prisma.permissionDelegation.findMany({
+      where: { beneficiaireId: session.user.id, estActive: true },
+      select: {
+        permission: { select: { key: true } },
+        donneur: {
+          select: {
+            isActive: true,
+            role: { select: { permissions: { select: { permission: { select: { key: true } } } } } },
+          },
+        },
+      },
+    }),
+  ]);
 
   if (!user || !user.isActive || user.tokenVersion !== session.user.tokenVersion) {
     return null;
   }
 
   const rolePermissions = role?.permissions.map((rp) => rp.permission.key) ?? [];
-
-  // Délégations individuelles actives reçues par cet utilisateur — voir
-  // CLAUDE.md "Délégation individuelle de permissions". Recalculées à
-  // chaque appel, jamais mises en cache au-delà de cette requête : le
-  // donneur doit ENCORE posséder cette permission via son propre rôle (et
-  // être toujours actif) au moment précis de cette vérification, sinon la
-  // délégation n'est pas prise en compte — aucune action manuelle de
-  // révocation n'est nécessaire quand le donneur perd le droit sous-jacent.
-  const delegations = await prisma.permissionDelegation.findMany({
-    where: { beneficiaireId: user.id, estActive: true },
-    select: {
-      permission: { select: { key: true } },
-      donneur: {
-        select: {
-          isActive: true,
-          role: { select: { permissions: { select: { permission: { select: { key: true } } } } } },
-        },
-      },
-    },
-  });
 
   const delegatedKeys = delegations
     .filter(

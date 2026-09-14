@@ -61,6 +61,7 @@ export default async function DepensesNonJustifieesPage() {
       montant: Number(l.montant),
       date: l.date,
       commentaire: l.commentaire,
+      motifNonJustifie: l.motifNonJustifie,
       solde: soldes.get(l.retourCaisse.reglementId) ?? 0,
     }))
     .filter((l) => l.solde !== 0);

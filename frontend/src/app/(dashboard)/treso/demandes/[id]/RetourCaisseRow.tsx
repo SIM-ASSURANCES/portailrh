@@ -27,6 +27,10 @@ export interface RetourCaisseRowData {
         id: string;
         estReceptionne: boolean;
         montantARetourner: number;
+        /** Renseignée uniquement pour une déclaration via le formulaire
+         * simplifié ("date + montant") — `null` pour une déclaration
+         * détaillée, où chaque `DepenseLigne` porte déjà sa propre date. */
+        dateRetour: Date | null;
         /** Non réceptionné, demande non clôturée, ET utilisateur connecté = déclarant original. */
         peutModifier: boolean;
         depenses: DepenseLigneData[];
@@ -44,7 +48,15 @@ export interface RetourCaisseRowData {
  * convention que le reste du projet (reste à régler, écart de
  * régularisation...).
  */
-function DetailDepenses({ depenses, montantARetourner }: { depenses: DepenseLigneData[]; montantARetourner: number }) {
+function DetailDepenses({
+  depenses,
+  montantARetourner,
+  dateRetour,
+}: {
+  depenses: DepenseLigneData[];
+  montantARetourner: number;
+  dateRetour: Date | null;
+}) {
   const totalDeclare = depenses.reduce((sum, d) => sum + d.montant, 0);
   const montantNonJustifie = depenses
     .filter((d) => d.justification === "SANS_PIECE")
@@ -52,6 +64,11 @@ function DetailDepenses({ depenses, montantARetourner }: { depenses: DepenseLign
 
   return (
     <div className="animate-fade-in-up space-y-3 border-t border-border pt-3">
+      {dateRetour ? (
+        <p className="text-xs text-muted-foreground">
+          Déclaration simplifiée — retour du {dateRetour.toLocaleDateString("fr-FR")}.
+        </p>
+      ) : null}
       <ul className="space-y-2">
         {depenses.map((d) => (
           <li key={d.id} className="rounded-md bg-muted p-2 text-sm">
@@ -189,7 +206,11 @@ export function RetourCaisseRow({ reglementId, montant, retour, peutDeclarer }: 
           onSuccess={() => setFormOpen(false)}
         />
       ) : retour ? (
-        <DetailDepenses depenses={retour.depenses} montantARetourner={retour.montantARetourner} />
+        <DetailDepenses
+          depenses={retour.depenses}
+          montantARetourner={retour.montantARetourner}
+          dateRetour={retour.dateRetour}
+        />
       ) : null}
     </li>
   );

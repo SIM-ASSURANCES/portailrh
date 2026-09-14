@@ -4,10 +4,13 @@ import { redirect } from "next/navigation";
 import { Button, PageHeader, StatCard, type StatTone } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import {
+  getMesDemandesDetail,
   getMesDemandesEnAttente,
   getMesIndicateurs,
   getReglementsCaisseADeclarer,
 } from "backend";
+
+import { MesDemandesDetailTable } from "./MesDemandesDetailTable";
 
 /**
  * "Mon tableau de bord" — cahier des charges section 14 : la vision
@@ -44,10 +47,11 @@ export default async function MonTableauDeBordPage() {
   }
 
   const userId = session.user.id;
-  const [indicateurs, enAttente, retoursADeclarer] = await Promise.all([
+  const [indicateurs, enAttente, retoursADeclarer, demandesDetail] = await Promise.all([
     getMesIndicateurs(userId),
     getMesDemandesEnAttente(userId),
     getReglementsCaisseADeclarer(userId),
+    getMesDemandesDetail(userId),
   ]);
 
   const canCreate = hasPermission(session, "treso.creer_demande");
@@ -171,16 +175,47 @@ export default async function MonTableauDeBordPage() {
               value={enAttente.nombre}
             />
           </div>
-          <div className="stat-card-enter">
-            <StatCard
-              href={hrefRetours}
-              icon="rotate-ccw"
-              tone={toneSiActif(retoursADeclarer.length, "warning")}
-              label="Mes retours de caisse à déclarer"
-              value={retoursADeclarer.length}
-            />
-          </div>
         </div>
+      </section>
+
+      {/* "Retours de caisse" — délibérément HORS de "À traiter" et toujours
+          en teinte neutre (jamais `warning`) : voir CLAUDE.md "Retour de
+          caisse optionnel". Ne rien soumettre est un état terminal valide
+          (rien à retourner ni à justifier) ; cette carte reste purement
+          informationnelle ("vous POURRIEZ déclarer quelque chose ici"),
+          jamais une obligation qui ne se résorbe qu'en soumettant quelque
+          chose, même trivial. */}
+      {retoursADeclarer.length > 0 ? (
+        <section className="space-y-4">
+          <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+            <span className="h-5 w-1 rounded-full bg-border" aria-hidden="true" />
+            Retours de caisse (facultatif)
+          </h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="stat-card-enter">
+              <StatCard
+                href={hrefRetours}
+                icon="rotate-ccw"
+                tone="neutral"
+                label="Retours de caisse disponibles à déclarer — aucune action requise si rien à signaler"
+                value={retoursADeclarer.length}
+              />
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {/* Voir CLAUDE.md "Tableau de bord collaborateur détaillé" : chaque
+          demande listée séparément (jamais agrégée derrière les 5
+          indicateurs ci-dessus), avec son propre montant reçu et son
+          propre état de régularisation — pour retrouver facilement où en
+          est une demande précise et l'argent reçu pour elle. */}
+      <section className="space-y-4">
+        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+          <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
+          Mes demandes
+        </h2>
+        <MesDemandesDetailTable demandes={demandesDetail} />
       </section>
     </div>
   );

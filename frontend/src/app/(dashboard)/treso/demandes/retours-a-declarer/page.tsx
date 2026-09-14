@@ -39,8 +39,8 @@ export default async function RetoursADeclarerPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
-        title="Mes retours de caisse à déclarer"
-        description="Règlements Caisse dont vous devez encore déclarer l'usage des fonds remis."
+        title="Retours de caisse disponibles à déclarer"
+        description="Règlements Caisse pour lesquels vous pouvez, si besoin, déclarer un retour ou justifier une dépense — aucune action n'est requise si vous n'avez rien à retourner ni à justifier."
       />
 
       {reglements.length === 0 ? (

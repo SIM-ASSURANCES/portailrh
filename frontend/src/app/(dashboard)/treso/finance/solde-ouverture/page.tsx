@@ -2,8 +2,9 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { getSoldeOuvertureHistorique, getSoldeOuvertureInfo } from "backend";
+import { getAlimentationsCaisseHistorique, getSoldeOuvertureHistorique, getSoldeOuvertureInfo } from "backend";
 
+import { AlimentationsCaisseHistorique } from "./AlimentationsCaisseHistorique";
 import { SoldeOuvertureCorrection } from "./SoldeOuvertureCorrection";
 import { SoldeOuvertureForm } from "./SoldeOuvertureForm";
 import { SoldeOuvertureHistorique } from "./SoldeOuvertureHistorique";
@@ -21,7 +22,11 @@ export default async function SoldeOuverturePage() {
     redirect("/?error=acces_refuse_solde_ouverture");
   }
 
-  const [info, historique] = await Promise.all([getSoldeOuvertureInfo(), getSoldeOuvertureHistorique()]);
+  const [info, historique, alimentations] = await Promise.all([
+    getSoldeOuvertureInfo(),
+    getSoldeOuvertureHistorique(),
+    getAlimentationsCaisseHistorique(),
+  ]);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
@@ -37,6 +42,7 @@ export default async function SoldeOuverturePage() {
       )}
 
       <SoldeOuvertureHistorique entries={historique} />
+      <AlimentationsCaisseHistorique entries={alimentations} />
     </div>
   );
 }

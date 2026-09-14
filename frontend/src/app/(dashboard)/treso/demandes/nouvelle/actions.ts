@@ -20,7 +20,6 @@ export interface LigneDemandeInput {
 
 export interface CreerDemandeInput {
   beneficiaireType: string;
-  categorieId: string;
   dateLivraisonSouhaitee?: string;
   devise: string;
   /** "Motif de l'achat" — stocké dans `Demande.description`. */
@@ -40,7 +39,6 @@ const demandeSchema = z.object({
   beneficiaireType: z.enum(["COLLABORATEUR", "STAGIAIRE", "FOURNISSEUR", "ENTREPRISE"], {
     message: "Entité bénéficiaire requise",
   }),
-  categorieId: z.string().min(1, "Catégorie d'achat requise"),
   dateLivraisonSouhaitee: z
     .string()
     .optional()
@@ -89,7 +87,7 @@ export async function creerDemandeAction(
     };
   }
 
-  const { beneficiaireType, categorieId, dateLivraisonSouhaitee, devise, motif, lignes } = parsed.data;
+  const { beneficiaireType, dateLivraisonSouhaitee, devise, motif, lignes } = parsed.data;
 
   const montant = lignes.reduce((sum, l) => sum + l.quantite * l.prixUnitaire, 0);
   if (montant <= 0) {
@@ -97,21 +95,6 @@ export async function creerDemandeAction(
       status: "error",
       message: "Le formulaire contient des erreurs.",
       fieldErrors: { lignes: "Le total général doit être supérieur à 0." },
-    };
-  }
-
-  // La catégorie d'achat doit exister et être active — c'est elle qui
-  // porte le budget PARTAGÉ (voir CLAUDE.md "Budget partagé par Catégorie"),
-  // jamais une notion propre à cette demande.
-  const categorie = await prisma.categorie.findFirst({
-    where: { id: categorieId, isActive: true },
-    select: { id: true },
-  });
-  if (!categorie) {
-    return {
-      status: "error",
-      message: "Le formulaire contient des erreurs.",
-      fieldErrors: { categorieId: "Catégorie d'achat inconnue." },
     };
   }
 
@@ -137,7 +120,9 @@ export async function creerDemandeAction(
           montant,
           description: motif,
           devise,
-          categorieId: categorie.id,
+          // Pas de categorieId ici : la catégorisation reste un travail de
+          // Finance après création (voir CategorisationForm), jamais choisie
+          // par le collaborateur à la création (`categorieId` est nullable).
           dateLivraisonSouhaitee: dateLivraisonSouhaitee ? new Date(dateLivraisonSouhaitee) : null,
           createurId: session.user.id,
           beneficiaireType,
