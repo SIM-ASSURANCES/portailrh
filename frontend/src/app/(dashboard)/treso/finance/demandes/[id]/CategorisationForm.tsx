@@ -1,7 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useActionState, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { Button, Input, Select } from "@/components/ui";
@@ -19,6 +18,12 @@ interface ObjetOption {
   id: string;
   label: string;
   categorieId: string;
+}
+
+interface BudgetCategorieInfo {
+  budgetAlloue: number | null;
+  consomme: number;
+  restant: number | null;
 }
 
 /** Valeur spéciale du Select "Objet" déclenchant le panneau de création
@@ -45,6 +50,7 @@ export function CategorisationForm({
   objets,
   initialCategorieId = "",
   initialObjetId = "",
+  budgetParCategorie = {},
 }: {
   demandeId: string;
   categories: CategorieOption[];
@@ -53,9 +59,16 @@ export function CategorisationForm({
    * EN_ATTENTE (Finance peut corriger tant qu'elle n'est pas validée). */
   initialCategorieId?: string;
   initialObjetId?: string;
+  /**
+   * Niveau de budget de chaque Catégorie proposable, déjà calculé côté
+   * serveur (`getMontantConsommeCategorie`, voir CLAUDE.md "Budget partagé
+   * par Catégorie") — jamais recalculé ici ni refetché au changement de
+   * Select : même volume que `categories`/`objets`, déjà chargé une fois
+   * par la page, filtré en mémoire selon la catégorie choisie.
+   */
+  budgetParCategorie?: Record<string, BudgetCategorieInfo>;
 }) {
   const [state, formAction, isPending] = useActionState(categoriserDemandeAction, IDLE_ACTION_STATE);
-  const router = useRouter();
   useActionFeedback(state);
   const [categorieId, setCategorieId] = useState(initialCategorieId);
   const [objetsLocaux, setObjetsLocaux] = useState(objets);
@@ -65,15 +78,14 @@ export function CategorisationForm({
   const [objetSelectionneId, setObjetSelectionneId] = useState(initialObjetId);
   const [isPendingObjet, startTransitionObjet] = useTransition();
 
-  useEffect(() => {
-    if (state.status === "success") {
-      // Retour à la liste plutôt que de rester sur un formulaire qui vient
-      // de se réinitialiser visuellement (comportement natif après une
-      // Server Action réussie) : plus cohérent avec le flux "traiter la
-      // file d'attente" de Finance.
-      router.push("/treso/finance/demandes");
-    }
-  }, [state, router]);
+  // Volontairement PAS de redirection après succès : Finance reste sur cet
+  // écran de traitement (toast de confirmation via `useActionFeedback`
+  // suffit). `categoriserDemandeAction` ne change jamais le statut — la
+  // demande reste `EN_ATTENTE_VALIDATION` — donc `revalidatePath` (appelé
+  // par l'action) suffit à réafficher ce même formulaire, désormais
+  // pré-rempli avec la catégorie/l'objet qui viennent d'être enregistrés,
+  // avec les boutons de décision (`ValidationActions`) toujours visibles
+  // juste en dessous sur la même page.
 
   const objetsFiltres = useMemo(
     () => objetsLocaux.filter((o) => o.categorieId === categorieId),
@@ -145,6 +157,10 @@ export function CategorisationForm({
         error={state.status === "error" ? state.fieldErrors?.categorieId : undefined}
       />
 
+      {categorieId && budgetParCategorie[categorieId] ? (
+        <BudgetCategorieApercu info={budgetParCategorie[categorieId]} />
+      ) : null}
+
       <Select
         key={`${categorieId}-${objetSelectionneId}`}
         name="objetId"
@@ -208,5 +224,53 @@ export function CategorisationForm({
         Enregistrer la catégorisation
       </Button>
     </form>
+  );
+}
+
+/**
+ * Aperçu du budget de la Catégorie actuellement sélectionnée dans le Select
+ * ci-dessus — "Budget visible au moment de la catégorisation" : Finance
+ * voit où en est l'argent de cette Catégorie AVANT de valider son choix,
+ * jamais après coup. Purement informatif (aucune action, aucun blocage —
+ * le contrôle bloquant réel reste au RÈGLEMENT, voir
+ * `confirmerReglementAction`/CLAUDE.md "Budget partagé par Catégorie") :
+ * une catégorie déjà en dépassement reste sélectionnable ici, Finance est
+ * seulement prévenue à l'avance plutôt que découvrir le blocage plus tard
+ * au moment de confirmer un règlement.
+ */
+function BudgetCategorieApercu({ info }: { info: BudgetCategorieInfo }) {
+  if (info.budgetAlloue == null) {
+    return (
+      <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+        Aucun budget défini pour cette catégorie — aucune limite appliquée.
+      </p>
+    );
+  }
+
+  const depasse = info.restant != null && info.restant < 0;
+
+  return (
+    <dl className="grid grid-cols-1 gap-3 rounded-md border border-border bg-muted/40 px-3 py-2.5 sm:grid-cols-3">
+      <div>
+        <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Budget alloué</dt>
+        <dd className="text-sm font-semibold text-foreground tabular-nums">
+          {info.budgetAlloue.toLocaleString("fr-FR")} FCFA
+        </dd>
+      </div>
+      <div>
+        <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Déjà consommé</dt>
+        <dd className="text-sm font-semibold text-foreground tabular-nums">
+          {info.consomme.toLocaleString("fr-FR")} FCFA
+        </dd>
+      </div>
+      <div>
+        <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Restant disponible
+        </dt>
+        <dd className={`text-sm font-semibold tabular-nums ${depasse ? "text-danger" : "text-success"}`}>
+          {info.restant!.toLocaleString("fr-FR")} FCFA
+        </dd>
+      </div>
+    </dl>
   );
 }

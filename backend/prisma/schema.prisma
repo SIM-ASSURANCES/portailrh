@@ -53,6 +53,9 @@ model User {
   reglementsFaits     Reglement[]       @relation("ReglementAuteur")
   retoursDeclares     RetourCaisse[]    @relation("RetourDeclarant")
   retoursReceptionnes RetourCaisse[]    @relation("RetourReceptionnaire")
+  /// Lignes de dépense marquées "non justifiée" par cet utilisateur Finance
+  /// (`marquerDepenseNonJustifieeAction`), avec motif obligatoire.
+  depensesMarqueesNonJustifiees DepenseLigne[] @relation("MotifNonJustifiePar")
   historique          HistoriqueEntry[]
   /// Écritures JournalCaisse déclenchées par cet utilisateur (auteur du
   /// règlement pour une SORTIE, receptionneParId pour une ENTRÉE de retour,
@@ -512,6 +515,17 @@ model RetourCaisse {
 
   createdAt     DateTime  @default(now())
   receptionneAt DateTime?
+
+  /// Date du retour physique de l'espèce, saisie par le collaborateur dans
+  /// le formulaire SIMPLIFIÉ ("Retour simple : date + montant", voir
+  /// CLAUDE.md "Retour de caisse optionnel — formulaire simplifié") —
+  /// distincte de `createdAt` (horodatage de la déclaration elle-même, qui
+  /// peut être postérieure de quelques jours au retour physique). Toujours
+  /// `null` pour une déclaration via le formulaire détaillé (chaque
+  /// `DepenseLigne` porte déjà sa propre date), même précédent que
+  /// `Reglement.confirmeAt` (Ticket 9) pour la même distinction
+  /// évènement-réel / horodatage-d'écriture.
+  dateRetour DateTime?
 }
 
 /// Une ligne de dépense détaillée d'un `RetourCaisse` (cahier des charges
@@ -526,6 +540,19 @@ model DepenseLigne {
   nature        String?
   justification TypeJustification
   commentaire   String?
+
+  /// Motif obligatoire saisi par Finance quand ELLE marque cette ligne
+  /// `SANS_PIECE` en traitant le retour (`marquerDepenseNonJustifieeAction`)
+  /// — distinct de `commentaire`, qui reste la justification donnée par le
+  /// collaborateur déclarant (obligatoire de son côté si SANS_PIECE dès la
+  /// déclaration). `null` tant que Finance n'est jamais intervenue sur
+  /// cette ligne, y compris si le collaborateur l'a lui-même déclarée
+  /// SANS_PIECE. Jamais réinitialisé automatiquement : voir
+  /// `marquerDepenseNonJustifieeAction` pour la seule écriture possible.
+  motifNonJustifie   String?
+  motifNonJustifiePar   User?    @relation("MotifNonJustifiePar", fields: [motifNonJustifieParId], references: [id])
+  motifNonJustifieParId String?
+  motifNonJustifieAt    DateTime?
 
   retourCaisseId String
   retourCaisse   RetourCaisse @relation(fields: [retourCaisseId], references: [id])
@@ -553,6 +580,12 @@ model JournalCaisse {
   source    String
   refId     String
   createdAt DateTime @default(now())
+
+  /// Date RÉELLE de l'opération, quand elle diverge de `createdAt` (date de
+  /// saisie dans le portail) — voir CLAUDE.md "Nouvelle alimentation de
+  /// caisse". `null` pour toutes les autres sources (règlement, retour,
+  /// solde d'ouverture), où `createdAt` fait foi.
+  dateOperation DateTime?
 
   /// Nullable depuis "Solde d'ouverture de caisse" (voir CLAUDE.md) :
   /// toutes les écritures avant cette phase portaient une demande réelle

@@ -51,6 +51,20 @@ function nouvelleLigne(): LigneEdit {
  * `modifierRetourCaisseAction` de mettre à jour les lignes conservées EN
  * PLACE plutôt que tout recréer (préserve une éventuelle pièce jointe déjà
  * attachée à une ligne inchangée).
+ *
+ * **Retour simplifié** (Tâche "Retour de caisse optionnel", voir
+ * CLAUDE.md) — uniquement en `mode="create"` : deux champs, date + montant
+ * retourné, plutôt que le formulaire détaillé complet, pour le cas courant
+ * "rien à détailler". La portion NON retournée (`montantReglement -
+ * montantRetourne`) est transmise comme UNE SEULE `DepenseLigne` synthétique
+ * (`justification: SANS_PIECE`) — jamais silencieusement perdue de la
+ * comptabilité : elle apparaît honnêtement comme "non justifiée" pour
+ * Finance (voir CLAUDE.md pour la tension documentée entre cette
+ * simplification et le détail par ligne). Si `montantRetourne` égale le
+ * montant du règlement (rien dépensé), aucune ligne n'est envoyée —
+ * `creerRetourCaisseAction` accepte désormais un tableau vide. Le
+ * formulaire détaillé reste disponible via un lien, pour qui a réellement
+ * des dépenses à justifier précisément.
  */
 export function RetourCaisseForm({
   mode = "create",
@@ -71,6 +85,13 @@ export function RetourCaisseForm({
   onCancel: () => void;
   onSuccess: () => void;
 }) {
+  // Le mode "édition" reste toujours détaillé (chaque ligne existante porte
+  // déjà sa propre date) — le choix simple/détaillé ne concerne que la
+  // déclaration initiale.
+  const [formeSimple, setFormeSimple] = useState(mode === "create");
+  const [dateRetourSimple, setDateRetourSimple] = useState(() => new Date().toISOString().slice(0, 10));
+  const [montantRetourneSimple, setMontantRetourneSimple] = useState(String(montantReglement));
+
   const [lignes, setLignes] = useState<LigneEdit[]>(() =>
     lignesInitiales && lignesInitiales.length > 0
       ? lignesInitiales.map((l) => ({ ...l, key: l.id }))
@@ -81,6 +102,47 @@ export function RetourCaisseForm({
 
   const totalDeclare = lignes.reduce((sum, l) => sum + (Number(l.montant) || 0), 0);
   const montantARetourner = Math.max(0, montantReglement - totalDeclare);
+
+  function handleSubmitSimple() {
+    const montantRetourne = Number(montantRetourneSimple);
+    if (!dateRetourSimple) {
+      setErreur("La date du retour est obligatoire.");
+      return;
+    }
+    if (Number.isNaN(montantRetourne) || montantRetourne < 0) {
+      setErreur("Le montant retourné doit être un nombre positif ou nul.");
+      return;
+    }
+    if (montantRetourne > montantReglement) {
+      setErreur(`Le montant retourné ne peut pas dépasser le montant du règlement (${montantReglement.toLocaleString("fr-FR")} FCFA).`);
+      return;
+    }
+    setErreur(undefined);
+
+    const montantDepense = Math.max(0, montantReglement - montantRetourne);
+    const lignesPayload: LigneDepenseInput[] =
+      montantDepense > 0
+        ? [
+            {
+              montant: montantDepense,
+              objet: "Dépenses non détaillées",
+              date: dateRetourSimple,
+              justification: "SANS_PIECE",
+              commentaire: "Déclaration simplifiée (date + montant) : dépenses non détaillées par le collaborateur.",
+            },
+          ]
+        : [];
+
+    startTransition(async () => {
+      const result = await creerRetourCaisseAction(reglementId, lignesPayload, dateRetourSimple);
+      if (result.status === "success") {
+        toast.success(result.message);
+        onSuccess();
+      } else {
+        toast.error(result.message);
+      }
+    });
+  }
 
   function updateLigne(key: string, patch: Partial<LigneEdit>) {
     setLignes((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -139,8 +201,69 @@ export function RetourCaisseForm({
     });
   }
 
+  if (formeSimple) {
+    return (
+      <div className="animate-fade-in-up space-y-4 border-t border-border pt-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Input
+            label="Date du retour"
+            type="date"
+            required
+            value={dateRetourSimple}
+            onChange={(e) => setDateRetourSimple(e.target.value)}
+          />
+          <Input
+            label="Montant retourné"
+            type="number"
+            inputMode="decimal"
+            min="0"
+            max={montantReglement}
+            step="1"
+            required
+            hint={`Montant du règlement : ${montantReglement.toLocaleString("fr-FR")} FCFA`}
+            value={montantRetourneSimple}
+            onChange={(e) => setMontantRetourneSimple(e.target.value)}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Le solde éventuellement dépensé ({Math.max(0, montantReglement - (Number(montantRetourneSimple) || 0)).toLocaleString("fr-FR")} FCFA)
+          sera enregistré comme une dépense non détaillée. Pour justifier précisément vos dépenses ligne par
+          ligne (montant, objet, pièce jointe), utilisez plutôt le{" "}
+          <button
+            type="button"
+            className="text-info underline-offset-4 hover:text-primary hover:underline"
+            onClick={() => setFormeSimple(false)}
+          >
+            formulaire détaillé
+          </button>
+          .
+        </p>
+
+        {erreur ? <p className="text-sm text-danger">{erreur}</p> : null}
+
+        <div className="flex flex-wrap gap-3">
+          <Button type="button" loading={isPending} onClick={handleSubmitSimple}>
+            Déclarer le retour
+          </Button>
+          <Button type="button" variant="secondary" disabled={isPending} onClick={onCancel}>
+            Annuler
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fade-in-up space-y-4 border-t border-border pt-4">
+      {mode === "create" ? (
+        <button
+          type="button"
+          className="text-xs text-info underline-offset-4 hover:text-primary hover:underline"
+          onClick={() => setFormeSimple(true)}
+        >
+          ← Revenir au formulaire simple (date + montant)
+        </button>
+      ) : null}
       <div className="space-y-4">
         {lignes.map((ligne, index) => (
           <div key={ligne.key} className="animate-fade-in-up space-y-3 rounded-md border border-border p-3">

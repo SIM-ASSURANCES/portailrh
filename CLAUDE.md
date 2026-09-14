@@ -600,6 +600,14 @@ flottante directe.
   `CAISSE` confirmé crée une écriture `SORTIE`, son annulation une écriture
   `ENTREE` compensatoire (le grand livre n'est jamais réécrit ni supprimé).
 - Permission : `treso.effectuer_reglement` (Finance uniquement).
+- **Distincte de `treso.valider_demande` depuis l'origine** (jamais un
+  seul droit couvrant les deux actions) — reconfirmé explicitement par la
+  Tâche "Séparer 'valider' de 'régler/décaisser'" : un Responsable Finance
+  peut déléguer `effectuer_reglement` seul, via `/delegations`, à un
+  collaborateur qui ne pourra alors PAS valider de demande (vérifié en
+  pratique, UI et requête réseau directe). Voir aussi "Aide-mémoire —
+  permissions actuelles" pour un bug de garde d'accès trouvé et corrigé à
+  cette occasion.
 
 ### Fonds remis / retour de caisse
 
@@ -612,7 +620,18 @@ flottante directe.
 - **Déclarer un retour ≠ réceptionner un retour.** Seule la réception
   (Finance, `estReceptionne = true`) crée une écriture `JournalCaisse`
   `ENTREE` et impacte le solde de caisse ; la déclaration seule n'écrit
-  jamais dans `JournalCaisse`.
+  jamais dans `JournalCaisse`. **Ré-audité (Tâche "Le retour de caisse
+  n'impacte la caisse qu'après validation Finance")** : `grep` exhaustif de
+  tous les `journalCaisse.create` du projet confirme que seuls
+  `reglementActions.ts` (règlement Caisse confirmé/annulé),
+  `finance/retours/retourActions.ts` (`receptionnerRetourAction`) et
+  `solde-ouverture/actions.ts` écrivent dans `JournalCaisse` —
+  `creerRetourCaisseAction`/`modifierRetourCaisseAction` (déclaration/
+  modification côté collaborateur) n'en créent aucune, confirmé aussi par
+  un parcours réel (solde de caisse lu avant/après déclaration : inchangé ;
+  avant/après réception : mis à jour exactement au moment de la réception).
+  Aucun bug trouvé, aucun correctif nécessaire — le comportement était déjà
+  conforme.
 - Un retour non encore réceptionné peut être **modifié** par son déclarant
   original (`modifierRetourCaisseAction`, diff par id ligne par ligne),
   jamais après réception.
@@ -620,6 +639,100 @@ flottante directe.
   déclarées − retours reçus, jamais plafonné à 0 (un résultat négatif
   signale une anomalie réelle).
 - Un seul retour par règlement Caisse confirmé.
+- **Solde à régulariser (`RegularisationSummary`/`getEcart`) — formule
+  vérifiée conforme** à "Fonds remis − Dépenses justifiées − Dépenses non
+  justifiées − Retours de caisse validés" : `ecart = decaisse -
+  depensesDeclarees - retoursRecus`, où `getDepensesDeclarees` somme déjà
+  **toutes** les `DepenseLigne` sans distinction de justification (donc
+  justifiées + non justifiées combinées). Mathématiquement identique à
+  soustraire les deux parts séparément (distributivité) — confirmé aussi
+  bien par relecture du code que par un cas de test réel (Fonds remis
+  100 000, dépense justifiée 30 000, dépense non justifiée 20 000, retour
+  validé 50 000 → Solde à régulariser = 0). Aucun terme divergent trouvé,
+  **aucune modification apportée à la formule elle-même**.
+
+**Retour de caisse optionnel — pas de déclaration forcée de "zéro"** : un
+collaborateur qui n'a rien à retourner ni à justifier n'a **aucune action
+à effectuer**. La véritable source d'une ancienne impression d'obligation
+n'était pas un blocage serveur (le circuit Finance "Retours en attente",
+`RETOUR_EN_ATTENTE_WHERE`, a toujours ignoré les règlements sans
+`RetourCaisse` — rien ne les y attend) mais le widget collaborateur "Mes
+retours de caisse à déclarer", affiché en zone "À traiter" (teinte
+`warning`) sur `tableau-de-bord/page.tsx` : reformulé en section séparée
+« Retours de caisse (facultatif) », teinte neutre fixe, libellé "aucune
+action requise si rien à signaler" — jamais dans la zone actionnable.
+Même reformulation sur `demandes/retours-a-declarer/page.tsx` (titre et
+description sans framing d'obligation).
+
+- `creerRetourCaisseAction` accepte désormais un tableau de `DepenseLigne`
+  **vide** (`lignesSchema` relâché de `.min(1)` à 0+) : un retour "tout
+  l'argent, rien dépensé" est une déclaration valide.
+- **Formulaire simplifié** (`RetourCaisseForm`, `mode="create"`
+  uniquement) — deux champs, date + montant retourné, remplace par défaut
+  le formulaire détaillé pour le cas courant. La portion **dépensée**
+  (`montantReglement - montantRetourne`) n'est jamais perdue de la
+  comptabilité : elle est transmise comme **une seule** `DepenseLigne`
+  synthétique (`justification: SANS_PIECE`, commentaire explicite
+  "Déclaration simplifiée...") — préserve à la fois le principe
+  "`montantARetourner` toujours calculé, jamais saisi" et l'exactitude de
+  la formule de Solde à régulariser (rien ne disparaît, une dépense non
+  détaillée apparaît honnêtement comme "non justifiée", visible et
+  flaggable par Finance). Si le montant retourné égale le montant du
+  règlement (rien dépensé), aucune ligne n'est envoyée. Le formulaire
+  détaillé (montant/objet/date/nature/justification/commentaire par ligne)
+  reste disponible via un lien, pour qui veut réellement justifier
+  précisément — le mode `"edit"` reste toujours détaillé (chaque ligne déjà
+  en base porte sa propre date).
+- **`RetourCaisse.dateRetour`** (`DateTime?`, nouvelle colonne, migration
+  `20260913215246_retour_caisse_date_retour`) — renseignée uniquement par
+  le formulaire simplifié (date unique du retour) ; `null` pour une
+  déclaration détaillée, où chaque `DepenseLigne` porte déjà sa propre
+  date. Réinitialisée à `null` par `modifierRetourCaisseAction` (modifier
+  implique repasser en mode détaillé). Affichée ("Déclaration simplifiée
+  — retour du...") sur `RetourCaisseRow`/`RetoursEnAttenteTable` quand
+  non nulle.
+- **Tension documentée** : simplifier à "date + montant" tout en
+  conservant la déclaration des dépenses justifiées nécessaire à la
+  formule de Solde à régulariser semblait a priori contradictoire —
+  résolu en synthétisant une `DepenseLigne` unique côté serveur plutôt
+  qu'en perdant l'information ; une vraie justification ligne par ligne
+  précise reste possible via le formulaire détaillé, jamais retirée.
+
+**Motif Finance sur dépense non justifiée** — `DepenseLigne.motifNonJustifie`
+/ `motifNonJustifieParId` / `motifNonJustifieAt` (nouvelles colonnes,
+migration `20260914071535_depense_ligne_motif_non_justifie`) : quand
+Finance traite un retour et considère une ligne comme non justifiée, un
+motif est **obligatoire** (min 3 caractères, refusé sinon côté serveur) et
+tracé (`HistoriqueEntry`, action `marquage_non_justifie`).
+
+- **`marquerDepenseNonJustifieeAction(depenseLigneId, motif)`**
+  (`treso/finance/retours/retourActions.ts`) — réservée à
+  `treso.receptionner_retour` (même permission que la réception
+  elle-même). Applicable à une ligne quelle que soit sa justification
+  actuelle (y compris déjà `SANS_PIECE` déclarée par le collaborateur —
+  Finance peut alors simplement y ajouter son propre motif) : force
+  `justification: "SANS_PIECE"` dans tous les cas, pour qu'elle apparaisse
+  dans le suivi "Dépenses non justifiées" même si le collaborateur
+  l'avait initialement déclarée avec pièce. Verrouillée dès que le retour
+  est réceptionné (`estReceptionne`) — même principe que
+  `modifierRetourCaisseAction`, aucune correction possible après réception.
+- **Distinct de `DepenseLigne.commentaire`** : ce dernier reste la
+  justification donnée par le COLLABORATEUR déclarant (déjà obligatoire de
+  son côté si `justification = SANS_PIECE` dès la déclaration) —
+  `motifNonJustifie` est la propre explication de FINANCE, jamais réécrite
+  par le collaborateur, jamais confondue avec `commentaire`.
+- UI : `RetoursEnAttenteTable.tsx` (finance/retours), petit formulaire
+  inline par ligne ("Marquer non justifiée" → motif + Confirmer, même
+  convention que `BudgetAlloueField.tsx`) ; motif déjà enregistré affiché
+  en lecture seule ensuite. Colonne "Motif Finance" ajoutée aussi à
+  `DepensesNonJustifieesTable.tsx` (écran de suivi dédié).
+- Cette action ajoute une **18ᵉ relation directe vers `User`**
+  (`motifNonJustifieParId`) — `supprimerUtilisateurAction` (admin/users)
+  mise à jour en conséquence (comptage `depenseLigne.count({ where:
+  { motifNonJustifieParId: userId } })`), l'ancienne note documentant
+  "DepenseLigne n'a aucune relation directe vers User" n'est donc plus
+  valable pour ce champ précis (toujours vraie pour le reste de
+  `DepenseLigne`, couverte transitivement via `RetourCaisse`/`Demande`).
 
 ### Bon de caisse et reçu PDF
 
@@ -689,6 +802,26 @@ toutes les demandes de cette catégorie.
 - Ancien mécanisme (`Demande.budgetDisponible` par demande,
   `Demande.posteBudgetaireId` en étiquette décorative) **retiré
   définitivement**.
+
+**Budget visible au moment de la catégorisation** — l'écran de
+catégorisation Finance (`treso/finance/demandes/[id]/CategorisationForm.tsx`)
+affiche, dès qu'une Catégorie est sélectionnée dans le Select, un aperçu
+(`BudgetCategorieApercu`) : budget alloué / déjà consommé / restant
+disponible. Réutilise directement **`getMontantConsommeCategorie`**
+(la même fonction que le contrôle bloquant du règlement, jamais recalculée
+séparément) — le `restant` est dérivé inline avec la formule identique à
+`getBudgetRestantCategorie` (`budgetAlloue - consomme`), sans rappeler
+cette dernière : `budgetAlloue` est déjà disponible dans le tableau
+`categories` chargé par la page (`page.tsx`), la rappeler aurait
+réintroduit une requête redondante pour une valeur déjà en mémoire (voir
+"Diagnostic de latence — requêtes redondantes" plus haut). Calculé une
+seule fois côté serveur pour **toutes** les catégories proposables
+(`Promise.all`), jamais recalculé au changement de Select côté client —
+même volume que `categories`/`objets`, déjà chargé une fois par la page.
+Purement informatif : aucune action, aucun blocage ici — le contrôle
+bloquant réel reste au règlement (`confirmerReglementAction`), une
+catégorie déjà en dépassement reste sélectionnable, Finance est seulement
+prévenue à l'avance.
 
 ### Dashboard Finance — zone « À traiter » (6 indicateurs)
 
@@ -761,6 +894,41 @@ seul).
   pièce jointe) affiché sur `/treso/finance/solde-ouverture`, reconstruit
   depuis le grand livre lui-même, jamais depuis un champ dédié.
 
+### Nouvelle alimentation de caisse
+
+Apport d'argent physique en caisse en cours d'exploitation — même écran
+(`/treso/finance/solde-ouverture`), même rigueur de traçabilité que le
+solde d'ouverture, mais un cycle **indépendant et répétable** (jamais
+plafonné à une seule occurrence, contrairement au solde d'ouverture).
+Bouton "Nouvelle alimentation de caisse" à côté de "Corriger le solde
+d'ouverture" (`SoldeOuvertureCorrection.tsx`) — n'apparaît donc, comme lui,
+qu'une fois un solde d'ouverture déjà défini (cas réel du portail en
+production ; jamais bloquant en pratique).
+
+- **`alimenterCaisseAction(montant, dateOperation, pieceJointeUrl, motif?)`**
+  (`treso/finance/solde-ouverture/actions.ts`) — même garde que le solde
+  d'ouverture (`isAdmin() || treso.effectuer_reglement`). Crée une écriture
+  `JournalCaisse` ordinaire (`type: ENTREE`, `source:
+  ALIMENTATION_CAISSE_SOURCE = "alimentation_caisse"`, `demandeId: null`) —
+  `getSoldeCaisse()` n'a besoin d'aucune modification.
+- **Pièce jointe obligatoire**, revérifiée côté serveur (jamais uniquement
+  le bouton désactivé côté client) — même principe que le solde
+  d'ouverture. Motif optionnel (contrairement à la correction du solde
+  d'ouverture : une alimentation n'est pas la rectification d'une erreur).
+- **`JournalCaisse.dateOperation`** (`DateTime?`, nouvelle colonne,
+  migration `20260914073432_journal_caisse_date_operation`) — date RÉELLE
+  de l'alimentation, potentiellement antérieure à sa saisie dans le portail
+  (`createdAt`). `null` pour toutes les autres sources (règlement, retour,
+  solde d'ouverture), où `createdAt` fait foi.
+- **`getAlimentationsCaisseHistorique()`** — historique dédié, la plus
+  récente en premier (inverse de l'historique du solde d'ouverture,
+  chronologique croissant : une alimentation est un évènement répétable,
+  seules les dernières occurrences intéressent Finance au quotidien).
+  Affiché sur la même page, sous l'historique du solde d'ouverture
+  (`AlimentationsCaisseHistorique.tsx`).
+- Réutilise `PieceJointeUpload`/`POST /api/treso/pieces-jointes/upload`
+  (aucune route d'upload dédiée créée).
+
 ### Pièce jointe (fonctionnelle)
 
 Stockage disque local `./uploads/` (racine du projet, `process.cwd()` —
@@ -776,16 +944,158 @@ et sur le solde d'ouverture.
 
 ### Formulaire de demande (« Demande d'Achat »)
 
-En-tête (bénéficiaire, catégorie d'achat obligatoire, devise, date de
-livraison souhaitée) + tableau de `LigneDemande` (libellé, quantité, prix
-unitaire) ; `Demande.montant` = somme calculée des lignes, jamais saisie
-directement. `Demande.devise` (défaut `XOF`) n'est **pas encore propagée**
-aux écrans Finance ni aux deux PDF (toujours « FCFA » en dur) — sans
-conséquence tant qu'aucune demande n'utilise une autre devise.
+Ordre du formulaire, volontairement le "Tableau des articles" d'abord :
+tableau de `LigneDemande` (libellé, quantité, prix unitaire) — première
+chose remplie —, puis l'en-tête (bénéficiaire, date de livraison
+souhaitée, devise, motif). `Demande.montant` = somme calculée des lignes,
+jamais saisie directement.
+
+**Aucune Catégorie d'achat sur ce formulaire.** `Demande.categorieId` est
+toujours `null` à la création par le collaborateur — la catégorisation
+reste entièrement un travail de Finance après création
+(`CategorisationForm`, `/treso/finance/demandes/[id]`, déjà conçu pour une
+demande non catégorisée, comme pour une dépense directe). Retiré du Select
+d'en-tête, du zod de `creerDemandeAction` et de l'écriture Prisma — ne pas
+le réintroduire côté collaborateur sans décision explicite contraire.
+
+**Motif de l'achat** — `Textarea` élargie (`rows={7}`, contre 4
+auparavant) avec un placeholder invitant à préciser contexte/usage/urgence
+— même champ (`Demande.description`), pas un champ séparé.
+
+**Prix unitaire** — `LigneEdit.prixUnitaire` est une **chaîne**, pas un
+nombre (`""` par défaut, jamais `"0"`) : un état initial numérique à `0`
+aurait affiché "0" dans le champ, obligeant à le sélectionner/effacer
+avant de taper un vrai montant (et risquant un "012000" résiduel sinon).
+Placeholder `"0"` à titre indicatif ; converti en nombre
+(`Number(...) || 0`) uniquement au calcul du total et à l'envoi à
+`creerDemandeAction`. Le champ "Nombre" (quantité) n'a pas ce problème
+(défaut `1`, jamais retouché).
+
+`Demande.devise` (défaut `XOF`) n'est **pas encore propagée** aux écrans
+Finance ni aux deux PDF (toujours « FCFA » en dur) — sans conséquence tant
+qu'aucune demande n'utilise une autre devise.
 
 Mapping bénéficiaire à la création : Collaborateur/Stagiaire → créateur
 connecté ; SIM Assurances CI → nom libre pré-rempli ; Fournisseur/prestataire
 → pas encore de champ de nom dédié.
+
+### Catégorisation Finance : jamais de redirection après succès
+
+`CategorisationForm.tsx` (`/treso/finance/demandes/[id]`) **reste toujours
+sur l'écran de traitement** après un enregistrement réussi — jamais de
+`router.push` vers la liste. `categoriserDemandeAction` ne change jamais
+`statut` (la demande reste `EN_ATTENTE_VALIDATION`) : le `revalidatePath`
+qu'elle appelle suffit à réafficher ce même formulaire, désormais
+pré-rempli avec la catégorie/l'objet qui viennent d'être enregistrés, avec
+`ValidationActions` toujours visible juste en dessous sur la même page —
+Finance peut enchaîner catégoriser puis valider sans changer d'écran.
+
+### Tableau de bord collaborateur détaillé
+
+`treso/tableau-de-bord/page.tsx` (Collaborateur) affiche, sous les 5
+indicateurs agrégés et les zones "À traiter"/"Retours de caisse", une
+nouvelle section "Mes demandes" (`MesDemandesDetailTable.tsx`) listant
+**chaque demande séparément** — jamais agrégées derrière les indicateurs
+globaux — avec son statut, son montant reçu (fonds remis) et son propre
+état de régularisation.
+
+- **`getMesDemandesDetail(userId)`** (`backend/src/tresorerie.ts`) —
+  réutilise directement `getTotalRegle`/`getDepensesDeclarees`/
+  `getRetoursRecus` (les mêmes fonctions déjà partagées par
+  `RegularisationSummary`/`getEcart`) plutôt que d'appeler `getEcart`
+  telle quelle : cette dernière recalculerait `getTotalRegle` une seconde
+  fois en interne pour arriver au montant déjà nécessaire par ailleurs
+  comme "montant reçu" (voir "Diagnostic de latence — requêtes
+  redondantes" ci-dessous) — la formule du solde à régulariser reste
+  rigoureusement identique (`totalRegle - depensesDeclarees -
+  retoursRecus`), seul le double appel est évité.
+- N+1 assumé (3 agrégats par demande, une requête `Promise.all` par
+  demande) : le volume de demandes d'un seul Collaborateur reste toujours
+  modeste (même hypothèse que `getReglementsCaisseADeclarer`), pas la
+  même échelle qu'un écran Finance portant sur toute l'organisation.
+- **État de régularisation affiché** (`EtatRegularisation`,
+  `MesDemandesDetailTable.tsx`) : "Rien reçu pour l'instant" si aucun
+  règlement encore confirmé ; "Régularisée" si le solde à régulariser vaut
+  exactement 0 ; "À régulariser : X FCFA" (teinte `warning`) si positif ;
+  "Anomalie : X FCFA en trop justifiés/retournés" (teinte `danger`) si
+  négatif — jamais plafonné à 0, même principe que `getSoldeARegulariser`.
+
+## Diagnostic de latence — requêtes redondantes
+
+Deux points de redondance réseau réels trouvés par lecture directe du code
+(pas de correctif hasardeux — chacun vérifié avant/après par comptage
+exact des allers-retours DB) :
+
+- **`getSession()`** (`frontend/src/lib/auth.ts`, appelée à chaque page et
+  chaque Server Action authentifiée, mémoïsée par requête via `cache()`)
+  faisait 3 requêtes Prisma **séquentielles** (`role`, `user`,
+  `permissionDelegation`) alors qu'elles sont mutuellement indépendantes
+  (`delegations` utilise `session.user.id`, déjà connu du JWT, jamais le
+  résultat de `user`) — désormais un seul `Promise.all`. Réduit la latence
+  de base de **tout** bouton du portail.
+- **`peutEffectuerReglement`/`getResteARegler`** (`backend/src/tresorerie.ts`)
+  acceptent désormais des valeurs pré-chargées optionnelles
+  (`demandeConnue`/`montantValideConnu`/`totalRegleConnu`, comportement
+  strictement inchangé si omis — tous les autres appelants, dont
+  `reporting.ts`, ne sont pas affectés). Avant ce correctif,
+  `confirmerReglementAction` déclenchait jusqu'à **3 lectures de la même
+  `Demande` et 2 calculs identiques de `getTotalRegle`** pour un seul clic
+  sur "Confirmer" (`peutEffectuerReglement` refetchait la demande en
+  interne, puis `getResteARegler` la refetchait une deuxième fois en
+  interne, puis l'action la refetchait une troisième fois explicitement) ;
+  `creerReglementAction`/`modifierReglementAction` avaient le même défaut.
+  Les trois actions transmettent maintenant la `demande`/le `totalRegle`
+  déjà chargés — ramené à 1 lecture de la demande + 2 agrégats (le second
+  agrégat n'a pas été éliminé, jugé trop risqué à dédupliquer sans
+  complexifier l'API partagée pour un gain marginal).
+- **`treso/finance/demandes/[id]/page.tsx`** — les 3 requêtes de la page
+  (historique du dernier évènement négatif DG, catégories actives, objets
+  actifs) étaient enchaînées en 2 `await` séquentiels alors
+  qu'indépendantes ; regroupées en un seul `Promise.all`. Cette page héberge
+  les 3 actions les plus utilisées de Finance (catégorisation, validation,
+  règlement).
+
+**Vérifié par comptage exact des allers-retours DB avant/après** (lecture
+du code, pas une mesure chronométrée — une comparaison A/B chronométrée
+isolée a été tentée via `git worktree` + jonction `node_modules`, mais
+Turbopack refuse un `node_modules` symlinké hors de la racine détectée du
+projet ; abandonné plutôt que forcer une copie complète de `node_modules`,
+coûteuse en temps pour un gain de rigueur marginal face à un comptage de
+requêtes déjà exact) : `confirmerReglementAction` passe de 6-8 à 3-4
+allers-retours DB selon le cas (catégorisé + budget alloué ou non).
+
+**Piste explorée, non corrigée, signalée par transparence** — chaque
+Server Action mutante appelle `publishDataChanged()` (diffusion SSE) EN
+PLUS de son `revalidatePath` ; or Next.js déclenche déjà un rafraîchissement
+implicite de la page courante à la fin de tout appel de Server Action
+(`revalidatePath` + le mécanisme natif des Server Actions). L'onglet qui
+vient de cliquer reçoit donc, quelques centaines de ms plus tard, SA PROPRE
+diffusion SSE (`Topbar.tsx` ne distingue pas "mon propre changement" de
+"changement d'un autre utilisateur") et déclenche un second
+`router.refresh()` — un second aller-retour RSC complet, systématiquement
+redondant pour l'auteur de l'action. Un correctif propre nécessiterait un
+identifiant de tab/session propagé du clic jusqu'à l'évènement SSE (le
+Server Action s'exécute côté serveur, sans accès direct à l'onglet
+appelant) — non implémenté ici : la plomberie nécessaire (id de tab par
+requête Server Action) touche un mécanisme transverse à tout le portail,
+jugée trop invasive pour être poussée sans mesure de production
+supplémentaire. Confirmé comme structurel (pas hypothétique) par lecture du
+code de `Topbar.tsx`/`eventBus.ts`, mais son impact réel sur la latence
+perçue n'a pas pu être isolé chronométriquement (voir limite ci-dessus).
+
+**Piste explorée et écartée** — le serveur `next dev` (Turbopack) compile
+chaque route/Server Action à la demande : le TOUT PREMIER appel d'une
+Server Action donnée dans un process de dev server coûte ~600-1400 ms,
+les appels suivants de la même action quelques dizaines de ms seulement
+(mesuré explicitement : catégoriser deux fois de suite sur le même écran,
+1374 ms puis 37-48 ms). **Ce phénomène est spécifique à `next dev` et
+disparaît entièrement dans un build de production** (`next build`
+précompile tout à l'avance) — si la lenteur "en local" rapportée par
+Finance a été observée contre un serveur de dev jamais redémarré depuis
+longtemps ou fraîchement relancé, une bonne part de la gêne ressentie peut
+venir de cet artefact de compilation à la demande, sans rapport avec le
+code applicatif. À tester contre `next build && next start` pour objectiver
+la latence réelle hors de cet artefact.
 
 ## Module Pointage RH — état actuel
 
@@ -933,12 +1243,14 @@ accès précis, sans jamais dépasser ce qu'il possède lui-même.
 ### Suppression définitive d'un compte utilisateur
 
 `supprimerUtilisateurAction(userId)` (`admin/users`) — possible **si et
-seulement si** le compte n'a jamais servi à rien : 17 relations vérifiées
+seulement si** le compte n'a jamais servi à rien : 18 relations vérifiées
 (créateur/bénéficiaire/approbateur de demande, auteur de règlement,
 déclarant/receptionnaire de retour, auteur d'entrée d'historique,
 utilisateur du journal de caisse, employé/auteur de pointage/correction/
 absence, destinataire de notification, plage d'absence autorisée, donneur
-ou bénéficiaire de délégation). Si au moins une relation existe : refus
+ou bénéficiaire de délégation, **auteur d'un motif Finance sur dépense non
+justifiée** — voir "Motif Finance sur dépense non justifiée"). Si au moins
+une relation existe : refus
 avec message précis listant chaque catégorie non nulle, invitant à
 désactiver plutôt. Sinon : suppression réelle + `HistoriqueEntry`.
 Toujours refusée pour l'auto-suppression et pour le **dernier compte dont
@@ -1146,6 +1458,16 @@ toutes les permissions `treso.*` opérationnelles ci-dessus (sauf
 `creer_demande`/`declarer_retour`, réservées au Collaborateur) : toute
 nouvelle permission Trésorerie qui doit donner accès à cet espace doit être
 ajoutée à cette garde OR.
+
+**Bug corrigé (Tâche "Séparer 'valider' de 'régler/décaisser'")** :
+`treso.effectuer_reglement` manquait de cette garde OR depuis l'origine —
+invisible tant que seul le rôle Finance (qui porte aussi
+`categoriser_demande`/`valider_demande`/etc.) y accédait, mais bloquant
+`Vous n'avez pas accès à l'espace Finance des demandes` pour tout compte
+délégataire ne détenant QUE `effectuer_reglement` (le scénario même que la
+délégation individuelle est censée permettre — voir "Délégation
+individuelle de permissions"). Découvert par vérification pratique d'une
+délégation "règlement seul", corrigé en ajoutant la permission à la garde.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

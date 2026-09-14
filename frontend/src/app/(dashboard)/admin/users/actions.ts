@@ -556,11 +556,13 @@ export async function supprimerUtilisateurAction(
     }
   }
 
-  // Vérification exhaustive des données liées — les 17 relations vers User
+  // Vérification exhaustive des données liées — les 18 relations vers User
   // recensées dans le schéma (Trésorerie + Pointage RH + Socle), voir
-  // CLAUDE.md. DepenseLigne et PieceJointe n'ont aucune relation directe
-  // vers User (couvertes transitivement via RetourCaisse/Demande, déjà
-  // vérifiées ci-dessous). `delegationsAccordees`/`delegationsRecues`
+  // CLAUDE.md. PieceJointe n'a aucune relation directe vers User (couverte
+  // transitivement via RetourCaisse/Demande, déjà vérifiées ci-dessous) ;
+  // DepenseLigne, elle, EN a une depuis "Motif Finance sur dépense non
+  // justifiée" (`motifNonJustifieParId`), vérifiée séparément ci-dessous.
+  // `delegationsAccordees`/`delegationsRecues`
   // (Socle, "Délégation individuelle de permissions") comptent TOUTES les
   // lignes, actives ou révoquées : même une délégation révoquée reste une
   // trace réelle d'utilisation du compte, jamais un motif de suppression
@@ -584,6 +586,7 @@ export async function supprimerUtilisateurAction(
     plagesAbsenceAutorisee,
     delegationsAccordees,
     delegationsRecues,
+    depensesMarqueesNonJustifiees,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -602,6 +605,7 @@ export async function supprimerUtilisateurAction(
     prisma.plageAbsenceAutorisee.count({ where: { userId } }),
     prisma.permissionDelegation.count({ where: { donneurId: userId } }),
     prisma.permissionDelegation.count({ where: { beneficiaireId: userId } }),
+    prisma.depenseLigne.count({ where: { motifNonJustifieParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -623,6 +627,8 @@ export async function supprimerUtilisateurAction(
   if (plagesAbsenceAutorisee > 0) blocages.push(`${plagesAbsenceAutorisee} plage(s) d'absence autorisée`);
   if (delegationsAccordees > 0) blocages.push(`accordé ${delegationsAccordees} délégation(s) de permission`);
   if (delegationsRecues > 0) blocages.push(`reçu ${delegationsRecues} délégation(s) de permission`);
+  if (depensesMarqueesNonJustifiees > 0)
+    blocages.push(`marqué ${depensesMarqueesNonJustifiees} dépense(s) comme non justifiée(s)`);
 
   if (blocages.length > 0) {
     const liste =

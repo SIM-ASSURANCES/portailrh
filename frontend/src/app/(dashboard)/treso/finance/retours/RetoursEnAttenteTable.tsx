@@ -3,11 +3,11 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, DataTable } from "@/components/ui";
+import { Button, DataTable, Input } from "@/components/ui";
 import { JUSTIFICATION_LABEL } from "@/components/tresorerie/justification";
 import type { ModeReglement, TypeJustification } from "backend";
 
-import { receptionnerRetourAction } from "./retourActions";
+import { marquerDepenseNonJustifieeAction, receptionnerRetourAction } from "./retourActions";
 
 interface DepenseLigneRow {
   id: string;
@@ -18,6 +18,10 @@ interface DepenseLigneRow {
   justification: TypeJustification;
   commentaire: string | null;
   pieceJointeId: string | null;
+  /** Voir CLAUDE.md "Motif Finance sur dépense non justifiée" — `null` tant
+   * que Finance n'est jamais intervenue sur cette ligne précise. */
+  motifNonJustifie: string | null;
+  motifNonJustifiePar: string | null;
 }
 
 interface RetourRow {
@@ -29,6 +33,10 @@ interface RetourRow {
   totalDeclare: number;
   montantARetourner: number;
   montantNonJustifie: number;
+  /** Renseignée uniquement pour une déclaration via le formulaire
+   * simplifié ("date + montant") — voir CLAUDE.md "Retour de caisse
+   * optionnel — formulaire simplifié". */
+  dateRetour: Date | null;
   depenses: DepenseLigneRow[];
   createdAt: Date;
 }
@@ -51,6 +59,73 @@ interface RetourRow {
  * disparaît immédiatement de cette liste après succès, puisqu'elle n'est
  * plus `estReceptionne: false` (revalidatePath sur cette page).
  */
+/**
+ * Ligne "Marquer non justifiée" pour une `DepenseLigne` précise — voir
+ * CLAUDE.md "Motif Finance sur dépense non justifiée". Affiche le motif
+ * déjà enregistré s'il existe (jamais réécrit par cette même UI : une fois
+ * marquée, seule la réception du retour la verrouille définitivement —
+ * revérifié côté serveur de toute façon), sinon un petit formulaire inline
+ * ouvert à la demande (même convention que `BudgetAlloueField.tsx` :
+ * enregistrement explicite par bouton, jamais à chaque frappe).
+ */
+function MarquerNonJustifiee({ depense }: { depense: DepenseLigneRow }) {
+  const [ouvert, setOuvert] = useState(false);
+  const [motif, setMotif] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  if (depense.motifNonJustifie) {
+    return (
+      <p className="text-xs text-warning">
+        Motif Finance{depense.motifNonJustifiePar ? ` (${depense.motifNonJustifiePar})` : ""} :{" "}
+        {depense.motifNonJustifie}
+      </p>
+    );
+  }
+
+  if (!ouvert) {
+    return (
+      <button
+        type="button"
+        className="text-xs text-info underline-offset-4 hover:text-primary hover:underline"
+        onClick={() => setOuvert(true)}
+      >
+        Marquer non justifiée
+      </button>
+    );
+  }
+
+  function handleConfirmer() {
+    startTransition(async () => {
+      const result = await marquerDepenseNonJustifieeAction(depense.id, motif);
+      if (result.status === "success") {
+        toast.success(result.message);
+        setOuvert(false);
+      } else {
+        toast.error(result.message);
+      }
+    });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="w-48">
+        <Input
+          aria-label="Motif (non justifiée)"
+          placeholder="Motif obligatoire"
+          value={motif}
+          onChange={(e) => setMotif(e.target.value)}
+        />
+      </div>
+      <Button type="button" variant="secondary" loading={isPending} onClick={handleConfirmer}>
+        Confirmer
+      </Button>
+      <Button type="button" variant="secondary" disabled={isPending} onClick={() => setOuvert(false)}>
+        Annuler
+      </Button>
+    </div>
+  );
+}
+
 export function RetoursEnAttenteTable({ retours }: { retours: RetourRow[] }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
@@ -83,26 +158,35 @@ export function RetoursEnAttenteTable({ retours }: { retours: RetourRow[] }) {
         {
           key: "depenses",
           header: "Détail des dépenses",
-          render: (r) => (
-            <ul className="space-y-1 text-xs">
-              {r.depenses.map((d) => (
-                <li key={d.id}>
-                  {d.objet} — {d.montant.toLocaleString("fr-FR")} FCFA ({JUSTIFICATION_LABEL[d.justification]})
-                  {d.pieceJointeId ? (
-                    <>
-                      {" — "}
-                      <a
-                        href={`/api/treso/pieces-jointes/${d.pieceJointeId}`}
-                        className="text-info underline-offset-4 hover:text-primary hover:underline"
-                      >
-                        Pièce jointe
-                      </a>
-                    </>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ),
+          render: (r) =>
+            r.depenses.length === 0 ? (
+              <span className="text-xs text-muted-foreground">
+                Retour intégral — rien dépensé
+                {r.dateRetour ? ` (déclaré pour le ${r.dateRetour.toLocaleDateString("fr-FR")})` : ""}
+              </span>
+            ) : (
+              <ul className="space-y-1.5 text-xs">
+                {r.depenses.map((d) => (
+                  <li key={d.id} className="space-y-0.5">
+                    <div>
+                      {d.objet} — {d.montant.toLocaleString("fr-FR")} FCFA ({JUSTIFICATION_LABEL[d.justification]})
+                      {d.pieceJointeId ? (
+                        <>
+                          {" — "}
+                          <a
+                            href={`/api/treso/pieces-jointes/${d.pieceJointeId}`}
+                            className="text-info underline-offset-4 hover:text-primary hover:underline"
+                          >
+                            Pièce jointe
+                          </a>
+                        </>
+                      ) : null}
+                    </div>
+                    <MarquerNonJustifiee depense={d} />
+                  </li>
+                ))}
+              </ul>
+            ),
         },
         {
           key: "totalDeclare",

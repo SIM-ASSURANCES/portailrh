@@ -51,6 +51,7 @@ export async function RetoursCaisseSection({
                       id: retour.id,
                       estReceptionne: retour.estReceptionne,
                       montantARetourner: Number(retour.montantARetourner),
+                      dateRetour: retour.dateRetour,
                       // Modification (avant réception) réservée au déclarant
                       // original — cohérent avec la déclaration elle-même.
                       peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer,

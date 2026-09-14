@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -14,16 +14,18 @@ import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import { creerDemandeAction } from "./actions";
 
-interface CategorieOption {
-  id: string;
-  label: string;
-}
-
 type LigneEdit = {
   key: string;
   libelle: string;
   quantite: number;
-  prixUnitaire: number;
+  /**
+   * Chaîne brute telle que tapée, jamais un nombre : un état initial à `0`
+   * afficherait "0" dans le champ, obligeant à le sélectionner/effacer avant
+   * de saisir un vrai montant (et risquant un "012000" si l'utilisateur tape
+   * sans l'avoir effacé). Vide par défaut, converti en nombre uniquement au
+   * calcul (`Number(...) || 0`) et à l'envoi.
+   */
+  prixUnitaire: string;
 };
 
 function nouvelleLigne(): LigneEdit {
@@ -31,7 +33,7 @@ function nouvelleLigne(): LigneEdit {
     key: `ligne-${Math.random().toString(36).slice(2)}`,
     libelle: "",
     quantite: 1,
-    prixUnitaire: 0,
+    prixUnitaire: "",
   };
 }
 
@@ -40,23 +42,27 @@ type FieldErrors = Partial<Record<string, string>>;
 /**
  * Formulaire de création d'une demande d'achat ("Demande d'Achat").
  *
- * Deux blocs : l'en-tête (bénéficiaire, catégorie, date de livraison, poste
- * budgétaire, devise, motif) et le "Tableau des articles" — une liste
- * dynamique de lignes (libellé / nombre / prix unitaire), au moins une
- * obligatoire. Le "Total général" est recalculé en direct et n'est jamais
+ * Deux blocs : le "Tableau des articles" (première chose à remplir — une
+ * liste dynamique de lignes libellé/nombre/prix unitaire, au moins une
+ * obligatoire) puis l'en-tête (bénéficiaire, date de livraison, devise,
+ * motif). Le "Total général" est recalculé en direct et n'est jamais
  * saisi : le `montant` de la demande est recomposé côté serveur à partir
  * des lignes (voir `creerDemandeAction`).
+ *
+ * **Aucune Catégorie d'achat ici** : la catégorisation reste un travail de
+ * Finance après création (`CategorisationForm`, écran
+ * `/treso/finance/demandes/[id]`) — le collaborateur ne la choisit jamais
+ * à la création (`Demande.categorieId` est nullable, voir schema.prisma).
  *
  * Un tableau de lignes ne se prête pas à `FormData` : on appelle donc
  * directement l'action via `useTransition` (même pattern que
  * `RetourCaisseForm`, Phase D), pas via `<form action={...}>`.
  */
-export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
+export function DemandeForm() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   const [beneficiaireType, setBeneficiaireType] = useState("");
-  const [categorieId, setCategorieId] = useState("");
   const [dateLivraison, setDateLivraison] = useState("");
   const [devise, setDevise] = useState("XOF");
   const [motif, setMotif] = useState("");
@@ -66,11 +72,6 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [erreurLignes, setErreurLignes] = useState<string | undefined>();
   const [demandeCreeeId, setDemandeCreeeId] = useState<string | null>(null);
-
-  const categorieOptions = useMemo(
-    () => categories.map((c) => ({ value: c.id, label: c.label })),
-    [categories]
-  );
 
   const totalGeneral = lignes.reduce(
     (sum, l) => sum + (Number(l.quantite) || 0) * (Number(l.prixUnitaire) || 0),
@@ -90,7 +91,6 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
   function handleSubmit() {
     const errors: FieldErrors = {};
     if (!beneficiaireType) errors.beneficiaireType = "Entité bénéficiaire requise";
-    if (!categorieId) errors.categorieId = "Catégorie d'achat requise";
     if (motif.trim().length < 3) errors.motif = "Merci de préciser le motif de l'achat";
     setFieldErrors(errors);
 
@@ -111,14 +111,13 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
     startTransition(async () => {
       const result = await creerDemandeAction({
         beneficiaireType,
-        categorieId,
         dateLivraisonSouhaitee: dateLivraison || undefined,
         devise,
         motif,
         lignes: lignes.map((l) => ({
           libelle: l.libelle,
           quantite: l.quantite,
-          prixUnitaire: l.prixUnitaire,
+          prixUnitaire: Number(l.prixUnitaire) || 0,
         })),
         pieceJointeUrl: pieceJointeUrl ?? undefined,
       });
@@ -157,61 +156,9 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
 
   return (
     <div className="space-y-6">
-      {/* En-tête de la demande */}
-      <Card>
-        <h2 className="flex items-center gap-2 text-base font-bold text-foreground">
-          <span className="h-4 w-1 rounded-full bg-primary" aria-hidden="true" />
-          En-tête de la demande
-        </h2>
-
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Select
-            label="Entité bénéficiaire"
-            placeholder="Sélectionner..."
-            options={[...BENEFICIAIRE_TYPE_OPTIONS]}
-            defaultValue={beneficiaireType}
-            onChange={(e) => setBeneficiaireType(e.target.value)}
-            error={fieldErrors.beneficiaireType}
-          />
-          <Select
-            label="Catégorie d'achat"
-            placeholder="Sélectionner..."
-            options={categorieOptions}
-            defaultValue={categorieId}
-            onChange={(e) => setCategorieId(e.target.value)}
-            error={fieldErrors.categorieId}
-          />
-          <Input
-            label="Date de livraison souhaitée"
-            type="date"
-            value={dateLivraison}
-            onChange={(e) => setDateLivraison(e.target.value)}
-            error={fieldErrors.dateLivraisonSouhaitee}
-          />
-          <Select
-            label="Devise"
-            options={[...DEVISE_OPTIONS]}
-            defaultValue={devise}
-            onChange={(e) => setDevise(e.target.value)}
-            error={fieldErrors.devise}
-          />
-        </div>
-
-        <div className="mt-4">
-          <Textarea
-            label="Motif de l'achat"
-            rows={4}
-            value={motif}
-            onChange={(e) => setMotif(e.target.value)}
-            error={fieldErrors.motif}
-          />
-        </div>
-        <div className="mt-4">
-          <PieceJointeUpload onChange={setPieceJointeUrl} />
-        </div>
-      </Card>
-
-      {/* Tableau des articles */}
+      {/* Tableau des articles — en premier : c'est la première chose que le
+          collaborateur doit remplir, avant les champs secondaires de
+          l'en-tête. */}
       <Card>
         <div className="flex items-center justify-between gap-4">
           <h2 className="flex items-center gap-2 text-base font-bold text-foreground">
@@ -269,8 +216,9 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
                     inputMode="decimal"
                     min="0"
                     step="1"
+                    placeholder="0"
                     value={ligne.prixUnitaire}
-                    onChange={(e) => updateLigne(ligne.key, { prixUnitaire: Number(e.target.value) })}
+                    onChange={(e) => updateLigne(ligne.key, { prixUnitaire: e.target.value })}
                   />
                 </div>
                 <div className="text-sm font-bold text-foreground tabular-nums sm:text-right">
@@ -305,6 +253,55 @@ export function DemandeForm({ categories }: { categories: CategorieOption[] }) {
       </Card>
 
       {erreurLignes ? <p className="text-sm text-danger">{erreurLignes}</p> : null}
+
+      {/* En-tête de la demande — champs secondaires, remplis après les
+          articles. Pas de Catégorie d'achat ici : la catégorisation reste
+          un travail de Finance après création. */}
+      <Card>
+        <h2 className="flex items-center gap-2 text-base font-bold text-foreground">
+          <span className="h-4 w-1 rounded-full bg-primary" aria-hidden="true" />
+          En-tête de la demande
+        </h2>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Select
+            label="Entité bénéficiaire"
+            placeholder="Sélectionner..."
+            options={[...BENEFICIAIRE_TYPE_OPTIONS]}
+            defaultValue={beneficiaireType}
+            onChange={(e) => setBeneficiaireType(e.target.value)}
+            error={fieldErrors.beneficiaireType}
+          />
+          <Input
+            label="Date de livraison souhaitée"
+            type="date"
+            value={dateLivraison}
+            onChange={(e) => setDateLivraison(e.target.value)}
+            error={fieldErrors.dateLivraisonSouhaitee}
+          />
+          <Select
+            label="Devise"
+            options={[...DEVISE_OPTIONS]}
+            defaultValue={devise}
+            onChange={(e) => setDevise(e.target.value)}
+            error={fieldErrors.devise}
+          />
+        </div>
+
+        <div className="mt-4">
+          <Textarea
+            label="Motif de l'achat"
+            rows={7}
+            placeholder="Décrivez précisément ce qui est demandé : contexte, usage prévu, urgence éventuelle..."
+            value={motif}
+            onChange={(e) => setMotif(e.target.value)}
+            error={fieldErrors.motif}
+          />
+        </div>
+        <div className="mt-4">
+          <PieceJointeUpload onChange={setPieceJointeUrl} />
+        </div>
+      </Card>
 
       <Button type="button" onClick={handleSubmit} loading={isPending} className="w-full">
         Envoyer la demande

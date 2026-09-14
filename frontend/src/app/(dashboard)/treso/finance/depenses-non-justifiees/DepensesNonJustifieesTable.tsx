@@ -12,6 +12,10 @@ interface DepenseNonJustifieeRow {
   montant: number;
   date: Date;
   commentaire: string | null;
+  /** Voir CLAUDE.md "Motif Finance sur dépense non justifiée" — `null` si
+   * Finance n'est jamais intervenue sur cette ligne (déclarée SANS_PIECE
+   * par le collaborateur lui-même, sans confirmation Finance ajoutée). */
+  motifNonJustifie: string | null;
 }
 
 function truncate(text: string, max = 50): string {
@@ -49,6 +53,11 @@ export function DepensesNonJustifieesTable({ lignes }: { lignes: DepenseNonJusti
           key: "commentaire",
           header: "Commentaire",
           render: (l) => (l.commentaire ? truncate(l.commentaire) : "—"),
+        },
+        {
+          key: "motifNonJustifie",
+          header: "Motif Finance",
+          render: (l) => (l.motifNonJustifie ? truncate(l.motifNonJustifie) : "—"),
         },
         {
           key: "actions",

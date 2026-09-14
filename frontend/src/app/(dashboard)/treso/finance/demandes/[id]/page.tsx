@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
-import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom } from "backend";
+import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom, getMontantConsommeCategorie } from "backend";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesIntervenantes";
@@ -48,34 +48,43 @@ export default async function CategoriserDemandePage({
     notFound();
   }
 
+  // Les 3 requêtes ci-dessous sont mutuellement indépendantes (chacune ne
+  // dépend que de `demande`/`canCategoriser`, déjà connus) : exécutées en
+  // parallèle plutôt qu'en 2 allers-retours DB séquentiels (voir CLAUDE.md
+  // "Diagnostic de latence — requêtes redondantes") — cette page héberge
+  // les 3 actions les plus utilisées de Finance (catégorisation, validation,
+  // règlement), tout gain de latence ici se ressent sur les trois.
+  //
   // Verrou de clôture — dernier évènement négatif (rejet lors d'un examen,
   // ou annulation d'une approbation déjà donnée) affiché en évidence tant
   // que la demande reste en attente (`validationCompleteParDG = false`) :
   // le plus récent des deux, jamais seulement le dernier rejet, pour ne
   // jamais afficher un motif de rejet devenu obsolète après une annulation
   // ultérieure plus pertinente (ni l'inverse) — voir CLAUDE.md.
-  const dernierEvenementNegatifDG = demande.validationCompleteParDG
-    ? null
-    : await prisma.historiqueEntry.findFirst({
-        where: {
-          entity: "Demande",
-          entityId: demande.id,
-          action: { in: ["rejet_validation_complete", "annulation_validation_complete"] },
-        },
-        include: { user: true },
-        orderBy: { createdAt: "desc" },
-      });
-
+  //
   // Ticket A.1 : seules les catégories/objets actifs sont proposables pour
   // une nouvelle catégorisation (soft-delete, jamais de suppression
   // définitive — voir admin/categories).
-  const [categoriesActives, objetsActives] =
-    demande.statut === "EN_ATTENTE_VALIDATION" && canCategoriser
-      ? await Promise.all([
-          prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
-          prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
-        ])
-      : [[], []];
+  const peutCategoriserMaintenant = demande.statut === "EN_ATTENTE_VALIDATION" && canCategoriser;
+  const [dernierEvenementNegatifDG, categoriesActives, objetsActives] = await Promise.all([
+    demande.validationCompleteParDG
+      ? Promise.resolve(null)
+      : prisma.historiqueEntry.findFirst({
+          where: {
+            entity: "Demande",
+            entityId: demande.id,
+            action: { in: ["rejet_validation_complete", "annulation_validation_complete"] },
+          },
+          include: { user: true },
+          orderBy: { createdAt: "desc" },
+        }),
+    peutCategoriserMaintenant
+      ? prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } })
+      : Promise.resolve([]),
+    peutCategoriserMaintenant
+      ? prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } })
+      : Promise.resolve([]),
+  ]);
 
   // Piège trouvé et corrigé en vérification manuelle : si la demande est
   // déjà catégorisée (EN_ATTENTE, en cours de correction par Finance) avec
@@ -97,6 +106,33 @@ export default async function CategoriserDemandePage({
     demande.objet && !objetsActives.some((o) => o.id === demande.objet!.id)
       ? [...objetsActives, { ...demande.objet, label: `${demande.objet.label} (inactif)` }]
       : objetsActives;
+
+  // Budget de chaque Catégorie proposable (Tâche "Budget visible au moment
+  // de la catégorisation") — réutilise `getMontantConsommeCategorie`
+  // (déjà existante, contrôle bloquant au règlement, voir CLAUDE.md "Budget
+  // partagé par Catégorie"), jamais une nouvelle fonction de calcul.
+  // `budgetAlloue` est déjà chargé sur chaque `Categorie` de `categories`
+  // (pas de `select` restrictif sur les requêtes ci-dessus) : seule la
+  // consommation (un `aggregate` par catégorie, indépendants entre eux,
+  // donc parallélisés) manque encore. Calculé uniquement si la
+  // catégorisation est possible sur cet écran (`categories` reste vide
+  // sinon, boucle immédiatement vide).
+  const budgetParCategorie: Record<
+    string,
+    { budgetAlloue: number | null; consomme: number; restant: number | null }
+  > = {};
+  if (categories.length > 0) {
+    const consommations = await Promise.all(categories.map((c) => getMontantConsommeCategorie(c.id)));
+    categories.forEach((c, i) => {
+      const budgetAlloue = c.budgetAlloue == null ? null : Number(c.budgetAlloue);
+      const consomme = consommations[i];
+      budgetParCategorie[c.id] = {
+        budgetAlloue,
+        consomme,
+        restant: budgetAlloue == null ? null : budgetAlloue - consomme,
+      };
+    });
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
@@ -285,6 +321,7 @@ export default async function CategoriserDemandePage({
               objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
               initialCategorieId={demande.categorieId ?? undefined}
               initialObjetId={demande.objetId ?? undefined}
+              budgetParCategorie={budgetParCategorie}
             />
           ) : (
             <CategorisationSummary

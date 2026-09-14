@@ -81,14 +81,20 @@ export async function creerReglementAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
-  if (!(await peutEffectuerReglement(demandeId))) {
+
+  // `demande`/`totalRegle` déjà chargés ici : transmis à
+  // `peutEffectuerReglement`/`getResteARegler` pour leur éviter de
+  // refaire le même `findUnique`/`aggregate` (voir CLAUDE.md "Diagnostic
+  // de latence — requêtes redondantes").
+  const totalRegle = await getTotalRegle(demandeId);
+  if (!(await peutEffectuerReglement(demandeId, demande, totalRegle))) {
     return {
       status: "error",
       message: "Cette demande n'est pas éligible au règlement (aucun montant validé restant à régler).",
     };
   }
 
-  const reste = await getResteARegler(demandeId);
+  const reste = await getResteARegler(demandeId, demande.montantValide, totalRegle);
   if (montant > reste) {
     return {
       status: "error",
@@ -137,11 +143,16 @@ export async function modifierReglementAction(
     return { status: "error", message: "Ce règlement n'est plus modifiable." };
   }
 
-  if (!(await peutEffectuerReglement(reglement.demandeId))) {
+  const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  const totalRegle = await getTotalRegle(reglement.demandeId);
+  if (!(await peutEffectuerReglement(reglement.demandeId, demande, totalRegle))) {
     return { status: "error", message: "Cette demande n'est plus éligible au règlement : modification impossible." };
   }
 
-  const reste = await getResteARegler(reglement.demandeId);
+  const reste = await getResteARegler(reglement.demandeId, demande.montantValide, totalRegle);
   if (parsedMontant.data > reste) {
     return {
       status: "error",
@@ -201,12 +212,19 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
     return { status: "error", message: "Ce règlement est annulé, il ne peut pas être confirmé." };
   }
 
-  if (!(await peutEffectuerReglement(reglement.demandeId))) {
+  // Demande + total réglé chargés UNE SEULE FOIS ici, puis transmis à
+  // `peutEffectuerReglement` (au lieu de la laisser les refetcher elle-même
+  // en interne) — avant ce correctif, cette action déclenchait jusqu'à 3
+  // lectures de la même `Demande` et 2 calculs identiques de
+  // `getTotalRegle` pour un seul clic sur "Confirmer" (voir CLAUDE.md
+  // "Diagnostic de latence — requêtes redondantes").
+  const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId } });
+  const totalConfirme = await getTotalRegle(reglement.demandeId);
+
+  if (!(await peutEffectuerReglement(reglement.demandeId, demande, totalConfirme))) {
     return { status: "error", message: "Cette demande n'est plus éligible au règlement : confirmation impossible." };
   }
 
-  const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId } });
-  const totalConfirme = await getTotalRegle(reglement.demandeId);
   const montantReglement = Number(reglement.montant);
   if (totalConfirme + montantReglement > Number(demande.montantValide)) {
     return {

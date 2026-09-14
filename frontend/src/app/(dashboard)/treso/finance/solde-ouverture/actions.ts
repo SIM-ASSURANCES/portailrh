@@ -7,6 +7,7 @@ import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
 import {
+  ALIMENTATION_CAISSE_SOURCE,
   getSoldeOuvertureInfo,
   SOLDE_OUVERTURE_ANNULATION_SOURCE,
   SOLDE_OUVERTURE_CORRECTION_SOURCE,
@@ -214,5 +215,96 @@ export async function corrigerSoldeOuvertureAction(
   return {
     status: "success",
     message: `Solde d'ouverture corrigé à ${parsedMontant.data.toLocaleString("fr-FR")} FCFA.`,
+  };
+}
+
+const dateOperationSchema = z.coerce.date({ message: "Date invalide" });
+
+const pieceJointeUrlSchemaAlimentation = z
+  .string()
+  .trim()
+  .min(1, "Une pièce jointe justificative est obligatoire pour une alimentation de caisse.");
+
+/**
+ * Enregistre une alimentation de caisse — apport d'argent physique en
+ * cours d'exploitation (voir CLAUDE.md "Nouvelle alimentation de caisse"),
+ * répétable autant de fois que nécessaire (contrairement au solde
+ * d'ouverture, unique). Réservée à Finance/Admin
+ * (`treso.effectuer_reglement` OU `isAdmin()`), même garde que le solde
+ * d'ouverture.
+ *
+ * Crée une écriture `JournalCaisse` ORDINAIRE (`type: "ENTREE"`, `source:
+ * ALIMENTATION_CAISSE_SOURCE`) — `getSoldeCaisse()` n'a besoin d'AUCUNE
+ * modification pour en tenir compte, il somme déjà toutes les écritures
+ * sans distinction de source. `demandeId: null` : comme le solde
+ * d'ouverture, aucune demande d'origine.
+ *
+ * **`dateOperation` distincte de `createdAt`** : la date réelle où l'argent
+ * a été physiquement remis en caisse est souvent antérieure à sa saisie
+ * dans le portail — voir `JournalCaisse.dateOperation` (`schema.prisma`).
+ *
+ * **`pieceJointeUrl` obligatoire**, même principe que le solde d'ouverture
+ * (voir CLAUDE.md "Pièce jointe obligatoire sur le solde d'ouverture") :
+ * un apport d'argent affirmé sans preuve n'a pas sa place dans le grand
+ * livre. Vient de `POST /api/treso/pieces-jointes/upload` (même route
+ * partagée que les 3 autres formulaires du module), cette action-ci crée
+ * la ligne `PieceJointe` elle-même (`journalCaisseId`, jamais `demandeId`).
+ */
+export async function alimenterCaisseAction(
+  montant: number,
+  dateOperation: string,
+  pieceJointeUrl: string,
+  motif?: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !(isAdmin(session) || hasPermission(session, "treso.effectuer_reglement"))) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedMontant = montantSchema.safeParse(montant);
+  if (!parsedMontant.success) {
+    return { status: "error", message: parsedMontant.error.issues[0].message };
+  }
+  const parsedDate = dateOperationSchema.safeParse(dateOperation);
+  if (!parsedDate.success) {
+    return { status: "error", message: parsedDate.error.issues[0].message };
+  }
+  const parsedPieceJointe = pieceJointeUrlSchemaAlimentation.safeParse(pieceJointeUrl);
+  if (!parsedPieceJointe.success) {
+    return { status: "error", message: parsedPieceJointe.error.issues[0].message };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const entree = await tx.journalCaisse.create({
+      data: {
+        type: "ENTREE",
+        montant: parsedMontant.data,
+        source: ALIMENTATION_CAISSE_SOURCE,
+        refId: ALIMENTATION_CAISSE_SOURCE,
+        dateOperation: parsedDate.data,
+        userId: session.user.id,
+      },
+    });
+    await tx.pieceJointe.create({
+      data: { url: parsedPieceJointe.data, journalCaisseId: entree.id },
+    });
+    await tx.historiqueEntry.create({
+      data: {
+        entity: "JournalCaisse",
+        entityId: entree.id,
+        action: "ALIMENTATION_CAISSE",
+        detail: `Alimentation de caisse de ${parsedMontant.data.toLocaleString("fr-FR")} FCFA (opération du ${parsedDate.data.toLocaleDateString("fr-FR")})${
+          motif?.trim() ? ` — ${motif.trim()}` : ""
+        } (pièce jointe : ${parsedPieceJointe.data})`,
+        userId: session.user.id,
+      },
+    });
+  });
+
+  revalidateSoldeOuverturePaths();
+
+  return {
+    status: "success",
+    message: `Alimentation de caisse de ${parsedMontant.data.toLocaleString("fr-FR")} FCFA enregistrée.`,
   };
 }
