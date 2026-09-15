@@ -22,6 +22,7 @@ export * from "./geo-utils";
 export * from "./reference";
 export * from "./validation";
 export * from "./beneficiaire";
+export * from "./feedback";
 
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).

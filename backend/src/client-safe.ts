@@ -24,3 +24,12 @@
 export * from "./generated/prisma/enums";
 export * from "./validation";
 export * from "./beneficiaire";
+// Constantes/validations pures uniquement (compteur de caractères côté
+// client) — depuis `./feedback-constants`, JAMAIS depuis `./feedback` :
+// même un `export { X } from "./feedback"` nommé (pas `export *`)
+// entraînerait l'évaluation complète de ce module, qui importe `./prisma`
+// en tête de fichier, cassant le bundle navigateur exactement comme
+// documenté ci-dessus pour `"./prisma"` (constaté concrètement : "Module
+// not found: Can't resolve 'dns'" via `pg` en Client Component). Voir
+// `./feedback-constants.ts`, qui n'importe rien de Prisma par construction.
+export { FEEDBACK_CONTENT_MIN, FEEDBACK_CONTENT_MAX } from "./feedback-constants";

@@ -104,6 +104,17 @@ export const authConfig = {
         nextUrl.pathname.startsWith('/forgot-password') ||
         nextUrl.pathname.startsWith('/reset-password');
 
+      // FeedbackApp (voir CLAUDE.md "FeedbackApp") — les pages publiques
+      // `/feedback` et `/feedback/nouveau` ne sont volontairement PAS
+      // gérées ici : elles sont exclues du `matcher` de `src/proxy.ts`
+      // directement, pour que ce middleware ne s'exécute même pas dessus.
+      // Un chemin simplement "autorisé" ici passerait quand même par le
+      // wrapper NextAuth, qui pose ses propres cookies (`authjs.csrf-token`,
+      // `authjs.callback-url`) sur la réponse — inacceptable pour une page
+      // qui doit rester strictement sans cookie pour un visiteur anonyme
+      // (constaté empiriquement, voir `proxy.ts`). Toute future route
+      // interne authentifiée du module (Tranche B, ex: `/feedback/interne`)
+      // reste, elle, couverte par la règle par défaut ci-dessous.
       if (isApiRoute) {
         return true; // API routes handle their own auth
       }

@@ -24,6 +24,7 @@ async function main() {
   await prisma.module.deleteMany();
   await prisma.historiqueEntry.deleteMany();
   await prisma.notification.deleteMany();
+  await prisma.feedback.deleteMany();
   await prisma.plageAbsenceAutorisee.deleteMany();
   await prisma.depenseLigne.deleteMany();
   await prisma.pieceJointe.deleteMany();
@@ -88,7 +89,7 @@ async function main() {
 
   console.log("Création des modules...");
 
-  const [moduleTresorerie, modulePointage] = await Promise.all([
+  const [moduleTresorerie, modulePointage, moduleFeedback] = await Promise.all([
     prisma.module.upsert({
       where: { key: "tresorerie" },
       update: { label: "Gestion des demandes et trésorerie" },
@@ -99,9 +100,14 @@ async function main() {
       update: { label: "Pointage RH" },
       create: { key: "pointage", label: "Pointage RH" },
     }),
+    prisma.module.upsert({
+      where: { key: "feedback" },
+      update: { label: "FeedbackApp" },
+      create: { key: "feedback", label: "FeedbackApp" },
+    }),
   ]);
 
-  console.log(`Modules créés : ${moduleTresorerie.label}, ${modulePointage.label}`);
+  console.log(`Modules créés : ${moduleTresorerie.label}, ${modulePointage.label}, ${moduleFeedback.label}`);
 
   console.log("Création des permissions...");
 
@@ -134,6 +140,11 @@ async function main() {
     { key: "pointage.gerer_horaires", label: "Paramétrer les horaires de référence", moduleId: modulePointage.id },
     { key: "pointage.voir_dashboard_rh", label: "Voir le dashboard RH", moduleId: modulePointage.id },
     { key: "pointage.voir_reporting", label: "Voir le reporting RH", moduleId: modulePointage.id },
+    {
+      key: "feedback.moderer",
+      label: "Modérer les messages FeedbackApp",
+      moduleId: moduleFeedback.id,
+    },
   ];
 
   const createdPermissions = await Promise.all(
@@ -182,6 +193,9 @@ async function main() {
       "pointage.consulter_tous",
       "pointage.voir_dashboard_rh",
       "pointage.voir_reporting",
+      // FeedbackApp (voir CLAUDE.md "FeedbackApp") — décision confirmée :
+      // la Direction modère aussi les messages, au même titre que RH.
+      "feedback.moderer",
     ],
     [roleRH.id]: [
       "pointage.pointer",
@@ -192,6 +206,9 @@ async function main() {
       "pointage.gerer_horaires",
       "pointage.voir_dashboard_rh",
       "pointage.voir_reporting",
+      // FeedbackApp (voir CLAUDE.md "FeedbackApp") — attribuée à RH ET DG
+      // (voir roleDG.id ci-dessus) : les deux rôles peuvent modérer.
+      "feedback.moderer",
     ],
   };
 

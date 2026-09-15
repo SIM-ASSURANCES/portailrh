@@ -86,6 +86,14 @@ model User {
   /// d'origine, ou en tant qu'Admin) — distinct de `delegationsAccordees` :
   /// un Admin peut révoquer une délégation accordée par quelqu'un d'autre.
   delegationsRevoquees PermissionDelegation[] @relation("DelegationRevoquePar")
+
+  /// Messages FeedbackApp reçus par cet employé — jamais de relation
+  /// inverse vers un "auteur" (voir CLAUDE.md "FeedbackApp : anonymat
+  /// total", l'auteur n'est structurellement enregistré nulle part).
+  feedbacksRecus  Feedback[] @relation("FeedbackRecipient")
+  /// Messages FeedbackApp que cet utilisateur a modérés (action RH/DG,
+  /// sans rapport avec l'auteur du message).
+  feedbacksModeres Feedback[] @relation("FeedbackModeratedBy")
 }
 
 model Role {
@@ -761,4 +769,66 @@ model PlageAbsenceAutorisee {
   createdAt DateTime @default(now())
 
   @@index([userId, date])
+}
+
+// ============================================================
+// FEEDBACKAPP — messages constructifs anonymes sur un employé
+// ============================================================
+//
+// RÈGLE ABSOLUE, PRIORITAIRE SUR TOUT LE RESTE (voir CLAUDE.md "FeedbackApp
+// : anonymat total") : AUCUNE colonne ne doit JAMAIS être ajoutée à
+// `Feedback` pour identifier l'auteur d'un message, sous quelque forme que
+// ce soit — ni id, ni IP, ni session, ni empreinte navigateur, ni horodatage
+// précis. Toute évolution future de ce modèle doit être relue au regard de
+// cette règle avant d'être ajoutée.
+
+enum FeedbackSource {
+  /// Soumis depuis la page publique, sans compte (n'importe qui).
+  PUBLIC
+  /// Soumis par un employé connecté au portail (Tranche B, pas encore
+  /// implémentée à ce stade — la colonne existe déjà pour éviter une
+  /// migration supplémentaire plus tard).
+  INTERNAL
+}
+
+model Feedback {
+  id String @id @default(uuid())
+
+  /// 20 à 500 caractères, revalidé côté serveur (zod) à chaque écriture —
+  /// aucune contrainte de longueur au niveau de la colonne elle-même,
+  /// cohérent avec le reste du projet (toute validation de format/longueur
+  /// vit en zod, jamais dans une contrainte SQL).
+  content String
+
+  recipientId String
+  /// Réutilise le `User` existant du portail — AUCUNE nouvelle table
+  /// "employees" séparée (voir CLAUDE.md).
+  recipient User @relation("FeedbackRecipient", fields: [recipientId], references: [id])
+
+  source FeedbackSource
+
+  /// DATE SEULE — colonne SQL `DATE` (`@db.Date`), jamais `TIMESTAMP` :
+  /// aucune heure/minute/seconde n'est physiquement stockable, contrainte
+  /// posée au niveau du SCHÉMA plutôt que par simple convention
+  /// applicative (défense en profondeur pour la règle d'anonymat — voir
+  /// CLAUDE.md). Valeur du jour au moment de l'écriture (`DEFAULT
+  /// CURRENT_DATE`), jamais recalculée ni modifiable après coup.
+  submittedAt DateTime @default(now()) @db.Date
+
+  isModerated     Boolean @default(false)
+  /// Motif de la modération (ex: message retiré) — nullable, jamais
+  /// obligatoire tant qu'`isModerated` est `false`.
+  motifModeration String?
+
+  /// Traçabilité de l'ACTION DE MODÉRATION elle-même (qui côté RH/DG a
+  /// modéré, quand) — SANS RAPPORT avec l'auteur du message, dont
+  /// l'anonymat reste total. Nullable : `null` tant que le message n'a
+  /// jamais été modéré.
+  moderatedById String?
+  moderatedBy   User?     @relation("FeedbackModeratedBy", fields: [moderatedById], references: [id])
+  moderatedAt   DateTime?
+
+  @@index([recipientId])
+  @@index([source])
+  @@index([isModerated])
 }

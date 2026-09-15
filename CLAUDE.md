@@ -1258,6 +1258,173 @@ Notifications Pointage RH (retards/absences aux RH, pointage
 exceptionnel/régularisation au collaborateur) utilisent le même mécanisme
 générique que la Trésorerie (`createNotification`/SSE).
 
+## Module FeedbackApp — anonymat total
+
+Troisième module : permet à QUICONQUE (employé connecté ou visiteur sans
+compte) de laisser un message constructif anonyme sur un employé nommé du
+portail. **Tranche A seulement implémentée à ce stade** : page publique de
+soumission (`/feedback/nouveau`) et de consultation (`/feedback`), sans
+compte. La soumission par un employé déjà connecté (`source: INTERNAL`)
+est prévue mais pas encore construite (colonne déjà en place pour éviter
+une migration supplémentaire).
+
+### Règle absolue : anonymat structurel de l'auteur
+
+**Aucune donnée permettant d'identifier l'auteur d'un message ne doit
+JAMAIS être stockée, ni même transiter dans un log serveur.** Cette règle
+prime sur tout le reste du module et a été vérifiée à chaque étape,
+au-delà de la simple relecture de code :
+
+- **Modèle `Feedback`** (`backend/prisma/schema.prisma`) — colonnes :
+  `id`, `content`, `recipientId`, `source`, `submittedAt`, `isModerated`,
+  `motifModeration`, `moderatedById`/`moderatedAt` (traçabilité de
+  l'ACTION DE MODÉRATION elle-même, RH/DG — sans rapport avec l'auteur du
+  message). **Aucune colonne** `authorId`/`authorIp`/`authorSession` ni
+  équivalent, sous aucune forme.
+- **`submittedAt` est une colonne SQL `DATE`** (`@db.Date`, jamais
+  `TIMESTAMP`) — garantie posée au niveau du **schéma**, pas seulement par
+  convention applicative : aucune heure/minute/seconde n'est
+  physiquement stockable, même par erreur d'un futur appelant. Vérifié en
+  base après une soumission réelle : `submittedAt` vaut exactement
+  `AAAA-MM-JJT00:00:00.000Z` et `information_schema.columns` confirme
+  `data_type: "date"` (pas `timestamp`).
+- **Aucun cookie posé pour un visiteur anonyme** — `/feedback` et
+  `/feedback/nouveau` sont exclus du **`matcher`** de `frontend/src/proxy.ts`
+  lui-même (pas seulement autorisés dans le callback `authorized` de
+  `auth.config.ts`). Un chemin simplement "autorisé" par `authorized`
+  passe quand même par le wrapper `NextAuth(...).auth`, qui pose ses
+  propres cookies (`authjs.csrf-token`, `authjs.callback-url`) sur
+  **toute** requête qu'il traite, y compris une requête finalement
+  autorisée — **constaté empiriquement** lors de la construction de ce
+  module (`Set-Cookie` présent malgré `authorized` renvoyant `true`).
+  Seule l'exclusion du matcher empêche réellement le middleware de
+  s'exécuter. Vérifié par inspection réseau réelle (pas supposée) : GET
+  et POST (soumission) sur les deux routes renvoient zéro `Set-Cookie`,
+  alors que `/login` et toute route protégée (ex: `/pointage/pointer`)
+  continuent d'en recevoir normalement. Ancré avec `$` dans le matcher
+  (pas de préfixe libre) pour ne jamais lever l'authentification d'une
+  future route interne du module, ex: `/feedback/interne` (Tranche B).
+- **Aucune IP journalisée** — `soumettreFeedbackAction`
+  (`frontend/src/app/feedback/nouveau/actions.ts`) est la seule fonction
+  du module à lire une IP (`getClientIp`, `backend/src/pointage-utils.ts`),
+  utilisée **uniquement** comme clé d'un compteur anti-spam **en
+  mémoire** (`checkRateLimit`, voir plus bas) — jamais écrite en base, ni
+  passée à `console.log`, ni au logger d'audit persistant du projet.
+  Vérification exhaustive faite par grep projet entier : le portail a une
+  fonction `logAuditAction` (`frontend/src/lib/auditLog.ts`) qui, elle,
+  persiste bien l'IP en base (utilisée par login, pointage, actions admin
+  users/services, profil) — confirmé que `soumettreFeedbackAction` ne
+  l'appelle **jamais** (seule mention : un commentaire expliquant pourquoi).
+  Confirmé aussi qu'aucun mécanisme de journalisation globale
+  (`instrumentation.ts`, middleware générique, `morgan`/`pino`/`winston`)
+  n'existe dans le projet — le seul log qui existe sur cette route est le
+  log natif `next dev` (méthode + chemin + statut + timing), qui ne
+  contient jamais d'adresse IP.
+
+### Anti-spam en mémoire — limite mono-instance documentée
+
+**`checkRateLimit`** (`frontend/src/lib/rate-limit.ts`, `Map` en mémoire du
+process, déjà utilisé par `/login`) — 3 soumissions / 5 minutes par IP,
+l'IP servant uniquement de clé de compteur transitoire (jamais persistée).
+Vérifié en pratique : la 4ᵉ soumission valide consécutive est bloquée,
+sans écriture en base. **Limite connue et acceptée pour cette V1** : ce
+compteur est en mémoire d'un seul process — un déploiement multi-instance
+(scaling horizontal) ne partagerait pas ce compteur entre conteneurs,
+même limite déjà documentée pour le bus SSE (voir "Rafraîchissement en
+temps réel"). À revoir (ex: Redis) si l'infrastructure de déploiement
+change un jour.
+
+### Anti-bot : honeypot (pas de CAPTCHA tiers pour cette V1)
+
+Champ caché `site_web` (`FeedbackForm.tsx`), invisible et hors du flux de
+tabulation pour un humain — un bot qui le remplit reçoit un **faux succès
+silencieux** (même message que "Merci, votre message a bien été envoyé."),
+sans jamais révéler la détection, et **aucune écriture en base** (vérifié
+en pratique). Choix V1 volontairement simple plutôt qu'un vrai CAPTCHA
+tiers (Turnstile/hCaptcha) — à renforcer si le spam devient un problème
+réel en production.
+
+### Filtre anti-haine et validation de contenu
+
+`backend/src/feedback-constants.ts` (voir plus bas pourquoi ce fichier est
+séparé de `feedback.ts`) : `FEEDBACK_CONTENT_MIN`/`MAX` (20-500
+caractères, revalidés côté serveur par zod, aucune contrainte de longueur
+au niveau SQL), `FEEDBACK_BANNED_WORDS` (liste française simple,
+comparaison insensible casse/accents, facilement extensible — pas de
+service tiers ni de modèle IA pour cette V1), `containsUrl` (rejette toute
+URL/lien détectable). Les trois vérifiées en pratique par requête réseau
+directe (message trop court, trop long, contenant un lien, contenant un
+mot banni → tous rejetés avec un message précis).
+
+### Permission `feedback.moderer`
+
+Nouvelle permission dédiée, **jamais héritée automatiquement du bypass
+`estAdmin`** (même principe que toutes les permissions `treso.*`/
+`pointage.*`) — attribuée dans le seed aux rôles **RH et DG** (décision
+confirmée : la Direction modère aussi, au même titre que RH). Vérifiée en
+base après ajout : la permission est bien assignée aux deux rôles, à
+aucun autre. Vérifiée aussi **en pratique** via une vraie connexion (compte
+DG réel, JWT réel, `getSession()` réel avec sa jointure Prisma
+rôle→permissions) : `session.permissions` contient bien `feedback.moderer`
+pour ce compte — c'est exactement le tableau que `hasPermission()`
+consultera dès qu'un écran de modération existera (aucun écran construit
+à ce stade, Tranche A seulement). Aucune autre logique du projet ne
+suppose que seul RH la possède : seul `seed.ts` référence cette clé, aucun
+composant/action ne compare `role.name === "RH"` en dur pour ce module.
+
+### Décisions confirmées
+
+- **Destinataires proposables** (`getFeedbackRecipients`,
+  `backend/src/feedback.ts`) : **tous** les `User` actifs du portail, sans
+  restriction de rôle — confirmé, ne pas restreindre.
+- **Destinataire jamais affiché publiquement** (`getPublicFeedbacks`) : la
+  vue publique (`/feedback`) ne montre que le contenu et la date (arrondie
+  au jour) des messages `source: PUBLIC` non modérés — confirmé, ne pas
+  changer.
+
+### Coexistence avec le flux mot de passe oublié (Thierry)
+
+`frontend/src/lib/auth.config.ts` est partagé entre l'exclusion FeedbackApp
+et le flux mot de passe oublié/réinitialisation de Thierry
+(`/forgot-password`, `/reset-password`) — **vérifié que les deux
+coexistent sans que l'un écrase l'autre**, aucune correction nécessaire :
+les deux logiques ne se recouvrent sur aucun chemin (le matcher de
+`proxy.ts` exclut uniquement `feedback$`/`feedback/nouveau$` ; `isAuthRoute`
+dans `authorized()`, lui, couvre `/login`/`/invitation`/`/forgot-password`/
+`/reset-password` — deux mécanismes disjoints, sur des routes disjointes,
+dans le même fichier sans interférence). Testé de bout en bout après la
+fusion : soumission réelle de `/forgot-password` → email simulé en
+console (aucun SMTP configuré dans `.env`, mode simulation sans risque
+d'envoi réel) avec lien de réinitialisation → `/reset-password/<token>`
+répond 200. `nodemailer`/`@types/nodemailer` (ajoutés par Thierry dans
+`frontend/package.json`) n'étaient pas installés après la fusion
+(`node_modules` non régénéré) — `npm install` exécuté pour corriger,
+resolu depuis le cache local sans accès réseau ; sans rapport avec
+`auth.config.ts`/`proxy.ts`, mais nécessaire pour tester réellement ce
+flux.
+
+### Piège rencontré — `client-safe.ts` et un re-export nommé
+
+`backend/src/client-safe.ts` doit rester importable par un Client
+Component sans jamais entraîner Prisma/`pg` dans le bundle navigateur
+(voir "Monorepo backend/frontend"). Un premier essai faisait
+`export { FEEDBACK_CONTENT_MIN, FEEDBACK_CONTENT_MAX } from "./feedback"`
+— un re-export **nommé** (pas `export *`), en pensant que ça évitait le
+problème. **Constaté en pratique que non** : `next dev` échouait avec
+`Module not found: Can't resolve 'dns'` (`pg` → `dns`), car même un
+re-export nommé force le bundler à évaluer le module source en entier, et
+`feedback.ts` importe `./prisma` en tête de fichier pour ses fonctions de
+lecture (`getFeedbackRecipients`, `getPublicFeedbacks`). **Solution** :
+les constantes/validations sans aucune dépendance Prisma
+(`FEEDBACK_CONTENT_MIN`/`MAX`, `FEEDBACK_BANNED_WORDS`,
+`containsBannedContent`, `containsUrl`) vivent maintenant dans
+`backend/src/feedback-constants.ts`, un fichier qui n'importe jamais
+`./prisma` — `feedback.ts` les réexporte (`export *`) pour le code
+backend, `client-safe.ts` importe directement `feedback-constants.ts`,
+jamais `feedback.ts`. Seule protection fiable constatée : isoler
+physiquement dans un fichier séparé tout ce qui doit rester sûr pour le
+navigateur, pas une forme d'export particulière.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif
