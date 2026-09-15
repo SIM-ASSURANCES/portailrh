@@ -843,6 +843,126 @@ mutuellement exclusifs ; 4/5/6 peuvent se recouper sur un même règlement.
 à la clôture) n'est plus une des 6 cartes mais reste accessible via un
 lien secondaire en bas de page.
 
+### Refonte visuelle du dashboard Finance
+
+Refonte **purement esthétique/structurelle** de `/treso/finance` — aucune
+nouvelle règle métier, aucune donnée fictive : chaque ajout visuel
+réutilise une fonction de calcul déjà existante ailleurs dans le module,
+jamais un second calcul divergent. Palette SIM Assurances inchangée
+(bleu `#004B9C`/`#51AEE2`, fond clair) ; `StatCard` et le reste de la
+coquille applicative (sidebar, header) **non modifiés**, pour ne jamais
+faire dériver le style des autres écrans qui réutilisent ces mêmes
+composants partagés (dashboard général, "Mon tableau de bord").
+
+- **Courbe d'évolution du solde de caisse** (`SoldeCaisseTrendChart.tsx`,
+  posée dans le bandeau "hero" existant, pour le renforcer visuellement
+  plutôt que lui ajouter un élément concurrent) — SVG tracé à la main
+  (pas de bibliothèque de graphiques, volume de points toujours modeste).
+  Données : **`getEvolutionSoldeCaisse(joursMax = 30)`**
+  (`dashboardFinance.ts`) — cumul chronologique RÉEL des écritures
+  `JournalCaisse` (ordre `createdAt`, jamais `dateOperation` : c'est
+  l'ordre d'écriture qui a réellement fait varier le solde), sur les 30
+  derniers jours ou depuis la toute première écriture si le grand livre
+  est plus jeune. Le dernier point de la courbe est toujours strictement
+  égal à `getSoldeCaisse()`. Retourne aussi `depuis` (date de début
+  réellement retenue), pour que les autres graphiques de la page décrivent
+  EXACTEMENT la même période. Cas vide (moins de 2 points dans la
+  fenêtre) : message clair plutôt qu'un graphique trompeur.
+- **Donut Caisse/Banque** (`ReglementsModeDonut.tsx`) — répartition des
+  règlements confirmés (non annulés) par mode depuis `depuis`
+  (**`getRepartitionReglementsParMode`**, groupée sur `confirmeAt`).
+  Anneau vide (`EmptyState`) si aucun règlement confirmé sur la période,
+  jamais un anneau à 0% trompeur.
+- **Barres de budget par Catégorie** (`BudgetCategorieBars.tsx`) — top 5
+  catégories actives ayant un budget alloué, triées par montant consommé
+  décroissant (**`getTopCategoriesBudget`**, réutilise directement
+  `getMontantConsommeCategorie` — la même fonction que le contrôle
+  bloquant du règlement et l'aperçu de catégorisation, jamais un second
+  calcul). Barre rouge et texte de dépassement si `consomme > budgetAlloue`
+  (le montant affiché reste la valeur brute, jamais plafonnée).
+- **Icônes ajoutées** : `trending-up`, `pie-chart` (`icons.tsx`), style
+  "outline" identique au reste du jeu d'icônes maison.
+
+**Piège React 19 rencontré et corrigé** : un `<title>` SVG par point de la
+courbe (infobulle native au survol) provoquait une erreur d'hydratation —
+React 19 hisse automatiquement TOUT élément `<title>` vers `<head>` comme
+s'il s'agissait du titre du document, sans distinguer le `<title>`
+SVG (décoratif) du `<title>` HTML de métadonnées. Confirmé en reproduisant
+l'erreur puis en l'éliminant en retirant ces `<title>` — pas de solution
+fiable trouvée pour garder une infobulle native SVG dans ce contexte,
+omise volontairement plutôt que de rouvrir ce bug. À garder à l'esprit
+pour tout futur graphique SVG maison dans le projet.
+
+#### Cartes "À traiter" : `FinanceActionCard.tsx` (dédié, `StatCard` intact)
+
+Suite à un retour utilisateur, les 6 cartes "À traiter" utilisent
+désormais **`FinanceActionCard.tsx`** (nouveau, colocalisé avec la page,
+utilisé UNIQUEMENT ici) plutôt que `StatCard` — **`StatCard` lui-même
+n'est pas modifié**, aucun autre écran (dashboard général, "Mon tableau de
+bord" Collaborateur, section "Validation complète (DG)" sur cette même
+page) n'est visuellement affecté. Différences volontaires par rapport à
+`StatCard` :
+
+- **Badge d'icône teinté par `tone`** (`bg-{tone}-bg`/`text-{tone}`) —
+  contrairement à `StatCard`, qui utilise un aplat bleu uniforme sur
+  toutes ses icônes (choix délibéré antérieur, documenté dans
+  `StatCard.tsx`, non remis en cause).
+- **Barre d'accent verticale sur le bord gauche** (`bg-{tone}`), pas la
+  barre horizontale en tête de `StatCard`.
+- **Survol combinant élévation ET léger changement de teinte de fond**
+  (`hover:bg-{tone}-bg`) plutôt que la seule élévation de `StatCard`.
+
+**Piège Tailwind v4 rencontré et corrigé** : `hover:shadow-elevated-lg`
+(pattern déjà utilisé par `StatCard`/`Card` dans tout le projet) **ne
+génère aucune règle CSS** — `.shadow-elevated`/`.shadow-elevated-lg`
+(`globals.css`) sont des classes CSS ordinaires, jamais enregistrées comme
+utilitaires Tailwind (ni `@utility`, ni jeton `--shadow-*`) : un préfixe
+de variante comme `hover:` ne peut s'appliquer qu'à un utilitaire que
+Tailwind reconnaît. **Confirmé en pratique que ce défaut est resté invisible
+partout ailleurs jusqu'ici** (l'effet "ombre plus marquée au survol" de
+`StatCard`/`Card` n'a probablement jamais fonctionné). Essais qui n'ont
+PAS marché non plus, dans l'ordre : valeur arbitraire `hover:shadow-[...]`
+(aucune règle générée, deux ombres séparées par une virgule au niveau
+racine du crochet) ; `@utility` maison avec `hover:` préfixé (la classe de
+base compile, mais son `hover:` reste sans effet, cause non identifiée
+avec certitude malgré plusieurs essais, y compris un nom sans rapport avec
+la famille `shadow-*` et un vidage complet du cache Turbopack). **Solution
+retenue** : une classe CSS ordinaire avec son **propre `:hover` écrit à la
+main** (`.card-shadow-hover:hover { box-shadow: ...; }`, `globals.css`),
+appliquée SANS préfixe `hover:` (le survol est déjà dans le sélecteur) —
+fonctionne de façon fiable, vérifié en pratique (valeur de `box-shadow`
+recalculée au survol réel). `.shadow-elevated-lg` reste inchangée (déjà
+sans effet en `hover:` partout où elle est utilisée) : la corriger
+globalement aurait changé visuellement `StatCard`/`Card` sur tous les
+autres écrans, hors périmètre de cette tâche.
+
+#### Cartes "Analyse" cliquables
+
+Les deux cartes de la section "Analyse" redirigent désormais vers l'écran
+de reporting existant — **aucun nouvel écran créé**, `Card` (composant
+partagé) non modifié : la variante cliquable est construite directement
+dans `treso/finance/page.tsx` (un `<Link>` stylé comme `Card` + le même
+langage d'interaction que `FinanceActionCard`, élévation + flèche
+discrète).
+
+- **Donut "Règlements par mode de paiement"** → `/treso/finance/reporting?du=<depuis>`
+  — `depuis` est la date de début RÉELLE de la fenêtre du donut/de la
+  courbe (`getEvolutionSoldeCaisse`), reprise telle quelle. Le reporting
+  supporte déjà un filtre de période en GET (`du`/`au`,
+  `parseReportingFilters`) : aucun nouveau paramètre ajouté côté
+  reporting, vérifié avant d'écrire ce lien.
+- **Barres "Suivi budgétaire — catégories les plus consommées"** →
+  `/treso/finance/reporting#suivi-budgetaire` — `/treso/finance/categories`
+  (écran de gestion des Catégories ouvert à Finance) a été explicitement
+  écarté : cet écran, pour un utilisateur Finance non-Admin, ne montre
+  JAMAIS le budget partagé ni sa consommation (limité à créer/supprimer,
+  voir "Gestion des Catégories/Objets ouverte à Finance") — la section
+  "Suivi budgétaire" du reporting (déjà existante, `getReportingSuiviBudgetaire`,
+  **toutes** les catégories avec budget, pas seulement le top 5 du
+  dashboard) est le seul écran qui montre réellement "le détail complet du
+  budget par catégorie" demandé. Ancre `id="suivi-budgetaire"` ajoutée sur
+  cette section (seul changement apporté à `reporting/page.tsx`).
+
 ### Reporting et export
 
 `backend/src/reporting.ts` / `treso/finance/reporting/page.tsx` / export

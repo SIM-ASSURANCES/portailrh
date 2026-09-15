@@ -332,6 +332,18 @@ const PATHS = {
       <circle cx="12" cy="10" r="3" />
     </>
   ),
+  "trending-up": (
+    <>
+      <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
+      <polyline points="16 7 22 7 22 13" />
+    </>
+  ),
+  "pie-chart": (
+    <>
+      <path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
+      <path d="M22 12A10 10 0 0 0 12 2v10z" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 

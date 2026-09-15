@@ -1,6 +1,10 @@
-import type { Prisma } from "./generated/prisma/client";
+import type { ModeReglement, Prisma } from "./generated/prisma/client";
 import { prisma } from "./prisma";
-import { DEMANDES_EN_ATTENTE_VALIDATION_WHERE, getSoldesARegulariserParReglements } from "./tresorerie";
+import {
+  DEMANDES_EN_ATTENTE_VALIDATION_WHERE,
+  getMontantConsommeCategorie,
+  getSoldesARegulariserParReglements,
+} from "./tresorerie";
 
 /**
  * Filtre partagé des retours de caisse "en attente" : non réceptionnés ET
@@ -269,4 +273,161 @@ export async function getDepensesNonJustifiees(): Promise<CompteEtMontant> {
     }
   }
   return { nombre, montant };
+}
+
+// ============================================================
+// Refonte visuelle du dashboard Finance — graphiques (voir CLAUDE.md
+// "Refonte visuelle du dashboard Finance"). Aucune nouvelle règle
+// métier : ces fonctions ne font que RESTITUER, sous une forme adaptée à
+// un graphique, des écritures déjà régies par les règles existantes
+// (`JournalCaisse`, `Reglement`, `Categorie.budgetAlloue`).
+// ============================================================
+
+export interface PointEvolutionSoldeCaisse {
+  date: Date;
+  solde: number;
+}
+
+export interface EvolutionSoldeCaisse {
+  points: PointEvolutionSoldeCaisse[];
+  /** Début réel de la fenêtre retenue (voir `getEvolutionSoldeCaisse`) —
+   * exposé pour que l'appelant puisse aligner un autre graphique
+   * (répartition des règlements) sur EXACTEMENT la même période, sans
+   * jamais recalculer une date de départ indépendante. */
+  depuis: Date;
+}
+
+/**
+ * Évolution chronologique du solde de caisse — point de départ : le
+ * solde déjà en vigueur `joursMax` jours avant aujourd'hui (ou dès la
+ * toute première écriture du grand livre si celui-ci est plus jeune que
+ * `joursMax` jours, cas courant sur un compte de test) ; puis un point
+ * par écriture `JournalCaisse` RÉELLE dans cette fenêtre, cumulée dans
+ * l'ORDRE CHRONOLOGIQUE D'ENREGISTREMENT (`createdAt`, jamais
+ * `dateOperation` — c'est l'ordre d'écriture qui a réellement fait varier
+ * le solde à chaque instant, `dateOperation` n'étant qu'une étiquette
+ * d'affichage pour l'alimentation de caisse, voir CLAUDE.md "Nouvelle
+ * alimentation de caisse"). Même formule que `getSoldeCaisse()` (ENTREE −
+ * SORTIE), jamais un calcul parallèle : le dernier point de la série est
+ * toujours strictement égal à `getSoldeCaisse()`.
+ *
+ * Deux requêtes seulement (jamais une par jour ni par écriture) : un
+ * agrégat ENTREE/SORTIE pour tout ce qui précède la fenêtre (le solde de
+ * départ), puis la liste des écritures DANS la fenêtre à cumuler une à
+ * une en mémoire — volume borné par l'activité réelle de caisse, jamais
+ * de pagination nécessaire pour une trésorerie d'entreprise interne.
+ *
+ * Retourne un tableau vide si le grand livre est entièrement vide (aucun
+ * mouvement n'a jamais existé) — à l'écran, ce cas se distingue de "un
+ * seul point, rien à tracer dans la fenêtre" (longueur 1) : les deux
+ * doivent être traités comme un état vide par l'appelant (pas de courbe
+ * significative avec moins de 2 points).
+ */
+export async function getEvolutionSoldeCaisse(joursMax = 30): Promise<EvolutionSoldeCaisse> {
+  const limiteParDefaut = new Date(Date.now() - joursMax * 24 * 60 * 60 * 1000);
+
+  const premiereEcriture = await prisma.journalCaisse.findFirst({
+    orderBy: { createdAt: "asc" },
+    select: { createdAt: true },
+  });
+  if (!premiereEcriture) {
+    return { points: [], depuis: limiteParDefaut };
+  }
+
+  const dateDebut = premiereEcriture.createdAt > limiteParDefaut ? premiereEcriture.createdAt : limiteParDefaut;
+
+  const [entreesAvant, sortiesAvant, ecrituresPeriode] = await Promise.all([
+    prisma.journalCaisse.aggregate({
+      where: { type: "ENTREE", createdAt: { lt: dateDebut } },
+      _sum: { montant: true },
+    }),
+    prisma.journalCaisse.aggregate({
+      where: { type: "SORTIE", createdAt: { lt: dateDebut } },
+      _sum: { montant: true },
+    }),
+    prisma.journalCaisse.findMany({
+      where: { createdAt: { gte: dateDebut } },
+      orderBy: { createdAt: "asc" },
+      select: { type: true, montant: true, createdAt: true },
+    }),
+  ]);
+
+  const soldeDepart = Number(entreesAvant._sum.montant ?? 0) - Number(sortiesAvant._sum.montant ?? 0);
+  const points: PointEvolutionSoldeCaisse[] = [{ date: dateDebut, solde: soldeDepart }];
+  ecrituresPeriode.reduce((solde, e) => {
+    const nouveauSolde = solde + (e.type === "ENTREE" ? Number(e.montant) : -Number(e.montant));
+    points.push({ date: e.createdAt, solde: nouveauSolde });
+    return nouveauSolde;
+  }, soldeDepart);
+
+  return { points, depuis: dateDebut };
+}
+
+export interface RepartitionModeReglement {
+  mode: ModeReglement;
+  montant: number;
+  nombre: number;
+}
+
+/**
+ * Répartition des règlements confirmés (non annulés) par mode de
+ * paiement, depuis une date donnée — pensé pour partager EXACTEMENT la
+ * même fenêtre que `getEvolutionSoldeCaisse` (même `dateDebut` transmise
+ * par la page appelante), pour que le donut Caisse/Banque et la courbe de
+ * solde décrivent la même période à l'écran. Filtré sur `confirmeAt`
+ * (date d'effet réelle du règlement, pas `createdAt` qui daterait un
+ * brouillon éventuel) — cohérent avec les écritures `JournalCaisse`
+ * correspondantes, créées au moment précis de la confirmation.
+ */
+export async function getRepartitionReglementsParMode(depuis: Date): Promise<RepartitionModeReglement[]> {
+  const groupes = await prisma.reglement.groupBy({
+    by: ["mode"],
+    where: { estConfirme: true, estAnnule: false, confirmeAt: { gte: depuis } },
+    _sum: { montant: true },
+    _count: { _all: true },
+  });
+  return groupes.map((g) => ({
+    mode: g.mode,
+    montant: Number(g._sum.montant ?? 0),
+    nombre: g._count._all,
+  }));
+}
+
+export interface CategorieBudgetSuivi {
+  id: string;
+  label: string;
+  budgetAlloue: number;
+  consomme: number;
+  restant: number;
+}
+
+/**
+ * Catégories actives ayant un budget alloué, triées par montant consommé
+ * décroissant et limitées à `limite` (dashboard : top 5, écran ne doit
+ * pas être surchargé si l'Admin a défini un budget sur de nombreuses
+ * catégories) — réutilise `getMontantConsommeCategorie` (une fois par
+ * catégorie concernée, jamais une deuxième formule de calcul), la même
+ * fonction que le contrôle bloquant du règlement et l'aperçu de
+ * catégorisation (voir CLAUDE.md "Budget partagé par Catégorie" et
+ * "Budget visible au moment de la catégorisation").
+ */
+export async function getTopCategoriesBudget(limite = 5): Promise<CategorieBudgetSuivi[]> {
+  const categories = await prisma.categorie.findMany({
+    where: { budgetAlloue: { not: null }, isActive: true },
+    select: { id: true, label: true, budgetAlloue: true },
+  });
+  if (categories.length === 0) {
+    return [];
+  }
+
+  const consommations = await Promise.all(categories.map((c) => getMontantConsommeCategorie(c.id)));
+
+  return categories
+    .map((c, i) => {
+      const budgetAlloue = Number(c.budgetAlloue);
+      const consomme = consommations[i];
+      return { id: c.id, label: c.label, budgetAlloue, consomme, restant: budgetAlloue - consomme };
+    })
+    .sort((a, b) => b.consomme - a.consomme)
+    .slice(0, limite);
 }

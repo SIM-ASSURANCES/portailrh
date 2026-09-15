@@ -280,7 +280,7 @@ export default async function ReportingPage({
         )}
       </div>
 
-      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
+      <div id="suivi-budgetaire" className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Suivi budgétaire</h2>
         {/* Budget PARTAGÉ par Catégorie (pas par demande, pas par service du
             demandeur), décompté au RÈGLEMENT — voir CLAUDE.md "Budget

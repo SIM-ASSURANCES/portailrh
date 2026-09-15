@@ -205,6 +205,25 @@ body {
     0 18px 36px -10px rgba(0, 75, 156, 0.22);
 }
 
+/* Classe ordinaire avec son propre `:hover` écrit à la main — jamais
+   `hover:shadow-elevated-lg` (une classe CSS ordinaire, comme les deux
+   ci-dessus, ne produit AUCUNE règle sous un préfixe de variante Tailwind :
+   vérifié, `:hover` silencieusement sans effet), NI `@utility` (même
+   constat en pratique sur ce projet : le `hover:` d'un utilitaire déclaré
+   via `@utility` ne compile pas non plus ici, cause non identifiée avec
+   certitude — écarté après plusieurs essais réels). Piège découvert en
+   construisant `FinanceActionCard.tsx` (voir CLAUDE.md "Refonte visuelle
+   du dashboard Finance / cartes À traiter"). Mêmes valeurs que
+   `.shadow-elevated-lg`, dupliquées ici à dessein plutôt que d'y toucher :
+   `.shadow-elevated-lg` reste inchangée (déjà sans effet en `hover:`, donc
+   déjà invisible) pour ne rien changer au comportement de tout ce qui
+   l'utilise ailleurs (StatCard, Card...), hors périmètre de cette tâche. */
+.card-shadow-hover:hover {
+  box-shadow:
+    0 2px 4px rgba(0, 75, 156, 0.08),
+    0 18px 36px -10px rgba(0, 75, 156, 0.22);
+}
+
 /* Entrée en fondu/léger décalage des cartes cliquables du dashboard Finance
    (Phase G, zone "À traiter") — un seul keyframe partagé, décalé par carte
    via nth-child plutôt qu'une librairie d'animation (GSAP serait

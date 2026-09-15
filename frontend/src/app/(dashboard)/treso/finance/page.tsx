@@ -7,14 +7,22 @@ import {
   getDecaissementsARegulariser,
   getDemandesEnAttenteValidation,
   getDepensesNonJustifiees,
+  getEvolutionSoldeCaisse,
   getFondsRemisARegulariser,
   getMontantsValidesNonRegles,
   getReglementsPartielsACompleter,
+  getRepartitionReglementsParMode,
   getRetoursEnAttenteReception,
+  getTopCategoriesBudget,
   getValidationsCompletesEnAttente,
 } from "backend";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { getSoldeCaisse, getSoldeOuvertureInfo } from "backend";
+
+import { BudgetCategorieBars } from "./BudgetCategorieBars";
+import { FinanceActionCard } from "./FinanceActionCard";
+import { ReglementsModeDonut } from "./ReglementsModeDonut";
+import { SoldeCaisseTrendChart } from "./SoldeCaisseTrendChart";
 
 /**
  * Tableau de bord Finance (Phase G, cahier des charges section 12) —
@@ -67,6 +75,8 @@ export default async function DashboardFinancePage() {
     depensesNonJustifiees,
     decaissementsARegulariser,
     validationsCompletesEnAttente,
+    evolutionSolde,
+    categoriesBudget,
   ] = await Promise.all([
     getSoldeCaisse(),
     getSoldeOuvertureInfo(),
@@ -80,7 +90,17 @@ export default async function DashboardFinancePage() {
     canApprouverValidationComplete
       ? getValidationsCompletesEnAttente()
       : Promise.resolve({ nombre: 0 }),
+    getEvolutionSoldeCaisse(30),
+    getTopCategoriesBudget(5),
   ]);
+
+  // La répartition Caisse/Banque doit décrire EXACTEMENT la même période
+  // que la courbe de solde ci-dessus (voir CLAUDE.md) — dépend donc de son
+  // résultat (`depuis`, la date de début réellement retenue par
+  // `getEvolutionSoldeCaisse`), jamais un second calcul de fenêtre
+  // indépendant qui risquerait de diverger d'un jour ou deux.
+  const { points: pointsSolde, depuis: depuisPeriode } = evolutionSolde;
+  const repartitionReglements = await getRepartitionReglementsParMode(depuisPeriode);
 
   // Réservé à Finance/Admin (voir CLAUDE.md "Solde d'ouverture de
   // caisse") — le DG (voir_dashboard_finance sans effectuer_reglement)
@@ -184,6 +204,8 @@ export default async function DashboardFinancePage() {
             "Aucun solde d'ouverture défini."
           )}
         </p>
+
+        <SoldeCaisseTrendChart points={pointsSolde} />
       </div>
 
       <section className="space-y-4">
@@ -203,7 +225,7 @@ export default async function DashboardFinancePage() {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="stat-card-enter">
-            <StatCard
+            <FinanceActionCard
               href="/treso/finance/demandes"
               icon="file-text"
               tone={toneSiActif(enAttenteValidation.nombre, "warning")}
@@ -212,7 +234,7 @@ export default async function DashboardFinancePage() {
             />
           </div>
           <div className="stat-card-enter">
-            <StatCard
+            <FinanceActionCard
               href="/treso/finance/a-decaisser"
               icon="wallet"
               tone={toneSiActif(montantsNonRegles.nombre, "info")}
@@ -222,7 +244,7 @@ export default async function DashboardFinancePage() {
             />
           </div>
           <div className="stat-card-enter">
-            <StatCard
+            <FinanceActionCard
               href="/treso/finance/reglements-partiels"
               icon="pencil"
               tone={toneSiActif(reglementsPartiels.nombre, "info")}
@@ -232,7 +254,7 @@ export default async function DashboardFinancePage() {
             />
           </div>
           <div className="stat-card-enter">
-            <StatCard
+            <FinanceActionCard
               href="/treso/finance/fonds-a-regulariser"
               icon="book-text"
               tone={toneSiActif(fondsARegulariser.nombre, "warning")}
@@ -242,7 +264,7 @@ export default async function DashboardFinancePage() {
             />
           </div>
           <div className="stat-card-enter">
-            <StatCard
+            <FinanceActionCard
               href={canReceptionnerRetour ? "/treso/finance/retours" : undefined}
               icon="rotate-ccw"
               tone={toneSiActif(retoursEnAttente.nombre, "warning")}
@@ -251,7 +273,7 @@ export default async function DashboardFinancePage() {
             />
           </div>
           <div className="stat-card-enter">
-            <StatCard
+            <FinanceActionCard
               href="/treso/finance/depenses-non-justifiees"
               icon="alert-triangle"
               tone={toneSiActif(depensesNonJustifiees.nombre, "danger")}
@@ -260,6 +282,63 @@ export default async function DashboardFinancePage() {
               hint={`${depensesNonJustifiees.montant.toLocaleString("fr-FR")} FCFA`}
             />
           </div>
+        </div>
+      </section>
+
+      {/* Refonte visuelle (voir CLAUDE.md "Refonte visuelle du dashboard
+          Finance") — analyse graphique, purement informative, aucune
+          nouvelle règle métier : chaque graphique réutilise une fonction
+          de calcul déjà existante ailleurs dans le module (répartition
+          Caisse/Banque, suivi budgétaire par Catégorie), jamais un second
+          calcul divergent. Les deux cartes sont cliquables vers l'écran de
+          reporting existant (jamais un nouvel écran créé pour l'occasion) —
+          `Card` (composant partagé) n'est pas modifié : la variante
+          cliquable est construite ici, avec le même langage d'interaction
+          que `FinanceActionCard` (élévation au survol + flèche discrète),
+          jamais reportée sur `Card` lui-même. */}
+      <section className="space-y-4">
+        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+          <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
+          Analyse
+        </h2>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Link
+            href={`/treso/finance/reporting?du=${depuisPeriode.toISOString().slice(0, 10)}`}
+            className="group relative flex flex-col rounded-2xl border border-border bg-surface p-6 shadow-elevated outline-offset-2 transition-[box-shadow,transform] duration-200 ease-out-strong card-shadow-hover motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-foreground">
+              <Icon name="pie-chart" className="size-4 text-primary" />
+              Règlements par mode de paiement
+              <span className="ml-auto text-xs font-normal text-muted-foreground">
+                Depuis le {depuisPeriode.toLocaleDateString("fr-FR")}
+              </span>
+            </h3>
+            <ReglementsModeDonut repartition={repartitionReglements} />
+            <span className="mt-4 flex items-center gap-1 text-xs font-semibold text-muted-foreground transition-colors duration-200 group-hover:text-primary">
+              Voir le reporting complet
+              <Icon
+                name="arrow-up-right"
+                className="size-3 transition-transform duration-200 ease-out-strong motion-safe:group-hover:translate-x-0.5 motion-safe:group-hover:-translate-y-0.5"
+              />
+            </span>
+          </Link>
+          <Link
+            href="/treso/finance/reporting#suivi-budgetaire"
+            className="group relative flex flex-col rounded-2xl border border-border bg-surface p-6 shadow-elevated outline-offset-2 transition-[box-shadow,transform] duration-200 ease-out-strong card-shadow-hover motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-foreground">
+              <Icon name="book-text" className="size-4 text-primary" />
+              Suivi budgétaire — catégories les plus consommées
+            </h3>
+            <BudgetCategorieBars categories={categoriesBudget} />
+            <span className="mt-4 flex items-center gap-1 text-xs font-semibold text-muted-foreground transition-colors duration-200 group-hover:text-primary">
+              Voir le suivi budgétaire complet
+              <Icon
+                name="arrow-up-right"
+                className="size-3 transition-transform duration-200 ease-out-strong motion-safe:group-hover:translate-x-0.5 motion-safe:group-hover:-translate-y-0.5"
+              />
+            </span>
+          </Link>
         </div>
       </section>
 
