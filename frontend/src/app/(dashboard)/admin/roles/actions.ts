@@ -226,3 +226,50 @@ export async function toggleRolePeutEtreBeneficiaireDelegationAction(
     message: eligible ? "Rôle rendu éligible comme bénéficiaire." : "Rôle rendu inéligible comme bénéficiaire.",
   };
 }
+
+/**
+ * Accorde ou retire l'éligibilité d'un rôle à apparaître comme
+ * DESTINATAIRE proposable sur `/feedback/nouveau` (voir CLAUDE.md
+ * "FeedbackApp", `Role.peutRecevoirFeedback`).
+ *
+ * **Volontairement librement modifiable à tout moment**, même principe que
+ * `toggleRolePeutEtreBeneficiaireDelegationAction` ci-dessus : ce n'est pas
+ * un invariant de sécurité critique comme `estAdmin` (figé après création)
+ * — ce champ ne donne par lui-même AUCUN droit, il détermine seulement
+ * qui apparaît dans la liste des destinataires. Aucun risque de
+ * verrouillage comparable à `estAdmin` (pas d'invariant "au moins un rôle
+ * éligible" à protéger).
+ */
+export async function toggleRolePeutRecevoirFeedbackAction(
+  roleId: string,
+  eligible: boolean
+): Promise<{ status: "success" | "error"; message: string }> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const role = await prisma.role.update({
+    where: { id: roleId },
+    data: { peutRecevoirFeedback: eligible },
+  });
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "Role",
+      entityId: role.id,
+      action: eligible ? "GRANT_RECEVOIR_FEEDBACK" : "REVOKE_RECEVOIR_FEEDBACK",
+      detail: `Rôle "${role.name}" ${eligible ? "rendu éligible" : "rendu inéligible"} comme destinataire FeedbackApp`,
+      userId: session.user.id,
+    },
+  });
+
+  revalidatePath("/admin/roles");
+  revalidatePath("/feedback/nouveau");
+  publishDataChanged();
+
+  return {
+    status: "success",
+    message: eligible ? "Rôle rendu éligible comme destinataire." : "Rôle rendu inéligible comme destinataire.",
+  };
+}

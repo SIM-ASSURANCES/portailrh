@@ -1375,12 +1375,54 @@ composant/action ne compare `role.name === "RH"` en dur pour ce module.
 ### Décisions confirmées
 
 - **Destinataires proposables** (`getFeedbackRecipients`,
-  `backend/src/feedback.ts`) : **tous** les `User` actifs du portail, sans
-  restriction de rôle — confirmé, ne pas restreindre.
+  `backend/src/feedback.ts`) : **tous** les `User` actifs du portail dont
+  le rôle est éligible (`role.peutRecevoirFeedback`, voir ci-dessous) —
+  confirmé, ne pas restreindre par rôle métier au-delà de ça.
 - **Destinataire jamais affiché publiquement** (`getPublicFeedbacks`) : la
   vue publique (`/feedback`) ne montre que le contenu et la date (arrondie
   au jour) des messages `source: PUBLIC` non modérés — confirmé, ne pas
   changer.
+
+### `Role.peutRecevoirFeedback` — exclure les comptes techniques
+
+Un rôle "Admin" représente un **compte technique**, pas un vrai employé à
+évaluer : ses comptes ne doivent jamais apparaître comme destinataires sur
+`/feedback/nouveau`. Un rôle combiné comme "Admin / Collaborateur" (qui
+porte aussi `estAdmin: true` mais représente, lui, un vrai employé) doit en
+revanche rester proposable — **jamais de comparaison sur le nom du rôle en
+dur** (`role.name === "Admin"`), même principe que `estAdmin`/
+`peutEtreBeneficiaireDelegation` : un champ dédié sur `Role`.
+
+- **`Role.peutRecevoirFeedback`** (`Boolean @default(true)`) — migration
+  additive (`20260915145338_role_peut_recevoir_feedback`) suivie d'une
+  migration de rattrapage dédiée
+  (`20260915145339_role_admin_peut_recevoir_feedback_rattrapage`, même
+  esprit que `20260911090822_role_collaborateur_beneficiaire_delegation_rattrapage`)
+  qui met ce champ à `false` **uniquement** pour le rôle nommé exactement
+  "Admin" sur les bases déjà seedées, où la nouvelle colonne apparaît sinon
+  à `true` pour tout le monde. `seed.ts` crée aussi directement le rôle
+  "Admin" avec `peutRecevoirFeedback: false`, donc une base neuve n'a pas
+  besoin de la migration de rattrapage pour être correcte.
+- **`getFeedbackRecipients`** filtre désormais avec
+  `where: { isActive: true, role: { peutRecevoirFeedback: true } }`.
+- **Librement modifiable à tout moment** depuis `/admin/roles`
+  (`PeutRecevoirFeedbackToggle.tsx` /
+  `toggleRolePeutRecevoirFeedbackAction`, `admin/roles/actions.ts`) — même
+  principe que `peutEtreBeneficiaireDelegation` : ce n'est pas un invariant
+  de sécurité critique comme `estAdmin` (jamais figé), aucun risque de
+  verrouillage à protéger. Chaque changement est historisé
+  (`HistoriqueEntry`, actions `GRANT_RECEVOIR_FEEDBACK`/
+  `REVOKE_RECEVOIR_FEEDBACK`).
+- **Vérifié en pratique** (comptes de test réels, requêtes réseau réelles,
+  pas seulement en base) : le compte "Admin Test" a disparu de la liste
+  des destinataires sur `/feedback/nouveau` ; un compte de test temporaire
+  sous le rôle "Admin / Collaborateur" (déjà présent en base sans compte
+  assigné, voir "Anomalie connue" plus haut) y reste bien proposable ;
+  Finance/RH/DG/Collaborateur restent proposables normalement ; et la
+  bascule Admin elle-même a été testée via une vraie connexion Admin et un
+  vrai appel de `toggleRolePeutRecevoirFeedbackAction` (protocole Server
+  Action réel, pas une écriture DB directe) — Finance a bien disparu puis
+  réapparu de la liste après avoir retiré puis rendu l'éligibilité.
 
 ### Coexistence avec le flux mot de passe oublié (Thierry)
 

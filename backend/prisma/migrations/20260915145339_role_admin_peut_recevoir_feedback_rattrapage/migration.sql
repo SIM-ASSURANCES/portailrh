@@ -1,0 +1,15 @@
+-- Rattrapage de Role.peutRecevoirFeedback pour le role technique "Admin",
+-- meme esprit que 20260911090822_role_collaborateur_beneficiaire_delegation_rattrapage
+-- (rattrapage de Role.peutEtreBeneficiaireDelegation) : la migration
+-- precedente (role_peut_recevoir_feedback) ajoute la colonne avec
+-- DEFAULT true, donc TOUS les roles existants (y compris "Admin", compte
+-- technique sans employe reel derriere) se retrouvent eligibles comme
+-- destinataire FeedbackApp par defaut.
+--
+-- Retablit la regle voulue : seul le role nomme litteralement "Admin"
+-- devient inegible. Un role combine comme "Admin / Collaborateur" (qui
+-- porte aussi estAdmin = true mais represente un vrai employe) n'est PAS
+-- vise ici (comparaison sur le nom exact, pas sur estAdmin) et reste donc
+-- a `true`. Idempotent. Sans effet sur une base neuve : seed.ts cree deja
+-- le role "Admin" avec peutRecevoirFeedback = false.
+UPDATE "Role" SET "peutRecevoirFeedback" = false WHERE "name" = 'Admin';

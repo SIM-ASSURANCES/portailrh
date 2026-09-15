@@ -118,6 +118,20 @@ model Role {
   /// ne donne AUCUN droit, contrôle uniquement qui peut apparaître comme
   /// bénéficiaire sélectionnable sur `/delegations`.
   peutEtreBeneficiaireDelegation Boolean @default(false)
+  /// FeedbackApp (voir CLAUDE.md "FeedbackApp") — détermine si les User
+  /// portant ce rôle apparaissent comme destinataires proposables sur
+  /// `/feedback/nouveau`. Champ dédié plutôt qu'une comparaison sur le nom
+  /// du rôle (`role.name === "Admin"`) — même principe que `estAdmin`/
+  /// `peutEtreBeneficiaireDelegation` ci-dessus : un rôle combiné (ex:
+  /// "Admin / Collaborateur", qui porte `estAdmin: true` mais représente un
+  /// vrai employé) reste proposable, alors que le rôle "Admin" (compte
+  /// technique, pas un employé à évaluer) ne l'est pas. `DEFAULT true` :
+  /// n'importe quel rôle propose ses comptes par défaut, seul un rôle
+  /// explicitement marqué `false` en est exclu — pas un invariant de
+  /// sécurité critique comme `estAdmin` (figé à la création) : librement
+  /// modifiable à tout moment depuis `/admin/roles`, même principe que
+  /// `peutEtreBeneficiaireDelegation`.
+  peutRecevoirFeedback Boolean @default(true)
   users       User[]
   permissions RolePermission[]
 }

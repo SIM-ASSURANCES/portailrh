@@ -3,6 +3,7 @@ import { prisma } from "backend";
 
 import { PermissionToggle } from "./PermissionToggle";
 import { PeutEtreBeneficiaireToggle } from "./PeutEtreBeneficiaireToggle";
+import { PeutRecevoirFeedbackToggle } from "./PeutRecevoirFeedbackToggle";
 import { RoleCreateForm } from "./RoleCreateForm";
 
 export default async function AdminRolesPage() {
@@ -72,6 +73,16 @@ export default async function AdminRolesPage() {
                 <PeutEtreBeneficiaireToggle
                   roleId={role.id}
                   defaultChecked={role.peutEtreBeneficiaireDelegation}
+                />
+              </div>
+
+              {/* Éligibilité comme destinataire FeedbackApp (voir CLAUDE.md
+                  "FeedbackApp") — librement modifiable à tout moment, même
+                  principe que peutEtreBeneficiaireDelegation ci-dessus. */}
+              <div className="mt-2">
+                <PeutRecevoirFeedbackToggle
+                  roleId={role.id}
+                  defaultChecked={role.peutRecevoirFeedback}
                 />
               </div>
 

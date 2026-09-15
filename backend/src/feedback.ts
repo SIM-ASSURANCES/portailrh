@@ -31,14 +31,21 @@ export interface FeedbackRecipientOption {
 /**
  * Employés proposables comme destinataire sur la page publique de
  * soumission — voir CLAUDE.md "FeedbackApp" pour la décision retenue
- * (TOUS les comptes actifs du portail, pas seulement un rôle précis :
- * n'importe quel employé peut recevoir un message constructif, pas
- * seulement Finance/RH/DG). Réutilise le `User` existant du portail,
- * aucune nouvelle table "employees".
+ * (TOUS les comptes actifs du portail dont le RÔLE est éligible, pas
+ * seulement un rôle métier précis : n'importe quel employé peut recevoir
+ * un message constructif, pas seulement Finance/RH/DG). Réutilise le
+ * `User` existant du portail, aucune nouvelle table "employees".
+ *
+ * `role.peutRecevoirFeedback` (voir schema.prisma) exclut les rôles
+ * représentant un COMPTE TECHNIQUE plutôt qu'un vrai employé (ex: "Admin")
+ * — jamais une comparaison sur le nom du rôle en dur, même principe que
+ * `estAdmin`/`peutEtreBeneficiaireDelegation`. Un rôle combiné (ex: "Admin
+ * / Collaborateur", qui porte aussi `estAdmin: true` mais représente un
+ * vrai employé) reste proposable : ce champ est indépendant de `estAdmin`.
  */
 export async function getFeedbackRecipients(): Promise<FeedbackRecipientOption[]> {
   const users = await prisma.user.findMany({
-    where: { isActive: true },
+    where: { isActive: true, role: { peutRecevoirFeedback: true } },
     select: { id: true, fullName: true },
     orderBy: { fullName: "asc" },
   });

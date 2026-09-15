@@ -73,8 +73,18 @@ async function main() {
     }),
     prisma.role.upsert({
       where: { name: "Admin" },
-      update: { description: "Administrateur du portail", estAdmin: true },
-      create: { name: "Admin", description: "Administrateur du portail", estAdmin: true },
+      // FeedbackApp (voir CLAUDE.md "FeedbackApp") — compte technique, pas
+      // un vrai employé à évaluer : jamais proposable comme destinataire.
+      // Comparaison sur le nom exact ("Admin"), jamais sur `estAdmin` : un
+      // rôle combiné comme "Admin / Collaborateur" représente, lui, un
+      // vrai employé et doit rester proposable malgré `estAdmin: true`.
+      update: { description: "Administrateur du portail", estAdmin: true, peutRecevoirFeedback: false },
+      create: {
+        name: "Admin",
+        description: "Administrateur du portail",
+        estAdmin: true,
+        peutRecevoirFeedback: false,
+      },
     }),
     prisma.role.upsert({
       where: { name: "RH" },
