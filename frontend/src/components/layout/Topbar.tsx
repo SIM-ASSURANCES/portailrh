@@ -7,12 +7,15 @@ import { Icon } from "@/components/icons";
 import { TopbarCalendar } from "./TopbarCalendar";
 import { NotificationBell } from "./NotificationBell";
 import { ProfileMenu } from "./ProfileMenu";
+import type { TopbarAlertData } from "@/lib/topbarAlerts";
+import Link from "next/link";
 
 interface TopbarProps {
   user: { fullName: string; email: string; photoUrl?: string | null };
   role: string;
   canAccessPointageRH?: boolean;
   unreadNotificationsCount?: number;
+  alert?: TopbarAlertData | null;
   /** Ouvre le tiroir de navigation mobile (bouton visible seulement < lg). */
   onOpenMobileMenu: () => void;
 }
@@ -38,7 +41,7 @@ const EVENTS_URL = "/api/events";
 // évènement à venir avant longtemps.
 const FORM_FIELD_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 
-export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCount = 0, onOpenMobileMenu }: TopbarProps) {
+export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCount = 0, alert, onOpenMobileMenu }: TopbarProps) {
   const router = useRouter();
   const isEditingRef = useRef(false);
   const pendingRefreshRef = useRef(false);
@@ -105,7 +108,39 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
         <Icon name="menu" className="size-5" />
       </button>
 
-      <div className="ml-auto flex items-center gap-4">
+      <div className="ml-auto flex items-center gap-3 sm:gap-4">
+        {alert && (
+          alert.href ? (
+            <Link
+              href={alert.href}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-bold shadow-sm transition-all duration-150 ${
+                alert.variant === "danger"
+                  ? "bg-danger text-white hover:bg-danger/90 hover:scale-[1.02] " + (alert.pulse ? "animate-pulse" : "")
+                  : "bg-primary/10 text-primary border border-primary/20 hover:bg-primary/15"
+              }`}
+              title={alert.message}
+            >
+              <Icon name={alert.variant === "danger" ? "alert-triangle" : "info"} className="size-4 shrink-0" />
+              <span className="hidden md:inline">{alert.message}</span>
+              <span className="md:hidden">{alert.shortMessage || alert.message}</span>
+              <Icon name="arrow-right" className="size-3.5 shrink-0 hidden sm:inline" />
+            </Link>
+          ) : (
+            <div
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-medium border ${
+                alert.variant === "danger"
+                  ? "bg-danger/10 border-danger/20 text-danger"
+                  : "bg-blue-50 border-blue-200 text-blue-800"
+              }`}
+              title={alert.message}
+            >
+              <Icon name="info" className="size-4 shrink-0" />
+              <span className="hidden md:inline">{alert.message}</span>
+              <span className="md:hidden">{alert.shortMessage || alert.message}</span>
+            </div>
+          )
+        )}
+
         <TopbarCalendar isRH={canAccessPointageRH} />
         
         <NotificationBell initialUnreadCount={unreadNotificationsCount} />

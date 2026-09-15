@@ -98,6 +98,12 @@ const PATHS = {
       <path d="m18 17-5-5 5-5" />
     </>
   ),
+  "arrow-left": (
+    <>
+      <path d="m12 19-7-7 7-7" />
+      <path d="M19 12H5" />
+    </>
+  ),
   "log-out": (
     <>
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -125,7 +131,21 @@ const PATHS = {
       <path d="M7 17 17 7" />
     </>
   ),
+  "arrow-right": (
+    <>
+      <path d="M5 12h14" />
+      <path d="m12 5 7 7-7 7" />
+    </>
+  ),
   "chevron-down": <path d="m6 9 6 6 6-6" />,
+  "chevron-right": <path d="m9 18 6-6-6-6" />,
+  info: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </>
+  ),
   "shopping-cart": (
     <>
       <circle cx="8" cy="21" r="1" />

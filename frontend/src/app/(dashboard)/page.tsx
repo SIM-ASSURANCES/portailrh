@@ -3,6 +3,9 @@ import Link from "next/link";
 import { Icon, type IconName } from "@/components/icons";
 import { Badge, EmptyState, PageHeader, ToastOnMount } from "@/components/ui";
 import { getAccessibleModules, getSession, hasPermission, isAdmin } from "@/lib/auth";
+import { prisma, getMesRetoursADeclarer } from "backend";
+import { getTopbarAlert } from "@/lib/topbarAlerts";
+import { DashboardNotificationsSection, type DashboardAlertItem } from "@/components/dashboard/DashboardNotificationsSection";
 
 /** Icône propre à chaque module (même symbole que sa branche de sidebar,
  * voir nav.ts) plutôt qu'une flèche générique répétée sur toutes les
@@ -110,6 +113,117 @@ export default async function DashboardHomePage({
     ...module_,
     ...getModuleCardState(module_.key, session),
   }));
+
+  // 1. Notifications personnelles récentes de l'utilisateur
+  const rawNotifications = session?.user
+    ? await prisma.notification.findMany({
+        where: { userId: session.user.id },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      })
+    : [];
+
+  const serializedNotifications = rawNotifications.map((n) => ({
+    id: n.id,
+    titre: n.titre,
+    message: n.message,
+    lien: n.lien,
+    estLue: n.estLue,
+    createdAt: n.createdAt.toISOString(),
+  }));
+
+  // 2. Alertes contextuelles prioritaires
+  const alerts: DashboardAlertItem[] = [];
+
+  if (session?.user) {
+    // Alerte pointage départ / jour férié
+    const topbarAlert = await getTopbarAlert(
+      session.user.id,
+      hasPermission(session, "pointage.pointer")
+    );
+    if (topbarAlert) {
+      alerts.push({
+        id: "topbar_alert",
+        title: topbarAlert.message,
+        description:
+          topbarAlert.id === "depart_non_pointe"
+            ? "Votre pointage de départ n'a pas encore été enregistré pour aujourd'hui. Pensez à pointer avant de partir."
+            : undefined,
+        href: topbarAlert.href,
+        variant: topbarAlert.variant,
+        icon: topbarAlert.variant === "danger" ? "clock" : "calendar",
+      });
+    }
+
+    // Collaborateur : Retours de caisse à déclarer
+    if (hasPermission(session, "treso.declarer_retour")) {
+      const { nombre: retoursADeclarer } = await getMesRetoursADeclarer(session.user.id);
+      if (retoursADeclarer > 0) {
+        alerts.push({
+          id: "retours_a_declarer",
+          title: `${retoursADeclarer} retour(s) de caisse à déclarer`,
+          description: "Des avances de fonds reçues nécessitent la justification et le dépôt de vos pièces de dépenses.",
+          href: "/treso/demandes/retours-a-declarer",
+          variant: "warning",
+          icon: "rotate-ccw",
+        });
+      }
+    }
+
+    // Finance : Demandes en attente de validation
+    if (hasPermission(session, "treso.valider_demande")) {
+      const demandesAValider = await prisma.demande.count({
+        where: { statut: "EN_ATTENTE_VALIDATION" },
+      });
+      if (demandesAValider > 0) {
+        alerts.push({
+          id: "demandes_a_valider",
+          title: `${demandesAValider} demande(s) en attente de validation`,
+          description: "Des demandes d'achat sont en attente de traitement et validation par l'équipe Finance.",
+          href: "/treso/finance/demandes",
+          variant: "warning",
+          icon: "wallet",
+        });
+      }
+    }
+
+    // DG : Validations complètes en attente d'approbation finale
+    if (hasPermission(session, "treso.approuver_validation_complete")) {
+      const validationsDG = await prisma.demande.count({
+        where: {
+          validationCompleteParDG: false,
+          statut: { in: ["REGLEE", "PARTIELLEMENT_REGLEE"] },
+        },
+      });
+      if (validationsDG > 0) {
+        alerts.push({
+          id: "validations_dg",
+          title: `${validationsDG} validation(s) complète(s) en attente DG`,
+          description: "Verrou de clôture finale : votre approbation de Direction Générale est requise.",
+          href: "/treso/finance/validations-attente",
+          variant: "warning",
+          icon: "shield-check",
+        });
+      }
+    }
+
+    // RH : Absences à contrôler
+    if (hasPermission(session, "pointage.voir_dashboard_rh")) {
+      const absencesAControler = await prisma.absence.count({
+        where: { statut: "A_CONTROLER" },
+      });
+      if (absencesAControler > 0) {
+        alerts.push({
+          id: "absences_a_controler",
+          title: `${absencesAControler} absence(s) en attente de contrôle RH`,
+          description: "Des absences détectées nécessitent une vérification ou justification.",
+          href: "/pointage/rh/absences",
+          variant: "info",
+          icon: "users",
+        });
+      }
+    }
+  }
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -236,19 +350,10 @@ export default async function DashboardHomePage({
         )}
       </section>
 
-      <section className="space-y-4">
-        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
-          <span className="h-5 w-1 rounded-full bg-border" aria-hidden="true" />
-          Notifications et alertes
-        </h2>
-        {/* Zone réservée aux notifications transverses du Socle (annonces,
-            maintenance, expiration de mot de passe...), pas aux indicateurs
-            "à traiter" d'un module métier précis — ceux-ci vivent sur le
-            tableau de bord de leur module (ex: /treso/finance, Phase G).
-            Vide aujourd'hui faute de producteur de notifications transverses,
-            pas parce que quelque chose manque ici. */}
-        <EmptyState icon="bell" message="Aucune notification pour le moment." compact />
-      </section>
+      <DashboardNotificationsSection
+        notifications={serializedNotifications}
+        alerts={alerts}
+      />
     </div>
   );
 }

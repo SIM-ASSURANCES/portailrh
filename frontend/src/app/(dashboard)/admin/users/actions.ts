@@ -12,6 +12,7 @@ import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 import { logAuditAction } from "@/lib/auditLog";
+import { sendEmail, generateWelcomeEmail } from "@/lib/email";
 
 const SALT_ROUNDS = 10;
 const INVITATION_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -94,12 +95,15 @@ export async function createUserAction(
       passwordHash,
       roleId: parsed.data.roleId,
       serviceId: parsed.data.serviceId,
+      photoUrl: "/default-avatar.svg",
+    },
+    include: {
+      role: { select: { name: true } },
+      service: { select: { name: true } },
     },
   });
 
-  const service = parsed.data.serviceId
-    ? await prisma.service.findUnique({ where: { id: parsed.data.serviceId } })
-    : null;
+  const service = user.service;
   const serviceDetail = service ? ` (Service : « ${service.name} »)` : "";
 
   await logAuditAction({
@@ -113,10 +117,32 @@ export async function createUserAction(
     logFileName: service ? "services.log" : undefined,
   });
 
+  // Envoi automatique de l'email d'accueil avec documentation des modules
+  try {
+    const loginUrl = `${await getBaseUrl()}/login`;
+    const welcomeMail = generateWelcomeEmail({
+      fullName: user.fullName,
+      email: user.email,
+      roleName: user.role.name,
+      serviceName: service?.name,
+      actionUrl: loginUrl,
+      isInvitation: false,
+    });
+    await sendEmail({
+      to: user.email,
+      subject: welcomeMail.subject,
+      html: welcomeMail.html,
+      text: welcomeMail.text,
+      userId: user.id,
+    });
+  } catch (err) {
+    console.error("Erreur lors de l'envoi de l'email de bienvenue:", err);
+  }
+
   revalidatePath("/admin/users");
   publishDataChanged();
 
-  return { status: "success", message: `Utilisateur ${user.email} créé.` };
+  return { status: "success", message: `Utilisateur ${user.email} créé et email d'accueil envoyé.` };
 }
 
 const createInvitationSchema = z.object({
@@ -190,12 +216,15 @@ export async function creerInvitationAction(
       serviceId: parsed.data.serviceId,
       invitationToken,
       invitationExpiresAt,
+      photoUrl: "/default-avatar.svg",
+    },
+    include: {
+      role: { select: { name: true } },
+      service: { select: { name: true } },
     },
   });
 
-  const service = parsed.data.serviceId
-    ? await prisma.service.findUnique({ where: { id: parsed.data.serviceId } })
-    : null;
+  const service = user.service;
   const serviceDetail = service ? ` (Service : « ${service.name} »)` : "";
 
   await logAuditAction({
@@ -209,14 +238,35 @@ export async function creerInvitationAction(
     logFileName: service ? "services.log" : undefined,
   });
 
+  const invitationUrl = `${await getBaseUrl()}/invitation/${invitationToken}`;
+
+  // Envoi automatique de l'email d'invitation avec documentation des modules
+  try {
+    const welcomeMail = generateWelcomeEmail({
+      fullName: user.fullName,
+      email: user.email,
+      roleName: user.role.name,
+      serviceName: service?.name,
+      actionUrl: invitationUrl,
+      isInvitation: true,
+    });
+    await sendEmail({
+      to: user.email,
+      subject: welcomeMail.subject,
+      html: welcomeMail.html,
+      text: welcomeMail.text,
+      userId: user.id,
+    });
+  } catch (err) {
+    console.error("Erreur lors de l'envoi de l'email d'invitation:", err);
+  }
+
   revalidatePath("/admin/users");
   publishDataChanged();
 
-  const invitationUrl = `${await getBaseUrl()}/invitation/${invitationToken}`;
-
   return {
     status: "success",
-    message: `Invitation créée pour ${user.email}.`,
+    message: `Invitation créée pour ${user.email} et email d'activation envoyé.`,
     data: { invitationUrl },
   };
 }

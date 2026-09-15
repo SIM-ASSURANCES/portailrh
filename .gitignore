@@ -17,7 +17,7 @@
 # "Monorepo backend/frontend")
 /frontend/.next/
 /frontend/out/
-
+/frontend/node_modules/
 # production
 /build
 

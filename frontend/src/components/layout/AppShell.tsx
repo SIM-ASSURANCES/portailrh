@@ -45,6 +45,7 @@ interface AppShellProps {
   /** `pointage.consulter_historique` : ajoute "Mon historique" au groupe "Mon espace". */
   canConsulterHistorique?: boolean;
   unreadNotificationsCount?: number;
+  topbarAlert?: import("@/lib/topbarAlerts").TopbarAlertData | null;
   children: ReactNode;
 }
 
@@ -76,6 +77,7 @@ export function AppShell({
   canPointer = false,
   canConsulterHistorique = false,
   unreadNotificationsCount = 0,
+  topbarAlert = null,
   children,
 }: AppShellProps) {
   // Rendu initial (serveur + première passe client) toujours « déployé »
@@ -184,6 +186,7 @@ export function AppShell({
           role={role} 
           canAccessPointageRH={canAccessPointageRH}
           unreadNotificationsCount={unreadNotificationsCount}
+          alert={topbarAlert}
           onOpenMobileMenu={() => setMobileOpen(true)} 
         />
         <main className="flex-1 px-4 py-6 sm:px-6 sm:py-8">{children}</main>

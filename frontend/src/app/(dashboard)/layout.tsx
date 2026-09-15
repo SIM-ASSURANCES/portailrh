@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/AppShell";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
+import { getTopbarAlert } from "@/lib/topbarAlerts";
 
 /**
  * Layout du Socle Portail (écrans authentifiés). Toute route de ce groupe
@@ -15,12 +16,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect("/login");
   }
 
-  const unreadCount = await getUnreadNotificationsCount();
+  const [unreadCount, topbarAlert] = await Promise.all([
+    getUnreadNotificationsCount(),
+    getTopbarAlert(session.user.id, hasPermission(session, "pointage.pointer")),
+  ]);
 
   return (
     <AppShell
       user={session.user}
       role={session.role}
+      topbarAlert={topbarAlert}
       canAdmin={isAdmin(session)}
       canAccesDemandes={
         hasPermission(session, "treso.creer_demande") || hasPermission(session, "treso.declarer_retour")

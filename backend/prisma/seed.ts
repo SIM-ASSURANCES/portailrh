@@ -17,21 +17,30 @@ const TEST_PASSWORD = "password123";
 async function main() {
   console.log("Suppression des données existantes...");
 
+  // Suppression par ordre inverse des dépendances
+  await prisma.permissionDelegation.deleteMany();
   await prisma.rolePermission.deleteMany();
   await prisma.permission.deleteMany();
   await prisma.module.deleteMany();
   await prisma.historiqueEntry.deleteMany();
+  await prisma.notification.deleteMany();
+  await prisma.plageAbsenceAutorisee.deleteMany();
+  await prisma.depenseLigne.deleteMany();
+  await prisma.pieceJointe.deleteMany();
+  await prisma.journalCaisse.deleteMany();
   await prisma.retourCaisse.deleteMany();
   await prisma.reglement.deleteMany();
-  await prisma.pieceJointe.deleteMany();
+  await prisma.ligneDemande.deleteMany();
   await prisma.demande.deleteMany();
   await prisma.objet.deleteMany();
   await prisma.categorie.deleteMany();
   await prisma.correctionPointage.deleteMany();
   await prisma.pointage.deleteMany();
   await prisma.absence.deleteMany();
+  await prisma.jourFerie.deleteMany();
   await prisma.parametrageHoraire.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.service.deleteMany();
   await prisma.role.deleteMany();
 
   console.log("Données existantes supprimées.");
@@ -39,20 +48,37 @@ async function main() {
   console.log("Création des rôles...");
 
   const [roleCollaborateur, roleFinance, roleDG, roleAdmin, roleRH] = await Promise.all([
-    prisma.role.create({
-      data: {
+    prisma.role.upsert({
+      where: { name: "Collaborateur" },
+      update: {
+        description: "Collaborateur pouvant créer des demandes",
+        peutEtreBeneficiaireDelegation: true,
+      },
+      create: {
         name: "Collaborateur",
         description: "Collaborateur pouvant créer des demandes",
         peutEtreBeneficiaireDelegation: true,
       },
     }),
-    prisma.role.create({ data: { name: "Finance", description: "Équipe finance / trésorerie" } }),
-    prisma.role.create({ data: { name: "DG", description: "Direction générale" } }),
-    prisma.role.create({
-      data: { name: "Admin", description: "Administrateur du portail", estAdmin: true },
+    prisma.role.upsert({
+      where: { name: "Finance" },
+      update: { description: "Équipe finance / trésorerie" },
+      create: { name: "Finance", description: "Équipe finance / trésorerie" },
     }),
-    prisma.role.create({
-      data: { name: "RH", description: "Gère le pointage, les retards, absences et reportings RH" },
+    prisma.role.upsert({
+      where: { name: "DG" },
+      update: { description: "Direction générale" },
+      create: { name: "DG", description: "Direction générale" },
+    }),
+    prisma.role.upsert({
+      where: { name: "Admin" },
+      update: { description: "Administrateur du portail", estAdmin: true },
+      create: { name: "Admin", description: "Administrateur du portail", estAdmin: true },
+    }),
+    prisma.role.upsert({
+      where: { name: "RH" },
+      update: { description: "Gère le pointage, les retards, absences et reportings RH" },
+      create: { name: "RH", description: "Gère le pointage, les retards, absences et reportings RH" },
     }),
   ]);
 
@@ -63,11 +89,15 @@ async function main() {
   console.log("Création des modules...");
 
   const [moduleTresorerie, modulePointage] = await Promise.all([
-    prisma.module.create({
-      data: { key: "tresorerie", label: "Gestion des demandes et trésorerie" },
+    prisma.module.upsert({
+      where: { key: "tresorerie" },
+      update: { label: "Gestion des demandes et trésorerie" },
+      create: { key: "tresorerie", label: "Gestion des demandes et trésorerie" },
     }),
-    prisma.module.create({
-      data: { key: "pointage", label: "Pointage RH" },
+    prisma.module.upsert({
+      where: { key: "pointage" },
+      update: { label: "Pointage RH" },
+      create: { key: "pointage", label: "Pointage RH" },
     }),
   ]);
 
@@ -108,8 +138,10 @@ async function main() {
 
   const createdPermissions = await Promise.all(
     permissionKeys.map((p) =>
-      prisma.permission.create({
-        data: {
+      prisma.permission.upsert({
+        where: { key: p.key },
+        update: { label: p.label, moduleId: p.moduleId },
+        create: {
           key: p.key,
           label: p.label,
           moduleId: p.moduleId,
@@ -146,17 +178,7 @@ async function main() {
       "treso.valider_demande",
       "treso.voir_dashboard_finance",
       "treso.voir_reporting",
-      // Verrou de clôture (indépendant du circuit de validation/règlement
-      // des Phases B/C, qui reste inchangé) : seul le DG peut approuver la
-      // "validation complète" qui débloque la clôture — jamais Finance,
-      // même si Finance a déjà tout réglé.
       "treso.approuver_validation_complete",
-      // Pas treso.saisir_depense_directe : comme categoriser_demande/
-      // effectuer_reglement/cloturer_demande, la saisie directe est une
-      // action opérationnelle réservée à Finance — le DG garde son rôle de
-      // validation/consultation (cohérent avec le reste du seed).
-      // Consultation seule côté RH pour la Direction générale, cohérent avec
-      // "consultation selon les droits accordés" du cahier des charges.
       "pointage.consulter_tous",
       "pointage.voir_dashboard_rh",
       "pointage.voir_reporting",
@@ -171,19 +193,20 @@ async function main() {
       "pointage.voir_dashboard_rh",
       "pointage.voir_reporting",
     ],
-    // Le rôle Admin n'a délibérément aucune permission de module ici : son
-    // accès à la console d'administration est un bypass basé sur
-    // role.name === "Admin" (voir isAdmin() dans src/lib/auth.ts), pas sur
-    // le système RolePermission. getAccessibleModules() lui montre malgré
-    // tout tous les modules actifs (vue d'ensemble Admin), sans que cela
-    // ne lui donne les permissions métier de ces modules.
   };
 
   let rolePermissionCount = 0;
   for (const [roleId, keys] of Object.entries(rolePermissionMap)) {
     for (const key of keys) {
-      await prisma.rolePermission.create({
-        data: {
+      await prisma.rolePermission.upsert({
+        where: {
+          roleId_permissionId: {
+            roleId,
+            permissionId: permissionByKey[key].id,
+          },
+        },
+        update: {},
+        create: {
           roleId,
           permissionId: permissionByKey[key].id,
         },
@@ -205,7 +228,13 @@ async function main() {
   ];
 
   const createdServices = await Promise.all(
-    servicesData.map((s) => prisma.service.create({ data: s }))
+    servicesData.map((s) =>
+      prisma.service.upsert({
+        where: { name: s.name },
+        update: {},
+        create: s,
+      })
+    )
   );
 
   const serviceByName = Object.fromEntries(createdServices.map((s) => [s.name, s]));
@@ -225,13 +254,22 @@ async function main() {
 
   const createdUsers = await Promise.all(
     testUsers.map((u) =>
-      prisma.user.create({
-        data: {
+      prisma.user.upsert({
+        where: { email: u.email },
+        update: {
+          fullName: u.fullName,
+          passwordHash,
+          roleId: u.roleId,
+          serviceId: u.serviceId,
+          isActive: true,
+        },
+        create: {
           fullName: u.fullName,
           email: u.email,
           passwordHash,
           roleId: u.roleId,
           serviceId: u.serviceId,
+          isActive: true,
         },
       })
     )
@@ -254,7 +292,13 @@ async function main() {
   ];
 
   const createdCategories = await Promise.all(
-    categorieLabels.map((label) => prisma.categorie.create({ data: { label } }))
+    categorieLabels.map((label) =>
+      prisma.categorie.upsert({
+        where: { label },
+        update: {},
+        create: { label },
+      })
+    )
   );
 
   const categorieByLabel = Object.fromEntries(createdCategories.map((c) => [c.label, c]));
@@ -269,21 +313,33 @@ async function main() {
     { label: "Carburant véhicule de liaison", categorie: "Carburant" },
   ];
 
-  const createdObjets = await Promise.all(
-    objetsData.map((o) =>
-      prisma.objet.create({
-        data: {
-          label: o.label,
-          categorieId: categorieByLabel[o.categorie].id,
-        },
-      })
-    )
-  );
+  const createdObjets = [];
+  for (const o of objetsData) {
+    const cat = categorieByLabel[o.categorie];
+    if (cat) {
+      const existing = await prisma.objet.findFirst({
+        where: { label: o.label, categorieId: cat.id },
+      });
+      if (existing) {
+        createdObjets.push(existing);
+      } else {
+        createdObjets.push(
+          await prisma.objet.create({
+            data: {
+              label: o.label,
+              categorieId: cat.id,
+            },
+          })
+        );
+      }
+    }
+  }
 
   console.log(`${createdObjets.length} objets créés.`);
 
   console.log("Création du paramétrage horaire par défaut...");
 
+  await prisma.parametrageHoraire.deleteMany();
   const parametrageHoraire = await prisma.parametrageHoraire.create({
     data: {
       heureDebutMatin: "07:45",

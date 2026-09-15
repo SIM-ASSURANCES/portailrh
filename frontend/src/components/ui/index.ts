@@ -39,3 +39,4 @@ export { BrandBackdrop } from "./BrandBackdrop";
 export type { BrandBackdropProps } from "./BrandBackdrop";
 
 export { AutoRefresh } from "./AutoRefresh";
+export { UserAvatar } from "./UserAvatar";
