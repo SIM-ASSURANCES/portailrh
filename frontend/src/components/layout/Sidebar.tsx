@@ -52,6 +52,10 @@ interface SidebarProps {
   canPointer?: boolean;
   /** `pointage.consulter_historique` : ajoute "Mon historique" au groupe "Mon espace". */
   canConsulterHistorique?: boolean;
+  /** `feedback.moderer` : ajoute "Modération Feedbacks" (RH & DG). */
+  canModererFeedback?: boolean;
+  /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
+  canRecevoirFeedback?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -64,6 +68,9 @@ function isActive(pathname: string, item: NavItem) {
 }
 
 function branchContains(branch: NavBranch, pathname: string) {
+  if (branch.key === "feedback" && (pathname === "/feedback" || pathname.startsWith("/feedback/"))) {
+    return true;
+  }
   return branch.groups.some((group) => group.items.some((item) => isActive(pathname, item)));
 }
 
@@ -101,6 +108,8 @@ export function Sidebar({
   canDelegerAcces = false,
   canPointer = false,
   canConsulterHistorique = false,
+  canModererFeedback = false,
+  canRecevoirFeedback = false,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
@@ -120,6 +129,8 @@ export function Sidebar({
     canAccessPointageRH,
     canPointer,
     canConsulterHistorique,
+    canRecevoirFeedback,
+    canModererFeedback,
   });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0]?.key ?? null
@@ -241,6 +252,7 @@ export function Sidebar({
               </div>
             );
           })}
+
 
           {canDelegerAcces ? (
             <div className="mt-2 border-t border-sidebar-border pt-2">

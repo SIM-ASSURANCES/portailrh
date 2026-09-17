@@ -14,6 +14,7 @@ import { DashboardNotificationsSection, type DashboardAlertItem } from "@/compon
 const MODULE_ICON: Record<string, IconName> = {
   tresorerie: "wallet",
   pointage: "clock",
+  feedback: "message-square",
 };
 
 /**
@@ -97,6 +98,9 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
       return { href: "/pointage/historique", reason: "no_access" };
     }
     return { href: null, reason: "no_access" };
+  }
+  if (moduleKey === "feedback") {
+    return { href: "/feedback/nouveau", reason: "no_access" };
   }
   return { href: null, reason: "coming_soon" };
 }
@@ -264,6 +268,18 @@ export default async function DashboardHomePage({
         <ToastOnMount
           variant="error"
           message="Vous n'avez pas la permission de consulter l'historique de pointage."
+        />
+      ) : null}
+      {error === "acces_refuse_moderation" ? (
+        <ToastOnMount
+          variant="error"
+          message="Vous n'avez pas la permission de modérer les feedbacks."
+        />
+      ) : null}
+      {error === "acces_refuse_recevoir_feedback" ? (
+        <ToastOnMount
+          variant="error"
+          message="Votre rôle n'est pas configuré pour recevoir des feedbacks."
         />
       ) : null}
 

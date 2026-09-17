@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { z } from "zod";
 
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getSession } from "@/lib/auth";
 import {
   containsBannedContent,
   containsUrl,
@@ -106,6 +107,21 @@ export async function soumettreFeedbackAction(
     return { status: "error", message: "Destinataire introuvable.", fieldErrors: { recipientId: "Choisissez un destinataire valide." } };
   }
 
+  // Détection de la session : "INTERNAL" si l'employé est connecté, "PUBLIC" sinon.
+  // RÈGLE ABSOLUE : l'identité de l'auteur n'est JAMAIS stockée ni enregistrée en base.
+  const session = await getSession();
+
+  // Règle d'intégrité : un collaborateur ne peut pas se laisser un feedback à lui-même
+  if (session?.user && session.user.id === parsed.data.recipientId) {
+    return {
+      status: "error",
+      message: "Vous ne pouvez pas vous envoyer un feedback à vous-même.",
+      fieldErrors: { recipientId: "Vous ne pouvez pas vous choisir comme destinataire." },
+    };
+  }
+
+  const source = session?.user ? "INTERNAL" : "PUBLIC";
+
   // `submittedAt` n'est jamais renseigné explicitement ici : la colonne
   // (`@db.Date`, schema.prisma) applique `DEFAULT CURRENT_TIMESTAMP` et le
   // type SQL `DATE` tronque lui-même toute composante horaire — garanti au
@@ -114,7 +130,7 @@ export async function soumettreFeedbackAction(
     data: {
       content: parsed.data.content,
       recipientId: parsed.data.recipientId,
-      source: "PUBLIC",
+      source,
     },
   });
 

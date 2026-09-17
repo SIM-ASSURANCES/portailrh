@@ -85,7 +85,7 @@ export function isAdmin(session: { estAdmin: boolean } | null): boolean {
  * modification de code à l'ajout d'un nouveau module.
  */
 export async function getAccessibleModules(
-  session: { estAdmin: boolean; permissions: string[] } | null
+  session: { estAdmin: boolean; permissions: string[]; peutRecevoirFeedback?: boolean } | null
 ): Promise<{ id: string; key: string; label: string }[]> {
   if (!session) {
     return [];
@@ -99,9 +99,12 @@ export async function getAccessibleModules(
 
   const visibleModules = isAdmin(session)
     ? modules
-    : modules.filter((module_) =>
-        module_.permissions.some((p) => session.permissions.includes(p.key))
-      );
+    : modules.filter((module_) => {
+        if (module_.key === "feedback") {
+          return true;
+        }
+        return module_.permissions.some((p) => session.permissions.includes(p.key));
+      });
 
   return visibleModules.map((module_) => ({
     id: module_.id,

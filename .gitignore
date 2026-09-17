@@ -92,3 +92,9 @@ backend/prisma/clearData.ts
 !frontend/public/uploads/profiles/
 frontend/public/uploads/profiles/*
 !frontend/public/uploads/profiles/.gitkeep
+.postman
+/postman/
+
+#cdc
+CDC_parties_feedback.txt
+CDC_FeedbackApp_SIM_Assurances.pdf 

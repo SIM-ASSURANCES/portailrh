@@ -266,6 +266,8 @@ export async function toggleRolePeutRecevoirFeedbackAction(
 
   revalidatePath("/admin/roles");
   revalidatePath("/feedback/nouveau");
+  revalidatePath("/feedback/mes-retours");
+  revalidatePath("/");
   publishDataChanged();
 
   return {

@@ -1,22 +1,21 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { Icon } from "@/components/icons";
 import { BrandBackdrop } from "@/components/ui";
+import { getSession } from "@/lib/auth";
 import { getFeedbackRecipients } from "backend";
 
 import { FeedbackForm } from "./FeedbackForm";
 
 /**
- * Page PUBLIQUE de soumission FeedbackApp — accessible sans compte, sans
- * session (voir `auth.config.ts`, exception `isFeedbackPublicRoute`, et
- * CLAUDE.md "FeedbackApp : anonymat total"). Aucun `getSession()` appelé
- * ici : peu importe qui visite cette page, connecté ou non, elle se
- * comporte à l'identique — jamais de comportement différent selon une
- * identité qui, par construction, n'est d'ailleurs jamais lue ni stockée
- * pour ce message.
+ * Page de soumission FeedbackApp (accessible aussi bien publiquement qu'en interne).
+ * Si un collaborateur est connecté, il ne peut pas se choisir lui-même comme destinataire.
+ * RÈGLE ABSOLUE : anonymat complet préservé, aucune information de l'expéditeur n'est stockée.
  */
 export default async function NouveauFeedbackPage() {
-  const recipients = await getFeedbackRecipients();
+  const session = await getSession();
+  const recipients = await getFeedbackRecipients(session?.user?.id);
 
   return (
     <div className="relative flex flex-1 items-center justify-center overflow-hidden border-[3px] border-primary bg-surface px-4 py-12">
@@ -28,6 +27,16 @@ export default async function NouveauFeedbackPage() {
         </div>
 
         <div className="space-y-4 p-8">
+          <div className="flex items-center justify-between gap-2">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-primary"
+            >
+              <Icon name="arrow-left" className="size-3.5" />
+              Retour au portail
+            </Link>
+          </div>
+
           <div>
             <h1 className="text-lg font-bold text-foreground">Laisser un message constructif</h1>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -38,11 +47,15 @@ export default async function NouveauFeedbackPage() {
 
           <FeedbackForm recipients={recipients} />
 
-          <p className="text-center text-xs text-muted-foreground">
+          <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
             <Link href="/feedback" className="font-medium text-primary hover:underline">
               Voir les messages publics
             </Link>
-          </p>
+            <span>•</span>
+            <Link href="/" className="font-medium text-primary hover:underline">
+              Retour au portail
+            </Link>
+          </div>
         </div>
       </div>
     </div>

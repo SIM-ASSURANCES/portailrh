@@ -115,6 +115,10 @@ export interface NavFlags {
   canAccessPointageRH: boolean;
   canPointer: boolean;
   canConsulterHistorique: boolean;
+  /** `Role.peutRecevoirFeedback` : active l'accès à "Mes critiques reçues". */
+  canRecevoirFeedback?: boolean;
+  /** `feedback.moderer` : active l'accès à "Modération feedbacks" (RH & DG). */
+  canModererFeedback?: boolean;
 }
 
 /**
@@ -129,6 +133,26 @@ export const DELEGATIONS_ITEM: NavItem = {
   label: "Déléguer des accès",
   href: "/delegations",
   icon: "users",
+};
+
+/**
+ * Entrée de navigation FeedbackApp — Espace Collaborateur ("Mes critiques reçues").
+ * Accessible à tout utilisateur authentifié (voir Tranche B).
+ */
+export const MES_FEEDBACKS_ITEM: NavItem = {
+  label: "Mes critiques reçues",
+  href: "/feedback/mes-retours",
+  icon: "message-square",
+};
+
+/**
+ * Entrée de modération RH/Direction pour FeedbackApp.
+ * Accessible uniquement aux comptes disposant de la permission `feedback.moderer`.
+ */
+export const MODERATION_FEEDBACK_ITEM: NavItem = {
+  label: "Modération Feedbacks",
+  href: "/feedback/admin",
+  icon: "shield-check",
 };
 
 /**
@@ -170,6 +194,8 @@ export function getNavBranches({
   canAccessPointageRH,
   canPointer,
   canConsulterHistorique,
+  canRecevoirFeedback,
+  canModererFeedback,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -289,6 +315,46 @@ export function getNavBranches({
                   { label: "Présence du jour", href: "/pointage/rh/presence", icon: "check-circle", exact: true },
                   { label: "Tous les pointages", href: "/pointage/rh/pointages", icon: "file-text", exact: true },
                   { label: "Absences", href: "/pointage/rh/absences", icon: "alert-triangle" },
+                ],
+              } satisfies NavGroup,
+            ]
+          : []),
+      ],
+    },
+    {
+      key: "feedback",
+      label: "FeedbackApp",
+      icon: "message-square",
+      groups: [
+        {
+          items: [
+            {
+              label: "Laisser un feedback",
+              href: "/feedback/nouveau",
+              icon: "pencil",
+            } satisfies NavItem,
+            ...(canRecevoirFeedback
+              ? [
+                  {
+                    label: "Mes critiques reçues",
+                    href: "/feedback/mes-retours",
+                    icon: "inbox",
+                    exact: true,
+                  } satisfies NavItem,
+                ]
+              : []),
+          ],
+        },
+        ...(canModererFeedback
+          ? [
+              {
+                title: "Modération",
+                items: [
+                  {
+                    label: "Modération feedbacks",
+                    href: "/feedback/admin",
+                    icon: "shield-check",
+                  } satisfies NavItem,
                 ],
               } satisfies NavGroup,
             ]

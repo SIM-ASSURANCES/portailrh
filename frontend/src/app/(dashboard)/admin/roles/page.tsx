@@ -1,5 +1,5 @@
 import { Badge, PageHeader } from "@/components/ui";
-import { prisma } from "backend";
+import { prisma, ensureFeedbackPermissions } from "backend";
 
 import { PermissionToggle } from "./PermissionToggle";
 import { PeutEtreBeneficiaireToggle } from "./PeutEtreBeneficiaireToggle";
@@ -7,6 +7,7 @@ import { PeutRecevoirFeedbackToggle } from "./PeutRecevoirFeedbackToggle";
 import { RoleCreateForm } from "./RoleCreateForm";
 
 export default async function AdminRolesPage() {
+  await ensureFeedbackPermissions();
   const [roles, modules] = await Promise.all([
     prisma.role.findMany({
       include: { permissions: { select: { permissionId: true } } },
@@ -17,6 +18,12 @@ export default async function AdminRolesPage() {
       orderBy: { label: "asc" },
     }),
   ]);
+
+  const standardModules = modules.filter((m) => m.key !== "feedback");
+  const feedbackModule = modules.find((m) => m.key === "feedback");
+  const feedbackModererPermission = feedbackModule?.permissions.find(
+    (p) => p.key === "feedback.moderer"
+  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-6 py-10">
@@ -76,21 +83,11 @@ export default async function AdminRolesPage() {
                 />
               </div>
 
-              {/* Éligibilité comme destinataire FeedbackApp (voir CLAUDE.md
-                  "FeedbackApp") — librement modifiable à tout moment, même
-                  principe que peutEtreBeneficiaireDelegation ci-dessus. */}
-              <div className="mt-2">
-                <PeutRecevoirFeedbackToggle
-                  roleId={role.id}
-                  defaultChecked={role.peutRecevoirFeedback}
-                />
-              </div>
-
-              {modules.length === 0 ? (
+              {standardModules.length === 0 ? (
                 <p className="mt-4 text-sm text-muted-foreground">Aucun module.</p>
               ) : (
                 <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {modules.map((module_) => (
+                  {standardModules.map((module_) => (
                     <div key={module_.id} className="space-y-2">
                       <h3 className="text-sm font-medium text-muted-foreground">
                         {module_.label}
@@ -110,6 +107,30 @@ export default async function AdminRolesPage() {
                   ))}
                 </div>
               )}
+
+              {/* Section dédiée FeedbackApp : éligibilité comme destinataire et droit de modération regroupés en bas */}
+              <div className="mt-5 border-t border-border pt-4">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Module FeedbackApp
+                </h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Gestion de la réception des avis et des droits de modération pour ce rôle.
+                </p>
+                <div className="mt-3 grid grid-cols-1 gap-4 rounded-lg border border-border bg-surface p-4 sm:grid-cols-2">
+                  <PeutRecevoirFeedbackToggle
+                    roleId={role.id}
+                    defaultChecked={role.peutRecevoirFeedback}
+                  />
+                  {feedbackModererPermission ? (
+                    <PermissionToggle
+                      roleId={role.id}
+                      permissionId={feedbackModererPermission.id}
+                      label="Peut modérer les feedbacks"
+                      defaultChecked={grantedIds.has(feedbackModererPermission.id)}
+                    />
+                  ) : null}
+                </div>
+              </div>
             </section>
           );
         })}

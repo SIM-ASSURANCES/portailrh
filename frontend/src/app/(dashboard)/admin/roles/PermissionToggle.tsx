@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useOptimistic, useTransition } from "react";
 import { toast } from "sonner";
 
 import { toggleRolePermissionAction } from "./actions";
@@ -16,11 +16,16 @@ export function PermissionToggle({
   label: string;
   defaultChecked: boolean;
 }) {
+  const [optimisticChecked, setOptimisticChecked] = useOptimistic(
+    defaultChecked,
+    (_current, next: boolean) => next
+  );
   const [isPending, startTransition] = useTransition();
 
-  function handleChange(checked: boolean) {
+  function handleChange(nextChecked: boolean) {
     startTransition(async () => {
-      const result = await toggleRolePermissionAction(roleId, permissionId, checked);
+      setOptimisticChecked(nextChecked);
+      const result = await toggleRolePermissionAction(roleId, permissionId, nextChecked);
       if (result.status === "success") {
         toast.success(result.message);
       } else {
@@ -30,15 +35,15 @@ export function PermissionToggle({
   }
 
   return (
-    <label className="flex items-center gap-2 text-sm text-foreground">
+    <label className="flex w-full cursor-pointer items-center gap-2 py-0.5 text-sm text-foreground select-none">
       <input
         type="checkbox"
-        defaultChecked={defaultChecked}
+        checked={optimisticChecked}
         disabled={isPending}
         onChange={(e) => handleChange(e.target.checked)}
-        className="h-4 w-4 rounded border-border accent-primary"
+        className="h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-primary disabled:opacity-50"
       />
-      {label}
+      <span>{label}</span>
     </label>
   );
 }

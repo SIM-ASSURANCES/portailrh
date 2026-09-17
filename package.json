@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace=frontend",
+    "prebuild": "npm run generate",
     "build": "npm run build --workspace=frontend",
     "start": "npm run start --workspace=frontend",
     "lint": "npm run lint --workspace=frontend && npm run lint --workspace=backend",

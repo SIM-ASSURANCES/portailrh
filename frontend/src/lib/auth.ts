@@ -2,7 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 
-import { prisma, hasPermission, isAdmin, getAccessibleModules } from "backend";
+import { prisma, hasPermission, isAdmin, getAccessibleModules, ensureFeedbackPermissions } from "backend";
 import { cache } from "react";
 
 import { authConfig } from "./auth.config";
@@ -167,6 +167,7 @@ export const getSession = cache(async (): Promise<{
   permissions: string[];
   rolePermissions: string[];
   estAdmin: boolean;
+  peutRecevoirFeedback: boolean;
 } | null> => {
   const session = await auth();
   if (!session?.user) {
@@ -181,6 +182,9 @@ export const getSession = cache(async (): Promise<{
   // authentifiée (mémoïsée par requête via `cache()`, mais recalculée à
   // chaque nouvelle requête), ce changement réduit la latence de base de
   // strictement TOUT bouton du portail, sans changer le résultat.
+  // Synchronisation automatique et idempotente des permissions FeedbackApp
+  await ensureFeedbackPermissions();
+
   const [role, user, delegations] = await Promise.all([
     prisma.role.findUnique({
       where: { name: session.role },
@@ -234,5 +238,6 @@ export const getSession = cache(async (): Promise<{
     // que `permissions` ci-dessus, pour qu'un changement pris via
     // /admin/roles s'applique immédiatement, sans reconnexion.
     estAdmin: role?.estAdmin ?? false,
+    peutRecevoirFeedback: role?.peutRecevoirFeedback ?? false,
   };
 });

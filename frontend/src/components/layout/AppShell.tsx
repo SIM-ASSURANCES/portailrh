@@ -44,6 +44,10 @@ interface AppShellProps {
   canPointer?: boolean;
   /** `pointage.consulter_historique` : ajoute "Mon historique" au groupe "Mon espace". */
   canConsulterHistorique?: boolean;
+  /** `feedback.moderer` : ajoute "Modération Feedbacks" (RH & DG). */
+  canModererFeedback?: boolean;
+  /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
+  canRecevoirFeedback?: boolean;
   unreadNotificationsCount?: number;
   topbarAlert?: import("@/lib/topbarAlerts").TopbarAlertData | null;
   children: ReactNode;
@@ -76,6 +80,8 @@ export function AppShell({
   canDelegerAcces = false,
   canPointer = false,
   canConsulterHistorique = false,
+  canModererFeedback = false,
+  canRecevoirFeedback = false,
   unreadNotificationsCount = 0,
   topbarAlert = null,
   children,
@@ -177,6 +183,8 @@ export function AppShell({
         canDelegerAcces={canDelegerAcces}
         canPointer={canPointer}
         canConsulterHistorique={canConsulterHistorique}
+        canModererFeedback={canModererFeedback}
+        canRecevoirFeedback={canRecevoirFeedback}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
       />

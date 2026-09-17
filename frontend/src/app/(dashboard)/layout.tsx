@@ -70,8 +70,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
       )}
       canPointer={hasPermission(session, "pointage.pointer")}
       canConsulterHistorique={hasPermission(session, "pointage.consulter_historique")}
+      canModererFeedback={hasPermission(session, "feedback.moderer")}
+      canRecevoirFeedback={session.peutRecevoirFeedback}
       unreadNotificationsCount={unreadCount}
-
     >
       {children}
     </AppShell>
