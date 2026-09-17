@@ -805,21 +805,59 @@ enum FeedbackSource {
   INTERNAL
 }
 
+/// Nature de l'avis — détermine sa visibilité (voir CLAUDE.md "FeedbackApp
+/// — notation structurée") : `COLLABORATION` est toujours PRIVÉ (visible
+/// uniquement du destinataire et des comptes `feedback.moderer`),
+/// `CONDITIONS_TRAVAIL` est toujours PUBLIC. Orthogonal à `FeedbackSource`
+/// (qui distingue QUI a soumis — anonyme ou employé connecté), jamais
+/// confondu : la visibilité dépend de `type`, jamais de `source`.
+enum FeedbackType {
+  /// Avis sur un collaborateur nommé (`recipientId` obligatoire) — privé.
+  COLLABORATION
+  /// Avis sur les conditions de travail générales de l'entreprise
+  /// (`recipientId` toujours `null`, aucun destinataire) — public.
+  CONDITIONS_TRAVAIL
+}
+
 model Feedback {
   id String @id @default(uuid())
 
   /// 20 à 500 caractères, revalidé côté serveur (zod) à chaque écriture —
   /// aucune contrainte de longueur au niveau de la colonne elle-même,
   /// cohérent avec le reste du projet (toute validation de format/longueur
-  /// vit en zod, jamais dans une contrainte SQL).
+  /// vit en zod, jamais dans une contrainte SQL). Depuis l'introduction de
+  /// la notation structurée, ce texte n'est JAMAIS tapé librement par
+  /// l'utilisateur : généré côté serveur à partir de `ratings` (voir
+  /// `generateFeedbackComment`, `backend/src/feedback-comment.ts`) —
+  /// défense supplémentaire contre l'identification par style d'écriture.
   content String
 
-  recipientId String
+  /// Nullable : obligatoire pour `type: COLLABORATION`, toujours `null`
+  /// pour `type: CONDITIONS_TRAVAIL` (avis sur l'entreprise en général,
+  /// aucun destinataire) — revalidé côté serveur selon `type` à chaque
+  /// écriture, jamais une simple convention.
+  recipientId String?
   /// Réutilise le `User` existant du portail — AUCUNE nouvelle table
   /// "employees" séparée (voir CLAUDE.md).
-  recipient User @relation("FeedbackRecipient", fields: [recipientId], references: [id])
+  recipient User? @relation("FeedbackRecipient", fields: [recipientId], references: [id])
 
   source FeedbackSource
+
+  /// `@default(COLLABORATION)` : préserve la validité des lignes déjà
+  /// existantes (toutes des avis sur un collaborateur nommé, avant
+  /// l'introduction de `CONDITIONS_TRAVAIL`) sans migration de données —
+  /// voir CLAUDE.md "FeedbackApp — notation structurée".
+  type FeedbackType @default(COLLABORATION)
+
+  /// Réponses brutes structurées (clé de question → valeur), pour
+  /// permettre des statistiques agrégées plus tard — en complément de
+  /// `content` (le texte assemblé), jamais en remplacement. Nullable :
+  /// `null` pour toute ligne antérieure à la notation structurée. RÈGLE
+  /// ABSOLUE inchangée (voir plus haut) : ces clés/valeurs ne portent
+  /// jamais, même indirectement, de donnée permettant de reconstituer
+  /// l'auteur (uniquement des notes/choix sur des questions fixes,
+  /// jamais un identifiant, une IP, un texte libre saisi par l'auteur).
+  ratings Json?
 
   /// DATE SEULE — colonne SQL `DATE` (`@db.Date`), jamais `TIMESTAMP` :
   /// aucune heure/minute/seconde n'est physiquement stockable, contrainte
@@ -845,4 +883,5 @@ model Feedback {
   @@index([recipientId])
   @@index([source])
   @@index([isModerated])
+  @@index([type])
 }

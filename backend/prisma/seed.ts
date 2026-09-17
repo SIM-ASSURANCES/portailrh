@@ -207,6 +207,15 @@ async function main() {
       // la Direction modère aussi les messages, au même titre que RH.
       "feedback.moderer",
     ],
+    // EXCEPTION DÉLIBÉRÉE à l'invariant "le rôle Admin n'a aucune
+    // RolePermission explicite" (voir CLAUDE.md "estAdmin — accès à la
+    // console /admin") : décision produit confirmée par le maître de
+    // stage le 17/09/2026 (voir CLAUDE.md "FeedbackApp — notation
+    // structurée"), jamais l'ancien mécanisme runtime bugué qui
+    // réattribuait ceci automatiquement à chaque process (corrigé). Seule
+    // exception à ce jour — ne pas y ajouter d'autres permissions
+    // `treso.*`/`pointage.*` sans une décision tout aussi explicite.
+    [roleAdmin.id]: ["feedback.moderer"],
     [roleRH.id]: [
       "pointage.pointer",
       "pointage.consulter_historique",

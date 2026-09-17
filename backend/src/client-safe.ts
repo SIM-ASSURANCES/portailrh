@@ -33,3 +33,12 @@ export * from "./beneficiaire";
 // not found: Can't resolve 'dns'" via `pg` en Client Component). Voir
 // `./feedback-constants.ts`, qui n'importe rien de Prisma par construction.
 export { FEEDBACK_CONTENT_MIN, FEEDBACK_CONTENT_MAX } from "./feedback-constants";
+// Définitions de questions (notation structurée) — nécessaires au Client
+// Component qui affiche le formulaire (étoiles/curseurs/choix, libellés,
+// options). `./feedback-questions.ts` n'importe que `./feedback-constants`
+// et le type `FeedbackType` généré par Prisma (fichier séparé, sûr) —
+// jamais `./prisma`. La fonction de génération du commentaire
+// (`generateFeedbackComment`) est elle aussi exportée d'ici : sans risque
+// pour le bundle (fichier pur), même si seul le serveur l'appelle en
+// pratique (jamais faire confiance à un `content` envoyé par le client).
+export * from "./feedback-questions";

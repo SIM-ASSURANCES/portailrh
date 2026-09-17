@@ -1,192 +1,225 @@
 import Link from "next/link";
 
 import DashboardLayout from "@/app/(dashboard)/layout";
-import { Icon } from "@/components/icons";
-import { Badge, Button, Card, PageHeader } from "@/components/ui";
+import { BRAND_ICON_PATHS, BRAND_ICON_VIEWBOX } from "@/components/ui/brandIcon";
+import { Icon, type IconName } from "@/components/icons";
+import { EmptyState } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { getPublicFeedbacks } from "backend";
+import { getFeedbackRecipients, getPublicFeedbacks } from "backend";
+
+import { FeedbackForm } from "./FeedbackForm";
+
+export const metadata = {
+  title: "FeedbackApp | SIM Assurances",
+  description: "Avis anonymes et structurés — collaboration entre collègues et conditions de travail.",
+};
+
+/** Badge de réassurance (Anonyme / Constructif / Sécurisé) — même pattern
+ * que `FinanceActionCard.tsx` (badge d'icône teinté), jamais un emoji brut. */
+function ReassuranceCard({
+  icon,
+  tone,
+  title,
+  description,
+}: {
+  icon: IconName;
+  tone: "primary" | "success" | "info";
+  title: string;
+  description: string;
+}) {
+  const toneClasses = {
+    primary: "bg-primary-bg text-primary",
+    success: "bg-success-bg text-success",
+    info: "bg-info-bg text-info",
+  }[tone];
+
+  return (
+    <div className="card-shadow-hover flex flex-col gap-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated transition-transform duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5">
+      <span className={`inline-grid size-11 place-items-center rounded-xl ${toneClasses}`}>
+        <Icon name={icon} className="size-5" />
+      </span>
+      <div>
+        <p className="text-sm font-bold text-foreground">{title}</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+/** Bandeau hero — dégradé + texture de marque CONTENUS au bandeau lui-même
+ * (voir globals.css `.feedback-hero-bg` pour pourquoi ce n'est jamais le
+ * fond de toute la page). */
+function FeedbackHero() {
+  return (
+    <div className="feedback-hero-bg relative overflow-hidden rounded-3xl px-6 py-10 text-white shadow-elevated-lg sm:px-10 sm:py-14">
+      <svg
+        viewBox={BRAND_ICON_VIEWBOX}
+        className="pointer-events-none absolute -right-10 -top-10 size-56 opacity-[0.12] sm:size-72"
+        aria-hidden="true"
+      >
+        {BRAND_ICON_PATHS.map((d) => (
+          <path key={d} d={d} fill="currentColor" />
+        ))}
+      </svg>
+      <div className="relative max-w-2xl">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
+          <Icon name="lock" className="size-3.5" />
+          100% anonyme, par construction
+        </span>
+        <h1 className="mt-4 text-3xl font-black leading-tight tracking-tight sm:text-4xl">
+          Votre avis compte,{" "}
+          <span className="text-[#bfe0f7]">en toute confidentialité</span>
+        </h1>
+        <p className="mt-3 max-w-xl text-sm leading-relaxed text-white/85 sm:text-[15px]">
+          Notez votre collaboration avec un collègue ou partagez votre ressenti sur les conditions
+          de travail chez SIM Assurances — quelques clics, jamais un mot tapé, jamais une trace de
+          qui vous êtes.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PublicFeedbackCard({ content, submittedAt }: { content: string; submittedAt: Date }) {
+  return (
+    <div className="card-shadow-hover relative overflow-hidden rounded-2xl border border-border bg-surface p-5 shadow-elevated transition-transform duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5">
+      <span className="absolute inset-y-0 left-0 w-1.5 bg-info" aria-hidden="true" />
+      <div className="flex items-start gap-3 pl-2">
+        <span className="mt-0.5 inline-grid size-8 shrink-0 place-items-center rounded-full bg-info-bg text-info">
+          <Icon name="message-square" className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{content}</p>
+          <p className="mt-2 text-xs font-medium text-muted-foreground">
+            {submittedAt.toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" })}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+async function FeedbackPageContent({
+  quickLinks,
+}: {
+  quickLinks?: { canRecevoir: boolean; canModerer: boolean };
+}) {
+  const [recipients, feedbacks] = await Promise.all([getFeedbackRecipients(), getPublicFeedbacks()]);
+
+  return (
+    <div className="mx-auto w-full max-w-4xl space-y-10 px-4 py-10 sm:px-6">
+      <FeedbackHero />
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <ReassuranceCard
+          icon="lock"
+          tone="primary"
+          title="Anonyme"
+          description="Aucune IP, aucun cookie, aucun texte libre : structurellement impossible de remonter à vous."
+        />
+        <ReassuranceCard
+          icon="trending-up"
+          tone="success"
+          title="Constructif"
+          description="Des questions fermées assemblées en un commentaire neutre et professionnel, jamais punitif."
+        />
+        <ReassuranceCard
+          icon="shield-check"
+          tone="info"
+          title="Sécurisé"
+          description="Les critiques sur un collègue restent privées ; seules RH, Direction et Admin peuvent les modérer."
+        />
+      </div>
+
+      {quickLinks && (quickLinks.canRecevoir || quickLinks.canModerer) ? (
+        <div className="flex flex-wrap gap-3">
+          {quickLinks.canRecevoir ? (
+            <Link
+              href="/feedback/mes-retours"
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2 text-xs font-semibold text-foreground shadow-elevated transition-colors hover:border-primary/50 hover:text-primary"
+            >
+              <Icon name="message-square" className="size-3.5" />
+              Mes critiques reçues
+            </Link>
+          ) : null}
+          {quickLinks.canModerer ? (
+            <Link
+              href="/feedback/admin"
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2 text-xs font-semibold text-foreground shadow-elevated transition-colors hover:border-primary/50 hover:text-primary"
+            >
+              <Icon name="shield-check" className="size-3.5" />
+              Modération des feedbacks
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+
+      <section id="soumettre-un-feedback" className="scroll-mt-6 space-y-4">
+        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+          <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
+          Soumettre un feedback
+        </h2>
+        <div className="rounded-3xl border border-border bg-surface p-5 shadow-elevated sm:p-8">
+          <FeedbackForm recipients={recipients} />
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+          <span className="h-5 w-1 rounded-full bg-info" aria-hidden="true" />
+          Avis sur l&apos;entreprise
+        </h2>
+        <p className="-mt-2 text-sm text-muted-foreground">
+          Avis publics et anonymes sur les conditions de travail chez SIM Assurances. Les critiques
+          sur un collaborateur restent, elles, toujours privées.
+        </p>
+
+        {feedbacks.length === 0 ? (
+          <EmptyState
+            icon="message-square"
+            message="Aucun avis pour le moment — soyez la première personne à en partager un."
+          />
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {feedbacks.map((feedback) => (
+              <PublicFeedbackCard key={feedback.id} content={feedback.content} submittedAt={feedback.submittedAt} />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
 
 /**
- * Hub d'accueil du module FeedbackApp.
- * - Si l'utilisateur est connecté au portail : affiche le Hub d'actions au sein de la coquille DashboardLayout (Sidebar, Topbar).
- *   L'utilisateur peut alors choisir où il veut aller selon ses habilitations :
- *   1. "Laisser un feedback" (accessible à tous)
- *   2. "Mes critiques reçues" (si le rôle est configuré pour recevoir des feedbacks)
- *   3. "Modération des feedbacks" (si le profil a le droit feedback.moderer)
- * - Si aucun utilisateur n'est connecté : affiche la liste publique des messages anonymes.
+ * Page d'accueil du module FeedbackApp — hero, réassurance, formulaire de
+ * soumission (les deux onglets, voir `FeedbackForm.tsx`) et liste publique
+ * des avis "Conditions de travail" partagent désormais TOUS la même page,
+ * pour visiteur anonyme ET employé connecté (voir CLAUDE.md "FeedbackApp —
+ * refonte visuelle de la soumission"). Les liens rapides "Mes critiques
+ * reçues"/"Modération" (hérités du Hub de Thierry) restent affichés en
+ * haut pour un compte connecté éligible, mais n'occupent plus toute la
+ * page : ce n'est plus qu'une des sections, pas la page entière.
  */
 export default async function FeedbackPage() {
   const session = await getSession();
 
   if (session) {
-    const canRecevoir = session.peutRecevoirFeedback === true;
-    const canModerer = hasPermission(session, "feedback.moderer");
+    const quickLinks = {
+      canRecevoir: session.peutRecevoirFeedback === true,
+      canModerer: hasPermission(session, "feedback.moderer"),
+    };
 
     return (
       <DashboardLayout>
-        <div className="mx-auto max-w-7xl space-y-8">
-          <PageHeader
-            title="FeedbackApp"
-            description="Espace d'échanges bienveillants et constructifs au sein de SIM Assurances."
-          />
-
-          {/* Hub de navigation interne — Choix de destination */}
-          <section className="space-y-4">
-            <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
-              <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
-              Où souhaitez-vous aller ?
-            </h2>
-
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
-              {/* Option 1 : Laisser un feedback (accessible à tous les internes) */}
-              <Link
-                href="/feedback/nouveau"
-                className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border bg-surface p-6 shadow-elevated transition-all duration-200 hover:-translate-y-1 hover:border-primary/50 hover:shadow-elevated-lg motion-safe:active:scale-[0.99]"
-              >
-                <span className="absolute inset-x-0 top-0 h-1 bg-primary" aria-hidden="true" />
-                <div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="inline-grid size-12 place-items-center rounded-xl bg-primary text-white shadow-md transition-transform duration-200 group-hover:scale-110">
-                      <Icon name="pencil" className="size-6" />
-                    </span>
-                    <Badge variant="primary">Pour tous</Badge>
-                  </div>
-                  <h3 className="mt-5 text-xl font-bold text-foreground">Laisser un feedback</h3>
-                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                    Rédiger et envoyer un message constructif et 100% anonyme à l&apos;attention d&apos;un collaborateur éligible.
-                  </p>
-                </div>
-                <div className="mt-6 flex items-center gap-2 text-sm font-semibold text-primary transition-all group-hover:translate-x-1">
-                  <span>Rédiger un retour</span>
-                  <Icon name="arrow-right" className="size-4" />
-                </div>
-              </Link>
-
-              {/* Option 2 : Mes critiques reçues (si éligible comme destinataire) */}
-              {canRecevoir ? (
-                <Link
-                  href="/feedback/mes-retours"
-                  className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border bg-surface p-6 shadow-elevated transition-all duration-200 hover:-translate-y-1 hover:border-primary/50 hover:shadow-elevated-lg motion-safe:active:scale-[0.99]"
-                >
-                  <span className="absolute inset-x-0 top-0 h-1 bg-primary" aria-hidden="true" />
-                  <div>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="inline-grid size-12 place-items-center rounded-xl bg-primary text-white shadow-md transition-transform duration-200 group-hover:scale-110">
-                        <Icon name="inbox" className="size-6" />
-                      </span>
-                      <Badge variant="neutral">Mon espace</Badge>
-                    </div>
-                    <h3 className="mt-5 text-xl font-bold text-foreground">Mes critiques reçues</h3>
-                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                      Consulter les appréciations et retours constructifs qui vous sont personnellement adressés en toute confidentialité.
-                    </p>
-                  </div>
-                  <div className="mt-6 flex items-center gap-2 text-sm font-semibold text-primary transition-all group-hover:translate-x-1">
-                    <span>Consulter mes retours</span>
-                    <Icon name="arrow-right" className="size-4" />
-                  </div>
-                </Link>
-              ) : null}
-
-              {/* Option 3 : Espace Modération (si droit feedback.moderer) */}
-              {canModerer ? (
-                <Link
-                  href="/feedback/admin"
-                  className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-border bg-surface p-6 shadow-elevated transition-all duration-200 hover:-translate-y-1 hover:border-amber-500/50 hover:shadow-elevated-lg motion-safe:active:scale-[0.99]"
-                >
-                  <span className="absolute inset-x-0 top-0 h-1 bg-amber-500" aria-hidden="true" />
-                  <div>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="inline-grid size-12 place-items-center rounded-xl bg-amber-500 text-white shadow-md transition-transform duration-200 group-hover:scale-110">
-                        <Icon name="shield-check" className="size-6" />
-                      </span>
-                      <Badge variant="warning">RH & Direction</Badge>
-                    </div>
-                    <h3 className="mt-5 text-xl font-bold text-foreground">Modération des feedbacks</h3>
-                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                      Superviser les flux de messages reçus, examiner les signalements et intervenir avec traçabilité complète.
-                    </p>
-                  </div>
-                  <div className="mt-6 flex items-center gap-2 text-sm font-semibold text-amber-600 transition-all group-hover:translate-x-1 dark:text-amber-400">
-                    <span>Accéder à la modération</span>
-                    <Icon name="arrow-right" className="size-4" />
-                  </div>
-                </Link>
-              ) : null}
-            </div>
-          </section>
-
-          {/* Charte & Principes d'usage */}
-          <section className="rounded-2xl border border-border bg-surface p-6 shadow-elevated">
-            <div className="flex items-center gap-3">
-              <span className="inline-grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">
-                <Icon name="info" className="size-5" />
-              </span>
-              <h3 className="text-base font-bold text-foreground">Les 3 principes fondamentaux de FeedbackApp</h3>
-            </div>
-            <div className="mt-4 grid grid-cols-1 gap-4 text-sm sm:grid-cols-3">
-              <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
-                <p className="font-semibold text-foreground">🔒 Anonymat total garanti</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  Aucune donnée identifiante de l&apos;expéditeur n&apos;est transmise ou enregistrée. L&apos;anonymat est garanti par construction technique.
-                </p>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
-                <p className="font-semibold text-foreground">🤝 Esprit constructif</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  Chaque message a pour vocation d&apos;encourager la progression mutuelle et l&apos;épanouissement professionnel.
-                </p>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
-                <p className="font-semibold text-foreground">🛡️ Modération bienveillante</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  Les messages inappropriés peuvent être retirés par la RH ou la Direction avec un motif motivé, sans rupture d&apos;anonymat.
-                </p>
-              </div>
-            </div>
-          </section>
-        </div>
+        <FeedbackPageContent quickLinks={quickLinks} />
       </DashboardLayout>
     );
   }
 
-  // Si non connecté (visiteur public)
-  const feedbacks = await getPublicFeedbacks();
-
   return (
-    <div className="mx-auto w-full max-w-2xl flex-1 px-4 py-12">
-      <div className="mb-8 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-lg font-bold text-foreground">Messages constructifs</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Messages publics anonymes, affichés sans nom d&apos;auteur ni de destinataire.
-          </p>
-        </div>
-        <Link href="/feedback/nouveau">
-          <Button variant="primary">Laisser un message</Button>
-        </Link>
-      </div>
-
-      {feedbacks.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Aucun message pour le moment.</p>
-      ) : (
-        <ul className="space-y-3">
-          {feedbacks.map((feedback) => (
-            <li key={feedback.id}>
-              <Card className="space-y-2 p-4">
-                <p className="whitespace-pre-wrap text-sm text-foreground">{feedback.content}</p>
-                <p className="text-xs text-muted-foreground">
-                  {feedback.submittedAt.toLocaleDateString("fr-FR", {
-                    year: "numeric",
-                    month: "long",
-                    day: "numeric",
-                  })}
-                </p>
-              </Card>
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="relative flex-1 overflow-hidden bg-surface">
+      <FeedbackPageContent />
     </div>
   );
 }

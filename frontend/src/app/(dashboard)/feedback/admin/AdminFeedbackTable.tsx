@@ -35,6 +35,17 @@ export function AdminFeedbackTable({ feedbacks }: AdminFeedbackTableProps) {
             ),
           },
           {
+            key: "type",
+            header: "Type",
+            sortable: true,
+            accessor: (row) => row.type,
+            render: (row) => (
+              <Badge variant={row.type === "COLLABORATION" ? "warning" : "info"}>
+                {row.type === "COLLABORATION" ? "Collaboration" : "Conditions de travail"}
+              </Badge>
+            ),
+          },
+          {
             key: "source",
             header: "Origine",
             sortable: true,
@@ -48,10 +59,10 @@ export function AdminFeedbackTable({ feedbacks }: AdminFeedbackTableProps) {
           {
             key: "recipient",
             header: "Destinataire",
-            accessor: (row) => row.recipientPseudo,
+            accessor: (row) => row.recipientPseudo ?? "",
             render: (row) => (
               <span className="text-xs font-mono text-muted-foreground">
-                {row.recipientPseudo}
+                {row.recipientPseudo ?? "—"}
               </span>
             ),
           },

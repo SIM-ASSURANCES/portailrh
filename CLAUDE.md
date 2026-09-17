@@ -1599,6 +1599,309 @@ jamais `feedback.ts`. Seule protection fiable constatée : isoler
 physiquement dans un fichier séparé tout ce qui doit rester sûr pour le
 navigateur, pas une forme d'export particulière.
 
+### FeedbackApp — notation structurée (refonte majeure)
+
+Refonte confirmée par le maître de stage : la soumission en texte libre
+est **entièrement retirée** au profit d'un questionnaire structuré
+(étoiles, curseurs, choix multiples) — plus aucun champ où l'utilisateur
+tape du texte. Le `content` final (toujours 20-500 caractères, colonne et
+contrainte inchangées) est **généré côté serveur** à partir des réponses,
+jamais saisi : élimine tout risque d'identification par style d'écriture,
+et empêche structurellement qu'un client malveillant (rejeu réseau direct)
+n'injecte un texte arbitraire — `soumettreFeedbackAction` ne lit d'ailleurs
+plus jamais de champ `content` dans `formData`.
+
+**Modèle de données** (migration `20260918010000_feedback_structured_ratings`) :
+
+- **`FeedbackType`** (`COLLABORATION` | `CONDITIONS_TRAVAIL`) —
+  `Feedback.type`, `@default(COLLABORATION)` pour que les lignes
+  existantes restent valides sans migration de données destructrice.
+  Détermine la VISIBILITÉ (voir plus bas), orthogonal à `FeedbackSource`
+  (qui reste "qui a soumis", jamais mélangé avec "quel type d'avis").
+- **`Feedback.recipientId`** devenu nullable (`String?`) — obligatoire
+  pour `COLLABORATION`, toujours `null` pour `CONDITIONS_TRAVAIL` (avis
+  sur l'entreprise en général, aucun destinataire). Revalidé côté serveur
+  selon `type` à chaque écriture (`createFeedback`, `feedback.ts`), jamais
+  une simple convention. Effet de bord à noter : la relation passe donc en
+  `onDelete: SetNull` (comportement par défaut de Prisma pour une relation
+  optionnelle) — supprimer un `User` ayant reçu des avis ne bloque plus au
+  niveau base, ses `Feedback.recipientId` deviennent `null` ; hors
+  périmètre de cette tâche, `supprimerUtilisateurAction` n'a pas été
+  auditée pour ce cas précis.
+- **`Feedback.ratings`** (`Json?`) — réponses brutes structurées (clé de
+  question → note ou code de choix), en complément de `content`, pour des
+  statistiques agrégées futures. RÈGLE ABSOLUE inchangée : ces clés/valeurs
+  ne portent jamais, même indirectement, de donnée permettant de
+  reconstituer l'auteur — uniquement des notes/choix sur des questions
+  FIXES, jamais un identifiant, une IP, un texte libre.
+- Aucun changement à `submittedAt` (`@db.Date`), aux vérifications de
+  cookie/IP/honeypot déjà en place — toutes revérifiées après cette
+  refonte, aucune régression (voir "Vérifications" plus bas).
+
+**Questions et structure** (`backend/src/feedback-questions.ts`, fichier
+PUR sans dépendance Prisma — mêmes règles que `feedback-constants.ts`,
+importe seulement le type `FeedbackType` généré, sûr par construction) —
+libellés reproduits au mot près depuis les maquettes fournies :
+
+- **Onglet "Collaboration entre collègues"** (`COLLABORATION_QUESTIONS`,
+  pas d'étapes) : 6 questions à 5 étoiles (qualité du travail,
+  communication, esprit d'équipe, ambiance, disponibilité, respect des
+  délais) + 1 note globale sur une échelle 1-10.
+- **Onglet "Conditions de travail"** (`CONDITIONS_TRAVAIL_STEPS`, 4
+  étapes avec indicateur de progression) : Environnement de travail (2
+  choix + 1 curseur 1-5), Management (2 choix + 1 curseur), Motivation &
+  ambiance (1 curseur + 2 choix), Satisfaction globale (1 curseur + 1
+  choix) — 11 questions au total.
+- **Toutes les questions d'un type sont obligatoires** (`validateFeedbackRatings`)
+  — formulaire fermé, jamais de soumission partielle : simplifie la
+  génération du commentaire (aucun cas de réponse manquante à gérer en
+  dehors d'un rejet explicite).
+
+**⚠️ Génération du commentaire — CONTENU PROVISOIRE, à valider par le
+maître de stage avant mise en production** (`generateFeedbackComment`,
+`backend/src/feedback-questions.ts`) :
+
+- Pour chaque question à étoiles/curseur (1-5) : note ≥4 → phrase positive
+  pré-écrite spécifique à la question ; note = 3 → phrase neutre ; note
+  ≤2 → phrase constructive (jamais punitive). Note globale 1-10
+  (collaboration) : ≥8 positif, 5-7 correct, ≤4 point d'attention.
+  Questions à choix : chaque option a sa propre phrase pré-écrite.
+- **Sélection des phrases assemblées** : chaque réponse reçoit un poids de
+  significativité (écart à la valeur médiane pour une échelle, position
+  extrême vs. centrale pour un choix) ; les 3 réponses les plus
+  significatives sont assemblées par défaut (ajusté entre 2 et 4 phrases
+  pour respecter strictement 20-500 caractères), jamais une liste à puces
+  — un paragraphe naturel. Ordre déterministe (à poids égal, l'ordre des
+  questions fait foi) : mêmes notes → même texte, utile pour la
+  validation.
+- Toutes les phrases sont neutres et professionnelles, y compris pour les
+  notes basses — objectif constructif, jamais agressif ni punitif.
+- **Exemples générés, à faire valider** (voir aussi le résumé de la
+  tâche) :
+  - Collaboration, notes hautes : *"La qualité du travail réalisé avec ce
+    collaborateur est jugée très satisfaisante. Cette personne communique
+    de manière claire et efficace. Cette personne contribue positivement
+    à l'ambiance de travail."* (201 caractères)
+  - Conditions de travail, réponses négatives : *"Les outils nécessaires
+    pour bien travailler font défaut. La charge de travail est jugée
+    excessive. L'environnement de travail pourrait être amélioré."* (149
+    caractères)
+  - Conditions de travail, mélange réaliste : *"Un sentiment d'écoute est
+    ressenti lors de l'expression d'une préoccupation. SIM Assurances
+    serait recommandée comme lieu de travail. Les outils disponibles pour
+    travailler ne couvrent que partiellement les besoins."* (215
+    caractères)
+- Vérifié sur 6 combinaisons de notes (hautes/basses/mélange × les deux
+  types) : toujours entre 149 et 215 caractères en pratique, largement
+  dans les bornes 20-500 (garanti par construction avec les phrases
+  actuelles ; filets de sécurité en fin de fonction — troncature ou ajout
+  d'une phrase de secours — jamais déclenchés en pratique, gardés par
+  défense en profondeur).
+
+**Visibilité par `type`** — changement de comportement important :
+
+- **`COLLABORATION` : privé.** Visible uniquement par le destinataire
+  (`getUserFeedbacks`, filtré `recipientId: userId` ET `type:
+  COLLABORATION`) et par les comptes `feedback.moderer` (`getAdminFeedbacks`,
+  sans filtre de type par défaut). **Les critiques sur un collègue, qui
+  étaient publiques avant cette tâche (`source: PUBLIC`), sont désormais
+  strictement privées.**
+- **`CONDITIONS_TRAVAIL` : public.** `getPublicFeedbacks` (`/feedback`)
+  filtre désormais sur **`type: CONDITIONS_TRAVAIL`, plus jamais sur
+  `source`** : la visibilité publique dépend de la nature de l'avis, pas
+  de qui l'a soumis (un avis `CONDITIONS_TRAVAIL` d'un employé connecté,
+  `source: INTERNAL`, est tout aussi public qu'un avis anonyme).
+- **`getAdminFeedbacks`** (écran de modération) renvoie toujours les
+  **deux types sans filtre par défaut** (un filtre `type` optionnel existe
+  dans `AdminFeedbackFilters` pour un usage futur côté UI) — colonne
+  "Type" ajoutée à `AdminFeedbackTable.tsx` pour les distinguer visuellement.
+  `recipientPseudo` devient `null` pour `CONDITIONS_TRAVAIL` (pas de
+  destinataire à pseudonymiser) — corrige au passage un plantage potentiel
+  (`recipientId.replace(...)` sur `null`) introduit par la nullabilité du
+  champ.
+
+**Vérifications, comptes de test réels + rejeux réseau** :
+- Un avis `COLLABORATION` de test (soumis via le protocole Server Action
+  réel) n'apparaît **jamais** sur `/feedback`, même en requête directe non
+  authentifiée — confirmé (0 occurrence).
+- Un avis `CONDITIONS_TRAVAIL` de test apparaît publiquement sans
+  authentification, zéro cookie — confirmé.
+- Le destinataire (compte de test réel) voit son `COLLABORATION` dans
+  "Mes critiques reçues" ; un autre collaborateur connecté ne le voit
+  jamais — confirmé avec deux comptes réels.
+- Admin, DG et RH voient chacun les **deux types** dans l'historique de
+  modération — testé séparément pour les 3 rôles (connexion réelle
+  chacun), confirmé. Un compte sans `feedback.moderer` reste refusé
+  (307 vers `/?error=acces_refuse_moderation`).
+- Réponses incomplètes rejetées côté serveur avec un message précis
+  (testé par rejeu réseau direct, contournant le formulaire).
+- Honeypot et rate limiting revérifiés fonctionnels avec le nouveau
+  formulaire (mêmes mécanismes, inchangés).
+- **Aucune régression de bundle** : `feedback-questions.ts` n'importe que
+  `./feedback-constants` et le type `FeedbackType` généré (sûr) — jamais
+  `./prisma`. Un vrai `next build` passe intégralement (65 routes, aucune
+  erreur "Module not found").
+
+### `feedback.moderer` accordé à Admin — décision délibérée (pas l'incident précédent)
+
+**Confirmé par le maître de stage le 17/09/2026** (à corriger si la date
+réelle diffère) : contrairement à l'incident précédent (réattribution
+AUTOMATIQUE à chaque redémarrage de process, corrigée — voir plus haut),
+cette fois Admin reçoit `feedback.moderer` par un **choix produit
+explicite et documenté**, appliqué UNE SEULE FOIS :
+
+- Migration ponctuelle dédiée
+  (`20260918010001_feedback_moderer_admin_rattrapage`, `INSERT ... ON
+  CONFLICT DO NOTHING`) pour les bases existantes.
+- `seed.ts` : `[roleAdmin.id]: ["feedback.moderer"]` — **exception
+  délibérée** à l'invariant documenté "le rôle Admin n'a aucune
+  `RolePermission` explicite" (voir "estAdmin — accès à la console
+  /admin" plus bas). Seule exception à ce jour : ne pas y ajouter d'autres
+  permissions `treso.*`/`pointage.*` sans une décision tout aussi
+  explicite et sourcée.
+- Reste ensuite **librement modifiable** par un Admin via `/admin/roles`,
+  comme n'importe quel autre rôle — jamais réinitialisé automatiquement
+  (le mécanisme runtime qui faisait ça a été retiré, voir "Régression
+  `ensureFeedbackPermissions()`" plus haut).
+- Vérifié en pratique : connexion réelle en Admin, accès à
+  `/feedback/admin` réussi, les deux types de feedback visibles dans
+  l'historique.
+
+### FeedbackApp — refonte visuelle de la soumission
+
+Refonte du RENDU de la page de soumission (structure/contenu des
+questions inchangés au mot près) — objectif un résultat soigné et
+professionnel, pas une copie du visuel basique des maquettes de
+référence. Skill `frontend-design` (`/mnt/skills/public/frontend-design/
+SKILL.md`) demandée en préalable : **chemin inexistant sur cet
+environnement** (convention de conteneur Unix, absente de cette
+installation Windows/VSCode) — appliqué à la place les principes déjà
+établis et documentés dans ce projet (`FinanceActionCard.tsx`,
+`BrandBackdrop.tsx`, palette/ombres/animations de `globals.css`), signalé
+explicitement plutôt que silencieusement ignoré.
+
+**IA repensée** : `/feedback/nouveau` (formulaire seul) et `/feedback`
+(hub ou liste publique selon connexion, apporté par Thierry) fusionnent en
+UNE seule page — hero, réassurance, formulaire (les deux onglets) et liste
+publique cohabitent désormais sur `/feedback`, pour visiteur anonyme ET
+employé connecté. `/feedback/nouveau` devient une redirection vers
+`/feedback#soumettre-un-feedback` (ancre directe sur la section de
+soumission, jamais un simple retrait de route — même principe que la
+redirection déjà en place pour `/admin/feedbacks`). Les liens rapides
+"Mes critiques reçues"/"Modération" du Hub de Thierry sont conservés
+(affichés en haut si le compte est éligible) mais réduits à une rangée de
+liens secondaires — ils n'occupent plus toute la page.
+
+**Fichiers déplacés** : `StarRating.tsx`/`RatingSlider.tsx`/
+`ChoiceButtons.tsx`/`NumberScale.tsx`/`FeedbackForm.tsx`/`actions.ts`
+vivent maintenant sous `frontend/src/app/feedback/` (plus `.../nouveau/`)
+— convention du projet (colocalisation à la page qui les utilise
+réellement).
+
+**Traitement visuel par écran** :
+
+- **Hero** (`FeedbackHero`, `feedback/page.tsx`) — dégradé confiné au
+  bandeau lui-même (`.feedback-hero-bg`, `globals.css` : radial + linéaire
+  dans les bleus de marque), jamais le fond de la page entière (voir
+  `BrandBackdrop.tsx` : "premier essai [dégradé bleu pleine page] refusé
+  explicitement" — un dégradé contenu à un bandeau reste une application
+  bien plus étroite que ce refus documenté, principe général "jamais un
+  aplat dominant en fond de PAGE" respecté). Texture de marque : le
+  triangle du pictogramme (`BRAND_ICON_PATHS`, déjà utilisé par
+  `BrandBackdrop`/`Sidebar`) en grand format, très pâle, coin haut-droit —
+  jamais un nouveau motif décoratif inventé. Titre en deux tons (blanc +
+  bleu clair de marque), hiérarchie typographique marquée (`text-3xl
+  font-black` → corps `text-sm`).
+- **3 cartes de réassurance** (`ReassuranceCard`) — même pattern que
+  `FinanceActionCard.tsx` : badge d'icône teinté (`bg-{tone}-bg text-{tone}`),
+  jamais un emoji brut. Anonyme (`lock`, primary), Constructif
+  (`trending-up`, success), Sécurisé (`shield-check`, info). Survol :
+  élévation + translation verticale légère (`.card-shadow-hover`,
+  `motion-safe:hover:-translate-y-0.5`), identique au reste du portail.
+- **Étoiles** (`StarRating.tsx`) — icône `star` (nouvelle, `icons.tsx`,
+  géométrie Lucide standard) pleine/vide selon l'état, `hover:scale-[1.15]`
+  + `active:scale-95`, et un "pop" rejoué à CHAQUE clic (`key={value}` sur
+  l'icône, force un remontage qui rejoue `.animate-select-pop`) — jamais
+  une icône statique. Valeur courante affichée à droite (`3/5`).
+- **Curseur** (`RatingSlider.tsx`) — piste qui se remplit progressivement :
+  un `<input type="range">` nu n'offre aucun moyen Tailwind générique de
+  colorer uniquement la portion "remplie" (thumb/track sont des
+  pseudo-éléments distincts par navigateur) — la portion remplie est donc
+  un dégradé CSS calculé en `%` et posé en `style` inline
+  (`.feedback-slider` dans `globals.css` ne fixe que l'apparence du
+  thumb). Libellé qualitatif ("Peu"/"Moyennement"/"Tout à fait") et valeur
+  numérique dans un badge circulaire au-dessus, jamais seulement le
+  chiffre nu.
+- **Choix multiples** (`ChoiceButtons.tsx`) — sélectionné = fond plein
+  `bg-primary` + icône `circle-check` + ombre portée colorée, jamais une
+  simple bordure fine ; nouveau contrôle testé sur ce point précis (une
+  V1 utilisant `check-circle`, un tracé outline avec un chemin ouvert,
+  rendait mal en `fill="currentColor"` — corrigé en `circle-check`, dont
+  le cercle est un `<circle>` fermé, réellement adapté au remplissage).
+- **Échelle 1-10** (`NumberScale.tsx`) — dégradé rouge → orange → vert
+  (interpolation RVB sur les tokens sémantiques `danger`/`warning`/
+  `success` déjà existants, jamais des couleurs hors charte) appliqué à la
+  case SÉLECTIONNÉE uniquement : repère universel de type NPS, appliqué à
+  ce seul contrôle — le reste de l'interface FeedbackApp garde
+  exclusivement la palette bleue SIM Assurances.
+- **Assistant "Conditions de travail"** (`Stepper`, `FeedbackForm.tsx`) —
+  cercles numérotés avec 3 états visuellement distincts (à venir : fond
+  neutre ; actif : fond primaire + halo `box-shadow` ; complété : fond
+  primaire + icône `circle-check`), ligne de connexion qui se remplit
+  (transition `width`, 500ms) plutôt qu'un simple changement de couleur
+  instantané. Titre d'étape masqué sous `sm:` (place limitée en mobile),
+  toujours visible en libellé texte au-dessus ("Étape X/4 — Titre").
+- **Transitions onglet/étape** — fondu + léger glissement horizontal
+  (`.animate-step-in`, `globals.css`), rejoué via `key={tab}`/`key={ctStep}`
+  sur le conteneur de contenu (force un remontage à chaque changement) —
+  jamais un changement de contenu instantané. Distinct de
+  `.animate-fade-in-up` (glissement VERTICAL, pensé pour une apparition
+  ponctuelle de carte) : un mouvement horizontal évoque ici une
+  progression dans une séquence.
+- **Confirmation de soumission** (`ConfirmationPanel`) — grand cercle vert
+  qui s'anime en expansion douce (`.animate-confirm-ring`), jamais
+  seulement le toast `useActionFeedback` (conservé en plus, pas en
+  remplacement). Piège React évité : la bascule automatique de tab/reset
+  après un délai (`setTimeout`) est déclenchée en dérivant l'état PENDANT
+  le rendu (`if (state !== lastHandledState) { ...; setConfirmationTab(tab) }`
+  — le pattern React officiel "adjusting state when a value changes"),
+  jamais par un `setState` synchrone dans le corps d'un `useEffect` (le
+  linter du projet le signale explicitement comme provoquant des rendus en
+  cascade) — seul le `setTimeout` (asynchrone) à l'intérieur de l'effet
+  appelle `setState`. Après une `COLLABORATION` réussie : réinitialise le
+  formulaire et bascule vers l'onglet "Conditions de travail". Après une
+  `CONDITIONS_TRAVAIL` réussie : réinitialise l'assistant (retour à
+  l'étape 1) et appelle `router.refresh()` pour que le nouvel avis
+  apparaisse immédiatement dans la liste publique en bas de la MÊME page
+  — jamais un rechargement brut.
+- **Liste publique** (`PublicFeedbackCard`) — vraies cartes (icône dans
+  pastille `info`, barre d'accent verticale, `.card-shadow-hover`), plus
+  une liste plate. État vide : `EmptyState` (composant partagé déjà
+  existant, pastille + message), pas un texte gris isolé.
+
+**Vérifications, parcours réel** :
+- Parcours anonyme complet (requêtes réseau réelles, protocole Server
+  Action) : soumission `COLLABORATION` → succès → soumission
+  `CONDITIONS_TRAVAIL` → succès → le texte généré pour `CONDITIONS_TRAVAIL`
+  apparaît sur `/feedback` en relecture, celui de `COLLABORATION` jamais.
+- **Zéro cookie à chaque étape** revérifié : `GET /feedback` (anonyme),
+  `GET /feedback/nouveau` (redirection), et les deux `POST /feedback`
+  (soumissions) — aucun `Set-Cookie` dans les 4 cas.
+- Un vrai `next build` passe intégralement (65 routes, `/feedback/nouveau`
+  redevenu statique `○` puisque simple redirection).
+- Aucune régression : `mes-retours` (compte destinataire réel) et
+  `/feedback/admin` (compte avec `feedback.moderer`) fonctionnent toujours
+  après le déplacement des fichiers et la fusion des pages ; le tableau de
+  modération affiche toujours les deux `type`.
+- Rendu mobile : vérifié par relecture de code (pas de capture d'écran
+  disponible dans cet environnement) — grilles `grid-cols-1 sm:grid-cols-*`
+  sur les cartes de réassurance/l'échelle 1-10/les onglets, titres d'étape
+  masqués sous `sm:`, hero en `overflow-hidden` (le triangle de texture
+  surdimensionné ne peut jamais provoquer de débordement horizontal).
+  Aucune capture d'écran produite (outil non disponible dans cet
+  environnement) — description précise fournie dans le résumé de la
+  tâche pour validation par le maître de stage.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif

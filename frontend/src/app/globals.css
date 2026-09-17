@@ -329,3 +329,130 @@ body {
     opacity: 1;
   }
 }
+
+/* ============================================================
+   FeedbackApp — bandeau hero, notation structurée (voir CLAUDE.md
+   "FeedbackApp — refonte visuelle de la soumission"). Dégradé/texture
+   CONTENUS AU BANDEAU LUI-MÊME (un bloc arrondi, jamais le fond de toute
+   la page) — la page reste blanche, filigrane de marque en fond, exactement
+   comme partout ailleurs (voir BrandBackdrop.tsx : "premier essai [fond
+   dégradé bleu pleine page] refusé explicitement"). Un dégradé confiné à un
+   bandeau contenu est une application bien plus étroite que ce refus
+   documenté, mais le principe général (jamais un aplat dominant en fond de
+   PAGE) reste respecté à dessein. */
+.feedback-hero-bg {
+  background:
+    radial-gradient(120% 140% at 15% 0%, rgba(81, 174, 226, 0.55) 0%, rgba(81, 174, 226, 0) 55%),
+    linear-gradient(135deg, #004b9c 0%, #0a5cb8 45%, #0f6dc9 100%);
+}
+
+/* Piste de curseur (RatingSlider) qui se remplit progressivement — un
+   <input type="range"> nu n'offre aucun moyen standard/cross-browser de
+   colorer uniquement la portion "remplie" via une seule classe Tailwind ;
+   la portion remplie est donc calculée en JS (largeur en %) et posée
+   dessous via `background` inline sur l'élément lui-même (voir
+   RatingSlider.tsx) — cette classe ne fixe que l'apparence du thumb/track
+   par défaut (WebKit/Firefox ont des pseudo-éléments distincts, jamais
+   stylables via une seule classe Tailwind générique). */
+.feedback-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 8px;
+  border-radius: 999px;
+  outline: none;
+}
+.feedback-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 3px solid var(--color-primary);
+  box-shadow: 0 2px 6px rgba(0, 75, 156, 0.35);
+  cursor: pointer;
+  transition: transform 0.15s var(--ease-out-strong);
+}
+.feedback-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+.feedback-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 3px solid var(--color-primary);
+  box-shadow: 0 2px 6px rgba(0, 75, 156, 0.35);
+  cursor: pointer;
+}
+.feedback-slider::-moz-range-track {
+  background: transparent;
+}
+
+/* Apparition d'une étoile/carte au moment où elle devient sélectionnée —
+   rejoué à chaque clic via `key={value}` sur l'élément (remontage forcé,
+   voir StarRating.tsx) : un petit "pop" qui dépasse légèrement puis se
+   stabilise, retour visuel immédiat sans dépendre d'un état CSS `:active`
+   qui disparaîtrait au relâchement du clic. */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-select-pop {
+    animation: select-pop 0.3s var(--ease-out-strong) both;
+  }
+}
+@keyframes select-pop {
+  0% {
+    transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Transition entre onglets (Collaboration / Conditions de travail) et
+   entre étapes de l'assistant "Conditions de travail" — un fondu + léger
+   glissement horizontal, rejoué à chaque changement via `key` sur le
+   conteneur (même principe que .animate-select-pop ci-dessus). Distinct de
+   `.animate-fade-in-up` (glissement VERTICAL, pensé pour une apparition
+   ponctuelle de carte) : ici le mouvement horizontal évoque une
+   progression dans une séquence, jamais une simple apparition. */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-step-in {
+    animation: step-in 0.28s var(--ease-out-strong) both;
+  }
+}
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Panneau de confirmation "marquant" après soumission (voir CLAUDE.md) —
+   le cercle de validation se dessine par une expansion douce plutôt qu'un
+   simple fondu, pour donner un vrai sentiment d'aboutissement. */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-confirm-ring {
+    animation: confirm-ring 0.5s var(--ease-out-strong) both;
+  }
+}
+@keyframes confirm-ring {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}

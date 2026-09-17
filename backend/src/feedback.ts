@@ -1,5 +1,7 @@
 import { prisma } from "./prisma";
-import type { FeedbackSource, Prisma } from "./generated/prisma/client";
+import type { FeedbackSource, FeedbackType, Prisma } from "./generated/prisma/client";
+import { FEEDBACK_CONTENT_MAX, FEEDBACK_CONTENT_MIN } from "./feedback-constants";
+import { generateFeedbackComment, type FeedbackRatings } from "./feedback-questions";
 
 /**
  * FeedbackApp — messages constructifs anonymes sur un employé (voir
@@ -22,6 +24,10 @@ import type { FeedbackSource, Prisma } from "./generated/prisma/client";
  * directement depuis `feedback-constants.ts` (voir ce fichier).
  */
 export * from "./feedback-constants";
+// Idem pour les définitions de questions et la génération du commentaire
+// (notation structurée) — `./feedback-questions.ts` n'importe pas non plus
+// `./prisma`, réexporté ici pour tout code backend, jamais rapatrié.
+export * from "./feedback-questions";
 
 let feedbackModulePermissionSyncPromise: Promise<void> | null = null;
 
@@ -110,6 +116,52 @@ export async function getFeedbackRecipients(excludeUserId?: string): Promise<Fee
   return users;
 }
 
+/**
+ * Crée un `Feedback` à partir de réponses structurées — **seul point
+ * d'écriture** du module (voir CLAUDE.md "FeedbackApp — notation
+ * structurée") : `content` n'est **jamais** reçu en paramètre, il est
+ * TOUJOURS calculé ici via `generateFeedbackComment(type, ratings)`.
+ * Empêche structurellement qu'un `content` fabriqué par un client
+ * malveillant (rejeu réseau direct, contournant le formulaire) ne soit
+ * jamais persisté tel quel — la seule donnée texte jamais écrite en base
+ * est celle que ce module génère lui-même à partir de notes fixes.
+ *
+ * `recipientId` : obligatoire pour `COLLABORATION`, ignoré (forcé à
+ * `null`) pour `CONDITIONS_TRAVAIL` — revalidé ici, jamais une simple
+ * convention côté appelant.
+ */
+export async function createFeedback(params: {
+  type: FeedbackType;
+  recipientId: string | null;
+  ratings: FeedbackRatings;
+  source: FeedbackSource;
+}): Promise<{ success: true; id: string } | { success: false; message: string }> {
+  const content = generateFeedbackComment(params.type, params.ratings);
+  if (content.length < FEEDBACK_CONTENT_MIN || content.length > FEEDBACK_CONTENT_MAX) {
+    // Filet de sécurité : ne devrait jamais se produire avec les phrases
+    // actuelles (voir `generateFeedbackComment`), mais on ne persiste
+    // jamais un contenu hors des bornes déjà vérifiées ailleurs (zod côté
+    // action, contrainte documentée sur la colonne).
+    return { success: false, message: "Impossible de générer un commentaire valide à partir de ces réponses." };
+  }
+
+  if (params.type === "COLLABORATION" && !params.recipientId) {
+    return { success: false, message: "Destinataire requis pour ce type d'avis." };
+  }
+
+  const feedback = await prisma.feedback.create({
+    data: {
+      content,
+      recipientId: params.type === "COLLABORATION" ? params.recipientId : null,
+      type: params.type,
+      source: params.source,
+      ratings: params.ratings as Prisma.InputJsonValue,
+    },
+  });
+
+  return { success: true, id: feedback.id };
+}
+
 export interface PublicFeedbackEntry {
   id: string;
   content: string;
@@ -118,18 +170,24 @@ export interface PublicFeedbackEntry {
 }
 
 /**
- * Messages publics (`source: PUBLIC`) affichés sur la vue publique —
- * jamais le nom du destinataire (voir CLAUDE.md "FeedbackApp", décision
- * retenue par défaut faute de cahier des charges accessible précisant le
- * contraire — à confirmer). Exclut les messages déjà modérés
- * (`isModerated: true`) : un message retiré par la modération ne doit
- * plus apparaître publiquement, même si aucun écran de modération n'est
- * encore construit à ce stade (Tranche A) — le filtre reste correct dès
- * qu'un tel écran existera.
+ * Messages publics affichés sur la vue publique (`/feedback`) — jamais le
+ * nom d'un destinataire (de toute façon inexistant pour ce type, voir
+ * plus bas). Exclut les messages déjà modérés (`isModerated: true`).
+ *
+ * **Filtre sur `type`, jamais sur `source`** (voir CLAUDE.md "FeedbackApp
+ * — notation structurée", changement de comportement important) : la
+ * visibilité publique dépend désormais de la NATURE de l'avis
+ * (`CONDITIONS_TRAVAIL`, toujours public), pas de qui l'a soumis
+ * (`FeedbackSource` reste orthogonal — un avis `CONDITIONS_TRAVAIL`
+ * soumis par un employé connecté, `source: INTERNAL`, est tout aussi
+ * public qu'un avis anonyme). Les avis `COLLABORATION` (critique d'un
+ * collaborateur nommé) ne sont **plus jamais** listés ici, quel que soit
+ * leur `source` — ils sont désormais strictement privés (destinataire +
+ * comptes `feedback.moderer`, voir `getUserFeedbacks`/`getAdminFeedbacks`).
  */
 export async function getPublicFeedbacks(): Promise<PublicFeedbackEntry[]> {
   const feedbacks = await prisma.feedback.findMany({
-    where: { source: "PUBLIC" as FeedbackSource, isModerated: false },
+    where: { type: "CONDITIONS_TRAVAIL" as FeedbackType, isModerated: false },
     select: { id: true, content: true, submittedAt: true },
     orderBy: { submittedAt: "desc" },
   });
@@ -147,8 +205,15 @@ export type FeedbackPeriodFilter = "semaine" | "mois" | "tout";
 
 /**
  * Critiques / retours reçus par un employé connecté (Tranche B).
- * Strictement filtré sur `recipientId = userId` et `isModerated = false`.
- * RÈGLE ABSOLUE : ne renvoie AUCUNE information d'auteur.
+ * Strictement filtré sur `recipientId = userId`, `type: COLLABORATION` et
+ * `isModerated = false`. RÈGLE ABSOLUE : ne renvoie AUCUNE information
+ * d'auteur.
+ *
+ * Le filtre `type: COLLABORATION` est explicite (voir CLAUDE.md "FeedbackApp
+ * — notation structurée") même si `recipientId: userId` exclurait déjà
+ * structurellement tout `CONDITIONS_TRAVAIL` (toujours `recipientId: null`
+ * pour ce type) : défense en profondeur, jamais une dépendance implicite
+ * à un autre invariant pour une garantie de confidentialité.
  */
 export async function getUserFeedbacks(
   userId: string,
@@ -174,6 +239,7 @@ export async function getUserFeedbacks(
   const feedbacks = await prisma.feedback.findMany({
     where: {
       recipientId: userId,
+      type: "COLLABORATION" as FeedbackType,
       isModerated: false,
       ...(dateFilter ? { submittedAt: dateFilter } : {}),
     },
@@ -194,6 +260,7 @@ export interface AdminFeedbackFilters {
   au?: string;
   statut?: "tous" | "actifs" | "moderes";
   source?: "tous" | "PUBLIC" | "INTERNAL";
+  type?: "tous" | "COLLABORATION" | "CONDITIONS_TRAVAIL";
   search?: string;
 }
 
@@ -202,17 +269,22 @@ export interface AdminFeedbackEntry {
   content: string;
   submittedAt: Date;
   source: FeedbackSource;
+  type: FeedbackType;
   isModerated: boolean;
   motifModeration: string | null;
   moderatedAt: Date | null;
   moderatedByNom: string | null;
-  /** Identifiant pseudonymisé / anonyme du destinataire, respectant le CDC */
-  recipientPseudo: string;
+  /** Identifiant pseudonymisé du destinataire, respectant le CDC — `null`
+   * pour `CONDITIONS_TRAVAIL` (jamais de destinataire pour ce type). */
+  recipientPseudo: string | null;
 }
 
 /**
- * Vue d'ensemble de tous les messages de la plateforme pour la modération RH/Direction (Tranche B).
- * Respecte le CDC : ne divulgue jamais l'identité nominative du destinataire dans la liste globale.
+ * Vue d'ensemble de TOUS les messages de la plateforme (les deux
+ * `type`, `COLLABORATION` et `CONDITIONS_TRAVAIL`, jamais filtré par
+ * défaut — voir CLAUDE.md "FeedbackApp — notation structurée") pour la
+ * modération RH/Direction/Admin (Tranche B). Respecte le CDC : ne divulgue
+ * jamais l'identité nominative du destinataire dans la liste globale.
  */
 export async function getAdminFeedbacks(filters: AdminFeedbackFilters = {}): Promise<AdminFeedbackEntry[]> {
   const whereClause: Prisma.FeedbackWhereInput = {};
@@ -237,6 +309,10 @@ export async function getAdminFeedbacks(filters: AdminFeedbackFilters = {}): Pro
     whereClause.source = filters.source as FeedbackSource;
   }
 
+  if (filters.type && filters.type !== "tous") {
+    whereClause.type = filters.type as FeedbackType;
+  }
+
   if (filters.search && filters.search.trim()) {
     whereClause.content = {
       contains: filters.search.trim(),
@@ -253,18 +329,23 @@ export async function getAdminFeedbacks(filters: AdminFeedbackFilters = {}): Pro
   });
 
   return feedbacks.map((f) => {
-    // Pseudonymisation déterministe basée sur l'id du destinataire (ex: "Collaborateur #A1B2")
-    const shortHash = f.recipientId.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase();
+    // Pseudonymisation déterministe basée sur l'id du destinataire (ex:
+    // "Collaborateur #A1B2") — `null` pour `CONDITIONS_TRAVAIL`, qui n'a
+    // structurellement aucun `recipientId` (voir schema.prisma).
+    const recipientPseudo = f.recipientId
+      ? `Collaborateur #${f.recipientId.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase() || "ANON"}`
+      : null;
     return {
       id: f.id,
       content: f.content,
       submittedAt: f.submittedAt,
       source: f.source,
+      type: f.type,
       isModerated: f.isModerated,
       motifModeration: f.motifModeration,
       moderatedAt: f.moderatedAt,
       moderatedByNom: f.moderatedBy?.fullName ?? null,
-      recipientPseudo: `Collaborateur #${shortHash || "ANON"}`,
+      recipientPseudo,
     };
   });
 }
