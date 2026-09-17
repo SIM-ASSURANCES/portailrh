@@ -1361,16 +1361,23 @@ mot banni → tous rejetés avec un message précis).
 Nouvelle permission dédiée, **jamais héritée automatiquement du bypass
 `estAdmin`** (même principe que toutes les permissions `treso.*`/
 `pointage.*`) — attribuée dans le seed aux rôles **RH et DG** (décision
-confirmée : la Direction modère aussi, au même titre que RH). Vérifiée en
-base après ajout : la permission est bien assignée aux deux rôles, à
+confirmée : la Direction modère aussi, au même titre que RH), **jamais à
+Admin**. Vérifiée en base : la permission est assignée aux deux rôles, à
 aucun autre. Vérifiée aussi **en pratique** via une vraie connexion (compte
 DG réel, JWT réel, `getSession()` réel avec sa jointure Prisma
 rôle→permissions) : `session.permissions` contient bien `feedback.moderer`
 pour ce compte — c'est exactement le tableau que `hasPermission()`
-consultera dès qu'un écran de modération existera (aucun écran construit
-à ce stade, Tranche A seulement). Aucune autre logique du projet ne
-suppose que seul RH la possède : seul `seed.ts` référence cette clé, aucun
-composant/action ne compare `role.name === "RH"` en dur pour ce module.
+consulte partout où l'écran de modération le vérifie (voir "Module
+FeedbackApp — Tranche B" plus bas). Aucune autre logique du projet ne
+suppose que seul RH la possède : seul `seed.ts` référence cette clé en
+dur, aucun composant/action ne compare `role.name === "RH"` pour ce module.
+
+**Régression trouvée puis corrigée (voir "Module FeedbackApp — Tranche B —
+régression `ensureFeedbackPermissions()`" plus bas)** : un mécanisme
+runtime ajouté en Tranche B réattribuait automatiquement cette permission
+à RH/DG **et Admin** à chaque redémarrage de process, écrasant toute
+révocation Admin — corrigé, `Admin` n'y a plus jamais accès sauf choix
+manuel explicite d'un Admin via `/admin/roles`.
 
 ### Décisions confirmées
 
@@ -1444,6 +1451,131 @@ répond 200. `nodemailer`/`@types/nodemailer` (ajoutés par Thierry dans
 resolu depuis le cache local sans accès réseau ; sans rapport avec
 `auth.config.ts`/`proxy.ts`, mais nécessaire pour tester réellement ce
 flux.
+
+### Module FeedbackApp — Tranche B (fusion Thierry : Admin + User)
+
+La Tranche B (espace Collaborateur "Mes critiques reçues", espace de
+modération RH/DG, export CSV) a été fusionnée sans conflit Git, mais a
+touché plusieurs zones sensibles d'un coup (`auth.ts`, `permissions.ts`,
+les trois toggles de `/admin/roles`). Diagnostic complet fait avant toute
+correction, puis une régression corrigée — détail ci-dessous.
+
+**Code mort trouvé et nettoyé** — deux dossiers distincts existaient pour
+l'admin FeedbackApp : `frontend/src/app/(dashboard)/admin/feedbacks/` et
+`frontend/src/app/(dashboard)/feedback/admin/`. Le second est le vrai
+(référencé par `nav.ts`, implémentation complète, gardé côté serveur dans
+son `layout.tsx` ET son `page.tsx`, indépendamment l'un de l'autre — même
+convention que partout ailleurs : jamais un layout comme seule garde). Le
+premier était un mélange : son `page.tsx` est une **redirection
+fonctionnelle** vers `/feedback/admin` (préserve les query params — gardée
+telle quelle, probable compatibilité descendante pour d'anciens liens,
+pas du code mort) ; ses 4 autres fichiers (`AdminFeedbackTable.tsx`,
+`FeedbackFilters.tsx`, `ModererFeedbackDialog.tsx`, `actions.ts` — ce
+dernier exportait littéralement une fonction nommée `unused()`) étaient
+sans ambiguïté du code mort, jamais importés nulle part : supprimés.
+Point mineur signalé, non corrigé (hors périmètre) : `MES_FEEDBACKS_ITEM`/
+`MODERATION_FEEDBACK_ITEM` (`nav.ts`) sont des exports jamais utilisés,
+dupliquant sans risque les items inline de la branche `feedback` réelle.
+
+**Séparation `client-safe.ts`/`feedback-constants.ts` : aucune régression**
+— vérifié qu'un vrai `next build` passe intégralement (65 routes, aucune
+erreur "Module not found"), et que `feedback-constants.ts` n'a toujours
+aucun import Prisma. Les ajouts de Thierry (`getUserFeedbacks`,
+`getAdminFeedbacks`, `getFeedbackStats`, `modererFeedback`) vivent tous
+dans `feedback.ts` (le fichier Prisma-dépendant), jamais réexportés côté
+client.
+
+**Permissions `treso.valider_demande`/`treso.effectuer_reglement`/plafond
+de délégation : aucune régression**, vérifié en pratique (pas seulement
+par lecture de code, `hasPermission()`/`accorderDelegationAction` n'ont
+d'ailleurs pas été touchés par cette fusion) : RH refusé sur
+`/treso/finance`, DG et Finance admis (guard OR de
+`treso/finance/layout.tsx` intacte) ; Finance délègue
+`treso.effectuer_reglement` à un Collaborateur → apparaît dans
+`session.permissions` du bénéficiaire mais jamais dans
+`session.rolePermissions` → tentative de re-délégation en cascade par ce
+même Collaborateur refusée avec le message attendu
+(`verifierEligibiliteDonneur`, `delegations/actions.ts`, inchangé).
+
+**Anonymat sur les nouveaux écrans Tranche B : confirmé, aucune fuite** —
+`getUserFeedbacks(userId)` filtre strictement `recipientId: userId`,
+vérifié avec deux comptes de test réels (Collaborateur/RH) : isolation
+croisée parfaite, zéro contamination. `/feedback/admin` et
+`/api/feedback/export` : gardés **côté serveur** (307/403/401 testés par
+requête réseau directe avec un compte sans `feedback.moderer`, et sans
+session du tout), jamais un masquage UI seul. `getAdminFeedbacks`
+pseudonymise le **destinataire** (`recipientPseudo`, dérivé de
+`recipientId` — ex: "Collaborateur #4CHY") sur la liste globale de
+modération, conformément au CDC de Thierry ; ceci concerne l'anonymat du
+DESTINATAIRE dans cet écran-là (un choix distinct de la règle absolue sur
+l'AUTEUR) — le champ structuré ne contient jamais le vrai nom, vérifié
+sur la charge utile RSC brute.
+
+### Régression `ensureFeedbackPermissions()` — réattribution automatique à chaque process
+
+**Trouvée** : `ensureFeedbackPermissions()` (`backend/src/feedback.ts`,
+ajoutée en Tranche B) faisait un `upsert` avec `update: {}` sur
+`RolePermission` pour RH, DG **et Admin**, appelée SANS CONDITION à
+l'intérieur de `getSession()` — donc à chaque page/Server Action
+authentifiée, y compris au tout premier appel suivant chaque redémarrage
+de process serveur (le singleton en mémoire `feedbackPermissionsSyncPromise`
+ne protégeait que des appels répétés PENDANT la vie d'un même process, pas
+entre deux démarrages). Conséquence directe, **constatée empiriquement** :
+un Admin qui révoque `feedback.moderer` d'un rôle via `/admin/roles` voit
+ce choix silencieusement annulé dès le redémarrage/redéploiement suivant,
+par la simple connexion d'un utilisateur quelconque sans aucun rapport —
+et "Admin" n'a jamais été autorisé à recevoir cette permission
+automatiquement (seuls RH/DG l'ont été, décision explicite antérieure).
+Un second point d'appel identique existait aussi dans
+`admin/roles/page.tsx` (même fonction, même singleton partagé).
+
+**Corrigé** — séparation stricte entre "garantir que la permission existe"
+(sûr, automatique, jamais destructeur) et "décider qui la possède" (doit
+rester un choix fait une seule fois, puis librement modifiable) :
+
+- **`ensureFeedbackModuleAndPermission()`** (renommée, `feedback.ts`) —
+  ne fait plus qu'`upsert` le Module `feedback` et la Permission
+  `feedback.moderer` eux-mêmes, **plus aucun `RolePermission` créé ou
+  modifié ici**. Reste sûre à appeler à chaque process (utile en dev après
+  un `git pull` sans reseed) : n'écrase jamais un choix Admin, puisqu'elle
+  ne touche plus jamais l'attribution. Appelée depuis `getSession()`
+  (`frontend/src/lib/auth.ts`) et `admin/roles/page.tsx`, les deux mêmes
+  points qu'avant.
+- **Attribution initiale à RH/DG : migration de rattrapage ponctuelle**
+  (`20260918000000_feedback_moderer_role_permission_rattrapage`), même
+  esprit que les rattrapages `estAdmin`/`peutEtreBeneficiaireDelegation`/
+  `peutRecevoirFeedback` déjà documentés — s'exécute UNE SEULE FOIS pour
+  la durée de vie d'une base (garanti par `_prisma_migrations`, jamais
+  rejouée à un redémarrage suivant), donc n'écrase jamais une décision
+  Admin ultérieure. Idempotente de bout en bout
+  (`ON CONFLICT DO NOTHING`) : crée le Module/la Permission s'ils
+  n'existent pas encore, attribue `feedback.moderer` à RH et DG s'ils ne
+  l'ont pas déjà, et **retire explicitement cette permission du rôle
+  "Admin"** si l'ancien mécanisme l'y avait déjà silencieusement placée
+  sur cette base (jamais un choix Admin délibéré — case jamais cochée à la
+  main pour son propre rôle, uniquement l'effet du bug) ; sans effet sur
+  une base neuve, où `seed.ts` fait déjà tout correctement seul (RH+DG,
+  jamais Admin).
+
+**Vérifications, redémarrage de process réel (pas seulement rechargement
+de page)** :
+- Admin révoque `feedback.moderer` de RH via `/admin/roles` (vraie
+  requête réseau, protocole Server Action réel) → **reste révoqué après 3
+  redémarrages complets du serveur successifs**, chacun suivi d'une
+  connexion réelle d'un compte sans rapport (Finance) qui déclenche
+  `getSession()`, et d'un chargement de `/admin/roles` (l'autre point
+  d'appel) — confirmé en base à chaque fois : RH absent de la liste des
+  rôles attribués tant que non re-coché manuellement.
+- **Admin n'a jamais `feedback.moderer` après ces 3 redémarrages** —
+  confirmé, aucune réapparition automatique.
+- **Environnement neuf** : base de test jetable créée localement,
+  `prisma migrate deploy` (36 migrations, y compris la nouvelle) puis
+  `seed.ts` exécutés from scratch, sans aucune intervention manuelle →
+  RH et DG ont `feedback.moderer`, Admin non — vérifié directement en
+  base sur cette base jetable, puis supprimée.
+- État final de la base de dev partagée : RH et DG ont `feedback.moderer`
+  (restauré à l'identique de l'état voulu après les tests de révocation),
+  Admin ne l'a plus.
 
 ### Piège rencontré — `client-safe.ts` et un re-export nommé
 

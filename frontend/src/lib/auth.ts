@@ -2,7 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 
-import { prisma, hasPermission, isAdmin, getAccessibleModules, ensureFeedbackPermissions } from "backend";
+import { prisma, hasPermission, isAdmin, getAccessibleModules, ensureFeedbackModuleAndPermission } from "backend";
 import { cache } from "react";
 
 import { authConfig } from "./auth.config";
@@ -182,8 +182,11 @@ export const getSession = cache(async (): Promise<{
   // authentifiée (mémoïsée par requête via `cache()`, mais recalculée à
   // chaque nouvelle requête), ce changement réduit la latence de base de
   // strictement TOUT bouton du portail, sans changer le résultat.
-  // Synchronisation automatique et idempotente des permissions FeedbackApp
-  await ensureFeedbackPermissions();
+  // Garantit uniquement l'EXISTENCE du Module/Permission FeedbackApp — ne
+  // touche jamais qui la possède (voir CLAUDE.md "FeedbackApp" pour la
+  // régression corrigée : une version antérieure réattribuait aussi les
+  // RolePermission ici, écrasant silencieusement toute révocation Admin).
+  await ensureFeedbackModuleAndPermission();
 
   const [role, user, delegations] = await Promise.all([
     prisma.role.findUnique({

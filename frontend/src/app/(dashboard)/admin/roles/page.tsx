@@ -1,5 +1,5 @@
 import { Badge, PageHeader } from "@/components/ui";
-import { prisma, ensureFeedbackPermissions } from "backend";
+import { prisma, ensureFeedbackModuleAndPermission } from "backend";
 
 import { PermissionToggle } from "./PermissionToggle";
 import { PeutEtreBeneficiaireToggle } from "./PeutEtreBeneficiaireToggle";
@@ -7,7 +7,11 @@ import { PeutRecevoirFeedbackToggle } from "./PeutRecevoirFeedbackToggle";
 import { RoleCreateForm } from "./RoleCreateForm";
 
 export default async function AdminRolesPage() {
-  await ensureFeedbackPermissions();
+  // Garantit uniquement l'EXISTENCE du Module/Permission FeedbackApp (pour
+  // que `feedbackModererPermission` ci-dessous ne soit jamais `undefined`
+  // sur un environnement neuf) — ne touche jamais qui possède la
+  // permission, voir CLAUDE.md "FeedbackApp" pour la régression corrigée.
+  await ensureFeedbackModuleAndPermission();
   const [roles, modules] = await Promise.all([
     prisma.role.findMany({
       include: { permissions: { select: { permissionId: true } } },

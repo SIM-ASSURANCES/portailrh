@@ -23,27 +23,44 @@ import type { FeedbackSource, Prisma } from "./generated/prisma/client";
  */
 export * from "./feedback-constants";
 
-let feedbackPermissionsSyncPromise: Promise<void> | null = null;
+let feedbackModulePermissionSyncPromise: Promise<void> | null = null;
 
 /**
- * Synchronisation idempotente automatique des permissions FeedbackApp.
- * Garantit que le Module `feedback`, la Permission `feedback.moderer`
- * et leur attribution aux rôles RH, DG (et Admin) existent en base
- * même si `seed.ts` n'a pas été rejoué après le git pull.
+ * Garantit que le Module `feedback` et la Permission `feedback.moderer`
+ * EXISTENT en base, même sur un environnement où `seed.ts` n'a jamais été
+ * rejoué depuis l'ajout de FeedbackApp (utile en dev après un git pull).
+ * Idempotent, sûr à appeler à chaque process serveur : ne fait
+ * qu'`upsert` le Module et la Permission eux-mêmes.
+ *
+ * **NE TOUCHE JAMAIS À QUI POSSÈDE cette permission** — aucun
+ * `RolePermission` n'est créé ni modifié ici, volontairement. Régression
+ * corrigée (voir CLAUDE.md "FeedbackApp") : une version antérieure de
+ * cette fonction (alors nommée `ensureFeedbackPermissions`) réattribuait
+ * AUSSI `feedback.moderer` à RH/DG **et Admin** à chaque appel — donc à
+ * chaque redémarrage de process serveur, puisqu'appelée sans condition
+ * dans `getSession()` — écrasant silencieusement toute révocation faite
+ * par un Admin via `/admin/roles`. "Admin" n'a d'ailleurs jamais été
+ * autorisé à recevoir cette permission automatiquement (seuls RH et DG
+ * l'ont été, décision explicite). L'attribution initiale à RH/DG est
+ * désormais un choix fait UNE SEULE FOIS, via `seed.ts` (base neuve) ou
+ * la migration de rattrapage dédiée
+ * (`20260918000000_feedback_moderer_role_permission_rattrapage`, base déjà
+ * seedée avant l'existence de FeedbackApp) — jamais recalculée au
+ * runtime, donc librement modifiable ensuite par un Admin sans jamais
+ * être réinitialisée, même principe que `peutEtreBeneficiaireDelegation`/
+ * `peutRecevoirFeedback`.
  */
-export async function ensureFeedbackPermissions(): Promise<void> {
-  if (!feedbackPermissionsSyncPromise) {
-    feedbackPermissionsSyncPromise = (async () => {
+export async function ensureFeedbackModuleAndPermission(): Promise<void> {
+  if (!feedbackModulePermissionSyncPromise) {
+    feedbackModulePermissionSyncPromise = (async () => {
       try {
-        // 1. Module Feedback
         const moduleFeedback = await prisma.module.upsert({
           where: { key: "feedback" },
           update: { label: "FeedbackApp", isActive: true },
           create: { key: "feedback", label: "FeedbackApp", isActive: true },
         });
 
-        // 2. Permission feedback.moderer
-        const perm = await prisma.permission.upsert({
+        await prisma.permission.upsert({
           where: { key: "feedback.moderer" },
           update: { label: "Modérer les messages FeedbackApp", moduleId: moduleFeedback.id },
           create: {
@@ -52,33 +69,12 @@ export async function ensureFeedbackPermissions(): Promise<void> {
             moduleId: moduleFeedback.id,
           },
         });
-
-        // 3. Attribution automatique aux rôles RH, DG et Admin
-        const roles = await prisma.role.findMany({
-          where: { name: { in: ["RH", "DG", "Admin"] } },
-        });
-
-        for (const role of roles) {
-          await prisma.rolePermission.upsert({
-            where: {
-              roleId_permissionId: {
-                roleId: role.id,
-                permissionId: perm.id,
-              },
-            },
-            update: {},
-            create: {
-              roleId: role.id,
-              permissionId: perm.id,
-            },
-          });
-        }
       } catch (err) {
-        console.error("[FeedbackApp] Erreur synchronisation permissions:", err);
+        console.error("[FeedbackApp] Erreur synchronisation module/permission:", err);
       }
     })();
   }
-  return feedbackPermissionsSyncPromise;
+  return feedbackModulePermissionSyncPromise;
 }
 
 export interface FeedbackRecipientOption {
