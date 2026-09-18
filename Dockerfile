@@ -146,6 +146,25 @@ COPY --from=builder --chown=nextjs:nodejs /app/frontend/public ./frontend/public
 # absents du traçage automatique de Next.js.
 COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 
+# `nodemailer` (envoi d'email — réinitialisation de mot de passe) : la
+# résolution npm de ce monorepo l'installe imbriqué sous
+# `frontend/node_modules/nodemailer` (conflit de version avec le pair
+# OPTIONNEL de next-auth, `nodemailer: "^7 || ^8"`, contre `^6.9.16`
+# demandé par frontend/package.json — jamais hoisté à la racine).
+# La ligne juste au-dessus ne copie QUE `/app/node_modules` (racine) du
+# stage prod-deps : ce paquet imbriqué en était donc absent, aucune erreur
+# au build (le code appelant, frontend/src/lib/email/transporter.ts, fait
+# un `await import("nodemailer").catch(() => null)` et retombe en mode
+# "email simulé" si absent) — mais aucun email SMTP réel n'aurait jamais
+# pu être envoyé en production, même avec SMTP_HOST/USER/PASS correctement
+# renseignés. Copié ici À LA RACINE (`./node_modules/nodemailer`, pas
+# `./frontend/node_modules/nodemailer`) : la résolution de modules Node
+# remonte les dossiers ANCÊTRES de chaque fichier, jamais `process.cwd()`
+# — `/app/node_modules` est un ancêtre de tout fichier sous
+# `/app/frontend/...`, donc résolu correctement quel que soit le point
+# d'appel. Vérifié explicitement (voir CLAUDE.md, section email).
+COPY --from=prod-deps --chown=nextjs:nodejs /app/frontend/node_modules/nodemailer ./node_modules/nodemailer
+
 # Fichiers nécessaires aux migrations et au seed manuel — pas du code
 # serveur Next.js, donc pas copiés par le build standalone. Placés sous
 # `./backend/` (chemin réel du package), `docker-entrypoint.sh` s'y déplace

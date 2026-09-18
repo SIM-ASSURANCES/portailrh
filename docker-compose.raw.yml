@@ -1,6 +1,6 @@
 # ============================================================
 # sim-portail — Dokploy mode "Raw" (compose collé, sans dépôt Git)
-# Image pré-construite : ghcr.io/sim-assurances/portailrh:v5
+# Image pré-construite : ghcr.io/sim-assurances/portailrh:v7
 # ------------------------------------------------------------
 # Onglet Environment de Dokploy — SEULE variable à renseigner :
 #   AUTH_SECRET        (openssl rand -base64 32)
@@ -57,7 +57,7 @@ services:
   # il ne s'execute qu'une seule fois, au tout premier deploiement.
   # `set-admin.ts` est idempotent : rejoue a chaque deploiement sans risque.
   init:
-    image: ghcr.io/sim-assurances/portailrh:v5
+    image: ghcr.io/sim-assurances/portailrh:v7
     pull_policy: always
     restart: "no"
     depends_on:
@@ -94,7 +94,7 @@ services:
 
   # ---------- Application ----------
   app:
-    image: ghcr.io/sim-assurances/portailrh:v5
+    image: ghcr.io/sim-assurances/portailrh:v7
     pull_policy: always
     restart: unless-stopped
     depends_on:
@@ -111,6 +111,15 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
       ALLOWED_OFFICE_IPS: "41.66.41.16"
       SYSTEM_START_DATE: "2026-09-01"
+      # SMTP facultatif (reinitialisation de mot de passe par email) : sans
+      # ces 4 variables, l'email est "simule" (log + notification interne,
+      # lien affiche/cliquable dans /admin), jamais d'erreur bloquante. A
+      # decommenter et renseigner pour un envoi SMTP reel.
+      # SMTP_HOST: smtp.example.com
+      # SMTP_PORT: "587"
+      # SMTP_USER: portail@sim-assurances.ci
+      # SMTP_PASS: ${SMTP_PASS:-}
+      # SMTP_SECURE: "false"
     volumes:
       - uploads:/app/uploads
     networks:
