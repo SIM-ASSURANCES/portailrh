@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { Badge, Button, DataTable } from "@/components/ui";
+import { Icon } from "@/components/icons";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import type { StatutDemande } from "backend";
 
@@ -17,24 +18,40 @@ interface MaDemandeDetailRow {
   createdAt: Date;
 }
 
+/** Icônes ajoutées à la présentation existante uniquement (voir CLAUDE.md
+ * "Modernisation du dashboard Collaborateur") — contenu et seuils
+ * strictement inchangés, `DataTable` porte déjà le survol de ligne et
+ * `Badge`/`STATUT_DEMANDE_BADGE_VARIANT` la coloration de statut. */
 function EtatRegularisation({ montantRecu, soldeARegulariser }: { montantRecu: number; soldeARegulariser: number }) {
   if (montantRecu === 0) {
-    return <span className="text-xs text-muted-foreground">Rien reçu pour l&apos;instant</span>;
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Icon name="clock" className="size-3.5" />
+        Rien reçu pour l&apos;instant
+      </span>
+    );
   }
   if (soldeARegulariser === 0) {
-    return <span className="text-xs font-semibold text-success">Régularisée</span>;
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-success">
+        <Icon name="circle-check" className="size-3.5" />
+        Régularisée
+      </span>
+    );
   }
   if (soldeARegulariser < 0) {
     // Signale une anomalie réelle (voir CLAUDE.md `getSoldeARegulariser` /
     // `getEcart`, jamais plafonné à 0) : plus justifié/retourné que reçu.
     return (
-      <span className="text-xs font-semibold text-danger">
+      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-danger">
+        <Icon name="alert-triangle" className="size-3.5 shrink-0" />
         Anomalie : {Math.abs(soldeARegulariser).toLocaleString("fr-FR")} FCFA en trop justifiés/retournés
       </span>
     );
   }
   return (
-    <span className="text-xs font-semibold text-warning">
+    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-warning">
+      <Icon name="rotate-ccw" className="size-3.5 shrink-0" />
       À régulariser : {soldeARegulariser.toLocaleString("fr-FR")} FCFA
     </span>
   );

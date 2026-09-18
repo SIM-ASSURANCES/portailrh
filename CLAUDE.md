@@ -1139,6 +1139,291 @@ globaux — avec son statut, son montant reçu (fonds remis) et son propre
   exactement 0 ; "À régulariser : X FCFA" (teinte `warning`) si positif ;
   "Anomalie : X FCFA en trop justifiés/retournés" (teinte `danger`) si
   négatif — jamais plafonné à 0, même principe que `getSoldeARegulariser`.
+  Icônes ajoutées à cette présentation (voir "Modernisation du dashboard
+  Collaborateur" ci-dessous) sans toucher au contenu ni aux seuils.
+
+### Modernisation du dashboard Collaborateur
+
+Refonte visuelle de `treso/tableau-de-bord/page.tsx`, même esprit que la
+refonte du dashboard Finance (cartes à badge d'icône, graphiques réels
+tirés des vraies données) mais avec sa propre identité, jamais un
+copier-coller. Skill `frontend-design` (`/mnt/skills/public/frontend-design/
+SKILL.md`) demandée en préalable : **chemin inexistant sur cet
+environnement** (même constat déjà fait pour la refonte de FeedbackApp) —
+appliqué à la place les patterns déjà établis (`FinanceActionCard.tsx`,
+`SoldeCaisseTrendChart.tsx`, `ReglementsModeDonut.tsx`).
+
+- **`CollaborateurStatCard.tsx`** (nouveau, colocalisé avec la page) —
+  remplace `StatCard` pour les 5 cartes "Vue d'ensemble" UNIQUEMENT.
+  **`StatCard` (partagé avec DG/Admin/Finance) n'est pas modifié** —
+  confirmé par un diff vide sur ce fichier, et par un grep confirmant que
+  `CollaborateurStatCard`/`CollaborateurDemandesBarChart`/
+  `TauxRegularisationGauge` ne sont importés nulle part ailleurs que par
+  cette seule page. Identité distincte de `FinanceActionCard` (qui l'a
+  inspiré) : badge CIRCULAIRE en haut-DROITE (`FinanceActionCard` : badge
+  carré en haut-gauche), libellé au-dessus du badge plutôt qu'en dessous,
+  pictogramme fantôme surdimensionné en bas-droite (très faible opacité,
+  flourish propre à cette carte). Survol : élévation + léger fond teinté
+  par `tone` (`.card-shadow-hover`, même classe déjà nécessaire ailleurs
+  car `hover:shadow-elevated-lg` ne compile pas dans ce projet — voir
+  "Refonte visuelle du dashboard Finance").
+- **`getMesDemandesParMois(userId, nombreDeMois = 6)`** (nouvelle fonction,
+  `backend/src/tresorerie.ts`) — montant DEMANDÉ (`Demande.montant`, pas
+  `montantValide`) par mois calendaire, fenêtre de 6 mois glissants
+  (volume mensuel d'un seul Collaborateur toujours modeste — une fenêtre
+  de 12 mois multiplierait surtout les mois à 0). Renvoie TOUS les mois de
+  la fenêtre, y compris à 0 — c'est `CollaborateurDemandesBarChart.tsx`
+  qui décide, lui, si la fenêtre entière est vide.
+- **`CollaborateurDemandesBarChart.tsx`** — barres SVG tracées à la main
+  (même choix que `SoldeCaisseTrendChart.tsx` : volume toujours modeste),
+  montant affiché au-dessus de chaque barre (jamais de `<title>` SVG —
+  piège React 19 déjà documenté : hissé vers `<head>`, casse
+  l'hydratation). **Deux états vides distincts** : aucune demande n'a
+  JAMAIS existé (`aDejaDesDemandes: false`, message identique à celui de
+  `MesDemandesDetailTable` pour rester cohérent) vs. aucune demande sur la
+  fenêtre récente alors que l'historique existe (message différent,
+  jamais confondu).
+- **Taux de régularisation** (`TauxRegularisationGauge.tsx`) — anneau SVG
+  (même technique que `ReglementsModeDonut.tsx`, un seul arc). **Ne
+  recalcule strictement rien** : `demandesReglees`/`demandesRegularisees`
+  sont dérivés dans `page.tsx` du même tableau déjà renvoyé par
+  `getMesDemandesDetail` (`montantRecu > 0` / `soldeARegulariser === 0` —
+  exactement les mêmes seuils que `EtatRegularisation`), zéro requête
+  supplémentaire. Teinte selon le taux (danger &lt;40%, warning 40-79%,
+  success ≥80%) — tokens sémantiques déjà existants, aucune nouvelle
+  échelle de couleur inventée pour ce seul indicateur.
+
+**Vérifications, recoupement DB direct** :
+- **"Demandé" recoupé** : 2 demandes réelles pré-existantes (37 000 FCFA)
+  + 2 demandes de test créées via les vraies Server Actions (8 000 FCFA ce
+  mois-ci, 15 000 FCFA le mois précédent — `createdAt` corrigé
+  directement en base pour ce seul champ, aucune autre donnée simulée) →
+  dashboard affiche bien "60 000 FCFA", confirmé par une requête directe
+  en base sur les 4 lignes.
+- **Taux de régularisation recoupé et testé en transition réelle** : cycle
+  complet via les vraies Server Actions (création → validation totale →
+  règlement Caisse créé puis confirmé → jauge à 67% = 2/3, teinte
+  `warning`, valeur recoupée par un calcul direct
+  `getTotalRegle`/`getDepensesDeclarees`/`getRetoursRecus` en base) →
+  retour de caisse déclaré (formulaire simplifié, tout retourné) puis
+  réceptionné par Finance → jauge repasse à 100% = 3/3, teinte `success` —
+  la transition demandée par la tâche a été observée pour de vrai, pas
+  seulement en théorie.
+- **Graphique testé avec 2 demandes à des mois différents** : la barre du
+  mois précédent (15 000 FCFA) et celle du mois courant (8 000 + 12 000 +
+  25 000 déjà existants) apparaissent distinctement, total affiché "60 000
+  FCFA" cohérent avec la somme des deux mois.
+- **Nettoyage** : les deux demandes de test, leur règlement et leur retour
+  de caisse supprimés après vérification (ordre de dépendance respecté :
+  `LigneDemande` → `RetourCaisse`/`Reglement` → `Demande`). **Les écritures
+  `JournalCaisse` créées par ce test n'ont volontairement PAS été
+  supprimées** — `JournalCaisse` n'a aucune vraie relation Prisma vers
+  `Demande` (`refId` est un simple `String`, jamais une clé étrangère), et
+  CLAUDE.md documente déjà cette table comme un grand livre append-only
+  ("jamais réécrit ni supprimé") : l'entrée SORTIE (règlement) et l'entrée
+  ENTRÉE (retour) s'annulent exactement (impact net nul sur le solde de
+  caisse réel), cohérent avec ce principe plutôt qu'une exception ad hoc
+  pour des données de test. Dashboard revérifié après nettoyage : revenu
+  exactement à l'état d'origine (37 000 FCFA, 2/2 régularisées, 100%).
+- **Aucune régression** : `StatCard.tsx` diff vide (jamais modifié) ;
+  dashboards Finance, DG (général), Admin et le dashboard général en tant
+  que Collaborateur tous testés après la refonte, chargent normalement.
+- **Rendu mobile** : vérifié par relecture de code (grilles
+  `grid-cols-1 sm:...`/`lg:grid-cols-2` qui empilent sous leurs seuils,
+  jauge en `flex-wrap` pour éviter tout débordement horizontal, graphique
+  en barres en SVG `viewBox` + `w-full` qui se redimensionne
+  proportionnellement) — pas de capture d'écran ni de test visuel réel
+  possible dans cet environnement.
+
+### Diagnostic d'une régression visuelle perçue sur la page racine — aucune cause de code trouvée
+
+Signalement : les cartes "Vos accès" de la page racine sembleraient
+réduites depuis la refonte FeedbackApp et celle du dashboard Collaborateur.
+Diagnostic exhaustif fait AVANT toute correction :
+
+- **`globals.css`** entre le commit précédant la refonte FeedbackApp et
+  l'état courant : 127 lignes strictement AJOUTÉES, zéro ligne modifiée ou
+  supprimée — toutes sous des noms de classe spécifiques
+  (`.feedback-hero-bg` à l'époque, `.animate-select-pop`,
+  `.animate-step-in`, `.animate-confirm-ring`), aucune classe générique ni
+  token `@theme` partagé (couleurs, espacement, `ease-out-strong`,
+  `.shadow-elevated`) touché.
+- **`(dashboard)/page.tsx`** (page racine) : diff vide depuis un commit
+  largement antérieur à toutes les tâches de cette session — ni les tâches
+  FeedbackApp, ni celle du dashboard Collaborateur ne l'ont touché.
+- **Composants partagés vérifiés un par un** (diff vide sur tous) :
+  `StatCard.tsx`, `FinanceActionCard.tsx`, le layout du groupe
+  `(dashboard)`, `AppShell.tsx`, `Sidebar.tsx`, `Topbar.tsx`, `Badge.tsx`,
+  `PageHeader.tsx`, `EmptyState.tsx`. Seul `icons.tsx` a été touché, de
+  façon strictement additive (une icône `star` ajoutée, aucune icône
+  existante modifiée).
+- **Vérifié en direct** : cache Turbopack vidé, serveur redémarré à froid,
+  page racine chargée pour de vrai — le HTML rendu contenait exactement
+  les classes attendues du code source, sans substitution ni artefact de
+  cache.
+
+**Conclusion (avant la tâche suivante, qui a depuis intentionnellement
+changé le style de ces cartes — voir "Cartes de modules de la page
+racine" ci-dessous)** : aucune preuve de code n'expliquait la différence
+perçue à ce stade — signalé tel quel plutôt que de forcer une correction
+sans cause identifiée.
+
+### Cartes de modules de la page racine — fond bleu plein + logo (décision produit)
+
+Suite au diagnostic ci-dessus (aucune régression de code trouvée), demande
+produit explicite de changer délibérément le style des cartes "Vos accès"
+(`(dashboard)/page.tsx`) : fond blanc + badge d'icône coloré par module →
+fond bleu SIM Assurances plein + logo de l'entreprise, identique sur
+toutes les cartes.
+
+- **`.brand-gradient-bg`** (`globals.css`) — l'ancienne classe
+  `.feedback-hero-bg` (bandeau hero de FeedbackApp) a été RENOMMÉE et
+  généralisée plutôt que dupliquée : même dégradé (`#004B9C` → survol
+  radial `#51AEE2`, voir plus haut "FeedbackApp — refonte visuelle"),
+  réutilisé tel quel ici plutôt que d'inventer une nouvelle valeur de
+  couleur — cohérent avec la demande explicite de réutiliser l'existant.
+  Le hero de FeedbackApp utilise maintenant cette même classe renommée,
+  sans changement visuel pour lui.
+- **Logo** : ~~affiché dans une pastille `bg-white/15`~~ — traitement
+  **remplacé** par un filigrane, voir "Cartes de modules de la page
+  racine — filigrane logo (ajustement)" ci-dessous. À l'origine (cette
+  tâche) remplaçait l'ancien badge d'icône par module (`MODULE_ICON`,
+  entièrement retiré — devenu mort) par le logo, identique sur les 4
+  cartes (FeedbackApp, Gestion des demandes et trésorerie, Pointage RH,
+  Administration) — plus aucune icône différente par module ; ce
+  principe (un seul logo, pas d'icône par module) reste vrai après
+  l'ajustement, seul le TRAITEMENT du logo a changé.
+- **Texte** : titre en `text-white` (gras, comme avant), description/lien
+  "Accéder au module" en `text-white/80` s'éclaircissant en `text-white`
+  au survol (`group-hover`) — hiérarchie titre/description préservée,
+  juste la couleur de base adaptée au fond sombre.
+- **État désactivé** ("Bientôt disponible"/"Aucun accès", cartes sans
+  `href`) : reçoit lui aussi le fond bleu (plus de fond blanc pour ce
+  state), à `opacity-60` (contre `0.75` avant — légèrement plus estompé
+  pour rester distinct des cartes actives, qui sont maintenant, elles
+  aussi, en bleu). Le badge n'utilise plus le composant partagé `Badge`
+  (ses variantes `bg-*-bg`/`text-*` sont calibrées pour un fond clair,
+  risque réel de mauvais contraste ou de bataille de spécificité Tailwind
+  en tentant de le surcharger) : un `<span>` dédié à cette carte
+  (`border-white/40 bg-white/15 text-white`), plus sûr qu'une tentative de
+  surcharge du composant partagé.
+- **Survol** : `.card-shadow-hover` (déjà la seule technique qui fonctionne
+  réellement dans ce projet — voir "Refonte visuelle du dashboard
+  Finance", `hover:shadow-elevated-lg` ne compile pas) + `hover:brightness-110`
+  (filtre CSS réel, remplace l'ancien `scale-110` du badge d'icône,
+  disparu avec le badge lui-même) + translation verticale déjà existante
+  inchangée.
+- L'ancienne barre d'accent de tête (`bg-primary` sur un fond déjà bleu
+  aurait été invisible) a été retirée — le fond plein est maintenant lui
+  même le signal de couleur.
+
+**Vérifications, plusieurs comptes de test réels** :
+- Comparaison des occurrences de `brand-gradient-bg` sur la page rendue
+  entre 5 comptes (Collaborateur, RH, DG, Admin, Finance) : nombre de
+  cartes cohérent dans chaque cas avec les permissions réelles de chaque
+  rôle (ex. Finance : Trésorerie + FeedbackApp seulement, RH : Pointage +
+  FeedbackApp seulement).
+- Logo confirmé présent sur chacune des 4 cartes nommées par la tâche
+  (recherche de l'attribut `src="/logo-sim-blanc.svg"` dans le HTML rendu),
+  aucune icône par module résiduelle.
+- **État désactivé testé pour de vrai** : le rôle "Admin" de cette base
+  porte depuis longtemps une anomalie déjà documentée (23 `RolePermission`
+  réelles, voir "estAdmin — accès à la console /admin") qui lui donne en
+  pratique accès à tous les modules — il ne permettait donc pas d'observer
+  la carte désactivée. Un rôle et un compte de test temporaires
+  (`estAdmin: true`, zéro `RolePermission`) ont été créés spécifiquement
+  pour exercer ce chemin de code, vérifiés (fond bleu, logo, badge "Aucun
+  accès" en blanc bien lisible à `opacity-60`), puis supprimés
+  (`HistoriqueEntry` de connexion supprimée en premier, seule ligne
+  bloquant la suppression du compte).
+- **Aucune régression** : en-tête ("Tableau de bord") et section
+  notifications confirmés inchangés sur la page rendue.
+- **Rendu mobile** : grille `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3`
+  strictement inchangée (seul le contenu interne des cartes a changé, pas
+  la grille qui les contient) — aucun nouveau risque de mise en page
+  introduit.
+- `tsc`/`eslint` clean, vrai `next build` réussi.
+
+### Cartes de modules de la page racine — filigrane logo (ajustement)
+
+Correction directe demandée après la tâche ci-dessus : la pastille
+`bg-white/15` contenant le logo (petit badge, `<Image src="/logo-sim-blanc.svg">`)
+jugée incohérente avec le seul autre endroit du portail qui affiche déjà le
+logo sur un fond bleu plein — le bandeau hero de FeedbackApp
+(`FeedbackHero()`, `app/feedback/page.tsx`), qui utilise un **grand
+filigrane pâle** du pictogramme en arrière-plan, pas un badge. Demande :
+reproduire exactement ce traitement sur les 4 cartes "Vos accès".
+
+- **Pastille entièrement retirée** — le `<span className="bg-white/15
+  px-3 py-2">` contenant `<Image src="/logo-sim-blanc.svg">` a disparu des
+  3 branches de rendu (carte accessible, carte désactivée, carte
+  Administration). L'import `next/image` a été retiré de la page (plus
+  aucun usage).
+- **`ModuleCardWatermark()`** (nouveau, `(dashboard)/page.tsx`) — reproduit
+  la technique du hero au trait près : `BRAND_ICON_PATHS`/
+  `BRAND_ICON_VIEWBOX` (le pictogramme triangle seul, déjà factorisé dans
+  `@/components/ui/brandIcon` et déjà réutilisé par la Sidebar réduite et
+  `BrandBackdrop` — jamais le fichier `logo-sim-blanc.svg`, qui contient le
+  texte "SIM Assurances" et ne convient pas à un filigrane décoratif),
+  `fill="currentColor"` sur chaque `<path>` (résout en blanc via le
+  `text-white` déjà hérité de la carte), `pointer-events-none absolute`
+  débordant en haut à droite, `aria-hidden="true"`.
+- **Taille volontairement réduite par rapport au hero** — `size-24
+  sm:size-32` (96px/128px) contre `size-56 sm:size-72` (224px/288px) sur le
+  hero, offset `-right-6 -top-6` contre `-right-10 -top-10`, opacité
+  `0.14` contre `0.12` (légèrement remontée pour rester perceptible à
+  cette taille réduite). **Déviation assumée, pas un oubli** : le hero est
+  un bandeau pleine largeur (`px-10 py-14`), ces cartes sont de petits
+  panneaux `p-5` en grille 1/2/3 colonnes — reproduire les 224-288px du
+  hero y aurait fait dominer visuellement le titre/texte de la carte,
+  contredisant l'exigence de lisibilité de la tâche. Même langage visuel
+  (style, position, transparence, source SVG), taille proportionnelle au
+  conteneur.
+- **Carte désactivée** : le `<div className="flex items-start
+  justify-between gap-2">` qui alignait pastille + badge côte à côte a été
+  simplifié en `<div className="relative flex justify-end">` ne portant
+  plus que le badge "Bientôt disponible"/"Aucun accès" (le filigrane
+  devient un élément de fond indépendant, plus un élément de cette ligne
+  flex).
+- **`relative` ajouté sur titre/description/lien** (`h3`/`p`) des 3
+  branches — le filigrane étant le premier enfant `absolute` du
+  conteneur, le texte doit explicitement se replacer dans le flux normal
+  au-dessus de lui (`position: relative` suffit avec l'ordre naturel du
+  DOM, sans z-index nécessaire).
+- Fond dégradé (`.brand-gradient-bg`), texte blanc, et survol
+  (`.card-shadow-hover`/`hover:brightness-110`) strictement inchangés —
+  seul le traitement du logo a été modifié, conformément à la demande.
+
+**Vérifications, comptes de test réels + inspection du HTML rendu** :
+- **Cohérence visuelle avec le hero FeedbackApp confirmée** : même SVG
+  (`viewBox="0 0 114 94"`, mêmes 3 `<path>` de `BRAND_ICON_PATHS`), même
+  technique de positionnement/opacité/`fill="currentColor"`, seule la
+  taille diffère (proportionnellement au conteneur, voir ci-dessus).
+- **Les 4 cartes affichent le filigrane** : vérifié par connexion réelle
+  (Collaborateur → 3 cartes, Admin → 4 cartes avec Administration) et
+  inspection du HTML renvoyé — un `<svg>` filigrane par carte, zéro trace
+  résiduelle de l'ancienne pastille (`grep` sur `bg-white/15 px-3 py-2` :
+  0 occurrence dans les deux cas).
+- **Texte parfaitement lisible malgré le filigrane** : classes
+  `text-white`/`text-white/80` sur titre/description/lien inchangées,
+  filigrane à opacité `0.14` uniquement (jamais superposé au-dessus du
+  texte grâce à `relative` sur ce dernier).
+- **État désactivé cohérent** : compte de test temporaire recréé
+  (`estAdmin: true`, zéro `RolePermission`, même technique que la tâche
+  précédente — nécessaire car le rôle "Admin" réel reste avec son anomalie
+  de 23 `RolePermission`, seul cas rendant ce chemin de code inatteignable
+  autrement) → carte "Aucun accès" confirmée avec filigrane en fond, badge
+  seul aligné à droite (`flex justify-end`), fond bleu et `opacity-60`
+  inchangés. Compte et rôle supprimés après vérification
+  (`HistoriqueEntry` de connexion supprimée avant l'utilisateur, même
+  contrainte FK que la tâche précédente).
+- **Rendu mobile** : vérifié par relecture de code — grille
+  `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3` inchangée, `sm:size-32`
+  n'agrandit le filigrane qu'à partir du même palier `sm` que le reste du
+  design system, aucun débordement horizontal possible (`overflow-hidden`
+  sur le conteneur de carte).
+- `tsc`/`eslint` clean, vrai `next build` réussi (65 routes générées sans
+  erreur).
 
 ## Diagnostic de latence — requêtes redondantes
 

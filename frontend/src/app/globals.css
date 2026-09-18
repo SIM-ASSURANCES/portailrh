@@ -331,16 +331,20 @@ body {
 }
 
 /* ============================================================
-   FeedbackApp — bandeau hero, notation structurée (voir CLAUDE.md
-   "FeedbackApp — refonte visuelle de la soumission"). Dégradé/texture
-   CONTENUS AU BANDEAU LUI-MÊME (un bloc arrondi, jamais le fond de toute
-   la page) — la page reste blanche, filigrane de marque en fond, exactement
-   comme partout ailleurs (voir BrandBackdrop.tsx : "premier essai [fond
-   dégradé bleu pleine page] refusé explicitement"). Un dégradé confiné à un
-   bandeau contenu est une application bien plus étroite que ce refus
-   documenté, mais le principe général (jamais un aplat dominant en fond de
-   PAGE) reste respecté à dessein. */
-.feedback-hero-bg {
+   Dégradé de marque SIM Assurances — bleu institutionnel (#004B9C) vers
+   bleu clair de marque (#51AEE2, le rgba ci-dessous), CONTENU à un bloc
+   précis (un bandeau, une carte), jamais le fond de toute une page (voir
+   BrandBackdrop.tsx : "premier essai [fond dégradé bleu pleine page]
+   refusé explicitement" — un dégradé confiné à un bloc reste une
+   application bien plus étroite que ce refus documenté, principe général
+   "jamais un aplat dominant en fond de PAGE" respecté à dessein).
+   Introduit pour le bandeau hero de FeedbackApp (voir CLAUDE.md
+   "FeedbackApp — refonte visuelle de la soumission"), réutilisé tel quel
+   par les cartes de modules de la page racine (voir CLAUDE.md "Cartes de
+   modules de la page racine — fond bleu plein") plutôt que de dupliquer
+   la même valeur de dégradé une seconde fois : une seule définition du
+   "dégradé de marque", partagée par tout composant qui en a besoin. */
+.brand-gradient-bg {
   background:
     radial-gradient(120% 140% at 15% 0%, rgba(81, 174, 226, 0.55) 0%, rgba(81, 174, 226, 0) 55%),
     linear-gradient(135deg, #004b9c 0%, #0a5cb8 45%, #0f6dc9 100%);

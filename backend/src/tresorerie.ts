@@ -698,6 +698,70 @@ export async function getMesDemandesEnAttente(userId: string): Promise<{ nombre:
   return { nombre };
 }
 
+export interface MoisMontantDemande {
+  /** Clé triable "AAAA-MM", jamais affichée directement. */
+  mois: string;
+  /** Libellé court pré-formaté ("janv. 26") — calculé ici plutôt que côté
+   * Client Component, pour rester un Server Component pur (voir
+   * `CollaborateurDemandesBarChart.tsx`, aucune interactivité JS requise). */
+  label: string;
+  montant: number;
+}
+
+/**
+ * Montant total DEMANDÉ (`Demande.montant`, pas `montantValide` : ce
+ * graphique montre le volume de sollicitation du Collaborateur, pas ce qui
+ * en a été retenu) par mois calendaire, sur les `nombreDeMois` derniers
+ * mois glissants (défaut 6 — voir CLAUDE.md "Modernisation du dashboard
+ * Collaborateur" : le volume mensuel d'un seul Collaborateur reste
+ * toujours modeste, une fenêtre plus large multiplierait surtout les mois
+ * à 0 sans ajouter d'information utile).
+ *
+ * **Tous les mois de la fenêtre sont renvoyés, y compris à 0** — jamais un
+ * trou silencieux dans le tableau si aucune demande n'existe pour un mois
+ * donné : c'est `CollaborateurDemandesBarChart.tsx` qui décide, lui, si la
+ * fenêtre entière est vide et mérite un message dédié plutôt qu'un
+ * graphique à barres toutes nulles.
+ *
+ * Une seule requête (`findMany` sur la fenêtre), jamais un `groupBy` par
+ * mois côté SQL (Prisma ne sait pas grouper par mois calendaire
+ * directement sans SQL brut) — le regroupement se fait en mémoire, sans
+ * risque de volume vu l'hypothèse déjà retenue pour
+ * `getMesDemandesDetail` (Collaborateur, jamais l'échelle Finance).
+ */
+export async function getMesDemandesParMois(
+  userId: string,
+  nombreDeMois = 6
+): Promise<MoisMontantDemande[]> {
+  const maintenant = new Date();
+  const premierMoisFenetre = new Date(maintenant.getFullYear(), maintenant.getMonth() - (nombreDeMois - 1), 1);
+
+  const demandes = await prisma.demande.findMany({
+    where: { createurId: userId, createdAt: { gte: premierMoisFenetre } },
+    select: { montant: true, createdAt: true },
+  });
+
+  const cleMois = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+
+  const totauxParMois = new Map<string, number>();
+  for (let i = 0; i < nombreDeMois; i++) {
+    const d = new Date(maintenant.getFullYear(), maintenant.getMonth() - (nombreDeMois - 1) + i, 1);
+    totauxParMois.set(cleMois(d), 0);
+  }
+  for (const d of demandes) {
+    const cle = cleMois(d.createdAt);
+    totauxParMois.set(cle, (totauxParMois.get(cle) ?? 0) + Number(d.montant));
+  }
+
+  return Array.from(totauxParMois.entries()).map(([mois, montant]) => {
+    const [annee, moisIndex] = mois.split("-").map(Number);
+    const label = new Date(annee, moisIndex - 1, 1)
+      .toLocaleDateString("fr-FR", { month: "short", year: "2-digit" })
+      .replace(".", "");
+    return { mois, label, montant };
+  });
+}
+
 /**
  * Règlements Caisse confirmés (non annulés) des demandes créées par cet
  * utilisateur, pour lesquels **aucun** `RetourCaisse` n'a encore été

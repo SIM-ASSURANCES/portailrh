@@ -6,11 +6,15 @@ import { getSession, hasPermission } from "@/lib/auth";
 import {
   getMesDemandesDetail,
   getMesDemandesEnAttente,
+  getMesDemandesParMois,
   getMesIndicateurs,
   getReglementsCaisseADeclarer,
 } from "backend";
 
+import { CollaborateurDemandesBarChart } from "./CollaborateurDemandesBarChart";
+import { CollaborateurStatCard } from "./CollaborateurStatCard";
 import { MesDemandesDetailTable } from "./MesDemandesDetailTable";
+import { TauxRegularisationGauge } from "./TauxRegularisationGauge";
 
 /**
  * "Mon tableau de bord" — cahier des charges section 14 : la vision
@@ -47,14 +51,24 @@ export default async function MonTableauDeBordPage() {
   }
 
   const userId = session.user.id;
-  const [indicateurs, enAttente, retoursADeclarer, demandesDetail] = await Promise.all([
+  const [indicateurs, enAttente, retoursADeclarer, demandesDetail, demandesParMois] = await Promise.all([
     getMesIndicateurs(userId),
     getMesDemandesEnAttente(userId),
     getReglementsCaisseADeclarer(userId),
     getMesDemandesDetail(userId),
+    getMesDemandesParMois(userId, 6),
   ]);
 
   const canCreate = hasPermission(session, "treso.creer_demande");
+
+  // Taux de régularisation — dérivé du même `demandesDetail` déjà chargé
+  // ci-dessus, JAMAIS une deuxième requête ni un nouveau calcul de seuil :
+  // exactement les mêmes `montantRecu`/`soldeARegulariser` (et le même
+  // découpage "réglée"/"régularisée") que `EtatRegularisation`
+  // (`MesDemandesDetailTable.tsx`) — voir CLAUDE.md "Modernisation du
+  // dashboard Collaborateur".
+  const demandesReglees = demandesDetail.filter((d) => d.montantRecu > 0);
+  const demandesRegularisees = demandesReglees.filter((d) => d.soldeARegulariser === 0);
 
   // Une seule demande concernée : la carte mène directement à son détail
   // (là où vit le bouton "Déclarer un retour de caisse", Ticket 5) — sinon
@@ -104,41 +118,22 @@ export default async function MonTableauDeBordPage() {
         </h2>
         {/* 5 cartes : progression responsive inchangée jusqu'à lg (1/2/3
             colonnes, comme avant), puis xl (desktop large, ≥1280px) passe
-            aux 5 colonnes sur une seule ligne — retour utilisateur explicite.
-            xl plutôt que lg : à 1024-1279px, 5 colonnes resteraient trop
-            étroites même en `size="compact"`.
-            `size="compact"` (StatCard) : gabarit "default" (28px) faisait
-            passer "550 000 FCFA" sur deux lignes de façon inégale d'une
-            carte à l'autre à cette largeur — corrigé par un second gabarit
-            dédié (20px, icône/padding réduits), réservé à cette grille :
-            jamais appliqué au dashboard Finance (6 cartes, jamais plus de 3
-            par ligne) ni au dashboard général, qui gardent le gabarit par
-            défaut inchangé. `h-full` sur chaque StatCard (interne au
-            composant) garantit que les 5 cartes partagent exactement la
-            même hauteur sur la ligne, icône/libellé/montant alignés au même
-            niveau vertical d'une carte à l'autre. */}
+            aux 5 colonnes sur une seule ligne — retour utilisateur explicite
+            déjà pris en compte par `CollaborateurStatCard` (padding/police
+            réduits via des classes `xl:` internes, jamais un simple booléen
+            JS) : composant DÉDIÉ à cette grille (voir CLAUDE.md
+            "Modernisation du dashboard Collaborateur"), `StatCard`
+            lui-même — partagé avec les dashboards DG/Admin/Finance — n'est
+            pas touché. */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <div className="stat-card-enter">
-            <StatCard
-              size="compact"
-              icon="shopping-cart"
-              tone="neutral"
-              label="Demandé"
-              value={fmt(indicateurs.demande)}
-            />
+            <CollaborateurStatCard icon="shopping-cart" tone="neutral" label="Demandé" value={fmt(indicateurs.demande)} />
           </div>
           <div className="stat-card-enter">
-            <StatCard
-              size="compact"
-              icon="shield-check"
-              tone="success"
-              label="Validé"
-              value={fmt(indicateurs.valide)}
-            />
+            <CollaborateurStatCard icon="shield-check" tone="success" label="Validé" value={fmt(indicateurs.valide)} />
           </div>
           <div className="stat-card-enter">
-            <StatCard
-              size="compact"
+            <CollaborateurStatCard
               icon="clock"
               tone={toneSiActif(indicateurs.restantAValider, "warning")}
               label="Restant à valider"
@@ -146,15 +141,38 @@ export default async function MonTableauDeBordPage() {
             />
           </div>
           <div className="stat-card-enter">
-            <StatCard size="compact" icon="wallet" tone="success" label="Réglé" value={fmt(indicateurs.regle)} />
+            <CollaborateurStatCard icon="wallet" tone="success" label="Réglé" value={fmt(indicateurs.regle)} />
           </div>
           <div className="stat-card-enter">
-            <StatCard
-              size="compact"
+            <CollaborateurStatCard
               icon="book-text"
               tone={toneSiActif(indicateurs.valideRestantARegler, "warning")}
               label="Validé restant à régler"
               value={fmt(indicateurs.valideRestantARegler)}
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-2xl border border-border bg-surface p-5 shadow-elevated sm:p-6">
+          <h2 className="flex items-center gap-2.5 text-base font-black tracking-tight text-foreground">
+            <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
+            Montant demandé — 6 derniers mois
+          </h2>
+          <div className="mt-4">
+            <CollaborateurDemandesBarChart data={demandesParMois} aDejaDesDemandes={demandesDetail.length > 0} />
+          </div>
+        </div>
+        <div className="rounded-2xl border border-border bg-surface p-5 shadow-elevated sm:p-6">
+          <h2 className="flex items-center gap-2.5 text-base font-black tracking-tight text-foreground">
+            <span className="h-5 w-1 rounded-full bg-success" aria-hidden="true" />
+            Taux de régularisation
+          </h2>
+          <div className="mt-4">
+            <TauxRegularisationGauge
+              demandesReglees={demandesReglees.length}
+              demandesRegularisees={demandesRegularisees.length}
             />
           </div>
         </div>

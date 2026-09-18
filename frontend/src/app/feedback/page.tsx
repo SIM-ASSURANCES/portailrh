@@ -47,11 +47,11 @@ function ReassuranceCard({
 }
 
 /** Bandeau hero — dégradé + texture de marque CONTENUS au bandeau lui-même
- * (voir globals.css `.feedback-hero-bg` pour pourquoi ce n'est jamais le
+ * (voir globals.css `.brand-gradient-bg` pour pourquoi ce n'est jamais le
  * fond de toute la page). */
 function FeedbackHero() {
   return (
-    <div className="feedback-hero-bg relative overflow-hidden rounded-3xl px-6 py-10 text-white shadow-elevated-lg sm:px-10 sm:py-14">
+    <div className="brand-gradient-bg relative overflow-hidden rounded-3xl px-6 py-10 text-white shadow-elevated-lg sm:px-10 sm:py-14">
       <svg
         viewBox={BRAND_ICON_VIEWBOX}
         className="pointer-events-none absolute -right-10 -top-10 size-56 opacity-[0.12] sm:size-72"

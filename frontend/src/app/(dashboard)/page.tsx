@@ -1,21 +1,12 @@
 import Link from "next/link";
 
-import { Icon, type IconName } from "@/components/icons";
-import { Badge, EmptyState, PageHeader, ToastOnMount } from "@/components/ui";
+import { Icon } from "@/components/icons";
+import { EmptyState, PageHeader, ToastOnMount } from "@/components/ui";
+import { BRAND_ICON_PATHS, BRAND_ICON_VIEWBOX } from "@/components/ui/brandIcon";
 import { getAccessibleModules, getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { prisma, getMesRetoursADeclarer } from "backend";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 import { DashboardNotificationsSection, type DashboardAlertItem } from "@/components/dashboard/DashboardNotificationsSection";
-
-/** Icône propre à chaque module (même symbole que sa branche de sidebar,
- * voir nav.ts) plutôt qu'une flèche générique répétée sur toutes les
- * cartes — la carte se reconnaît au premier coup d'œil, pas seulement au
- * texte de son titre. */
-const MODULE_ICON: Record<string, IconName> = {
-  tresorerie: "wallet",
-  pointage: "clock",
-  feedback: "message-square",
-};
 
 /**
  * Point d'entrée le plus pertinent du module Trésorerie selon les
@@ -103,6 +94,30 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
     return { href: "/feedback/nouveau", reason: "no_access" };
   }
   return { href: null, reason: "coming_soon" };
+}
+
+/**
+ * Filigrane logo des cartes "Vos accès" — même technique que
+ * `FeedbackHero()` (`app/feedback/page.tsx` : SVG `BRAND_ICON_PATHS`,
+ * `fill="currentColor"`, très pâle, débordant en haut à droite d'un
+ * conteneur `relative overflow-hidden`), mais volontairement réduit
+ * (`size-24 sm:size-32` contre `size-56 sm:size-72` sur le hero) : ces
+ * cartes sont de petits panneaux `p-5` en grille, pas un bandeau pleine
+ * largeur — la taille du hero y dominerait la carte et nuirait à la
+ * lisibilité du titre/texte, jamais reproduite au pixel près.
+ */
+function ModuleCardWatermark() {
+  return (
+    <svg
+      viewBox={BRAND_ICON_VIEWBOX}
+      className="pointer-events-none absolute -right-6 -top-6 size-24 opacity-[0.14] sm:size-32"
+      aria-hidden="true"
+    >
+      {BRAND_ICON_PATHS.map((d) => (
+        <path key={d} d={d} fill="currentColor" />
+      ))}
+    </svg>
+  );
 }
 
 export default async function DashboardHomePage({
@@ -305,14 +320,11 @@ export default async function DashboardHomePage({
                 <Link
                   key={module_.id}
                   href={module_.href}
-                  className="group relative overflow-hidden rounded-2xl border border-border bg-surface p-5 shadow-elevated transition-[box-shadow,transform] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:shadow-elevated-lg"
+                  className="brand-gradient-bg card-shadow-hover group relative flex flex-col overflow-hidden rounded-2xl p-5 shadow-elevated transition-[box-shadow,transform,filter] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:brightness-110"
                 >
-                  <span className="absolute inset-x-0 top-0 h-[3px] bg-primary" aria-hidden="true" />
-                  <span className="inline-grid size-11 place-items-center rounded-xl bg-primary text-white shadow-[0_4px_10px_-2px_rgba(0,0,0,0.25)] transition-transform duration-200 ease-out-strong motion-safe:group-hover:scale-110">
-                    <Icon name={MODULE_ICON[module_.key] ?? "folder-tree"} className="size-5" />
-                  </span>
-                  <h3 className="mt-4 text-lg font-bold text-foreground">{module_.label}</h3>
-                  <p className="mt-1 flex items-center gap-1 text-sm font-semibold text-muted-foreground transition-colors duration-200 group-hover:text-primary">
+                  <ModuleCardWatermark />
+                  <h3 className="relative mt-4 text-lg font-bold text-white">{module_.label}</h3>
+                  <p className="relative mt-1 flex items-center gap-1 text-sm font-semibold text-white/80 transition-colors duration-200 group-hover:text-white">
                     Accéder au module
                     <Icon
                       name="arrow-up-right"
@@ -323,19 +335,16 @@ export default async function DashboardHomePage({
               ) : (
                 <div
                   key={module_.id}
-                  className="relative overflow-hidden rounded-2xl border border-border bg-surface p-5 opacity-75"
+                  className="brand-gradient-bg relative flex flex-col overflow-hidden rounded-2xl p-5 opacity-60"
                 >
-                  <span className="absolute inset-x-0 top-0 h-[3px] bg-border" aria-hidden="true" />
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="inline-grid size-11 place-items-center rounded-xl bg-neutral-bg text-neutral">
-                      <Icon name={MODULE_ICON[module_.key] ?? "folder-tree"} className="size-5" />
-                    </span>
-                    <Badge variant="neutral">
+                  <ModuleCardWatermark />
+                  <div className="relative flex justify-end">
+                    <span className="inline-flex items-center rounded-full border border-white/40 bg-white/15 px-2.5 py-0.5 text-xs font-medium text-white">
                       {module_.reason === "coming_soon" ? "Bientôt disponible" : "Aucun accès"}
-                    </Badge>
+                    </span>
                   </div>
-                  <h3 className="mt-4 text-lg font-bold text-foreground">{module_.label}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <h3 className="relative mt-4 text-lg font-bold text-white">{module_.label}</h3>
+                  <p className="relative mt-1 text-sm text-white/80">
                     {module_.reason === "coming_soon"
                       ? "Les écrans de ce module sont en cours de construction."
                       : "Votre rôle n'a aucune permission opérationnelle sur ce module."}
@@ -346,14 +355,11 @@ export default async function DashboardHomePage({
             {isAdmin(session) ? (
               <Link
                 href="/admin"
-                className="group relative overflow-hidden rounded-2xl border border-border bg-surface p-5 shadow-elevated transition-[box-shadow,transform] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:shadow-elevated-lg"
+                className="brand-gradient-bg card-shadow-hover group relative flex flex-col overflow-hidden rounded-2xl p-5 shadow-elevated transition-[box-shadow,transform,filter] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:brightness-110"
               >
-                <span className="absolute inset-x-0 top-0 h-[3px] bg-primary" aria-hidden="true" />
-                <span className="inline-grid size-11 place-items-center rounded-xl bg-primary text-white shadow-[0_4px_10px_-2px_rgba(0,0,0,0.25)] transition-transform duration-200 ease-out-strong motion-safe:group-hover:scale-110">
-                  <Icon name="shield-check" className="size-5" />
-                </span>
-                <h3 className="mt-4 text-lg font-bold text-foreground">Administration</h3>
-                <p className="mt-1 flex items-center gap-1 text-sm font-semibold text-muted-foreground transition-colors duration-200 group-hover:text-primary">
+                <ModuleCardWatermark />
+                <h3 className="relative mt-4 text-lg font-bold text-white">Administration</h3>
+                <p className="relative mt-1 flex items-center gap-1 text-sm font-semibold text-white/80 transition-colors duration-200 group-hover:text-white">
                   Utilisateurs, rôles et modules du portail
                   <Icon
                     name="arrow-up-right"
