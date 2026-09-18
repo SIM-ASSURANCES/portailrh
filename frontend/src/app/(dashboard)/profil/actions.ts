@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { logAuditAction } from "@/lib/auditLog";
 import { publishDataChanged } from "@/lib/eventBus";
+import { sendEmail, generatePasswordChangedEmail } from "@/lib/email";
 
 /**
  * Permet à un utilisateur de renseigner/modifier LIBREMENT son propre
@@ -135,6 +136,27 @@ export async function updatePassword(currentPass: string, newPass: string) {
     where: { id: session.user.id },
     data: { passwordHash: newHash },
   });
+
+  // Notification de sécurité par courriel
+  try {
+    const baseUrl = process.env.AUTH_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
+    const emailPayload = generatePasswordChangedEmail({
+      fullName: user.fullName,
+      email: user.email,
+      changedAt: new Date(),
+      actionUrl: `${baseUrl}/login`,
+      resetUrl: `${baseUrl}/forgot-password`,
+    });
+    await sendEmail({
+      to: user.email,
+      subject: emailPayload.subject,
+      html: emailPayload.html,
+      text: emailPayload.text,
+      userId: user.id,
+    });
+  } catch (err) {
+    console.error("Erreur lors de l'envoi de l'email de sécurité (changement mdp):", err);
+  }
 
   return { success: true };
 }

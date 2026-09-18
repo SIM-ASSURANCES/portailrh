@@ -98,3 +98,5 @@ frontend/public/uploads/profiles/*
 #cdc
 CDC_parties_feedback.txt
 CDC_FeedbackApp_SIM_Assurances.pdf 
+backend/src/__tests__/
+implementation_plan_refonte_notif.md
