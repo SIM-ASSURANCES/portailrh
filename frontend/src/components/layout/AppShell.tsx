@@ -20,6 +20,8 @@ interface AppShellProps {
   canAccesMonTableauDeBord?: boolean;
   /** Affiche "Demandes à traiter (Finance)" (categoriser_demande OU valider_demande). */
   canAccesFinanceDemandes?: boolean;
+  /** Affiche "Toutes les demandes" (valider_demande OU effectuer_reglement OU receptionner_retour). */
+  canVoirToutesLesDemandes?: boolean;
   /** Affiche "Retours en attente" (treso.receptionner_retour). */
   canReceptionnerRetour?: boolean;
   /** Affiche "Tableau de bord Finance" (treso.voir_dashboard_finance). */
@@ -68,6 +70,7 @@ export function AppShell({
   canAccesDemandes = false,
   canAccesMonTableauDeBord = false,
   canAccesFinanceDemandes = false,
+  canVoirToutesLesDemandes = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
   canVoirReporting = false,
@@ -171,6 +174,7 @@ export function AppShell({
         canAccesDemandes={canAccesDemandes}
         canAccesMonTableauDeBord={canAccesMonTableauDeBord}
         canAccesFinanceDemandes={canAccesFinanceDemandes}
+        canVoirToutesLesDemandes={canVoirToutesLesDemandes}
         canReceptionnerRetour={canReceptionnerRetour}
         canVoirDashboardFinance={canVoirDashboardFinance}
         canVoirReporting={canVoirReporting}

@@ -63,6 +63,16 @@ export async function accorderDelegationAction(
     return { status: "error", message: "Action non autorisée." };
   }
 
+  // Restreint au Responsable Finance uniquement (Tâche "Restreindre
+  // 'Déléguer des accès'", voir CLAUDE.md) — même garde exacte que
+  // `delegations/page.tsx`, jamais uniquement le masquage du lien/formulaire.
+  const peutDeleguer =
+    session.rolePermissions.includes("treso.valider_demande") &&
+    !session.rolePermissions.includes("treso.approuver_validation_complete");
+  if (!peutDeleguer) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
   const eligibilite = await verifierEligibiliteDonneur(session, permissionId);
   if (!eligibilite.ok) {
     return { status: "error", message: eligibilite.message };

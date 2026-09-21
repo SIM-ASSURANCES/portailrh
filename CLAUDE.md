@@ -1087,6 +1087,120 @@ uniquement, aucune donnée réelle touchée)** :
   sous-jacents, jamais après.
 - `tsc`/`eslint` clean, vrai `next build` réussi (65 routes).
 
+### Traçabilité d'une demande après règlement/clôture
+
+Signalement : une demande réglée + retour réceptionné disparaît (à raison)
+des listes "Demandes en attente de validation"/"Retours en attente" — mais
+aucun moyen quotidien ne permettait ensuite de la retrouver, en particulier
+une fois `CLOTUREE`, où elle semblait avoir complètement disparu.
+
+**Diagnostic fait avant toute correction** :
+- **Écran de détail (`treso/finance/demandes/[id]/page.tsx`)** : reste
+  bien accessible directement par URL/ID une fois `CLOTUREE` (jamais un
+  `notFound()`/crash — la branche `CLOTUREE` a toujours existé), MAIS
+  **masquait deux blocs d'information** avant cette tâche : `ReglementsSection`
+  (liste des règlements, mode, auteur, dates, liens "Télécharger le
+  reçu"/"bon de caisse") n'était tout simplement jamais rendue dans cette
+  branche ; et le détail ligne par ligne des dépenses/pièces jointes de
+  `RegularisationSummary` (`canGererJustification`, voir "Détail des
+  dépenses sur l'écran de Régularisation") restait invisible faute d'être
+  transmis. Un règlement réglé-mais-pas-encore-clôturé, lui, affichait déjà
+  tout correctement (branche inchangée, jamais concernée par le bug).
+- **Écran de reporting (`/treso/finance/reporting`)** : son filtre
+  `statut` couvre déjà bien les 11 valeurs de `StatutDemande`, CLOTUREE/
+  REGLEE inclus (dérivé de `STATUT_DEMANDE_LABEL`, jamais une liste
+  dupliquée). En revanche, ses tableaux sont des **agrégats par Catégorie
+  × Objet** (`getReportingRows`), jamais une ligne par demande individuelle
+  — rendre une ligne agrégée "cliquable vers le détail" n'a structurellement
+  aucun sens (plusieurs dizaines de demandes possibles derrière une seule
+  ligne). Le reporting n'a donc PAS été modifié : ce n'est pas l'outil
+  pour "retrouver UNE demande précise", et forcer un lien dessus aurait
+  été un correctif de façade plutôt qu'une vraie solution.
+
+**Conclusion : les deux (correctif + nouvel écran), pas un choix entre les
+deux** — le correctif du détail répare l'information une fois qu'on a
+déjà l'ID/la référence ; il manquait toujours un moyen de la RETROUVER
+sans la connaître à l'avance, d'où le nouvel écran.
+
+**1. Correctif du détail (`page.tsx`, `RegularisationSummary.tsx`)** :
+
+- Branche `CLOTUREE` : ajoute `<ReglementsSection ... canEffectuerReglement={false} />`
+  (si `montantValide > 0`) et passe `showDetail` (nouvelle prop, voir
+  ci-dessous) à `RegularisationSummary`. `canEffectuerReglement={false}`
+  **inconditionnel** (jamais la permission réelle du lecteur) : une fois
+  clôturée, plus AUCUN compte ne peut agir, quel que soit son rôle —
+  cohérent avec le bandeau déjà affiché ("plus aucune action n'est
+  possible"), jamais une question de permission à ce stade.
+- **`RegularisationSummary.tsx`** — `canGererJustification` (action
+  "Marquer non justifiée") et `showDetail` (visibilité du détail
+  ligne par ligne) sont désormais deux props DISTINCTES (`showDetail`
+  défaut = `canGererJustification`, pour ne rien changer à l'appel
+  existant côté écran actif) : permet d'afficher le détail en LECTURE
+  SEULE (`showDetail` seul) sans jamais proposer une action vouée à
+  l'échec côté serveur (`canGererJustification` resterait `false`). Une
+  ligne non justifiée sans motif, ni réceptionnée ni gérable, affiche
+  désormais "Non justifiée, jamais traitée par Finance." (nouveau texte,
+  remplace l'ancien silence — cette branche n'existait pas avant, seule
+  `canGererJustification` contrôlait tout le bloc jusqu'ici).
+
+**2. Nouvel écran "Toutes les demandes"** (`/treso/finance/demandes/toutes`,
+complément DÉLIBÉRÉ, jamais un remplacement) :
+
+- **`ToutesLesDemandesFiltersForm`/`ToutesLesDemandesTable`** — même
+  pattern GET natif que `ReportingFiltersForm`/même pattern `DataTable` +
+  lien "Voir le détail" que `DemandesACategoriserTable`. Filtres :
+  référence (texte libre, `contains` insensible à la casse), créateur,
+  statut — volontairement simple, ce n'est pas un écran d'analyse.
+  Aucune pagination (volume toujours modeste, même hypothèse que le reste
+  du module).
+- **Accès** : `treso.valider_demande` OU `treso.effectuer_reglement` OU
+  `treso.receptionner_retour` — couvre Responsable Finance, Assistant
+  Finance ET DG, jamais RH ni Collaborateur. Nouveau flag de nav
+  `canVoirToutesLesDemandes` (distinct de `canAccesFinanceDemandes`,
+  jamais fusionné avec lui) propagé `(dashboard)/layout.tsx` →
+  `AppShell.tsx` → `Sidebar.tsx`/`nav.ts`, item `exact: true` (évite qu'il
+  s'allume à tort sur `/treso/finance/demandes`, son préfixe strict).
+  **Nuance non corrigée, sans rapport avec cette tâche** : visiter cette
+  page allume AUSSI "Demandes en attente de validation" dans la sidebar
+  (cet item-là n'a pas `exact`) — comportement déjà préexistant pour
+  `/treso/finance/demandes/[id]` (le détail), pas quelque chose que cette
+  tâche a introduit ni dû corriger (`page.tsx`/`RetoursEnAttenteTable.tsx`
+  existants restent intouchés, comme demandé).
+- **Jamais de modification des écrans filtrés existants** ("Demandes en
+  attente de validation", "Retours en attente") — confirmé par diff vide
+  sur `demandes/page.tsx`, `DemandesACategoriserTable.tsx`,
+  `retours/page.tsx`, `RetoursEnAttenteTable.tsx`.
+
+**Vérifications, parcours réel (comptes de test, deux demandes créées
+pour l'occasion)** :
+- Demande réglée + retour réceptionné (jamais clôturée) : absente des
+  deux listes filtrées, détail toujours pleinement consultable par
+  Finance (déjà correct avant cette tâche, reconfirmé).
+- Demande menée jusqu'à `CLOTUREE` (validation → règlement confirmé →
+  retour réceptionné → validation complète DG → clôture Finance) :
+  détail affiche désormais règlement (montant, mode, auteur, lien "Télécharger
+  le reçu"), détail de la dépense déclarée (pièce jointe consultable),
+  Personnes intervenantes (Validateur/Régleur/Clôturé par), bandeau de
+  clôture et motif — confirmé identique pour un accès Finance ET DG.
+- Nouvel écran : les deux demandes de test y apparaissent sans filtre ;
+  `?statut=CLOTUREE` isole bien la seconde ; `?reference=...` isole bien
+  la première ; les liens "Voir le détail" pointent vers les bons ID.
+  Accès confirmé 200 pour Finance/Assistant/DG, redirect confirmé pour
+  RH/Collaborateur.
+- `tsc`/`eslint` clean, vrai `next build` réussi (66 routes).
+
+**Point découvert pendant la vérification, sans rapport avec cette tâche,
+signalé par transparence** : une demande "NOURRITURE DE LA PAUSE"
+(référence `DEM-2026-000004`, créée par le compte de test Collaborateur à
+10:48 le 2026-09-21, réglée et déjà approuvée par le DG) existait dans la
+base de dev partagée sans porter aucun marqueur de donnée de test
+(`(à supprimer)` ou équivalent) — elle ne correspond à aucun script créé
+par cette session. **Volontairement non touchée** (ni elle, ni son
+règlement, ni son retour, ni ses écritures `JournalCaisse`) : pourrait
+être un test manuel effectué en parallèle sur cette même base partagée. À
+confirmer : s'il s'agit bien d'une donnée de test oubliée, la nettoyer ;
+sinon, la laisser suivre son cours normal.
+
 ### Budget partagé par Catégorie
 
 Le budget appartient à la **Catégorie** (nature de la dépense), jamais au
@@ -2681,6 +2795,73 @@ accès précis, sans jamais dépasser ce qu'il possède lui-même.
 - Un compte ayant accordé ou reçu au moins une délégation (active ou
   révoquée) ne peut plus être supprimé définitivement (voir plus bas),
   seulement désactivé.
+
+### Restreindre "Déléguer des accès" au Responsable Finance
+
+Accès à `/delegations` resserré : jusqu'ici accessible à quiconque
+possédait au moins une permission `treso.*` OU `pointage.*` via son propre
+rôle — trop large, ouvrait la page à RH (permissions Pointage RH) et à
+n'importe quel profil Trésorerie (Assistant Finance, DG). Réservé
+désormais au Responsable Finance UNIQUEMENT.
+
+**Garde retenue : `treso.valider_demande` ET PAS
+`treso.approuver_validation_complete`** (sur `session.rolePermissions`,
+jamais `session.permissions`, inchangé) — **`treso.valider_demande` seule
+ne suffit PAS** : le rôle DG la possède aussi (il valide/rejette les
+demandes au même titre que Finance, voir "Module Trésorerie — validation").
+Une restriction littérale sur cette seule permission aurait donc laissé le
+DG accéder à la page, contredisant l'exigence explicite de l'exclure.
+**Conflit de spécification signalé et tranché avec l'utilisateur** (pas
+une décision prise seule) : la seconde condition (absence de
+`treso.approuver_validation_complete`, le marqueur du DG, jamais transmis
+à Finance dans le seed) exclut spécifiquement ce rôle sans jamais comparer
+de nom de rôle en dur — même principe que `estAdmin`/
+`peutEtreBeneficiaireDelegation`. Alternative écartée : utiliser
+`treso.cloturer_demande` seule (qui identifie déjà exclusivement Finance
+aujourd'hui) — non retenue pour rester au plus près de la permission
+explicitement nommée dans la demande.
+
+Trois points de garde mis à jour avec exactement la même condition,
+jamais dupliquée sous une forme divergente :
+- `delegations/page.tsx` — redirection si non éligible.
+- `accorderDelegationAction` (`delegations/actions.ts`) — revérifiée en
+  tout début de fonction, avant `verifierEligibiliteDonneur` ; jamais
+  seulement le masquage de page/formulaire.
+- `(dashboard)/layout.tsx` — `canDelegerAcces` (nav), qui pilotait déjà
+  `DELEGATIONS_ITEM` dans `Sidebar.tsx` : aucune modification nécessaire
+  côté `nav.ts`/`Sidebar.tsx` eux-mêmes, seul le booléen d'entrée était
+  trop large.
+- `revoquerDelegationAction` **volontairement PAS restreinte** : un
+  donneur (même RH) garde la capacité de révoquer une délégation qu'il a
+  lui-même déjà accordée par le passé (ou un Admin, comme avant) — jamais
+  bloqué par ce resserrement, qui ne porte que sur l'OCTROI de nouvelles
+  délégations.
+
+**Délégations RH existantes vérifiées, aucune orpheline** : requête
+directe sur les 13 `PermissionDelegation` de la base de dev partagée (5
+actives, 8 révoquées) — **toutes accordées par un donneur possédant déjà
+`treso.valider_demande` sans `treso.approuver_validation_complete`**
+(en pratique, toutes par le compte de test "Finance"), aucune par un
+compte RH. Rien à traiter dans cette base ; si une délégation RH existait,
+elle resterait active en base (jamais supprimée par ce changement, qui ne
+touche que l'accès à la PAGE/l'action d'octroi) mais devenue non-gérable
+(non-révocable) par son donneur RH lui-même — seul un Admin pourrait
+encore la révoquer via `/admin/delegations`. **À surveiller sur une base
+avec un historique différent.**
+
+**Vérifications, parcours réel + rejeux réseau (comptes de test)** :
+- Finance (Responsable) : `GET /delegations` → 200, formulaire complet
+  visible, lien "Déléguer des accès" présent dans la sidebar.
+- Assistant Finance, DG, RH, Collaborateur : `GET /delegations` → 307
+  vers `/?error=acces_refuse_delegations`, lien absent de la sidebar pour
+  les quatre (confirmé par recherche de `href="/delegations"` dans le
+  HTML rendu — 0 occurrence).
+- Rejeu réseau direct de `accorderDelegationAction` (arguments arbitraires,
+  le contrôle de permission précède toute lecture DB) : refusé
+  (`"Action non autorisée."`) pour Assistant Finance/DG/RH/Collaborateur ;
+  passe la garde pour Finance (échoue ensuite normalement sur
+  "Fonctionnalité introuvable" faute d'un `permissionId` réel — preuve
+  que seule la NOUVELLE restriction, pas une régression, a été testée).
 
 ### Suppression définitive d'un compte utilisateur
 

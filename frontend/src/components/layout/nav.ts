@@ -62,6 +62,16 @@ export interface NavFlags {
    */
   canAccesMonTableauDeBord: boolean;
   canAccesFinanceDemandes: boolean;
+  /**
+   * `treso.valider_demande` OU `treso.effectuer_reglement` OU
+   * `treso.receptionner_retour` : ajoute "Toutes les demandes" — voir
+   * CLAUDE.md "Traçabilité d'une demande après règlement/clôture".
+   * Distincte de `canAccesFinanceDemandes` (Responsable Finance
+   * uniquement, "Demandes en attente de validation" : une liste de tâches,
+   * jamais élargie) : ce nouvel écran couvre aussi l'Assistant Finance et
+   * le DG, sans jamais toucher à la liste filtrée existante.
+   */
+  canVoirToutesLesDemandes: boolean;
   /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
   canReceptionnerRetour: boolean;
   /** `treso.voir_dashboard_finance` : ajoute "Tableau de bord Finance" (en tête de branche). */
@@ -183,6 +193,7 @@ export function getNavBranches({
   canAccesDemandes,
   canAccesMonTableauDeBord,
   canAccesFinanceDemandes,
+  canVoirToutesLesDemandes,
   canReceptionnerRetour,
   canVoirDashboardFinance,
   canVoirReporting,
@@ -261,6 +272,24 @@ export function getNavBranches({
                     label: "Demandes en attente de validation",
                     href: "/treso/finance/demandes",
                     icon: "folder-tree",
+                  } satisfies NavItem,
+                ]
+              : []),
+            ...(canVoirToutesLesDemandes
+              ? [
+                  {
+                    label: "Toutes les demandes",
+                    href: "/treso/finance/demandes/toutes",
+                    icon: "scroll-text",
+                    // `exact` : `/treso/finance/demandes` (préfixe strict
+                    // de cet item, voir la note sur `NavItem.exact` en tête
+                    // de fichier) ne doit jamais l'allumer par erreur.
+                    // N'empêche pas l'inverse (visiter cette page allume
+                    // AUSSI "Demandes en attente de validation", qui n'a
+                    // pas `exact` — comportement préexistant, déjà celui
+                    // du détail `/treso/finance/demandes/[id]`, non modifié
+                    // par cette tâche).
+                    exact: true,
                   } satisfies NavItem,
                 ]
               : []),

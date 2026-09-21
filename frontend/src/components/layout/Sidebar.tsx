@@ -28,6 +28,8 @@ interface SidebarProps {
   canAccesMonTableauDeBord?: boolean;
   /** categoriser_demande OU valider_demande : ajoute "Demandes à traiter (Finance)". */
   canAccesFinanceDemandes?: boolean;
+  /** valider_demande OU effectuer_reglement OU receptionner_retour : ajoute "Toutes les demandes". */
+  canVoirToutesLesDemandes?: boolean;
   /** treso.receptionner_retour : ajoute "Retours en attente". */
   canReceptionnerRetour?: boolean;
   /** treso.voir_dashboard_finance : ajoute "Tableau de bord Finance". */
@@ -96,6 +98,7 @@ export function Sidebar({
   canAccesDemandes = false,
   canAccesMonTableauDeBord = false,
   canAccesFinanceDemandes = false,
+  canVoirToutesLesDemandes = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
   canVoirReporting = false,
@@ -118,6 +121,7 @@ export function Sidebar({
     canAccesDemandes,
     canAccesMonTableauDeBord,
     canAccesFinanceDemandes,
+    canVoirToutesLesDemandes,
     canReceptionnerRetour,
     canVoirDashboardFinance,
     canVoirReporting,

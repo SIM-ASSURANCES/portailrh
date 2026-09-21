@@ -369,6 +369,16 @@ export default async function CategoriserDemandePage({
         // REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :
         // CLOTUREE_TOTALE/CLOTUREE_PARTIELLE fusionnées en un unique statut
         // CLOTUREE — motifCloture reste affiché tel quel s'il est renseigné.
+        //
+        // Traçabilité après clôture (voir CLAUDE.md "Traçabilité d'une
+        // demande après règlement/clôture") : `ReglementsSection` et le
+        // détail des dépenses de `RegularisationSummary` sont désormais
+        // affichés ici aussi (absents avant cette tâche, masquant les
+        // liens "Télécharger le reçu"/"bon de caisse" et le détail des
+        // dépenses/pièces jointes une fois clôturée) — toujours en pure
+        // lecture (`canEffectuerReglement={false}` inconditionnel, jamais
+        // la permission réelle du lecteur : une fois clôturée, plus AUCUN
+        // compte ne peut agir, quel que soit son rôle).
         <>
           <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
             Ce dossier est clôturé : plus aucune action n&apos;est possible (règlement, retour de
@@ -379,7 +389,18 @@ export default async function CategoriserDemandePage({
             objetLabel={demande.objet?.label}
             lockMessage="Catégorie et objet sont définitivement verrouillés."
           />
-          <RegularisationSummary demandeId={demande.id} montantValide={Number(demande.montantValide ?? 0)} />
+          {demande.montantValide != null && Number(demande.montantValide) > 0 ? (
+            <ReglementsSection
+              demandeId={demande.id}
+              montantValide={Number(demande.montantValide)}
+              canEffectuerReglement={false}
+            />
+          ) : null}
+          <RegularisationSummary
+            demandeId={demande.id}
+            montantValide={Number(demande.montantValide ?? 0)}
+            showDetail
+          />
           <PersonnesIntervenantes demandeId={demande.id} demandeurNom={demande.createur.fullName} />
           {demande.motifCloture ? (
             <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">

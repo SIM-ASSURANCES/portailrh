@@ -10,12 +10,22 @@ const MODULES_DELEGABLES = ["tresorerie", "pointage"] as const;
 
 /**
  * Écran de délégation individuelle de permissions (voir CLAUDE.md
- * "Délégation individuelle de permissions") : accessible à quiconque
- * possède, via son PROPRE rôle (`session.rolePermissions`, jamais
- * `session.permissions` — voir `getSession()`), au moins une permission des
- * branches Trésorerie ou Pointage RH. Permet d'accorder à un compte
- * utilisateur déjà existant l'un de ces droits précis, sans jamais créer de
- * compte ni dépasser ce que le donneur possède lui-même.
+ * "Délégation individuelle de permissions") : restreint au Responsable
+ * Finance UNIQUEMENT (Tâche "Restreindre 'Déléguer des accès' au
+ * Responsable Finance", voir CLAUDE.md) — exclu pour RH (même pour ses
+ * propres permissions Pointage RH), l'Assistant Finance et le DG.
+ *
+ * **`treso.valider_demande` ET PAS `treso.approuver_validation_complete`**
+ * (sur `session.rolePermissions`, jamais `session.permissions` — voir
+ * `getSession()`, même principe qu'avant : seul ce que le donneur possède
+ * via son PROPRE rôle compte, jamais une permission reçue par délégation).
+ * `treso.valider_demande` seule NE SUFFIT PAS à identifier le Responsable
+ * Finance : le rôle DG la possède aussi (il valide/rejette les demandes au
+ * même titre que Finance, voir CLAUDE.md "Module Trésorerie"). La
+ * deuxième condition (absence de `treso.approuver_validation_complete`,
+ * le marqueur du DG, jamais transmis à Finance dans le seed) exclut donc
+ * spécifiquement le DG sans jamais comparer de nom de rôle en dur — même
+ * principe que `estAdmin`/`peutEtreBeneficiaireDelegation`.
  *
  * Gardée ici (page) ET revérifiée dans chaque Server Action
  * (`accorderDelegationAction`) — jamais uniquement le masquage du lien de
@@ -23,9 +33,10 @@ const MODULES_DELEGABLES = ["tresorerie", "pointage"] as const;
  */
 export default async function DelegationsPage() {
   const session = await getSession();
-  const peutDeleguer = session?.rolePermissions.some(
-    (key) => key.startsWith("treso.") || key.startsWith("pointage.")
-  );
+  const peutDeleguer =
+    !!session &&
+    session.rolePermissions.includes("treso.valider_demande") &&
+    !session.rolePermissions.includes("treso.approuver_validation_complete");
 
   if (!session || !peutDeleguer) {
     redirect("/?error=acces_refuse_delegations");

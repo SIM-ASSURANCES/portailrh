@@ -35,6 +35,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "treso.categoriser_demande") ||
         hasPermission(session, "treso.valider_demande")
       }
+      // "Toutes les demandes" (Tâche "Traçabilité d'une demande après
+      // règlement/clôture", voir CLAUDE.md) — Responsable Finance, Assistant
+      // Finance ET DG, jamais RH ni Collaborateur ; distincte de
+      // `canAccesFinanceDemandes` ci-dessus (liste de tâches, Responsable
+      // Finance seul), jamais fusionnée avec elle.
+      canVoirToutesLesDemandes={
+        hasPermission(session, "treso.valider_demande") ||
+        hasPermission(session, "treso.effectuer_reglement") ||
+        hasPermission(session, "treso.receptionner_retour")
+      }
       canReceptionnerRetour={hasPermission(session, "treso.receptionner_retour")}
       canVoirDashboardFinance={hasPermission(session, "treso.voir_dashboard_finance")}
       canVoirReporting={hasPermission(session, "treso.voir_reporting")}
@@ -80,14 +90,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "pointage.voir_dashboard_rh") ||
         hasPermission(session, "pointage.voir_reporting")
       }
-      // Basé sur `rolePermissions` (jamais `permissions`, qui inclurait les
-      // permissions seulement déléguées) : voir CLAUDE.md "Délégation
-      // individuelle de permissions" — seul ce qu'un compte possède via son
-      // propre rôle rend ce lien visible, jamais une permission reçue par
-      // délégation (interdit toute chaîne de redélégation).
-      canDelegerAcces={session.rolePermissions.some(
-        (key) => key.startsWith("treso.") || key.startsWith("pointage.")
-      )}
+      // Restreint au Responsable Finance uniquement (Tâche "Restreindre
+      // 'Déléguer des accès'", voir CLAUDE.md) — `treso.valider_demande`
+      // SEULE ne suffit pas à écarter le DG (qui la possède aussi) : la
+      // deuxième condition (absence de `treso.approuver_validation_complete`,
+      // le marqueur du DG) exclut spécifiquement ce rôle, jamais une
+      // comparaison de nom de rôle en dur. Basé sur `rolePermissions`
+      // (jamais `permissions`, qui inclurait des permissions reçues par
+      // délégation) — même garde exacte que `delegations/page.tsx` et
+      // `accorderDelegationAction`.
+      canDelegerAcces={
+        session.rolePermissions.includes("treso.valider_demande") &&
+        !session.rolePermissions.includes("treso.approuver_validation_complete")
+      }
       canPointer={hasPermission(session, "pointage.pointer")}
       canConsulterHistorique={hasPermission(session, "pointage.consulter_historique")}
       canModererFeedback={hasPermission(session, "feedback.moderer")}

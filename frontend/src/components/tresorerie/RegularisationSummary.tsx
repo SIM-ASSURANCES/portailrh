@@ -32,15 +32,24 @@ import { MarquerNonJustifiee } from "./MarquerNonJustifiee";
  * même périmètre que `getDepensesDeclarees`, jamais un second calcul
  * divergent de `ecart`, qui continue d'utiliser la somme des deux).
  *
- * **`canGererJustification`** (défaut `false`) — active, EN PLUS de
- * l'éclatement ci-dessus (toujours affiché, y compris côté Collaborateur),
- * le détail ligne par ligne des `DepenseLigne` de la demande (pièce
- * jointe consultable, action "Marquer non justifiée") : réservé à l'écran
- * Finance (`treso/finance/demandes/[id]/page.tsx`, permission
+ * **`canGererJustification`** (défaut `false`) — active l'action "Marquer
+ * non justifiée" sur chaque ligne (réservé à l'écran Finance,
+ * `treso/finance/demandes/[id]/page.tsx`, permission
  * `treso.receptionner_retour` déjà revérifiée par
  * `marquerDepenseNonJustifieeAction` elle-même côté serveur) — jamais
  * transmis depuis l'écran Collaborateur (`treso/demandes/[id]/page.tsx`),
  * qui reste volontairement en lecture seule sur ses propres dépenses.
+ * Implique toujours `showDetail` (voir ci-dessous).
+ *
+ * **`showDetail`** (défaut = `canGererJustification`, voir Tâche
+ * "Traçabilité d'une demande après règlement/clôture") — affiche, EN PLUS
+ * de l'éclatement ci-dessus, le détail ligne par ligne des `DepenseLigne`
+ * de la demande (pièce jointe consultable) SANS forcément l'action de
+ * marquage : permet à l'écran Finance de garder ce détail visible en
+ * LECTURE SEULE une fois la demande `CLOTUREE` (plus aucune action
+ * possible, mais l'information — quelles dépenses, quelle pièce jointe —
+ * ne doit jamais disparaître) en passant `showDetail` seul, sans
+ * `canGererJustification`.
  *
  * Même convention que le "Reste à régler" de `ReglementsSection.tsx`
  * (Ticket 4) : `text-success` quand tout est justifié (solde nul),
@@ -51,17 +60,19 @@ export async function RegularisationSummary({
   montantValide,
   title = "Régularisation",
   canGererJustification = false,
+  showDetail = canGererJustification,
 }: {
   demandeId: string;
   montantValide: number;
   title?: string;
   canGererJustification?: boolean;
+  showDetail?: boolean;
 }) {
   const [decaisse, depenses, retoursRecus, lignes] = await Promise.all([
     getTotalRegle(demandeId),
     getDepensesDeclareesParJustification(demandeId),
     getRetoursRecus(demandeId),
-    canGererJustification ? getDepenseLignesDetail(demandeId) : Promise.resolve([]),
+    showDetail ? getDepenseLignesDetail(demandeId) : Promise.resolve([]),
   ]);
   const depensesDeclarees = depenses.justifiees + depenses.nonJustifiees;
   const ecart = decaisse - depensesDeclarees - retoursRecus;
@@ -120,7 +131,7 @@ export async function RegularisationSummary({
           </dd>
         </div>
       </dl>
-      {canGererJustification ? (
+      {showDetail ? (
         <div className="space-y-3 border-t border-border pt-4">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Détail des dépenses déclarées
@@ -161,10 +172,12 @@ export async function RegularisationSummary({
                     <p className="text-xs text-muted-foreground">
                       Retour déjà réceptionné : justification définitivement verrouillée.
                     </p>
-                  ) : (
+                  ) : canGererJustification ? (
                     <MarquerNonJustifiee
                       depense={{ id: ligne.id, motifNonJustifie: null, motifNonJustifiePar: null }}
                     />
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Non justifiée, jamais traitée par Finance.</p>
                   )}
                 </li>
               ))}
