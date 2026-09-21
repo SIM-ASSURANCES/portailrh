@@ -38,9 +38,29 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canReceptionnerRetour={hasPermission(session, "treso.receptionner_retour")}
       canVoirDashboardFinance={hasPermission(session, "treso.voir_dashboard_finance")}
       canVoirReporting={hasPermission(session, "treso.voir_reporting")}
-      canSaisirDepenseDirecte={hasPermission(session, "treso.saisir_depense_directe")}
+      // Élargi (Tâche "Séparation Responsable Finance / Assistant
+      // Finance", voir CLAUDE.md) : reste visible pour un Assistant
+      // Finance sans délégation, pour qu'il atteigne la page et voie le
+      // bouton "Créer la dépense directe" VISIBLE MAIS DÉSACTIVÉ plutôt
+      // que de ne jamais voir le lien du tout — même garde élargie que
+      // `depenses-directes/nouvelle/page.tsx`.
+      canSaisirDepenseDirecte={
+        hasPermission(session, "treso.saisir_depense_directe") ||
+        hasPermission(session, "treso.effectuer_reglement") ||
+        hasPermission(session, "treso.receptionner_retour")
+      }
       canApprouverValidationComplete={hasPermission(session, "treso.approuver_validation_complete")}
-      canGererSoldeOuverture={isAdmin(session) || hasPermission(session, "treso.effectuer_reglement")}
+      // Élargi de la même façon (voir `solde-ouverture/page.tsx`) : un
+      // Assistant Finance (treso.effectuer_reglement/receptionner_retour)
+      // doit atteindre la page pour voir ses boutons désactivés, même
+      // sans `treso.corriger_solde_ouverture`/`treso.alimenter_caisse`.
+      canGererSoldeOuverture={
+        isAdmin(session) ||
+        hasPermission(session, "treso.corriger_solde_ouverture") ||
+        hasPermission(session, "treso.alimenter_caisse") ||
+        hasPermission(session, "treso.effectuer_reglement") ||
+        hasPermission(session, "treso.receptionner_retour")
+      }
       canGererCategories={isAdmin(session) || hasPermission(session, "treso.gerer_categories")}
       hasPointageAccess={[
         "pointage.pointer",

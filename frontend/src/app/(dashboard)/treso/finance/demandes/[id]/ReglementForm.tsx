@@ -9,13 +9,27 @@ import { IDLE_ACTION_STATE } from "backend/client";
 import { creerReglementAction } from "./reglementActions";
 
 /**
- * Formulaire "Ajouter un règlement" — repliable, n'apparaît que si
- * `treso.effectuer_reglement` ET reste à régler > 0 (vérifié par la page
- * appelante). Le montant maximal (`max`) donne un premier refus côté
- * client via la validation native du navigateur ; l'autorité reste la
- * Server Action, qui revérifie le reste à régler côté serveur.
+ * Formulaire "Ajouter un règlement" — repliable, affiché dès que le reste
+ * à régler > 0 (vérifié par la page appelante). Le montant maximal (`max`)
+ * donne un premier refus côté client via la validation native du
+ * navigateur ; l'autorité reste la Server Action, qui revérifie le reste à
+ * régler côté serveur.
+ *
+ * **`disabled`** (Tâche "Séparation Responsable Finance / Assistant
+ * Finance") — le bouton d'entrée reste VISIBLE mais désactivé pour un
+ * compte sans `treso.effectuer_reglement` (ex: le Responsable Finance),
+ * jamais absent : empêche d'ouvrir le formulaire plutôt que de le
+ * masquer, même principe que `ValidationActions`.
  */
-export function ReglementForm({ demandeId, resteARegler }: { demandeId: string; resteARegler: number }) {
+export function ReglementForm({
+  demandeId,
+  resteARegler,
+  disabled = false,
+}: {
+  demandeId: string;
+  resteARegler: number;
+  disabled?: boolean;
+}) {
   const [state, formAction, isPending] = useActionState(creerReglementAction, IDLE_ACTION_STATE);
   const [open, setOpen] = useState(false);
   useActionFeedback(state);
@@ -37,9 +51,16 @@ export function ReglementForm({ demandeId, resteARegler }: { demandeId: string; 
     // ouvert, pas un gris secondaire pour l'action qui déclenche tout le
     // reste du cycle de règlement.
     return (
-      <Button type="button" onClick={() => setOpen(true)}>
-        Ajouter un règlement
-      </Button>
+      <div className="space-y-1">
+        <Button type="button" disabled={disabled} onClick={() => setOpen(true)}>
+          Ajouter un règlement
+        </Button>
+        {disabled ? (
+          <p className="text-xs text-muted-foreground">
+            Votre rôle ne permet pas d&apos;effectuer de règlement.
+          </p>
+        ) : null}
+      </div>
     );
   }
 

@@ -347,9 +347,11 @@ export default async function CategoriserDemandePage({
             />
           )}
 
-          {canValider ? (
-            <ValidationActions demandeId={demande.id} montantDemande={Number(demande.montant)} />
-          ) : null}
+          <ValidationActions
+            demandeId={demande.id}
+            montantDemande={Number(demande.montant)}
+            disabled={!canValider}
+          />
         </>
       ) : demande.statut === "REJETEE" ? (
         <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">

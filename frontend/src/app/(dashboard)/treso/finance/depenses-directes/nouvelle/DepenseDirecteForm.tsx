@@ -35,8 +35,14 @@ interface UserOption {
  *   serveur (`creerDepenseDirecteAction`).
  * - FOURNISSEUR — jamais de compte : nom libre uniquement.
  * - ENTREPRISE — nom libre, pré-rempli "SIM ASSURANCES CI" (éditable).
+ *
+ * **`disabled`** (Tâche "Séparation Responsable Finance / Assistant
+ * Finance") — le formulaire reste VISIBLE (tous les champs restent
+ * consultables/remplissables) mais son bouton de soumission désactivé
+ * pour un compte sans `treso.saisir_depense_directe` (ex: l'Assistant
+ * Finance par défaut), jamais absent.
  */
-export function DepenseDirecteForm({ users }: { users: UserOption[] }) {
+export function DepenseDirecteForm({ users, disabled = false }: { users: UserOption[]; disabled?: boolean }) {
   const [state, formAction, isPending] = useActionState(creerDepenseDirecteAction, IDLE_ACTION_STATE);
   const router = useRouter();
   useActionFeedback(state);
@@ -160,9 +166,14 @@ export function DepenseDirecteForm({ users }: { users: UserOption[] }) {
       <input type="hidden" name="pieceJointeUrl" value={pieceJointeUrl ?? ""} />
       <PieceJointeUpload onChange={setPieceJointeUrl} />
 
-      <Button type="submit" loading={isPending} className="w-full sm:w-auto">
+      <Button type="submit" loading={isPending} disabled={disabled} className="w-full sm:w-auto">
         Créer la dépense directe
       </Button>
+      {disabled ? (
+        <p className="text-xs text-muted-foreground">
+          Votre rôle ne permet pas de saisir une dépense directe.
+        </p>
+      ) : null}
     </form>
   );
 }

@@ -9,10 +9,14 @@ import { ReglementRow } from "./ReglementRow";
  * > 0` — totalement ou partiellement, Phase C) : montant validé / total
  * réglé / reste à régler (calculé sur `montantValide`, PAS le montant
  * demandé — cahier des charges section 4), liste des règlements
- * (brouillon/confirmé/annulé), et le formulaire d'ajout si l'utilisateur a
- * `treso.effectuer_reglement` et qu'il reste quelque chose à régler. Server
- * Component autonome : requête lui-même règlements + totaux à partir du
- * seul id de la demande.
+ * (brouillon/confirmé/annulé), et le formulaire d'ajout dès qu'il reste
+ * quelque chose à régler — visible mais désactivé si l'utilisateur n'a pas
+ * `treso.effectuer_reglement` (ex: le Responsable Finance depuis
+ * "Séparation Responsable Finance / Assistant Finance", voir CLAUDE.md),
+ * jamais absent : `resteARegler > 0` reste la seule condition d'AFFICHAGE
+ * du formulaire (état métier), `canEffectuerReglement` ne contrôle plus
+ * que son état activé/désactivé (permission). Server Component autonome :
+ * requête lui-même règlements + totaux à partir du seul id de la demande.
  */
 export async function ReglementsSection({
   demandeId,
@@ -87,8 +91,8 @@ export async function ReglementsSection({
         </ul>
       )}
 
-      {canEffectuerReglement && resteARegler > 0 ? (
-        <ReglementForm demandeId={demandeId} resteARegler={resteARegler} />
+      {resteARegler > 0 ? (
+        <ReglementForm demandeId={demandeId} resteARegler={resteARegler} disabled={!canEffectuerReglement} />
       ) : null}
     </div>
   );

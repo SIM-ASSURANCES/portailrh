@@ -17,15 +17,25 @@ import { marquerDepenseNonJustifieeAction } from "@/app/(dashboard)/treso/financ
  * — revérifié côté serveur de toute façon), sinon un petit formulaire
  * inline ouvert à la demande (même convention que `BudgetAlloueField.tsx` :
  * enregistrement explicite par bouton, jamais à chaque frappe).
+ *
+ * **`disabled`** (Tâche "Accès lecture seule du Responsable Finance à
+ * Retours en attente", voir CLAUDE.md) — le déclencheur "Marquer non
+ * justifiée" reste VISIBLE mais désactivé (grisé, non cliquable) pour un
+ * compte sans `treso.receptionner_retour`, jamais absent : empêche
+ * d'ouvrir le petit formulaire plutôt que de le masquer, même principe
+ * qu'ailleurs dans le module. Un motif déjà enregistré reste affiché tel
+ * quel (pure lecture, jamais concerné par `disabled`).
  */
 export function MarquerNonJustifiee({
   depense,
+  disabled = false,
 }: {
   depense: {
     id: string;
     motifNonJustifie: string | null;
     motifNonJustifiePar: string | null;
   };
+  disabled?: boolean;
 }) {
   const [ouvert, setOuvert] = useState(false);
   const [motif, setMotif] = useState("");
@@ -44,7 +54,8 @@ export function MarquerNonJustifiee({
     return (
       <button
         type="button"
-        className="text-xs text-info underline-offset-4 hover:text-primary hover:underline"
+        disabled={disabled}
+        className="text-xs text-info underline-offset-4 hover:text-primary hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline disabled:hover:text-muted-foreground"
         onClick={() => setOuvert(true)}
       >
         Marquer non justifiée

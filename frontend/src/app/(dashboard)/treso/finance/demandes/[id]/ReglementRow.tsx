@@ -32,12 +32,14 @@ function ReglementStatutBadge({ reglement }: { reglement: ReglementRowData }) {
  * - Confirmé (non annulé) : Annuler (motif obligatoire) — plus aucune édition.
  * - Annulé : lecture seule, grisé/barré, motif visible.
  *
- * `canEffectuerReglement` masque les boutons d'action pour un utilisateur
- * qui partage l'espace Finance sans avoir cette permission précise (ex: le
- * DG, qui a `treso.valider_demande` mais pas `treso.effectuer_reglement`) —
- * même principe que Finance/DG sur la catégorisation au Ticket 3. Les
+ * `canEffectuerReglement` désactive (visible mais non cliquable, jamais
+ * absent — Tâche "Séparation Responsable Finance / Assistant Finance",
+ * voir CLAUDE.md) les boutons d'action pour un utilisateur qui partage
+ * l'espace Finance sans avoir cette permission précise (ex: le DG, ou
+ * depuis cette tâche le Responsable Finance lui-même, qui a
+ * `treso.valider_demande` mais plus `treso.effectuer_reglement`). Les
  * Server Actions revérifient de toute façon la permission côté serveur :
- * ce masquage est une question de clarté d'interface, pas la seule ligne
+ * ce grisage est une question de clarté d'interface, pas la seule ligne
  * de défense.
  *
  * Le formulaire d'édition reste non contrôlé (`defaultValue` + `FormData`
@@ -149,18 +151,28 @@ export function ReglementRow({
               </Button>
             </a>
           ) : null}
-          {canEffectuerReglement && !reglement.estConfirme && !reglement.estAnnule && uiMode === "view" ? (
+          {!reglement.estConfirme && !reglement.estAnnule && uiMode === "view" ? (
             <>
-              <Button type="button" variant="secondary" onClick={() => setUiMode("edit")}>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={!canEffectuerReglement}
+                onClick={() => setUiMode("edit")}
+              >
                 Modifier
               </Button>
-              <Button type="button" loading={isPending} onClick={handleConfirmer}>
+              <Button type="button" loading={isPending} disabled={!canEffectuerReglement} onClick={handleConfirmer}>
                 Confirmer
               </Button>
             </>
           ) : null}
-          {canEffectuerReglement && reglement.estConfirme && !reglement.estAnnule && uiMode === "view" ? (
-            <Button type="button" variant="danger" onClick={() => setUiMode("annuler")}>
+          {reglement.estConfirme && !reglement.estAnnule && uiMode === "view" ? (
+            <Button
+              type="button"
+              variant="danger"
+              disabled={!canEffectuerReglement}
+              onClick={() => setUiMode("annuler")}
+            >
               Annuler
             </Button>
           ) : null}

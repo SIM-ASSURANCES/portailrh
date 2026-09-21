@@ -17,8 +17,13 @@ import { definirSoldeOuvertureAction } from "./actions";
  * sur le solde d'ouverture") — bloque la soumission côté client (bouton
  * désactivé + message explicite), revérifié côté serveur dans
  * `definirSoldeOuvertureAction` (jamais uniquement ce masquage).
+ *
+ * **`disabled`** (Tâche "Séparation Responsable Finance / Assistant
+ * Finance") — le formulaire reste VISIBLE mais son bouton de soumission
+ * désactivé pour un compte sans `treso.corriger_solde_ouverture` (ex:
+ * l'Assistant Finance par défaut), jamais absent.
  */
-export function SoldeOuvertureForm() {
+export function SoldeOuvertureForm({ disabled = false }: { disabled?: boolean }) {
   const [montant, setMontant] = useState("");
   const [montantError, setMontantError] = useState<string | undefined>();
   const [pieceJointeUrl, setPieceJointeUrl] = useState<string | null>(null);
@@ -85,9 +90,14 @@ export function SoldeOuvertureForm() {
         value={motif}
         onChange={(e) => setMotif(e.target.value)}
       />
-      <Button type="button" loading={isPending} disabled={!pieceJointeUrl} onClick={handleSubmit}>
+      <Button type="button" loading={isPending} disabled={!pieceJointeUrl || disabled} onClick={handleSubmit}>
         Définir le solde d&apos;ouverture
       </Button>
+      {disabled ? (
+        <p className="text-xs text-muted-foreground">
+          Votre rôle ne permet pas de définir le solde d&apos;ouverture.
+        </p>
+      ) : null}
     </div>
   );
 }

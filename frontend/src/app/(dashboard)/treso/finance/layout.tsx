@@ -14,16 +14,26 @@ import { getSession, hasPermission } from "@/lib/auth";
  * `treso.approuver_validation_complete` (verrou de clôture DG) **OU**
  * `treso.gerer_categories` (gestion des Catégories/Objets ouverte à
  * Finance, voir CLAUDE.md "Gestion des Catégories/Objets ouverte à
- * Finance") (pas besoin de toutes) : Finance catégorise et réceptionne les
+ * Finance") **OU** `treso.alimenter_caisse` **OU**
+ * `treso.corriger_solde_ouverture` (permissions isolées depuis "Séparation
+ * Responsable Finance / Assistant Finance", ajoutées ici par principe
+ * même si `treso.effectuer_reglement`/`treso.receptionner_retour`
+ * suffisent déjà à admettre le seul rôle qui les possède aujourd'hui —
+ * voir CLAUDE.md "Aide-mémoire — permissions actuelles" : toute nouvelle
+ * permission Trésorerie opérationnelle doit être ajoutée à cette garde)
+ * (pas besoin de toutes) : Finance catégorise et réceptionne les
  * retours (généralement sans `valider_demande`), le DG valide/rejette et
  * voit le dashboard/reporting (généralement sans les autres, cf. seed) —
  * ces profils partagent cet espace, mais les pages qu'il contient doivent
  * ensuite afficher des actions différentes selon la permission précise de
  * l'utilisateur (voir `finance/demandes/[id]/page.tsx` et
  * `finance/retours/page.tsx`) : ne jamais supposer qu'un utilisateur qui a
- * passé cette garde a toutes les permissions. Dans le seed actuel, le rôle
- * Finance les a toutes, mais la garde reste correcte par principe pour tout
- * futur rôle qui n'en aurait qu'une seule.
+ * passé cette garde a toutes les permissions. Depuis "Séparation
+ * Responsable Finance / Assistant Finance", DEUX rôles se partagent
+ * désormais l'ensemble complet (Finance : tout sauf effectuer_reglement/
+ * receptionner_retour ; Assistant Finance : uniquement ces deux-là) — la
+ * garde reste correcte par principe pour tout futur rôle qui n'en aurait
+ * qu'une seule.
  *
  * Même pattern que `(dashboard)/admin/layout.tsx` : redirection vers le
  * dashboard avec un toast d'erreur plutôt qu'une page 403.
@@ -40,7 +50,9 @@ export default async function FinanceLayout({ children }: { children: React.Reac
       hasPermission(session, "treso.voir_reporting") ||
       hasPermission(session, "treso.saisir_depense_directe") ||
       hasPermission(session, "treso.approuver_validation_complete") ||
-      hasPermission(session, "treso.gerer_categories"));
+      hasPermission(session, "treso.gerer_categories") ||
+      hasPermission(session, "treso.alimenter_caisse") ||
+      hasPermission(session, "treso.corriger_solde_ouverture"));
 
   if (!canAccess) {
     redirect("/?error=acces_refuse_categoriser");

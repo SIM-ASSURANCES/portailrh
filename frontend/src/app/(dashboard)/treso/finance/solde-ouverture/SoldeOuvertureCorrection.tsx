@@ -22,10 +22,19 @@ import { alimenterCaisseAction, corrigerSoldeOuvertureAction } from "./actions";
 export function SoldeOuvertureCorrection({
   montantActuel,
   definiLe,
+  canCorriger = true,
+  canAlimenter = true,
 }: {
   montantActuel: number;
   /** Date ISO de la première définition (jamais celle d'une correction ultérieure). */
   definiLe: string;
+  /** Tâche "Séparation Responsable Finance / Assistant Finance" — les deux
+   * boutons d'entrée ci-dessous restent VISIBLES mais désactivés
+   * indépendamment l'un de l'autre selon la permission précise manquante
+   * (`treso.corriger_solde_ouverture`/`treso.alimenter_caisse`), jamais
+   * absents. */
+  canCorriger?: boolean;
+  canAlimenter?: boolean;
 }) {
   const router = useRouter();
   const [ouvert, setOuvert] = useState(false);
@@ -143,13 +152,29 @@ export function SoldeOuvertureCorrection({
       </div>
 
       {!ouvert && !ouvertAlimentation ? (
-        <div className="flex flex-wrap gap-3">
-          <Button type="button" variant="secondary" onClick={() => setOuvert(true)}>
-            Corriger le solde d&apos;ouverture
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => setOuvertAlimentation(true)}>
-            Nouvelle alimentation de caisse
-          </Button>
+        <div className="space-y-1">
+          <div className="flex flex-wrap gap-3">
+            <Button type="button" variant="secondary" disabled={!canCorriger} onClick={() => setOuvert(true)}>
+              Corriger le solde d&apos;ouverture
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!canAlimenter}
+              onClick={() => setOuvertAlimentation(true)}
+            >
+              Nouvelle alimentation de caisse
+            </Button>
+          </div>
+          {!canCorriger || !canAlimenter ? (
+            <p className="text-xs text-muted-foreground">
+              {!canCorriger && !canAlimenter
+                ? "Votre rôle ne permet ni de corriger le solde d'ouverture ni d'alimenter la caisse."
+                : !canCorriger
+                  ? "Votre rôle ne permet pas de corriger le solde d'ouverture."
+                  : "Votre rôle ne permet pas d'alimenter la caisse."}
+            </p>
+          ) : null}
         </div>
       ) : null}
 

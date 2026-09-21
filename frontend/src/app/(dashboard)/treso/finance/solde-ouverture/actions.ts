@@ -34,10 +34,14 @@ const pieceJointeUrlSchema = z
  * "Solde d'ouverture de caisse") : en conditions réelles, de l'argent
  * physique peut déjà être présent en caisse avant que l'application ne
  * commence à l'utiliser ; `getSoldeCaisse()` partait implicitement de 0
- * sans ce mécanisme. Réservée à Finance/Admin (`treso.effectuer_reglement`
- * — la même permission qui gouverne déjà les autres écritures
- * `JournalCaisse` — OU `isAdmin()`), jamais au DG (`treso.valider_demande`
- * seule ne suffit pas).
+ * sans ce mécanisme. Réservée à Responsable Finance/Admin
+ * (`treso.corriger_solde_ouverture` — voir CLAUDE.md "Séparation
+ * Responsable Finance / Assistant Finance" : couvre à la fois la
+ * définition initiale et la correction ultérieure, même écran, même
+ * concept — OU `isAdmin()`), jamais au DG ni à l'Assistant Finance par
+ * défaut (`treso.effectuer_reglement`/`treso.receptionner_retour` seules
+ * ne suffisent plus depuis cette même tâche — avant, cette action
+ * partageait à tort la garde de `treso.effectuer_reglement`).
  *
  * Crée une écriture `JournalCaisse` ORDINAIRE (`type: "ENTREE"`,
  * `source: "solde_ouverture"`) — `getSoldeCaisse()` n'a besoin d'AUCUNE
@@ -62,7 +66,7 @@ export async function definirSoldeOuvertureAction(
   motif?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !(isAdmin(session) || hasPermission(session, "treso.effectuer_reglement"))) {
+  if (!session || !(isAdmin(session) || hasPermission(session, "treso.corriger_solde_ouverture"))) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -140,6 +144,9 @@ const motifCorrectionSchema = z
  * écriture de correction (`SOLDE_OUVERTURE_CORRECTION_SOURCE`), jamais à
  * l'écriture d'annulation (pure compensation technique, pas le sujet du
  * justificatif).
+ *
+ * Réservée à `treso.corriger_solde_ouverture` OU `isAdmin()` — voir
+ * CLAUDE.md "Séparation Responsable Finance / Assistant Finance".
  */
 export async function corrigerSoldeOuvertureAction(
   nouveauMontant: number,
@@ -147,7 +154,7 @@ export async function corrigerSoldeOuvertureAction(
   motif: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !(isAdmin(session) || hasPermission(session, "treso.effectuer_reglement"))) {
+  if (!session || !(isAdmin(session) || hasPermission(session, "treso.corriger_solde_ouverture"))) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -229,9 +236,11 @@ const pieceJointeUrlSchemaAlimentation = z
  * Enregistre une alimentation de caisse — apport d'argent physique en
  * cours d'exploitation (voir CLAUDE.md "Nouvelle alimentation de caisse"),
  * répétable autant de fois que nécessaire (contrairement au solde
- * d'ouverture, unique). Réservée à Finance/Admin
- * (`treso.effectuer_reglement` OU `isAdmin()`), même garde que le solde
- * d'ouverture.
+ * d'ouverture, unique). Réservée à Responsable Finance/Admin
+ * (`treso.alimenter_caisse` — permission dédiée depuis "Séparation
+ * Responsable Finance / Assistant Finance", voir CLAUDE.md ; partageait à
+ * tort la garde de `treso.effectuer_reglement` auparavant — OU
+ * `isAdmin()`), jamais l'Assistant Finance par défaut.
  *
  * Crée une écriture `JournalCaisse` ORDINAIRE (`type: "ENTREE"`, `source:
  * ALIMENTATION_CAISSE_SOURCE`) — `getSoldeCaisse()` n'a besoin d'AUCUNE
@@ -257,7 +266,7 @@ export async function alimenterCaisseAction(
   motif?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !(isAdmin(session) || hasPermission(session, "treso.effectuer_reglement"))) {
+  if (!session || !(isAdmin(session) || hasPermission(session, "treso.alimenter_caisse"))) {
     return { status: "error", message: "Action non autorisée." };
   }
 

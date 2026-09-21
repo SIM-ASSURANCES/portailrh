@@ -48,7 +48,7 @@ async function main() {
 
   console.log("Création des rôles...");
 
-  const [roleCollaborateur, roleFinance, roleDG, roleAdmin, roleRH] = await Promise.all([
+  const [roleCollaborateur, roleFinance, roleDG, roleAdmin, roleRH, roleAssistantFinance] = await Promise.all([
     prisma.role.upsert({
       where: { name: "Collaborateur" },
       update: {
@@ -63,8 +63,8 @@ async function main() {
     }),
     prisma.role.upsert({
       where: { name: "Finance" },
-      update: { description: "Équipe finance / trésorerie" },
-      create: { name: "Finance", description: "Équipe finance / trésorerie" },
+      update: { description: "Équipe finance / trésorerie (Responsable Finance : décide)" },
+      create: { name: "Finance", description: "Équipe finance / trésorerie (Responsable Finance : décide)" },
     }),
     prisma.role.upsert({
       where: { name: "DG" },
@@ -91,10 +91,33 @@ async function main() {
       update: { description: "Gère le pointage, les retards, absences et reportings RH" },
       create: { name: "RH", description: "Gère le pointage, les retards, absences et reportings RH" },
     }),
+    // Séparation stricte des tâches Trésorerie (voir CLAUDE.md "Séparation
+    // Responsable Finance / Assistant Finance") — exécute le
+    // règlement/décaissement et la réception des retours de caisse,
+    // JAMAIS la validation elle-même : réduit le risque de fraude en
+    // s'assurant qu'une seule personne ne peut jamais à la fois valider
+    // une dépense ET la régler. `peutEtreBeneficiaireDelegation: true` DÈS
+    // LA CRÉATION — second cas explicite après "Collaborateur" à déroger à
+    // la règle "réservé au rôle Collaborateur" (voir "Délégation
+    // individuelle de permissions") : un Responsable Finance doit pouvoir
+    // déléguer au cas par cas l'alimentation de caisse/la correction du
+    // solde d'ouverture/la dépense directe à son Assistant.
+    prisma.role.upsert({
+      where: { name: "Assistant Finance" },
+      update: {
+        description: "Exécute les règlements/décaissements et réceptionne les retours de caisse (séparation des tâches)",
+        peutEtreBeneficiaireDelegation: true,
+      },
+      create: {
+        name: "Assistant Finance",
+        description: "Exécute les règlements/décaissements et réceptionne les retours de caisse (séparation des tâches)",
+        peutEtreBeneficiaireDelegation: true,
+      },
+    }),
   ]);
 
   console.log(
-    `Rôles créés : ${roleCollaborateur.name}, ${roleFinance.name}, ${roleDG.name}, ${roleAdmin.name}, ${roleRH.name}`
+    `Rôles créés : ${roleCollaborateur.name}, ${roleFinance.name}, ${roleDG.name}, ${roleAdmin.name}, ${roleRH.name}, ${roleAssistantFinance.name}`
   );
 
   console.log("Création des modules...");
@@ -135,6 +158,16 @@ async function main() {
       moduleId: moduleTresorerie.id,
     },
     { key: "treso.saisir_depense_directe", label: "Saisir une dépense directe", moduleId: moduleTresorerie.id },
+    {
+      key: "treso.alimenter_caisse",
+      label: "Enregistrer une alimentation de caisse",
+      moduleId: moduleTresorerie.id,
+    },
+    {
+      key: "treso.corriger_solde_ouverture",
+      label: "Définir/corriger le solde d'ouverture de caisse",
+      moduleId: moduleTresorerie.id,
+    },
     { key: "treso.voir_dashboard_finance", label: "Voir le dashboard finance", moduleId: moduleTresorerie.id },
     { key: "treso.voir_reporting", label: "Voir le reporting", moduleId: moduleTresorerie.id },
     {
@@ -184,12 +217,19 @@ async function main() {
       "pointage.pointer",
       "pointage.consulter_historique",
     ],
+    // Responsable Finance : décide (valide/rejette, clôture) — voir
+    // CLAUDE.md "Séparation Responsable Finance / Assistant Finance".
+    // Retrait assumé (choix produit daté 2026-09-21, PAS un correctif de
+    // bug) de "treso.effectuer_reglement"/"treso.receptionner_retour" :
+    // désormais l'exclusivité du rôle "Assistant Finance" ci-dessous,
+    // pour qu'une seule personne ne puisse jamais à la fois valider une
+    // dépense ET la régler.
     [roleFinance.id]: [
       "treso.categoriser_demande",
       "treso.valider_demande",
-      "treso.effectuer_reglement",
-      "treso.receptionner_retour",
       "treso.cloturer_demande",
+      "treso.alimenter_caisse",
+      "treso.corriger_solde_ouverture",
       "treso.voir_dashboard_finance",
       "treso.voir_reporting",
       "treso.saisir_depense_directe",
@@ -229,6 +269,12 @@ async function main() {
       // (voir roleDG.id ci-dessus) : les deux rôles peuvent modérer.
       "feedback.moderer",
     ],
+    // Assistant Finance : exécute (règlement/décaissement, réception des
+    // retours de caisse) — jamais la validation, jamais par défaut
+    // l'alimentation de caisse/la correction du solde d'ouverture/la
+    // dépense directe (délégables au cas par cas par le Responsable
+    // Finance, voir CLAUDE.md).
+    [roleAssistantFinance.id]: ["treso.effectuer_reglement", "treso.receptionner_retour"],
   };
 
   let rolePermissionCount = 0;
@@ -286,6 +332,7 @@ async function main() {
     { fullName: "DG Test", email: "dg@simassurances.test", roleId: roleDG.id, serviceId: serviceByName["Direction"].id },
     { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id, serviceId: null },
     { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id, serviceId: serviceByName["Ressources Humaines"].id },
+    { fullName: "Assistant Finance Test", email: "assistant-finance@simassurances.test", roleId: roleAssistantFinance.id, serviceId: serviceByName["Finance"].id },
   ];
 
   const createdUsers = await Promise.all(

@@ -839,6 +839,254 @@ clôture Finance, jamais l'une sans l'autre ni l'inverse).
   écriture `JournalCaisse`), et historique associés supprimés après
   vérification.
 
+### Séparation Responsable Finance / Assistant Finance (2026-09-21)
+
+Séparation stricte des tâches (segregation of duties) au sein de l'équipe
+Finance — objectif business confirmé : réduire le risque de fraude en
+s'assurant qu'une seule personne ne peut jamais à la fois valider une
+dépense ET la régler. Le rôle « Finance » existant (dans son usage métier
+« Responsable Finance ») garde la décision (valider/rejeter, clôturer,
+alimentation caisse/solde d'ouverture/dépense directe) ; un nouveau rôle
+fixe « Assistant Finance » reçoit l'exécution (règlement/décaissement,
+réception des retours de caisse).
+
+**Diagnostic préalable (avant toute modification)** — trois actions à
+isoler ou confirmer déjà isolées :
+
+| Action | État trouvé |
+|---|---|
+| `validerTotalementAction`/`validerPartiellementAction`/`rejeterDemandeAction` | Déjà `treso.valider_demande`, isolée — inchangé. |
+| `confirmerReglementAction`/`creerReglementAction`/`modifierReglementAction`/`annulerReglementAction` | Déjà `treso.effectuer_reglement`, isolée — inchangé dans son principe, retirée du rôle Finance (voir plus bas). |
+| Réception de retour / `marquerDepenseNonJustifieeAction` | Déjà `treso.receptionner_retour`, isolée — inchangé dans son principe, retirée du rôle Finance (voir plus bas). |
+| `alimenterCaisseAction` | **PAS isolée** : gardée par `isAdmin() OU treso.effectuer_reglement`, une vérification PARTAGÉE avec le règlement, jamais une permission dédiée. |
+| `definirSoldeOuvertureAction`/`corrigerSoldeOuvertureAction` | **PAS isolées** : même garde partagée `isAdmin() OU treso.effectuer_reglement` que l'alimentation — les trois actions du module solde d'ouverture ne faisaient techniquement qu'une seule et même vérification. |
+| `creerDepenseDirecteAction` | **Déjà isolée** : `treso.saisir_depense_directe`, une permission dédiée de longue date — aucune isolation nécessaire. |
+
+**Isolation de deux nouvelles permissions** — `treso.alimenter_caisse` et
+`treso.corriger_solde_ouverture` (cette dernière couvre volontairement À
+LA FOIS `definirSoldeOuvertureAction` — la définition initiale, unique —
+ET `corrigerSoldeOuvertureAction` — la correction ultérieure : même écran,
+même concept métier de « gérer le solde d'ouverture », jamais deux
+permissions pour deux actions du même formulaire). Les trois Server
+Actions du fichier `solde-ouverture/actions.ts` pointent désormais vers
+ces permissions dédiées au lieu de `treso.effectuer_reglement`.
+
+**Nouveau rôle fixe « Assistant Finance »** — `estAdmin: false`,
+`peutRecevoirFeedback: true` (comme les autres rôles non-Admin, valeur par
+défaut du champ), **`peutEtreBeneficiaireDelegation: true` DÈS LA
+CRÉATION** (voir "Délégation individuelle de permissions" — second cas
+explicite après « Collaborateur », pas un oubli : un Responsable Finance
+doit pouvoir déléguer au cas par cas l'une des trois actions que
+l'Assistant n'a pas par défaut). Permissions par défaut : uniquement
+`treso.effectuer_reglement` + `treso.receptionner_retour`.
+
+**Retrait DÉFINITIF sur le rôle « Finance »** (choix produit assumé et
+daté 2026-09-21, **volontairement PAS documenté comme un correctif de
+bug** — le comportement précédent n'était pas un défaut, c'était le
+fonctionnement voulu avant cette tâche) : `treso.effectuer_reglement` et
+`treso.receptionner_retour` retirées de ses `RolePermission`, désormais
+l'exclusivité du rôle « Assistant Finance ». Le rôle Finance gagne en
+contrepartie `treso.alimenter_caisse`/`treso.corriger_solde_ouverture`
+(aucune régression : il les avait déjà implicitement via l'ancienne garde
+partagée).
+
+- Migration `20260921000000_separation_finance_responsable_assistant`
+  (idempotente, `ON CONFLICT DO NOTHING` partout — même schéma que les
+  rattrapages `feedback.moderer` précédents) : crée les deux permissions,
+  les attribue à Finance, crée le rôle Assistant Finance avec ses deux
+  permissions par défaut, puis retire `effectuer_reglement`/
+  `receptionner_retour` du rôle Finance. `seed.ts` mis à jour en parallèle
+  (nouveau rôle, nouvelles permissions, `rolePermissionMap` réécrite,
+  nouveau compte de test `assistant-finance@simassurances.test`) pour
+  qu'une base neuve obtienne directement le bon état sans dépendre de
+  cette migration.
+- `treso/finance/layout.tsx` — **aucune modification de logique
+  nécessaire** : la garde OR admettait déjà `treso.effectuer_reglement`/
+  `treso.receptionner_retour`, donc le nouveau rôle Assistant Finance y
+  accède directement sans changement (confirmé en pratique). Les deux
+  nouvelles permissions y ont tout de même été ajoutées par principe (voir
+  "Aide-mémoire — permissions actuelles").
+
+**Boutons visibles mais désactivés, jamais absents** (au lieu du masquage
+conditionnel `{canX ? <Action/> : null}` déjà en place ailleurs dans le
+module) — changement de convention volontaire pour cette tâche
+spécifiquement, afin que la séparation des tâches soit LISIBLE sur l'écran
+plutôt que de disparaître silencieusement :
+
+- **`ValidationActions.tsx`** — nouvelle prop `disabled` (remplace le
+  masquage `{canValider ? ... : null}` de la page appelante) : les 3
+  boutons restent visibles, désactivés + message explicite si `disabled`.
+- **`ReglementForm.tsx`** (bouton d'entrée "Ajouter un règlement") et
+  **`ReglementRow.tsx`** (Modifier/Confirmer/Annuler par règlement) — même
+  principe, nouvelle prop `disabled`/reprise de `canEffectuerReglement`
+  sans plus jamais conditionner le RENDU du bouton, seulement son état.
+  `ReglementsSection.tsx` : `resteARegler > 0` reste la seule condition
+  d'affichage (état métier, jamais une permission).
+- **`solde-ouverture/page.tsx`** — garde de PAGE élargie (Admin OU
+  `corriger_solde_ouverture` OU `alimenter_caisse` OU
+  `effectuer_reglement` OU `receptionner_retour`) : un Assistant Finance
+  sans délégation doit pouvoir ATTEINDRE cette page pour voir ses boutons
+  désactivés, pas se heurter à une redirection en amont. `SoldeOuvertureForm`/
+  `SoldeOuvertureCorrection` reçoivent chacun leur(s) prop(s)
+  `disabled`/`canCorriger`/`canAlimenter` — les deux boutons d'entrée de
+  `SoldeOuvertureCorrection` ("Corriger le solde d'ouverture" et "Nouvelle
+  alimentation de caisse") se désactivent indépendamment l'un de l'autre
+  (un compte peut avoir reçu une délégation sur l'un sans l'autre).
+- **`depenses-directes/nouvelle/page.tsx`** — même principe : garde de
+  page élargie (`saisir_depense_directe` OU `effectuer_reglement` OU
+  `receptionner_retour`), `DepenseDirecteForm` reçoit `disabled` (désactive
+  uniquement le bouton de soumission, tous les champs restent
+  consultables/remplissables — l'autorité réelle reste la Server Action).
+- **Nav (`(dashboard)/layout.tsx`)** — `canGererSoldeOuverture`/
+  `canSaisirDepenseDirecte` élargis avec la même liste de permissions que
+  les gardes de page correspondantes, pour que le lien apparaisse dans la
+  sidebar de l'Assistant Finance sans délégation (sinon la page serait
+  atteignable par URL directe mais jamais découvrable).
+- **`/treso/finance/retours` ("Retours en attente")** : à l'origine
+  volontairement PAS étendu, laissé en `redirect()` strict sur
+  `treso.receptionner_retour` seule — point explicitement signalé sans
+  être tranché unilatéralement. **Résolu par la tâche suivante** ("Accès
+  lecture seule du Responsable Finance à Retours en attente" ci-dessous) :
+  le Responsable Finance y a désormais bien un accès de consultation
+  complet, boutons visibles mais désactivés — plus un point ouvert.
+
+**Vérifications, parcours réel + rejeux réseau (comptes de test
+uniquement, aucune donnée réelle touchée)** :
+
+- **Assistant Finance** : demande de test vue avec boutons
+  validation/rejet visibles et désactivés (`disabled=""` confirmé dans le
+  HTML rendu, message explicite affiché) ; rejeu réseau direct de
+  `validerTotalementAction` → refusé (`"Action non autorisée."`).
+- **Finance (Responsable)** valide normalement la même demande
+  (`validerTotalementAction` → succès, statut `VALIDEE_NON_REGLEE`
+  confirmé en base).
+- **Une fois validée**, Finance voit "Ajouter un règlement" visible mais
+  désactivé (`disabled=""` + message confirmés dans le HTML) ; rejeu
+  réseau direct de `confirmerReglementAction` (avec un id de règlement
+  arbitraire, le contrôle de permission précède toute lecture DB) →
+  refusé.
+- **Assistant Finance effectue alors, pour de vrai, tout le cycle
+  d'exécution sur cette même demande** : crée le règlement (brouillon),
+  le confirme (`JournalCaisse` SORTIE créée), puis réceptionne le retour
+  déclaré par le collaborateur (`JournalCaisse` ENTREE créée) — les trois
+  appels réussissent.
+- **Finance garde "Nouvelle alimentation de caisse"/"Corriger le solde
+  d'ouverture"/"Nouvelle dépense directe" pleinement fonctionnels** :
+  les trois exécutées pour de vrai avec succès (petits montants de test,
+  nettoyés après coup — la correction du solde d'ouverture à l'identique
+  a un impact net nul par construction, les deux alimentations de test
+  d'1 FCFA ont été supprimées directement, faute de mécanisme de
+  compensation pour cette action précise).
+- **Assistant Finance ne peut faire aucune des trois par défaut** : les
+  trois rejeux réseau directs refusés (`"Action non autorisée."`).
+- **Délégation ciblée testée pour de vrai** : Finance délègue
+  `treso.alimenter_caisse` à l'Assistant Finance via
+  `accorderDelegationAction` (le vrai flux de `/delegations`) →
+  l'Assistant peut alors effectuer une alimentation de caisse réelle,
+  **mais reste refusé sur les deux autres actions non déléguées**
+  (`corrigerSoldeOuvertureAction`/`creerDepenseDirecteAction`) — plafond
+  strict confirmé. Délégation révoquée après vérification
+  (`revoquerDelegationAction`).
+- **Flux complet de bout en bout, sans régression sur le verrou de
+  clôture déjà vérifié** (voir "Vérification de la règle de clôture à
+  double validation" ci-dessus) : demande créée (collaborateur) →
+  Responsable Finance valide → Assistant Finance règle et réceptionne →
+  Finance tente de clôturer AVANT l'approbation DG → refusé → DG approuve
+  la validation complète (`validationCompleteParDG` passe à `true`,
+  statut inchangé) → **Assistant Finance tente de clôturer → refusé**
+  (`treso.cloturer_demande` reste l'exclusivité du rôle Finance, jamais
+  donnée à l'Assistant) → Finance clôture → succès. Confirme qu'aucune
+  régression n'a été introduite sur cette logique déjà vérifiée
+  précédemment.
+- Compte de test `assistant-finance@simassurances.test` créé directement
+  en base (seed non rejoué sur cette base de dev partagée, comme pour
+  toute nouvelle donnée de seed sur une base déjà initialisée) avec les
+  mêmes paramètres que `seed.ts` — conservé comme fixture permanente,
+  même statut que les 5 autres comptes de test. Demandes/règlements/
+  retours/historique de test supprimés après vérification ; solde de
+  caisse revérifié identique avant/après (4 975 000 FCFA).
+- `tsc`/`eslint` clean, vrai `next build` réussi (65 routes).
+
+### Accès lecture seule du Responsable Finance à Retours en attente
+
+Suite directe de la tâche ci-dessus : le Responsable Finance, désormais
+dépourvu de `treso.receptionner_retour`, se retrouvait totalement
+redirigé hors de `/treso/finance/retours` ("Retours en attente") — point
+explicitement signalé sans être tranché unilatéralement. Demande
+confirmée : garder un accès de CONSULTATION complet (montants,
+collaborateurs, statuts), boutons d'action visibles mais désactivés,
+jamais un redirect.
+
+- **`retours/page.tsx`** — la garde devient `treso.receptionner_retour`
+  **OU** `treso.valider_demande` : le premier obtient un accès complet
+  (`disabled={false}`), le second un accès lecture seule
+  (`disabled={true}`, bannière explicite en haut de page). Un compte
+  n'ayant NI L'UNE NI L'AUTRE (DG, Collaborateur) reste redirigé — dans la
+  pratique via la garde plus générale de `finance/layout.tsx` en amont
+  (aucune des deux permissions ne fait partie de son ensemble de
+  permissions Trésorerie), jamais atteint le `redirect()` propre à cette
+  page, mais le résultat observable (redirection) est strictement
+  identique à avant.
+- **`RetoursEnAttenteTable.tsx`** — nouvelle prop `disabled`, propagée au
+  bouton "Réceptionner" (colonne Actions) et à `MarquerNonJustifiee`
+  (colonne "Détail des dépenses") : les deux restent visibles, jamais
+  retirés du rendu.
+- **`MarquerNonJustifiee.tsx`** (partagé avec `RegularisationSummary.tsx`,
+  voir "Détail des dépenses sur l'écran de Régularisation") — nouvelle
+  prop `disabled` : désactive uniquement le DÉCLENCHEUR ("Marquer non
+  justifiée"), jamais le motif déjà enregistré (toujours affiché en pure
+  lecture, sans rapport avec `disabled`). L'appel depuis
+  `RegularisationSummary` reste inchangé (non concerné, cette tâche ne
+  touche que la liste agrégée `/treso/finance/retours`).
+- **Message explicite plutôt qu'une répétition par ligne** — une seule
+  bannière en tête de page ("Consultation en lecture seule : ...") au lieu
+  d'un texte explicatif sous CHAQUE bouton désactivé (contrairement au
+  reste du module, ex: `ValidationActions`) : cette page est une liste
+  avec potentiellement plusieurs dizaines de lignes, répéter la même
+  phrase sous chaque bouton "Réceptionner" et chaque "Marquer non
+  justifiée" aurait été redondant et bruyant — adaptation délibérée du
+  principe "visible mais désactivé", pas un oubli du message explicatif.
+
+**Vérifications, parcours réel + rejeux réseau (comptes de test
+uniquement, aucune donnée réelle touchée)** :
+
+- Demande de test créée → validée (Responsable Finance) → réglée et
+  confirmée (Assistant Finance, `treso.effectuer_reglement`) → retour
+  déclaré par le collaborateur avec une ligne `SANS_PIECE` (pour exercer
+  aussi "Marquer non justifiée").
+- **Responsable Finance** : page chargée avec succès (200, jamais un
+  redirect), bannière lecture seule présente, liste complète visible
+  (référence, collaborateur, montant, mode CAISSE), bouton "Réceptionner"
+  ET déclencheur "Marquer non justifiée" tous deux confirmés
+  `disabled=""` dans le HTML rendu. Rejeu réseau direct de
+  `receptionnerRetourAction` → refusé (`"Action non autorisée."`).
+- **Assistant Finance** : page chargée sans la bannière lecture seule,
+  bouton "Réceptionner" confirmé SANS `disabled` dans le HTML (seul
+  `aria-busy="false"` présent) — puis réceptionne réellement le retour
+  avec succès, sans aucune régression par rapport au comportement
+  d'avant cette tâche.
+- **Collaborateur** (ni `receptionner_retour` ni `valider_demande`) :
+  toujours redirigé (intercepté par la garde de `finance/layout.tsx` en
+  amont, résultat final identique à avant cette tâche).
+- **Piège rencontré et corrigé pendant le nettoyage** : après suppression
+  directe de la demande de test, les deux écritures `JournalCaisse`
+  qu'elle avait produites (SORTIE 15 000 du règlement, ENTREE 0 de la
+  réception) ont survécu avec `demandeId` mis à `null`
+  (`JournalCaisse.demandeId` est une relation optionnelle, comportement
+  Prisma par défaut `SET NULL` — jamais un blocage de suppression), un
+  déséquilibre permanent de -15 000 FCFA sans rapport avec cette tâche
+  elle-même. Repéré en revérifiant le solde de caisse avant/après
+  nettoyage (4 960 000 au lieu des 4 975 000 attendus) plutôt que supposé
+  correct — corrigé en supprimant directement ces deux écritures
+  devenues orphelines (aucune information reconstituable ne s'y
+  rattachait plus une fois `demandeId` nul, contrairement à une écriture
+  encore liée à une vraie demande). Solde de caisse revérifié restauré
+  à 4 975 000 FCFA. Enseignement pour toute future tâche de ce type :
+  toujours annuler un règlement confirmé (`annulerReglementAction`, crée
+  l'écriture compensatoire) AVANT de supprimer la `Demande`/le `Reglement`
+  sous-jacents, jamais après.
+- `tsc`/`eslint` clean, vrai `next build` réussi (65 routes).
+
 ### Budget partagé par Catégorie
 
 Le budget appartient à la **Catégorie** (nature de la dépense), jamais au
@@ -2416,9 +2664,17 @@ accès précis, sans jamais dépasser ce qu'il possède lui-même.
   passe défini).
 - **`Role.peutEtreBeneficiaireDelegation`** (booléen, librement modifiable
   à tout moment depuis `/admin/roles`, contrairement à `estAdmin`) —
-  détermine qui peut être choisi comme bénéficiaire. Seul le rôle
-  « Collaborateur » l'a à `true` par défaut (seed + migration de
-  rattrapage) ; jamais déduit d'un nom de rôle en dur.
+  détermine qui peut être choisi comme bénéficiaire. Jamais déduit d'un nom
+  de rôle en dur. **Deux cas explicites l'ont à `true` par défaut** (aucun
+  autre) :
+  - « Collaborateur » (seed + migration de rattrapage, cas d'origine).
+  - **« Assistant Finance »** (Tâche "Séparation Responsable Finance /
+    Assistant Finance", voir plus bas) — **exception délibérée dès la
+    création du rôle**, pas un oubli : un Responsable Finance doit pouvoir
+    déléguer au cas par cas à son Assistant l'une des trois actions qu'il
+    ne possède pas par défaut (alimentation de caisse, correction du solde
+    d'ouverture, dépense directe), sans lui donner l'accès de façon
+    permanente via son rôle.
 - `revoquerDelegationAction` : le donneur d'origine, **ou** un Admin
   (`/admin/delegations`, vue de toutes les délégations tous donneurs
   confondus).
@@ -2669,8 +2925,13 @@ pas de build côté Dokploy).
 **Trésorerie** (`treso.*`) : `creer_demande`, `declarer_retour`,
 `categoriser_demande`, `valider_demande`, `effectuer_reglement`,
 `receptionner_retour`, `cloturer_demande`, `saisir_depense_directe`,
-`voir_dashboard_finance`, `voir_reporting`, `approuver_validation_complete`,
-`gerer_categories`.
+`alimenter_caisse`, `corriger_solde_ouverture`, `voir_dashboard_finance`,
+`voir_reporting`, `approuver_validation_complete`, `gerer_categories`.
+`alimenter_caisse`/`corriger_solde_ouverture` isolées depuis "Séparation
+Responsable Finance / Assistant Finance" (voir plus bas) — avant cette
+tâche, `alimenterCaisseAction`/`definirSoldeOuvertureAction`/
+`corrigerSoldeOuvertureAction` partageaient toutes les trois la garde de
+`effectuer_reglement`, jamais des permissions dédiées.
 
 **Pointage RH** (`pointage.*`) : `pointer`, `consulter_historique`,
 `consulter_tous`, `pointage_exceptionnel`, `corriger_pointage`,
@@ -2679,13 +2940,20 @@ pas de build côté Dokploy).
 **Champs de rôle transverses** (jamais un nom de rôle en dur) :
 `Role.estAdmin` (accès `/admin`, figé à la création),
 `Role.peutEtreBeneficiaireDelegation` (éligibilité comme bénéficiaire
-d'une délégation, librement modifiable).
+d'une délégation, librement modifiable — deux cas explicites l'ont à
+`true` par défaut : « Collaborateur » et « Assistant Finance », voir
+"Délégation individuelle de permissions").
 
 `treso/finance/layout.tsx` (espace Finance partagé) accepte l'union de
 toutes les permissions `treso.*` opérationnelles ci-dessus (sauf
 `creer_demande`/`declarer_retour`, réservées au Collaborateur) : toute
 nouvelle permission Trésorerie qui doit donner accès à cet espace doit être
-ajoutée à cette garde OR.
+ajoutée à cette garde OR — `alimenter_caisse`/`corriger_solde_ouverture` y
+ont été ajoutées dès leur création (Tâche "Séparation Responsable Finance
+/ Assistant Finance"), même si `effectuer_reglement`/`receptionner_retour`
+suffisent déjà en pratique à admettre le seul rôle qui les possède
+aujourd'hui (Assistant Finance) — appliqué par principe, pas par nécessité
+immédiate.
 
 **Bug corrigé (Tâche "Séparer 'valider' de 'régler/décaisser'")** :
 `treso.effectuer_reglement` manquait de cette garde OR depuis l'origine —

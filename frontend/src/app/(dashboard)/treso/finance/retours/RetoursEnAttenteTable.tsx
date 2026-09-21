@@ -59,8 +59,17 @@ interface RetourRow {
  * pas de champ à valider, juste un identifiant. La ligne réceptionnée
  * disparaît immédiatement de cette liste après succès, puisqu'elle n'est
  * plus `estReceptionne: false` (revalidatePath sur cette page).
+ *
+ * **`disabled`** (Tâche "Accès lecture seule du Responsable Finance à
+ * Retours en attente", voir CLAUDE.md) — le bouton "Réceptionner" reste
+ * VISIBLE mais désactivé pour un compte sans `treso.receptionner_retour`
+ * (le Responsable Finance, en lecture seule), jamais absent ; propagé
+ * aussi à `MarquerNonJustifiee` (même permission). La page appelante
+ * n'affiche cette table qu'à ceux ayant déjà l'une des deux permissions
+ * pertinentes (voir `page.tsx`), donc `disabled` ne signifie jamais ici
+ * "aucun droit du tout", seulement "lecture seule".
  */
-export function RetoursEnAttenteTable({ retours }: { retours: RetourRow[] }) {
+export function RetoursEnAttenteTable({ retours, disabled = false }: { retours: RetourRow[]; disabled?: boolean }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
@@ -116,7 +125,7 @@ export function RetoursEnAttenteTable({ retours }: { retours: RetourRow[] }) {
                         </>
                       ) : null}
                     </div>
-                    <MarquerNonJustifiee depense={d} />
+                    <MarquerNonJustifiee depense={d} disabled={disabled} />
                   </li>
                 ))}
               </ul>
@@ -162,6 +171,7 @@ export function RetoursEnAttenteTable({ retours }: { retours: RetourRow[] }) {
             <Button
               type="button"
               loading={pendingId === r.id}
+              disabled={disabled}
               onClick={() => handleReceptionner(r.id)}
             >
               Réceptionner

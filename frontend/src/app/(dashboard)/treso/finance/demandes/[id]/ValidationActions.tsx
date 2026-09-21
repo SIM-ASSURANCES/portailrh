@@ -25,13 +25,24 @@ type Mode = "idle" | "confirm-totale" | "partielle" | "rejeter";
  * Après succès, la page se met à jour automatiquement : la Server Action
  * appelle `revalidatePath()`, ce que Next.js répercute sur ce composant
  * sans navigation ni `router.refresh()` explicite.
+ *
+ * **`disabled`** (Tâche "Séparation Responsable Finance / Assistant
+ * Finance") — toujours rendu, y compris pour un compte sans
+ * `treso.valider_demande` (ex: Assistant Finance) : les trois boutons
+ * restent VISIBLES mais désactivés, jamais absents, pour que la
+ * séparation des tâches soit lisible directement sur l'écran plutôt que
+ * de disparaître silencieusement — même principe que le verrou de
+ * clôture DG. La Server Action revérifie de toute façon la permission
+ * côté serveur, ce masquage n'est qu'une question de clarté d'interface.
  */
 export function ValidationActions({
   demandeId,
   montantDemande,
+  disabled = false,
 }: {
   demandeId: string;
   montantDemande: number;
+  disabled?: boolean;
 }) {
   const [mode, setMode] = useState<Mode>("idle");
   const [montantPartiel, setMontantPartiel] = useState("");
@@ -101,16 +112,21 @@ export function ValidationActions({
 
       {mode === "idle" ? (
         <div className="flex flex-wrap gap-3">
-          <Button type="button" onClick={() => setMode("confirm-totale")}>
+          <Button type="button" disabled={disabled} onClick={() => setMode("confirm-totale")}>
             Valider totalement
           </Button>
-          <Button type="button" variant="secondary" onClick={() => setMode("partielle")}>
+          <Button type="button" variant="secondary" disabled={disabled} onClick={() => setMode("partielle")}>
             Valider partiellement
           </Button>
-          <Button type="button" variant="danger" onClick={() => setMode("rejeter")}>
+          <Button type="button" variant="danger" disabled={disabled} onClick={() => setMode("rejeter")}>
             Rejeter
           </Button>
         </div>
+      ) : null}
+      {disabled ? (
+        <p className="text-xs text-muted-foreground">
+          Votre rôle ne permet pas de valider ou rejeter une demande.
+        </p>
       ) : null}
 
       {mode === "confirm-totale" ? (
