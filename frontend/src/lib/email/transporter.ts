@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import { prisma } from "backend";
 
 export interface SendEmailOptions {
@@ -6,6 +8,8 @@ export interface SendEmailOptions {
   html: string;
   text?: string;
   userId?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  attachments?: any[];
 }
 
 export interface SendEmailResult {
@@ -31,6 +35,7 @@ export async function sendEmail({
   html,
   text,
   userId,
+  attachments,
 }: SendEmailOptions): Promise<SendEmailResult> {
   const host = process.env.SMTP_HOST;
   const port = Number(process.env.SMTP_PORT || 587);
@@ -114,12 +119,41 @@ export async function sendEmail({
       },
     });
 
+    // Résolution et injection automatique du logo officiel en CID inline
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const emailAttachments: any[] = [];
+
+    if (html.includes("cid:sim-logo")) {
+      const p1 = path.join(process.cwd(), "public", "logo-sim-couleur.png");
+      const p2 = path.join(process.cwd(), "frontend", "public", "logo-sim-couleur.png");
+      const resolvedPath = fs.existsSync(/* turbopackIgnore: true */ p1)
+        ? p1
+        : fs.existsSync(/* turbopackIgnore: true */ p2)
+          ? p2
+          : null;
+
+      if (resolvedPath) {
+        emailAttachments.push({
+          filename: "logo-sim-couleur.png",
+          path: resolvedPath,
+          cid: "sim-logo",
+          contentType: "image/png",
+          contentDisposition: "inline",
+        });
+      }
+    }
+
+    if (attachments && Array.isArray(attachments)) {
+      emailAttachments.push(...attachments);
+    }
+
     await transporter.sendMail({
       from,
       to,
       subject,
       text: text || html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
       html,
+      attachments: emailAttachments.length > 0 ? emailAttachments : undefined,
     });
 
     return {

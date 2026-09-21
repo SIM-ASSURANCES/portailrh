@@ -30,55 +30,55 @@ export function generatePasswordChangedEmail({
   }).format(changedAt);
 
   const contentHtml = `
-    <div style="margin-bottom: 24px;">
-      <span class="badge badge-success" style="display: inline-block; padding: 4px 14px; font-size: 11px; font-weight: 700; border-radius: 9999px; text-transform: uppercase; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">
-        ✓ Sécurité du Compte
+    <div style="margin-bottom: 20px;">
+      <span class="badge badge-success" style="display: inline-block; padding: 3px 10px; font-size: 11px; font-weight: 700; border-radius: 4px; text-transform: uppercase; background-color: #F0FDF4; color: #15803D; border: 1px solid #BBF7D0; letter-spacing: 0.4px;">
+        Sécurité du Compte
       </span>
     </div>
 
-    <h2 style="color: #0B1B3D; margin-top: 0; margin-bottom: 16px; font-size: 20px; font-weight: 700;">
+    <h2 style="color: #004B9C; margin-top: 0; margin-bottom: 14px; font-size: 18px; font-weight: 700; line-height: 1.3;">
       Bonjour ${fullName},
     </h2>
 
-    <p style="color: #334155; font-size: 15px; margin: 0 0 16px 0;">
-      Nous vous confirmons que le mot de passe associé à votre compte <strong>Portail SIM Assurances</strong> (<code>${email}</code>) a été modifié avec succès le :
+    <p style="color: #334155; font-size: 14.5px; margin: 0 0 14px 0; line-height: 1.6;">
+      Nous vous confirmons que le mot de passe associé à votre compte sur le <strong>Portail SIM Assurances</strong> (<code>${email}</code>) a été modifié avec succès le :
     </p>
 
-    <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-left: 4px solid #004B9C; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
-      <p style="margin: 0; font-size: 14px; color: #1E293B; font-weight: 600;">
-        📅 Date & Heure : <span style="color: #004B9C; font-weight: 700;">${dateFormatted} (heure d'Abidjan)</span>
+    <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-left: 3px solid #004B9C; border-radius: 4px; padding: 14px 18px; margin: 18px 0;">
+      <p style="margin: 0; font-size: 13.5px; color: #1E293B; font-weight: 600;">
+        Date & heure : <span style="color: #004B9C; font-weight: 700;">${dateFormatted} (heure d'Abidjan)</span>
       </p>
-      <p style="margin: 6px 0 0 0; font-size: 12px; color: #64748B;">
+      <p style="margin: 4px 0 0 0; font-size: 12px; color: #64748B;">
         Par mesure de sécurité, toutes vos autres sessions actives ont été automatiquement déconnectées.
       </p>
     </div>
 
-    <div style="text-align: center; margin: 28px 0;">
-      <a href="${loginUrl}" class="btn" style="display: inline-block; padding: 13px 28px; background-color: #004B9C; color: #FFFFFF !important; text-decoration: none; font-weight: 600; font-size: 15px; border-radius: 8px; box-shadow: 0 3px 8px rgba(0, 75, 156, 0.35);">
-        Se connecter avec le nouveau mot de passe
+    <div style="text-align: center; margin: 26px 0;">
+      <a href="${loginUrl}" class="btn" style="display: inline-block; padding: 12px 26px; background-color: #004B9C; color: #FFFFFF !important; text-decoration: none; font-weight: 600; font-size: 14px; border-radius: 6px; letter-spacing: 0.2px;">
+        Se connecter au portail
       </a>
     </div>
 
     <!-- ALERTE SÉCURITÉ EN CAS D'ACTION NON SOLLICITÉE -->
-    <div style="background-color: #FEF2F2; border: 1px solid #FECACA; border-left: 4px solid #DC2626; border-radius: 8px; padding: 18px 20px; margin: 28px 0;">
-      <h4 style="margin: 0 0 8px 0; color: #991B1B; font-size: 14px; font-weight: 700;">
-        ⚠️ Vous n'êtes pas à l'origine de cette modification ?
+    <div style="background-color: #FEF2F2; border: 1px solid #FECACA; border-left: 3px solid #DC2626; border-radius: 4px; padding: 16px 18px; margin: 24px 0;">
+      <h4 style="margin: 0 0 6px 0; color: #991B1B; font-size: 13.5px; font-weight: 700;">
+        Vous n'êtes pas à l'origine de cette modification ?
       </h4>
-      <p style="margin: 0; font-size: 13px; color: #7F1D1D; line-height: 1.6;">
-        Si vous n'avez pas demandé ni effectué ce changement, votre compte est peut-être compromis. Agissez sans attendre :
+      <p style="margin: 0; font-size: 12.5px; color: #7F1D1D; line-height: 1.55;">
+        Si vous n'avez pas demandé ce changement, votre compte est peut-être compromis :
       </p>
-      <div style="margin-top: 12px;">
-        <a href="${recoveryUrl}" style="color: #B91C1C; font-weight: 700; font-size: 13px; text-decoration: underline;">
-          → Réinitialiser immédiatement mon mot de passe en urgence
+      <div style="margin-top: 10px;">
+        <a href="${recoveryUrl}" style="color: #DC2626; font-weight: 700; font-size: 13px; text-decoration: underline;">
+          → Réinitialiser mon mot de passe en urgence
         </a>
       </div>
-      <p style="margin: 8px 0 0 0; font-size: 12px; color: #991B1B;">
-        Veuillez également avertir sans délai le support informatique ou le service RH de SIM Assurances.
+      <p style="margin: 6px 0 0 0; font-size: 11.5px; color: #991B1B;">
+        Avertissez immédiatement le support informatique ou les Ressources Humaines de SIM Assurances.
       </p>
     </div>
 
-    <p style="font-size: 12px; color: #94A3B8; margin-top: 24px; border-top: 1px solid #E2E8F0; padding-top: 18px;">
-      Ce courriel est une notification automatique de sécurité systématique générée pour toute mise à jour de vos identifiants d'accès.
+    <p style="font-size: 11.5px; color: #94A3B8; margin-top: 20px; border-top: 1px solid #F1F5F9; padding-top: 14px; line-height: 1.5;">
+      Ce message est une notification automatique de sécurité générée pour toute mise à jour de vos identifiants d'accès.
     </p>
   `;
 
