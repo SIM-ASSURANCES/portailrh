@@ -200,11 +200,22 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
               className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-medium transition-colors ${
                 alert.variant === "danger"
                   ? "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"
+                  : alert.variant === "warning"
+                  ? "bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100"
                   : "bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/70"
               }`}
               title={alert.message}
             >
-              <Icon name={alert.variant === "danger" ? "alert-triangle" : "info"} className="size-4 shrink-0" />
+              <Icon
+                name={
+                  alert.variant === "danger"
+                    ? "alert-triangle"
+                    : alert.variant === "warning"
+                    ? "clock"
+                    : "info"
+                }
+                className="size-4 shrink-0"
+              />
               <span className="hidden md:inline">{alert.message}</span>
               <span className="md:hidden">{alert.shortMessage || alert.message}</span>
               <Icon name="arrow-right" className="size-3.5 shrink-0 hidden sm:inline" />
@@ -214,11 +225,22 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
               className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-medium border ${
                 alert.variant === "danger"
                   ? "bg-red-50 text-red-700 border-red-200"
+                  : alert.variant === "warning"
+                  ? "bg-amber-50 text-amber-800 border-amber-200"
                   : "bg-slate-50 text-slate-700 border-slate-200"
               }`}
               title={alert.message}
             >
-              <Icon name="info" className="size-4 shrink-0" />
+              <Icon
+                name={
+                  alert.variant === "danger"
+                    ? "alert-triangle"
+                    : alert.variant === "warning"
+                    ? "clock"
+                    : "info"
+                }
+                className="size-4 shrink-0"
+              />
               <span className="hidden md:inline">{alert.message}</span>
               <span className="md:hidden">{alert.shortMessage || alert.message}</span>
             </div>

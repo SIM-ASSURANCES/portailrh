@@ -9,6 +9,11 @@ const sections = [
     description: "Créer des comptes, activer ou désactiver un accès.",
   },
   {
+    href: "/admin/notifications",
+    title: "Notifications Push",
+    description: "Superviser l'adoption des alertes et les terminaux enregistrés.",
+  },
+  {
     href: "/admin/roles",
     title: "Rôles",
     description: "Consulter et modifier les permissions de chaque rôle.",
@@ -32,7 +37,7 @@ export default function AdminHomePage() {
         title="Administration"
         description="Gestion des utilisateurs, des rôles et des modules du portail."
       />
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {sections.map((section) => (
           <Link
             key={section.href}

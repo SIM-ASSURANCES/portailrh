@@ -152,10 +152,12 @@ export default async function DashboardHomePage({
         description:
           topbarAlert.id === "depart_non_pointe"
             ? "Votre pointage de départ n'a pas encore été enregistré pour aujourd'hui. Pensez à pointer avant de partir."
+            : topbarAlert.id === "fin_journee_proche"
+            ? "La fin de journée approche. Pensez à pointer votre départ dès l'horaire réglementaire atteint."
             : undefined,
         href: topbarAlert.href,
         variant: topbarAlert.variant,
-        icon: topbarAlert.variant === "danger" ? "clock" : "calendar",
+        icon: topbarAlert.variant === "danger" || topbarAlert.variant === "warning" ? "clock" : "calendar",
       });
     }
 

@@ -383,6 +383,7 @@ export const ADMIN_GROUP: NavGroup = {
   items: [
     { label: "Vue d'ensemble", href: "/admin", icon: "layout-grid", exact: true },
     { label: "Utilisateurs", href: "/admin/users", icon: "users" },
+    { label: "Notifications Push", href: "/admin/notifications", icon: "bell" },
     { label: "Rôles & permissions", href: "/admin/roles", icon: "shield-check" },
     { label: "Délégations", href: "/admin/delegations", icon: "shield" },
     { label: "Services", href: "/admin/services", icon: "briefcase" },
