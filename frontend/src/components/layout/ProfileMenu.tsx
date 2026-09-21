@@ -36,7 +36,7 @@ export function ProfileMenu({ user, role }: ProfileMenuProps) {
         <div className="hidden leading-tight sm:block text-left">
           <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
             {user.fullName}
-            <span className="rounded-full bg-info-bg px-2 py-0.5 text-[11px] font-medium text-info">
+            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 border border-slate-200/60">
               {role}
             </span>
           </p>

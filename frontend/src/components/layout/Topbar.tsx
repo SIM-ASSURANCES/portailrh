@@ -197,10 +197,11 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
           alert.href ? (
             <Link
               href={alert.href}
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-bold shadow-sm transition-all duration-150 ${alert.variant === "danger"
-                  ? "bg-danger text-white hover:bg-danger/90 hover:scale-[1.02] " + (alert.pulse ? "animate-pulse" : "")
-                  : "bg-primary/10 text-primary border border-primary/20 hover:bg-primary/15"
-                }`}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-medium transition-colors ${
+                alert.variant === "danger"
+                  ? "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"
+                  : "bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200/70"
+              }`}
               title={alert.message}
             >
               <Icon name={alert.variant === "danger" ? "alert-triangle" : "info"} className="size-4 shrink-0" />
@@ -210,10 +211,11 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
             </Link>
           ) : (
             <div
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-medium border ${alert.variant === "danger"
-                  ? "bg-danger/10 border-danger/20 text-danger"
-                  : "bg-blue-50 border-blue-200 text-blue-800"
-                }`}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-medium border ${
+                alert.variant === "danger"
+                  ? "bg-red-50 text-red-700 border-red-200"
+                  : "bg-slate-50 text-slate-700 border-slate-200"
+              }`}
               title={alert.message}
             >
               <Icon name="info" className="size-4 shrink-0" />
