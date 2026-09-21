@@ -782,6 +782,63 @@ Concerne **uniquement** la clôture, jamais le règlement (une demande peut
   existante de clôture (totale : motif libre ; partielle : motif
   obligatoire).
 
+**Vérification de la règle de clôture à double validation — diagnostic
+demandé par Finance/DG, AUCUN écart de code trouvé.** Signalement : le DG
+aurait pu « valider complètement » une demande sans que ça corresponde au
+comportement attendu (règle non négociable : règlement possible sans le
+DG, mais clôture exigeant DEUX actions distinctes — approbation DG PUIS
+clôture Finance, jamais l'une sans l'autre ni l'inverse).
+
+- **Séparation par permission, vérifiée dans le seed ET dans la base de
+  dev partagée** (requête directe sur `RolePermission`) : le rôle « DG »
+  n'a jamais `treso.cloturer_demande`, le rôle « Finance » n'a jamais
+  `treso.approuver_validation_complete` — aucun rôle métier réel ne cumule
+  les deux (seule l'exception déjà connue et documentée du rôle « Admin »,
+  hors circuit métier normal, les cumule).
+- **Reproduit en pratique de bout en bout** (comptes de test réels
+  Finance/DG/Collaborateur, demande jetable créée pour l'occasion,
+  Server Actions appelées directement avec vérification de permission
+  intacte, état relu en base à chaque étape — jamais une simple lecture de
+  code) :
+  1. Finance tente `cloturerDemandeAction` AVANT toute approbation DG →
+     refusé (`"La clôture nécessite l'approbation complète du DG au
+     préalable."`), confirmé par le message ET par le statut inchangé en
+     base.
+  2. DG appelle `approuverValidationCompleteAction` → succès,
+     `validationCompleteParDG` passe à `true` en base — **mais le
+     `statut` de la demande reste strictement inchangé**
+     (`VALIDEE_NON_REGLEE` dans le test, jamais `CLOTUREE`) : cette action
+     ne fait QUE déverrouiller, elle ne clôture jamais rien par
+     elle-même.
+  3. DG tente `cloturerDemandeAction` directement → refusé
+     (`"Action non autorisée."`, `treso.cloturer_demande` absente de son
+     rôle) : le DG ne peut structurellement pas clôturer seul, même après
+     sa propre approbation.
+  4. Finance appelle enfin `cloturerDemandeAction` → succès, `statut`
+     passe à `CLOTUREE` en base seulement à cette étape.
+- **Conclusion : comportement déjà rigoureusement conforme à la règle des
+  deux validations, à chaque étape, prouvé par l'état réel en base et non
+  par supposition.** Aucun correctif de logique nécessaire.
+- **Cause probable de la confusion, corrigée par un seul ajout d'affichage** :
+  un DG n'a jamais accès à la section « Clôture » (`ClotureActions.tsx`,
+  visible seulement avec `treso.cloturer_demande`) — après avoir approuvé,
+  son écran ne montre plus qu'une confirmation d'approbation, sans aucune
+  indication que Finance doit encore agir séparément. Combiné au fait
+  qu'une demande déjà réglée affiche un badge de statut « Réglée » en vert
+  (succès), un DG peut raisonnablement conclure que son approbation a
+  terminé le dossier. **Correctif appliqué** (`treso/finance/demandes/[id]/page.tsx`) :
+  une phrase explicite («&nbsp;Cette approbation ne clôture pas la
+  demande : elle reste ouverte tant que l'équipe Finance n'a pas elle-même
+  cliqué sur «&nbsp;Clôturer&nbsp;».&nbsp;») s'affiche désormais après une
+  approbation DG tant que la demande n'est pas `CLOTUREE`, **uniquement**
+  pour un lecteur qui n'a pas `treso.cloturer_demande` (donc jamais
+  affichée à Finance, qui voit déjà les boutons de clôture juste en
+  dessous — pas de message redondant). Aucun changement de logique, aucune
+  nouvelle permission, aucune nouvelle action.
+- Nettoyage : demande de test, règlement (annulé pour neutraliser son
+  écriture `JournalCaisse`), et historique associés supprimés après
+  vérification.
+
 ### Budget partagé par Catégorie
 
 Le budget appartient à la **Catégorie** (nature de la dépense), jamais au
@@ -1109,6 +1166,86 @@ qu'elle appelle suffit à réafficher ce même formulaire, désormais
 pré-rempli avec la catégorie/l'objet qui viennent d'être enregistrés, avec
 `ValidationActions` toujours visible juste en dessous sur la même page —
 Finance peut enchaîner catégoriser puis valider sans changer d'écran.
+
+### Détail des dépenses sur l'écran de Régularisation
+
+Retour Finance : la carte « Régularisation » (`RegularisationSummary.tsx`,
+`treso/finance/demandes/[id]/page.tsx`) n'affichait « Dépenses effectuées »
+qu'en un seul montant agrégé (justifiées + non justifiées combinées) —
+Finance voulait la répartition, et pouvoir agir sur la justification
+directement depuis cet écran plutôt que de devoir aller sur
+`/treso/finance/retours`.
+
+- **Diagnostic préalable** : le calcul séparé n'existait qu'implicitement
+  (`getMontantNonJustifie`, par `RetourCaisse`, pas par `Demande`) —
+  aucune fonction n'exposait déjà la répartition au niveau d'une demande
+  entière. `marquerDepenseNonJustifieeAction` (`treso/finance/retours/retourActions.ts`)
+  existait déjà et n'était jusqu'ici utilisable que depuis
+  `/treso/finance/retours` (`RetoursEnAttenteTable.tsx`, qui ne liste que
+  les retours PAS ENCORE réceptionnés).
+- **`getDepensesDeclareesParJustification(demandeId)`** (nouvelle,
+  `backend/src/tresorerie.ts`) — deux `aggregate` sur le même périmètre
+  exact que `getDepensesDeclarees` (jamais un second calcul divergent),
+  un avec `justification: "SANS_PIECE"`, l'autre sans filtre ; la
+  différence donne le montant justifié. La somme des deux vaut toujours
+  l'ancien total unique — `ecart` (`RegularisationSummary`) continue de
+  sommer les deux, formule strictement inchangée.
+- **`getDepenseLignesDetail(demandeId)`** (nouvelle, même fichier) —
+  détail ligne par ligne de TOUTES les `DepenseLigne` de la demande (tous
+  ses `RetourCaisse`, réceptionnés ou non — contrairement à
+  `RetoursEnAttenteTable` qui ne montre que les non-réceptionnés),
+  `pieceJointeId`/`motifNonJustifie`/`retourEstReceptionne` inclus pour
+  que l'appelant sache si l'action de marquage reste possible.
+- **`RegularisationSummary.tsx`** — nouvelle prop optionnelle
+  `canGererJustification` (défaut `false`) : affiche, EN PLUS de
+  l'éclatement justifiées/non justifiées (toujours visible, y compris
+  côté Collaborateur), le détail ligne par ligne avec lien "Voir la pièce
+  jointe" et l'action "Marquer non justifiée". **Jamais transmise depuis
+  l'écran Collaborateur** (`treso/demandes/[id]/page.tsx`, reste
+  volontairement en lecture seule) — passée `true` uniquement depuis
+  `treso/finance/demandes/[id]/page.tsx`, calculée avec la même permission
+  que l'action elle-même revérifie déjà côté serveur
+  (`treso.receptionner_retour`), et seulement dans la branche active (pas
+  la branche `CLOTUREE`, où `ClotureActions` explique déjà qu'aucune
+  action n'est plus possible — afficher le bouton là aurait proposé une
+  action vouée à l'échec serveur).
+- **`MarquerNonJustifiee.tsx`** (nouveau, `components/tresorerie/`) —
+  extrait tel quel de `RetoursEnAttenteTable.tsx` (même comportement,
+  même appel à `marquerDepenseNonJustifieeAction`) pour être réutilisé par
+  `RegularisationSummary` sans dupliquer l'implémentation ; `RetoursEnAttenteTable.tsx`
+  importe désormais ce composant partagé au lieu de sa copie locale
+  (supprimée).
+- Ligne déjà réceptionnée sans motif : message « Retour déjà réceptionné :
+  justification définitivement verrouillée. » à la place du bouton
+  (jamais un bouton voué à l'échec serveur) — la ligne conserve son lien
+  pièce jointe, indépendant du statut de justification.
+
+**Vérifications, parcours réel + rejeux réseau (demande jetable, cycle
+complet création → validation → règlement Caisse confirmé → retour
+déclaré avec 2 lignes) :**
+- Retour à 2 lignes (6 000 FCFA avec facture + pièce jointe, 4 000 FCFA
+  sans pièce) → carte affiche « Dépenses justifiées : 6 000 FCFA » /
+  « Dépenses non justifiées : 4 000 FCFA », somme 10 000 FCFA identique à
+  l'ancien total unique, Solde à régulariser toujours à 0 (formule
+  inchangée, vérifiée avant/après).
+- Lien « Voir la pièce jointe » présent pour la ligne avec facture,
+  absent (« Aucune pièce jointe. ») pour l'autre — conforme aux données
+  réellement attachées.
+- **Marquage non justifiée depuis ce nouvel emplacement testé pour de
+  vrai** : la ligne à 6 000 FCFA (facture) marquée non justifiée via
+  `marquerDepenseNonJustifieeAction` appelée depuis cette carte → relecture
+  de la page : « Dépenses justifiées : 0 FCFA » / « Dépenses non
+  justifiées : 10 000 FCFA » (somme toujours 10 000), motif Finance
+  affiché avec l'auteur, Solde à régulariser inchangé (0).
+- **Verrou de réception revérifié depuis ce nouvel emplacement** : retour
+  réceptionné, puis nouvelle tentative de marquage sur l'autre ligne (non
+  encore marquée) → refusée par le serveur (« Ce retour de caisse a déjà
+  été réceptionné... »), page affichant bien le message de verrouillage à
+  la place du bouton.
+- Nettoyage : règlement annulé (compense exactement l'écriture
+  `JournalCaisse` de sa confirmation — impact net vérifié à 0 avant
+  suppression), retour/lignes/demande/historique supprimés ensuite.
+- `tsc`/`eslint` clean, vrai `next build` réussi (65 routes).
 
 ### Tableau de bord collaborateur détaillé
 

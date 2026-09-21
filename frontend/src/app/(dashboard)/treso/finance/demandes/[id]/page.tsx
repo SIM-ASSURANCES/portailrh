@@ -31,6 +31,7 @@ export default async function CategoriserDemandePage({
   const canEffectuerReglement = hasPermission(session, "treso.effectuer_reglement");
   const canCloturerDemande = hasPermission(session, "treso.cloturer_demande");
   const canApprouverValidationComplete = hasPermission(session, "treso.approuver_validation_complete");
+  const canGererJustification = hasPermission(session, "treso.receptionner_retour");
 
   const demande = await prisma.demande.findUnique({
     where: { id },
@@ -309,6 +310,21 @@ export default async function CategoriserDemandePage({
               Cette approbation ne peut plus être annulée : la demande a déjà été clôturée sur cette base.
             </p>
           ) : null}
+          {/* Clarification demandée après un signalement Finance/DG : cette
+              approbation n'est qu'un déverrouillage, jamais la clôture
+              elle-même (voir CLAUDE.md "Vérification de la règle de
+              clôture à double validation") — un DG sans
+              `treso.cloturer_demande` ne voit jamais la section "Clôture"
+              ci-dessous et n'a donc, sans cette phrase, aucun moyen de
+              savoir qu'une action distincte de Finance reste nécessaire.
+              Jamais affichée si le lecteur voit déjà les boutons de
+              clôture lui-même (Finance), ni une fois réellement clôturée. */}
+          {demande.validationCompleteParDG && demande.statut !== "CLOTUREE" && !canCloturerDemande ? (
+            <p className="rounded-md bg-info-bg px-3 py-2 text-xs text-info">
+              Cette approbation ne clôture pas la demande : elle reste ouverte tant que l&apos;équipe
+              Finance n&apos;a pas elle-même cliqué sur « Clôturer ».
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -413,7 +429,11 @@ export default async function CategoriserDemandePage({
             montantValide={Number(demande.montantValide)}
             canEffectuerReglement={canEffectuerReglement}
           />
-          <RegularisationSummary demandeId={demande.id} montantValide={Number(demande.montantValide)} />
+          <RegularisationSummary
+            demandeId={demande.id}
+            montantValide={Number(demande.montantValide)}
+            canGererJustification={canGererJustification}
+          />
           {STATUTS_VALIDATION_COMPLETE.includes(demande.statut) && canCloturerDemande ? (
             demande.validationCompleteParDG ? (
               <ClotureActions demandeId={demande.id} />

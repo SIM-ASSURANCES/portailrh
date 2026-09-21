@@ -355,6 +355,66 @@ export async function getDepensesDeclarees(demandeId: string): Promise<number> {
 }
 
 /**
+ * Répartition justifiées/non justifiées de `getDepensesDeclarees` — même
+ * périmètre exact (toutes les `DepenseLigne` de tous les `RetourCaisse`
+ * liés à cette demande), juste éclatée par `justification`. La somme des
+ * deux vaut toujours `getDepensesDeclarees(demandeId)` (deux `aggregate`
+ * sur un where identique à un `justification` près, jamais un second
+ * calcul divergent) — voir CLAUDE.md "Détail des dépenses sur l'écran de
+ * Régularisation".
+ */
+export async function getDepensesDeclareesParJustification(
+  demandeId: string
+): Promise<{ justifiees: number; nonJustifiees: number }> {
+  const [nonJustifiees, total] = await Promise.all([
+    prisma.depenseLigne.aggregate({
+      where: { retourCaisse: { reglement: { demandeId } }, justification: "SANS_PIECE" },
+      _sum: { montant: true },
+    }),
+    prisma.depenseLigne.aggregate({
+      where: { retourCaisse: { reglement: { demandeId } } },
+      _sum: { montant: true },
+    }),
+  ]);
+  const montantNonJustifiees = Number(nonJustifiees._sum.montant ?? 0);
+  const montantTotal = Number(total._sum.montant ?? 0);
+  return { justifiees: montantTotal - montantNonJustifiees, nonJustifiees: montantNonJustifiees };
+}
+
+/**
+ * Détail ligne par ligne de toutes les `DepenseLigne` déclarées pour une
+ * demande (tous ses `RetourCaisse`, réceptionnés ou non) — pour l'accès
+ * direct depuis la carte "Régularisation" (voir CLAUDE.md ci-dessus).
+ * `retourEstReceptionne` permet à l'appelant de savoir si
+ * `marquerDepenseNonJustifieeAction` reste appelable sur cette ligne (elle
+ * se verrouille elle-même dès réception, revérifié côté serveur de toute
+ * façon — ce champ n'est qu'un signal d'affichage, jamais la seule garde).
+ */
+export async function getDepenseLignesDetail(demandeId: string) {
+  const lignes = await prisma.depenseLigne.findMany({
+    where: { retourCaisse: { reglement: { demandeId } } },
+    include: {
+      pieceJointe: { select: { id: true } },
+      motifNonJustifiePar: { select: { fullName: true } },
+      retourCaisse: { select: { estReceptionne: true } },
+    },
+    orderBy: { date: "asc" },
+  });
+  return lignes.map((l) => ({
+    id: l.id,
+    montant: Number(l.montant),
+    objet: l.objet,
+    date: l.date,
+    justification: l.justification,
+    commentaire: l.commentaire,
+    pieceJointeId: l.pieceJointe?.id ?? null,
+    motifNonJustifie: l.motifNonJustifie,
+    motifNonJustifiePar: l.motifNonJustifiePar?.fullName ?? null,
+    retourEstReceptionne: l.retourCaisse.estReceptionne,
+  }));
+}
+
+/**
  * Somme des montants de TOUTES les `DepenseLigne` d'un `RetourCaisse`
  * précis — c'est le total qui sert à calculer `montantARetourner`
  * (`getMontantARetourner` ci-dessous). Phase D (fonds remis, cahier des
