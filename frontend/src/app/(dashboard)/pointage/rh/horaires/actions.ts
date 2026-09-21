@@ -16,6 +16,7 @@ const updateHorairesSchema = z.object({
   heureFinMatin: timeStringSchema,
   heureDebutApresMidi: timeStringSchema,
   heureFinApresMidi: timeStringSchema,
+  delaiAlerteOubliDepartMinutes: z.coerce.number().min(0, "Le délai ne peut pas être négatif").max(360, "Maximum 360 minutes").default(30),
 });
 
 export async function updateHorairesAction(
@@ -35,6 +36,7 @@ export async function updateHorairesAction(
     heureFinMatin: formData.get("heureFinMatin"),
     heureDebutApresMidi: formData.get("heureDebutApresMidi"),
     heureFinApresMidi: formData.get("heureFinApresMidi"),
+    delaiAlerteOubliDepartMinutes: formData.get("delaiAlerteOubliDepartMinutes"),
   });
 
   if (!parseResult.success) {

@@ -14,6 +14,8 @@ export interface NotificationItem {
   message: string;
   lien?: string | null;
   estLue: boolean;
+  priority?: "CRITIQUE" | "IMPORTANT" | "INFO";
+  category?: "TRESORERIE" | "POINTAGE" | "RH" | "ADMIN" | "SYSTEME";
   createdAt: string | Date;
 }
 
@@ -73,15 +75,30 @@ export function NotificationDetailModal({
               <Icon name="bell" className="size-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-bold text-foreground">{notification.titre}</h3>
+                {notification.priority === "CRITIQUE" && (
+                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-red-100 text-red-700 border border-red-200">
+                    Critique
+                  </span>
+                )}
+                {notification.priority === "IMPORTANT" && (
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200">
+                    Important
+                  </span>
+                )}
+                {notification.category && notification.category !== "SYSTEME" && (
+                  <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">
+                    {notification.category}
+                  </span>
+                )}
                 {!notification.estLue && (
                   <Badge variant="danger">
                     Nouveau
                   </Badge>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground mt-0.5">
                 {formattedDate} ({relativeTime})
               </p>
             </div>

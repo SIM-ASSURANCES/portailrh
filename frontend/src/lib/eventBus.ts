@@ -50,3 +50,35 @@ export function subscribeDataChanged(listener: () => void): () => void {
     eventBus.off(DATA_CHANGED_EVENT, listener);
   };
 }
+
+export interface InAppNotificationPayload {
+  id: string;
+  titre: string;
+  message: string;
+  lien?: string | null;
+  priority: "CRITIQUE" | "IMPORTANT" | "INFO";
+  category: "TRESORERIE" | "POINTAGE" | "RH" | "ADMIN" | "SYSTEME";
+  createdAt: string;
+}
+
+/**
+ * Notifie un utilisateur spécifique en temps réel sur sa session ouverte.
+ */
+export function publishUserNotification(userId: string, notification: InAppNotificationPayload): void {
+  eventBus.emit(`notification:${userId}`, notification);
+}
+
+/**
+ * S'abonne aux notifications temps réel ciblées pour un utilisateur donné.
+ */
+export function subscribeUserNotification(
+  userId: string,
+  listener: (notification: InAppNotificationPayload) => void
+): () => void {
+  const eventName = `notification:${userId}`;
+  eventBus.on(eventName, listener);
+  return () => {
+    eventBus.off(eventName, listener);
+  };
+}
+

@@ -1,5 +1,5 @@
 import { getSession } from "@/lib/auth";
-import { subscribeDataChanged } from "@/lib/eventBus";
+import { subscribeDataChanged, subscribeUserNotification } from "@/lib/eventBus";
 
 // Un flux SSE lit `headers()`/`cookies()` (via `getSession()`) et ne doit
 // jamais être mis en cache — explicite plutôt que de compter sur l'opt-out
@@ -20,14 +20,9 @@ function sseMessage(event: string, data: string): Uint8Array {
 }
 
 /**
- * Flux d'évènements en temps réel (Server-Sent Events) — remplace le
- * polling à intervalle fixe (voir CLAUDE.md "Rafraîchissement en temps
- * réel") : chaque onglet ouvert sur l'AppShell garde une connexion HTTP
- * longue ouverte sur cette route, et reçoit un évènement `data-changed`
- * dès qu'une Server Action pertinente publie sur `src/lib/eventBus.ts`.
- *
- * Réservé aux sessions authentifiées (401 sinon) — un utilisateur non
- * connecté est sur `/login`, sans AppShell à rafraîchir.
+ * Flux d'évènements en temps réel (Server-Sent Events) :
+ * 1. Évènement global `data-changed`
+ * 2. Évènement ciblé `notification` avec payload complet pour l'utilisateur connecté
  */
 export async function GET() {
   const session = await getSession();
@@ -44,17 +39,23 @@ export async function GET() {
         try {
           controller.enqueue(sseMessage(event, data));
         } catch {
-          // Le contrôleur a pu être fermé entre-temps par une déconnexion
-          // client (race avec `cancel()` ci-dessous) — rien à faire de plus,
-          // `cancel()` se charge du nettoyage (désabonnement, heartbeat).
+          // Le contrôleur a pu être fermé entre-temps par une déconnexion client
         }
       };
 
-      unsubscribe = subscribeDataChanged(() => send("data-changed", "1"));
+      const unsubData = subscribeDataChanged(() => send("data-changed", "1"));
+      const unsubNotif = subscribeUserNotification(session.user.id, (notif) => {
+        send("notification", JSON.stringify(notif));
+      });
+
+      unsubscribe = () => {
+        unsubData();
+        unsubNotif();
+      };
+
       heartbeat = setInterval(() => send("ping", "1"), HEARTBEAT_INTERVAL_MS);
 
-      // Confirme immédiatement l'ouverture de la connexion, avant même le
-      // premier heartbeat périodique.
+      // Confirme immédiatement l'ouverture de la connexion
       send("ping", "1");
     },
     cancel() {

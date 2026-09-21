@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "backend";
 import type { Prisma } from "backend";
+import { notify } from "@/lib/notifications";
 
 export async function GET(request: Request) {
   // Basic security check (Mandatory for Cron jobs)
@@ -158,9 +159,27 @@ export async function GET(request: Request) {
       nouvellesAbsences = absencesToCreate.length;
     }
 
-    // 4. Détection des oublis de pointage de départ (uniquement pour la journée en cours)
+    // 4. Détection des oublis de pointage de départ (attendre le délai configurable après l'heure de fin)
     let oublisDetectes = 0;
-    if (hasPassedEndOfDay) {
+    const delaiOubliMinutes = parametrage?.delaiAlerteOubliDepartMinutes ?? 30;
+    let hasPassedDepartureAlertThreshold = false;
+
+    if (parametrage && parametrage.heureFinApresMidi) {
+      const [endHour, endMinute] = parametrage.heureFinApresMidi.split(":").map(Number);
+      const thresholdDate = new Date(now);
+      thresholdDate.setHours(endHour, endMinute + delaiOubliMinutes, 0, 0);
+      if (now >= thresholdDate) {
+        hasPassedDepartureAlertThreshold = true;
+      }
+    } else {
+      const thresholdDate = new Date(now);
+      thresholdDate.setHours(18, delaiOubliMinutes, 0, 0);
+      if (now >= thresholdDate) {
+        hasPassedDepartureAlertThreshold = true;
+      }
+    }
+
+    if (hasPassedDepartureAlertThreshold) {
       const todayStart = new Date(today);
       todayStart.setHours(0, 0, 0, 0);
       const todayEnd = new Date(today);
@@ -195,26 +214,26 @@ export async function GET(request: Request) {
           });
 
           if (!existingNotif) {
-             // Notifier le collaborateur concerné
-             await prisma.notification.create({
-               data: {
-                 userId: arrivee.userId,
-                 titre: "Oubli de pointage de départ",
-                 message: "Vous avez pointé votre arrivée mais vous avez oublié de pointer votre départ aujourd'hui.",
-                 lien: "/pointage/historique"
-               }
+             // Notifier le collaborateur concerné (Email + Push + In-app : CRITIQUE)
+             await notify({
+               userId: arrivee.userId,
+               titre: "Oubli de pointage de départ",
+               message: "Vous avez pointé votre arrivée mais vous avez oublié de pointer votre départ aujourd'hui.",
+               lien: "/pointage/historique",
+               priority: "CRITIQUE",
+               category: "POINTAGE",
              });
 
-             // Notifier les RH et Administrateurs
-             const alertNotifs = adminsAndRh.map(admin => ({
-               userId: admin.id,
-               titre: "Oubli de pointage détecté",
-               message: `Le collaborateur ${arrivee.user.fullName} n'a pas pointé son départ aujourd'hui.`,
-               lien: `/pointage/rh/presence?date=${formatDate(today)}`
-             }));
-
-             if (alertNotifs.length > 0) {
-               await prisma.notification.createMany({ data: alertNotifs });
+             // Notifier les RH et Administrateurs (Push + In-app : IMPORTANT)
+             for (const admin of adminsAndRh) {
+               await notify({
+                 userId: admin.id,
+                 titre: "Oubli de pointage détecté",
+                 message: `Le collaborateur ${arrivee.user.fullName} n'a pas pointé son départ aujourd'hui.`,
+                 lien: `/pointage/rh/presence?date=${formatDate(today)}`,
+                 priority: "IMPORTANT",
+                 category: "POINTAGE",
+               });
              }
 
              oublisDetectes++;

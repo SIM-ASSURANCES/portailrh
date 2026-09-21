@@ -12,7 +12,8 @@ import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 import { logAuditAction } from "@/lib/auditLog";
-import { sendEmail, generateWelcomeEmail, generateAccountStatusEmail } from "@/lib/email";
+import { sendEmail, generateWelcomeEmail } from "@/lib/email";
+import { notify } from "@/lib/notifications";
 
 const SALT_ROUNDS = 10;
 const INVITATION_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -402,24 +403,20 @@ export async function toggleUserActiveAction(
   revalidatePath("/admin/users");
   publishDataChanged();
 
-  // Notification automatique par courriel du collaborateur
+  // Notification critique (Email + Push + In-app)
   try {
-    const loginUrl = `${await getBaseUrl()}/login`;
-    const emailPayload = generateAccountStatusEmail({
-      fullName: user.fullName,
-      email: user.email,
-      isActive: active,
-      actionUrl: loginUrl,
-    });
-    await sendEmail({
-      to: user.email,
-      subject: emailPayload.subject,
-      html: emailPayload.html,
-      text: emailPayload.text,
+    await notify({
       userId: user.id,
+      titre: active ? "Compte réactivé" : "Compte désactivé",
+      message: active
+        ? "Votre compte a été réactivé par un administrateur. Vous pouvez à nouveau accéder au portail SIM Assurances."
+        : "Votre compte a été désactivé par un administrateur. Veuillez vous rapprocher des RH ou de la Direction.",
+      lien: "/login",
+      priority: "CRITIQUE",
+      category: "ADMIN",
     });
   } catch (err) {
-    console.error("Erreur lors de l'envoi de l'email de statut de compte:", err);
+    console.error("Erreur lors de l'envoi de la notification de statut de compte:", err);
   }
 
   return { status: "success", message: active ? "Compte réactivé." : "Compte désactivé." };

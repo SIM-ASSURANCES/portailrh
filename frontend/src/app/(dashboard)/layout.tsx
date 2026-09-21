@@ -5,6 +5,8 @@ import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 
+import { PushPermissionPrompt } from "@/components/notifications/PushPermissionPrompt";
+
 /**
  * Layout du Socle Portail (écrans authentifiés). Toute route de ce groupe
  * hérite de la coquille applicative (sidebar + topbar) et exige une session
@@ -60,11 +62,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "pointage.voir_dashboard_rh") ||
         hasPermission(session, "pointage.voir_reporting")
       }
-      // Basé sur `rolePermissions` (jamais `permissions`, qui inclurait les
-      // permissions seulement déléguées) : voir CLAUDE.md "Délégation
-      // individuelle de permissions" — seul ce qu'un compte possède via son
-      // propre rôle rend ce lien visible, jamais une permission reçue par
-      // délégation (interdit toute chaîne de redélégation).
       canDelegerAcces={session.rolePermissions.some(
         (key) => key.startsWith("treso.") || key.startsWith("pointage.")
       )}
@@ -75,6 +72,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       unreadNotificationsCount={unreadCount}
     >
       {children}
+      <PushPermissionPrompt />
     </AppShell>
   );
 }
+

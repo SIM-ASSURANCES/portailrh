@@ -41,10 +41,15 @@ const EVENTS_URL = "/api/events";
 // évènement à venir avant longtemps.
 const FORM_FIELD_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 
+import { playNotificationSound } from "@/lib/audio/notificationSound";
+import { onForegroundMessage } from "@/lib/notifications/fcmClient";
+import { toast } from "sonner";
+
 export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCount = 0, alert, onOpenMobileMenu }: TopbarProps) {
   const router = useRouter();
   const isEditingRef = useRef(false);
   const pendingRefreshRef = useRef(false);
+  const recentNotifIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     function handleFocusIn(event: FocusEvent) {
@@ -72,28 +77,107 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
   }, [router]);
 
   useEffect(() => {
-    // `EventSource` se reconnecte nativement (backoff intégré du navigateur)
-    // sur une coupure réseau ou un redémarrage du serveur dev — aucune
-    // logique de reconnexion manuelle nécessaire, vérifié en conditions
-    // réelles (voir CLAUDE.md).
     const source = new EventSource(EVENTS_URL);
 
+    // 1. Évènement global de changement de données
     source.addEventListener("data-changed", () => {
       if (isEditingRef.current) {
-        // Saisie en cours : différé plutôt que perdu (voir commentaire plus
-        // haut) — appliqué au prochain `focusout`.
         pendingRefreshRef.current = true;
         return;
       }
       router.refresh();
     });
 
-    // "ping" (heartbeat serveur) : volontairement aucun handler — la seule
-    // fonction de cet évènement est de garder la connexion HTTP ouverte à
-    // travers d'éventuels proxys, jamais de déclencher un rafraîchissement.
+    // 2. Évènement ciblé temps réel (Notification spécifique à l'utilisateur)
+    source.addEventListener("notification", (event) => {
+      try {
+        const notif = JSON.parse(event.data);
+        if (notif.id) {
+          recentNotifIdsRef.current.add(notif.id);
+          setTimeout(() => recentNotifIdsRef.current.delete(notif.id), 5000);
+        }
+
+        // Jouer le carillon sonore
+        playNotificationSound(notif.priority);
+
+        // Afficher le toast selon le niveau de priorité
+        const toastAction = notif.lien
+          ? {
+            label: "Consulter",
+            onClick: () => router.push(notif.lien),
+          }
+          : undefined;
+
+        if (notif.priority === "CRITIQUE") {
+          toast.error(notif.titre, {
+            description: notif.message,
+            duration: 9000,
+            action: toastAction,
+          });
+        } else if (notif.priority === "IMPORTANT") {
+          toast.warning(notif.titre, {
+            description: notif.message,
+            duration: 6000,
+            action: toastAction,
+          });
+        } else {
+          toast.info(notif.titre, {
+            description: notif.message,
+            duration: 4000,
+            action: toastAction,
+          });
+        }
+
+        // Actualiser l'UI (notamment le compteur de la cloche)
+        if (!isEditingRef.current) {
+          router.refresh();
+        } else {
+          pendingRefreshRef.current = true;
+        }
+      } catch (err) {
+        console.error("[SSE] Erreur parsing notification:", err);
+      }
+    });
+
+    // 3. Écoute FCM au premier plan (si l'onglet est actif et qu'un push arrive)
+    const unsubscribeFcm = onForegroundMessage((fcmData) => {
+      if (fcmData.id && recentNotifIdsRef.current.has(fcmData.id)) {
+        return; // Déjà traité par le flux SSE
+      }
+      if (fcmData.id) {
+        recentNotifIdsRef.current.add(fcmData.id);
+        setTimeout(() => recentNotifIdsRef.current.delete(fcmData.id!), 5000);
+      }
+
+      playNotificationSound(fcmData.priority as 'INFO' | 'IMPORTANT' | 'CRITIQUE');
+
+      const toastAction = fcmData.lien
+        ? {
+          label: "Consulter",
+          onClick: () => router.push(fcmData.lien!),
+        }
+        : undefined;
+
+      if (fcmData.priority === "CRITIQUE") {
+        toast.error(fcmData.titre, {
+          description: fcmData.message,
+          duration: 9000,
+          action: toastAction,
+        });
+      } else {
+        toast.info(fcmData.titre, {
+          description: fcmData.message,
+          duration: 5000,
+          action: toastAction,
+        });
+      }
+
+      router.refresh();
+    });
 
     return () => {
       source.close();
+      unsubscribeFcm();
     };
   }, [router]);
 
@@ -113,11 +197,10 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
           alert.href ? (
             <Link
               href={alert.href}
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-bold shadow-sm transition-all duration-150 ${
-                alert.variant === "danger"
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-bold shadow-sm transition-all duration-150 ${alert.variant === "danger"
                   ? "bg-danger text-white hover:bg-danger/90 hover:scale-[1.02] " + (alert.pulse ? "animate-pulse" : "")
                   : "bg-primary/10 text-primary border border-primary/20 hover:bg-primary/15"
-              }`}
+                }`}
               title={alert.message}
             >
               <Icon name={alert.variant === "danger" ? "alert-triangle" : "info"} className="size-4 shrink-0" />
@@ -127,11 +210,10 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
             </Link>
           ) : (
             <div
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-medium border ${
-                alert.variant === "danger"
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 sm:px-3 text-xs font-medium border ${alert.variant === "danger"
                   ? "bg-danger/10 border-danger/20 text-danger"
                   : "bg-blue-50 border-blue-200 text-blue-800"
-              }`}
+                }`}
               title={alert.message}
             >
               <Icon name="info" className="size-4 shrink-0" />
@@ -142,7 +224,7 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
         )}
 
         <TopbarCalendar isRH={canAccessPointageRH} />
-        
+
         <NotificationBell initialUnreadCount={unreadNotificationsCount} />
 
         <ProfileMenu user={user} role={role} />

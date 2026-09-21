@@ -4,3 +4,5 @@ export { generateResetPasswordEmail } from "./templates/resetPasswordTemplate";
 export { generateWelcomeEmail } from "./templates/welcomeEmailTemplate";
 export { generateAccountStatusEmail } from "./templates/accountStatusTemplate";
 export { generatePasswordChangedEmail } from "./templates/passwordChangedTemplate";
+export { generateCriticalNotificationEmail } from "./templates/criticalNotificationTemplate";
+

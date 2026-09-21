@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { getSession, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
-import { createNotification } from "@/lib/notifications";
+import { notify } from "@/lib/notifications";
 import { prisma } from "backend";
 
 /** Seules les branches Trésorerie et Pointage RH sont délégables — jamais
@@ -113,11 +113,13 @@ export async function accorderDelegationAction(
     },
   });
 
-  await createNotification({
+  await notify({
     userId: beneficiaireId,
     titre: "Nouvel accès délégué",
     message: `${session.user.fullName} vous a accordé l'accès "${eligibilite.permission.label}".`,
     lien: "/",
+    priority: "IMPORTANT",
+    category: "ADMIN",
   });
 
   revalidatePath("/delegations");
@@ -174,10 +176,12 @@ export async function revoquerDelegationAction(delegationId: string): Promise<Ac
     },
   });
 
-  await createNotification({
+  await notify({
     userId: delegation.beneficiaireId,
     titre: "Accès délégué retiré",
     message: `L'accès "${delegation.permission.label}" vous a été retiré.`,
+    priority: "IMPORTANT",
+    category: "ADMIN",
   });
 
   revalidatePath("/delegations");

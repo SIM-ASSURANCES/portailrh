@@ -73,6 +73,7 @@ model User {
   absencesDeclarees     Absence[]            @relation("AbsenceEmploye")
   absencesControlees    Absence[]            @relation("AbsenceControlePar")
   notifications         Notification[]
+  fcmTokens             FcmToken[]
   plagesAbsenceAutorisee PlageAbsenceAutorisee[]
 
   /// Délégations individuelles de permission Trésorerie/Pointage RH que cet
@@ -220,16 +221,52 @@ model HistoriqueEntry {
   user   User   @relation(fields: [userId], references: [id])
 }
 
+/// Niveaux de priorité des notifications (routage des canaux)
+enum NotificationPriority {
+  CRITIQUE    // Email + FCM Push + In-app
+  IMPORTANT   // FCM Push + In-app
+  INFO        // In-app uniquement
+}
+
+/// Catégories fonctionnelles des notifications
+enum NotificationCategory {
+  TRESORERIE
+  POINTAGE
+  RH
+  ADMIN
+  SYSTEME
+}
+
 model Notification {
-  id        String   @id @default(cuid())
+  id        String               @id @default(cuid())
   titre     String
   message   String
   lien      String?
-  estLue    Boolean  @default(false)
+  estLue    Boolean              @default(false)
+  priority  NotificationPriority @default(INFO)
+  category  NotificationCategory @default(SYSTEME)
+  pushSent  Boolean              @default(false)
+  emailSent Boolean              @default(false)
+  createdAt DateTime             @default(now())
+
+  userId    String
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, estLue, createdAt])
+}
+
+/// Tokens FCM d'un utilisateur (multi-navigateurs / multi-appareils)
+model FcmToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userAgent String?
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // ============================================================
@@ -677,6 +714,8 @@ model ParametrageHoraire {
   heureDebutApresMidi String
   heureFinApresMidi   String
   isActive            Boolean  @default(true)
+  /// Délai d'attente en minutes après l'heure de fin avant d'envoyer l'alerte d'oubli de départ (défaut: 30)
+  delaiAlerteOubliDepartMinutes Int @default(30)
   /// Activer le pointage par géolocalisation GPS comme fallback réseau
   geolocalisationActive Boolean @default(false)
   /// Latitude GPS du bureau (point de référence pour le calcul de distance)

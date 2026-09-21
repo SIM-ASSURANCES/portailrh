@@ -130,20 +130,36 @@ export function NotificationBell({ initialUnreadCount }: NotificationBellProps) 
                     </button>
                     <div className="flex gap-3 pr-4">
                       <div className="mt-0.5 shrink-0">
-                        {!notif.estLue ? (
+                        {notif.priority === "CRITIQUE" ? (
+                          <div className="size-2.5 rounded-full bg-red-600 mt-1.5 ring-4 ring-red-500/20 animate-pulse" />
+                        ) : notif.priority === "IMPORTANT" ? (
+                          <div className="size-2.5 rounded-full bg-amber-500 mt-1.5 ring-4 ring-amber-500/20" />
+                        ) : !notif.estLue ? (
                           <div className="size-2 rounded-full bg-primary mt-1.5 ring-4 ring-primary/20" />
                         ) : (
                           <div className="size-2 rounded-full mt-1.5 bg-slate-300" />
                         )}
                       </div>
                       <div className="flex-1 space-y-1 min-w-0">
-                        <p
-                          className={`text-sm leading-snug truncate ${
-                            notif.estLue ? "text-foreground font-medium" : "text-foreground font-bold"
-                          }`}
-                        >
-                          {notif.titre}
-                        </p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {notif.priority === "CRITIQUE" && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-red-100 text-red-700">
+                              CRITIQUE
+                            </span>
+                          )}
+                          {notif.category && notif.category !== "SYSTEME" && (
+                            <span className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">
+                              {notif.category}
+                            </span>
+                          )}
+                          <p
+                            className={`text-sm leading-snug truncate ${
+                              notif.estLue ? "text-foreground font-medium" : "text-foreground font-bold"
+                            }`}
+                          >
+                            {notif.titre}
+                          </p>
+                        </div>
                         <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
                           {notif.message}
                         </p>
