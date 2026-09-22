@@ -1217,46 +1217,44 @@ venir de cet artefact de compilation à la demande, sans rapport avec le
 code applicatif. À tester contre `next build && next start` pour objectiver
 la latence réelle hors de cet artefact.
 
-## Module Pointage RH — état actuel
+## Module Pointage RH — architecture et fonctionnalités complètes
 
-Module distinct, maintenu principalement par un autre binôme
-(`origin/thierry-kouame`) — cette section documente uniquement
-l'intégration côté Socle (nav, permissions, dashboard), pas la logique
-métier détaillée du module.
+> **Documentation détaillée dédiée :**
+> - **Architecture technique, sécurité & scalabilité** : [docs/POINTAGE_ARCHITECTURE.md](docs/POINTAGE_ARCHITECTURE.md).
+> - **Guide d'utilisation et règles fonctionnelles** : [docs/GUIDE_FONCTIONNEL_POINTAGE.md](docs/GUIDE_FONCTIONNEL_POINTAGE.md).
 
-Modèles : `ParametrageHoraire` (horaires de référence), `Pointage`
-(arrivée/départ, source `QR_CODE`/`ORDINATEUR`/`RH_EXCEPTIONNEL`),
-`CorrectionPointage` (trace obligatoire de toute correction — jamais
-d'édition silencieuse), `Absence` (statut `A_CONTROLER`/`CONFIRMEE`/
-`JUSTIFIEE`).
+Module complet de gestion des temps de présence, retards, départs anticipés et absences du personnel, développé et durci par Thierry Kouame.
 
-Module `pointage`, 8 permissions (`pointer`, `consulter_historique`,
-`consulter_tous`, `pointage_exceptionnel`, `corriger_pointage`,
-`gerer_horaires`, `voir_dashboard_rh`, `voir_reporting`). Répartition :
-Collaborateur → `pointer`+`consulter_historique` ; RH → les 8 ; DG →
-lecture seule (`consulter_tous`/`voir_dashboard_rh`/`voir_reporting`) ;
-Admin → aucune (accès via `isAdmin()`).
+### 1. Modèle de données & Rôles
+- **Modèles Prisma** ([backend/prisma/schema.prisma](backend/prisma/schema.prisma)) : `Pointage` (sources `QR_CODE`, `ORDINATEUR`, `RH_EXCEPTIONNEL`, `GEOLOCALISATION`), `ParametrageHoraire` (horaires et coordonnées GPS bureau), `CorrectionPointage` (registre d'audit transparent, zéro édition silencieuse), `Absence` (`A_CONTROLER`, `CONFIRMEE`, `JUSTIFIEE`), `JourFerie` (jours chômés).
+- **Permissions `pointage.*`** : 8 permissions fines réparties entre Collaborateur (`pointer`, `consulter_historique`), RH (les 8 droits complets), DG (lecture seule `/rh/presence` et reporting), et Admin (supervision).
 
-Un ordinateur ne peut pointer que depuis une IP listée dans
-`ALLOWED_OFFICE_IPS` (env var, contrôlée aussi côté Server Action) ; un
-téléphone n'est pas soumis à cette restriction.
+### 2. Double barrière de sécurité & Géolocalisation
+- **Contrôle réseau d'entreprise** : Filtrage IP et masques de sous-réseau CIDR (`ALLOWED_OFFICE_IPS`, `ipaddr.js`, gestion IPv4/IPv6 `::ffff:`).
+- **Fallback Géolocalisation GPS (Formule de Haversine)** : Si l'agent est hors réseau Wi-Fi, calcul automatique de la distance au siège SIM Assurances (`bureauLatitude`, `bureauLongitude`, `rayonAutorise` configurable entre 30m et 200m). Filtre de précision GPS (seuil 150m max) et alerte de sécurité instantanée aux RH en cas de tentative hors périmètre.
 
-Routes réelles construites à ce jour : `/pointage/pointer` (+ alias
-`/pointage`), `/pointage/historique`, `/pointage/rh` (présence du jour),
-`/pointage/rh/generer-qr`. D'autres écrans RH (pointages, retards,
-reporting, corrections, horaires) ont depuis reçu du code
-(`pointage/rh/absences/actions.ts`, `.../corrections/actions.ts`,
-`.../horaires/actions.ts`, `.../pointages/nouveau/actions.ts` existent) —
-**l'état exact de ce qui est réellement navigable est à vérifier dans le
-code au moment de travailler dessus**, ce module évoluant indépendamment
-de cette documentation (section signalée comme possiblement datée). La
-nav (`hasPointageAccess`/`canAccessPointageRH`) et le dashboard général
-marquent `comingSoon: true` tout écran encore sans route réelle plutôt que
-de proposer un lien mort.
+### 3. Parcours Collaborateur & Temps Réel
+- **Composant adaptatif** (`SmartPointage.tsx`) : Détection automatique du statut journalier (arrivée, départ), motif obligatoire en cas de retard (après 07h45) ou de départ anticipé (avant 16h45).
+- **Pointage Mobile par QR Code** (`/pointage/qr` -> `/pointage/pointer?source=QR_CODE`) : Scan sécurisé à l'accueil de l'entreprise.
+- **Synchronisation Server-Sent Events (SSE)** (`/api/pointage/stream`) : Tout pointage actualise instantanément les compteurs et listes des tableaux de bord RH sans rechargement.
 
-Notifications Pointage RH (retards/absences aux RH, pointage
-exceptionnel/régularisation au collaborateur) utilisent le même mécanisme
-générique que la Trésorerie (`createNotification`/SSE).
+### 4. Automatisation des Absences & Oublis (CRON)
+- **Route planifiée** (`/api/cron/absences`) sécurisée par `CRON_SECRET`.
+- **Règles d'équité** : Exclusion stricte des week-ends et des jours fériés (`JourFerie`).
+- **Protection de l'ancienneté (Option B)** : Aucune absence ne peut être imputée avant ou le jour même de la date de création ou de réactivation du compte collaborateur.
+- **Détection des oublis de départ** : Alerte prioritaire envoyée à l'employé et aux RH si l'arrivée a été pointée sans départ après le délai configurable (`delaiAlerteOubliDepartMinutes`).
+- **Rattrapage manuel** : Action `recoverAbsencesAction` disponible depuis l'interface RH.
+
+### 5. Boîte à Outils RH
+- Présence du jour en direct (`/pointage/rh/presence`), pointage exceptionnel avec régularisation automatique (`/pointage/rh/pointages/nouveau`), corrections tracées (`/pointage/rh/corrections`), traitement des absences (`/pointage/rh/absences`), configuration horaires et GPS (`/pointage/rh/horaires`, `/pointage/rh/geolocalisation`), et reporting Excel multi-feuilles aux couleurs SIM Assurances (`/pointage/rh/reporting`, `exceljs`).
+
+### 6. Chantiers Transverses Réalisés Hors Pointage
+- **Plateforme de Notifications Multi-Canal** : Moteur unifié à 3 niveaux de priorité (`CRITIQUE`, `IMPORTANT`, `INFO`), intégration Firebase Cloud Messaging (Web Push) multi-terminaux avec auto-nettoyage des tokens, tiroir latéral (`NotificationDrawer.tsx`), alertes audio Web Audio API.
+- **Console Admin — Adoption Push** : Supervision sous `/admin/notifications` avec analyse des navigateurs/OS et export CSV.
+- **Charte Emails & Compatibilité Outlook** : Gabarits tabulaires responsives, police Calibri universelle, logo CID embarqué, notifications de statut de compte.
+- **Réinitialisation de Mot de Passe par Email** : Parcours sécurisé `/forgot-password` et `/reset-password/[token]` avec jeton 1h et hachage bcrypt.
+- **Refonte Profil & Audit** : Vues de profil personnalisées par rôle (`/profil`), élimination des waterfalls de rendu dans `LogsList.tsx` et traçabilité des services.
+- **Durcissement FeedbackApp** : Exclusion du rôle technique Admin des destinataires de feedback (`peutRecevoirFeedback: false`), modération RH/DG, système de notation structurée.
 
 ## Module FeedbackApp — anonymat total
 
