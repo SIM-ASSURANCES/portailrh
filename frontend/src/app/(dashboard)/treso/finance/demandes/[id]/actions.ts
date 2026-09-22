@@ -57,6 +57,13 @@ const categorisationSchema = z.object({
  * soumission (ex: validée entre-temps par un autre utilisateur Finance).
  * Une fois VALIDEE, ces champs sont définitivement verrouillés, y compris
  * pour Finance.
+ *
+ * **Catégorisation par ligne (voir CLAUDE.md)** : réservée désormais aux
+ * demandes SANS ligne (`DEPENSE_DIRECTE`) — même principe exact que le
+ * gate déjà posé sur les quatre actions de validation par montant
+ * (`demandeAauMoinsUneLigne`, voir plus bas) : une demande `STANDARD` (au
+ * moins une ligne) se catégorise désormais exclusivement via
+ * `categoriserLigneAction`, ligne par ligne.
  */
 export async function categoriserDemandeAction(
   _prevState: ActionState,
@@ -86,6 +93,12 @@ export async function categoriserDemandeAction(
   const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
+  }
+  if (await demandeAauMoinsUneLigne(demandeId)) {
+    return {
+      status: "error",
+      message: "Cette demande contient des lignes d'article : catégorisez chaque ligne individuellement.",
+    };
   }
   if (demande.statut !== "EN_ATTENTE_VALIDATION") {
     return {
@@ -123,6 +136,150 @@ export async function categoriserDemandeAction(
   publishDataChanged();
 
   return { status: "success", message: "Catégorisation enregistrée." };
+}
+
+const categorisationLigneSchema = z.object({
+  ligneId: z.string().min(1),
+  categorieId: z.string().min(1, "Catégorie requise"),
+  objetId: z.string().min(1, "Objet requis"),
+});
+
+/**
+ * Catégorisation par ligne (voir CLAUDE.md "Catégorisation par ligne") —
+ * mirroir exact de `modifierLibelleLigneAction` : même permission
+ * (`treso.categoriser_demande`, inchangée), même granularité par
+ * `LigneDemande` plutôt que par `Demande`. Réutilise
+ * `creerCategorieInlineAction`/`creerObjetInlineAction` telles quelles
+ * (aucune modification) : la création à la volée ne connaît pas la notion
+ * de ligne, elle crée un catalogue partagé, peu importe qui l'appelle.
+ *
+ * **Garde : `ligne.statutValidation === "EN_ATTENTE"`, PAS
+ * `demande.statut`** — relit la règle impérative "Catégorie/objet
+ * modifiables uniquement avant validation" à l'échelle de la LIGNE : une
+ * fois qu'une ligne est décidée (validée OU rejetée), sa catégorisation
+ * est définitivement verrouillée, même si une autre ligne de la même
+ * demande reste encore `EN_ATTENTE` (en pratique, `validerLignesAction`
+ * décide toutes les lignes d'une demande en un seul geste atomique — ce
+ * cas mixte ne survit donc jamais dans les faits, mais le contrôle reste
+ * posé à la bonne granularité conceptuelle, jamais un raccourci sur le
+ * statut de la demande entière).
+ */
+export async function categoriserLigneAction(
+  ligneId: string,
+  categorieId: string,
+  objetId: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.categoriser_demande")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsed = categorisationLigneSchema.safeParse({ ligneId, categorieId, objetId });
+  if (!parsed.success) {
+    return { status: "error", message: parsed.error.issues[0]?.message ?? "Formulaire invalide." };
+  }
+
+  const ligne = await prisma.ligneDemande.findUnique({ where: { id: parsed.data.ligneId } });
+  if (!ligne) {
+    return { status: "error", message: "Ligne introuvable." };
+  }
+  if (ligne.statutValidation !== "EN_ATTENTE") {
+    return {
+      status: "error",
+      message: "Cette ligne a déjà été décidée : sa catégorisation ne peut plus être modifiée.",
+    };
+  }
+
+  const objet = await prisma.objet.findUnique({
+    where: { id: parsed.data.objetId },
+    include: { categorie: true },
+  });
+  if (!objet || objet.categorieId !== parsed.data.categorieId) {
+    return { status: "error", message: "Cet objet n'appartient pas à la catégorie sélectionnée." };
+  }
+
+  await prisma.$transaction([
+    prisma.ligneDemande.update({
+      where: { id: parsed.data.ligneId },
+      data: { categorieId: parsed.data.categorieId, objetId: parsed.data.objetId },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "LigneDemande",
+        entityId: parsed.data.ligneId,
+        action: "categorisation_ligne",
+        detail: `Ligne « ${ligne.libelle} » catégorisée : « ${objet.categorie.label} » / « ${objet.label} »`,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+
+  revalidateDemandePaths(ligne.demandeId);
+
+  return { status: "success", message: "Catégorisation enregistrée." };
+}
+
+const nouvelleCategorieSchema = z.object({
+  label: z.string().trim().min(2, "Le libellé doit contenir au moins 2 caractères"),
+});
+
+export type CreerCategorieInlineResult =
+  | { status: "success"; categorie: { id: string; label: string } }
+  | { status: "error"; message: string };
+
+/**
+ * Crée une Catégorie directement depuis l'écran de catégorisation Finance
+ * — Tâche "Visibilité des catégories/objets existants pendant la
+ * catégorisation" (voir CLAUDE.md). Même principe et même permission
+ * exactement que `creerObjetInlineAction` ci-dessous (`treso.categoriser_demande`,
+ * pas `treso.gerer_categories` — cohérent avec le fait que c'est Finance
+ * qui agit dans CE contexte précis, le CRUD complet de `admin/categories`
+ * restant un espace distinct) : les deux actions inline (catégorie ET
+ * objet) partagent désormais la même garde, jamais l'une plus permissive
+ * que l'autre.
+ *
+ * La nouvelle Catégorie est une Catégorie ORDINAIRE (`isActive: true` par
+ * défaut, aucun `budgetAlloue`) — apparaît ensuite normalement dans
+ * `admin/categories`/`treso/finance/categories`, jamais une donnée cachée.
+ */
+export async function creerCategorieInlineAction(label: string): Promise<CreerCategorieInlineResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.categoriser_demande")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsed = nouvelleCategorieSchema.safeParse({ label });
+  if (!parsed.success) {
+    return { status: "error", message: parsed.error.issues[0].message };
+  }
+
+  const existante = await prisma.categorie.findUnique({ where: { label: parsed.data.label } });
+  if (existante) {
+    return { status: "error", message: "Une catégorie porte déjà ce libellé." };
+  }
+
+  const categorie = await prisma.categorie.create({ data: { label: parsed.data.label } });
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "Categorie",
+      entityId: categorie.id,
+      action: "CREATE",
+      detail: `Catégorie « ${categorie.label} » créée depuis l'écran de catégorisation`,
+      userId: session.user.id,
+    },
+  });
+
+  // Même revalidation que `creerObjetInlineAction`/`createCategorieAction`
+  // (`admin/categories/actions.ts`) : le catalogue est partagé par
+  // plusieurs écrans, jamais une donnée cachée ou différente selon l'écran
+  // d'origine de la création.
+  revalidatePath("/admin/categories");
+  revalidatePath("/treso/finance/categories");
+  revalidatePath("/treso/finance/reporting");
+  publishDataChanged();
+
+  return { status: "success", categorie: { id: categorie.id, label: categorie.label } };
 }
 
 const nouvelObjetSchema = z.object({
@@ -203,6 +360,174 @@ export async function creerObjetInlineAction(
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
+const modifierDescriptionSchema = z.object({
+  demandeId: z.string().min(1),
+  description: z.string().trim().min(3, "La description doit contenir au moins 3 caractères"),
+});
+
+/**
+ * Modifie la "Description du besoin" d'une demande — Tâche "Libellé de
+ * demande modifiable avec traçabilité permanente" (voir CLAUDE.md).
+ * Réservée au Responsable Finance ET à l'Assistant Finance, EXCLUSIVEMENT.
+ *
+ * **`treso.valider_demande` seule NE SUFFIT PAS à exclure le DG** (même
+ * conflit de spécification déjà rencontré et tranché avec l'utilisateur
+ * pour "Restreindre 'Déléguer des accès'", voir CLAUDE.md) : le rôle DG
+ * possède aussi cette permission. Garde retenue, même schéma que pour les
+ * délégations : **(`treso.valider_demande` ET PAS
+ * `treso.approuver_validation_complete`) OU `treso.effectuer_reglement`**
+ * — couvre Responsable Finance (`valider_demande`, jamais
+ * `approuver_validation_complete`) et Assistant Finance
+ * (`effectuer_reglement`), exclut le DG (a les deux premières, jamais la
+ * troisième) et le Collaborateur (aucune des trois), sans jamais comparer
+ * de nom de rôle en dur.
+ *
+ * **`descriptionOriginale` renseignée UNE SEULE FOIS**, à la toute
+ * première modification (`?? demande.description`, jamais écrasée par
+ * une modification suivante) — `description` reste la version COURANTE,
+ * modifiée autant de fois que nécessaire. Les deux ne divergent qu'après
+ * au moins une modification ; avant ça, `descriptionOriginale` reste
+ * `null` et `description` fait office des deux versions à la fois (voir
+ * le commentaire du champ dans `schema.prisma`).
+ *
+ * **Chaque modification tracée dans `HistoriqueEntry`** (action
+ * `modification_description`, ancienne valeur dans `detail`) — cohérent
+ * avec la règle impérative du projet ("toute opération importante
+ * historisée"), même si l'écran n'affiche que la version initiale et la
+ * version courante côte à côte, jamais chaque étape intermédiaire.
+ *
+ * Verrouillée une fois `CLOTUREE` — même principe que toutes les autres
+ * mutations de ce module une fois le dossier fermé.
+ */
+export async function modifierDescriptionAction(
+  demandeId: string,
+  nouvelleDescription: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  const peutModifier =
+    !!session &&
+    ((hasPermission(session, "treso.valider_demande") &&
+      !hasPermission(session, "treso.approuver_validation_complete")) ||
+      hasPermission(session, "treso.effectuer_reglement"));
+  if (!peutModifier) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsed = modifierDescriptionSchema.safeParse({ demandeId, description: nouvelleDescription });
+  if (!parsed.success) {
+    return { status: "error", message: parsed.error.issues[0].message };
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.statut === "CLOTUREE") {
+    return { status: "error", message: "Cette demande est clôturée : sa description ne peut plus être modifiée." };
+  }
+  if (parsed.data.description === demande.description) {
+    return { status: "success", message: "Aucun changement à enregistrer." };
+  }
+
+  await prisma.$transaction([
+    prisma.demande.update({
+      where: { id: demandeId },
+      data: {
+        description: parsed.data.description,
+        descriptionOriginale: demande.descriptionOriginale ?? demande.description,
+      },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "modification_description",
+        detail: `Description modifiée par ${session.user.fullName} — ancienne version : « ${demande.description} »`,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+
+  revalidateDemandePaths(demandeId);
+
+  return { status: "success", message: "Description modifiée." };
+}
+
+const modifierLibelleLigneSchema = z.object({
+  ligneId: z.string().min(1),
+  libelle: z.string().trim().min(3, "Le libellé doit contenir au moins 3 caractères"),
+});
+
+/**
+ * Modifie le libellé d'UNE ligne d'article (`LigneDemande.libelle`) — Tâche
+ * "Validation ligne par ligne" (voir CLAUDE.md). Même pattern exact que
+ * `modifierDescriptionAction` ci-dessus (même garde de permission, même
+ * mécanique `libelleOriginal` renseignée une seule fois, même verrou
+ * `CLOTUREE`, même trace `HistoriqueEntry`) — seule différence : porte sur
+ * une `LigneDemande` précise, pas sur la `Demande` entière.
+ *
+ * Action DISTINCTE de `validerLignesAction` (qui, elle, décide
+ * valider/rejeter) : modifier un libellé n'est jamais une décision de
+ * validation, reste donc ouvert à l'Assistant Finance comme
+ * `modifierDescriptionAction`.
+ */
+export async function modifierLibelleLigneAction(
+  ligneId: string,
+  nouveauLibelle: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  const peutModifier =
+    !!session &&
+    ((hasPermission(session, "treso.valider_demande") &&
+      !hasPermission(session, "treso.approuver_validation_complete")) ||
+      hasPermission(session, "treso.effectuer_reglement"));
+  if (!peutModifier) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsed = modifierLibelleLigneSchema.safeParse({ ligneId, libelle: nouveauLibelle });
+  if (!parsed.success) {
+    return { status: "error", message: parsed.error.issues[0].message };
+  }
+
+  const ligne = await prisma.ligneDemande.findUnique({
+    where: { id: parsed.data.ligneId },
+    include: { demande: true },
+  });
+  if (!ligne) {
+    return { status: "error", message: "Ligne introuvable." };
+  }
+  if (ligne.demande.statut === "CLOTUREE") {
+    return { status: "error", message: "Cette demande est clôturée : le libellé ne peut plus être modifié." };
+  }
+  if (parsed.data.libelle === ligne.libelle) {
+    return { status: "success", message: "Aucun changement à enregistrer." };
+  }
+
+  await prisma.$transaction([
+    prisma.ligneDemande.update({
+      where: { id: parsed.data.ligneId },
+      data: {
+        libelle: parsed.data.libelle,
+        libelleOriginal: ligne.libelleOriginal ?? ligne.libelle,
+      },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "LigneDemande",
+        entityId: parsed.data.ligneId,
+        action: "modification_libelle_ligne",
+        detail: `Libellé modifié par ${session.user.fullName} — ancienne version : « ${ligne.libelle} »`,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+
+  revalidateDemandePaths(ligne.demandeId);
+
+  return { status: "success", message: "Libellé modifié." };
+}
+
 function revalidateDemandePaths(demandeId: string) {
   revalidatePath("/treso/finance/demandes");
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
@@ -255,6 +580,205 @@ async function enregistrerValidation(
 }
 
 /**
+ * `true` dès qu'une demande a au moins une ligne d'article — utilisé pour
+ * refuser les quatre actions de validation par montant (Option B1, voir
+ * CLAUDE.md "Validation ligne par ligne") : une demande avec lignes ne peut
+ * plus être décidée que via `validerLignesAction`. Une simple `count`,
+ * jamais un `include: { lignes: true }` complet — ces quatre actions n'ont
+ * besoin que de savoir s'il y en a, jamais de leur contenu.
+ */
+async function demandeAauMoinsUneLigne(demandeId: string): Promise<boolean> {
+  const nombreLignes = await prisma.ligneDemande.count({ where: { demandeId } });
+  return nombreLignes > 0;
+}
+
+const decisionLigneSchema = z.object({
+  ligneId: z.string().min(1),
+  statut: z.enum(["VALIDEE", "REJETEE"]),
+  motif: z.string().trim().optional(),
+});
+
+const validerLignesSchema = z.array(decisionLigneSchema).min(1);
+
+/**
+ * Validation ligne par ligne — Tâche "Validation ligne par ligne" (voir
+ * CLAUDE.md). Pour toute demande ayant AU MOINS une ligne, cette action
+ * devient l'UNIQUE mécanisme de décision : elle remplace entièrement
+ * `validerTotalementAction`/`validerPartiellementAction`/
+ * `validerComplementaireAction`/`rejeterReliquatAction` pour ce cas (ces
+ * quatre actions se refusent désormais explicitement dès qu'une demande a
+ * des lignes — voir leur garde ajoutée plus bas). Décision UNIQUE ET
+ * COMPLÈTE en un seul geste : jamais de notion de "reliquat" à traiter plus
+ * tard une fois les lignes tranchées, jamais de dévalidation.
+ *
+ * **Permission : réservée au Responsable Finance UNIQUEMENT**
+ * (`treso.valider_demande` ET PAS `treso.approuver_validation_complete`),
+ * PAS à l'Assistant Finance (`treso.effectuer_reglement` seul ne suffit
+ * jamais ici, contrairement à `modifierLibelleLigneAction`) — c'est une
+ * décision de VALIDATION, cohérent avec le fait que l'Assistant Finance
+ * n'a, dans tout le reste du module, jamais aucun pouvoir de décision
+ * (seulement `effectuer_reglement`/`receptionner_retour`, des actions
+ * d'EXÉCUTION une fois la décision déjà prise par le Responsable) — voir
+ * CLAUDE.md "Séparation stricte Responsable Finance / Assistant Finance".
+ *
+ * Une seule transaction Prisma :
+ * 1. Vérifie que la demande a au moins une ligne et est
+ *    `EN_ATTENTE_VALIDATION`.
+ * 2. Vérifie qu'AUCUNE ligne n'est déjà décidée — nécessaire en plus du
+ *    contrôle de statut : si TOUTES les lignes sont rejetées,
+ *    `montantValide` retombe à 0 et `calculerStatutDemande` (jamais
+ *    modifiée ici) repasse la demande en `EN_ATTENTE_VALIDATION` alors que
+ *    ses lignes sont pourtant déjà toutes décidées — sans ce second
+ *    contrôle, ce cas précis permettrait à tort une seconde exécution
+ *    (une forme de dévalidation par la bande, contraire au principe
+ *    "décision unique et complète").
+ * 3. Vérifie que TOUTES les lignes de la demande sont couvertes par les
+ *    décisions reçues, ni plus ni moins (rejette si une ligne manque ou si
+ *    un id étranger à la demande est reçu).
+ * 4. Motif obligatoire (3 caractères minimum) pour chaque ligne `REJETEE`.
+ * 5. Met à jour `statutValidation`/`motifRejet`/`decideParId`/`decideAt`
+ *    sur chaque ligne, recalcule `Demande.montantValide` = Σ
+ *    (quantite × prixUnitaire) des seules lignes `VALIDEE`, puis appelle
+ *    `calculerStatutDemande()` exactement comme les autres actions de
+ *    validation.
+ * 6. Une `HistoriqueEntry` par ligne décidée (`entity: "LigneDemande"`,
+ *    action `validation_ligne`/`rejet_ligne`).
+ */
+export async function validerLignesAction(
+  demandeId: string,
+  decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE"; motif?: string }[]
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  const peutValider =
+    !!session &&
+    hasPermission(session, "treso.valider_demande") &&
+    !hasPermission(session, "treso.approuver_validation_complete");
+  if (!peutValider) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedDecisions = validerLignesSchema.safeParse(decisions);
+  if (!parsedDecisions.success) {
+    return { status: "error", message: "Décisions invalides." };
+  }
+
+  const demande = await prisma.demande.findUnique({
+    where: { id: demandeId },
+    include: { lignes: true },
+  });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.lignes.length === 0) {
+    return {
+      status: "error",
+      message: "Cette demande n'a aucune ligne d'article — utilisez la validation par montant.",
+    };
+  }
+  if (demande.lignes.some((ligne) => ligne.statutValidation !== "EN_ATTENTE")) {
+    return { status: "error", message: "Les lignes de cette demande ont déjà été décidées." };
+  }
+  if (demande.statut !== "EN_ATTENTE_VALIDATION") {
+    return {
+      status: "error",
+      message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
+    };
+  }
+
+  const ligneParId = new Map(demande.lignes.map((ligne) => [ligne.id, ligne]));
+  const decisionIds = new Set(parsedDecisions.data.map((d) => d.ligneId));
+
+  if (
+    decisionIds.size !== parsedDecisions.data.length ||
+    parsedDecisions.data.some((d) => !ligneParId.has(d.ligneId)) ||
+    demande.lignes.some((ligne) => !decisionIds.has(ligne.id))
+  ) {
+    return {
+      status: "error",
+      message: "Toutes les lignes de la demande doivent être décidées, une seule fois chacune.",
+    };
+  }
+
+  for (const d of parsedDecisions.data) {
+    if (d.statut === "REJETEE" && (d.motif?.trim().length ?? 0) < 3) {
+      return {
+        status: "error",
+        message: "Un motif de rejet (3 caractères minimum) est obligatoire pour chaque ligne rejetée.",
+      };
+    }
+  }
+
+  const decideAt = new Date();
+  let montantValide = 0;
+
+  const ligneUpdates = parsedDecisions.data.map((d) => {
+    const ligne = ligneParId.get(d.ligneId)!;
+    const motif = d.statut === "REJETEE" ? d.motif!.trim() : null;
+    if (d.statut === "VALIDEE") {
+      montantValide += ligne.quantite * Number(ligne.prixUnitaire);
+    }
+    return prisma.ligneDemande.update({
+      where: { id: d.ligneId },
+      data: {
+        statutValidation: d.statut,
+        motifRejet: motif,
+        decideParId: session.user.id,
+        decideAt,
+      },
+    });
+  });
+
+  const historiqueEntries = parsedDecisions.data.map((d) => {
+    const ligne = ligneParId.get(d.ligneId)!;
+    return prisma.historiqueEntry.create({
+      data: {
+        entity: "LigneDemande",
+        entityId: d.ligneId,
+        action: d.statut === "VALIDEE" ? "validation_ligne" : "rejet_ligne",
+        detail:
+          d.statut === "VALIDEE"
+            ? `Ligne « ${ligne.libelle} » validée (${ligne.quantite} × ${Number(ligne.prixUnitaire).toLocaleString("fr-FR")} FCFA)`
+            : `Ligne « ${ligne.libelle} » rejetée — motif : ${d.motif!.trim()}`,
+        userId: session.user.id,
+      },
+    });
+  });
+
+  await prisma.$transaction([
+    ...ligneUpdates,
+    prisma.demande.update({ where: { id: demandeId }, data: { montantValide } }),
+    ...historiqueEntries,
+  ]);
+
+  await calculerStatutDemande(demandeId);
+  revalidateDemandePaths(demandeId);
+
+  const montantDemande = Number(demande.montant);
+  if (Math.round(montantValide * 100) >= Math.round(montantDemande * 100)) {
+    await notifierDemandeEntierementValidee(demande, montantValide, session.user.id);
+  } else if (montantValide > 0) {
+    await createNotification({
+      userId: demande.createurId,
+      titre: "Demande validée partiellement",
+      message: `Votre demande ${demande.reference} a été validée partiellement (${montantValide.toLocaleString("fr-FR")} FCFA sur ${montantDemande.toLocaleString("fr-FR")} FCFA demandés) — certaines lignes ont été rejetées.`,
+      lien: `/treso/demandes/${demandeId}`,
+    });
+  } else {
+    await createNotification({
+      userId: demande.createurId,
+      titre: "Lignes de votre demande rejetées",
+      message: `Toutes les lignes de votre demande ${demande.reference} ont été rejetées.`,
+      lien: `/treso/demandes/${demandeId}`,
+    });
+  }
+
+  return {
+    status: "success",
+    message: `Décisions enregistrées pour la demande ${demande.reference} (${montantValide.toLocaleString("fr-FR")} FCFA validés).`,
+  };
+}
+
+/**
  * Valide TOTALEMENT une demande `EN_ATTENTE_VALIDATION` : `montantValide`
  * est porté au montant demandé en une seule fois. Réservée à
  * `treso.valider_demande`. Défense en profondeur : le statut est revérifié
@@ -274,6 +798,12 @@ export async function validerTotalementAction(demandeId: string): Promise<Simple
   const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
+  }
+  if (await demandeAauMoinsUneLigne(demandeId)) {
+    return {
+      status: "error",
+      message: "Cette demande contient des lignes d'article : utilisez la validation ligne par ligne.",
+    };
   }
   if (demande.statut !== "EN_ATTENTE_VALIDATION") {
     return {
@@ -320,6 +850,12 @@ export async function validerPartiellementAction(
   const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
+  }
+  if (await demandeAauMoinsUneLigne(demandeId)) {
+    return {
+      status: "error",
+      message: "Cette demande contient des lignes d'article : utilisez la validation ligne par ligne.",
+    };
   }
   if (demande.statut !== "EN_ATTENTE_VALIDATION") {
     return {
@@ -387,6 +923,12 @@ export async function validerComplementaireAction(
   const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
+  }
+  if (await demandeAauMoinsUneLigne(demandeId)) {
+    return {
+      status: "error",
+      message: "Cette demande contient des lignes d'article : utilisez la validation ligne par ligne.",
+    };
   }
   if (demande.statut !== "PARTIELLEMENT_VALIDEE") {
     return {
@@ -478,6 +1020,12 @@ export async function rejeterReliquatAction(
   const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
+  }
+  if (await demandeAauMoinsUneLigne(demandeId)) {
+    return {
+      status: "error",
+      message: "Cette demande contient des lignes d'article : utilisez la validation ligne par ligne.",
+    };
   }
   if (demande.statut !== "PARTIELLEMENT_VALIDEE") {
     return {

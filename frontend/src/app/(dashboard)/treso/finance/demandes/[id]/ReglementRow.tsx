@@ -5,7 +5,14 @@ import { toast } from "sonner";
 
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 
+import { AllocationCategorieFields, type CategorieAllocationOption } from "./AllocationCategorieFields";
 import { annulerReglementAction, confirmerReglementAction, modifierReglementAction } from "./reglementActions";
+
+export interface ReglementAllocationData {
+  categorieId: string;
+  categorieLabel: string;
+  montant: number;
+}
 
 export interface ReglementRowData {
   id: string;
@@ -16,6 +23,11 @@ export interface ReglementRowData {
   motifAnnulation: string | null;
   auteurNom: string;
   createdAt: Date;
+  /** Voir CLAUDE.md "Allocation budgétaire explicite par règlement" —
+   * toujours au moins une entrée dès que la demande est catégorisée
+   * (même une seule catégorie crée une allocation à 100%, transparente
+   * pour Finance), vide seulement si la demande n'est pas catégorisée. */
+  allocations: ReglementAllocationData[];
 }
 
 const MODE_LABEL: Record<"CAISSE" | "BANQUE", string> = { CAISSE: "Caisse", BANQUE: "Banque" };
@@ -28,7 +40,7 @@ function ReglementStatutBadge({ reglement }: { reglement: ReglementRowData }) {
 
 /**
  * Une ligne de la liste des règlements, avec ses actions propres :
- * - Brouillon (ni confirmé ni annulé) : Modifier (montant/mode) + Confirmer.
+ * - Brouillon (ni confirmé ni annulé) : Modifier (montant/mode/répartition) + Confirmer.
  * - Confirmé (non annulé) : Annuler (motif obligatoire) — plus aucune édition.
  * - Annulé : lecture seule, grisé/barré, motif visible.
  *
@@ -43,8 +55,14 @@ function ReglementStatutBadge({ reglement }: { reglement: ReglementRowData }) {
  * de défense.
  *
  * Le formulaire d'édition reste non contrôlé (`defaultValue` + `FormData`
- * au submit) : passer `value` à `Select` entrerait en conflit avec son
- * `defaultValue` interne (voir CLAUDE.md, piège déjà rencontré au Ticket 2).
+ * au submit) pour montant/mode — passer `value` à `Select` entrerait en
+ * conflit avec son `defaultValue` interne (voir CLAUDE.md, piège déjà
+ * rencontré au Ticket 2). Les champs de répartition (voir CLAUDE.md
+ * "Allocation budgétaire explicite par règlement"), eux, restent
+ * CONTRÔLÉS (état local `allocValues`) — nécessaire pour afficher le total
+ * réparti en direct — mais portent tout de même un `name`, donc le
+ * `FormData` construit à la soumission les lit normalement, exactement
+ * comme `montant`/`mode`.
  *
  * "Télécharger le reçu" (Ticket 9) apparaît sur tout règlement confirmé et
  * non annulé, **sans condition sur `canEffectuerReglement`** : la Route
@@ -59,16 +77,30 @@ function ReglementStatutBadge({ reglement }: { reglement: ReglementRowData }) {
  */
 export function ReglementRow({
   reglement,
+  categoriesConcernees,
   canEffectuerReglement,
 }: {
   reglement: ReglementRowData;
+  categoriesConcernees: CategorieAllocationOption[];
   canEffectuerReglement: boolean;
 }) {
   const [uiMode, setUiMode] = useState<"view" | "edit" | "annuler">("view");
   const [montantError, setMontantError] = useState<string | undefined>();
+  const [montantEdit, setMontantEdit] = useState(String(reglement.montant));
+  const [allocValues, setAllocValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(reglement.allocations.map((a) => [a.categorieId, String(a.montant)]))
+  );
   const [motif, setMotif] = useState("");
   const [motifError, setMotifError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
+
+  const multiCategories = categoriesConcernees.length >= 2;
+  const sommeAllocations = categoriesConcernees.reduce(
+    (total, c) => total + (Number(allocValues[c.categorieId]) || 0),
+    0
+  );
+  const allocationValide =
+    !multiCategories || Math.round(sommeAllocations * 100) === Math.round((Number(montantEdit) || 0) * 100);
 
   function handleConfirmer() {
     startTransition(async () => {
@@ -91,7 +123,7 @@ export function ReglementRow({
     setMontantError(undefined);
 
     startTransition(async () => {
-      const result = await modifierReglementAction(reglement.id, montantValue, modeValue);
+      const result = await modifierReglementAction(reglement.id, montantValue, modeValue, formData);
       if (result.status === "success") {
         toast.success(result.message);
         setUiMode("view");
@@ -129,6 +161,19 @@ export function ReglementRow({
           <p className="text-xs text-muted-foreground">
             {reglement.auteurNom} — {reglement.createdAt.toLocaleString("fr-FR")}
           </p>
+          {/* Répartition par catégorie (voir CLAUDE.md "Allocation
+              budgétaire explicite par règlement") — affichée seulement si
+              plus d'une catégorie est concernée : pour une seule catégorie,
+              l'allocation à 100% n'apporte aucune information que le
+              montant total n'ait déjà donnée, jamais une ligne redondante. */}
+          {reglement.allocations.length > 1 ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Répartition :{" "}
+              {reglement.allocations
+                .map((a) => `${a.categorieLabel} ${a.montant.toLocaleString("fr-FR")} FCFA`)
+                .join(", ")}
+            </p>
+          ) : null}
           {reglement.estAnnule && reglement.motifAnnulation ? (
             <p className="mt-1 text-sm text-danger">
               Motif d&apos;annulation : {reglement.motifAnnulation}
@@ -188,7 +233,8 @@ export function ReglementRow({
             inputMode="decimal"
             min="1"
             step="1"
-            defaultValue={reglement.montant}
+            value={montantEdit}
+            onChange={(e) => setMontantEdit(e.target.value)}
             error={montantError}
           />
           <Select
@@ -200,8 +246,16 @@ export function ReglementRow({
               { value: "BANQUE", label: "Banque" },
             ]}
           />
+          {multiCategories ? (
+            <AllocationCategorieFields
+              categories={categoriesConcernees}
+              montantTotal={Number(montantEdit) || 0}
+              values={allocValues}
+              onChange={(categorieId, valeur) => setAllocValues((prev) => ({ ...prev, [categorieId]: valeur }))}
+            />
+          ) : null}
           <div className="flex flex-wrap gap-3">
-            <Button type="submit" loading={isPending}>
+            <Button type="submit" loading={isPending} disabled={!allocationValide}>
               Enregistrer
             </Button>
             <Button type="button" variant="secondary" disabled={isPending} onClick={() => setUiMode("view")}>

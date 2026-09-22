@@ -125,20 +125,37 @@ export function reportingFiltersToQueryString(filters: ReportingFilters): string
   return params.toString();
 }
 
+/**
+ * Catégorisation par ligne (voir CLAUDE.md) : `categorieId`/`objetId`
+ * doivent désormais matcher soit la demande elle-même (`DEPENSE_DIRECTE`,
+ * seul cas où ces champs restent renseignés sur `Demande`), soit AU MOINS
+ * une de ses lignes (`STANDARD`) — combiné via un `OR` explicite par
+ * critère, l'ensemble regroupé dans un seul `AND` pour éviter toute clé
+ * dupliquée (deux `OR` distincts ne peuvent pas cohabiter comme deux
+ * propriétés du même objet littéral).
+ */
 function buildDemandeWhere(filters: ReportingFilters): Prisma.DemandeWhereInput {
-  return {
-    ...(filters.du || filters.au
-      ? { createdAt: { ...(filters.du ? { gte: filters.du } : {}), ...(filters.au ? { lte: filters.au } : {}) } }
-      : {}),
-    ...(filters.demandeurId ? { createurId: filters.demandeurId } : {}),
-    ...(filters.service ? { createur: { service: { name: filters.service } } } : {}),
-    ...(filters.categorieId ? { categorieId: filters.categorieId } : {}),
-    ...(filters.objetId ? { objetId: filters.objetId } : {}),
-    ...(filters.statut ? { statut: filters.statut } : {}),
-    ...(filters.typeDemande ? { typeDemande: filters.typeDemande } : {}),
-    ...(filters.beneficiaireUserId ? { beneficiaireUserId: filters.beneficiaireUserId } : {}),
-    ...(filters.beneficiaireNom ? { beneficiaireNom: filters.beneficiaireNom } : {}),
-  };
+  const clauses: Prisma.DemandeWhereInput[] = [];
+  if (filters.du || filters.au) {
+    clauses.push({
+      createdAt: { ...(filters.du ? { gte: filters.du } : {}), ...(filters.au ? { lte: filters.au } : {}) },
+    });
+  }
+  if (filters.demandeurId) clauses.push({ createurId: filters.demandeurId });
+  if (filters.service) clauses.push({ createur: { service: { name: filters.service } } });
+  if (filters.categorieId) {
+    clauses.push({
+      OR: [{ categorieId: filters.categorieId }, { lignes: { some: { categorieId: filters.categorieId } } }],
+    });
+  }
+  if (filters.objetId) {
+    clauses.push({ OR: [{ objetId: filters.objetId }, { lignes: { some: { objetId: filters.objetId } } }] });
+  }
+  if (filters.statut) clauses.push({ statut: filters.statut });
+  if (filters.typeDemande) clauses.push({ typeDemande: filters.typeDemande });
+  if (filters.beneficiaireUserId) clauses.push({ beneficiaireUserId: filters.beneficiaireUserId });
+  if (filters.beneficiaireNom) clauses.push({ beneficiaireNom: filters.beneficiaireNom });
+  return clauses.length > 0 ? { AND: clauses } : {};
 }
 
 /**
@@ -228,6 +245,7 @@ interface DemandeAvecRelations {
   /** Phase H : base de la colonne "Validé" du tableau agrégé (capture aussi les validations partielles). */
   montantValide: Prisma.Decimal | null;
   statut: StatutDemande;
+  typeDemande: TypeDemande;
   createdAt: Date;
   categorieId: string | null;
   objetId: string | null;
@@ -237,6 +255,79 @@ interface DemandeAvecRelations {
   beneficiaireUserId: string | null;
   beneficiaireNom: string | null;
   beneficiaireUser: { fullName: string } | null;
+  /** Catégorisation par ligne (voir CLAUDE.md) — uniquement peuplé pour
+   * `STANDARD` (toujours vide pour `DEPENSE_DIRECTE`, qui n'a pas de
+   * ligne). Sert de base à `getUnitesComptables` ci-dessous. */
+  lignes: {
+    id: string;
+    libelle: string;
+    quantite: number;
+    prixUnitaire: Prisma.Decimal;
+    statutValidation: string;
+    categorieId: string | null;
+    objetId: string | null;
+    categorie: { label: string } | null;
+    objet: { label: string } | null;
+  }[];
+}
+
+/**
+ * "Unité comptable" — voir CLAUDE.md "Catégorisation par ligne" : unifie
+ * `DEPENSE_DIRECTE` (0 ligne, la demande ENTIÈRE porte sa propre catégorie)
+ * et `STANDARD` (chaque LIGNE porte la sienne, potentiellement différente
+ * d'une ligne à l'autre) sous une même forme, pour que
+ * `getReportingRows`/`getReportingFondsRemis`/`getReportingDemandesDetail`
+ * n'aient qu'un seul bucketing à écrire, jamais deux chemins de code
+ * séparés selon `typeDemande`.
+ *
+ * `montant`/`montantValide` sont ceux de l'UNITÉ (la ligne, ou la demande
+ * entière si `DEPENSE_DIRECTE`) — jamais ceux de la demande complète pour
+ * une ligne, qui compterait alors le montant des AUTRES lignes en trop
+ * dans le même bucket.
+ */
+export interface UniteComptable {
+  demandeId: string;
+  /** `null` pour une DEPENSE_DIRECTE (une seule "unité" = la demande elle-même). */
+  ligneId: string | null;
+  categorieId: string | null;
+  categorieLabel: string;
+  objetId: string | null;
+  objetLabel: string;
+  montant: number;
+  montantValide: number;
+}
+
+function getUnitesComptables(demandes: DemandeAvecRelations[]): UniteComptable[] {
+  const unites: UniteComptable[] = [];
+  for (const d of demandes) {
+    if (d.typeDemande === "DEPENSE_DIRECTE") {
+      unites.push({
+        demandeId: d.id,
+        ligneId: null,
+        categorieId: d.categorieId,
+        categorieLabel: d.categorie?.label ?? "Non catégorisée",
+        objetId: d.objetId,
+        objetLabel: d.objet?.label ?? "Non renseigné",
+        montant: Number(d.montant),
+        montantValide: Number(d.montantValide ?? 0),
+      });
+    } else {
+      for (const ligne of d.lignes) {
+        const montantLigne = ligne.quantite * Number(ligne.prixUnitaire);
+        unites.push({
+          demandeId: d.id,
+          ligneId: ligne.id,
+          categorieId: ligne.categorieId,
+          categorieLabel: ligne.categorie?.label ?? "Non catégorisée",
+          objetId: ligne.objetId,
+          objetLabel: ligne.objet?.label ?? "Non renseigné",
+          montant: montantLigne,
+          montantValide: ligne.statutValidation === "VALIDEE" ? montantLigne : 0,
+        });
+      }
+    }
+  }
+  return unites;
 }
 
 /**
@@ -255,7 +346,13 @@ async function getDemandesFiltrees(
 ): Promise<{ demandes: DemandeAvecRelations[]; montantsRegleParDemande: Map<string, MontantsRegle> }> {
   const demandes = await prisma.demande.findMany({
     where: buildDemandeWhere(filters),
-    include: { categorie: true, objet: true, createur: { include: { service: true } }, beneficiaireUser: true },
+    include: {
+      categorie: true,
+      objet: true,
+      createur: { include: { service: true } },
+      beneficiaireUser: true,
+      lignes: { include: { categorie: true, objet: true } },
+    },
     orderBy: { createdAt: "asc" },
   });
 
@@ -353,12 +450,75 @@ async function getFondsRemisParDemande(demandeIds: string[]): Promise<Map<string
   return map;
 }
 
+interface AllocationsParCategorie {
+  total: number;
+  caisse: number;
+  banque: number;
+  nombreOperationsCaisse: number;
+}
+
+/**
+ * Montants RÉGLÉS agrégés par (Demande, Catégorie) — voir CLAUDE.md
+ * "Allocation budgétaire explicite par règlement" — somme des
+ * `ReglementCategorieAllocation.montant` (règlements confirmés, non
+ * annulés) de CETTE demande précise pour CETTE catégorie précise, ventilée
+ * par mode. **Exacte** (jamais une estimation) : dérivée de la même
+ * donnée que `getMontantConsommeCategorie`, simplement conservée par
+ * demande plutôt qu'agrégée globalement (nécessaire pour que
+ * `getReportingRows`/`getReportingFondsRemis` puissent additionner
+ * correctement la contribution de PLUSIEURS demandes à un même bucket
+ * Catégorie×Objet, sans jamais confondre "la même catégorie apparaît deux
+ * fois dans CETTE demande" avec "deux demandes différentes contribuent
+ * à cette catégorie").
+ *
+ * **Granularité Catégorie, jamais Objet** : une allocation ne descend pas
+ * au niveau Objet (elle n'existe qu'au niveau où le budget lui-même
+ * s'applique). Pour une demande `STANDARD` dont plusieurs lignes de MÊME
+ * catégorie ont des Objets différents, les appelants répètent donc le
+ * MÊME total "Réglé" de cette (demande, catégorie) sur chaque ligne Objet
+ * concernée (la donnée la plus précise réellement disponible) — jamais
+ * sommé une seconde fois pour la même (demande, catégorie). Documenté
+ * aussi dans CLAUDE.md "Catégorisation par ligne", signalé explicitement
+ * comme point à confirmer.
+ */
+async function getMontantsAllocationsParCategorie(
+  demandeIds: string[]
+): Promise<Map<string, AllocationsParCategorie>> {
+  if (demandeIds.length === 0) return new Map();
+
+  const cle = (demandeId: string, categorieId: string) => `${demandeId}|${categorieId}`;
+
+  const allocations = await prisma.reglementCategorieAllocation.findMany({
+    where: { reglement: { demandeId: { in: demandeIds }, estConfirme: true, estAnnule: false } },
+    select: { categorieId: true, montant: true, reglement: { select: { demandeId: true, mode: true } } },
+  });
+
+  const map = new Map<string, AllocationsParCategorie>();
+  for (const a of allocations) {
+    const key = cle(a.reglement.demandeId, a.categorieId);
+    const entry = map.get(key) ?? { total: 0, caisse: 0, banque: 0, nombreOperationsCaisse: 0 };
+    const montant = Number(a.montant);
+    entry.total += montant;
+    if (a.reglement.mode === "CAISSE") {
+      entry.caisse += montant;
+      entry.nombreOperationsCaisse += 1;
+    } else {
+      entry.banque += montant;
+    }
+    map.set(key, entry);
+  }
+  return map;
+}
+
 export interface ReportingFondsRemisRow {
   categorieId: string | null;
   categorieLabel: string;
   objetId: string | null;
   objetLabel: string;
-  /** Nombre de règlements Caisse confirmés (pas de demandes — une demande peut en avoir plusieurs). */
+  /** Nombre d'ALLOCATIONS Caisse confirmées (pas de règlements — un
+   * règlement réparti sur plusieurs catégories compte pour une opération
+   * dans CHACUNE de ses catégories, chacune ayant réellement reçu une part
+   * de cette remise d'espèces). */
   nombreOperations: number;
   montantDemande: number;
   montantValide: number;
@@ -384,39 +544,104 @@ export interface ReportingFondsRemisRow {
  * général, avec les colonnes exactes demandées : nombre d'opérations,
  * montant demandé, montant validé, montant remis, dépenses déclarées,
  * retours reçus, montant restant à régulariser.
+ *
+ * **Catégorisation par ligne (voir CLAUDE.md)** : bucketé par "unité
+ * comptable" (`getUnitesComptables` — une ligne pour `STANDARD`, la
+ * demande entière pour `DEPENSE_DIRECTE`) au lieu d'une demande entière
+ * systématique. `montantRemis` (Caisse) est **exact**, dérivé de
+ * `getMontantsAllocationsParCategorie` (allocations explicites, jamais
+ * estimées). `depensesDeclarees`/`retoursRecus`, en revanche, n'ont AUCUNE
+ * dimension Catégorie dans le modèle de données (un `RetourCaisse`/une
+ * `DepenseLigne` se rattachent à un `Reglement`, jamais à une Catégorie) —
+ * **seule estimation de cette tâche** : répartie au prorata de la part de
+ * `montantRemis` que représente chaque catégorie dans le total remis de
+ * LA MÊME demande (ratio = 100% pour toute `DEPENSE_DIRECTE`, ou pour une
+ * `STANDARD` n'ayant qu'une seule catégorie concernée — comportement donc
+ * strictement inchangé dans ces deux cas très majoritaires). Signalé
+ * explicitement : à confirmer si une répartition plus précise est
+ * nécessaire un jour (impliquerait de faire porter aussi une Catégorie
+ * aux `DepenseLigne`/`RetourCaisse` eux-mêmes, hors périmètre ici).
  */
 export async function getReportingFondsRemis(filters: ReportingFilters): Promise<ReportingFondsRemisRow[]> {
   const { demandes } = await getDemandesFiltrees(filters);
-  const fondsParDemande = await getFondsRemisParDemande(demandes.map((d) => d.id));
+  const demandeIds = demandes.map((d) => d.id);
+  const [fondsParDemande, allocationsParCategorie] = await Promise.all([
+    getFondsRemisParDemande(demandeIds),
+    getMontantsAllocationsParCategorie(demandeIds),
+  ]);
 
   const buckets = new Map<string, ReportingFondsRemisRow>();
+  // Garantit qu'une (demande, catégorie) ne contribue à `montantRemis`/
+  // `nombreOperations`/`depensesDeclarees`/`retoursRecus` qu'UNE SEULE FOIS
+  // au total agrégé, même si plusieurs lignes Objet de cette demande
+  // partagent cette catégorie (sans quoi une catégorie couvrant 2 Objets
+  // dans une même demande compterait deux fois le même montant remis).
+  const demandeCategorieDejaComptee = new Set<string>();
+
   for (const d of demandes) {
     const fonds = fondsParDemande.get(d.id);
     if (!fonds) continue; // Aucun règlement Caisse confirmé : hors périmètre "fonds remis".
 
-    const key = `${d.categorieId ?? "none"}|${d.objetId ?? "none"}`;
-    const existing = buckets.get(key);
-    if (existing) {
-      existing.nombreOperations += fonds.nombreOperations;
-      existing.montantDemande += Number(d.montant);
-      existing.montantValide += Number(d.montantValide ?? 0);
-      existing.montantRemis += fonds.montantRemis;
-      existing.depensesDeclarees += fonds.depensesDeclarees;
-      existing.retoursRecus += fonds.retoursRecus;
-    } else {
-      buckets.set(key, {
-        categorieId: d.categorieId,
-        categorieLabel: d.categorie?.label ?? "Non catégorisée",
-        objetId: d.objetId,
-        objetLabel: d.objet?.label ?? "Non renseigné",
-        nombreOperations: fonds.nombreOperations,
-        montantDemande: Number(d.montant),
-        montantValide: Number(d.montantValide ?? 0),
-        montantRemis: fonds.montantRemis,
-        depensesDeclarees: fonds.depensesDeclarees,
-        retoursRecus: fonds.retoursRecus,
-        montantRestantARegulariser: 0,
-      });
+    const unites = getUnitesComptables([d]);
+    // Total Caisse de CETTE demande, dérivé des allocations de ses propres
+    // catégories (jamais un second calcul divergent de `fonds.montantRemis`
+    // qui, lui, vient directement des règlements — les deux DOIVENT
+    // coïncider ; utilisé uniquement comme dénominateur du prorata).
+    const categoriesDeLaDemande = [...new Set(unites.map((u) => u.categorieId).filter((id): id is string => id != null))];
+    const totalCaisseDemande = categoriesDeLaDemande.reduce(
+      (sum, catId) => sum + (allocationsParCategorie.get(`${d.id}|${catId}`)?.caisse ?? 0),
+      0
+    );
+
+    for (const unite of unites) {
+      const cleDemandeCategorie = unite.categorieId ? `${d.id}|${unite.categorieId}` : null;
+      const dejaComptee = cleDemandeCategorie != null && demandeCategorieDejaComptee.has(cleDemandeCategorie);
+
+      const montantRemisCategorie = unite.categorieId
+        ? (allocationsParCategorie.get(cleDemandeCategorie!)?.caisse ?? 0)
+        : fonds.montantRemis; // Non catégorisée : pas de ventilation possible, tout le montant remis de la demande.
+      const ratio = totalCaisseDemande > 0 ? montantRemisCategorie / totalCaisseDemande : 1;
+
+      const key = `${unite.categorieId ?? "none"}|${unite.objetId ?? "none"}`;
+      const existing = buckets.get(key);
+      const contribution = {
+        // 0 si cette (demande, catégorie) a déjà contribué via un autre
+        // bucket Objet de la même demande — jamais compté deux fois.
+        nombreOperations: dejaComptee
+          ? 0
+          : unite.categorieId
+            ? (allocationsParCategorie.get(cleDemandeCategorie!)?.nombreOperationsCaisse ?? 0)
+            : fonds.nombreOperations,
+        montantDemande: unite.montant,
+        montantValide: unite.montantValide,
+        montantRemis: dejaComptee ? 0 : montantRemisCategorie,
+        depensesDeclarees: dejaComptee ? 0 : fonds.depensesDeclarees * ratio,
+        retoursRecus: dejaComptee ? 0 : fonds.retoursRecus * ratio,
+      };
+      if (cleDemandeCategorie) demandeCategorieDejaComptee.add(cleDemandeCategorie);
+
+      if (existing) {
+        existing.montantDemande += contribution.montantDemande;
+        existing.montantValide += contribution.montantValide;
+        existing.montantRemis += contribution.montantRemis;
+        existing.nombreOperations += contribution.nombreOperations;
+        existing.depensesDeclarees += contribution.depensesDeclarees;
+        existing.retoursRecus += contribution.retoursRecus;
+      } else {
+        buckets.set(key, {
+          categorieId: unite.categorieId,
+          categorieLabel: unite.categorieLabel,
+          objetId: unite.objetId,
+          objetLabel: unite.objetLabel,
+          nombreOperations: contribution.nombreOperations,
+          montantDemande: contribution.montantDemande,
+          montantValide: contribution.montantValide,
+          montantRemis: contribution.montantRemis,
+          depensesDeclarees: contribution.depensesDeclarees,
+          retoursRecus: contribution.retoursRecus,
+          montantRestantARegulariser: 0,
+        });
+      }
     }
   }
 
@@ -494,39 +719,74 @@ export interface ReportingRow {
  * donc ne contribue jamais à "Validé", "Réglé", "Validé restant à régler"
  * ni aux colonnes Caisse/Banque — uniquement à "Demandé", "Restant à
  * valider" (égal au montant demandé dans ce cas) et au nombre de demandes.
+ *
+ * **Catégorisation par ligne (voir CLAUDE.md)** : bucketé par "unité
+ * comptable" (`getUnitesComptables`) — une `DEPENSE_DIRECTE` reste une
+ * seule unité (comportement inchangé), une `STANDARD` en apporte une par
+ * ligne, chacune dans le bucket de SA PROPRE catégorie/objet avec SON
+ * PROPRE montant (`nombreDemandes` devient donc, pour une demande
+ * `STANDARD`, un nombre de LIGNES contributrices, pas de demandes —
+ * cohérent avec le fait qu'une même demande peut désormais alimenter
+ * plusieurs lignes du tableau). "Réglé"/"Réglé Caisse"/"Réglé Banque"
+ * sont **exacts** (`getMontantsAllocationsParCategorie`, allocations
+ * explicites) — jamais estimés, contrairement à
+ * `depensesDeclarees`/`retoursRecus` de `getReportingFondsRemis` (qui,
+ * eux, n'ont pas d'équivalent ici). Une (demande, catégorie) ne contribue
+ * qu'UNE SEULE FOIS à ces trois colonnes, même si sa catégorie couvre
+ * plusieurs Objets dans la même demande (même garde-fou que
+ * `getReportingFondsRemis`, voir ce commentaire pour le détail).
  */
 export async function getReportingRows(filters: ReportingFilters): Promise<ReportingRow[]> {
-  const { demandes, montantsRegleParDemande } = await getDemandesFiltrees(filters);
+  const { demandes } = await getDemandesFiltrees(filters);
+  const demandeIds = demandes.map((d) => d.id);
+  const allocationsParCategorie = await getMontantsAllocationsParCategorie(demandeIds);
 
   const buckets = new Map<string, ReportingRow>();
-  for (const d of demandes) {
-    const key = `${d.categorieId ?? "none"}|${d.objetId ?? "none"}`;
-    const montants = montantsRegleParDemande.get(d.id) ?? { total: 0, caisse: 0, banque: 0 };
-    const montantValideContribution = Number(d.montantValide ?? 0);
+  const demandeCategorieDejaComptee = new Set<string>();
 
-    const existing = buckets.get(key);
-    if (existing) {
-      existing.nombreDemandes += 1;
-      existing.montantDemande += Number(d.montant);
-      existing.montantValide += montantValideContribution;
-      existing.montantRegle += montants.total;
-      existing.montantRegleCaisse += montants.caisse;
-      existing.montantRegleBanque += montants.banque;
-    } else {
-      buckets.set(key, {
-        categorieId: d.categorieId,
-        categorieLabel: d.categorie?.label ?? "Non catégorisée",
-        objetId: d.objetId,
-        objetLabel: d.objet?.label ?? "Non renseigné",
-        nombreDemandes: 1,
-        montantDemande: Number(d.montant),
-        montantValide: montantValideContribution,
-        montantRestantAValider: 0,
-        montantRegle: montants.total,
-        valideResteARegler: 0,
-        montantRegleCaisse: montants.caisse,
-        montantRegleBanque: montants.banque,
-      });
+  for (const d of demandes) {
+    for (const unite of getUnitesComptables([d])) {
+      const key = `${unite.categorieId ?? "none"}|${unite.objetId ?? "none"}`;
+      const cleDemandeCategorie = unite.categorieId ? `${d.id}|${unite.categorieId}` : null;
+      const dejaComptee = cleDemandeCategorie != null && demandeCategorieDejaComptee.has(cleDemandeCategorie);
+      const montants = (cleDemandeCategorie != null ? allocationsParCategorie.get(cleDemandeCategorie) : undefined) ?? {
+        total: 0,
+        caisse: 0,
+        banque: 0,
+      };
+      if (cleDemandeCategorie) demandeCategorieDejaComptee.add(cleDemandeCategorie);
+
+      const existing = buckets.get(key);
+      const contribution = {
+        montantDemande: unite.montant,
+        montantValide: unite.montantValide,
+        montantRegle: dejaComptee ? 0 : montants.total,
+        montantRegleCaisse: dejaComptee ? 0 : montants.caisse,
+        montantRegleBanque: dejaComptee ? 0 : montants.banque,
+      };
+      if (existing) {
+        existing.nombreDemandes += 1;
+        existing.montantDemande += contribution.montantDemande;
+        existing.montantValide += contribution.montantValide;
+        existing.montantRegle += contribution.montantRegle;
+        existing.montantRegleCaisse += contribution.montantRegleCaisse;
+        existing.montantRegleBanque += contribution.montantRegleBanque;
+      } else {
+        buckets.set(key, {
+          categorieId: unite.categorieId,
+          categorieLabel: unite.categorieLabel,
+          objetId: unite.objetId,
+          objetLabel: unite.objetLabel,
+          nombreDemandes: 1,
+          montantDemande: contribution.montantDemande,
+          montantValide: contribution.montantValide,
+          montantRestantAValider: 0,
+          montantRegle: contribution.montantRegle,
+          valideResteARegler: 0,
+          montantRegleCaisse: contribution.montantRegleCaisse,
+          montantRegleBanque: contribution.montantRegleBanque,
+        });
+      }
     }
   }
 
@@ -591,6 +851,10 @@ export async function getReportingSuiviBudgetaire(): Promise<ReportingSuiviBudge
 
 export interface ReportingDemandeDetail {
   reference: string;
+  /** Libellé de la ligne d'article (voir CLAUDE.md "Catégorisation par
+   * ligne") — `null` pour une `DEPENSE_DIRECTE` (une seule ligne de
+   * feuille = la demande entière, comme avant cette tâche). */
+  libelleLigne: string | null;
   createurNom: string;
   service: string | null;
   categorieLabel: string;
@@ -600,19 +864,35 @@ export interface ReportingDemandeDetail {
   createdAt: Date;
 }
 
-/** Feuille "Demandes" de l'export — même ensemble que `getReportingRows`. */
+/**
+ * Feuille "Demandes" de l'export — même ensemble que `getReportingRows`
+ * (même "unité comptable" : une LIGNE d'article pour `STANDARD`, la
+ * demande entière pour `DEPENSE_DIRECTE`, voir CLAUDE.md "Catégorisation
+ * par ligne"). `statut`/`createdAt`/`createurNom`/`service` restent ceux
+ * de la DEMANDE porteuse (une ligne n'a pas son propre statut de demande,
+ * seulement son `statutValidation` — qui n'apparaît pas ici, cette feuille
+ * reste au niveau "où en est la demande", pas "où en est la décision de
+ * cette ligne précise").
+ */
 export async function getReportingDemandesDetail(filters: ReportingFilters): Promise<ReportingDemandeDetail[]> {
   const { demandes } = await getDemandesFiltrees(filters);
-  return demandes.map((d) => ({
-    reference: d.reference,
-    createurNom: d.createur.fullName,
-    service: d.createur.service,
-    categorieLabel: d.categorie?.label ?? "Non catégorisée",
-    objetLabel: d.objet?.label ?? "Non renseigné",
-    montant: Number(d.montant),
-    statut: d.statut,
-    createdAt: d.createdAt,
-  }));
+  const rows: ReportingDemandeDetail[] = [];
+  for (const d of demandes) {
+    for (const unite of getUnitesComptables([d])) {
+      rows.push({
+        reference: d.reference,
+        libelleLigne: unite.ligneId ? (d.lignes.find((l) => l.id === unite.ligneId)?.libelle ?? null) : null,
+        createurNom: d.createur.fullName,
+        service: d.createur.service,
+        categorieLabel: unite.categorieLabel,
+        objetLabel: unite.objetLabel,
+        montant: unite.montant,
+        statut: d.statut,
+        createdAt: d.createdAt,
+      });
+    }
+  }
+  return rows;
 }
 
 export interface ReportingReglementDetail {
@@ -621,6 +901,15 @@ export interface ReportingReglementDetail {
   mode: ModeReglement;
   confirmeLe: Date;
   auteurNom: string;
+  /**
+   * Répartition par Catégorie (voir CLAUDE.md "Allocation budgétaire
+   * explicite par règlement") — chaîne vide si une seule catégorie est
+   * concernée (rendu inchangé par rapport à avant cette tâche, cette
+   * feuille n'a jamais affiché de catégorie), renseignée uniquement quand
+   * le règlement a plusieurs allocations : "Catégorie A: 20 000 FCFA,
+   * Catégorie B: 10 000 FCFA".
+   */
+  repartitionCategories: string;
 }
 
 /** Feuille "Règlements" de l'export : règlements confirmés des demandes filtrées. */
@@ -639,7 +928,7 @@ export async function getReportingReglementsDetail(filters: ReportingFilters): P
       estAnnule: false,
       ...(filters.mode ? { mode: filters.mode } : {}),
     },
-    include: { auteur: true },
+    include: { auteur: true, allocations: { include: { categorie: true } } },
     orderBy: { confirmeAt: "asc" },
   });
 
@@ -649,6 +938,10 @@ export async function getReportingReglementsDetail(filters: ReportingFilters): P
     mode: r.mode,
     confirmeLe: r.confirmeAt ?? r.createdAt,
     auteurNom: r.auteur.fullName,
+    repartitionCategories:
+      r.allocations.length > 1
+        ? r.allocations.map((a) => `${a.categorie.label}: ${Number(a.montant).toLocaleString("fr-FR")} FCFA`).join(", ")
+        : "",
   }));
 }
 

@@ -1,4 +1,4 @@
-import { getResteARegler, getTotalRegle } from "backend";
+import { getCategoriesConcerneesDemande, getResteARegler, getTotalRegle } from "backend";
 import { prisma } from "backend";
 
 import { ReglementForm } from "./ReglementForm";
@@ -27,14 +27,19 @@ export async function ReglementsSection({
   montantValide: number;
   canEffectuerReglement: boolean;
 }) {
-  const [reglements, totalRegle, resteARegler] = await Promise.all([
+  const [reglements, totalRegle, resteARegler, categoriesConcernees] = await Promise.all([
     prisma.reglement.findMany({
       where: { demandeId },
-      include: { auteur: true },
+      include: { auteur: true, allocations: { include: { categorie: true } } },
       orderBy: { createdAt: "asc" },
     }),
     getTotalRegle(demandeId),
     getResteARegler(demandeId),
+    // Allocation budgétaire explicite par règlement (voir CLAUDE.md) : la
+    // MÊME liste de catégories concernées sert à la fois à construire les
+    // champs de répartition de `ReglementForm` (création) et de chaque
+    // `ReglementRow` en édition — jamais deux calculs divergents.
+    getCategoriesConcerneesDemande(demandeId),
   ]);
 
   return (
@@ -76,6 +81,11 @@ export async function ReglementsSection({
             <ReglementRow
               key={r.id}
               canEffectuerReglement={canEffectuerReglement}
+              categoriesConcernees={categoriesConcernees.map((c) => ({
+                categorieId: c.categorieId,
+                categorieLabel: c.categorieLabel,
+                restant: c.restant,
+              }))}
               reglement={{
                 id: r.id,
                 montant: Number(r.montant),
@@ -85,6 +95,11 @@ export async function ReglementsSection({
                 motifAnnulation: r.motifAnnulation,
                 auteurNom: r.auteur.fullName,
                 createdAt: r.createdAt,
+                allocations: r.allocations.map((a) => ({
+                  categorieId: a.categorieId,
+                  categorieLabel: a.categorie.label,
+                  montant: Number(a.montant),
+                })),
               }}
             />
           ))}
@@ -92,7 +107,16 @@ export async function ReglementsSection({
       )}
 
       {resteARegler > 0 ? (
-        <ReglementForm demandeId={demandeId} resteARegler={resteARegler} disabled={!canEffectuerReglement} />
+        <ReglementForm
+          demandeId={demandeId}
+          resteARegler={resteARegler}
+          categoriesConcernees={categoriesConcernees.map((c) => ({
+            categorieId: c.categorieId,
+            categorieLabel: c.categorieLabel,
+            restant: c.restant,
+          }))}
+          disabled={!canEffectuerReglement}
+        />
       ) : null}
     </div>
   );

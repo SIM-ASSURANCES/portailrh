@@ -6,6 +6,7 @@ import { Button, Input, Select } from "@/components/ui";
 import { useActionFeedback } from "@/lib/hooks/useActionFeedback";
 import { IDLE_ACTION_STATE } from "backend/client";
 
+import { AllocationCategorieFields, type CategorieAllocationOption } from "./AllocationCategorieFields";
 import { creerReglementAction } from "./reglementActions";
 
 /**
@@ -20,19 +21,32 @@ import { creerReglementAction } from "./reglementActions";
  * compte sans `treso.effectuer_reglement` (ex: le Responsable Finance),
  * jamais absent : empêche d'ouvrir le formulaire plutôt que de le
  * masquer, même principe que `ValidationActions`.
+ *
+ * **`categoriesConcernees`** (Tâche "Allocation budgétaire explicite par
+ * règlement", voir CLAUDE.md) — si elle contient au moins 2 catégories,
+ * affiche `AllocationCategorieFields` en plus du montant/mode habituels ;
+ * sinon (0 ou 1 catégorie, le cas le plus fréquent), **aucun changement
+ * visible** par rapport à avant cette tâche — l'allocation unique à 100%
+ * est créée automatiquement côté serveur.
  */
 export function ReglementForm({
   demandeId,
   resteARegler,
+  categoriesConcernees,
   disabled = false,
 }: {
   demandeId: string;
   resteARegler: number;
+  categoriesConcernees: CategorieAllocationOption[];
   disabled?: boolean;
 }) {
   const [state, formAction, isPending] = useActionState(creerReglementAction, IDLE_ACTION_STATE);
   const [open, setOpen] = useState(false);
+  const [montant, setMontant] = useState("");
+  const [allocValues, setAllocValues] = useState<Record<string, string>>({});
   useActionFeedback(state);
+
+  const multiCategories = categoriesConcernees.length >= 2;
 
   useEffect(() => {
     if (state.status === "success") {
@@ -41,8 +55,17 @@ export function ReglementForm({
       // au rendu — même cas que le pattern déjà justifié dans AppShell.tsx.
       // eslint-disable-next-line react-hooks/set-state-in-effect -- réaction ponctuelle à un ActionState de succès, pas un état dérivé du rendu
       setOpen(false);
+      setMontant("");
+      setAllocValues({});
     }
   }, [state]);
+
+  const sommeAllocations = categoriesConcernees.reduce(
+    (total, c) => total + (Number(allocValues[c.categorieId]) || 0),
+    0
+  );
+  const allocationValide =
+    !multiCategories || Math.round(sommeAllocations * 100) === Math.round((Number(montant) || 0) * 100);
 
   if (!open) {
     // Couleur primaire (Tâche navigation/UX) : c'est la seule action
@@ -77,6 +100,8 @@ export function ReglementForm({
         step="1"
         required
         hint={`Reste à régler : ${resteARegler.toLocaleString("fr-FR")} FCFA`}
+        value={montant}
+        onChange={(e) => setMontant(e.target.value)}
         error={state.status === "error" ? state.fieldErrors?.montant : undefined}
       />
       <Select
@@ -89,8 +114,18 @@ export function ReglementForm({
         ]}
         error={state.status === "error" ? state.fieldErrors?.mode : undefined}
       />
+
+      {multiCategories ? (
+        <AllocationCategorieFields
+          categories={categoriesConcernees}
+          montantTotal={Number(montant) || 0}
+          values={allocValues}
+          onChange={(categorieId, valeur) => setAllocValues((prev) => ({ ...prev, [categorieId]: valeur }))}
+        />
+      ) : null}
+
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" loading={isPending}>
+        <Button type="submit" loading={isPending} disabled={!allocationValide}>
           Créer le règlement
         </Button>
         <Button type="button" variant="secondary" disabled={isPending} onClick={() => setOpen(false)}>

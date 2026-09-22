@@ -13,6 +13,8 @@ import { STATUTS_VALIDATION_COMPLETE } from "backend";
 
 import { CategorisationForm } from "./CategorisationForm";
 import { ClotureActions } from "./ClotureActions";
+import { DescriptionEditor } from "./DescriptionEditor";
+import { LignesValidationTable } from "./LignesValidationTable";
 import { ReglementsSection } from "./ReglementsSection";
 import { ValidationActions } from "./ValidationActions";
 import { ValidationComplementaireActions } from "./ValidationComplementaireActions";
@@ -32,6 +34,21 @@ export default async function CategoriserDemandePage({
   const canCloturerDemande = hasPermission(session, "treso.cloturer_demande");
   const canApprouverValidationComplete = hasPermission(session, "treso.approuver_validation_complete");
   const canGererJustification = hasPermission(session, "treso.receptionner_retour");
+  // `treso.valider_demande` seule n'exclut pas le DG (voir CLAUDE.md
+  // "Libellé de demande modifiable..." — même conflit déjà rencontré pour
+  // "Déléguer des accès") : la garde exacte de `modifierDescriptionAction`
+  // est reproduite ici à l'identique, jamais une approximation.
+  const canModifierDescription =
+    (canValider && !canApprouverValidationComplete) || canEffectuerReglement;
+  // Tâche "Validation ligne par ligne" (voir CLAUDE.md) — même garde exacte
+  // que `canModifierDescription` (le libellé d'une ligne n'est jamais une
+  // décision de validation, ouvert au Responsable ET à l'Assistant Finance).
+  const canModifierLibelleLigne = canModifierDescription;
+  // La décision elle-même, en revanche, reste réservée au Responsable
+  // Finance UNIQUEMENT (jamais l'Assistant) — voir la garde identique dans
+  // `validerLignesAction` (actions.ts) et le résumé de la tâche pour la
+  // justification de ce choix.
+  const canValiderLignes = canValider && !canApprouverValidationComplete;
 
   const demande = await prisma.demande.findUnique({
     where: { id },
@@ -42,12 +59,38 @@ export default async function CategoriserDemandePage({
       beneficiaireUser: true,
       dgApprobateur: true,
       pieces: true,
+      lignes: { orderBy: { createdAt: "asc" }, include: { decidePar: true, categorie: true, objet: true } },
     },
   });
 
   if (!demande) {
     notFound();
   }
+
+  // Validation ligne par ligne (voir CLAUDE.md) : `LignesValidationTable`
+  // détermine lui-même, à partir de `lignesPourTable`, s'il doit s'afficher
+  // en mode interactif ou en lecture seule (`dejaDecidees` ne peut PAS se
+  // déduire de `demande.statut` seul — si TOUTES les lignes sont rejetées,
+  // `montantValide` retombe à 0 et `calculerStatutDemande`, jamais
+  // modifiée, repasse la demande en `EN_ATTENTE_VALIDATION` alors que ses
+  // lignes sont pourtant déjà toutes décidées) — seul `demande.lignes.length`
+  // est nécessaire ici, pour choisir QUEL composant rendre.
+  const demandeAauMoinsUneLigne = demande.lignes.length > 0;
+  const lignesPourTable = demande.lignes.map((ligne) => ({
+    id: ligne.id,
+    libelle: ligne.libelle,
+    libelleOriginal: ligne.libelleOriginal,
+    quantite: ligne.quantite,
+    prixUnitaire: Number(ligne.prixUnitaire),
+    statutValidation: ligne.statutValidation,
+    motifRejet: ligne.motifRejet,
+    decideParNom: ligne.decidePar?.fullName ?? null,
+    decideAt: ligne.decideAt,
+    categorieId: ligne.categorieId,
+    categorieLabel: ligne.categorie?.label ?? null,
+    objetId: ligne.objetId,
+    objetLabel: ligne.objet?.label ?? null,
+  }));
 
   // Les 3 requêtes ci-dessous sont mutuellement indépendantes (chacune ne
   // dépend que de `demande`/`canCategoriser`, déjà connus) : exécutées en
@@ -212,12 +255,12 @@ export default async function CategoriserDemandePage({
               <p className="mt-1 text-xs font-medium text-danger">Définitivement clos (reliquat rejeté)</p>
             ) : null}
           </div>
-          <div className="sm:col-span-2">
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Description du besoin
-            </dt>
-            <dd className="text-sm text-foreground">{demande.description}</dd>
-          </div>
+          <DescriptionEditor
+            demandeId={demande.id}
+            description={demande.description}
+            descriptionOriginale={demande.descriptionOriginale}
+            disabled={!canModifierDescription || demande.statut === "CLOTUREE"}
+          />
           {demande.commentaire ? (
             <div className="sm:col-span-2">
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -330,28 +373,57 @@ export default async function CategoriserDemandePage({
 
       {demande.statut === "EN_ATTENTE_VALIDATION" ? (
         <>
-          {canCategoriser ? (
-            <CategorisationForm
+          {/* Catégorisation par ligne (voir CLAUDE.md) : `CategorisationForm`
+              (catégorisation de la demande ENTIÈRE) reste utilisé tel quel
+              UNIQUEMENT pour une `DEPENSE_DIRECTE` (0 ligne, gate déjà posé
+              sur `categoriserDemandeAction`) — une demande `STANDARD` se
+              catégorise désormais exclusivement ligne par ligne, colonne
+              dédiée de `LignesValidationTable` ci-dessous, jamais les deux
+              affichés à la fois pour une même demande. */}
+          {!demandeAauMoinsUneLigne ? (
+            canCategoriser ? (
+              <CategorisationForm
+                demandeId={demande.id}
+                categories={categories.map((c) => ({ id: c.id, label: c.label }))}
+                objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
+                initialCategorieId={demande.categorieId ?? undefined}
+                initialObjetId={demande.objetId ?? undefined}
+                budgetParCategorie={budgetParCategorie}
+              />
+            ) : (
+              <CategorisationSummary
+                categorieLabel={demande.categorie?.label}
+                objetLabel={demande.objet?.label}
+                note="Catégorie et objet sont renseignés par l'équipe Finance."
+              />
+            )
+          ) : null}
+
+          {/* Validation ligne par ligne (voir CLAUDE.md) : dès qu'une
+              demande a au moins une ligne, `validerLignesAction` remplace
+              entièrement la validation par montant — jamais les deux
+              affichés à la fois. `lignesDejaDecidees` gère ici le cas
+              particulier où toutes les lignes ont été rejetées (voir le
+              commentaire plus haut). */}
+          {demandeAauMoinsUneLigne ? (
+            <LignesValidationTable
               demandeId={demande.id}
+              lignes={lignesPourTable}
+              canValider={canValiderLignes}
+              canModifierLibelle={canModifierLibelleLigne}
+              libelleModifiable
+              canCategoriser={canCategoriser}
               categories={categories.map((c) => ({ id: c.id, label: c.label }))}
               objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
-              initialCategorieId={demande.categorieId ?? undefined}
-              initialObjetId={demande.objetId ?? undefined}
               budgetParCategorie={budgetParCategorie}
             />
           ) : (
-            <CategorisationSummary
-              categorieLabel={demande.categorie?.label}
-              objetLabel={demande.objet?.label}
-              note="Catégorie et objet sont renseignés par l'équipe Finance."
+            <ValidationActions
+              demandeId={demande.id}
+              montantDemande={Number(demande.montant)}
+              disabled={!canValider}
             />
           )}
-
-          <ValidationActions
-            demandeId={demande.id}
-            montantDemande={Number(demande.montant)}
-            disabled={!canValider}
-          />
         </>
       ) : demande.statut === "REJETEE" ? (
         <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
@@ -384,11 +456,34 @@ export default async function CategoriserDemandePage({
             Ce dossier est clôturé : plus aucune action n&apos;est possible (règlement, retour de
             caisse, re-clôture).
           </p>
-          <CategorisationSummary
-            categorieLabel={demande.categorie?.label}
-            objetLabel={demande.objet?.label}
-            lockMessage="Catégorie et objet sont définitivement verrouillés."
-          />
+          {/* Catégorisation par ligne (voir CLAUDE.md) : ce résumé de
+              catégorisation AU NIVEAU DE LA DEMANDE ne concerne plus que
+              les DEPENSE_DIRECTE (0 ligne) — pour une STANDARD, la
+              catégorisation vit désormais exclusivement sur les lignes,
+              déjà affichée en lecture seule dans `LignesValidationTable`
+              ci-dessous ; l'afficher ici en plus aurait montré à tort
+              "Non catégorisée" au niveau de la demande, alors que ses
+              lignes SONT bien catégorisées individuellement. */}
+          {!demandeAauMoinsUneLigne ? (
+            <CategorisationSummary
+              categorieLabel={demande.categorie?.label}
+              objetLabel={demande.objet?.label}
+              lockMessage="Catégorie et objet sont définitivement verrouillés."
+            />
+          ) : null}
+          {demandeAauMoinsUneLigne ? (
+            <LignesValidationTable
+              demandeId={demande.id}
+              lignes={lignesPourTable}
+              canValider={false}
+              canModifierLibelle={false}
+              libelleModifiable={false}
+              canCategoriser={false}
+              categories={[]}
+              objets={[]}
+              budgetParCategorie={{}}
+            />
+          ) : null}
           {demande.montantValide != null && Number(demande.montantValide) > 0 ? (
             <ReglementsSection
               demandeId={demande.id}
@@ -421,16 +516,40 @@ export default async function CategoriserDemandePage({
         // validation complémentaire (reliquat) et la clôture distinguent
         // encore ces deux cas.
         <>
-          <CategorisationSummary
-            categorieLabel={demande.categorie?.label}
-            objetLabel={demande.objet?.label}
-            lockMessage={
-              demande.statut === "PARTIELLEMENT_VALIDEE"
-                ? "Cette demande est partiellement validée : catégorie et objet sont verrouillés."
-                : "Cette demande est validée : catégorie et objet sont définitivement verrouillés et ne peuvent plus être modifiés."
-            }
-          />
-          {demande.statut === "PARTIELLEMENT_VALIDEE" && demande.reliquatRejete ? (
+          {/* Catégorisation par ligne (voir CLAUDE.md) : ce résumé
+              demande-entière ne concerne plus que les DEPENSE_DIRECTE — voir
+              le commentaire identique dans la branche CLOTUREE ci-dessus. */}
+          {!demandeAauMoinsUneLigne ? (
+            <CategorisationSummary
+              categorieLabel={demande.categorie?.label}
+              objetLabel={demande.objet?.label}
+              lockMessage={
+                demande.statut === "PARTIELLEMENT_VALIDEE"
+                  ? "Cette demande est partiellement validée : catégorie et objet sont verrouillés."
+                  : "Cette demande est validée : catégorie et objet sont définitivement verrouillés et ne peuvent plus être modifiés."
+              }
+            />
+          ) : null}
+          {/* Validation ligne par ligne (voir CLAUDE.md) : aucune notion de
+              "reliquat" pour une demande avec lignes — la décision a déjà
+              été prise en un seul geste, complet, par `validerLignesAction`.
+              Le tableau des lignes (lecture seule ici, toutes déjà
+              décidées) remplace entièrement le bloc "Validation
+              complémentaire"/reliquat, qui ne concerne que les demandes
+              SANS ligne (ex: DEPENSE_DIRECTE). */}
+          {demandeAauMoinsUneLigne ? (
+            <LignesValidationTable
+              demandeId={demande.id}
+              lignes={lignesPourTable}
+              canValider={false}
+              canModifierLibelle={canModifierLibelleLigne}
+              libelleModifiable
+              canCategoriser={false}
+              categories={[]}
+              objets={[]}
+              budgetParCategorie={{}}
+            />
+          ) : demande.statut === "PARTIELLEMENT_VALIDEE" && demande.reliquatRejete ? (
             <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
               <h2 className="text-sm font-semibold text-foreground">Validation complémentaire</h2>
               <p className="mt-3 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">

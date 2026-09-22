@@ -135,7 +135,7 @@ export default async function ReportingPage({
               <tr>
                 <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Catégorie</th>
                 <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Objet</th>
-                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Nb. demandes</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Nb. lignes/demandes</th>
                 <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Demandé</th>
                 <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Validé</th>
                 <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Restant à valider</th>

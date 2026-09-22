@@ -94,6 +94,11 @@ export async function GET(request: NextRequest) {
   const sheetDemandes = workbook.addWorksheet("Demandes");
   sheetDemandes.columns = [
     { header: "Référence", key: "reference", width: 20 },
+    // Catégorisation par ligne (voir CLAUDE.md) : une ligne de feuille par
+    // ligne d'article pour une demande STANDARD (colonne renseignée),
+    // vide pour une DEPENSE_DIRECTE (une seule ligne = la demande entière,
+    // comportement inchangé).
+    { header: "Ligne d'article", key: "libelleLigne", width: 24 },
     { header: "Créateur", key: "createur", width: 22 },
     { header: "Service", key: "service", width: 18 },
     { header: "Catégorie", key: "categorie", width: 18 },
@@ -105,6 +110,7 @@ export async function GET(request: NextRequest) {
   demandes.forEach((d) =>
     sheetDemandes.addRow({
       reference: d.reference,
+      libelleLigne: d.libelleLigne ?? "—",
       createur: d.createurNom,
       service: d.service ?? "—",
       categorie: d.categorieLabel,
@@ -146,6 +152,11 @@ export async function GET(request: NextRequest) {
     { header: "Mode", key: "mode", width: 12 },
     { header: "Date de confirmation", key: "confirmeLe", width: 18 },
     { header: "Auteur", key: "auteur", width: 22 },
+    // Allocation budgétaire explicite par règlement (voir CLAUDE.md) :
+    // vide si une seule catégorie est concernée (rendu inchangé, cette
+    // feuille n'a jamais affiché de catégorie avant cette tâche) —
+    // renseignée uniquement pour un règlement réparti entre plusieurs.
+    { header: "Répartition par catégorie", key: "repartition", width: 40 },
   ];
   reglements.forEach((r) =>
     sheetReglements.addRow({
@@ -154,6 +165,7 @@ export async function GET(request: NextRequest) {
       mode: MODE_LABEL[r.mode],
       confirmeLe: r.confirmeLe.toLocaleDateString("fr-FR"),
       auteur: r.auteurNom,
+      repartition: r.repartitionCategories,
     })
   );
   styleHeaderRow(sheetReglements);
@@ -343,7 +355,7 @@ export async function GET(request: NextRequest) {
   sheetReporting.columns = [
     { header: "Catégorie", key: "categorie", width: 18 },
     { header: "Objet", key: "objet", width: 26 },
-    { header: "Nb. demandes", key: "nombre", width: 14 },
+    { header: "Nb. lignes/demandes", key: "nombre", width: 14 },
     { header: "Demandé (FCFA)", key: "montantDemande", width: 18 },
     { header: "Validé (FCFA)", key: "montantValide", width: 18 },
     { header: "Restant à valider (FCFA)", key: "montantRestantAValider", width: 20 },

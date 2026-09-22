@@ -15,9 +15,9 @@ datasource db {
 // ============================================================
 
 model User {
-  id           String   @id @default(cuid())
-  fullName     String
-  email        String   @unique
+  id                     String    @id @default(cuid())
+  fullName               String
+  email                  String    @unique
   /// Nullable : un compte créé par invitation par lien (voir CLAUDE.md
   /// "Invitation par lien") n'a pas encore de mot de passe tant que la
   /// personne n'a pas finalisé son compte via `/invitation/[token]`. Un
@@ -25,54 +25,58 @@ model User {
   /// `passwordHash` nul. La création manuelle classique (admin/users,
   /// `createUserAction`) continue de renseigner ce champ immédiatement,
   /// comme avant.
-  passwordHash String?
-  isActive     Boolean  @default(true)
+  passwordHash           String?
+  isActive               Boolean   @default(true)
   /// Incrémenté à chaque désactivation ou changement de rôle pour invalider le JWT (SEC-06)
-  tokenVersion Int      @default(0)
+  tokenVersion           Int       @default(0)
   /// Invitation par lien (complémentaire à la création manuelle) : jeton
   /// aléatoire sécurisé, unique, remis à `null` dès l'activation du compte
   /// (`activerInvitationAction`) — jamais réutilisable une fois consommé.
-  invitationToken     String?   @unique
+  invitationToken        String?   @unique
   /// Expire 7 jours après la génération du lien (voir `creerInvitationAction`).
   /// Un Admin peut régénérer un nouveau lien (nouveau token + nouvelle
   /// expiration) pour un compte encore en attente si l'ancien a expiré.
-  invitationExpiresAt DateTime?
+  invitationExpiresAt    DateTime?
   /// Jeton de réinitialisation de mot de passe (unique, sécurisé, remis à null après usage)
   resetPasswordToken     String?   @unique
   /// Expire 1 heure après la demande de réinitialisation
   resetPasswordExpiresAt DateTime?
-  serviceId    String?
-  service      Service? @relation(fields: [serviceId], references: [id])
-  photoUrl     String?  @default("/default-avatar.svg")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  serviceId              String?
+  service                Service?  @relation(fields: [serviceId], references: [id])
+  photoUrl               String?   @default("/default-avatar.svg")
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   roleId String
   role   Role   @relation(fields: [roleId], references: [id])
 
-  demandesCreees      Demande[]         @relation("DemandeCreateur")
-  demandesBeneficiees Demande[]         @relation("DemandeBeneficiaire")
+  demandesCreees                Demande[]         @relation("DemandeCreateur")
+  demandesBeneficiees           Demande[]         @relation("DemandeBeneficiaire")
   /// Demandes dont ce DG a approuvé la "validation complète" (verrou de clôture, Ticket 7).
-  demandesApprouveesDG Demande[]        @relation("DgApprobateurValidationComplete")
-  reglementsFaits     Reglement[]       @relation("ReglementAuteur")
-  retoursDeclares     RetourCaisse[]    @relation("RetourDeclarant")
-  retoursReceptionnes RetourCaisse[]    @relation("RetourReceptionnaire")
+  demandesApprouveesDG          Demande[]         @relation("DgApprobateurValidationComplete")
+  reglementsFaits               Reglement[]       @relation("ReglementAuteur")
+  retoursDeclares               RetourCaisse[]    @relation("RetourDeclarant")
+  retoursReceptionnes           RetourCaisse[]    @relation("RetourReceptionnaire")
   /// Lignes de dépense marquées "non justifiée" par cet utilisateur Finance
   /// (`marquerDepenseNonJustifieeAction`), avec motif obligatoire.
-  depensesMarqueesNonJustifiees DepenseLigne[] @relation("MotifNonJustifiePar")
-  historique          HistoriqueEntry[]
+  depensesMarqueesNonJustifiees DepenseLigne[]    @relation("MotifNonJustifiePar")
+  /// Lignes de demande décidées (validée OU rejetée) par cet utilisateur
+  /// Finance — `validerLignesAction` (voir CLAUDE.md "Validation ligne par
+  /// ligne").
+  lignesDemandeDecidees         LigneDemande[]    @relation("LigneDemandeDecideur")
+  historique                    HistoriqueEntry[]
   /// Écritures JournalCaisse déclenchées par cet utilisateur (auteur du
   /// règlement pour une SORTIE, receptionneParId pour une ENTRÉE de retour,
   /// ou l'utilisateur ayant annulé un règlement pour une ENTRÉE
   /// compensatoire — section 13 du cahier des charges, traçabilité).
-  ecrituresJournalCaisse JournalCaisse[] @relation("JournalCaisseUser")
+  ecrituresJournalCaisse        JournalCaisse[]   @relation("JournalCaisseUser")
 
-  pointagesEffectues    Pointage[]           @relation("PointageEmploye")
-  pointagesRealises     Pointage[]           @relation("PointageEffectuePar")
-  correctionsEffectuees CorrectionPointage[] @relation("CorrectionEffectuePar")
-  absencesDeclarees     Absence[]            @relation("AbsenceEmploye")
-  absencesControlees    Absence[]            @relation("AbsenceControlePar")
-  notifications         Notification[]
+  pointagesEffectues     Pointage[]              @relation("PointageEmploye")
+  pointagesRealises      Pointage[]              @relation("PointageEffectuePar")
+  correctionsEffectuees  CorrectionPointage[]    @relation("CorrectionEffectuePar")
+  absencesDeclarees      Absence[]               @relation("AbsenceEmploye")
+  absencesControlees     Absence[]               @relation("AbsenceControlePar")
+  notifications          Notification[]
   plagesAbsenceAutorisee PlageAbsenceAutorisee[]
 
   /// Délégations individuelles de permission Trésorerie/Pointage RH que cet
@@ -90,16 +94,16 @@ model User {
   /// Messages FeedbackApp reçus par cet employé — jamais de relation
   /// inverse vers un "auteur" (voir CLAUDE.md "FeedbackApp : anonymat
   /// total", l'auteur n'est structurellement enregistré nulle part).
-  feedbacksRecus  Feedback[] @relation("FeedbackRecipient")
+  feedbacksRecus   Feedback[] @relation("FeedbackRecipient")
   /// Messages FeedbackApp que cet utilisateur a modérés (action RH/DG,
   /// sans rapport avec l'auteur du message).
   feedbacksModeres Feedback[] @relation("FeedbackModeratedBy")
 }
 
 model Role {
-  id          String           @id @default(cuid())
-  name        String           @unique
-  description String?
+  id                             String           @id @default(cuid())
+  name                           String           @unique
+  description                    String?
   /// Accès à la console d'administration (`/admin/*`), voir `isAdmin()`
   /// dans `backend/src/permissions.ts`. Remplace l'ancienne comparaison
   /// littérale `role.name === "Admin"` — un rôle combiné (ex: "Admin /
@@ -107,7 +111,7 @@ model Role {
   /// "Admin". Indépendant du système de permissions par module
   /// (`RolePermission`) : cocher `estAdmin` ne donne AUCUNE permission
   /// métier (`treso.*`, `pointage.*`), exactement comme avant.
-  estAdmin    Boolean          @default(false)
+  estAdmin                       Boolean          @default(false)
   /// Éligibilité à être BÉNÉFICIAIRE d'une délégation individuelle de
   /// permission (voir CLAUDE.md "Délégation individuelle de permissions").
   /// Champ dédié plutôt qu'une comparaison sur le nom du rôle
@@ -117,7 +121,7 @@ model Role {
   /// "Collaborateur". Indépendant de `estAdmin` et de `RolePermission` :
   /// ne donne AUCUN droit, contrôle uniquement qui peut apparaître comme
   /// bénéficiaire sélectionnable sur `/delegations`.
-  peutEtreBeneficiaireDelegation Boolean @default(false)
+  peutEtreBeneficiaireDelegation Boolean          @default(false)
   /// FeedbackApp (voir CLAUDE.md "FeedbackApp") — détermine si les User
   /// portant ce rôle apparaissent comme destinataires proposables sur
   /// `/feedback/nouveau`. Champ dédié plutôt qu'une comparaison sur le nom
@@ -131,9 +135,9 @@ model Role {
   /// sécurité critique comme `estAdmin` (figé à la création) : librement
   /// modifiable à tout moment depuis `/admin/roles`, même principe que
   /// `peutEtreBeneficiaireDelegation`.
-  peutRecevoirFeedback Boolean @default(true)
-  users       User[]
-  permissions RolePermission[]
+  peutRecevoirFeedback           Boolean          @default(true)
+  users                          User[]
+  permissions                    RolePermission[]
 }
 
 model Module {
@@ -188,11 +192,11 @@ model RolePermission {
 /// complet de tous les octrois/révocations reste intégralement
 /// reconstituable, jamais réécrit.
 model PermissionDelegation {
-  id             String   @id @default(cuid())
+  id             String     @id @default(cuid())
   beneficiaireId String
-  beneficiaire   User     @relation("DelegationBeneficiaire", fields: [beneficiaireId], references: [id])
+  beneficiaire   User       @relation("DelegationBeneficiaire", fields: [beneficiaireId], references: [id])
   donneurId      String
-  donneur        User     @relation("DelegationDonneur", fields: [donneurId], references: [id])
+  donneur        User       @relation("DelegationDonneur", fields: [donneurId], references: [id])
   permissionId   String
   permission     Permission @relation(fields: [permissionId], references: [id])
 
@@ -228,8 +232,8 @@ model Notification {
   estLue    Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // ============================================================
@@ -256,6 +260,18 @@ enum StatutDemande {
   EN_ATTENTE_REGULARISATION
   REGULARISEE
   CLOTUREE
+}
+
+/// Statut de validation d'une `LigneDemande` — Tâche "Validation ligne par
+/// ligne" (voir CLAUDE.md) : remplace, pour toute demande ayant au moins
+/// une ligne, la saisie manuelle d'un montant partiel par une décision
+/// individuelle par ligne d'article. `EN_ATTENTE` par défaut, jamais
+/// dévalidée une fois `VALIDEE`/`REJETEE` (même principe qu'ailleurs dans
+/// le module : aucune fonction de "dévalidation" nulle part).
+enum StatutLigneDemande {
+  EN_ATTENTE
+  VALIDEE
+  REJETEE
 }
 
 /// Type de bénéficiaire d'une Demande — distinct du Demandeur (créateur).
@@ -323,35 +339,56 @@ model Categorie {
   /// CLAUDE.md "Budget partagé par Catégorie". `null` = aucune limite
   /// définie, aucun contrôle appliqué pour cette catégorie. Décompté au
   /// RÈGLEMENT (pas à la validation) via `getMontantConsommeCategorie`
-  /// (`src/lib/tresorerie.ts`) : la somme de tous les règlements confirmés
-  /// et non annulés des demandes de cette catégorie, tous demandeurs et
-  /// tous bénéficiaires confondus. Aucun renouvellement automatique
-  /// périodique : un montant total consommable jusqu'à épuisement, à
-  /// réajuster manuellement par l'Admin (`admin/categories`).
+  /// (`src/lib/tresorerie.ts`) — depuis "Catégorisation par ligne" :
+  /// somme des `ReglementCategorieAllocation.montant` de cette catégorie
+  /// dont le `Reglement` est confirmé et non annulé (allocation EXPLICITE
+  /// choisie par Finance à chaque règlement, jamais un apportionnement
+  /// calculé). Aucun renouvellement automatique périodique : un montant
+  /// total consommable jusqu'à épuisement, à réajuster manuellement par
+  /// l'Admin (`admin/categories`).
   budgetAlloue Decimal? @db.Decimal(14, 2)
 
-  demandes Demande[] @relation("DemandeCategorie")
+  demandes             Demande[]                      @relation("DemandeCategorie")
+  /// Lignes de demande catégorisées directement (voir CLAUDE.md
+  /// "Catégorisation par ligne") — distinct de `demandes` ci-dessus, qui
+  /// ne couvre que les `DEPENSE_DIRECTE` depuis cette tâche.
+  lignesDemande        LigneDemande[]                 @relation("LigneDemandeCategorie")
+  allocationsReglement ReglementCategorieAllocation[]
 }
 
 model Objet {
-  id          String    @id @default(cuid())
-  label       String
+  id            String         @id @default(cuid())
+  label         String
   /// Voir Categorie.isActive — même principe de soft-delete.
-  isActive    Boolean   @default(true)
-  categorieId String
-  categorie   Categorie @relation(fields: [categorieId], references: [id])
-  demandes    Demande[]
+  isActive      Boolean        @default(true)
+  categorieId   String
+  categorie     Categorie      @relation(fields: [categorieId], references: [id])
+  demandes      Demande[]
+  /// Voir `Categorie.lignesDemande` (CLAUDE.md "Catégorisation par ligne").
+  lignesDemande LigneDemande[]
 }
 
 model Demande {
-  id          String        @id @default(cuid())
-  reference   String        @unique
+  id                   String        @id @default(cuid())
+  reference            String        @unique
   /// Montant demandé (nom de champ conservé pour limiter la casse — voir
   /// CLAUDE.md "Refonte V1"). Distinct de `montantValide` ci-dessous.
-  montant     Decimal       @db.Decimal(14, 2)
-  description String
-  commentaire String?
-  statut      StatutDemande @default(EN_ATTENTE_VALIDATION)
+  montant              Decimal       @db.Decimal(14, 2)
+  description          String
+  /// Version ORIGINALE de `description`, immuable une fois posée — voir
+  /// CLAUDE.md "Libellé de demande modifiable avec traçabilité permanente".
+  /// `null` tant que `description` n'a JAMAIS été modifiée depuis la
+  /// création (dans ce cas `description` EST la version originale) ;
+  /// renseignée UNE SEULE FOIS, à la toute première modification par
+  /// Finance (copie de la valeur d'alors), jamais réécrite ensuite même si
+  /// `description` est modifiée à nouveau — `description` porte donc
+  /// toujours la version COURANTE, `descriptionOriginale` la version de
+  /// départ. Le Collaborateur créateur voit toujours cette version
+  /// (jamais `description` si elle diverge) ; Finance voit les deux côte à
+  /// côte dès qu'elles divergent.
+  descriptionOriginale String?
+  commentaire          String?
+  statut               StatutDemande @default(EN_ATTENTE_VALIDATION)
 
   /// Phase F (saisie directe) — voir le commentaire de l'enum
   /// `TypeDemande`. `natureDepenseDirecte` n'est renseignée que si
@@ -395,7 +432,7 @@ model Demande {
   /// Champs d'en-tête du formulaire "Demande d'Achat".
   /// `devise` : code ISO (XOF par défaut, EUR, USD).
   dateLivraisonSouhaitee DateTime?
-  devise                 String     @default("XOF")
+  devise                 String    @default("XOF")
 
   /// Lignes d'articles (Libellé / Nombre / Prix unitaire). `montant` ci-dessus
   /// est la somme des (quantite × prixUnitaire) — jamais saisi directement.
@@ -443,8 +480,8 @@ model Demande {
 /// fichier généré côté serveur (jamais dérivé d'une entrée utilisateur),
 /// résolu par la route de téléchargement.
 model PieceJointe {
-  id        String   @id @default(cuid())
-  url       String
+  id              String         @id @default(cuid())
+  url             String
   /// Renseigné pour toute pièce rattachée à une Demande (y compris quand
   /// elle est en réalité attachée à une seule ligne de dépense,
   /// `depenseLigneId` ci-dessous, plutôt qu'à la demande elle-même —
@@ -455,8 +492,8 @@ model PieceJointe {
   /// (`journalCaisseId` ci-dessous) n'a, par nature, aucune demande
   /// d'origine — même raisonnement que `JournalCaisse.demandeId`,
   /// assoupli pour la même raison.
-  demandeId String?
-  demande   Demande? @relation(fields: [demandeId], references: [id])
+  demandeId       String?
+  demande         Demande?       @relation(fields: [demandeId], references: [id])
   /// Renseigné uniquement si cette pièce est attachée à une ligne de
   /// dépense précise d'un retour de caisse, plutôt qu'à la demande
   /// elle-même (formulaire de création / dépense directe). `@unique` : une
@@ -465,29 +502,81 @@ model PieceJointe {
   /// disparaît avec elle plutôt que de rester orpheline en base (le
   /// fichier lui-même reste sur disque — V1 volontairement simple, pas de
   /// tâche de nettoyage des fichiers orphelins).
-  depenseLigneId String?       @unique
-  depenseLigne   DepenseLigne? @relation(fields: [depenseLigneId], references: [id], onDelete: Cascade)
+  depenseLigneId  String?        @unique
+  depenseLigne    DepenseLigne?  @relation(fields: [depenseLigneId], references: [id], onDelete: Cascade)
   /// Renseigné uniquement pour une pièce jointe attachée à une écriture
   /// `JournalCaisse` du cycle "solde d'ouverture" (`definirSoldeOuvertureAction`/
   /// `corrigerSoldeOuvertureAction`) — le seul cas de pièce jointe sans
   /// Demande d'origine. `@unique` : une seule pièce par écriture.
   journalCaisseId String?        @unique
   journalCaisse   JournalCaisse? @relation(fields: [journalCaisseId], references: [id])
-  createdAt DateTime @default(now())
+  createdAt       DateTime       @default(now())
 }
 
 /// Ligne d'article d'une Demande d'Achat ("Tableau des articles" du
 /// formulaire de création). Le `montant` de la Demande est la somme des
 /// (quantite × prixUnitaire) de ses lignes — recalculé côté serveur,
 /// jamais saisi directement (même principe que le solde de caisse).
+///
+/// **Validation ligne par ligne** (voir CLAUDE.md "Validation ligne par
+/// ligne") — pour toute demande ayant AU MOINS une ligne,
+/// `validerLignesAction` est l'UNIQUE mécanisme de décision (remplace
+/// entièrement `validerTotalementAction`/`validerPartiellementAction`/
+/// `validerComplementaireAction`/`rejeterReliquatAction` pour ce cas —
+/// ces quatre actions restent réservées aux demandes SANS ligne, ex:
+/// `DEPENSE_DIRECTE`). Décision UNIQUE ET COMPLÈTE en un seul geste
+/// (Option A2 du rapport de diagnostic) : jamais de notion de "reliquat"
+/// à traiter plus tard une fois les lignes tranchées, jamais de
+/// dévalidation.
 model LigneDemande {
   id           String  @id @default(cuid())
   libelle      String
   quantite     Int
   prixUnitaire Decimal @db.Decimal(14, 2)
 
+  /// Version ORIGINALE de `libelle`, immuable une fois posée — même
+  /// mécanique exacte que `Demande.descriptionOriginale` (voir CLAUDE.md
+  /// "Description du besoin modifiable avec traçabilité permanente") :
+  /// `null` tant que `libelle` n'a JAMAIS été modifié depuis la création
+  /// (il fait alors office des deux versions à la fois) ; renseignée UNE
+  /// SEULE FOIS, à la toute première modification par Finance, jamais
+  /// réécrite ensuite. Le Collaborateur créateur voit toujours cette
+  /// version (jamais `libelle` si elle diverge) ; Finance voit les deux
+  /// côte à côte dès qu'elles divergent.
+  libelleOriginal String?
+
+  /// `EN_ATTENTE` par défaut, posée UNE SEULE FOIS par
+  /// `validerLignesAction` (décision unique et complète, jamais de
+  /// dévalidation ensuite).
+  statutValidation StatutLigneDemande @default(EN_ATTENTE)
+  /// Obligatoire si `statutValidation = REJETEE` (min 3 caractères,
+  /// revérifié côté serveur), sinon toujours `null`.
+  motifRejet       String?
+  /// Auteur et date de la décision (validée OU rejetée) — `null` tant que
+  /// `statutValidation = EN_ATTENTE`.
+  decideParId      String?
+  decidePar        User?              @relation("LigneDemandeDecideur", fields: [decideParId], references: [id])
+  decideAt         DateTime?
+
   demandeId String
   demande   Demande @relation(fields: [demandeId], references: [id])
+
+  /// Catégorisation par ligne (voir CLAUDE.md "Catégorisation par ligne") —
+  /// même mécanique exacte que `Demande.categorieId`/`objetId` (nullable,
+  /// même relations), mais portée par CHAQUE ligne plutôt que par la
+  /// demande entière : une demande à plusieurs lignes peut désormais avoir
+  /// une catégorie différente par ligne (ex: "Transport" et "Matériel" sur
+  /// la même demande). Réservé aux demandes `STANDARD` (qui ont des
+  /// lignes) — `Demande.categorieId`/`objetId` restent, eux, l'unique
+  /// mécanisme pour `DEPENSE_DIRECTE` (0 ligne, jamais concernée par ces
+  /// deux champs). Modifiable uniquement tant que
+  /// `statutValidation = EN_ATTENTE` (`categoriserLigneAction`) — même
+  /// principe que "Catégorie/objet modifiables uniquement avant
+  /// validation", relu à l'échelle de la ligne plutôt que de la demande.
+  categorieId String?
+  categorie   Categorie? @relation("LigneDemandeCategorie", fields: [categorieId], references: [id])
+  objetId     String?
+  objet       Objet?     @relation(fields: [objetId], references: [id])
 
   createdAt DateTime @default(now())
 }
@@ -508,8 +597,45 @@ model Reglement {
 
   retours RetourCaisse[]
 
+  /// Allocation budgétaire explicite par Catégorie (voir CLAUDE.md
+  /// "Catégorisation par ligne" / "Allocation budgétaire explicite par
+  /// règlement") — Option 2 du diagnostic (PAS un apportionnement
+  /// proportionnel calculé) : Finance répartit elle-même, de façon
+  /// EXPLICITE, le montant de ce règlement entre chaque Catégorie
+  /// concernée par la demande. Toujours au moins UNE allocation dès que le
+  /// règlement porte sur une demande catégorisée (même une demande à une
+  /// seule catégorie en crée une, à 100%, de façon transparente pour
+  /// Finance) — jamais optionnel, jamais un calcul dérivé recalculé à la
+  /// volée. La somme des `montant` de ces allocations doit TOUJOURS égaler
+  /// exactement `Reglement.montant` (revérifié côté serveur à chaque
+  /// écriture, jamais uniquement côté client).
+  allocations ReglementCategorieAllocation[]
+
   createdAt  DateTime  @default(now())
   confirmeAt DateTime?
+}
+
+/// Une ligne = la part explicite de `Reglement.montant` que Finance a
+/// choisi d'attribuer à UNE Catégorie précise — voir le commentaire de
+/// `Reglement.allocations` ci-dessus. `getMontantConsommeCategorie`
+/// (`backend/src/tresorerie.ts`) est désormais l'UNIQUE fonction qui lit
+/// cette table (somme des `montant` des allocations dont le `Reglement`
+/// est confirmé et non annulé) — jamais une deuxième lecture parallèle.
+model ReglementCategorieAllocation {
+  id          String    @id @default(cuid())
+  reglementId String
+  reglement   Reglement @relation(fields: [reglementId], references: [id])
+  categorieId String
+  categorie   Categorie @relation(fields: [categorieId], references: [id])
+  montant     Decimal   @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+
+  /// Au plus une allocation par (règlement, catégorie) — jamais deux lignes
+  /// pour la même catégorie sur le même règlement (la répartition
+  /// additionne déjà tout ce qui revient à une catégorie dans UNE seule
+  /// ligne).
+  @@unique([reglementId, categorieId])
 }
 
 /// Fonds remis (cahier des charges sections 8-9, Phase D) : un retour de
@@ -575,8 +701,8 @@ model DepenseLigne {
   /// cette ligne, y compris si le collaborateur l'a lui-même déclarée
   /// SANS_PIECE. Jamais réinitialisé automatiquement : voir
   /// `marquerDepenseNonJustifieeAction` pour la seule écriture possible.
-  motifNonJustifie   String?
-  motifNonJustifiePar   User?    @relation("MotifNonJustifiePar", fields: [motifNonJustifieParId], references: [id])
+  motifNonJustifie      String?
+  motifNonJustifiePar   User?     @relation("MotifNonJustifiePar", fields: [motifNonJustifieParId], references: [id])
   motifNonJustifieParId String?
   motifNonJustifieAt    DateTime?
 
@@ -642,7 +768,7 @@ model Service {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  users       User[]
+  users User[]
 
   @@map("Service")
 }
@@ -671,43 +797,43 @@ enum StatutAbsence {
 }
 
 model ParametrageHoraire {
-  id                  String   @id @default(cuid())
-  heureDebutMatin     String
-  heureFinMatin       String
-  heureDebutApresMidi String
-  heureFinApresMidi   String
-  isActive            Boolean  @default(true)
+  id                    String   @id @default(cuid())
+  heureDebutMatin       String
+  heureFinMatin         String
+  heureDebutApresMidi   String
+  heureFinApresMidi     String
+  isActive              Boolean  @default(true)
   /// Activer le pointage par géolocalisation GPS comme fallback réseau
-  geolocalisationActive Boolean @default(false)
+  geolocalisationActive Boolean  @default(false)
   /// Latitude GPS du bureau (point de référence pour le calcul de distance)
-  bureauLatitude      Float?   @default(5.3628189)
+  bureauLatitude        Float?   @default(5.3628189)
   /// Longitude GPS du bureau
-  bureauLongitude     Float?   @default(-3.9374753)
+  bureauLongitude       Float?   @default(-3.9374753)
   /// Rayon autorisé en mètres autour du bureau (min: 30, max: 200, défaut: 50)
-  rayonAutorise       Int      @default(50)
-  updatedAt           DateTime @updatedAt
+  rayonAutorise         Int      @default(50)
+  updatedAt             DateTime @updatedAt
 }
 
 model Pointage {
-  id            String         @id @default(cuid())
-  type          TypePointage
-  source        SourcePointage
-  heure         DateTime
-  heurePrevue   String?
-  estRetard     Boolean        @default(false)
-  minutesRetard Int?
-  estDepartAnticipe Boolean    @default(false)
-  motif         String?
-  ipAddress     String?
+  id                String         @id @default(cuid())
+  type              TypePointage
+  source            SourcePointage
+  heure             DateTime
+  heurePrevue       String?
+  estRetard         Boolean        @default(false)
+  minutesRetard     Int?
+  estDepartAnticipe Boolean        @default(false)
+  motif             String?
+  ipAddress         String?
 
   /// Latitude GPS du collaborateur au moment du pointage (mode géoloc)
-  geoLatitude   Float?
+  geoLatitude  Float?
   /// Longitude GPS du collaborateur au moment du pointage (mode géoloc)
-  geoLongitude  Float?
+  geoLongitude Float?
   /// Précision GPS en mètres fournie par le navigateur
-  geoPrecision  Float?
+  geoPrecision Float?
   /// Distance calculée en mètres entre le collaborateur et le bureau
-  geoDistance   Int?
+  geoDistance  Int?
 
   userId String
   user   User   @relation("PointageEmploye", fields: [userId], references: [id])
@@ -772,8 +898,8 @@ enum SourceAbsenceAutorisee {
 model PlageAbsenceAutorisee {
   id          String                 @id @default(cuid())
   date        DateTime
-  heureDebut  String                 // ex: "08:00"
-  heureFin    String                 // ex: "12:00"
+  heureDebut  String // ex: "08:00"
+  heureFin    String // ex: "12:00"
   source      SourceAbsenceAutorisee
   description String?
 
@@ -839,7 +965,7 @@ model Feedback {
   recipientId String?
   /// Réutilise le `User` existant du portail — AUCUNE nouvelle table
   /// "employees" séparée (voir CLAUDE.md).
-  recipient User? @relation("FeedbackRecipient", fields: [recipientId], references: [id])
+  recipient   User?   @relation("FeedbackRecipient", fields: [recipientId], references: [id])
 
   source FeedbackSource
 

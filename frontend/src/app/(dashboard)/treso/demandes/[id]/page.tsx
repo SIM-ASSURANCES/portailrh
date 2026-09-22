@@ -1,6 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 
-import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import {
+  STATUT_DEMANDE_BADGE_VARIANT,
+  STATUT_DEMANDE_LABEL,
+  STATUT_LIGNE_DEMANDE_BADGE_VARIANT,
+  STATUT_LIGNE_DEMANDE_LABEL,
+} from "@/components/tresorerie/demandeStatut";
 import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom } from "backend";
 import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
@@ -44,8 +49,6 @@ export default async function MaDemandeDetailPage({
   const demande = await prisma.demande.findUnique({
     where: { id },
     include: {
-      categorie: true,
-      objet: true,
       beneficiaireUser: true,
       lignes: { orderBy: { createdAt: "asc" } },
       pieces: true,
@@ -138,11 +141,17 @@ export default async function MaDemandeDetailPage({
               <p className="mt-1 text-xs font-medium text-danger">Définitivement clos (reliquat rejeté)</p>
             ) : null}
           </div>
+          {/* Tâche "Libellé de demande modifiable avec traçabilité
+              permanente" (voir CLAUDE.md) : le Collaborateur créateur voit
+              TOUJOURS sa description telle qu'il l'a soumise à l'origine
+              (`descriptionOriginale` si Finance l'a modifiée depuis,
+              jamais la version modifiée) — choix documenté, le CDC ne
+              tranchant pas explicitement ce point. */}
           <div className="sm:col-span-2">
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Description du besoin
             </dt>
-            <dd className="text-sm text-foreground">{demande.description}</dd>
+            <dd className="text-sm text-foreground">{demande.descriptionOriginale ?? demande.description}</dd>
           </div>
           {demande.commentaire ? (
             <div className="sm:col-span-2">
@@ -170,14 +179,10 @@ export default async function MaDemandeDetailPage({
               </dd>
             </div>
           ) : null}
-          {demande.categorie ? (
-            <div>
-              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Catégorie d&apos;achat
-              </dt>
-              <dd className="text-sm text-foreground">{demande.categorie.label}</dd>
-            </div>
-          ) : null}
+          {/* Catégorie/Objet retirés de cet écran (Tâche "Masquer Catégorie/
+              Objet côté historique Collaborateur", voir CLAUDE.md) :
+              information de gestion interne à Finance, jamais destinée au
+              Collaborateur créateur. */}
           {demande.dateLivraisonSouhaitee ? (
             <div>
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -194,14 +199,6 @@ export default async function MaDemandeDetailPage({
             </dt>
             <dd className="text-sm text-foreground">{demande.devise}</dd>
           </div>
-          {demande.objet ? (
-            <div>
-              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Objet
-              </dt>
-              <dd className="text-sm text-foreground">{demande.objet.label}</dd>
-            </div>
-          ) : null}
         </dl>
 
         {demande.lignes.length > 0 ? (
@@ -217,18 +214,31 @@ export default async function MaDemandeDetailPage({
                     <th className="px-3 py-2 text-right font-medium text-muted-foreground">Nombre</th>
                     <th className="px-3 py-2 text-right font-medium text-muted-foreground">Prix unitaire</th>
                     <th className="px-3 py-2 text-right font-medium text-muted-foreground">Total</th>
+                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Statut</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border bg-surface">
                   {demande.lignes.map((ligne) => (
                     <tr key={ligne.id}>
-                      <td className="px-3 py-2 text-foreground">{ligne.libelle}</td>
+                      {/* Tâche "Validation ligne par ligne" (voir CLAUDE.md) :
+                          toujours la version ORIGINALE du libellé, jamais la
+                          version modifiée par Finance — même principe que
+                          `descriptionOriginale` pour la demande elle-même. */}
+                      <td className="px-3 py-2 text-foreground">{ligne.libelleOriginal ?? ligne.libelle}</td>
                       <td className="px-3 py-2 text-right text-foreground">{ligne.quantite}</td>
                       <td className="px-3 py-2 text-right text-foreground">
                         {formatMontantDevise(Number(ligne.prixUnitaire), demande.devise)}
                       </td>
                       <td className="px-3 py-2 text-right font-medium text-foreground">
                         {formatMontantDevise(ligne.quantite * Number(ligne.prixUnitaire), demande.devise)}
+                      </td>
+                      <td className="px-3 py-2 text-left">
+                        <Badge variant={STATUT_LIGNE_DEMANDE_BADGE_VARIANT[ligne.statutValidation]}>
+                          {STATUT_LIGNE_DEMANDE_LABEL[ligne.statutValidation]}
+                        </Badge>
+                        {ligne.statutValidation === "REJETEE" && ligne.motifRejet ? (
+                          <p className="mt-1 text-xs text-muted-foreground">Motif : {ligne.motifRejet}</p>
+                        ) : null}
                       </td>
                     </tr>
                   ))}
@@ -246,7 +256,7 @@ export default async function MaDemandeDetailPage({
           sans scroller volontairement — vérifié explicitement par un
           parcours navigateur réel sur un cycle complet. Position désormais
           fixe, uniforme quel que soit le statut. */}
-      <DemandeHistorique demandeId={demande.id} />
+      <DemandeHistorique demandeId={demande.id} masquerGestionInterne />
 
       {/* REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :
           CLOTUREE_TOTALE/CLOTUREE_PARTIELLE fusionnées en un unique statut

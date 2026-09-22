@@ -150,6 +150,17 @@ export interface ReceiptData {
   beneficiaireNom: string;
   categorieLabel: string | null;
   objetLabel: string | null;
+  /**
+   * Répartition explicite par Catégorie de CE règlement (voir CLAUDE.md
+   * "Allocation budgétaire explicite par règlement") — renseignée
+   * UNIQUEMENT quand le règlement a plusieurs allocations (plusieurs
+   * catégories concernées sur la demande) ; dans ce cas `categorieLabel`/
+   * `objetLabel` ci-dessus valent `null` (un seul champ "Catégorie" n'aurait
+   * plus de sens). Pour un règlement à une seule catégorie (le cas le plus
+   * fréquent, DEPENSE_DIRECTE incluse), reste `null` — le rendu existant
+   * (`categorieLabel`/`objetLabel`) est inchangé.
+   */
+  repartitionCategories: { label: string; montant: number }[] | null;
   montant: number;
   mode: "CAISSE" | "BANQUE";
   confirmeLe: Date;
@@ -273,14 +284,28 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
               <Text style={styles.detailLabel}>Bénéficiaire</Text>
               <Text style={styles.detailValue}>{data.beneficiaireNom}</Text>
             </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Catégorie</Text>
-              <Text style={styles.detailValue}>{data.categorieLabel ?? "Non renseignée"}</Text>
-            </View>
-            <View style={[styles.detailRow, { marginBottom: 0 }]}>
-              <Text style={styles.detailLabel}>Objet</Text>
-              <Text style={styles.detailValue}>{data.objetLabel ?? "Non renseigné"}</Text>
-            </View>
+            {data.repartitionCategories && data.repartitionCategories.length > 0 ? (
+              data.repartitionCategories.map((r, index) => (
+                <View
+                  key={r.label}
+                  style={index === data.repartitionCategories!.length - 1 ? [styles.detailRow, { marginBottom: 0 }] : styles.detailRow}
+                >
+                  <Text style={styles.detailLabel}>Catégorie ({r.label})</Text>
+                  <Text style={styles.detailValue}>{formatMontant(r.montant)}</Text>
+                </View>
+              ))
+            ) : (
+              <>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Catégorie</Text>
+                  <Text style={styles.detailValue}>{data.categorieLabel ?? "Non renseignée"}</Text>
+                </View>
+                <View style={[styles.detailRow, { marginBottom: 0 }]}>
+                  <Text style={styles.detailLabel}>Objet</Text>
+                  <Text style={styles.detailValue}>{data.objetLabel ?? "Non renseigné"}</Text>
+                </View>
+              </>
+            )}
           </View>
 
           <Text style={styles.auteurLine}>

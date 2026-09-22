@@ -559,22 +559,26 @@ export async function getEcart(demandeId: string): Promise<number> {
 
 /**
  * Consommation réelle du budget PARTAGÉ d'une Catégorie (voir CLAUDE.md
- * "Budget partagé par Catégorie") : somme des règlements confirmés et non
- * annulés de TOUTES les demandes ayant cette `categorieId`, tous
- * demandeurs et tous bénéficiaires confondus — un Commercial qui achète un
- * ordinateur et un Marketing qui achète une imprimante, catégorisés tous
- * les deux "Informatique", puisent dans la même enveloppe. Décomptée au
- * RÈGLEMENT (pas à la validation) : c'est le moment où l'argent sort
- * réellement (règle impérative du module, voir CLAUDE.md).
+ * "Budget partagé par Catégorie" / "Catégorisation par ligne") — **UNIQUE
+ * source de vérité**, réutilisée telle quelle par le contrôle bloquant de
+ * `confirmerReglementAction`, l'aperçu de budget (Finance), le dashboard
+ * (`getTopCategoriesBudget`) et le reporting (`getReportingSuiviBudgetaire`) :
+ * aucun de ces appelants n'a de logique de calcul parallèle.
  *
- * Équivalent mathématique de "appliquer `getTotalRegle` à chaque demande de
- * cette catégorie et sommer", mais en une seule requête `aggregate` avec un
- * filtre de relation (`demande: { categorieId }`) plutôt qu'une boucle —
- * jamais une requête par demande.
+ * Depuis "Catégorisation par ligne" (allocation budgétaire EXPLICITE, pas
+ * un apportionnement calculé) : somme des
+ * `ReglementCategorieAllocation.montant` de cette catégorie dont le
+ * `Reglement` est confirmé et non annulé. Une demande à plusieurs lignes
+ * catégorisées différemment n'impacte donc JAMAIS cette catégorie pour la
+ * totalité de ses règlements — seule la part que Finance a explicitement
+ * allouée à cette catégorie, à chaque règlement, compte ici (voir
+ * `confirmerReglementAction`, qui crée ces allocations). Décomptée au
+ * RÈGLEMENT (pas à la validation), toujours : c'est le moment où l'argent
+ * sort réellement (règle impérative du module).
  */
 export async function getMontantConsommeCategorie(categorieId: string): Promise<number> {
-  const result = await prisma.reglement.aggregate({
-    where: { estConfirme: true, estAnnule: false, demande: { categorieId } },
+  const result = await prisma.reglementCategorieAllocation.aggregate({
+    where: { categorieId, reglement: { estConfirme: true, estAnnule: false } },
     _sum: { montant: true },
   });
   return Number(result._sum.montant ?? 0);
@@ -599,6 +603,74 @@ export async function getBudgetRestantCategorie(categorieId: string): Promise<nu
   }
   const consomme = await getMontantConsommeCategorie(categorieId);
   return Number(categorie.budgetAlloue) - consomme;
+}
+
+export interface CategorieConcerneeInfo {
+  categorieId: string;
+  categorieLabel: string;
+  budgetAlloue: number | null;
+  consomme: number;
+  restant: number | null;
+}
+
+/**
+ * Catégories DISTINCTES concernées par une demande — voir CLAUDE.md
+ * "Catégorisation par ligne" / "Allocation budgétaire explicite par
+ * règlement" : détermine, pour une demande donnée, la liste des
+ * catégories entre lesquelles un règlement doit être réparti.
+ *
+ * - `DEPENSE_DIRECTE` (0 ligne) : la catégorie unique de la demande
+ *   elle-même (`Demande.categorieId`), ou liste vide si pas encore
+ *   catégorisée.
+ * - `STANDARD` (≥ 1 ligne) : les catégories distinctes des lignes
+ *   `VALIDEE` UNIQUEMENT (une ligne encore `EN_ATTENTE` ou `REJETEE` ne
+ *   représente aucun montant à régler, donc aucune catégorie "concernée"
+ *   par le règlement) — une ligne `VALIDEE` sans catégorie n'ajoute rien
+ *   à cette liste (aucune limite ne s'applique à une portion non
+ *   catégorisée, même principe que l'ancien contrôle "aucune limite si
+ *   pas de `categorieId`").
+ *
+ * Utilisée à la fois par `reglementActions.ts` (déterminer si le
+ * règlement est en cas simple/mono-catégorie ou en cas
+ * multi-catégorie) et par l'UI (`ReglementsSection`/`ReglementForm`) pour
+ * construire les champs de répartition avec leur aperçu de budget —
+ * réutilise `getMontantConsommeCategorie` (jamais un second calcul).
+ */
+export async function getCategoriesConcerneesDemande(demandeId: string): Promise<CategorieConcerneeInfo[]> {
+  const demande = await prisma.demande.findUnique({
+    where: { id: demandeId },
+    include: {
+      categorie: true,
+      lignes: {
+        where: { statutValidation: "VALIDEE", categorieId: { not: null } },
+        include: { categorie: true },
+      },
+    },
+  });
+  if (!demande) return [];
+
+  const categoriesBrutes =
+    demande.typeDemande === "DEPENSE_DIRECTE"
+      ? demande.categorie
+        ? [demande.categorie]
+        : []
+      : Array.from(
+          new Map(demande.lignes.filter((l) => l.categorie).map((l) => [l.categorie!.id, l.categorie!])).values()
+        );
+
+  return Promise.all(
+    categoriesBrutes.map(async (categorie) => {
+      const budgetAlloue = categorie.budgetAlloue == null ? null : Number(categorie.budgetAlloue);
+      const consomme = await getMontantConsommeCategorie(categorie.id);
+      return {
+        categorieId: categorie.id,
+        categorieLabel: categorie.label,
+        budgetAlloue,
+        consomme,
+        restant: budgetAlloue == null ? null : budgetAlloue - consomme,
+      };
+    })
+  );
 }
 
 export interface MesIndicateurs {

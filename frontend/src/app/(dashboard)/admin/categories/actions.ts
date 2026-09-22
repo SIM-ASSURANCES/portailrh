@@ -279,13 +279,20 @@ export async function toggleObjetActiveAction(
  *   d'abord, sans quoi la contrainte de clé étrangère échouerait de toute
  *   façon (`onDelete` non défini = comportement par défaut `Restrict`).
  * - `Demande.categorieId` — une Catégorie référencée par au moins une
- *   Demande (quel que soit son statut) ne peut pas être supprimée.
+ *   Demande (quel que soit son statut) ne peut pas être supprimée. Ne
+ *   concerne plus que les `DEPENSE_DIRECTE` depuis "Catégorisation par
+ *   ligne" (voir CLAUDE.md) — une demande `STANDARD` catégorisée ne
+ *   référence plus jamais `Demande.categorieId` directement.
+ * - `LigneDemande.categorieId` (voir CLAUDE.md "Catégorisation par
+ *   ligne") — une Catégorie utilisée par au moins une LIGNE d'article
+ *   (`STANDARD`) ne peut pas non plus être supprimée, même vérification
+ *   exhaustive, même principe.
  *   **Aucune vérification séparée sur `Reglement`/`JournalCaisse`/
- *   `DepenseLigne` n'est nécessaire** : aucun de ces modèles ne référence
- *   `Categorie` directement (vérifié), ils ne l'atteignent que
- *   TRANSITIVEMENT via `Demande` — déjà couvert par ce seul contrôle,
- *   même raisonnement que documenté pour `DepenseLigne`/`PieceJointe`
- *   dans `supprimerUtilisateurAction`.
+ *   `DepenseLigne`/`ReglementCategorieAllocation` n'est nécessaire** :
+ *   aucun de ces modèles n'est atteignable sans passer par une `Demande`
+ *   ou une `LigneDemande` déjà catégorisée — déjà couvert par ces deux
+ *   contrôles, même raisonnement que documenté pour `DepenseLigne`/
+ *   `PieceJointe` dans `supprimerUtilisateurAction`.
  * - `Categorie.budgetAlloue` non nul — pas une relation au sens strict,
  *   mais un choix délibéré d'inclure ce cas dans les blocages : supprimer
  *   une Catégorie avec un budget partagé explicitement configuré effacerait
@@ -303,7 +310,7 @@ export async function supprimerCategorieAction(categorieId: string): Promise<Sim
   const categorie = await prisma.categorie.findUnique({
     where: { id: categorieId },
     include: {
-      _count: { select: { objets: true, demandes: true } },
+      _count: { select: { objets: true, demandes: true, lignesDemande: true } },
     },
   });
   if (!categorie) {
@@ -316,6 +323,9 @@ export async function supprimerCategorieAction(categorieId: string): Promise<Sim
   }
   if (categorie._count.demandes > 0) {
     blocages.push(`${categorie._count.demandes} demande(s) l'utilisant`);
+  }
+  if (categorie._count.lignesDemande > 0) {
+    blocages.push(`${categorie._count.lignesDemande} ligne(s) d'article l'utilisant`);
   }
   if (categorie.budgetAlloue != null) {
     blocages.push(
@@ -353,8 +363,10 @@ export async function supprimerCategorieAction(categorieId: string): Promise<Sim
 
 /**
  * Supprime DÉFINITIVEMENT un Objet — même principe que
- * `supprimerCategorieAction` ci-dessus. **Seule relation réelle trouvée**
- * dans `schema.prisma` : `Demande.objetId`.
+ * `supprimerCategorieAction` ci-dessus. **Relations réelles trouvées**
+ * dans `schema.prisma` : `Demande.objetId` (DEPENSE_DIRECTE uniquement
+ * depuis "Catégorisation par ligne", voir CLAUDE.md) et
+ * `LigneDemande.objetId` (STANDARD).
  */
 export async function supprimerObjetAction(objetId: string): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -364,16 +376,23 @@ export async function supprimerObjetAction(objetId: string): Promise<SimpleActio
 
   const objet = await prisma.objet.findUnique({
     where: { id: objetId },
-    include: { _count: { select: { demandes: true } } },
+    include: { _count: { select: { demandes: true, lignesDemande: true } } },
   });
   if (!objet) {
     return { status: "error", message: "Objet introuvable." };
   }
 
+  const blocagesObjet: string[] = [];
   if (objet._count.demandes > 0) {
+    blocagesObjet.push(`${objet._count.demandes} demande(s)`);
+  }
+  if (objet._count.lignesDemande > 0) {
+    blocagesObjet.push(`${objet._count.lignesDemande} ligne(s) d'article`);
+  }
+  if (blocagesObjet.length > 0) {
     return {
       status: "error",
-      message: `Impossible de supprimer « ${objet.label} » : ${objet._count.demandes} demande(s) l'utilisent. Désactivez-le plutôt.`,
+      message: `Impossible de supprimer « ${objet.label} » : ${blocagesObjet.join(" et ")} l'utilisent. Désactivez-le plutôt.`,
     };
   }
 

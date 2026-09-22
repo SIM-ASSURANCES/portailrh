@@ -1242,6 +1242,16 @@ bloquant réel reste au règlement (`confirmerReglementAction`), une
 catégorie déjà en dépassement reste sélectionnable, Finance est seulement
 prévenue à l'avance.
 
+**Mise à jour majeure depuis "Catégorisation par ligne"** (voir cette
+section plus bas) : `getMontantConsommeCategorie` ne lit plus directement
+les règlements — elle lit désormais `ReglementCategorieAllocation`
+(allocation budgétaire EXPLICITE, choisie par Finance à chaque règlement,
+jamais un calcul implicite dérivé de `Demande.categorieId`). Tous les
+principes ci-dessus (décompte au règlement, jamais plafonné à 0, contrôle
+bloquant à la confirmation) restent inchangés — seule la SOURCE du calcul
+a changé, nécessaire depuis qu'une demande peut avoir plusieurs lignes de
+catégories différentes.
+
 ### Dashboard Finance — zone « À traiter » (6 indicateurs)
 
 | # | Indicateur | Définition |
@@ -1518,6 +1528,564 @@ Mapping bénéficiaire à la création : Collaborateur/Stagiaire → créateur
 connecté ; SIM Assurances CI → nom libre pré-rempli ; Fournisseur/prestataire
 → pas encore de champ de nom dédié.
 
+### Validation ligne par ligne
+
+Pour toute demande ayant **au moins une ligne** (`Demande.lignes.length > 0`
+— en pratique toute demande `STANDARD`, qui exige `.min(1)` ligne à la
+création), **`validerLignesAction` est l'UNIQUE mécanisme de décision** :
+elle remplace entièrement `validerTotalementAction`/
+`validerPartiellementAction`/`validerComplementaireAction`/
+`rejeterReliquatAction` pour ce cas — aucune notion de "reliquat" ne
+survit, puisque toutes les lignes sont décidées en un seul geste. Pour une
+demande **sans ligne** (`DEPENSE_DIRECTE`, qui n'en crée jamais), ces
+quatre actions restent utilisées exactement comme avant, sans aucun
+changement de comportement pour ce cas.
+
+**Décision confirmée sur le périmètre choisi** (Option A2 du diagnostic
+initial : décision unique et complète, jamais de reliquat par ligne
+laissé en suspens ; Option B1 : les quatre anciennes actions restent
+réservées aux demandes sans ligne) — les deux avaient été proposées avec
+leurs alternatives puis explicitement confirmées avant toute
+implémentation.
+
+#### Schéma
+
+- **`StatutLigneDemande`** (`EN_ATTENTE`/`VALIDEE`/`REJETEE`,
+  migration `20260921160827_validation_ligne_par_ligne`) — nouveau champ
+  `LigneDemande.statutValidation`, `EN_ATTENTE` par défaut, posé **une
+  seule fois** (aucune fonction de "dévalidation", même principe
+  qu'ailleurs dans le module).
+- **`LigneDemande.motifRejet`** — obligatoire (3 caractères minimum,
+  revérifié côté serveur) si `statutValidation = REJETEE`, sinon toujours
+  `null`.
+- **`LigneDemande.decideParId`/`decidePar`/`decideAt`** — auteur et date
+  de la décision (validée OU rejetée), `null` tant qu'`EN_ATTENTE`.
+- **`LigneDemande.libelleOriginal`** — même mécanique exacte que
+  `Demande.descriptionOriginale` : `null` tant que `libelle` n'a jamais
+  été modifié depuis la création, renseignée **une seule fois** à la
+  première modification par Finance, jamais réécrite ensuite. Le
+  Collaborateur créateur voit toujours `libelleOriginal ?? libelle`,
+  jamais la version modifiée.
+- Migration purement additive, aucune donnée de rattrapage (fonctionnalité
+  développée et vérifiée en local avant toute mise en production, base de
+  test vidée avant bascule réelle).
+
+#### Server Actions (`treso/finance/demandes/[id]/actions.ts`)
+
+- **`validerLignesAction(demandeId, decisions[])`** — une seule
+  transaction : vérifie que la demande a au moins une ligne et est
+  `EN_ATTENTE_VALIDATION` ; vérifie qu'**aucune** ligne n'est déjà décidée
+  (voir le piège ci-dessous) ; vérifie que **toutes** les lignes de la
+  demande sont couvertes par les décisions reçues, ni plus ni moins
+  (refuse un id manquant, en trop, ou étranger à la demande) ; motif
+  obligatoire pour chaque ligne `REJETEE` ; recalcule
+  `Demande.montantValide` = Σ (quantite × prixUnitaire) des seules lignes
+  `VALIDEE` ; appelle `calculerStatutDemande()` **sans aucune
+  modification** de cette fonction ; une `HistoriqueEntry` par ligne
+  décidée (`entity: "LigneDemande"`, `entityId: <ligneId>`, action
+  `validation_ligne`/`rejet_ligne`).
+
+  **Piège trouvé et corrigé pendant l'implémentation, avant toute mise en
+  service** : `demande.statut !== "EN_ATTENTE_VALIDATION"` seul ne suffit
+  PAS comme garde contre une seconde exécution. Si **toutes** les lignes
+  sont rejetées, `montantValide` retombe à 0 et `calculerStatutDemande`
+  (jamais modifiée) repasse la demande en `EN_ATTENTE_VALIDATION` — alors
+  que ses lignes sont pourtant déjà toutes décidées. Sans un second
+  contrôle explicite (`demande.lignes.some(l => l.statutValidation !==
+  "EN_ATTENTE")` → refus), ce cas précis aurait permis à Finance de
+  relancer une seconde décision sur les mêmes lignes, une forme de
+  dévalidation par la bande contraire au principe "décision unique et
+  complète". **Reproduit et vérifié en pratique** (demande de test à 2
+  lignes, les deux rejetées → statut revenu à `EN_ATTENTE_VALIDATION`,
+  `montantValide: 0`, nouvelle tentative de décision refusée avec
+  "Les lignes de cette demande ont déjà été décidées.").
+
+  **Permission : réservée au Responsable Finance UNIQUEMENT**
+  (`treso.valider_demande` ET PAS `treso.approuver_validation_complete`)
+  — **jamais** l'Assistant Finance, contrairement à
+  `modifierLibelleLigneAction` ci-dessous. Décision confirmée après
+  consultation explicite (le diagnostic initial recommandait ce choix sans
+  trancher seul) : c'est une décision de VALIDATION, et l'Assistant
+  Finance n'a, dans tout le reste du module, jamais aucun pouvoir de
+  décision — seulement `effectuer_reglement`/`receptionner_retour`, des
+  actions d'EXÉCUTION une fois la décision déjà prise par le Responsable
+  (voir "Séparation stricte Responsable Finance / Assistant Finance").
+  Vérifié en pratique par rejeu réseau direct : le DG (qui porte aussi
+  `treso.valider_demande`) et l'Assistant Finance sont tous deux refusés.
+
+- **`modifierLibelleLigneAction(ligneId, nouveauLibelle)`** — même pattern
+  exact que `modifierDescriptionAction` (mécanique `libelleOriginal`,
+  verrou `CLOTUREE` uniquement, `HistoriqueEntry` action
+  `modification_libelle_ligne`). Permission **volontairement plus large**
+  que la décision elle-même : `(treso.valider_demande` ET PAS
+  `approuver_validation_complete) OU treso.effectuer_reglement` —
+  Responsable ET Assistant Finance, jamais le DG. Modifier un libellé
+  n'est jamais une décision de validation, reste donc ouvert à
+  l'Assistant comme la description de la demande elle-même. Vérifié en
+  pratique : l'Assistant Finance modifie un libellé avec succès, le DG
+  est refusé.
+
+- **Garde ajoutée sur les quatre anciennes actions**
+  (`validerTotalementAction`/`validerPartiellementAction`/
+  `validerComplementaireAction`/`rejeterReliquatAction`) : refus explicite
+  dès que la demande a au moins une ligne ("Cette demande contient des
+  lignes d'article : utilisez la validation ligne par ligne."), via un
+  `prisma.ligneDemande.count()` ajouté en tête de chacune. Vérifié en
+  pratique sur une demande à lignes (refusé) et sur la `DEPENSE_DIRECTE`
+  existante (0 ligne, comportement métier préexistant inchangé —
+  `validerComplementaireAction`/`rejeterReliquatAction` refusées pour
+  leur raison habituelle, "reliquat déjà rejeté", jamais pour la nouvelle
+  garde).
+
+  **Point non tranché unilatéralement, signalé plutôt que décidé** :
+  `rejeterDemandeAction` (rejet total AVANT toute validation) n'a
+  volontairement **pas** reçu cette garde — la consigne énumérait
+  explicitement les quatre actions ci-dessus, sans la mentionner. Une
+  demande avec lignes reste donc, à ce stade, rejetable intégralement via
+  cette action sans qu'aucune ligne ne soit individuellement décidée
+  (`statutValidation` de chaque ligne resterait `EN_ATTENTE` malgré un
+  statut de demande `REJETEE`) — incohérence potentielle mineure, à
+  trancher explicitement si elle pose problème en pratique.
+
+#### Interface Finance (`treso/finance/demandes/[id]`)
+
+**`LignesValidationTable.tsx`** (nouveau, colocalisé) remplace
+`ValidationActions`/le bloc reliquat dès que `demande.lignes.length > 0`,
+sur toutes les branches de rendu concernées (`EN_ATTENTE_VALIDATION`,
+`montantValide > 0`, et `CLOTUREE` en lecture seule pour la traçabilité) —
+jamais les deux affichés à la fois pour une même demande. Détermine
+lui-même son mode (interactif vs lecture seule) à partir du
+`statutValidation` de chaque ligne, **jamais** de `demande.statut` seul
+(voir le piège ci-dessus) :
+
+- **Mode interactif** (au moins une ligne `EN_ATTENTE`) : par ligne,
+  libellé (avec lien "Modifier" ouvrant un champ inline, même pattern
+  visuel que `DescriptionEditor`, versions initiale/modifiée affichées en
+  permanence dès qu'elles divergent), quantité, prix unitaire, total,
+  deux boutons Valider/Rejeter (bascule de variante `Button`, pas de
+  composant radio dédié dans le design system), champ motif apparaissant
+  uniquement si "Rejeter" est choisi. Total "Montant qui sera validé"
+  recalculé en direct côté client. Bouton unique "Enregistrer les
+  décisions", désactivé tant que toutes les lignes n'ont pas de décision
+  et que tous les motifs de rejet ne sont pas remplis (min 3 caractères) —
+  revérifié de toute façon côté serveur.
+- **Mode lecture seule** (toutes les lignes déjà décidées) : même tableau,
+  badge de statut (`STATUT_LIGNE_DEMANDE_BADGE_VARIANT`, mêmes tokens
+  sémantiques que `STATUT_DEMANDE_BADGE_VARIANT`) + motif si rejetée +
+  auteur/date de la décision, aucun contrôle d'action. Le libellé reste
+  modifiable indépendamment de l'état de décision (même verrou `CLOTUREE`
+  que partout ailleurs) — modifier un libellé n'est jamais lié à la
+  décision de validation elle-même.
+
+#### Interface Collaborateur (`treso/demandes/[id]`)
+
+Le "Tableau des articles" existant affiche désormais, par ligne, un badge
+de statut (mêmes tokens que ci-dessus) et le motif en petit texte si
+rejetée. **Le libellé affiché est toujours `ligne.libelleOriginal ??
+ligne.libelle`** — jamais la version modifiée par Finance, même principe
+que `Demande.descriptionOriginale`.
+
+#### Historique (`DemandeHistorique.tsx`)
+
+Les entrées `validation_ligne`/`rejet_ligne`/`modification_libelle_ligne`
+portent `entity: "LigneDemande"` et `entityId: <ligneId>`, jamais
+`entityId: demandeId` — le composant charge d'abord les lignes de la
+demande pour les inclure dans le même historique fusionné (`OR` sur deux
+familles d'entité). `modification_libelle_ligne` rejoint
+`ACTIONS_GESTION_INTERNE` (même traitement que
+`modification_description` : révèle l'ancien libellé, jamais montré au
+Collaborateur). **`validation_ligne`/`rejet_ligne` restent volontairement
+visibles** au Collaborateur, contrairement au reste de cette liste : la
+Tâche 4 lui montre déjà directement, sur le tableau des articles, le
+statut de décision de chaque ligne — les masquer dans l'historique créerait
+une incohérence avec ce qu'il voit déjà par ailleurs.
+
+#### Vérifications, parcours réel (comptes de test réels, rejeu réseau direct)
+
+- Demande de test à 3 lignes : Finance valide 2 lignes et rejette la 3ᵉ
+  avec motif → `montantValide` exactement égal à la somme des 2 lignes
+  validées, statut `PARTIELLEMENT_VALIDEE`, 3 `HistoriqueEntry`
+  (`entity: "LigneDemande"`) créées avec le bon `action`/`detail`.
+- Rejet sans motif → refusé, testé par rejeu réseau direct (contournement
+  du formulaire).
+- Décisions incomplètes (une ligne non couverte) → refusée
+  ("Toutes les lignes de la demande doivent être décidées...").
+- Nouvelle tentative de décision sur des lignes déjà décidées → refusée
+  ("Les lignes de cette demande ont déjà été décidées"), y compris dans
+  le cas piège où le statut de la demande était revenu à
+  `EN_ATTENTE_VALIDATION` (voir plus haut).
+- DG et Assistant Finance refusés sur `validerLignesAction` (rejeu réseau
+  direct) ; Assistant Finance autorisé sur `modifierLibelleLigneAction`,
+  DG refusé.
+- Collaborateur : badges corrects (y compris sur la demande où toutes les
+  lignes ont été rejetées), motif affiché, libellé toujours original même
+  après modification par Finance (0 occurrence de la version modifiée
+  dans la page rendue), `modification_libelle_ligne` absente de son
+  historique alors qu'elle apparaît dans celui de Finance.
+- `DEPENSE_DIRECTE` existante (0 ligne) : `validerComplementaireAction`/
+  `rejeterReliquatAction` refusées pour leur raison métier préexistante
+  (reliquat déjà rejeté), jamais pour la nouvelle garde — confirme que le
+  comportement des demandes sans ligne est resté inchangé.
+- Un règlement (mode Banque) créé et confirmé sur la demande partiellement
+  validée par lignes fonctionne normalement (`peutEffectuerReglement`/
+  `getResteARegler` lisent `montantValide`, jamais les lignes
+  directement) ; reçu PDF généré avec succès. Dashboard Finance,
+  reporting, export Excel (12 feuilles) et écran "À décaisser" tous
+  vérifiés fonctionnels sans aucune modification de leur code.
+- Nettoyage complet après vérification : demandes de test, leurs lignes,
+  `HistoriqueEntry` et l'unique règlement (mode Banque, donc zéro écriture
+  `JournalCaisse` à annuler) supprimés ; solde de caisse revérifié
+  identique avant/après (4 490 000 FCFA) ; base revenue à ses 7 demandes
+  d'origine. Route de diagnostic temporaire et scripts `scratch-*.ts`
+  supprimés après usage.
+- `tsc --noEmit` et `next build` (66 routes) passent sans erreur avant
+  nettoyage ; `next build` revérifié après nettoyage (65 routes, la route
+  de diagnostic disparue).
+
+**Piège d'environnement rencontré et corrigé, sans lien avec le code
+métier** : le serveur `next dev` déjà en cours d'exécution pour cette
+session avait chargé le Prisma Client généré **avant** la migration de
+cette tâche (le singleton `globalForPrisma.prisma`, conservé sur
+`globalThis` pour survivre au hot-reload, ne réimporte pas spontanément
+un client Prisma régénéré sur disque) — les nouveaux champs de
+`LigneDemande` étaient silencieusement absents des résultats de requête
+malgré une base de données à jour, provoquant un faux positif ("lignes
+déjà décidées" sur des lignes réellement `EN_ATTENTE`). Diagnostiqué par
+une route de debug dédiée comparant la lecture Prisma vue par le serveur
+et une lecture directe en script ; corrigé par un redémarrage du serveur
+de dev (aucune conséquence en production, où `next build`/`next start`
+repartent toujours d'un process neuf après `prisma generate`).
+
+#### Bug signalé — "l'interaction se bloque après avoir cliqué Rejeter"
+
+Signalement : sur `LignesValidationTable.tsx`, cliquer "Rejeter" affiche
+bien le champ motif, mais ensuite "l'interaction se bloque" (saisir le
+motif, ou "Enregistrer les décisions" semble ne plus réagir) — alors que
+"Valider" sur toutes les lignes fonctionne normalement.
+
+**Diagnostic fait avec une vraie interaction navigateur, pas seulement une
+relecture de code** (voir méthodologie ci-dessous) : l'état React et la
+logique de décision (`decisions`, `toutesDecidees`, `motifsValides`,
+`peutEnregistrer`) se sont révélés **corrects** — taper un motif, y
+compris caractère par caractère à vitesse réelle, met bien à jour la
+valeur du champ, recalcule bien "Montant qui sera validé" en direct, et
+active bien "Enregistrer les décisions" dès que toutes les lignes ont une
+décision valide. **Cause réelle trouvée** : une fois qu'au moins une ligne
+est "Rejeter" avec un motif de MOINS de 3 caractères, le bouton reste
+CORRECTEMENT désactivé (comportement voulu) — mais **rien sur l'écran
+n'expliquait pourquoi** : aucun message d'erreur sur le champ motif,
+aucune indication près du bouton. Un test avec un motif volontairement
+court ("na", 2 caractères) reproduit exactement la perception de blocage
+signalée, sans qu'aucune ligne de code ne soit réellement en tort — un
+défaut d'ergonomie (absence de retour), pas un bug de logique.
+
+**Corrigé** (`LignesValidationTable.tsx`) : le champ motif reçoit
+désormais une erreur inline ("3 caractères minimum.", même prop `error`
+que partout ailleurs dans le design system) dès qu'il est non vide mais
+trop court ; un message explicatif apparaît aussi juste au-dessus du
+bouton "Enregistrer les décisions" tant qu'il reste désactivé pour une
+raison de complétude (`raisonBlocage` : "Chaque ligne doit avoir une
+décision..." ou "Un motif de rejet d'au moins 3 caractères est
+requis..."), même principe que le message de permission
+("Votre rôle ne permet pas...") déjà présent juste à côté.
+
+**Méthodologie de diagnostic** (aucun outil de navigateur/test visuel
+n'existait jusqu'ici dans ce projet — voir les nombreuses mentions
+"aucune capture d'écran... outil non disponible dans cet environnement"
+ailleurs dans ce document) : `vitest` + `@testing-library/react` +
+`jsdom` installés **temporairement** (`npm install --no-save`, jamais
+ajoutés à `package.json`) pour un premier test d'interaction isolé
+(frappe clavier réelle simulée sur le composant seul, zéro erreur trouvée)
+— insuffisant pour conclure avec certitude sur un bug qui pourrait être
+spécifique à Next.js/au navigateur réel. **`playwright` installé de la
+même façon** (chromium déjà partiellement en cache sur la machine,
+complété par téléchargement), pour piloter un **vrai Chromium headless**
+contre le VRAI serveur `next dev` déjà lancé, avec de vraies sessions
+authentifiées (Collaborateur crée une demande à plusieurs lignes via le
+vrai formulaire, Finance ouvre l'écran réel, clique réellement sur les
+boutons, tape réellement au clavier) — plusieurs scénarios rejoués
+(ordre Rejeter d'abord/Valider d'abord, motif à exactement 3 caractères,
+frappe sans délai, 3 lignes avec décisions mixtes), avec capture de la
+console navigateur (`page.on("console")`/`page.on("pageerror")`) à
+chaque étape. Tous les devDependencies et scripts de test ont été
+supprimés après usage (jamais ajoutés à `package.json`/au lockfile,
+`npm uninstall --no-save` de retour à l'identique) — même rigueur que les
+scripts `scratch-*.ts` déjà utilisés côté backend.
+
+**Point non lié à cette tâche, observé et non corrigé** : un avertissement
+d'hydratation React (`style={{caret-color:"transparent"}}` sur le champ
+cache `demandeId` de `CategorisationForm.tsx`) est apparu de façon
+intermittente pendant les tests navigateur — jamais bloquant (les
+scénarios aboutissaient malgré tout), non reproductible de façon fiable,
+et sans rapport avec `LignesValidationTable`. Signalé par transparence,
+non creusé davantage (hors périmètre de cette tâche).
+
+**Donnée réelle trouvée dans la base de dev partagée pendant la
+vérification, non touchée** : une demande "DEPENSE GROUPE" (référence
+attribuée automatiquement lors de la vérification, 4 lignes, catégorisée,
+intégralement validée) portait un horodatage du jour même de cette tâche
+— vraisemblablement le propre test manuel de l'utilisateur avant de
+signaler ce bug. Laissée telle quelle (pas une donnée créée par les
+scripts de cette tâche), conformément au principe "ne jamais supprimer
+une donnée non reconnue sans clarification".
+
+### Catégorisation par ligne + allocation budgétaire explicite par règlement
+
+Besoin : une demande à plusieurs lignes (ex: "Transport" et "Matériel")
+doit pouvoir recevoir une Catégorie/Objet **différente par ligne** — avant
+cette tâche, une seule catégorisation s'appliquait à toute la demande,
+empêchant de distinguer les natures de dépense d'une même demande. Même
+découpage que "Validation ligne par ligne" : `DEPENSE_DIRECTE` (0 ligne)
+garde sa catégorisation au niveau de la demande, inchangée ; `STANDARD`
+(≥1 ligne) passe à une catégorisation par ligne.
+
+**Option 2 du diagnostic préalable retenue pour le budget : allocation
+EXPLICITE, jamais un apportionnement proportionnel calculé.** Chaque
+Catégorie garde un budget strictement indépendant ; un règlement touchant
+plusieurs catégories exige que Finance répartisse elle-même, explicitement,
+le montant entre elles.
+
+#### Schéma
+
+- **`LigneDemande.categorieId`/`objetId`** (nullables, mêmes relations que
+  sur `Demande`) — modifiables UNIQUEMENT tant que
+  `ligne.statutValidation === "EN_ATTENTE"` (`categoriserLigneAction`
+  refuse sinon) : relit la règle impérative "Catégorie/objet modifiables
+  uniquement avant validation" à l'échelle de la LIGNE, pas de la demande
+  entière. `Demande.categorieId`/`objetId` restent, eux, l'unique
+  mécanisme pour `DEPENSE_DIRECTE` (jamais renseignés pour une
+  `STANDARD` désormais).
+- **`ReglementCategorieAllocation`** (`{ id, reglementId, categorieId,
+  montant }`, `@@unique([reglementId, categorieId])`) — une ligne par
+  Catégorie concernée par un règlement. **Toujours au moins une
+  allocation** dès qu'un règlement porte sur une demande catégorisée
+  (même une seule catégorie en crée une, à 100%, de façon transparente) ;
+  la somme des `montant` de ses allocations égale TOUJOURS exactement
+  `Reglement.montant`, revérifié côté serveur à chaque écriture. Migration
+  purement additive (`20260922104612_categorisation_par_ligne_allocation_budgetaire`),
+  aucune donnée de rattrapage (développée et vérifiée en local, base de
+  test vidée avant bascule réelle).
+
+#### Server Actions
+
+- **`categoriserLigneAction(ligneId, categorieId, objetId)`**
+  (`treso/finance/demandes/[id]/actions.ts`) — mirroir exact de
+  `modifierLibelleLigneAction` : même permission
+  (`treso.categoriser_demande`, inchangée), réutilise
+  `creerCategorieInlineAction`/`creerObjetInlineAction` telles quelles (la
+  création à la volée ne connaît pas la notion de ligne). Garde
+  `ligne.statutValidation === "EN_ATTENTE"`, jamais le statut de la
+  demande.
+- **`categoriserDemandeAction`** reçoit le même gate
+  `demande.lignes.length === 0` que les quatre actions de validation par
+  montant — réservée désormais aux `DEPENSE_DIRECTE`.
+- **`getMontantConsommeCategorie(categorieId)`** — **réécrite entièrement**,
+  reste l'UNIQUE source de vérité (contrôle bloquant, aperçu
+  `CategorisationForm`/`LignesValidationTable`, dashboard
+  `getTopCategoriesBudget`, `getReportingSuiviBudgetaire` — aucun de ces
+  appelants n'a de logique parallèle) : somme des
+  `ReglementCategorieAllocation.montant` de cette catégorie dont le
+  `Reglement` est confirmé et non annulé, au lieu de sommer directement
+  les règlements par `Demande.categorieId`.
+
+#### Règlement : allocation explicite par catégorie
+
+`getCategoriesConcerneesDemande(demandeId)` (`tresorerie.ts`) détermine les
+catégories distinctes concernées : lignes `VALIDEE` (uniquement — une
+ligne encore `EN_ATTENTE`/`REJETEE` ne représente rien à régler) pour
+`STANDARD`, `Demande.categorieId` unique pour `DEPENSE_DIRECTE`. Une ligne
+`VALIDEE` sans catégorie n'ajoute rien à cette liste (aucune limite ne
+s'applique à une portion non catégorisée, même principe qu'avant).
+
+- **0 ou 1 catégorie concernée (le cas le plus fréquent, toute
+  `DEPENSE_DIRECTE` incluse) : AUCUN changement visible pour Finance** —
+  un seul champ montant comme avant cette tâche. `construireAllocations`
+  (`reglementActions.ts`, partagée par création ET modification) crée
+  automatiquement UNE allocation à 100% (ou aucune si 0 catégorie), de
+  façon transparente.
+- **≥ 2 catégories concernées** — `ReglementForm`/`ReglementRow` (édition)
+  affichent, via `AllocationCategorieFields.tsx`, un champ de montant PAR
+  CATÉGORIE (nommés `alloc_<categorieId>`, mêmes noms côté client et
+  serveur), chacun avec un aperçu du budget restant (réutilise
+  `getMontantConsommeCategorie`, jamais recalculé au changement de
+  valeur — même convention que `BudgetCategorieApercu`). Validation
+  stricte, client ET serveur (`construireAllocations`, comparaison en
+  centimes entiers) : la somme doit égaler EXACTEMENT le montant total,
+  refusée sinon.
+- **`confirmerReglementAction`** — pour CHAQUE allocation du règlement,
+  vérifie indépendamment `budgetAlloue(categorieId) −
+  getMontantConsommeCategorie(categorieId) >= montant de cette
+  allocation`. **Si UNE seule catégorie échoue, refuse la confirmation
+  ENTIÈRE** (jamais de confirmation partielle — le contrôle s'exécute
+  entièrement AVANT toute écriture, donc une catégorie saine n'est jamais
+  touchée par le refus d'une autre) — message listant PRÉCISÉMENT chaque
+  catégorie en dépassement et le montant alloué/restant. Vérifié en
+  pratique : refus nommant uniquement la catégorie fautive, l'autre
+  catégorie garde sa consommation exacte d'avant la tentative (aucun
+  décompte fantôme).
+- **Annulation** — aucune modification nécessaire : `getMontantConsommeCategorie`
+  filtre déjà `reglement.estConfirme: true, estAnnule: false`, donc les
+  allocations d'un règlement annulé cessent automatiquement de compter.
+  Vérifié en pratique (règlement multi-catégorie confirmé puis annulé →
+  les deux budgets redeviennent exactement ce qu'ils étaient avant ce
+  règlement).
+- **Reçu PDF** (`ReceiptDocument.tsx`) — si le règlement a plusieurs
+  allocations, remplace les lignes "Catégorie"/"Objet" par une répartition
+  ("Catégorie (X) : montant" par ligne) ; une seule allocation garde le
+  rendu exact d'avant (pour `STANDARD`, la catégorie vient désormais de
+  l'allocation elle-même plutôt que de `Demande.categorie`, toujours
+  `null` pour ce type ; `objetLabel` reste `null` pour `STANDARD` — un
+  règlement peut couvrir plusieurs lignes/objets d'une même catégorie,
+  aucun "objet unique" n'existe plus à ce niveau).
+- **Bon de caisse — DÉLIBÉRÉMENT non modifié** : déjà documenté comme
+  "volontairement minimaliste", n'affiche jamais la catégorie ni le
+  montant demandé/validé — y ajouter une répartition aurait contredit ce
+  principe existant sans apporter de valeur à un document pensé pour
+  rester minimal.
+- **Export "Règlements"** — nouvelle colonne "Répartition par catégorie",
+  vide pour un règlement à une seule catégorie (rendu inchangé, cette
+  feuille n'avait jamais affiché de catégorie), renseignée pour un
+  règlement multi-catégorie.
+
+#### Reporting (`getReportingRows`/`getReportingFondsRemis`/`getReportingDemandesDetail`)
+
+**"Unité comptable"** (`getUnitesComptables`, `reporting.ts`) — abstraction
+qui unifie `DEPENSE_DIRECTE` (une unité = la demande entière, comportement
+strictement inchangé) et `STANDARD` (une unité par LIGNE, chacune dans le
+bucket de SA PROPRE catégorie/objet avec SON PROPRE montant), pour que le
+bucketing Catégorie×Objet n'ait qu'un seul chemin de code.
+
+- **"Demandé"/"Validé" par unité : exacts**, dérivés directement de
+  `quantite × prixUnitaire` de la ligne (et de son `statutValidation`).
+- **"Réglé"/"Réglé Caisse"/"Réglé Banque" : exacts** — dérivés de
+  `ReglementCategorieAllocation`, jamais estimés. **Limite assumée et
+  documentée dans le code** : une allocation ne descend qu'au niveau
+  Catégorie, jamais Objet (le budget lui-même n'existe qu'à ce niveau) —
+  si une demande a plusieurs lignes de MÊME catégorie mais d'Objets
+  différents, chaque ligne Objet affiche le total "Réglé" de LA CATÉGORIE
+  ENTIÈRE (la donnée la plus précise réellement disponible), avec un
+  garde-fou (`demandeCategorieDejaComptee`) empêchant qu'une même
+  (demande, catégorie) ne soit comptée deux fois dans les totaux agrégés.
+- **`getReportingFondsRemis`** : `montantRemis` (Caisse) suit exactement le
+  même principe (exact, par catégorie). **`depensesDeclarees`/
+  `retoursRecus`, en revanche, n'ont AUCUNE dimension Catégorie dans le
+  modèle de données** (un `RetourCaisse`/une `DepenseLigne` se rattachent
+  à un `Reglement`, jamais à une Catégorie) — **seule estimation
+  introduite par cette tâche** : répartie au prorata de la part de
+  `montantRemis` que représente chaque catégorie dans le total remis de LA
+  MÊME demande (ratio = 100% pour `DEPENSE_DIRECTE` ou toute `STANDARD`
+  n'ayant qu'une seule catégorie concernée — comportement donc strictement
+  inchangé dans ces deux cas très majoritaires). **Point signalé,
+  non tranché unilatéralement** : accepter cette approximation pour ces
+  deux seules colonnes, plutôt que de faire porter une Catégorie aux
+  `DepenseLigne`/`RetourCaisse` eux-mêmes (changement de bien plus grande
+  ampleur, hors périmètre de cette tâche).
+- **`getReportingDemandesDetail`** (feuille Excel "Demandes") : une ligne
+  = une ligne d'article pour `STANDARD` (nouvelle colonne "Ligne
+  d'article"), une ligne = une demande pour `DEPENSE_DIRECTE`.
+- **`getDemandesFiltrees`** — le filtre `categorieId`/`objetId` matche
+  désormais `Demande.categorieId`/`objetId` OU `lignes.some({ categorieId,
+  objetId })` (combiné via `AND: [...clauses]` explicite plutôt que deux
+  propriétés `OR` dupliquées, impossibles dans le même objet littéral).
+- Colonne "Nb. demandes" renommée **"Nb. lignes/demandes"** (écran +
+  export) : compte désormais des LIGNES pour `STANDARD`, des demandes pour
+  `DEPENSE_DIRECTE` — l'ancien intitulé aurait été trompeur.
+
+#### Suppression de Catégorie/Objet
+
+`supprimerCategorieAction`/`supprimerObjetAction` (`admin/categories/actions.ts`)
+bloquent désormais aussi si `LigneDemande.count({ categorieId/objetId }) >
+0`, en plus du contrôle existant sur `Demande` (qui ne concerne plus que
+les `DEPENSE_DIRECTE`). Vérifié en pratique par rejeu réseau direct :
+tentative de suppression d'une Catégorie/d'un Objet utilisé par une ligne
+→ refusée, message listant précisément objets/demandes/lignes/budget en
+cause.
+
+#### Interface Finance — fusion dans le tableau de lignes
+
+Pour les demandes `STANDARD`, la sélection Catégorie/Objet est fusionnée
+directement dans `LignesValidationTable.tsx` (colonne "Catégorie / Objet"
+par ligne, `LigneCategorisationCell` — mêmes Select en cascade, même
+création à la volée, même aperçu de budget que `CategorisationForm.tsx`,
+dont `BudgetCategorieApercu` est réutilisée telle quelle) plutôt qu'un
+écran séparé. `CategorisationForm.tsx` reste utilisé tel quel UNIQUEMENT
+pour les `DEPENSE_DIRECTE` — **le résumé demande-entière
+(`CategorisationSummary`) a dû être explicitement masqué pour les
+`STANDARD` dans les branches CLOTUREE et "montant validé > 0" de
+`page.tsx`** (bug trouvé pendant la vérification : affichait à tort
+"Non catégorisée" au niveau demande alors que ses lignes l'étaient
+individuellement — corrigé).
+
+Verrouillée dès que `ligne.statutValidation !== "EN_ATTENTE"` (comme côté
+serveur) : l'éditeur ne s'affiche jamais pour une ligne déjà décidée, texte
+en lecture seule uniquement.
+
+#### Historique
+
+`ACTION_LABELS` (`DemandeHistorique.tsx`) reçoit `categorisation_ligne`
+(bug trouvé pendant la vérification : l'action s'affichait en clair, sans
+libellé humanisé — corrigé) — rejoint `ACTIONS_GESTION_INTERNE` (même
+principe que `CATEGORISER`/`modification_libelle_ligne` : la Catégorie/
+l'Objet d'une ligne ne sont jamais montrés au Collaborateur, même
+indirectement).
+
+#### Vérifications, parcours réel + rejeu réseau (comptes de test réels)
+
+- Demande à 2 lignes (Transport 60 000 FCFA catégorisé "Déplacements",
+  Matériel 40 000 FCFA catégorisé "ACHat", budget de 30 000 FCFA
+  temporairement posé sur "ACHat" pour le test) — catégorisation par ligne
+  réussie via l'écran réel, les deux lignes validées (`montantValide` =
+  100 000 FCFA).
+- Règlement 1 (50 000 FCFA, répartition explicite Déplacements 30 000 /
+  ACHat 20 000, budgets suffisants) → créé puis confirmé avec succès ;
+  `getMontantConsommeCategorie` recoupé en base : ACHat = 20 000, Déplacements
+  = 30 000 (exact, aucune estimation).
+- Règlement 2 (50 000 FCFA restants, répartition Déplacements 20 000 / ACHat
+  30 000 — ACHat atteindrait 20 000 + 30 000 = 50 000 > 30 000 de budget)
+  → confirmation **refusée en entier**, message : `Ce règlement dépasse le
+  budget disponible pour : « ACHat » (30 000 FCFA alloués, 10 000 FCFA
+  restants) — confirmation refusée pour l'ensemble du règlement.`
+  Recoupé en base : règlement resté `estConfirme: false`, ACHat toujours à
+  20 000, **Déplacements toujours à 30 000 (totalement inaffecté)** —
+  aucun décompte fantôme.
+- Finance ajuste la répartition du brouillon (Déplacements 40 000 / ACHat
+  10 000 — ACHat atteindrait exactement 30 000, la limite) → confirmation
+  acceptée. Recoupé en base : ACHat = 30 000 (exactement le budget),
+  Déplacements = 70 000.
+- Annulation du règlement 2 (multi-catégorie, confirmé) → recoupé en base :
+  ACHat revenu à 20 000, Déplacements revenu à 30 000 (les deux budgets
+  redevenus disponibles, exactement l'état d'avant ce règlement).
+- Suppression de la Catégorie "ACHat" et de l'Objet "materiel" (tous deux
+  utilisés par une ligne) → refusées toutes les deux, message mentionnant
+  explicitement "ligne(s) d'article" en plus des demandes/objets déjà
+  comptés.
+- Export Excel recoupé ligne par ligne : feuille "Demandes" montre bien 2
+  lignes distinctes pour cette demande (une par ligne d'article, catégorie
+  propre à chacune) ; feuille "Reporting" montre "ACHat"/"materiel" et
+  "Déplacements"/"Transport" comme deux buckets séparés avec leurs propres
+  colonnes Demandé/Validé/Réglé exactes ; feuille "Règlements" montre la
+  répartition uniquement pour le règlement multi-catégorie, vide pour tous
+  les règlements mono-catégorie préexistants (rendu inchangé) — et exclut
+  correctement le règlement annulé de tous les totaux.
+- Collaborateur : `grep` sur son propre écran de demande confirme zéro
+  occurrence des catégories/objets utilisés ("Déplacements"/"ACHat"/
+  "materiel" absents), y compris dans l'historique.
+- Reçu PDF généré avec succès pour le règlement multi-catégorie ET pour un
+  règlement mono-catégorie préexistant (aucune régression) — contenu texte
+  non vérifiable dans cet environnement (pas d'extracteur PDF disponible),
+  vérifié par relecture du code conditionnel (`route.tsx`).
+- Aucune régression : dashboard Finance, écran de reporting, "À décaisser"
+  tous chargés avec succès après les changements ; `JournalCaisse`/solde
+  de caisse inchangés (tous les règlements de test en mode Banque,
+  vérifié explicitement) ; `RegularisationSummary` affichée normalement
+  sur l'écran de la demande de test.
+- Nettoyage complet : demande de test, ses lignes, ses 2 règlements, leurs
+  4 allocations et leur historique supprimés ; budget de "ACHat" restauré
+  à `null` (illimité, son état d'origine) ; base revenue à ses 8 demandes
+  (7 + la demande "DEPENSE GROUPE" du diagnostic précédent, non touchée).
+- `tsc --noEmit` et `next build` (65 routes) passent sans erreur avant et
+  après nettoyage.
+
 ### Catégorisation Finance : jamais de redirection après succès
 
 `CategorisationForm.tsx` (`/treso/finance/demandes/[id]`) **reste toujours
@@ -1528,6 +2096,264 @@ qu'elle appelle suffit à réafficher ce même formulaire, désormais
 pré-rempli avec la catégorie/l'objet qui viennent d'être enregistrés, avec
 `ValidationActions` toujours visible juste en dessous sur la même page —
 Finance peut enchaîner catégoriser puis valider sans changer d'écran.
+
+### Description du besoin modifiable avec traçabilité permanente
+
+**Renommée depuis "Libellé de demande modifiable..."** — voir "Correction :
+le bon champ était déjà ciblé" plus bas : l'ancien titre, utilisant le mot
+"libellé", entretenait une confusion avec le catalogue Catégorie/Objet
+(dont les entrées portent elles-mêmes un "libellé"/`label`). Le champ
+concerné a toujours été, et reste, `Demande.description` — jamais un champ
+d'`Objet`.
+
+La "Description du besoin" (`Demande.description`, le motif écrit par le
+collaborateur créateur à la création de sa demande) devient modifiable par
+le Responsable Finance ET l'Assistant Finance, avec les deux versions
+(initiale/courante) TOUJOURS visibles côte à côte dès qu'elles divergent —
+jamais un remplacement silencieux, jamais besoin de cliquer pour voir
+l'ancienne version.
+
+**Mécanisme retenu : un champ simple (`Demande.descriptionOriginale`),
+pas une table d'historique dédiée** — `descriptionOriginale` (`String?`,
+migration `20260921135917_demande_description_originale`) reste `null`
+tant que `description` n'a jamais été modifiée depuis la création (elle
+fait alors office des deux versions à la fois) ; à la TOUTE PREMIÈRE
+modification, `descriptionOriginale` est renseignée une seule fois
+(`?? demande.description`, jamais réécrite ensuite même après une
+deuxième/troisième modification) — `description` reste la version
+COURANTE, modifiable autant de fois que nécessaire. Garde donc "version
+initiale" et "version actuelle" en permanence, jamais chaque étape
+intermédiaire (voir la tâche : "pas nécessairement chaque version
+intermédiaire").
+
+**Chaque modification est malgré tout tracée dans `HistoriqueEntry`**
+(action `modification_description`, ancienne valeur dans `detail`) — pour
+l'audit complet, cohérent avec la règle impérative du projet ("toute
+opération importante historisée"), même si l'écran lui-même n'affiche que
+les deux bornes.
+
+- **`modifierDescriptionAction`** (`treso/finance/demandes/[id]/actions.ts`)
+  — verrouillée une fois `CLOTUREE`, même principe que le reste du module.
+  **Conflit de spécification rencontré et résolu avec le même schéma déjà
+  validé pour "Restreindre 'Déléguer des accès'"** : la demande nommait
+  `treso.valider_demande` OU `treso.effectuer_reglement`, mais
+  `treso.valider_demande` seule n'exclut PAS le DG (qui la possède aussi).
+  Garde retenue : **(`treso.valider_demande` ET PAS
+  `treso.approuver_validation_complete`) OU `treso.effectuer_reglement`**
+  — couvre Responsable Finance et Assistant Finance, exclut le DG et le
+  Collaborateur, sans comparaison de nom de rôle. Repéré en pratique lors
+  de la vérification (le DG a d'abord réussi une modification avant ce
+  correctif) — jamais supposé correct sans test réel.
+- **`DescriptionEditor.tsx`** (nouveau, colocalisé) — remplace le simple
+  `<dd>{demande.description}</dd>` dans le bloc d'information partagé (en
+  haut de page, rendu pour TOUS les statuts) : affiche "Description du
+  besoin — version initiale (saisie par le collaborateur)" (si
+  `descriptionOriginale` non nul) ET "Description du besoin — version
+  modifiée"/"Description du besoin" (courante), avec un déclencheur
+  "Modifier" ouvrant un `Textarea` inline (même convention que
+  `MarquerNonJustifiee.tsx`). Toujours rendu, jamais conditionné par la
+  permission côté page — déclencheur VISIBLE MAIS DÉSACTIVÉ (`disabled`)
+  pour qui n'a pas le droit ou une fois clôturée, même principe "visible
+  mais désactivé" que le reste du module depuis "Séparation Responsable
+  Finance / Assistant Finance". **Libellés "Demande initiale"/"Demande
+  modifiée" d'origine renommés** (voir "Correction" plus bas) — laissaient
+  penser à tort qu'une autre entité pouvait être concernée.
+
+**Choix documenté pour le Collaborateur créateur** (CDC ambigu sur ce
+point précis, tranché plutôt que deviné) : `treso/demandes/[id]/page.tsx`
+affiche désormais `demande.descriptionOriginale ?? demande.description`
+— TOUJOURS la version originale si elle existe, jamais la version
+modifiée par Finance, conformément à l'instruction "si ambigu, affiche
+par défaut la version ORIGINALE". Le Collaborateur ne voit aucune trace
+qu'une modification a eu lieu (ni bannière, ni mention) — `DemandeHistorique`
+lui masque aussi les entrées `modification_description` (voir "Masquer
+Catégorie/Objet côté historique Collaborateur" ci-dessous, même
+mécanisme).
+
+**Vérifications, parcours réel + rejeux réseau (comptes de test)** :
+- Responsable Finance modifie la description → les deux versions
+  ("Description du besoin — version initiale"/"version modifiée")
+  visibles immédiatement sur son écran.
+- Assistant Finance modifie à nouveau la même demande (déjà validée) →
+  fonctionne identiquement, `descriptionOriginale` reste celle de la toute
+  première modification (jamais écrasée par cette deuxième modification).
+- DG : rejeu réseau direct refusé (`"Action non autorisée."`) — confirmé
+  APRÈS correctif du conflit de permission ci-dessus (le premier essai,
+  avant correctif, avait à tort réussi).
+- Collaborateur : rejeu réseau direct refusé.
+- Le Collaborateur créateur voit bien la description ORIGINALE sur son
+  propre écran, jamais la version modifiée par Finance/Assistant —
+  confirmé par inspection du HTML rendu. `HistoriqueEntry` complet (les 3
+  modifications + catégorisation + validation) visible côté Finance,
+  seule "Validation" visible côté Collaborateur.
+- `tsc`/`eslint` clean, vrai `next build` réussi.
+
+### Correction : le bon champ était déjà ciblé (pas un champ d'Objet)
+
+Retour de compréhension : "le champ modifiable a été branché sur le
+mauvais champ — pas une description liée à l'entité Objet, mais le
+motif écrit par le demandeur à la création". **Diagnostic exhaustif fait
+avant toute correction de logique** (schéma Prisma, code de l'action, du
+composant, du câblage dans `page.tsx`, ET la documentation CLAUDE.md
+préexistante de "Formulaire de demande (« Demande d'Achat »)") :
+
+- `Demande.motif` **n'existe pas** dans le schéma — jamais existé. Le
+  champ "Motif de l'achat"/"Description du besoin" saisi par le
+  collaborateur (`Textarea` élargie à 7 lignes, voir "Formulaire de
+  demande") est, et a toujours été, **`Demande.description`** — déjà
+  documenté noir sur blanc AVANT même la tâche précédente : "même champ
+  (`Demande.description`), pas un champ séparé".
+- `Objet` (modèle du catalogue Catégorie/Objet) ne porte, et n'a jamais
+  porté, aucun champ `description`/`descriptionOriginale` — ses seules
+  colonnes réelles sont `id`/`label`/`isActive`/`categorieId` (confirmé
+  par une requête directe en base sur un `Objet` réel).
+- `descriptionOriginale` a été ajoutée sur `Demande` (migration
+  `20260921135917_demande_description_originale`, juste à côté de
+  `description`), jamais sur `Objet`. `modifierDescriptionAction` lit et
+  écrit exclusivement `prisma.demande.update(...)`. `page.tsx` passe
+  `description={demande.description}`/`descriptionOriginale=
+  {demande.descriptionOriginale}` à `DescriptionEditor` — jamais
+  `demande.objet.quoi que ce soit`.
+- **Confirmé par requête directe en base** sur une demande de test ayant
+  À LA FOIS une description modifiée ET une catégorie/objet réellement
+  assignés (pour écarter tout doute) : `description`/`descriptionOriginale`
+  bien portées par la ligne `Demande` elle-même (`categorieId`/`objetId`
+  restent des colonnes voisines, sans aucun rapport) ;
+  `HistoriqueEntry.entity = "Demande"` (jamais `"Objet"`) pour l'action
+  `modification_description`.
+
+**Conclusion : le bon champ était déjà ciblé depuis l'origine — aucune
+correction de logique nécessaire.** Cause la plus probable de la
+confusion, identifiée et corrigée (voir la section ci-dessus) : le mot
+"libellé", utilisé à la fois dans le titre de section CLAUDE.md d'origine
+("Libellé de demande modifiable...") ET dans le vocabulaire du catalogue
+Catégorie/Objet (`label`, "Le libellé doit contenir au moins 2
+caractères" dans les deux actions de création inline), ainsi que les
+libellés d'écran "Demande initiale"/"Demande modifiée" (suggérant à tort
+une duplication de la "Demande" entière plutôt qu'un seul champ texte) —
+les deux tâches (description modifiable et catalogue Catégorie/Objet)
+ayant en plus été livrées dans le même message, sur le même écran. Titre
+de section et libellés d'écran renommés en conséquence (voir plus haut) ;
+zéro changement de schéma, d'action ou de câblage de données.
+
+### Bouton de catégorisation sans retour visuel
+
+`CategorisationForm.tsx` : `isPending` (via `Button.loading`, déjà un
+spinner intégré) ne suffisait pas — la soumission est souvent trop rapide
+pour être perçue, et rien ne confirmait le succès SUR le bouton lui-même
+(seule la notification `sonner` externe le faisait, découplée
+visuellement de l'action qui vient d'être cliquée).
+
+- Texte du bouton désormais explicite pendant l'attente
+  ("Enregistrement...", pas seulement le spinner).
+- **Confirmation visuelle brève au succès** : bascule "Enregistré ✓"
+  (icône `circle-check` + texte) pendant 1,8 seconde après chaque
+  `state.status === "success"` — réaction ponctuelle à un `ActionState`
+  via `useEffect`/`setTimeout` (même pattern déjà établi dans
+  `DepenseDirecteForm.tsx` : jamais un état dérivé du rendu, un
+  `eslint-disable-next-line react-hooks/set-state-in-effect` documenté).
+- Vérifié par revue de code + rejeu réseau de `categoriserDemandeAction`
+  (confirme que le `state.status` transite bien vers `"success"`,
+  déclenchant l'effet) — **le rendu visuel exact du bouton dans le temps
+  (avant/pendant/juste après clic) n'a pas pu être observé par capture
+  d'écran dans cet environnement**, aucun outil de test visuel/navigateur
+  disponible ici (même limite déjà documentée pour d'autres tâches UI de
+  ce projet).
+
+### Visibilité des catégories/objets existants pendant la catégorisation
+
+**Diagnostic** : la création d'Objet "à la volée" (`creerObjetInlineAction`,
+réservée à `treso.categoriser_demande`) existait déjà depuis l'origine —
+un Select "Objet" propose toujours "+ Ajouter un nouvel objet" et ouvre
+automatiquement le panneau de création si la catégorie choisie n'a encore
+aucun objet. **Ce qui manquait précisément** : (1) aucun aperçu visuel des
+paires Catégorie→Objets existantes — les deux `Select` restaient
+totalement indépendants, sans jamais montrer à Finance ce qui existe déjà
+avant de choisir ; (2) aucun moyen de créer une nouvelle CATÉGORIE depuis
+cet écran (seul l'Objet avait son mécanisme à la volée).
+
+- **`creerCategorieInlineAction`** (nouveau, `actions.ts`) — mirroir exact
+  de `creerObjetInlineAction` : même garde (`treso.categoriser_demande`,
+  PAS `treso.gerer_categories` — cohérence délibérée entre les deux
+  créations inline, jamais l'une plus permissive que l'autre), même
+  historisation, mêmes chemins revalidés. Nouvelle option "+ Ajouter une
+  nouvelle catégorie" dans le Select "Catégorie" (même sentinelle
+  `VALEUR_NOUVELLE_CATEGORIE` que `VALEUR_NOUVEL_OBJET`), panneau de
+  création inline identique — deux mécanismes symétriques, jamais l'un
+  plus élaboré que l'autre.
+
+**Correction (retour "l'ajout précédent a mal visé") : l'aperçu retiré,
+jamais réintroduit.** Le premier essai avait aussi ajouté un
+`CatalogueApercu` (liste/accordéon permanent de toutes les catégories
+avec leurs objets, affiché au-dessus du Select) — **jugé après coup comme
+compliquant l'écran plutôt que de le simplifier**, mélangeant
+consultation et création dans un même bloc visuel alors que la demande
+réelle était un flux simple en deux temps distincts (sélection, PUIS
+création séparée si besoin). `CatalogueApercu` entièrement supprimé
+(composant + son rendu) — l'écran revient à sa forme originale (deux
+`Select` indépendants, Catégorie puis Objet filtré par la catégorie
+choisie), avec les deux SEULS ajouts qui restent : l'option "+ Ajouter
+une nouvelle catégorie" (nouvelle) et "+ Ajouter un nouvel objet"
+(préexistante depuis l'origine) — chacune ouvrant son propre petit
+panneau de création séparé, jamais une liste mélangée. Aucune régression
+sur `BudgetCategorieApercu` (aperçu du budget de la Catégorie
+SÉLECTIONNÉE, sans rapport avec le catalogue complet, non concerné par
+cette correction).
+
+**Vérifications, parcours réel + rejeux réseau (comptes de test)** :
+- Écran confirmé plus simple : aucun aperçu/accordéon Catégorie→Objets
+  visible, seulement les deux `Select` + les deux options de création.
+- Sélection d'une catégorie et d'un objet déjà existants → enregistrement
+  réussi sur la demande (`categoriserDemandeAction`), sans aucune liste
+  superflue affichée.
+- Catégorie inexistante → création simple via "+ Ajouter une nouvelle
+  catégorie" (`creerCategorieInlineAction`), résultat immédiatement
+  sélectionnable et utilisé avec succès pour catégoriser la demande de
+  test.
+- Objet inexistant (catégorie existante) → identique, comportement
+  strictement inchangé depuis avant cette tâche (mécanisme d'origine du
+  projet, jamais modifié).
+- `tsc`/`eslint` clean, vrai `next build` réussi.
+
+### Masquer Catégorie/Objet côté historique Collaborateur
+
+La Catégorie et l'Objet assignés par Finance sont une information de
+gestion interne — jamais destinée au Collaborateur créateur. Retirés de
+`treso/demandes/[id]/page.tsx` (deux blocs `<dd>` en moins, `include`
+Prisma `categorie`/`objet` retiré, devenu inutile sur cet écran).
+
+**Fuite indirecte trouvée et corrigée en vérifiant "qu'aucune autre
+information sensible équivalente n'y est exposée par erreur"** :
+`DemandeHistorique.tsx` (rendu sans filtre sur cette même page) affichait
+en clair, via l'entrée `HistoriqueEntry` `CATEGORISER`, le libellé de la
+catégorie ET de l'objet choisis par Finance (`detail: "Catégorie « X »,
+objet « Y »"`) — exactement l'information que la tâche demande de
+masquer, révélée par un chemin détourné. La nouvelle action
+`modification_description` (voir "Libellé de demande modifiable"
+ci-dessus) aurait posé le même problème dans l'autre sens : révéler au
+Collaborateur qu'une modification a eu lieu et le contenu de l'ancienne
+version, contredisant le choix de ne lui montrer que la version
+originale, silencieusement.
+
+- **`DemandeHistorique`** — nouvelle prop `masquerGestionInterne` (défaut
+  `false`) : exclut les actions `CATEGORISER`/`modification_description`
+  de la requête (`ACTIONS_GESTION_INTERNE`, un `Set` explicite plutôt
+  qu'une liste dupliquée). Passée `true` UNIQUEMENT depuis l'écran
+  Collaborateur ; l'écran Finance continue de tout voir, sans filtre.
+- Recherche exhaustive faite avant correction (`grep` sur `categorie`/
+  `Categorie`/`objet.label` dans tous les écrans Collaborateur : "Mes
+  demandes", "Mon tableau de bord", règlements reçus, retours de caisse) —
+  aucune autre exposition trouvée.
+
+**Vérifications, parcours réel (comptes de test)** :
+- Compte Collaborateur : Catégorie/Objet absents du détail de sa demande,
+  ET absents de son historique (seule "Validation" visible, sur 5
+  entrées réelles) — confirmé par inspection du HTML rendu, pas seulement
+  supposé depuis le code.
+- Compte Finance : Catégorie/Objet et historique complet (Catégorisation
+  + 3 modifications de description + Validation) toujours visibles
+  normalement sur son propre écran — aucune régression.
+- `tsc`/`eslint` clean, vrai `next build` réussi (66 routes).
 
 ### Détail des dépenses sur l'écran de Régularisation
 

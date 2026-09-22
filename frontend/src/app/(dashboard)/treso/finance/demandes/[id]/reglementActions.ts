@@ -9,10 +9,12 @@ import { createNotification } from "@/lib/notifications";
 import { prisma } from "backend";
 import {
   calculerStatutDemande,
+  getCategoriesConcerneesDemande,
   getMontantConsommeCategorie,
   getResteARegler,
   getTotalRegle,
   peutEffectuerReglement,
+  type CategorieConcerneeInfo,
 } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
@@ -20,6 +22,75 @@ type SimpleActionResult = { status: "success" | "error"; message: string };
 
 const montantSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
 const modeSchema = z.enum(["CAISSE", "BANQUE"]);
+const allocationMontantSchema = z.coerce.number().min(0, "Montant invalide");
+
+/** Préfixe des champs `FormData` de répartition par catégorie (voir
+ * CLAUDE.md "Allocation budgétaire explicite par règlement") — un champ
+ * `alloc_<categorieId>` par catégorie concernée, uniquement rendu par
+ * `ReglementForm`/`ReglementRow` quand `categoriesConcernees.length >= 2`. */
+const PREFIXE_CHAMP_ALLOCATION = "alloc_";
+
+export type AllocationInput = { categorieId: string; montant: number };
+
+/**
+ * Construit et valide la répartition par catégorie d'un règlement — Option
+ * 2 du diagnostic (allocation EXPLICITE choisie par Finance, jamais un
+ * apportionnement proportionnel calculé). Partagée par
+ * `creerReglementAction`/`modifierReglementAction` : même règle exacte aux
+ * deux endroits, jamais une deuxième définition.
+ *
+ * - 0 catégorie concernée (demande pas encore catégorisée) : aucune
+ *   allocation créée — `Reglement.allocations` reste vide, même
+ *   comportement qu'avant "Catégorisation par ligne" (aucune limite
+ *   appliquée à une portion non catégorisée).
+ * - 1 catégorie concernée (cas le plus fréquent, DEPENSE_DIRECTE incluse) :
+ *   **aucun champ visible pour Finance** — une seule allocation à 100% du
+ *   montant du règlement, créée automatiquement en arrière-plan.
+ * - ≥ 2 catégories concernées : la répartition DOIT être fournie
+ *   explicitement (un champ par catégorie), et sa somme doit égaler
+ *   EXACTEMENT le montant total du règlement (comparaison en centimes
+ *   entiers, jamais une égalité flottante directe) — refusée sinon.
+ */
+function construireAllocations(
+  categoriesConcernees: CategorieConcerneeInfo[],
+  montantTotal: number,
+  formData: FormData
+): { status: "success"; allocations: AllocationInput[] } | { status: "error"; message: string; fieldErrors?: Record<string, string> } {
+  if (categoriesConcernees.length <= 1) {
+    return {
+      status: "success",
+      allocations: categoriesConcernees.map((c) => ({ categorieId: c.categorieId, montant: montantTotal })),
+    };
+  }
+
+  const fieldErrors: Record<string, string> = {};
+  const allocations: AllocationInput[] = [];
+  let somme = 0;
+
+  for (const categorie of categoriesConcernees) {
+    const champ = `${PREFIXE_CHAMP_ALLOCATION}${categorie.categorieId}`;
+    const parsed = allocationMontantSchema.safeParse(formData.get(champ));
+    if (!parsed.success) {
+      fieldErrors[champ] = parsed.error.issues[0]?.message ?? "Montant invalide.";
+      continue;
+    }
+    allocations.push({ categorieId: categorie.categorieId, montant: parsed.data });
+    somme += parsed.data;
+  }
+
+  if (Object.keys(fieldErrors).length > 0) {
+    return { status: "error", message: "La répartition par catégorie contient des erreurs.", fieldErrors };
+  }
+
+  if (Math.round(somme * 100) !== Math.round(montantTotal * 100)) {
+    return {
+      status: "error",
+      message: `La somme de la répartition par catégorie (${somme.toLocaleString("fr-FR")} FCFA) doit égaler exactement le montant du règlement (${montantTotal.toLocaleString("fr-FR")} FCFA).`,
+    };
+  }
+
+  return { status: "success", allocations };
+}
 
 function revalidateDemande(demandeId: string) {
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
@@ -52,6 +123,13 @@ const creerReglementSchema = z.object({
  * (calculé sur `montantValide`, pas le montant demandé) `> 0`. Une demande
  * `PARTIELLEMENT_VALIDEE` est donc éligible dès sa validation partielle,
  * sans attendre le reliquat (cahier des charges section 4).
+ *
+ * **Allocation budgétaire explicite par catégorie** (voir CLAUDE.md
+ * "Catégorisation par ligne") : `construireAllocations` détermine et
+ * valide la répartition (transparente si une seule catégorie concernée,
+ * champs `alloc_<categorieId>` du formulaire sinon) — créée dans la MÊME
+ * transaction que le `Reglement` (écriture nested Prisma), jamais en deux
+ * temps séparés.
  */
 export async function creerReglementAction(
   _prevState: ActionState,
@@ -105,8 +183,24 @@ export async function creerReglementAction(
     };
   }
 
+  const categoriesConcernees = await getCategoriesConcerneesDemande(demandeId);
+  const allocationsResult = construireAllocations(categoriesConcernees, montant, formData);
+  if (allocationsResult.status === "error") {
+    return {
+      status: "error",
+      message: allocationsResult.message,
+      fieldErrors: allocationsResult.fieldErrors,
+    };
+  }
+
   await prisma.reglement.create({
-    data: { demandeId, montant, mode, auteurId: session.user.id },
+    data: {
+      demandeId,
+      montant,
+      mode,
+      auteurId: session.user.id,
+      allocations: { create: allocationsResult.allocations },
+    },
   });
 
   revalidateDemande(demandeId);
@@ -115,14 +209,25 @@ export async function creerReglementAction(
 }
 
 /**
- * Modifie le montant/mode d'un règlement NON confirmé et NON annulé. Mêmes
- * validations que la création. Appelée directement depuis un composant
- * client (pas via `<form>`), comme les actions valider/rejeter du Ticket 3.
+ * Modifie le montant/mode/répartition par catégorie d'un règlement NON
+ * confirmé et NON annulé. Mêmes validations que la création. Appelée
+ * directement depuis un composant client (pas via `<form action={...}>`),
+ * comme les actions valider/rejeter du Ticket 3 — `allocationsFormData` est
+ * un `FormData` construit côté client à partir du formulaire d'édition
+ * (mêmes champs `alloc_<categorieId>` que `ReglementForm`, voir
+ * `construireAllocations`), `undefined` si la demande n'a qu'une seule
+ * catégorie concernée (ou aucune) et qu'aucun champ de répartition n'est
+ * donc rendu.
+ *
+ * **Les allocations existantes sont entièrement remplacées** (jamais
+ * fusionnées) : le montant total ayant pu changer, l'ancienne répartition
+ * n'a plus de sens à conserver telle quelle.
  */
 export async function modifierReglementAction(
   reglementId: string,
   montant: number,
-  mode: "CAISSE" | "BANQUE"
+  mode: "CAISSE" | "BANQUE",
+  allocationsFormData?: FormData
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.effectuer_reglement")) {
@@ -160,10 +265,26 @@ export async function modifierReglementAction(
     };
   }
 
-  await prisma.reglement.update({
-    where: { id: reglementId },
-    data: { montant: parsedMontant.data, mode: parsedMode.data },
-  });
+  const categoriesConcernees = await getCategoriesConcerneesDemande(reglement.demandeId);
+  const allocationsResult = construireAllocations(
+    categoriesConcernees,
+    parsedMontant.data,
+    allocationsFormData ?? new FormData()
+  );
+  if (allocationsResult.status === "error") {
+    return { status: "error", message: allocationsResult.message };
+  }
+
+  await prisma.$transaction([
+    prisma.reglement.update({
+      where: { id: reglementId },
+      data: { montant: parsedMontant.data, mode: parsedMode.data },
+    }),
+    prisma.reglementCategorieAllocation.deleteMany({ where: { reglementId } }),
+    prisma.reglementCategorieAllocation.createMany({
+      data: allocationsResult.allocations.map((a) => ({ ...a, reglementId })),
+    }),
+  ]);
 
   revalidateDemande(reglement.demandeId);
 
@@ -177,11 +298,16 @@ export async function modifierReglementAction(
  * (`peutEffectuerReglement`, Phase C), que le règlement n'est ni déjà
  * confirmé ni annulé, et recalcule côté serveur que la confirmation ne
  * ferait pas dépasser **`montantValide`** (jamais le montant demandé, ni
- * confiance dans l'UI), puis, si la demande est catégorisée et que sa
- * Catégorie a un `budgetAlloue` défini, que ce règlement ne ferait pas
- * dépasser le budget PARTAGÉ de cette catégorie (voir CLAUDE.md "Budget
- * partagé par Catégorie" — c'est ici, au règlement, que le contrôle
- * s'applique, jamais à la validation). Si `mode = CAISSE`, l'écriture `JournalCaisse`
+ * confiance dans l'UI), puis, pour CHAQUE allocation budgétaire du
+ * règlement (voir CLAUDE.md "Allocation budgétaire explicite par
+ * règlement" — une par catégorie concernée, déjà fixée à la création/
+ * modification, jamais recalculée ici), que sa Catégorie ne dépasserait
+ * pas son budget PARTAGÉ (`budgetAlloue`, `null` = illimité). **Chaque
+ * catégorie a un budget strictement indépendant** : si UNE seule catégorie
+ * dépasse, la confirmation ENTIÈRE est refusée (jamais de confirmation
+ * partielle catégorie par catégorie — un `Reglement` reste un évènement
+ * financier atomique), avec un message nommant PRÉCISÉMENT chaque
+ * catégorie en cause. Si `mode = CAISSE`, l'écriture `JournalCaisse`
  * (SORTIE) est créée dans la même transaction que la confirmation — les
  * deux réussissent ou échouent ensemble. Un règlement BANQUE n'a
  * strictement aucun effet sur `JournalCaisse`.
@@ -201,7 +327,10 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
     return { status: "error", message: "Action non autorisée." };
   }
 
-  const reglement = await prisma.reglement.findUnique({ where: { id: reglementId } });
+  const reglement = await prisma.reglement.findUnique({
+    where: { id: reglementId },
+    include: { allocations: { include: { categorie: true } } },
+  });
   if (!reglement) {
     return { status: "error", message: "Règlement introuvable." };
   }
@@ -233,30 +362,39 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
     };
   }
 
-  // Budget partagé par Catégorie (voir CLAUDE.md "Budget partagé par
-  // Catégorie") : contrôle bloquant au RÈGLEMENT, jamais à la validation —
-  // c'est le moment où l'argent sort réellement. Aucune limite ne
-  // s'applique si la demande n'a pas encore de `categorieId` (pas
-  // catégorisée), ou si sa Catégorie n'a pas de `budgetAlloue` défini
-  // (`null` = illimité). Le règlement en cours d'écriture n'est encore
-  // QUE brouillon (`estConfirme: false`) au moment de ce calcul — jamais
-  // besoin de l'exclure explicitement de la consommation déjà existante,
-  // il n'y contribue pas encore.
-  if (demande.categorieId) {
-    const categorie = await prisma.categorie.findUnique({
-      where: { id: demande.categorieId },
-      select: { label: true, budgetAlloue: true },
-    });
-    if (categorie?.budgetAlloue != null) {
-      const consommeExistant = await getMontantConsommeCategorie(demande.categorieId);
-      const restantAvantCeReglement = Number(categorie.budgetAlloue) - consommeExistant;
-      if (montantReglement > restantAvantCeReglement) {
-        return {
-          status: "error",
-          message: `Ce règlement dépasse le budget disponible de la catégorie « ${categorie.label} » (${Math.max(0, restantAvantCeReglement).toLocaleString("fr-FR")} FCFA restants avant ce règlement).`,
-        };
-      }
+  // Allocation budgétaire explicite par catégorie (voir CLAUDE.md
+  // "Allocation budgétaire explicite par règlement") : contrôle bloquant
+  // au RÈGLEMENT, jamais à la validation — c'est le moment où l'argent
+  // sort réellement. Aucune limite ne s'applique à une allocation dont la
+  // Catégorie n'a pas de `budgetAlloue` défini (`null` = illimité). Le
+  // règlement en cours d'écriture n'est encore QUE brouillon
+  // (`estConfirme: false`) au moment de ce calcul — jamais besoin de
+  // l'exclure explicitement de la consommation déjà existante, il n'y
+  // contribue pas encore (`getMontantConsommeCategorie` filtre déjà
+  // `estConfirme: true`).
+  //
+  // **Chaque catégorie est vérifiée INDÉPENDAMMENT** : la liste complète
+  // des dépassements est collectée avant de refuser, pour que le message
+  // nomme TOUTES les catégories en cause en une seule fois (jamais
+  // seulement la première trouvée) — et pour que, si aucune catégorie ne
+  // dépasse, aucune n'ait été touchée par un test partiel.
+  const depassements: string[] = [];
+  for (const allocation of reglement.allocations) {
+    if (allocation.categorie.budgetAlloue == null) continue;
+    const consommeExistant = await getMontantConsommeCategorie(allocation.categorieId);
+    const restantAvantCeReglement = Number(allocation.categorie.budgetAlloue) - consommeExistant;
+    const montantAlloue = Number(allocation.montant);
+    if (montantAlloue > restantAvantCeReglement) {
+      depassements.push(
+        `« ${allocation.categorie.label} » (${montantAlloue.toLocaleString("fr-FR")} FCFA alloués, ${Math.max(0, restantAvantCeReglement).toLocaleString("fr-FR")} FCFA restants)`
+      );
     }
+  }
+  if (depassements.length > 0) {
+    return {
+      status: "error",
+      message: `Ce règlement dépasse le budget disponible pour : ${depassements.join(" ; ")} — confirmation refusée pour l'ensemble du règlement. Ajustez la répartition et resoumettez.`,
+    };
   }
 
   await prisma.$transaction([

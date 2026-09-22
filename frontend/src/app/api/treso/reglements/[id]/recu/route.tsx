@@ -59,6 +59,7 @@ export async function GET(
     include: {
       demande: { include: { createur: true, categorie: true, objet: true, beneficiaireUser: true } },
       auteur: true,
+      allocations: { include: { categorie: true } },
     },
   });
 
@@ -99,13 +100,27 @@ export async function GET(
     getValidateursNoms(reglement.demandeId),
   ]);
 
+  // Catégorisation par ligne (voir CLAUDE.md "Allocation budgétaire
+  // explicite par règlement") : `reglement.demande.categorie`/`objet`
+  // restent l'unique source pour `DEPENSE_DIRECTE` (jamais concernée par
+  // les lignes), mais valent toujours `null` pour une demande `STANDARD`
+  // depuis cette tâche — la catégorie de CE règlement précis se lit
+  // désormais sur ses propres `allocations`, jamais sur la demande.
+  const repartitionCategories =
+    reglement.allocations.length > 1
+      ? reglement.allocations.map((a) => ({ label: a.categorie.label, montant: Number(a.montant) }))
+      : null;
+  const categorieLabelUnique =
+    reglement.allocations.length === 1 ? reglement.allocations[0].categorie.label : reglement.demande.categorie?.label ?? null;
+
   const data: ReceiptData = {
     recuReference,
     demandeReference: reglement.demande.reference,
     demandeurNom: reglement.demande.createur.fullName,
     beneficiaireNom: getBeneficiaireNom(reglement.demande),
-    categorieLabel: reglement.demande.categorie?.label ?? null,
-    objetLabel: reglement.demande.objet?.label ?? null,
+    categorieLabel: repartitionCategories ? null : categorieLabelUnique,
+    objetLabel: repartitionCategories ? null : reglement.demande.objet?.label ?? null,
+    repartitionCategories,
     montant: Number(reglement.montant),
     mode: reglement.mode,
     confirmeLe: reglement.confirmeAt ?? reglement.createdAt,

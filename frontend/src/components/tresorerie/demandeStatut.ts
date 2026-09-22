@@ -1,5 +1,5 @@
 import type { BadgeVariant } from "@/components/ui";
-import type { StatutDemande } from "backend";
+import type { StatutDemande, StatutLigneDemande } from "backend";
 
 /**
  * Mapping partagé StatutDemande -> Badge/libellé, pour rester cohérent sur
@@ -47,4 +47,23 @@ export const STATUT_DEMANDE_LABEL: Record<StatutDemande, string> = {
   EN_ATTENTE_REGULARISATION: "En attente de régularisation",
   REGULARISEE: "Régularisée",
   CLOTUREE: "Clôturée",
+};
+
+/**
+ * Mapping StatutLigneDemande -> Badge/libellé — Tâche "Validation ligne par
+ * ligne" (voir CLAUDE.md). Mêmes tokens sémantiques que
+ * `STATUT_DEMANDE_BADGE_VARIANT` (warning/success/danger), jamais une
+ * nouvelle échelle de couleur inventée pour ce statut, plus fin (3 valeurs
+ * seulement, pas de statut "en cours de règlement" au niveau d'une ligne).
+ */
+export const STATUT_LIGNE_DEMANDE_BADGE_VARIANT: Record<StatutLigneDemande, BadgeVariant> = {
+  EN_ATTENTE: "warning",
+  VALIDEE: "success",
+  REJETEE: "danger",
+};
+
+export const STATUT_LIGNE_DEMANDE_LABEL: Record<StatutLigneDemande, string> = {
+  EN_ATTENTE: "En attente",
+  VALIDEE: "Validée",
+  REJETEE: "Rejetée",
 };

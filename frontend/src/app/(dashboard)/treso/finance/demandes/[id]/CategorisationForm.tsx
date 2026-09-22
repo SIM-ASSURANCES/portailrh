@@ -1,13 +1,14 @@
 "use client";
 
-import { useActionState, useMemo, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
+import { Icon } from "@/components/icons";
 import { Button, Input, Select } from "@/components/ui";
 import { useActionFeedback } from "@/lib/hooks/useActionFeedback";
 import { IDLE_ACTION_STATE } from "backend/client";
 
-import { categoriserDemandeAction, creerObjetInlineAction } from "./actions";
+import { categoriserDemandeAction, creerCategorieInlineAction, creerObjetInlineAction } from "./actions";
 
 interface CategorieOption {
   id: string;
@@ -20,7 +21,7 @@ interface ObjetOption {
   categorieId: string;
 }
 
-interface BudgetCategorieInfo {
+export interface BudgetCategorieInfo {
   budgetAlloue: number | null;
   consomme: number;
   restant: number | null;
@@ -30,6 +31,10 @@ interface BudgetCategorieInfo {
  * inline — jamais une valeur réellement soumise (voir `onChange` ci-dessous,
  * qui referme immédiatement le Select sur cette sélection). */
 const VALEUR_NOUVEL_OBJET = "__nouvel_objet__";
+/** Même principe que `VALEUR_NOUVEL_OBJET`, pour le Select "Catégorie" —
+ * Tâche "Visibilité des catégories/objets existants pendant la
+ * catégorisation" (voir CLAUDE.md). */
+const VALEUR_NOUVELLE_CATEGORIE = "__nouvelle_categorie__";
 
 /**
  * Filtrage Catégorie -> Objet fait entièrement côté client, sans requête
@@ -70,13 +75,36 @@ export function CategorisationForm({
 }) {
   const [state, formAction, isPending] = useActionState(categoriserDemandeAction, IDLE_ACTION_STATE);
   useActionFeedback(state);
+  // Tâche "Bouton de catégorisation sans retour visuel" (voir CLAUDE.md) :
+  // `isPending` seul ne suffisait pas — la soumission est souvent trop
+  // rapide pour être perçue, et rien ne confirmait le succès SUR le
+  // bouton lui-même (seule la notification externe le faisait). Bascule
+  // "Enregistré ✓" pendant 1,8s après chaque succès, réaction ponctuelle à
+  // un `ActionState` (pas un état dérivé du rendu), même pattern déjà
+  // établi ailleurs (`DepenseDirecteForm.tsx`).
+  const [vientDEtreEnregistre, setVientDEtreEnregistre] = useState(false);
+  useEffect(() => {
+    if (state.status === "success") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- réaction ponctuelle à un ActionState de succès, pas un état dérivé du rendu
+      setVientDEtreEnregistre(true);
+      const timeout = setTimeout(() => setVientDEtreEnregistre(false), 1800);
+      return () => clearTimeout(timeout);
+    }
+  }, [state]);
   const [categorieId, setCategorieId] = useState(initialCategorieId);
+  const [categoriesLocaux, setCategoriesLocaux] = useState(categories);
   const [objetsLocaux, setObjetsLocaux] = useState(objets);
   const [creationOuverte, setCreationOuverte] = useState(false);
   const [nouvelObjetLabel, setNouvelObjetLabel] = useState("");
   const [nouvelObjetErreur, setNouvelObjetErreur] = useState<string | undefined>();
   const [objetSelectionneId, setObjetSelectionneId] = useState(initialObjetId);
   const [isPendingObjet, startTransitionObjet] = useTransition();
+  // Création de catégorie inline — même principe que la création d'objet
+  // ci-dessus, jamais fusionnée avec elle (deux catalogues distincts).
+  const [creationCategorieOuverte, setCreationCategorieOuverte] = useState(false);
+  const [nouvelleCategorieLabel, setNouvelleCategorieLabel] = useState("");
+  const [nouvelleCategorieErreur, setNouvelleCategorieErreur] = useState<string | undefined>();
+  const [isPendingCategorie, startTransitionCategorie] = useTransition();
 
   // Volontairement PAS de redirection après succès : Finance reste sur cet
   // écran de traitement (toast de confirmation via `useActionFeedback`
@@ -100,11 +128,43 @@ export function CategorisationForm({
   const afficherCreation = creationOuverte || (categorieId !== "" && objetsFiltres.length === 0);
 
   function handleCategorieChange(nouvelleCategorieId: string) {
+    if (nouvelleCategorieId === VALEUR_NOUVELLE_CATEGORIE) {
+      // Jamais soumise telle quelle : ouvre le panneau de création et
+      // laisse la catégorie sélectionnée vide (même principe que le
+      // Select "Objet").
+      setCreationCategorieOuverte(true);
+      setCategorieId("");
+      setObjetSelectionneId("");
+      return;
+    }
     setCategorieId(nouvelleCategorieId);
     setObjetSelectionneId("");
     setCreationOuverte(false);
     setNouvelObjetLabel("");
     setNouvelObjetErreur(undefined);
+    setCreationCategorieOuverte(false);
+  }
+
+  function handleCreerCategorie() {
+    const label = nouvelleCategorieLabel.trim();
+    if (label.length < 2) {
+      setNouvelleCategorieErreur("Le libellé doit contenir au moins 2 caractères.");
+      return;
+    }
+    setNouvelleCategorieErreur(undefined);
+    startTransitionCategorie(async () => {
+      const result = await creerCategorieInlineAction(label);
+      if (result.status === "success") {
+        setCategoriesLocaux((prev) => [...prev, result.categorie]);
+        setCategorieId(result.categorie.id);
+        setObjetSelectionneId("");
+        setCreationCategorieOuverte(false);
+        setNouvelleCategorieLabel("");
+        toast.success(`Catégorie « ${result.categorie.label} » créée.`);
+      } else {
+        toast.error(result.message);
+      }
+    });
   }
 
   function handleObjetChange(valeur: string) {
@@ -147,15 +207,51 @@ export function CategorisationForm({
       <input type="hidden" name="demandeId" value={demandeId} />
 
       <Select
+        key={`categorie-${categorieId}`}
         name="categorieId"
         label="Catégorie"
         placeholder="Sélectionner une catégorie..."
         required
-        defaultValue={initialCategorieId}
+        defaultValue={categorieId}
         onChange={(e) => handleCategorieChange(e.target.value)}
-        options={categories.map((c) => ({ value: c.id, label: c.label }))}
+        options={[
+          ...categoriesLocaux.map((c) => ({ value: c.id, label: c.label })),
+          { value: VALEUR_NOUVELLE_CATEGORIE, label: "+ Ajouter une nouvelle catégorie" },
+        ]}
         error={state.status === "error" ? state.fieldErrors?.categorieId : undefined}
       />
+
+      {creationCategorieOuverte ? (
+        <div className="animate-fade-in-up space-y-3 rounded-md border border-border p-3">
+          <Input
+            label="Nom de la nouvelle catégorie"
+            required
+            value={nouvelleCategorieLabel}
+            onChange={(e) => {
+              setNouvelleCategorieLabel(e.target.value);
+              if (nouvelleCategorieErreur) setNouvelleCategorieErreur(undefined);
+            }}
+            error={nouvelleCategorieErreur}
+          />
+          <div className="flex flex-wrap gap-3">
+            <Button type="button" loading={isPendingCategorie} onClick={handleCreerCategorie}>
+              Créer la catégorie
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={isPendingCategorie}
+              onClick={() => {
+                setCreationCategorieOuverte(false);
+                setNouvelleCategorieLabel("");
+                setNouvelleCategorieErreur(undefined);
+              }}
+            >
+              Annuler
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {categorieId && budgetParCategorie[categorieId] ? (
         <BudgetCategorieApercu info={budgetParCategorie[categorieId]} />
@@ -221,7 +317,14 @@ export function CategorisationForm({
       ) : null}
 
       <Button type="submit" loading={isPending} className="w-full sm:w-auto">
-        Enregistrer la catégorisation
+        {vientDEtreEnregistre ? (
+          <span className="flex items-center gap-1.5">
+            <Icon name="circle-check" className="size-4" />
+            Enregistré
+          </span>
+        ) : (
+          isPending ? "Enregistrement..." : "Enregistrer la catégorisation"
+        )}
       </Button>
     </form>
   );
@@ -238,7 +341,12 @@ export function CategorisationForm({
  * seulement prévenue à l'avance plutôt que découvrir le blocage plus tard
  * au moment de confirmer un règlement.
  */
-function BudgetCategorieApercu({ info }: { info: BudgetCategorieInfo }) {
+/**
+ * Exportée depuis "Catégorisation par ligne" (voir CLAUDE.md) : réutilisée
+ * telle quelle par la catégorisation PAR LIGNE dans `LignesValidationTable.tsx`
+ * (une seule définition de cet aperçu, jamais dupliquée).
+ */
+export function BudgetCategorieApercu({ info }: { info: BudgetCategorieInfo }) {
   if (info.budgetAlloue == null) {
     return (
       <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
