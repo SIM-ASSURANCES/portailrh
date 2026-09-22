@@ -2086,6 +2086,87 @@ indirectement).
 - `tsc --noEmit` et `next build` (65 routes) passent sans erreur avant et
   après nettoyage.
 
+#### Refonte visuelle en cartes + budget par ligne en temps réel
+
+Suite directe de la fusion ci-dessus : le tableau HTML brut de
+`LignesValidationTable.tsx` (défilement horizontal, colonnes serrées,
+liens texte bleu plats) a été remplacé par une présentation en **cartes
+empilées**, une par `LigneDemande` — plus aucun `<table>` dans ce
+composant.
+
+- **`LigneCard`** (remplace l'ancien `LigneRow`) — même classe de survol
+  que `FinanceActionCard`/le reste du portail
+  (`card-shadow-hover ... motion-safe:hover:-translate-y-0.5`, la seule
+  technique qui fonctionne réellement dans ce projet, voir "Refonte
+  visuelle du dashboard Finance" : `hover:shadow-elevated-lg` ne compile
+  pas en Tailwind v4 ici). En-tête de carte : libellé mis en valeur à
+  gauche (avec "Modifier" en pastille discrète, icône crayon, plus un lien
+  texte bleu isolé) et le Total de la ligne à droite, en grand
+  (`text-xl font-black tabular-nums`). Corps : Quantité × Prix unitaire en
+  une seule ligne secondaire, petite taille, sous le libellé — ne
+  concurrence plus visuellement le montant. Sous un séparateur
+  (`border-t`), deux zones côte à côte (`grid sm:grid-cols-2`) : bloc
+  Catégorie/Objet (badge + `LigneCategorisationCell`) et bloc Décision
+  (boutons Valider/Rejeter, ou badge de statut si déjà décidée) — jamais
+  de défilement horizontal requis, les deux blocs s'empilent
+  naturellement sous `sm`.
+- Le total courant "Montant qui sera validé : X FCFA" et le message d'aide
+  sous "Enregistrer les décisions" (logique de `LignesValidationTable`
+  elle-même : `decisions`/`toutesDecidees`/`motifsValides`/
+  `peutEnregistrer`) sont restés **strictement inchangés** — seule la
+  présentation de chaque ligne individuelle a changé.
+- **`LigneBudgetApercu`** (nouveau) — affiche côte à côte le montant DE
+  LA LIGNE (`quantite × prixUnitaire`, jamais un autre montant) et
+  `BudgetCategorieApercu` (réutilisé tel quel depuis
+  `CategorisationForm.tsx`, jamais recalculé séparément — même fonction
+  que le contrôle bloquant du règlement et l'aperçu de
+  `CategorisationForm`) pour la catégorie actuellement sélectionnée sur
+  cette ligne précise. Rendu à deux endroits dans
+  `LigneCategorisationCell` : une fois en lecture seule sous le badge
+  (catégorie déjà assignée, éditeur fermé) et une fois **à l'intérieur du
+  panneau d'édition ouvert**, keyé sur l'état local du `Select` (pas sur
+  `ligne.categorieId`, qui ne change qu'après enregistrement) — change
+  donc instantanément, sans requête réseau ni rechargement, dès que
+  Finance sélectionne une autre catégorie dans la liste déroulante, en
+  réutilisant le même tableau `budgetParCategorie` déjà chargé une seule
+  fois par la page (même convention que l'aperçu de
+  `CategorisationForm` : jamais recalculé au changement de `Select` côté
+  client).
+- Purement informatif, comme documenté pour `CategorisationForm` : aucun
+  blocage ici, le contrôle bloquant réel reste exclusivement dans
+  `confirmerReglementAction`.
+
+**Vérifications, parcours réel (Playwright, comptes de test), desktop
+(1280px) et mobile (390px) :**
+- Zéro `<table>` restant, zéro défilement horizontal nécessaire aux deux
+  largeurs pour lire une ligne complète (libellé, montant, catégorie,
+  décision) — confirmé par inspection du DOM rendu, pas seulement par
+  relecture de code.
+- Sélection d'une catégorie sur une ligne encore non catégorisée →
+  `LigneBudgetApercu` apparaît immédiatement dans le panneau d'édition,
+  montant de la ligne et budget alloué/consommé/restant exacts, recoupés
+  par une requête directe en base sur la même catégorie.
+- Changement de catégorie sur la même ligne, éditeur toujours ouvert →
+  l'aperçu bascule instantanément sur les chiffres de la nouvelle
+  catégorie (y compris le cas "Aucun budget défini" pour une catégorie
+  sans `budgetAlloue`), sans rechargement de page.
+- Rechargement complet de la page sur une ligne déjà catégorisée mais pas
+  encore décidée → l'aperçu réapparaît correctement en lecture seule avec
+  les mêmes chiffres (vérifié avec des locators DOM précis après un
+  faux-négatif initial dû à `innerText` sur un `<select>`, qui inclut le
+  texte de toutes les `<option>`, pas seulement celle sélectionnée — sans
+  rapport avec un bug applicatif, corrigé côté script de vérification
+  uniquement).
+- Deux lignes d'une même demande catégorisées différemment → chacune
+  affiche exclusivement le budget de SA PROPRE catégorie (recoupé en
+  base), jamais mélangé.
+- Aucune régression : une ligne validée, une autre rejetée avec motif,
+  "Enregistrer les décisions" correctement activé et fonctionnel ; le
+  contrôle bloquant de `confirmerReglementAction` (allocation explicite,
+  refus atomique multi-catégorie) inchangé et revérifié fonctionnel.
+- `tsc --noEmit`, `eslint` et `next build` (65 routes) passent sans
+  erreur.
+
 ### Catégorisation Finance : jamais de redirection après succès
 
 `CategorisationForm.tsx` (`/treso/finance/demandes/[id]`) **reste toujours

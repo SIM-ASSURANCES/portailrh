@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 
+import { Icon } from "@/components/icons";
 import { STATUT_LIGNE_DEMANDE_BADGE_VARIANT, STATUT_LIGNE_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 
@@ -59,6 +60,14 @@ const VALEUR_NOUVELLE_CATEGORIE = "__nouvelle_categorie__";
  * AU MOINS une ligne (`demande.lignes.length > 0`) : `page.tsx` ne rend
  * plus jamais les deux composants en même temps pour une même demande.
  *
+ * **Refonte visuelle en cartes** (Tâche "Refonte visuelle du tableau
+ * Lignes d'articles", voir CLAUDE.md) — un tableau HTML classique
+ * (défilement horizontal, colonnes serrées) a été remplacé par une carte
+ * empilée par ligne (`LigneCard`), même langage visuel que
+ * `FinanceActionCard`/le tableau de bord Finance modernisé
+ * (`rounded-2xl`/`shadow-elevated`/`card-shadow-hover`) : plus aucun
+ * défilement horizontal nécessaire, lisible nativement sur mobile.
+ *
  * Deux modes, déterminés par la page appelante via `dejaDecidees`
  * (`lignes.every(l => l.statutValidation !== "EN_ATTENTE")`) — **jamais**
  * uniquement `demande.statut === "EN_ATTENTE_VALIDATION"` : si TOUTES les
@@ -67,11 +76,11 @@ const VALEUR_NOUVELLE_CATEGORIE = "__nouvelle_categorie__";
  * `EN_ATTENTE_VALIDATION` alors que ses lignes sont pourtant déjà toutes
  * décidées — seul un contrôle basé sur le statut de chaque ligne distingue
  * correctement ce cas d'une demande qui n'a encore reçu aucune décision.
- * - `dejaDecidees = false` : tableau interactif (catégorisation + décision
- *   + motif + total qui se recalcule en direct + bouton d'enregistrement
- *   unique).
- * - `dejaDecidees = true` : même tableau, mais en lecture seule pour les
- *   colonnes Catégorie/Objet et Décision, sans aucun contrôle.
+ * - `dejaDecidees = false` : cartes interactives (catégorisation +
+ *   décision + motif + total qui se recalcule en direct + bouton
+ *   d'enregistrement unique).
+ * - `dejaDecidees = true` : mêmes cartes, mais en lecture seule pour les
+ *   blocs Catégorie/Objet et Décision, sans aucun contrôle.
  *
  * Le libellé reste modifiable indépendamment de l'état de décision
  * (`canModifierLibelle`/`libelleModifiable`) — même verrou que
@@ -82,12 +91,24 @@ const VALEUR_NOUVELLE_CATEGORIE = "__nouvelle_categorie__";
  * `budgetParCategorie` (catalogue complet + aperçu budgétaire, mêmes
  * données que `CategorisationForm` pour une `DEPENSE_DIRECTE`) et
  * `canCategoriser` (`treso.categoriser_demande`, indépendante de
- * `canValider`/`canModifierLibelle`) pilotent une colonne Catégorie/Objet
- * PAR LIGNE, verrouillée dès que `ligne.statutValidation !== "EN_ATTENTE"`
+ * `canValider`/`canModifierLibelle`) pilotent un bloc Catégorie/Objet PAR
+ * LIGNE, verrouillé dès que `ligne.statutValidation !== "EN_ATTENTE"`
  * (`categoriserLigneAction` refuse de toute façon côté serveur) —
  * `CategorisationForm` reste utilisé tel quel UNIQUEMENT pour les
  * `DEPENSE_DIRECTE` (gate posé sur `categoriserDemandeAction`), jamais
  * affiché en même temps que ce tableau pour une même demande.
+ *
+ * **Budget disponible par ligne** (Tâche "Budget disponible en temps réel
+ * par ligne catégorisée", voir CLAUDE.md) : dès qu'une catégorie est
+ * sélectionnée ou déjà assignée sur une ligne, `BudgetCategorieApercu`
+ * (réutilisée telle quelle, jamais un second composant) s'affiche à côté
+ * du montant de CETTE ligne précise — `budgetParCategorie` est un
+ * instantané calculé une fois par le serveur pour toutes les catégories
+ * proposables (même convention que `CategorisationForm`, jamais
+ * recalculé au changement de sélection) : basculer de catégorie sur une
+ * ligne affiche instantanément l'aperçu de l'autre catégorie, sans
+ * requête réseau ni rechargement, à partir de ce même instantané déjà en
+ * mémoire.
  */
 export function LignesValidationTable({
   demandeId,
@@ -173,40 +194,25 @@ export function LignesValidationTable({
   return (
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
       <h2 className="text-sm font-semibold text-foreground">Lignes d&apos;articles</h2>
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full min-w-full divide-y divide-border text-sm">
-          <thead className="bg-muted">
-            <tr>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Libellé</th>
-              <th className="px-3 py-2 text-right font-medium text-muted-foreground">Nombre</th>
-              <th className="px-3 py-2 text-right font-medium text-muted-foreground">Prix unitaire</th>
-              <th className="px-3 py-2 text-right font-medium text-muted-foreground">Total</th>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Catégorie / Objet</th>
-              <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-                {dejaDecidees ? "Statut" : "Décision"}
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border bg-surface">
-            {lignes.map((ligne) => (
-              <LigneRow
-                key={ligne.id}
-                ligne={ligne}
-                dejaDecidee={dejaDecidees}
-                decision={decisions[ligne.id]}
-                onChangeStatut={(statut) => setDecisionStatut(ligne.id, statut)}
-                onChangeMotif={(motif) => setDecisionMotif(ligne.id, motif)}
-                canModifierLibelle={canModifierLibelle}
-                libelleModifiable={libelleModifiable}
-                decisionsPending={isPending}
-                canCategoriser={canCategoriser}
-                categories={categories}
-                objets={objets}
-                budgetParCategorie={budgetParCategorie}
-              />
-            ))}
-          </tbody>
-        </table>
+
+      <div className="space-y-3">
+        {lignes.map((ligne) => (
+          <LigneCard
+            key={ligne.id}
+            ligne={ligne}
+            dejaDecidee={dejaDecidees}
+            decision={decisions[ligne.id]}
+            onChangeStatut={(statut) => setDecisionStatut(ligne.id, statut)}
+            onChangeMotif={(motif) => setDecisionMotif(ligne.id, motif)}
+            canModifierLibelle={canModifierLibelle}
+            libelleModifiable={libelleModifiable}
+            decisionsPending={isPending}
+            canCategoriser={canCategoriser}
+            categories={categories}
+            objets={objets}
+            budgetParCategorie={budgetParCategorie}
+          />
+        ))}
       </div>
 
       {!dejaDecidees ? (
@@ -232,7 +238,17 @@ export function LignesValidationTable({
   );
 }
 
-function LigneRow({
+/**
+ * Une ligne d'article, en carte — remplace l'ancienne ligne de `<table>`.
+ * Même silhouette générale que `FinanceActionCard` (`rounded-2xl`,
+ * `shadow-elevated`, `card-shadow-hover` + légère translation verticale au
+ * survol — voir CLAUDE.md "Refonte visuelle du dashboard Finance" pour
+ * pourquoi `hover:shadow-elevated-lg` ne compile pas dans ce projet et
+ * pourquoi `card-shadow-hover` est la seule technique qui fonctionne),
+ * jamais copiée telle quelle (celle-ci n'est ni cliquable ni un lien —
+ * pas de `<Link>`, pas de `group-hover` sur un chevron).
+ */
+function LigneCard({
   ligne,
   dejaDecidee,
   decision,
@@ -284,133 +300,177 @@ function LigneRow({
   const total = ligne.quantite * ligne.prixUnitaire;
 
   return (
-    <tr>
-      <td className="min-w-[14rem] px-3 py-2 align-top text-foreground">
-        {/* Même mécanique que `DescriptionEditor` : les deux versions restent
-            visibles EN PERMANENCE dès qu'elles divergent. */}
-        {ligne.libelleOriginal != null ? (
-          <p className="mb-1 text-xs text-muted-foreground">
-            Version initiale : <span className="italic">{ligne.libelleOriginal}</span>
-          </p>
-        ) : null}
-        {!ouvertLibelle ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span>{ligne.libelle}</span>
-            {canModifierLibelle ? (
-              <button
-                type="button"
-                disabled={!libelleModifiable}
-                className="text-xs font-medium text-info underline-offset-4 hover:text-primary hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline disabled:hover:text-muted-foreground"
-                onClick={() => {
-                  setValeurLibelle(ligne.libelle);
-                  setOuvertLibelle(true);
-                }}
-              >
-                Modifier
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          <div className="animate-fade-in-up space-y-2">
-            <Input
-              aria-label="Libellé de la ligne"
-              value={valeurLibelle}
-              onChange={(e) => {
-                setValeurLibelle(e.target.value);
-                if (erreurLibelle) setErreurLibelle(undefined);
-              }}
-              error={erreurLibelle}
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" loading={isPendingLibelle} onClick={handleEnregistrerLibelle}>
-                Enregistrer
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={isPendingLibelle}
-                onClick={() => {
-                  setOuvertLibelle(false);
-                  setErreurLibelle(undefined);
-                }}
-              >
-                Annuler
-              </Button>
+    <div className="card-shadow-hover relative rounded-2xl border border-border bg-surface p-4 shadow-elevated transition-transform duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 sm:p-5">
+      {/* En-tête de carte : libellé + action Modifier, montant Total en face */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          {/* Même mécanique que `DescriptionEditor` : les deux versions
+              restent visibles EN PERMANENCE dès qu'elles divergent. */}
+          {ligne.libelleOriginal != null ? (
+            <p className="mb-1 text-xs text-muted-foreground">
+              Version initiale : <span className="italic">{ligne.libelleOriginal}</span>
+            </p>
+          ) : null}
+          {!ouvertLibelle ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="break-words text-base font-bold text-foreground">{ligne.libelle}</h3>
+              {canModifierLibelle ? (
+                <button
+                  type="button"
+                  disabled={!libelleModifiable}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-info hover:text-info disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:text-muted-foreground"
+                  onClick={() => {
+                    setValeurLibelle(ligne.libelle);
+                    setOuvertLibelle(true);
+                  }}
+                >
+                  <Icon name="pencil" className="size-3" />
+                  Modifier
+                </button>
+              ) : null}
             </div>
-          </div>
-        )}
-      </td>
-      <td className="px-3 py-2 text-right align-top text-foreground">{ligne.quantite}</td>
-      <td className="px-3 py-2 text-right align-top text-foreground">
-        {ligne.prixUnitaire.toLocaleString("fr-FR")} FCFA
-      </td>
-      <td className="px-3 py-2 text-right align-top font-medium text-foreground">
-        {total.toLocaleString("fr-FR")} FCFA
-      </td>
-      <td className="min-w-[13rem] px-3 py-2 align-top">
-        <LigneCategorisationCell
-          ligne={ligne}
-          canCategoriser={canCategoriser}
-          categories={categories}
-          objets={objets}
-          budgetParCategorie={budgetParCategorie}
-        />
-      </td>
-      <td className="min-w-[12rem] px-3 py-2 align-top">
-        {dejaDecidee ? (
-          <>
-            <Badge variant={STATUT_LIGNE_DEMANDE_BADGE_VARIANT[ligne.statutValidation]}>
-              {STATUT_LIGNE_DEMANDE_LABEL[ligne.statutValidation]}
-            </Badge>
-            {ligne.statutValidation === "REJETEE" && ligne.motifRejet ? (
-              <p className="mt-1 text-xs text-muted-foreground">Motif : {ligne.motifRejet}</p>
-            ) : null}
-            {ligne.decideParNom ? (
-              <p className="mt-1 text-xs text-muted-foreground">
-                Par {ligne.decideParNom}
-                {ligne.decideAt ? ` — ${ligne.decideAt.toLocaleDateString("fr-FR")}` : ""}
-              </p>
-            ) : null}
-          </>
-        ) : (
-          <div className="space-y-2">
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant={decision?.statut === "VALIDEE" ? "primary" : "secondary"}
-                disabled={decisionsPending}
-                onClick={() => onChangeStatut("VALIDEE")}
-              >
-                Valider
-              </Button>
-              <Button
-                type="button"
-                variant={decision?.statut === "REJETEE" ? "danger" : "secondary"}
-                disabled={decisionsPending}
-                onClick={() => onChangeStatut("REJETEE")}
-              >
-                Rejeter
-              </Button>
-            </div>
-            {decision?.statut === "REJETEE" ? (
-              <Textarea
-                aria-label="Motif du rejet de la ligne"
-                rows={2}
-                placeholder="Motif du rejet (3 caractères minimum)..."
-                value={decision.motif}
-                disabled={decisionsPending}
-                onChange={(e) => onChangeMotif(e.target.value)}
-                error={
-                  decision.motif.length > 0 && decision.motif.trim().length < 3
-                    ? "3 caractères minimum."
-                    : undefined
-                }
+          ) : (
+            <div className="animate-fade-in-up space-y-2">
+              <Input
+                aria-label="Libellé de la ligne"
+                value={valeurLibelle}
+                onChange={(e) => {
+                  setValeurLibelle(e.target.value);
+                  if (erreurLibelle) setErreurLibelle(undefined);
+                }}
+                error={erreurLibelle}
               />
-            ) : null}
-          </div>
-        )}
-      </td>
-    </tr>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" loading={isPendingLibelle} onClick={handleEnregistrerLibelle}>
+                  Enregistrer
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={isPendingLibelle}
+                  onClick={() => {
+                    setOuvertLibelle(false);
+                    setErreurLibelle(undefined);
+                  }}
+                >
+                  Annuler
+                </Button>
+              </div>
+            </div>
+          )}
+          {/* Quantité / prix unitaire — informations secondaires, jamais en
+              compétition visuelle avec le libellé/le total. */}
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">{ligne.quantite}</span>
+            {" × "}
+            <span className="tabular-nums">{ligne.prixUnitaire.toLocaleString("fr-FR")} FCFA</span>
+          </p>
+        </div>
+
+        <div className="shrink-0 text-right">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Total</p>
+          <p className="text-xl font-black leading-tight tracking-tight tabular-nums text-foreground">
+            {total.toLocaleString("fr-FR")} FCFA
+          </p>
+        </div>
+      </div>
+
+      {/* Corps de carte : Catégorie/Objet + Décision côte à côte (empilés en
+          dessous du seuil `sm`, aucun défilement horizontal jamais requis). */}
+      <div className="mt-4 grid grid-cols-1 gap-4 border-t border-border pt-4 sm:grid-cols-2">
+        <div>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Catégorie
+          </p>
+          <LigneCategorisationCell
+            ligne={ligne}
+            canCategoriser={canCategoriser}
+            categories={categories}
+            objets={objets}
+            budgetParCategorie={budgetParCategorie}
+          />
+        </div>
+
+        <div>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {dejaDecidee ? "Statut" : "Décision"}
+          </p>
+          {dejaDecidee ? (
+            <div>
+              <Badge variant={STATUT_LIGNE_DEMANDE_BADGE_VARIANT[ligne.statutValidation]}>
+                {STATUT_LIGNE_DEMANDE_LABEL[ligne.statutValidation]}
+              </Badge>
+              {ligne.statutValidation === "REJETEE" && ligne.motifRejet ? (
+                <p className="mt-1 text-xs text-muted-foreground">Motif : {ligne.motifRejet}</p>
+              ) : null}
+              {ligne.decideParNom ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Par {ligne.decideParNom}
+                  {ligne.decideAt ? ` — ${ligne.decideAt.toLocaleDateString("fr-FR")}` : ""}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant={decision?.statut === "VALIDEE" ? "primary" : "secondary"}
+                  disabled={decisionsPending}
+                  onClick={() => onChangeStatut("VALIDEE")}
+                >
+                  Valider
+                </Button>
+                <Button
+                  type="button"
+                  variant={decision?.statut === "REJETEE" ? "danger" : "secondary"}
+                  disabled={decisionsPending}
+                  onClick={() => onChangeStatut("REJETEE")}
+                >
+                  Rejeter
+                </Button>
+              </div>
+              {decision?.statut === "REJETEE" ? (
+                <Textarea
+                  aria-label="Motif du rejet de la ligne"
+                  rows={2}
+                  placeholder="Motif du rejet (3 caractères minimum)..."
+                  value={decision.motif}
+                  disabled={decisionsPending}
+                  onChange={(e) => onChangeMotif(e.target.value)}
+                  error={
+                    decision.motif.length > 0 && decision.motif.trim().length < 3
+                      ? "3 caractères minimum."
+                      : undefined
+                  }
+                />
+              ) : null}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Le montant de CETTE ligne, affiché juste au-dessus de
+ * `BudgetCategorieApercu` — Tâche "Budget disponible en temps réel par
+ * ligne catégorisée" (voir CLAUDE.md) : lien visuel direct entre "cette
+ * ligne vaut X FCFA" et "sa catégorie a Y FCFA de restant", jamais deux
+ * informations dissociées à rapprocher mentalement.
+ */
+function LigneBudgetApercu({ montantLigne, info }: { montantLigne: number; info: BudgetCategorieInfo }) {
+  return (
+    <div className="mt-2 space-y-2 rounded-lg border border-border bg-muted/30 p-2.5">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="font-medium text-muted-foreground">Montant de cette ligne</span>
+        <span className="font-semibold tabular-nums text-foreground">
+          {montantLigne.toLocaleString("fr-FR")} FCFA
+        </span>
+      </div>
+      <BudgetCategorieApercu info={info} />
+    </div>
   );
 }
 
@@ -425,8 +485,14 @@ function LigneRow({
  *
  * **Verrouillée dès que `ligne.statutValidation !== "EN_ATTENTE"`** —
  * `categoriserLigneAction` refuse de toute façon côté serveur ; l'éditeur
- * ne s'affiche donc JAMAIS pour une ligne déjà décidée, seul un texte en
- * lecture seule (même principe que la colonne Statut).
+ * ne s'affiche donc JAMAIS pour une ligne déjà décidée, seul un badge en
+ * lecture seule (même principe que le bloc Statut).
+ *
+ * **Budget par ligne** — `LigneBudgetApercu` s'affiche dès qu'une
+ * catégorie est retenue, dans les DEUX états (lecture seule ET édition) :
+ * en édition, elle suit `categorieId` (l'état local du Select, pas
+ * `ligne.categorieId`) pour se mettre à jour dès que Finance change de
+ * catégorie, avant même d'enregistrer.
  */
 function LigneCategorisationCell({
   ligne,
@@ -455,6 +521,7 @@ function LigneCategorisationCell({
   const [isPendingCreation, startTransitionCreation] = useTransition();
 
   const objetsFiltres = objetsLocaux.filter((o) => o.categorieId === categorieId);
+  const montantLigne = ligne.quantite * ligne.prixUnitaire;
 
   function handleCategorieChange(valeur: string) {
     if (valeur === VALEUR_NOUVELLE_CATEGORIE) {
@@ -525,41 +592,56 @@ function LigneCategorisationCell({
     });
   }
 
+  const badgeCategorie = (
+    <span
+      className={`inline-flex max-w-full items-center gap-1.5 truncate rounded-full px-2.5 py-1 text-xs font-semibold ${
+        ligne.categorieId ? "bg-info-bg text-info" : "bg-muted text-muted-foreground"
+      }`}
+    >
+      {ligne.categorieId ? (
+        <>
+          {ligne.categorieLabel}
+          {ligne.objetLabel ? ` · ${ligne.objetLabel}` : ""}
+        </>
+      ) : (
+        "Non catégorisée"
+      )}
+    </span>
+  );
+
   if (dejaDecidee) {
-    return (
-      <p className="text-foreground">
-        {ligne.categorieLabel ?? "Non catégorisée"}
-        {ligne.objetLabel ? ` / ${ligne.objetLabel}` : ""}
-      </p>
-    );
+    return <div className="flex flex-wrap items-center gap-2">{badgeCategorie}</div>;
   }
 
   if (!ouvert) {
     return (
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-foreground">
-          {ligne.categorieLabel ?? "Non catégorisée"}
-          {ligne.objetLabel ? ` / ${ligne.objetLabel}` : ""}
-        </span>
-        {canCategoriser ? (
-          <button
-            type="button"
-            className="text-xs font-medium text-info underline-offset-4 hover:text-primary hover:underline"
-            onClick={() => {
-              setCategorieId(ligne.categorieId ?? "");
-              setObjetId(ligne.objetId ?? "");
-              setOuvert(true);
-            }}
-          >
-            {ligne.categorieId ? "Modifier" : "Catégoriser"}
-          </button>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {badgeCategorie}
+          {canCategoriser ? (
+            <button
+              type="button"
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-info hover:text-info"
+              onClick={() => {
+                setCategorieId(ligne.categorieId ?? "");
+                setObjetId(ligne.objetId ?? "");
+                setOuvert(true);
+              }}
+            >
+              <Icon name="pencil" className="size-3" />
+              {ligne.categorieId ? "Modifier" : "Catégoriser"}
+            </button>
+          ) : null}
+        </div>
+        {ligne.categorieId && budgetParCategorie[ligne.categorieId] ? (
+          <LigneBudgetApercu montantLigne={montantLigne} info={budgetParCategorie[ligne.categorieId]} />
         ) : null}
       </div>
     );
   }
 
   return (
-    <div className="animate-fade-in-up space-y-2">
+    <div className="animate-fade-in-up space-y-2 rounded-xl border border-border bg-muted/30 p-3">
       <Select
         aria-label="Catégorie de la ligne"
         value={categorieId}
@@ -571,7 +653,7 @@ function LigneCategorisationCell({
         ]}
       />
       {creationCategorieOuverte ? (
-        <div className="space-y-2 rounded-md border border-border p-2">
+        <div className="space-y-2 rounded-md border border-border bg-surface p-2">
           <Input
             aria-label="Nom de la nouvelle catégorie"
             placeholder="Nom de la catégorie"
@@ -598,7 +680,7 @@ function LigneCategorisationCell({
       ) : null}
 
       {categorieId && budgetParCategorie[categorieId] ? (
-        <BudgetCategorieApercu info={budgetParCategorie[categorieId]} />
+        <LigneBudgetApercu montantLigne={montantLigne} info={budgetParCategorie[categorieId]} />
       ) : null}
 
       <Select
@@ -613,7 +695,7 @@ function LigneCategorisationCell({
         ]}
       />
       {creationObjetOuverte ? (
-        <div className="space-y-2 rounded-md border border-border p-2">
+        <div className="space-y-2 rounded-md border border-border bg-surface p-2">
           <Input
             aria-label="Nom du nouvel objet"
             placeholder="Nom de l'objet"
