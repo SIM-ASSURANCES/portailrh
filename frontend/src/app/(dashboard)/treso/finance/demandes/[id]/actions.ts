@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
-import { createNotification, notifierParPermission } from "@/lib/notifications";
+import { notify, notifyByPermission } from "@/lib/notifications";
 import { prisma } from "backend";
 import { calculerStatutDemande, getEcart, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
@@ -23,20 +23,24 @@ async function notifierDemandeEntierementValidee(
   montantFinal: number,
   actorUserId: string
 ) {
-  await createNotification({
+  await notify({
     userId: demande.createurId,
     titre: "Demande validée",
     message: `Votre demande ${demande.reference} a été validée totalement (${montantFinal.toLocaleString("fr-FR")} FCFA).`,
     lien: `/treso/demandes/${demande.id}`,
+    priority: "IMPORTANT",
+    category: "TRESORERIE",
   });
   // Exclut l'auteur de la validation (Finance ou DG) : un rôle combiné
   // portant aussi `treso.approuver_validation_complete` ne doit pas se
   // notifier lui-même de sa propre action.
-  await notifierParPermission("treso.approuver_validation_complete", {
+  await notifyByPermission("treso.approuver_validation_complete", {
     titre: "Demande à approuver (validation complète)",
     message: `La demande ${demande.reference} est entièrement validée et attend votre approbation avant clôture.`,
     lien: "/treso/finance/validations-attente",
     excludeUserId: actorUserId,
+    priority: "IMPORTANT",
+    category: "TRESORERIE",
   });
 }
 
@@ -757,18 +761,22 @@ export async function validerLignesAction(
   if (Math.round(montantValide * 100) >= Math.round(montantDemande * 100)) {
     await notifierDemandeEntierementValidee(demande, montantValide, session.user.id);
   } else if (montantValide > 0) {
-    await createNotification({
+    await notify({
       userId: demande.createurId,
       titre: "Demande validée partiellement",
       message: `Votre demande ${demande.reference} a été validée partiellement (${montantValide.toLocaleString("fr-FR")} FCFA sur ${montantDemande.toLocaleString("fr-FR")} FCFA demandés) — certaines lignes ont été rejetées.`,
       lien: `/treso/demandes/${demandeId}`,
+      priority: "IMPORTANT",
+      category: "TRESORERIE",
     });
   } else {
-    await createNotification({
+    await notify({
       userId: demande.createurId,
       titre: "Lignes de votre demande rejetées",
       message: `Toutes les lignes de votre demande ${demande.reference} ont été rejetées.`,
       lien: `/treso/demandes/${demandeId}`,
+      priority: "CRITIQUE",
+      category: "TRESORERIE",
     });
   }
 
@@ -884,11 +892,13 @@ export async function validerPartiellementAction(
   if (estFinalementTotale) {
     await notifierDemandeEntierementValidee(demande, parsedMontant.data, session.user.id);
   } else {
-    await createNotification({
+    await notify({
       userId: demande.createurId,
       titre: "Demande validée partiellement",
       message: `Votre demande ${demande.reference} a été validée partiellement (${parsedMontant.data.toLocaleString("fr-FR")} FCFA sur ${montantDemande.toLocaleString("fr-FR")} FCFA demandés).`,
       lien: `/treso/demandes/${demandeId}`,
+      priority: "IMPORTANT",
+      category: "TRESORERIE",
     });
   }
 
@@ -1055,6 +1065,15 @@ export async function rejeterReliquatAction(
 
   revalidateDemandePaths(demandeId);
 
+  await notify({
+    userId: demande.createurId,
+    titre: "Reliquat de demande rejeté",
+    message: `Le reliquat de votre demande ${demande.reference} a été rejeté. Motif : ${parsedMotif.data}`,
+    lien: `/treso/demandes/${demandeId}`,
+    priority: "CRITIQUE",
+    category: "TRESORERIE",
+  });
+
   return {
     status: "success",
     message: `Reliquat de la demande ${demande.reference} rejeté — le montant déjà validé suit son cours normal.`,
@@ -1130,11 +1149,13 @@ export async function rejeterDemandeAction(
 
   revalidateDemandePaths(demandeId);
 
-  await createNotification({
+  await notify({
     userId: demande.createurId,
     titre: "Demande rejetée",
     message: `Votre demande ${demande.reference} a été rejetée. Motif : ${parsedMotif.data}`,
     lien: `/treso/demandes/${demandeId}`,
+    priority: "CRITIQUE",
+    category: "TRESORERIE",
   });
 
   return { status: "success", message: `Demande ${demande.reference} rejetée.` };
@@ -1394,11 +1415,23 @@ export async function rejeterValidationCompleteAction(
 
   // Exclut le DG lui-même (`treso.valider_demande` peut aussi être porté
   // par le DG) — il ne doit pas se notifier de sa propre décision.
-  await notifierParPermission("treso.valider_demande", {
+  await notifyByPermission("treso.valider_demande", {
     titre: "Validation complète rejetée par le DG",
     message: `Le DG a rejeté (à l'examen) la validation complète de la demande ${demande.reference}. Motif : ${parsedMotif.data}`,
     lien: `/treso/finance/demandes/${demandeId}`,
     excludeUserId: session.user.id,
+    priority: "CRITIQUE",
+    category: "TRESORERIE",
+  });
+
+  // Notifier également le créateur de la demande en priorité CRITIQUE
+  await notify({
+    userId: demande.createurId,
+    titre: "Validation complète rejetée par le DG",
+    message: `Le DG a rejeté la validation complète de votre demande ${demande.reference}. Motif : ${parsedMotif.data}`,
+    lien: `/treso/demandes/${demandeId}`,
+    priority: "CRITIQUE",
+    category: "TRESORERIE",
   });
 
   return {
@@ -1473,11 +1506,13 @@ export async function annulerValidationCompleteAction(
   revalidateDemandePaths(demandeId);
   revalidatePath("/treso/finance/validations-attente");
 
-  await notifierParPermission("treso.valider_demande", {
+  await notifyByPermission("treso.valider_demande", {
     titre: "Validation complète annulée par le DG",
     message: `Le DG a annulé son approbation de validation complète sur la demande ${demande.reference}. Motif : ${parsedMotif.data}`,
     lien: `/treso/finance/demandes/${demandeId}`,
     excludeUserId: session.user.id,
+    priority: "IMPORTANT",
+    category: "TRESORERIE",
   });
 
   return {

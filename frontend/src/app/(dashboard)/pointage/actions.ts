@@ -16,7 +16,7 @@ import {
 import { revalidatePath } from "next/cache";
 import { pointageEmitter } from "@/lib/events";
 import { ActionState, fieldErrorsFromZod } from "backend";
-import { createNotification } from "@/lib/notifications";
+import { notify } from "@/lib/notifications";
 
 const pointageSchema = z.object({
   source: z.enum(["QR_CODE", "ORDINATEUR"]),
@@ -79,11 +79,13 @@ export async function enregistrerPointageAction(
     if (!geoActive) {
       const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
       for (const rh of rhUsers) {
-        await createNotification({
+        await notify({
           userId: rh.id,
           titre: "⚠️ Alerte Sécurité Pointage",
           message: `${session.user.fullName} a tenté de pointer hors réseau (IP: ${ip}). La géolocalisation est désactivée.`,
           lien: "/pointage/rh",
+          priority: "IMPORTANT",
+          category: "POINTAGE",
         });
       }
       return {
@@ -120,11 +122,13 @@ export async function enregistrerPointageAction(
       // ── GARDE-FOU : collaborateur hors réseau ET hors du rayon géographique ──
       const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
       for (const rh of rhUsers) {
-        await createNotification({
+        await notify({
           userId: rh.id,
           titre: "🚨 Tentative de pointage non autorisée",
           message: `${session.user.fullName} a tenté de pointer hors réseau et hors périmètre. IP: ${ip} | Distance au bureau: ${geoDistance}m (rayon: ${rayon}m). Aucun pointage enregistré.`,
           lien: "/pointage/rh",
+          priority: "IMPORTANT",
+          category: "POINTAGE",
         });
       }
       return {
@@ -288,11 +292,13 @@ export async function enregistrerPointageAction(
       const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
       const raison = estRetard ? "retard" : "départ anticipé";
       for (const rh of rhUsers) {
-        await createNotification({
+        await notify({
           userId: rh.id,
           titre: "Anomalie de pointage signalée",
           message: `${session.user.fullName} a signalé un ${raison}. Motif : ${motif}`,
           lien: "/pointage/rh/presence",
+          priority: "IMPORTANT",
+          category: "POINTAGE",
         });
       }
     }
@@ -301,11 +307,13 @@ export async function enregistrerPointageAction(
     if (geoFallbackUsed) {
       const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
       for (const rh of rhUsers) {
-        await createNotification({
+        await notify({
           userId: rh.id,
           titre: "📍 Pointage par géolocalisation",
           message: `${session.user.fullName} a pointé hors réseau Wi-Fi. Validé par GPS à ${geoDistance}m du bureau (précision: ${geoPrecision ? Math.round(geoPrecision) : "?"}m).`,
           lien: "/pointage/rh/presence",
+          priority: "IMPORTANT",
+          category: "POINTAGE",
         });
       }
     }
@@ -404,11 +412,13 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
 
     const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
     for (const rh of rhUsers) {
-      await createNotification({
+      await notify({
         userId: rh.id,
         titre: "Absence Automatique",
         message: `${session.user.fullName} a été marqué(e) absent(e) (fin de journée atteinte sans pointage).`,
         lien: "/pointage/rh/absences",
+        priority: "IMPORTANT",
+        category: "POINTAGE",
       });
     }
 

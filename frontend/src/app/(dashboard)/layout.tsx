@@ -5,6 +5,8 @@ import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 
+import { PushPermissionPrompt } from "@/components/notifications/PushPermissionPrompt";
+
 /**
  * Layout du Socle Portail (écrans authentifiés). Toute route de ce groupe
  * hérite de la coquille applicative (sidebar + topbar) et exige une session
@@ -99,6 +101,21 @@ export default async function DashboardLayout({ children }: { children: React.Re
       // (jamais `permissions`, qui inclurait des permissions reçues par
       // délégation) — même garde exacte que `delegations/page.tsx` et
       // `accorderDelegationAction`.
+      //
+      // CONFLIT DE MERGE (origin/thierry-kouame) résolu en faveur de cette
+      // version : la branche de Thierry portait encore l'ancienne condition
+      // large (`treso.*`/`pointage.* — n'importe laquelle`), antérieure à
+      // cette restriction. Vérifié avant de trancher : `delegations/page.tsx`
+      // et `accorderDelegationAction` (les points d'application réels)
+      // portent déjà cette même garde restreinte après fusion, inchangés par
+      // les commits de Thierry (son seul changement dans `delegations/actions.ts`
+      // concerne le renommage `createNotification` -> `notify`, jamais cette
+      // logique de permission) — garder la condition large ici aurait donc
+      // seulement affiché le lien "Déléguer des accès" à des comptes
+      // (RH/DG/Assistant Finance) qui se seraient ensuite fait rediriger en
+      // cliquant dessus, sans aucune différence réelle de sécurité. Signalé
+      // à l'utilisateur malgré tout (voir résumé) : c'est la même prop
+      // modifiée des deux côtés au même endroit exact.
       canDelegerAcces={
         session.rolePermissions.includes("treso.valider_demande") &&
         !session.rolePermissions.includes("treso.approuver_validation_complete")
@@ -110,6 +127,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       unreadNotificationsCount={unreadCount}
     >
       {children}
+      <PushPermissionPrompt />
     </AppShell>
   );
 }
+

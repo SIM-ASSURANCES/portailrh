@@ -13,6 +13,7 @@ import { prisma } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 import { logAuditAction } from "@/lib/auditLog";
 import { sendEmail, generateWelcomeEmail } from "@/lib/email";
+import { notify } from "@/lib/notifications";
 
 const SALT_ROUNDS = 10;
 const INVITATION_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -299,7 +300,13 @@ export async function regenererInvitationAction(
     return { status: "error", message: "Action non autorisée." };
   }
 
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await prisma.user.findUnique({ 
+    where: { id: userId },
+    include: {
+      role: { select: { name: true } },
+      service: { select: { name: true } },
+    },
+  });
   if (!user) {
     return { status: "error", message: "Utilisateur introuvable." };
   }
@@ -330,9 +337,30 @@ export async function regenererInvitationAction(
 
   const invitationUrl = `${await getBaseUrl()}/invitation/${invitationToken}`;
 
+  // Expédition automatique du nouvel email d'invitation
+  try {
+    const welcomeMail = generateWelcomeEmail({
+      fullName: user.fullName,
+      email: user.email,
+      roleName: user.role.name,
+      serviceName: user.service?.name,
+      actionUrl: invitationUrl,
+      isInvitation: true,
+    });
+    await sendEmail({
+      to: user.email,
+      subject: "Votre lien d'invitation au Portail SIM Assurances (renouvelé)",
+      html: welcomeMail.html,
+      text: welcomeMail.text,
+      userId: user.id,
+    });
+  } catch (err) {
+    console.error("Erreur lors du renvoi de l'invitation par email:", err);
+  }
+
   return {
     status: "success",
-    message: `Nouveau lien généré pour ${user.email}.`,
+    message: `Nouveau lien généré pour ${user.email} et email envoyé.`,
     data: { invitationUrl },
   };
 }
@@ -374,6 +402,22 @@ export async function toggleUserActiveAction(
 
   revalidatePath("/admin/users");
   publishDataChanged();
+
+  // Notification critique (Email + Push + In-app)
+  try {
+    await notify({
+      userId: user.id,
+      titre: active ? "Compte réactivé" : "Compte désactivé",
+      message: active
+        ? "Votre compte a été réactivé par un administrateur. Vous pouvez à nouveau accéder au portail SIM Assurances."
+        : "Votre compte a été désactivé par un administrateur. Veuillez vous rapprocher des RH ou de la Direction.",
+      lien: "/login",
+      priority: "CRITIQUE",
+      category: "ADMIN",
+    });
+  } catch (err) {
+    console.error("Erreur lors de l'envoi de la notification de statut de compte:", err);
+  }
 
   return { status: "success", message: active ? "Compte réactivé." : "Compte désactivé." };
 }
@@ -529,7 +573,13 @@ export async function forcerReinitialisationMotDePasseAction(
     return { status: "error", message: "Action non autorisée." };
   }
 
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await prisma.user.findUnique({ 
+    where: { id: userId },
+    include: {
+      role: { select: { name: true } },
+      service: { select: { name: true } },
+    },
+  });
   if (!user) {
     return { status: "error", message: "Utilisateur introuvable." };
   }
@@ -562,9 +612,30 @@ export async function forcerReinitialisationMotDePasseAction(
 
   const invitationUrl = `${await getBaseUrl()}/invitation/${invitationToken}`;
 
+  // Expédition automatique de l'email au collaborateur
+  try {
+    const welcomeMail = generateWelcomeEmail({
+      fullName: user.fullName,
+      email: user.email,
+      roleName: user.role.name,
+      serviceName: user.service?.name,
+      actionUrl: invitationUrl,
+      isInvitation: true,
+    });
+    await sendEmail({
+      to: user.email,
+      subject: "Réinitialisation de vos accès — Portail SIM Assurances",
+      html: welcomeMail.html,
+      text: welcomeMail.text,
+      userId: user.id,
+    });
+  } catch (err) {
+    console.error("Erreur lors de l'envoi de l'email de réinitialisation forcée:", err);
+  }
+
   return {
     status: "success",
-    message: `Réinitialisation forcée pour ${user.email}.`,
+    message: `Réinitialisation forcée pour ${user.email} et email envoyé.`,
     data: { invitationUrl },
   };
 }

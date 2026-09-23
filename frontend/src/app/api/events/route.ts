@@ -1,7 +1,7 @@
-import { getSession } from "@/lib/auth";
-import { subscribeDataChanged } from "@/lib/eventBus";
+import { auth } from "@/lib/auth";
+import { subscribeDataChanged, subscribeUserNotification } from "@/lib/eventBus";
 
-// Un flux SSE lit `headers()`/`cookies()` (via `getSession()`) et ne doit
+// Un flux SSE lit `headers()`/`cookies()` (via `auth()`) et ne doit
 // jamais être mis en cache — explicite plutôt que de compter sur l'opt-out
 // implicite de ces appels (voir node_modules/next/dist/docs, Route Handlers).
 export const dynamic = "force-dynamic";
@@ -20,20 +20,22 @@ function sseMessage(event: string, data: string): Uint8Array {
 }
 
 /**
- * Flux d'évènements en temps réel (Server-Sent Events) — remplace le
- * polling à intervalle fixe (voir CLAUDE.md "Rafraîchissement en temps
- * réel") : chaque onglet ouvert sur l'AppShell garde une connexion HTTP
- * longue ouverte sur cette route, et reçoit un évènement `data-changed`
- * dès qu'une Server Action pertinente publie sur `src/lib/eventBus.ts`.
+ * Flux d'évènements en temps réel (Server-Sent Events) :
+ * 1. Évènement global `data-changed`
+ * 2. Évènement ciblé `notification` avec payload complet pour l'utilisateur connecté
  *
- * Réservé aux sessions authentifiées (401 sinon) — un utilisateur non
- * connecté est sur `/login`, sans AppShell à rafraîchir.
+ * PERF-01 : `auth()` (JWT uniquement, 0 requête DB) remplace `getSession()`
+ * (3 requêtes Prisma + ensureFeedbackModuleAndPermission) — seul l'`id` de
+ * l'utilisateur est nécessaire ici pour cibler le bon listener SSE. Les
+ * permissions complètes ne sont pas nécessaires pour établir le flux.
  */
 export async function GET() {
-  const session = await getSession();
-  if (!session) {
+  // PERF-01 : auth() lit uniquement le JWT — aucune requête base de données
+  const session = await auth();
+  if (!session?.user?.id) {
     return new Response("Non authentifié.", { status: 401 });
   }
+  const userId = session.user.id as string;
 
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -44,17 +46,23 @@ export async function GET() {
         try {
           controller.enqueue(sseMessage(event, data));
         } catch {
-          // Le contrôleur a pu être fermé entre-temps par une déconnexion
-          // client (race avec `cancel()` ci-dessous) — rien à faire de plus,
-          // `cancel()` se charge du nettoyage (désabonnement, heartbeat).
+          // Le contrôleur a pu être fermé entre-temps par une déconnexion client
         }
       };
 
-      unsubscribe = subscribeDataChanged(() => send("data-changed", "1"));
+      const unsubData = subscribeDataChanged(() => send("data-changed", "1"));
+      const unsubNotif = subscribeUserNotification(userId, (notif) => {
+        send("notification", JSON.stringify(notif));
+      });
+
+      unsubscribe = () => {
+        unsubData();
+        unsubNotif();
+      };
+
       heartbeat = setInterval(() => send("ping", "1"), HEARTBEAT_INTERVAL_MS);
 
-      // Confirme immédiatement l'ouverture de la connexion, avant même le
-      // premier heartbeat périodique.
+      // Confirme immédiatement l'ouverture de la connexion
       send("ping", "1");
     },
     cancel() {

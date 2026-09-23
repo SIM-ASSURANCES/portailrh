@@ -7,7 +7,7 @@ import { prisma } from "backend";
 import { timeToMinutes } from "backend";
 import { revalidatePath } from "next/cache";
 import { ActionState, fieldErrorsFromZod } from "backend";
-import { createNotification } from "@/lib/notifications";
+import { notify } from "@/lib/notifications";
 
 const pointageExceptionnelSchema = z.object({
   collaborateurId: z.string().min(1, "Veuillez sélectionner un collaborateur"),
@@ -122,19 +122,23 @@ export async function enregistrerPointageRHAction(
     });
 
     // Envoi des notifications au collaborateur
-    await createNotification({
+    await notify({
       userId: collaborateurId,
       titre: "Pointage exceptionnel",
       message: `Un pointage (${type === "ARRIVEE" ? "Arrivée" : "Départ"}) a été saisi pour vous par ${session.user.fullName}.`,
       lien: "/pointage",
+      priority: "IMPORTANT",
+      category: "POINTAGE",
     });
 
     if (result.absenceRegularisee) {
-      await createNotification({
+      await notify({
         userId: collaborateurId,
         titre: "Absence régularisée",
         message: "Votre anomalie de pointage pour aujourd'hui a été régularisée par les RH.",
         lien: "/pointage",
+        priority: "IMPORTANT",
+        category: "POINTAGE",
       });
     }
 

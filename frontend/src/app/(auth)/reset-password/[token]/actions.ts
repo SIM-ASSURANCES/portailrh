@@ -7,6 +7,7 @@ import { z } from "zod";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
+import { sendEmail, generatePasswordChangedEmail } from "@/lib/email";
 
 const SALT_ROUNDS = 10;
 
@@ -98,6 +99,27 @@ export async function resetPasswordAction(
   ]);
 
   publishDataChanged();
+
+  // Notification de sécurité par email après réinitialisation réussie
+  try {
+    const baseUrl = process.env.AUTH_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
+    const emailPayload = generatePasswordChangedEmail({
+      fullName: user.fullName,
+      email: user.email,
+      changedAt: new Date(),
+      actionUrl: `${baseUrl}/login`,
+      resetUrl: `${baseUrl}/forgot-password`,
+    });
+    await sendEmail({
+      to: user.email,
+      subject: emailPayload.subject,
+      html: emailPayload.html,
+      text: emailPayload.text,
+      userId: user.id,
+    });
+  } catch (err) {
+    console.error("Erreur lors de l'envoi de l'email de sécurité après réinitialisation:", err);
+  }
 
   redirect("/login?reset=success");
 }

@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
-import { notifierParPermission } from "@/lib/notifications";
+import { notifyByPermission } from "@/lib/notifications";
 import { calculerMontantARetournerNet, getDateDernierReglementConfirme, prisma } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
@@ -204,10 +204,12 @@ export async function creerRetourCaisseAction(
   revalidatePath("/treso/finance", "layout");
   publishDataChanged();
 
-  await notifierParPermission("treso.receptionner_retour", {
+  await notifyByPermission("treso.receptionner_retour", {
     titre: "Retour de caisse à réceptionner",
     message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}.`,
     lien: "/treso/finance/retours",
+    priority: "IMPORTANT",
+    category: "TRESORERIE",
   });
 
   return {
@@ -421,7 +423,7 @@ export async function signalerErreurRetourAction(retourId: string, commentaire: 
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   publishDataChanged();
 
-  await notifierParPermission("treso.receptionner_retour", {
+  await notifyByPermission("treso.receptionner_retour", {
     titre: "Erreur signalée sur un retour de caisse",
     message: `Le collaborateur a signalé une erreur sur le détail d'un retour de caisse de la demande ${retour.reglement.demande.reference}.`,
     lien: `/treso/finance/retours/${retourId}`,

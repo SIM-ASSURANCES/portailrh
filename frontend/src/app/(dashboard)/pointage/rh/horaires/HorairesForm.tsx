@@ -18,6 +18,7 @@ export function HorairesForm({ config }: { config: ParametrageHoraire | null }) 
   const defMatinFin = config?.heureFinMatin || "";
   const defApremDeb = config?.heureDebutApresMidi || "";
   const defApremFin = config?.heureFinApresMidi || "";
+  const defDelai = config?.delaiAlerteOubliDepartMinutes ?? 30;
 
   return (
     <form action={formAction} className="space-y-8 max-w-2xl bg-card p-6 rounded-lg border shadow-sm">
@@ -61,6 +62,25 @@ export function HorairesForm({ config }: { config: ParametrageHoraire | null }) 
             defaultValue={defApremFin}
             required
             error={fieldErrors?.heureFinApresMidi}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-lg font-medium border-b pb-2">Alerte d&apos;oubli de départ</h3>
+        <p className="text-xs text-muted-foreground">
+          Délai d&apos;attente après l&apos;heure de fin de journée avant d&apos;envoyer automatiquement une alerte push, email et interne au collaborateur et aux RH.
+        </p>
+        <div className="max-w-xs">
+          <Input
+            label="Délai d'attente (en minutes)"
+            name="delaiAlerteOubliDepartMinutes"
+            type="number"
+            min={0}
+            max={360}
+            defaultValue={defDelai}
+            required
+            error={fieldErrors?.delaiAlerteOubliDepartMinutes}
           />
         </div>
       </div>

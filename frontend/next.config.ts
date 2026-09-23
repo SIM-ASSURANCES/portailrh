@@ -52,10 +52,36 @@ const nextConfig: NextConfig = {
           { key: "X-XSS-Protection", value: "1; mode=block" },
           { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
+          // SEC-03 : Content-Security-Policy — bloque les XSS et les ressources
+          // non autorisées. 'unsafe-inline' est nécessaire pour les styles
+          // injectés par Next.js/Tailwind. Firebase FCM nécessite les domaines
+          // googleapis.com et fcm.googleapis.com.
+          {
+            key: "Content-Security-Policy",
+            value: [
+              "default-src 'self'",
+              // Next.js injecte des scripts inline + chunks depuis /_next/
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://apis.google.com",
+              // Styles inline (Next.js/Tailwind) + Google Fonts
+              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+              "font-src 'self' https://fonts.gstatic.com",
+              // Images : photos profil locales, data URI, blob (recadrage)
+              "img-src 'self' data: blob:",
+              // SSE, API, Firebase FCM
+              "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://fcm.googleapis.com wss://*.firebaseio.com",
+              // Service Worker Firebase Messaging
+              "worker-src 'self' blob:",
+              "frame-src 'none'",
+              "object-src 'none'",
+              "base-uri 'self'",
+              "form-action 'self'",
+            ].join("; "),
+          },
         ],
       },
     ];
   },
+
 };
 
 export default nextConfig;

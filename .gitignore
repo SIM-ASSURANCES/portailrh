@@ -95,6 +95,9 @@ frontend/public/uploads/profiles/*
 .postman
 /postman/
 
-#cdc
-CDC_parties_feedback.txt
-CDC_FeedbackApp_SIM_Assurances.pdf 
+backend/src/__tests__/
+powershell.cmd
+powershell.bat
+frontend/powershell.cmd
+frontend/powershell.bat
+CHARTE GRAPHIQUE SIM ASSURANCE CI (1) (1).pdf

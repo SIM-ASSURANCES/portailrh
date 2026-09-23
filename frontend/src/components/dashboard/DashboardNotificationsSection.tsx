@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
 
@@ -28,17 +29,24 @@ export function DashboardNotificationsSection({
   notifications: initialNotifications,
   alerts,
 }: DashboardNotificationsSectionProps) {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<NotificationItem[]>(initialNotifications);
   const [selectedNotif, setSelectedNotif] = useState<NotificationItem | null>(null);
 
   const handleSelectNotif = async (notif: NotificationItem) => {
-    setSelectedNotif(notif);
     if (!notif.estLue) {
       await markNotificationAsRead(notif.id);
       setNotifications((prev) =>
         prev.map((n) => (n.id === notif.id ? { ...n, estLue: true } : n))
       );
     }
+
+    if (notif.lien) {
+      router.push(notif.lien);
+      return;
+    }
+
+    setSelectedNotif(notif);
   };
 
   const handleMarkAsRead = async (id: string) => {

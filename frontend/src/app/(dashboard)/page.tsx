@@ -133,14 +133,50 @@ export default async function DashboardHomePage({
     ...getModuleCardState(module_.key, session),
   }));
 
-  // 1. Notifications personnelles récentes de l'utilisateur
-  const rawNotifications = session?.user
-    ? await prisma.notification.findMany({
-        where: { userId: session.user.id },
-        orderBy: { createdAt: "desc" },
-        take: 5,
-      })
-    : [];
+  // PERF-03 : Toutes les queries indépendantes après la session sont
+  // parallélisées — notifications + topbarAlert + compteurs d'alertes
+  // contextuelles en un seul round-trip au lieu de N séquentiels.
+  const [
+    rawNotifications,
+    topbarAlertResult,
+    retoursADeclarerResult,
+    demandesAValiderResult,
+    validationsDGResult,
+    absencesAControlerResult,
+  ] = await Promise.all([
+    session?.user
+      ? prisma.notification.findMany({
+          where: { userId: session.user.id },
+          orderBy: { createdAt: "desc" },
+          take: 5,
+        })
+      : Promise.resolve([]),
+    // PERF-05 : getTopbarAlert est appelée aussi dans le layout — le cache()
+    // de React ne dé-duplique que dans un même render tree SERVER, mais
+    // ici layout et page partagent effectivement le même render. Ce
+    // Promise.all regroupe aussi cette query avec les autres pour éviter
+    // tout séquencement.
+    session?.user
+      ? getTopbarAlert(session.user.id, hasPermission(session, "pointage.pointer"))
+      : Promise.resolve(null),
+    session?.user && hasPermission(session, "treso.declarer_retour")
+      ? getMesRetoursADeclarer(session.user.id)
+      : Promise.resolve({ nombre: 0 }),
+    session?.user && hasPermission(session, "treso.valider_demande")
+      ? prisma.demande.count({ where: { statut: "EN_ATTENTE_VALIDATION" } })
+      : Promise.resolve(0),
+    session?.user && hasPermission(session, "treso.approuver_validation_complete")
+      ? prisma.demande.count({
+          where: {
+            validationCompleteParDG: false,
+            statut: { in: ["REGLEE", "PARTIELLEMENT_REGLEE"] },
+          },
+        })
+      : Promise.resolve(0),
+    session?.user && hasPermission(session, "pointage.voir_dashboard_rh")
+      ? prisma.absence.count({ where: { statut: "A_CONTROLER" } })
+      : Promise.resolve(0),
+  ]);
 
   const serializedNotifications = rawNotifications.map((n) => ({
     id: n.id,
@@ -151,98 +187,71 @@ export default async function DashboardHomePage({
     createdAt: n.createdAt.toISOString(),
   }));
 
-  // 2. Alertes contextuelles prioritaires
+  // 2. Alertes contextuelles prioritaires — construites à partir des résultats parallèles
   const alerts: DashboardAlertItem[] = [];
 
   if (session?.user) {
-    // Alerte pointage départ / jour férié
-    const topbarAlert = await getTopbarAlert(
-      session.user.id,
-      hasPermission(session, "pointage.pointer")
-    );
-    if (topbarAlert) {
+    if (topbarAlertResult) {
       alerts.push({
         id: "topbar_alert",
-        title: topbarAlert.message,
+        title: topbarAlertResult.message,
         description:
-          topbarAlert.id === "depart_non_pointe"
+          topbarAlertResult.id === "depart_non_pointe"
             ? "Votre pointage de départ n'a pas encore été enregistré pour aujourd'hui. Pensez à pointer avant de partir."
+            : topbarAlertResult.id === "fin_journee_proche"
+            ? "La fin de journée approche. Pensez à pointer votre départ dès l'horaire réglementaire atteint."
             : undefined,
-        href: topbarAlert.href,
-        variant: topbarAlert.variant,
-        icon: topbarAlert.variant === "danger" ? "clock" : "calendar",
+        href: topbarAlertResult.href,
+        variant: topbarAlertResult.variant,
+        icon: topbarAlertResult.variant === "danger" || topbarAlertResult.variant === "warning" ? "clock" : "calendar",
       });
     }
 
-    // Collaborateur : Retours de caisse à déclarer
-    if (hasPermission(session, "treso.declarer_retour")) {
-      const { nombre: retoursADeclarer } = await getMesRetoursADeclarer(session.user.id);
-      if (retoursADeclarer > 0) {
-        alerts.push({
-          id: "retours_a_declarer",
-          title: `${retoursADeclarer} retour(s) de caisse à déclarer`,
-          description: "Des avances de fonds reçues nécessitent la justification et le dépôt de vos pièces de dépenses.",
-          href: "/treso/demandes/retours-a-declarer",
-          variant: "warning",
-          icon: "rotate-ccw",
-        });
-      }
+    if (retoursADeclarerResult.nombre > 0) {
+      alerts.push({
+        id: "retours_a_declarer",
+        title: `${retoursADeclarerResult.nombre} retour(s) de caisse à déclarer`,
+        description: "Des avances de fonds reçues nécessitent la justification et le dépôt de vos pièces de dépenses.",
+        href: "/treso/demandes/retours-a-declarer",
+        variant: "warning",
+        icon: "rotate-ccw",
+      });
     }
 
-    // Finance : Demandes en attente de validation
-    if (hasPermission(session, "treso.valider_demande")) {
-      const demandesAValider = await prisma.demande.count({
-        where: { statut: "EN_ATTENTE_VALIDATION" },
+    if (demandesAValiderResult > 0) {
+      alerts.push({
+        id: "demandes_a_valider",
+        title: `${demandesAValiderResult} demande(s) en attente de validation`,
+        description: "Des demandes d'achat sont en attente de traitement et validation par l'équipe Finance.",
+        href: "/treso/finance/demandes",
+        variant: "warning",
+        icon: "wallet",
       });
-      if (demandesAValider > 0) {
-        alerts.push({
-          id: "demandes_a_valider",
-          title: `${demandesAValider} demande(s) en attente de validation`,
-          description: "Des demandes d'achat sont en attente de traitement et validation par l'équipe Finance.",
-          href: "/treso/finance/demandes",
-          variant: "warning",
-          icon: "wallet",
-        });
-      }
     }
 
-    // DG : Validations complètes en attente d'approbation finale
-    if (hasPermission(session, "treso.approuver_validation_complete")) {
-      const validationsDG = await prisma.demande.count({
-        where: {
-          validationCompleteParDG: false,
-          statut: { in: ["REGLEE", "PARTIELLEMENT_REGLEE"] },
-        },
+    if (validationsDGResult > 0) {
+      alerts.push({
+        id: "validations_dg",
+        title: `${validationsDGResult} validation(s) complète(s) en attente DG`,
+        description: "Verrou de clôture finale : votre approbation de Direction Générale est requise.",
+        href: "/treso/finance/validations-attente",
+        variant: "warning",
+        icon: "shield-check",
       });
-      if (validationsDG > 0) {
-        alerts.push({
-          id: "validations_dg",
-          title: `${validationsDG} validation(s) complète(s) en attente DG`,
-          description: "Verrou de clôture finale : votre approbation de Direction Générale est requise.",
-          href: "/treso/finance/validations-attente",
-          variant: "warning",
-          icon: "shield-check",
-        });
-      }
     }
 
-    // RH : Absences à contrôler
-    if (hasPermission(session, "pointage.voir_dashboard_rh")) {
-      const absencesAControler = await prisma.absence.count({
-        where: { statut: "A_CONTROLER" },
+    if (absencesAControlerResult > 0) {
+      alerts.push({
+        id: "absences_a_controler",
+        title: `${absencesAControlerResult} absence(s) en attente de contrôle RH`,
+        description: "Des absences détectées nécessitent une vérification ou justification.",
+        href: "/pointage/rh/absences",
+        variant: "info",
+        icon: "users",
       });
-      if (absencesAControler > 0) {
-        alerts.push({
-          id: "absences_a_controler",
-          title: `${absencesAControler} absence(s) en attente de contrôle RH`,
-          description: "Des absences détectées nécessitent une vérification ou justification.",
-          href: "/pointage/rh/absences",
-          variant: "info",
-          icon: "users",
-        });
-      }
     }
   }
+
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">

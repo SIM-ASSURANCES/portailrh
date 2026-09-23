@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { prisma, timeToMinutes } from "backend";
 
 export interface TopbarAlertData {
@@ -9,7 +10,10 @@ export interface TopbarAlertData {
   pulse?: boolean;
 }
 
-export async function getTopbarAlert(
+// PERF-05 : getTopbarAlert est appelée à la fois par le layout racine et par
+// la page d'accueil du dashboard dans le même cycle de rendu Server Components.
+// Le wrapper `cache()` de React dé-duplique l'exécution par requête.
+export const getTopbarAlert = cache(async function getTopbarAlert(
   userId: string,
   canPointer: boolean
 ): Promise<TopbarAlertData | null> {
@@ -54,9 +58,29 @@ export async function getTopbarAlert(
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
     const departMinutes = timeToMinutes(heureLimiteDepart);
 
-    // Alerte rouge : l'utilisateur a pointé son arrivée, n'a pas encore pointé son départ,
-    // et nous approchons ou avons dépassé l'heure de départ réglementaire (ou à partir de 15h30)
-    if (hasArrivee && !hasDepart && currentMinutes >= departMinutes - 60) {
+    // 1. Rappel amical : à partir de 30 minutes avant l'heure de départ
+    if (hasArrivee && !hasDepart && currentMinutes >= departMinutes - 30 && currentMinutes < departMinutes) {
+      const minutesRestantes = departMinutes - currentMinutes;
+      let contexte = "";
+      if (jourFerieDemain) {
+        contexte = ` (Demain férié : ${jourFerieDemain.libelle})`;
+      } else if (isFriday) {
+        contexte = " (Bientôt le week-end !)";
+      }
+
+      return {
+        id: "fin_journee_proche",
+        message: `Fin de journée dans ${minutesRestantes} minute${minutesRestantes > 1 ? "s" : ""} !${contexte}`,
+        shortMessage: `Fin dans ${minutesRestantes} min`,
+        href: "/pointage/pointer",
+        variant: "warning",
+        pulse: false,
+      };
+    }
+
+    // 2. Alerte rouge : l'utilisateur a pointé son arrivée, n'a pas encore pointé son départ,
+    // et l'heure de départ réglementaire est atteinte ou dépassée
+    if (hasArrivee && !hasDepart && currentMinutes >= departMinutes) {
       let contexte = "";
       if (jourFerieDemain) {
         contexte = ` (Demain férié : ${jourFerieDemain.libelle})`;
@@ -95,4 +119,4 @@ export async function getTopbarAlert(
   }
 
   return null;
-}
+});

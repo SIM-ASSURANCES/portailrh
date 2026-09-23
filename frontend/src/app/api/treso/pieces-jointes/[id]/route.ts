@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { prisma } from "backend";
 
-const UPLOAD_DIR = path.join(process.cwd(), "uploads");
+const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 
 const MIME_PAR_EXTENSION: Record<string, string> = {
   pdf: "application/pdf",
@@ -81,8 +81,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const extension = piece.url.split(".").pop() ?? "";
   const contentType = MIME_PAR_EXTENSION[extension] ?? "application/octet-stream";
 
+  // SEC-07 : Vérification path traversal — le chemin résolu doit rester
+  // strictement sous UPLOAD_DIR. piece.url est généré server-side (UUID),
+  // mais cette garde défensive protège contre une corruption de données.
+  const resolvedFilePath = path.resolve(UPLOAD_DIR, piece.url);
+  if (!resolvedFilePath.startsWith(UPLOAD_DIR + path.sep) && resolvedFilePath !== UPLOAD_DIR) {
+    return new NextResponse("Chemin de fichier invalide.", { status: 400 });
+  }
+
   try {
-    const bytes = await readFile(path.join(UPLOAD_DIR, piece.url));
+    const bytes = await readFile(resolvedFilePath);
     return new NextResponse(new Uint8Array(bytes), {
       status: 200,
       headers: {

@@ -81,6 +81,9 @@ model User {
   absencesDeclarees      Absence[]               @relation("AbsenceEmploye")
   absencesControlees     Absence[]               @relation("AbsenceControlePar")
   notifications          Notification[]
+  /// Tokens FCM (notifications push, voir CLAUDE.md côté Thierry) —
+  /// plusieurs appareils/navigateurs possibles par utilisateur.
+  fcmTokens              FcmToken[]
   plagesAbsenceAutorisee PlageAbsenceAutorisee[]
 
   /// Délégations individuelles de permission Trésorerie/Pointage RH que cet
@@ -226,18 +229,62 @@ model HistoriqueEntry {
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
+
+  // PERF-06 : Index composé (entity + entityId) pour les requêtes
+  // "tous les historiques d'une Demande/User/etc." qui filtrent sur les deux.
+  // Index sur createdAt pour les tris chronologiques et les recherches par
+  // période (ex: derniereActivations dans le CRON d'absences).
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@index([userId])
+}
+
+/// Niveaux de priorité des notifications (routage des canaux)
+enum NotificationPriority {
+  CRITIQUE    // Email + FCM Push + In-app
+  IMPORTANT   // FCM Push + In-app
+  INFO        // In-app uniquement
+}
+
+/// Catégories fonctionnelles des notifications
+enum NotificationCategory {
+  TRESORERIE
+  POINTAGE
+  RH
+  ADMIN
+  SYSTEME
 }
 
 model Notification {
-  id        String   @id @default(cuid())
+  id        String               @id @default(cuid())
   titre     String
   message   String
   lien      String?
-  estLue    Boolean  @default(false)
+  estLue    Boolean              @default(false)
+  priority  NotificationPriority @default(INFO)
+  category  NotificationCategory @default(SYSTEME)
+  pushSent  Boolean              @default(false)
+  emailSent Boolean              @default(false)
+  createdAt DateTime             @default(now())
+
+  userId    String
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, estLue, createdAt])
+}
+
+/// Tokens FCM d'un utilisateur (multi-navigateurs / multi-appareils)
+model FcmToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userAgent String?
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // ============================================================
@@ -477,6 +524,13 @@ model Demande {
   @@index([createurId])
   @@index([statut])
   @@index([beneficiaireUserId])
+  // PERF-06 : Index sur categorieId pour les agrégats budget par catégorie
+  // (getMontantConsommeCategorie, très sollicité dans le reporting et
+  // l'affichage des budgets sur le formulaire de demande).
+  @@index([categorieId])
+  // PERF-06 : Index sur validationCompleteParDG pour les compteurs DG du
+  // dashboard Finance et le filtre "validations en attente DG".
+  @@index([validationCompleteParDG, statut])
 }
 
 /// Stockage local sur disque (`./uploads/`, hors dépôt git — voir
@@ -617,6 +671,12 @@ model Reglement {
 
   createdAt  DateTime  @default(now())
   confirmeAt DateTime?
+
+  // PERF-06 : Index sur demandeId, utilisé dans TOUS les agrégats de
+  // règlement (groupBy par demandeId, getTotalRegle, getResteARegler,
+  // générés sur chaque affichage Finance).
+  @@index([demandeId])
+  @@index([demandeId, estConfirme, estAnnule])
 }
 
 /// Une ligne = la part explicite de `Reglement.montant` que Finance a
@@ -711,6 +771,14 @@ model RetourCaisse {
   /// `RetourCaisse` lui-même) : un même retour peut être signalé plusieurs
   /// fois au fil du temps (signalé, corrigé, signalé à nouveau...).
   signalements SignalementRetour[]
+
+  // PERF-06 : Index sur reglementId pour les jointures fréquentes (un
+  // règlement a au plus un retour, mais la jointure Reglement → RetourCaisse
+  // est systématique dans le tableau de bord Finance et les listes de
+  // règlements à compléter).
+  @@index([reglementId])
+  @@index([declarantId])
+  @@index([estReceptionne])
 }
 
 /// Signalement d'erreur soumis par le Collaborateur créateur de la demande
@@ -872,6 +940,8 @@ model ParametrageHoraire {
   heureDebutApresMidi   String
   heureFinApresMidi     String
   isActive              Boolean  @default(true)
+  /// Délai d'attente en minutes après l'heure de fin avant d'envoyer l'alerte d'oubli de départ (défaut: 30)
+  delaiAlerteOubliDepartMinutes Int @default(30)
   /// Activer le pointage par géolocalisation GPS comme fallback réseau
   geolocalisationActive Boolean  @default(false)
   /// Latitude GPS du bureau (point de référence pour le calcul de distance)

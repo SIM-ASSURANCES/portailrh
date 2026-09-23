@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
+import { notify } from "@/lib/notifications";
 import { getSession } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 import { StatutAbsence } from "backend";
@@ -31,14 +32,30 @@ export async function traiterAbsence(absenceId: string, statut: StatutAbsence, m
       return { status: "error", message: "Le motif est obligatoire" };
     }
 
-    await prisma.absence.update({
+    const updatedAbsence = await prisma.absence.update({
       where: { id: absenceId },
       data: {
         statut,
         motif,
         controleParId: session.user.id,
-      }
+      },
     });
+
+    if (statut === "CONFIRMEE") {
+      const dateFormatee = new Date(updatedAbsence.date).toLocaleDateString("fr-FR", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+      await notify({
+        userId: updatedAbsence.userId,
+        titre: "Absence non justifiée confirmée",
+        message: `Votre absence du ${dateFormatee} a été marquée non justifiée par les RH. Motif : ${motif}`,
+        lien: "/pointage/historique",
+        priority: "CRITIQUE",
+        category: "RH",
+      });
+    }
 
     revalidatePath("/pointage/rh/absences");
     publishDataChanged();
