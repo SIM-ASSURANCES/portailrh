@@ -219,6 +219,14 @@ model HistoriqueEntry {
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
+
+  // PERF-06 : Index composé (entity + entityId) pour les requêtes
+  // "tous les historiques d'une Demande/User/etc." qui filtrent sur les deux.
+  // Index sur createdAt pour les tris chronologiques et les recherches par
+  // période (ex: derniereActivations dans le CRON d'absences).
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@index([userId])
 }
 
 /// Niveaux de priorité des notifications (routage des canaux)
@@ -473,6 +481,13 @@ model Demande {
   @@index([createurId])
   @@index([statut])
   @@index([beneficiaireUserId])
+  // PERF-06 : Index sur categorieId pour les agrégats budget par catégorie
+  // (getMontantConsommeCategorie, très sollicité dans le reporting et
+  // l'affichage des budgets sur le formulaire de demande).
+  @@index([categorieId])
+  // PERF-06 : Index sur validationCompleteParDG pour les compteurs DG du
+  // dashboard Finance et le filtre "validations en attente DG".
+  @@index([validationCompleteParDG, statut])
 }
 
 /// Stockage local sur disque (`./uploads/`, hors dépôt git — voir
@@ -547,6 +562,12 @@ model Reglement {
 
   createdAt  DateTime  @default(now())
   confirmeAt DateTime?
+
+  // PERF-06 : Index sur demandeId, utilisé dans TOUS les agrégats de
+  // règlement (groupBy par demandeId, getTotalRegle, getResteARegler,
+  // générés sur chaque affichage Finance).
+  @@index([demandeId])
+  @@index([demandeId, estConfirme, estAnnule])
 }
 
 /// Fonds remis (cahier des charges sections 8-9, Phase D) : un retour de
@@ -589,6 +610,14 @@ model RetourCaisse {
   /// `Reglement.confirmeAt` (Ticket 9) pour la même distinction
   /// évènement-réel / horodatage-d'écriture.
   dateRetour DateTime?
+
+  // PERF-06 : Index sur reglementId pour les jointures fréquentes (un
+  // règlement a au plus un retour, mais la jointure Reglement → RetourCaisse
+  // est systématique dans le tableau de bord Finance et les listes de
+  // règlements à compléter).
+  @@index([reglementId])
+  @@index([declarantId])
+  @@index([estReceptionne])
 }
 
 /// Une ligne de dépense détaillée d'un `RetourCaisse` (cahier des charges

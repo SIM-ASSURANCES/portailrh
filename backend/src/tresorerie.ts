@@ -650,10 +650,10 @@ export interface MaDemandeDetail {
  * (`totalRegle - depensesDeclarees - retoursRecus`), seul le double appel
  * est évité.
  *
- * N+1 assumé (3 agrégats par demande) : le volume de demandes d'un seul
- * Collaborateur reste toujours modeste (même hypothèse que
- * `getReglementsCaisseADeclarer`/`RetoursADeclarerPage`), pas la même
- * échelle qu'un écran Finance portant sur toute l'organisation.
+ * PERF-04 : Optimisation N+1 — les agrégats de règlements, de retours reçus
+ * et de dépenses déclarées sont regroupés par lots (`groupBy` et `findMany` avec
+ * filtre `demandeId: { in: ids }`) en 3 requêtes parallèles au lieu de 3 requêtes
+ * par demande (151 requêtes -> 4 requêtes pour 50 demandes).
  */
 export async function getMesDemandesDetail(userId: string): Promise<MaDemandeDetail[]> {
   const demandes = await prisma.demande.findMany({
@@ -661,25 +661,75 @@ export async function getMesDemandesDetail(userId: string): Promise<MaDemandeDet
     orderBy: { createdAt: "desc" },
   });
 
-  return Promise.all(
-    demandes.map(async (d) => {
-      const [montantRecu, depensesDeclarees, retoursRecus] = await Promise.all([
-        getTotalRegle(d.id),
-        getDepensesDeclarees(d.id),
-        getRetoursRecus(d.id),
-      ]);
-      return {
-        id: d.id,
-        reference: d.reference,
-        statut: d.statut,
-        montant: Number(d.montant),
-        montantValide: d.montantValide == null ? null : Number(d.montantValide),
-        montantRecu,
-        soldeARegulariser: montantRecu - depensesDeclarees - retoursRecus,
-        createdAt: d.createdAt,
-      };
-    })
-  );
+  if (demandes.length === 0) {
+    return [];
+  }
+
+  const ids = demandes.map((d) => d.id);
+
+  const [reglementsGrouped, retours, depenses] = await Promise.all([
+    prisma.reglement.groupBy({
+      by: ["demandeId"],
+      where: { demandeId: { in: ids }, estConfirme: true, estAnnule: false },
+      _sum: { montant: true },
+    }),
+    prisma.retourCaisse.findMany({
+      where: {
+        reglement: { demandeId: { in: ids } },
+        estReceptionne: true,
+      },
+      select: {
+        montantARetourner: true,
+        reglement: { select: { demandeId: true } },
+      },
+    }),
+    prisma.depenseLigne.findMany({
+      where: {
+        retourCaisse: { reglement: { demandeId: { in: ids } } },
+      },
+      select: {
+        montant: true,
+        retourCaisse: {
+          select: {
+            reglement: { select: { demandeId: true } },
+          },
+        },
+      },
+    }),
+  ]);
+
+  const regleParDemande = new Map<string, number>();
+  for (const r of reglementsGrouped) {
+    regleParDemande.set(r.demandeId, Number(r._sum.montant ?? 0));
+  }
+
+  const retoursParDemande = new Map<string, number>();
+  for (const ret of retours) {
+    const dId = ret.reglement.demandeId;
+    retoursParDemande.set(dId, (retoursParDemande.get(dId) ?? 0) + Number(ret.montantARetourner ?? 0));
+  }
+
+  const depensesParDemande = new Map<string, number>();
+  for (const dep of depenses) {
+    const dId = dep.retourCaisse.reglement.demandeId;
+    depensesParDemande.set(dId, (depensesParDemande.get(dId) ?? 0) + Number(dep.montant ?? 0));
+  }
+
+  return demandes.map((d) => {
+    const montantRecu = regleParDemande.get(d.id) ?? 0;
+    const depensesDeclarees = depensesParDemande.get(d.id) ?? 0;
+    const retoursRecus = retoursParDemande.get(d.id) ?? 0;
+    return {
+      id: d.id,
+      reference: d.reference,
+      statut: d.statut,
+      montant: Number(d.montant),
+      montantValide: d.montantValide == null ? null : Number(d.montantValide),
+      montantRecu,
+      soldeARegulariser: montantRecu - depensesDeclarees - retoursRecus,
+      createdAt: d.createdAt,
+    };
+  });
 }
 
 /**

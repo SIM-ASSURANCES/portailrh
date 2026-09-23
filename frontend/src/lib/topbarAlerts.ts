@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { prisma, timeToMinutes } from "backend";
 
 export interface TopbarAlertData {
@@ -9,7 +10,10 @@ export interface TopbarAlertData {
   pulse?: boolean;
 }
 
-export async function getTopbarAlert(
+// PERF-05 : getTopbarAlert est appelée à la fois par le layout racine et par
+// la page d'accueil du dashboard dans le même cycle de rendu Server Components.
+// Le wrapper `cache()` de React dé-duplique l'exécution par requête.
+export const getTopbarAlert = cache(async function getTopbarAlert(
   userId: string,
   canPointer: boolean
 ): Promise<TopbarAlertData | null> {
@@ -115,4 +119,4 @@ export async function getTopbarAlert(
   }
 
   return null;
-}
+});

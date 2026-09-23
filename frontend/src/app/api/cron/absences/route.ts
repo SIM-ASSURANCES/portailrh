@@ -2,13 +2,36 @@ import { NextResponse } from "next/server";
 import { prisma } from "backend";
 import type { Prisma } from "backend";
 import { notify } from "@/lib/notifications";
+import { timingSafeEqual } from "node:crypto";
 
 export async function GET(request: Request) {
-  // Basic security check (Mandatory for Cron jobs)
+  // SEC-06 : Comparaison en temps constant pour éviter les attaques par timing
+  // sur le CRON_SECRET (un `!==` standard révèle la longueur du token par le
+  // temps de réponse — `timingSafeEqual` garantit une durée identique quelle
+  // que soit la valeur comparée).
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  let isAuthorized = false;
+  if (cronSecret && authHeader) {
+    try {
+      const expectedToken = `Bearer ${cronSecret}`;
+      // Les deux buffers doivent avoir exactement la même longueur pour
+      // `timingSafeEqual` — un test de longueur préalable court-circuiterait
+      // le timing, mais exposer "mauvaise longueur" n'apporte pas d'info utile
+      // sur le secret lui-même.
+      if (authHeader.length === expectedToken.length) {
+        isAuthorized = timingSafeEqual(
+          Buffer.from(authHeader),
+          Buffer.from(expectedToken)
+        );
+      }
+    } catch {
+      isAuthorized = false;
+    }
+  }
+
+  if (!isAuthorized) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 

@@ -182,11 +182,20 @@ export const getSession = cache(async (): Promise<{
   // authentifiée (mémoïsée par requête via `cache()`, mais recalculée à
   // chaque nouvelle requête), ce changement réduit la latence de base de
   // strictement TOUT bouton du portail, sans changer le résultat.
-  // Garantit uniquement l'EXISTENCE du Module/Permission FeedbackApp — ne
-  // touche jamais qui la possède (voir CLAUDE.md "FeedbackApp" pour la
-  // régression corrigée : une version antérieure réattribuait aussi les
-  // RolePermission ici, écrasant silencieusement toute révocation Admin).
-  await ensureFeedbackModuleAndPermission();
+  // PERF-02 : ensureFeedbackModuleAndPermission() mise en cache dans un flag
+  // globalThis — exécutée une seule fois au premier démarrage du process
+  // Node (ou au premier hot-reload en dev), jamais sur les requêtes suivantes.
+  // L'opération est idempotente (upsert) : son résultat est stable dès
+  // qu'elle a réussi une fois — relancer l'upsert à chaque getSession()
+  // représentait un aller-retour DB inutile sur CHAQUE requête du portail.
+  // Voir CLAUDE.md "FeedbackApp" : cette fonction ne touche jamais qui
+  // possède la permission (la régression d'attribution silencieuse a été
+  // corrigée dans une version antérieure).
+  const globalForFeedback = globalThis as unknown as { _feedbackBootstrapDone?: boolean };
+  if (!globalForFeedback._feedbackBootstrapDone) {
+    await ensureFeedbackModuleAndPermission();
+    globalForFeedback._feedbackBootstrapDone = true;
+  }
 
   const [role, user, delegations] = await Promise.all([
     prisma.role.findUnique({

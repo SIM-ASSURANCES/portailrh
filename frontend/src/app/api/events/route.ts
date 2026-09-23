@@ -1,7 +1,7 @@
-import { getSession } from "@/lib/auth";
+import { auth } from "@/lib/auth";
 import { subscribeDataChanged, subscribeUserNotification } from "@/lib/eventBus";
 
-// Un flux SSE lit `headers()`/`cookies()` (via `getSession()`) et ne doit
+// Un flux SSE lit `headers()`/`cookies()` (via `auth()`) et ne doit
 // jamais être mis en cache — explicite plutôt que de compter sur l'opt-out
 // implicite de ces appels (voir node_modules/next/dist/docs, Route Handlers).
 export const dynamic = "force-dynamic";
@@ -23,12 +23,19 @@ function sseMessage(event: string, data: string): Uint8Array {
  * Flux d'évènements en temps réel (Server-Sent Events) :
  * 1. Évènement global `data-changed`
  * 2. Évènement ciblé `notification` avec payload complet pour l'utilisateur connecté
+ *
+ * PERF-01 : `auth()` (JWT uniquement, 0 requête DB) remplace `getSession()`
+ * (3 requêtes Prisma + ensureFeedbackModuleAndPermission) — seul l'`id` de
+ * l'utilisateur est nécessaire ici pour cibler le bon listener SSE. Les
+ * permissions complètes ne sont pas nécessaires pour établir le flux.
  */
 export async function GET() {
-  const session = await getSession();
-  if (!session) {
+  // PERF-01 : auth() lit uniquement le JWT — aucune requête base de données
+  const session = await auth();
+  if (!session?.user?.id) {
     return new Response("Non authentifié.", { status: 401 });
   }
+  const userId = session.user.id as string;
 
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -44,7 +51,7 @@ export async function GET() {
       };
 
       const unsubData = subscribeDataChanged(() => send("data-changed", "1"));
-      const unsubNotif = subscribeUserNotification(session.user.id, (notif) => {
+      const unsubNotif = subscribeUserNotification(userId, (notif) => {
         send("notification", JSON.stringify(notif));
       });
 
