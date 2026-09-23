@@ -1,14 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { toast } from "sonner";
+import Link from "next/link";
 
-import { Button, DataTable } from "@/components/ui";
+import { Badge, Button, DataTable } from "@/components/ui";
 import { JUSTIFICATION_LABEL } from "@/components/tresorerie/justification";
-import { MarquerNonJustifiee } from "@/components/tresorerie/MarquerNonJustifiee";
 import type { ModeReglement, TypeJustification } from "backend";
-
-import { receptionnerRetourAction } from "./retourActions";
 
 interface DepenseLigneRow {
   id: string;
@@ -19,8 +15,6 @@ interface DepenseLigneRow {
   justification: TypeJustification;
   commentaire: string | null;
   pieceJointeId: string | null;
-  /** Voir CLAUDE.md "Motif Finance sur dépense non justifiée" — `null` tant
-   * que Finance n'est jamais intervenue sur cette ligne précise. */
   motifNonJustifie: string | null;
   motifNonJustifiePar: string | null;
 }
@@ -38,6 +32,7 @@ interface RetourRow {
    * simplifié ("date + montant") — voir CLAUDE.md "Retour de caisse
    * optionnel — formulaire simplifié". */
   dateRetour: Date | null;
+  creeParAssistant: boolean;
   depenses: DepenseLigneRow[];
   createdAt: Date;
 }
@@ -47,45 +42,16 @@ interface RetourRow {
  * (Ticket 1) pour l'explication (colonnes avec accessor/render : fonctions
  * non sérialisables entre Server et Client Component).
  *
- * REFONTE V1 / Phase D (voir CLAUDE.md "Refonte V1 en cours") : remplace
- * les anciennes colonnes "Montant dépensé"/"Justification"/"Commentaire"
- * (un seul montant agrégé, Ticket 5) par une colonne "Détail des dépenses"
- * listant chaque `DepenseLigne`, et une colonne "Non justifié" mise en
- * évidence (`text-warning`) quand une part de la dépense n'a aucune pièce
- * (justification `SANS_PIECE`).
- *
- * `receptionnerRetourAction` est appelée directement (comme
- * `confirmerReglementAction` au Ticket 4), pas via `<form action={...}>` :
- * pas de champ à valider, juste un identifiant. La ligne réceptionnée
- * disparaît immédiatement de cette liste après succès, puisqu'elle n'est
- * plus `estReceptionne: false` (revalidatePath sur cette page).
- *
- * **`disabled`** (Tâche "Accès lecture seule du Responsable Finance à
- * Retours en attente", voir CLAUDE.md) — le bouton "Réceptionner" reste
- * VISIBLE mais désactivé pour un compte sans `treso.receptionner_retour`
- * (le Responsable Finance, en lecture seule), jamais absent ; propagé
- * aussi à `MarquerNonJustifiee` (même permission). La page appelante
- * n'affiche cette table qu'à ceux ayant déjà l'une des deux permissions
- * pertinentes (voir `page.tsx`), donc `disabled` ne signifie jamais ici
- * "aucun droit du tout", seulement "lecture seule".
+ * **"Voir" avant "Réceptionner"** (Tâche "Écran 'Voir' avant 'Réceptionner'",
+ * voir CLAUDE.md) — cette liste ne propose plus qu'UNE SEULE action directe
+ * par ligne : "Voir", menant au détail complet
+ * (`/treso/finance/retours/[id]`). Ni "Réceptionner" ni "Marquer non
+ * justifiée" ne sont plus actionnables depuis cette liste — les deux ont
+ * été déplacées sur l'écran de détail, après consultation. La colonne
+ * "Détail des dépenses" reste un simple résumé de LECTURE (objet, montant,
+ * justification, pièce jointe), jamais une action.
  */
-export function RetoursEnAttenteTable({ retours, disabled = false }: { retours: RetourRow[]; disabled?: boolean }) {
-  const [pendingId, setPendingId] = useState<string | null>(null);
-  const [, startTransition] = useTransition();
-
-  function handleReceptionner(id: string) {
-    setPendingId(id);
-    startTransition(async () => {
-      const result = await receptionnerRetourAction(id);
-      if (result.status === "success") {
-        toast.success(result.message);
-      } else {
-        toast.error(result.message);
-      }
-      setPendingId(null);
-    });
-  }
-
+export function RetoursEnAttenteTable({ retours }: { retours: RetourRow[] }) {
   return (
     <DataTable
       rowKey={(r) => r.id}
@@ -108,24 +74,10 @@ export function RetoursEnAttenteTable({ retours, disabled = false }: { retours: 
                 {r.dateRetour ? ` (déclaré pour le ${r.dateRetour.toLocaleDateString("fr-FR")})` : ""}
               </span>
             ) : (
-              <ul className="space-y-1.5 text-xs">
+              <ul className="space-y-1 text-xs">
                 {r.depenses.map((d) => (
-                  <li key={d.id} className="space-y-0.5">
-                    <div>
-                      {d.objet} — {d.montant.toLocaleString("fr-FR")} FCFA ({JUSTIFICATION_LABEL[d.justification]})
-                      {d.pieceJointeId ? (
-                        <>
-                          {" — "}
-                          <a
-                            href={`/api/treso/pieces-jointes/${d.pieceJointeId}`}
-                            className="text-info underline-offset-4 hover:text-primary hover:underline"
-                          >
-                            Pièce jointe
-                          </a>
-                        </>
-                      ) : null}
-                    </div>
-                    <MarquerNonJustifiee depense={d} disabled={disabled} />
+                  <li key={d.id}>
+                    {d.objet} — {d.montant.toLocaleString("fr-FR")} FCFA ({JUSTIFICATION_LABEL[d.justification]})
                   </li>
                 ))}
               </ul>
@@ -133,7 +85,7 @@ export function RetoursEnAttenteTable({ retours, disabled = false }: { retours: 
         },
         {
           key: "totalDeclare",
-          header: "Total déclaré",
+          header: "Total dépensé",
           sortable: true,
           accessor: (r) => r.totalDeclare,
           render: (r) => `${r.totalDeclare.toLocaleString("fr-FR")} FCFA`,
@@ -158,6 +110,16 @@ export function RetoursEnAttenteTable({ retours, disabled = false }: { retours: 
           render: (r) => `${r.montantARetourner.toLocaleString("fr-FR")} FCFA`,
         },
         {
+          key: "origine",
+          header: "Origine",
+          render: (r) =>
+            r.creeParAssistant ? (
+              <Badge variant="info">Assistant Finance</Badge>
+            ) : (
+              <span className="text-xs text-muted-foreground">Collaborateur</span>
+            ),
+        },
+        {
           key: "createdAt",
           header: "Déclaré le",
           sortable: true,
@@ -168,14 +130,11 @@ export function RetoursEnAttenteTable({ retours, disabled = false }: { retours: 
           key: "actions",
           header: "Actions",
           render: (r) => (
-            <Button
-              type="button"
-              loading={pendingId === r.id}
-              disabled={disabled}
-              onClick={() => handleReceptionner(r.id)}
-            >
-              Réceptionner
-            </Button>
+            <Link href={`/treso/finance/retours/${r.id}`}>
+              <Button type="button" variant="secondary">
+                Voir
+              </Button>
+            </Link>
           ),
         },
       ]}

@@ -9,13 +9,14 @@ import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesInterve
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
-import { STATUTS_VALIDATION_COMPLETE } from "backend";
+import { lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
 
 import { CategorisationForm } from "./CategorisationForm";
 import { ClotureActions } from "./ClotureActions";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { LignesValidationTable } from "./LignesValidationTable";
 import { ReglementsSection } from "./ReglementsSection";
+import { RetoursCaisseFinanceSection } from "./RetoursCaisseFinanceSection";
 import { ValidationActions } from "./ValidationActions";
 import { ValidationComplementaireActions } from "./ValidationComplementaireActions";
 import { ValidationCompleteDGActions } from "./ValidationCompleteDGActions";
@@ -299,6 +300,19 @@ export default async function CategoriserDemandePage({
           désormais fixe, uniforme quel que soit le statut. */}
       <DemandeHistorique demandeId={demande.id} />
 
+      {/* Tâche "L'Assistant Finance déclare les dépenses sur toute demande,
+          retour ou pas" + Tâche "Réouverture exceptionnelle post-clôture"
+          (voir CLAUDE.md) — affichée pour TOUT statut (y compris CLOTUREE,
+          la seule branche qui a réellement besoin de cette section) ; la
+          section elle-même ne rend rien si la demande n'a aucun règlement
+          Caisse confirmé. `canGererJustification` = `treso.receptionner_retour`,
+          déjà calculée plus haut pour `RegularisationSummary`. */}
+      <RetoursCaisseFinanceSection
+        demandeId={demande.id}
+        demandeEstCloturee={demande.statut === "CLOTUREE"}
+        canDeclarerAssistant={canGererJustification}
+      />
+
       {/* Verrou de clôture (Ticket 7) — indépendant du circuit de
           validation/règlement des Phases B/C, qui reste inchangé (n'affecte
           jamais l'éligibilité au règlement, seulement la clôture) : visible
@@ -576,7 +590,8 @@ export default async function CategoriserDemandePage({
             montantValide={Number(demande.montantValide)}
             canGererJustification={canGererJustification}
           />
-          {STATUTS_VALIDATION_COMPLETE.includes(demande.statut) && canCloturerDemande ? (
+          {(STATUTS_VALIDATION_COMPLETE.includes(demande.statut) || lignesToutesDecidees(demande.lignes)) &&
+          canCloturerDemande ? (
             demande.validationCompleteParDG ? (
               <ClotureActions demandeId={demande.id} />
             ) : (

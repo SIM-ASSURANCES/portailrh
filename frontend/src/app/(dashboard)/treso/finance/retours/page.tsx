@@ -72,6 +72,7 @@ export default async function RetoursEnAttentePage() {
       montantARetourner: Number(r.montantARetourner),
       montantNonJustifie,
       dateRetour: r.dateRetour,
+      creeParAssistant: r.creeParAssistant,
       depenses: r.depenses.map((d) => ({
         id: d.id,
         montant: Number(d.montant),
@@ -100,7 +101,7 @@ export default async function RetoursEnAttentePage() {
           justifiées sont réservés à l&apos;Assistant Finance.
         </p>
       ) : null}
-      <RetoursEnAttenteTable retours={retours} disabled={!canReceptionner} />
+      <RetoursEnAttenteTable retours={retours} />
     </div>
   );
 }

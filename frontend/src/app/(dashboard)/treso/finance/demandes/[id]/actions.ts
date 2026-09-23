@@ -7,7 +7,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { createNotification, notifierParPermission } from "@/lib/notifications";
 import { prisma } from "backend";
-import { calculerStatutDemande, getEcart, STATUTS_VALIDATION_COMPLETE } from "backend";
+import { calculerStatutDemande, getEcart, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
 /**
@@ -1187,7 +1187,10 @@ export async function cloturerDemandeAction(
     motifValide = motif.trim();
   }
 
-  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  const demande = await prisma.demande.findUnique({
+    where: { id: demandeId },
+    include: { lignes: { select: { statutValidation: true } } },
+  });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
@@ -1208,7 +1211,16 @@ export async function cloturerDemandeAction(
   // totale produit désormais VALIDEE_NON_REGLEE/PARTIELLEMENT_REGLEE/REGLEE
   // selon l'avancement du règlement (voir `calculerStatutDemande`). Voir
   // `STATUTS_VALIDATION_COMPLETE` dans src/lib/tresorerie.ts.
-  if (!STATUTS_VALIDATION_COMPLETE.includes(demande.statut)) {
+  //
+  // Tâche "Diagnostic DEM-2026-000009 bloquée" (voir CLAUDE.md) : pour une
+  // demande AVEC lignes, `PARTIELLEMENT_VALIDEE` (une ligne validée, une
+  // autre rejetée) n'a plus jamais vocation à évoluer vers un statut de
+  // `STATUTS_VALIDATION_COMPLETE` — `validerLignesAction` décide toutes les
+  // lignes en un seul geste, jamais de reliquat par ligne. Sans
+  // `lignesToutesDecidees`, une telle demande ne pouvait plus jamais être
+  // clôturée, alors même que son montant validé était intégralement réglé
+  // et régularisé.
+  if (!STATUTS_VALIDATION_COMPLETE.includes(demande.statut) && !lignesToutesDecidees(demande.lignes)) {
     return {
       status: "error",
       message: `Cette demande ne peut pas être clôturée (statut actuel : ${demande.statut}).`,

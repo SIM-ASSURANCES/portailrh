@@ -43,11 +43,50 @@ export const STATUTS_VALIDATION_COMPLETE: readonly StatutDemande[] = [
  * peut être mis à `true` que depuis `PARTIELLEMENT_VALIDEE` (garde de
  * `rejeterReliquatAction`), donc une demande encore `EN_ATTENTE_VALIDATION`
  * a toujours `reliquatRejete = false` par construction.
+ *
+ * **Deuxième bug réel du même type, trouvé et corrigé (Tâche "Diagnostic
+ * DEM-2026-000009 bloquée")** : pour une demande AVEC lignes, `PARTIELLEMENT_VALIDEE`
+ * (ou même `EN_ATTENTE_VALIDATION`, si TOUTES les lignes ont été rejetées —
+ * voir le piège déjà documenté dans "Validation ligne par ligne") ne
+ * signifie plus jamais "il reste une décision à prendre" une fois que
+ * `validerLignesAction` a déjà décidé TOUTES les lignes en un seul geste
+ * (jamais de reliquat par ligne, jamais de dévalidation) : le caractère
+ * partiel (une ligne validée, une autre rejetée) est alors définitif,
+ * exactement comme un reliquat explicitement rejeté ci-dessus. Sans cette
+ * distinction, une demande dont les lignes sont TOUTES décidées restait
+ * indéfiniment coincée dans "Demandes en attente de validation" — reproduit
+ * en pratique sur DEM-2026-000009 (2 lignes, l'une `VALIDEE`, l'autre
+ * `REJETEE`, `statut: PARTIELLEMENT_VALIDEE`) : présente dans la liste,
+ * mais aucune action de validation (ni de clôture, voir
+ * `STATUTS_VALIDATION_COMPLETE` ci-dessus) n'était plus jamais possible
+ * dessus. Exclusion ajoutée : une demande AVEC lignes ne compte comme "en
+ * attente" que si AU MOINS une ligne est encore `EN_ATTENTE` (une demande
+ * sans ligne n'est pas concernée par cette clause, `lignes.none: {}`).
  */
 export const DEMANDES_EN_ATTENTE_VALIDATION_WHERE = {
-  statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] },
   reliquatRejete: false,
+  OR: [
+    { lignes: { none: {} }, statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] } },
+    {
+      statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] },
+      lignes: { some: { statutValidation: "EN_ATTENTE" } },
+    },
+  ],
 } satisfies Prisma.DemandeWhereInput;
+
+/**
+ * Une demande AVEC lignes dont `statutValidation` de CHAQUE ligne n'est
+ * plus `EN_ATTENTE` — équivalent, pour le modèle "validation ligne par
+ * ligne", de `STATUTS_VALIDATION_COMPLETE` pour l'ancien modèle par
+ * montant global : `validerLignesAction` décide toutes les lignes en un
+ * seul geste, donc une fois cette fonction vraie, plus AUCUNE décision de
+ * validation n'est jamais plus possible sur cette demande, quel que soit
+ * son `statut` (`PARTIELLEMENT_VALIDEE` y compris, voir le bug ci-dessus).
+ * `false` pour une demande sans ligne (pas concernée par ce modèle).
+ */
+export function lignesToutesDecidees(lignes: { statutValidation: string }[]): boolean {
+  return lignes.length > 0 && lignes.every((l) => l.statutValidation !== "EN_ATTENTE");
+}
 
 /**
  * Somme des règlements confirmés et non annulés d'une demande — c'est le
@@ -461,6 +500,79 @@ export async function getMontantARetourner(retourCaisseId: string): Promise<numb
   }
   const totalDepenses = await getTotalDepensesDeclarees(retourCaisseId);
   return Math.max(0, Number(retour.reglement.montant) - totalDepenses);
+}
+
+/**
+ * Date du règlement CONFIRMÉ et non annulé le plus récent d'une demande
+ * (tout mode confondu — Caisse ou Banque, le décaissement lui-même est ce
+ * qui compte, pas le mode) — `null` si aucun règlement n'est encore
+ * confirmé. Sert de date plancher pour la date d'un retour de caisse (voir
+ * CLAUDE.md "Libellés et validations sur le formulaire de retour") : un
+ * retour ne peut logiquement pas être antérieur à l'argent qu'il est censé
+ * justifier.
+ */
+export async function getDateDernierReglementConfirme(demandeId: string): Promise<Date | null> {
+  const reglement = await prisma.reglement.findFirst({
+    where: { demandeId, estConfirme: true, estAnnule: false },
+    orderBy: { confirmeAt: "desc" },
+    select: { confirmeAt: true },
+  });
+  return reglement?.confirmeAt ?? null;
+}
+
+/**
+ * Calcule le `montantARetourner` d'un retour de caisse en tenant compte des
+ * AUTRES retours déjà existants sur le même règlement (Tâche "Retours
+ * multiples autorisés sur une même demande", voir CLAUDE.md) — généralise
+ * l'ancienne formule à un seul retour (`max(0, montant du règlement -
+ * dépenses déclarées)`), qui reste le résultat exact quand aucun autre
+ * retour n'existe encore sur ce règlement (comportement strictement
+ * inchangé pour le cas courant).
+ *
+ * Principe : le "restant" disponible pour un NOUVEAU retour est le montant
+ * du règlement moins tout ce que les AUTRES retours ont déjà consommé —
+ * leurs dépenses déclarées (comptées qu'ils soient déjà réceptionnés ou
+ * non, puisqu'une dépense déclarée reste une dépense déclarée) PLUS le
+ * montant déjà effectivement RENDU par ceux d'entre eux réceptionnés
+ * (jamais un retour encore en attente : cet argent n'a pas encore
+ * matériellement bougé, il reste donc disponible pour ce nouveau retour).
+ * `excludeRetourId` exclut le retour en cours de MODIFICATION de ce calcul
+ * (`modifierRetourCaisseAction`) — sinon il compterait ses propres anciennes
+ * lignes comme "un autre retour".
+ */
+export async function calculerMontantARetournerNet({
+  reglementId,
+  totalDepensesNouvelles,
+  excludeRetourId,
+}: {
+  reglementId: string;
+  totalDepensesNouvelles: number;
+  excludeRetourId?: string;
+}): Promise<number> {
+  const reglement = await prisma.reglement.findUnique({
+    where: { id: reglementId },
+    select: { montant: true },
+  });
+  if (!reglement) {
+    return 0;
+  }
+
+  const autresRetours = await prisma.retourCaisse.findMany({
+    where: { reglementId, ...(excludeRetourId ? { id: { not: excludeRetourId } } : {}) },
+    select: { estReceptionne: true, montantARetourner: true, depenses: { select: { montant: true } } },
+  });
+
+  let depensesAutres = 0;
+  let retoursRecusAutres = 0;
+  for (const r of autresRetours) {
+    depensesAutres += r.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
+    if (r.estReceptionne) {
+      retoursRecusAutres += Number(r.montantARetourner);
+    }
+  }
+
+  const restant = Math.max(0, Number(reglement.montant) - depensesAutres - retoursRecusAutres);
+  return Math.max(0, restant - totalDepensesNouvelles);
 }
 
 /**

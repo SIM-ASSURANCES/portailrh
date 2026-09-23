@@ -734,6 +734,382 @@ tracé (`HistoriqueEntry`, action `marquage_non_justifie`).
   valable pour ce champ précis (toujours vraie pour le reste de
   `DepenseLigne`, couverte transitivement via `RetourCaisse`/`Demande`).
 
+### Lot de retours Finance (libellés, retours multiples, Voir/Réceptionner, Assistant, réouverture exceptionnelle, pièces jointes)
+
+Six tâches distinctes traitées ensemble, chacune diagnostiquée avant
+implémentation.
+
+#### 1. Libellés et validations sur le formulaire de retour
+
+- **"Montant retourné" → "Montant à retourner"** (`RetourCaisseForm.tsx`,
+  formulaire simplifié Collaborateur) — **diagnostic** : le libellé exact
+  en base n'était pas "Montant" (comme le signalement le supposait) mais
+  déjà "Montant retourné" ; le champ visé ne faisant aucun doute (seul
+  champ de saisie du montant retourné par le Collaborateur), renommé
+  directement vers le libellé cible sans autre clarification nécessaire.
+  Le "Montant" du formulaire DÉTAILLÉ (montant d'une LIGNE de dépense,
+  concept différent) n'a volontairement pas été touché.
+- **"Total déclaré" → "Total dépensé"** — deux occurrences exactes
+  trouvées et renommées (`RetourCaisseRow.tsx` côté Collaborateur,
+  `RetoursEnAttenteTable.tsx`/l'écran de détail côté Finance) ; "Restant à
+  régulariser"/"Montant réglé (Caisse)" et libellés voisins non touchés
+  (n'existaient d'ailleurs pas sous ces noms exacts dans ces écrans).
+- **`getDateDernierReglementConfirme(demandeId)`** (nouvelle,
+  `tresorerie.ts`) — date du règlement CONFIRMÉ le plus récent (tout mode
+  confondu) d'une demande, `null` si aucun. Sert de plancher à la date de
+  retour du formulaire SIMPLIFIÉ uniquement (`dateRetour`, comparée en
+  granularité JOUR — un retour posé le même jour calendaire que la
+  confirmation reste valide) : contrainte `min` côté client (`RetourCaisseForm`)
+  ET revérifiée côté serveur (`creerRetourCaisseAction`), message précis
+  citant la date en cause. **Scope volontairement limité** au formulaire
+  simplifié (seul visé par le signalement) — les dates par ligne du
+  formulaire détaillé, et les lignes de `declarerRetourAssistantAction`
+  (voir plus bas), n'ont pas reçu cette contrainte.
+
+#### 2. Retours multiples autorisés sur une même demande
+
+**Diagnostic** : `creerRetourCaisseAction` bloquait tout nouveau retour
+dès qu'`UN` retour existait déjà sur le règlement (`reglement.retours.length
+> 0`), reçu ou non — c'est ce contrôle, pas une limite par demande, qui a
+été retiré. `getDepensesDeclarees`/`getRetoursRecus`/`getEcart`/
+`getSoldesARegulariserParReglements` sommaient déjà correctement sur TOUS
+les `RetourCaisse` d'une demande/d'un règlement (`aggregate`/`findMany`
+sans limite à un seul) — **aucune de ces fonctions n'a eu besoin d'être
+modifiée pour le cumul**, seul le calcul du `montantARetourner` de CHAQUE
+retour individuel devait changer pour rester correct en présence de
+plusieurs retours.
+
+- **Règle retenue** : jamais deux retours **EN ATTENTE** simultanément sur
+  le même règlement (ambiguïté sur lequel réceptionner) — un nouveau
+  retour redevient possible dès que le précédent est réceptionné (exactement
+  le scénario nommé : "même après qu'un précédent a déjà été
+  réceptionné"). Vérifié : un 2ᵉ retour tenté PENDANT que le 1ᵉʳ est encore
+  en attente → refusé ; une fois le 1ᵉʳ réceptionné → accepté.
+- **`calculerMontantARetournerNet`** (nouvelle, `tresorerie.ts`) —
+  généralise l'ancienne formule à un seul retour
+  (`max(0, montant du règlement - dépenses déclarées)`, qui reste le
+  résultat exact quand aucun autre retour n'existe encore, comportement
+  **strictement inchangé** pour le cas courant) : le "restant" disponible
+  pour un NOUVEAU retour est le montant du règlement moins ce que les
+  AUTRES retours ont déjà consommé — leurs dépenses déclarées (comptées
+  qu'ils soient réceptionnés ou non, une dépense déclarée reste déclarée)
+  PLUS le montant déjà effectivement RENDU par ceux d'entre eux
+  réceptionnés (jamais un retour encore en attente, cet argent n'a pas
+  matériellement bougé). Réutilisée par `creerRetourCaisseAction`,
+  `modifierRetourCaisseAction` (avec `excludeRetourId`, pour ne jamais
+  compter ses propres anciennes lignes comme celles d'un autre retour) et
+  `declarerRetourAssistantAction` (voir Tâche 4) — **une seule formule**,
+  jamais un second calcul divergent.
+- **Conséquence mathématique assumée** : une fois qu'un premier retour a
+  intégralement "résolu" le montant du règlement (dépenses + montant
+  réceptionné = montant du règlement, par construction), un retour
+  SUIVANT sur ce même règlement a par nature un "restant" nul — son
+  `montantARetourner` sera donc `0`, et ses dépenses viennent uniquement
+  s'AJOUTER au total déjà déclaré (visible sur "Solde à régulariser", qui
+  peut alors devenir négatif — signal d'anomalie déjà existant et
+  documenté, jamais plafonné). Comportement voulu, pas une limitation :
+  un retour complémentaire sert à documenter/corriger la répartition
+  justifiée/non justifiée, pas à faire réapparaître de l'argent physique
+  qui n'existe plus dans le règlement d'origine.
+- **`RetoursCaisseSection`/`RetourCaisseRow`** (Collaborateur) —
+  affichent désormais TOUS les retours d'un règlement (`retours: RetourData[]`,
+  plus `retour: ... | null` unique) : chaque retour existant garde son
+  propre bloc détail + son propre bouton "Modifier" (réservé au déclarant
+  original, non réceptionné) ; le bouton de déclaration change de libellé
+  ("Déclarer un retour de caisse" / "Déclarer un nouveau retour de
+  caisse") selon qu'il en existe déjà ou non, et disparaît tant qu'un
+  retour reste en attente.
+- **Vérifications, parcours réel (comptes de test, rejeu réseau direct
+  des Server Actions)** : retour #1 (60 000 FCFA dépensés sur un règlement
+  de 100 000, 40 000 FCFA à retourner) créé puis réceptionné par
+  l'Assistant Finance ; retour #2 (20 000 FCFA de dépense additionnelle)
+  refusé tant que le #1 restait en attente, accepté après sa réception
+  (`montantARetourner` alors `0`, conforme à la formule) ; cumul recoupé
+  en base : dépenses totales = 60 000+20 000 = 80 000 FCFA, retours reçus
+  = 40 000+0 = 40 000 FCFA — exactement la somme des deux retours,
+  jamais seulement le dernier.
+
+#### 3. Écran "Voir" avant "Réceptionner" (Finance/Assistant)
+
+- **`RetoursEnAttenteTable.tsx`** — la colonne "Détail des dépenses"
+  redevient un simple résumé de LECTURE (plus de `MarquerNonJustifiee`
+  inline) ; la colonne "Actions" ne propose plus que "Voir" (`<Link>` vers
+  `/treso/finance/retours/[id]`, même convention que "Traiter" sur
+  `DemandesACategoriserTable.tsx`) — "La liste garde 'Voir' comme SEULE
+  action directe" (consigne explicite), donc "Marquer non justifiée" a
+  aussi été retirée de la liste, pas seulement "Réceptionner".
+- **`/treso/finance/retours/[id]/page.tsx`** (nouvelle) — détail complet
+  d'un retour (règlement d'origine, total dépensé, à retourner, non
+  justifié, chaque `DepenseLigne` avec pièce jointe téléchargeable) ; le
+  bouton **"Réceptionner"** (`ReceptionnerAction.tsx`, Client) et l'action
+  **"Marquer non justifiée"** (`MarquerNonJustifiee`, réutilisée telle
+  quelle) vivent désormais UNIQUEMENT ici. Même garde d'accès que la liste
+  (`treso.receptionner_retour` complet, `treso.valider_demande` lecture
+  seule avec bannière) — jamais un contrôle dupliqué différemment.
+  Fonctionne aussi bien pour un retour Collaborateur classique que pour un
+  retour créé par l'Assistant Finance (Tâches 4/5 ci-dessous), y compris
+  sur une demande `CLOTUREE` (badges "Assistant Finance"/"Réouverture
+  exceptionnelle" affichés le cas échéant) — c'est
+  `receptionnerRetourAction` elle-même qui autorise ou refuse selon le
+  contexte, jamais une condition dupliquée sur cette page.
+- **Vérifications, parcours réel** : liste confirmée sans bouton
+  "Réceptionner" ni "Marquer non justifiée" directs (0 occurrence) ; clic
+  "Voir" → détail complet affiché (règlement, dépenses, "Total dépensé") ;
+  "Réceptionner" depuis le détail fonctionne (retour passe à
+  `estReceptionne: true`, confirmé en base et à l'écran).
+
+#### 4. L'Assistant Finance déclare les dépenses sur toute demande, retour ou pas
+
+**Diagnostic** : `marquerDepenseNonJustifieeAction` et la synthèse
+automatique en ligne `SANS_PIECE` (formulaire simplifié Collaborateur)
+existaient déjà, mais uniquement pour RECLASSIFIER une ligne déjà
+déclarée par le collaborateur — rien ne permettait à Finance de créer
+elle-même la déclaration initiale en l'absence totale de retour soumis.
+
+- **`declarerRetourAssistantAction(reglementId, lignes, motifReouverture?)`**
+  (nouvelle, `treso/finance/retours/retourActions.ts`) — réservée à
+  `treso.receptionner_retour`. Réutilise directement `DepenseLigne` (même
+  table, mêmes colonnes que le formulaire Collaborateur — schéma de
+  validation dupliqué à dessein dans ce fichier plutôt qu'importé du
+  fichier Collaborateur, pour garder les deux domaines de permission
+  physiquement séparés) : montant/objet/date/nature/justification/
+  commentaire/pièce jointe par ligne, motif obligatoire si `SANS_PIECE`
+  (même contrainte que le formulaire détaillé du Collaborateur).
+- **Ne réceptionne JAMAIS automatiquement** — crée le retour
+  `estReceptionne: false`, exactement comme une déclaration normale ;
+  la réception reste une action séparée
+  (`receptionnerRetourAction`, inchangée). Décision délibérée : même la
+  règle impérative "Déclarer un retour ≠ réceptionner un retour, deux
+  actions et deux acteurs distincts" reste respectée AU NIVEAU DE
+  L'ACTION (deux clics, deux écrans) même quand c'est le même Assistant
+  qui se substitue au collaborateur absent pour les deux étapes — jamais
+  fusionnées en une seule pour ce cas exceptionnel.
+- **`RetourCaisse.creeParAssistant`** (nouveau champ, migration
+  `20260922150935_retours_multiples_assistant_reouverture_exceptionnelle`) —
+  `true` uniquement pour un retour créé par cette action (`declarantId`
+  porte alors l'id de l'Assistant, pas du collaborateur) ; affiché comme
+  badge informatif partout où un retour est listé (liste, détail, écran
+  Collaborateur), jamais une condition de calcul.
+- **Interface** : `RetoursCaisseFinanceSection.tsx` (nouvelle, affichée
+  sur `treso/finance/demandes/[id]/page.tsx` pour TOUT statut de demande,
+  y compris `CLOTUREE` — voir Tâche 5) liste, pour chaque règlement Caisse
+  confirmé, ses retours existants (lien "Voir le détail") puis, si
+  `treso.receptionner_retour` ET qu'aucun retour n'est déjà en attente sur
+  ce règlement, le déclencheur "Aucun retour du collaborateur — déclarer
+  les dépenses" (`RetourAssistantTrigger.tsx` → `DeclarerRetourAssistantForm.tsx`,
+  même structure de lignes dynamiques que `RetourCaisseForm.tsx` détaillé,
+  réutilise `PieceJointeUpload`). Historique : action `declaration_retour_assistant`
+  (`ACTION_LABELS`, `DemandeHistorique.tsx`) — volontairement VISIBLE au
+  Collaborateur (comme `declaration_retour`/`reception_retour`), jamais
+  dans `ACTIONS_GESTION_INTERNE` : c'est une information sur SON ARGENT,
+  pas une donnée de gestion interne à masquer.
+- **Vérifications, parcours réel + rejeu réseau (comptes de test)** :
+  demande réglée sans aucun retour soumis → Assistant Finance déclare via
+  le vrai formulaire (upload réel d'une pièce jointe pour une ligne
+  justifiée, motif obligatoire pour une ligne `SANS_PIECE`) → retour créé
+  avec `creeParAssistant: true`, confirmé en base ; réceptionné avec
+  succès depuis l'écran de détail (Tâche 3). Responsable Finance : ne voit
+  pas le déclencheur sur son propre écran (permission absente), rejeu
+  réseau direct de `declarerRetourAssistantAction` refusé
+  (`"Action non autorisée."`). DG : refusé de la même façon.
+
+#### 5. Réouverture exceptionnelle post-clôture pour retour de caisse oublié
+
+Réutilise intégralement le mécanisme de la Tâche 4 (même action, même
+formulaire) — la seule différence est le statut de la demande au moment
+de l'appel.
+
+- **`RetourCaisse.motifReouvertureExceptionnelle`** (nouveau champ,
+  même migration que ci-dessus) — `null` pour tout retour normal (déclaré
+  par le collaborateur, ou par l'Assistant sur une demande NON clôturée).
+  `declarerRetourAssistantAction` exige ce motif (min **10 caractères**,
+  plus strict que le motif de rejet habituel — 3 caractères ailleurs dans
+  le module — vu la gravité de rouvrir un dossier clôturé) **uniquement**
+  si `demande.statut === "CLOTUREE"` au moment de l'appel ; sinon jamais
+  demandé. Historique : action DISTINCTE `reouverture_exceptionnelle_retour`
+  (jamais confondue avec `declaration_retour_assistant` ni
+  `declaration_retour`), également visible au Collaborateur.
+- **`receptionnerRetourAction`** — sa garde `demande.statut === "CLOTUREE"`
+  refuse désormais **SAUF** si `retour.motifReouvertureExceptionnelle`
+  n'est pas `null` : la SEULE porte de sortie de ce verrou, et elle ne
+  s'ouvre que pour CE retour précis (un `RetourCaisse` normal sur la même
+  demande resterait, lui, bloqué si jamais il existait — cas impossible en
+  pratique puisque `creerRetourCaisseAction` bloque déjà toute nouvelle
+  déclaration Collaborateur sur une demande `CLOTUREE`).
+- **Aucune autre action n'est réactivée** — `validerLignesAction`,
+  `categoriserLigneAction`, `creerReglementAction`, `cloturerDemandeAction`
+  n'ont reçu AUCUNE modification : leurs propres gardes de statut
+  (déjà existantes, jamais touchées par cette tâche) continuent de tout
+  refuser sur une demande `CLOTUREE`, motif de réouverture ou non. Le
+  statut de la demande lui-même (`Demande.statut`) n'est jamais modifié
+  par cette exception — reste strictement `CLOTUREE` avant, pendant et
+  après, à l'affichage comme en base.
+- **Vérifications, parcours réel + rejeu réseau (demande de test menée
+  jusqu'à `CLOTUREE`)** :
+  - Déclaration sans motif → refusée (validation zod).
+  - Déclaration avec un motif de 5 caractères → refusée
+    ("10 caractères minimum").
+  - Déclaration avec un motif valide (une phrase complète) → acceptée,
+    `motifReouvertureExceptionnelle` renseigné en base.
+  - Statut de la demande confirmé `CLOTUREE` avant/après la déclaration
+    (base ET affichage), jamais réapparue dans "Demandes en attente" ni
+    "Retours en attente" (exclue par `RETOUR_EN_ATTENTE_WHERE`, qui filtre
+    déjà les demandes `CLOTUREE` — c'est justement pourquoi cette
+    réception ne pouvait se faire que depuis l'écran de détail de la
+    demande/du retour, jamais depuis la liste générale).
+  - Réception réussie malgré le statut `CLOTUREE` (badge "Réouverture
+    exceptionnelle" visible sur l'écran de détail du retour).
+  - Rejeu réseau direct de `validerLignesAction`, `categoriserLigneAction`
+    et `creerReglementAction` sur cette même demande, APRÈS la réouverture
+    exceptionnelle → les trois toujours refusées, chacune pour sa propre
+    raison déjà existante (permission/statut de ligne déjà décidée/aucun
+    montant restant à régler) — confirme qu'aucune de ces actions n'a été
+    réactivée par cette tâche.
+
+#### 6. Visibilité des pièces jointes pour le Collaborateur
+
+Conséquence directe de la Tâche 2 (`RetoursCaisseSection` affichant
+désormais TOUS les retours d'un règlement, y compris ceux créés par
+l'Assistant Finance) : **aucun changement de code séparé n'a été
+nécessaire** — `DetailDepenses` affichait déjà, sans condition, le lien
+"Télécharger la pièce jointe" pour toute `DepenseLigne` qui en possède
+une, et `GET /api/treso/pieces-jointes/[id]` autorisait déjà le créateur
+de la demande (voir "Pièce jointe (fonctionnelle)") — jamais de logique
+spécifique au déclarant de la ligne. Le lien est donc automatiquement
+apparu, en lecture seule (aucune action de modification/suppression n'a
+jamais existé sur cet écran Collaborateur), dès que la Tâche 2 a cessé de
+limiter l'affichage à `retours[0]`.
+
+**Vérification, parcours réel avec upload de fichier réel** : Assistant
+Finance déclare une dépense justifiée avec une pièce jointe réellement
+uploadée (formulaire réel, `PieceJointeUpload`) → réceptionnée → le
+Collaborateur, sur `/treso/demandes/[id]`, voit la ligne de dépense ET le
+lien "Télécharger la pièce jointe" → téléchargement réel effectué avec
+succès (`200`, contenu du fichier correctement servi).
+
+#### Vérifications transverses et nettoyage
+
+- Aucune régression : dashboard Finance, "Retours en attente", reporting,
+  "À décaisser", "Toutes les demandes" tous chargés avec succès (200,
+  aucune erreur JS non interceptée) après l'ensemble des changements.
+- 5 demandes de test (+ règlements, retours, lignes de dépense, pièces
+  jointes, historique) créées pour l'occasion, supprimées après
+  vérification. **Piège rencontré pendant le nettoyage, même leçon déjà
+  documentée dans ce fichier** ("toujours annuler un règlement confirmé
+  AVANT de supprimer la Demande/le Reglement sous-jacents") : les
+  règlements de test ayant été créés directement en base (`estConfirme:
+  true`, sans passer par `confirmerReglementAction`) pour accélérer la
+  mise en place, aucune écriture `JournalCaisse` `SORTIE` ne leur
+  correspondait — mais les RÉCEPTIONS de retours, elles, passaient bien
+  par la vraie `receptionnerRetourAction` et ont donc créé de vraies
+  écritures `JournalCaisse` `ENTREE` (80 000 FCFA au total, sur plusieurs
+  écritures). Repéré en comparant le solde de caisse avant/après
+  nettoyage plutôt que supposé correct ; corrigé en supprimant
+  explicitement, par `demandeId`, toutes les écritures `JournalCaisse`
+  liées aux demandes de test avant de supprimer ces dernières — solde de
+  caisse revérifié cohérent (diminution exactement égale au total des
+  écritures retirées).
+- `tsc --noEmit`, `eslint` et `next build` (66 routes, dont la nouvelle
+  `/treso/finance/retours/[id]`) passent sans erreur avant et après
+  nettoyage. Route de diagnostic temporaire et scripts de vérification
+  supprimés après usage ; dépendance `playwright` désinstallée
+  (`--no-save`, jamais ajoutée à `package.json`/au lockfile).
+
+#### Retirer la saisie de justification par le Collaborateur
+
+Règle produit explicite : le Collaborateur ne doit **jamais** saisir
+lui-même motif, justification ou pièce jointe sur un retour de caisse —
+uniquement date et montant. Toute classification (justifié/non justifié,
+motif, pièce jointe) reste exclusivement l'action de l'Assistant Finance,
+qu'un vrai retour existe ou non (voir "L'Assistant Finance déclare les
+dépenses..." ci-dessus).
+
+**Diagnostic : le chemin détaillé existait encore, "formulaire simplifié"
+n'était qu'un défaut, pas la seule option.** `RetourCaisseForm.tsx`
+proposait toujours, en plus des deux champs date/montant, un lien "→
+formulaire détaillé" (mode `create`) rouvrant plusieurs lignes de dépense
+avec objet/justification/commentaire/pièce jointe SAISIS PAR LE
+COLLABORATEUR LUI-MÊME — chemin déjà documenté dans ce fichier comme
+"reste disponible... pour qui veut réellement justifier précisément" au
+moment de sa création, avant que la présente règle produit ne soit
+énoncée. Le mode `edit` ("Modifier" un retour pas encore réceptionné)
+était, lui, TOUJOURS détaillé, sans même de mode simple.
+
+**Corrigé — retiré de l'interface ET du type accepté par la Server Action,
+pas seulement masqué** : `creerRetourCaisseAction`/`modifierRetourCaisseAction`
+(`treso/demandes/[id]/retourActions.ts`) ont vu leur signature RÉDUITE de
+`(reglementId, lignes: LigneDepenseInput[], dateRetour?)` à
+`(reglementId, montantRetourne: number, dateRetour: string)` — le
+paramètre `lignes` (objet/justification/commentaire/pièceJointeUrl
+arbitraires) a été supprimé PUREMENT ET SIMPLEMENT, pas seulement ignoré :
+un rejeu réseau direct ne peut plus techniquement transmettre de
+justification, quel que soit le contournement de l'UI tenté. Le type
+`LigneDepenseInput`/le schéma `ligneDepenseSchema` (détaillés) ont été
+supprimés du fichier — plus aucune trace de saisie détaillée côté
+Collaborateur.
+
+- **`construireLigneSynthetique(montantDepense, date)`** (nouvelle,
+  serveur) — génère la SEULE ligne `DepenseLigne` désormais possible pour
+  un retour Collaborateur : toujours `justification: "SANS_PIECE"`,
+  commentaire fixe ("Déclaration simplifiée..."), jamais de pièce jointe —
+  aucune de ces valeurs n'est plus jamais lue depuis une entrée client.
+  Réutilisée à l'identique par `creerRetourCaisseAction` et
+  `modifierRetourCaisseAction`.
+- **`RetourCaisseForm.tsx`** — réécrit : plus de `formeSimple`/toggle,
+  plus de lien "formulaire détaillé", plus d'import de `Select`/`Textarea`/
+  `PieceJointeUpload`/`JUSTIFICATION_OPTIONS`. Le mode `edit` (bouton
+  "Modifier" d'un retour Collaborateur pas encore réceptionné) utilise
+  désormais EXACTEMENT le même formulaire simple (date + montant),
+  préremplis depuis `retour.dateRetour`/`retour.montantARetourner` — plus
+  jamais l'ancien éditeur multi-lignes.
+- **Conséquence assumée sur `modifierRetourCaisseAction`** : puisque le
+  Collaborateur ne peut plus produire qu'une seule ligne synthétique,
+  l'ancien diff "par id" (préservant une ligne inchangée et sa pièce
+  jointe) n'a plus de sens — remplacé par un remplacement INTÉGRAL des
+  lignes existantes à chaque modification. Un éventuel retour créé AVANT
+  cette tâche via l'ancien formulaire détaillé (plusieurs lignes, pièces
+  jointes) perdrait ce détail à la première modification suivante — aucun
+  cas de ce type trouvé en pratique (voir vérifications), comportement
+  documenté ici si le cas se présentait.
+- **`RetourCaisseRow.tsx`** — le "Total dépensé" affiché reste inchangé
+  (dérivé des `DepenseLigne` réellement en base, jamais du formulaire) ;
+  seul le point d'entrée d'édition a changé de props
+  (`montantRetourneInitial`/`dateRetourInitiale` au lieu de
+  `lignesInitiales`).
+- **Aucun changement côté Assistant Finance** — `declarerRetourAssistantAction`/
+  `marquerDepenseNonJustifieeAction` (`treso/finance/retours/retourActions.ts`)
+  restent la SEULE voie de classification, avec leur capacité intacte
+  (objet/justification/commentaire/pièce jointe, y compris en l'absence de
+  tout retour Collaborateur) — ce sont des fichiers/permissions
+  entièrement distincts (`treso.receptionner_retour`, jamais
+  `treso.declarer_retour`), non touchés par cette tâche.
+
+**Vérifications, parcours réel (comptes de test réels, inspection précise
+du DOM — pas un simple test de présence de mot dans la page, un contrôle
+`querySelector` par type de champ)** :
+- Formulaire de déclaration Collaborateur : exactement 2 champs visibles
+  (Date du retour, Montant à retourner), **0 `<select>`, 0 `<textarea>`,
+  0 `<input type="file">`** — confirmé par comptage direct des éléments du
+  DOM, pas par recherche de texte (un premier essai de vérification par
+  mot-clé a produit de faux positifs à cause du propre texte explicatif du
+  formulaire — "qui se chargera elle-même de le classer... pièce jointe,
+  motif" — corrigé en comptant les éléments de formulaire réels).
+- Retour déclaré (montant partiel retourné) → recoupé en base : **une
+  seule** `DepenseLigne`, `justification: "SANS_PIECE"`, commentaire fixe
+  généré par le serveur — jamais un choix transmis par le client.
+- Assistant Finance : retour bien visible dans "Retours en attente",
+  "Marquer non justifiée" fonctionnelle sur la ligne synthétique,
+  réception réussie ; déclencheur "Aucun retour du collaborateur —
+  déclarer les dépenses" toujours disponible sur l'écran Finance (capacité
+  de classification intacte, y compris après réception du retour
+  Collaborateur — s'applique alors à un ÉVENTUEL futur règlement/retour,
+  pas de régression).
+- Collaborateur : après réception par l'Assistant, le retour s'affiche en
+  lecture seule ("Réceptionné") sur son écran, sans aucun bouton "Marquer
+  non justifiée" ni autre action de classification — confirmé par
+  comptage (0 occurrence).
+- `tsc --noEmit`, `eslint` et `next build` passent sans erreur.
+
 ### Bon de caisse et reçu PDF
 
 Deux documents PDF distincts par règlement, mêmes règles d'accès (401 non
@@ -1828,6 +2204,97 @@ intégralement validée) portait un horodatage du jour même de cette tâche
 signaler ce bug. Laissée telle quelle (pas une donnée créée par les
 scripts de cette tâche), conformément au principe "ne jamais supprimer
 une donnée non reconnue sans clarification".
+
+#### Bug trouvé et corrigé — demande à lignes mixtes bloquée définitivement dans "Demandes en attente"
+
+Signalement : `DEM-2026-000009` (2 lignes, l'une validée à 12 000 FCFA,
+l'autre rejetée) restait visible dans "Demandes en attente de validation"
+sans plus aucune action possible dessus, ni validation ni clôture, alors
+même que son montant validé était déjà intégralement réglé et régularisé
+(règlement Caisse confirmé, retour réceptionné, solde à régulariser à 0).
+
+**Diagnostic fait en base ET en pratique (compte Finance réel), pas
+supposé** :
+- Ses 2 `LigneDemande` étaient déjà TOUTES décidées
+  (`statutValidation`: `VALIDEE`/`REJETEE`, `decideAt` renseignée) —
+  `validerLignesAction` avait donc déjà fait son travail correctement,
+  `montantValide` (12 000) correspondant exactement à la somme des lignes
+  `VALIDEE`. Aucune donnée incohérente : c'est un vrai bug de code, pas
+  une donnée de test à corriger.
+- `demande.statut = "PARTIELLEMENT_VALIDEE"` (cohérent :
+  `montantValide < montant`, `calculerStatutDemande` jamais modifiée).
+- **Cause exacte** : `DEMANDES_EN_ATTENTE_VALIDATION_WHERE` (`tresorerie.ts`,
+  utilisée par `/treso/finance/demandes` ET le compteur du dashboard)
+  traite `PARTIELLEMENT_VALIDEE` comme "il reste toujours une décision à
+  prendre" — vrai pour l'ANCIEN modèle par montant global (reliquat), FAUX
+  pour une demande AVEC lignes une fois que `validerLignesAction` les a
+  TOUTES décidées en un seul geste (jamais de reliquat par ligne, jamais de
+  dévalidation, voir "Validation ligne par ligne" ci-dessus) : le
+  caractère partiel devient alors définitif, exactement comme un reliquat
+  explicitement rejeté (`reliquatRejete`, déjà exclu par ce même filtre)
+  — mais ce deuxième cas n'avait jamais été couvert lors de l'introduction
+  de la validation ligne par ligne.
+- **Même bug, deuxième symptôme** : `STATUTS_VALIDATION_COMPLETE` (gate de
+  `cloturerDemandeAction` ET de l'affichage de la section "Clôture" sur
+  `treso/finance/demandes/[id]/page.tsx`) ne contient que les statuts
+  atteignables quand `montantValide === montant` — jamais
+  `PARTIELLEMENT_VALIDEE`. Une demande à lignes mixtes ne pouvait donc
+  JAMAIS être clôturée, quel que soit l'avancement réel de son règlement.
+  Reproduit en pratique : 0 bouton "Valider" et 0 bouton "Clôturer" sur
+  l'écran de détail, alors que Règlement/Régularisation affichaient déjà
+  "Reste à régler : 0 FCFA"/"Solde à régulariser : 0 FCFA".
+
+**Corrigé** (`backend/src/tresorerie.ts`, nouvelle fonction
+`lignesToutesDecidees(lignes)` — `true` si la demande a des lignes ET
+qu'aucune n'est plus `EN_ATTENTE`, équivalent pour le modèle "ligne par
+ligne" de `STATUTS_VALIDATION_COMPLETE` pour l'ancien modèle) :
+- `DEMANDES_EN_ATTENTE_VALIDATION_WHERE` restructurée en `OR` : une
+  demande SANS ligne suit l'ancienne règle inchangée ; une demande AVEC
+  lignes ne compte comme "en attente" que si AU MOINS une ligne est
+  encore `EN_ATTENTE` — couvre aussi, par construction, le cas où TOUTES
+  les lignes seraient rejetées (`montantValide = 0`, `statut` retombant à
+  `EN_ATTENTE_VALIDATION` — piège déjà documenté dans "Validation ligne
+  par ligne").
+- `cloturerDemandeAction` (`treso/finance/demandes/[id]/actions.ts`) et
+  la condition d'affichage de la section "Clôture" sur `page.tsx` :
+  `STATUTS_VALIDATION_COMPLETE.includes(demande.statut) ||
+  lignesToutesDecidees(demande.lignes)` — une seule condition ajoutée aux
+  deux endroits, jamais dupliquée sous une forme divergente.
+- **Point signalé, volontairement NON traité (hors périmètre du
+  signalement)** : le cas symétrique "TOUTES les lignes rejetées" (statut
+  reste `EN_ATTENTE_VALIDATION`, `montantValide = 0`) sort désormais
+  correctement de "Demandes en attente de validation" grâce au fix
+  ci-dessus, mais reste volontairement **non rendu clôturable** — aucune
+  demande de test dans cet état n'existe actuellement (voir vérification
+  ci-dessous), et la question "une demande où rien n'a été validé
+  doit-elle être clôturée, ou plutôt migrer vers `REJETEE`, l'état
+  terminal déjà utilisé pour un rejet total ?" est une vraie décision
+  produit distincte, jamais tranchée seule ici.
+
+**Vérifications, parcours réel (comptes de test réels, jusqu'à la
+clôture effective)** :
+- `DEM-2026-000009` confirmée absente de "Demandes en attente de
+  validation" après le correctif (recoupé aussi directement contre
+  `DEMANDES_EN_ATTENTE_VALIDATION_WHERE`, requête vide).
+- Bouton de clôture toujours invisible tant que le DG n'avait pas
+  approuvé (comportement inchangé, verrou indépendant) ; DG approuve la
+  validation complète via l'écran réel → `validationCompleteParDG: true`
+  confirmé en base, statut de la demande inchangé (déverrouillage
+  seulement, comme documenté dans "Vérification de la règle de clôture à
+  double validation").
+- "Clôturer totalement"/"Clôturer partiellement" apparaissent alors sur
+  l'écran Finance → clôture totale confirmée via le vrai parcours
+  (bouton → confirmation) → `statut: CLOTUREE` vérifié en base. La
+  demande progresse désormais normalement, jusqu'à son terme réel.
+- **Sanity check inverse** : une demande fraîchement créée avec une ligne
+  encore `EN_ATTENTE` (aucune décision) continue d'apparaître dans le
+  filtre — le correctif n'exclut que les demandes dont TOUTES les lignes
+  sont décidées, jamais les demandes réellement en attente.
+- Scan exhaustif de toutes les demandes à lignes de la base de dev
+  partagée (9 au total) : `DEM-2026-000009` était la SEULE dans cet état
+  incohérent — aucune autre demande de test à corriger.
+- `tsc --noEmit`, `eslint` et `next build` (66 routes) passent sans
+  erreur.
 
 ### Catégorisation par ligne + allocation budgétaire explicite par règlement
 

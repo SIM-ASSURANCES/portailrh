@@ -1,3 +1,4 @@
+import { getDateDernierReglementConfirme } from "backend";
 import { prisma } from "backend";
 
 import { RetourCaisseRow } from "./RetourCaisseRow";
@@ -13,6 +14,16 @@ import { RetourCaisseRow } from "./RetourCaisseRow";
  * caisse" une fois la demande clôturée — `creerRetourCaisseAction` le
  * refuserait de toute façon côté serveur, mais autant ne pas proposer une
  * action vouée à échouer (même principe que `canEffectuerReglement`).
+ *
+ * **Retours multiples** (voir CLAUDE.md "Retours multiples autorisés sur
+ * une même demande") — affiche désormais TOUS les retours de chaque
+ * règlement (`r.retours`, pas seulement `r.retours[0]`), y compris ceux
+ * créés par l'Assistant Finance en l'absence de déclaration du
+ * collaborateur (Tâche "L'Assistant Finance déclare les dépenses...") :
+ * leurs pièces jointes doivent rester consultables ici (Tâche "Visibilité
+ * des pièces jointes pour le Collaborateur"), en pure lecture (aucune
+ * action de modification n'est jamais proposée pour un retour dont
+ * `declarantId` n'est pas l'utilisateur connecté).
  */
 export async function RetoursCaisseSection({
   demandeId,
@@ -24,54 +35,57 @@ export async function RetoursCaisseSection({
   /** Utilisateur connecté — sert à réserver le bouton "Modifier" au déclarant original de chaque retour. */
   userId: string;
 }) {
-  const reglements = await prisma.reglement.findMany({
-    where: { demandeId, mode: "CAISSE", estConfirme: true, estAnnule: false },
-    include: { retours: { include: { depenses: { include: { pieceJointe: true } } } } },
-    orderBy: { createdAt: "asc" },
-  });
+  const [reglements, dateDernierReglement] = await Promise.all([
+    prisma.reglement.findMany({
+      where: { demandeId, mode: "CAISSE", estConfirme: true, estAnnule: false },
+      include: { retours: { include: { depenses: { include: { pieceJointe: true } } }, orderBy: { createdAt: "asc" } } },
+      orderBy: { createdAt: "asc" },
+    }),
+    getDateDernierReglementConfirme(demandeId),
+  ]);
 
   if (reglements.length === 0) {
     return null;
   }
 
+  const dateMin = dateDernierReglement ? dateDernierReglement.toISOString().slice(0, 10) : undefined;
+
   return (
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
       <h2 className="text-sm font-semibold text-foreground">Retours de caisse</h2>
       <ul className="space-y-3">
-        {reglements.map((r) => {
-          const retour = r.retours[0];
-          return (
-            <RetourCaisseRow
-              key={r.id}
-              reglementId={r.id}
-              montant={Number(r.montant)}
-              retour={
-                retour
-                  ? {
-                      id: retour.id,
-                      estReceptionne: retour.estReceptionne,
-                      montantARetourner: Number(retour.montantARetourner),
-                      dateRetour: retour.dateRetour,
-                      // Modification (avant réception) réservée au déclarant
-                      // original — cohérent avec la déclaration elle-même.
-                      peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer,
-                      depenses: retour.depenses.map((d) => ({
-                        id: d.id,
-                        montant: Number(d.montant),
-                        objet: d.objet,
-                        date: d.date,
-                        nature: d.nature,
-                        justification: d.justification,
-                        commentaire: d.commentaire,
-                        pieceJointeId: d.pieceJointe?.id ?? null,
-                      })),
-                    }
-                  : null
-              }
-              peutDeclarer={peutDeclarer}
-            />
-          );
-        })}
+        {reglements.map((r) => (
+          <RetourCaisseRow
+            key={r.id}
+            reglementId={r.id}
+            montant={Number(r.montant)}
+            retours={r.retours.map((retour) => ({
+              id: retour.id,
+              estReceptionne: retour.estReceptionne,
+              montantARetourner: Number(retour.montantARetourner),
+              dateRetour: retour.dateRetour,
+              creeParAssistant: retour.creeParAssistant,
+              // Modification (avant réception) réservée au déclarant
+              // original — cohérent avec la déclaration elle-même. Un
+              // retour créé par l'Assistant Finance (declarantId = son
+              // propre id) n'est donc jamais modifiable depuis cet écran
+              // Collaborateur.
+              peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer,
+              depenses: retour.depenses.map((d) => ({
+                id: d.id,
+                montant: Number(d.montant),
+                objet: d.objet,
+                date: d.date,
+                nature: d.nature,
+                justification: d.justification,
+                commentaire: d.commentaire,
+                pieceJointeId: d.pieceJointe?.id ?? null,
+              })),
+            }))}
+            peutDeclarer={peutDeclarer}
+            dateMin={dateMin}
+          />
+        ))}
       </ul>
     </div>
   );

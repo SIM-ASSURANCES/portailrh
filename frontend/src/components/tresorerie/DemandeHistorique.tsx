@@ -20,6 +20,15 @@ const ACTION_LABELS: Record<string, string> = {
   declaration_retour: "Retour de caisse déclaré",
   modification_retour: "Retour de caisse modifié",
   reception_retour: "Retour de caisse réceptionné",
+  // Tâche "L'Assistant Finance déclare les dépenses sur toute demande,
+  // retour ou pas" (voir CLAUDE.md) — l'Assistant se substitue au
+  // collaborateur absent, sur une demande encore active.
+  declaration_retour_assistant: "Retour de caisse déclaré par l'Assistant Finance",
+  // Tâche "Réouverture exceptionnelle post-clôture pour retour de caisse
+  // oublié" — volontairement UN LIBELLÉ DISTINCT du précédent (voir
+  // CLAUDE.md) : ne doit jamais être confondu avec un retour normal, même
+  // déclaré par l'Assistant sur une demande active.
+  reouverture_exceptionnelle_retour: "Réouverture exceptionnelle — retour de caisse complémentaire (demande clôturée)",
   cloture_totale: "Clôture totale",
   cloture_partielle: "Clôture partielle",
   validation_complete_dg: "Validation complète approuvée par le DG",

@@ -6,112 +6,100 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notifierParPermission } from "@/lib/notifications";
-import { prisma } from "backend";
+import { calculerMontantARetournerNet, getDateDernierReglementConfirme, prisma } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
-const ligneDepenseSchema = z
-  .object({
-    id: z.string().optional(),
-    montant: z.coerce.number().positive("Le montant doit être supérieur à 0"),
-    objet: z.string().trim().min(1, "L'objet est obligatoire"),
-    date: z.coerce.date({ message: "Date invalide" }),
-    nature: z.string().trim().optional(),
-    justification: z.enum(["FACTURE", "RECU", "TICKET", "SANS_PIECE"]),
-    commentaire: z.string().optional(),
-    pieceJointeUrl: z.string().optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (data.justification === "SANS_PIECE" && !data.commentaire?.trim()) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["commentaire"],
-        message: "Le commentaire est obligatoire pour une dépense sans pièce formelle.",
-      });
-    }
-  });
-
-// Zéro ligne est désormais un cas légitime (Tâche "Retour de caisse
-// optionnel" — voir CLAUDE.md) : un collaborateur qui n'a RIEN dépensé et
-// restitue l'intégralité du règlement n'a aucune dépense à déclarer.
-// `montantARetourner` vaut alors `reglement.montant` (calcul inchangé, la
-// somme des lignes valant 0) — jamais un cas d'erreur.
-const lignesSchema = z.array(ligneDepenseSchema);
+const montantRetourneSchema = z.coerce.number().min(0, "Le montant retourné doit être un nombre positif ou nul.");
 
 const dateRetourSchema = z
   .string()
   .trim()
-  .optional()
-  .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Date invalide");
+  .min(1, "La date du retour est obligatoire.")
+  .refine((v) => !Number.isNaN(Date.parse(v)), "Date invalide");
 
-export interface LigneDepenseInput {
-  /**
-   * Présent uniquement en modification (`modifierRetourCaisseAction`), pour
-   * une ligne déjà en base : distingue une ligne à METTRE À JOUR (id connu)
-   * d'une ligne à CRÉER (id absent). Jamais utilisé par la création
-   * initiale (`creerRetourCaisseAction`), où aucune ligne n'a encore d'id.
-   */
-  id?: string;
-  montant: number;
-  objet: string;
-  date: string;
-  nature?: string;
-  justification: "FACTURE" | "RECU" | "TICKET" | "SANS_PIECE";
-  commentaire?: string;
-  /** Nom de fichier renvoyé par `POST /api/treso/pieces-jointes/upload`, le cas échéant (facultatif). */
-  pieceJointeUrl?: string;
+/**
+ * Construit la ligne de dépense SYNTHÉTIQUE représentant la part NON
+ * retournée d'un retour Collaborateur — voir CLAUDE.md "Retirer la saisie
+ * de justification par le Collaborateur" : `creerRetourCaisseAction`/
+ * `modifierRetourCaisseAction` n'acceptent plus qu'une date et un montant
+ * retourné, JAMAIS un objet/une justification/une pièce jointe saisis par
+ * le Collaborateur — même côté serveur, pas seulement dans l'UI qui les
+ * saisissait autrefois. Toute classification (justifié/non justifié,
+ * motif, pièce jointe) reste exclusivement le fait de l'Assistant Finance
+ * (`declarerRetourAssistantAction`/`marquerDepenseNonJustifieeAction`,
+ * `treso/finance/retours/retourActions.ts`) : cette ligne synthétique est
+ * TOUJOURS `SANS_PIECE`, avec un commentaire fixe expliquant son origine —
+ * jamais une valeur transmise par le client.
+ */
+function construireLigneSynthetique(montantDepense: number, date: Date) {
+  return montantDepense > 0
+    ? [
+        {
+          montant: montantDepense,
+          objet: "Dépenses non détaillées",
+          date,
+          nature: null as string | null,
+          justification: "SANS_PIECE" as const,
+          commentaire: "Déclaration simplifiée (date + montant) : dépenses non détaillées par le collaborateur.",
+        },
+      ]
+    : [];
 }
 
 /**
- * Déclare un retour de caisse pour un règlement Caisse confirmé, sous la
- * forme de PLUSIEURS lignes de dépenses détaillées (Phase D, "fonds
- * remis" — cahier des charges sections 8-9 : remplace le montant dépensé
- * agrégé unique du Ticket 5). Réservée à `treso.declarer_retour`, et
- * uniquement sur les propres demandes du collaborateur connecté — jamais
- * sur celles d'un tiers (revérifié ici, pas seulement via la
- * navigation/l'affichage de la page).
+ * Déclare un retour de caisse pour un règlement Caisse confirmé. Réservée
+ * à `treso.declarer_retour`, et uniquement sur les propres demandes du
+ * collaborateur connecté — jamais sur celles d'un tiers (revérifié ici,
+ * pas seulement via la navigation/l'affichage de la page).
  *
- * V1 : un règlement ne peut recevoir qu'un seul retour déclaré à la fois
- * (évite les doublons) — revérifié ici même si le bouton de déclaration ne
- * devrait normalement plus être visible une fois un retour créé.
+ * **Signature volontairement réduite à `(reglementId, montantRetourne,
+ * dateRetour)`** — voir CLAUDE.md "Retirer la saisie de justification par
+ * le Collaborateur" : avant cette tâche, un formulaire "détaillé" restait
+ * accessible au Collaborateur (plusieurs lignes de dépense avec
+ * objet/justification/commentaire/pièce jointe saisis par lui), en plus du
+ * formulaire simplifié (date + montant). Cette action acceptait alors un
+ * tableau `LigneDepenseInput[]` arbitraire — un rejeu réseau direct aurait
+ * donc pu faire porter une "justification" au Collaborateur même avec le
+ * formulaire détaillé retiré de l'UI seule. Supprimer purement et
+ * simplement le paramètre `lignes` ferme cette possibilité au niveau du
+ * type, pas seulement par convention d'interface : le Collaborateur ne
+ * peut plus JAMAIS transmettre à cette action ni objet, ni justification,
+ * ni commentaire, ni pièce jointe — seule une ligne SYNTHÉTIQUE `SANS_PIECE`
+ * générée ici (`construireLigneSynthetique`) peut exister.
  *
  * **`montantARetourner` est CALCULÉ ICI, jamais reçu du client** (voir
- * `RetourCaisse.montantARetourner` dans `schema.prisma` et CLAUDE.md
- * "Refonte V1 en cours" / Phase D) : montant du règlement moins la somme
- * des lignes de dépenses soumises, jamais négatif.
+ * `RetourCaisse.montantARetourner` dans `schema.prisma`) : montant du
+ * règlement moins la part non retournée déduite du montant retourné
+ * annoncé, jamais négatif.
  *
  * RÈGLE CRITIQUE : cette action NE crée AUCUNE écriture `JournalCaisse` et
  * NE touche PAS au solde de caisse — seule la RÉCEPTION du retour par
- * Finance (Ticket 6, pas celui-ci) aura cet effet. Déclarer un retour
- * n'enregistre qu'une intention/justification côté collaborateur.
+ * Finance (`receptionnerRetourAction`) aura cet effet. Déclarer un retour
+ * n'enregistre qu'une intention côté collaborateur.
  *
- * Défense en profondeur (Ticket 7, corrigée Phase C) : la demande ne doit
- * pas être `CLOTUREE` — une fois clôturée, plus aucun nouveau retour ne
- * peut être déclaré, même si le règlement d'origine reste `estConfirme`
- * (ce champ ne change jamais après clôture, ce n'était donc pas suffisant
- * pour bloquer l'accès).
+ * Défense en profondeur : la demande ne doit pas être `CLOTUREE` — une
+ * fois clôturée, plus aucun nouveau retour ne peut être déclaré, même si
+ * le règlement d'origine reste `estConfirme`.
  *
- * `dateRetour` (optionnel) : uniquement renseigné par le formulaire
- * SIMPLIFIÉ ("Retour simple : date + montant", voir CLAUDE.md) — le
- * formulaire détaillé ne l'envoie jamais (chaque `DepenseLigne` porte déjà
- * sa propre date). `lignes` peut être un tableau VIDE : un collaborateur
- * qui n'a rien dépensé et restitue l'intégralité du règlement n'a aucune
- * dépense à déclarer — `montantARetourner` vaut alors le montant complet
- * du règlement (calcul inchangé, la somme des lignes valant 0).
+ * **Retours multiples** (voir CLAUDE.md "Retours multiples autorisés sur
+ * une même demande") — jamais deux retours EN ATTENTE simultanément sur le
+ * même règlement ; un nouveau redevient possible dès que le précédent est
+ * réceptionné.
  */
 export async function creerRetourCaisseAction(
   reglementId: string,
-  lignes: LigneDepenseInput[],
-  dateRetour?: string
+  montantRetourne: number,
+  dateRetour: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.declarer_retour")) {
     return { status: "error", message: "Action non autorisée." };
   }
 
-  const parsedLignes = lignesSchema.safeParse(lignes);
-  if (!parsedLignes.success) {
-    return { status: "error", message: parsedLignes.error.issues[0].message };
+  const parsedMontant = montantRetourneSchema.safeParse(montantRetourne);
+  if (!parsedMontant.success) {
+    return { status: "error", message: parsedMontant.error.issues[0].message };
   }
   const parsedDateRetour = dateRetourSchema.safeParse(dateRetour);
   if (!parsedDateRetour.success) {
@@ -138,12 +126,41 @@ export async function creerRetourCaisseAction(
   if (reglement.demande.createurId !== session.user.id) {
     return { status: "error", message: "Vous ne pouvez déclarer un retour que sur vos propres demandes." };
   }
-  if (reglement.retours.length > 0) {
-    return { status: "error", message: "Un retour a déjà été déclaré pour ce règlement." };
+  if (parsedMontant.data > Number(reglement.montant)) {
+    return {
+      status: "error",
+      message: `Le montant retourné ne peut pas dépasser le montant du règlement (${Number(reglement.montant).toLocaleString("fr-FR")} FCFA).`,
+    };
+  }
+  // Tâche "Retours multiples autorisés sur une même demande" : jamais deux
+  // retours EN ATTENTE simultanément sur le même règlement.
+  if (reglement.retours.some((r) => !r.estReceptionne)) {
+    return {
+      status: "error",
+      message: "Un retour est déjà en attente de réception pour ce règlement : attendez qu'il soit traité avant d'en déclarer un nouveau.",
+    };
   }
 
-  const totalDeclare = parsedLignes.data.reduce((sum, l) => sum + l.montant, 0);
-  const montantARetourner = Math.max(0, Number(reglement.montant) - totalDeclare);
+  // Tâche "Libellés et validations sur le formulaire de retour" : la date de
+  // retour ne peut pas être antérieure au règlement/décaissement le plus
+  // récent confirmé sur la demande — comparée en granularité JOUR.
+  const dateDernierReglement = await getDateDernierReglementConfirme(reglement.demandeId);
+  if (dateDernierReglement) {
+    const dateDernierReglementStr = dateDernierReglement.toISOString().slice(0, 10);
+    if (parsedDateRetour.data < dateDernierReglementStr) {
+      return {
+        status: "error",
+        message: `La date du retour ne peut pas être antérieure au dernier règlement confirmé sur cette demande (${dateDernierReglement.toLocaleDateString("fr-FR")}).`,
+      };
+    }
+  }
+
+  const montantDepense = Math.max(0, Number(reglement.montant) - parsedMontant.data);
+  const lignes = construireLigneSynthetique(montantDepense, new Date(parsedDateRetour.data));
+  const montantARetourner = await calculerMontantARetournerNet({
+    reglementId,
+    totalDepensesNouvelles: montantDepense,
+  });
 
   await prisma.$transaction(async (tx) => {
     const retour = await tx.retourCaisse.create({
@@ -151,30 +168,12 @@ export async function creerRetourCaisseAction(
         reglementId,
         declarantId: session.user.id,
         montantARetourner,
-        dateRetour: parsedDateRetour.data ? new Date(parsedDateRetour.data) : null,
+        dateRetour: new Date(parsedDateRetour.data),
       },
     });
 
-    // `create` individuel par ligne (pas `createMany`) : nécessaire pour
-    // pouvoir imbriquer la pièce jointe optionnelle de chaque ligne dans
-    // la même écriture (`createMany` ne supporte pas les relations
-    // imbriquées). Volume toujours modeste (quelques lignes par retour),
-    // même convention que le reste du module pour ce genre de boucle.
-    for (const l of parsedLignes.data) {
-      await tx.depenseLigne.create({
-        data: {
-          retourCaisseId: retour.id,
-          montant: l.montant,
-          objet: l.objet,
-          date: l.date,
-          nature: l.nature?.trim() || null,
-          justification: l.justification,
-          commentaire: l.commentaire?.trim() || null,
-          ...(l.pieceJointeUrl
-            ? { pieceJointe: { create: { url: l.pieceJointeUrl, demandeId: reglement.demandeId } } }
-            : {}),
-        },
-      });
+    for (const l of lignes) {
+      await tx.depenseLigne.create({ data: { retourCaisseId: retour.id, ...l } });
     }
 
     await tx.historiqueEntry.create({
@@ -183,8 +182,8 @@ export async function creerRetourCaisseAction(
         entityId: reglement.demandeId,
         action: "declaration_retour",
         detail:
-          parsedLignes.data.length > 0
-            ? `Retour de caisse déclaré : ${parsedLignes.data.length} ligne(s) de dépense, ${totalDeclare.toLocaleString("fr-FR")} FCFA déclarés, ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner`
+          montantDepense > 0
+            ? `Retour de caisse déclaré : ${parsedMontant.data.toLocaleString("fr-FR")} FCFA retournés, ${montantDepense.toLocaleString("fr-FR")} FCFA de solde non détaillé, ${montantARetourner.toLocaleString("fr-FR")} FCFA restant à retourner`
             : `Retour de caisse déclaré : aucune dépense (retour intégral), ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner`,
         userId: session.user.id,
       },
@@ -212,37 +211,45 @@ export async function creerRetourCaisseAction(
 
 /**
  * Modifie un retour de caisse **déjà déclaré mais pas encore réceptionné**
- * (Tâche « modification d'un retour de caisse avant réception ») : seul le
- * déclarant original peut corriger ses lignes de dépenses avant que Finance
- * ne traite le retour — une fois `estReceptionne`, c'est verrouillé
- * exactement comme avant cette action (aucune fonction de "dévalidation" ni
- * de correction rétroactive après réception, même principe que le reste du
- * module).
+ * — seul le déclarant original peut corriger sa date/son montant avant que
+ * Finance ne traite le retour. Une fois `estReceptionne`, c'est verrouillé
+ * (aucune fonction de "dévalidation" ni de correction rétroactive après
+ * réception, même principe que le reste du module).
  *
- * **Diff par id, jamais un `deleteMany` + `createMany` en bloc** : une
- * ligne du payload avec un `id` connu est mise à jour EN PLACE (préserve sa
- * `PieceJointe` éventuelle, Tâche pièce jointe) ; une ligne sans `id` est
- * créée ; une ligne existante en base mais absente du payload est
- * supprimée (et sa `PieceJointe`, le cas échéant, avec elle — voir
- * `onDelete: Cascade` sur `DepenseLigne.pieceJointe` dans `schema.prisma`).
- * Un simple "tout supprimer puis tout recréer" aurait perdu silencieusement
- * les pièces jointes déjà attachées aux lignes conservées à l'identique.
+ * **Signature réduite à `(retourId, montantRetourne, dateRetour)`**, même
+ * principe et même raison que `creerRetourCaisseAction` ci-dessus (voir
+ * CLAUDE.md "Retirer la saisie de justification par le Collaborateur") :
+ * plus de tableau de lignes arbitraire, le Collaborateur ne peut plus
+ * transmettre ni objet, ni justification, ni pièce jointe à cette action.
+ *
+ * **Remplace TOUJOURS l'intégralité des lignes existantes** par au plus
+ * UNE ligne synthétique fraîche (`construireLigneSynthetique`) — jamais de
+ * diff par id : le Collaborateur ne produit plus qu'une seule ligne
+ * possible, un diff n'a donc plus de sens. Une éventuelle ligne détaillée
+ * (avec sa propre pièce jointe) créée AVANT cette tâche via l'ancien
+ * formulaire détaillé disparaît à la première modification suivante —
+ * comportement attendu, ce chemin de saisie n'existe plus.
  *
  * `montantARetourner` recalculé exactement comme à la création — toujours
  * côté serveur, jamais reçu du client.
  */
 export async function modifierRetourCaisseAction(
   retourId: string,
-  lignes: LigneDepenseInput[]
+  montantRetourne: number,
+  dateRetour: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.declarer_retour")) {
     return { status: "error", message: "Action non autorisée." };
   }
 
-  const parsedLignes = lignesSchema.safeParse(lignes);
-  if (!parsedLignes.success) {
-    return { status: "error", message: parsedLignes.error.issues[0].message };
+  const parsedMontant = montantRetourneSchema.safeParse(montantRetourne);
+  if (!parsedMontant.success) {
+    return { status: "error", message: parsedMontant.error.issues[0].message };
+  }
+  const parsedDateRetour = dateRetourSchema.safeParse(dateRetour);
+  if (!parsedDateRetour.success) {
+    return { status: "error", message: parsedDateRetour.error.issues[0].message };
   }
 
   const retour = await prisma.retourCaisse.findUnique({
@@ -265,65 +272,51 @@ export async function modifierRetourCaisseAction(
       message: `Cette demande n'est plus modifiable (statut actuel : ${retour.reglement.demande.statut}).`,
     };
   }
+  if (parsedMontant.data > Number(retour.reglement.montant)) {
+    return {
+      status: "error",
+      message: `Le montant retourné ne peut pas dépasser le montant du règlement (${Number(retour.reglement.montant).toLocaleString("fr-FR")} FCFA).`,
+    };
+  }
+
+  const dateDernierReglement = await getDateDernierReglementConfirme(retour.reglement.demandeId);
+  if (dateDernierReglement) {
+    const dateDernierReglementStr = dateDernierReglement.toISOString().slice(0, 10);
+    if (parsedDateRetour.data < dateDernierReglementStr) {
+      return {
+        status: "error",
+        message: `La date du retour ne peut pas être antérieure au dernier règlement confirmé sur cette demande (${dateDernierReglement.toLocaleDateString("fr-FR")}).`,
+      };
+    }
+  }
 
   const ancienTotal = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
-  const nouveauTotal = parsedLignes.data.reduce((sum, l) => sum + l.montant, 0);
-  const montantARetourner = Math.max(0, Number(retour.reglement.montant) - nouveauTotal);
-
-  const idsExistants = new Set(retour.depenses.map((d) => d.id));
-  const idsConserves = new Set(parsedLignes.data.filter((l) => l.id).map((l) => l.id!));
-  const idsASupprimer = [...idsExistants].filter((id) => !idsConserves.has(id));
+  const montantDepense = Math.max(0, Number(retour.reglement.montant) - parsedMontant.data);
+  const nouvellesLignes = construireLigneSynthetique(montantDepense, new Date(parsedDateRetour.data));
+  // Tâche "Retours multiples autorisés sur une même demande" : exclut CE
+  // retour de son propre calcul, nette correctement contre d'éventuels
+  // autres retours déjà existants sur ce même règlement.
+  const montantARetourner = await calculerMontantARetournerNet({
+    reglementId: retour.reglementId,
+    totalDepensesNouvelles: montantDepense,
+    excludeRetourId: retourId,
+  });
 
   await prisma.$transaction(async (tx) => {
-    if (idsASupprimer.length > 0) {
-      await tx.depenseLigne.deleteMany({ where: { id: { in: idsASupprimer } } });
-    }
-    for (const l of parsedLignes.data) {
-      const data = {
-        montant: l.montant,
-        objet: l.objet,
-        date: l.date,
-        nature: l.nature?.trim() || null,
-        justification: l.justification,
-        commentaire: l.commentaire?.trim() || null,
-      };
-      if (l.id && idsExistants.has(l.id)) {
-        // Mise à jour EN PLACE : ne touche jamais `pieceJointe` — une
-        // pièce déjà attachée à cette ligne (hors périmètre de cette
-        // action) reste donc intacte, quelle que soit la valeur de
-        // `pieceJointeUrl` envoyée par le client pour une ligne existante
-        // (le formulaire ne propose d'ailleurs pas ce champ pour une ligne
-        // déjà en base — voir `RetourCaisseForm.tsx`).
-        await tx.depenseLigne.update({ where: { id: l.id }, data });
-      } else {
-        // Ligne réellement nouvelle (ajoutée pendant cette modification) :
-        // peut porter sa propre pièce jointe, comme à la création.
-        await tx.depenseLigne.create({
-          data: {
-            ...data,
-            retourCaisseId: retourId,
-            ...(l.pieceJointeUrl
-              ? { pieceJointe: { create: { url: l.pieceJointeUrl, demandeId: retour.reglement.demandeId } } }
-              : {}),
-          },
-        });
-      }
+    await tx.depenseLigne.deleteMany({ where: { retourCaisseId: retourId } });
+    for (const l of nouvellesLignes) {
+      await tx.depenseLigne.create({ data: { retourCaisseId: retourId, ...l } });
     }
     await tx.retourCaisse.update({
       where: { id: retourId },
-      // `dateRetour` toujours remise à `null` ici : la modification passe
-      // par le formulaire DÉTAILLÉ (chaque ligne porte sa propre date,
-      // voir `RetourCaisseRow.tsx`) — une valeur posée par une déclaration
-      // initiale "simple" n'a plus de sens dès qu'on modifie via ce
-      // formulaire, jamais affichée ni utilisée dans ce mode.
-      data: { montantARetourner, dateRetour: null },
+      data: { montantARetourner, dateRetour: new Date(parsedDateRetour.data) },
     });
     await tx.historiqueEntry.create({
       data: {
         entity: "Demande",
         entityId: retour.reglement.demandeId,
         action: "modification_retour",
-        detail: `Retour de caisse modifié : total déclaré ${ancienTotal.toLocaleString("fr-FR")} FCFA → ${nouveauTotal.toLocaleString("fr-FR")} FCFA (${parsedLignes.data.length} ligne(s), ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner)`,
+        detail: `Retour de caisse modifié : montant retourné ${Math.max(0, Number(retour.reglement.montant) - ancienTotal).toLocaleString("fr-FR")} FCFA → ${parsedMontant.data.toLocaleString("fr-FR")} FCFA (${montantARetourner.toLocaleString("fr-FR")} FCFA restant à retourner)`,
         userId: session.user.id,
       },
     });

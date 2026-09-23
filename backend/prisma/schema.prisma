@@ -678,6 +678,28 @@ model RetourCaisse {
   /// `Reglement.confirmeAt` (Ticket 9) pour la même distinction
   /// évènement-réel / horodatage-d'écriture.
   dateRetour DateTime?
+
+  /// `true` uniquement pour un retour créé par l'Assistant Finance
+  /// (`declarerRetourAssistantAction`, voir CLAUDE.md "L'Assistant Finance
+  /// déclare les dépenses sur toute demande, retour ou pas") plutôt que par
+  /// le collaborateur lui-même (`creerRetourCaisseAction`) — dans ce cas,
+  /// `declarantId` porte l'id de l'Assistant, pas du collaborateur.
+  /// Distingue les deux origines dans l'historique/l'affichage, jamais
+  /// utilisé comme condition de calcul (`getDepensesDeclarees`/
+  /// `getRetoursRecus`/etc. ne font aucune distinction).
+  creeParAssistant Boolean @default(false)
+
+  /// Renseigné UNIQUEMENT pour un retour créé par l'Assistant Finance sur
+  /// une demande déjà `CLOTUREE` (Tâche "Réouverture exceptionnelle
+  /// post-clôture pour retour de caisse oublié", voir CLAUDE.md) — motif
+  /// obligatoire (min 10 caractères) justifiant cette correction
+  /// exceptionnelle. `null` pour tout retour normal (déclaré par le
+  /// collaborateur, ou par l'Assistant sur une demande NON clôturée). Sa
+  /// seule présence autorise `receptionnerRetourAction` à s'exécuter
+  /// malgré le statut `CLOTUREE` de la demande — aucune autre action
+  /// (validation, règlement, catégorisation, clôture) n'est réactivée par
+  /// ce champ.
+  motifReouvertureExceptionnelle String?
 }
 
 /// Une ligne de dépense détaillée d'un `RetourCaisse` (cahier des charges
