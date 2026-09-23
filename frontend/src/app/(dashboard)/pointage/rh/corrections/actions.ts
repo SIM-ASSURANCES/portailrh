@@ -3,8 +3,7 @@
 import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
-import { prisma } from "backend";
-import { checkLateStatus } from "backend";
+import { prisma, checkLateStatus, timeToMinutes } from "backend";
 import { revalidatePath } from "next/cache";
 import { ActionState, fieldErrorsFromZod } from "backend";
 
@@ -56,20 +55,25 @@ export async function corrigerPointageAction(
     return { status: "error", message: "Pointage introuvable." };
   }
 
-  // Calculate retard if it's an arrival
+  // Calculate retard if it's an arrival, or depart anticipe if it's a departure
   let estRetard = false;
   let minutesRetard = null;
+  let estDepartAnticipe = false;
+
+  const parametrage = await prisma.parametrageHoraire.findFirst({
+    where: { isActive: true }
+  });
 
   if (existingPointage.type === "ARRIVEE") {
-    const parametrage = await prisma.parametrageHoraire.findFirst({
-      where: { isActive: true }
-    });
-    
     if (parametrage) {
       const lateStatus = checkLateStatus(newDate, parametrage);
       estRetard = lateStatus.estRetard;
       minutesRetard = estRetard ? lateStatus.minutesRetard : null;
     }
+  } else if (existingPointage.type === "DEPART") {
+    const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
+    const currentMinutes = newDate.getHours() * 60 + newDate.getMinutes();
+    estDepartAnticipe = currentMinutes < limiteDepartMinutes;
   }
 
   try {
@@ -92,7 +96,8 @@ export async function corrigerPointageAction(
           heure: newDate,
           estRetard,
           minutesRetard,
-          motif: estRetard ? existingPointage.motif : null,
+          estDepartAnticipe,
+          motif: existingPointage.motif,
         }
       });
 

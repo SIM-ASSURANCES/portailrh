@@ -98,6 +98,7 @@ export default async function PointagesRHPage({ searchParams }: PointagesRHPageP
     source: p.source,
     estRetard: p.estRetard,
     minutesRetard: p.minutesRetard,
+    estDepartAnticipe: p.estDepartAnticipe,
     motif: p.motif,
     collaborateurNom: p.user.fullName,
     effectueParNom: p.effectuePar?.fullName ?? null,

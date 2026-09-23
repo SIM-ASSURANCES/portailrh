@@ -13,6 +13,7 @@ export type PointageCorrectionRow = {
   source: string;
   estRetard: boolean;
   minutesRetard: number | null;
+  estDepartAnticipe?: boolean;
   motif: string | null;
   collaborateurNom: string;
   collaborateurService: string | null;
@@ -138,14 +139,23 @@ export function CorrectionsClient({ initialData, search = "" }: CorrectionsClien
       header: "Statut",
       render: (row) => {
         if (row.type === "DEPART") {
-          return row.motif ? (
-            <div className="space-y-1">
-              <Badge variant="primary">Départ anticipé</Badge>
-              <p className="text-xs text-muted-foreground italic truncate max-w-xs">{row.motif}</p>
-            </div>
-          ) : (
-            <span className="text-xs text-muted-foreground">Normal</span>
-          );
+          if (row.estDepartAnticipe) {
+            return (
+              <div className="space-y-1">
+                <Badge variant="primary">Départ anticipé</Badge>
+                {row.motif && <p className="text-xs text-muted-foreground italic truncate max-w-xs">{row.motif}</p>}
+              </div>
+            );
+          }
+          if (row.motif) {
+            return (
+              <div className="space-y-1">
+                <Badge variant="info">Normal</Badge>
+                <p className="text-xs text-muted-foreground italic truncate max-w-xs">{row.motif}</p>
+              </div>
+            );
+          }
+          return <span className="text-xs text-muted-foreground">Normal</span>;
         }
         if (row.estRetard) {
           return (

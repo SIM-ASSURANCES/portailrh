@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
 import {
@@ -37,6 +38,7 @@ export function NotificationDrawer({
   unreadCount,
   onUnreadCountChange,
 }: NotificationDrawerProps) {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
   const [selectedNotif, setSelectedNotif] = useState<Notification | null>(null);
@@ -121,7 +123,15 @@ export function NotificationDrawer({
     if (!notif.estLue) {
       handleMarkAsRead(notif.id);
     }
-    // Si la notification a un lien direct, on peut ouvrir la modale ou naviguer
+
+    // Redirection directe vers la page de l'action sans passer par une modale intermédiaire
+    if (notif.lien) {
+      onClose();
+      router.push(notif.lien);
+      return;
+    }
+
+    // S'il n'y a pas de lien d'action, ouvrir la modale pour lire le message complet
     setSelectedNotif(notif);
   };
 
@@ -201,33 +211,30 @@ export function NotificationDrawer({
           <button
             type="button"
             onClick={() => setActiveTab("all")}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-              activeTab === "all"
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${activeTab === "all"
                 ? "bg-primary text-primary-foreground font-semibold shadow-xs"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            }`}
+              }`}
           >
             Toutes ({notifications.length})
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("unread")}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-              activeTab === "unread"
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${activeTab === "unread"
                 ? "bg-primary text-primary-foreground font-semibold shadow-xs"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            }`}
+              }`}
           >
             Non lues {unreadTotal > 0 ? `(${unreadTotal})` : ""}
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("priority")}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-              activeTab === "priority"
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${activeTab === "priority"
                 ? "bg-primary text-primary-foreground font-semibold shadow-xs"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            }`}
+              }`}
           >
             Prioritaires {priorityTotal > 0 ? `(${priorityTotal})` : ""}
           </button>
@@ -252,8 +259,8 @@ export function NotificationDrawer({
                 {activeTab === "unread"
                   ? "Aucune notification non lue pour le moment."
                   : activeTab === "priority"
-                  ? "Aucune alerte prioritaire en attente."
-                  : "Aucune notification enregistrée."}
+                    ? "Aucune alerte prioritaire en attente."
+                    : "Aucune notification enregistrée."}
               </p>
             </div>
           ) : (
@@ -266,15 +273,14 @@ export function NotificationDrawer({
                 <div
                   key={notif.id}
                   onClick={() => handleSelectNotification(notif)}
-                  className={`group relative p-4 transition-colors cursor-pointer border-l-[3px] ${
-                    isCritical
+                  className={`group relative p-4 transition-colors cursor-pointer border-l-[3px] ${isCritical
                       ? "border-l-red-600 bg-red-50/10 hover:bg-red-50/20"
                       : isImportant && isUnread
-                      ? "border-l-amber-500 bg-amber-50/10 hover:bg-amber-50/20"
-                      : isUnread
-                      ? "border-l-primary bg-primary/[0.03] hover:bg-primary/[0.06]"
-                      : "border-l-transparent hover:bg-muted/40"
-                  }`}
+                        ? "border-l-amber-500 bg-amber-50/10 hover:bg-amber-50/20"
+                        : isUnread
+                          ? "border-l-primary bg-primary/[0.03] hover:bg-primary/[0.06]"
+                          : "border-l-transparent hover:bg-muted/40"
+                    }`}
                 >
                   <div className="flex items-start gap-3">
                     {/* Discrète icône de priorité */}
@@ -320,11 +326,10 @@ export function NotificationDrawer({
                       </div>
 
                       <h4
-                        className={`text-xs leading-snug line-clamp-1 ${
-                          isUnread
+                        className={`text-xs leading-snug line-clamp-1 ${isUnread
                             ? "font-bold text-foreground"
                             : "font-medium text-foreground/80"
-                        }`}
+                          }`}
                       >
                         {notif.titre}
                       </h4>
@@ -334,9 +339,11 @@ export function NotificationDrawer({
                       </p>
 
                       {notif.lien && (
-                        <div className="mt-2 flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
-                          <span>Consulter</span>
-                          <ArrowUpRight className="size-3" />
+                        <div className="mt-2.5 flex items-center">
+                          <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-all duration-150">
+                            <span>Consulter</span>
+                            <ArrowUpRight className="size-3" />
+                          </span>
                         </div>
                       )}
                     </div>

@@ -15,6 +15,7 @@ export type PointageRow = {
   source: SourcePointage;
   estRetard: boolean;
   minutesRetard: number | null;
+  estDepartAnticipe?: boolean;
   motif: string | null;
   effectueParNom: string | null;
   correctionsCount: number;
@@ -104,14 +105,23 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
           return <span className="text-xs text-muted-foreground italic">Pointage modifié</span>;
         }
         if (row.type === "DEPART") {
-          return row.motif ? (
-            <div className="space-y-1">
-              <Badge variant="primary">Départ anticipé</Badge>
-              <p className="text-xs text-muted-foreground italic truncate max-w-xs">{row.motif}</p>
-            </div>
-          ) : (
-            <span className="text-xs text-muted-foreground">Normal</span>
-          );
+          if (row.estDepartAnticipe) {
+            return (
+              <div className="space-y-1">
+                <Badge variant="primary">Départ anticipé</Badge>
+                {row.motif && <p className="text-xs text-muted-foreground italic truncate max-w-xs">{row.motif}</p>}
+              </div>
+            );
+          }
+          if (row.motif) {
+            return (
+              <div className="space-y-1">
+                <Badge variant="info">Normal</Badge>
+                <p className="text-xs text-muted-foreground italic truncate max-w-xs">{row.motif}</p>
+              </div>
+            );
+          }
+          return <span className="text-xs text-muted-foreground">Normal</span>;
         }
         if (row.estRetard) {
           return (

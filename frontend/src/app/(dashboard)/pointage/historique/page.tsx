@@ -176,6 +176,7 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
       source: p.source,
       estRetard: p.estRetard,
       minutesRetard: p.minutesRetard,
+      estDepartAnticipe: p.estDepartAnticipe,
       motif: p.motif,
       effectueParNom: p.effectuePar?.fullName ?? null,
       correctionsCount: p.corrections.length,

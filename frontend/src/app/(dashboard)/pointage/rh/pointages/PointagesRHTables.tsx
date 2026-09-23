@@ -15,6 +15,7 @@ export type PointageRHRow = {
   source: SourcePointage;
   estRetard: boolean;
   minutesRetard: number | null;
+  estDepartAnticipe?: boolean;
   motif: string | null;
   collaborateurNom: string;
   effectueParNom: string | null;
@@ -61,10 +62,20 @@ function renderHeure(row: PointageRHRow | null) {
 function renderStatut(row: PointageRHRow | null) {
   if (!row) return <span className="text-muted-foreground font-medium">-</span>;
   if (row.type === "DEPART") {
-    if (row.motif) {
+    if (row.estDepartAnticipe) {
       return (
         <div className="space-y-0.5 max-w-[120px]">
           <Badge variant="primary" className="text-[10px] px-1.5 py-0 leading-tight">Départ anticipé</Badge>
+          {row.motif && (
+            <p className="text-[10px] text-muted-foreground italic truncate" title={row.motif}>{row.motif}</p>
+          )}
+        </div>
+      );
+    }
+    if (row.motif) {
+      return (
+        <div className="space-y-0.5 max-w-[120px]">
+          <Badge variant="info" className="text-[10px] px-1.5 py-0 leading-tight">Normal</Badge>
           <p className="text-[10px] text-muted-foreground italic truncate" title={row.motif}>{row.motif}</p>
         </div>
       );

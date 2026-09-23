@@ -53,6 +53,7 @@ export default async function CorrectionsPage({ searchParams }: CorrectionsPageP
     source: p.source,
     estRetard: p.estRetard,
     minutesRetard: p.minutesRetard,
+    estDepartAnticipe: p.estDepartAnticipe,
     motif: p.motif,
     collaborateurNom: p.user.fullName,
     collaborateurService: p.user.service?.name ?? null,
