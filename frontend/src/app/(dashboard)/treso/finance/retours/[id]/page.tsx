@@ -7,7 +7,9 @@ import { MarquerNonJustifiee } from "@/components/tresorerie/MarquerNonJustifiee
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 
+import { DetaillerDepensesTrigger } from "./DetaillerDepensesTrigger";
 import { ReceptionnerAction } from "./ReceptionnerAction";
+import type { LigneDetailInput } from "../retourActions";
 
 /**
  * Détail complet d'un retour de caisse (Tâche "Écran 'Voir' avant
@@ -43,6 +45,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
       declarant: true,
       reglement: { include: { demande: true } },
       depenses: { include: { pieceJointe: true, motifNonJustifiePar: true }, orderBy: { date: "asc" } },
+      signalements: { where: { estResolu: false }, include: { signalePar: true } },
     },
   });
 
@@ -54,6 +57,26 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
   const montantNonJustifie = retour.depenses
     .filter((d) => d.justification === "SANS_PIECE")
     .reduce((sum, d) => sum + Number(d.montant), 0);
+
+  // Tâche "L'Assistant Finance détaille réellement le retour" (voir
+  // CLAUDE.md) : le mécanisme unifié de détail reste possible tant que le
+  // retour n'est pas réceptionné (comme avant) OU, une fois réceptionné,
+  // UNIQUEMENT s'il existe un signalement actif du collaborateur (Tâche
+  // "Signalement d'erreur par le Collaborateur") — même garde EXACTE que
+  // `detaillerDepensesRetourAction` côté serveur, jamais dupliquée sous une
+  // forme divergente ici (celle-ci ne sert qu'à décider l'affichage).
+  const signalementActif = retour.signalements[0] ?? null;
+  const cloturéeSansException = retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle;
+  const bloqueParReception = retour.estReceptionne && !signalementActif;
+  const peutDetailler = !cloturéeSansException && !bloqueParReception;
+  const lignesInitiales: LigneDetailInput[] = retour.depenses.map((d) => ({
+    libelle: d.objet,
+    montant: Number(d.montant),
+    pieceJointeFournie: !!d.pieceJointe,
+    pieceJointeUrl: undefined,
+    justifiee: d.justification !== "SANS_PIECE",
+    motif: d.motifNonJustifie ?? undefined,
+  }));
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
@@ -72,6 +95,20 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
           Consultation en lecture seule : la réception de ce retour et le marquage des dépenses non justifiées sont
           réservés à l&apos;Assistant Finance.
         </p>
+      ) : null}
+
+      {signalementActif ? (
+        <div className="space-y-1 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
+          <p className="font-semibold">
+            Erreur signalée par {signalementActif.signalePar.fullName} le{" "}
+            {signalementActif.signaleAt.toLocaleDateString("fr-FR")} :
+          </p>
+          <p>{signalementActif.commentaire}</p>
+          <p className="text-xs">
+            Ce signalement débloque exceptionnellement la correction du détail ci-dessous — il sera marqué résolu
+            automatiquement dès l&apos;enregistrement de la correction.
+          </p>
+        </div>
       ) : null}
 
       <div className="space-y-4 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
@@ -130,9 +167,27 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
         </dl>
 
         <div className="space-y-3 border-t border-border pt-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Lignes de dépenses déclarées
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Lignes de dépenses déclarées
+            </h2>
+            {canReceptionner ? (
+              peutDetailler ? (
+                <DetaillerDepensesTrigger
+                  retourId={retour.id}
+                  montantCible={totalDeclare}
+                  lignesInitiales={lignesInitiales}
+                  label={retour.depenses.length > 0 ? "Détailler / corriger les dépenses" : "Détailler les dépenses"}
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {cloturéeSansException
+                    ? "Cette demande est clôturée : le détail n'est plus modifiable."
+                    : "Ce retour est réceptionné : un signalement actif du collaborateur est nécessaire pour corriger le détail."}
+                </p>
+              )
+            ) : null}
+          </div>
           {retour.depenses.length === 0 ? (
             <p className="text-sm text-muted-foreground">Retour intégral — aucune dépense déclarée.</p>
           ) : (
@@ -157,8 +212,11 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
                       Télécharger la pièce jointe
                     </a>
                   ) : (
-                    <p className="text-xs text-muted-foreground">Aucune pièce jointe.</p>
+                    <p className="text-xs text-muted-foreground">Aucune pièce jointe fournie.</p>
                   )}
+                  {d.justification !== "SANS_PIECE" && !d.motifNonJustifie ? (
+                    <p className="text-xs text-success">Justifiée.</p>
+                  ) : null}
                   {!retour.estReceptionne ? (
                     <MarquerNonJustifiee
                       depense={{

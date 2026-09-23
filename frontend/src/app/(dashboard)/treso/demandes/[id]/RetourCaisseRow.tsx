@@ -3,10 +3,10 @@
 import { useState } from "react";
 
 import { Badge, Button } from "@/components/ui";
-import { JUSTIFICATION_LABEL } from "@/components/tresorerie/justification";
 import type { TypeJustification } from "backend";
 
 import { RetourCaisseForm } from "./RetourCaisseForm";
+import { SignalerErreurRetour } from "./SignalerErreurRetour";
 
 export interface DepenseLigneData {
   id: string;
@@ -17,6 +17,11 @@ export interface DepenseLigneData {
   justification: TypeJustification;
   commentaire: string | null;
   pieceJointeId: string | null;
+  /** Motif Finance si la ligne est marquée non justifiée — voir CLAUDE.md
+   * "Le Collaborateur voit le détail réel, pas le générique" : jamais
+   * affiché avant cette tâche côté Collaborateur. */
+  motifNonJustifie: string | null;
+  motifNonJustifiePar: string | null;
 }
 
 export interface RetourData {
@@ -36,6 +41,9 @@ export interface RetourData {
   /** Non réceptionné, demande non clôturée, ET utilisateur connecté = déclarant original. */
   peutModifier: boolean;
   depenses: DepenseLigneData[];
+  /** Signalement d'erreur ACTIF (non résolu) sur ce retour, le cas échéant
+   * — voir CLAUDE.md "Signalement d'erreur par le Collaborateur". */
+  signalementActif: { commentaire: string } | null;
 }
 
 export interface RetourCaisseRowData {
@@ -60,6 +68,15 @@ export interface RetourCaisseRowData {
  * évidence avec les couleurs d'alerte de la charte (`text-warning`), même
  * convention que le reste du projet (reste à régler, écart de
  * régularisation...).
+ *
+ * **Détail réel, pas le générique** (voir CLAUDE.md "Le Collaborateur voit
+ * le détail réel, pas le générique") — affiche pour chaque ligne, en
+ * LECTURE SEULE : son libellé réel (`objet`, déjà le cas — reste "Dépenses
+ * non détaillées" tant que l'Assistant n'a pas encore détaillé), sa pièce
+ * jointe téléchargeable OU la mention EXPLICITE "Aucune pièce jointe
+ * fournie." (jamais un silence muet), et son statut justifié/non justifié
+ * avec motif Finance si applicable (`motifNonJustifie`, jamais affiché
+ * avant cette tâche côté Collaborateur).
  */
 function DetailDepenses({
   depenses,
@@ -89,9 +106,7 @@ function DetailDepenses({
               <span className="font-medium text-foreground">
                 {d.objet} — {d.montant.toLocaleString("fr-FR")} FCFA
               </span>
-              <span className="text-xs text-muted-foreground">
-                {d.date.toLocaleDateString("fr-FR")} — {JUSTIFICATION_LABEL[d.justification]}
-              </span>
+              <span className="text-xs text-muted-foreground">{d.date.toLocaleDateString("fr-FR")}</span>
             </div>
             {d.nature ? <p className="mt-1 text-xs text-muted-foreground">{d.nature}</p> : null}
             {d.commentaire ? <p className="mt-1 text-xs text-foreground">{d.commentaire}</p> : null}
@@ -102,7 +117,18 @@ function DetailDepenses({
               >
                 Télécharger la pièce jointe
               </a>
-            ) : null}
+            ) : (
+              <p className="mt-1 text-xs text-muted-foreground">Aucune pièce jointe fournie.</p>
+            )}
+            {d.justification !== "SANS_PIECE" ? (
+              <p className="mt-1 text-xs text-success">Justifiée.</p>
+            ) : d.motifNonJustifie ? (
+              <p className="mt-1 text-xs text-warning">
+                Non justifiée{d.motifNonJustifiePar ? ` (${d.motifNonJustifiePar})` : ""} : {d.motifNonJustifie}
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-muted-foreground">Détail non encore renseigné par l&apos;équipe Finance.</p>
+            )}
           </li>
         ))}
       </ul>
@@ -169,11 +195,19 @@ function RetourExistant({
           onSuccess={() => setEditOpen(false)}
         />
       ) : (
-        <DetailDepenses
-          depenses={retour.depenses}
-          montantARetourner={retour.montantARetourner}
-          dateRetour={retour.dateRetour}
-        />
+        <>
+          <DetailDepenses
+            depenses={retour.depenses}
+            montantARetourner={retour.montantARetourner}
+            dateRetour={retour.dateRetour}
+          />
+          <div className="border-t border-border pt-2">
+            <SignalerErreurRetour
+              retourId={retour.id}
+              signalementActifCommentaire={retour.signalementActif?.commentaire ?? null}
+            />
+          </div>
+        </>
       )}
     </li>
   );

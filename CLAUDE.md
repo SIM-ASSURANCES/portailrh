@@ -1110,6 +1110,243 @@ du DOM — pas un simple test de présence de mot dans la page, un contrôle
   comptage (0 occurrence).
 - `tsc --noEmit`, `eslint` et `next build` passent sans erreur.
 
+### L'Assistant Finance détaille réellement le retour (remplace le générique) + signalement d'erreur par le Collaborateur
+
+Trois tâches liées, traitées ensemble : la ligne `DepenseLigne` générique
+("Dépenses non détaillées", `SANS_PIECE`) produite automatiquement par le
+formulaire simplifié du Collaborateur (voir "Retirer la saisie de
+justification par le Collaborateur" ci-dessus) et par
+`declarerRetourAssistantAction` (cas "0 retour", voir "L'Assistant Finance
+déclare les dépenses...") ne pouvait jusqu'ici qu'être marquée "non
+justifiée" globalement — jamais réellement détaillée (libellé réel,
+montant par nature de dépense, pièce jointe individuelle).
+
+#### Mécanisme UNIFIÉ de détail réel (`detaillerDepensesRetourAction`)
+
+**Une seule façon de détailler, peu importe l'origine du retour** — la
+demande explicitement de ne jamais dupliquer un second mécanisme a été
+respectée en reconnaissant que les deux origines (retour réellement soumis
+par le Collaborateur, ou déclaré par l'Assistant en son absence) produisent
+déjà exactement la même forme : un `RetourCaisse` portant une ligne
+générique unique. `declarerRetourAssistantAction` (Tâche "L'Assistant
+Finance déclare les dépenses...") a donc été **réduite** à
+`(reglementId, motifReouverture?)` — elle ne crée plus qu'un retour +
+UNE ligne générique `SANS_PIECE` couvrant tout le montant restant à
+expliquer (`calculerMontantARetournerNet`, formule déjà existante,
+inchangée), exactement comme le fait déjà le formulaire simplifié
+Collaborateur. Le paramètre `lignes` détaillées qu'elle acceptait est
+purement et simplement supprimé — plus aucune saisie de ligne à la
+création, peu importe qui déclare.
+
+- **`detaillerDepensesRetourAction(retourId, lignes: LigneDetailInput[])`**
+  (nouvelle, `treso/finance/retours/retourActions.ts`) — réservée à
+  `treso.receptionner_retour` (Assistant Finance uniquement, comme toutes
+  les actions de ce type ; Responsable Finance et DG exclus). Remplace
+  **intégralement** les lignes actuelles du retour (génériques ou déjà
+  détaillées lors d'un appel précédent) par le nouveau détail — jamais un
+  ajout, toujours un remplacement complet dans la même transaction
+  (`deleteMany` puis recréation).
+  ```ts
+  interface LigneDetailInput {
+    libelle: string;
+    montant: number;
+    pieceJointeFournie: boolean;   // état EXPLICITE, jamais déduit du silence
+    pieceJointeUrl?: string;        // requis si pieceJointeFournie
+    justifiee: boolean;
+    motif?: string;                 // requis si !justifiee (3 caractères minimum)
+  }
+  ```
+  `justifiee: true` → `justification: "FACTURE"` (la pièce jointe éventuelle
+  faisant foi) ; `justifiee: false` → `justification: "SANS_PIECE"` +
+  `motifNonJustifie`/`motifNonJustifieParId`/`motifNonJustifieAt` renseignés
+  directement dans la transaction (mêmes champs que
+  `marquerDepenseNonJustifieeAction`, jamais un second appel à cette
+  action pour des lignes qui n'ont pas encore d'id).
+- **Validation stricte du total** — la cible n'est **jamais** recalculée
+  depuis `Reglement.montant` : c'est la somme des lignes ACTUELLES du
+  retour (`retour.depenses`, avant remplacement) qui fait foi — cette
+  action ne modifie donc jamais `montantARetourner`, seule la RÉPARTITION
+  du total déjà établi change. Comparaison en centimes entiers, écart
+  exact renvoyé dans le message de refus : `"La somme des lignes (X FCFA)
+  ne correspond pas au total dépensé de ce retour (Y FCFA) — écart de Z
+  FCFA en trop/manquant."` — vérifié en pratique (écart de 1 000 FCFA
+  manquant correctement détecté et chiffré).
+- **Pièce jointe, état explicite** — aucune nouvelle colonne : le SERVEUR
+  refuse simplement (`superRefine` zod) toute ligne où `pieceJointeFournie:
+  true` sans `pieceJointeUrl`, message "Téléversez le fichier, ou indiquez
+  qu'aucune pièce jointe n'est fournie." — jamais un champ silencieusement
+  vide. Réutilise `POST /api/treso/pieces-jointes/upload` tel quel (déjà
+  accessible à l'Assistant Finance via sa permission
+  `treso.effectuer_reglement`, faisant partie de la garde OR existante de
+  cette route).
+
+#### Verrouillage et exception ciblée — `SignalementRetour`
+
+**Structure retenue : une table dédiée `SignalementRetour`, pas un simple
+champ réutilisable sur `RetourCaisse`** (choix explicitement laissé libre
+par la demande) — décision motivée par la différence de nature avec
+`motifReouvertureExceptionnelle` (un champ figé, un seul usage possible par
+retour) : un signalement peut légitimement se reproduire plusieurs fois
+sur la vie d'un même retour (signalé → résolu → signalé à nouveau si une
+nouvelle erreur est constatée), et nécessite un historique complet
+auditable (qui a signalé/résolu, quand, avec quel commentaire) — un champ
+unique écraserait cet historique à chaque nouveau signalement.
+```prisma
+model SignalementRetour {
+  id             String       @id @default(cuid())
+  retourCaisseId String
+  retourCaisse   RetourCaisse @relation(fields: [retourCaisseId], references: [id])
+  commentaire    String
+  signaleParId   String
+  signalePar     User         @relation("SignalementRetourSignalePar", fields: [signaleParId], references: [id])
+  signaleAt      DateTime     @default(now())
+  estResolu      Boolean      @default(false)
+  resoluParId    String?
+  resoluPar      User?        @relation("SignalementRetourResoluPar", fields: [resoluParId], references: [id])
+  resoluAt       DateTime?
+}
+```
+Migration purement additive `20260923094649_signalement_retour_detail_reel`.
+Un seul signalement `estResolu: false` ("actif") autorisé à la fois par
+retour — un second signalement pendant que le premier est encore actif
+est refusé côté serveur (`"Un signalement est déjà en cours de traitement
+pour ce retour : attendez qu'il soit résolu avant d'en soumettre un
+nouveau."`), vérifié en pratique.
+
+- **`signalerErreurRetourAction(retourId, commentaire)`**
+  (`treso/demandes/[id]/retourActions.ts`, côté Collaborateur) — réservée
+  à `treso.declarer_retour`, revérifie que le créateur de la demande liée
+  est bien l'utilisateur connecté. Commentaire obligatoire (**10 caractères
+  minimum**, même seuil que `motifReouvertureExceptionnelle` — gravité
+  comparable, une erreur signalée rouvre exceptionnellement un dossier déjà
+  traité). Trace une `HistoriqueEntry` (action `signalement_retour`,
+  volontairement **visible** au Collaborateur — c'est sa propre action) et
+  notifie l'équipe Finance via `notifierParPermission("treso.receptionner_retour",
+  ...)` (mécanisme déjà existant, jamais dupliqué) — atteint donc
+  spécifiquement l'Assistant Finance, jamais le Responsable Finance/DG qui
+  n'ont pas cette permission.
+- **Exception ciblée dans `detaillerDepensesRetourAction`** — refuse
+  normalement toute modification d'un retour déjà `estReceptionne`, SAUF
+  s'il existe un `SignalementRetour` actif pour ce retour précis (même
+  principe que `motifReouvertureExceptionnelle`/`receptionnerRetourAction`
+  pour la réouverture post-clôture, jamais un mécanisme divergent) :
+  message de refus inchangé sinon
+  (`"Ce retour de caisse a déjà été réceptionné : la modification du
+  détail nécessite un signalement actif du collaborateur."`).
+- **Auto-résolution dans la MÊME transaction** — si la correction
+  s'appuie sur un signalement actif, celui-ci passe à `estResolu: true`
+  (`resoluParId`/`resoluAt`) au moment même où les nouvelles lignes sont
+  écrites : le retour se **reverrouille automatiquement** (sans signalement
+  actif restant, une tentative suivante est refusée exactement comme
+  avant tout signalement) — vérifié en pratique (nouvelle tentative après
+  correction → refusée avec le même message que l'état initial).
+- **Historique, action distincte** — `correction_signalement_retour`
+  (jamais confondue avec `detaillage_retour`, le premier détaillage
+  normal sans signalement) : "traçabilité complète et distincte de la
+  correction elle-même", conformément à la demande. Les trois nouvelles
+  actions (`detaillage_retour`, `signalement_retour`,
+  `correction_signalement_retour`) sont ajoutées à `ACTION_LABELS`
+  (`DemandeHistorique.tsx`) et **volontairement exclues** de
+  `ACTIONS_GESTION_INTERNE` — restent visibles au Collaborateur, comme
+  `declaration_retour_assistant`/`reouverture_exceptionnelle_retour` déjà
+  documentées : c'est une information sur SON ARGENT, jamais de la
+  gestion interne à masquer.
+- **`supprimerUtilisateurAction`** (admin/users) étendue avec 2 relations
+  supplémentaires (`signalementRetour.signaleParId`/`resoluParId`, même
+  pattern exact que `motifNonJustifieParId`) — un compte ayant signalé ou
+  résolu au moins une erreur ne peut plus être supprimé définitivement.
+
+#### Le Collaborateur voit le détail réel, jamais le générique
+
+`DetailDepenses` (`RetourCaisseRow.tsx`, côté Collaborateur, déjà
+existant) affiche désormais, par ligne, dans l'ordre : le libellé réel
+(`objet`, déjà affiché — reste "Dépenses non détaillées" tant que
+l'Assistant n'a rien détaillé, devient le vrai libellé une fois détaillé,
+sans aucun changement de code nécessaire pour ce point précis puisque le
+composant lisait déjà ce champ) ; le lien "Télécharger la pièce jointe" OU
+la mention **explicite** "Aucune pièce jointe fournie." (jamais un silence
+muet — remplace l'ancien "Aucune pièce jointe.") ; puis un statut à trois
+états, nouveau : "Justifiée." (vert) si `justification !== "SANS_PIECE"`,
+"Non justifiée (auteur) : motif" (orange) si un `motifNonJustifie` existe,
+ou "Détail non encore renseigné par l'équipe Finance." (neutre) pour la
+ligne générique pas encore traitée — ce troisième cas couvre exactement
+la période entre la déclaration et le détaillage par l'Assistant.
+Toujours en LECTURE SEULE, aucune action de modification côté
+Collaborateur au-delà du signalement (voir ci-dessus).
+
+`RetoursCaisseSection.tsx` transmet désormais aussi
+`motifNonJustifie`/`motifNonJustifiePar` par ligne (jamais exposés avant
+cette tâche côté Collaborateur — l'auteur du motif Finance devient
+visible, cohérent avec le fait que c'est son propre argent) et le
+signalement **actif** éventuel de chaque retour, pour que
+`SignalerErreurRetour` (nouveau, colocalisé) affiche déjà un signalement
+en cours plutôt que de proposer d'en ouvrir un second voué à l'échec
+serveur.
+
+#### Vérifications, parcours réel (rejeu réseau direct via une route de diagnostic temporaire dans un vrai contexte de requête, comptes de test réels, dev server redémarré après la migration)
+
+Méthodologie : plutôt que de deviner le protocole interne des Server
+Actions Next.js, une route API temporaire (`/api/diag-tmp`, supprimée
+après usage) a servi de point d'entrée pour rejouer les vraies fonctions
+de Server Action dans un **vrai contexte de requête** (cookies de session
+réels obtenus par une vraie connexion Auth.js/Credentials) — le contrôle
+de permission (`getSession()`/`hasPermission()`) s'exécute donc
+exactement comme en production, sans raccourci. Deux demandes de test
+créées via le vrai formulaire (Server Action `creerDemandeAction`).
+
+- **Scénario A (retour réellement soumis par le collaborateur)** : demande
+  validée (60 000 FCFA), réglée en Caisse et confirmée, retour partiel
+  déclaré par le Collaborateur (40 000 FCFA retournés, 20 000 FCFA à
+  détailler → ligne générique `SANS_PIECE` auto-créée, confirmé en base).
+  - Détail avec somme incorrecte (19 000 FCFA au lieu de 20 000) → refusé,
+    message exact : "écart de 1 000 FCFA manquant."
+  - Détail avec somme correcte (12 000 FCFA justifiée + pièce jointe PDF
+    réellement uploadée, 8 000 FCFA non justifiée + motif) → réussi ;
+    recoupé en base (2 lignes réelles, `pieceJointeId` renseigné sur la
+    première, `motifNonJustifie` sur la seconde).
+  - Page Collaborateur relue : libellés réels présents, lien "Télécharger
+    la pièce jointe" présent, "Aucune pièce jointe fournie." pour la
+    ligne sans pièce, "Justifiée." affiché, motif Finance affiché, **zéro
+    occurrence** du texte générique "Dépenses non détaillées" — confirmé
+    par recherche exacte dans le HTML rendu.
+  - Responsable Finance ET DG refusés sur `detaillerDepensesRetourAction`
+    (rejeu réseau direct, "Action non autorisée.").
+  - Retour réceptionné (Assistant) → nouvelle tentative de modification
+    SANS signalement actif → refusée avec le message de verrou attendu.
+  - Signalement sans commentaire → refusé (message de validation
+    zod) ; commentaire valide (>10 caractères) → accepté, notification
+    créée pour l'Assistant Finance (recoupée en base, titre "Erreur
+    signalée sur un retour de caisse"). Second signalement pendant que
+    le premier reste actif → refusé.
+  - Correction avec le signalement actif → réussie, message "Détail
+    corrigé — signalement résolu, retour reverrouillé." ; recoupé en
+    base : signalement passé à `estResolu: true`. Nouvelle tentative de
+    modification APRÈS cette correction, sans nouveau signalement →
+    refusée exactement comme avant tout signalement (reverrouillage
+    confirmé).
+  - Responsable Finance ET DG refusés sur `signalerErreurRetourAction`
+    (rejeu réseau direct, "Action non autorisée.").
+- **Scénario B (demande SANS aucun retour soumis, 0 retour)** : demande
+  validée (30 000 FCFA), réglée en Caisse et confirmée, aucun retour
+  déclaré par le Collaborateur. L'Assistant Finance appelle
+  `declarerRetourAssistantAction` (retour + ligne générique 30 000 FCFA,
+  confirmé en base) puis **le même** `detaillerDepensesRetourAction` que
+  le Scénario A (20 000 FCFA justifiée + 10 000 FCFA non justifiée avec
+  motif) → réussi du premier coup, confirmant le mécanisme réellement
+  **unifié** — aucune divergence de comportement entre les deux origines.
+  Page Collaborateur relue : les deux libellés réels présents, "Aucune
+  pièce jointe fournie." affiché, badge "Déclaré par l'Assistant Finance"
+  toujours présent (inchangé).
+- **Nettoyage** : les 2 demandes de test (+ un troisième brouillon orphelin
+  issu d'un script de vérification interrompu en cours de route) et toutes
+  leurs entités liées (lignes, règlements, retours, dépenses, signalements,
+  allocations, historique, écritures `JournalCaisse`) supprimés
+  explicitement par `demandeId` — solde de caisse revérifié identique
+  avant/après (4 480 000 FCFA). Route de diagnostic temporaire et scripts
+  de vérification supprimés après usage.
+- `tsc --noEmit` et un vrai `next build` passent sans erreur après
+  nettoyage.
+
 ### Bon de caisse et reçu PDF
 
 Deux documents PDF distincts par règlement, mêmes règles d'accès (401 non

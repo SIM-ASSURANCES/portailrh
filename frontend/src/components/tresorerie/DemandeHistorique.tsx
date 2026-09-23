@@ -29,6 +29,16 @@ const ACTION_LABELS: Record<string, string> = {
   // CLAUDE.md) : ne doit jamais être confondu avec un retour normal, même
   // déclaré par l'Assistant sur une demande active.
   reouverture_exceptionnelle_retour: "Réouverture exceptionnelle — retour de caisse complémentaire (demande clôturée)",
+  // Tâche "L'Assistant Finance détaille réellement le retour" (voir
+  // CLAUDE.md) — volontairement VISIBLE au Collaborateur (comme
+  // `declaration_retour_assistant`) : c'est une information sur SON
+  // ARGENT, jamais de la gestion interne à masquer.
+  detaillage_retour: "Détail réel du retour renseigné par l'Assistant Finance",
+  // Tâche "Signalement d'erreur par le Collaborateur" — les deux actions
+  // restent visibles au Collaborateur : la première est SA PROPRE action,
+  // la seconde répond directement à son signalement.
+  signalement_retour: "Erreur signalée par le collaborateur",
+  correction_signalement_retour: "Détail du retour corrigé suite à un signalement",
   cloture_totale: "Clôture totale",
   cloture_partielle: "Clôture partielle",
   validation_complete_dg: "Validation complète approuvée par le DG",

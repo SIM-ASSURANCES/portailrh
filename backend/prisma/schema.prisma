@@ -64,6 +64,10 @@ model User {
   /// Finance — `validerLignesAction` (voir CLAUDE.md "Validation ligne par
   /// ligne").
   lignesDemandeDecidees         LigneDemande[]    @relation("LigneDemandeDecideur")
+  /// Signalements d'erreur sur un retour de caisse — voir CLAUDE.md
+  /// "Signalement d'erreur par le Collaborateur".
+  signalementsRetourEmis        SignalementRetour[] @relation("SignalementRetourSignalePar")
+  signalementsRetourResolus     SignalementRetour[] @relation("SignalementRetourResoluPar")
   historique                    HistoriqueEntry[]
   /// Écritures JournalCaisse déclenchées par cet utilisateur (auteur du
   /// règlement pour une SORTIE, receptionneParId pour une ENTRÉE de retour,
@@ -700,6 +704,49 @@ model RetourCaisse {
   /// (validation, règlement, catégorisation, clôture) n'est réactivée par
   /// ce champ.
   motifReouvertureExceptionnelle String?
+
+  /// Signalements d'erreur soumis par le Collaborateur sur ce retour une
+  /// fois détaillé — voir CLAUDE.md "Signalement d'erreur par le
+  /// Collaborateur". Historique complet (jamais un seul champ figé sur
+  /// `RetourCaisse` lui-même) : un même retour peut être signalé plusieurs
+  /// fois au fil du temps (signalé, corrigé, signalé à nouveau...).
+  signalements SignalementRetour[]
+}
+
+/// Signalement d'erreur soumis par le Collaborateur créateur de la demande
+/// sur le détail (réel) d'un retour de caisse — voir CLAUDE.md "Signalement
+/// d'erreur par le Collaborateur". Modèle dédié plutôt qu'un simple champ
+/// sur `RetourCaisse` (comme `motifReouvertureExceptionnelle`) : contrairement
+/// à la réouverture post-clôture (un évènement rare, jamais répété sur le
+/// même retour), un signalement peut légitimement se répéter dans le temps
+/// (signalé → corrigé/résolu → signalé de nouveau) ; conserver l'historique
+/// complet (qui a signalé, quand, avec quel commentaire, qui a résolu et
+/// quand) nécessite plusieurs lignes possibles, pas un seul champ écrasé à
+/// chaque cycle.
+model SignalementRetour {
+  id             String       @id @default(cuid())
+  retourCaisseId String
+  retourCaisse   RetourCaisse @relation(fields: [retourCaisseId], references: [id])
+
+  /// Commentaire obligatoire (min 10 caractères, revérifié côté serveur)
+  /// expliquant l'erreur ou l'oubli constaté par le Collaborateur.
+  commentaire String
+
+  signaleParId String
+  signalePar   User     @relation("SignalementRetourSignalePar", fields: [signaleParId], references: [id])
+  signaleAt    DateTime @default(now())
+
+  /// `false` tant que l'Assistant Finance n'a pas corrigé le détail en
+  /// réponse — voir CLAUDE.md : un signalement `estResolu: false` est ce
+  /// qui autorise EXCEPTIONNELLEMENT `detaillerDepensesRetourAction` à
+  /// s'exécuter sur un retour déjà réceptionné (même principe ciblé que
+  /// `motifReouvertureExceptionnelle` pour la clôture). Un seul signalement
+  /// actif à la fois par retour (refusé côté serveur si un autre est déjà
+  /// `estResolu: false`).
+  estResolu   Boolean   @default(false)
+  resoluParId String?
+  resoluPar   User?     @relation("SignalementRetourResoluPar", fields: [resoluParId], references: [id])
+  resoluAt    DateTime?
 }
 
 /// Une ligne de dépense détaillée d'un `RetourCaisse` (cahier des charges

@@ -638,6 +638,8 @@ export async function supprimerUtilisateurAction(
     delegationsAccordees,
     delegationsRecues,
     depensesMarqueesNonJustifiees,
+    signalementsRetourEmis,
+    signalementsRetourResolus,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -657,6 +659,10 @@ export async function supprimerUtilisateurAction(
     prisma.permissionDelegation.count({ where: { donneurId: userId } }),
     prisma.permissionDelegation.count({ where: { beneficiaireId: userId } }),
     prisma.depenseLigne.count({ where: { motifNonJustifieParId: userId } }),
+    // Tâche "Signalement d'erreur par le Collaborateur" (voir CLAUDE.md) —
+    // 2 relations directes supplémentaires vers User.
+    prisma.signalementRetour.count({ where: { signaleParId: userId } }),
+    prisma.signalementRetour.count({ where: { resoluParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -680,6 +686,9 @@ export async function supprimerUtilisateurAction(
   if (delegationsRecues > 0) blocages.push(`reçu ${delegationsRecues} délégation(s) de permission`);
   if (depensesMarqueesNonJustifiees > 0)
     blocages.push(`marqué ${depensesMarqueesNonJustifiees} dépense(s) comme non justifiée(s)`);
+  if (signalementsRetourEmis > 0) blocages.push(`signalé ${signalementsRetourEmis} erreur(s) sur un retour de caisse`);
+  if (signalementsRetourResolus > 0)
+    blocages.push(`résolu ${signalementsRetourResolus} signalement(s) d'erreur sur un retour de caisse`);
 
   if (blocages.length > 0) {
     const liste =

@@ -332,3 +332,93 @@ export async function modifierRetourCaisseAction(
     message: `Retour de caisse modifié : ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner.`,
   };
 }
+
+const signalementCommentaireSchema = z
+  .string()
+  .trim()
+  .min(10, "Le commentaire est obligatoire (10 caractères minimum) pour expliquer le problème constaté.");
+
+/**
+ * Le Collaborateur signale une erreur ou un oubli constaté dans le détail
+ * réel d'un retour de caisse (renseigné par l'Assistant Finance) — voir
+ * CLAUDE.md "Signalement d'erreur par le Collaborateur". Réservée à
+ * `treso.declarer_retour`, et uniquement sur les retours de ses PROPRES
+ * demandes (même garde que `creerRetourCaisseAction`).
+ *
+ * Un seul signalement ACTIF (`estResolu: false`) à la fois par retour —
+ * refusée si un précédent signalement n'a pas encore été traité par
+ * l'Assistant Finance (`detaillerDepensesRetourAction`, qui le résout
+ * automatiquement dès qu'il corrige le détail en réponse).
+ *
+ * Un signalement actif débloque EXCEPTIONNELLEMENT, pour l'Assistant
+ * Finance uniquement, la modification du détail d'un retour déjà
+ * réceptionné — voir `detaillerDepensesRetourAction`. Cette action-ci ne
+ * modifie JAMAIS elle-même le détail : elle ne fait que tracer le
+ * signalement et notifier l'Assistant.
+ */
+export async function signalerErreurRetourAction(retourId: string, commentaire: string): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.declarer_retour")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedCommentaire = signalementCommentaireSchema.safeParse(commentaire);
+  if (!parsedCommentaire.success) {
+    return { status: "error", message: parsedCommentaire.error.issues[0].message };
+  }
+
+  const retour = await prisma.retourCaisse.findUnique({
+    where: { id: retourId },
+    include: {
+      reglement: { include: { demande: true } },
+      signalements: { where: { estResolu: false } },
+    },
+  });
+  if (!retour) {
+    return { status: "error", message: "Retour de caisse introuvable." };
+  }
+  if (retour.reglement.demande.createurId !== session.user.id) {
+    return { status: "error", message: "Vous ne pouvez signaler une erreur que sur vos propres demandes." };
+  }
+  if (retour.signalements.length > 0) {
+    return {
+      status: "error",
+      message: "Un signalement est déjà en cours de traitement pour ce retour : attendez qu'il soit résolu avant d'en soumettre un nouveau.",
+    };
+  }
+
+  const demandeId = retour.reglement.demandeId;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.signalementRetour.create({
+      data: {
+        retourCaisseId: retourId,
+        commentaire: parsedCommentaire.data,
+        signaleParId: session.user.id,
+      },
+    });
+    await tx.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "signalement_retour",
+        detail: `Erreur signalée par le collaborateur sur le détail d'un retour de caisse : ${parsedCommentaire.data}`,
+        userId: session.user.id,
+      },
+    });
+  });
+
+  revalidatePath(`/treso/demandes/${demandeId}`);
+  revalidatePath(`/treso/finance/retours/${retourId}`);
+  revalidatePath("/treso/finance/retours");
+  revalidatePath(`/treso/finance/demandes/${demandeId}`);
+  publishDataChanged();
+
+  await notifierParPermission("treso.receptionner_retour", {
+    titre: "Erreur signalée sur un retour de caisse",
+    message: `Le collaborateur a signalé une erreur sur le détail d'un retour de caisse de la demande ${retour.reglement.demande.reference}.`,
+    lien: `/treso/finance/retours/${retourId}`,
+  });
+
+  return { status: "success", message: "Signalement envoyé à l'équipe Finance." };
+}

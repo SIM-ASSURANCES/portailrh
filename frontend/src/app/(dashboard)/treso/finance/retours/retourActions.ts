@@ -10,99 +10,55 @@ import { calculerMontantARetournerNet, prisma } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
-/**
- * Schéma de validation d'une ligne de dépense saisie par l'Assistant
- * Finance (`declarerRetourAssistantAction` ci-dessous) — délibérément
- * dupliqué depuis `treso/demandes/[id]/retourActions.ts` plutôt
- * qu'importé : ce fichier vit dans le domaine de permission Finance
- * (`treso.receptionner_retour`), l'autre dans celui du Collaborateur
- * (`treso.declarer_retour`) — les garder physiquement séparés évite un
- * couplage entre deux domaines de permission distincts pour un schéma de
- * quelques lignes. Structure identique (`DepenseLigne` reste la même
- * table dans les deux cas, jamais une structure parallèle).
- */
-const ligneDepenseAssistantSchema = z
-  .object({
-    montant: z.coerce.number().positive("Le montant doit être supérieur à 0"),
-    objet: z.string().trim().min(1, "L'objet est obligatoire"),
-    date: z.coerce.date({ message: "Date invalide" }),
-    nature: z.string().trim().optional(),
-    justification: z.enum(["FACTURE", "RECU", "TICKET", "SANS_PIECE"]),
-    commentaire: z.string().optional(),
-    pieceJointeUrl: z.string().optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (data.justification === "SANS_PIECE" && !data.commentaire?.trim()) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["commentaire"],
-        message: "Le commentaire est obligatoire pour une dépense sans pièce formelle.",
-      });
-    }
-  });
-const lignesAssistantSchema = z.array(ligneDepenseAssistantSchema);
-
-export interface LigneDepenseAssistantInput {
-  montant: number;
-  objet: string;
-  date: string;
-  nature?: string;
-  justification: "FACTURE" | "RECU" | "TICKET" | "SANS_PIECE";
-  commentaire?: string;
-  pieceJointeUrl?: string;
-}
-
 const motifReouvertureSchema = z
   .string()
   .trim()
   .min(10, "Le motif de réouverture exceptionnelle est obligatoire (10 caractères minimum)");
 
 /**
- * Permet à l'Assistant Finance de déclarer LUI-MÊME les dépenses d'une
- * demande réglée (Caisse), qu'un retour ait déjà été soumis par le
- * collaborateur ou non — voir CLAUDE.md "L'Assistant Finance déclare les
- * dépenses sur toute demande, retour ou pas". Réutilise directement
- * `DepenseLigne` (même table, mêmes colonnes) : aucune structure
- * parallèle.
+ * Permet à l'Assistant Finance de déclarer LUI-MÊME l'existence d'un retour
+ * de caisse en l'absence de dépôt du collaborateur, qu'une demande soit
+ * active ou déjà `CLOTUREE` (réouverture exceptionnelle) — voir CLAUDE.md
+ * "L'Assistant Finance détaille réellement le retour".
+ *
+ * **Signature réduite à `(reglementId, motifReouverture?)`, sans aucune
+ * ligne** — depuis la Tâche "L'Assistant Finance détaille réellement le
+ * retour" (voir CLAUDE.md) : cette action ne fait plus que créer le retour
+ * avec UNE ligne générique `SANS_PIECE` ("Dépenses non détaillées",
+ * couvrant l'intégralité du montant restant à expliquer), EXACTEMENT comme
+ * le ferait un collaborateur via le formulaire simplifié
+ * (`construireLigneSynthetique`, `treso/demandes/[id]/retourActions.ts` —
+ * dupliqué ici plutôt qu'importé, même principe de séparation des domaines
+ * de permission déjà documenté ailleurs dans ce fichier). Le VRAI détail
+ * (libellés réels, pièces jointes, justification) se fait ensuite via
+ * **`detaillerDepensesRetourAction`** ci-dessous, sur l'écran de détail du
+ * retour — le MÊME mécanisme, peu importe l'origine du retour (déclaré par
+ * le collaborateur, ou par l'Assistant en son absence) : plus aucune
+ * saisie de lignes détaillées à la création, une seule façon de détailler.
  *
  * **Deux cas distincts, un seul mécanisme** :
- * - Demande NON clôturée : cas normal (Tâche 4), `motifReouverture` ignoré
- *   (pas exigé).
- * - Demande `CLOTUREE` : réouverture EXCEPTIONNELLE (Tâche 5),
- *   `motifReouverture` OBLIGATOIRE (10 caractères minimum, plus strict que
- *   le motif de rejet habituel vu la gravité de rouvrir un dossier
- *   clôturé) — stocké sur `RetourCaisse.motifReouvertureExceptionnelle`,
- *   seul champ qui autorise ensuite `receptionnerRetourAction` à
- *   s'exécuter malgré le statut `CLOTUREE`. Aucune autre action
- *   (validation, règlement, catégorisation, clôture) n'est réactivée par
- *   cette exception : elle ne touche que ce retour précis.
+ * - Demande NON clôturée : cas normal, `motifReouverture` ignoré.
+ * - Demande `CLOTUREE` : réouverture EXCEPTIONNELLE, `motifReouverture`
+ *   OBLIGATOIRE (10 caractères minimum) — stocké sur
+ *   `RetourCaisse.motifReouvertureExceptionnelle`, seul champ qui autorise
+ *   ensuite `receptionnerRetourAction`/`detaillerDepensesRetourAction` à
+ *   s'exécuter malgré le statut `CLOTUREE`.
  *
  * **Ne réceptionne PAS automatiquement** : crée le retour avec
- * `estReceptionne: false`, exactement comme une déclaration normale du
- * collaborateur — la réception reste une action DISTINCTE
- * (`receptionnerRetourAction`, inchangée), même principe que la règle
- * impérative "Déclarer un retour ≠ réceptionner un retour" : même quand
- * c'est l'Assistant qui se substitue au collaborateur absent, les DEUX
- * étapes restent deux clics séparés, jamais fusionnés en un seul.
+ * `estReceptionne: false` — la réception reste une action DISTINCTE
+ * (`receptionnerRetourAction`).
  *
  * Même règle "un seul retour EN ATTENTE à la fois par règlement" que
  * `creerRetourCaisseAction` (voir CLAUDE.md "Retours multiples autorisés
- * sur une même demande") — appliquée uniformément, peu importe qui a créé
- * le retour précédent.
+ * sur une même demande").
  */
 export async function declarerRetourAssistantAction(
   reglementId: string,
-  lignes: LigneDepenseAssistantInput[],
   motifReouverture?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.receptionner_retour")) {
     return { status: "error", message: "Action non autorisée." };
-  }
-
-  const parsedLignes = lignesAssistantSchema.safeParse(lignes);
-  if (!parsedLignes.success) {
-    return { status: "error", message: parsedLignes.error.issues[0].message };
   }
 
   const reglement = await prisma.reglement.findUnique({
@@ -131,11 +87,13 @@ export async function declarerRetourAssistantAction(
     motifValide = parsedMotif.data;
   }
 
-  const totalDeclare = parsedLignes.data.reduce((sum, l) => sum + l.montant, 0);
-  const montantARetourner = await calculerMontantARetournerNet({
-    reglementId,
-    totalDepensesNouvelles: totalDeclare,
-  });
+  // Restant disponible sur ce règlement AVANT ce nouveau retour (nette déjà
+  // contre d'éventuels autres retours existants — voir CLAUDE.md "Retours
+  // multiples autorisés sur une même demande") : la ligne générique couvre
+  // l'intégralité de ce restant, rien retourné, tout dépensé, à détailler
+  // ensuite.
+  const restant = await calculerMontantARetournerNet({ reglementId, totalDepensesNouvelles: 0 });
+  const montantARetourner = await calculerMontantARetournerNet({ reglementId, totalDepensesNouvelles: restant });
 
   await prisma.$transaction(async (tx) => {
     const retour = await tx.retourCaisse.create({
@@ -148,19 +106,15 @@ export async function declarerRetourAssistantAction(
       },
     });
 
-    for (const l of parsedLignes.data) {
+    if (restant > 0) {
       await tx.depenseLigne.create({
         data: {
           retourCaisseId: retour.id,
-          montant: l.montant,
-          objet: l.objet,
-          date: l.date,
-          nature: l.nature?.trim() || null,
-          justification: l.justification,
-          commentaire: l.commentaire?.trim() || null,
-          ...(l.pieceJointeUrl
-            ? { pieceJointe: { create: { url: l.pieceJointeUrl, demandeId: reglement.demandeId } } }
-            : {}),
+          montant: restant,
+          objet: "Dépenses non détaillées",
+          date: new Date(),
+          justification: "SANS_PIECE",
+          commentaire: "Retour intégral déclaré par l'Assistant Finance en l'absence de dépôt du collaborateur — détail à renseigner.",
         },
       });
     }
@@ -169,15 +123,15 @@ export async function declarerRetourAssistantAction(
       data: {
         entity: "Demande",
         entityId: reglement.demandeId,
-        // Action DISTINCTE du cas normal (Tâche 5 : "clairement visible et
-        // distincte dans l'historique, pas confondue avec un retour
-        // normal") — jamais la même valeur que `declaration_retour`
-        // (collaborateur) ni que `declaration_retour_assistant` (cas non
-        // clôturé) l'une pour l'autre.
+        // Action DISTINCTE du cas normal ("clairement visible et distincte
+        // dans l'historique, pas confondue avec un retour normal") —
+        // jamais la même valeur que `declaration_retour` (collaborateur)
+        // ni que `declaration_retour_assistant` (cas non clôturé) l'une
+        // pour l'autre.
         action: motifValide ? "reouverture_exceptionnelle_retour" : "declaration_retour_assistant",
         detail: motifValide
-          ? `Réouverture exceptionnelle post-clôture : retour de caisse complémentaire déclaré par l'Assistant Finance (${totalDeclare.toLocaleString("fr-FR")} FCFA de dépenses, ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner) — motif : ${motifValide}`
-          : `Retour de caisse déclaré par l'Assistant Finance (aucune déclaration du collaborateur) : ${totalDeclare.toLocaleString("fr-FR")} FCFA de dépenses, ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner`,
+          ? `Réouverture exceptionnelle post-clôture : retour de caisse complémentaire déclaré par l'Assistant Finance (${restant.toLocaleString("fr-FR")} FCFA à détailler) — motif : ${motifValide}`
+          : `Retour de caisse déclaré par l'Assistant Finance (aucune déclaration du collaborateur) : ${restant.toLocaleString("fr-FR")} FCFA à détailler`,
         userId: session.user.id,
       },
     });
@@ -191,15 +145,15 @@ export async function declarerRetourAssistantAction(
 
   await notifierParPermission("treso.receptionner_retour", {
     titre: "Retour de caisse à réceptionner",
-    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA (déclaré par l'Assistant Finance) reste à réceptionner sur la demande ${reglement.demande.reference}.`,
+    message: `Un retour de caisse de ${restant.toLocaleString("fr-FR")} FCFA (déclaré par l'Assistant Finance) reste à détailler et réceptionner sur la demande ${reglement.demande.reference}.`,
     lien: "/treso/finance/retours",
   });
 
   return {
     status: "success",
     message: motifValide
-      ? "Retour de caisse complémentaire déclaré (réouverture exceptionnelle)."
-      : "Retour de caisse déclaré.",
+      ? "Retour de caisse complémentaire déclaré (réouverture exceptionnelle) — détaillez-le sur l'écran de détail."
+      : "Retour de caisse déclaré — détaillez-le sur l'écran de détail.",
   };
 }
 
@@ -311,6 +265,207 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   publishDataChanged();
 
   return { status: "success", message: "Retour de caisse réceptionné." };
+}
+
+const ligneDetailSchema = z
+  .object({
+    libelle: z.string().trim().min(1, "Le libellé est obligatoire."),
+    montant: z.coerce.number().positive("Le montant doit être supérieur à 0."),
+    pieceJointeFournie: z.boolean(),
+    pieceJointeUrl: z.string().optional(),
+    justifiee: z.boolean(),
+    motif: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.pieceJointeFournie && !data.pieceJointeUrl) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["pieceJointeUrl"],
+        message: "Téléversez le fichier, ou indiquez qu'aucune pièce jointe n'est fournie.",
+      });
+    }
+    if (!data.justifiee && (!data.motif || data.motif.trim().length < 3)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["motif"],
+        message: "Le motif est obligatoire (3 caractères minimum) pour une dépense non justifiée.",
+      });
+    }
+  });
+const lignesDetailSchema = z.array(ligneDetailSchema);
+
+export interface LigneDetailInput {
+  /** Texte libre décrivant l'usage réel de la dépense (ex: "Transport pour livraison X"). */
+  libelle: string;
+  montant: number;
+  /** État EXPLICITE, jamais déduit du silence — voir CLAUDE.md "L'Assistant
+   * Finance détaille réellement le retour" : `false` affiche "Aucune pièce
+   * jointe fournie." côté Collaborateur, jamais une simple absence muette. */
+  pieceJointeFournie: boolean;
+  /** Requis si `pieceJointeFournie`. Nom de fichier renvoyé par `POST /api/treso/pieces-jointes/upload`. */
+  pieceJointeUrl?: string;
+  /** `true` = justifiée (enregistrée avec `justification: "FACTURE"`, la
+   * pièce jointe éventuelle faisant foi) ; `false` = non justifiée
+   * (`justification: "SANS_PIECE"` + `motif` obligatoire, mêmes champs
+   * `motifNonJustifie*` que `marquerDepenseNonJustifieeAction`). */
+  justifiee: boolean;
+  motif?: string;
+}
+
+/**
+ * **Mécanisme UNIFIÉ de détail réel d'un retour de caisse** — voir CLAUDE.md
+ * "L'Assistant Finance détaille réellement le retour" : remplace la ou les
+ * lignes ACTUELLES d'un retour (qu'elles soient le générique "Dépenses non
+ * détaillées" produit par le formulaire simplifié du Collaborateur OU par
+ * `declarerRetourAssistantAction`, ou même un détail déjà saisi
+ * précédemment) par un détail réel — un ou plusieurs libellés/montants,
+ * chacun avec une pièce jointe (ou la mention explicite de son absence) et
+ * un statut justifié/non justifié (motif obligatoire sinon, mêmes champs
+ * que `marquerDepenseNonJustifieeAction`). Réservée à
+ * `treso.receptionner_retour` — même permission que toutes les actions de
+ * ce type, Responsable Finance et DG exclus.
+ *
+ * **Une seule façon de détailler, peu importe l'origine du retour** :
+ * jamais deux mécanismes séparés pour "retour réellement soumis" et "aucun
+ * retour soumis" — les deux convergent vers un retour portant une ligne
+ * générique, détaillée ici de façon identique.
+ *
+ * **Validation stricte du total** — la somme des nouvelles lignes doit
+ * égaler EXACTEMENT le total dépensé déjà établi pour ce retour (la somme
+ * de ses lignes ACTUELLES, jamais recalculée à partir du règlement : ce
+ * total n'est jamais modifié par cette action, seule sa RÉPARTITION change)
+ * — comparaison en centimes entiers, écart exact renvoyé dans le message de
+ * refus pour aider l'Assistant à corriger sa saisie.
+ *
+ * **Verrouillage** : comme toute autre correction du détail, refusée une
+ * fois le retour réceptionné — SAUF exception ciblée et tracée :
+ * - Demande `CLOTUREE` sans `retour.motifReouvertureExceptionnelle` : refusée
+ *   (même garde que `receptionnerRetourAction`).
+ * - Retour déjà réceptionné : refusée, SAUF s'il existe un
+ *   `SignalementRetour` actif (`estResolu: false`) pour ce retour (voir
+ *   CLAUDE.md "Signalement d'erreur par le Collaborateur") — dans ce cas,
+ *   la correction est appliquée ET le signalement est marqué résolu dans
+ *   la MÊME transaction (le retour se reverrouille alors normalement :
+ *   sans nouveau signalement, une tentative suivante est de nouveau
+ *   refusée).
+ */
+export async function detaillerDepensesRetourAction(
+  retourId: string,
+  lignes: LigneDetailInput[]
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.receptionner_retour")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedLignes = lignesDetailSchema.safeParse(lignes);
+  if (!parsedLignes.success) {
+    return { status: "error", message: parsedLignes.error.issues[0].message };
+  }
+
+  const retour = await prisma.retourCaisse.findUnique({
+    where: { id: retourId },
+    include: {
+      reglement: { include: { demande: true } },
+      depenses: true,
+      signalements: { where: { estResolu: false } },
+    },
+  });
+  if (!retour) {
+    return { status: "error", message: "Retour de caisse introuvable." };
+  }
+  if (retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle) {
+    return {
+      status: "error",
+      message: `Cette demande n'est plus modifiable (statut actuel : ${retour.reglement.demande.statut}).`,
+    };
+  }
+
+  const signalementActif = retour.signalements[0] ?? null;
+  if (retour.estReceptionne && !signalementActif) {
+    return {
+      status: "error",
+      message:
+        "Ce retour de caisse a déjà été réceptionné : la modification du détail nécessite un signalement actif du collaborateur.",
+    };
+  }
+
+  const montantCible = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
+  const nouveauTotal = parsedLignes.data.reduce((sum, l) => sum + l.montant, 0);
+  if (Math.round(nouveauTotal * 100) !== Math.round(montantCible * 100)) {
+    const ecart = nouveauTotal - montantCible;
+    return {
+      status: "error",
+      message: `La somme des lignes (${nouveauTotal.toLocaleString("fr-FR")} FCFA) ne correspond pas au total dépensé de ce retour (${montantCible.toLocaleString("fr-FR")} FCFA) — écart de ${Math.abs(ecart).toLocaleString("fr-FR")} FCFA ${ecart > 0 ? "en trop" : "manquant"}.`,
+    };
+  }
+
+  const demandeId = retour.reglement.demandeId;
+  const dateLignes = retour.dateRetour ?? retour.createdAt;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.depenseLigne.deleteMany({ where: { retourCaisseId: retourId } });
+
+    for (const l of parsedLignes.data) {
+      await tx.depenseLigne.create({
+        data: {
+          retourCaisseId: retourId,
+          montant: l.montant,
+          objet: l.libelle,
+          date: dateLignes,
+          justification: l.justifiee ? "FACTURE" : "SANS_PIECE",
+          ...(l.justifiee
+            ? {}
+            : {
+                motifNonJustifie: l.motif!.trim(),
+                motifNonJustifieParId: session.user.id,
+                motifNonJustifieAt: new Date(),
+              }),
+          ...(l.pieceJointeFournie && l.pieceJointeUrl
+            ? { pieceJointe: { create: { url: l.pieceJointeUrl, demandeId } } }
+            : {}),
+        },
+      });
+    }
+
+    if (signalementActif) {
+      await tx.signalementRetour.update({
+        where: { id: signalementActif.id },
+        data: { estResolu: true, resoluParId: session.user.id, resoluAt: new Date() },
+      });
+    }
+
+    await tx.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        // Action DISTINCTE quand la correction répond à un signalement
+        // actif (voir CLAUDE.md "Signalement d'erreur par le
+        // Collaborateur" : "traçabilité complète et distincte de la
+        // correction elle-même") — jamais confondue avec un premier
+        // détaillage normal.
+        action: signalementActif ? "correction_signalement_retour" : "detaillage_retour",
+        detail: signalementActif
+          ? `Détail du retour corrigé par l'Assistant Finance suite au signalement du collaborateur (${parsedLignes.data.length} ligne(s), ${nouveauTotal.toLocaleString("fr-FR")} FCFA) — signalement résolu.`
+          : `Détail réel du retour renseigné par l'Assistant Finance (${parsedLignes.data.length} ligne(s), ${nouveauTotal.toLocaleString("fr-FR")} FCFA).`,
+        userId: session.user.id,
+      },
+    });
+  });
+
+  revalidatePath("/treso/finance/retours");
+  revalidatePath(`/treso/finance/retours/${retourId}`);
+  revalidatePath(`/treso/demandes/${demandeId}`);
+  revalidatePath(`/treso/finance/demandes/${demandeId}`);
+  revalidatePath("/treso/finance", "layout");
+  publishDataChanged();
+
+  return {
+    status: "success",
+    message: signalementActif
+      ? "Détail corrigé — signalement résolu, retour reverrouillé."
+      : "Détail des dépenses enregistré.",
+  };
 }
 
 const motifNonJustifieSchema = z

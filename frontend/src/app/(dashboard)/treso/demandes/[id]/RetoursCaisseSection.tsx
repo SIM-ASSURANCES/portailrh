@@ -24,6 +24,14 @@ import { RetourCaisseRow } from "./RetourCaisseRow";
  * des pièces jointes pour le Collaborateur"), en pure lecture (aucune
  * action de modification n'est jamais proposée pour un retour dont
  * `declarantId` n'est pas l'utilisateur connecté).
+ *
+ * **Détail réel + signalement** (Tâches "Le Collaborateur voit le détail
+ * réel"/"Signalement d'erreur par le Collaborateur", voir CLAUDE.md) —
+ * transmet désormais `motifNonJustifie`/`motifNonJustifiePar` par ligne
+ * (jamais affiché avant cette tâche côté Collaborateur) et le signalement
+ * ACTIF éventuel de chaque retour (`estResolu: false`), pour que le bouton
+ * "Signaler une erreur" reflète déjà un signalement en cours plutôt que
+ * d'en proposer un second.
  */
 export async function RetoursCaisseSection({
   demandeId,
@@ -38,7 +46,15 @@ export async function RetoursCaisseSection({
   const [reglements, dateDernierReglement] = await Promise.all([
     prisma.reglement.findMany({
       where: { demandeId, mode: "CAISSE", estConfirme: true, estAnnule: false },
-      include: { retours: { include: { depenses: { include: { pieceJointe: true } } }, orderBy: { createdAt: "asc" } } },
+      include: {
+        retours: {
+          include: {
+            depenses: { include: { pieceJointe: true, motifNonJustifiePar: true } },
+            signalements: { orderBy: { signaleAt: "desc" } },
+          },
+          orderBy: { createdAt: "asc" },
+        },
+      },
       orderBy: { createdAt: "asc" },
     }),
     getDateDernierReglementConfirme(demandeId),
@@ -80,7 +96,12 @@ export async function RetoursCaisseSection({
                 justification: d.justification,
                 commentaire: d.commentaire,
                 pieceJointeId: d.pieceJointe?.id ?? null,
+                motifNonJustifie: d.motifNonJustifie,
+                motifNonJustifiePar: d.motifNonJustifiePar?.fullName ?? null,
               })),
+              signalementActif: retour.signalements.find((s) => !s.estResolu)
+                ? { commentaire: retour.signalements.find((s) => !s.estResolu)!.commentaire }
+                : null,
             }))}
             peutDeclarer={peutDeclarer}
             dateMin={dateMin}
