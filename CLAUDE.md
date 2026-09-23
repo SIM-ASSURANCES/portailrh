@@ -1347,6 +1347,196 @@ créées via le vrai formulaire (Server Action `creerDemandeAction`).
 - `tsc --noEmit` et un vrai `next build` passent sans erreur après
   nettoyage.
 
+### Blocage du règlement Caisse si solde insuffisant
+
+**Diagnostic** : `getSoldeCaisse()` (`backend/src/tresorerie.ts`, déjà
+réutilisée par `SoldeCaisseTrendChart`/le dashboard Finance) existait déjà
+et restait la seule source de vérité du solde — mais `confirmerReglementAction`
+ne la consultait jamais avant de confirmer un règlement `CAISSE` : rien
+n'empêchait de faire passer la caisse en négatif (le contrôle bloquant
+existant à cet endroit ne portait que sur le budget partagé par Catégorie,
+jamais sur le solde de caisse lui-même).
+
+- **Contrôle ajouté dans `confirmerReglementAction`**, juste après le
+  contrôle de budget déjà existant, **uniquement pour `mode: "CAISSE"`**
+  (un règlement `BANQUE` n'est jamais concerné, conformément à la règle
+  impérative n°3 du module) : si `montant du règlement > getSoldeCaisse()`,
+  refuse avec un message citant les deux montants et renvoyant
+  explicitement vers "Nouvelle alimentation de caisse" (le bouton déjà
+  existant sur `/treso/finance/solde-ouverture`) :
+  `"Solde de caisse insuffisant : X FCFA disponibles pour un règlement de Y
+  FCFA — réalimentez la caisse (« Nouvelle alimentation de caisse ») avant
+  de confirmer."`
+- **Réutilise `getSoldeCaisse()` telle quelle** — aucune nouvelle fonction
+  de calcul créée. Le règlement en cours de confirmation est encore
+  `estConfirme: false` au moment de l'appel, donc pas encore compté dans
+  le solde retourné : comparaison directe, sans avoir besoin de l'exclure
+  explicitement.
+- **Portée volontairement limitée à la confirmation** (`confirmerReglementAction`) —
+  `creerReglementAction` (création du brouillon) n'a reçu aucun contrôle
+  équivalent : un brouillon Caisse peut toujours être créé même si son
+  montant dépasse le solde actuel (le solde peut changer entre la création
+  du brouillon et sa confirmation, ex: une alimentation de caisse entre
+  les deux) — seule la confirmation, moment où l'argent sort réellement,
+  est le bon endroit pour ce contrôle, cohérent avec le contrôle de budget
+  déjà en place au même endroit.
+
+**Vérifications, parcours réel + rejeu réseau direct (comptes de test)** :
+- Demande de test validée à un montant délibérément supérieur au solde de
+  caisse (solde + 100 000 FCFA) → règlement Caisse créé en brouillon avec
+  succès (`creerReglementAction`, jamais bloquée à cette étape) → tentative
+  de confirmation (`confirmerReglementAction`, rejeu réseau direct) →
+  **refusée**, message exact confirmé (montants corrects, mention du
+  bouton d'alimentation).
+- **Règlement Banque du même montant, sur la même demande** → créé ET
+  confirmé sans aucun blocage (jamais concerné par le solde de caisse) —
+  confirme la portée `mode: "CAISSE"` uniquement.
+- **Alimentation de caisse réelle** (`alimenterCaisseAction`, montant
+  suffisant pour couvrir l'écart, pièce jointe réellement uploadée) →
+  solde de caisse recoupé en base après alimentation → le règlement Caisse
+  précédemment refusé est confirmé avec succès une fois le solde suffisant
+  (après avoir annulé le règlement Banque de test pour libérer le reste à
+  régler consommé par ce dernier — sans rapport avec le contrôle de solde
+  lui-même, contrainte de test uniquement).
+- Nettoyage complet : demandes de test et leurs règlements/lignes/historique
+  supprimés, écriture `JournalCaisse` de l'alimentation de test retrouvée
+  précisément via son `HistoriqueEntry` (motif distinctif) et supprimée —
+  solde de caisse revérifié identique avant/après (4 480 000 FCFA).
+- `tsc --noEmit` et un vrai `next build` (65 routes) passent sans erreur.
+
+### Aucune date dans le passé (demande et retour de caisse)
+
+**Diagnostic** : deux champs de date saisis manuellement existaient déjà,
+aucun des deux ne refusait une date passée.
+- **Création de demande** — "Date de livraison souhaitée"
+  (`Demande.dateLivraisonSouhaitee`, champ optionnel de l'en-tête,
+  `DemandeForm.tsx`/`creerDemandeAction`) : validée uniquement pour son
+  format (`Date.parse`), jamais pour sa position dans le temps.
+- **Retour de caisse** — "Date du retour" (`RetourCaisseForm.tsx`,
+  `creerRetourCaisseAction`/`modifierRetourCaisseAction`) : déjà contrainte
+  à ne pas précéder le dernier règlement confirmé sur la demande
+  (`getDateDernierReglementConfirme`, voir "Libellés et validations sur le
+  formulaire de retour") — mais rien n'empêchait une date dans le passé
+  par ailleurs (ex: une demande dont le dernier règlement remonte à
+  plusieurs mois autoriserait n'importe quelle date passée après cette
+  borne).
+
+**Contrainte ajoutée aux deux endroits, jamais en remplacement de
+l'existant** — comparaison en granularité JOUR (chaînes `YYYY-MM-DD`),
+même convention que le reste du module : la date du jour reste autorisée
+(`>=`, jamais `>`), toute date future reste autorisée.
+
+- **`demandeSchema.dateLivraisonSouhaitee`** (`treso/demandes/nouvelle/actions.ts`)
+  — second `.refine()` ajouté au schéma zod déjà existant :
+  `v >= new Date().toISOString().slice(0, 10)`. Champ toujours optionnel
+  (`!v || ...`) — l'absence de date n'est jamais concernée.
+  `DemandeForm.tsx` : `min={aujourdHui}` + `hint="Ne peut pas être dans le
+  passé."` sur l'`Input`, confort de saisie seulement, revérifié de toute
+  façon côté serveur.
+- **`dateRetourSchema`** (`treso/demandes/[id]/retourActions.ts`, partagée
+  par `creerRetourCaisseAction`/`modifierRetourCaisseAction`) — même
+  second `.refine()` ajouté à ce schéma UNIQUE (jamais dupliqué), donc les
+  deux actions en héritent automatiquement. **Les deux contraintes
+  s'appliquent simultanément** : le refus "pas dans le passé" est vérifié
+  par ce refine avant même que l'action ne charge le dernier règlement
+  confirmé ; le refus "pas avant le dernier règlement" (contrôle déjà
+  existant, inchangé) s'applique ensuite — la plus restrictive des deux
+  l'emporte naturellement, sans logique de combinaison explicite à écrire.
+  `RetourCaisseForm.tsx` : `dateMinEffective` = la PLUS RÉCENTE de
+  `aujourdHui` et `dateMin` (la date du dernier règlement, si fournie),
+  posée comme `min` du champ — jamais un simple remplacement de `dateMin`,
+  les deux bornes coexistent et c'est la plus contraignante qui pilote le
+  champ.
+
+**Point signalé, non tranché unilatéralement** — la demande anticipait
+explicitement la question "si un flux existant crée déjà des demandes/
+retours avec une date passée par défaut, ce qui casserait avec cette
+nouvelle règle" : vérifié qu'aucun flux du projet ne le fait.
+`dateLivraisonSouhaitee` est toujours soit omise (valeur par défaut vide
+côté formulaire, `useState("")`), soit saisie explicitement par le
+Collaborateur — jamais pré-remplie avec une date passée par le code.
+`RetourCaisseForm` initialise sa date à `dateRetourInitiale ?? new
+Date().toISOString().slice(0, 10)` (aujourd'hui), jamais une date passée
+par défaut. Aucune régression trouvée, mais signalé explicitement comme
+demandé plutôt que simplement affirmé sans vérification.
+
+**Vérifications, parcours réel + rejeu réseau direct (comptes de test)** :
+- Création de demande avec date de livraison **hier** → refusée
+  (`fieldErrors.dateLivraisonSouhaitee`, formulaire ET rejeu réseau
+  direct) ; **aujourd'hui** → acceptée ; **demain** → acceptée.
+- Retour de caisse avec date **hier** → refusé
+  (`"La date du retour ne peut pas être dans le passé."`).
+- Retour de caisse avec date **aujourd'hui**, égale à la date de
+  confirmation réelle du dernier règlement → accepté (les deux contraintes
+  satisfaites simultanément, le cas normal).
+- **Cas combiné isolé sur un règlement dédié** (`confirmeAt` avancé
+  artificiellement à demain via une écriture directe — un règlement ne
+  peut jamais être confirmé dans le futur en usage réel, ce cas n'existe
+  donc que pour exercer les DEUX contraintes indépendamment) : date de
+  retour **aujourd'hui** (pas dans le passé) mais **avant** ce règlement
+  confirmé "demain" → refusée par la règle déjà existante ("dernier
+  règlement confirmé"), confirmant que les deux contraintes s'appliquent
+  bien ensemble et non l'une en remplacement de l'autre ; date **demain**
+  (valide sur les deux critères à la fois) → acceptée.
+- Nettoyage complet : demandes de test et règlements associés supprimés ;
+  solde de caisse revérifié identique avant/après.
+- `tsc --noEmit` et un vrai `next build` (65 routes) passent sans erreur.
+
+### Finance peut définir le budget d'une catégorie, comme l'Admin
+
+**Diagnostic** : `modifierBudgetCategorieAction` (`admin/categories/actions.ts`)
+était réservée à `isAdmin()` seul — décision antérieure explicite du
+projet ("le toggle et le budget restent réservés à l'Admin", voir "Gestion
+des Catégories/Objets ouverte à Finance"), jamais remise en cause jusqu'ici.
+La demande actuelle étend spécifiquement le BUDGET au Responsable Finance,
+sans toucher au toggle Activer/Désactiver ni à l'Assistant Finance.
+
+- **`peutModifierBudget()`** (nouvelle, `admin/categories/actions.ts`) —
+  `isAdmin()` OU (`treso.valider_demande` ET PAS
+  `treso.approuver_validation_complete`). **`treso.valider_demande` seule
+  ne suffit pas** : le rôle DG la possède aussi (il valide/rejette les
+  demandes au même titre que Finance) — même conflit de spécification déjà
+  rencontré et tranché de façon identique pour "Restreindre 'Déléguer des
+  accès'"/"Description du besoin modifiable" (voir CLAUDE.md) : la seconde
+  condition exclut spécifiquement le DG (`treso.approuver_validation_complete`,
+  jamais transmise à Finance dans le seed) sans jamais comparer de nom de
+  rôle en dur. **Décision appliquée par cohérence avec ce précédent
+  répété du projet, pas explicitement demandée pour cette tâche précise**
+  (signalé ici plutôt que tranché silencieusement) : le DG ne peut de
+  toute façon pas atteindre `/treso/finance/categories`
+  (`treso.gerer_categories` absente de son rôle), donc cette exclusion
+  n'a d'effet concret qu'en cas de rejeu réseau direct par un compte DG.
+  L'Assistant Finance n'a de toute façon jamais `treso.valider_demande` —
+  exclu structurellement, sans logique supplémentaire nécessaire pour lui.
+- **`CategoriesList.tsx`** — nouvelle prop `canModifierBudget` (défaut =
+  `isAdmin`, pour ne rien changer à l'appel existant depuis
+  `/admin/categories`, où l'Admin garde son accès inchangé), DISTINCTE de
+  `isAdmin` : pilote désormais SEULE l'affichage du bloc "Budget alloué"
+  (`BudgetAlloueField`), jamais fusionnée avec `isAdmin` qui continue de
+  piloter Activer/Désactiver seul, resté réservé à l'Admin, inchangé.
+- **`treso/finance/categories/page.tsx`** — calcule `canModifierBudget`
+  avec EXACTEMENT la même garde que `peutModifierBudget()` côté serveur
+  (jamais une condition divergente entre l'affichage et la Server Action),
+  la transmet à `CategoriesList`.
+- **Toggle Activer/Désactiver — inchangé**, toujours réservé à `isAdmin()`
+  seul (`toggleCategorieActiveAction`), jamais touché par cette tâche.
+
+**Vérifications, parcours réel + rejeu réseau direct (comptes de test)** :
+- Catégorie de test créée par Finance (`treso.gerer_categories`, mécanisme
+  déjà existant, inchangé) → Responsable Finance modifie son budget
+  (`modifierBudgetCategorieAction`, rejeu réseau direct) → **réussi**,
+  recoupé en base (500 000 FCFA).
+- Assistant Finance tente de modifier ce même budget → **refusé**
+  (`"Action non autorisée."`), budget resté inchangé en base après la
+  tentative.
+- DG tente de modifier ce même budget (rejeu réseau direct, bien qu'il ne
+  puisse pas atteindre la page elle-même) → **refusé**, même raison.
+- Toggle Activer/Désactiver sur cette catégorie : Finance → refusé
+  (`"Action non autorisée."`) ; Admin → réussi (catégorie désactivée avec
+  succès) — comportement strictement inchangé.
+- Nettoyage : catégorie de test supprimée après vérification.
+- `tsc --noEmit` et un vrai `next build` (65 routes) passent sans erreur.
+
 ### Bon de caisse et reçu PDF
 
 Deux documents PDF distincts par règlement, mêmes règles d'accès (401 non
@@ -4634,6 +4824,105 @@ En plus de la palette/typographie/composants de base (voir plus haut) :
   « Actions » détachée en pied de carte) — les tableaux HTML bruts du
   reporting (grille dense, ligne de total) restent volontairement en mode
   tableau avec indice de défilement horizontal.
+
+### Refonte visuelle des écrans d'authentification (connexion, mot de passe oublié, réinitialisation)
+
+Changement **purement visuel** — aucune Server Action, validation,
+redirection ni message d'erreur/succès n'a été modifié. Les 3 écrans
+(`/login`, `/forgot-password`, `/reset-password/[token]`) sont passés d'une
+carte unique (bandeau bleu + logo blanc en tête) à une carte scindée en
+deux, à l'identique dans l'esprit d'une maquette de référence fournie
+(panneau blanc formulaire + panneau illustré en dégradé de marque), avec
+l'identité réelle SIM Assurances. **Le 4ᵉ écran du même groupe de routes,
+`/invitation/[token]`, est volontairement resté sur son ancien habillage**
+(hors périmètre de la tâche) — voir plus bas pourquoi ceci exclut
+délibérément un vrai `(auth)/layout.tsx`.
+
+**Aucun écran d'inscription** : le projet n'a jamais eu de flux "Sign Up"
+(comptes créés uniquement par l'Admin, voir "Invitation par lien") —
+confirmé qu'aucune des 3 pages ni le nouveau composant partagé n'y fait
+la moindre allusion, vérifié par recherche de texte sur les pages rendues.
+
+- **`src/app/(auth)/AuthShell.tsx`** (nouveau, Server Component) — coquille
+  visuelle partagée par les 3 pages, importée explicitement par chacune
+  (JAMAIS un `(auth)/layout.tsx`, qui aurait involontairement restylé
+  `/invitation/[token]` au passage — ce 4ᵉ écran du même groupe de routes
+  n'était pas dans le périmètre de la tâche). Structure : `grid
+  sm:grid-cols-5`, panneau gauche blanc `sm:col-span-3` (logo couleur
+  `logo-sim-couleur.svg` + `children`, le contenu propre à chaque page) et
+  panneau droit `sm:col-span-2` (~40%) `hidden sm:flex` — **masqué
+  entièrement sur mobile** (jamais réduit à un bandeau, la maquette de
+  référence proposait les deux options ; masquer entièrement est plus
+  simple et le formulaire reste pleinement lisible seul). Un
+  `<BrandBackdrop>` supplémentaire, discret (`opacity-[0.05]`), habille le
+  fond de page derrière la carte.
+- **Panneau droit** : `.brand-gradient-bg` (classe déjà existante,
+  réutilisée telle quelle — jamais un second dégradé défini) + un
+  `<BrandBackdrop>` en filigrane **clair** (voir prop `watermarkColorClassName`
+  ci-dessous), `watermarkPosition="corner-br"`, `showBottomAccent={false}`
+  (le filet dégradé du bas n'a plus de sens sur un fond déjà bleu) + un
+  texte d'accroche fixe ("Bienvenue sur le portail SIM Assurances") et une
+  sous-phrase (`tagline`, prop de `AuthShell`) courte, adaptée par écran
+  (contexte trésorerie pour la connexion, confidentialité pour la demande
+  de réinitialisation, sécurité du compte pour le nouveau mot de passe).
+- **`BrandBackdrop.tsx` étendu** — nouvelle prop optionnelle
+  `watermarkColorClassName` (défaut `"text-muted-foreground"`, comportement
+  **strictement inchangé** partout où elle n'est pas passée : `/invitation`,
+  l'AppShell, et l'usage par défaut sur le fond de page des 3 écrans
+  restylés eux-mêmes). Seul le panneau droit (fond bleu) la passe à
+  `"text-white"` — le filigrane gris pensé pour un fond clair aurait été
+  quasi invisible sur un fond déjà bleu.
+- **Logo** : les 3 écrans affichent désormais `logo-sim-couleur.svg` (le
+  vrai logotype couleur) sur le panneau blanc, en remplacement du bandeau
+  bleu + `logo-sim-blanc.svg` (blanc) de l'ancien habillage — conforme à la
+  consigne explicite "le vrai logotype couleur, pas une version custom".
+  `logo-sim-blanc.svg` reste utilisé ailleurs dans le portail (en-tête du
+  Socle Portail, sur fond bleu) — aucun changement à cet usage.
+- **Composants de formulaire réutilisés tels quels** — `Input`/`Button`
+  (design system existant), aucun nouveau composant de champ créé ; seule
+  la mise en page environnante (carte, logo, panneau illustré) a changé.
+  Le contenu de chaque page (`page.tsx`) — titres, bannières d'erreur/
+  succès, champs, `LoginSubmitButton`/`ForgotPasswordForm`/
+  `ResetPasswordForm` — a été déplacé tel quel à l'intérieur de
+  `<AuthShell>`, jamais réécrit : `login/actions.ts`
+  (n'existe pas, la Server Action `authenticate` reste inline dans
+  `page.tsx`), `forgot-password/actions.ts`, `reset-password/[token]/actions.ts`,
+  `ForgotPasswordForm.tsx`, `ResetPasswordForm.tsx`, `LoginSubmitButton.tsx`
+  n'ont subi AUCUNE modification.
+- **Bordure de page bleue épaisse retirée** (`border-[3px] border-primary`
+  de l'ancien conteneur plein écran) — remplacée par l'élévation de la
+  carte elle-même (`shadow-elevated-lg`, déjà existante) sur un fond de
+  page blanc/neutre : plus proche de la maquette de référence (fond clair,
+  carte qui se détache par l'ombre plutôt que par un cadre), le panneau
+  droit en dégradé bleu portant désormais l'essentiel de l'identité de
+  couleur de l'écran.
+
+**Vérifications, parcours réel (Playwright headless, comptes de test réels,
+installé temporairement `--no-save` puis désinstallé après usage — même
+convention que les vérifications précédentes de ce projet)** :
+- Connexion avec identifiants invalides → bannière d'erreur affichée,
+  bien intégrée visuellement dans le panneau gauche (capture d'écran
+  vérifiée) ; connexion avec identifiants valides → redirection réelle
+  hors de `/login` (vers `/`), confirmée par l'URL finale.
+- Parcours complet mot de passe oublié → réinitialisation : demande
+  envoyée (mode simulation, aucun SMTP configuré dans `.env`, comportement
+  inchangé) → jeton retrouvé directement en base (équivalent du lien reçu
+  par email en production) → `/reset-password/[token]` accepte un nouveau
+  mot de passe conforme à la politique de complexité déjà existante
+  (inchangée) → redirection vers `/login?reset=success` avec bannière de
+  succès → connexion réussie avec le nouveau mot de passe. Compte de test
+  ensuite restauré à son mot de passe d'origine (écriture directe du hash
+  bcrypt, la politique de complexité du formulaire de réinitialisation
+  étant plus stricte que l'ancien mot de passe de test en clair — sans
+  rapport avec cette tâche, un début de constat déjà présent avant elle).
+- **Mobile (390px)** : panneau illustré confirmé absent du DOM visible
+  (`.brand-gradient-bg` non visible), largeur du document égale à la
+  largeur du viewport sur les 2 écrans testés (aucun scroll horizontal),
+  formulaire pleinement lisible.
+- **Aucune occurrence** de "sign up"/"s'inscrire"/"inscription"/"créer un
+  compte" sur les pages rendues (recherche de texte exhaustive).
+- `tsc --noEmit`, `eslint` et un vrai `next build` (65 routes) passent
+  sans erreur.
 
 ## Monorepo backend/frontend
 

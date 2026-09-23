@@ -34,6 +34,16 @@ export interface BrandBackdropProps {
    *   opaque de la coquille.
    */
   watermarkPosition?: "bleed-left" | "corner-br";
+  /**
+   * Classe Tailwind de COULEUR du filigrane (contrôle `currentColor` via
+   * `fill="currentColor"` sur chaque `<path>`). Par défaut `text-muted-foreground`
+   * (gris très pâle, comportement historique inchangé partout où ce prop
+   * n'est pas passé). Ajouté pour l'écran de connexion/mot de passe oublié
+   * (voir CLAUDE.md "Refonte visuelle des écrans d'authentification") : le
+   * panneau illustré en dégradé bleu de ces écrans a besoin d'un filigrane
+   * CLAIR (`text-white`), jamais le gris pensé pour un fond blanc.
+   */
+  watermarkColorClassName?: string;
 }
 
 /**
@@ -91,19 +101,22 @@ const WATERMARK_POSITION_CLASSES: Record<NonNullable<BrandBackdropProps["waterma
 export function BrandBackdrop({
   className = "",
   watermarkOpacityClassName = "opacity-[0.09]",
+  watermarkColorClassName = "text-muted-foreground",
   showBottomAccent = true,
   watermarkPosition = "bleed-left",
 }: BrandBackdropProps) {
   return (
     <div aria-hidden="true" className={`pointer-events-none overflow-hidden ${className}`}>
       {/* Filigrane : pictogramme seul, très agrandi, calé sur un bord et
-          volontairement coupé par le cadre (pas centré). Gris très pâle via
-          le token neutre existant (`text-muted-foreground`), jamais une
-          teinte bleue — le bleu reste réservé à la bordure et au filet du
-          bas, pour que le filigrane ne rivalise jamais avec le texte. */}
+          volontairement coupé par le cadre (pas centré). Gris très pâle par
+          défaut (`text-muted-foreground`, pensé pour un fond clair) — jamais
+          une teinte bleue par défaut, le bleu reste réservé à la bordure et
+          au filet du bas. `watermarkColorClassName` permet une couleur CLAIRE
+          (`text-white`) sur un fond de marque déjà bleu (voir panneau
+          illustré des écrans d'authentification). */}
       <svg
         viewBox={BRAND_ICON_VIEWBOX}
-        className={`absolute text-muted-foreground ${WATERMARK_POSITION_CLASSES[watermarkPosition]} ${watermarkOpacityClassName}`}
+        className={`absolute ${watermarkColorClassName} ${WATERMARK_POSITION_CLASSES[watermarkPosition]} ${watermarkOpacityClassName}`}
       >
         {BRAND_ICON_PATHS.map((d) => (
           <path key={d} d={d} fill="currentColor" />
