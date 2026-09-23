@@ -37,17 +37,24 @@ export interface CategorieRow {
  * ouverte à Finance") : disponible pour quiconque a atteint cette page — la
  * garde d'accès (Admin ou `treso.gerer_categories`) est déjà assurée par la
  * page appelante, jamais revérifiée ici (composant purement de
- * présentation). **Activer/Désactiver et le budget partagé restent
- * réservés à l'Admin** (`isAdmin`, prop) : masqués entièrement plutôt que
- * désactivés pour un non-admin, jamais un bouton voué à échouer côté
- * serveur.
+ * présentation). **Activer/Désactiver reste réservé à l'Admin** (`isAdmin`,
+ * prop) : masqué entièrement plutôt que désactivé pour un non-admin, jamais
+ * un bouton voué à échouer côté serveur.
+ *
+ * **Budget alloué** (voir CLAUDE.md "Finance peut définir le budget d'une
+ * catégorie") — prop DISTINCTE `canModifierBudget` (défaut = `isAdmin`,
+ * pour ne rien changer à l'appel existant depuis `/admin/categories`) :
+ * ouvert en plus au Responsable Finance depuis cette tâche, jamais fusionné
+ * avec `isAdmin` (qui continue de piloter Activer/Désactiver seul).
  */
 export function CategoriesList({
   categories,
   isAdmin,
+  canModifierBudget = isAdmin,
 }: {
   categories: CategorieRow[];
   isAdmin: boolean;
+  canModifierBudget?: boolean;
 }) {
   if (categories.length === 0) {
     return <p className="text-sm text-muted-foreground">Aucune catégorie pour l&apos;instant.</p>;
@@ -79,7 +86,7 @@ export function CategoriesList({
             </div>
           </div>
 
-          {isAdmin ? (
+          {canModifierBudget ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Budget alloué

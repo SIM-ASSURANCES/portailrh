@@ -39,10 +39,18 @@ const demandeSchema = z.object({
   beneficiaireType: z.enum(["COLLABORATEUR", "STAGIAIRE", "FOURNISSEUR", "ENTREPRISE"], {
     message: "Entité bénéficiaire requise",
   }),
+  // Tâche "Aucune date dans le passé" (voir CLAUDE.md) : la date du jour
+  // reste autorisée, seule une date STRICTEMENT antérieure est refusée —
+  // comparaison en granularité JOUR (chaînes `YYYY-MM-DD`), même
+  // convention que le retour de caisse (`dateRetourSchema`).
   dateLivraisonSouhaitee: z
     .string()
     .optional()
-    .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Date invalide"),
+    .refine((v) => !v || !Number.isNaN(Date.parse(v)), "Date invalide")
+    .refine(
+      (v) => !v || v >= new Date().toISOString().slice(0, 10),
+      "La date de livraison souhaitée ne peut pas être dans le passé."
+    ),
   devise: z.enum(DEVISE_CODES as [string, ...string[]], { message: "Devise invalide" }),
   motif: z.string().trim().min(3, "Merci de préciser le motif de l'achat (3 caractères minimum)"),
   lignes: z.array(ligneSchema).min(1, "Ajoutez au moins une ligne d'article"),

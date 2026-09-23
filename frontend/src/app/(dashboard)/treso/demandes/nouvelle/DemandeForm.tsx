@@ -73,6 +73,12 @@ export function DemandeForm() {
   const [erreurLignes, setErreurLignes] = useState<string | undefined>();
   const [demandeCreeeId, setDemandeCreeeId] = useState<string | null>(null);
 
+  // Tâche "Aucune date dans le passé" (voir CLAUDE.md) : la date du jour
+  // reste autorisée, revérifiée de toute façon côté serveur
+  // (`creerDemandeAction`) — cette borne `min` n'est qu'un confort de
+  // saisie, jamais la seule protection.
+  const aujourdHui = new Date().toISOString().slice(0, 10);
+
   const totalGeneral = lignes.reduce(
     (sum, l) => sum + (Number(l.quantite) || 0) * (Number(l.prixUnitaire) || 0),
     0
@@ -275,6 +281,8 @@ export function DemandeForm() {
           <Input
             label="Date de livraison souhaitée"
             type="date"
+            min={aujourdHui}
+            hint="Ne peut pas être dans le passé."
             value={dateLivraison}
             onChange={(e) => setDateLivraison(e.target.value)}
             error={fieldErrors.dateLivraisonSouhaitee}

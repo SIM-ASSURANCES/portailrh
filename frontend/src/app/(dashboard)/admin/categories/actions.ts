@@ -18,10 +18,12 @@ type SimpleActionResult = { status: "success" | "error"; message: string };
  * permission — jamais un accès en dur sur un nom de rôle). Volontairement
  * SCOPÉ à la création et la suppression seulement : l'activation/
  * désactivation (`toggleCategorieActiveAction`/`toggleObjetActiveAction`)
- * et le budget partagé (`modifierBudgetCategorieAction`) restent réservés
- * à `isAdmin()` seul, périmètre non demandé par cette tâche — voir
- * CLAUDE.md "Gestion des Catégories/Objets ouverte à Finance" pour ce
- * choix explicite.
+ * reste réservée à `isAdmin()` seul — voir CLAUDE.md "Gestion des
+ * Catégories/Objets ouverte à Finance" pour ce choix explicite. Le budget
+ * partagé (`modifierBudgetCategorieAction`), lui, est désormais ouvert
+ * en plus au Responsable Finance (voir "Finance peut définir le budget
+ * d'une catégorie" ci-dessous, `peutModifierBudget()` — une garde
+ * distincte, jamais fusionnée avec celle-ci).
  */
 function peutGererCategories(session: { estAdmin: boolean; permissions: string[] } | null): boolean {
   return !!session && (isAdmin(session) || hasPermission(session, "treso.gerer_categories"));
@@ -187,19 +189,44 @@ const budgetAlloueSchema = z
   .nullable();
 
 /**
+ * Éligibilité à MODIFIER le budget partagé d'une Catégorie — `isAdmin()`
+ * OU `treso.valider_demande` (Responsable Finance), voir CLAUDE.md "Finance
+ * peut définir le budget d'une catégorie". **`treso.valider_demande` seule
+ * ne suffit pas** : le rôle DG la possède aussi (il valide/rejette les
+ * demandes au même titre que Finance) — même conflit de spécification déjà
+ * rencontré et tranché pour "Restreindre 'Déléguer des accès'"/"Description
+ * du besoin modifiable", résolu ici avec exactement le même schéma : exclut
+ * spécifiquement le DG via l'absence de `treso.approuver_validation_complete`
+ * (jamais transmise à Finance dans le seed), sans jamais comparer de nom de
+ * rôle en dur. L'Assistant Finance n'a de toute façon jamais
+ * `treso.valider_demande` — exclu structurellement, aucune exclusion
+ * supplémentaire nécessaire pour lui.
+ */
+function peutModifierBudget(session: { estAdmin: boolean; permissions: string[] } | null): boolean {
+  return (
+    !!session &&
+    (isAdmin(session) ||
+      (hasPermission(session, "treso.valider_demande") &&
+        !hasPermission(session, "treso.approuver_validation_complete")))
+  );
+}
+
+/**
  * Définit ou retire le budget PARTAGÉ (`budgetAlloue`) d'une Catégorie —
  * voir CLAUDE.md "Budget partagé par Catégorie". `null` = aucune limite,
  * aucun contrôle appliqué désormais pour cette catégorie (jamais la
  * consommation déjà enregistrée qui, elle, ne peut techniquement pas être
- * "retirée" — le grand livre des règlements reste immuable). Réservée aux
- * administrateurs, comme le reste de cet écran.
+ * "retirée" — le grand livre des règlements reste immuable). Réservée à
+ * `peutModifierBudget()` (Admin OU Responsable Finance, voir plus haut) —
+ * depuis "Finance peut définir le budget d'une catégorie" (voir CLAUDE.md),
+ * plus réservée à l'Admin seul.
  */
 export async function modifierBudgetCategorieAction(
   categorieId: string,
   budgetAlloue: number | null
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !isAdmin(session)) {
+  if (!session || !peutModifierBudget(session)) {
     return { status: "error", message: "Action non autorisée." };
   }
 

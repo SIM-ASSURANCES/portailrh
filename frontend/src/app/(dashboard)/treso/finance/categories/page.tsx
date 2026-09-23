@@ -24,9 +24,18 @@ import { prisma } from "backend";
  *
  * `isAdmin` transmis à `CategoriesList` reflète la VRAIE session ici
  * (contrairement à `/admin/categories`, toujours `true`) : un utilisateur
- * Finance ordinaire ne voit donc jamais les contrôles Activer/Désactiver ni
- * le budget partagé (réservés à l'Admin, hors périmètre de cette tâche) —
- * seulement créer et supprimer.
+ * Finance ordinaire ne voit donc jamais les contrôles Activer/Désactiver
+ * (réservés à l'Admin) — seulement créer et supprimer.
+ *
+ * **Budget alloué — ouvert au Responsable Finance** (voir CLAUDE.md
+ * "Finance peut définir le budget d'une catégorie") : `canModifierBudget`
+ * (prop DISTINCTE de `isAdmin`) est calculé ici avec exactement la même
+ * garde que `modifierBudgetCategorieAction` elle-même
+ * (`treso.valider_demande` ET PAS `treso.approuver_validation_complete`,
+ * pour exclure le DG qui possède aussi `valider_demande` — même schéma déjà
+ * établi ailleurs dans le module) — jamais recalculée différemment entre
+ * l'affichage et la Server Action. L'Assistant Finance n'atteint de toute
+ * façon jamais cette page (`treso.gerer_categories` absente de son rôle).
  */
 export default async function FinanceCategoriesPage() {
   const session = await getSession();
@@ -37,6 +46,10 @@ export default async function FinanceCategoriesPage() {
   }
 
   const admin = isAdmin(session);
+  const canModifierBudget =
+    admin ||
+    (hasPermission(session, "treso.valider_demande") &&
+      !hasPermission(session, "treso.approuver_validation_complete"));
 
   const categories = await prisma.categorie.findMany({
     include: { objets: { orderBy: { label: "asc" } } },
@@ -59,6 +72,7 @@ export default async function FinanceCategoriesPage() {
         <h2 className="text-lg font-semibold text-foreground">Catégories existantes</h2>
         <CategoriesList
           isAdmin={admin}
+          canModifierBudget={canModifierBudget}
           categories={categories.map((c) => ({
             id: c.id,
             label: c.label,

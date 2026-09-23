@@ -12,11 +12,18 @@ type SimpleActionResult = { status: "success" | "error"; message: string };
 
 const montantRetourneSchema = z.coerce.number().min(0, "Le montant retourné doit être un nombre positif ou nul.");
 
+// Tâche "Aucune date dans le passé" (voir CLAUDE.md) : contrainte
+// AJOUTÉE à celle déjà existante (pas avant le dernier règlement confirmé,
+// vérifiée séparément plus bas dans chaque action) — les deux s'appliquent
+// simultanément, la plus restrictive des deux l'emporte naturellement.
+// Comparaison en granularité JOUR (chaînes `YYYY-MM-DD`), même convention
+// que `getDateDernierReglementConfirme` : la date du jour reste autorisée.
 const dateRetourSchema = z
   .string()
   .trim()
   .min(1, "La date du retour est obligatoire.")
-  .refine((v) => !Number.isNaN(Date.parse(v)), "Date invalide");
+  .refine((v) => !Number.isNaN(Date.parse(v)), "Date invalide")
+  .refine((v) => v >= new Date().toISOString().slice(0, 10), "La date du retour ne peut pas être dans le passé.");
 
 /**
  * Construit la ligne de dépense SYNTHÉTIQUE représentant la part NON

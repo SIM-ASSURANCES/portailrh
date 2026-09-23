@@ -12,6 +12,7 @@ import {
   getCategoriesConcerneesDemande,
   getMontantConsommeCategorie,
   getResteARegler,
+  getSoldeCaisse,
   getTotalRegle,
   peutEffectuerReglement,
   type CategorieConcerneeInfo,
@@ -395,6 +396,24 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
       status: "error",
       message: `Ce règlement dépasse le budget disponible pour : ${depassements.join(" ; ")} — confirmation refusée pour l'ensemble du règlement. Ajustez la répartition et resoumettez.`,
     };
+  }
+
+  // Solde de caisse disponible — contrôle bloquant uniquement pour un
+  // règlement CAISSE (un règlement BANQUE n'impacte jamais la caisse,
+  // voir CLAUDE.md règle impérative n°3) : réutilise `getSoldeCaisse()`,
+  // la même fonction que le dashboard Finance/`SoldeCaisseTrendChart`,
+  // jamais un second calcul. Le règlement en cours de confirmation est
+  // encore `estConfirme: false` à ce stade, donc pas encore comptabilisé
+  // dans le solde retourné — comparaison directe sans avoir besoin de
+  // l'exclure explicitement.
+  if (reglement.mode === "CAISSE") {
+    const soldeDisponible = await getSoldeCaisse();
+    if (montantReglement > soldeDisponible) {
+      return {
+        status: "error",
+        message: `Solde de caisse insuffisant : ${soldeDisponible.toLocaleString("fr-FR")} FCFA disponibles pour un règlement de ${montantReglement.toLocaleString("fr-FR")} FCFA — réalimentez la caisse (« Nouvelle alimentation de caisse ») avant de confirmer.`,
+      };
+    }
   }
 
   await prisma.$transaction([

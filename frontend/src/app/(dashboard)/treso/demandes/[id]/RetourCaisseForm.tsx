@@ -70,10 +70,22 @@ export function RetourCaisseForm({
   const [erreur, setErreur] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
+  // Tâche "Aucune date dans le passé" (voir CLAUDE.md) : contrainte AJOUTÉE
+  // à celle déjà existante (`dateMin`, pas avant le dernier règlement
+  // confirmé) — les deux s'appliquent en même temps, la borne `min` du
+  // champ devient donc la PLUS RÉCENTE des deux (jamais un simple
+  // remplacement de `dateMin`).
+  const aujourdHui = new Date().toISOString().slice(0, 10);
+  const dateMinEffective = dateMin && dateMin > aujourdHui ? dateMin : aujourdHui;
+
   function handleSubmit() {
     const montant = Number(montantRetourne);
     if (!dateRetour) {
       setErreur("La date du retour est obligatoire.");
+      return;
+    }
+    if (dateRetour < aujourdHui) {
+      setErreur("La date du retour ne peut pas être dans le passé.");
       return;
     }
     if (dateMin && dateRetour < dateMin) {
@@ -111,8 +123,12 @@ export function RetourCaisseForm({
           label="Date du retour"
           type="date"
           required
-          min={dateMin}
-          hint={dateMin ? `Ne peut pas être antérieure au ${new Date(dateMin).toLocaleDateString("fr-FR")}.` : undefined}
+          min={dateMinEffective}
+          hint={
+            dateMin && dateMin > aujourdHui
+              ? `Ne peut pas être antérieure au ${new Date(dateMin).toLocaleDateString("fr-FR")}.`
+              : "Ne peut pas être dans le passé."
+          }
           value={dateRetour}
           onChange={(e) => setDateRetour(e.target.value)}
         />
