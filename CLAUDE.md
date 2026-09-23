@@ -4924,6 +4924,274 @@ convention que les vérifications précédentes de ce projet)** :
 - `tsc --noEmit`, `eslint` et un vrai `next build` (65 routes) passent
   sans erreur.
 
+### Animation d'entrée de l'écran de connexion
+
+Suite directe de la tâche ci-dessus, réservée à `/login` UNIQUEMENT (jamais
+`forgot-password`/`reset-password`, hors périmètre, rendu strictement
+inchangé pour ces deux écrans) — inspirée d'une maquette de référence
+("QRApp", une autre application SIM Assurances, modèle d'interaction
+uniquement, aucun contenu copié). Seuls `AuthShell.tsx` et `login/page.tsx`
+touchés ; aucune Server Action, validation ou logique métier modifiée.
+
+**Comportement** : au chargement, le panneau bleu de marque occupe toute
+la largeur de l'écran (logo blanc, accroche, bouton "Se connecter"
+centrés) ; au clic (ou activation clavier), il se rétracte sur la GAUCHE
+(~57%) pendant que le formulaire de connexion glisse depuis la droite
+(~43%) — un MIROIR délibéré du placement form-gauche/bleu-droite des 2
+autres écrans, imposé par le sens de la maquette de référence, spécifique
+à `/login`.
+
+**`AuthShell.tsx` reçoit deux nouvelles props** :
+- `animatedIntro` (défaut `false`) — seul `/login` la passe à `true`.
+  Quand `false`, la branche de rendu est **strictement identique** à
+  l'implémentation d'avant cette tâche (copié-collé intact) : zéro
+  régression possible sur `forgot-password`/`reset-password`.
+- `skipIntro` (défaut `false`) — calculé par `login/page.tsx` à partir de
+  ses propres `searchParams` (`Boolean(error || activated || reset)`).
+  Nécessaire car `revealed` (l'état React qui pilote l'animation) doit
+  **rester stable pendant toute interaction normale du formulaire**
+  (échec de connexion, déconnexion pour inactivité, compte activé, mot de
+  passe réinitialisé — tous ces cas rechargent `/login` avec un paramètre
+  d'URL déjà présent après le `redirect()` du Server Action) : `revealed`
+  démarre directement à `true` dans ces cas, jamais de rejeu de
+  l'animation. Un simple F5 sur `/login` **sans paramètre**, lui, repart
+  bien de l'état plein écran (comportement explicitement demandé) —
+  `skipIntro` ne s'applique que si l'URL porte déjà la preuve d'une
+  interaction précédente.
+
+**Architecture "grille fixe + calque de recouvrement"** — PAS une grille
+dont les colonnes changeraient de largeur (`0%` → `43%`), premier essai
+tenté puis abandonné : faire passer la largeur RÉELLE de la colonne
+formulaire à `0%` (même avec `min-w-0`) force son contenu à se reformater
+sur une largeur quasi nulle, ce qui gonflait sa hauteur naturelle et
+provoquait exactement le saut de mise en page à éviter (mesuré en
+pratique : 638px avant clic contre 444px après, sur le même écran).
+Solution retenue :
+- La grille RÉELLE (`sm:grid-cols-[57%_43%]`) ne change **jamais** de
+  proportions — sa hauteur est donc constante dès le premier rendu, sans
+  deviner de valeur `min-h-[...]` arbitraire.
+- Un calque `absolute` (le "panneau bleu" perçu par l'utilisateur) couvre
+  toute la carte (`w-full`) au chargement, se rétracte à `sm:w-[57%]` au
+  clic (`inset-y-0` fige sa hauteur sur celle, déjà stable, de la carte —
+  son propre contenu ne peut donc jamais influencer la hauteur de qui que
+  ce soit).
+- **Piège trouvé et corrigé en cours de route** : une fois rétracté à
+  `57%`, ce calque coïncide EXACTEMENT avec la colonne bleue réelle en
+  dessous — un premier essai ne faisait fondre que le CONTENU du calque
+  (son titre/accroche/bouton), jamais le calque lui-même, dont le fond
+  opaque (`brand-gradient-bg`) continuait donc à recouvrir la colonne
+  réelle POUR TOUJOURS derrière lui (constaté en pratique : panneau bleu
+  resté vide, sans titre ni accroche, après un clic ou un rechargement
+  avec `?error=1`). Corrigé en faisant aussi disparaître le calque
+  lui-même en opacité, mais SEULEMENT sur les 200 dernières ms des 500ms
+  de rétrécissement (`transition-[width_500ms_ease-out,opacity_200ms_ease-out_300ms]`,
+  syntaxe de transition arbitraire Tailwind à propriétés multiples) —
+  jamais en même temps que le rétrécissement (un fondu concurrent aurait
+  rendu le calque semi-transparent PENDANT qu'il recouvre encore la zone
+  du formulaire en train d'apparaître) : le délai est choisi pour que la
+  colonne bleue réelle en dessous ait déjà fini d'apparaître (son propre
+  fondu se termine à 450ms) avant que le calque ne s'efface à son tour à
+  500ms — aucune discontinuité visible, le texte semble simplement
+  apparaître une fois le calque retiré.
+- `border`/`shadow-elevated-lg` restent volontairement présents dans les
+  deux états (jamais togglés) : `box-shadow: none`/`border-width: 0` ne
+  s'animent pas proprement vers une vraie valeur (saut instantané, même
+  limitation CSS que `height: auto`) — les garder actifs en permanence les
+  rend simplement invisibles quand la carte touche les bords du viewport
+  (état plein écran), puis ils "apparaissent" naturellement dès qu'elle
+  s'en détache en rétrécissant.
+
+**Accessibilité clavier — piège trouvé et corrigé** : le point d'entrée
+est un vrai `<button>` (focusable/activable au clavier nativement, jamais
+un `<div onClick>`). Un premier test clavier réel a révélé un bug distinct :
+même recouverts par le calque opaque, les champs de LA COLONNE FORMULAIRE
+RÉELLE (email, mot de passe, case à cocher, lien, bouton — tous
+techniquement "visibles" au sens CSS, seulement peints par-dessus) restent
+dans l'ordre de tabulation naturel du navigateur — un utilisateur clavier
+tombait donc d'abord sur ces champs invisibles avant d'atteindre le bouton
+"Se connecter", et valider Entrée sur un champ email cargo vide
+déclenchait la bulle de validation HTML5 native du navigateur SANS AUCUN
+CHAMP VISIBLE À L'ÉCRAN. Corrigé avec l'attribut natif `inert` (React 19) :
+- La colonne formulaire réelle reçoit `inert={isDesktop && !revealed}` —
+  `isDesktop` détecté côté client via `matchMedia("(min-width: 640px)")`
+  (défaut `false`, sûr pour le rendu serveur/l'hydratation) : sur mobile,
+  où `revealed` ne peut de toute façon jamais être activé par un clic
+  (calque et bouton masqués, voir plus bas), ce formulaire doit rester
+  TOUJOURS pleinement interactif — sans cette garde `isDesktop`, un
+  `inert` inconditionnel aurait rendu le formulaire mobile durablement
+  inutilisable.
+- Le calque plein écran reçoit `inert={revealed}` (sans besoin de la même
+  garde `isDesktop` : sur mobile il est déjà `hidden`, donc déjà hors
+  d'atteinte). `inert` retire à la fois la focusabilité ET l'exposition
+  aux technologies d'assistance en une seule fois — le `tabIndex={-1}`/
+  `aria-hidden` posés séparément dans un premier essai sont devenus
+  redondants et ont été retirés.
+
+**Mobile — solution retenue et justification** : le panneau bleu (calque
+ET colonne réelle) reste `hidden sm:flex` en permanence, exactement comme
+le panneau illustré des 2 autres écrans — **jamais d'interstitiel plein
+écran sur mobile**, le formulaire est immédiatement visible dès le
+chargement. Justification : l'animation est une transformation
+essentiellement HORIZONTALE (un panneau qui se rétracte latéralement pour
+en révéler un autre) — sur un écran portrait déjà trop étroit pour afficher
+les deux panneaux côte à côte (décision déjà prise et vérifiée dans la
+tâche précédente), rejouer cette même mécanique n'aurait guère de sens
+et ajouterait une étape de friction pure (un écran d'accueil à écarter)
+pour un utilisateur mobile venu se connecter rapidement — la cohérence
+avec le comportement mobile déjà établi et vérifié des 2 autres écrans
+(jamais remis en cause) l'emporte sur une fidélité littérale à la maquette
+desktop.
+
+**Vérifications, parcours réel (Playwright headless, comptes de test
+réels, installé temporairement `--no-save` puis désinstallé après usage)** :
+- Chargement initial : panneau bleu plein écran (1440px de large, pleine
+  largeur du viewport), logo, titre et accroche lisibles, bouton "Se
+  connecter" visible et centré.
+- Clic sur le bouton → transition déclenchée → carte recentrée (896px,
+  `max-w-4xl`), panneau bleu à gauche (~57%) AVEC son titre/accroche
+  visibles, formulaire à droite (~43%) pleinement fonctionnel — **écart de
+  hauteur entre les deux états mesuré à 0px** (bounding box identique
+  avant/après, confirmant l'absence de saut de mise en page).
+- Connexion avec identifiants invalides (formulaire déjà révélé) →
+  bannière d'erreur affichée, **formulaire toujours révélé, aucun
+  réaffichage du panneau plein écran ni du bouton** (pas de
+  re-déclenchement de l'animation) ; connexion avec identifiants valides →
+  redirection réelle vers `/`.
+- **F5 sur une session fraîche, sans paramètre d'URL** → reste bien à
+  l'état plein écran (bouton "Se connecter" toujours visible) — pas de
+  mémorisation d'état intempestive.
+- **Activation clavier** : `Tab` atteint directement le bouton "Se
+  connecter" en 1 seul saut (confirmé APRÈS le correctif `inert` —
+  atteignait à tort des champs invisibles du formulaire recouvert avant
+  correction), `Entrée` déclenche la révélation exactement comme un clic,
+  sans bulle de validation HTML5 parasite.
+- **Mobile (390px)** : formulaire directement visible dès le chargement,
+  bouton "Se connecter" du panneau bleu absent (`isVisible: false`),
+  largeur du document égale à celle du viewport (aucun scroll horizontal).
+- `forgot-password` rechargé et confirmé visuellement identique à avant
+  cette tâche (carte scindée statique, jamais de panneau plein écran).
+- Aucune erreur JavaScript capturée dans la console sur l'ensemble du
+  parcours.
+- `tsc --noEmit`, `eslint` et un vrai `next build` (65 routes) passent
+  sans erreur.
+
+### Nouvelle disposition de l'état "formulaire révélé" + filigrane plus marqué
+
+Suite directe de la tâche ci-dessus, toujours limitée à `AuthShell.tsx`
+(branche `animatedIntro`) et purement visuelle — aucune Server Action, ni
+validation, ni comportement touché. Remplace le split "panneau bleu ~57% /
+formulaire ~43%" par une disposition à calques : **le fond bleu de marque
+occupe TOUJOURS toute la page, sans jamais rétrécir**, et le formulaire de
+connexion apparaît comme une **carte blanche flottante, centrée**,
+par-dessus ce fond permanent.
+
+**Filigrane plus marqué, scopé au hero de connexion uniquement** —
+`BrandBackdrop.tsx` n'a **pas été modifié** : son prop déjà existant
+`watermarkOpacityClassName` suffisait très exactement à ce que la tâche
+suggérait ("passe par une prop dédiée plutôt que de changer le composant
+globalement"). Seule la VALEUR passée depuis l'unique appel du fond bleu
+de `/login` change, de `opacity-[0.16]` à `opacity-[0.32]` — le double.
+Tous les autres usages du composant restent strictement à leur valeur
+d'origine : `0.05`/`0.09` (fond de page clair, `/login` et les 2 autres
+écrans), `0.16` (panneau bleu de `/forgot-password`/`/reset-password`,
+INCHANGÉ — la tâche vise explicitement "le hero de connexion", pas les 2
+autres écrans), `0.035`/`0.05` (AppShell, sur fond clair). Le hero
+FeedbackApp et les cartes "Vos accès" du dashboard n'utilisent de toute
+façon pas ce composant (filigrane construit à la main à partir de
+`brandIcon.ts` directement dans ces fichiers) — aucun risque de les
+affecter par ricochet. Contraste vérifié par capture d'écran réelle : le
+triangle est désormais un vrai élément graphique visible du fond, tout en
+laissant le titre/l'accroche/le logo blanc parfaitement lisibles par-dessus
+(le filigrane reste cantonné au coin bas-droit, `watermarkPosition="corner-br"`,
+inchangé, jamais superposé directement au bloc de texte central).
+
+**Architecture — 3 calques `absolute inset-0` empilés dans un conteneur à
+taille fixe**, remplace l'ancienne "grille fixe (57%/43%) + calque de
+recouvrement à largeur variable" (dont l'historique — deux pièges
+rencontrés et corrigés, saut de hauteur puis panneau resté vide — reste
+documenté ci-dessus pour mémoire, mais ce mécanisme n'existe plus) :
+1. **Fond bleu** (`brand-gradient-bg` + `BrandBackdrop`) — toujours
+   `inset-0`, ne change JAMAIS de taille ni de position, masqué sur mobile
+   (`hidden sm:block`, le fond y reste blanc comme avant cette tâche).
+2. **Accueil** (logo blanc, titre, accroche, bouton "Se connecter") —
+   centré sur tout l'écran, s'efface en fondu (`opacity`, 200ms) une fois
+   révélé, `inert` pour ne jamais rester un arrêt de tabulation fantôme.
+3. **Carte** (logo couleur + `children`, le formulaire) — centrée par un
+   calque englobant qui la place au milieu de l'écran, apparaît en fondu +
+   très léger agrandissement (`opacity-0 scale-95` → `opacity-100
+   scale-100`, 300ms, `delay-150`) une fois révélée.
+
+Le conteneur externe garde une taille **fixe** (`min-h-full flex-1`,
+hauteur du viewport) en toute circonstance — les 3 calques sont tous
+`absolute inset-0` et ne contribuent donc JAMAIS à cette taille : la carte
+peut apparaître/disparaître sans le moindre effet sur la mise en page
+environnante. Cette architecture est structurellement IMMUNISÉE contre le
+type de saut de hauteur déjà rencontré sur l'ancienne disposition (rien ne
+redimensionne plus jamais un élément en fonction de son contenu) — vérifié
+en pratique par mesure directe de la bounding box du fond bleu avant/après
+révélation : **écart de largeur et de hauteur mesuré à 0px dans les deux
+cas**, et hauteur totale de page strictement identique (900px, la hauteur
+du viewport de test) avant et après.
+
+**Logo/accroche du hero : disparaissent en fondu, ne se repositionnent PAS
+en haut de l'écran** — choix retenu parmi les deux options proposées par
+la tâche, justifié : un simple fondu croisé (calque 2 s'efface, calque 3
+apparaît, tous deux déjà centrés au même endroit) est robuste et ne
+dépend d'aucun calcul de position lié à la taille du contenu ou du
+viewport, contrairement à un repositionnement du logo vers le haut de
+l'écran (qui aurait exigé de faire correspondre deux tailles/positions
+différentes du même élément sans jamais chevaucher la carte pendant la
+transition, une complexité et un risque de régression jugés disproportionnés
+pour un gain visuel marginal). Conséquence assumée : une fois la carte
+affichée, l'arrière-plan bleu est entièrement épuré (juste le filigrane),
+sans titre ni accroche résiduelle — cohérent avec "la carte flotte SUR le
+fond bleu" demandé, et visuellement plus propre qu'un texte qui se
+déplacerait.
+
+**Comportement gardé strictement inchangé** (vérifié explicitement,
+aucune régression) : `revealed`/`skipIntro`/`isDesktop` (mêmes noms, même
+logique, aucune de ces trois pièces d'état n'a changé) ; `inert` sur la
+carte tant que non révélée sur desktop uniquement (même garde
+`isDesktop && !revealed`, même raison — un utilisateur clavier ne doit
+jamais tomber sur des champs cachés) ; aucun re-déclenchement de
+l'animation après une soumission de formulaire (toujours piloté par
+`skipIntro`, calculé de façon identique dans `login/page.tsx` — ce fichier
+n'a d'ailleurs pas eu besoin d'être modifié pour cette tâche, ses props
+passées à `AuthShell` restent les mêmes) ; comportement mobile (formulaire
+toujours visible d'emblée, jamais d'interstitiel) ; `forgot-password`/
+`reset-password` strictement inchangés (aucune ligne de leur branche de
+rendu — le cas `!animatedIntro` — n'a été touchée).
+
+**Vérifications, parcours réel (Playwright headless, comptes de test
+réels, installé temporairement `--no-save` puis désinstallé après
+usage)** :
+- Chargement initial : fond bleu couvrant exactement tout le viewport
+  (1440×900), filigrane nettement plus visible qu'avant, logo/titre/
+  accroche/bouton lisibles et centrés.
+- Clic sur "Se connecter" → carte blanche centrée apparaît par-dessus le
+  MÊME fond bleu, sans le moindre changement de ses dimensions (0px
+  d'écart mesuré) ni de la hauteur totale de la page.
+- Connexion avec identifiants invalides (carte déjà révélée) → bannière
+  d'erreur affichée sur la carte, toujours centrée, pas de retour au hero ;
+  connexion avec identifiants valides → redirection réelle vers `/`.
+- Session fraîche sans paramètre d'URL, puis F5 → bouton "Se connecter"
+  visible dans les deux cas (retour à l'état hero confirmé, pas de
+  mémorisation intempestive).
+- Activation clavier : `Tab` atteint le bouton en 1 saut, `Entrée` révèle
+  la carte exactement comme un clic, sans bulle de validation HTML5
+  parasite (comportement déjà corrigé sur l'ancienne disposition, reconfirmé
+  ici).
+- Mobile (390px) : carte directement visible, bouton du hero absent, pas
+  de scroll horizontal, connexion valide fonctionne normalement depuis
+  mobile.
+- `/forgot-password` et `/reset-password` (y compris son état "lien
+  invalide") rechargés et confirmés visuellement identiques à avant cette
+  tâche par capture d'écran.
+- Aucune erreur JavaScript capturée dans la console sur l'ensemble du
+  parcours.
+- `tsc --noEmit`, `eslint` et un vrai `next build` (65 routes) passent
+  sans erreur.
+
 ## Monorepo backend/frontend
 
 ```
