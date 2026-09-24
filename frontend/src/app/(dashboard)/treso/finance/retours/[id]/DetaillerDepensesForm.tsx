@@ -88,6 +88,13 @@ export function DetaillerDepensesForm({
         setErreur("Téléversez le fichier, ou indiquez qu'aucune pièce jointe n'est fournie pour cette ligne.");
         return;
       }
+      // Tâche "Refonte de la zone 'Régularisation'" (voir CLAUDE.md) — même
+      // règle que le serveur (`ligneDetailSchema`) : une ligne "Justifiée"
+      // exige une pièce jointe réellement téléversée.
+      if (l.justifiee && (!l.pieceJointeFournie || !l.pieceJointeUrl)) {
+        setErreur("Une pièce jointe est obligatoire pour une ligne justifiée.");
+        return;
+      }
       if (!l.justifiee && (!l.motif || l.motif.trim().length < 3)) {
         setErreur("Un motif (3 caractères minimum) est obligatoire pour une ligne non justifiée.");
         return;

@@ -66,7 +66,7 @@ export function ValidationsAttenteTable({ demandes }: { demandes: ValidationAtte
           header: "Actions",
           render: (d) => (
             <Link href={`/treso/finance/demandes/${d.id}`}>
-              <Button variant="secondary">Approuver</Button>
+              <Button variant="secondary">Décision à prendre</Button>
             </Link>
           ),
         },

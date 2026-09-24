@@ -284,6 +284,19 @@ const ligneDetailSchema = z
         message: "Téléversez le fichier, ou indiquez qu'aucune pièce jointe n'est fournie.",
       });
     }
+    // Tâche "Refonte de la zone 'Régularisation'" (voir CLAUDE.md) : une
+    // dépense JUSTIFIÉE exige désormais explicitement une pièce jointe
+    // (jamais déduit — état déjà EXPLICITE par ailleurs, voir
+    // `LigneDetailInput.pieceJointeFournie`) ; auparavant, `justifiee: true`
+    // sans aucune pièce passait la validation, contrairement à la lecture du
+    // libellé "Justifiée." affiché ensuite côté Collaborateur.
+    if (data.justifiee && (!data.pieceJointeFournie || !data.pieceJointeUrl)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["pieceJointeFournie"],
+        message: "Une pièce jointe est obligatoire pour une dépense justifiée.",
+      });
+    }
     if (!data.justifiee && (!data.motif || data.motif.trim().length < 3)) {
       ctx.addIssue({
         code: "custom",
@@ -489,7 +502,8 @@ const motifNonJustifieSchema = z
  * sa justification actuelle (y compris déjà `SANS_PIECE` déclarée par le
  * collaborateur — Finance peut alors simplement y ajouter son propre
  * motif) : force `justification: "SANS_PIECE"` dans tous les cas, pour que
- * la ligne apparaisse dans le suivi "Dépenses non justifiées"
+ * la ligne apparaisse dans le suivi "Dépense sans pièce formelle" (libellé
+ * renommé, voir CLAUDE.md "Refonte de la zone 'Régularisation'")
  * (`depenses-non-justifiees/page.tsx`, indicateur #6 du dashboard Finance)
  * même si le collaborateur l'avait initialement déclarée avec pièce.
  *

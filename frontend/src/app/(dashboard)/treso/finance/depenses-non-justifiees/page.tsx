@@ -8,8 +8,12 @@ import { getSoldesARegulariserParReglements } from "backend";
 import { DepensesNonJustifieesTable } from "./DepensesNonJustifieesTable";
 
 /**
- * "Dépenses non justifiées à suivre" (Phase G, cahier des charges section
- * 12) — lignes de dépenses (`DepenseLigne`) déclarées sans pièce
+ * "Dépense sans pièce formelle à suivre" (renommé depuis "Dépenses non
+ * justifiées à suivre" — Tâche "Refonte de la zone 'Régularisation'", voir
+ * CLAUDE.md ; libellé UI uniquement, jamais l'enum `SANS_PIECE`/la route
+ * `/treso/finance/depenses-non-justifiees`, inchangées) (Phase G, cahier
+ * des charges section 12) — lignes de dépenses (`DepenseLigne`) déclarées
+ * sans pièce
  * justificative (`justification = SANS_PIECE`) dont le règlement Caisse
  * d'origine n'est pas encore totalement régularisé. Cible de l'indicateur
  * #6 de la zone "À traiter" du dashboard Finance : même définition exacte
@@ -41,7 +45,7 @@ export default async function DepensesNonJustifieesPage() {
     return (
       <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
         <PageHeader
-          title="Dépenses non justifiées à suivre"
+          title="Dépense sans pièce formelle à suivre"
           description="Lignes de dépenses sans pièce justificative dont le règlement d'origine n'est pas encore régularisé."
         />
         <DepensesNonJustifieesTable lignes={[]} />
@@ -69,7 +73,7 @@ export default async function DepensesNonJustifieesPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
-        title="Dépenses non justifiées à suivre"
+        title="Dépense sans pièce formelle à suivre"
         description="Lignes de dépenses sans pièce justificative dont le règlement d'origine n'est pas encore régularisé."
       />
       <DepensesNonJustifieesTable lignes={rows} />

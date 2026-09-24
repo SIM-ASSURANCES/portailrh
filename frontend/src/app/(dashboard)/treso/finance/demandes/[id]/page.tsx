@@ -9,7 +9,7 @@ import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesInterve
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
-import { lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
+import { getMontantsLignesParStatut, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
 
 import { CategorisationForm } from "./CategorisationForm";
 import { ClotureActions } from "./ClotureActions";
@@ -77,6 +77,15 @@ export default async function CategoriserDemandePage({
   // lignes sont pourtant déjà toutes décidées) — seul `demande.lignes.length`
   // est nécessaire ici, pour choisir QUEL composant rendre.
   const demandeAauMoinsUneLigne = demande.lignes.length > 0;
+  // Tâche "Bug d'affichage 'Montant restant à valider'" (voir CLAUDE.md) :
+  // pour une demande AVEC lignes, `montant - montantValide` (formule de
+  // l'ancien modèle par montant global, toujours valable pour une
+  // DEPENSE_DIRECTE sans ligne) compterait à tort une ligne déjà REJETEE
+  // comme "restant à valider" — seules les lignes encore EN_ATTENTE le sont
+  // réellement. Calculé uniquement si `demandeAauMoinsUneLigne`, jamais pour
+  // l'ancien modèle (qui garde sa formule `reliquatRejete` inchangée).
+  const { montantEnAttente: montantLignesEnAttente, montantRejete: montantLignesRejete } =
+    getMontantsLignesParStatut(demande.lignes);
   const lignesPourTable = demande.lignes.map((ligne) => ({
     id: ligne.id,
     libelle: ligne.libelle,
@@ -100,25 +109,34 @@ export default async function CategoriserDemandePage({
   // les 3 actions les plus utilisées de Finance (catégorisation, validation,
   // règlement), tout gain de latence ici se ressent sur les trois.
   //
-  // Verrou de clôture — dernier évènement négatif (rejet lors d'un examen,
-  // ou annulation d'une approbation déjà donnée) affiché en évidence tant
-  // que la demande reste en attente (`validationCompleteParDG = false`) :
-  // le plus récent des deux, jamais seulement le dernier rejet, pour ne
-  // jamais afficher un motif de rejet devenu obsolète après une annulation
-  // ultérieure plus pertinente (ni l'inverse) — voir CLAUDE.md.
+  // Verrou de clôture — dernier évènement DG (rejet lors d'un examen,
+  // annulation d'une approbation déjà donnée, ou resoumission par Finance
+  // après un rejet — Tâche "Resoumission au DG après rejet", voir
+  // CLAUDE.md) affiché en évidence tant que la demande reste en attente
+  // (`validationCompleteParDG = false`) : le plus récent des trois, jamais
+  // seulement le dernier rejet, pour ne jamais afficher un motif de rejet
+  // devenu obsolète après une resoumission/annulation ultérieure plus
+  // pertinente (ni l'inverse). Renommé depuis `dernierEvenementNegatifDG` :
+  // peut désormais aussi porter une resoumission, qui n'est plus "négative".
   //
   // Ticket A.1 : seules les catégories/objets actifs sont proposables pour
   // une nouvelle catégorisation (soft-delete, jamais de suppression
   // définitive — voir admin/categories).
   const peutCategoriserMaintenant = demande.statut === "EN_ATTENTE_VALIDATION" && canCategoriser;
-  const [dernierEvenementNegatifDG, categoriesActives, objetsActives] = await Promise.all([
+  const [dernierEvenementDG, categoriesActives, objetsActives] = await Promise.all([
     demande.validationCompleteParDG
       ? Promise.resolve(null)
       : prisma.historiqueEntry.findFirst({
           where: {
             entity: "Demande",
             entityId: demande.id,
-            action: { in: ["rejet_validation_complete", "annulation_validation_complete"] },
+            action: {
+              in: [
+                "rejet_validation_complete",
+                "annulation_validation_complete",
+                "resoumission_validation_complete",
+              ],
+            },
           },
           include: { user: true },
           orderBy: { createdAt: "desc" },
@@ -245,17 +263,39 @@ export default async function CategoriserDemandePage({
                 demande.reliquatRejete ? "text-muted-foreground line-through" : "text-foreground"
               }`}
             >
-              {Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0)).toLocaleString("fr-FR")}{" "}
+              {/* Demande AVEC lignes : uniquement la somme des lignes encore
+                  EN_ATTENTE — jamais `montant - montantValide`, qui compterait
+                  à tort une ligne déjà REJETEE comme "restant à valider" (voir
+                  CLAUDE.md, bug corrigé). Demande SANS ligne (DEPENSE_DIRECTE) :
+                  formule de l'ancien modèle par montant global, inchangée. */}
+              {(demandeAauMoinsUneLigne
+                ? montantLignesEnAttente
+                : Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0))
+              ).toLocaleString("fr-FR")}{" "}
               FCFA
             </dd>
-            {/* Rejet du reliquat (nouveau) : le montant restant n'est plus
-                "en attente" mais définitivement clos — barré + libellé
-                explicite, jamais laissé à interpréter comme si une
-                validation complémentaire restait possible. */}
-            {demande.reliquatRejete ? (
+            {/* Rejet du reliquat (ancien modèle uniquement) : le montant
+                restant n'est plus "en attente" mais définitivement clos —
+                barré + libellé explicite, jamais laissé à interpréter comme
+                si une validation complémentaire restait possible. */}
+            {!demandeAauMoinsUneLigne && demande.reliquatRejete ? (
               <p className="mt-1 text-xs font-medium text-danger">Définitivement clos (reliquat rejeté)</p>
             ) : null}
           </div>
+          {/* "Montant rejeté" (nouveau) : préserve l'information des lignes
+              REJETEE une fois qu'elles ne comptent plus dans "restant à
+              valider" — affiché uniquement s'il y a effectivement un montant
+              rejeté, pour ne pas complexifier l'écran dans le cas courant. */}
+          {demandeAauMoinsUneLigne && montantLignesRejete > 0 ? (
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Montant rejeté
+              </dt>
+              <dd className="mt-1 text-base font-bold tabular-nums text-danger">
+                {montantLignesRejete.toLocaleString("fr-FR")} FCFA
+              </dd>
+            </div>
+          ) : null}
           <DescriptionEditor
             demandeId={demande.id}
             description={demande.description}
@@ -340,26 +380,55 @@ export default async function CategoriserDemandePage({
               )}
             </div>
             {canApprouverValidationComplete && !demande.validationCompleteParDG ? (
-              <ValidationCompleteDGActions demandeId={demande.id} mode="examen" />
+              <ValidationCompleteDGActions
+                demandeId={demande.id}
+                mode="examen"
+                attenteResoumission={
+                  demande.validationCompleteRejeteeParDG && dernierEvenementDG?.action === "rejet_validation_complete"
+                }
+              />
             ) : null}
             {canApprouverValidationComplete &&
             demande.validationCompleteParDG &&
             demande.statut !== "CLOTUREE" ? (
               <ValidationCompleteDGActions demandeId={demande.id} mode="annulation" />
             ) : null}
+            {/* Tâche "Resoumission au DG après rejet" (voir CLAUDE.md) —
+                garde de permission DISTINCTE et opposée à celle des deux
+                boutons ci-dessus (`canValiderLignes` = Responsable Finance
+                UNIQUEMENT, jamais le DG) : visible uniquement si le DERNIER
+                évènement DG connu est bien un rejet (jamais "jamais encore
+                examinée" ni "approbation annulée" — revérifié de toute façon
+                côté serveur). */}
+            {canValiderLignes &&
+            !demande.validationCompleteParDG &&
+            dernierEvenementDG?.action === "rejet_validation_complete" ? (
+              <ValidationCompleteDGActions demandeId={demande.id} mode="resoumission" />
+            ) : null}
           </div>
-          {/* Motif du dernier évènement négatif (rejet d'examen ou annulation
-              d'une approbation) — visible tant que la demande reste en
-              attente, pour que Finance sache ce qui doit être corrigé avant
-              un nouvel examen du DG. */}
-          {dernierEvenementNegatifDG ? (
-            <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
-              {dernierEvenementNegatifDG.action === "rejet_validation_complete"
+          {/* Motif du dernier évènement DG (rejet d'examen, annulation d'une
+              approbation, ou resoumission par Finance) — visible tant que la
+              demande reste en attente, pour que Finance/le DG sachent où en
+              est le dossier. Teinte "danger" pour rejet/annulation (évènement
+              défavorable), teinte neutre pour une resoumission (Finance
+              indique avoir corrigé le dossier — jamais présenté comme un
+              nouvel évènement négatif). */}
+          {dernierEvenementDG ? (
+            <p
+              className={`rounded-md px-3 py-2 text-sm ${
+                dernierEvenementDG.action === "resoumission_validation_complete"
+                  ? "bg-info-bg text-info"
+                  : "bg-danger-bg text-danger"
+              }`}
+            >
+              {dernierEvenementDG.action === "rejet_validation_complete"
                 ? "Rejeté par le DG lors de l'examen"
-                : "Approbation précédemment annulée par le DG"}{" "}
-              ({dernierEvenementNegatifDG.user.fullName}, le{" "}
-              {dernierEvenementNegatifDG.createdAt.toLocaleDateString("fr-FR")}) — motif :{" "}
-              <span className="font-semibold">{dernierEvenementNegatifDG.detail}</span>
+                : dernierEvenementDG.action === "annulation_validation_complete"
+                  ? "Approbation précédemment annulée par le DG"
+                  : "Resoumise au DG par Finance après un rejet"}{" "}
+              ({dernierEvenementDG.user.fullName}, le{" "}
+              {dernierEvenementDG.createdAt.toLocaleDateString("fr-FR")}) — motif :{" "}
+              <span className="font-semibold">{dernierEvenementDG.detail}</span>
             </p>
           ) : null}
           {canApprouverValidationComplete && demande.validationCompleteParDG && demande.statut === "CLOTUREE" ? (
@@ -503,6 +572,7 @@ export default async function CategoriserDemandePage({
               demandeId={demande.id}
               montantValide={Number(demande.montantValide)}
               canEffectuerReglement={false}
+              canAnnulerReglementConfirme={false}
             />
           ) : null}
           <RegularisationSummary
@@ -584,6 +654,13 @@ export default async function CategoriserDemandePage({
             demandeId={demande.id}
             montantValide={Number(demande.montantValide)}
             canEffectuerReglement={canEffectuerReglement}
+            // Tâche "Annulation d'un règlement après reçu réservée au
+            // Responsable" (voir CLAUDE.md) — même garde que
+            // `annulerReglementAction`, distincte de `canEffectuerReglement`
+            // (Assistant Finance) : réutilise `canValiderLignes`, déjà
+            // calculé plus haut pour la même identification "Responsable
+            // Finance UNIQUEMENT".
+            canAnnulerReglementConfirme={canValiderLignes}
           />
           <RegularisationSummary
             demandeId={demande.id}

@@ -66,7 +66,17 @@ export function RetourCaisseForm({
   onSuccess: () => void;
 }) {
   const [dateRetour, setDateRetour] = useState(() => dateRetourInitiale ?? new Date().toISOString().slice(0, 10));
-  const [montantRetourne, setMontantRetourne] = useState(String(montantRetourneInitial ?? montantReglement));
+  // Tâche "Nettoyage du formulaire 'Retour de caisse'" (voir CLAUDE.md) :
+  // en mode `create`, le champ démarre VIDE — jamais pré-rempli avec le
+  // montant total du règlement, qui laissait penser à tort que "rien n'a
+  // été dépensé" par défaut. Chaîne vide plutôt que `"0"` littéral, même
+  // raison que `LigneEdit.prixUnitaire` (formulaire de demande) : un `"0"`
+  // obligerait à le sélectionner/effacer avant de taper le vrai montant. En
+  // mode `edit`, `montantRetourneInitial` reste préchargé normalement,
+  // inchangé.
+  const [montantRetourne, setMontantRetourne] = useState(
+    montantRetourneInitial != null ? String(montantRetourneInitial) : ""
+  );
   const [erreur, setErreur] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 

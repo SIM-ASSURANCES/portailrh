@@ -1324,12 +1324,34 @@ export async function approuverValidationCompleteAction(demandeId: string): Prom
   if (demande.validationCompleteParDG) {
     return { status: "error", message: "La validation complète a déjà été approuvée pour cette demande." };
   }
+  // Après un rejet, le DG ne peut plus approuver directement : seule une
+  // resoumission du Responsable Finance (dernier évènement DG =
+  // `resoumission_validation_complete`) rouvre cette possibilité. Revérifié
+  // ici, jamais seulement par le masquage du bouton.
+  if (demande.validationCompleteRejeteeParDG) {
+    const dernierEvenementDG = await prisma.historiqueEntry.findFirst({
+      where: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: { in: ["rejet_validation_complete", "resoumission_validation_complete"] },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (dernierEvenementDG?.action !== "resoumission_validation_complete") {
+      return {
+        status: "error",
+        message:
+          "En attente de resoumission par le Responsable Finance avant nouvelle décision du DG : approbation impossible.",
+      };
+    }
+  }
 
   await prisma.$transaction([
     prisma.demande.update({
       where: { id: demandeId },
       data: {
         validationCompleteParDG: true,
+        validationCompleteRejeteeParDG: false,
         dgApprobateurId: session.user.id,
         dgApprouveAt: new Date(),
       },
@@ -1400,15 +1422,21 @@ export async function rejeterValidationCompleteAction(
     };
   }
 
-  await prisma.historiqueEntry.create({
-    data: {
-      entity: "Demande",
-      entityId: demandeId,
-      action: "rejet_validation_complete",
-      detail: parsedMotif.data,
-      userId: session.user.id,
-    },
-  });
+  // Le rejet GÈLE désormais le règlement (voir CLAUDE.md "Le rejet DG gèle
+  // le règlement") : seul champ de la Demande touché, jusqu'à la prochaine
+  // approbation DG.
+  await prisma.$transaction([
+    prisma.demande.update({ where: { id: demandeId }, data: { validationCompleteRejeteeParDG: true } }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "rejet_validation_complete",
+        detail: parsedMotif.data,
+        userId: session.user.id,
+      },
+    }),
+  ]);
 
   revalidateDemandePaths(demandeId);
   revalidatePath("/treso/finance/validations-attente");
@@ -1518,5 +1546,120 @@ export async function annulerValidationCompleteAction(
   return {
     status: "success",
     message: `Approbation annulée pour la demande ${demande.reference} — retour en attente de validation complète.`,
+  };
+}
+
+const motifResoumissionSchema = z
+  .string()
+  .trim()
+  .min(10, "Le motif de resoumission est obligatoire (10 caractères minimum)");
+
+/**
+ * Resoumet au DG une demande dont la validation complète a été REJETÉE lors
+ * de l'examen (Tâche "Resoumission au DG après rejet", voir CLAUDE.md).
+ *
+ * **Aucun champ persistant ne distingue "rejetée" de "jamais encore
+ * examinée"** — `validationCompleteParDG` reste `false` dans les deux cas
+ * (`rejeterValidationCompleteAction` ne touche AUCUN champ de la `Demande`,
+ * voir son docblock). Cette action ne "réinitialise" donc rien sur la
+ * `Demande` elle-même (déjà `false`, déjà `dgApprobateurId: null` — la
+ * demande est d'ailleurs déjà, techniquement, dans la file d'attente du DG,
+ * qui pourrait l'approuver directement sans cette action) : son seul effet
+ * est de tracer une **nouvelle** `HistoriqueEntry` (`resoumission_validation_complete`)
+ * qui devient le plus récent évènement DG — elle fait donc disparaître le
+ * bandeau "Rejeté par le DG..." (voir `dernierEvenementNegatifDG`/
+ * `page.tsx`, dont la requête a été élargie à cette action) et notifie
+ * explicitement le DG, plutôt que de compter sur lui pour remarquer seul
+ * qu'un dossier déjà rejeté a été corrigé entre-temps.
+ *
+ * **Réservée au Responsable Finance UNIQUEMENT** — même garde exacte que
+ * `validerLignesAction` (`treso.valider_demande` ET PAS
+ * `treso.approuver_validation_complete`) : jamais l'Assistant Finance
+ * (`treso.effectuer_reglement` seul ne suffit pas, contrairement à
+ * `modifierDescriptionAction`/`modifierLibelleLigneAction` — resoumettre au
+ * DG est une décision de pilotage du dossier, pas une simple modification
+ * de forme), jamais le DG lui-même (exclu par la seconde condition, même
+ * principe que partout ailleurs dans ce fichier).
+ *
+ * Ne rouvre ni ne revalide RIEN d'autre : les lignes déjà décidées
+ * (`statutValidation`), le `montantValide`, les règlements déjà
+ * créés/confirmés restent strictement inchangés — seul le DG revoit le
+ * dossier dans sa file, sans que Finance n'ait à défaire quoi que ce soit
+ * de déjà fait pour le lui soumettre à nouveau.
+ */
+export async function resoumettreValidationCompleteDGAction(
+  demandeId: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (
+    !session ||
+    !hasPermission(session, "treso.valider_demande") ||
+    hasPermission(session, "treso.approuver_validation_complete")
+  ) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedMotif = motifResoumissionSchema.safeParse(motif);
+  if (!parsedMotif.success) {
+    return { status: "error", message: parsedMotif.error.issues[0].message };
+  }
+
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  if (!demande) {
+    return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.validationCompleteParDG) {
+    return {
+      status: "error",
+      message: "Cette demande a déjà été approuvée par le DG — rien à resoumettre.",
+    };
+  }
+
+  // Revérifie côté serveur que le dernier évènement DG est bien un REJET
+  // (jamais "jamais encore examinée" ni "approbation annulée") — même
+  // requête que celle qui pilote le bandeau affiché sur cette page.
+  const dernierEvenementDG = await prisma.historiqueEntry.findFirst({
+    where: {
+      entity: "Demande",
+      entityId: demandeId,
+      action: {
+        in: ["rejet_validation_complete", "annulation_validation_complete", "resoumission_validation_complete"],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (dernierEvenementDG?.action !== "rejet_validation_complete") {
+    return {
+      status: "error",
+      message: "Cette demande n'a pas été rejetée par le DG — rien à resoumettre.",
+    };
+  }
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "Demande",
+      entityId: demandeId,
+      action: "resoumission_validation_complete",
+      detail: parsedMotif.data,
+      userId: session.user.id,
+    },
+  });
+
+  revalidateDemandePaths(demandeId);
+  revalidatePath("/treso/finance/validations-attente");
+
+  await notifyByPermission("treso.approuver_validation_complete", {
+    titre: "Demande resoumise pour validation complète",
+    message: `La demande ${demande.reference}, précédemment rejetée, a été resoumise pour un nouvel examen. Motif : ${parsedMotif.data}`,
+    lien: "/treso/finance/validations-attente",
+    excludeUserId: session.user.id,
+    priority: "IMPORTANT",
+    category: "TRESORERIE",
+  });
+
+  return {
+    status: "success",
+    message: `Demande ${demande.reference} resoumise au DG pour un nouvel examen.`,
   };
 }

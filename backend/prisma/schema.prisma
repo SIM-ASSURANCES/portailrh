@@ -510,6 +510,13 @@ model Demande {
   dgApprobateurId         String?
   dgApprobateur           User?     @relation("DgApprobateurValidationComplete", fields: [dgApprobateurId], references: [id])
   dgApprouveAt            DateTime?
+  /// `true` tant que le DG a REJETÉ la validation complète sans qu'elle ait
+  /// été approuvée depuis : distingue "rejetée" de "jamais examinée"
+  /// (`validationCompleteParDG` reste `false` dans les deux cas). Gèle la
+  /// création/modification/confirmation de règlement (voir CLAUDE.md
+  /// "Le rejet DG gèle le règlement"). Posé par `rejeterValidationCompleteAction`,
+  /// remis à `false` uniquement par `approuverValidationCompleteAction`.
+  validationCompleteRejeteeParDG Boolean @default(false)
 
   createurId String
   createur   User   @relation("DemandeCreateur", fields: [createurId], references: [id])

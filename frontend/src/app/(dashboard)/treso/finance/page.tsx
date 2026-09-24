@@ -40,7 +40,9 @@ import { SoldeCaisseTrendChart } from "./SoldeCaisseTrendChart";
  * 3. Règlements partiels à compléter (déjà commencé, pas fini)
  * 4. Fonds remis à régulariser (règlements Caisse au solde non nul)
  * 5. Retours de fonds en attente de réception
- * 6. Dépenses non justifiées à suivre
+ * 6. Dépense sans pièce formelle à suivre (renommé depuis "Dépenses non
+ *    justifiées" — Tâche "Refonte de la zone 'Régularisation'", voir
+ *    CLAUDE.md, libellé UI uniquement, jamais l'enum SANS_PIECE en base)
  *
  * Chaque définition exacte vit dans `dashboardFinance.ts`, jamais dupliquée
  * ici. L'ancien indicateur "Décaissements à régulariser" (Ticket 8,
@@ -128,7 +130,7 @@ export default async function DashboardFinancePage() {
 
   // Une carte ne "s'allume" dans sa teinte d'urgence que s'il y a
   // effectivement quelque chose à traiter — à 0, elle repasse en neutre
-  // pour ne pas crier au loup (ex: "Dépenses non justifiées" ne doit pas
+  // pour ne pas crier au loup (ex: "Dépense sans pièce formelle" ne doit pas
   // s'afficher en rouge quand ce nombre est nul). La hiérarchie visuelle ne
   // doit signaler que ce qui est réellement actionnable.
   function toneSiActif(nombre: number, toneActif: StatTone): StatTone {
@@ -277,7 +279,7 @@ export default async function DashboardFinancePage() {
               href="/treso/finance/depenses-non-justifiees"
               icon="alert-triangle"
               tone={toneSiActif(depensesNonJustifiees.nombre, "danger")}
-              label="Dépenses non justifiées à suivre"
+              label="Dépense sans pièce formelle à suivre"
               value={depensesNonJustifiees.nombre}
               hint={`${depensesNonJustifiees.montant.toLocaleString("fr-FR")} FCFA`}
             />

@@ -31,7 +31,7 @@ export function DepensesNonJustifieesTable({ lignes }: { lignes: DepenseNonJusti
   return (
     <DataTable
       rowKey={(l) => l.id}
-      emptyMessage="Aucune dépense non justifiée à suivre pour l'instant."
+      emptyMessage="Aucune dépense sans pièce formelle à suivre pour l'instant."
       columns={[
         { key: "demandeReference", header: "Demande", sortable: true, accessor: (l) => l.demandeReference },
         { key: "objet", header: "Objet de la dépense", render: (l) => truncate(l.objet) },

@@ -89,6 +89,36 @@ export function lignesToutesDecidees(lignes: { statutValidation: string }[]): bo
 }
 
 /**
+ * Répartition du montant demandé d'une demande AVEC lignes entre "encore en
+ * attente d'une décision" et "rejeté" — corrige le bug d'affichage où
+ * `max(0, montant - montantValide)` (formule héritée de l'ANCIEN modèle par
+ * montant global, valable uniquement pour une demande SANS ligne) comptait à
+ * tort une ligne déjà `REJETEE` comme "restant à valider" (voir CLAUDE.md,
+ * bug identique à celui déjà corrigé sur `DEMANDES_EN_ATTENTE_VALIDATION_WHERE`
+ * pour DEM-2026-000009 — même cause racine : une fonction pensée pour
+ * l'ancien modèle appliquée telle quelle à une demande à lignes).
+ *
+ * `montantEnAttente` ne somme QUE les lignes `EN_ATTENTE` — vaut donc
+ * exactement 0 dès que `lignesToutesDecidees()` est vraie, jamais un residu
+ * dérivé de `montant - montantValide`. `montantRejete` somme les lignes
+ * `REJETEE`, pour ne pas perdre cette information une fois retirée du
+ * "restant à valider".
+ */
+export function getMontantsLignesParStatut(
+  lignes: { statutValidation: string; quantite: number; prixUnitaire: Prisma.Decimal | number }[]
+): { montantEnAttente: number; montantRejete: number } {
+  return lignes.reduce(
+    (acc, l) => {
+      const total = l.quantite * Number(l.prixUnitaire);
+      if (l.statutValidation === "EN_ATTENTE") acc.montantEnAttente += total;
+      else if (l.statutValidation === "REJETEE") acc.montantRejete += total;
+      return acc;
+    },
+    { montantEnAttente: 0, montantRejete: 0 }
+  );
+}
+
+/**
  * Somme des règlements confirmés et non annulés d'une demande — c'est le
  * montant qui compte réellement comme "déjà réglé" (règle impérative : un
  * règlement en brouillon ou annulé ne compte jamais).

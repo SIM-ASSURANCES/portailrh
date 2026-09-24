@@ -46,13 +46,18 @@ function ReglementStatutBadge({ reglement }: { reglement: ReglementRowData }) {
  *
  * `canEffectuerReglement` désactive (visible mais non cliquable, jamais
  * absent — Tâche "Séparation Responsable Finance / Assistant Finance",
- * voir CLAUDE.md) les boutons d'action pour un utilisateur qui partage
- * l'espace Finance sans avoir cette permission précise (ex: le DG, ou
- * depuis cette tâche le Responsable Finance lui-même, qui a
- * `treso.valider_demande` mais plus `treso.effectuer_reglement`). Les
- * Server Actions revérifient de toute façon la permission côté serveur :
- * ce grisage est une question de clarté d'interface, pas la seule ligne
- * de défense.
+ * voir CLAUDE.md) les boutons Modifier/Confirmer pour un utilisateur qui
+ * partage l'espace Finance sans avoir cette permission précise (ex: le DG,
+ * ou le Responsable Finance lui-même, qui a `treso.valider_demande` mais
+ * plus `treso.effectuer_reglement`). Le bouton "Annuler" d'un règlement
+ * déjà CONFIRMÉ suit désormais une garde SÉPARÉE,
+ * `canAnnulerReglementConfirme` (Tâche "Annulation d'un règlement après
+ * reçu réservée au Responsable", voir CLAUDE.md) — l'Assistant Finance
+ * garde `canEffectuerReglement` pour Modifier/Confirmer un règlement encore
+ * en cours, mais ne peut plus annuler un règlement déjà confirmé (reçu déjà
+ * généré), réservé au Responsable Finance. Les Server Actions revérifient
+ * de toute façon chaque permission côté serveur : ce grisage est une
+ * question de clarté d'interface, pas la seule ligne de défense.
  *
  * Le formulaire d'édition reste non contrôlé (`defaultValue` + `FormData`
  * au submit) pour montant/mode — passer `value` à `Select` entrerait en
@@ -79,10 +84,17 @@ export function ReglementRow({
   reglement,
   categoriesConcernees,
   canEffectuerReglement,
+  canAnnulerReglementConfirme,
 }: {
   reglement: ReglementRowData;
   categoriesConcernees: CategorieAllocationOption[];
   canEffectuerReglement: boolean;
+  /** Tâche "Annulation d'un règlement après reçu réservée au Responsable"
+   * (voir CLAUDE.md) — contrôle UNIQUEMENT le bouton "Annuler" d'un
+   * règlement déjà confirmé (Responsable Finance), jamais
+   * Modifier/Confirmer (restés sur `canEffectuerReglement`, Assistant
+   * Finance, inchangés). */
+  canAnnulerReglementConfirme: boolean;
 }) {
   const [uiMode, setUiMode] = useState<"view" | "edit" | "annuler">("view");
   const [montantError, setMontantError] = useState<string | undefined>();
@@ -215,7 +227,7 @@ export function ReglementRow({
             <Button
               type="button"
               variant="danger"
-              disabled={!canEffectuerReglement}
+              disabled={!canAnnulerReglementConfirme}
               onClick={() => setUiMode("annuler")}
             >
               Annuler

@@ -21,13 +21,19 @@ import { ReglementRow } from "./ReglementRow";
 export async function ReglementsSection({
   demandeId,
   montantValide,
-  canEffectuerReglement,
+  canEffectuerReglement: canEffectuerReglementBrut,
+  canAnnulerReglementConfirme,
 }: {
   demandeId: string;
   montantValide: number;
   canEffectuerReglement: boolean;
+  /** Tâche "Annulation d'un règlement après reçu réservée au Responsable"
+   * (voir CLAUDE.md) — distincte de `canEffectuerReglement` : contrôle
+   * UNIQUEMENT le bouton "Annuler" d'un règlement déjà confirmé, jamais
+   * Modifier/Confirmer (restés sur `canEffectuerReglement`, inchangés). */
+  canAnnulerReglementConfirme: boolean;
 }) {
-  const [reglements, totalRegle, resteARegler, categoriesConcernees] = await Promise.all([
+  const [reglements, totalRegle, resteARegler, categoriesConcernees, demandeGel] = await Promise.all([
     prisma.reglement.findMany({
       where: { demandeId },
       include: { auteur: true, allocations: { include: { categorie: true } } },
@@ -40,11 +46,25 @@ export async function ReglementsSection({
     // champs de répartition de `ReglementForm` (création) et de chaque
     // `ReglementRow` en édition — jamais deux calculs divergents.
     getCategoriesConcerneesDemande(demandeId),
+    prisma.demande.findUnique({ where: { id: demandeId }, select: { validationCompleteRejeteeParDG: true } }),
   ]);
+
+  // Gel après rejet DG (voir CLAUDE.md "Le rejet DG gèle le règlement") :
+  // création/modification/confirmation désactivées, avec message explicite
+  // à l'endroit où l'Assistant Finance tenterait d'agir.
+  const gele = demandeGel?.validationCompleteRejeteeParDG ?? false;
+  const canEffectuerReglement = canEffectuerReglementBrut && !gele;
 
   return (
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
       <h2 className="text-sm font-semibold text-foreground">Règlements</h2>
+
+      {gele ? (
+        <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
+          Rejetée par le DG — en attente de resoumission par le Responsable Finance. Aucun règlement ne peut être
+          créé, modifié ou confirmé tant que la validation complète n&apos;a pas été approuvée.
+        </p>
+      ) : null}
 
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
@@ -81,6 +101,7 @@ export async function ReglementsSection({
             <ReglementRow
               key={r.id}
               canEffectuerReglement={canEffectuerReglement}
+              canAnnulerReglementConfirme={canAnnulerReglementConfirme}
               categoriesConcernees={categoriesConcernees.map((c) => ({
                 categorieId: c.categorieId,
                 categorieLabel: c.categorieLabel,

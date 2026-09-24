@@ -233,7 +233,16 @@ export function RetourCaisseRow({ reglementId, montant, retours, peutDeclarer, d
   return (
     <li className="space-y-3 rounded-md border border-border p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="font-medium text-foreground">{montant.toLocaleString("fr-FR")} FCFA — Caisse</p>
+        {/* Tâche "Nettoyage du formulaire 'Retour de caisse'" (voir
+            CLAUDE.md) : ce résumé identifie le règlement pour cette ligne
+            (utile quand la liste en contient plusieurs), mais devient
+            purement redondant une fois le formulaire ouvert juste en
+            dessous (son propre champ "Montant à retourner" affiche déjà le
+            montant du règlement en `hint`) — masqué uniquement dans ce
+            cas, jamais retiré de la liste au repos. */}
+        {!formOpen ? (
+          <p className="font-medium text-foreground">{montant.toLocaleString("fr-FR")} FCFA — Caisse</p>
+        ) : null}
         {formOpen || aUnRetourEnAttente ? null : peutDeclarer ? (
           <Button type="button" onClick={() => setFormOpen(true)}>
             {retours.length === 0 ? "Déclarer un retour de caisse" : "Déclarer un nouveau retour de caisse"}

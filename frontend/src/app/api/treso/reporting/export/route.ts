@@ -294,11 +294,14 @@ export async function GET(request: NextRequest) {
   });
   styleHeaderRow(sheetDepenses);
 
-  // Section 16 : feuille DÉDIÉE "Dépenses non justifiées", distincte de la
-  // colonne "Non justifiée" ci-dessus — une ligne PAR DEMANDE (nombre
-  // d'opérations + montant total, jamais une ligne par DepenseLigne comme
-  // "Dépenses effectuées") avec demandeur/bénéficiaire/service/période.
-  const sheetDepensesNonJustifiees = workbook.addWorksheet("Dépenses non justifiées");
+  // Section 16 : feuille DÉDIÉE "Dépense sans pièce formelle" (renommée
+  // depuis "Dépenses non justifiées" — Tâche "Refonte de la zone
+  // 'Régularisation'", voir CLAUDE.md), distincte de la colonne "Non
+  // justifiée" ci-dessus (per-ligne, non renommée, hors périmètre) — une
+  // ligne PAR DEMANDE (nombre d'opérations + montant total, jamais une
+  // ligne par DepenseLigne comme "Dépenses effectuées") avec
+  // demandeur/bénéficiaire/service/période.
+  const sheetDepensesNonJustifiees = workbook.addWorksheet("Dépense sans pièce formelle");
   sheetDepensesNonJustifiees.columns = [
     { header: "Référence demande", key: "reference", width: 20 },
     { header: "Demandeur", key: "demandeur", width: 22 },

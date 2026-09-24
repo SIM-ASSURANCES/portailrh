@@ -10,7 +10,10 @@ import { MarquerNonJustifiee } from "./MarquerNonJustifiee";
 
 /**
  * Chiffres de régularisation d'une demande ("Fonds remis (Caisse + Banque)",
- * "Dépenses justifiées"/"Dépenses non justifiées", "Retours reçus", "Solde
+ * "Dépenses justifiées"/"Dépense sans pièce formelle" (renommé depuis
+ * "Dépenses non justifiées" — Tâche "Refonte de la zone 'Régularisation'",
+ * voir CLAUDE.md, jamais l'enum `TypeJustification.SANS_PIECE` en base,
+ * inchangée), "Retours reçus", "Solde
  * à régulariser" — libellés renommés, voir CLAUDE.md "Renommage de
  * libellés Régularisation/Retour de caisse" puis "Distinction Fonds remis
  * (Caisse + Banque) vs Fonds remis (Caisse seule)" ; variables internes
@@ -111,7 +114,7 @@ export async function RegularisationSummary({
         </div>
         <div>
           <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Dépenses non justifiées
+            Dépense sans pièce formelle
           </dt>
           <dd
             className={`mt-1 text-xl font-black tracking-tight tabular-nums ${
