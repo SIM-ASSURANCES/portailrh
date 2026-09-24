@@ -55,7 +55,7 @@ export default async function RetoursADeclarerPage() {
               <div>
                 <p className="font-medium text-foreground">{r.reference}</p>
                 <p className="text-sm text-muted-foreground">
-                  {r.montant.toLocaleString("fr-FR")} FCFA — Caisse
+                  {r.montant.toLocaleString("fr-FR")} FCFA — {r.mode === "BANQUE" ? "Banque" : "Caisse"}
                   {r.confirmeAt ? ` — réglé le ${r.confirmeAt.toLocaleDateString("fr-FR")}` : ""}
                 </p>
               </div>

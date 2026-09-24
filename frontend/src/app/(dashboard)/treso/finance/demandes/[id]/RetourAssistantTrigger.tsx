@@ -16,10 +16,12 @@ export function RetourAssistantTrigger({
   reglementId,
   montantReglement,
   motifReouvertureRequis,
+  modeReglement,
 }: {
   reglementId: string;
   montantReglement: number;
   motifReouvertureRequis: boolean;
+  modeReglement: "CAISSE" | "BANQUE";
 }) {
   const [open, setOpen] = useState(false);
 
@@ -36,6 +38,7 @@ export function RetourAssistantTrigger({
       reglementId={reglementId}
       montantReglement={montantReglement}
       motifReouvertureRequis={motifReouvertureRequis}
+      modeReglement={modeReglement}
       onCancel={() => setOpen(false)}
       onSuccess={() => setOpen(false)}
     />

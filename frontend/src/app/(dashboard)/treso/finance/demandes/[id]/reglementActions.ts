@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { prisma } from "backend";
+import { prisma, type Prisma } from "backend";
 import {
   calculerStatutDemande,
   getCategoriesConcerneesDemande,
@@ -432,7 +432,7 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
     }
   }
 
-  await prisma.$transaction([
+  const operations: Prisma.PrismaPromise<unknown>[] = [
     prisma.reglement.update({
       where: { id: reglementId },
       data: { estConfirme: true, confirmeAt: new Date() },
@@ -455,7 +455,19 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
             },
           }),
         ]
-      : []),
+      : [
+          // Règlement BANQUE : écriture de traçabilité UNIQUEMENT (aucun solde
+          // banque, aucun contrôle de disponibilité — voir CLAUDE.md "Retour
+          // sur règlement Banque"), jamais dans `JournalCaisse`.
+          prisma.journalBanque.create({
+            data: {
+              type: "SORTIE",
+              montant: reglement.montant,
+              reglementId,
+              creeParId: reglement.auteurId,
+            },
+          }),
+        ]),
     prisma.historiqueEntry.create({
       data: {
         entity: "Demande",
@@ -465,7 +477,8 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
         userId: session.user.id,
       },
     }),
-  ]);
+  ];
+  await prisma.$transaction(operations);
 
   await calculerStatutDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);
@@ -563,7 +576,7 @@ export async function annulerReglementAction(
     };
   }
 
-  await prisma.$transaction([
+  const operations: Prisma.PrismaPromise<unknown>[] = [
     prisma.reglement.update({
       where: { id: reglementId },
       data: { estAnnule: true, motifAnnulation: parsedMotif.data },
@@ -584,7 +597,11 @@ export async function annulerReglementAction(
             },
           }),
         ]
-      : []),
+      : [
+          prisma.journalBanque.create({
+            data: { type: "ANNULATION", montant: reglement.montant, reglementId, creeParId: session.user.id },
+          }),
+        ]),
     prisma.historiqueEntry.create({
       data: {
         entity: "Demande",
@@ -594,7 +611,8 @@ export async function annulerReglementAction(
         userId: session.user.id,
       },
     }),
-  ]);
+  ];
+  await prisma.$transaction(operations);
 
   await calculerStatutDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);

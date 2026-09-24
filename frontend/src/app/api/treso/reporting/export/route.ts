@@ -10,6 +10,8 @@ import {
   getReportingDepensesDetail,
   getReportingDepensesNonJustifieesDetail,
   getReportingFondsRemis,
+  getReportingJournalBanqueDetail,
+  getReportingRetoursExternesDetail,
   getReportingJournalDetail,
   getReportingReglementsDetail,
   getReportingRegularisationsDetail,
@@ -72,6 +74,8 @@ export async function GET(request: NextRequest) {
     depensesNonJustifiees,
     suiviBudgetaire,
     dashboard,
+    mouvementsBanque,
+    retoursExternes,
   ] = await Promise.all([
     getReportingDemandesDetail(filters),
     getReportingReglementsDetail(filters),
@@ -85,6 +89,8 @@ export async function GET(request: NextRequest) {
     getReportingDepensesNonJustifieesDetail(filters),
     getReportingSuiviBudgetaire(),
     getReportingDashboardSnapshot(),
+    getReportingJournalBanqueDetail(filters),
+    getReportingRetoursExternesDetail(filters),
   ]);
 
   const workbook = new ExcelJS.Workbook();
@@ -170,12 +176,67 @@ export async function GET(request: NextRequest) {
   );
   styleHeaderRow(sheetReglements);
 
+  // Mouvements banque (voir CLAUDE.md "Retour sur règlement Banque") : historique
+  // de traçabilité, aucun solde.
+  const sheetBanque = workbook.addWorksheet("Mouvements banque");
+  sheetBanque.columns = [
+    { header: "Référence demande", key: "reference", width: 20 },
+    { header: "Type", key: "type", width: 14 },
+    { header: "Montant (FCFA)", key: "montant", width: 16 },
+    { header: "Date", key: "date", width: 14 },
+    { header: "Auteur", key: "auteur", width: 22 },
+    { header: "Bordereau joint", key: "bordereau", width: 16 },
+  ];
+  mouvementsBanque.forEach((m) =>
+    sheetBanque.addRow({
+      reference: m.demandeReference,
+      type: m.type === "SORTIE" ? "Sortie" : m.type === "RETOUR" ? "Retour" : "Annulation",
+      montant: m.montant,
+      date: m.date.toLocaleDateString("fr-FR"),
+      auteur: m.auteurNom,
+      bordereau: m.bordereau ? "Oui" : "—",
+    })
+  );
+  styleHeaderRow(sheetBanque);
+
+  // Retours externes (voir CLAUDE.md "Retour externe") : feuille distincte,
+  // jamais mélangée aux retours de caisse liés à une demande.
+  const sheetExternes = workbook.addWorksheet("Retours externes");
+  sheetExternes.columns = [
+    { header: "Personne", key: "personne", width: 28 },
+    { header: "Type", key: "type", width: 16 },
+    { header: "Chèque initial déclaré (FCFA)", key: "cheque", width: 26 },
+    { header: "Montant retourné (FCFA)", key: "retourne", width: 22 },
+    { header: "Motif", key: "motif", width: 40 },
+    { header: "Date", key: "date", width: 14 },
+    { header: "Enregistré par", key: "auteur", width: 22 },
+    { header: "Justificatif du chèque initial", key: "pjCheque", width: 30 },
+    { header: "Justificatif du retour", key: "pjRetour", width: 26 },
+  ];
+  retoursExternes.forEach((r) =>
+    sheetExternes.addRow({
+      personne: r.personne,
+      type: r.estExterne ? "Personne externe" : "Collaborateur",
+      cheque: r.montantChequeInitial,
+      retourne: r.montantRetourne,
+      motif: r.motif,
+      date: r.date.toLocaleDateString("fr-FR"),
+      auteur: r.auteurNom,
+      pjCheque: r.pieceChequeId
+        ? { text: "Télécharger", hyperlink: `${request.nextUrl.origin}/api/treso/pieces-jointes/${r.pieceChequeId}` }
+        : "—",
+      pjRetour: { text: "Télécharger", hyperlink: `${request.nextUrl.origin}/api/treso/pieces-jointes/${r.pieceRetourId}` },
+    })
+  );
+  styleHeaderRow(sheetExternes);
+
   // REFONTE V1 / Phase D (voir CLAUDE.md "Refonte V1 en cours") : un retour
   // n'a plus de justification unique (une par DepenseLigne) — remplacée
   // par le total déclaré et le montant non justifié (lignes SANS_PIECE).
   const sheetRetours = workbook.addWorksheet("Retours de caisse");
   sheetRetours.columns = [
     { header: "Référence demande", key: "reference", width: 20 },
+    { header: "Mode du règlement", key: "mode", width: 16 },
     { header: "Total dépenses effectuées (FCFA)", key: "montantDepenseTotal", width: 24 },
     { header: "Montant à retourner (FCFA)", key: "montantARetourner", width: 20 },
     { header: "Dont non justifié (FCFA)", key: "montantNonJustifie", width: 22 },
@@ -185,6 +246,7 @@ export async function GET(request: NextRequest) {
   retours.forEach((r) =>
     sheetRetours.addRow({
       reference: r.demandeReference,
+      mode: MODE_LABEL[r.mode],
       montantDepenseTotal: r.montantDepenseTotal,
       montantARetourner: r.montantARetourner,
       montantNonJustifie: r.montantNonJustifie,
@@ -237,6 +299,8 @@ export async function GET(request: NextRequest) {
     { header: "Solde à régulariser (FCFA)", key: "ecart", width: 22 },
     { header: "Motif de clôture", key: "motif", width: 32 },
     { header: "Clôturée le", key: "clotureeLe", width: 14 },
+    { header: "Retours exceptionnels validés (FCFA)", key: "retoursExc", width: 26 },
+    { header: "Dernier retour exceptionnel validé le", key: "retourExcLe", width: 24 },
   ];
   regularisations.forEach((r) => {
     const row = sheetRegularisations.addRow({
@@ -248,6 +312,8 @@ export async function GET(request: NextRequest) {
       ecart: r.ecart,
       motif: r.motifCloture ?? "—",
       clotureeLe: r.clotureeLe.toLocaleDateString("fr-FR"),
+      retoursExc: r.retoursExceptionnelsValides,
+      retourExcLe: r.retourExceptionnelValideLe ? r.retourExceptionnelValideLe.toLocaleDateString("fr-FR") : "—",
     });
     if (r.ecart !== 0) {
       row.getCell("ecart").font = { bold: true, color: { argb: "FFF16622" } };
@@ -341,7 +407,7 @@ export async function GET(request: NextRequest) {
     sheetJournal.addRow({
       type: j.type,
       montant: j.montant,
-      source: j.source,
+      source: j.source === "retour_externe" ? "Retour externe (hors système)" : j.source,
       reference: j.demandeReference,
       utilisateur: j.userNom,
       date: j.createdAt.toLocaleDateString("fr-FR"),

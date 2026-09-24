@@ -23,22 +23,17 @@ function nouvelleLigne(): LigneEdit {
 }
 
 /**
- * Formulaire UNIFIÉ de détail réel d'un retour de caisse — voir CLAUDE.md
- * "L'Assistant Finance détaille réellement le retour" : remplace la ou les
- * lignes actuelles du retour (générique "Dépenses non détaillées" ou détail
- * déjà saisi) par un détail réel — un ou plusieurs libellés/montants,
- * chacun avec pièce jointe (ou mention explicite d'absence) et statut
- * justifié/non justifié (motif obligatoire sinon).
+ * Décomposition du montant total déclaré par le collaborateur (voir
+ * CLAUDE.md "Décomposition du montant déclaré") : l'Assistant Finance répartit
+ * ce total en plusieurs entrées, chacune typée —
+ * - **Dépense justifiée** : montant + motif + pièce jointe OBLIGATOIRE ;
+ * - **Dépense sans pièce formelle** : montant + motif OBLIGATOIRE, aucune
+ *   pièce jointe demandée.
  *
- * **Prérempli depuis les lignes ACTUELLES du retour** (`lignesInitiales`) :
- * l'Assistant part de l'existant plutôt que de tout ressaisir, y compris
- * pour corriger un détail déjà renseigné suite à un signalement.
- *
- * **Validation de la somme côté client, en plus du serveur** : le total
- * saisi doit égaler exactement `montantCible` (le total dépensé déjà
- * établi pour ce retour, jamais modifié par cette action) — écart affiché
- * en temps réel pour guider la saisie, refus serveur si incohérent malgré
- * tout (contournement du formulaire).
+ * Un SEUL champ texte "Motif" par entrée (stocké comme libellé de la ligne ;
+ * pour une dépense sans pièce formelle, aussi comme motif Finance). La somme
+ * ne peut jamais dépasser `montantCible` (revérifié côté serveur) ; si elle
+ * est inférieure, le reste demeure "Dépenses non détaillées".
  */
 export function DetaillerDepensesForm({
   retourId,
@@ -50,59 +45,46 @@ export function DetaillerDepensesForm({
   retourId: string;
   montantCible: number;
   lignesInitiales: LigneDetailInput[];
-  onCancel: () => void;
-  onSuccess: () => void;
+  onCancel?: () => void;
+  onSuccess?: () => void;
 }) {
   const [lignes, setLignes] = useState<LigneEdit[]>(() =>
-    lignesInitiales.length > 0 ? lignesInitiales.map((l) => ({ ...l, key: `ligne-${Math.random().toString(36).slice(2)}` })) : [nouvelleLigne()]
+    lignesInitiales.length > 0
+      ? lignesInitiales.map((l) => ({
+          ...l,
+          motif: l.justifiee ? l.libelle : (l.motif ?? l.libelle),
+          key: `ligne-${Math.random().toString(36).slice(2)}`,
+        }))
+      : [nouvelleLigne()]
   );
   const [erreur, setErreur] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
   const totalSaisi = lignes.reduce((sum, l) => sum + (Number(l.montant) || 0), 0);
-  const ecart = Math.round((totalSaisi - montantCible) * 100) / 100;
+  const reste = Math.round((montantCible - totalSaisi) * 100) / 100;
 
   function updateLigne(key: string, patch: Partial<LigneEdit>) {
     setLignes((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   }
 
-  function ajouterLigne() {
-    setLignes((prev) => [...prev, nouvelleLigne()]);
-  }
-
-  function retirerLigne(key: string) {
-    setLignes((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
-  }
-
   function handleSubmit() {
     for (const l of lignes) {
-      if (!l.libelle.trim()) {
-        setErreur("Chaque ligne doit avoir un libellé décrivant l'usage réel de la dépense.");
-        return;
-      }
       if (!l.montant || l.montant <= 0) {
-        setErreur("Chaque ligne doit avoir un montant supérieur à 0.");
+        setErreur("Chaque entrée doit avoir un montant supérieur à 0.");
         return;
       }
-      if (l.pieceJointeFournie && !l.pieceJointeUrl) {
-        setErreur("Téléversez le fichier, ou indiquez qu'aucune pièce jointe n'est fournie pour cette ligne.");
+      if (!l.motif || l.motif.trim().length < 3) {
+        setErreur("Un motif (3 caractères minimum) est obligatoire pour chaque entrée.");
         return;
       }
-      // Tâche "Refonte de la zone 'Régularisation'" (voir CLAUDE.md) — même
-      // règle que le serveur (`ligneDetailSchema`) : une ligne "Justifiée"
-      // exige une pièce jointe réellement téléversée.
       if (l.justifiee && (!l.pieceJointeFournie || !l.pieceJointeUrl)) {
-        setErreur("Une pièce jointe est obligatoire pour une ligne justifiée.");
-        return;
-      }
-      if (!l.justifiee && (!l.motif || l.motif.trim().length < 3)) {
-        setErreur("Un motif (3 caractères minimum) est obligatoire pour une ligne non justifiée.");
+        setErreur("Une pièce jointe est obligatoire pour une dépense justifiée.");
         return;
       }
     }
-    if (Math.round(totalSaisi * 100) !== Math.round(montantCible * 100)) {
+    if (reste < 0) {
       setErreur(
-        `La somme des lignes (${totalSaisi.toLocaleString("fr-FR")} FCFA) doit égaler le total dépensé (${montantCible.toLocaleString("fr-FR")} FCFA) — écart de ${Math.abs(ecart).toLocaleString("fr-FR")} FCFA ${ecart > 0 ? "en trop" : "manquant"}.`
+        `La somme des entrées (${totalSaisi.toLocaleString("fr-FR")} FCFA) dépasse le montant total déclaré (${montantCible.toLocaleString("fr-FR")} FCFA) — ${Math.abs(reste).toLocaleString("fr-FR")} FCFA en trop.`
       );
       return;
     }
@@ -110,17 +92,17 @@ export function DetaillerDepensesForm({
 
     startTransition(async () => {
       const payload: LigneDetailInput[] = lignes.map((l) => ({
-        libelle: l.libelle,
+        libelle: l.motif!.trim(),
         montant: l.montant,
-        pieceJointeFournie: l.pieceJointeFournie,
-        pieceJointeUrl: l.pieceJointeFournie ? l.pieceJointeUrl : undefined,
+        pieceJointeFournie: l.justifiee,
+        pieceJointeUrl: l.justifiee ? l.pieceJointeUrl : undefined,
         justifiee: l.justifiee,
-        motif: l.justifiee ? undefined : l.motif,
+        motif: l.justifiee ? undefined : l.motif!.trim(),
       }));
       const result = await detaillerDepensesRetourAction(retourId, payload);
       if (result.status === "success") {
         toast.success(result.message);
-        onSuccess();
+        onSuccess?.();
       } else {
         toast.error(result.message);
       }
@@ -128,32 +110,43 @@ export function DetaillerDepensesForm({
   }
 
   return (
-    <div className="animate-fade-in-up space-y-4 rounded-md border border-border p-4">
+    <div className="animate-fade-in-up w-full space-y-4 rounded-md border border-border p-4">
       <p className="text-xs text-muted-foreground">
-        Total dépensé à détailler : <span className="font-semibold text-foreground">{montantCible.toLocaleString("fr-FR")} FCFA</span> — la
-        somme des lignes ci-dessous doit égaler exactement ce montant.
+        Montant total déclaré par le collaborateur :{" "}
+        <span className="font-semibold text-foreground">{montantCible.toLocaleString("fr-FR")} FCFA</span> — répartissez-le
+        en une ou plusieurs entrées (la somme ne peut pas le dépasser).
       </p>
 
       <div className="space-y-4">
         {lignes.map((ligne, index) => (
           <div key={ligne.key} className="animate-fade-in-up space-y-3 rounded-md border border-border p-3">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Dépense {index + 1}
-              </p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Entrée {index + 1}</p>
               {lignes.length > 1 ? (
-                <Button type="button" variant="secondary" onClick={() => retirerLigne(ligne.key)}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setLignes((prev) => prev.filter((l) => l.key !== ligne.key))}
+                >
                   Retirer
                 </Button>
               ) : null}
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Input
-                label="Libellé / usage réel"
-                hint='Ex : "Transport pour livraison X"'
-                required
-                value={ligne.libelle}
-                onChange={(e) => updateLigne(ligne.key, { libelle: e.target.value })}
+              <Select
+                label="Type"
+                options={[
+                  { value: "justifiee", label: "Dépense justifiée" },
+                  { value: "sans_piece", label: "Dépense sans pièce formelle" },
+                ]}
+                value={ligne.justifiee ? "justifiee" : "sans_piece"}
+                onChange={(e) =>
+                  updateLigne(ligne.key, {
+                    justifiee: e.target.value === "justifiee",
+                    pieceJointeFournie: e.target.value === "justifiee",
+                    pieceJointeUrl: undefined,
+                  })
+                }
               />
               <Input
                 label="Montant"
@@ -166,48 +159,30 @@ export function DetaillerDepensesForm({
                 onChange={(e) => updateLigne(ligne.key, { montant: Number(e.target.value) })}
               />
             </div>
-
-            <Select
-              label="Pièce jointe"
-              options={[
-                { value: "non", label: "Aucune pièce jointe fournie" },
-                { value: "oui", label: "Pièce jointe fournie" },
-              ]}
-              value={ligne.pieceJointeFournie ? "oui" : "non"}
-              onChange={(e) => updateLigne(ligne.key, { pieceJointeFournie: e.target.value === "oui", pieceJointeUrl: undefined })}
+            <Textarea
+              label="Motif"
+              rows={2}
+              required
+              hint={
+                ligne.justifiee
+                  ? "Nature/usage de la dépense (3 caractères minimum)."
+                  : "Pourquoi il n'existe aucun justificatif (3 caractères minimum)."
+              }
+              value={ligne.motif ?? ""}
+              onChange={(e) => updateLigne(ligne.key, { motif: e.target.value })}
             />
-            {ligne.pieceJointeFournie ? (
+            {ligne.justifiee ? (
               <PieceJointeUpload
-                label="Fichier transmis par le collaborateur en interne"
-                onChange={(url) => updateLigne(ligne.key, { pieceJointeUrl: url ?? undefined })}
-              />
-            ) : null}
-
-            <Select
-              label="Statut"
-              options={[
-                { value: "justifiee", label: "Justifiée" },
-                { value: "non_justifiee", label: "Non justifiée" },
-              ]}
-              value={ligne.justifiee ? "justifiee" : "non_justifiee"}
-              onChange={(e) => updateLigne(ligne.key, { justifiee: e.target.value === "justifiee" })}
-            />
-            {!ligne.justifiee ? (
-              <Textarea
-                label="Motif (non justifiée)"
-                rows={2}
-                required
-                hint="Obligatoire (3 caractères minimum)."
-                value={ligne.motif ?? ""}
-                onChange={(e) => updateLigne(ligne.key, { motif: e.target.value })}
+                label="Pièce jointe (obligatoire)"
+                onChange={(url) => updateLigne(ligne.key, { pieceJointeUrl: url ?? undefined, pieceJointeFournie: true })}
               />
             ) : null}
           </div>
         ))}
       </div>
 
-      <Button type="button" variant="secondary" onClick={ajouterLigne}>
-        Ajouter une ligne de dépense
+      <Button type="button" variant="secondary" onClick={() => setLignes((prev) => [...prev, nouvelleLigne()])}>
+        Ajouter une entrée
       </Button>
 
       <div className="grid grid-cols-1 gap-4 rounded-md bg-muted p-3 sm:grid-cols-2">
@@ -216,9 +191,9 @@ export function DetaillerDepensesForm({
           <p className="text-sm font-semibold text-foreground">{totalSaisi.toLocaleString("fr-FR")} FCFA</p>
         </div>
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Écart avec le total dépensé</p>
-          <p className={`text-sm font-semibold ${ecart === 0 ? "text-success" : "text-danger"}`}>
-            {ecart === 0 ? "Aucun écart" : `${ecart > 0 ? "+" : ""}${ecart.toLocaleString("fr-FR")} FCFA`}
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Reste non détaillé</p>
+          <p className={`text-sm font-semibold ${reste < 0 ? "text-danger" : "text-foreground"}`}>
+            {reste < 0 ? `${Math.abs(reste).toLocaleString("fr-FR")} FCFA en trop` : `${reste.toLocaleString("fr-FR")} FCFA`}
           </p>
         </div>
       </div>
@@ -229,9 +204,11 @@ export function DetaillerDepensesForm({
         <Button type="button" loading={isPending} onClick={handleSubmit}>
           Enregistrer le détail
         </Button>
-        <Button type="button" variant="secondary" disabled={isPending} onClick={onCancel}>
-          Annuler
-        </Button>
+        {onCancel ? (
+          <Button type="button" variant="secondary" disabled={isPending} onClick={onCancel}>
+            Annuler
+          </Button>
+        ) : null}
       </div>
     </div>
   );

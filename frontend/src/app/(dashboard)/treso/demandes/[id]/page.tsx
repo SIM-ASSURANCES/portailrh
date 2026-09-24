@@ -17,6 +17,7 @@ import { prisma } from "backend";
 
 import { ReglementsRecusSection } from "./ReglementsRecusSection";
 import { RetoursCaisseSection } from "./RetoursCaisseSection";
+import { RetoursExceptionnelsCollaborateur } from "./RetoursExceptionnelsCollaborateur";
 
 /**
  * Détail d'une demande côté Collaborateur (créateur). Distinct de
@@ -306,6 +307,7 @@ export default async function MaDemandeDetailPage({
       <ReglementsRecusSection demandeId={demande.id} />
 
       <RetoursCaisseSection demandeId={demande.id} peutDeclarer={peutDeclarerRetour} userId={session.user.id} />
+      <RetoursExceptionnelsCollaborateur demandeId={demande.id} />
     </div>
   );
 }

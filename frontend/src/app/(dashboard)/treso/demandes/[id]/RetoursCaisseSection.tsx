@@ -45,7 +45,7 @@ export async function RetoursCaisseSection({
 }) {
   const [reglements, dateDernierReglement] = await Promise.all([
     prisma.reglement.findMany({
-      where: { demandeId, mode: "CAISSE", estConfirme: true, estAnnule: false },
+      where: { demandeId, estConfirme: true, estAnnule: false },
       include: {
         retours: {
           include: {
@@ -70,10 +70,11 @@ export async function RetoursCaisseSection({
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
       <h2 className="text-sm font-semibold text-foreground">Retours de caisse</h2>
       <ul className="space-y-3">
-        {reglements.map((r) => (
+        {reglements.map((r, index) => (
           <RetourCaisseRow
             key={r.id}
             reglementId={r.id}
+            modeReglement={r.mode}
             montant={Number(r.montant)}
             retours={r.retours.map((retour) => ({
               id: retour.id,
@@ -86,7 +87,7 @@ export async function RetoursCaisseSection({
               // retour créé par l'Assistant Finance (declarantId = son
               // propre id) n'est donc jamais modifiable depuis cet écran
               // Collaborateur.
-              peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer,
+              peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer && r.mode !== "BANQUE",
               depenses: retour.depenses.map((d) => ({
                 id: d.id,
                 montant: Number(d.montant),
@@ -105,6 +106,11 @@ export async function RetoursCaisseSection({
             }))}
             peutDeclarer={peutDeclarer}
             dateMin={dateMin}
+            repere={
+              reglements.length > 1
+                ? `Règlement ${index + 1}/${reglements.length}${r.mode === "BANQUE" ? " (Banque)" : ""} — ${(r.confirmeAt ?? r.createdAt).toLocaleDateString("fr-FR")}`
+                : undefined
+            }
           />
         ))}
       </ul>

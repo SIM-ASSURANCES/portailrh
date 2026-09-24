@@ -13,11 +13,12 @@ import {
   getReglementsPartielsACompleter,
   getRepartitionReglementsParMode,
   getRetoursEnAttenteReception,
+  getRetoursExceptionnelsEnAttenteValidation,
   getTopCategoriesBudget,
   getValidationsCompletesEnAttente,
 } from "backend";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { getSoldeCaisse, getSoldeOuvertureInfo } from "backend";
+import { getSoldeCaisse, getSoldeOuvertureInfo, prisma } from "backend";
 
 import { BudgetCategorieBars } from "./BudgetCategorieBars";
 import { FinanceActionCard } from "./FinanceActionCard";
@@ -79,6 +80,8 @@ export default async function DashboardFinancePage() {
     validationsCompletesEnAttente,
     evolutionSolde,
     categoriesBudget,
+    retoursExceptionnels,
+    retoursExternesCount,
   ] = await Promise.all([
     getSoldeCaisse(),
     getSoldeOuvertureInfo(),
@@ -94,6 +97,8 @@ export default async function DashboardFinancePage() {
       : Promise.resolve({ nombre: 0 }),
     getEvolutionSoldeCaisse(30),
     getTopCategoriesBudget(5),
+    getRetoursExceptionnelsEnAttenteValidation(),
+    prisma.retourExterne.count(),
   ]);
 
   // La répartition Caisse/Banque doit décrire EXACTEMENT la même période
@@ -119,6 +124,9 @@ export default async function DashboardFinancePage() {
   // pas actionnable par ce rôle précis : reste visible (chiffre de
   // consultation), devient simplement non cliquable.
   const canReceptionnerRetour = hasPermission(session, "treso.receptionner_retour");
+  // Retour externe : Responsable Finance uniquement (exclut le DG, qui porte aussi valider_demande).
+  const canRetourExterne =
+    hasPermission(session, "treso.valider_demande") && !hasPermission(session, "treso.approuver_validation_complete");
 
   const totalATraiter =
     enAttenteValidation.nombre +
@@ -284,6 +292,46 @@ export default async function DashboardFinancePage() {
               hint={`${depensesNonJustifiees.montant.toLocaleString("fr-FR")} FCFA`}
             />
           </div>
+        </div>
+      </section>
+
+      {canRetourExterne ? (
+        <section className="space-y-4">
+          <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+            <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
+            Retour externe
+          </h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <FinanceActionCard
+              href="/treso/finance/retours-externes"
+              icon="rotate-ccw"
+              tone="info"
+              label="Enregistrer un retour externe (hors système)"
+              value={retoursExternesCount}
+              hint="Retours déjà enregistrés — cliquer pour en saisir un nouveau"
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {/* Retours exceptionnels post-clôture (voir CLAUDE.md) — indicateur
+          SÉPARÉ des 6 de "À traiter" (et de `RETOUR_EN_ATTENTE_WHERE`) : en
+          attente de validation du Responsable Finance. Pas de compteur "en
+          attente de saisie" (déclenchement manuel, aucune détection). */}
+      <section className="space-y-4">
+        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+          <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
+          Retours exceptionnels post-clôture
+        </h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <FinanceActionCard
+            href="/treso/finance/retours-exceptionnels"
+            icon="rotate-ccw"
+            tone={toneSiActif(retoursExceptionnels.nombre, "warning")}
+            label="En attente de validation"
+            value={retoursExceptionnels.nombre}
+            hint={`${retoursExceptionnels.montant.toLocaleString("fr-FR")} FCFA`}
+          />
         </div>
       </section>
 

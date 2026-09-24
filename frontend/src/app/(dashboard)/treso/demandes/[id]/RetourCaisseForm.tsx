@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { Button, Input } from "@/components/ui";
+import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import { creerRetourCaisseAction, modifierRetourCaisseAction } from "./retourActions";
 
@@ -40,6 +41,7 @@ import { creerRetourCaisseAction, modifierRetourCaisseAction } from "./retourAct
 export function RetourCaisseForm({
   mode = "create",
   reglementId,
+  modeReglement = "CAISSE",
   retourId,
   montantReglement,
   montantRetourneInitial,
@@ -50,6 +52,8 @@ export function RetourCaisseForm({
 }: {
   mode?: "create" | "edit";
   reglementId: string;
+  /** BANQUE : bordereau de versement OBLIGATOIRE (voir CLAUDE.md "Retour sur règlement Banque"). */
+  modeReglement?: "CAISSE" | "BANQUE";
   /** Requis si `mode === "edit"`. */
   retourId?: string;
   montantReglement: number;
@@ -77,6 +81,8 @@ export function RetourCaisseForm({
   const [montantRetourne, setMontantRetourne] = useState(
     montantRetourneInitial != null ? String(montantRetourneInitial) : ""
   );
+  const estBanque = modeReglement === "BANQUE";
+  const [bordereau, setBordereau] = useState<string | undefined>();
   const [erreur, setErreur] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
@@ -110,13 +116,23 @@ export function RetourCaisseForm({
       setErreur(`Le montant retourné ne peut pas dépasser le montant du règlement (${montantReglement.toLocaleString("fr-FR")} FCFA).`);
       return;
     }
+    if (estBanque && mode !== "edit") {
+      if (montant <= 0) {
+        setErreur("Le montant retourné doit être supérieur à 0 pour un retour Banque.");
+        return;
+      }
+      if (!bordereau) {
+        setErreur("Le bordereau de versement est obligatoire pour un retour Banque.");
+        return;
+      }
+    }
     setErreur(undefined);
 
     startTransition(async () => {
       const result =
         mode === "edit" && retourId
           ? await modifierRetourCaisseAction(retourId, montant, dateRetour)
-          : await creerRetourCaisseAction(reglementId, montant, dateRetour);
+          : await creerRetourCaisseAction(reglementId, montant, dateRetour, estBanque ? bordereau : undefined);
       if (result.status === "success") {
         toast.success(result.message);
         onSuccess();
@@ -155,6 +171,9 @@ export function RetourCaisseForm({
           onChange={(e) => setMontantRetourne(e.target.value)}
         />
       </div>
+      {estBanque && mode !== "edit" ? (
+        <PieceJointeUpload label="Bordereau de versement (obligatoire)" onChange={(url) => setBordereau(url ?? undefined)} />
+      ) : null}
       <p className="text-xs text-muted-foreground">
         Le solde éventuellement dépensé (
         {Math.max(0, montantReglement - (Number(montantRetourne) || 0)).toLocaleString("fr-FR")} FCFA) sera transmis

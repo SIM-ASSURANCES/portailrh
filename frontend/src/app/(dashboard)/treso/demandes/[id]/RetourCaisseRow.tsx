@@ -48,6 +48,8 @@ export interface RetourData {
 
 export interface RetourCaisseRowData {
   reglementId: string;
+  /** Mode du règlement : BANQUE = bordereau de versement obligatoire (voir CLAUDE.md "Retour sur règlement Banque"). */
+  modeReglement: "CAISSE" | "BANQUE";
   montant: number;
   /** Tous les retours déjà créés sur ce règlement (voir CLAUDE.md "Retours
    * multiples autorisés sur une même demande") — un règlement peut
@@ -59,6 +61,9 @@ export interface RetourCaisseRowData {
    * formulaire simplifié — voir CLAUDE.md "Libellés et validations sur le
    * formulaire de retour". */
   dateMin?: string;
+  /** Ex: "Règlement du 24/09/2026" — renseigné seulement s'il y a plusieurs
+   * règlements Caisse sur la demande, sinon aucun sous-titre. */
+  repere?: string;
 }
 
 /**
@@ -121,10 +126,10 @@ function DetailDepenses({
               <p className="mt-1 text-xs text-muted-foreground">Aucune pièce jointe fournie.</p>
             )}
             {d.justification !== "SANS_PIECE" ? (
-              <p className="mt-1 text-xs text-success">Justifiée.</p>
+              <p className="mt-1 text-xs text-success">Dépense justifiée.</p>
             ) : d.motifNonJustifie ? (
               <p className="mt-1 text-xs text-warning">
-                Non justifiée{d.motifNonJustifiePar ? ` (${d.motifNonJustifiePar})` : ""} : {d.motifNonJustifie}
+                Dépense sans pièce formelle{d.motifNonJustifiePar ? ` (${d.motifNonJustifiePar})` : ""} : {d.motifNonJustifie}
               </p>
             ) : (
               <p className="mt-1 text-xs text-muted-foreground">Détail non encore renseigné par l&apos;équipe Finance.</p>
@@ -143,7 +148,7 @@ function DetailDepenses({
         </div>
         {montantNonJustifie > 0 ? (
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Non justifié</dt>
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Dépense sans pièce formelle</dt>
             <dd className="text-sm font-semibold text-warning">{montantNonJustifie.toLocaleString("fr-FR")} FCFA</dd>
           </div>
         ) : null}
@@ -225,7 +230,7 @@ function RetourExistant({
  * simultanément sur le même règlement, mais un nouveau redevient possible
  * dès que le précédent est réceptionné.
  */
-export function RetourCaisseRow({ reglementId, montant, retours, peutDeclarer, dateMin }: RetourCaisseRowData) {
+export function RetourCaisseRow({ reglementId, modeReglement, montant, retours, peutDeclarer, dateMin, repere }: RetourCaisseRowData) {
   const [formOpen, setFormOpen] = useState(false);
 
   const aUnRetourEnAttente = retours.some((r) => !r.estReceptionne);
@@ -233,16 +238,10 @@ export function RetourCaisseRow({ reglementId, montant, retours, peutDeclarer, d
   return (
     <li className="space-y-3 rounded-md border border-border p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* Tâche "Nettoyage du formulaire 'Retour de caisse'" (voir
-            CLAUDE.md) : ce résumé identifie le règlement pour cette ligne
-            (utile quand la liste en contient plusieurs), mais devient
-            purement redondant une fois le formulaire ouvert juste en
-            dessous (son propre champ "Montant à retourner" affiche déjà le
-            montant du règlement en `hint`) — masqué uniquement dans ce
-            cas, jamais retiré de la liste au repos. */}
-        {!formOpen ? (
-          <p className="font-medium text-foreground">{montant.toLocaleString("fr-FR")} FCFA — Caisse</p>
-        ) : null}
+        {/* Repère minimal, uniquement quand la demande a PLUSIEURS règlements
+            Caisse (voir `RetoursCaisseSection`) : la date, jamais le montant
+            (déjà affiché dans la section Règlements). */}
+        {repere ? <p className="font-medium text-foreground">{repere}</p> : null}
         {formOpen || aUnRetourEnAttente ? null : peutDeclarer ? (
           <Button type="button" onClick={() => setFormOpen(true)}>
             {retours.length === 0 ? "Déclarer un retour de caisse" : "Déclarer un nouveau retour de caisse"}
@@ -263,6 +262,7 @@ export function RetourCaisseRow({ reglementId, montant, retours, peutDeclarer, d
       {formOpen ? (
         <RetourCaisseForm
           reglementId={reglementId}
+          modeReglement={modeReglement}
           montantReglement={montant}
           dateMin={dateMin}
           onCancel={() => setFormOpen(false)}

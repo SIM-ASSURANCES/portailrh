@@ -446,6 +446,16 @@ async function getFondsRemisParDemande(demandeIds: string[]): Promise<Map<string
     const entry = map.get(r.reglement.demandeId);
     if (entry) entry.retoursRecus += Number(r.montantARetourner);
   }
+  // Retours exceptionnels post-clôture VALIDÉS : comptés comme retours reçus
+  // (jamais ceux en attente/rejetés) — voir CLAUDE.md.
+  const exceptionnels = await prisma.retourExceptionnel.findMany({
+    where: { statut: "VALIDE", demandeId: { in: demandeIds } },
+    select: { montant: true, demandeId: true },
+  });
+  for (const e of exceptionnels) {
+    const entry = map.get(e.demandeId);
+    if (entry) entry.retoursRecus += Number(e.montant);
+  }
 
   return map;
 }
@@ -947,6 +957,8 @@ export async function getReportingReglementsDetail(filters: ReportingFilters): P
 
 export interface ReportingRetourDetail {
   demandeReference: string;
+  /** Mode du règlement d'origine (Caisse ou Banque — voir CLAUDE.md "Retour sur règlement Banque"). */
+  mode: "CAISSE" | "BANQUE";
   montantDepenseTotal: number;
   montantARetourner: number;
   montantNonJustifie: number;
@@ -981,6 +993,7 @@ export async function getReportingRetoursDetail(filters: ReportingFilters): Prom
 
   return retours.map((r) => ({
     demandeReference: referenceParDemande.get(r.reglement.demandeId) ?? "—",
+    mode: r.reglement.mode,
     montantDepenseTotal: r.depenses.reduce((sum, d) => sum + Number(d.montant), 0),
     montantARetourner: Number(r.montantARetourner),
     montantNonJustifie: r.depenses
@@ -988,6 +1001,81 @@ export async function getReportingRetoursDetail(filters: ReportingFilters): Prom
       .reduce((sum, d) => sum + Number(d.montant), 0),
     estReceptionne: r.estReceptionne,
     declareLe: r.createdAt,
+  }));
+}
+
+export interface ReportingRetourExterneDetail {
+  personne: string;
+  estExterne: boolean;
+  montantChequeInitial: number;
+  montantRetourne: number;
+  motif: string;
+  date: Date;
+  auteurNom: string;
+  pieceChequeId: string | null;
+  pieceRetourId: string;
+}
+
+/**
+ * Feuille "Retours externes" (voir CLAUDE.md "Retour externe") : indépendante
+ * des demandes (donc jamais soumise aux filtres demande/service/catégorie) —
+ * seule la période (du/au) s'applique. Jamais mélangée aux retours de caisse.
+ */
+export async function getReportingRetoursExternesDetail(filters: ReportingFilters): Promise<ReportingRetourExterneDetail[]> {
+  const retours = await prisma.retourExterne.findMany({
+    where: { creeAt: { gte: filters.du, lte: filters.au } },
+    include: { collaborateur: { select: { fullName: true } }, creePar: { select: { fullName: true } } },
+    orderBy: { creeAt: "asc" },
+  });
+  return retours.map((r) => ({
+    personne: r.collaborateur?.fullName ?? r.nomExterne ?? "—",
+    estExterne: r.collaborateurId == null,
+    montantChequeInitial: Number(r.montantChequeInitial),
+    montantRetourne: Number(r.montantRetourne),
+    motif: r.motif,
+    date: r.creeAt,
+    auteurNom: r.creePar.fullName,
+    pieceChequeId: r.pieceJointeChequeId,
+    pieceRetourId: r.pieceJointeId,
+  }));
+}
+
+export interface ReportingMouvementBanqueDetail {
+  demandeReference: string;
+  type: "SORTIE" | "RETOUR" | "ANNULATION";
+  montant: number;
+  date: Date;
+  auteurNom: string;
+  /** Bordereau de versement joint (obligatoire pour un RETOUR). */
+  bordereau: boolean;
+}
+
+/**
+ * Feuille "Mouvements banque" de l'export : historique `JournalBanque` des
+ * demandes filtrées (voir CLAUDE.md "Retour sur règlement Banque") —
+ * traçabilité UNIQUEMENT, aucun solde banque n'est calculé.
+ */
+export async function getReportingJournalBanqueDetail(
+  filters: ReportingFilters
+): Promise<ReportingMouvementBanqueDetail[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const demandeIds = demandes.map((d) => d.id);
+  if (demandeIds.length === 0) {
+    return [];
+  }
+  const referenceParDemande = new Map(demandes.map((d) => [d.id, d.reference]));
+  const mouvements = await prisma.journalBanque.findMany({
+    where: { reglement: { demandeId: { in: demandeIds } } },
+    include: { reglement: { select: { demandeId: true } }, creePar: { select: { fullName: true } } },
+    orderBy: { creeAt: "asc" },
+  });
+  return mouvements.map((m) => ({
+    demandeReference: referenceParDemande.get(m.reglement.demandeId) ?? "—",
+    type: m.type,
+    montant: Number(m.montant),
+    date: m.creeAt,
+    auteurNom: m.creePar.fullName,
+    bordereau: m.pieceJointeId != null,
   }));
 }
 
@@ -1162,6 +1250,9 @@ export interface ReportingRegularisationDetail {
   motifCloture: string | null;
   /** Date de la dernière `HistoriqueEntry` `cloture_totale`/`cloture_partielle` ; à défaut (donnée historique sans cette entrée), `updatedAt` de la demande. */
   clotureeLe: Date;
+  /** Retours exceptionnels post-clôture VALIDÉS (déjà inclus dans `retoursRecus`) : total et date de la dernière validation — jamais la date de création de la demande. */
+  retoursExceptionnelsValides: number;
+  retourExceptionnelValideLe: Date | null;
 }
 
 /**
@@ -1178,7 +1269,25 @@ export async function getReportingRegularisationsDetail(
   filters: ReportingFilters
 ): Promise<ReportingRegularisationDetail[]> {
   const { demandes } = await getDemandesFiltrees(filters);
-  const cloturees = demandes.filter((d) => d.statut === "CLOTUREE");
+  let cloturees = demandes.filter((d) => d.statut === "CLOTUREE");
+
+  // Retours exceptionnels post-clôture : la période s'applique à leur date de
+  // VALIDATION (`valideAt`), jamais à la date de création de la demande. Une
+  // demande créée hors période reste donc listée si un retour exceptionnel y a
+  // été validé DANS la période (les autres filtres continuent de s'appliquer).
+  const periode = filters.du || filters.au ? { ...(filters.du ? { gte: filters.du } : {}), ...(filters.au ? { lte: filters.au } : {}) } : null;
+  if (periode) {
+    const dejaLa = new Set(cloturees.map((d) => d.id));
+    const validesEnPeriode = await prisma.retourExceptionnel.findMany({
+      where: { statut: "VALIDE", valideAt: periode },
+      select: { demandeId: true },
+    });
+    const manquants = new Set(validesEnPeriode.map((e) => e.demandeId).filter((id) => !dejaLa.has(id)));
+    if (manquants.size > 0) {
+      const { demandes: sansPeriode } = await getDemandesFiltrees({ ...filters, du: undefined, au: undefined });
+      cloturees = [...cloturees, ...sansPeriode.filter((d) => d.statut === "CLOTUREE" && manquants.has(d.id))];
+    }
+  }
   if (cloturees.length === 0) {
     return [];
   }
@@ -1205,6 +1314,11 @@ export async function getReportingRegularisationsDetail(
   }
   const infoParDemande = new Map(motifsEtDates.map((d) => [d.id, d]));
 
+  const exceptionnelsValides = await prisma.retourExceptionnel.findMany({
+    where: { statut: "VALIDE", demandeId: { in: clotureIds }, ...(periode ? { valideAt: periode } : {}) },
+    select: { demandeId: true, montant: true, valideAt: true },
+  });
+
   const details = await Promise.all(
     cloturees.map(async (d) => {
       const [totalRegle, depensesDeclarees, retoursRecus] = await Promise.all([
@@ -1213,6 +1327,7 @@ export async function getReportingRegularisationsDetail(
         getRetoursRecus(d.id),
       ]);
       const info = infoParDemande.get(d.id);
+      const exc = exceptionnelsValides.filter((e) => e.demandeId === d.id);
       return {
         demandeReference: d.reference,
         montantValide: Number(d.montantValide ?? 0),
@@ -1222,6 +1337,11 @@ export async function getReportingRegularisationsDetail(
         ecart: totalRegle - depensesDeclarees - retoursRecus,
         motifCloture: info?.motifCloture ?? null,
         clotureeLe: clotureDateParDemande.get(d.id) ?? info?.updatedAt ?? d.createdAt,
+        retoursExceptionnelsValides: exc.reduce((s, e) => s + Number(e.montant), 0),
+        retourExceptionnelValideLe: exc.reduce<Date | null>(
+          (max, e) => (e.valideAt && (!max || e.valideAt > max) ? e.valideAt : max),
+          null
+        ),
       };
     })
   );

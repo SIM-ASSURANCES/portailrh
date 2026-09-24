@@ -465,7 +465,7 @@ export async function getDepenseLignesDetail(demandeId: string) {
     include: {
       pieceJointe: { select: { id: true } },
       motifNonJustifiePar: { select: { fullName: true } },
-      retourCaisse: { select: { estReceptionne: true } },
+      retourCaisse: { select: { id: true, estReceptionne: true } },
     },
     orderBy: { date: "asc" },
   });
@@ -480,6 +480,7 @@ export async function getDepenseLignesDetail(demandeId: string) {
     motifNonJustifie: l.motifNonJustifie,
     motifNonJustifiePar: l.motifNonJustifiePar?.fullName ?? null,
     retourEstReceptionne: l.retourCaisse.estReceptionne,
+    retourCaisseId: l.retourCaisse.id,
   }));
 }
 
@@ -675,11 +676,20 @@ export async function getSoldesARegulariserParReglements(
  * déclaré mais pas encore traité par Finance.
  */
 export async function getRetoursRecus(demandeId: string): Promise<number> {
-  const result = await prisma.retourCaisse.aggregate({
-    where: { reglement: { demandeId }, estReceptionne: true },
-    _sum: { montantARetourner: true },
-  });
-  return Number(result._sum.montantARetourner ?? 0);
+  const [result, exceptionnels] = await Promise.all([
+    prisma.retourCaisse.aggregate({
+      where: { reglement: { demandeId }, estReceptionne: true },
+      _sum: { montantARetourner: true },
+    }),
+    // Retours exceptionnels post-clôture VALIDÉS uniquement (voir CLAUDE.md
+    // "Retour de caisse exceptionnel post-clôture") : en attente ou rejetés,
+    // ils ne comptent jamais — comme pour le solde de caisse.
+    prisma.retourExceptionnel.aggregate({
+      where: { demandeId, statut: "VALIDE" },
+      _sum: { montant: true },
+    }),
+  ]);
+  return Number(result._sum.montantARetourner ?? 0) + Number(exceptionnels._sum.montant ?? 0);
 }
 
 /**
@@ -1104,11 +1114,12 @@ export async function getMesDemandesParMois(
  * cette même requête — jamais deux implémentations de la même règle.
  */
 export async function getReglementsCaisseADeclarer(userId: string): Promise<
-  { reglementId: string; demandeId: string; reference: string; montant: number; confirmeAt: Date | null }[]
+  { reglementId: string; demandeId: string; reference: string; montant: number; confirmeAt: Date | null; mode: "CAISSE" | "BANQUE" }[]
 > {
   const reglements = await prisma.reglement.findMany({
     where: {
-      mode: "CAISSE",
+      // Inclut désormais les règlements BANQUE (voir CLAUDE.md "Retour sur
+      // règlement Banque") — le retour y est possible, avec bordereau.
       estConfirme: true,
       estAnnule: false,
       demande: { createurId: userId, statut: { not: "CLOTUREE" } },
@@ -1117,6 +1128,7 @@ export async function getReglementsCaisseADeclarer(userId: string): Promise<
     select: {
       id: true,
       montant: true,
+      mode: true,
       confirmeAt: true,
       demande: { select: { id: true, reference: true } },
     },
@@ -1127,6 +1139,7 @@ export async function getReglementsCaisseADeclarer(userId: string): Promise<
     reglementId: r.id,
     demandeId: r.demande.id,
     reference: r.demande.reference,
+    mode: r.mode,
     montant: Number(r.montant),
     confirmeAt: r.confirmeAt,
   }));

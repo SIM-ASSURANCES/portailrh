@@ -16,6 +16,7 @@ import { ClotureActions } from "./ClotureActions";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { LignesValidationTable } from "./LignesValidationTable";
 import { ReglementsSection } from "./ReglementsSection";
+import { RetourExceptionnelSection } from "./RetourExceptionnelSection";
 import { RetoursCaisseFinanceSection } from "./RetoursCaisseFinanceSection";
 import { ValidationActions } from "./ValidationActions";
 import { ValidationComplementaireActions } from "./ValidationComplementaireActions";
@@ -352,6 +353,10 @@ export default async function CategoriserDemandePage({
         demandeEstCloturee={demande.statut === "CLOTUREE"}
         canDeclarerAssistant={canGererJustification}
       />
+
+      {/* Retour de caisse exceptionnel post-clôture (voir CLAUDE.md) — uniquement
+          sur une demande clôturée. */}
+      {demande.statut === "CLOTUREE" ? <RetourExceptionnelSection demandeId={demande.id} /> : null}
 
       {/* Verrou de clôture (Ticket 7) — indépendant du circuit de
           validation/règlement des Phases B/C, qui reste inchangé (n'affecte

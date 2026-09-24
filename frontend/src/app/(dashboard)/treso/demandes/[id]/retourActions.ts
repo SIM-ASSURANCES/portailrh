@@ -97,7 +97,8 @@ function construireLigneSynthetique(montantDepense: number, date: Date) {
 export async function creerRetourCaisseAction(
   reglementId: string,
   montantRetourne: number,
-  dateRetour: string
+  dateRetour: string,
+  bordereauUrl?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.declarer_retour")) {
@@ -121,8 +122,21 @@ export async function creerRetourCaisseAction(
   if (!reglement) {
     return { status: "error", message: "Règlement introuvable." };
   }
-  if (reglement.mode !== "CAISSE" || !reglement.estConfirme || reglement.estAnnule) {
+  if (!reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est pas éligible à un retour de caisse." };
+  }
+  // Retour sur règlement BANQUE (voir CLAUDE.md "Retour sur règlement
+  // Banque") : dépôt justifié par un bordereau de versement OBLIGATOIRE, un
+  // montant réellement retourné > 0 ; aucun contrôle de solde (il n'existe
+  // pas de solde banque). Le flux Caisse reste strictement inchangé.
+  const estBanque = reglement.mode === "BANQUE";
+  if (estBanque) {
+    if (!bordereauUrl || !bordereauUrl.trim()) {
+      return { status: "error", message: "Un bordereau de versement est obligatoire pour un retour sur un règlement Banque." };
+    }
+    if (parsedMontant.data <= 0) {
+      return { status: "error", message: "Le montant retourné doit être supérieur à 0 pour un retour Banque." };
+    }
   }
   if (reglement.demande.statut === "CLOTUREE") {
     return {
@@ -181,6 +195,20 @@ export async function creerRetourCaisseAction(
 
     for (const l of lignes) {
       await tx.depenseLigne.create({ data: { retourCaisseId: retour.id, ...l } });
+    }
+
+    if (estBanque) {
+      const piece = await tx.pieceJointe.create({ data: { url: bordereauUrl!.trim(), demandeId: reglement.demandeId } });
+      await tx.journalBanque.create({
+        data: {
+          type: "RETOUR",
+          montant: montantARetourner,
+          reglementId,
+          retourCaisseId: retour.id,
+          pieceJointeId: piece.id,
+          creeParId: session.user.id,
+        },
+      });
     }
 
     await tx.historiqueEntry.create({
@@ -271,6 +299,15 @@ export async function modifierRetourCaisseAction(
   }
   if (retour.estReceptionne) {
     return { status: "error", message: "Ce retour de caisse a déjà été réceptionné : il n'est plus modifiable." };
+  }
+  // Retour sur règlement BANQUE : appuyé par un bordereau de versement et une
+  // écriture `JournalBanque` non modifiable (jamais réécrite, règle
+  // impérative n°5) — pas de modification du montant/de la date.
+  if (retour.reglement.mode === "BANQUE") {
+    return {
+      status: "error",
+      message: "Un retour sur règlement Banque n'est pas modifiable (il est appuyé par un bordereau de versement). Contactez l'équipe Finance.",
+    };
   }
   if (retour.declarantId !== session.user.id) {
     return { status: "error", message: "Vous ne pouvez modifier que vos propres déclarations de retour." };

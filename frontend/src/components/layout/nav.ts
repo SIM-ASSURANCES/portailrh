@@ -72,6 +72,8 @@ export interface NavFlags {
    * le DG, sans jamais toucher à la liste filtrée existante.
    */
   canVoirToutesLesDemandes: boolean;
+  /** Responsable Finance uniquement (valider_demande sans approuver_validation_complete) : ajoute "Retour externe". */
+  canRetourExterne?: boolean;
   /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
   canReceptionnerRetour: boolean;
   /** `treso.voir_dashboard_finance` : ajoute "Tableau de bord Finance" (en tête de branche). */
@@ -194,6 +196,7 @@ export function getNavBranches({
   canAccesMonTableauDeBord,
   canAccesFinanceDemandes,
   canVoirToutesLesDemandes,
+  canRetourExterne,
   canReceptionnerRetour,
   canVoirDashboardFinance,
   canVoirReporting,
@@ -290,6 +293,15 @@ export function getNavBranches({
                     // du détail `/treso/finance/demandes/[id]`, non modifié
                     // par cette tâche).
                     exact: true,
+                  } satisfies NavItem,
+                ]
+              : []),
+            ...(canRetourExterne
+              ? [
+                  {
+                    label: "Retour externe",
+                    href: "/treso/finance/retours-externes",
+                    icon: "rotate-ccw",
                   } satisfies NavItem,
                 ]
               : []),

@@ -49,7 +49,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   const piece = await prisma.pieceJointe.findUnique({
     where: { id },
-    include: { demande: { select: { createurId: true, beneficiaireUserId: true } } },
+    include: {
+      demande: { select: { createurId: true, beneficiaireUserId: true } },
+      retourExterne: { select: { id: true } },
+      retourExterneCheque: { select: { id: true } },
+    },
   });
 
   if (!piece) {
@@ -67,6 +71,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const estCreateurOuBeneficiaire =
       piece.demande.createurId === session.user.id || piece.demande.beneficiaireUserId === session.user.id;
     accesAutorise = estFinanceOuDG || estCreateurOuBeneficiaire;
+  } else if (piece.retourExterne || piece.retourExterneCheque) {
+    // Retour externe : Responsable Finance (même garde que l'action) ou Admin.
+    accesAutorise =
+      isAdmin(session) ||
+      (hasPermission(session, "treso.valider_demande") && !hasPermission(session, "treso.approuver_validation_complete"));
   } else {
     // Pièce du solde d'ouverture (`journalCaisseId`, pas de demande
     // d'origine) — même permission EXACTE que definirSoldeOuvertureAction/

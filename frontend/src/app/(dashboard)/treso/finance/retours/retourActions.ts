@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notifierParPermission } from "@/lib/notifications";
+import { snapshotLigne, type CorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
 import { calculerMontantARetournerNet, prisma } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
@@ -54,7 +55,11 @@ const motifReouvertureSchema = z
  */
 export async function declarerRetourAssistantAction(
   reglementId: string,
-  motifReouverture?: string
+  motifReouverture?: string,
+  /** Règlement BANQUE uniquement (voir CLAUDE.md "Retour sur règlement Banque") : bordereau de versement OBLIGATOIRE. */
+  bordereauUrl?: string,
+  /** Règlement BANQUE uniquement : montant réellement reversé (> 0) ; le reste est la dépense à détailler. */
+  montantRetourneBanque?: number
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.receptionner_retour")) {
@@ -68,8 +73,19 @@ export async function declarerRetourAssistantAction(
   if (!reglement) {
     return { status: "error", message: "Règlement introuvable." };
   }
-  if (reglement.mode !== "CAISSE" || !reglement.estConfirme || reglement.estAnnule) {
+  if (!reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est pas éligible à un retour de caisse." };
+  }
+  // Branche selon le mode : Caisse = flux existant, Banque = bordereau
+  // obligatoire + écriture JournalBanque, AUCUN contrôle de solde.
+  const estBanque = reglement.mode === "BANQUE";
+  if (estBanque) {
+    if (!bordereauUrl || !bordereauUrl.trim()) {
+      return { status: "error", message: "Un bordereau de versement est obligatoire pour un retour sur un règlement Banque." };
+    }
+    if (!montantRetourneBanque || !(montantRetourneBanque > 0)) {
+      return { status: "error", message: "Le montant retourné doit être supérieur à 0 pour un retour Banque." };
+    }
   }
   if (reglement.retours.some((r) => !r.estReceptionne)) {
     return {
@@ -92,7 +108,16 @@ export async function declarerRetourAssistantAction(
   // multiples autorisés sur une même demande") : la ligne générique couvre
   // l'intégralité de ce restant, rien retourné, tout dépensé, à détailler
   // ensuite.
-  const restant = await calculerMontantARetournerNet({ reglementId, totalDepensesNouvelles: 0 });
+  const restantTotal = await calculerMontantARetournerNet({ reglementId, totalDepensesNouvelles: 0 });
+  if (estBanque && montantRetourneBanque! > restantTotal) {
+    return {
+      status: "error",
+      message: `Le montant retourné ne peut pas dépasser le montant restant sur ce règlement (${restantTotal.toLocaleString("fr-FR")} FCFA).`,
+    };
+  }
+  // Caisse : tout le restant est "dépensé, à détailler" (montantARetourner = 0).
+  // Banque : la part reversée est déduite, seule la différence est à détailler.
+  const restant = estBanque ? Math.round((restantTotal - montantRetourneBanque!) * 100) / 100 : restantTotal;
   const montantARetourner = await calculerMontantARetournerNet({ reglementId, totalDepensesNouvelles: restant });
 
   await prisma.$transaction(async (tx) => {
@@ -105,6 +130,20 @@ export async function declarerRetourAssistantAction(
         motifReouvertureExceptionnelle: motifValide,
       },
     });
+
+    if (estBanque) {
+      const piece = await tx.pieceJointe.create({ data: { url: bordereauUrl!.trim(), demandeId: reglement.demandeId } });
+      await tx.journalBanque.create({
+        data: {
+          type: "RETOUR",
+          montant: montantARetourner,
+          reglementId,
+          retourCaisseId: retour.id,
+          pieceJointeId: piece.id,
+          creeParId: session.user.id,
+        },
+      });
+    }
 
     if (restant > 0) {
       await tx.depenseLigne.create({
@@ -223,6 +262,10 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   const demandeId = retour.reglement.demandeId;
   const montant = retour.montantARetourner;
 
+  // Retour sur règlement BANQUE : la réception ne touche JAMAIS `JournalCaisse`
+  // (règle impérative n°3 — la Banque n'impacte pas la caisse) ; le mouvement
+  // `JournalBanque` RETOUR a déjà été écrit à la déclaration, avec son bordereau.
+  const estBanque = retour.reglement.mode === "BANQUE";
   await prisma.$transaction([
     prisma.retourCaisse.update({
       where: { id: retourId },
@@ -232,19 +275,23 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
         receptionneAt: new Date(),
       },
     }),
-    prisma.journalCaisse.create({
-      data: {
-        type: "ENTREE",
-        montant,
-        source: "retour_caisse_receptionne",
-        refId: retourId,
-        // Traçabilité (section 13) : la demande d'origine (via
-        // Reglement -> Demande) et l'utilisateur qui réceptionne, identique
-        // à `receptionneParId` sur le RetourCaisse mis à jour ci-dessus.
-        demandeId,
-        userId: session.user.id,
-      },
-    }),
+    ...(estBanque
+      ? []
+      : [
+          prisma.journalCaisse.create({
+            data: {
+              type: "ENTREE",
+              montant,
+              source: "retour_caisse_receptionne",
+              refId: retourId,
+              // Traçabilité (section 13) : la demande d'origine (via
+              // Reglement -> Demande) et l'utilisateur qui réceptionne,
+              // identique à `receptionneParId` ci-dessus.
+              demandeId,
+              userId: session.user.id,
+            },
+          }),
+        ]),
     prisma.historiqueEntry.create({
       data: {
         entity: "Demande",
@@ -405,11 +452,15 @@ export async function detaillerDepensesRetourAction(
 
   const montantCible = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
   const nouveauTotal = parsedLignes.data.reduce((sum, l) => sum + l.montant, 0);
-  if (Math.round(nouveauTotal * 100) !== Math.round(montantCible * 100)) {
-    const ecart = nouveauTotal - montantCible;
+  // Décomposition (voir CLAUDE.md "Décomposition du montant déclaré") : la
+  // somme des entrées ne doit JAMAIS dépasser le total dépensé déclaré ; si
+  // elle est inférieure, le reste demeure une ligne générique "Dépenses non
+  // détaillées" (le total dépensé de ce retour n'est donc jamais modifié).
+  const resteNonDetaille = Math.round((montantCible - nouveauTotal) * 100) / 100;
+  if (resteNonDetaille < 0) {
     return {
       status: "error",
-      message: `La somme des lignes (${nouveauTotal.toLocaleString("fr-FR")} FCFA) ne correspond pas au total dépensé de ce retour (${montantCible.toLocaleString("fr-FR")} FCFA) — écart de ${Math.abs(ecart).toLocaleString("fr-FR")} FCFA ${ecart > 0 ? "en trop" : "manquant"}.`,
+      message: `La somme des entrées (${nouveauTotal.toLocaleString("fr-FR")} FCFA) dépasse le montant total déclaré pour cette dépense (${montantCible.toLocaleString("fr-FR")} FCFA) — ${Math.abs(resteNonDetaille).toLocaleString("fr-FR")} FCFA en trop.`,
     };
   }
 
@@ -417,10 +468,25 @@ export async function detaillerDepensesRetourAction(
   const dateLignes = retour.dateRetour ?? retour.createdAt;
 
   await prisma.$transaction(async (tx) => {
+    // Trace complète (voir CLAUDE.md "Conserver la trace complète des
+    // corrections") : instantané AVANT (lignes + pièces jointes), pièces
+    // DÉTACHÉES (jamais supprimées en cascade), puis lignes remplacées.
+    const anciennes = await tx.depenseLigne.findMany({
+      where: { retourCaisseId: retourId },
+      include: { pieceJointe: { select: { id: true, url: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+    const avant: LigneSnapshot[] = anciennes.map(snapshotLigne);
+    await tx.pieceJointe.updateMany({
+      where: { depenseLigneId: { in: anciennes.map((a) => a.id) } },
+      data: { depenseLigneId: null, demandeId },
+    });
     await tx.depenseLigne.deleteMany({ where: { retourCaisseId: retourId } });
+    const apres: LigneSnapshot[] = [];
 
     for (const l of parsedLignes.data) {
-      await tx.depenseLigne.create({
+      const creee = await tx.depenseLigne.create({
+        include: { pieceJointe: { select: { id: true, url: true } } },
         data: {
           retourCaisseId: retourId,
           montant: l.montant,
@@ -439,7 +505,32 @@ export async function detaillerDepensesRetourAction(
             : {}),
         },
       });
+      apres.push(snapshotLigne(creee));
     }
+
+    if (resteNonDetaille > 0) {
+      const reste = await tx.depenseLigne.create({
+        include: { pieceJointe: { select: { id: true, url: true } } },
+        data: {
+          retourCaisseId: retourId,
+          montant: resteNonDetaille,
+          objet: "Dépenses non détaillées",
+          date: dateLignes,
+          justification: "SANS_PIECE",
+          commentaire: "Reste du montant déclaré non encore détaillé par l'équipe Finance.",
+        },
+      });
+      apres.push(snapshotLigne(reste));
+    }
+    const detailCorrection: CorrectionDetail = {
+      v: 1,
+      resume: signalementActif
+        ? `Détail du retour corrigé par l'Assistant Finance suite au signalement du collaborateur (${apres.length} ligne(s), ${montantCible.toLocaleString("fr-FR")} FCFA) — signalement résolu.`
+        : `Détail réel du retour renseigné par l'Assistant Finance (${apres.length} ligne(s), ${montantCible.toLocaleString("fr-FR")} FCFA).`,
+      signalement: signalementActif?.commentaire ?? null,
+      avant,
+      apres,
+    };
 
     if (signalementActif) {
       await tx.signalementRetour.update({
@@ -458,9 +549,7 @@ export async function detaillerDepensesRetourAction(
         // correction elle-même") — jamais confondue avec un premier
         // détaillage normal.
         action: signalementActif ? "correction_signalement_retour" : "detaillage_retour",
-        detail: signalementActif
-          ? `Détail du retour corrigé par l'Assistant Finance suite au signalement du collaborateur (${parsedLignes.data.length} ligne(s), ${nouveauTotal.toLocaleString("fr-FR")} FCFA) — signalement résolu.`
-          : `Détail réel du retour renseigné par l'Assistant Finance (${parsedLignes.data.length} ligne(s), ${nouveauTotal.toLocaleString("fr-FR")} FCFA).`,
+        detail: JSON.stringify(detailCorrection),
         userId: session.user.id,
       },
     });
@@ -581,4 +670,164 @@ export async function marquerDepenseNonJustifieeAction(
   publishDataChanged();
 
   return { status: "success", message: "Dépense marquée non justifiée." };
+}
+
+const motifAjustementTotalSchema = z
+  .string()
+  .trim()
+  .min(10, "Le motif de l'ajustement est obligatoire (10 caractères minimum)");
+
+/**
+ * Ajuste le TOTAL DÉCLARÉ d'un retour de caisse (Tâche "Le Responsable
+ * Finance peut ajuster le total déclaré sous signalement actif", voir
+ * CLAUDE.md) — le plafond de saisie de `detaillerDepensesRetourAction` est
+ * la somme des lignes actuelles : l'ajuster ici relève ou abaisse ce
+ * plafond.
+ *
+ * **Réservée au Responsable Finance UNIQUEMENT** (`treso.valider_demande` ET
+ * PAS `treso.approuver_validation_complete`) — jamais l'Assistant Finance
+ * (qui détaille dans la limite du total) ni le DG. **Uniquement sous
+ * signalement actif** sur ce retour, motif ≥ 10 caractères, tracée dans
+ * `HistoriqueEntry` (ancien total, nouveau total, motif, auteur).
+ *
+ * Mécanique : une hausse ajoute une ligne générique "Dépenses non
+ * détaillées" (`SANS_PIECE`) de la différence ; une baisse ne peut retirer
+ * que du montant encore "non détaillé" (jamais une ligne déjà détaillée par
+ * l'Assistant). `montantARetourner` est recalculé tant que le retour n'est
+ * PAS réceptionné ; une fois réceptionné, il reste inchangé (l'espèce
+ * réellement rendue et écrite en caisse ne se réécrit pas) — un total relevé
+ * peut alors faire apparaître un Solde à régulariser négatif, signal
+ * d'anomalie déjà documenté.
+ */
+export async function ajusterTotalDeclareRetourAction(
+  retourId: string,
+  nouveauTotal: number,
+  motif: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (
+    !session ||
+    !hasPermission(session, "treso.valider_demande") ||
+    hasPermission(session, "treso.approuver_validation_complete")
+  ) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsedMotif = motifAjustementTotalSchema.safeParse(motif);
+  if (!parsedMotif.success) {
+    return { status: "error", message: parsedMotif.error.issues[0].message };
+  }
+  if (!Number.isFinite(nouveauTotal) || nouveauTotal <= 0) {
+    return { status: "error", message: "Le nouveau total doit être supérieur à 0." };
+  }
+
+  const retour = await prisma.retourCaisse.findUnique({
+    where: { id: retourId },
+    include: {
+      reglement: { include: { demande: true } },
+      depenses: true,
+      signalements: { where: { estResolu: false } },
+    },
+  });
+  if (!retour) {
+    return { status: "error", message: "Retour de caisse introuvable." };
+  }
+  if (retour.signalements.length === 0) {
+    return {
+      status: "error",
+      message: "Le total déclaré ne peut être ajusté que lorsqu'un signalement du collaborateur est actif sur ce retour.",
+    };
+  }
+  if (retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle) {
+    return { status: "error", message: "Cette demande est clôturée : le total n'est plus modifiable." };
+  }
+  if (nouveauTotal > Number(retour.reglement.montant)) {
+    return {
+      status: "error",
+      message: `Le total déclaré ne peut pas dépasser le montant du règlement (${Number(retour.reglement.montant).toLocaleString("fr-FR")} FCFA).`,
+    };
+  }
+
+  const ancienTotal = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
+  const deltaCentimes = Math.round(nouveauTotal * 100) - Math.round(ancienTotal * 100);
+  if (deltaCentimes === 0) {
+    return { status: "error", message: "Le nouveau total est identique au total actuel." };
+  }
+  const delta = deltaCentimes / 100;
+
+  const estGenerique = (d: { objet: string; motifNonJustifie: string | null }) =>
+    d.objet === "Dépenses non détaillées" && !d.motifNonJustifie;
+  const generiques = retour.depenses.filter(estGenerique);
+  const totalGenerique = generiques.reduce((sum, d) => sum + Number(d.montant), 0);
+  if (delta < 0 && Math.round(-delta * 100) > Math.round(totalGenerique * 100)) {
+    return {
+      status: "error",
+      message: `Seuls ${totalGenerique.toLocaleString("fr-FR")} FCFA "non détaillés" peuvent être retirés : le détail déjà saisi par l'Assistant Finance ne se réduit pas ici.`,
+    };
+  }
+
+  const demandeId = retour.reglement.demandeId;
+  const dateLignes = retour.dateRetour ?? retour.createdAt;
+
+  await prisma.$transaction(async (tx) => {
+    if (delta > 0) {
+      await tx.depenseLigne.create({
+        data: {
+          retourCaisseId: retourId,
+          montant: delta,
+          objet: "Dépenses non détaillées",
+          date: dateLignes,
+          justification: "SANS_PIECE",
+          commentaire: `Ajustement du total déclaré par le Responsable Finance (${parsedMotif.data}).`,
+        },
+      });
+    } else {
+      let aRetirer = -delta;
+      for (const g of generiques) {
+        if (aRetirer <= 0) break;
+        const m = Number(g.montant);
+        if (m <= aRetirer) {
+          await tx.depenseLigne.delete({ where: { id: g.id } });
+          aRetirer = Math.round((aRetirer - m) * 100) / 100;
+        } else {
+          await tx.depenseLigne.update({ where: { id: g.id }, data: { montant: Math.round((m - aRetirer) * 100) / 100 } });
+          aRetirer = 0;
+        }
+      }
+    }
+
+    if (!retour.estReceptionne) {
+      const montantARetourner = await calculerMontantARetournerNet({
+        reglementId: retour.reglementId,
+        totalDepensesNouvelles: nouveauTotal,
+        excludeRetourId: retourId,
+      });
+      await tx.retourCaisse.update({ where: { id: retourId }, data: { montantARetourner } });
+    }
+
+    await tx.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "ajustement_total_retour",
+        detail: `Total déclaré du retour de caisse ajusté par ${session.user.fullName} : ${ancienTotal.toLocaleString("fr-FR")} → ${nouveauTotal.toLocaleString("fr-FR")} FCFA. Motif : ${parsedMotif.data}`,
+        userId: session.user.id,
+      },
+    });
+  });
+
+  revalidatePath("/treso/finance/retours");
+  revalidatePath(`/treso/finance/retours/${retourId}`);
+  revalidatePath(`/treso/demandes/${demandeId}`);
+  revalidatePath(`/treso/finance/demandes/${demandeId}`);
+  revalidatePath("/treso/finance", "layout");
+  publishDataChanged();
+
+  await notifierParPermission("treso.receptionner_retour", {
+    titre: "Total déclaré ajusté sur un retour de caisse",
+    message: `Le Responsable Finance a ajusté le total déclaré (${ancienTotal.toLocaleString("fr-FR")} → ${nouveauTotal.toLocaleString("fr-FR")} FCFA) du retour de la demande ${retour.reglement.demande.reference} : vous pouvez maintenant corriger le détail.`,
+    lien: `/treso/finance/retours/${retourId}`,
+  });
+
+  return { status: "success", message: "Total déclaré ajusté." };
 }

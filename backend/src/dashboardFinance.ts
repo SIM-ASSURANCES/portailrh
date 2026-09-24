@@ -212,6 +212,22 @@ export async function getRetoursEnAttenteReception(): Promise<{ nombre: number }
 }
 
 /**
+ * Indicateur "Retours exceptionnels post-clôture" (voir CLAUDE.md "Retour de
+ * caisse exceptionnel post-clôture"), SÉPARÉ de `RETOUR_EN_ATTENTE_WHERE` :
+ * retours saisis sur une demande clôturée, en attente de validation par le
+ * Responsable Finance. Pas de compteur "en attente de saisie" — le
+ * déclenchement est manuel, aucune détection automatique.
+ */
+export async function getRetoursExceptionnelsEnAttenteValidation(): Promise<CompteEtMontant> {
+  const result = await prisma.retourExceptionnel.aggregate({
+    where: { statut: "EN_ATTENTE_VALIDATION" },
+    _count: true,
+    _sum: { montant: true },
+  });
+  return { nombre: result._count, montant: Number(result._sum.montant ?? 0) };
+}
+
+/**
  * Indicateur "À traiter" #6 — dépenses non justifiées à suivre :
  * `DepenseLigne` dont la justification est `SANS_PIECE`, dont le
  * règlement lié n'est pas encore totalement régularisé (son solde à
