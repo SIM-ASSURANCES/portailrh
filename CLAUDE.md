@@ -5084,6 +5084,11 @@ convention que les vérifications précédentes de ce projet)** :
 
 ### Animation d'entrée de l'écran de connexion
 
+> **⚠️ REMPLACÉ le 2026-09-25 — ne plus appliquer cette section.** L'animation d'entrée de `/login` (fond bleu plein écran puis
+> carte révélée) a été **retirée à la demande du produit** : `AuthShell.tsx` et `login/page.tsx` sont revenus à l'état du commit
+> `2b21fd1` (carte scindée statique sur fond de page blanc `bg-app-bg` avec le filigrane discret `BrandBackdrop`, visible
+> immédiatement ; plus de props `animatedIntro`/`skipIntro`). Section conservée pour l'historique uniquement.
+
 Suite directe de la tâche ci-dessus, réservée à `/login` UNIQUEMENT (jamais
 `forgot-password`/`reset-password`, hors périmètre, rendu strictement
 inchangé pour ces deux écrans) — inspirée d'une maquette de référence
@@ -5234,6 +5239,11 @@ réels, installé temporairement `--no-save` puis désinstallé après usage)** 
   sans erreur.
 
 ### Nouvelle disposition de l'état "formulaire révélé" + filigrane plus marqué
+
+> **⚠️ REMPLACÉ le 2026-09-25 — ne plus appliquer cette section.** L'animation d'entrée de `/login` (fond bleu plein écran puis
+> carte révélée) a été **retirée à la demande du produit** : `AuthShell.tsx` et `login/page.tsx` sont revenus à l'état du commit
+> `2b21fd1` (carte scindée statique sur fond de page blanc `bg-app-bg` avec le filigrane discret `BrandBackdrop`, visible
+> immédiatement ; plus de props `animatedIntro`/`skipIntro`). Section conservée pour l'historique uniquement.
 
 Suite directe de la tâche ci-dessus, toujours limitée à `AuthShell.tsx`
 (branche `animatedIntro`) et purement visuelle — aucune Server Action, ni

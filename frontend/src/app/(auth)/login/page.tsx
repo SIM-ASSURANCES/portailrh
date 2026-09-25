@@ -72,21 +72,8 @@ export default async function LoginPage({
 
   const { error, callbackUrl, activated, reset } = await searchParams;
 
-  // Voir CLAUDE.md "Animation d'entrée de l'écran de connexion" : un
-  // paramètre déjà présent dans l'URL prouve que cette page se recharge
-  // APRÈS une interaction (échec de connexion, déconnexion pour
-  // inactivité, compte activé, mot de passe réinitialisé) — l'animation
-  // d'entrée ne doit alors jamais rejouer, le formulaire doit rester
-  // directement visible. Un simple F5 sur `/login` SANS paramètre, lui,
-  // repart bien de l'état plein écran (comportement demandé).
-  const skipIntro = Boolean(error || activated || reset);
-
   return (
-    <AuthShell
-      animatedIntro
-      skipIntro={skipIntro}
-      tagline="Gérez vos demandes, validations et règlements de trésorerie depuis un espace unique et sécurisé."
-    >
+    <AuthShell tagline="Gérez vos demandes, validations et règlements de trésorerie depuis un espace unique et sécurisé.">
       <form action={authenticate} className="space-y-4">
         <div>
           <h1 className="text-xl font-bold text-foreground">Connexion</h1>
