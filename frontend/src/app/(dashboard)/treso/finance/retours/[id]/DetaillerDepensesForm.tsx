@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
@@ -57,13 +58,28 @@ export function DetaillerDepensesForm({
         }))
       : [nouvelleLigne()]
   );
+  const router = useRouter();
+  // Cycle du bouton "Enregistrer le détail" : désactivé au départ et juste après un enregistrement réussi ;
+  // actif dès qu'on ajoute (ou modifie/retire) une entrée, jusqu'au prochain enregistrement réussi.
+  const [aEnregistrer, setAEnregistrer] = useState(false);
   const [erreur, setErreur] = useState<string | undefined>();
+  const [enregistre, setEnregistre] = useState<{ nombre: number; total: number } | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (!enregistre) return;
+    const t = setTimeout(() => setEnregistre(null), 4000);
+    return () => clearTimeout(t);
+  }, [enregistre]);
 
   const totalSaisi = lignes.reduce((sum, l) => sum + (Number(l.montant) || 0), 0);
   const reste = Math.round((montantCible - totalSaisi) * 100) / 100;
 
+  const peutEnregistrer = aEnregistrer;
+  const raisonDesactive = aEnregistrer ? null : "Rien de nouveau à enregistrer : ajoutez une entrée.";
+
   function updateLigne(key: string, patch: Partial<LigneEdit>) {
+    setAEnregistrer(true);
     setLignes((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   }
 
@@ -102,6 +118,10 @@ export function DetaillerDepensesForm({
       const result = await detaillerDepensesRetourAction(retourId, payload);
       if (result.status === "success") {
         toast.success(result.message);
+        setEnregistre({ nombre: lignes.length, total: totalSaisi });
+        setAEnregistrer(false);
+        // Re-fetch ciblé : la liste des lignes et les totaux de la page se mettent à jour immédiatement.
+        router.refresh();
         onSuccess?.();
       } else {
         toast.error(result.message);
@@ -126,7 +146,10 @@ export function DetaillerDepensesForm({
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => setLignes((prev) => prev.filter((l) => l.key !== ligne.key))}
+                  onClick={() => {
+                    setAEnregistrer(true);
+                    setLignes((prev) => prev.filter((l) => l.key !== ligne.key));
+                  }}
                 >
                   Retirer
                 </Button>
@@ -181,7 +204,14 @@ export function DetaillerDepensesForm({
         ))}
       </div>
 
-      <Button type="button" variant="secondary" onClick={() => setLignes((prev) => [...prev, nouvelleLigne()])}>
+      <Button
+        type="button"
+        variant="secondary"
+        onClick={() => {
+          setAEnregistrer(true);
+          setLignes((prev) => [...prev, nouvelleLigne()]);
+        }}
+      >
         Ajouter une entrée
       </Button>
 
@@ -199,11 +229,19 @@ export function DetaillerDepensesForm({
       </div>
 
       {erreur ? <p className="text-sm text-danger">{erreur}</p> : null}
+      {enregistre ? (
+        <p role="status" className="rounded-md bg-success-bg px-3 py-2 text-sm font-medium text-success">
+          Détail enregistré : {enregistre.nombre} entrée(s), {enregistre.total.toLocaleString("fr-FR")} FCFA détaillés.
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap gap-3">
-        <Button type="button" loading={isPending} onClick={handleSubmit}>
-          Enregistrer le détail
+        <Button type="button" loading={isPending} disabled={isPending || !peutEnregistrer} onClick={handleSubmit}>
+          {isPending ? "Enregistrement..." : "Enregistrer le détail"}
         </Button>
+        {raisonDesactive && !isPending ? (
+          <p className="self-center text-xs text-muted-foreground">{raisonDesactive}</p>
+        ) : null}
         {onCancel ? (
           <Button type="button" variant="secondary" disabled={isPending} onClick={onCancel}>
             Annuler
