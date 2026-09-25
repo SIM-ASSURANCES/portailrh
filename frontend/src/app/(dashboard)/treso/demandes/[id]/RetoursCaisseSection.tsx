@@ -84,6 +84,7 @@ export async function RetoursCaisseSection({
               estReceptionne: retour.estReceptionne,
               montantARetourner: Number(retour.montantARetourner),
               dejaCouvertPostCloture: couvertParRetour.get(retour.id) ?? 0,
+              peutSignaler: peutDeclarer || !!retour.motifReouvertureExceptionnelle,
               dateRetour: retour.dateRetour,
               creeParAssistant: retour.creeParAssistant,
               // Modification (avant réception) réservée au déclarant

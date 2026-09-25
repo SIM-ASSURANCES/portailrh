@@ -435,6 +435,11 @@ export async function signalerErreurRetourAction(
   if (retour.reglement.demande.createurId !== session.user.id) {
     return { status: "error", message: "Vous ne pouvez signaler une erreur que sur vos propres demandes." };
   }
+  // Même garde que toutes les actions de régularisation (complément, remboursement, détail) : sur une demande
+  // clôturée, un signalement ne pourrait JAMAIS être résolu (il bloquerait tout nouveau signalement pour rien).
+  if (retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle) {
+    return { status: "error", message: "Cette demande est clôturée : il n'est plus possible de signaler une erreur sur ce retour." };
+  }
   if (retour.signalements.length > 0) {
     return {
       status: "error",

@@ -1431,6 +1431,17 @@ nouvelle écriture qui référence le retour d'origine et le signalement.
 - Traçabilité : historique de la demande (`retour_complementaire_signalement`, `remboursement_retour_*`,
   visibles du Collaborateur) ; Excel « Compléments et remboursements ».
 - `ajusterTotalDeclareRetourAction` : en cas de hausse, **fusionne** avec la ligne « non détaillé » existante.
+- **Garde `CLOTUREE` commune** : `signalerErreurRetourAction`, `declarerRetourComplementaireAction`,
+  `proposerRemboursementRetourAction` (et le détail/la réception) refusent sur une demande `CLOTUREE`, sauf retour en
+  réouverture exceptionnelle (`motifReouvertureExceptionnelle`). Le **signalement** doit porter cette même garde (serveur
+  ET bouton masqué côté Collaborateur, `RetourData.peutSignaler`) : bug corrigé — sans elle, un signalement créé sur une
+  demande clôturée ne pouvait jamais être résolu (toutes les actions de régularisation refusent) et bloquait tout nouveau
+  signalement sur ce retour. Un signalement déjà actif reste affiché en lecture seule.
+- **Décision assumée (2026-09-25)** : `validerRemboursementRetourAction`/`rejeter…` **n'ont volontairement PAS de garde
+  `CLOTUREE`**. Un remboursement proposé avant la clôture reste valide si la demande se clôture entre-temps : l'argent
+  peut bouger après clôture via ce circuit dédié, dont le Responsable Finance est le verrou (double validation, jamais
+  sur sa propre proposition) — même principe que le retour exceptionnel post-clôture. Ne pas ajouter de garde ici : cela
+  forcerait à traiter en urgence tout remboursement légitime avant la clôture.
 
 #### Justification après réception
 

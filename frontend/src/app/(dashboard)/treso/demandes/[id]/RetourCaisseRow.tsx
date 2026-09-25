@@ -44,6 +44,8 @@ export interface RetourData {
   creeParAssistant: boolean;
   /** Non réceptionné, demande non clôturée, ET utilisateur connecté = déclarant original. */
   peutModifier: boolean;
+  /** Même condition que la garde serveur de `signalerErreurRetourAction` : demande non clôturée, ou retour en réouverture exceptionnelle. */
+  peutSignaler: boolean;
   depenses: DepenseLigneData[];
   /** Signalement d'erreur ACTIF (non résolu) sur ce retour, le cas échéant
    * — voir CLAUDE.md "Signalement d'erreur par le Collaborateur". */
@@ -227,10 +229,12 @@ function RetourExistant({
             dateRetour={retour.dateRetour}
           />
           <div className="border-t border-border pt-2">
-            <SignalerErreurRetour
-              retourId={retour.id}
-              signalementActifCommentaire={retour.signalementActif?.commentaire ?? null}
-            />
+            {retour.peutSignaler || retour.signalementActif ? (
+              <SignalerErreurRetour
+                retourId={retour.id}
+                signalementActifCommentaire={retour.signalementActif?.commentaire ?? null}
+              />
+            ) : null}
           </div>
         </>
       )}
