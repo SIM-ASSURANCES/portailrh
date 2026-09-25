@@ -6,6 +6,7 @@ import { publishDataChanged } from "@/lib/eventBus";
 import { prisma, checkLateStatus, timeToMinutes } from "backend";
 import { revalidatePath } from "next/cache";
 import { ActionState, fieldErrorsFromZod } from "backend";
+import { notify } from "@/lib/notifications";
 
 const correctionSchema = z.object({
   pointageId: z.string().min(1, "L'identifiant du pointage est requis"),
@@ -111,6 +112,17 @@ export async function corrigerPointageAction(
           userId: session.user.id
         }
       });
+    });
+
+    // Notification in-app et push FCM au collaborateur concerné
+    const typeLabel = existingPointage.type === "ARRIVEE" ? "d'arrivée" : "de départ";
+    await notify({
+      userId: existingPointage.userId,
+      titre: "Pointage modifié par les RH",
+      message: `Votre pointage ${typeLabel} du ${formatDateTime(existingPointage.heure)} a été modifié à ${formatDateTime(newDate)} par ${session.user.fullName}. Motif : ${motif}`,
+      lien: "/pointage/historique",
+      priority: "IMPORTANT",
+      category: "POINTAGE",
     });
 
     revalidatePath("/pointage");

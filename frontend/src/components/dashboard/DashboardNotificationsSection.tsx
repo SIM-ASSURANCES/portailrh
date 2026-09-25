@@ -188,7 +188,7 @@ export function DashboardNotificationsSection({
                           {notif.titre}
                         </p>
                         {!notif.estLue && (
-                          <Badge variant="danger">
+                          <Badge variant="primary">
                             Nouveau
                           </Badge>
                         )}

@@ -85,15 +85,24 @@ export function NotificationDetailModal({
           <div className="flex items-start gap-3.5 min-w-0 pr-2">
             <div className="mt-0.5 shrink-0">
               {isCritical ? (
-                <div className="grid size-9 place-items-center rounded-lg bg-red-100 text-red-700">
+                <div
+                  className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"
+                  title="Alerte critique"
+                >
                   <ShieldAlert className="size-4.5" />
                 </div>
               ) : isImportant ? (
-                <div className="grid size-9 place-items-center rounded-lg bg-amber-100 text-amber-700">
+                <div
+                  className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"
+                  title="Important"
+                >
                   <AlertTriangle className="size-4.5" />
                 </div>
               ) : (
-                <div className="grid size-9 place-items-center rounded-lg bg-slate-100 text-slate-600">
+                <div
+                  className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"
+                  title="Information"
+                >
                   <Bell className="size-4.5" />
                 </div>
               )}
@@ -102,12 +111,12 @@ export function NotificationDetailModal({
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap mb-1">
                 {isCritical && (
-                  <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700 border border-red-200/60 uppercase tracking-wide">
+                  <span className="rounded bg-primary-bg px-1.5 py-0.5 text-[10px] font-bold text-primary border border-primary-border uppercase tracking-wide">
                     Alerte critique
                   </span>
                 )}
                 {isImportant && (
-                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 border border-amber-200/60 uppercase tracking-wide">
+                  <span className="rounded bg-primary-bg px-1.5 py-0.5 text-[10px] font-semibold text-primary border border-primary-border uppercase tracking-wide">
                     Important
                   </span>
                 )}

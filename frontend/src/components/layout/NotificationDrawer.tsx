@@ -273,28 +273,33 @@ export function NotificationDrawer({
                 <div
                   key={notif.id}
                   onClick={() => handleSelectNotification(notif)}
-                  className={`group relative p-4 transition-colors cursor-pointer border-l-[3px] ${isCritical
-                      ? "border-l-red-600 bg-red-50/10 hover:bg-red-50/20"
-                      : isImportant && isUnread
-                        ? "border-l-amber-500 bg-amber-50/10 hover:bg-amber-50/20"
-                        : isUnread
-                          ? "border-l-primary bg-primary/[0.03] hover:bg-primary/[0.06]"
-                          : "border-l-transparent hover:bg-muted/40"
+                  className={`group relative p-4 transition-colors cursor-pointer border-l-[3px] ${isUnread
+                      ? "border-l-primary bg-primary/[0.03] hover:bg-primary/[0.06]"
+                      : "border-l-transparent hover:bg-muted/40"
                     }`}
                 >
                   <div className="flex items-start gap-3">
-                    {/* Discrète icône de priorité */}
+                    {/* Discrète icône de priorité aux couleurs institutionnelles */}
                     <div className="mt-0.5 shrink-0">
                       {isCritical ? (
-                        <div className="grid size-7 place-items-center rounded-lg bg-red-100 text-red-700">
+                        <div
+                          className="grid size-7 place-items-center rounded-lg bg-primary/10 text-primary"
+                          title="Alerte critique"
+                        >
                           <ShieldAlert className="size-4" />
                         </div>
                       ) : isImportant ? (
-                        <div className="grid size-7 place-items-center rounded-lg bg-amber-100 text-amber-700">
+                        <div
+                          className="grid size-7 place-items-center rounded-lg bg-primary/10 text-primary"
+                          title="Important"
+                        >
                           <AlertTriangle className="size-4" />
                         </div>
                       ) : (
-                        <div className="grid size-7 place-items-center rounded-lg bg-slate-100 text-slate-600">
+                        <div
+                          className="grid size-7 place-items-center rounded-lg bg-primary/10 text-primary"
+                          title="Information"
+                        >
                           <Info className="size-4" />
                         </div>
                       )}
@@ -304,11 +309,16 @@ export function NotificationDrawer({
                     <div className="flex-1 min-w-0 pr-6">
                       <div className="flex items-center gap-1.5 mb-1">
                         {isCritical && (
-                          <span className="text-[10px] font-bold text-red-700 tracking-wider uppercase">
-                            Alerte
+                          <span className="text-[10px] font-bold text-primary tracking-wider uppercase">
+                            Alerte critique
                           </span>
                         )}
-                        {isCritical && <span className="text-slate-300">•</span>}
+                        {isImportant && (
+                          <span className="text-[10px] font-bold text-primary tracking-wider uppercase">
+                            Important
+                          </span>
+                        )}
+                        {(isCritical || isImportant) && <span className="text-slate-300">•</span>}
                         {notif.category && notif.category !== "SYSTEME" && (
                           <span className="text-[10px] font-medium text-muted-foreground uppercase">
                             {notif.category}

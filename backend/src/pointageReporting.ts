@@ -23,8 +23,41 @@ export function getReportingPeriodConstraints(dateDebut?: string, dateFin?: stri
   return { error: null };
 }
 
+export const USER_CAN_POINT_WHERE: Prisma.UserWhereInput = {
+  isActive: true,
+  OR: [
+    {
+      role: {
+        permissions: {
+          some: {
+            permission: {
+              key: "pointage.pointer",
+            },
+          },
+        },
+      },
+    },
+    {
+      delegationsRecues: {
+        some: {
+          estActive: true,
+          revokedAt: null,
+          permission: {
+            key: "pointage.pointer",
+          },
+        },
+      },
+    },
+  ],
+};
+
 export async function getServicesUniques(): Promise<string[]> {
   const services = await prisma.service.findMany({
+    where: {
+      users: {
+        some: USER_CAN_POINT_WHERE,
+      },
+    },
     orderBy: { name: "asc" },
     select: { name: true },
   });
@@ -33,7 +66,7 @@ export async function getServicesUniques(): Promise<string[]> {
 
 export async function getCollaborateursFiltres() {
   const users = await prisma.user.findMany({
-    where: { isActive: true },
+    where: USER_CAN_POINT_WHERE,
     select: { id: true, fullName: true, service: { select: { name: true } } },
     orderBy: { fullName: "asc" },
   });
@@ -45,7 +78,9 @@ export async function getCollaborateursFiltres() {
 }
 
 export async function getReportingAgrégé(filters: PointageReportingFilters) {
-  const whereUser: Prisma.UserWhereInput = {};
+  const whereUser: Prisma.UserWhereInput = {
+    ...USER_CAN_POINT_WHERE,
+  };
   if (filters.userId) whereUser.id = filters.userId;
   if (filters.service) whereUser.service = { name: filters.service };
 
@@ -118,10 +153,16 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
 }
 
 export async function getDetailsRetards(filters: PointageReportingFilters, skip = 0, take = 50) {
-  const where: Prisma.PointageWhereInput = { type: "ARRIVEE", estRetard: true };
+  const where: Prisma.PointageWhereInput = {
+    type: "ARRIVEE",
+    estRetard: true,
+    user: {
+      ...USER_CAN_POINT_WHERE,
+      ...(filters.service ? { service: { name: filters.service } } : {}),
+    },
+  };
 
   if (filters.userId) where.userId = filters.userId;
-  if (filters.service) where.user = { service: { name: filters.service } };
 
   if (filters.dateDebut || filters.dateFin) {
     where.heure = {};

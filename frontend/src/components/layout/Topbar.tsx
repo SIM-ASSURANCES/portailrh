@@ -44,6 +44,7 @@ const FORM_FIELD_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 import { playNotificationSound } from "@/lib/audio/notificationSound";
 import { onForegroundMessage } from "@/lib/notifications/fcmClient";
 import { toast } from "sonner";
+import { ShieldAlert, AlertTriangle, Bell } from "lucide-react";
 
 export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCount = 0, alert, onOpenMobileMenu }: TopbarProps) {
   const router = useRouter();
@@ -100,7 +101,7 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
         // Jouer le carillon sonore
         playNotificationSound(notif.priority);
 
-        // Afficher le toast selon le niveau de priorité
+        // Afficher le toast selon le niveau de priorité aux couleurs institutionnelles
         const toastAction = notif.lien
           ? {
             label: "Consulter",
@@ -108,25 +109,32 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
           }
           : undefined;
 
-        if (notif.priority === "CRITIQUE") {
-          toast.error(notif.titre, {
-            description: notif.message,
-            duration: 9000,
-            action: toastAction,
-          });
-        } else if (notif.priority === "IMPORTANT") {
-          toast.warning(notif.titre, {
-            description: notif.message,
-            duration: 6000,
-            action: toastAction,
-          });
-        } else {
-          toast.info(notif.titre, {
-            description: notif.message,
-            duration: 4000,
-            action: toastAction,
-          });
-        }
+        const isCritical = notif.priority === "CRITIQUE";
+        const isImportant = notif.priority === "IMPORTANT";
+
+        const priorityPrefix = isCritical
+          ? "[Alerte critique] "
+          : isImportant
+            ? "[Important] "
+            : "";
+        const toastTitle = `${priorityPrefix}${notif.titre}`;
+        const toastDuration = isCritical ? 9000 : isImportant ? 6000 : 4000;
+
+        const priorityIcon = isCritical ? (
+          <ShieldAlert className="size-5 text-primary shrink-0" />
+        ) : isImportant ? (
+          <AlertTriangle className="size-5 text-primary shrink-0" />
+        ) : (
+          <Bell className="size-5 text-primary shrink-0" />
+        );
+
+        toast(toastTitle, {
+          description: notif.message,
+          duration: toastDuration,
+          action: toastAction,
+          icon: priorityIcon,
+          className: "!bg-primary-bg !text-primary !border-primary-border",
+        });
 
         // Actualiser l'UI (notamment le compteur de la cloche)
         if (!isEditingRef.current) {
@@ -158,19 +166,31 @@ export function Topbar({ user, role, canAccessPointageRH, unreadNotificationsCou
         }
         : undefined;
 
-      if (fcmData.priority === "CRITIQUE") {
-        toast.error(fcmData.titre, {
-          description: fcmData.message,
-          duration: 9000,
-          action: toastAction,
-        });
-      } else {
-        toast.info(fcmData.titre, {
-          description: fcmData.message,
-          duration: 5000,
-          action: toastAction,
-        });
-      }
+      const isCritical = fcmData.priority === "CRITIQUE";
+      const isImportant = fcmData.priority === "IMPORTANT";
+
+      const fcmPriorityPrefix = isCritical
+        ? "[Alerte critique] "
+        : isImportant
+          ? "[Important] "
+          : "";
+      const fcmToastTitle = `${fcmPriorityPrefix}${fcmData.titre}`;
+
+      const fcmPriorityIcon = isCritical ? (
+        <ShieldAlert className="size-5 text-primary shrink-0" />
+      ) : isImportant ? (
+        <AlertTriangle className="size-5 text-primary shrink-0" />
+      ) : (
+        <Bell className="size-5 text-primary shrink-0" />
+      );
+
+      toast(fcmToastTitle, {
+        description: fcmData.message,
+        duration: isCritical ? 9000 : 5000,
+        action: toastAction,
+        icon: fcmPriorityIcon,
+        className: "!bg-primary-bg !text-primary !border-primary-border",
+      });
 
       router.refresh();
     });
