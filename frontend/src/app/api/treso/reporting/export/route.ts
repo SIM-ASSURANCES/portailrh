@@ -12,6 +12,7 @@ import {
   getReportingFondsRemis,
   getReportingJournalBanqueDetail,
   getReportingRetoursExternesDetail,
+  getReportingComplementsRemboursementsDetail,
   getReportingJournalDetail,
   getReportingReglementsDetail,
   getReportingRegularisationsDetail,
@@ -76,6 +77,7 @@ export async function GET(request: NextRequest) {
     dashboard,
     mouvementsBanque,
     retoursExternes,
+    complementsRemboursements,
   ] = await Promise.all([
     getReportingDemandesDetail(filters),
     getReportingReglementsDetail(filters),
@@ -91,6 +93,7 @@ export async function GET(request: NextRequest) {
     getReportingDashboardSnapshot(),
     getReportingJournalBanqueDetail(filters),
     getReportingRetoursExternesDetail(filters),
+    getReportingComplementsRemboursementsDetail(filters),
   ]);
 
   const workbook = new ExcelJS.Workbook();
@@ -201,6 +204,42 @@ export async function GET(request: NextRequest) {
 
   // Retours externes (voir CLAUDE.md "Retour externe") : feuille distincte,
   // jamais mélangée aux retours de caisse liés à une demande.
+  // Compléments et remboursements liés à un signalement (voir CLAUDE.md "Correction d'un retour signalé").
+  const sheetCompl = workbook.addWorksheet("Compléments et remboursements");
+  sheetCompl.columns = [
+    { header: "Demande d'origine", key: "demande", width: 20 },
+    { header: "Retour d'origine (réf.)", key: "retour", width: 28 },
+    { header: "Signalement lié (réf.)", key: "signalement", width: 28 },
+    { header: "Type", key: "type", width: 15 },
+    { header: "Statut", key: "statut", width: 22 },
+    { header: "Montant (FCFA)", key: "montant", width: 16 },
+    { header: "Motif", key: "motif", width: 40 },
+    { header: "Auteur (proposant)", key: "proposant", width: 24 },
+    { header: "Validateur", key: "validateur", width: 24 },
+    { header: "Date de proposition", key: "dateProp", width: 18 },
+    { header: "Date de validation", key: "dateVal", width: 18 },
+    { header: "Justificatif", key: "pj", width: 16 },
+  ];
+  complementsRemboursements.forEach((c) =>
+    sheetCompl.addRow({
+      demande: c.demandeReference,
+      retour: c.retourOrigineRef,
+      signalement: c.signalementRef,
+      type: c.type,
+      statut: c.statut,
+      montant: c.montant,
+      motif: c.motif,
+      proposant: c.proposantNom,
+      validateur: c.validateurNom ?? "—",
+      dateProp: c.dateProposition.toLocaleDateString("fr-FR"),
+      dateVal: c.dateValidation ? c.dateValidation.toLocaleDateString("fr-FR") : "—",
+      pj: c.pieceId
+        ? { text: "Télécharger", hyperlink: `${request.nextUrl.origin}/api/treso/pieces-jointes/${c.pieceId}` }
+        : "—",
+    })
+  );
+  styleHeaderRow(sheetCompl);
+
   const sheetExternes = workbook.addWorksheet("Retours externes");
   sheetExternes.columns = [
     { header: "Personne", key: "personne", width: 28 },

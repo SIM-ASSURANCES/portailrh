@@ -5,9 +5,9 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
-import { notifierParPermission } from "@/lib/notifications";
+import { notifierParPermission, notify } from "@/lib/notifications";
 import { snapshotLigne, type CorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
-import { calculerMontantARetournerNet, prisma } from "backend";
+import { calculerMontantARetournerNet, getSoldeCaisse, prisma } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -771,16 +771,8 @@ export async function ajusterTotalDeclareRetourAction(
 
   await prisma.$transaction(async (tx) => {
     if (delta > 0) {
-      await tx.depenseLigne.create({
-        data: {
-          retourCaisseId: retourId,
-          montant: delta,
-          objet: "Dépenses non détaillées",
-          date: dateLignes,
-          justification: "SANS_PIECE",
-          commentaire: `Ajustement du total déclaré par le Responsable Finance (${parsedMotif.data}).`,
-        },
-      });
+      // Fusion avec la ligne "non détaillé" existante plutôt qu'une seconde ligne.
+      await ajouterAuNonDetaille(tx, retourId, delta, dateLignes, `Ajustement du total déclaré par le Responsable Finance (${parsedMotif.data}).`);
     } else {
       let aRetirer = -delta;
       for (const g of generiques) {
@@ -830,4 +822,330 @@ export async function ajusterTotalDeclareRetourAction(
   });
 
   return { status: "success", message: "Total déclaré ajusté." };
+}
+
+
+type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/** Ajoute `montant` à la ligne générique "Dépenses non détaillées" du retour (la crée si absente). */
+async function ajouterAuNonDetaille(tx: TxClient, retourId: string, montant: number, date: Date, commentaire: string) {
+  const existante = await tx.depenseLigne.findFirst({
+    where: { retourCaisseId: retourId, objet: "Dépenses non détaillées", motifNonJustifie: null },
+    orderBy: { createdAt: "asc" },
+  });
+  if (existante) {
+    await tx.depenseLigne.update({
+      where: { id: existante.id },
+      data: { montant: Math.round((Number(existante.montant) + montant) * 100) / 100 },
+    });
+  } else {
+    await tx.depenseLigne.create({
+      data: { retourCaisseId: retourId, montant, objet: "Dépenses non détaillées", date, justification: "SANS_PIECE", commentaire },
+    });
+  }
+}
+
+/** Retire `montant` des lignes génériques du retour ; false si le "non détaillé" est insuffisant. */
+async function retirerDuNonDetaille(tx: TxClient, retourId: string, montant: number): Promise<boolean> {
+  const generiques = await tx.depenseLigne.findMany({
+    where: { retourCaisseId: retourId, objet: "Dépenses non détaillées", motifNonJustifie: null },
+    orderBy: { createdAt: "asc" },
+  });
+  const total = generiques.reduce((s, g) => s + Number(g.montant), 0);
+  if (Math.round(montant * 100) > Math.round(total * 100)) return false;
+  let aRetirer = montant;
+  for (const g of generiques) {
+    if (aRetirer <= 0) break;
+    const m = Number(g.montant);
+    if (m <= aRetirer) {
+      await tx.depenseLigne.delete({ where: { id: g.id } });
+      aRetirer = Math.round((aRetirer - m) * 100) / 100;
+    } else {
+      await tx.depenseLigne.update({ where: { id: g.id }, data: { montant: Math.round((m - aRetirer) * 100) / 100 } });
+      aRetirer = 0;
+    }
+  }
+  return true;
+}
+
+function revaliderCorrection(demandeId: string, retourId: string) {
+  revalidatePath("/treso/finance/retours");
+  revalidatePath(`/treso/finance/retours/${retourId}`);
+  revalidatePath(`/treso/demandes/${demandeId}`);
+  revalidatePath(`/treso/finance/demandes/${demandeId}`);
+  revalidatePath("/treso/finance", "layout");
+  publishDataChanged();
+}
+
+/**
+ * Correction d'un retour RÉCEPTIONNÉ signalé en erreur, sens "argent qui rentre" (voir CLAUDE.md
+ * "Correction d'un retour signalé") : le collaborateur doit rendre PLUS que ce qui a déjà été
+ * réceptionné. Déclare un retour COMPLÉMENTAIRE (nouveau RetourCaisse, réceptionné ensuite par le
+ * cycle normal, avec sa propre écriture JournalCaisse). Le retour d'origine et son écriture de caisse
+ * ne sont jamais modifiés ; seule sa ligne "non détaillé" est réduite pour garder le Solde à
+ * régulariser juste. Assistant Finance seul. Le montant est TOUJOURS recalculé côté serveur :
+ * montant proposé du signalement − montant déjà réceptionné sur le retour signalé.
+ */
+export async function declarerRetourComplementaireAction(retourId: string): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.receptionner_retour")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  const retour = await prisma.retourCaisse.findUnique({
+    where: { id: retourId },
+    include: { reglement: { include: { demande: true, retours: true } }, signalements: { where: { estResolu: false } } },
+  });
+  if (!retour) return { status: "error", message: "Retour de caisse introuvable." };
+  const signalement = retour.signalements[0];
+  if (!signalement || signalement.montantPropose == null) {
+    return { status: "error", message: "Aucun signalement actif avec un montant proposé sur ce retour." };
+  }
+  if (!retour.estReceptionne) {
+    return { status: "error", message: "Ce retour n'est pas encore réceptionné : corrigez-le directement." };
+  }
+  if (retour.reglement.mode !== "CAISSE") {
+    return { status: "error", message: "Le retour complémentaire ne s'applique qu'à un règlement Caisse." };
+  }
+  if (retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle) {
+    return { status: "error", message: "Cette demande est clôturée : aucune correction n'est possible." };
+  }
+  if (retour.reglement.retours.some((r) => !r.estReceptionne)) {
+    return { status: "error", message: "Un retour est déjà en attente de réception sur ce règlement : réceptionnez-le d'abord." };
+  }
+  const ecartCentimes = Math.round(Number(signalement.montantPropose) * 100) - Math.round(Number(retour.montantARetourner) * 100);
+  if (ecartCentimes <= 0) {
+    return { status: "error", message: "Le montant proposé n'est pas supérieur au montant déjà réceptionné : aucun retour complémentaire à déclarer." };
+  }
+  const ecart = ecartCentimes / 100;
+  const demandeId = retour.reglement.demandeId;
+
+  const ok = await prisma.$transaction(async (tx) => {
+    if (!(await retirerDuNonDetaille(tx, retourId, ecart))) return false;
+    const complement = await tx.retourCaisse.create({
+      data: {
+        reglementId: retour.reglementId,
+        declarantId: session.user.id,
+        montantARetourner: ecart,
+        creeParAssistant: true,
+        signalementOrigineId: signalement.id,
+        dateRetour: new Date(),
+      },
+    });
+    await tx.signalementRetour.update({
+      where: { id: signalement.id },
+      data: { estResolu: true, resoluParId: session.user.id, resoluAt: new Date() },
+    });
+    await tx.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "retour_complementaire_signalement",
+        detail: `Régularisation du signalement du retour de caisse (montant proposé : ${Number(signalement.montantPropose).toLocaleString("fr-FR")} FCFA, déjà réceptionné : ${Number(retour.montantARetourner).toLocaleString("fr-FR")} FCFA) : retour complémentaire de ${ecart.toLocaleString("fr-FR")} FCFA déclaré par ${session.user.fullName}, à réceptionner. Le retour d'origine reste inchangé (réf. retour complémentaire : ${complement.id}).`,
+        userId: session.user.id,
+      },
+    });
+    return true;
+  });
+  if (!ok) {
+    return {
+      status: "error",
+      message: `Le détail déjà saisi couvre trop du total dépensé : il faut libérer au moins ${ecart.toLocaleString("fr-FR")} FCFA en "non détaillé" (corrigez d'abord le détail) avant de déclarer le retour complémentaire.`,
+    };
+  }
+  revaliderCorrection(demandeId, retourId);
+  return { status: "success", message: `Retour complémentaire de ${ecart.toLocaleString("fr-FR")} FCFA déclaré — à réceptionner.` };
+}
+
+const remboursementSchema = z.object({
+  montant: z.coerce.number().positive("Le montant doit être supérieur à 0."),
+  motif: z.string().trim().min(10, "Le motif est obligatoire (10 caractères minimum)."),
+  pieceJointeUrl: z.string().trim().min(1, "Le justificatif est obligatoire."),
+});
+
+/**
+ * Sens "argent qui sort" : le collaborateur a trop rendu. L'Assistant Finance PROPOSE un
+ * remboursement (pièce jointe obligatoire) ; aucune écriture de caisse avant validation du
+ * Responsable Finance. Montant plafonné à (montant réceptionné − montant proposé du signalement).
+ */
+export async function proposerRemboursementRetourAction(
+  retourId: string,
+  montant: number,
+  motif: string,
+  pieceJointeUrl: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.receptionner_retour")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  const parsed = remboursementSchema.safeParse({ montant, motif, pieceJointeUrl });
+  if (!parsed.success) return { status: "error", message: parsed.error.issues[0].message };
+
+  const retour = await prisma.retourCaisse.findUnique({
+    where: { id: retourId },
+    include: {
+      reglement: { include: { demande: true } },
+      signalements: { where: { estResolu: false } },
+      remboursements: { where: { statut: "EN_ATTENTE_VALIDATION" } },
+    },
+  });
+  if (!retour) return { status: "error", message: "Retour de caisse introuvable." };
+  const signalement = retour.signalements[0];
+  if (!signalement || signalement.montantPropose == null) {
+    return { status: "error", message: "Aucun signalement actif avec un montant proposé sur ce retour." };
+  }
+  if (!retour.estReceptionne || retour.reglement.mode !== "CAISSE") {
+    return { status: "error", message: "Un remboursement ne s'applique qu'à un retour Caisse déjà réceptionné." };
+  }
+  if (retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle) {
+    return { status: "error", message: "Cette demande est clôturée : aucune correction n'est possible." };
+  }
+  if (retour.remboursements.length > 0) {
+    return { status: "error", message: "Un remboursement est déjà en attente de validation pour ce retour." };
+  }
+  const plafondCentimes = Math.round(Number(retour.montantARetourner) * 100) - Math.round(Number(signalement.montantPropose) * 100);
+  if (plafondCentimes <= 0) {
+    return { status: "error", message: "Le montant proposé n'est pas inférieur au montant réceptionné : aucun remboursement à proposer." };
+  }
+  if (Math.round(parsed.data.montant * 100) > plafondCentimes) {
+    return { status: "error", message: `Le remboursement ne peut pas dépasser ${(plafondCentimes / 100).toLocaleString("fr-FR")} FCFA (montant réceptionné − montant proposé).` };
+  }
+  const demandeId = retour.reglement.demandeId;
+
+  await prisma.$transaction(async (tx) => {
+    const pj = await tx.pieceJointe.create({ data: { url: parsed.data.pieceJointeUrl, demandeId } });
+    const rb = await tx.remboursementRetour.create({
+      data: {
+        retourCaisseId: retourId,
+        signalementId: signalement.id,
+        montant: parsed.data.montant,
+        motif: parsed.data.motif,
+        pieceJointeId: pj.id,
+        proposeParId: session.user.id,
+      },
+    });
+    await tx.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "remboursement_retour_propose",
+        detail: `Remboursement de ${parsed.data.montant.toLocaleString("fr-FR")} FCFA proposé par ${session.user.fullName} suite au signalement du retour de caisse (montant proposé par le collaborateur : ${Number(signalement.montantPropose).toLocaleString("fr-FR")} FCFA) — motif : ${parsed.data.motif}. En attente de validation du Responsable Finance (réf. ${rb.id}).`,
+        userId: session.user.id,
+      },
+    });
+  });
+  revaliderCorrection(demandeId, retourId);
+  return { status: "success", message: "Remboursement proposé — en attente de validation du Responsable Finance." };
+}
+
+function estResponsable(session: NonNullable<Awaited<ReturnType<typeof getSession>>>) {
+  return hasPermission(session, "treso.valider_demande") && !hasPermission(session, "treso.approuver_validation_complete");
+}
+
+/** Validation (Responsable Finance) : SORTIE de caisse, dépense du retour d'origine relevée du même montant. */
+export async function validerRemboursementRetourAction(remboursementId: string): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !estResponsable(session)) return { status: "error", message: "Action non autorisée." };
+
+  const rb = await prisma.remboursementRetour.findUnique({
+    where: { id: remboursementId },
+    include: { retourCaisse: { include: { reglement: { include: { demande: true } } } } },
+  });
+  if (!rb) return { status: "error", message: "Remboursement introuvable." };
+  if (rb.statut !== "EN_ATTENTE_VALIDATION") return { status: "error", message: "Ce remboursement a déjà été traité." };
+  if (rb.proposeParId === session.user.id) {
+    return { status: "error", message: "Séparation des tâches : vous ne pouvez pas valider votre propre proposition." };
+  }
+  const montant = Number(rb.montant);
+  const solde = await getSoldeCaisse();
+  if (Math.round(montant * 100) > Math.round(solde * 100)) {
+    return {
+      status: "error",
+      message: `Solde de caisse insuffisant : ${solde.toLocaleString("fr-FR")} FCFA disponibles pour un remboursement de ${montant.toLocaleString("fr-FR")} FCFA — réalimentez la caisse avant de valider.`,
+    };
+  }
+  const demande = rb.retourCaisse.reglement.demande;
+  const maintenant = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.remboursementRetour.update({
+      where: { id: remboursementId },
+      data: { statut: "VALIDE", valideParId: session.user.id, valideAt: maintenant },
+    });
+    await tx.journalCaisse.create({
+      data: {
+        type: "SORTIE",
+        montant,
+        source: "remboursement_retour",
+        refId: remboursementId,
+        demandeId: demande.id,
+        userId: session.user.id,
+      },
+    });
+    await ajouterAuNonDetaille(
+      tx,
+      rb.retourCaisseId,
+      montant,
+      rb.retourCaisse.dateRetour ?? rb.retourCaisse.createdAt,
+      "Dépense complémentaire constatée suite au signalement du collaborateur (remboursement validé)."
+    );
+    await tx.signalementRetour.update({
+      where: { id: rb.signalementId },
+      data: { estResolu: true, resoluParId: session.user.id, resoluAt: maintenant },
+    });
+    await tx.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demande.id,
+        action: "remboursement_retour_valide",
+        detail: `Remboursement de ${montant.toLocaleString("fr-FR")} FCFA validé par ${session.user.fullName} (sortie de caisse) en réponse au signalement du retour de caisse ; le retour d'origine et son écriture restent inchangés (réf. ${remboursementId}).`,
+        userId: session.user.id,
+      },
+    });
+  });
+  revaliderCorrection(demande.id, rb.retourCaisseId);
+  await notify({
+    userId: demande.createurId,
+    titre: "Remboursement de caisse validé",
+    message: `Un remboursement de ${montant.toLocaleString("fr-FR")} FCFA vous est accordé le ${maintenant.toLocaleDateString("fr-FR")} sur votre demande ${demande.reference}.`,
+    lien: `/treso/demandes/${demande.id}`,
+    priority: "IMPORTANT",
+    category: "TRESORERIE",
+  });
+  return { status: "success", message: "Remboursement validé — sortie de caisse enregistrée." };
+}
+
+/** Rejet (Responsable Finance), motif obligatoire ; le signalement reste actif, l'Assistant peut re-proposer. */
+export async function rejeterRemboursementRetourAction(remboursementId: string, motifRejet: string): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !estResponsable(session)) return { status: "error", message: "Action non autorisée." };
+  const parsedMotif = z.string().trim().min(3, "Le motif de rejet est obligatoire (3 caractères minimum).").safeParse(motifRejet);
+  if (!parsedMotif.success) return { status: "error", message: parsedMotif.error.issues[0].message };
+
+  const rb = await prisma.remboursementRetour.findUnique({
+    where: { id: remboursementId },
+    include: { retourCaisse: { include: { reglement: true } } },
+  });
+  if (!rb) return { status: "error", message: "Remboursement introuvable." };
+  if (rb.statut !== "EN_ATTENTE_VALIDATION") return { status: "error", message: "Ce remboursement a déjà été traité." };
+  if (rb.proposeParId === session.user.id) {
+    return { status: "error", message: "Séparation des tâches : vous ne pouvez pas traiter votre propre proposition." };
+  }
+  const demandeId = rb.retourCaisse.reglement.demandeId;
+  await prisma.$transaction([
+    prisma.remboursementRetour.update({
+      where: { id: remboursementId },
+      data: { statut: "REJETE", valideParId: session.user.id, valideAt: new Date(), motifRejet: parsedMotif.data },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "remboursement_retour_rejete",
+        detail: `Remboursement de ${Number(rb.montant).toLocaleString("fr-FR")} FCFA rejeté par ${session.user.fullName} — motif : ${parsedMotif.data}.`,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+  revaliderCorrection(demandeId, rb.retourCaisseId);
+  return { status: "success", message: "Remboursement rejeté." };
 }

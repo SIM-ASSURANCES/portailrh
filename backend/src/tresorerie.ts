@@ -660,6 +660,14 @@ export async function getSoldesARegulariserParReglements(
   for (const r of reglements) {
     soldes.set(r.id, Number(r.montant));
   }
+  const rembourses = await prisma.remboursementRetour.findMany({
+    where: { statut: "VALIDE", retourCaisse: { reglementId: { in: reglementIds } } },
+    select: { montant: true, retourCaisse: { select: { reglementId: true } } },
+  });
+  for (const rb of rembourses) {
+    const id = rb.retourCaisse.reglementId;
+    soldes.set(id, (soldes.get(id) ?? 0) + Number(rb.montant));
+  }
   for (const retour of retours) {
     const depensesDeclarees = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
     const retourRecu = retour.estReceptionne ? Number(retour.montantARetourner) : 0;
@@ -676,7 +684,7 @@ export async function getSoldesARegulariserParReglements(
  * déclaré mais pas encore traité par Finance.
  */
 export async function getRetoursRecus(demandeId: string): Promise<number> {
-  const [result, exceptionnels] = await Promise.all([
+  const [result, exceptionnels, rembourses] = await Promise.all([
     prisma.retourCaisse.aggregate({
       where: { reglement: { demandeId }, estReceptionne: true },
       _sum: { montantARetourner: true },
@@ -688,8 +696,18 @@ export async function getRetoursRecus(demandeId: string): Promise<number> {
       where: { demandeId, statut: "VALIDE" },
       _sum: { montant: true },
     }),
+    // Remboursements VALIDÉS (sortie de caisse vers un collaborateur qui avait trop rendu,
+    // voir CLAUDE.md "Correction d'un retour signalé") : viennent en déduction des retours reçus.
+    prisma.remboursementRetour.aggregate({
+      where: { statut: "VALIDE", retourCaisse: { reglement: { demandeId } } },
+      _sum: { montant: true },
+    }),
   ]);
-  return Number(result._sum.montantARetourner ?? 0) + Number(exceptionnels._sum.montant ?? 0);
+  return (
+    Number(result._sum.montantARetourner ?? 0) +
+    Number(exceptionnels._sum.montant ?? 0) -
+    Number(rembourses._sum.montant ?? 0)
+  );
 }
 
 /**
@@ -991,6 +1009,14 @@ export async function getMesDemandesDetail(userId: string): Promise<MaDemandeDet
   for (const ret of retours) {
     const dId = ret.reglement.demandeId;
     retoursParDemande.set(dId, (retoursParDemande.get(dId) ?? 0) + Number(ret.montantARetourner ?? 0));
+  }
+  const rembourses = await prisma.remboursementRetour.findMany({
+    where: { statut: "VALIDE", retourCaisse: { reglement: { demandeId: { in: ids } } } },
+    select: { montant: true, retourCaisse: { select: { reglement: { select: { demandeId: true } } } } },
+  });
+  for (const rb of rembourses) {
+    const dId = rb.retourCaisse.reglement.demandeId;
+    retoursParDemande.set(dId, (retoursParDemande.get(dId) ?? 0) - Number(rb.montant));
   }
 
   const depensesParDemande = new Map<string, number>();

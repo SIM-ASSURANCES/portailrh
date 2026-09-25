@@ -446,6 +446,14 @@ async function getFondsRemisParDemande(demandeIds: string[]): Promise<Map<string
     const entry = map.get(r.reglement.demandeId);
     if (entry) entry.retoursRecus += Number(r.montantARetourner);
   }
+  const rembourses = await prisma.remboursementRetour.findMany({
+    where: { statut: "VALIDE", retourCaisse: { reglement: { demandeId: { in: demandeIds } } } },
+    select: { montant: true, retourCaisse: { select: { reglement: { select: { demandeId: true } } } } },
+  });
+  for (const rb of rembourses) {
+    const entry = map.get(rb.retourCaisse.reglement.demandeId);
+    if (entry) entry.retoursRecus -= Number(rb.montant);
+  }
   // Retours exceptionnels post-clôture VALIDÉS : comptés comme retours reçus
   // (jamais ceux en attente/rejetés) — voir CLAUDE.md.
   const exceptionnels = await prisma.retourExceptionnel.findMany({
@@ -1002,6 +1010,81 @@ export async function getReportingRetoursDetail(filters: ReportingFilters): Prom
     estReceptionne: r.estReceptionne,
     declareLe: r.createdAt,
   }));
+}
+
+export interface ReportingComplementRemboursementDetail {
+  demandeReference: string;
+  retourOrigineRef: string;
+  signalementRef: string;
+  type: "Complément" | "Remboursement";
+  statut: string;
+  montant: number;
+  motif: string;
+  proposantNom: string;
+  validateurNom: string | null;
+  dateProposition: Date;
+  dateValidation: Date | null;
+  pieceId: string | null;
+}
+
+/**
+ * Feuille "Compléments et remboursements" (voir CLAUDE.md "Correction d'un retour signalé") :
+ * retours complémentaires (entrée de caisse) et remboursements (sortie de caisse) rattachés à un
+ * signalement, pour les demandes filtrées. Distincte de "Retours externes" (aucun lien à une demande).
+ */
+export async function getReportingComplementsRemboursementsDetail(
+  filters: ReportingFilters
+): Promise<ReportingComplementRemboursementDetail[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const demandeIds = demandes.map((d) => d.id);
+  if (demandeIds.length === 0) return [];
+  const referenceParDemande = new Map(demandes.map((d) => [d.id, d.reference]));
+
+  const [complements, remboursements] = await Promise.all([
+    prisma.retourCaisse.findMany({
+      where: { signalementOrigineId: { not: null }, reglement: { demandeId: { in: demandeIds } } },
+      include: { reglement: { select: { demandeId: true } }, declarant: { select: { fullName: true } }, receptionnePar: { select: { fullName: true } }, signalementOrigine: { include: { retourCaisse: { select: { id: true } } } } },
+    }),
+    prisma.remboursementRetour.findMany({
+      where: { retourCaisse: { reglement: { demandeId: { in: demandeIds } } } },
+      include: { retourCaisse: { select: { id: true, reglement: { select: { demandeId: true } } } }, proposePar: { select: { fullName: true } }, validePar: { select: { fullName: true } } },
+    }),
+  ]);
+
+  const lignes: ReportingComplementRemboursementDetail[] = [];
+  for (const c of complements) {
+    lignes.push({
+      demandeReference: referenceParDemande.get(c.reglement.demandeId) ?? "—",
+      retourOrigineRef: c.signalementOrigine?.retourCaisse.id ?? "—",
+      signalementRef: c.signalementOrigineId ?? "—",
+      type: "Complément",
+      statut: c.estReceptionne ? "Réceptionné" : "En attente de réception",
+      montant: Number(c.montantARetourner),
+      motif: c.signalementOrigine?.commentaire ?? "—",
+      proposantNom: c.declarant.fullName,
+      validateurNom: null,
+      dateProposition: c.createdAt,
+      dateValidation: null,
+      pieceId: null,
+    });
+  }
+  for (const r of remboursements) {
+    lignes.push({
+      demandeReference: referenceParDemande.get(r.retourCaisse.reglement.demandeId) ?? "—",
+      retourOrigineRef: r.retourCaisse.id,
+      signalementRef: r.signalementId,
+      type: "Remboursement",
+      statut: r.statut === "VALIDE" ? "Validé" : r.statut === "REJETE" ? "Rejeté" : "En attente de validation",
+      montant: Number(r.montant),
+      motif: r.motif,
+      proposantNom: r.proposePar.fullName,
+      validateurNom: r.validePar?.fullName ?? null,
+      dateProposition: r.proposeAt,
+      dateValidation: r.valideAt,
+      pieceId: r.pieceJointeId,
+    });
+  }
+  return lignes.sort((a, b) => a.dateProposition.getTime() - b.dateProposition.getTime());
 }
 
 export interface ReportingRetourExterneDetail {

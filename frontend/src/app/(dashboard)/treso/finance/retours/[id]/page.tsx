@@ -8,6 +8,7 @@ import { prisma } from "backend";
 import { DetaillerDepensesForm } from "./DetaillerDepensesForm";
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
 import { ReceptionnerAction } from "./ReceptionnerAction";
+import { RegularisationSignalement, RemboursementDecision } from "./RegularisationSignalement";
 import type { LigneDetailInput } from "../retourActions";
 
 /**
@@ -51,6 +52,10 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
       reglement: { include: { demande: true } },
       depenses: { include: { pieceJointe: true, motifNonJustifiePar: true }, orderBy: { date: "asc" } },
       signalements: { where: { estResolu: false }, include: { signalePar: true } },
+      remboursements: {
+        include: { proposePar: true, validePar: true, pieceJointe: { select: { id: true } } },
+        orderBy: { proposeAt: "asc" },
+      },
     },
   });
 
@@ -111,6 +116,25 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
             {signalementActif.signaleAt.toLocaleDateString("fr-FR")} :
           </p>
           <p>{signalementActif.commentaire}</p>
+          {signalementActif.montantPropose != null ? (
+            <p className="text-base font-bold">
+              Montant du retour proposé par le collaborateur : {Number(signalementActif.montantPropose).toLocaleString("fr-FR")} FCFA
+              <span className="ml-2 text-xs font-normal">
+                (réceptionné : {Number(retour.montantARetourner).toLocaleString("fr-FR")} FCFA — information déclarative, rien n&apos;est appliqué automatiquement)
+              </span>
+            </p>
+          ) : null}
+          {retour.estReceptionne && signalementActif.montantPropose != null ? (
+            <div className="pt-2">
+              <RegularisationSignalement
+                retourId={retour.id}
+                montantRecu={Number(retour.montantARetourner)}
+                montantPropose={Number(signalementActif.montantPropose)}
+                peutAgir={canReceptionner}
+                remboursementEnAttente={retour.remboursements.some((r) => r.statut === "EN_ATTENTE_VALIDATION")}
+              />
+            </div>
+          ) : null}
           <p className="text-xs">
             Ce signalement débloque exceptionnellement la correction du détail ci-dessous — il sera marqué résolu
             automatiquement dès l&apos;enregistrement de la correction.
@@ -123,9 +147,44 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
         </div>
       ) : null}
 
+      {retour.remboursements.length > 0 ? (
+        <div className="space-y-3 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Remboursements liés à ce retour (sortie de caisse)
+          </h2>
+          <ul className="space-y-3">
+            {retour.remboursements.map((r) => (
+              <li key={r.id} className="space-y-1.5 rounded-lg border border-border p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-foreground">{Number(r.montant).toLocaleString("fr-FR")} FCFA</span>
+                  <Badge variant={r.statut === "VALIDE" ? "success" : r.statut === "REJETE" ? "danger" : "warning"}>
+                    {r.statut === "VALIDE" ? "Validé" : r.statut === "REJETE" ? "Rejeté" : "En attente de validation"}
+                  </Badge>
+                </div>
+                <p className="text-foreground">{r.motif}</p>
+                <p className="text-xs text-muted-foreground">
+                  Proposé par {r.proposePar.fullName} le {r.proposeAt.toLocaleDateString("fr-FR")}
+                  {r.validePar && r.valideAt
+                    ? ` — ${r.statut === "VALIDE" ? "validé" : "rejeté"} par ${r.validePar.fullName} le ${r.valideAt.toLocaleDateString("fr-FR")}`
+                    : ""}
+                </p>
+                {r.motifRejet ? <p className="text-xs text-danger">Motif du rejet : {r.motifRejet}</p> : null}
+                <a href={`/api/treso/pieces-jointes/${r.pieceJointe.id}`} className="inline-block text-xs text-info underline-offset-4 hover:text-primary hover:underline">
+                  Télécharger le justificatif
+                </a>
+                {r.statut === "EN_ATTENTE_VALIDATION" && canAjusterTotal && r.proposeParId !== session!.user.id ? (
+                  <RemboursementDecision remboursementId={r.id} />
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       <div className="space-y-4 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
+            {retour.signalementOrigineId ? <Badge variant="info">Retour complémentaire (suite à un signalement)</Badge> : null}
             <Badge variant={retour.estReceptionne ? "success" : "warning"}>
               {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
             </Badge>

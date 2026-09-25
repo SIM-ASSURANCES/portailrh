@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Textarea } from "@/components/ui";
+import { Button, Input, Textarea } from "@/components/ui";
 
 import { signalerErreurRetourAction } from "./retourActions";
 
@@ -28,6 +28,7 @@ export function SignalerErreurRetour({
 }) {
   const [ouvert, setOuvert] = useState(false);
   const [commentaire, setCommentaire] = useState("");
+  const [montantPropose, setMontantPropose] = useState("");
   const [isPending, startTransition] = useTransition();
 
   if (signalementActifCommentaire) {
@@ -52,11 +53,16 @@ export function SignalerErreurRetour({
 
   function handleEnvoyer() {
     startTransition(async () => {
-      const result = await signalerErreurRetourAction(retourId, commentaire);
+      const result = await signalerErreurRetourAction(
+        retourId,
+        commentaire,
+        montantPropose.trim() ? Number(montantPropose) : undefined
+      );
       if (result.status === "success") {
         toast.success(result.message);
         setOuvert(false);
         setCommentaire("");
+        setMontantPropose("");
       } else {
         toast.error(result.message);
       }
@@ -71,6 +77,14 @@ export function SignalerErreurRetour({
         rows={2}
         value={commentaire}
         onChange={(e) => setCommentaire(e.target.value)}
+      />
+      <Input
+        label="Montant du retour selon vous (FCFA, facultatif)"
+        type="number"
+        min="0"
+        hint="Le montant total que vous auriez dû retourner. Indicatif : l'équipe Finance l'utilise pour proposer la régularisation."
+        value={montantPropose}
+        onChange={(e) => setMontantPropose(e.target.value)}
       />
       <div className="flex flex-wrap gap-2">
         <Button type="button" loading={isPending} onClick={handleEnvoyer}>

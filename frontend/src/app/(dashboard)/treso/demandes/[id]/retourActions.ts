@@ -402,7 +402,11 @@ const signalementCommentaireSchema = z
  * modifie JAMAIS elle-même le détail : elle ne fait que tracer le
  * signalement et notifier l'Assistant.
  */
-export async function signalerErreurRetourAction(retourId: string, commentaire: string): Promise<SimpleActionResult> {
+export async function signalerErreurRetourAction(
+  retourId: string,
+  commentaire: string,
+  montantPropose?: number
+): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.declarer_retour")) {
     return { status: "error", message: "Action non autorisée." };
@@ -411,6 +415,11 @@ export async function signalerErreurRetourAction(retourId: string, commentaire: 
   const parsedCommentaire = signalementCommentaireSchema.safeParse(commentaire);
   if (!parsedCommentaire.success) {
     return { status: "error", message: parsedCommentaire.error.issues[0].message };
+  }
+
+  // Montant proposé : INFORMATIF (ne déclenche jamais rien automatiquement), strictement positif si fourni.
+  if (montantPropose != null && (!Number.isFinite(montantPropose) || montantPropose <= 0)) {
+    return { status: "error", message: "Le montant proposé doit être supérieur à 0." };
   }
 
   const retour = await prisma.retourCaisse.findUnique({
@@ -441,6 +450,7 @@ export async function signalerErreurRetourAction(retourId: string, commentaire: 
         retourCaisseId: retourId,
         commentaire: parsedCommentaire.data,
         signaleParId: session.user.id,
+        montantPropose: montantPropose ?? null,
       },
     });
     await tx.historiqueEntry.create({
@@ -448,7 +458,9 @@ export async function signalerErreurRetourAction(retourId: string, commentaire: 
         entity: "Demande",
         entityId: demandeId,
         action: "signalement_retour",
-        detail: `Erreur signalée par le collaborateur sur le détail d'un retour de caisse : ${parsedCommentaire.data}`,
+        detail: `Erreur signalée par le collaborateur sur le détail d'un retour de caisse : ${parsedCommentaire.data}${
+          montantPropose != null ? ` (montant du retour proposé par le collaborateur : ${montantPropose.toLocaleString("fr-FR")} FCFA)` : ""
+        }`,
         userId: session.user.id,
       },
     });

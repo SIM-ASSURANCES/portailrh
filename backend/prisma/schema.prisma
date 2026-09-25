@@ -72,6 +72,8 @@ model User {
   retoursExceptionnelsSaisis    RetourExceptionnel[] @relation("RetourExceptionnelSaisiPar")
   retoursExternesCollaborateur  RetourExterne[]      @relation("RetourExterneCollaborateur")
   retoursExternesCrees          RetourExterne[]      @relation("RetourExterneCreePar")
+  remboursementsRetourProposes  RemboursementRetour[] @relation("RemboursementRetourProposePar")
+  remboursementsRetourValides   RemboursementRetour[] @relation("RemboursementRetourValidePar")
   retoursExceptionnelsValides   RetourExceptionnel[] @relation("RetourExceptionnelValidePar")
   mouvementsBanqueCrees         JournalBanque[] @relation("JournalBanqueCreePar")
   historique                    HistoriqueEntry[]
@@ -588,6 +590,7 @@ model PieceJointe {
   journalBanque        JournalBanque?
   retourExterne        RetourExterne? @relation("RetourExternePieceRetour")
   retourExterneCheque  RetourExterne? @relation("RetourExternePieceCheque")
+  remboursementRetour  RemboursementRetour?
   retourExceptionnelId String?             @unique
   retourExceptionnel   RetourExceptionnel? @relation(fields: [retourExceptionnelId], references: [id], onDelete: SetNull)
   createdAt       DateTime       @default(now())
@@ -795,6 +798,12 @@ model RetourCaisse {
   /// `RetourCaisse` lui-même) : un même retour peut être signalé plusieurs
   /// fois au fil du temps (signalé, corrigé, signalé à nouveau...).
   signalements SignalementRetour[]
+  /// Remboursements (sortie de caisse) proposés suite à un signalement sur CE retour.
+  remboursements RemboursementRetour[]
+  /// Retour COMPLÉMENTAIRE déclaré en réponse à un signalement (voir CLAUDE.md
+  /// "Correction d'un retour signalé") : lien explicite, jamais une fusion.
+  signalementOrigineId String?
+  signalementOrigine   SignalementRetour? @relation("RetourComplementaire", fields: [signalementOrigineId], references: [id])
   /// Mouvement banque `RETOUR` (règlement Banque uniquement).
   mouvementsBanque JournalBanque[]
 
@@ -841,6 +850,45 @@ model SignalementRetour {
   resoluParId String?
   resoluPar   User?     @relation("SignalementRetourResoluPar", fields: [resoluParId], references: [id])
   resoluAt    DateTime?
+
+  /// Montant total du retour selon le collaborateur — INFORMATIF, ne déclenche rien.
+  montantPropose Decimal? @db.Decimal(14, 2)
+
+  retoursComplementaires RetourCaisse[]       @relation("RetourComplementaire")
+  remboursements         RemboursementRetour[]
+}
+
+enum StatutRemboursementRetour {
+  EN_ATTENTE_VALIDATION
+  VALIDE
+  REJETE
+}
+
+/// Remboursement (SORTIE de caisse) au collaborateur qui a trop rendu, suite à un
+/// signalement sur un retour déjà réceptionné. Proposé par l'Assistant Finance,
+/// validé par le Responsable Finance ; écriture JournalCaisse SORTIE à la validation
+/// uniquement. Le retour original n'est jamais modifié dans son écriture de caisse.
+model RemboursementRetour {
+  id             String                   @id @default(cuid())
+  retourCaisseId String
+  retourCaisse   RetourCaisse             @relation(fields: [retourCaisseId], references: [id])
+  signalementId  String
+  signalement    SignalementRetour        @relation(fields: [signalementId], references: [id])
+  montant        Decimal                  @db.Decimal(14, 2)
+  motif          String
+  pieceJointeId  String                   @unique
+  pieceJointe    PieceJointe              @relation(fields: [pieceJointeId], references: [id])
+  statut         StatutRemboursementRetour @default(EN_ATTENTE_VALIDATION)
+  proposeParId   String
+  proposePar     User                     @relation("RemboursementRetourProposePar", fields: [proposeParId], references: [id])
+  proposeAt      DateTime                 @default(now())
+  valideParId    String?
+  validePar      User?                    @relation("RemboursementRetourValidePar", fields: [valideParId], references: [id])
+  valideAt       DateTime?
+  motifRejet     String?
+
+  @@index([retourCaisseId])
+  @@index([statut])
 }
 
 /// Une ligne de dépense détaillée d'un `RetourCaisse` (cahier des charges
