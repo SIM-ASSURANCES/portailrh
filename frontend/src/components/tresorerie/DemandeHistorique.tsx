@@ -47,6 +47,7 @@ const ACTION_LABELS: Record<string, string> = {
   retour_exceptionnel_saisie: "Retour exceptionnel post-clôture saisi (en attente de validation)",
   retour_exceptionnel_rejete: "Retour exceptionnel post-clôture rejeté",
   retour_exceptionnel_post_cloture: "Retour exceptionnel post-clôture validé",
+  justification_apres_reception: "Dépense justifiée après réception du retour (pièce jointe ajoutée)",
   retour_complementaire_signalement: "Retour complémentaire déclaré suite au signalement",
   remboursement_retour_propose: "Remboursement proposé suite au signalement (en attente de validation)",
   remboursement_retour_valide: "Remboursement validé (sortie de caisse)",

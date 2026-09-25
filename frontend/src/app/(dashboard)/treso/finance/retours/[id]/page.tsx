@@ -8,6 +8,7 @@ import { getCouvertureRetoursPostCloture, prisma } from "backend";
 
 import { DetaillerDepensesForm } from "./DetaillerDepensesForm";
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
+import { JustifierApresReception } from "./JustifierApresReception";
 import { ReceptionnerAction } from "./ReceptionnerAction";
 import { RegularisationSignalement, RemboursementDecision } from "./RegularisationSignalement";
 import type { LigneDetailInput } from "../retourActions";
@@ -304,6 +305,9 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
                     <p className="text-xs text-warning">
                       Motif{d.motifNonJustifiePar ? ` (${d.motifNonJustifiePar.fullName})` : ""} : {d.motifNonJustifie}
                     </p>
+                  ) : null}
+                  {canReceptionner && retour.estReceptionne && !cloturéeSansException && d.justification === "SANS_PIECE" && d.motifNonJustifie ? (
+                    <JustifierApresReception depenseLigneId={d.id} />
                   ) : null}
                 </li>
               ))}

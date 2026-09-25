@@ -1149,3 +1149,57 @@ export async function rejeterRemboursementRetourAction(remboursementId: string, 
   revaliderCorrection(demandeId, rb.retourCaisseId);
   return { status: "success", message: "Remboursement rejeté." };
 }
+
+/**
+ * Justifie APRÈS COUP une "dépense sans pièce formelle" d'un retour (typiquement déjà réceptionné) :
+ * l'Assistant Finance joint la pièce, la ligne passe à "Dépense justifiée". Le montant, le retour et
+ * l'écriture de caisse ne changent pas ; seul le statut de justification (donc les totaux "sans pièce
+ * formelle" et le suivi des dépenses non justifiées) évolue. Historisé avec l'ancien motif.
+ */
+export async function justifierDepenseApresReceptionAction(
+  depenseLigneId: string,
+  pieceJointeUrl: string
+): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.receptionner_retour")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  const parsedUrl = z.string().trim().min(1, "La pièce jointe est obligatoire pour justifier la dépense.").safeParse(pieceJointeUrl);
+  if (!parsedUrl.success) return { status: "error", message: parsedUrl.error.issues[0].message };
+
+  const ligne = await prisma.depenseLigne.findUnique({
+    where: { id: depenseLigneId },
+    include: { pieceJointe: true, retourCaisse: { include: { reglement: { include: { demande: true } } } } },
+  });
+  if (!ligne) return { status: "error", message: "Ligne de dépense introuvable." };
+  if (ligne.justification !== "SANS_PIECE" || !ligne.motifNonJustifie) {
+    return { status: "error", message: "Seule une dépense sans pièce formelle peut être justifiée après coup." };
+  }
+  if (ligne.pieceJointe) {
+    return { status: "error", message: "Cette ligne possède déjà une pièce jointe." };
+  }
+  const retour = ligne.retourCaisse;
+  const demande = retour.reglement.demande;
+  if (demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle) {
+    return { status: "error", message: "Cette demande est clôturée : la justification n'est plus modifiable." };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.pieceJointe.create({ data: { url: parsedUrl.data, demandeId: demande.id, depenseLigneId } });
+    await tx.depenseLigne.update({
+      where: { id: depenseLigneId },
+      data: { justification: "FACTURE", motifNonJustifie: null, motifNonJustifieParId: null, motifNonJustifieAt: null },
+    });
+    await tx.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demande.id,
+        action: "justification_apres_reception",
+        detail: `Dépense « ${ligne.objet} » (${Number(ligne.montant).toLocaleString("fr-FR")} FCFA) justifiée après coup par ${session.user.fullName} : pièce jointe ajoutée (ancien motif « sans pièce formelle » : ${ligne.motifNonJustifie}). Retour ${retour.estReceptionne ? "déjà réceptionné" : "non réceptionné"} ; montant et écriture de caisse inchangés.`,
+        userId: session.user.id,
+      },
+    });
+  });
+  revaliderCorrection(demande.id, retour.id);
+  return { status: "success", message: "Dépense justifiée : pièce jointe ajoutée." };
+}
