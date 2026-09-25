@@ -1347,6 +1347,116 @@ créées via le vrai formulaire (Server Action `creerDemandeAction`).
 - `tsc --noEmit` et un vrai `next build` passent sans erreur après
   nettoyage.
 
+### Retours hors flux normal : Banque, externe, post-clôture, correction d'un retour signalé
+
+Quatre mécanismes distincts, volontairement séparés dans le code (modèles, actions, écrans,
+reporting) malgré leur ressemblance de surface. Garde « Responsable Finance » utilisée partout
+ci-dessous : `treso.valider_demande` ET PAS `treso.approuver_validation_complete` (exclut le DG,
+qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionner_retour`.
+
+#### Retour sur règlement Banque (`JournalBanque`)
+
+- Un retour est possible sur un règlement `BANQUE` (avant : refusé). Modélisé comme un **versement
+  bancaire justifié** : **bordereau de versement (pièce jointe) OBLIGATOIRE** et montant > 0, côté
+  Collaborateur (`creerRetourCaisseAction(reglementId, montant, date, bordereauUrl)`) comme côté
+  Assistant (`declarerRetourAssistantAction(..., bordereauUrl, montantRetourneBanque)`, plafonné au restant).
+- **Aucun solde banque** : ni `getSoldeBanque()`, ni contrôle de disponibilité, ni rapprochement.
+  `JournalBanque` est une table de **traçabilité** : `SORTIE` à la confirmation d'un règlement
+  Banque, `ANNULATION` à son annulation, `RETOUR` à la déclaration du retour (avec `pieceJointeId`).
+- La réception d'un retour Banque **n'écrit jamais dans `JournalCaisse`** (le flux Caisse et son
+  contrôle de solde restent intacts). `modifierRetourCaisseAction` est refusée pour un retour Banque
+  (grand livre en ajout seul, retour appuyé par un bordereau).
+- « Fonds remis à régulariser » et les indicateurs du dashboard restent **Caisse uniquement** ; la
+  Banque apparaît dans « Réglé Banque » et les feuilles Excel « Retours de caisse » (colonne
+  « Mode du règlement ») et « Mouvements banque ».
+
+#### Retour externe (hors demande) — `RetourExterne`
+
+- Argent revenu en caisse suite à un règlement fait hors système (ex. chèque). **Totalement
+  autonome** : aucun lien avec `Demande`/`Reglement`/`RetourCaisse`/`RetourExceptionnel` — ne jamais
+  le rattacher ni le compter dans les calculs de ces objets.
+- `creerRetourExterneAction` : **Responsable Finance seul**, effet immédiat et définitif (pas de
+  double validation). Personne = `collaborateurId` **XOR** `nomExterne` (jamais les deux ni aucun,
+  contrainte applicative). Montant du chèque initial = **information déclarative non vérifiée**.
+  **Deux pièces jointes obligatoires et distinctes** : `pieceJointeChequeId` (chèque initial ;
+  nullable en base uniquement pour les lignes antérieures à son ajout) et `pieceJointeId` (retour).
+- Écrit une `ENTREE` `JournalCaisse` (`source: "retour_externe"`) + `HistoriqueEntry`
+  (`entity: "RetourExterne"`, `action: "retour_externe"`) : `getSoldeCaisse()` n'a pas eu besoin de changer.
+- Écran `/treso/finance/retours-externes` (formulaire + historique), entrée « Retour externe » dans
+  la sidebar et section du dashboard Finance, Responsable seulement. Excel : feuille « Retours
+  externes » (filtre de période seul), libellé « Retour externe (hors système) » dans « Journal de caisse ».
+
+#### Retour exceptionnel post-clôture — `RetourExceptionnel`
+
+- Argent rendu après la clôture d'une demande (`CLOTUREE`). **Saisie par l'Assistant Finance
+  UNIQUEMENT** (le Responsable ne voit ni ne peut utiliser la saisie), statut
+  `EN_ATTENTE_VALIDATION` : **aucune écriture de caisse à ce stade**, aucune notification.
+- **Plafond** à la saisie : `getTotalRegle − getRetoursRecus` (montant réglé moins retours déjà reçus).
+- **Validation/rejet : Responsable Finance seul** (jamais l'auteur de la saisie ; rejet = motif
+  obligatoire, l'Assistant peut resaisir). **Décision confirmée le 2026-09-25 : le Responsable Finance valide,
+  pas le DG** ; la spec citait la permission du DG (`treso.approuver_validation_complete`) par confusion de nom
+  (rôle vs nom de permission).
+- À la validation : `ENTREE` `JournalCaisse` (`source: "retour_exceptionnel_post_cloture"`), notification
+  du collaborateur (montant + date), historique dédié. **Priorité de couverture** : la part du montant qui
+  **couvre le solde à régulariser encore ouvert** (`ecart = réglé − dépenses − retours reçus`, plafonné à 0)
+  ne réduit **aucune** dépense ; seul l'**excédent** réduit les dépenses — d'abord les « dépenses sans
+  pièce formelle » (motif Finance renseigné), puis « Dépenses non détaillées », **jamais les dépenses
+  justifiées**. Un résidu non imputable est signalé (message + historique) et laisse le solde négatif
+  (signal d'anomalie, jamais plafonné).
+- **Non rétroactif** : les retours exceptionnels validés avant cette règle ne sont pas recalculés.
+- Reporting « Régularisations » : la période s'applique à la **date de validation** (`valideAt`), pas à la
+  date de création de la demande.
+- **Affichage « À retourner »** (Collaborateur ET Finance, source unique) : `getCouvertureRetoursPostCloture`
+  impute les retours exceptionnels validés sur les retours **non réceptionnés** (plus ancien d'abord) ;
+  `etatRetourAffiche` (`lib/retourAffichage.ts`) en déduit « Retourné à la compta » (réceptionné),
+  « Retourné » (couvert par un retour post-clôture — autre sens, ne pas confondre) ou le solde restant.
+  Ne jamais dupliquer cette logique dans un écran.
+
+#### Correction d'un retour réceptionné signalé en erreur
+
+Principe : **on ne modifie jamais une écriture déjà passée** ; toute correction post-réception est une
+nouvelle écriture qui référence le retour d'origine et le signalement.
+- `SignalementRetour.montantPropose` (facultatif, **informatif**, ne déclenche rien) saisi par le
+  Collaborateur avec son commentaire (≥ 10 caractères).
+- **Montant proposé > réceptionné** (argent qui rentre) : `declarerRetourComplementaireAction`
+  (Assistant seul) crée un `RetourCaisse` complémentaire (`signalementOrigineId`) de l'écart calculé côté
+  serveur, réceptionné ensuite par le cycle normal (écriture propre). Retire l'écart de la ligne
+  « non détaillé » du retour d'origine ; refusé s'il n'y en a pas assez (corriger d'abord le détail).
+- **Montant proposé < réceptionné** (argent qui sort) : `RemboursementRetour` — proposé par l'Assistant
+  (montant ≤ réceptionné − proposé, motif, **pièce jointe obligatoire**), **validé/rejeté par le Responsable**
+  (séparation des tâches). `SORTIE` `JournalCaisse` à la validation seulement, **refusée si solde de caisse
+  insuffisant** ; la dépense du retour d'origine est relevée du même montant (fusion dans « non détaillé »).
+- Les remboursements **validés** viennent en déduction des retours reçus (`getRetoursRecus`,
+  `getSoldesARegulariserParReglements`, `getMesDemandesDetail`, reporting « Fonds remis »).
+- Traçabilité : historique de la demande (`retour_complementaire_signalement`, `remboursement_retour_*`,
+  visibles du Collaborateur) ; Excel « Compléments et remboursements ».
+- `ajusterTotalDeclareRetourAction` : en cas de hausse, **fusionne** avec la ligne « non détaillé » existante.
+
+#### Justification après réception
+
+`justifierDepenseApresReceptionAction` (Assistant seul) : sur une « dépense sans pièce formelle », joint la
+pièce manquante, la ligne devient « Dépense justifiée » (montant, retour et écriture de caisse inchangés).
+**Refusée sur une demande `CLOTUREE`** sauf retour en réouverture exceptionnelle ; l'historique garde
+l'ancien motif. Conséquence : une ligne réduite par un retour post-clôture (demande clôturée) ne peut en
+pratique pas être justifiée ensuite.
+
+#### RÈGLE — ordre des opérations dans `getSoldesARegulariserParReglements`
+
+Le solde à régulariser est calculé **par règlement**, et une demande peut avoir **plusieurs règlements**
+(règlements partiels, fonctionnalité prévue — indicateur « Règlements partiels à compléter »). L'imputation
+des retours exceptionnels post-clôture (niveau **demande**) **doit toujours venir APRÈS la soustraction des
+dépenses et des retours reçus de chaque règlement** : d'abord sur les soldes encore positifs, du plus ancien
+au plus récent, le reliquat éventuel sur le dernier. Bug corrigé : appliquée avant, l'imputation plafonnait
+sur le montant brut du 1ᵉʳ règlement (ex. 60 000 + 40 000, retour exceptionnel de 30 000 → règlement 1 =
+−30 000 au lieu de 0, règlement 2 = 40 000 au lieu de 10 000). Ne pas remonter ce bloc avant la boucle des
+retours.
+
+#### Formulaire de détail des dépenses (`DetaillerDepensesForm`)
+
+Le bouton « Enregistrer le détail » démarre **désactivé**, s'active dès qu'une entrée est ajoutée/modifiée/
+retirée, se désactive après un enregistrement réussi (cycle répétable sans recharger) ; état de chargement,
+message de confirmation et `router.refresh()` après succès.
+
 ### Blocage du règlement Caisse si solde insuffisant
 
 **Diagnostic** : `getSoldeCaisse()` (`backend/src/tresorerie.ts`, déjà
