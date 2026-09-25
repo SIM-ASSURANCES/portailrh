@@ -34,7 +34,7 @@ export async function RetoursCaisseFinanceSection({
   canDeclarerAssistant: boolean;
 }) {
   const reglements = await prisma.reglement.findMany({
-    where: { demandeId, mode: "CAISSE", estConfirme: true, estAnnule: false },
+    where: { demandeId, estConfirme: true, estAnnule: false },
     include: { retours: { orderBy: { createdAt: "asc" } } },
     orderBy: { createdAt: "asc" },
   });
@@ -52,7 +52,7 @@ export async function RetoursCaisseFinanceSection({
           return (
             <li key={r.id} className="space-y-3 rounded-md border border-border p-3">
               <p className="text-sm font-medium text-foreground">
-                {Number(r.montant).toLocaleString("fr-FR")} FCFA — Caisse
+                {Number(r.montant).toLocaleString("fr-FR")} FCFA — {r.mode === "BANQUE" ? "Banque" : "Caisse"}
               </p>
               {r.retours.length > 0 ? (
                 <ul className="space-y-2">
@@ -80,6 +80,7 @@ export async function RetoursCaisseFinanceSection({
                   reglementId={r.id}
                   montantReglement={Number(r.montant)}
                   motifReouvertureRequis={demandeEstCloturee}
+                  modeReglement={r.mode}
                 />
               ) : null}
             </li>

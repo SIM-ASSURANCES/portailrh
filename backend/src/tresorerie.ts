@@ -89,6 +89,36 @@ export function lignesToutesDecidees(lignes: { statutValidation: string }[]): bo
 }
 
 /**
+ * Répartition du montant demandé d'une demande AVEC lignes entre "encore en
+ * attente d'une décision" et "rejeté" — corrige le bug d'affichage où
+ * `max(0, montant - montantValide)` (formule héritée de l'ANCIEN modèle par
+ * montant global, valable uniquement pour une demande SANS ligne) comptait à
+ * tort une ligne déjà `REJETEE` comme "restant à valider" (voir CLAUDE.md,
+ * bug identique à celui déjà corrigé sur `DEMANDES_EN_ATTENTE_VALIDATION_WHERE`
+ * pour DEM-2026-000009 — même cause racine : une fonction pensée pour
+ * l'ancien modèle appliquée telle quelle à une demande à lignes).
+ *
+ * `montantEnAttente` ne somme QUE les lignes `EN_ATTENTE` — vaut donc
+ * exactement 0 dès que `lignesToutesDecidees()` est vraie, jamais un residu
+ * dérivé de `montant - montantValide`. `montantRejete` somme les lignes
+ * `REJETEE`, pour ne pas perdre cette information une fois retirée du
+ * "restant à valider".
+ */
+export function getMontantsLignesParStatut(
+  lignes: { statutValidation: string; quantite: number; prixUnitaire: Prisma.Decimal | number }[]
+): { montantEnAttente: number; montantRejete: number } {
+  return lignes.reduce(
+    (acc, l) => {
+      const total = l.quantite * Number(l.prixUnitaire);
+      if (l.statutValidation === "EN_ATTENTE") acc.montantEnAttente += total;
+      else if (l.statutValidation === "REJETEE") acc.montantRejete += total;
+      return acc;
+    },
+    { montantEnAttente: 0, montantRejete: 0 }
+  );
+}
+
+/**
  * Somme des règlements confirmés et non annulés d'une demande — c'est le
  * montant qui compte réellement comme "déjà réglé" (règle impérative : un
  * règlement en brouillon ou annulé ne compte jamais).
@@ -435,7 +465,7 @@ export async function getDepenseLignesDetail(demandeId: string) {
     include: {
       pieceJointe: { select: { id: true } },
       motifNonJustifiePar: { select: { fullName: true } },
-      retourCaisse: { select: { estReceptionne: true } },
+      retourCaisse: { select: { id: true, estReceptionne: true } },
     },
     orderBy: { date: "asc" },
   });
@@ -450,6 +480,7 @@ export async function getDepenseLignesDetail(demandeId: string) {
     motifNonJustifie: l.motifNonJustifie,
     motifNonJustifiePar: l.motifNonJustifiePar?.fullName ?? null,
     retourEstReceptionne: l.retourCaisse.estReceptionne,
+    retourCaisseId: l.retourCaisse.id,
   }));
 }
 
@@ -612,7 +643,8 @@ export async function getSoldesARegulariserParReglements(
 
   const reglements = await prisma.reglement.findMany({
     where: { id: { in: reglementIds } },
-    select: { id: true, montant: true },
+    select: { id: true, montant: true, demandeId: true },
+    orderBy: { createdAt: "asc" },
   });
 
   const retours = await prisma.retourCaisse.findMany({
@@ -629,11 +661,44 @@ export async function getSoldesARegulariserParReglements(
   for (const r of reglements) {
     soldes.set(r.id, Number(r.montant));
   }
+  const rembourses = await prisma.remboursementRetour.findMany({
+    where: { statut: "VALIDE", retourCaisse: { reglementId: { in: reglementIds } } },
+    select: { montant: true, retourCaisse: { select: { reglementId: true } } },
+  });
+  for (const rb of rembourses) {
+    const id = rb.retourCaisse.reglementId;
+    soldes.set(id, (soldes.get(id) ?? 0) + Number(rb.montant));
+  }
   for (const retour of retours) {
     const depensesDeclarees = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
     const retourRecu = retour.estReceptionne ? Number(retour.montantARetourner) : 0;
     const courant = soldes.get(retour.reglementId) ?? 0;
     soldes.set(retour.reglementId, courant - depensesDeclarees - retourRecu);
+  }
+  // Retours exceptionnels post-clôture VALIDÉS (niveau demande) : imputés APRÈS la soustraction des
+  // dépenses et retours de chaque règlement, du plus ancien au plus récent, d'abord sur les soldes
+  // encore positifs ; le reliquat éventuel (dépenses déjà réduites à la validation) est déduit du
+  // dernier règlement.
+  const demandeIds = [...new Set(reglements.map((r) => r.demandeId))];
+  const exceptionnels = await prisma.retourExceptionnel.groupBy({
+    by: ["demandeId"],
+    where: { statut: "VALIDE", demandeId: { in: demandeIds } },
+    _sum: { montant: true },
+  });
+  for (const e of exceptionnels) {
+    let reste = Number(e._sum.montant ?? 0);
+    const deLaDemande = reglements.filter((r) => r.demandeId === e.demandeId);
+    for (const r of deLaDemande) {
+      if (reste <= 0) break;
+      const positif = Math.max(0, soldes.get(r.id) ?? 0);
+      const impute = Math.min(reste, positif);
+      soldes.set(r.id, (soldes.get(r.id) ?? 0) - impute);
+      reste -= impute;
+    }
+    if (reste > 0 && deLaDemande.length > 0) {
+      const dernier = deLaDemande[deLaDemande.length - 1];
+      soldes.set(dernier.id, (soldes.get(dernier.id) ?? 0) - reste);
+    }
   }
   return soldes;
 }
@@ -645,11 +710,30 @@ export async function getSoldesARegulariserParReglements(
  * déclaré mais pas encore traité par Finance.
  */
 export async function getRetoursRecus(demandeId: string): Promise<number> {
-  const result = await prisma.retourCaisse.aggregate({
-    where: { reglement: { demandeId }, estReceptionne: true },
-    _sum: { montantARetourner: true },
-  });
-  return Number(result._sum.montantARetourner ?? 0);
+  const [result, exceptionnels, rembourses] = await Promise.all([
+    prisma.retourCaisse.aggregate({
+      where: { reglement: { demandeId }, estReceptionne: true },
+      _sum: { montantARetourner: true },
+    }),
+    // Retours exceptionnels post-clôture VALIDÉS uniquement (voir CLAUDE.md
+    // "Retour de caisse exceptionnel post-clôture") : en attente ou rejetés,
+    // ils ne comptent jamais — comme pour le solde de caisse.
+    prisma.retourExceptionnel.aggregate({
+      where: { demandeId, statut: "VALIDE" },
+      _sum: { montant: true },
+    }),
+    // Remboursements VALIDÉS (sortie de caisse vers un collaborateur qui avait trop rendu,
+    // voir CLAUDE.md "Correction d'un retour signalé") : viennent en déduction des retours reçus.
+    prisma.remboursementRetour.aggregate({
+      where: { statut: "VALIDE", retourCaisse: { reglement: { demandeId } } },
+      _sum: { montant: true },
+    }),
+  ]);
+  return (
+    Number(result._sum.montantARetourner ?? 0) +
+    Number(exceptionnels._sum.montant ?? 0) -
+    Number(rembourses._sum.montant ?? 0)
+  );
 }
 
 /**
@@ -952,6 +1036,14 @@ export async function getMesDemandesDetail(userId: string): Promise<MaDemandeDet
     const dId = ret.reglement.demandeId;
     retoursParDemande.set(dId, (retoursParDemande.get(dId) ?? 0) + Number(ret.montantARetourner ?? 0));
   }
+  const rembourses = await prisma.remboursementRetour.findMany({
+    where: { statut: "VALIDE", retourCaisse: { reglement: { demandeId: { in: ids } } } },
+    select: { montant: true, retourCaisse: { select: { reglement: { select: { demandeId: true } } } } },
+  });
+  for (const rb of rembourses) {
+    const dId = rb.retourCaisse.reglement.demandeId;
+    retoursParDemande.set(dId, (retoursParDemande.get(dId) ?? 0) - Number(rb.montant));
+  }
 
   const depensesParDemande = new Map<string, number>();
   for (const dep of depenses) {
@@ -1074,11 +1166,12 @@ export async function getMesDemandesParMois(
  * cette même requête — jamais deux implémentations de la même règle.
  */
 export async function getReglementsCaisseADeclarer(userId: string): Promise<
-  { reglementId: string; demandeId: string; reference: string; montant: number; confirmeAt: Date | null }[]
+  { reglementId: string; demandeId: string; reference: string; montant: number; confirmeAt: Date | null; mode: "CAISSE" | "BANQUE" }[]
 > {
   const reglements = await prisma.reglement.findMany({
     where: {
-      mode: "CAISSE",
+      // Inclut désormais les règlements BANQUE (voir CLAUDE.md "Retour sur
+      // règlement Banque") — le retour y est possible, avec bordereau.
       estConfirme: true,
       estAnnule: false,
       demande: { createurId: userId, statut: { not: "CLOTUREE" } },
@@ -1087,6 +1180,7 @@ export async function getReglementsCaisseADeclarer(userId: string): Promise<
     select: {
       id: true,
       montant: true,
+      mode: true,
       confirmeAt: true,
       demande: { select: { id: true, reference: true } },
     },
@@ -1097,6 +1191,7 @@ export async function getReglementsCaisseADeclarer(userId: string): Promise<
     reglementId: r.id,
     demandeId: r.demande.id,
     reference: r.demande.reference,
+    mode: r.mode,
     montant: Number(r.montant),
     confirmeAt: r.confirmeAt,
   }));
@@ -1183,4 +1278,117 @@ export async function calculerStatutDemande(demandeId: string): Promise<StatutDe
   }
 
   return nouveauStatut;
+}
+
+/**
+ * Imputation des retours exceptionnels post-clôture VALIDÉS d'une demande sur ses retours encore
+ * NON réceptionnés (du plus ancien au plus récent) : renvoie, par id de retour, la part déjà
+ * couverte. Source UNIQUE de cette imputation — utilisée à l'identique par l'écran Collaborateur
+ * et l'écran Finance (jamais dupliquée).
+ */
+export async function getCouvertureRetoursPostCloture(demandeId: string): Promise<Map<string, number>> {
+  const [reglements, exceptionnels] = await Promise.all([
+    prisma.reglement.findMany({
+      where: { demandeId, estConfirme: true, estAnnule: false },
+      include: { retours: { orderBy: { createdAt: "asc" } } },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.retourExceptionnel.aggregate({ where: { demandeId, statut: "VALIDE" }, _sum: { montant: true } }),
+  ]);
+  let restant = Number(exceptionnels._sum.montant ?? 0);
+  const couvert = new Map<string, number>();
+  for (const reglement of reglements) {
+    for (const retour of reglement.retours) {
+      if (retour.estReceptionne || restant <= 0) continue;
+      const alloue = Math.min(restant, Number(retour.montantARetourner));
+      couvert.set(retour.id, alloue);
+      restant -= alloue;
+    }
+  }
+  return couvert;
+}
+
+/**
+ * Montant "reçu net" d'un retour au regard d'un signalement (voir CLAUDE.md "Correction d'un retour signalé") :
+ * montant réceptionné du retour d'origine + retours COMPLÉMENTAIRES déjà déclarés pour ce signalement (réceptionnés
+ * ou non) − remboursements de ce signalement (validés ou en attente). Le signalement restant actif jusqu'à la
+ * correction du détail, c'est cette valeur — et non le seul montant réceptionné — qui sert à calculer l'écart encore
+ * à régulariser, pour ne jamais régulariser deux fois le même écart.
+ */
+export async function getRecuNetSignalement(retourId: string, signalementId: string): Promise<number> {
+  const [retour, complements, remboursements] = await Promise.all([
+    prisma.retourCaisse.findUnique({ where: { id: retourId }, select: { montantARetourner: true } }),
+    prisma.retourCaisse.aggregate({ where: { signalementOrigineId: signalementId }, _sum: { montantARetourner: true } }),
+    prisma.remboursementRetour.aggregate({
+      where: { signalementId, statut: { in: ["VALIDE", "EN_ATTENTE_VALIDATION"] } },
+      _sum: { montant: true },
+    }),
+  ]);
+  return (
+    Number(retour?.montantARetourner ?? 0) +
+    Number(complements._sum.montantARetourner ?? 0) -
+    Number(remboursements._sum.montant ?? 0)
+  );
+}
+
+export interface MontantDefinitifRetour {
+  /** Montant réceptionné du retour d'origine (le champ historique "Retourné à la compta", jamais modifié). */
+  recu: number;
+  /** Retours complémentaires liés à un signalement de ce retour (réceptionnés ou non). */
+  complements: number;
+  /** Part des compléments pas encore réceptionnée. */
+  complementsEnAttente: number;
+  /** Remboursements VALIDÉS (sortie de caisse). */
+  rembourses: number;
+  /** recu + complements − rembourses. */
+  definitif: number;
+  /** Au moins un complément ou un remboursement validé : seul cas où le "montant définitif" est affiché. */
+  aCorrection: boolean;
+}
+
+/**
+ * "Montant à retourner définitif" de chaque retour (voir CLAUDE.md "Correction d'un retour signalé") : net après les
+ * régularisations liées à un signalement — montant réceptionné + compléments déclarés (réceptionnés ou non) − remboursements
+ * VALIDÉS. Affichage seulement ; ne modifie jamais le montant réceptionné historique. Une seule requête par nature pour tous les retours.
+ */
+export async function getMontantsDefinitifsRetours(retourIds: string[]): Promise<Map<string, MontantDefinitifRetour>> {
+  const resultat = new Map<string, MontantDefinitifRetour>();
+  if (retourIds.length === 0) return resultat;
+  const [retours, complements, remboursements] = await Promise.all([
+    prisma.retourCaisse.findMany({ where: { id: { in: retourIds } }, select: { id: true, montantARetourner: true } }),
+    prisma.retourCaisse.findMany({
+      where: { signalementOrigine: { retourCaisseId: { in: retourIds } } },
+      select: { montantARetourner: true, estReceptionne: true, signalementOrigine: { select: { retourCaisseId: true } } },
+    }),
+    prisma.remboursementRetour.groupBy({
+      by: ["retourCaisseId"],
+      where: { retourCaisseId: { in: retourIds }, statut: "VALIDE" },
+      _sum: { montant: true },
+    }),
+  ]);
+  for (const r of retours) {
+    resultat.set(r.id, {
+      recu: Number(r.montantARetourner),
+      complements: 0,
+      complementsEnAttente: 0,
+      rembourses: 0,
+      definitif: Number(r.montantARetourner),
+      aCorrection: false,
+    });
+  }
+  for (const c of complements) {
+    const entree = resultat.get(c.signalementOrigine!.retourCaisseId);
+    if (!entree) continue;
+    entree.complements += Number(c.montantARetourner);
+    if (!c.estReceptionne) entree.complementsEnAttente += Number(c.montantARetourner);
+  }
+  for (const rb of remboursements) {
+    const entree = resultat.get(rb.retourCaisseId);
+    if (entree) entree.rembourses += Number(rb._sum.montant ?? 0);
+  }
+  for (const entree of resultat.values()) {
+    entree.definitif = entree.recu + entree.complements - entree.rembourses;
+    entree.aCorrection = entree.complements > 0 || entree.rembourses > 0;
+  }
+  return resultat;
 }

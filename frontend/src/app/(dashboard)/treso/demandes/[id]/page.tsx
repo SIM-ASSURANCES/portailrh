@@ -6,7 +6,7 @@ import {
   STATUT_LIGNE_DEMANDE_BADGE_VARIANT,
   STATUT_LIGNE_DEMANDE_LABEL,
 } from "@/components/tresorerie/demandeStatut";
-import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom } from "backend";
+import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom, getMontantsLignesParStatut } from "backend";
 import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
@@ -17,6 +17,7 @@ import { prisma } from "backend";
 
 import { ReglementsRecusSection } from "./ReglementsRecusSection";
 import { RetoursCaisseSection } from "./RetoursCaisseSection";
+import { RetoursExceptionnelsCollaborateur } from "./RetoursExceptionnelsCollaborateur";
 
 /**
  * Détail d'une demande côté Collaborateur (créateur). Distinct de
@@ -70,6 +71,14 @@ export default async function MaDemandeDetailPage({
   // Finance (qui ne l'a pas dans le seed) afficherait sinon un bouton voué à
   // échouer côté serveur — même principe que `canEffectuerReglement` ailleurs.
   const peutDeclarerRetour = demande.statut !== "CLOTUREE" && hasPermission(session, "treso.declarer_retour");
+
+  // Même correctif que côté Finance (voir CLAUDE.md "Bug d'affichage
+  // 'Montant restant à valider'") : pour une demande AVEC lignes, seules les
+  // lignes encore EN_ATTENTE comptent comme "restant à valider" — jamais
+  // `montant - montantValide`, qui inclurait à tort une ligne déjà REJETEE.
+  const demandeAauMoinsUneLigne = demande.lignes.length > 0;
+  const { montantEnAttente: montantLignesEnAttente, montantRejete: montantLignesRejete } =
+    getMontantsLignesParStatut(demande.lignes);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
@@ -133,14 +142,26 @@ export default async function MaDemandeDetailPage({
               }`}
             >
               {formatMontantDevise(
-                Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0)),
+                demandeAauMoinsUneLigne
+                  ? montantLignesEnAttente
+                  : Math.max(0, Number(demande.montant) - Number(demande.montantValide ?? 0)),
                 demande.devise
               )}
             </dd>
-            {demande.reliquatRejete ? (
+            {!demandeAauMoinsUneLigne && demande.reliquatRejete ? (
               <p className="mt-1 text-xs font-medium text-danger">Définitivement clos (reliquat rejeté)</p>
             ) : null}
           </div>
+          {demandeAauMoinsUneLigne && montantLignesRejete > 0 ? (
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Montant rejeté
+              </dt>
+              <dd className="mt-1 text-base font-bold tabular-nums text-danger">
+                {formatMontantDevise(montantLignesRejete, demande.devise)}
+              </dd>
+            </div>
+          ) : null}
           {/* Tâche "Libellé de demande modifiable avec traçabilité
               permanente" (voir CLAUDE.md) : le Collaborateur créateur voit
               TOUJOURS sa description telle qu'il l'a soumise à l'origine
@@ -286,6 +307,7 @@ export default async function MaDemandeDetailPage({
       <ReglementsRecusSection demandeId={demande.id} />
 
       <RetoursCaisseSection demandeId={demande.id} peutDeclarer={peutDeclarerRetour} userId={session.user.id} />
+      <RetoursExceptionnelsCollaborateur demandeId={demande.id} />
     </div>
   );
 }

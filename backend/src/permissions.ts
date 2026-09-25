@@ -92,7 +92,8 @@ export async function getAccessibleModules(
   }
 
   const modules = await prisma.module.findMany({
-    where: { isActive: true },
+    // Module TECHNIQUE "systeme" (réinitialisation à usage unique) : jamais une carte du tableau de bord, même pour un Admin.
+    where: { isActive: true, key: { not: "systeme" } },
     include: { permissions: { select: { key: true } } },
     orderBy: { label: "asc" },
   });

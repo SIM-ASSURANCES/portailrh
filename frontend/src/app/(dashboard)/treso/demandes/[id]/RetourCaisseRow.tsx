@@ -6,6 +6,8 @@ import { Badge, Button } from "@/components/ui";
 import type { TypeJustification } from "backend";
 
 import { RetourCaisseForm } from "./RetourCaisseForm";
+import { detailMontantDefinitif, etatRetourAffiche, type MontantDefinitifAffiche } from "@/lib/retourAffichage";
+
 import { SignalerErreurRetour } from "./SignalerErreurRetour";
 
 export interface DepenseLigneData {
@@ -28,6 +30,10 @@ export interface RetourData {
   id: string;
   estReceptionne: boolean;
   montantARetourner: number;
+  /** Part de ce retour (non réceptionné) déjà couverte par des retours exceptionnels post-clôture VALIDÉS. */
+  dejaCouvertPostCloture: number;
+  /** Net après compléments/remboursements liés à un signalement ; `null` s'il n'y en a aucun (rien à afficher). */
+  montantDefinitif: MontantDefinitifAffiche | null;
   /** Renseignée uniquement pour une déclaration via le formulaire
    * simplifié ("date + montant") — `null` pour une déclaration
    * détaillée, où chaque `DepenseLigne` porte déjà sa propre date. */
@@ -40,6 +46,8 @@ export interface RetourData {
   creeParAssistant: boolean;
   /** Non réceptionné, demande non clôturée, ET utilisateur connecté = déclarant original. */
   peutModifier: boolean;
+  /** Même condition que la garde serveur de `signalerErreurRetourAction` : demande non clôturée, ou retour en réouverture exceptionnelle. */
+  peutSignaler: boolean;
   depenses: DepenseLigneData[];
   /** Signalement d'erreur ACTIF (non résolu) sur ce retour, le cas échéant
    * — voir CLAUDE.md "Signalement d'erreur par le Collaborateur". */
@@ -48,6 +56,8 @@ export interface RetourData {
 
 export interface RetourCaisseRowData {
   reglementId: string;
+  /** Mode du règlement : BANQUE = bordereau de versement obligatoire (voir CLAUDE.md "Retour sur règlement Banque"). */
+  modeReglement: "CAISSE" | "BANQUE";
   montant: number;
   /** Tous les retours déjà créés sur ce règlement (voir CLAUDE.md "Retours
    * multiples autorisés sur une même demande") — un règlement peut
@@ -59,6 +69,9 @@ export interface RetourCaisseRowData {
    * formulaire simplifié — voir CLAUDE.md "Libellés et validations sur le
    * formulaire de retour". */
   dateMin?: string;
+  /** Ex: "Règlement du 24/09/2026" — renseigné seulement s'il y a plusieurs
+   * règlements Caisse sur la demande, sinon aucun sous-titre. */
+  repere?: string;
 }
 
 /**
@@ -81,12 +94,24 @@ export interface RetourCaisseRowData {
 function DetailDepenses({
   depenses,
   montantARetourner,
+  estReceptionne,
+  dejaCouvertPostCloture,
+  montantDefinitif,
   dateRetour,
 }: {
   depenses: DepenseLigneData[];
   montantARetourner: number;
+  estReceptionne: boolean;
+  dejaCouvertPostCloture: number;
+  montantDefinitif: MontantDefinitifAffiche | null;
   dateRetour: Date | null;
 }) {
+  // "À retourner" tient compte des retours enregistrés après la clôture : soldé => "Retourné".
+  const { libelle: libelleRetour, valeur: valeurRetour, estRetourne, couvertParPostCloture } = etatRetourAffiche({
+    montantARetourner,
+    estReceptionne,
+    dejaCouvertPostCloture,
+  });
   const totalDeclare = depenses.reduce((sum, d) => sum + d.montant, 0);
   const montantNonJustifie = depenses
     .filter((d) => d.justification === "SANS_PIECE")
@@ -121,10 +146,10 @@ function DetailDepenses({
               <p className="mt-1 text-xs text-muted-foreground">Aucune pièce jointe fournie.</p>
             )}
             {d.justification !== "SANS_PIECE" ? (
-              <p className="mt-1 text-xs text-success">Justifiée.</p>
+              <p className="mt-1 text-xs text-success">Dépense justifiée.</p>
             ) : d.motifNonJustifie ? (
               <p className="mt-1 text-xs text-warning">
-                Non justifiée{d.motifNonJustifiePar ? ` (${d.motifNonJustifiePar})` : ""} : {d.motifNonJustifie}
+                Dépense sans pièce formelle{d.motifNonJustifiePar ? ` (${d.motifNonJustifiePar})` : ""} : {d.motifNonJustifie}
               </p>
             ) : (
               <p className="mt-1 text-xs text-muted-foreground">Détail non encore renseigné par l&apos;équipe Finance.</p>
@@ -138,12 +163,25 @@ function DetailDepenses({
           <dd className="text-sm font-semibold text-foreground">{totalDeclare.toLocaleString("fr-FR")} FCFA</dd>
         </div>
         <div>
-          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">À retourner</dt>
-          <dd className="text-sm font-semibold text-foreground">{montantARetourner.toLocaleString("fr-FR")} FCFA</dd>
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{libelleRetour}</dt>
+          <dd className={`text-sm font-semibold ${estRetourne ? "text-success" : "text-foreground"}`}>
+            {couvertParPostCloture
+              ? `${montantARetourner.toLocaleString("fr-FR")} FCFA (couvert par un retour enregistré après la clôture)`
+              : `${valeurRetour.toLocaleString("fr-FR")} FCFA`}
+          </dd>
         </div>
+        {montantDefinitif ? (
+          <div className="sm:col-span-3">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Montant à retourner définitif</dt>
+            <dd className="text-sm font-semibold text-foreground">
+              {montantDefinitif.definitif.toLocaleString("fr-FR")} FCFA{" "}
+              <span className="text-xs font-normal text-muted-foreground">{detailMontantDefinitif(montantDefinitif)}</span>
+            </dd>
+          </div>
+        ) : null}
         {montantNonJustifie > 0 ? (
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Non justifié</dt>
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Dépense sans pièce formelle</dt>
             <dd className="text-sm font-semibold text-warning">{montantNonJustifie.toLocaleString("fr-FR")} FCFA</dd>
           </div>
         ) : null}
@@ -199,13 +237,18 @@ function RetourExistant({
           <DetailDepenses
             depenses={retour.depenses}
             montantARetourner={retour.montantARetourner}
+            estReceptionne={retour.estReceptionne}
+            dejaCouvertPostCloture={retour.dejaCouvertPostCloture}
+            montantDefinitif={retour.montantDefinitif}
             dateRetour={retour.dateRetour}
           />
           <div className="border-t border-border pt-2">
-            <SignalerErreurRetour
-              retourId={retour.id}
-              signalementActifCommentaire={retour.signalementActif?.commentaire ?? null}
-            />
+            {retour.peutSignaler || retour.signalementActif ? (
+              <SignalerErreurRetour
+                retourId={retour.id}
+                signalementActifCommentaire={retour.signalementActif?.commentaire ?? null}
+              />
+            ) : null}
           </div>
         </>
       )}
@@ -225,7 +268,7 @@ function RetourExistant({
  * simultanément sur le même règlement, mais un nouveau redevient possible
  * dès que le précédent est réceptionné.
  */
-export function RetourCaisseRow({ reglementId, montant, retours, peutDeclarer, dateMin }: RetourCaisseRowData) {
+export function RetourCaisseRow({ reglementId, modeReglement, montant, retours, peutDeclarer, dateMin, repere }: RetourCaisseRowData) {
   const [formOpen, setFormOpen] = useState(false);
 
   const aUnRetourEnAttente = retours.some((r) => !r.estReceptionne);
@@ -233,7 +276,10 @@ export function RetourCaisseRow({ reglementId, montant, retours, peutDeclarer, d
   return (
     <li className="space-y-3 rounded-md border border-border p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="font-medium text-foreground">{montant.toLocaleString("fr-FR")} FCFA — Caisse</p>
+        {/* Repère minimal, uniquement quand la demande a PLUSIEURS règlements
+            Caisse (voir `RetoursCaisseSection`) : la date, jamais le montant
+            (déjà affiché dans la section Règlements). */}
+        {repere ? <p className="font-medium text-foreground">{repere}</p> : null}
         {formOpen || aUnRetourEnAttente ? null : peutDeclarer ? (
           <Button type="button" onClick={() => setFormOpen(true)}>
             {retours.length === 0 ? "Déclarer un retour de caisse" : "Déclarer un nouveau retour de caisse"}
@@ -254,6 +300,7 @@ export function RetourCaisseRow({ reglementId, montant, retours, peutDeclarer, d
       {formOpen ? (
         <RetourCaisseForm
           reglementId={reglementId}
+          modeReglement={modeReglement}
           montantReglement={montant}
           dateMin={dateMin}
           onCancel={() => setFormOpen(false)}

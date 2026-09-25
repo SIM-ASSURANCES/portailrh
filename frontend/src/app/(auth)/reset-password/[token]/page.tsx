@@ -30,7 +30,7 @@ export default async function ResetPasswordPage({
       : "ok";
 
   return (
-    <AuthShell tagline="Choisissez un nouveau mot de passe robuste pour sécuriser votre compte.">
+    <AuthShell>
       <div className="space-y-4">
         <div>
           <h1 className="text-xl font-bold text-foreground">Nouveau mot de passe</h1>

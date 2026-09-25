@@ -1,3 +1,4 @@
+import { parseCorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
 import { prisma } from "backend";
 
 /**
@@ -39,6 +40,18 @@ const ACTION_LABELS: Record<string, string> = {
   // la seconde répond directement à son signalement.
   signalement_retour: "Erreur signalée par le collaborateur",
   correction_signalement_retour: "Détail du retour corrigé suite à un signalement",
+  ajustement_total_retour: "Total déclaré du retour ajusté par le Responsable Finance",
+  // Retour de caisse exceptionnel post-clôture (voir CLAUDE.md) : la saisie et
+  // le rejet restent internes (jamais montrés au Collaborateur, évite une fausse
+  // alerte) ; seule la validation lui est visible.
+  retour_exceptionnel_saisie: "Retour exceptionnel post-clôture saisi (en attente de validation)",
+  retour_exceptionnel_rejete: "Retour exceptionnel post-clôture rejeté",
+  retour_exceptionnel_post_cloture: "Retour exceptionnel post-clôture validé",
+  justification_apres_reception: "Dépense justifiée après réception du retour (pièce jointe ajoutée)",
+  retour_complementaire_signalement: "Retour complémentaire déclaré suite au signalement",
+  remboursement_retour_propose: "Remboursement proposé suite au signalement (en attente de validation)",
+  remboursement_retour_valide: "Remboursement validé (sortie de caisse)",
+  remboursement_retour_rejete: "Remboursement rejeté",
   cloture_totale: "Clôture totale",
   cloture_partielle: "Clôture partielle",
   validation_complete_dg: "Validation complète approuvée par le DG",
@@ -53,6 +66,40 @@ const ACTION_LABELS: Record<string, string> = {
   // `LigneDemande` que ci-dessus.
   categorisation_ligne: "Catégorisation d'une ligne d'article",
 };
+
+function ListeLignes({ titre, lignes }: { titre: string; lignes: LigneSnapshot[] }) {
+  return (
+    <div className="rounded-md bg-muted p-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{titre}</p>
+      {lignes.length === 0 ? (
+        <p className="text-xs text-muted-foreground">Aucune ligne.</p>
+      ) : (
+        <ul className="mt-1 space-y-1.5">
+          {lignes.map((l, i) => (
+            <li key={i} className="text-xs text-foreground">
+              <span className="font-medium">{l.libelle}</span> — {l.montant.toLocaleString("fr-FR")} FCFA ·{" "}
+              {l.type === "justifiee" ? "Dépense justifiée" : "Dépense sans pièce formelle"}
+              {l.motif && l.motif !== l.libelle ? <> · Motif : {l.motif}</> : null}
+              {l.pieceJointe ? (
+                <>
+                  {" · "}
+                  <a
+                    href={`/api/treso/pieces-jointes/${l.pieceJointe.id}`}
+                    className="text-info underline-offset-4 hover:text-primary hover:underline"
+                  >
+                    Pièce jointe ({l.pieceJointe.fichier.slice(0, 8)}…)
+                  </a>
+                </>
+              ) : (
+                <> · Aucune pièce jointe</>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function labelForAction(action: string): string {
   return ACTION_LABELS[action] ?? action;
@@ -83,6 +130,8 @@ const ACTIONS_GESTION_INTERNE = new Set([
   "modification_description",
   "modification_libelle_ligne",
   "categorisation_ligne",
+  "retour_exceptionnel_saisie",
+  "retour_exceptionnel_rejete",
 ]);
 
 /**
@@ -139,7 +188,22 @@ export async function DemandeHistorique({
               <p className="text-xs text-muted-foreground">
                 {entry.user.fullName} — {entry.createdAt.toLocaleString("fr-FR")}
               </p>
-              {entry.detail ? <p className="mt-1 text-foreground">{entry.detail}</p> : null}
+              {(() => {
+                const correction = parseCorrectionDetail(entry.detail);
+                if (!correction) return entry.detail ? <p className="mt-1 text-foreground">{entry.detail}</p> : null;
+                return (
+                  <div className="mt-1 space-y-2">
+                    <p className="text-foreground">{correction.resume}</p>
+                    {correction.signalement ? (
+                      <p className="text-xs text-muted-foreground">Signalement : {correction.signalement}</p>
+                    ) : null}
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <ListeLignes titre="Avant" lignes={correction.avant} />
+                      <ListeLignes titre="Après" lignes={correction.apres} />
+                    </div>
+                  </div>
+                );
+              })()}
             </li>
           ))}
         </ul>

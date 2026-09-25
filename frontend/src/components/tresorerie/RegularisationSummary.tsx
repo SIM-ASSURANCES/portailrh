@@ -5,12 +5,14 @@ import {
   getTotalRegle,
 } from "backend";
 
-import { JUSTIFICATION_LABEL } from "./justification";
-import { MarquerNonJustifiee } from "./MarquerNonJustifiee";
+import Link from "next/link";
 
 /**
  * Chiffres de régularisation d'une demande ("Fonds remis (Caisse + Banque)",
- * "Dépenses justifiées"/"Dépenses non justifiées", "Retours reçus", "Solde
+ * "Dépenses justifiées"/"Dépense sans pièce formelle" (renommé depuis
+ * "Dépenses non justifiées" — Tâche "Refonte de la zone 'Régularisation'",
+ * voir CLAUDE.md, jamais l'enum `TypeJustification.SANS_PIECE` en base,
+ * inchangée), "Retours reçus", "Solde
  * à régulariser" — libellés renommés, voir CLAUDE.md "Renommage de
  * libellés Régularisation/Retour de caisse" puis "Distinction Fonds remis
  * (Caisse + Banque) vs Fonds remis (Caisse seule)" ; variables internes
@@ -111,7 +113,7 @@ export async function RegularisationSummary({
         </div>
         <div>
           <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Dépenses non justifiées
+            Dépense sans pièce formelle
           </dt>
           <dd
             className={`mt-1 text-xl font-black tracking-tight tabular-nums ${
@@ -147,7 +149,7 @@ export async function RegularisationSummary({
                       {ligne.objet} — {ligne.montant.toLocaleString("fr-FR")} FCFA
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      {ligne.date.toLocaleDateString("fr-FR")} · {JUSTIFICATION_LABEL[ligne.justification]}
+                      {ligne.date.toLocaleDateString("fr-FR")} · {ligne.justification === "SANS_PIECE" ? "Dépense sans pièce formelle" : "Dépense justifiée"}
                     </span>
                   </div>
                   {ligne.pieceJointeId ? (
@@ -161,24 +163,22 @@ export async function RegularisationSummary({
                     <p className="text-xs text-muted-foreground">Aucune pièce jointe.</p>
                   )}
                   {ligne.motifNonJustifie ? (
-                    <MarquerNonJustifiee
-                      depense={{
-                        id: ligne.id,
-                        motifNonJustifie: ligne.motifNonJustifie,
-                        motifNonJustifiePar: ligne.motifNonJustifiePar,
-                      }}
-                    />
-                  ) : ligne.retourEstReceptionne ? (
+                    <p className="text-xs text-warning">
+                      Motif{ligne.motifNonJustifiePar ? ` (${ligne.motifNonJustifiePar})` : ""} : {ligne.motifNonJustifie}
+                    </p>
+                  ) : null}
+                  {ligne.retourEstReceptionne ? (
                     <p className="text-xs text-muted-foreground">
-                      Retour déjà réceptionné : justification définitivement verrouillée.
+                      Retour déjà réceptionné : détail verrouillé.
                     </p>
                   ) : canGererJustification ? (
-                    <MarquerNonJustifiee
-                      depense={{ id: ligne.id, motifNonJustifie: null, motifNonJustifiePar: null }}
-                    />
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Non justifiée, jamais traitée par Finance.</p>
-                  )}
+                    <Link
+                      href={`/treso/finance/retours/${ligne.retourCaisseId}`}
+                      className="inline-block text-xs font-semibold text-info underline-offset-4 hover:text-primary hover:underline"
+                    >
+                      Détailler les dépenses (montant + motif + pièce jointe)
+                    </Link>
+                  ) : null}
                 </li>
               ))}
             </ul>

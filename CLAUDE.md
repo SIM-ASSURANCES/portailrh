@@ -1347,6 +1347,180 @@ créées via le vrai formulaire (Server Action `creerDemandeAction`).
 - `tsc --noEmit` et un vrai `next build` passent sans erreur après
   nettoyage.
 
+### Retours hors flux normal : Banque, externe, post-clôture, correction d'un retour signalé
+
+Quatre mécanismes distincts, volontairement séparés dans le code (modèles, actions, écrans,
+reporting) malgré leur ressemblance de surface. Garde « Responsable Finance » utilisée partout
+ci-dessous : `treso.valider_demande` ET PAS `treso.approuver_validation_complete` (exclut le DG,
+qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionner_retour`.
+
+#### Retour sur règlement Banque (`JournalBanque`)
+
+- Un retour est possible sur un règlement `BANQUE` (avant : refusé). Modélisé comme un **versement
+  bancaire justifié** : **bordereau de versement (pièce jointe) OBLIGATOIRE** et montant > 0, côté
+  Collaborateur (`creerRetourCaisseAction(reglementId, montant, date, bordereauUrl)`) comme côté
+  Assistant (`declarerRetourAssistantAction(..., bordereauUrl, montantRetourneBanque)`, plafonné au restant).
+- **Aucun solde banque** : ni `getSoldeBanque()`, ni contrôle de disponibilité, ni rapprochement.
+  `JournalBanque` est une table de **traçabilité** : `SORTIE` à la confirmation d'un règlement
+  Banque, `ANNULATION` à son annulation, `RETOUR` à la déclaration du retour (avec `pieceJointeId`).
+- La réception d'un retour Banque **n'écrit jamais dans `JournalCaisse`** (le flux Caisse et son
+  contrôle de solde restent intacts). `modifierRetourCaisseAction` est refusée pour un retour Banque
+  (grand livre en ajout seul, retour appuyé par un bordereau).
+- « Fonds remis à régulariser » et les indicateurs du dashboard restent **Caisse uniquement** ; la
+  Banque apparaît dans « Réglé Banque » et les feuilles Excel « Retours de caisse » (colonne
+  « Mode du règlement ») et « Mouvements banque ».
+
+#### Retour externe (hors demande) — `RetourExterne`
+
+- Argent revenu en caisse suite à un règlement fait hors système (ex. chèque). **Totalement
+  autonome** : aucun lien avec `Demande`/`Reglement`/`RetourCaisse`/`RetourExceptionnel` — ne jamais
+  le rattacher ni le compter dans les calculs de ces objets.
+- `creerRetourExterneAction` : **Responsable Finance seul**, effet immédiat et définitif (pas de
+  double validation). Personne = `collaborateurId` **XOR** `nomExterne` (jamais les deux ni aucun,
+  contrainte applicative). Montant du chèque initial = **information déclarative non vérifiée**.
+  **Deux pièces jointes obligatoires et distinctes** : `pieceJointeChequeId` (chèque initial ;
+  nullable en base uniquement pour les lignes antérieures à son ajout) et `pieceJointeId` (retour).
+- Écrit une `ENTREE` `JournalCaisse` (`source: "retour_externe"`) + `HistoriqueEntry`
+  (`entity: "RetourExterne"`, `action: "retour_externe"`) : `getSoldeCaisse()` n'a pas eu besoin de changer.
+- Écran `/treso/finance/retours-externes` (formulaire + historique), entrée « Retour externe » dans
+  la sidebar et section du dashboard Finance, Responsable seulement. Excel : feuille « Retours
+  externes » (filtre de période seul), libellé « Retour externe (hors système) » dans « Journal de caisse ».
+
+#### Retour exceptionnel post-clôture — `RetourExceptionnel`
+
+- Argent rendu après la clôture d'une demande (`CLOTUREE`). **Saisie par l'Assistant Finance
+  UNIQUEMENT** (le Responsable ne voit ni ne peut utiliser la saisie), statut
+  `EN_ATTENTE_VALIDATION` : **aucune écriture de caisse à ce stade**, aucune notification.
+- **Plafond** à la saisie : `getTotalRegle − getRetoursRecus` (montant réglé moins retours déjà reçus).
+- **Validation/rejet : Responsable Finance seul** (jamais l'auteur de la saisie ; rejet = motif
+  obligatoire, l'Assistant peut resaisir). **Décision confirmée le 2026-09-25 : le Responsable Finance valide,
+  pas le DG** ; la spec citait la permission du DG (`treso.approuver_validation_complete`) par confusion de nom
+  (rôle vs nom de permission).
+- À la validation : `ENTREE` `JournalCaisse` (`source: "retour_exceptionnel_post_cloture"`), notification
+  du collaborateur (montant + date), historique dédié. **Priorité de couverture** : la part du montant qui
+  **couvre le solde à régulariser encore ouvert** (`ecart = réglé − dépenses − retours reçus`, plafonné à 0)
+  ne réduit **aucune** dépense ; seul l'**excédent** réduit les dépenses — d'abord les « dépenses sans
+  pièce formelle » (motif Finance renseigné), puis « Dépenses non détaillées », **jamais les dépenses
+  justifiées**. Un résidu non imputable est signalé (message + historique) et laisse le solde négatif
+  (signal d'anomalie, jamais plafonné).
+- **Non rétroactif** : les retours exceptionnels validés avant cette règle ne sont pas recalculés.
+- Reporting « Régularisations » : la période s'applique à la **date de validation** (`valideAt`), pas à la
+  date de création de la demande.
+- **Affichage « À retourner »** (Collaborateur ET Finance, source unique) : `getCouvertureRetoursPostCloture`
+  impute les retours exceptionnels validés sur les retours **non réceptionnés** (plus ancien d'abord) ;
+  `etatRetourAffiche` (`lib/retourAffichage.ts`) en déduit « Retourné à la compta » (réceptionné),
+  « Retourné » (couvert par un retour post-clôture — autre sens, ne pas confondre) ou le solde restant.
+  Ne jamais dupliquer cette logique dans un écran.
+
+#### Correction d'un retour réceptionné signalé en erreur
+
+Principe : **on ne modifie jamais une écriture déjà passée** ; toute correction post-réception est une
+nouvelle écriture qui référence le retour d'origine et le signalement.
+- `SignalementRetour.montantPropose` (facultatif, **informatif**, ne déclenche rien) saisi par le
+  Collaborateur avec son commentaire (≥ 10 caractères).
+- **Montant proposé > réceptionné** (argent qui rentre) : `declarerRetourComplementaireAction`
+  (Assistant seul) crée un `RetourCaisse` complémentaire (`signalementOrigineId`) de l'écart calculé côté
+  serveur, réceptionné ensuite par le cycle normal (écriture propre). Retire l'écart de la ligne
+  « non détaillé » du retour d'origine ; refusé s'il n'y en a pas assez (corriger d'abord le détail).
+- **Montant proposé < réceptionné** (argent qui sort) : `RemboursementRetour` — proposé par l'Assistant
+  (montant ≤ réceptionné − proposé, motif, **pièce jointe obligatoire**), **validé/rejeté par le Responsable**
+  (séparation des tâches). `SORTIE` `JournalCaisse` à la validation seulement, **refusée si solde de caisse
+  insuffisant** ; la dépense du retour d'origine est relevée du même montant par une **ligne dédiée** « Dépense complémentaire
+  (signalement) » (`SANS_PIECE`, **motif renseigné**, jamais fusionnée dans « non détaillé ») : elle est ainsi éligible à
+  `justifierDepenseApresReceptionAction` (pièce jointe après coup) et reprise comme une entrée normale par le formulaire de détail.
+- **RÈGLE — l'argent et la documentation sont deux choses séparées** : un signalement n'est résolu **que** par la correction du
+  détail (`detaillerDepensesRetourAction`), **jamais** par la régularisation de caisse (déclaration d'un complément, validation d'un
+  remboursement). Bug corrigé : résolu à la validation du remboursement, il re-verrouillait le retour réceptionné avant que le détail
+  des dépenses ait pu être corrigé. Conséquence : le signalement reste actif après la régularisation, donc l'écart doit se calculer
+  sur le **reçu net** (`getRecuNetSignalement` : réceptionné + compléments du signalement − remboursements validés ou en attente)
+  et non sur le seul montant réceptionné, sinon le même écart pourrait être régularisé deux fois (second complément / second
+  remboursement) — `declarerRetourComplementaireAction` et `proposerRemboursementRetourAction` refusent quand il est soldé, et
+  l'écran affiche « Régularisation de caisse effectuée : il reste à corriger le détail ».
+- **« Montant à retourner définitif »** (écrans Finance ET Collaborateur, `getMontantsDefinitifsRetours` + `detailMontantDefinitif`) :
+  net = réceptionné + compléments liés à un signalement (réceptionnés ou non) − remboursements **validés** (pas ceux en attente),
+  affiché **seulement** s'il existe au moins un complément ou un remboursement validé, avec le détail « (50 000 reçus − 5 000
+  remboursés) ». Ne modifie jamais « Retourné à la compta » (montant brut réceptionné). Visible du Collaborateur : c'est son argent.
+- Les remboursements **validés** viennent en déduction des retours reçus (`getRetoursRecus`,
+  `getSoldesARegulariserParReglements`, `getMesDemandesDetail`, reporting « Fonds remis »).
+- Traçabilité : historique de la demande (`retour_complementaire_signalement`, `remboursement_retour_*`,
+  visibles du Collaborateur) ; Excel « Compléments et remboursements ».
+- `ajusterTotalDeclareRetourAction` : en cas de hausse, **fusionne** avec la ligne « non détaillé » existante.
+- **Garde `CLOTUREE` commune** : `signalerErreurRetourAction`, `declarerRetourComplementaireAction`,
+  `proposerRemboursementRetourAction` (et le détail/la réception) refusent sur une demande `CLOTUREE`, sauf retour en
+  réouverture exceptionnelle (`motifReouvertureExceptionnelle`). Le **signalement** doit porter cette même garde (serveur
+  ET bouton masqué côté Collaborateur, `RetourData.peutSignaler`) : bug corrigé — sans elle, un signalement créé sur une
+  demande clôturée ne pouvait jamais être résolu (toutes les actions de régularisation refusent) et bloquait tout nouveau
+  signalement sur ce retour. Un signalement déjà actif reste affiché en lecture seule.
+- **Décision assumée (2026-09-25)** : `validerRemboursementRetourAction`/`rejeter…` **n'ont volontairement PAS de garde
+  `CLOTUREE`**. Un remboursement proposé avant la clôture reste valide si la demande se clôture entre-temps : l'argent
+  peut bouger après clôture via ce circuit dédié, dont le Responsable Finance est le verrou (double validation, jamais
+  sur sa propre proposition) — même principe que le retour exceptionnel post-clôture. Ne pas ajouter de garde ici : cela
+  forcerait à traiter en urgence tout remboursement légitime avant la clôture.
+
+#### Justification après réception
+
+`justifierDepenseApresReceptionAction` (Assistant seul) : sur une « dépense sans pièce formelle », joint la
+pièce manquante, la ligne devient « Dépense justifiée » (montant, retour et écriture de caisse inchangés).
+**Refusée sur une demande `CLOTUREE`** sauf retour en réouverture exceptionnelle ; l'historique garde
+l'ancien motif. Conséquence : une ligne réduite par un retour post-clôture (demande clôturée) ne peut en
+pratique pas être justifiée ensuite.
+
+#### RÈGLE — ordre des opérations dans `getSoldesARegulariserParReglements`
+
+Le solde à régulariser est calculé **par règlement**, et une demande peut avoir **plusieurs règlements**
+(règlements partiels, fonctionnalité prévue — indicateur « Règlements partiels à compléter »). L'imputation
+des retours exceptionnels post-clôture (niveau **demande**) **doit toujours venir APRÈS la soustraction des
+dépenses et des retours reçus de chaque règlement** : d'abord sur les soldes encore positifs, du plus ancien
+au plus récent, le reliquat éventuel sur le dernier. Bug corrigé : appliquée avant, l'imputation plafonnait
+sur le montant brut du 1ᵉʳ règlement (ex. 60 000 + 40 000, retour exceptionnel de 30 000 → règlement 1 =
+−30 000 au lieu de 0, règlement 2 = 40 000 au lieu de 10 000). Ne pas remonter ce bloc avant la boucle des
+retours.
+
+#### Formulaire de détail des dépenses (`DetaillerDepensesForm`)
+
+Le bouton « Enregistrer le détail » démarre **désactivé**, s'active dès qu'une entrée est ajoutée/modifiée/
+retirée, se désactive après un enregistrement réussi (cycle répétable sans recharger) ; état de chargement,
+message de confirmation et `router.refresh()` après succès.
+
+### Réinitialisation avant mise en production (usage unique)
+
+Purge des données de TEST des modules Trésorerie et Pointage RH / FeedbackApp en une seule action, puis désactivation
+définitive. Écran `/systeme/reinitialisation`, route de sauvegarde `GET /api/systeme/reinitialisation/sauvegarde`,
+logique dans `backend/src/reinitialisation.ts`.
+
+- **Accès** : permission dédiée `systeme.reinitialiser`, **DG seul** (seed + migration `20260925100000_reinitialisation_systeme`),
+  jamais héritée d'`estAdmin` (`hasPermission` n'a aucun contournement admin). Rattachée à un module **technique `systeme`**,
+  exclu de `getAccessibleModules` (aucune carte), de `/admin/modules` et de la matrice `/admin/roles` ; `toggleRolePermissionAction`
+  refuse toute permission `systeme.*`. Lien de navigation « Réinitialisation » visible seulement avec la permission ET tant que non exécutée.
+- **Purgé** (une seule transaction Prisma, isolation sérialisable, ordre = enfants avant parents d'après les FK) :
+  1 `RemboursementRetour` · 2 `JournalBanque` · 3 `RetourExterne` · 4 `PieceJointe` · 5 `SignalementRetour` · 6 `DepenseLigne` ·
+  7 `RetourCaisse` · 8 `ReglementCategorieAllocation` · 9 `JournalCaisse` · 10 `RetourExceptionnel` · 11 `Reglement` ·
+  12 `LigneDemande` · 13 `Demande` · 14 `HistoriqueEntry` (entity ∈ Demande, LigneDemande, JournalCaisse, RetourExterne) ·
+  15 `Notification` TRESORERIE — puis Pointage/Feedback (ordre validé par Thierry) : 16 `CorrectionPointage` · 17 `Pointage` ·
+  18 `Absence` · 19 `PlageAbsenceAutorisee` · 20 `Feedback` · 21 `Notification` (RH, POINTAGE) · 22 `HistoriqueEntry`
+  (Pointage, PointageQR, PointageGeo). Le solde d'ouverture (`JournalCaisse`) est donc purgé et pourra être redéfini une fois.
+- **Jamais purgé** : `User`, `Role`, `Permission`, `RolePermission`, `Module`, `PermissionDelegation`, `Service`, `Categorie`, `Objet`,
+  `ParametrageHoraire`, `JourFerie`, `FcmToken` (les jetons push survivent), notifications ADMIN/SYSTEME, audit Admin/Auth
+  (le cron d'absences lit les activations de compte dans `HistoriqueEntry`).
+- **Sauvegarde ↔ purge** : la route renvoie un JSON (méta + lignes des tables purgées) et son SHA-256 (`X-Backup-Sha256`) ; la purge
+  **relit les mêmes données dans sa propre transaction, recalcule l'empreinte et refuse si elle diffère** (les données ont changé
+  depuis la sauvegarde). Elle supprime donc exactement ce qui a été sauvegardé. Les fichiers `uploads/` ne sont **pas** dans le JSON.
+- **Confirmation forte** : mot exact `REINITIALISER` (revérifié côté serveur) ; le bouton n'est actif qu'après téléchargement de la sauvegarde.
+- **Usage unique** : table `ReinitialisationSysteme` (jamais purgée) = flag définitif + journal d'audit (date, utilisateur, décompte
+  par table, empreinte, fichiers supprimés/échecs). `verrou` constant et unique : deux exécutions simultanées ne peuvent pas réussir
+  toutes les deux. Une fois posée : la page n'affiche plus que l'audit, la sauvegarde répond 409, le lien de navigation disparaît.
+  Conséquence : le compte du DG qui l'a déclenchée n'est plus supprimable (`supprimerUtilisateurAction`).
+- **Fichiers** : supprimés de `uploads/` APRÈS le commit (hors transaction, garde anti path traversal) ; un échec de fichier
+  n'annule rien et est compté.
+- **Après la purge** : régler `SYSTEM_START_DATE` sur la date de bascule (le cron `/api/cron/absences` ignore tout ce qui est antérieur) —
+  `.env` en local ; **en production `docker-compose.raw.yml` le fixe en dur** (et `docker-compose.dokploy.yml` le lit d'une variable Dokploy).
+  Rappel affiché au DG (message de succès et page d'audit). Non automatisable depuis l'application. La numérotation `DEM-AAAA-NNNNNN`
+  repart de 1 (elle est dérivée du nombre de demandes).
+- **Testé** sur une base PostgreSQL jetable (jamais la base de développement) : purge complète via l'interface (bouton grisé sans
+  sauvegarde / mot incomplet / mot en minuscules), données gardées intactes, refus sans permission, mot faux, empreinte absente/fausse/
+  périmée, seconde exécution refusée, **une seule exécution réussit sur deux simultanées**, et **atomicité** (échec forcé sur la dernière
+  écriture ⇒ rollback complet, aucune ligne supprimée).
+
 ### Blocage du règlement Caisse si solde insuffisant
 
 **Diagnostic** : `getSoldeCaisse()` (`backend/src/tresorerie.ts`, déjà
@@ -4825,6 +4999,10 @@ En plus de la palette/typographie/composants de base (voir plus haut) :
 
 ### Refonte visuelle des écrans d'authentification (connexion, mot de passe oublié, réinitialisation)
 
+> **Mise à jour 2026-09-25 :** le **panneau bleu illustré de droite a été retiré** (décision produit). `AuthShell` n'affiche plus qu'une
+> carte blanche unique et centrée (logo + formulaire, `max-w-md`) sur le fond blanc avec le filigrane discret ; la prop `tagline` a
+> disparu (plus aucune page ne la passe). Les passages ci-dessous sur la « carte scindée »/le « panneau droit » sont donc historiques.
+
 Changement **purement visuel** — aucune Server Action, validation,
 redirection ni message d'erreur/succès n'a été modifié. Les 3 écrans
 (`/login`, `/forgot-password`, `/reset-password/[token]`) sont passés d'une
@@ -4923,6 +5101,11 @@ convention que les vérifications précédentes de ce projet)** :
   sans erreur.
 
 ### Animation d'entrée de l'écran de connexion
+
+> **⚠️ REMPLACÉ le 2026-09-25 — ne plus appliquer cette section.** L'animation d'entrée de `/login` (fond bleu plein écran puis
+> carte révélée) a été **retirée à la demande du produit** : `AuthShell.tsx` et `login/page.tsx` sont revenus à l'état du commit
+> `2b21fd1` (carte scindée statique sur fond de page blanc `bg-app-bg` avec le filigrane discret `BrandBackdrop`, visible
+> immédiatement ; plus de props `animatedIntro`/`skipIntro`). Section conservée pour l'historique uniquement.
 
 Suite directe de la tâche ci-dessus, réservée à `/login` UNIQUEMENT (jamais
 `forgot-password`/`reset-password`, hors périmètre, rendu strictement
@@ -5074,6 +5257,11 @@ réels, installé temporairement `--no-save` puis désinstallé après usage)** 
   sans erreur.
 
 ### Nouvelle disposition de l'état "formulaire révélé" + filigrane plus marqué
+
+> **⚠️ REMPLACÉ le 2026-09-25 — ne plus appliquer cette section.** L'animation d'entrée de `/login` (fond bleu plein écran puis
+> carte révélée) a été **retirée à la demande du produit** : `AuthShell.tsx` et `login/page.tsx` sont revenus à l'état du commit
+> `2b21fd1` (carte scindée statique sur fond de page blanc `bg-app-bg` avec le filigrane discret `BrandBackdrop`, visible
+> immédiatement ; plus de props `animatedIntro`/`skipIntro`). Section conservée pour l'historique uniquement.
 
 Suite directe de la tâche ci-dessus, toujours limitée à `AuthShell.tsx`
 (branche `animatedIntro`) et purement visuelle — aucune Server Action, ni

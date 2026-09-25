@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
+import { reinitialisationEffectuee } from "backend";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 
@@ -46,6 +47,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "treso.valider_demande") ||
         hasPermission(session, "treso.effectuer_reglement") ||
         hasPermission(session, "treso.receptionner_retour")
+      }
+      canRetourExterne={
+        hasPermission(session, "treso.valider_demande") &&
+        !hasPermission(session, "treso.approuver_validation_complete")
       }
       canReceptionnerRetour={hasPermission(session, "treso.receptionner_retour")}
       canVoirDashboardFinance={hasPermission(session, "treso.voir_dashboard_finance")}
@@ -120,6 +125,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         session.rolePermissions.includes("treso.valider_demande") &&
         !session.rolePermissions.includes("treso.approuver_validation_complete")
       }
+      canReinitialiser={hasPermission(session, "systeme.reinitialiser") && !(await reinitialisationEffectuee())}
       canPointer={hasPermission(session, "pointage.pointer")}
       canConsulterHistorique={hasPermission(session, "pointage.consulter_historique")}
       canModererFeedback={hasPermission(session, "feedback.moderer")}

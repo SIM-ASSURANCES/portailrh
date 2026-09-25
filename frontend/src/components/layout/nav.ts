@@ -72,6 +72,8 @@ export interface NavFlags {
    * le DG, sans jamais toucher à la liste filtrée existante.
    */
   canVoirToutesLesDemandes: boolean;
+  /** Responsable Finance uniquement (valider_demande sans approuver_validation_complete) : ajoute "Retour externe". */
+  canRetourExterne?: boolean;
   /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
   canReceptionnerRetour: boolean;
   /** `treso.voir_dashboard_finance` : ajoute "Tableau de bord Finance" (en tête de branche). */
@@ -139,6 +141,13 @@ export interface NavFlags {
  * propre rôle, jamais un rôle en particulier — voir `SidebarProps.canDelegerAcces`
  * et CLAUDE.md "Délégation individuelle de permissions".
  */
+/** Réinitialisation à usage unique avant mise en production (DG seul, tant qu'elle n'a pas été effectuée). */
+export const REINITIALISATION_ITEM: NavItem = {
+  label: "Réinitialisation",
+  href: "/systeme/reinitialisation",
+  icon: "rotate-ccw",
+};
+
 export const DELEGATIONS_ITEM: NavItem = {
   label: "Déléguer des accès",
   href: "/delegations",
@@ -194,6 +203,7 @@ export function getNavBranches({
   canAccesMonTableauDeBord,
   canAccesFinanceDemandes,
   canVoirToutesLesDemandes,
+  canRetourExterne,
   canReceptionnerRetour,
   canVoirDashboardFinance,
   canVoirReporting,
@@ -290,6 +300,15 @@ export function getNavBranches({
                     // du détail `/treso/finance/demandes/[id]`, non modifié
                     // par cette tâche).
                     exact: true,
+                  } satisfies NavItem,
+                ]
+              : []),
+            ...(canRetourExterne
+              ? [
+                  {
+                    label: "Retour externe",
+                    href: "/treso/finance/retours-externes",
+                    icon: "rotate-ccw",
                   } satisfies NavItem,
                 ]
               : []),

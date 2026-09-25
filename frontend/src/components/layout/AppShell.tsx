@@ -22,6 +22,7 @@ interface AppShellProps {
   canAccesFinanceDemandes?: boolean;
   /** Affiche "Toutes les demandes" (valider_demande OU effectuer_reglement OU receptionner_retour). */
   canVoirToutesLesDemandes?: boolean;
+  canRetourExterne?: boolean;
   /** Affiche "Retours en attente" (treso.receptionner_retour). */
   canReceptionnerRetour?: boolean;
   /** Affiche "Tableau de bord Finance" (treso.voir_dashboard_finance). */
@@ -42,6 +43,7 @@ interface AppShellProps {
   canAccessPointageRH?: boolean;
   /** Affiche "Déléguer des accès" (au moins une permission treso.x ou pointage.x via son propre rôle). */
   canDelegerAcces?: boolean;
+  canReinitialiser?: boolean;
   /** `pointage.pointer` : ajoute "Pointer" au groupe "Mon espace". */
   canPointer?: boolean;
   /** `pointage.consulter_historique` : ajoute "Mon historique" au groupe "Mon espace". */
@@ -71,6 +73,7 @@ export function AppShell({
   canAccesMonTableauDeBord = false,
   canAccesFinanceDemandes = false,
   canVoirToutesLesDemandes = false,
+  canRetourExterne = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
   canVoirReporting = false,
@@ -81,6 +84,7 @@ export function AppShell({
   hasPointageAccess = false,
   canAccessPointageRH = false,
   canDelegerAcces = false,
+  canReinitialiser = false,
   canPointer = false,
   canConsulterHistorique = false,
   canModererFeedback = false,
@@ -175,6 +179,7 @@ export function AppShell({
         canAccesMonTableauDeBord={canAccesMonTableauDeBord}
         canAccesFinanceDemandes={canAccesFinanceDemandes}
         canVoirToutesLesDemandes={canVoirToutesLesDemandes}
+        canRetourExterne={canRetourExterne}
         canReceptionnerRetour={canReceptionnerRetour}
         canVoirDashboardFinance={canVoirDashboardFinance}
         canVoirReporting={canVoirReporting}
@@ -185,6 +190,7 @@ export function AppShell({
         hasPointageAccess={hasPointageAccess}
         canAccessPointageRH={canAccessPointageRH}
         canDelegerAcces={canDelegerAcces}
+        canReinitialiser={canReinitialiser}
         canPointer={canPointer}
         canConsulterHistorique={canConsulterHistorique}
         canModererFeedback={canModererFeedback}

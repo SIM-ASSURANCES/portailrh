@@ -1,4 +1,4 @@
-import { getDateDernierReglementConfirme } from "backend";
+import { getCouvertureRetoursPostCloture, getDateDernierReglementConfirme, getMontantsDefinitifsRetours } from "backend";
 import { prisma } from "backend";
 
 import { RetourCaisseRow } from "./RetourCaisseRow";
@@ -45,7 +45,7 @@ export async function RetoursCaisseSection({
 }) {
   const [reglements, dateDernierReglement] = await Promise.all([
     prisma.reglement.findMany({
-      where: { demandeId, mode: "CAISSE", estConfirme: true, estAnnule: false },
+      where: { demandeId, estConfirme: true, estAnnule: false },
       include: {
         retours: {
           include: {
@@ -64,21 +64,30 @@ export async function RetoursCaisseSection({
     return null;
   }
 
+  // Retours exceptionnels post-clôture VALIDÉS imputés sur les retours non réceptionnés (source unique partagée avec l'écran Finance).
+  const couvertParRetour = await getCouvertureRetoursPostCloture(demandeId);
+  // "Montant à retourner définitif" (net après compléments/remboursements) : c'est l'argent du Collaborateur, il le voit aussi.
+  const definitifs = await getMontantsDefinitifsRetours(reglements.flatMap((r) => r.retours.map((t) => t.id)));
+
   const dateMin = dateDernierReglement ? dateDernierReglement.toISOString().slice(0, 10) : undefined;
 
   return (
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
       <h2 className="text-sm font-semibold text-foreground">Retours de caisse</h2>
       <ul className="space-y-3">
-        {reglements.map((r) => (
+        {reglements.map((r, index) => (
           <RetourCaisseRow
             key={r.id}
             reglementId={r.id}
+            modeReglement={r.mode}
             montant={Number(r.montant)}
             retours={r.retours.map((retour) => ({
               id: retour.id,
               estReceptionne: retour.estReceptionne,
               montantARetourner: Number(retour.montantARetourner),
+              dejaCouvertPostCloture: couvertParRetour.get(retour.id) ?? 0,
+              montantDefinitif: definitifs.get(retour.id)?.aCorrection ? definitifs.get(retour.id)! : null,
+              peutSignaler: peutDeclarer || !!retour.motifReouvertureExceptionnelle,
               dateRetour: retour.dateRetour,
               creeParAssistant: retour.creeParAssistant,
               // Modification (avant réception) réservée au déclarant
@@ -86,7 +95,7 @@ export async function RetoursCaisseSection({
               // retour créé par l'Assistant Finance (declarantId = son
               // propre id) n'est donc jamais modifiable depuis cet écran
               // Collaborateur.
-              peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer,
+              peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer && r.mode !== "BANQUE",
               depenses: retour.depenses.map((d) => ({
                 id: d.id,
                 montant: Number(d.montant),
@@ -105,6 +114,11 @@ export async function RetoursCaisseSection({
             }))}
             peutDeclarer={peutDeclarer}
             dateMin={dateMin}
+            repere={
+              reglements.length > 1
+                ? `Règlement ${index + 1}/${reglements.length}${r.mode === "BANQUE" ? " (Banque)" : ""} — ${(r.confirmeAt ?? r.createdAt).toLocaleDateString("fr-FR")}`
+                : undefined
+            }
           />
         ))}
       </ul>

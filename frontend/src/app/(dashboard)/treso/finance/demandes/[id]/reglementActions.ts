@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { prisma } from "backend";
+import { prisma, type Prisma } from "backend";
 import {
   calculerStatutDemande,
   getCategoriesConcerneesDemande,
@@ -20,6 +20,13 @@ import {
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
+
+/** Gel du règlement après un rejet de la validation complète par le DG
+ * (voir CLAUDE.md "Le rejet DG gèle le règlement") — création, modification
+ * et confirmation ; l'annulation d'un règlement déjà confirmé, la
+ * consultation et les retours de caisse ne sont volontairement PAS bloqués. */
+const MESSAGE_GEL_REJET_DG =
+  "Rejetée par le DG — en attente de resoumission par le Responsable Finance : aucun règlement possible pour l'instant.";
 
 const montantSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
 const modeSchema = z.enum(["CAISSE", "BANQUE"]);
@@ -160,6 +167,9 @@ export async function creerReglementAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
+  if (demande.validationCompleteRejeteeParDG) {
+    return { status: "error", message: MESSAGE_GEL_REJET_DG };
+  }
 
   // `demande`/`totalRegle` déjà chargés ici : transmis à
   // `peutEffectuerReglement`/`getResteARegler` pour leur éviter de
@@ -252,6 +262,9 @@ export async function modifierReglementAction(
   const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
+  }
+  if (demande.validationCompleteRejeteeParDG) {
+    return { status: "error", message: MESSAGE_GEL_REJET_DG };
   }
   const totalRegle = await getTotalRegle(reglement.demandeId);
   if (!(await peutEffectuerReglement(reglement.demandeId, demande, totalRegle))) {
@@ -349,6 +362,9 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   // `getTotalRegle` pour un seul clic sur "Confirmer" (voir CLAUDE.md
   // "Diagnostic de latence — requêtes redondantes").
   const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId } });
+  if (demande.validationCompleteRejeteeParDG) {
+    return { status: "error", message: MESSAGE_GEL_REJET_DG };
+  }
   const totalConfirme = await getTotalRegle(reglement.demandeId);
 
   if (!(await peutEffectuerReglement(reglement.demandeId, demande, totalConfirme))) {
@@ -416,7 +432,7 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
     }
   }
 
-  await prisma.$transaction([
+  const operations: Prisma.PrismaPromise<unknown>[] = [
     prisma.reglement.update({
       where: { id: reglementId },
       data: { estConfirme: true, confirmeAt: new Date() },
@@ -439,7 +455,19 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
             },
           }),
         ]
-      : []),
+      : [
+          // Règlement BANQUE : écriture de traçabilité UNIQUEMENT (aucun solde
+          // banque, aucun contrôle de disponibilité — voir CLAUDE.md "Retour
+          // sur règlement Banque"), jamais dans `JournalCaisse`.
+          prisma.journalBanque.create({
+            data: {
+              type: "SORTIE",
+              montant: reglement.montant,
+              reglementId,
+              creeParId: reglement.auteurId,
+            },
+          }),
+        ]),
     prisma.historiqueEntry.create({
       data: {
         entity: "Demande",
@@ -449,7 +477,8 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
         userId: session.user.id,
       },
     }),
-  ]);
+  ];
+  await prisma.$transaction(operations);
 
   await calculerStatutDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);
@@ -477,7 +506,19 @@ const motifAnnulationSchema = z
   .min(3, "Le motif de l'annulation est obligatoire (3 caractères minimum)");
 
 /**
- * Annule un règlement confirmé. Réservée à `treso.effectuer_reglement`.
+ * Annule un règlement confirmé.
+ *
+ * **Réservée au Responsable Finance UNIQUEMENT** (Tâche "Annulation d'un
+ * règlement après reçu réservée au Responsable", voir CLAUDE.md) — même
+ * garde exacte que `validerLignesAction` (`treso.valider_demande` ET PAS
+ * `treso.approuver_validation_complete`), jamais `treso.effectuer_reglement`
+ * (retiré ici volontairement). Cette action n'opère de toute façon QUE sur
+ * un règlement déjà `estConfirme` (voir le contrôle plus bas) : l'Assistant
+ * Finance garde tous ses droits normaux (`treso.effectuer_reglement`,
+ * inchangé) sur le cycle de création/modification/confirmation d'un
+ * règlement encore en cours — seule l'ANNULATION d'un règlement déjà
+ * confirmé (reçu déjà généré/téléchargeable) lui est désormais retirée, au
+ * profit exclusif du Responsable Finance qui a validé la dépense d'origine.
  *
  * Jamais de suppression ni d'édition silencieuse (règle impérative) :
  * l'écriture SORTIE d'origine (si `CAISSE`) n'est ni modifiée ni
@@ -505,7 +546,11 @@ export async function annulerReglementAction(
   motif: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !hasPermission(session, "treso.effectuer_reglement")) {
+  if (
+    !session ||
+    !hasPermission(session, "treso.valider_demande") ||
+    hasPermission(session, "treso.approuver_validation_complete")
+  ) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -531,7 +576,7 @@ export async function annulerReglementAction(
     };
   }
 
-  await prisma.$transaction([
+  const operations: Prisma.PrismaPromise<unknown>[] = [
     prisma.reglement.update({
       where: { id: reglementId },
       data: { estAnnule: true, motifAnnulation: parsedMotif.data },
@@ -552,7 +597,11 @@ export async function annulerReglementAction(
             },
           }),
         ]
-      : []),
+      : [
+          prisma.journalBanque.create({
+            data: { type: "ANNULATION", montant: reglement.montant, reglementId, creeParId: session.user.id },
+          }),
+        ]),
     prisma.historiqueEntry.create({
       data: {
         entity: "Demande",
@@ -562,7 +611,8 @@ export async function annulerReglementAction(
         userId: session.user.id,
       },
     }),
-  ]);
+  ];
+  await prisma.$transaction(operations);
 
   await calculerStatutDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma } from "backend";
+import { getSoldesARegulariserParReglements, prisma } from "backend";
 
 import { FondsARegulariserTable } from "./FondsARegulariserTable";
 
@@ -36,16 +36,17 @@ export default async function FondsARegulariserPage() {
     orderBy: { confirmeAt: "asc" },
   });
 
+  // Solde net (source unique) : inclut retours réceptionnés, remboursements validés ET retours exceptionnels post-clôture.
+  const soldes = await getSoldesARegulariserParReglements(reglements.map((r) => r.id));
+
   const rows = reglements
     .map((r) => {
       const depensesDeclarees = r.retours.reduce(
         (sum, retour) => sum + retour.depenses.reduce((s, d) => s + Number(d.montant), 0),
         0
       );
-      const retoursRecus = r.retours
-        .filter((retour) => retour.estReceptionne)
-        .reduce((sum, retour) => sum + Number(retour.montantARetourner), 0);
-      const solde = Number(r.montant) - depensesDeclarees - retoursRecus;
+      const solde = Math.round((soldes.get(r.id) ?? 0) * 100) / 100;
+      const retoursRecus = Math.round((Number(r.montant) - depensesDeclarees - solde) * 100) / 100;
       return {
         id: r.id,
         demandeId: r.demande.id,

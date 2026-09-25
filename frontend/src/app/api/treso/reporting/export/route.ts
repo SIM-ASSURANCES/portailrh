@@ -10,6 +10,9 @@ import {
   getReportingDepensesDetail,
   getReportingDepensesNonJustifieesDetail,
   getReportingFondsRemis,
+  getReportingJournalBanqueDetail,
+  getReportingRetoursExternesDetail,
+  getReportingComplementsRemboursementsDetail,
   getReportingJournalDetail,
   getReportingReglementsDetail,
   getReportingRegularisationsDetail,
@@ -72,6 +75,9 @@ export async function GET(request: NextRequest) {
     depensesNonJustifiees,
     suiviBudgetaire,
     dashboard,
+    mouvementsBanque,
+    retoursExternes,
+    complementsRemboursements,
   ] = await Promise.all([
     getReportingDemandesDetail(filters),
     getReportingReglementsDetail(filters),
@@ -85,6 +91,9 @@ export async function GET(request: NextRequest) {
     getReportingDepensesNonJustifieesDetail(filters),
     getReportingSuiviBudgetaire(),
     getReportingDashboardSnapshot(),
+    getReportingJournalBanqueDetail(filters),
+    getReportingRetoursExternesDetail(filters),
+    getReportingComplementsRemboursementsDetail(filters),
   ]);
 
   const workbook = new ExcelJS.Workbook();
@@ -170,12 +179,103 @@ export async function GET(request: NextRequest) {
   );
   styleHeaderRow(sheetReglements);
 
+  // Mouvements banque (voir CLAUDE.md "Retour sur règlement Banque") : historique
+  // de traçabilité, aucun solde.
+  const sheetBanque = workbook.addWorksheet("Mouvements banque");
+  sheetBanque.columns = [
+    { header: "Référence demande", key: "reference", width: 20 },
+    { header: "Type", key: "type", width: 14 },
+    { header: "Montant (FCFA)", key: "montant", width: 16 },
+    { header: "Date", key: "date", width: 14 },
+    { header: "Auteur", key: "auteur", width: 22 },
+    { header: "Bordereau joint", key: "bordereau", width: 16 },
+  ];
+  mouvementsBanque.forEach((m) =>
+    sheetBanque.addRow({
+      reference: m.demandeReference,
+      type: m.type === "SORTIE" ? "Sortie" : m.type === "RETOUR" ? "Retour" : "Annulation",
+      montant: m.montant,
+      date: m.date.toLocaleDateString("fr-FR"),
+      auteur: m.auteurNom,
+      bordereau: m.bordereau ? "Oui" : "—",
+    })
+  );
+  styleHeaderRow(sheetBanque);
+
+  // Retours externes (voir CLAUDE.md "Retour externe") : feuille distincte,
+  // jamais mélangée aux retours de caisse liés à une demande.
+  // Compléments et remboursements liés à un signalement (voir CLAUDE.md "Correction d'un retour signalé").
+  const sheetCompl = workbook.addWorksheet("Compléments et remboursements");
+  sheetCompl.columns = [
+    { header: "Demande d'origine", key: "demande", width: 20 },
+    { header: "Retour d'origine (réf.)", key: "retour", width: 28 },
+    { header: "Signalement lié (réf.)", key: "signalement", width: 28 },
+    { header: "Type", key: "type", width: 15 },
+    { header: "Statut", key: "statut", width: 22 },
+    { header: "Montant (FCFA)", key: "montant", width: 16 },
+    { header: "Motif", key: "motif", width: 40 },
+    { header: "Auteur (proposant)", key: "proposant", width: 24 },
+    { header: "Validateur", key: "validateur", width: 24 },
+    { header: "Date de proposition", key: "dateProp", width: 18 },
+    { header: "Date de validation", key: "dateVal", width: 18 },
+    { header: "Justificatif", key: "pj", width: 16 },
+  ];
+  complementsRemboursements.forEach((c) =>
+    sheetCompl.addRow({
+      demande: c.demandeReference,
+      retour: c.retourOrigineRef,
+      signalement: c.signalementRef,
+      type: c.type,
+      statut: c.statut,
+      montant: c.montant,
+      motif: c.motif,
+      proposant: c.proposantNom,
+      validateur: c.validateurNom ?? "—",
+      dateProp: c.dateProposition.toLocaleDateString("fr-FR"),
+      dateVal: c.dateValidation ? c.dateValidation.toLocaleDateString("fr-FR") : "—",
+      pj: c.pieceId
+        ? { text: "Télécharger", hyperlink: `${request.nextUrl.origin}/api/treso/pieces-jointes/${c.pieceId}` }
+        : "—",
+    })
+  );
+  styleHeaderRow(sheetCompl);
+
+  const sheetExternes = workbook.addWorksheet("Retours externes");
+  sheetExternes.columns = [
+    { header: "Personne", key: "personne", width: 28 },
+    { header: "Type", key: "type", width: 16 },
+    { header: "Chèque initial déclaré (FCFA)", key: "cheque", width: 26 },
+    { header: "Montant retourné (FCFA)", key: "retourne", width: 22 },
+    { header: "Motif", key: "motif", width: 40 },
+    { header: "Date", key: "date", width: 14 },
+    { header: "Enregistré par", key: "auteur", width: 22 },
+    { header: "Justificatif du chèque initial", key: "pjCheque", width: 30 },
+    { header: "Justificatif du retour", key: "pjRetour", width: 26 },
+  ];
+  retoursExternes.forEach((r) =>
+    sheetExternes.addRow({
+      personne: r.personne,
+      type: r.estExterne ? "Personne externe" : "Collaborateur",
+      cheque: r.montantChequeInitial,
+      retourne: r.montantRetourne,
+      motif: r.motif,
+      date: r.date.toLocaleDateString("fr-FR"),
+      auteur: r.auteurNom,
+      pjCheque: r.pieceChequeId
+        ? { text: "Télécharger", hyperlink: `${request.nextUrl.origin}/api/treso/pieces-jointes/${r.pieceChequeId}` }
+        : "—",
+      pjRetour: { text: "Télécharger", hyperlink: `${request.nextUrl.origin}/api/treso/pieces-jointes/${r.pieceRetourId}` },
+    })
+  );
+  styleHeaderRow(sheetExternes);
+
   // REFONTE V1 / Phase D (voir CLAUDE.md "Refonte V1 en cours") : un retour
   // n'a plus de justification unique (une par DepenseLigne) — remplacée
   // par le total déclaré et le montant non justifié (lignes SANS_PIECE).
   const sheetRetours = workbook.addWorksheet("Retours de caisse");
   sheetRetours.columns = [
     { header: "Référence demande", key: "reference", width: 20 },
+    { header: "Mode du règlement", key: "mode", width: 16 },
     { header: "Total dépenses effectuées (FCFA)", key: "montantDepenseTotal", width: 24 },
     { header: "Montant à retourner (FCFA)", key: "montantARetourner", width: 20 },
     { header: "Dont non justifié (FCFA)", key: "montantNonJustifie", width: 22 },
@@ -185,6 +285,7 @@ export async function GET(request: NextRequest) {
   retours.forEach((r) =>
     sheetRetours.addRow({
       reference: r.demandeReference,
+      mode: MODE_LABEL[r.mode],
       montantDepenseTotal: r.montantDepenseTotal,
       montantARetourner: r.montantARetourner,
       montantNonJustifie: r.montantNonJustifie,
@@ -237,6 +338,8 @@ export async function GET(request: NextRequest) {
     { header: "Solde à régulariser (FCFA)", key: "ecart", width: 22 },
     { header: "Motif de clôture", key: "motif", width: 32 },
     { header: "Clôturée le", key: "clotureeLe", width: 14 },
+    { header: "Retours exceptionnels validés (FCFA)", key: "retoursExc", width: 26 },
+    { header: "Dernier retour exceptionnel validé le", key: "retourExcLe", width: 24 },
   ];
   regularisations.forEach((r) => {
     const row = sheetRegularisations.addRow({
@@ -248,6 +351,8 @@ export async function GET(request: NextRequest) {
       ecart: r.ecart,
       motif: r.motifCloture ?? "—",
       clotureeLe: r.clotureeLe.toLocaleDateString("fr-FR"),
+      retoursExc: r.retoursExceptionnelsValides,
+      retourExcLe: r.retourExceptionnelValideLe ? r.retourExceptionnelValideLe.toLocaleDateString("fr-FR") : "—",
     });
     if (r.ecart !== 0) {
       row.getCell("ecart").font = { bold: true, color: { argb: "FFF16622" } };
@@ -294,11 +399,14 @@ export async function GET(request: NextRequest) {
   });
   styleHeaderRow(sheetDepenses);
 
-  // Section 16 : feuille DÉDIÉE "Dépenses non justifiées", distincte de la
-  // colonne "Non justifiée" ci-dessus — une ligne PAR DEMANDE (nombre
-  // d'opérations + montant total, jamais une ligne par DepenseLigne comme
-  // "Dépenses effectuées") avec demandeur/bénéficiaire/service/période.
-  const sheetDepensesNonJustifiees = workbook.addWorksheet("Dépenses non justifiées");
+  // Section 16 : feuille DÉDIÉE "Dépense sans pièce formelle" (renommée
+  // depuis "Dépenses non justifiées" — Tâche "Refonte de la zone
+  // 'Régularisation'", voir CLAUDE.md), distincte de la colonne "Non
+  // justifiée" ci-dessus (per-ligne, non renommée, hors périmètre) — une
+  // ligne PAR DEMANDE (nombre d'opérations + montant total, jamais une
+  // ligne par DepenseLigne comme "Dépenses effectuées") avec
+  // demandeur/bénéficiaire/service/période.
+  const sheetDepensesNonJustifiees = workbook.addWorksheet("Dépense sans pièce formelle");
   sheetDepensesNonJustifiees.columns = [
     { header: "Référence demande", key: "reference", width: 20 },
     { header: "Demandeur", key: "demandeur", width: 22 },
@@ -338,7 +446,7 @@ export async function GET(request: NextRequest) {
     sheetJournal.addRow({
       type: j.type,
       montant: j.montant,
-      source: j.source,
+      source: j.source === "retour_externe" ? "Retour externe (hors système)" : j.source,
       reference: j.demandeReference,
       utilisateur: j.userNom,
       date: j.createdAt.toLocaleDateString("fr-FR"),

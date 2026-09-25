@@ -143,6 +143,12 @@ export async function toggleRolePermissionAction(
     return { status: "error", message: "Action non autorisée." };
   }
 
+  // Permissions du module technique "systeme" : jamais modifiables depuis la matrice (DG seul, posée par migration/seed).
+  const cible = await prisma.permission.findUnique({ where: { id: permissionId }, select: { key: true } });
+  if (cible?.key.startsWith("systeme.")) {
+    return { status: "error", message: "Cette permission n'est pas modifiable depuis la console." };
+  }
+
   if (granted) {
     await prisma.rolePermission.upsert({
       where: { roleId_permissionId: { roleId, permissionId } },

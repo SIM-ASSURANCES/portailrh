@@ -68,6 +68,15 @@ model User {
   /// "Signalement d'erreur par le Collaborateur".
   signalementsRetourEmis        SignalementRetour[] @relation("SignalementRetourSignalePar")
   signalementsRetourResolus     SignalementRetour[] @relation("SignalementRetourResoluPar")
+  /// Retours exceptionnels post-clôture saisis / validés par cet utilisateur.
+  retoursExceptionnelsSaisis    RetourExceptionnel[] @relation("RetourExceptionnelSaisiPar")
+  retoursExternesCollaborateur  RetourExterne[]      @relation("RetourExterneCollaborateur")
+  retoursExternesCrees          RetourExterne[]      @relation("RetourExterneCreePar")
+  reinitialisationsSysteme      ReinitialisationSysteme[]
+  remboursementsRetourProposes  RemboursementRetour[] @relation("RemboursementRetourProposePar")
+  remboursementsRetourValides   RemboursementRetour[] @relation("RemboursementRetourValidePar")
+  retoursExceptionnelsValides   RetourExceptionnel[] @relation("RetourExceptionnelValidePar")
+  mouvementsBanqueCrees         JournalBanque[] @relation("JournalBanqueCreePar")
   historique                    HistoriqueEntry[]
   /// Écritures JournalCaisse déclenchées par cet utilisateur (auteur du
   /// règlement pour une SORTIE, receptionneParId pour une ENTRÉE de retour,
@@ -510,6 +519,13 @@ model Demande {
   dgApprobateurId         String?
   dgApprobateur           User?     @relation("DgApprobateurValidationComplete", fields: [dgApprobateurId], references: [id])
   dgApprouveAt            DateTime?
+  /// `true` tant que le DG a REJETÉ la validation complète sans qu'elle ait
+  /// été approuvée depuis : distingue "rejetée" de "jamais examinée"
+  /// (`validationCompleteParDG` reste `false` dans les deux cas). Gèle la
+  /// création/modification/confirmation de règlement (voir CLAUDE.md
+  /// "Le rejet DG gèle le règlement"). Posé par `rejeterValidationCompleteAction`,
+  /// remis à `false` uniquement par `approuverValidationCompleteAction`.
+  validationCompleteRejeteeParDG Boolean @default(false)
 
   createurId String
   createur   User   @relation("DemandeCreateur", fields: [createurId], references: [id])
@@ -518,6 +534,8 @@ model Demande {
   updatedAt DateTime @updatedAt
 
   pieces        PieceJointe[]
+  /// Retours exceptionnels post-clôture (voir CLAUDE.md), distincts de `RetourCaisse`.
+  retoursExceptionnels RetourExceptionnel[]
   reglements    Reglement[]
   journalCaisse JournalCaisse[]
 
@@ -561,13 +579,21 @@ model PieceJointe {
   /// fichier lui-même reste sur disque — V1 volontairement simple, pas de
   /// tâche de nettoyage des fichiers orphelins).
   depenseLigneId  String?        @unique
-  depenseLigne    DepenseLigne?  @relation(fields: [depenseLigneId], references: [id], onDelete: Cascade)
+  depenseLigne    DepenseLigne?  @relation(fields: [depenseLigneId], references: [id], onDelete: SetNull)
   /// Renseigné uniquement pour une pièce jointe attachée à une écriture
   /// `JournalCaisse` du cycle "solde d'ouverture" (`definirSoldeOuvertureAction`/
   /// `corrigerSoldeOuvertureAction`) — le seul cas de pièce jointe sans
   /// Demande d'origine. `@unique` : une seule pièce par écriture.
   journalCaisseId String?        @unique
   journalCaisse   JournalCaisse? @relation(fields: [journalCaisseId], references: [id])
+  /// Justificatif optionnel d'un retour exceptionnel post-clôture (une seule pièce).
+  /// Bordereau de versement d'un retour sur règlement Banque.
+  journalBanque        JournalBanque?
+  retourExterne        RetourExterne? @relation("RetourExternePieceRetour")
+  retourExterneCheque  RetourExterne? @relation("RetourExternePieceCheque")
+  remboursementRetour  RemboursementRetour?
+  retourExceptionnelId String?             @unique
+  retourExceptionnel   RetourExceptionnel? @relation(fields: [retourExceptionnelId], references: [id], onDelete: SetNull)
   createdAt       DateTime       @default(now())
 }
 
@@ -654,6 +680,8 @@ model Reglement {
   auteur   User   @relation("ReglementAuteur", fields: [auteurId], references: [id])
 
   retours RetourCaisse[]
+  /// Mouvements banque (SORTIE/ANNULATION/RETOUR) — voir `JournalBanque`.
+  mouvementsBanque JournalBanque[]
 
   /// Allocation budgétaire explicite par Catégorie (voir CLAUDE.md
   /// "Catégorisation par ligne" / "Allocation budgétaire explicite par
@@ -771,6 +799,14 @@ model RetourCaisse {
   /// `RetourCaisse` lui-même) : un même retour peut être signalé plusieurs
   /// fois au fil du temps (signalé, corrigé, signalé à nouveau...).
   signalements SignalementRetour[]
+  /// Remboursements (sortie de caisse) proposés suite à un signalement sur CE retour.
+  remboursements RemboursementRetour[]
+  /// Retour COMPLÉMENTAIRE déclaré en réponse à un signalement (voir CLAUDE.md
+  /// "Correction d'un retour signalé") : lien explicite, jamais une fusion.
+  signalementOrigineId String?
+  signalementOrigine   SignalementRetour? @relation("RetourComplementaire", fields: [signalementOrigineId], references: [id])
+  /// Mouvement banque `RETOUR` (règlement Banque uniquement).
+  mouvementsBanque JournalBanque[]
 
   // PERF-06 : Index sur reglementId pour les jointures fréquentes (un
   // règlement a au plus un retour, mais la jointure Reglement → RetourCaisse
@@ -815,6 +851,45 @@ model SignalementRetour {
   resoluParId String?
   resoluPar   User?     @relation("SignalementRetourResoluPar", fields: [resoluParId], references: [id])
   resoluAt    DateTime?
+
+  /// Montant total du retour selon le collaborateur — INFORMATIF, ne déclenche rien.
+  montantPropose Decimal? @db.Decimal(14, 2)
+
+  retoursComplementaires RetourCaisse[]       @relation("RetourComplementaire")
+  remboursements         RemboursementRetour[]
+}
+
+enum StatutRemboursementRetour {
+  EN_ATTENTE_VALIDATION
+  VALIDE
+  REJETE
+}
+
+/// Remboursement (SORTIE de caisse) au collaborateur qui a trop rendu, suite à un
+/// signalement sur un retour déjà réceptionné. Proposé par l'Assistant Finance,
+/// validé par le Responsable Finance ; écriture JournalCaisse SORTIE à la validation
+/// uniquement. Le retour original n'est jamais modifié dans son écriture de caisse.
+model RemboursementRetour {
+  id             String                   @id @default(cuid())
+  retourCaisseId String
+  retourCaisse   RetourCaisse             @relation(fields: [retourCaisseId], references: [id])
+  signalementId  String
+  signalement    SignalementRetour        @relation(fields: [signalementId], references: [id])
+  montant        Decimal                  @db.Decimal(14, 2)
+  motif          String
+  pieceJointeId  String                   @unique
+  pieceJointe    PieceJointe              @relation(fields: [pieceJointeId], references: [id])
+  statut         StatutRemboursementRetour @default(EN_ATTENTE_VALIDATION)
+  proposeParId   String
+  proposePar     User                     @relation("RemboursementRetourProposePar", fields: [proposeParId], references: [id])
+  proposeAt      DateTime                 @default(now())
+  valideParId    String?
+  validePar      User?                    @relation("RemboursementRetourValidePar", fields: [valideParId], references: [id])
+  valideAt       DateTime?
+  motifRejet     String?
+
+  @@index([retourCaisseId])
+  @@index([statut])
 }
 
 /// Une ligne de dépense détaillée d'un `RetourCaisse` (cahier des charges
@@ -1149,4 +1224,117 @@ model Feedback {
   @@index([source])
   @@index([isModerated])
   @@index([type])
+}
+
+enum StatutRetourExceptionnel {
+  EN_ATTENTE_VALIDATION
+  VALIDE
+  REJETE
+}
+
+/// Retour de caisse EXCEPTIONNEL sur une demande déjà `CLOTUREE` (voir CLAUDE.md
+/// "Retour de caisse exceptionnel post-clôture") : saisi par l'Assistant
+/// Finance (ou le Responsable), validé par le Responsable Finance. Aucune
+/// écriture `JournalCaisse` avant validation — le solde de caisse n'est
+/// jamais affecté par un retour en attente ou rejeté. Distinct de
+/// `RetourCaisse` pour ne pas compliquer les requêtes des retours normaux.
+model RetourExceptionnel {
+  id        String                   @id @default(cuid())
+  demandeId String
+  demande   Demande                  @relation(fields: [demandeId], references: [id])
+  montant   Decimal                  @db.Decimal(14, 2)
+  motif     String
+  statut    StatutRetourExceptionnel @default(EN_ATTENTE_VALIDATION)
+
+  saisiParId String
+  saisiPar   User     @relation("RetourExceptionnelSaisiPar", fields: [saisiParId], references: [id])
+  saisiAt    DateTime @default(now())
+
+  valideParId String?
+  validePar   User?     @relation("RetourExceptionnelValidePar", fields: [valideParId], references: [id])
+  /// Date de la validation OU du rejet (décision du Responsable).
+  valideAt    DateTime?
+  motifRejet  String?
+
+  pieceJointe PieceJointe?
+
+  @@index([demandeId])
+  @@index([statut])
+}
+
+/// Retour EXTERNE (voir CLAUDE.md "Retour externe") : argent revenu en caisse
+/// suite à un règlement fait hors système (ex: chèque). Totalement autonome :
+/// aucun lien avec Demande/Reglement/RetourCaisse/RetourExceptionnel.
+/// Contrainte applicative : `collaborateurId` XOR `nomExterne`.
+/// `montantChequeInitial` est purement déclaratif (non vérifiable).
+/// Écrit immédiatement dans `JournalCaisse` (ENTREE, source "retour_externe").
+model RetourExterne {
+  id                   String   @id @default(cuid())
+  collaborateurId      String?
+  collaborateur        User?    @relation("RetourExterneCollaborateur", fields: [collaborateurId], references: [id])
+  nomExterne           String?
+  montantChequeInitial Decimal  @db.Decimal(14, 2)
+  montantRetourne      Decimal  @db.Decimal(14, 2)
+  motif                String
+  pieceJointeId        String   @unique
+  pieceJointe          PieceJointe @relation("RetourExternePieceRetour", fields: [pieceJointeId], references: [id])
+  /// Justificatif du chèque initial (preuve du règlement d'origine). Obligatoire
+  /// côté applicatif ; nullable en base uniquement pour les lignes antérieures.
+  pieceJointeChequeId  String?  @unique
+  pieceJointeCheque    PieceJointe? @relation("RetourExternePieceCheque", fields: [pieceJointeChequeId], references: [id])
+  creeParId            String
+  creePar              User     @relation("RetourExterneCreePar", fields: [creeParId], references: [id])
+  creeAt               DateTime @default(now())
+
+  @@index([creeAt])
+}
+
+/// Réinitialisation à USAGE UNIQUE avant mise en production (voir CLAUDE.md "Réinitialisation avant mise en
+/// production") : purge des données de test Trésorerie + Pointage RH/FeedbackApp. Cette table n'est JAMAIS
+/// purgée : une ligne = "déjà exécutée" (flag définitif) ET journal d'audit hors des tables purgées.
+/// `verrou` est constant + unique : deux exécutions concurrentes ne peuvent pas réussir toutes les deux.
+model ReinitialisationSysteme {
+  id             String   @id @default(cuid())
+  verrou         String   @unique @default("REINITIALISATION")
+  effectueeAt    DateTime @default(now())
+  effectueeParId String
+  effectueePar   User     @relation(fields: [effectueeParId], references: [id])
+  /// Nombre de lignes supprimées par table.
+  decompte       Json
+  /// Empreinte SHA-256 de la sauvegarde JSON téléchargée juste avant la purge.
+  sauvegardeSha256 String
+  /// Fichiers de uploads/ supprimés du disque après le commit (mis à jour après coup).
+  fichiersSupprimes Int      @default(0)
+  fichiersEchecs    Int      @default(0)
+}
+
+enum TypeMouvementBanque {
+  SORTIE
+  RETOUR
+  ANNULATION
+}
+
+/// Historique des mouvements BANQUE (voir CLAUDE.md "Retour sur règlement
+/// Banque") — table de traçabilité UNIQUEMENT : il n'existe volontairement
+/// AUCUN solde banque, ni fonction de calcul, ni contrôle de disponibilité
+/// (contrairement à `JournalCaisse`). `SORTIE` écrite à la confirmation d'un
+/// règlement Banque, `ANNULATION` à son annulation, `RETOUR` à la déclaration
+/// d'un retour (avec bordereau de versement obligatoire, `pieceJointeId`).
+model JournalBanque {
+  id         String              @id @default(cuid())
+  type       TypeMouvementBanque
+  montant    Decimal             @db.Decimal(14, 2)
+  reglementId String
+  reglement   Reglement          @relation(fields: [reglementId], references: [id])
+  /// Retour de caisse associé, pour un mouvement `RETOUR`.
+  retourCaisseId String?
+  retourCaisse   RetourCaisse?   @relation(fields: [retourCaisseId], references: [id])
+  /// Bordereau de versement — obligatoire pour un `RETOUR` (revérifié côté serveur).
+  pieceJointeId String?          @unique
+  pieceJointe   PieceJointe?     @relation(fields: [pieceJointeId], references: [id])
+  creeParId  String
+  creePar    User                @relation("JournalBanqueCreePar", fields: [creeParId], references: [id])
+  creeAt     DateTime            @default(now())
+
+  @@index([reglementId])
 }

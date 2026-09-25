@@ -2,13 +2,15 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
-import { JUSTIFICATION_LABEL } from "@/components/tresorerie/justification";
-import { MarquerNonJustifiee } from "@/components/tresorerie/MarquerNonJustifiee";
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma } from "backend";
+import { detailMontantDefinitif, etatRetourAffiche } from "@/lib/retourAffichage";
+import { getCouvertureRetoursPostCloture, getMontantsDefinitifsRetours, getRecuNetSignalement, prisma } from "backend";
 
-import { DetaillerDepensesTrigger } from "./DetaillerDepensesTrigger";
+import { DetaillerDepensesForm } from "./DetaillerDepensesForm";
+import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
+import { JustifierApresReception } from "./JustifierApresReception";
 import { ReceptionnerAction } from "./ReceptionnerAction";
+import { RegularisationSignalement, RemboursementDecision } from "./RegularisationSignalement";
 import type { LigneDetailInput } from "../retourActions";
 
 /**
@@ -34,6 +36,12 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
   const { id } = await params;
   const session = await getSession();
   const canReceptionner = !!session && hasPermission(session, "treso.receptionner_retour");
+  // Ajustement du total déclaré : Responsable Finance UNIQUEMENT (même garde que
+  // `ajusterTotalDeclareRetourAction`, revérifiée côté serveur).
+  const canAjusterTotal =
+    !!session &&
+    hasPermission(session, "treso.valider_demande") &&
+    !hasPermission(session, "treso.approuver_validation_complete");
   const canConsulterLectureSeule = !!session && hasPermission(session, "treso.valider_demande");
   if (!canReceptionner && !canConsulterLectureSeule) {
     redirect("/?error=acces_refuse_receptionner_retour");
@@ -46,6 +54,10 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
       reglement: { include: { demande: true } },
       depenses: { include: { pieceJointe: true, motifNonJustifiePar: true }, orderBy: { date: "asc" } },
       signalements: { where: { estResolu: false }, include: { signalePar: true } },
+      remboursements: {
+        include: { proposePar: true, validePar: true, pieceJointe: { select: { id: true } } },
+        orderBy: { proposeAt: "asc" },
+      },
     },
   });
 
@@ -53,6 +65,15 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     notFound();
   }
 
+  // Même imputation des retours post-clôture que l'écran Collaborateur (source unique).
+  const couverture = await getCouvertureRetoursPostCloture(retour.reglement.demandeId);
+  const etatRetour = etatRetourAffiche({
+    montantARetourner: Number(retour.montantARetourner),
+    estReceptionne: retour.estReceptionne,
+    dejaCouvertPostCloture: couverture.get(retour.id) ?? 0,
+  });
+  // "Montant à retourner définitif" : net après compléments/remboursements liés à un signalement (n'altère pas "Retourné à la compta").
+  const montantDefinitif = (await getMontantsDefinitifsRetours([retour.id])).get(retour.id);
   const totalDeclare = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
   const montantNonJustifie = retour.depenses
     .filter((d) => d.justification === "SANS_PIECE")
@@ -66,10 +87,15 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
   // `detaillerDepensesRetourAction` côté serveur, jamais dupliquée sous une
   // forme divergente ici (celle-ci ne sert qu'à décider l'affichage).
   const signalementActif = retour.signalements[0] ?? null;
+  // Reçu net au regard du signalement (réceptionné + compléments − remboursements) : le signalement reste actif après une
+  // régularisation de caisse, jusqu'à la correction du détail.
+  const recuNetSignalement = signalementActif ? await getRecuNetSignalement(retour.id, signalementActif.id) : 0;
   const cloturéeSansException = retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle;
   const bloqueParReception = retour.estReceptionne && !signalementActif;
   const peutDetailler = !cloturéeSansException && !bloqueParReception;
-  const lignesInitiales: LigneDetailInput[] = retour.depenses.map((d) => ({
+  const lignesInitiales: LigneDetailInput[] = retour.depenses
+    .filter((d) => !(d.objet === "Dépenses non détaillées" && !d.motifNonJustifie))
+    .map((d) => ({
     libelle: d.objet,
     montant: Number(d.montant),
     pieceJointeFournie: !!d.pieceJointe,
@@ -104,16 +130,76 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
             {signalementActif.signaleAt.toLocaleDateString("fr-FR")} :
           </p>
           <p>{signalementActif.commentaire}</p>
+          {signalementActif.montantPropose != null ? (
+            <p className="text-base font-bold">
+              Montant du retour proposé par le collaborateur : {Number(signalementActif.montantPropose).toLocaleString("fr-FR")} FCFA
+              <span className="ml-2 text-xs font-normal">
+                (réceptionné : {Number(retour.montantARetourner).toLocaleString("fr-FR")} FCFA — information déclarative, rien n&apos;est appliqué automatiquement)
+              </span>
+            </p>
+          ) : null}
+          {retour.estReceptionne && signalementActif.montantPropose != null ? (
+            <div className="pt-2">
+              <RegularisationSignalement
+                retourId={retour.id}
+                montantRecu={recuNetSignalement}
+                regulariseDeja={Math.round((recuNetSignalement - Number(retour.montantARetourner)) * 100) !== 0}
+                montantPropose={Number(signalementActif.montantPropose)}
+                peutAgir={canReceptionner}
+                remboursementEnAttente={retour.remboursements.some((r) => r.statut === "EN_ATTENTE_VALIDATION")}
+              />
+            </div>
+          ) : null}
           <p className="text-xs">
             Ce signalement débloque exceptionnellement la correction du détail ci-dessous — il sera marqué résolu
             automatiquement dès l&apos;enregistrement de la correction.
           </p>
+          {canAjusterTotal ? (
+            <div className="pt-2">
+              <AjusterTotalDeclareForm retourId={retour.id} totalActuel={totalDeclare} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {retour.remboursements.length > 0 ? (
+        <div className="space-y-3 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Remboursements liés à ce retour (sortie de caisse)
+          </h2>
+          <ul className="space-y-3">
+            {retour.remboursements.map((r) => (
+              <li key={r.id} className="space-y-1.5 rounded-lg border border-border p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-foreground">{Number(r.montant).toLocaleString("fr-FR")} FCFA</span>
+                  <Badge variant={r.statut === "VALIDE" ? "success" : r.statut === "REJETE" ? "danger" : "warning"}>
+                    {r.statut === "VALIDE" ? "Validé" : r.statut === "REJETE" ? "Rejeté" : "En attente de validation"}
+                  </Badge>
+                </div>
+                <p className="text-foreground">{r.motif}</p>
+                <p className="text-xs text-muted-foreground">
+                  Proposé par {r.proposePar.fullName} le {r.proposeAt.toLocaleDateString("fr-FR")}
+                  {r.validePar && r.valideAt
+                    ? ` — ${r.statut === "VALIDE" ? "validé" : "rejeté"} par ${r.validePar.fullName} le ${r.valideAt.toLocaleDateString("fr-FR")}`
+                    : ""}
+                </p>
+                {r.motifRejet ? <p className="text-xs text-danger">Motif du rejet : {r.motifRejet}</p> : null}
+                <a href={`/api/treso/pieces-jointes/${r.pieceJointe.id}`} className="inline-block text-xs text-info underline-offset-4 hover:text-primary hover:underline">
+                  Télécharger le justificatif
+                </a>
+                {r.statut === "EN_ATTENTE_VALIDATION" && canAjusterTotal && r.proposeParId !== session!.user.id ? (
+                  <RemboursementDecision remboursementId={r.id} />
+                ) : null}
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
 
       <div className="space-y-4 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
+            {retour.signalementOrigineId ? <Badge variant="info">Retour complémentaire (suite à un signalement)</Badge> : null}
             <Badge variant={retour.estReceptionne ? "success" : "warning"}>
               {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
             </Badge>
@@ -137,11 +223,22 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
             <dd className="text-sm font-semibold text-foreground">{totalDeclare.toLocaleString("fr-FR")} FCFA</dd>
           </div>
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">À retourner</dt>
-            <dd className="text-sm font-semibold text-foreground">
-              {Number(retour.montantARetourner).toLocaleString("fr-FR")} FCFA
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{etatRetour.libelle}</dt>
+            <dd className={`text-sm font-semibold ${etatRetour.estRetourne ? "text-success" : "text-foreground"}`}>
+              {etatRetour.couvertParPostCloture
+                ? `${Number(retour.montantARetourner).toLocaleString("fr-FR")} FCFA (couvert par un retour enregistré après la clôture)`
+                : `${etatRetour.valeur.toLocaleString("fr-FR")} FCFA`}
             </dd>
           </div>
+          {montantDefinitif?.aCorrection ? (
+            <div className="sm:col-span-3">
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Montant à retourner définitif</dt>
+              <dd className="text-sm font-semibold text-foreground">
+                {montantDefinitif.definitif.toLocaleString("fr-FR")} FCFA{" "}
+                <span className="text-xs font-normal text-muted-foreground">{detailMontantDefinitif(montantDefinitif)}</span>
+              </dd>
+            </div>
+          ) : null}
           {montantNonJustifie > 0 ? (
             <div>
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Non justifié</dt>
@@ -171,23 +268,25 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
             <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Lignes de dépenses déclarées
             </h2>
-            {canReceptionner ? (
-              peutDetailler ? (
-                <DetaillerDepensesTrigger
-                  retourId={retour.id}
-                  montantCible={totalDeclare}
-                  lignesInitiales={lignesInitiales}
-                  label={retour.depenses.length > 0 ? "Détailler / corriger les dépenses" : "Détailler les dépenses"}
-                />
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  {cloturéeSansException
-                    ? "Cette demande est clôturée : le détail n'est plus modifiable."
-                    : "Ce retour est réceptionné : un signalement actif du collaborateur est nécessaire pour corriger le détail."}
-                </p>
-              )
+            {canReceptionner && !peutDetailler ? (
+              <p className="text-xs text-muted-foreground">
+                {cloturéeSansException
+                  ? "Cette demande est clôturée : le détail n'est plus modifiable."
+                  : "Ce retour est réceptionné : un signalement actif du collaborateur est nécessaire pour corriger le détail."}
+              </p>
             ) : null}
           </div>
+          {canReceptionner && peutDetailler ? (
+            <div className="space-y-2">
+              <h3 className="text-sm font-bold text-foreground">Détailler les dépenses</h3>
+              <DetaillerDepensesForm
+                key={JSON.stringify(lignesInitiales.map((l) => [l.libelle, l.montant, l.justifiee]))}
+                retourId={retour.id}
+                montantCible={totalDeclare}
+                lignesInitiales={lignesInitiales}
+              />
+            </div>
+          ) : null}
           {retour.depenses.length === 0 ? (
             <p className="text-sm text-muted-foreground">Retour intégral — aucune dépense déclarée.</p>
           ) : (
@@ -199,7 +298,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
                       {d.objet} — {Number(d.montant).toLocaleString("fr-FR")} FCFA
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      {d.date.toLocaleDateString("fr-FR")} · {JUSTIFICATION_LABEL[d.justification]}
+                      {d.date.toLocaleDateString("fr-FR")} · {d.justification === "SANS_PIECE" ? "Dépense sans pièce formelle" : "Dépense justifiée"}
                     </span>
                   </div>
                   {d.nature ? <p className="text-xs text-muted-foreground">{d.nature}</p> : null}
@@ -215,22 +314,15 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
                     <p className="text-xs text-muted-foreground">Aucune pièce jointe fournie.</p>
                   )}
                   {d.justification !== "SANS_PIECE" && !d.motifNonJustifie ? (
-                    <p className="text-xs text-success">Justifiée.</p>
+                    <p className="text-xs text-success">Dépense justifiée.</p>
                   ) : null}
-                  {!retour.estReceptionne ? (
-                    <MarquerNonJustifiee
-                      depense={{
-                        id: d.id,
-                        motifNonJustifie: d.motifNonJustifie,
-                        motifNonJustifiePar: d.motifNonJustifiePar?.fullName ?? null,
-                      }}
-                      disabled={!canReceptionner}
-                    />
-                  ) : d.motifNonJustifie ? (
+                  {d.motifNonJustifie ? (
                     <p className="text-xs text-warning">
-                      Motif Finance{d.motifNonJustifiePar ? ` (${d.motifNonJustifiePar.fullName})` : ""} :{" "}
-                      {d.motifNonJustifie}
+                      Motif{d.motifNonJustifiePar ? ` (${d.motifNonJustifiePar.fullName})` : ""} : {d.motifNonJustifie}
                     </p>
+                  ) : null}
+                  {canReceptionner && retour.estReceptionne && !cloturéeSansException && d.justification === "SANS_PIECE" && d.motifNonJustifie ? (
+                    <JustifierApresReception depenseLigneId={d.id} />
                   ) : null}
                 </li>
               ))}
