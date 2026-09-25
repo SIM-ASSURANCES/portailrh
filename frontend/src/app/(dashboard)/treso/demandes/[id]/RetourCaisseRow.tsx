@@ -6,6 +6,8 @@ import { Badge, Button } from "@/components/ui";
 import type { TypeJustification } from "backend";
 
 import { RetourCaisseForm } from "./RetourCaisseForm";
+import { etatRetourAffiche } from "@/lib/retourAffichage";
+
 import { SignalerErreurRetour } from "./SignalerErreurRetour";
 
 export interface DepenseLigneData {
@@ -28,6 +30,8 @@ export interface RetourData {
   id: string;
   estReceptionne: boolean;
   montantARetourner: number;
+  /** Part de ce retour (non réceptionné) déjà couverte par des retours exceptionnels post-clôture VALIDÉS. */
+  dejaCouvertPostCloture: number;
   /** Renseignée uniquement pour une déclaration via le formulaire
    * simplifié ("date + montant") — `null` pour une déclaration
    * détaillée, où chaque `DepenseLigne` porte déjà sa propre date. */
@@ -86,12 +90,22 @@ export interface RetourCaisseRowData {
 function DetailDepenses({
   depenses,
   montantARetourner,
+  estReceptionne,
+  dejaCouvertPostCloture,
   dateRetour,
 }: {
   depenses: DepenseLigneData[];
   montantARetourner: number;
+  estReceptionne: boolean;
+  dejaCouvertPostCloture: number;
   dateRetour: Date | null;
 }) {
+  // "À retourner" tient compte des retours enregistrés après la clôture : soldé => "Retourné".
+  const { libelle: libelleRetour, valeur: valeurRetour, estRetourne, couvertParPostCloture } = etatRetourAffiche({
+    montantARetourner,
+    estReceptionne,
+    dejaCouvertPostCloture,
+  });
   const totalDeclare = depenses.reduce((sum, d) => sum + d.montant, 0);
   const montantNonJustifie = depenses
     .filter((d) => d.justification === "SANS_PIECE")
@@ -143,8 +157,12 @@ function DetailDepenses({
           <dd className="text-sm font-semibold text-foreground">{totalDeclare.toLocaleString("fr-FR")} FCFA</dd>
         </div>
         <div>
-          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">À retourner</dt>
-          <dd className="text-sm font-semibold text-foreground">{montantARetourner.toLocaleString("fr-FR")} FCFA</dd>
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{libelleRetour}</dt>
+          <dd className={`text-sm font-semibold ${estRetourne ? "text-success" : "text-foreground"}`}>
+            {couvertParPostCloture
+              ? `${montantARetourner.toLocaleString("fr-FR")} FCFA (couvert par un retour enregistré après la clôture)`
+              : `${valeurRetour.toLocaleString("fr-FR")} FCFA`}
+          </dd>
         </div>
         {montantNonJustifie > 0 ? (
           <div>
@@ -204,6 +222,8 @@ function RetourExistant({
           <DetailDepenses
             depenses={retour.depenses}
             montantARetourner={retour.montantARetourner}
+            estReceptionne={retour.estReceptionne}
+            dejaCouvertPostCloture={retour.dejaCouvertPostCloture}
             dateRetour={retour.dateRetour}
           />
           <div className="border-t border-border pt-2">

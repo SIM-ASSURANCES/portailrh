@@ -1,4 +1,4 @@
-import { getDateDernierReglementConfirme } from "backend";
+import { getCouvertureRetoursPostCloture, getDateDernierReglementConfirme } from "backend";
 import { prisma } from "backend";
 
 import { RetourCaisseRow } from "./RetourCaisseRow";
@@ -64,6 +64,9 @@ export async function RetoursCaisseSection({
     return null;
   }
 
+  // Retours exceptionnels post-clôture VALIDÉS imputés sur les retours non réceptionnés (source unique partagée avec l'écran Finance).
+  const couvertParRetour = await getCouvertureRetoursPostCloture(demandeId);
+
   const dateMin = dateDernierReglement ? dateDernierReglement.toISOString().slice(0, 10) : undefined;
 
   return (
@@ -80,6 +83,7 @@ export async function RetoursCaisseSection({
               id: retour.id,
               estReceptionne: retour.estReceptionne,
               montantARetourner: Number(retour.montantARetourner),
+              dejaCouvertPostCloture: couvertParRetour.get(retour.id) ?? 0,
               dateRetour: retour.dateRetour,
               creeParAssistant: retour.creeParAssistant,
               // Modification (avant réception) réservée au déclarant

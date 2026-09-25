@@ -643,7 +643,8 @@ export async function getSoldesARegulariserParReglements(
 
   const reglements = await prisma.reglement.findMany({
     where: { id: { in: reglementIds } },
-    select: { id: true, montant: true },
+    select: { id: true, montant: true, demandeId: true },
+    orderBy: { createdAt: "asc" },
   });
 
   const retours = await prisma.retourCaisse.findMany({
@@ -673,6 +674,31 @@ export async function getSoldesARegulariserParReglements(
     const retourRecu = retour.estReceptionne ? Number(retour.montantARetourner) : 0;
     const courant = soldes.get(retour.reglementId) ?? 0;
     soldes.set(retour.reglementId, courant - depensesDeclarees - retourRecu);
+  }
+  // Retours exceptionnels post-clôture VALIDÉS (niveau demande) : imputés APRÈS la soustraction des
+  // dépenses et retours de chaque règlement, du plus ancien au plus récent, d'abord sur les soldes
+  // encore positifs ; le reliquat éventuel (dépenses déjà réduites à la validation) est déduit du
+  // dernier règlement.
+  const demandeIds = [...new Set(reglements.map((r) => r.demandeId))];
+  const exceptionnels = await prisma.retourExceptionnel.groupBy({
+    by: ["demandeId"],
+    where: { statut: "VALIDE", demandeId: { in: demandeIds } },
+    _sum: { montant: true },
+  });
+  for (const e of exceptionnels) {
+    let reste = Number(e._sum.montant ?? 0);
+    const deLaDemande = reglements.filter((r) => r.demandeId === e.demandeId);
+    for (const r of deLaDemande) {
+      if (reste <= 0) break;
+      const positif = Math.max(0, soldes.get(r.id) ?? 0);
+      const impute = Math.min(reste, positif);
+      soldes.set(r.id, (soldes.get(r.id) ?? 0) - impute);
+      reste -= impute;
+    }
+    if (reste > 0 && deLaDemande.length > 0) {
+      const dernier = deLaDemande[deLaDemande.length - 1];
+      soldes.set(dernier.id, (soldes.get(dernier.id) ?? 0) - reste);
+    }
   }
   return soldes;
 }
@@ -1252,4 +1278,32 @@ export async function calculerStatutDemande(demandeId: string): Promise<StatutDe
   }
 
   return nouveauStatut;
+}
+
+/**
+ * Imputation des retours exceptionnels post-clôture VALIDÉS d'une demande sur ses retours encore
+ * NON réceptionnés (du plus ancien au plus récent) : renvoie, par id de retour, la part déjà
+ * couverte. Source UNIQUE de cette imputation — utilisée à l'identique par l'écran Collaborateur
+ * et l'écran Finance (jamais dupliquée).
+ */
+export async function getCouvertureRetoursPostCloture(demandeId: string): Promise<Map<string, number>> {
+  const [reglements, exceptionnels] = await Promise.all([
+    prisma.reglement.findMany({
+      where: { demandeId, estConfirme: true, estAnnule: false },
+      include: { retours: { orderBy: { createdAt: "asc" } } },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.retourExceptionnel.aggregate({ where: { demandeId, statut: "VALIDE" }, _sum: { montant: true } }),
+  ]);
+  let restant = Number(exceptionnels._sum.montant ?? 0);
+  const couvert = new Map<string, number>();
+  for (const reglement of reglements) {
+    for (const retour of reglement.retours) {
+      if (retour.estReceptionne || restant <= 0) continue;
+      const alloue = Math.min(restant, Number(retour.montantARetourner));
+      couvert.set(retour.id, alloue);
+      restant -= alloue;
+    }
+  }
+  return couvert;
 }

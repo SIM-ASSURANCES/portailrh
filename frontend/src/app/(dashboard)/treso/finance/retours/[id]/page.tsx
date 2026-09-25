@@ -3,7 +3,8 @@ import { notFound, redirect } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma } from "backend";
+import { etatRetourAffiche } from "@/lib/retourAffichage";
+import { getCouvertureRetoursPostCloture, prisma } from "backend";
 
 import { DetaillerDepensesForm } from "./DetaillerDepensesForm";
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
@@ -63,6 +64,13 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     notFound();
   }
 
+  // Même imputation des retours post-clôture que l'écran Collaborateur (source unique).
+  const couverture = await getCouvertureRetoursPostCloture(retour.reglement.demandeId);
+  const etatRetour = etatRetourAffiche({
+    montantARetourner: Number(retour.montantARetourner),
+    estReceptionne: retour.estReceptionne,
+    dejaCouvertPostCloture: couverture.get(retour.id) ?? 0,
+  });
   const totalDeclare = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
   const montantNonJustifie = retour.depenses
     .filter((d) => d.justification === "SANS_PIECE")
@@ -208,9 +216,11 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
             <dd className="text-sm font-semibold text-foreground">{totalDeclare.toLocaleString("fr-FR")} FCFA</dd>
           </div>
           <div>
-            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">À retourner</dt>
-            <dd className="text-sm font-semibold text-foreground">
-              {Number(retour.montantARetourner).toLocaleString("fr-FR")} FCFA
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{etatRetour.libelle}</dt>
+            <dd className={`text-sm font-semibold ${etatRetour.estRetourne ? "text-success" : "text-foreground"}`}>
+              {etatRetour.couvertParPostCloture
+                ? `${Number(retour.montantARetourner).toLocaleString("fr-FR")} FCFA (couvert par un retour enregistré après la clôture)`
+                : `${etatRetour.valeur.toLocaleString("fr-FR")} FCFA`}
             </dd>
           </div>
           {montantNonJustifie > 0 ? (

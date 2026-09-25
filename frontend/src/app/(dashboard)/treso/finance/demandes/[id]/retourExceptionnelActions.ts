@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { getRetoursRecus, getTotalRegle, prisma } from "backend";
+import { getDepensesDeclarees, getRetoursRecus, getTotalRegle, prisma } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -133,7 +133,19 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
     };
   }
 
+  // Part du montant qui COUVRE le solde à régulariser encore ouvert (ex. retour non réceptionné) : elle
+  // ne réduit aucune dépense. Seul l'excédent réduit les dépenses non justifiées (solde ramené à 0, jamais négatif).
+  const [totalRegle, depensesDeclarees, retoursRecus] = await Promise.all([
+    getTotalRegle(retour.demandeId),
+    getDepensesDeclarees(retour.demandeId),
+    getRetoursRecus(retour.demandeId),
+  ]);
+  const ecartAvant = Math.round((totalRegle - depensesDeclarees - retoursRecus) * 100);
+  const couvertureCentimes = Math.min(Math.round(Number(retour.montant) * 100), Math.max(0, ecartAvant));
+
   const maintenant = new Date();
+  let residuel = 0;
+  let resumeReduction = "";
   await prisma.$transaction(async (tx) => {
     await tx.retourExceptionnel.update({
       where: { id: retourId },
@@ -150,12 +162,45 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
         userId: session.user.id,
       },
     });
+    // Le montant rendu réduit en PRIORITÉ les dépenses "sans pièce formelle" (les moins vérifiées),
+    // puis déborde sur le "non détaillé" — jamais sur les dépenses justifiées — pour que le Solde à
+    // régulariser revienne à 0 au lieu de passer négatif.
+    const lignes = await tx.depenseLigne.findMany({
+      where: { retourCaisse: { reglement: { demandeId: retour.demandeId } }, justification: "SANS_PIECE" },
+      orderBy: { createdAt: "asc" },
+    });
+    const sansPiece = lignes.filter((l) => l.motifNonJustifie != null);
+    const nonDetaille = lignes.filter((l) => l.motifNonJustifie == null);
+    let reste = Math.round(Number(retour.montant) * 100) - couvertureCentimes;
+    let reduitSansPiece = 0;
+    let reduitNonDetaille = 0;
+    for (const [groupe, isSansPiece] of [[sansPiece, true], [nonDetaille, false]] as const) {
+      for (const l of groupe) {
+        if (reste <= 0) break;
+        const m = Math.round(Number(l.montant) * 100);
+        const retire = Math.min(m, reste);
+        if (retire >= m) {
+          await tx.depenseLigne.delete({ where: { id: l.id } });
+        } else {
+          await tx.depenseLigne.update({ where: { id: l.id }, data: { montant: (m - retire) / 100 } });
+        }
+        reste -= retire;
+        if (isSansPiece) reduitSansPiece += retire;
+        else reduitNonDetaille += retire;
+      }
+    }
+    residuel = reste / 100;
+    resumeReduction = `${couvertureCentimes > 0 ? ` ${(couvertureCentimes / 100).toLocaleString("fr-FR")} FCFA couvrent le solde encore à régulariser.` : ""} Dépenses réduites en conséquence : ${(reduitSansPiece / 100).toLocaleString("fr-FR")} FCFA sur « dépense sans pièce formelle »${
+      reduitNonDetaille > 0 ? `, ${(reduitNonDetaille / 100).toLocaleString("fr-FR")} FCFA sur « non détaillé »` : ""
+    }${
+      residuel > 0 ? `. ATTENTION : ${residuel.toLocaleString("fr-FR")} FCFA n'ont pu être imputés (seules des dépenses justifiées subsistent) — le Solde à régulariser sera négatif, à vérifier.` : "."
+    }`;
     await tx.historiqueEntry.create({
       data: {
         entity: "Demande",
         entityId: retour.demandeId,
         action: "retour_exceptionnel_post_cloture",
-        detail: `Retour exceptionnel post-clôture validé : ${Number(retour.montant).toLocaleString("fr-FR")} FCFA — motif : ${retour.motif}. Saisi par ${retour.saisiPar.fullName} le ${retour.saisiAt.toLocaleDateString("fr-FR")}, validé par ${session.user.fullName} le ${maintenant.toLocaleDateString("fr-FR")}.`,
+        detail: `Retour exceptionnel post-clôture validé : ${Number(retour.montant).toLocaleString("fr-FR")} FCFA — motif : ${retour.motif}.${resumeReduction} Saisi par ${retour.saisiPar.fullName} le ${retour.saisiAt.toLocaleDateString("fr-FR")}, validé par ${session.user.fullName} le ${maintenant.toLocaleDateString("fr-FR")}.`,
         userId: session.user.id,
       },
     });
@@ -172,7 +217,15 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
     category: "TRESORERIE",
   });
 
-  return { status: "success", message: "Retour exceptionnel validé — écriture enregistrée en caisse." };
+  return {
+    status: "success",
+    message:
+      residuel > 0
+        ? `Retour exceptionnel validé — écriture enregistrée en caisse. Attention : ${residuel.toLocaleString("fr-FR")} FCFA n'ont pas pu être imputés sur les dépenses non justifiées (Solde à régulariser négatif).`
+        : couvertureCentimes > 0
+          ? `Retour exceptionnel validé — écriture enregistrée en caisse ; ${(couvertureCentimes / 100).toLocaleString("fr-FR")} FCFA couvrent le solde encore à régulariser${couvertureCentimes < Math.round(Number(retour.montant) * 100) ? ", le reste réduit les dépenses non justifiées" : ""}.`
+          : "Retour exceptionnel validé — écriture enregistrée en caisse ; dépenses non justifiées réduites du même montant.",
+  };
 }
 
 /** Rejet (Responsable Finance UNIQUEMENT), motif obligatoire. L'Assistant peut ensuite resaisir. */
