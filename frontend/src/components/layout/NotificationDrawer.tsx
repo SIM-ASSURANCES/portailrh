@@ -172,7 +172,7 @@ export function NotificationDrawer({
               Notifications
             </h2>
             {unreadTotal > 0 && (
-              <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+              <span className="inline-flex items-center rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white">
                 {unreadTotal}
               </span>
             )}
