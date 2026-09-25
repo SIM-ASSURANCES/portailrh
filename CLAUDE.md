@@ -4999,6 +4999,10 @@ En plus de la palette/typographie/composants de base (voir plus haut) :
 
 ### Refonte visuelle des écrans d'authentification (connexion, mot de passe oublié, réinitialisation)
 
+> **Mise à jour 2026-09-25 :** le **panneau bleu illustré de droite a été retiré** (décision produit). `AuthShell` n'affiche plus qu'une
+> carte blanche unique et centrée (logo + formulaire, `max-w-md`) sur le fond blanc avec le filigrane discret ; la prop `tagline` a
+> disparu (plus aucune page ne la passe). Les passages ci-dessous sur la « carte scindée »/le « panneau droit » sont donc historiques.
+
 Changement **purement visuel** — aucune Server Action, validation,
 redirection ni message d'erreur/succès n'a été modifié. Les 3 écrans
 (`/login`, `/forgot-password`, `/reset-password/[token]`) sont passés d'une

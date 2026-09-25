@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 export default async function ForgotPasswordPage() {
   return (
-    <AuthShell tagline="Nous vous envoyons un lien sécurisé pour réinitialiser votre accès en toute confidentialité.">
+    <AuthShell>
       <div className="space-y-4">
         <div>
           <h1 className="text-xl font-bold text-foreground">Mot de passe oublié</h1>

@@ -73,7 +73,7 @@ export default async function LoginPage({
   const { error, callbackUrl, activated, reset } = await searchParams;
 
   return (
-    <AuthShell tagline="Gérez vos demandes, validations et règlements de trésorerie depuis un espace unique et sécurisé.">
+    <AuthShell>
       <form action={authenticate} className="space-y-4">
         <div>
           <h1 className="text-xl font-bold text-foreground">Connexion</h1>
