@@ -27,6 +27,7 @@ export function RegularisationSignalement({
   montantPropose,
   peutAgir,
   remboursementEnAttente,
+  regulariseDeja,
 }: {
   retourId: string;
   montantRecu: number;
@@ -34,6 +35,8 @@ export function RegularisationSignalement({
   /** Assistant Finance (`treso.receptionner_retour`). */
   peutAgir: boolean;
   remboursementEnAttente: boolean;
+  /** Une régularisation de caisse (complément ou remboursement) existe déjà pour ce signalement. */
+  regulariseDeja: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -43,7 +46,14 @@ export function RegularisationSignalement({
   const ecart = Math.round((montantPropose - montantRecu) * 100) / 100;
 
   if (ecart === 0) {
-    return <p className="text-xs">Le montant proposé est identique au montant déjà réceptionné : aucune régularisation de caisse.</p>;
+    return regulariseDeja ? (
+      <p className="text-xs">
+        Régularisation de caisse effectuée : il reste à <strong>corriger le détail des dépenses</strong> (formulaire ci-dessous) — le
+        signalement sera alors marqué résolu.
+      </p>
+    ) : (
+      <p className="text-xs">Le montant proposé est identique au montant déjà réceptionné : aucune régularisation de caisse.</p>
+    );
   }
   if (!peutAgir) {
     return (

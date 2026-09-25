@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { etatRetourAffiche } from "@/lib/retourAffichage";
-import { getCouvertureRetoursPostCloture, prisma } from "backend";
+import { getCouvertureRetoursPostCloture, getRecuNetSignalement, prisma } from "backend";
 
 import { DetaillerDepensesForm } from "./DetaillerDepensesForm";
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
@@ -85,6 +85,9 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
   // `detaillerDepensesRetourAction` côté serveur, jamais dupliquée sous une
   // forme divergente ici (celle-ci ne sert qu'à décider l'affichage).
   const signalementActif = retour.signalements[0] ?? null;
+  // Reçu net au regard du signalement (réceptionné + compléments − remboursements) : le signalement reste actif après une
+  // régularisation de caisse, jusqu'à la correction du détail.
+  const recuNetSignalement = signalementActif ? await getRecuNetSignalement(retour.id, signalementActif.id) : 0;
   const cloturéeSansException = retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle;
   const bloqueParReception = retour.estReceptionne && !signalementActif;
   const peutDetailler = !cloturéeSansException && !bloqueParReception;
@@ -137,7 +140,8 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
             <div className="pt-2">
               <RegularisationSignalement
                 retourId={retour.id}
-                montantRecu={Number(retour.montantARetourner)}
+                montantRecu={recuNetSignalement}
+                regulariseDeja={Math.round((recuNetSignalement - Number(retour.montantARetourner)) * 100) !== 0}
                 montantPropose={Number(signalementActif.montantPropose)}
                 peutAgir={canReceptionner}
                 remboursementEnAttente={retour.remboursements.some((r) => r.statut === "EN_ATTENTE_VALIDATION")}

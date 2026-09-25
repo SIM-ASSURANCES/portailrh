@@ -1425,7 +1425,17 @@ nouvelle écriture qui référence le retour d'origine et le signalement.
 - **Montant proposé < réceptionné** (argent qui sort) : `RemboursementRetour` — proposé par l'Assistant
   (montant ≤ réceptionné − proposé, motif, **pièce jointe obligatoire**), **validé/rejeté par le Responsable**
   (séparation des tâches). `SORTIE` `JournalCaisse` à la validation seulement, **refusée si solde de caisse
-  insuffisant** ; la dépense du retour d'origine est relevée du même montant (fusion dans « non détaillé »).
+  insuffisant** ; la dépense du retour d'origine est relevée du même montant par une **ligne dédiée** « Dépense complémentaire
+  (signalement) » (`SANS_PIECE`, **motif renseigné**, jamais fusionnée dans « non détaillé ») : elle est ainsi éligible à
+  `justifierDepenseApresReceptionAction` (pièce jointe après coup) et reprise comme une entrée normale par le formulaire de détail.
+- **RÈGLE — l'argent et la documentation sont deux choses séparées** : un signalement n'est résolu **que** par la correction du
+  détail (`detaillerDepensesRetourAction`), **jamais** par la régularisation de caisse (déclaration d'un complément, validation d'un
+  remboursement). Bug corrigé : résolu à la validation du remboursement, il re-verrouillait le retour réceptionné avant que le détail
+  des dépenses ait pu être corrigé. Conséquence : le signalement reste actif après la régularisation, donc l'écart doit se calculer
+  sur le **reçu net** (`getRecuNetSignalement` : réceptionné + compléments du signalement − remboursements validés ou en attente)
+  et non sur le seul montant réceptionné, sinon le même écart pourrait être régularisé deux fois (second complément / second
+  remboursement) — `declarerRetourComplementaireAction` et `proposerRemboursementRetourAction` refusent quand il est soldé, et
+  l'écran affiche « Régularisation de caisse effectuée : il reste à corriger le détail ».
 - Les remboursements **validés** viennent en déduction des retours reçus (`getRetoursRecus`,
   `getSoldesARegulariserParReglements`, `getMesDemandesDetail`, reporting « Fonds remis »).
 - Traçabilité : historique de la demande (`retour_complementaire_signalement`, `remboursement_retour_*`,

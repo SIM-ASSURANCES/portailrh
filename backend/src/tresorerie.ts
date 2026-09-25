@@ -1307,3 +1307,26 @@ export async function getCouvertureRetoursPostCloture(demandeId: string): Promis
   }
   return couvert;
 }
+
+/**
+ * Montant "reçu net" d'un retour au regard d'un signalement (voir CLAUDE.md "Correction d'un retour signalé") :
+ * montant réceptionné du retour d'origine + retours COMPLÉMENTAIRES déjà déclarés pour ce signalement (réceptionnés
+ * ou non) − remboursements de ce signalement (validés ou en attente). Le signalement restant actif jusqu'à la
+ * correction du détail, c'est cette valeur — et non le seul montant réceptionné — qui sert à calculer l'écart encore
+ * à régulariser, pour ne jamais régulariser deux fois le même écart.
+ */
+export async function getRecuNetSignalement(retourId: string, signalementId: string): Promise<number> {
+  const [retour, complements, remboursements] = await Promise.all([
+    prisma.retourCaisse.findUnique({ where: { id: retourId }, select: { montantARetourner: true } }),
+    prisma.retourCaisse.aggregate({ where: { signalementOrigineId: signalementId }, _sum: { montantARetourner: true } }),
+    prisma.remboursementRetour.aggregate({
+      where: { signalementId, statut: { in: ["VALIDE", "EN_ATTENTE_VALIDATION"] } },
+      _sum: { montant: true },
+    }),
+  ]);
+  return (
+    Number(retour?.montantARetourner ?? 0) +
+    Number(complements._sum.montantARetourner ?? 0) -
+    Number(remboursements._sum.montant ?? 0)
+  );
+}

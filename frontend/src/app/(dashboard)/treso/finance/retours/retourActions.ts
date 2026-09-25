@@ -7,7 +7,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notifierParPermission, notify } from "@/lib/notifications";
 import { snapshotLigne, type CorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
-import { calculerMontantARetournerNet, getSoldeCaisse, prisma } from "backend";
+import { calculerMontantARetournerNet, getRecuNetSignalement, getSoldeCaisse, prisma } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -912,9 +912,12 @@ export async function declarerRetourComplementaireAction(retourId: string): Prom
   if (retour.reglement.retours.some((r) => !r.estReceptionne)) {
     return { status: "error", message: "Un retour est déjà en attente de réception sur ce règlement : réceptionnez-le d'abord." };
   }
-  const ecartCentimes = Math.round(Number(signalement.montantPropose) * 100) - Math.round(Number(retour.montantARetourner) * 100);
+  // Écart sur le "reçu net" (réceptionné + compléments déjà déclarés − remboursements) : le signalement reste actif
+  // après une régularisation, jamais deux fois le même écart.
+  const recuNet = await getRecuNetSignalement(retourId, signalement.id);
+  const ecartCentimes = Math.round(Number(signalement.montantPropose) * 100) - Math.round(recuNet * 100);
   if (ecartCentimes <= 0) {
-    return { status: "error", message: "Le montant proposé n'est pas supérieur au montant déjà réceptionné : aucun retour complémentaire à déclarer." };
+    return { status: "error", message: "Aucun retour complémentaire à déclarer : le montant proposé est déjà atteint (ou une régularisation de caisse a déjà été faite pour ce signalement)." };
   }
   const ecart = ecartCentimes / 100;
   const demandeId = retour.reglement.demandeId;
@@ -931,10 +934,7 @@ export async function declarerRetourComplementaireAction(retourId: string): Prom
         dateRetour: new Date(),
       },
     });
-    await tx.signalementRetour.update({
-      where: { id: signalement.id },
-      data: { estResolu: true, resoluParId: session.user.id, resoluAt: new Date() },
-    });
+    // Le signalement N'EST PAS résolu ici : seule la correction du détail (`detaillerDepensesRetourAction`) le résout.
     await tx.historiqueEntry.create({
       data: {
         entity: "Demande",
@@ -1002,9 +1002,10 @@ export async function proposerRemboursementRetourAction(
   if (retour.remboursements.length > 0) {
     return { status: "error", message: "Un remboursement est déjà en attente de validation pour ce retour." };
   }
-  const plafondCentimes = Math.round(Number(retour.montantARetourner) * 100) - Math.round(Number(signalement.montantPropose) * 100);
+  const recuNet = await getRecuNetSignalement(retourId, signalement.id);
+  const plafondCentimes = Math.round(recuNet * 100) - Math.round(Number(signalement.montantPropose) * 100);
   if (plafondCentimes <= 0) {
-    return { status: "error", message: "Le montant proposé n'est pas inférieur au montant réceptionné : aucun remboursement à proposer." };
+    return { status: "error", message: "Aucun remboursement à proposer : le montant proposé est déjà atteint (ou une régularisation de caisse a déjà été faite pour ce signalement)." };
   }
   if (Math.round(parsed.data.montant * 100) > plafondCentimes) {
     return { status: "error", message: `Le remboursement ne peut pas dépasser ${(plafondCentimes / 100).toLocaleString("fr-FR")} FCFA (montant réceptionné − montant proposé).` };
@@ -1081,16 +1082,21 @@ export async function validerRemboursementRetourAction(remboursementId: string):
         userId: session.user.id,
       },
     });
-    await ajouterAuNonDetaille(
-      tx,
-      rb.retourCaisseId,
-      montant,
-      rb.retourCaisse.dateRetour ?? rb.retourCaisse.createdAt,
-      "Dépense complémentaire constatée suite au signalement du collaborateur (remboursement validé)."
-    );
-    await tx.signalementRetour.update({
-      where: { id: rb.signalementId },
-      data: { estResolu: true, resoluParId: session.user.id, resoluAt: maintenant },
+    // Ligne DÉDIÉE (jamais fusionnée dans "Dépenses non détaillées") avec un motif renseigné : elle est ainsi éligible à
+    // `justifierDepenseApresReceptionAction` et reprise comme une entrée normale par le formulaire de détail. Le signalement
+    // N'EST PAS résolu ici : l'argent (remboursement) et la documentation (détail) sont deux choses séparées.
+    await tx.depenseLigne.create({
+      data: {
+        retourCaisseId: rb.retourCaisseId,
+        montant,
+        objet: "Dépense complémentaire (signalement)",
+        date: rb.retourCaisse.dateRetour ?? rb.retourCaisse.createdAt,
+        justification: "SANS_PIECE",
+        motifNonJustifie: "Dépense complémentaire constatée suite au signalement du collaborateur (remboursement validé)",
+        motifNonJustifieParId: session.user.id,
+        motifNonJustifieAt: maintenant,
+        commentaire: "Ajoutée à la validation du remboursement : justifiable après coup (pièce jointe).",
+      },
     });
     await tx.historiqueEntry.create({
       data: {
