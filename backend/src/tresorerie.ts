@@ -1330,3 +1330,65 @@ export async function getRecuNetSignalement(retourId: string, signalementId: str
     Number(remboursements._sum.montant ?? 0)
   );
 }
+
+export interface MontantDefinitifRetour {
+  /** Montant réceptionné du retour d'origine (le champ historique "Retourné à la compta", jamais modifié). */
+  recu: number;
+  /** Retours complémentaires liés à un signalement de ce retour (réceptionnés ou non). */
+  complements: number;
+  /** Part des compléments pas encore réceptionnée. */
+  complementsEnAttente: number;
+  /** Remboursements VALIDÉS (sortie de caisse). */
+  rembourses: number;
+  /** recu + complements − rembourses. */
+  definitif: number;
+  /** Au moins un complément ou un remboursement validé : seul cas où le "montant définitif" est affiché. */
+  aCorrection: boolean;
+}
+
+/**
+ * "Montant à retourner définitif" de chaque retour (voir CLAUDE.md "Correction d'un retour signalé") : net après les
+ * régularisations liées à un signalement — montant réceptionné + compléments déclarés (réceptionnés ou non) − remboursements
+ * VALIDÉS. Affichage seulement ; ne modifie jamais le montant réceptionné historique. Une seule requête par nature pour tous les retours.
+ */
+export async function getMontantsDefinitifsRetours(retourIds: string[]): Promise<Map<string, MontantDefinitifRetour>> {
+  const resultat = new Map<string, MontantDefinitifRetour>();
+  if (retourIds.length === 0) return resultat;
+  const [retours, complements, remboursements] = await Promise.all([
+    prisma.retourCaisse.findMany({ where: { id: { in: retourIds } }, select: { id: true, montantARetourner: true } }),
+    prisma.retourCaisse.findMany({
+      where: { signalementOrigine: { retourCaisseId: { in: retourIds } } },
+      select: { montantARetourner: true, estReceptionne: true, signalementOrigine: { select: { retourCaisseId: true } } },
+    }),
+    prisma.remboursementRetour.groupBy({
+      by: ["retourCaisseId"],
+      where: { retourCaisseId: { in: retourIds }, statut: "VALIDE" },
+      _sum: { montant: true },
+    }),
+  ]);
+  for (const r of retours) {
+    resultat.set(r.id, {
+      recu: Number(r.montantARetourner),
+      complements: 0,
+      complementsEnAttente: 0,
+      rembourses: 0,
+      definitif: Number(r.montantARetourner),
+      aCorrection: false,
+    });
+  }
+  for (const c of complements) {
+    const entree = resultat.get(c.signalementOrigine!.retourCaisseId);
+    if (!entree) continue;
+    entree.complements += Number(c.montantARetourner);
+    if (!c.estReceptionne) entree.complementsEnAttente += Number(c.montantARetourner);
+  }
+  for (const rb of remboursements) {
+    const entree = resultat.get(rb.retourCaisseId);
+    if (entree) entree.rembourses += Number(rb._sum.montant ?? 0);
+  }
+  for (const entree of resultat.values()) {
+    entree.definitif = entree.recu + entree.complements - entree.rembourses;
+    entree.aCorrection = entree.complements > 0 || entree.rembourses > 0;
+  }
+  return resultat;
+}

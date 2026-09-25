@@ -3,8 +3,8 @@ import { notFound, redirect } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { etatRetourAffiche } from "@/lib/retourAffichage";
-import { getCouvertureRetoursPostCloture, getRecuNetSignalement, prisma } from "backend";
+import { detailMontantDefinitif, etatRetourAffiche } from "@/lib/retourAffichage";
+import { getCouvertureRetoursPostCloture, getMontantsDefinitifsRetours, getRecuNetSignalement, prisma } from "backend";
 
 import { DetaillerDepensesForm } from "./DetaillerDepensesForm";
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
@@ -72,6 +72,8 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     estReceptionne: retour.estReceptionne,
     dejaCouvertPostCloture: couverture.get(retour.id) ?? 0,
   });
+  // "Montant à retourner définitif" : net après compléments/remboursements liés à un signalement (n'altère pas "Retourné à la compta").
+  const montantDefinitif = (await getMontantsDefinitifsRetours([retour.id])).get(retour.id);
   const totalDeclare = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
   const montantNonJustifie = retour.depenses
     .filter((d) => d.justification === "SANS_PIECE")
@@ -228,6 +230,15 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
                 : `${etatRetour.valeur.toLocaleString("fr-FR")} FCFA`}
             </dd>
           </div>
+          {montantDefinitif?.aCorrection ? (
+            <div className="sm:col-span-3">
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Montant à retourner définitif</dt>
+              <dd className="text-sm font-semibold text-foreground">
+                {montantDefinitif.definitif.toLocaleString("fr-FR")} FCFA{" "}
+                <span className="text-xs font-normal text-muted-foreground">{detailMontantDefinitif(montantDefinitif)}</span>
+              </dd>
+            </div>
+          ) : null}
           {montantNonJustifie > 0 ? (
             <div>
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Non justifié</dt>

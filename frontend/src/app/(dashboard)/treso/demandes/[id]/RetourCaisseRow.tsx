@@ -6,7 +6,7 @@ import { Badge, Button } from "@/components/ui";
 import type { TypeJustification } from "backend";
 
 import { RetourCaisseForm } from "./RetourCaisseForm";
-import { etatRetourAffiche } from "@/lib/retourAffichage";
+import { detailMontantDefinitif, etatRetourAffiche, type MontantDefinitifAffiche } from "@/lib/retourAffichage";
 
 import { SignalerErreurRetour } from "./SignalerErreurRetour";
 
@@ -32,6 +32,8 @@ export interface RetourData {
   montantARetourner: number;
   /** Part de ce retour (non réceptionné) déjà couverte par des retours exceptionnels post-clôture VALIDÉS. */
   dejaCouvertPostCloture: number;
+  /** Net après compléments/remboursements liés à un signalement ; `null` s'il n'y en a aucun (rien à afficher). */
+  montantDefinitif: MontantDefinitifAffiche | null;
   /** Renseignée uniquement pour une déclaration via le formulaire
    * simplifié ("date + montant") — `null` pour une déclaration
    * détaillée, où chaque `DepenseLigne` porte déjà sa propre date. */
@@ -94,12 +96,14 @@ function DetailDepenses({
   montantARetourner,
   estReceptionne,
   dejaCouvertPostCloture,
+  montantDefinitif,
   dateRetour,
 }: {
   depenses: DepenseLigneData[];
   montantARetourner: number;
   estReceptionne: boolean;
   dejaCouvertPostCloture: number;
+  montantDefinitif: MontantDefinitifAffiche | null;
   dateRetour: Date | null;
 }) {
   // "À retourner" tient compte des retours enregistrés après la clôture : soldé => "Retourné".
@@ -166,6 +170,15 @@ function DetailDepenses({
               : `${valeurRetour.toLocaleString("fr-FR")} FCFA`}
           </dd>
         </div>
+        {montantDefinitif ? (
+          <div className="sm:col-span-3">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Montant à retourner définitif</dt>
+            <dd className="text-sm font-semibold text-foreground">
+              {montantDefinitif.definitif.toLocaleString("fr-FR")} FCFA{" "}
+              <span className="text-xs font-normal text-muted-foreground">{detailMontantDefinitif(montantDefinitif)}</span>
+            </dd>
+          </div>
+        ) : null}
         {montantNonJustifie > 0 ? (
           <div>
             <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Dépense sans pièce formelle</dt>
@@ -226,6 +239,7 @@ function RetourExistant({
             montantARetourner={retour.montantARetourner}
             estReceptionne={retour.estReceptionne}
             dejaCouvertPostCloture={retour.dejaCouvertPostCloture}
+            montantDefinitif={retour.montantDefinitif}
             dateRetour={retour.dateRetour}
           />
           <div className="border-t border-border pt-2">

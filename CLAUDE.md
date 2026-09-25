@@ -1436,6 +1436,10 @@ nouvelle écriture qui référence le retour d'origine et le signalement.
   et non sur le seul montant réceptionné, sinon le même écart pourrait être régularisé deux fois (second complément / second
   remboursement) — `declarerRetourComplementaireAction` et `proposerRemboursementRetourAction` refusent quand il est soldé, et
   l'écran affiche « Régularisation de caisse effectuée : il reste à corriger le détail ».
+- **« Montant à retourner définitif »** (écrans Finance ET Collaborateur, `getMontantsDefinitifsRetours` + `detailMontantDefinitif`) :
+  net = réceptionné + compléments liés à un signalement (réceptionnés ou non) − remboursements **validés** (pas ceux en attente),
+  affiché **seulement** s'il existe au moins un complément ou un remboursement validé, avec le détail « (50 000 reçus − 5 000
+  remboursés) ». Ne modifie jamais « Retourné à la compta » (montant brut réceptionné). Visible du Collaborateur : c'est son argent.
 - Les remboursements **validés** viennent en déduction des retours reçus (`getRetoursRecus`,
   `getSoldesARegulariserParReglements`, `getMesDemandesDetail`, reporting « Fonds remis »).
 - Traçabilité : historique de la demande (`retour_complementaire_signalement`, `remboursement_retour_*`,

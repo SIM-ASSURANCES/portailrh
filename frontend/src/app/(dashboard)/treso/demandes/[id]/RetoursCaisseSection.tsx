@@ -1,4 +1,4 @@
-import { getCouvertureRetoursPostCloture, getDateDernierReglementConfirme } from "backend";
+import { getCouvertureRetoursPostCloture, getDateDernierReglementConfirme, getMontantsDefinitifsRetours } from "backend";
 import { prisma } from "backend";
 
 import { RetourCaisseRow } from "./RetourCaisseRow";
@@ -66,6 +66,8 @@ export async function RetoursCaisseSection({
 
   // Retours exceptionnels post-clôture VALIDÉS imputés sur les retours non réceptionnés (source unique partagée avec l'écran Finance).
   const couvertParRetour = await getCouvertureRetoursPostCloture(demandeId);
+  // "Montant à retourner définitif" (net après compléments/remboursements) : c'est l'argent du Collaborateur, il le voit aussi.
+  const definitifs = await getMontantsDefinitifsRetours(reglements.flatMap((r) => r.retours.map((t) => t.id)));
 
   const dateMin = dateDernierReglement ? dateDernierReglement.toISOString().slice(0, 10) : undefined;
 
@@ -84,6 +86,7 @@ export async function RetoursCaisseSection({
               estReceptionne: retour.estReceptionne,
               montantARetourner: Number(retour.montantARetourner),
               dejaCouvertPostCloture: couvertParRetour.get(retour.id) ?? 0,
+              montantDefinitif: definitifs.get(retour.id)?.aCorrection ? definitifs.get(retour.id)! : null,
               peutSignaler: peutDeclarer || !!retour.motifReouvertureExceptionnelle,
               dateRetour: retour.dateRetour,
               creeParAssistant: retour.creeParAssistant,
