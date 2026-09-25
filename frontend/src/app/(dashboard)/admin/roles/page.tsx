@@ -18,6 +18,8 @@ export default async function AdminRolesPage() {
       orderBy: { name: "asc" },
     }),
     prisma.module.findMany({
+      // Module technique "systeme" (réinitialisation à usage unique) : jamais attribuable depuis la matrice.
+      where: { key: { not: "systeme" } },
       include: { permissions: { orderBy: { label: "asc" } } },
       orderBy: { label: "asc" },
     }),

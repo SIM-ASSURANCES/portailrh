@@ -122,7 +122,7 @@ async function main() {
 
   console.log("Création des modules...");
 
-  const [moduleTresorerie, modulePointage, moduleFeedback] = await Promise.all([
+  const [moduleTresorerie, modulePointage, moduleFeedback, moduleSysteme] = await Promise.all([
     prisma.module.upsert({
       where: { key: "tresorerie" },
       update: { label: "Gestion des demandes et trésorerie" },
@@ -137,6 +137,12 @@ async function main() {
       where: { key: "feedback" },
       update: { label: "FeedbackApp" },
       create: { key: "feedback", label: "FeedbackApp" },
+    }),
+    // Module TECHNIQUE (jamais affiché comme carte, voir getAccessibleModules) : réinitialisation à usage unique.
+    prisma.module.upsert({
+      where: { key: "systeme" },
+      update: { label: "Système" },
+      create: { key: "systeme", label: "Système" },
     }),
   ]);
 
@@ -187,6 +193,11 @@ async function main() {
       key: "feedback.moderer",
       label: "Modérer les messages FeedbackApp",
       moduleId: moduleFeedback.id,
+    },
+    {
+      key: "systeme.reinitialiser",
+      label: "Réinitialiser les données de test avant mise en production (usage unique)",
+      moduleId: moduleSysteme.id,
     },
   ];
 
@@ -246,6 +257,8 @@ async function main() {
       // FeedbackApp (voir CLAUDE.md "FeedbackApp") — décision confirmée :
       // la Direction modère aussi les messages, au même titre que RH.
       "feedback.moderer",
+      // Réinitialisation à usage unique : DG SEUL (jamais Admin, jamais héritée d'estAdmin).
+      "systeme.reinitialiser",
     ],
     // EXCEPTION DÉLIBÉRÉE à l'invariant "le rôle Admin n'a aucune
     // RolePermission explicite" (voir CLAUDE.md "estAdmin — accès à la

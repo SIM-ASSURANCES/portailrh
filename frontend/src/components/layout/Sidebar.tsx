@@ -11,6 +11,7 @@ import {
   ADMIN_GROUP,
   DASHBOARD_ITEM,
   DELEGATIONS_ITEM,
+  REINITIALISATION_ITEM,
   getNavBranches,
   type NavBranch,
   type NavItem,
@@ -51,6 +52,8 @@ interface SidebarProps {
   canAccessPointageRH?: boolean;
   /** Affiche "Déléguer des accès" (au moins une permission treso.x ou pointage.x via son propre rôle). */
   canDelegerAcces?: boolean;
+  /** `systeme.reinitialiser` (DG) ET réinitialisation pas encore effectuée. */
+  canReinitialiser?: boolean;
   /** `pointage.pointer` : ajoute "Pointer" au groupe "Mon espace". */
   canPointer?: boolean;
   /** `pointage.consulter_historique` : ajoute "Mon historique" au groupe "Mon espace". */
@@ -111,6 +114,7 @@ export function Sidebar({
   hasPointageAccess = false,
   canAccessPointageRH = false,
   canDelegerAcces = false,
+  canReinitialiser = false,
   canPointer = false,
   canConsulterHistorique = false,
   canModererFeedback = false,
@@ -266,6 +270,17 @@ export function Sidebar({
               <ItemLink
                 item={DELEGATIONS_ITEM}
                 active={isActive(pathname, DELEGATIONS_ITEM)}
+                collapsed={collapsed}
+                onNavigate={onCloseMobile}
+              />
+            </div>
+          ) : null}
+
+          {canReinitialiser ? (
+            <div className="mt-2 border-t border-sidebar-border pt-2">
+              <ItemLink
+                item={REINITIALISATION_ITEM}
+                active={isActive(pathname, REINITIALISATION_ITEM)}
                 collapsed={collapsed}
                 onNavigate={onCloseMobile}
               />

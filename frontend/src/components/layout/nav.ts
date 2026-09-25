@@ -141,6 +141,13 @@ export interface NavFlags {
  * propre rôle, jamais un rôle en particulier — voir `SidebarProps.canDelegerAcces`
  * et CLAUDE.md "Délégation individuelle de permissions".
  */
+/** Réinitialisation à usage unique avant mise en production (DG seul, tant qu'elle n'a pas été effectuée). */
+export const REINITIALISATION_ITEM: NavItem = {
+  label: "Réinitialisation",
+  href: "/systeme/reinitialisation",
+  icon: "rotate-ccw",
+};
+
 export const DELEGATIONS_ITEM: NavItem = {
   label: "Déléguer des accès",
   href: "/delegations",

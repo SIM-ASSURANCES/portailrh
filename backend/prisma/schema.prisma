@@ -72,6 +72,7 @@ model User {
   retoursExceptionnelsSaisis    RetourExceptionnel[] @relation("RetourExceptionnelSaisiPar")
   retoursExternesCollaborateur  RetourExterne[]      @relation("RetourExterneCollaborateur")
   retoursExternesCrees          RetourExterne[]      @relation("RetourExterneCreePar")
+  reinitialisationsSysteme      ReinitialisationSysteme[]
   remboursementsRetourProposes  RemboursementRetour[] @relation("RemboursementRetourProposePar")
   remboursementsRetourValides   RemboursementRetour[] @relation("RemboursementRetourValidePar")
   retoursExceptionnelsValides   RetourExceptionnel[] @relation("RetourExceptionnelValidePar")
@@ -1286,6 +1287,25 @@ model RetourExterne {
   creeAt               DateTime @default(now())
 
   @@index([creeAt])
+}
+
+/// Réinitialisation à USAGE UNIQUE avant mise en production (voir CLAUDE.md "Réinitialisation avant mise en
+/// production") : purge des données de test Trésorerie + Pointage RH/FeedbackApp. Cette table n'est JAMAIS
+/// purgée : une ligne = "déjà exécutée" (flag définitif) ET journal d'audit hors des tables purgées.
+/// `verrou` est constant + unique : deux exécutions concurrentes ne peuvent pas réussir toutes les deux.
+model ReinitialisationSysteme {
+  id             String   @id @default(cuid())
+  verrou         String   @unique @default("REINITIALISATION")
+  effectueeAt    DateTime @default(now())
+  effectueeParId String
+  effectueePar   User     @relation(fields: [effectueeParId], references: [id])
+  /// Nombre de lignes supprimées par table.
+  decompte       Json
+  /// Empreinte SHA-256 de la sauvegarde JSON téléchargée juste avant la purge.
+  sauvegardeSha256 String
+  /// Fichiers de uploads/ supprimés du disque après le commit (mis à jour après coup).
+  fichiersSupprimes Int      @default(0)
+  fichiersEchecs    Int      @default(0)
 }
 
 enum TypeMouvementBanque {

@@ -711,6 +711,7 @@ export async function supprimerUtilisateurAction(
     depensesMarqueesNonJustifiees,
     signalementsRetourEmis,
     signalementsRetourResolus,
+    reinitialisationsEffectuees,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -734,6 +735,8 @@ export async function supprimerUtilisateurAction(
     // 2 relations directes supplémentaires vers User.
     prisma.signalementRetour.count({ where: { signaleParId: userId } }),
     prisma.signalementRetour.count({ where: { resoluParId: userId } }),
+    // Journal de la réinitialisation à usage unique (jamais purgé) : le compte du DG qui l'a déclenchée n'est plus supprimable.
+    prisma.reinitialisationSysteme.count({ where: { effectueeParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -760,6 +763,7 @@ export async function supprimerUtilisateurAction(
   if (signalementsRetourEmis > 0) blocages.push(`signalé ${signalementsRetourEmis} erreur(s) sur un retour de caisse`);
   if (signalementsRetourResolus > 0)
     blocages.push(`résolu ${signalementsRetourResolus} signalement(s) d'erreur sur un retour de caisse`);
+  if (reinitialisationsEffectuees > 0) blocages.push("déclenché la réinitialisation avant mise en production (journal d'audit permanent)");
 
   if (blocages.length > 0) {
     const liste =

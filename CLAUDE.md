@@ -1468,6 +1468,45 @@ Le bouton « Enregistrer le détail » démarre **désactivé**, s'active dès q
 retirée, se désactive après un enregistrement réussi (cycle répétable sans recharger) ; état de chargement,
 message de confirmation et `router.refresh()` après succès.
 
+### Réinitialisation avant mise en production (usage unique)
+
+Purge des données de TEST des modules Trésorerie et Pointage RH / FeedbackApp en une seule action, puis désactivation
+définitive. Écran `/systeme/reinitialisation`, route de sauvegarde `GET /api/systeme/reinitialisation/sauvegarde`,
+logique dans `backend/src/reinitialisation.ts`.
+
+- **Accès** : permission dédiée `systeme.reinitialiser`, **DG seul** (seed + migration `20260925100000_reinitialisation_systeme`),
+  jamais héritée d'`estAdmin` (`hasPermission` n'a aucun contournement admin). Rattachée à un module **technique `systeme`**,
+  exclu de `getAccessibleModules` (aucune carte), de `/admin/modules` et de la matrice `/admin/roles` ; `toggleRolePermissionAction`
+  refuse toute permission `systeme.*`. Lien de navigation « Réinitialisation » visible seulement avec la permission ET tant que non exécutée.
+- **Purgé** (une seule transaction Prisma, isolation sérialisable, ordre = enfants avant parents d'après les FK) :
+  1 `RemboursementRetour` · 2 `JournalBanque` · 3 `RetourExterne` · 4 `PieceJointe` · 5 `SignalementRetour` · 6 `DepenseLigne` ·
+  7 `RetourCaisse` · 8 `ReglementCategorieAllocation` · 9 `JournalCaisse` · 10 `RetourExceptionnel` · 11 `Reglement` ·
+  12 `LigneDemande` · 13 `Demande` · 14 `HistoriqueEntry` (entity ∈ Demande, LigneDemande, JournalCaisse, RetourExterne) ·
+  15 `Notification` TRESORERIE — puis Pointage/Feedback (ordre validé par Thierry) : 16 `CorrectionPointage` · 17 `Pointage` ·
+  18 `Absence` · 19 `PlageAbsenceAutorisee` · 20 `Feedback` · 21 `Notification` (RH, POINTAGE) · 22 `HistoriqueEntry`
+  (Pointage, PointageQR, PointageGeo). Le solde d'ouverture (`JournalCaisse`) est donc purgé et pourra être redéfini une fois.
+- **Jamais purgé** : `User`, `Role`, `Permission`, `RolePermission`, `Module`, `PermissionDelegation`, `Service`, `Categorie`, `Objet`,
+  `ParametrageHoraire`, `JourFerie`, `FcmToken` (les jetons push survivent), notifications ADMIN/SYSTEME, audit Admin/Auth
+  (le cron d'absences lit les activations de compte dans `HistoriqueEntry`).
+- **Sauvegarde ↔ purge** : la route renvoie un JSON (méta + lignes des tables purgées) et son SHA-256 (`X-Backup-Sha256`) ; la purge
+  **relit les mêmes données dans sa propre transaction, recalcule l'empreinte et refuse si elle diffère** (les données ont changé
+  depuis la sauvegarde). Elle supprime donc exactement ce qui a été sauvegardé. Les fichiers `uploads/` ne sont **pas** dans le JSON.
+- **Confirmation forte** : mot exact `REINITIALISER` (revérifié côté serveur) ; le bouton n'est actif qu'après téléchargement de la sauvegarde.
+- **Usage unique** : table `ReinitialisationSysteme` (jamais purgée) = flag définitif + journal d'audit (date, utilisateur, décompte
+  par table, empreinte, fichiers supprimés/échecs). `verrou` constant et unique : deux exécutions simultanées ne peuvent pas réussir
+  toutes les deux. Une fois posée : la page n'affiche plus que l'audit, la sauvegarde répond 409, le lien de navigation disparaît.
+  Conséquence : le compte du DG qui l'a déclenchée n'est plus supprimable (`supprimerUtilisateurAction`).
+- **Fichiers** : supprimés de `uploads/` APRÈS le commit (hors transaction, garde anti path traversal) ; un échec de fichier
+  n'annule rien et est compté.
+- **Après la purge** : régler `SYSTEM_START_DATE` sur la date de bascule (le cron `/api/cron/absences` ignore tout ce qui est antérieur) —
+  `.env` en local ; **en production `docker-compose.raw.yml` le fixe en dur** (et `docker-compose.dokploy.yml` le lit d'une variable Dokploy).
+  Rappel affiché au DG (message de succès et page d'audit). Non automatisable depuis l'application. La numérotation `DEM-AAAA-NNNNNN`
+  repart de 1 (elle est dérivée du nombre de demandes).
+- **Testé** sur une base PostgreSQL jetable (jamais la base de développement) : purge complète via l'interface (bouton grisé sans
+  sauvegarde / mot incomplet / mot en minuscules), données gardées intactes, refus sans permission, mot faux, empreinte absente/fausse/
+  périmée, seconde exécution refusée, **une seule exécution réussit sur deux simultanées**, et **atomicité** (échec forcé sur la dernière
+  écriture ⇒ rollback complet, aucune ligne supprimée).
+
 ### Blocage du règlement Caisse si solde insuffisant
 
 **Diagnostic** : `getSoldeCaisse()` (`backend/src/tresorerie.ts`, déjà
