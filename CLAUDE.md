@@ -4669,8 +4669,11 @@ réellement).
 
 Remplace le classeur Excel de suivi des paiements : contrats payés en plusieurs versements, prorata prime nette /
 accessoires / taxes / commission / honoraires par versement, suivi des taxes (exigibilité N+1, reversement avant le 20),
-commissions et honoraires dus/payés, annulations, clôture mensuelle. **Aucune ligne de code à ce stade** (conception
-validée le 2026-09-26).
+commissions et honoraires dus/payés, annulations, clôture mensuelle. Conception validée le 2026-09-26. En place :
+moteur de calcul pur (`backend/src/encCalcul.ts`, tests vitest) ; module, permissions `enc.*` et 5 rôles de départ
+(source unique `backend/src/encPermissions.ts`, reprise par le seed et la migration idempotente, synchronisation vérifiée
+par test) ; entrée de navigation et page d'accueil « en construction » réservées à `enc.consulter`. **Aucune permission
+de validation d'un versement** tant que le client n'a pas dit qui valide (ambiguïté 5, bloquante pour le commit Versement).
 
 **Arbitrages du 2026-09-26 :**
 - **Module autonome** : préfixe `Enc` (modèles), `enc.*` (permissions), clé de module `encaissements`, routes

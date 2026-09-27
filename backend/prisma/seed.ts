@@ -7,6 +7,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
+import { ENC_MODULE_KEY, ENC_PERMISSIONS, ENC_PERMISSION_MISE_EN_SERVICE, ENC_ROLES_DEPART } from "../src/encPermissions";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -120,6 +121,17 @@ async function main() {
     `Rôles créés : ${roleCollaborateur.name}, ${roleFinance.name}, ${roleDG.name}, ${roleAdmin.name}, ${roleRH.name}, ${roleAssistantFinance.name}`
   );
 
+  // Module Encaissements (voir docs/encaissements-conception.md §4) : 5 rôles de départ, modifiables ensuite.
+  const rolesEncaissements = await Promise.all(
+    ENC_ROLES_DEPART.map((r) =>
+      prisma.role.upsert({
+        where: { name: r.name },
+        update: { description: r.description },
+        create: { name: r.name, description: r.description },
+      })
+    )
+  );
+
   console.log("Création des modules...");
 
   const [moduleTresorerie, modulePointage, moduleFeedback, moduleSysteme] = await Promise.all([
@@ -147,6 +159,12 @@ async function main() {
   ]);
 
   console.log(`Modules créés : ${moduleTresorerie.label}, ${modulePointage.label}, ${moduleFeedback.label}`);
+
+  const moduleEncaissements = await prisma.module.upsert({
+    where: { key: ENC_MODULE_KEY },
+    update: { label: "Encaissements, taxes et commissions" },
+    create: { key: ENC_MODULE_KEY, label: "Encaissements, taxes et commissions" },
+  });
 
   console.log("Création des permissions...");
 
@@ -199,6 +217,9 @@ async function main() {
       label: "Réinitialiser les données de test avant mise en production (usage unique)",
       moduleId: moduleSysteme.id,
     },
+    // Module Encaissements (source unique : src/encPermissions.ts). La mise en service va au module technique « systeme ».
+    ...ENC_PERMISSIONS.map((p) => ({ key: p.key, label: p.label, moduleId: moduleEncaissements.id })),
+    { ...ENC_PERMISSION_MISE_EN_SERVICE, moduleId: moduleSysteme.id },
   ];
 
   const createdPermissions = await Promise.all(
@@ -259,6 +280,8 @@ async function main() {
       "feedback.moderer",
       // Réinitialisation à usage unique : DG SEUL (jamais Admin, jamais héritée d'estAdmin).
       "systeme.reinitialiser",
+      // Mise en service du module Encaissements : même modèle, DG seul.
+      ENC_PERMISSION_MISE_EN_SERVICE.key,
     ],
     // EXCEPTION DÉLIBÉRÉE à l'invariant "le rôle Admin n'a aucune
     // RolePermission explicite" (voir CLAUDE.md "estAdmin — accès à la
@@ -288,6 +311,8 @@ async function main() {
     // dépense directe (délégables au cas par cas par le Responsable
     // Finance, voir CLAUDE.md).
     [roleAssistantFinance.id]: ["treso.effectuer_reglement", "treso.receptionner_retour"],
+    // Module Encaissements : un rôle par profil du cahier (§2).
+    ...Object.fromEntries(rolesEncaissements.map((role, i) => [role.id, ENC_ROLES_DEPART[i].permissions])),
   };
 
   let rolePermissionCount = 0;
@@ -346,6 +371,11 @@ async function main() {
     { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id, serviceId: null },
     { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id, serviceId: serviceByName["Ressources Humaines"].id },
     { fullName: "Assistant Finance Test", email: "assistant-finance@simassurances.test", roleId: roleAssistantFinance.id, serviceId: serviceByName["Finance"].id },
+    // Module Encaissements : un compte de test par rôle de départ, JAMAIS en production (l'image fixe
+    // NODE_ENV=production, y compris pour le service `init` qui exécute ce seed au premier déploiement).
+    ...(process.env.NODE_ENV === "production"
+      ? []
+      : ENC_ROLES_DEPART.map((r, i) => ({ ...r.compteTest, roleId: rolesEncaissements[i].id, serviceId: serviceByName["Finance"].id }))),
   ];
 
   const createdUsers = await Promise.all(

@@ -84,6 +84,10 @@ Chaque profil du CDC §2 devient un **jeu de permissions positives** (jamais « 
 | `enc.corriger_versement_valide`, `enc.annuler_reglement`, `enc.cloturer_mois`, `enc.decloturer_mois`, `enc.deroger` | | | | ✓ | |
 | `enc.mettre_en_service` (section 6) | DG seul, jamais héritée d'`estAdmin` | | | | |
 
+**Aucune permission de validation d'un versement (Brouillon → Validé) n'est créée** : qui valide reste à trancher par le client (ambiguïté 5, bloquante pour le commit Versement).
+
+**Mise en œuvre (commit 3a)** : source unique `backend/src/encPermissions.ts` (clés, libellés, rôles de départ), reprise par le seed et par la migration idempotente `20260927100000_encaissements_module` (un test vitest vérifie que les deux restent identiques). Rôles créés : « Encaissements – Équipe technique », « – Gestionnaire », « – Finance », « – Responsable », « – Consultation » (colonne Audit), chacun avec un compte de test `enc-<profil>@simassurances.test` en seed, jamais créé en production (`NODE_ENV=production`, fixé par l'image, y compris pour le service `init` qui exécute le seed au premier déploiement). `enc.mettre_en_service` est rangée dans le module technique masqué `systeme` (comme `systeme.reinitialiser`) : absente de la matrice `/admin/roles`, et `toggleRolePermissionAction` refuse toute permission de ce module (garde par module, plus par préfixe de clé) — seule la migration ou le seed l'attribuent, au rôle DG uniquement.
+
 Les cumuls (ex. Finance + Responsable) passent par un rôle composite, ou par la délégation si `"encaissements"` est ajouté à `MODULES_DELEGABLES`. La séparation des tâches est revérifiée dans chaque action serveur.
 
 ---
@@ -318,6 +322,7 @@ Environ 200 000 versements et 800 000 lignes dues par an, soit 2 M et 8 M sur di
    - **Purgé** : toutes les tables transactionnelles `Enc*`, `EncAudit` (hors lignes des référentiels), `EncSequence`, `EncPieceJointe` (fichiers supprimés après le commit).
    - **Conservé** : référentiels (produits, partenaires, bénéficiaires, taux, types d'opération, comptes, motifs, paramètres) et leurs lignes d'audit, pour garder l'historique des taux (CDC §3.8).
    - **En fin de transaction** : création de la ligne `EncMiseEnService`.
+   - **Emplacement (arbitrage du 2026-09-27)** : l'action est placée dans l'espace système (`/systeme`), à côté de la réinitialisation globale, et non dans le module. Le DG n'a donc pas besoin d'`enc.consulter` : `enc.mettre_en_service` suffit, revérifiée côté serveur par la page et par l'action.
 3. **Immuabilité de l'audit.** Les triggers existent dès la migration du Lot 1, mais sont **conditionnels** :
    - `EncAudit` : `UPDATE` toujours interdit ; `DELETE` interdit dès qu'une ligne `EncMiseEnService` existe. La recette peut donc nettoyer avant la mise en service, plus rien ne s'efface ensuite.
    - `EncMiseEnService` : `UPDATE` et `DELETE` toujours interdits.
@@ -442,7 +447,7 @@ Statuts : **OUVERT** (à trancher), **PROVISOIRE** (retenu en attendant confirma
 | 2 | Versements « figés à la validation » (§3.2) mais « recalculés » si la prime change (F2.4) ; rang « recalculé » (col. R) : un versement antidaté décale rangs et reliquat ; la correction d'un versement validé par le Responsable n'est pas décrite | OUVERT |
 | 3 | Types d'annulation : F4.2 « sans effet / résiliation / ristourne » ; §5.7 « sans effet / résiliation / non-paiement » | OUVERT |
 | 4 | Double source du statut Annulé (§3.1 statut d'annulation, §5.6 statut calculé) | OUVERT |
-| 5 | Aucun profil n'a la validation d'un versement (Brouillon → Validé) ; F3.7 suggère une validation immédiate à l'enregistrement | OUVERT |
+| 5 | Aucun profil n'a la validation d'un versement (Brouillon → Validé) ; F3.7 suggère une validation immédiate à l'enregistrement. Question posée au client : qui valide un versement ? Aucune permission créée en attendant (commit 3a) | OUVERT — **BLOQUANT pour le commit Versement** |
 | 6 | Statut « Rapproché » d'un versement (F9.5) absent de la liste §3.2 — proposition : attribut `rapprocheAt`, le statut reste Validé | PROVISOIRE |
 | 7 | Base de taux « prime TTC » (§3.7) : calcul circulaire, aucune formule inverse (§5.1) | OUVERT |
 | 8 | Règle d'arrondi du prorata non définie | PROVISOIRE (2026-09-26, section 8) |
@@ -468,7 +473,9 @@ Statuts : **OUVERT** (à trancher), **PROVISOIRE** (retenu en attendant confirma
 
 1. **Docs** : cahier des charges, ce document, section du module dans `CLAUDE.md`.
 2. **Moteur de calcul pur** : vitest, `encCalcul.ts` (clone local de decimal.js, compatible `Prisma.Decimal`, aucune dépendance à la base), tests sur §9.1, 9.3, 9.4 (prime acquise), 9.7, 9.8 (saisie directe et calcul inverse), 9.9 et cas limites.
-3. **Fondations** : module `encaissements`, permissions `enc.*`, 5 rôles, `EncSequence`, `EncAudit` + triggers conditionnels, `EncPieceJointe` et sa route, `EncParametre`, `EncMiseEnService`, câblage navigation et tableau de bord.
+3. **Fondations**, en deux commits :
+   - **3a — câblage** : module `encaissements`, permissions `enc.*` (sans validation de versement, ambiguïté 5), 5 rôles, `enc.mettre_en_service` au DG, migration idempotente, entrée de navigation et carte du tableau de bord réservées à `enc.consulter`, page d'accueil « en construction ».
+   - **3b — socle technique** : `EncSequence`, `EncAudit` + triggers conditionnels, `EncMiseEnService`, `EncParametre` (défauts en seed), `EncPieceJointe` et sa route.
 4. **Référentiels** : produits, partenaires (+ bénéficiaires), types d'opération, taux (contrôle de chevauchement de la section 7), écrans, import/export Excel du paramétrage.
 5. **Contrat** : création et modification (saisie directe, calcul inverse), fiche, recherche paginée, contrôles bloquants §8.1.
 6. **Versement** (F3) : verrou, valeurs figées, `PaiementID`, **lignes dues créées dans la même transaction**, contre-passation, alerte de référence en double, trop-perçu.
