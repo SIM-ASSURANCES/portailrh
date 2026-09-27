@@ -4659,6 +4659,42 @@ réellement).
   environnement) — description précise fournie dans le résumé de la
   tâche pour validation par le maître de stage.
 
+## Module Encaissements, taxes et commissions (en conception)
+
+> **Cahier des charges** : [docs/cahier-des-charges-encaissements.md](docs/cahier-des-charges-encaissements.md).
+> **Conception de référence** (modèle de données des lots 1 à 4, permissions, mise en service, séquences, taux, arrondi,
+> fichiers partagés, ambiguïtés et leur statut, découpage en commits) :
+> [docs/encaissements-conception.md](docs/encaissements-conception.md). Toute évolution de la conception se fait dans ce
+> document, dans le même commit que le code qui l'applique.
+
+Remplace le classeur Excel de suivi des paiements : contrats payés en plusieurs versements, prorata prime nette /
+accessoires / taxes / commission / honoraires par versement, suivi des taxes (exigibilité N+1, reversement avant le 20),
+commissions et honoraires dus/payés, annulations, clôture mensuelle. **Aucune ligne de code à ce stade** (conception
+validée le 2026-09-26).
+
+**Arbitrages du 2026-09-26 :**
+- **Module autonome** : préfixe `Enc` (modèles), `enc.*` (permissions), clé de module `encaissements`, routes
+  `/encaissements` et `/api/encaissements`. Aucun modèle de la Trésorerie n'est réutilisé pour les données métier
+  (collisions : Règlement, clôture, Responsable, bordereau, annulation, `PieceJointe`).
+- **Hors purge globale** : `ReinitialisationSysteme` (usage unique) ne touche aucune table `Enc*` et on n'y ajoute rien.
+  Le module a sa **propre mise en service** (`enc.mettre_en_service`, DG seul, hors `estAdmin`) qui purge ses données
+  transactionnelles, son audit et ses séquences, puis pose `EncMiseEnService` dans la même transaction.
+- **Audit dédié `EncAudit`** (avant/après en JSON) : `UPDATE` toujours interdit par trigger, `DELETE` interdit dès la
+  mise en service. Limite : l'application se connecte en superutilisateur `postgres`, qui peut désactiver un trigger.
+- **Séquences `EncSequence`** à incrément atomique (`PAI-AAAA`, `SUS-AAAA`, `RGS-AAAA`, `BRD-AAAA-MM`), jamais
+  `count()+1` ; l'import remonte la séquence au plus grand `PaiementID` importé.
+- **Taux en fraction `Decimal(7,6)`** (0,0725 pour 7,25 %), saisis et affichés en %. Chevauchements de `EncTaux`
+  contrôlés applicativement sous verrou du produit, avec deux index uniques partiels (pas de contrainte d'exclusion ni
+  de `btree_gist`).
+- **`EncPieceJointe` séparée** de `PieceJointe` (la purge globale fait `pieceJointe.deleteMany()` sans filtre) ;
+  stockage `uploads/` et route d'upload communs.
+- **F10 (suspens) au Lot 2**, avec le rapprochement F9.
+- **`EncLigneDue` et `EncBeneficiaire` dès le Lot 1** : chaque versement validé crée ses lignes dues dans la même transaction.
+- **Règle d'arrondi PROVISOIRE** : AB et AC arrondis au centime (half-up), AD = Z − AB − AC, commission et honoraires
+  arrondis indépendamment, reliquat exact sur le versement soldant. Le cas du contrat incohérent (T + U + V ≠ S) attend
+  la validation du client.
+- **Montants** : `Decimal(14,2)`, calculs en `Prisma.Decimal` uniquement, jamais en `number`.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif
