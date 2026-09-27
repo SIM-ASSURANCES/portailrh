@@ -193,7 +193,7 @@ model EncLigneDue {                                                             
 }
 ```
 
-**Création des lignes dues (A6).** À la validation d'un versement, dans la même transaction : une ligne `origine = VERSEMENT` par nature, montants repris des valeurs figées (taxe = AD, commission, honoraires, accessoires = AC). Une contre-passation (versement négatif) crée ses propres lignes `VERSEMENT`, négatives. Création des lignes à montant nul : ambiguïté 20.
+**Création des lignes dues (A6).** À la validation d'un versement, dans la même transaction : une ligne `origine = VERSEMENT` par nature, montants repris des valeurs figées (taxe = AD, commission, honoraires, accessoires = AC). **Aucune ligne due n'est créée pour un montant nul** (ex. accessoires = 0 ; ambiguïté 20 tranchée le 2026-09-26). Une contre-passation (versement négatif) crée ses propres lignes `VERSEMENT`, négatives ; leur traitement face à la ligne d'origine (compensation ou montant à récupérer) est l'ambiguïté 21, à trancher avant le Lot 3.
 
 **Contrainte d'unicité (correction du 2026-09-26).** L'ancienne contrainte `@@unique([versementId, nature, origine])` interdisait deux régularisations de même nature sur un même versement (deux déclôtures successives, ou déclôture puis annulation). Elle est remplacée par :
 
@@ -386,6 +386,25 @@ Contrôles : 279,72 + 0 + 20,28 = 300 = Z. §9.3 : 83,92 + 117,48 = 201,40 dus ;
 1. **§9.7 et §9.9 ne donnent pas la prime S des contrats** (ambiguïté 19). Le calcul ci-dessus suppose T/S = 1/1,0725 exact ; en réalité T est stocké au centime (ou pris du fichier). L'écart, au plus 0,005 × Z/S, peut faire basculer un arrondi proche de la demi-unité : police C à 0,0009 du seuil (bascule vers 55 944,05 dès que Z/S > 0,18 avec un T arrondi par défaut), police B à 0,0011. Aucun risque si ces versements soldent leur contrat. Dans la tolérance de recette (1 FCFA).
 2. **Contrat incohérent, T + U + V ≠ S** (ambiguïté 18, en attente du client) : toléré à 1 FCFA en saisie, **accepté à l'import quel que soit l'écart** (§9.8 : 50 FCFA). Hors versement soldant, AD = Z − AB − AC diffère de V·Z/S. Sur le versement soldant, les deux invariants du CDC §5.2 ne peuvent plus tenir ensemble : soit ΣAD = V (reliquat exact de V) mais AB + AC + AD ≠ Z, soit AB + AC + AD = Z mais ΣAD ≠ V.
 
+### Moteur de calcul (`backend/src/encCalcul.ts`, commit 2)
+
+Fonctions pures, aucun accès à la base, couvertes par `backend/src/encCalcul.test.ts` (vitest, `npm test`).
+- **Décimal** : clone local de decimal.js (`EncDecimal`, arrondi half-up), jamais `Decimal.set` global. Entrées : chaînes ou
+  objets « Decimal.js-like » (dont `Prisma.Decimal`, converti par `toFixed()` : le `Decimal` embarqué par Prisma n'est pas
+  reconnu comme instance par un autre clone). Un `number` est refusé à la compilation et à l'exécution. Sorties acceptées
+  telles quelles par Prisma.
+- **Paramètres en arguments** : délai d'exigibilité et jour limite (viendront d'`EncParametre`).
+- **Règle d'arrondi** : isolée dans `regleArrondiProvisoire` (seule fonction à modifier si l'ambiguïté 18 est tranchée
+  autrement) ; `calculerVersement` accepte une autre règle en paramètre.
+- **Saisie directe** : base « prime TTC » refusée pour la taxe et les accessoires (circulaire, ambiguïté 7), acceptée pour la
+  commission et les honoraires.
+- **Calcul inverse** : défini seulement pour les bases par défaut et des accessoires en taux (refus explicite sinon) ;
+  V = S − T − U pour que la prime TTC saisie reste exacte.
+- **Trop-perçu** : refusé par le moteur ; sa validation par le responsable est un circuit à part (ambiguïté 16).
+- **Échéancier** : montants **tronqués** au centime, reliquat sur la dernière (la dernière ne peut jamais être négative) ;
+  jour de la date d'effet conservé, ramené au dernier jour du mois s'il n'existe pas (31/01 → 28/02 → 31/03).
+- **Semaine ISO** : libellé « Sem N - AAAA » sans zéro devant le numéro, année ISO.
+
 ---
 
 ## 9. Fichiers partagés avec le binôme (Pointage RH / FeedbackApp)
@@ -439,14 +458,16 @@ Statuts : **OUVERT** (à trancher), **PROVISOIRE** (retenu en attendant confirma
 | 17 | Régularisation après déclôture (F11.5) : née automatiquement à la re-clôture ou saisie ? | OUVERT |
 | 18 | Contrat incohérent (T + U + V ≠ S) : invariant prioritaire au versement soldant (ΣAD = V ou AB + AC + AD = Z) | OUVERT — en attente du client |
 | 19 | §9.7 et §9.9 ne donnent pas la prime S : écart possible de 0,01 sur une ligne (dans la tolérance) | OUVERT (non bloquant) |
-| 20 | Lignes dues à montant nul (ex. accessoires = 0) : créées ou non ? Proposition : non créées | OUVERT |
+| 20 | Lignes dues à montant nul (ex. accessoires = 0) : créées ou non ? | TRANCHÉ 2026-09-26 : aucune ligne due créée pour un montant nul |
+| 21 | Lignes dues négatives issues d'une contre-passation : compensation avec la ligne d'origine si elle n'est pas payée, montant à récupérer si elle est payée ? | OUVERT — à trancher avant le Lot 3 |
+| 22 | Suspens identifié PILE le jour limite (le 20) : déclaration du mois ou du mois suivant ? L'échéance du jour même « suit »-elle l'identification (F10.6) ? Choix provisoire du moteur : mois suivant | OUVERT (choix provisoire documenté par un test) |
 
 ---
 
 ## 11. Découpage en commits (Lot 1)
 
 1. **Docs** : cahier des charges, ce document, section du module dans `CLAUDE.md`.
-2. **Moteur de calcul pur** : vitest, `encCalcul.ts` (`Prisma.Decimal`, aucune dépendance à la base), tests sur §9.1, 9.3, 9.4 (prime acquise), 9.7, 9.8 (saisie directe et calcul inverse) et 9.9.
+2. **Moteur de calcul pur** : vitest, `encCalcul.ts` (clone local de decimal.js, compatible `Prisma.Decimal`, aucune dépendance à la base), tests sur §9.1, 9.3, 9.4 (prime acquise), 9.7, 9.8 (saisie directe et calcul inverse), 9.9 et cas limites.
 3. **Fondations** : module `encaissements`, permissions `enc.*`, 5 rôles, `EncSequence`, `EncAudit` + triggers conditionnels, `EncPieceJointe` et sa route, `EncParametre`, `EncMiseEnService`, câblage navigation et tableau de bord.
 4. **Référentiels** : produits, partenaires (+ bénéficiaires), types d'opération, taux (contrôle de chevauchement de la section 7), écrans, import/export Excel du paramétrage.
 5. **Contrat** : création et modification (saisie directe, calcul inverse), fiche, recherche paginée, contrôles bloquants §8.1.
