@@ -4676,10 +4676,13 @@ fichier de production (paiements « à confirmer »), saisie à l'écran, relev�
 encaissement confirmé compte**, ses montants sont **figés à la confirmation**. Tout se suit **par branche**.
 
 **En place** : moteur de calcul pur **V2** (`backend/src/encCalcul.ts`, vitest : prorata, exigibilité §5.3 avec « Régularisation »
-et reprise, partage des accessoires, contre-passation, trop-perçu en alerte) ; conception V1 à adapter : module, 17
-permissions `enc.*` et 5 rôles (commit 3a) ; séquences atomiques, audit `EncAudit` immuable par trigger, paramètres,
-pièces jointes `EncPieceJointe` (commit 3b). Les permissions et rôles V1 seront remplacés par une **migration
-corrective** (3 profils : Équipe technique, Finance, Consultation) — **jamais en modifiant une migration déjà poussée**.
+et reprise, partage des accessoires, contre-passation, trop-perçu en alerte) ; **permissions V2** — 3 profils validés,
+9 permissions `enc.*` (Équipe technique, Finance, Consultation ; `enc.mettre_en_service` à part, module technique, DG
+seul) posées par une **migration corrective** (`20260928150000_encaissements_permissions_v2`, jamais en modifiant la
+migration 3a déjà poussée), qui retire les 17 permissions et les rôles « Gestionnaire »/« Responsable » du V1, avec un
+garde-fou qui arrête toute la migration si l'un de ces deux rôles porte encore un compte ; séquences atomiques, audit
+`EncAudit` immuable par trigger, paramètres, pièces jointes `EncPieceJointe` (commit 3b, paramètres encore à adapter à
+la V2 : conception §5.1).
 
 **Décisions du 2026-09-28 (détail : conception §1)** :
 - **Arrondi** : calcul et stockage au centime (règle du moteur : AD = Z − AB − AC, reliquat exact au soldant), affichage à l'unité FCFA.

@@ -1,10 +1,18 @@
 /**
- * Permissions et rôles de départ du module Encaissements (voir docs/encaissements-conception.md §4).
- * Source unique pour le seed ; la migration `20260927100000_encaissements_module` insère exactement les mêmes
- * lignes (idempotente) pour les bases déjà seedées. Les rôles restent ensuite librement modifiables via /admin/roles.
+ * Permissions et rôles de départ du module « Encaissements, taxes » (voir docs/encaissements-conception.md §4).
+ * Source unique pour le seed ; la migration corrective `20260929000000_encaissements_permissions_v2` insère
+ * exactement les mêmes lignes (idempotente) pour les bases déjà seedées avec les 17 permissions et 5 rôles du V1.
+ * Les rôles restent ensuite librement modifiables via /admin/roles.
  *
- * Aucune permission de VALIDATION d'un versement n'existe : qui valide un versement est une question en attente
- * auprès du client (ambiguïté 5, bloquante pour le commit Versement).
+ * 9 permissions validées le 2026-09-28 (conception §4, décision D1), 3 profils du cahier V2.6 §2 : Équipe technique,
+ * Finance, Consultation. Les rôles « Encaissements – Gestionnaire » et « Encaissements – Responsable » du V1
+ * disparaissent (la migration corrective les supprime, ou s'arrête si l'un d'eux porte encore un compte).
+ *
+ * Noms de rôle préfixés « Encaissements – » à dessein : un rôle « Finance » existe déjà pour la Trésorerie
+ * (`seed.ts`, `roleFinance`) — jamais de collision de nom possible avec le préfixe.
+ *
+ * Aucune permission de VALIDATION d'un versement n'existe : la notion disparaît en V2 (CDC V2.6, aucun statut
+ * « Brouillon »/« Validé »), ce qui clôt l'ambiguïté 5 du V1.
  */
 
 export const ENC_MODULE_KEY = "encaissements";
@@ -12,27 +20,19 @@ export const ENC_MODULE_KEY = "encaissements";
 export const ENC_PERMISSIONS = [
   { key: "enc.consulter", label: "Encaissements : consulter et exporter" },
   { key: "enc.importer_production", label: "Encaissements : importer le fichier de production" },
-  { key: "enc.gerer_contrats", label: "Encaissements : créer et corriger les contrats (taux en saisie directe)" },
-  { key: "enc.parametrer_taux", label: "Encaissements : paramétrer les taux par produit et par partenaire" },
   { key: "enc.annuler_contrat", label: "Encaissements : annuler un contrat (écran ou import)" },
-  { key: "enc.saisir_versement", label: "Encaissements : saisir les versements" },
-  { key: "enc.saisir_remise", label: "Encaissements : saisir les encaissements groupés" },
-  { key: "enc.importer_encaissements", label: "Encaissements : importer des encaissements" },
-  { key: "enc.saisir_suspens", label: "Encaissements : saisir et identifier les paiements en suspens" },
-  { key: "enc.classer_suspens", label: "Encaissements : classer un suspens (non taxable, à rembourser)" },
-  { key: "enc.regler_sortant", label: "Encaissements : saisir les règlements de taxes, commissions, honoraires et accessoires" },
-  { key: "enc.rapprocher", label: "Encaissements : rapprocher les relevés banque et mobile money" },
-  { key: "enc.corriger_versement_valide", label: "Encaissements : corriger un versement validé" },
-  { key: "enc.annuler_reglement", label: "Encaissements : annuler un règlement" },
-  { key: "enc.cloturer_mois", label: "Encaissements : clôturer un mois" },
-  { key: "enc.decloturer_mois", label: "Encaissements : déclôturer un mois" },
-  { key: "enc.deroger", label: "Encaissements : déroger à la liste de contrôle de clôture" },
+  { key: "enc.saisir_encaissement", label: "Encaissements : saisir un encaissement (fiche police, paiement pour plusieurs contrats)" },
+  { key: "enc.confirmer_paiement", label: "Encaissements : confirmer les paiements du fichier technique, importer un relevé, les frais des opérateurs" },
+  { key: "enc.corriger_encaissement", label: "Encaissements : corriger ou contre-passer un encaissement" },
+  { key: "enc.gerer_non_identifie", label: "Encaissements : gérer l'argent non identifié (affecter, classer hors prime)" },
+  { key: "enc.marquer_paye", label: "Encaissements : marquer payés (et décocher) taxes, commissions, honoraires et accessoires" },
+  { key: "enc.parametrer", label: "Encaissements : paramétrer les honoraires, le partage des accessoires, les taux de contrôle et les branches" },
 ] as const;
 
 /**
  * Mise en service du module (remise à zéro + activation, conception §6) : même modèle que `systeme.reinitialiser`,
  * rattachée au module TECHNIQUE « systeme » (jamais une carte, jamais dans la matrice /admin/roles, jamais
- * modifiable depuis la console), attribuée au seul rôle DG, jamais héritée d'`estAdmin`.
+ * modifiable depuis la console), attribuée au seul rôle DG, jamais héritée d'`estAdmin`. Inchangée depuis le V1.
  */
 export const ENC_PERMISSION_MISE_EN_SERVICE = {
   key: "enc.mettre_en_service",
@@ -50,7 +50,16 @@ export const ENC_PERMISSIONS_DEPOT_PIECE_JOINTE: readonly EncPermissionKey[] = E
   (k) => k !== "enc.consulter"
 );
 
-/** Cinq rôles de départ = les cinq profils du cahier des charges (§2). Jeux de permissions POSITIVES uniquement. */
+/**
+ * Trois rôles de départ = les trois profils du cahier des charges V2.6 (§2). Jeux de permissions POSITIVES uniquement.
+ *
+ * - Équipe technique : produit et importe le fichier de production, annule un contrat, consulte les signalements —
+ *   jamais de saisie, confirmation ni correction d'encaissement, ni de marquage « payé », ni de paramètres (CDC §2).
+ * - Finance : tout le reste (D1) — y compris `enc.importer_production` (télécharge aussi les fichiers de production,
+ *   D6) et la reprise initiale, qui exige `enc.importer_production` ET `enc.marquer_paye` (F1.5, réservée à la
+ *   Finance) — mais jamais `enc.annuler_contrat` ni de modification des montants venant du fichier.
+ * - Consultation : `enc.consulter` seule.
+ */
 export const ENC_ROLES_DEPART: {
   name: string;
   description: string;
@@ -59,41 +68,26 @@ export const ENC_ROLES_DEPART: {
 }[] = [
   {
     name: "Encaissements – Équipe technique",
-    description: "Import de la production, contrats, paramétrage des taux, annulation de contrats",
-    permissions: ["enc.consulter", "enc.importer_production", "enc.gerer_contrats", "enc.parametrer_taux", "enc.annuler_contrat"],
+    description: "Produit et importe le fichier de production, annule un contrat, consulte les signalements",
+    permissions: ["enc.consulter", "enc.importer_production", "enc.annuler_contrat"],
     compteTest: { fullName: "Enc Technique Test", email: "enc-technique@simassurances.test" },
   },
   {
-    name: "Encaissements – Gestionnaire",
-    description: "Appel d'une police, saisie des versements et des encaissements groupés, suspens",
-    permissions: ["enc.consulter", "enc.saisir_versement", "enc.saisir_remise", "enc.importer_encaissements", "enc.saisir_suspens"],
-    compteTest: { fullName: "Enc Gestionnaire Test", email: "enc-gestionnaire@simassurances.test" },
-  },
-  {
     name: "Encaissements – Finance",
-    description: "Import de la production transmise, règlements sortants, rapprochement, suspens",
+    description:
+      "Importe la production, appelle une police, saisit/confirme/corrige/contre-passe un encaissement, gère l'argent " +
+      "non identifié, marque payés taxes/commissions/honoraires/accessoires, paramètre le module, exporte",
     permissions: [
       "enc.consulter",
       "enc.importer_production",
-      "enc.saisir_suspens",
-      "enc.classer_suspens",
-      "enc.regler_sortant",
-      "enc.rapprocher",
+      "enc.saisir_encaissement",
+      "enc.confirmer_paiement",
+      "enc.corriger_encaissement",
+      "enc.gerer_non_identifie",
+      "enc.marquer_paye",
+      "enc.parametrer",
     ],
     compteTest: { fullName: "Enc Finance Test", email: "enc-finance@simassurances.test" },
-  },
-  {
-    name: "Encaissements – Responsable",
-    description: "Correction d'un versement validé, annulation d'un règlement, clôture et déclôture mensuelles",
-    permissions: [
-      "enc.consulter",
-      "enc.corriger_versement_valide",
-      "enc.annuler_reglement",
-      "enc.cloturer_mois",
-      "enc.decloturer_mois",
-      "enc.deroger",
-    ],
-    compteTest: { fullName: "Enc Responsable Test", email: "enc-responsable@simassurances.test" },
   },
   {
     name: "Encaissements – Consultation",

@@ -133,7 +133,7 @@ async function main() {
     `Rôles créés : ${roleCollaborateur.name}, ${roleFinance.name}, ${roleDG.name}, ${roleAdmin.name}, ${roleRH.name}, ${roleAssistantFinance.name}`
   );
 
-  // Module Encaissements (voir docs/encaissements-conception.md §4) : 5 rôles de départ, modifiables ensuite.
+  // Module Encaissements (voir docs/encaissements-conception.md §4) : 3 rôles de départ, modifiables ensuite.
   const rolesEncaissements = await Promise.all(
     ENC_ROLES_DEPART.map((r) =>
       prisma.role.upsert({

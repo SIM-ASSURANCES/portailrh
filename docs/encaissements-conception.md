@@ -113,12 +113,23 @@ Hors liste : **`enc.mettre_en_service`** (module technique `systeme`, DG seul, j
 arbitrage du 2026-09-27). **Reprise initiale** (F1.5) : Finance seule, qui doit détenir `enc.importer_production` **et**
 `enc.marquer_paye` (D1).
 
-**État en base aujourd'hui** : les 17 permissions et 5 rôles du V1 (commit 3a, migration
-`20260927100000_encaissements_module`). Ils seront remplacés par une **migration corrective** (jamais en modifiant la
-migration poussée) : création des nouvelles permissions, retrait des obsolètes et de leurs attributions, suppression
-conditionnelle des rôles « Gestionnaire » et « Responsable » (D2), arrêt si une délégation pointe sur une permission
-supprimée. Aucune permission de « validation » : la notion disparaît en V2. Les comptes de test (un par rôle) ne sont
-jamais créés en production.
+**État en base : fait (commit « Permissions V2 »).** Migration corrective
+`20260928150000_encaissements_permissions_v2`, jamais en modifiant la migration 3a déjà poussée : crée les 6
+permissions nouvelles, synchronise la description des 3 rôles conservés (un simple `ON CONFLICT DO NOTHING` ne l'aurait
+jamais fait sur une base déjà seedée), retire les 14 permissions obsolètes du V1 et leurs attributions, accorde à
+« Encaissements – Finance » les 6 permissions qui lui manquaient, puis supprime les rôles « Gestionnaire » et
+« Responsable » (D2) — après un garde-fou qui arrête toute la migration (`RAISE EXCEPTION`, transaction annulée en
+entier) si l'un des deux porte encore un compte, ou qu'une délégation pointe sur une permission sur le point d'être
+supprimée (défense en profondeur : `encaissements` n'a jamais figuré dans `MODULES_DELEGABLES`, aucune délégation n'y
+est possible depuis l'interface). Vérifié sur trois bases jetables : neuve (3 rôles, 9 permissions, `seed.ts` s'adapte
+seul au nombre de rôles) ; état 3a sans compte sur les anciens rôles (nettoyage complet) ; état 3a avec un compte sur
+« Gestionnaire » (migration refusée, rien modifié, `_prisma_migrations` marque l'échec — `prisma migrate resolve
+--rolled-back` puis un nouveau `deploy` après réaffectation du compte referme l'incident). Aucune permission de
+« validation » : la notion disparaît en V2. Les comptes de test (un par rôle) ne sont jamais créés en production.
+
+**Écart signalé, pas silencieusement corrigé** : la demande de ce commit parlait de « retirer les 6 permissions
+obsolètes » — il y en a en réalité **14** (17 permissions du V1, 3 conservées : `consulter`, `importer_production`,
+`annuler_contrat`). Le nombre « 6 » correspond aux permissions **nouvelles**. La migration retire bien les 14.
 
 ---
 
@@ -494,7 +505,8 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 |---|---|---|
 | 0 | **Docs** : V2.6 et maquette, archives, analyse, cette conception, `CLAUDE.md`, `.gitignore` | — |
 | 1 | **Moteur V2** (§7.5) — fait | — |
-| 2 | **Permissions et paramètres V2** : migration corrective, seed, tests | — (permissions validées, D1) |
+| 2 | **Permissions V2** : migration corrective, seed, tests — fait | — |
+| 2b | **Paramètres V2** : retirer la ligne `taxe.delai_exigibilite_mois`, ajouter `accessoires.part_partenaire_defaut` | — |
 | 3 | **Référentiels, contrat, paramétrage de base** (branches, honoraires, partage des accessoires) | V2-A13, V2-A15 |
 | 4 | **Lecture de tableurs et règles d'import** (SheetJS, F1, F1.5, relevé synthétique) | V2-A1c, A10, A12, A14, A28 |
 | 5 | **Import de production (F1)** | — |
