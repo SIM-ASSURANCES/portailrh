@@ -4659,44 +4659,47 @@ réellement).
   environnement) — description précise fournie dans le résumé de la
   tâche pour validation par le maître de stage.
 
-## Module Encaissements, taxes et commissions (en conception)
+## Module « Encaissements, taxes » (en conception, V2)
 
-> **Cahier des charges** : [docs/cahier-des-charges-encaissements.md](docs/cahier-des-charges-encaissements.md).
-> **Conception de référence** (modèle de données des lots 1 à 4, permissions, mise en service, séquences, taux, arrondi,
-> fichiers partagés, ambiguïtés et leur statut, découpage en commits) :
-> [docs/encaissements-conception.md](docs/encaissements-conception.md). Toute évolution de la conception se fait dans ce
-> document, dans le même commit que le code qui l'applique.
+> **Cahier des charges de référence : V2.6** — [docs/cahier-des-charges-encaissements-v2.md](docs/cahier-des-charges-encaissements-v2.md)
+> (reçue le 2026-09-28 ; fait foi face à la maquette [docs/Maquette_registre_paiements.html](docs/Maquette_registre_paiements.html)).
+> **Conception de référence** : [docs/encaissements-conception.md](docs/encaissements-conception.md) (arbitrages datés,
+> permissions, modèle de données, calculs, imports, ambiguïtés et statut, découpage en commits). Raisonnement et écarts :
+> [docs/encaissements-analyse-impact-v2.md](docs/encaissements-analyse-impact-v2.md). Le cahier V1 et les réponses du
+> 28/09 sont **remplacés** ([docs/archive/](docs/archive/)). Toute évolution de la conception se fait dans le même commit
+> que le code qui l'applique.
 
-Remplace le classeur Excel de suivi des paiements : contrats payés en plusieurs versements, prorata prime nette /
-accessoires / taxes / commission / honoraires par versement, suivi des taxes (exigibilité N+1, reversement avant le 20),
-commissions et honoraires dus/payés, annulations, clôture mensuelle. Conception validée le 2026-09-26. En place :
-moteur de calcul pur (`backend/src/encCalcul.ts`, tests vitest) ; module, permissions `enc.*` et 5 rôles de départ
-(source unique `backend/src/encPermissions.ts`, reprise par le seed et la migration idempotente, synchronisation vérifiée
-par test) ; entrée de navigation et page d'accueil « en construction » réservées à `enc.consulter`. **Aucune permission
-de validation d'un versement** tant que le client n'a pas dit qui valide (ambiguïté 5, bloquante pour le commit Versement).
+Remplace le classeur Excel de suivi des paiements (colonnes A à AH). **Pas un outil comptable** : ni écritures, ni
+clôture ; l'application calcule ce qui est dû, les paiements sortants se font hors application puis sont cochés « payés ».
+Contrats **uniquement issus du fichier de production** (jamais créés à l'écran) ; encaissements par **trois voies** :
+fichier de production (paiements « à confirmer »), saisie à l'écran, relevé mobile money ou bancaire. **Seul un
+encaissement confirmé compte**, ses montants sont **figés à la confirmation**. Tout se suit **par branche**.
 
-**Arbitrages du 2026-09-26 :**
-- **Module autonome** : préfixe `Enc` (modèles), `enc.*` (permissions), clé de module `encaissements`, routes
-  `/encaissements` et `/api/encaissements`. Aucun modèle de la Trésorerie n'est réutilisé pour les données métier
-  (collisions : Règlement, clôture, Responsable, bordereau, annulation, `PieceJointe`).
-- **Hors purge globale** : `ReinitialisationSysteme` (usage unique) ne touche aucune table `Enc*` et on n'y ajoute rien.
-  Le module a sa **propre mise en service** (`enc.mettre_en_service`, DG seul, hors `estAdmin`) qui purge ses données
-  transactionnelles, son audit et ses séquences, puis pose `EncMiseEnService` dans la même transaction.
-- **Audit dédié `EncAudit`** (avant/après en JSON) : `UPDATE` toujours interdit par trigger, `DELETE` interdit dès la
-  mise en service. Limite : l'application se connecte en superutilisateur `postgres`, qui peut désactiver un trigger.
-- **Séquences `EncSequence`** à incrément atomique (`PAI-AAAA`, `SUS-AAAA`, `RGS-AAAA`, `BRD-AAAA-MM`), jamais
-  `count()+1` ; l'import remonte la séquence au plus grand `PaiementID` importé.
-- **Taux en fraction `Decimal(7,6)`** (0,0725 pour 7,25 %), saisis et affichés en %. Chevauchements de `EncTaux`
-  contrôlés applicativement sous verrou du produit, avec deux index uniques partiels (pas de contrainte d'exclusion ni
-  de `btree_gist`).
-- **`EncPieceJointe` séparée** de `PieceJointe` (la purge globale fait `pieceJointe.deleteMany()` sans filtre) ;
-  stockage `uploads/` et route d'upload communs.
-- **F10 (suspens) au Lot 2**, avec le rapprochement F9.
-- **`EncLigneDue` et `EncBeneficiaire` dès le Lot 1** : chaque versement validé crée ses lignes dues dans la même transaction.
-- **Règle d'arrondi PROVISOIRE** : AB et AC arrondis au centime (half-up), AD = Z − AB − AC, commission et honoraires
-  arrondis indépendamment, reliquat exact sur le versement soldant. Le cas du contrat incohérent (T + U + V ≠ S) attend
-  la validation du client.
-- **Montants** : `Decimal(14,2)`, calculs en `Prisma.Decimal` uniquement, jamais en `number`.
+**En place (conception V1, à adapter)** : moteur de calcul pur (`backend/src/encCalcul.ts`, vitest) ; module, 17
+permissions `enc.*` et 5 rôles (commit 3a) ; séquences atomiques, audit `EncAudit` immuable par trigger, paramètres,
+pièces jointes `EncPieceJointe` (commit 3b). Les permissions et rôles V1 seront remplacés par une **migration
+corrective** (3 profils : Équipe technique, Finance, Consultation) — **jamais en modifiant une migration déjà poussée**.
+
+**Décisions du 2026-09-28 (détail : conception §1)** :
+- **Arrondi** : calcul et stockage au centime (règle du moteur : AD = Z − AB − AC, reliquat exact au soldant), affichage à l'unité FCFA.
+- **PaiementID** : à la **reprise**, ceux du classeur deviennent nos numéros `PAI` (séquence remontée au maximum repris) ; pour les **fichiers mensuels**, le PaiementID du fichier va dans un **champ séparé** (anti-doublon) et chaque encaissement reçoit **notre** numéro `PAI-AAAA` (année de saisie) ; l'export écrit notre numéro en colonne B.
+- **Avenant** : confirmés figés, suivants sur les nouveaux montants, reliquat sur les nouveaux totaux, alerte trop-perçu si la nouvelle prime est inférieure à l'encaissé.
+- **Exigibilité, parts d'accessoires et bénéficiaire des honoraires calculés et figés dès le Lot 1** ; écrans aux Lots 2 et 3.
+- **Reprise initiale** (CDC F1.5), **Finance seule** (`enc.importer_production` et `enc.marquer_paye`) : prise en compte = date de paiement ; bascule par nature sur la colonne A (taxes au 30/09/2026 — date reposée au client —, autres natures sans bascule) ; le paramétrage des accessoires et des honoraires doit la précéder.
+- **Relevés** : négatifs et paiements < 100 FCFA ignorés pour le rapprochement mais **comptés dans les frais des opérateurs**.
+- Fichiers importés conservés comme preuve (données clients) : **relevés téléchargeables par la Finance seulement**, **fichiers de production par la Finance et l'équipe technique** (jamais la Consultation). Remise à zéro avant production conservée.
+- **Permissions V2 : 9, validées** (conception §4). Provisoires : liste des branches paramétrée par la Finance ; « taxe payée » non cochable avant exigibilité pour les actions de l'utilisateur (la reprise en est exclue).
+
+**Données clients** : les relevés bancaires et mobile money (et tout extrait du classeur) ne vont **jamais** dans le dépôt,
+ni dans `docs/`, ni dans des tests. Dossier local `C:\Projets\donnees-sensibles\`, **hors du dépôt** (la ligne
+`/donnees-sensibles/` du `.gitignore` reste par précaution) ; tests sur des relevés synthétiques. Lecture `.xls`/`.xlsx`/`.csv` : **SheetJS CE 0.20.3** proposé (archive de l'éditeur versionnée ; le
+paquet npm `xlsx` 0.18.5 n'est plus maintenu et porte des failles connues) ; ExcelJS reste l'outil d'écriture des exports.
+
+**Toujours valables (2026-09-26)** : module autonome (préfixe `Enc`, clé `encaissements`, routes `/encaissements`) ;
+hors purge globale, avec sa propre remise à zéro (`enc.mettre_en_service`, DG seul, espace système) ; audit immuable
+(limite : connexion en superutilisateur, le CDC demande un compte applicatif aux droits limités et une conservation de 10
+ans) ; `EncPieceJointe` séparée de `PieceJointe` ; taux et parts en fraction `Decimal(7,6)` ; montants `Decimal(14,2)`,
+jamais en `number`.
 
 ## Socle Portail — Authentification et permissions
 

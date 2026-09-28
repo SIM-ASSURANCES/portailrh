@@ -1,36 +1,66 @@
-# Module « Encaissements, taxes et commissions » — document de conception
+# Module « Encaissements, taxes » — document de conception (V2)
 
-> Source fonctionnelle : [cahier-des-charges-encaissements.md](cahier-des-charges-encaissements.md) (référencé ci-dessous « CDC §x »).
-> Statut : **conception validée le 2026-09-26**, aucune ligne de code écrite. Les points marqués **PROVISOIRE** ou **OUVERT**
-> restent à confirmer (section 10). Toute évolution de ce document se fait dans le même commit que le code qui l'applique.
+> **Source fonctionnelle** : [cahier-des-charges-encaissements-v2.md](cahier-des-charges-encaissements-v2.md) (**V2.6**,
+> reçue le 2026-09-28, référencée ci-dessous « CDC §x ») et la maquette
+> [Maquette_registre_paiements.html](Maquette_registre_paiements.html) (le cahier fait foi en cas de différence).
+> Raisonnement détaillé, écarts et vérifications : [encaissements-analyse-impact-v2.md](encaissements-analyse-impact-v2.md).
+> Le cahier V1 et les réponses du 28/09 sont dans [archive/](archive/) (remplacés).
+>
+> **Statut** : conception V2 du **2026-09-28**. Elle remplace la conception V1 du 2026-09-26 (historique dans git).
+> Les points marqués **PROVISOIRE** ou **OUVERT** sont à confirmer (section 10). Toute évolution de ce document se fait dans
+> le même commit que le code qui l'applique.
 
 ## Sommaire
 
-1. Arbitrages du 2026-09-26
+1. Arbitrages datés
 2. Existant réutilisable
-3. Collisions avec la Trésorerie et préfixe
+3. Préfixe et collisions avec la Trésorerie
 4. Profils → permissions
-5. Modèle de données (lots 1 à 4)
-6. Mise en service, audit et séquences
-7. Taux : unité et contrôle des chevauchements
-8. Règle d'arrondi du prorata (PROVISOIRE)
-9. Fichiers partagés avec le binôme (Pointage RH / FeedbackApp)
-10. Ambiguïtés du cahier et statut
-11. Découpage en commits (Lot 1)
+5. Modèle de données
+6. Mise en service, audit, séquences et fichiers
+7. Règles de calcul
+8. Imports et relevés
+9. Fichiers partagés avec le binôme
+10. Ambiguïtés et statut
+11. Découpage en commits
 
 ---
 
-## 1. Arbitrages du 2026-09-26
+## 1. Arbitrages datés
 
-| # | Arbitrage |
+### 2026-09-26 (conception V1, toujours valables sauf mention)
+
+| # | Arbitrage | Statut V2 |
+|---|---|---|
+| A1 | Module **autonome** : préfixe `Enc`, permissions `enc.*`, clé `encaissements`, routes `/encaissements` et `/api/encaissements` ; aucun modèle de la Trésorerie réutilisé pour les données métier | Valable |
+| A2 | **Hors purge globale** (`ReinitialisationSysteme`) ; remise à zéro propre, couplée à la mise en service (section 6) | Valable |
+| A3 | Pièces jointes dans une table propre **`EncPieceJointe`** ; stockage `uploads/` et route d'upload communs | Valable (sert aux fichiers importés, 2026-09-28) |
+| A4 | Taux et parts en **fraction** `Decimal(7,6)` (0,4 pour 40 %) | Valable (parts d'accessoires, taux de contrôle) |
+| A5 | Suspens au Lot 2 | Valable (argent non identifié = Lot 2) |
+| A6 | `EncLigneDue` et `EncBeneficiaire` dès le Lot 1 | **Caduc** : plus de lignes dues ni de règlements (V2) |
+| A7 | Règle d'arrondi du prorata provisoire | **Définitive** (2026-09-28, voir D3) |
+
+### 2026-09-27
+
+- La mise en service du module est une action de l'**espace système** (`/systeme`), à côté de la réinitialisation globale ; le DG n'a pas besoin d'`enc.consulter`.
+
+### 2026-09-28
+
+| # | Décision |
 |---|---|
-| A1 | Module **autonome** : préfixe `Enc` (modèles), `enc.*` (permissions), clé de module `encaissements`, routes `/encaissements` et `/api/encaissements`. Aucun modèle de la Trésorerie n'est réutilisé pour les données métier. |
-| A2 | Le module est **hors de la purge globale** (`ReinitialisationSysteme`, à usage unique, sans doute déjà consommée). Il a sa **propre remise à zéro, couplée à sa mise en service** (section 6). |
-| A3 | Pièces jointes dans une table propre **`EncPieceJointe`** (la purge globale fait `pieceJointe.deleteMany()` sans filtre : partager `PieceJointe` la ferait échouer ou supprimerait les pièces du module). Le stockage disque (`uploads/`) et la route d'upload restent communs. |
-| A4 | Taux stockés en **fraction décimale** `Decimal(7,6)` (0,0725 pour 7,25 %). |
-| A5 | **F10 (suspens) rattaché au Lot 2**, avec le rapprochement F9. |
-| A6 | **`EncLigneDue` et `EncBeneficiaire` dès le Lot 1** : chaque versement validé crée ses lignes dues (taxe, commission, honoraires, accessoires) dans la même transaction. Aucune migration de reprise au Lot 2. |
-| A7 | Règle d'arrondi de la section 8 retenue **à titre provisoire** ; le cas du contrat incohérent (T + U + V ≠ S) attend la validation du client (ambiguïté 18). |
+| D1 | Permissions : la liste des 9 (section 4) est **validée** ; la **reprise initiale** est réservée à la Finance (`enc.importer_production` **et** `enc.marquer_paye`) |
+| D2 | Rôles V1 « Gestionnaire » et « Responsable » : **supprimés s'ils n'ont aucun compte, sinon la migration s'arrête avec un message** |
+| D3 | **Arrondi** : calcul et stockage **au centime** (règle du moteur : AB et AC arrondis half-up, AD = Z − AB − AC, commission et honoraires arrondis indépendamment, reliquat exact au soldant) ; **affichage arrondi à l'unité FCFA** ; la recette au centime porte sur les valeurs stockées |
+| D4 | Libellé du module : **« Encaissements, taxes »** (titre de la V2.6) |
+| D5 | Remise à zéro du module avant production : **conservée** |
+| D6 | Fichiers importés (production, relevés) **conservés comme preuve** (données clients) : **relevés téléchargeables par la Finance seulement** ; **fichiers de production par la Finance et l'équipe technique**, jamais par la Consultation |
+| D7 | **PaiementID** (remplace la première décision du jour) : **à la reprise**, les PaiementID du classeur **deviennent nos numéros PAI** (séquence remontée au maximum repris) ; **pour les fichiers mensuels suivants**, le PaiementID du fichier est stocké dans un **champ séparé** (clé anti-doublon) et chaque encaissement reçoit **notre propre numéro PAI** ; l'export du registre écrit **notre** numéro en colonne B. Origine des PaiementID des fichiers mensuels : question posée au client (V2-A1c) |
+| D8 | **Avenant** : encaissements confirmés figés ; les suivants utilisent les nouveaux montants ; reliquat du soldant calculé sur les **nouveaux totaux** ; nouvelle prime inférieure à l'encaissé → **alerte trop-perçu** |
+| D9 | **Tous les montants** (exigibilité, parts d'accessoires, bénéficiaire des honoraires) sont **calculés et figés dès la confirmation, en Lot 1** ; les écrans correspondants suivent aux Lots 2 et 3 |
+| D10 | **Reprise initiale** : réglée par le CDC §F1.5 (prise en compte = date de paiement réelle ; bascule par nature lue sur la colonne A) ; **décision SIM : taxes au 30/09/2026 ; commissions, honoraires et accessoires sans bascule** (la date des taxes, 30/09 ou 31/08, est reposée au client : V2-A27d). Le paramétrage des accessoires (et des honoraires) doit précéder la reprise |
+| D11 | Relevés : montants **négatifs** et paiements **< 100 FCFA** ignorés pour le **rapprochement**, mais **comptés dans les frais des opérateurs** (vérifié sur le relevé Wave d'août : 110 paiements, 5 de moins de 100 FCFA, 4 négatifs `agent_transaction`) |
+| P1 | **PROVISOIRE** (proposé au client, sans réponse écrite) : liste des **branches paramétrée par la Finance** |
+| P2 | **PROVISOIRE** : case « taxe payée » **non cochable tant que la taxe n'est pas exigible**, pour les **actions de l'utilisateur** (F7) ; la **reprise en est exclue** en attendant la réponse du client sur V2-A27d |
 
 ---
 
@@ -38,461 +68,428 @@
 
 | Besoin | État actuel | Verdict |
 |---|---|---|
-| Rôles et permissions | `Role` (`estAdmin`, `peutEtreBeneficiaireDelegation`), `Permission` → `Module`, `RolePermission`, `PermissionDelegation`, `getSession()` recalculé à chaque appel ; la matrice `/admin/roles` liste les modules génériquement | Réutilisable. Limites : **un seul rôle par utilisateur** ; délégation restreinte à `MODULES_DELEGABLES = ["tresorerie","pointage"]` |
-| Cartes et navigation | Codées en dur par module (`(dashboard)/page.tsx`, `nav.ts`) | À câbler au commit « Fondations » |
-| Audit | `HistoriqueEntry` (texte libre, purgeable, pas d'avant/après structuré ni d'immuabilité) | **Insuffisant** pour CDC §3.6 et §8.3 → table dédiée `EncAudit` |
-| Pièces jointes | Route d'upload (10 Mo, PDF/JPG/PNG, noms UUID), `PieceJointeUpload` | Upload réutilisable ; modèle propre `EncPieceJointe` (A3) et route de téléchargement propre |
-| Import Excel | Aucun ; `exceljs` ^4.4 (frontend) ne sert qu'aux exports ; aucun parseur CSV | À construire (lecture ExcelJS en flux ; parseur CSV au Lot 2 pour les relevés) |
-| Exports, PDF | ExcelJS multi-feuilles, `@react-pdf/renderer` | Réutilisables (bordereaux PDF au Lot 3) |
-| Montants | `Decimal(14,2)` dans tout le schéma (`Float` réservé au GPS) | Bon type ; le calcul du module se fait en `Prisma.Decimal` (decimal.js), jamais en `number` |
-| Références | `generateDemandeReference()` = `count()+1` (ni atomique, ni « jamais réutilisé ») | Insuffisant → `EncSequence` (section 6) |
-| Divers | Cron protégé (`CRON_SECRET`), notifications, SSE, `date-fns`, zod | Réutilisables |
-| Absents | Double authentification (CDC §8.3), pagination serveur, suite de tests | À prévoir (tests dès le commit 2) |
+| Rôles et permissions | `Role`, `Permission` → `Module`, `RolePermission`, `PermissionDelegation`, `getSession()` recalculé à chaque appel | Réutilisable ; un seul rôle par utilisateur ; `encaissements` non délégable |
+| Cartes et navigation | Codées par module (`(dashboard)/page.tsx`, `nav.ts`) | Câblé au 3a ; les 7 onglets du CDC §6 deviennent les entrées de la branche |
+| Audit | `HistoriqueEntry` insuffisant | `EncAudit` (3b) |
+| Pièces jointes | Route d'upload commune, `EncPieceJointe` (3b) | Fichiers importés |
+| Lecture de tableurs | **Aucune** (ExcelJS ne sert qu'à écrire et ne lit pas `.xls`) | **SheetJS CE 0.20.3** proposé (section 8.4) |
+| Exports | ExcelJS | Réutilisable (export du registre A–AH + §7.3) |
+| Montants | `Decimal(14,2)` | Calcul en décimal (moteur), jamais en `number` |
+| Références | `count()+1` en Trésorerie | `EncSequence` (3b) |
+| Divers | Cron, notifications, SSE, zod | Rappels de taxes (§8.1) : cron |
+| Absents | Double authentification, pagination serveur | 2FA au niveau du portail avant la production (CDC §8.2) |
 
 ---
 
-## 3. Collisions avec la Trésorerie et préfixe
+## 3. Préfixe et collisions avec la Trésorerie
 
-| Terme du cahier | Déjà utilisé en Trésorerie |
-|---|---|
-| Règlement (sortant) | `Reglement`, `ReglementCategorieAllocation`, `treso.effectuer_reglement` |
-| Clôture (mensuelle) | `CLOTUREE`, `cloturerDemandeAction`, `treso.cloturer_demande` |
-| Responsable (valideur) | « Responsable Finance » = `valider_demande` sans `approuver_validation_complete` |
-| Bordereau | « bordereau de versement » d'un retour Banque, `JournalBanque` |
-| Annulation, remboursement | annulation de règlement/retour, `RemboursementRetour` |
-| PieceJointe, références | `PieceJointe` (liée à la Trésorerie), `DEM-…` |
-
-Préfixe retenu : `Enc` (A1). Identifiants métier conservés : `PAI-`, `SUS-`, `BRD-` ; ajout de `RGS-` pour les règlements sortants.
+Préfixe `Enc` (A1). La V2 supprime la plupart des collisions de vocabulaire (règlement sortant, clôture, Responsable,
+bordereau). Restent : « annulation » et « remboursement » (Trésorerie : annulation de règlement, `RemboursementRetour`),
+`PieceJointe` (A3). Identifiants métier : **`PAI-AAAA-NNNNNN`** (encaissements) et **`SUS-AAAA-NNNNNN`** (argent non
+identifié) ; `RGS-` et `BRD-` disparaissent.
 
 ---
 
 ## 4. Profils → permissions
 
-Chaque profil du CDC §2 devient un **jeu de permissions positives** (jamais « l'absence d'une permission »). Aucune permission `enc.*` n'est accordée par le contournement `estAdmin` ; cinq rôles de départ sont créés par le seed et restent modifiables.
+Trois profils (CDC §2), trois rôles de départ modifiables ensuite : **Équipe technique**, **Finance**, **Consultation**.
+Chaque profil = un jeu de permissions **positives** ; aucune n'est héritée d'`estAdmin`.
 
-| Permission | Technique | Gestionnaire | Finance | Responsable | Audit |
-|---|---|---|---|---|---|
-| `enc.consulter` (lecture, export) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `enc.importer_production` | ✓ | | ✓ | | |
-| `enc.gerer_contrats` (créer, corriger, taux en saisie directe) | ✓ | | | | |
-| `enc.parametrer_taux` | ✓ | | | | |
-| `enc.annuler_contrat` (écran ou import) | ✓ | | | | |
-| `enc.saisir_versement`, `enc.saisir_remise`, `enc.importer_encaissements` | | ✓ | | | |
-| `enc.saisir_suspens` (saisie et identification) | | ✓ | ✓ | | |
-| `enc.classer_suspens` (non taxable, à rembourser) | | | ✓ | | |
-| `enc.regler_sortant`, `enc.rapprocher` | | | ✓ | | |
-| `enc.corriger_versement_valide`, `enc.annuler_reglement`, `enc.cloturer_mois`, `enc.decloturer_mois`, `enc.deroger` | | | | ✓ | |
-| `enc.mettre_en_service` (section 6) | DG seul, jamais héritée d'`estAdmin` | | | | |
+**Liste validée le 2026-09-28 (D1)** :
 
-**Aucune permission de validation d'un versement (Brouillon → Validé) n'est créée** : qui valide reste à trancher par le client (ambiguïté 5, bloquante pour le commit Versement).
+| Permission | Technique | Finance | Consultation | Couvre |
+|---|:-:|:-:|:-:|---|
+| `enc.consulter` | ✓ | ✓ | ✓ | Consulter, exporter, voir les signalements |
+| `enc.importer_production` | ✓ | ✓ | | F1 ; téléchargement des fichiers de production (D6) |
+| `enc.annuler_contrat` | ✓ | | | F8 |
+| `enc.saisir_encaissement` | | ✓ | | F3, F4 |
+| `enc.confirmer_paiement` | | ✓ | | F5 (reçu, non reçu, finalement reçu, relevés, frais) ; téléchargement des relevés (D6) |
+| `enc.corriger_encaissement` | | ✓ | | Correction, contre-passation |
+| `enc.gerer_non_identifie` | | ✓ | | F6 |
+| `enc.marquer_paye` | | ✓ | | F7, décocher compris |
+| `enc.parametrer` | | ✓ | | F9 (honoraires, accessoires, taux de contrôle, branches) |
 
-**Mise en œuvre (commit 3a)** : source unique `backend/src/encPermissions.ts` (clés, libellés, rôles de départ), reprise par le seed et par la migration idempotente `20260927100000_encaissements_module` (un test vitest vérifie que les deux restent identiques). Rôles créés : « Encaissements – Équipe technique », « – Gestionnaire », « – Finance », « – Responsable », « – Consultation » (colonne Audit), chacun avec un compte de test `enc-<profil>@simassurances.test` en seed, jamais créé en production (`NODE_ENV=production`, fixé par l'image, y compris pour le service `init` qui exécute le seed au premier déploiement). `enc.mettre_en_service` est rangée dans le module technique masqué `systeme` (comme `systeme.reinitialiser`) : absente de la matrice `/admin/roles`, et `toggleRolePermissionAction` refuse toute permission de ce module (garde par module, plus par préfixe de clé) — seule la migration ou le seed l'attribuent, au rôle DG uniquement.
+Hors liste : **`enc.mettre_en_service`** (module technique `systeme`, DG seul, jamais modifiable depuis la console,
+arbitrage du 2026-09-27). **Reprise initiale** (F1.5) : Finance seule, qui doit détenir `enc.importer_production` **et**
+`enc.marquer_paye` (D1).
 
-Les cumuls (ex. Finance + Responsable) passent par un rôle composite, ou par la délégation si `"encaissements"` est ajouté à `MODULES_DELEGABLES`. La séparation des tâches est revérifiée dans chaque action serveur.
-
----
-
-## 5. Modèle de données (lots 1 à 4)
-
-Conventions : montants `Decimal(14,2)` (signés quand une régularisation ou une contre-passation l'exige), taux `Decimal(7,6)` en fraction, mois stockés en `Date` au 1er du mois. Le lot où chaque modèle devient utile est indiqué entre crochets.
-
-### 5.1 Socle technique
-
-```prisma
-model EncMiseEnService { id Int @id @default(1)  activeeAt  activeeParId  sauvegardeSha256 }              // [L1, fin] une seule ligne (section 6)
-model EncSequence      { cle String @id  valeur Int }                                                  // [L1] "PAI-2026", "SUS-2026", "RGS-2026", "BRD-2026-09"
-model EncParametre     { cle String @id  valeur  majParId  majAt }                                     // [L1] délai d'exigibilité (1), jour limite (20), tolérances, seuils
-model EncAudit {                                                                                        // [L1] ajout seul (section 6)
-  id BigInt @id @default(autoincrement())
-  entite  entiteId  action  avant Json?  apres Json?  motif?
-  mois DateTime? @db.Date                                     // mois de rattachement (rapport « changements depuis la clôture », F11.4)
-  userId  ip?  at DateTime @default(now())
-  @@index([entite, entiteId]) @@index([mois, at]) @@index([at])
-}
-model EncPieceJointe { id  url  nomOrigine  mime  taille  sha256  deposeeParId  deposeeAt }             // [L1] référencée par clé unique côté porteur
-model EncImport {                                                                                       // [L1 production ; L2 relevés ; L3 règlements, bordereaux partenaire ; L4 annulations]
-  id  type(PRODUCTION|ENCAISSEMENTS|BORDEREAU_PARTENAIRE|PARAMETRAGE_TAUX|PARTENAIRES|RELEVE|REGLEMENTS|ANNULATIONS)
-  nomFichier  sha256  fichierId  statut(APERCU|CONFIRME|ABANDONNE|ECHEC)  importeParId  creeAt  confirmeAt?
-  transmisParId?  transmisAt?  totalContratsControle?  totalPrimesTtcControle?   // F1 « qui importe »
-  nbLignes  nbCrees  nbIgnores  nbErreurs  nbEcarts
-  @@index([type, creeAt]) @@index([sha256])
-}
-model EncImportLigne { id  importId  numeroLigne  severite(ERREUR|ECART|INFO)  code  message  donnees Json  @@index([importId, severite]) }   // [L1]
-```
-
-### 5.2 Référentiels
-
-```prisma
-model EncProduit        { id  code @unique  libelle  actif }                                            // [L1]
-model EncPartenaire     { id  code @unique  nom  coordonneesPaiement Json?  actif  importId? }          // [L1]
-model EncTypeOperation  { id  code @unique  libelle  actif }                                            // [L1]
-model EncTaux {                                                                                          // [L1] partenaireId NULL = taux par défaut du produit
-  id  produitId  partenaireId?  dateDebut @db.Date  dateFin? @db.Date                                   // intervalle fermé [début, fin] ; fin vide = en cours
-  tauxAccessoires? baseAccessoires?  tauxTaxe? baseTaxe?  tauxCommission? baseCommission?  tauxGestion? baseGestion?
-  montantFixeAccessoires?  creeParId  creeAt
-  @@index([produitId, partenaireId, dateDebut])
-  // + 2 index uniques partiels (section 7)
-}
-model EncBeneficiaire {                                                                                  // [L1] (A6)
-  id  type(ADMIN_FISCALE|PARTENAIRE|HONORAIRES|ACCESSOIRES)  partenaireId? @unique  nom  actif
-}
-model EncMotifAnnulation { id  code @unique  libelle  actif }                                           // [L4]
-```
-
-`EncBeneficiaire` : un bénéficiaire `PARTENAIRE` est créé avec chaque partenaire ; `ADMIN_FISCALE`, `HONORAIRES` et `ACCESSOIRES` sont créés par le seed (bénéficiaires uniques, **provisoire**, ambiguïté 12).
-
-### 5.3 Contrats, versements, encaissements, lignes dues
-
-```prisma
-model EncContrat {                                                                                       // [L1]
-  id  numPolice @unique  typeContrat(I|G)  produitId  typeOperationId  clientId  clientNom  partenaireId
-  dateEffet  dateEcheance  dateProduction  typePolice?
-  primeTtc  primeNette  accessoires  taxes  commission  honoraires              // S T U V W X
-  tauxAccessoires? baseAccessoires? tauxTaxe? baseTaxe? tauxCommission? baseCommission? tauxGestion? baseGestion?   // saisie directe
-  tauxParametresSnapshot Json?                                                  // taux retenus à dateProduction (état « Écarts de taux »)
-  modeSaisie(IMPORT|SAISIE_DIRECTE)  importId?  echelonne Boolean
-  statutAnnulation(ACTIF|ANNULE)  dateAnnulation?                               // dénormalisés ; détail dans EncAnnulation [L4]
-  totalEncaisse  nbVersements  dernierVersementAt?                              // dénormalisés dans la transaction du versement
-  creeParId  creeAt  majAt
-  @@index([clientNom]) @@index([clientId]) @@index([partenaireId, produitId]) @@index([dateProduction]) @@index([dateEcheance]) @@index([statutAnnulation])
-}
-model EncRemise {                                                                                        // [L1] encaissement groupé (F3 bis)
-  id  numero @unique  payeurType(PARTENAIRE|CLIENT)  partenaireId?  payeurNom  datePaiement  modePaiement  reference
-  montantTotal  statut(BROUILLON|VALIDE|RAPPROCHE)  pieceJointeId? @unique  suspensId?  compteTresorerieId?
-  creeParId  valideParId?  valideAt?
-  @@index([reference]) @@index([partenaireId, datePaiement])
-}
-model EncVersement {                                                                                     // [L1]
-  id  paiementId @unique  contratId  remiseId?
-  origine(SAISIE|REMISE|IMPORT|SUSPENS|CONTREPASSATION|REMBOURSEMENT)
-  datePaiement @db.Date  enregistreAt  modePaiement  referencePaiement  observations?  compteTresorerieId?
-  statut(BROUILLON|VALIDE|ANNULE)  rapprocheAt?  rapprochementId?              // « Rapproché » = attribut (ambiguïté 6)
-  rang Int?                                                                     // N° de versement (ambiguïté 2)
-  contrepasseDeId? @unique  motifContrepassation?
-  dateIdentification? @db.Date  suspensId?                                     // [L2] versement né d'un suspens identifié
-  moisRattachement @db.Date                                                     // mois de datePaiement ; mois d'identification pour un suspens (F10.5)
-  montantRecu                                                                   // Z (négatif : contre-passation ou remboursement)
-  // FIGÉS à la validation (section 8)
-  restantDu  primeNetteRecue  accessoiresRecus  taxe  commissionDue  honorairesDus   // AA AB AC AD, commission, honoraires
-  estSoldant Boolean  moisEncaissement @db.Date  moisExigibiliteTaxe @db.Date  dateLimiteReversement @db.Date
-  assiettes Json                                                                // S T U V W X utilisés au calcul
-  creeParId  valideParId?  valideAt?
-  @@index([contratId, datePaiement, id]) @@index([remiseId]) @@index([suspensId]) @@index([referencePaiement])
-  @@index([datePaiement]) @@index([moisRattachement]) @@index([moisExigibiliteTaxe]) @@index([statut, moisRattachement])
-}
-model EncAvancePartenaire   { id  partenaireId  remiseId  montant  montantUtilise  creeAt  @@index([partenaireId]) }   // [L1] reliquat de remise (F3 bis.3)
-model EncUtilisationAvance  { id  avanceId  versementId @unique  montant }                                              // [L1]
-model EncEcheance           { id  contratId  numero  dateEcheance @db.Date  montant  montantImpute  @@unique([contratId, numero]) @@index([dateEcheance]) }  // [L1]
-model EncImputationEcheance { versementId  echeanceId  montant  @@id([versementId, echeanceId]) @@index([echeanceId]) }  // [L1]
-
-model EncLigneDue {                                                                                      // [L1] (A6) une ligne = un versement × une nature
-  id  versementId?  contratId  beneficiaireId  nature(TAXE|COMMISSION|HONORAIRES|ACCESSOIRES)
-  origine(VERSEMENT|REGULARISATION_ANNULATION|REGULARISATION_DECLOTURE)
-  montantDu  montantPaye                                                        // montantPaye = somme des affectations actives (dénormalisé)
-  statut(DUE|EN_ATTENTE|PARTIELLEMENT_PAYEE|PAYEE)  motifAttente?  attenteParId?  attenteAt?
-  dateEncaissement @db.Date  moisExigibilite? @db.Date  moisOrigine? @db.Date   // « encaissement de N identifié en N+x »
-  bordereauId?  declarationId?                                                 // une seule appartenance courante
-  @@index([beneficiaireId, nature, statut, dateEncaissement]) @@index([nature, moisExigibilite, statut])
-  @@index([bordereauId]) @@index([contratId, nature]) @@index([versementId])
-}
-```
-
-**Création des lignes dues (A6).** À la validation d'un versement, dans la même transaction : une ligne `origine = VERSEMENT` par nature, montants repris des valeurs figées (taxe = AD, commission, honoraires, accessoires = AC). **Aucune ligne due n'est créée pour un montant nul** (ex. accessoires = 0 ; ambiguïté 20 tranchée le 2026-09-26). Une contre-passation (versement négatif) crée ses propres lignes `VERSEMENT`, négatives ; leur traitement face à la ligne d'origine (compensation ou montant à récupérer) est l'ambiguïté 21, à trancher avant le Lot 3.
-
-**Contrainte d'unicité (correction du 2026-09-26).** L'ancienne contrainte `@@unique([versementId, nature, origine])` interdisait deux régularisations de même nature sur un même versement (deux déclôtures successives, ou déclôture puis annulation). Elle est remplacée par :
-
-```sql
--- une seule ligne « née du versement » par nature ; les régularisations sont illimitées
-CREATE UNIQUE INDEX "EncLigneDue_versement_nature_uniq"
-  ON "EncLigneDue" ("versementId", "nature") WHERE "origine" = 'VERSEMENT';
-```
-
-Chaque ligne de régularisation est reliée à son `EncRegularisation` (`ligneDueId @unique` côté régularisation, section 5.6), ce qui garantit qu'une régularisation ne crée qu'une ligne.
-
-### 5.4 Rapprochement et suspens [L2] (A5)
-
-```prisma
-model EncCompteTresorerie { id  code @unique  libelle  type(BANQUE|ORANGE_MONEY|MTN|WAVE|AUTRE)  actif }
-model EncReleve           { id  compteId  importId @unique  periodeDebut  periodeFin  soldeDebut?  soldeFin? }
-model EncReleveOperation {
-  id  releveId  dateOperation  montant  sens(CREDIT|DEBIT)  reference?  libelle
-  statut(A_RAPPROCHER|RAPPROCHEE|NON_SAISIE|IGNOREE)
-  @@index([releveId, statut]) @@index([reference]) @@index([dateOperation, montant])
-}
-model EncRapprochement {
-  id  operationId  versementId?  remiseId?  suspensId?  montant  mode(AUTO|MANUEL)  parId  at  annuleAt?  annuleParId?
-  @@index([operationId]) @@index([versementId]) @@index([remiseId])
-}
-model EncSuspens {
-  id  numero @unique  dateReception @db.Date  montant  modePaiement  reference?  payeurPresume?  compteTresorerieId
-  pieceJointeId? @unique  operationReleveId?  statut(EN_SUSPENS|PARTIELLEMENT_IDENTIFIE|SOLDE)  montantTraite  creeParId  creeAt
-  @@index([statut, dateReception])
-}
-model EncSuspensTraitement {
-  id  suspensId  type(POLICE|NON_TAXABLE|A_REMBOURSER|RECLASSEMENT|REMBOURSE)  montant
-  versementId?  remiseId?  dateTraitement @db.Date  parId  motif?
-  @@index([suspensId])
-}
-```
-
-Un versement issu d'un suspens garde `datePaiement` = date réelle (N) et reçoit `dateIdentification` et `suspensId`. Son `moisRattachement` (verrou de clôture) est le mois d'identification, et son exigibilité se calcule depuis la date d'identification (F10.6 : identifié le 10/11 → à reverser avant le 20/11 ; le 25/11 → avant le 20/12), **pas** par la règle N+1.
-
-### 5.5 Règlements sortants, bordereaux, créances [L2 taxes ; L3 le reste]
-
-```prisma
-model EncDeclarationTaxe {                                                                               // [L2] jamais modifiée une fois déclarée (F11.5)
-  id  moisExigibilite @db.Date @unique  dateLimite @db.Date  montantDu  montantRegularisations  montantCredits
-  statut(PREPAREE|DECLAREE|PAYEE)  declareeAt?  declareeParId?
-}
-model EncReglementSortant {                                                                              // [L2 taxe ; L3 commissions, honoraires, accessoires]
-  id  numero @unique  nature  beneficiaireId  dateReglement @db.Date  modePaiement  reference  montant  periode? @db.Date
-  statut(BROUILLON|VALIDE|ANNULE)  regleRepartition(PLUS_ANCIENNES|PRORATA|CONTRATS_CHOISIS|COCHES|IMPORT)?
-  estAcompte Boolean  montantAffecte  pieceJointeId? @unique  importId?                                   // acompte : ambiguïté 14
-  creeParId  valideParId?  valideAt?  annuleParId?  annuleAt?  motifAnnulation?
-  @@index([beneficiaireId, nature, dateReglement]) @@index([reference])
-}
-model EncAffectation {                                                                                   // lettrage ; jamais supprimée, désactivée à l'annulation du règlement
-  id  reglementId  ligneDueId  montant  bordereauId?  creeAt  annuleeAt?
-  @@index([ligneDueId, annuleeAt]) @@index([reglementId])
-}
-model EncBordereau {                                                                                     // [L3]
-  id  numero @unique  beneficiaireId  nature  periode @db.Date  genereAt  genereParId
-  total  montantPaye  statut(EMIS|PARTIELLEMENT_PAYE|PAYE|ANNULE)
-  @@index([statut])
-}
-model EncBordereauLigne     { id  bordereauId  ligneDueId  montantInitial  retireeAt?  @@index([bordereauId]) @@index([ligneDueId]) }   // [L3] historique
-model EncReglementBordereau { reglementId  bordereauId  montant  @@id([reglementId, bordereauId]) }                                  // [L3]
-model EncCreance {                                                                                       // [L3 surpaiement ; L4 annulation]
-  id  beneficiaireId  nature  type(CREDIT_TAXE|A_RECUPERER)  montant  montantImpute
-  origine(ANNULATION|SURPAIEMENT|REGULARISATION)  annulationId?  regularisationId?  statut(OUVERTE|SOLDEE)  creeAt
-  @@index([beneficiaireId, nature, statut])
-}
-model EncImputationCreance { id  creanceId  reglementId?  declarationId?  montant  at  annuleeAt? }       // [L3/L4]
-```
-
-**Unicité du bordereau (correction du 2026-09-26).** La contrainte incluant `numero` était inutile (`numero` est déjà unique). Elle est remplacée par « un seul bordereau non annulé par bénéficiaire, nature et période » :
-
-```sql
-CREATE UNIQUE INDEX "EncBordereau_beneficiaire_nature_periode_actif_uniq"
-  ON "EncBordereau" ("beneficiaireId", "nature", "periode") WHERE "statut" <> 'ANNULE';
-```
-
-Un bordereau annulé libère ses lignes (`EncLigneDue.bordereauId` remis à NULL, `EncBordereauLigne.retireeAt` renseigné) et un nouveau bordereau peut être généré pour la même période.
-
-### 5.6 Annulations, régularisations, clôture [L4]
-
-```prisma
-model EncAnnulation {
-  id  contratId @unique  type(SANS_EFFET|RESILIATION|NON_PAIEMENT)  dateAnnulation @db.Date  motifId  pieceJointeId? @unique
-  primeAcquise  encaisseALaDate  remboursementDu  restantDuRamene  importId?  creeParId  creeAt
-}
-model EncRegularisation {                                                  // datée du jour d'annulation ou de la re-clôture ; les versements restent intacts (§5.7)
-  id  annulationId?  clotureId?  contratId  versementId?  nature(PRIME|TAXE|COMMISSION|HONORAIRES|ACCESSOIRES)
-  montant(signé)  dateEffet @db.Date  moisRattachement @db.Date  ligneDueId? @unique  creanceId? @unique
-  @@index([contratId]) @@index([moisRattachement])
-}
-model EncMois    { mois @db.Date @id  statut(OUVERT|CLOTURE)  versionCourante Int  clotureAt?  clotureParId? }
-model EncCloture {
-  id  mois  version  action(CLOTURE|DECLOTURE)  parId  at  motif?  checklist Json  derogations Json?
-  @@index([mois, version])
-}
-model EncEtatFige {                                                        // « tel que déclaré » (F11.2) et version corrigée (F11.6)
-  id  mois  version  etat(TABLEAU_BORD|TAXES|DETAIL_TAXES|COMMISSIONS|HONORAIRES|ENCAISSEMENTS|IMPAYES|ANNULES|REFERENCES)
-  parametres Json  contenu Json  sha256  genereAt
-  @@unique([mois, version, etat])
-}
-```
-
-**Verrou de clôture.** Toute écriture détermine son `moisRattachement` (versement, régularisation) ou sa date (règlement, contrat) et refuse si `EncMois.statut = CLOTURE`. Pour un suspens identifié, c'est le mois d'identification qui compte : les états de N ne bougent pas.
-
-### 5.7 Volumétrie
-
-Environ 200 000 versements et 800 000 lignes dues par an, soit 2 M et 8 M sur dix ans, plus le journal d'audit.
-- **Concurrence** : un verrou de ligne sur le contrat (`SELECT … FOR UPDATE`) pendant le calcul et le figement d'un versement (AA et le reliquat dépendent du cumul).
-- **Fiche contrat < 2 s** : totaux dénormalisés sur `EncContrat`.
-- **Listes** : pagination côté serveur uniquement, recherche par index (police, `PaiementID`, référence).
-- **Répartition d'un bordereau de 1 000 lignes < 5 s** : s'appuie sur l'index `(bénéficiaire, nature, statut, dateEncaissement)`.
+**État en base aujourd'hui** : les 17 permissions et 5 rôles du V1 (commit 3a, migration
+`20260927100000_encaissements_module`). Ils seront remplacés par une **migration corrective** (jamais en modifiant la
+migration poussée) : création des nouvelles permissions, retrait des obsolètes et de leurs attributions, suppression
+conditionnelle des rôles « Gestionnaire » et « Responsable » (D2), arrêt si une délégation pointe sur une permission
+supprimée. Aucune permission de « validation » : la notion disparaît en V2. Les comptes de test (un par rôle) ne sont
+jamais créés en production.
 
 ---
 
-## 6. Mise en service, audit et séquences
+## 5. Modèle de données
 
-1. **Hors purge globale (A2).** `ReinitialisationSysteme` ne touche aucune table `Enc*` et on n'y ajoute rien.
-2. **Mise en service = remise à zéro + activation, en une seule action** : permission `enc.mettre_en_service` (DG seul, hors `estAdmin`), même protocole que la réinitialisation globale (sauvegarde JSON liée par empreinte SHA-256, mot de confirmation, une transaction sérialisable).
-   - **Purgé** : toutes les tables transactionnelles `Enc*`, `EncAudit` (hors lignes des référentiels), `EncSequence`, `EncPieceJointe` (fichiers supprimés après le commit).
-   - **Conservé** : référentiels (produits, partenaires, bénéficiaires, taux, types d'opération, comptes, motifs, paramètres) et leurs lignes d'audit, pour garder l'historique des taux (CDC §3.8).
-   - **En fin de transaction** : création de la ligne `EncMiseEnService`.
-   - **Emplacement (arbitrage du 2026-09-27)** : l'action est placée dans l'espace système (`/systeme`), à côté de la réinitialisation globale, et non dans le module. Le DG n'a donc pas besoin d'`enc.consulter` : `enc.mettre_en_service` suffit, revérifiée côté serveur par la page et par l'action.
-3. **Immuabilité de l'audit.** Les triggers existent dès la migration du Lot 1, mais sont **conditionnels** :
-   - `EncAudit` : `UPDATE` toujours interdit ; `DELETE` interdit dès qu'une ligne `EncMiseEnService` existe. La recette peut donc nettoyer avant la mise en service, plus rien ne s'efface ensuite.
-   - `EncMiseEnService` : `UPDATE` et `DELETE` toujours interdits.
-   - **Limite** : l'application se connecte en `postgres` (superutilisateur), qui peut désactiver un trigger. Le trigger protège des erreurs de code, pas d'un administrateur de base. Une vraie immuabilité sur 10 ans exige un rôle PostgreSQL applicatif avec `INSERT`/`SELECT` seulement sur `EncAudit` (décision d'infrastructure, à prendre avec le binôme).
-4. **Séquences.** `UPDATE "EncSequence" SET valeur = valeur + 1 WHERE cle = $1 RETURNING valeur` (verrou de ligne implicite), jamais `count()+1`.
-   - **Clés** : `PAI-AAAA`, `SUS-AAAA`, `RGS-AAAA` par année ; `BRD-AAAA-MM` par mois (numérotation `BRD-AAAA-MM-NNNN` qui repart à 1 chaque mois).
-   - **Mise en service** : séquences purgées (aucun numéro de recette n'a de valeur réelle).
-   - **Après mise en service** : trigger interdisant `DELETE` et toute baisse de `valeur`.
-   - **Import** : les `PaiementID` du classeur (colonne B) sont conservés ; l'import remonte la séquence au maximum importé de chaque année, sinon la première saisie à l'écran reprendrait un numéro existant.
-   - **Année du numéro** : ambiguïté 15.
+Conventions : montants `Decimal(14,2)`, signés pour une contre-passation ou un remboursement ; parts et taux en fraction
+`Decimal(7,6)` ; mois en `Date` au 1er ; **toutes les relations vers `User` en `onDelete: Restrict`** et comptées par
+`supprimerUtilisateurAction`. Entre crochets : **[S]** existe déjà (3b), **[L1]** à **[L4]** lot où le modèle devient
+utile.
+
+### 5.1 Socle technique (existant)
+
+```prisma
+model EncMiseEnService { id Int @id @default(1)  activeeAt  activeeParId  sauvegardeSha256 }   // [S] une seule ligne (CHECK), immuable
+model EncSequence      { cle String @id  valeur Int }                                       // [S] clés PAI-AAAA, SUS-AAAA
+model EncParametre     { cle String @id  valeur  majParId?  majAt }                         // [S] voir ci-dessous
+model EncAudit         { id BigInt  entite  entiteId  action  avant? apres? motif?  mois?  userId  ip?  at }   // [S] ajout seul
+model EncPieceJointe   { id  url @unique  nomOrigine?  mime  taille  sha256  deposeeParId  deposeeAt }       // [S] fichiers importés (D6)
+```
+
+**Paramètres (`EncParametre`, source unique `backend/src/encParametres.ts`)** :
+
+| Clé | Défaut | Bornes | Statut |
+|---|---|---|---|
+| `taxe.jour_limite_reversement` | 20 | **1–28** (aujourd'hui 1–31 dans le code) | À adapter |
+| `controle.tolerance_fcfa` | 1 | 0–1 000 | Garder |
+| `taxe.rappel_jours_avant_limite` | 5 | 0–31 | Garder |
+| `suspens.alerte_jours` | 60 | 1–3 650 | Garder (argent non identifié) |
+| `accessoires.part_partenaire_defaut` | 0 | 0–1 (fraction) | **À ajouter** [L1] |
+| `taxe.delai_exigibilite_mois` | 1 | — | **À retirer** (N+1 fixe) ; ligne supprimée par la migration corrective |
+
+`EncAudit.mois` (ancien rapport « changements depuis la clôture ») devient inutilisé ; il reste inoffensif et n'est pas
+retiré.
+
+### 5.2 Référentiels et paramètres métier
+
+```prisma
+model EncBranche {                                   // [L1] liste paramétrée par la Finance (P1)
+  id  nom @unique  actif Boolean  creeParId  creeAt
+}
+model EncPartenaire {                                // [L1] créé à l'import, ajout manuel possible
+  id  cleNom @unique  nom  partAccessoiresPartenaire Decimal(7,6)?  creeAt      // part null = défaut
+}
+model EncBeneficiaireHonoraires {                    // [L1] NOVELIA ; bénéficiaire en vigueur à la date de prise en compte
+  id  nom  dateDebut @unique @db.Date  creeParId  creeAt
+}
+model EncTauxControle {                              // [L1 ou L3, V2-A20] signalement seulement, jamais un montant
+  id  produitCode?  partenaireId?  tauxTaxe?  tauxCommission?  tauxAccessoires?  tauxHonoraires?  majParId  majAt
+  @@unique([produitCode, partenaireId])
+}
+```
+
+### 5.3 Contrats et encaissements
+
+```prisma
+model EncContrat {                                   // [L1] uniquement issu du fichier de production
+  id  numPolice @unique  brancheId
+  typeContrat?  produitLibelle?  produitCode?  typeOperation?  clientId?  clientNom?  partenaireId?
+  dateEffet @db.Date  dateEcheance? @db.Date  typePolice?
+  S  T  U  V  W  X                                   // Decimal(14,2), mis à jour par un avenant (D8)
+  partAccessoiresPartenaire Decimal(7,6)?            // taux propre à la police
+  annulationType?  annulationDate?  annulationMotif?  annulationSource?  annuleParId?  annuleAt?   // [L4]
+  creeParImportId  majParImportId?  creeAt  majAt
+  @@index([brancheId]) @@index([partenaireId]) @@index([clientNom]) @@index([produitCode])
+}
+
+model EncEncaissement {                              // [L1]
+  id  paiementId String @unique                      // NOTRE numéro PAI (repris du classeur à la reprise, généré sinon) — D7
+  paiementIdFichier String?                          // PaiementID d'un fichier mensuel : clé anti-doublon seulement — D7
+  contratId  source (FICHIER | MANUEL)  statut (A_CONFIRMER | CONFIRME | NON_RECU)
+  datePaiement @db.Date  mode (CHQ | VIR | OM | MTN | WAVE | CB | MOB)  reference?  Z
+  saisiLe  saisiParId?  confirmeLe?  confirmeParId?  datePriseEnCompte? @db.Date  ordrePriseEnCompte?
+  motifNonReception?  nonRecuParId?  nonRecuAt?
+  referenceGroupe?  groupeId?  nonIdentifieId?  importId?  importLigne?  releveLigneId?
+  contrePasseId? @unique  motifContrePassation?      // [L4]
+  // Figés à la confirmation (D9)
+  AA  AB  AC  AD  commission  honoraires
+  partAccessoiresTaux  partAccessoiresPartenaire  partAccessoiresSim
+  moisExigibilite @db.Date  dateLimiteReversement @db.Date  estRegularisation  beneficiaireHonorairesId
+  // Marquages « payé » (hors application), par nature : date, référence, auteur, source (MANUEL | REPRISE)
+  taxePayee*  commissionPayee*  honorairesPayes*  accessoiresPayes*
+  aRegulariser Boolean                               // [L4] contre-passation ou annulation après un marquage « payé »
+  observations?
+  @@index([contratId, statut, ordrePriseEnCompte]) @@index([statut, datePaiement]) @@index([reference])
+  @@index([moisExigibilite]) @@index([datePriseEnCompte]) @@index([paiementIdFichier])
+}
+```
+
+### 5.4 Argent non identifié
+
+```prisma
+model EncNonIdentifie {                              // [L2]
+  id  numero @unique (SUS-AAAA-NNNNNN)  dateReception  mode  reference?  montant  payeurPresume?  telephone?
+  source (MANUEL | RELEVE)  releveLigneId? @unique
+  statut (NON_AFFECTE | AFFECTE | CLASSE)  montantClasseHorsPrime?  motifClassement?   // affectation partielle : V2-A16
+  dateAffectation?  traiteParId?  traiteAt?  saisiParId  saisiAt
+}
+```
+
+### 5.5 Imports, signalements, relevés, frais
+
+```prisma
+model EncImport {                                    // [L1]
+  id  type (PRODUCTION | RELEVE | REPRISE)  statut (APERCU | VALIDE | ABANDONNE)
+  nomFichier  sha256  fichierId? @unique             // EncPieceJointe (D6)
+  brancheParDefautId?  operateur?
+  basculeTaxe?  basculeCommission?  basculeHonoraires?  basculeAccessoires?   // reprise (D10)
+  nbLignes  totalPrimesTtc?  nbContratsCrees  nbContratsMaj  nbPaiementsAConfirmer  nbATraiter
+  importeParId  importeAt  valideParId?  valideAt?
+}
+model EncSignalement {                               // [L1]
+  id  importId  contratId?  numPolice  brancheId?
+  analyse (DEJA_PRESENT | DOUBLON_POSSIBLE | A_COMPLETER | REF_WAVE_NON_CONFORME | AJOUTE | SANS_PAIEMENT
+           | PRIME_MODIFIEE | INCOHERENCE | ECART_TAUX | LIGNE_ANNULEE_REJETEE | BRANCHE_INCONNUE)
+  niveau (A_TRAITER | INFO)  statut (A_TRAITER | INFO | TRAITE)
+  paiementIndique Json?  encaissementExistantId?  encaissementCreeId?  primeAvant?  primeApres?
+  traiteParId?  traiteAt?  resolution?  creeAt
+}
+model EncReleveLigne {                               // [L1]
+  id  importId  numeroLigne  date  references String[]  referencePrincipale?
+  montantBrut  montantNet?  frais  typeTransaction?  nomContrepartie?  telephone?
+  groupe (EXACT | MEME_REF_ECART | MEME_MONTANT | INCONNU | IGNOREE_NEGATIVE | IGNOREE_TEST | DEJA_CONNUE)
+  ecart?  transactionPartageeN?
+  @@unique([importId, numeroLigne])
+}
+model EncFraisOperateur {                            // [L1] remplacé au réimport (même opérateur, même mois)
+  id  operateur  mois  nbPaiements  brut  frais  net  importId  majAt
+  @@unique([operateur, mois])
+}
+model EncPreferenceUtilisateur { userId @id  confirmationAutoReleve Boolean }   // [L1] F5.7
+```
+
+**Disparaissent** par rapport à la conception V1 : `EncProduit`, `EncTypeOperation`, `EncTaux` (périodes, bases,
+chevauchements), `EncBeneficiaire` typé, `EncLigneDue`, règlements sortants et affectations, bordereaux, créances,
+clôtures, régularisations, `EncMotifAnnulation`, `EncImportLigne`.
+
+### 5.6 Volumétrie
+
+50 000 contrats et 200 000 encaissements par an (CDC §8.2). Les montants figés à la confirmation évitent tout recalcul à
+l'affichage ; les états (« Taxes », « Ce que je dois », « Qui nous doit ») agrègent `EncEncaissement` sur les index
+ci-dessus. Objectifs : recherche < 1 s, fiche < 2 s, import de 5 000 lignes < 2 min.
 
 ---
 
-## 7. Taux : unité et contrôle des chevauchements
+## 6. Mise en service, audit, séquences et fichiers
 
-**Unité (A4).** Fraction décimale `Decimal(7,6)` : `0.072500` pour 7,25 %. Contrôle 0 ≤ taux ≤ 1 (CDC §3.8). Saisie et affichage en %, conversion à la frontière (action serveur, import). Les taux implicites (CDC §3.7) ne sont jamais stockés. Si le fichier de paramétrage est fourni en % (« 7,25 »), l'import le convertit.
-
-**Chevauchements.** Une contrainte d'exclusion PostgreSQL est écartée : avec `partenaireId` NULL, l'opérateur `=` vaut NULL et les taux par défaut du produit ne seraient jamais protégés ; de plus `btree_gist` demande un `CREATE EXTENSION` en superutilisateur. À la place :
-- **Contrôle applicatif transactionnel** : chaque écriture de taux commence par `SELECT … FROM "EncProduit" WHERE id = $1 FOR UPDATE` (sérialise toutes les écritures d'un produit, quel que soit le partenaire), puis cherche un chevauchement avec `"partenaireId" IS NOT DISTINCT FROM $2` et `COALESCE("dateFin", 'infinity')`, sur des intervalles fermés.
-- **Filet en base, sans extension** (migration SQL, Prisma n'exprime pas les index partiels) :
-  ```sql
-  CREATE UNIQUE INDEX "EncTaux_produit_defaut_en_cours_uniq"
-    ON "EncTaux" ("produitId") WHERE "partenaireId" IS NULL AND "dateFin" IS NULL;
-  CREATE UNIQUE INDEX "EncTaux_produit_partenaire_en_cours_uniq"
-    ON "EncTaux" ("produitId", "partenaireId") WHERE "partenaireId" IS NOT NULL AND "dateFin" IS NULL;
-  ```
-- **Import du paramétrage** : une seule transaction, produits verrouillés dans un ordre fixe (par `id`) pour éviter tout interblocage.
-
-Résolution d'un taux à la date de production : la ligne produit × partenaire valable, champ par champ, à défaut la ligne produit valable (« un taux laissé vide reprend celui du produit »).
+1. **Hors purge globale (A2).** `ReinitialisationSysteme` ne touche aucune table `Enc*`.
+2. **Mise en service = remise à zéro + activation** (D5) : `enc.mettre_en_service` (DG seul, espace système), même protocole que la réinitialisation globale (sauvegarde JSON liée par empreinte SHA-256, mot de confirmation, transaction sérialisable).
+   - **Purgé** : contrats, encaissements, argent non identifié, imports, signalements, relevés, frais, `EncAudit`, `EncSequence`, `EncPieceJointe` (fichiers supprimés après le commit).
+   - **Conservé** : branches, partenaires et leurs parts d'accessoires, bénéficiaires des honoraires, taux de contrôle, paramètres (nécessaires à la reprise, D10).
+   - En fin de transaction : la ligne `EncMiseEnService`. La reprise initiale (F1.5) se fait **après** la mise en service.
+3. **Immuabilité de l'audit** (triggers en place depuis le 3b) : `EncAudit` : `UPDATE` toujours interdit, `DELETE` et `TRUNCATE` interdits après la mise en service ; `EncMiseEnService` : jamais modifiée, supprimée ni vidée. **Limite** : l'application se connecte en superutilisateur ; le CDC §8.2 demande un **compte applicatif aux droits limités** (décision du responsable informatique) et un audit **conservé 10 ans**.
+4. **Séquences** : incrément atomique (`INSERT … ON CONFLICT DO UPDATE … RETURNING`), jamais `count()+1`.
+   - Clés : **`PAI-AAAA`** (année de saisie, CDC §3.2) et **`SUS-AAAA`** (année : V2-A18). `RGS` et `BRD` sont retirées du code au commit du moteur.
+   - Reprise : les PaiementID du classeur deviennent nos numéros ; `remonterSequence` porte la séquence au maximum repris (D7).
+   - Fichiers mensuels : chaque encaissement reçoit notre numéro ; le PaiementID du fichier va dans `paiementIdFichier` (anti-doublon), jamais dans la séquence (D7).
+   - Après mise en service : ni suppression, ni baisse, ni renommage (trigger).
+5. **Fichiers importés** (D6) : chaque fichier de production et chaque relevé est conservé dans `EncPieceJointe` (empreinte SHA-256, qui détecte aussi un réimport à l'identique). Téléchargement : relevés réservés à la Finance (`enc.confirmer_paiement`) ; fichiers de production à la Finance et à l'équipe technique (`enc.importer_production`), jamais à la Consultation.
 
 ---
 
-## 8. Règle d'arrondi du prorata — PROVISOIRE (A7)
+## 7. Règles de calcul
 
-Calcul en `Prisma.Decimal`, arrondi `toDecimalPlaces(2, ROUND_HALF_UP)`.
+Moteur pur `backend/src/encCalcul.ts` (tests vitest `encCalcul.test.ts`), décimal exact (`EncDecimal`, clone local de
+decimal.js, arrondi half-up), jamais de `number` pour un montant.
 
-- **Versement non soldant** : AB = arrondi(T·Z/S) ; AC = arrondi(U·Z/S) ; **AD = Z − AB − AC** ; commission = arrondi(W·Z/S) ; honoraires = arrondi(X·Z/S), arrondis indépendamment.
-- **Versement soldant** (AA = 0) : chaque composante = total du contrat − somme des versements précédents (reliquat exact).
-- **Contre-passation** : copie négative exacte des valeurs figées, jamais recalculée (évite l'asymétrie de l'arrondi sur les négatifs).
+### 7.1 Prorata et arrondi (CDC §5.2, D3)
 
-### Vérification manuelle
+- **Non soldant** : AB = arrondi(T·Z/S) ; AC = arrondi(U·Z/S) ; **AD = Z − AB − AC** ; commission = arrondi(W·Z/S) ; honoraires = arrondi(X·Z/S).
+- **Soldant** (AA = 0) : chaque élément = total du contrat − cumul (reliquat exact) → la somme des encaissements égale toujours les montants du fichier.
+- **Incohérence T + U + V ≠ S** : même calcul ; la taxe totale encaissée est celle du fichier (ΣAD = V au soldant), la ventilation peut s'écarter de quelques francs (CDC §5.2).
+- **Stockage au centime, affichage à l'unité FCFA** ; la recette au centime porte sur les valeurs stockées.
+- **Ordre** : ordre de **prise en compte** (CDC F3.7), fourni par l'appelant (cumul des confirmés précédents).
+- **Avenant** (D8) : les confirmés restent figés ; les suivants utilisent S…X à jour ; reliquat du soldant = nouveaux totaux − cumul ; nouvelle prime inférieure à l'encaissé → alerte trop-perçu.
+- **Trop-perçu** : autorisé après alerte (CDC §5.6) ; ventilation de l'excédent : V2-A6.
+- **Contre-passation** : copie négative **exacte** des montants figés (dont parts d'accessoires), rattachée au **même mois d'exigibilité** ; « à régulariser » si une part est déjà marquée payée.
 
-**CDC §9.1** (S = 1 500 ; T = 1 398,60 ; U = 0 ; V = 101,40 ; W = 251,75 ; X = 34,97)
+### 7.2 Exigibilité de la taxe (CDC §5.3)
 
-| Vers. | Z | AB | AD = Z − AB | Commission | Honoraires | Conforme |
-|---|---|---|---|---|---|---|
-| 1 | 500 | 466,20 (exact) | 33,80 | 83,9166… → 83,92 | 11,6566… → 11,66 | oui |
-| 2 | 700 | 9 790,2 ÷ 15 = 652,68 (exact) | 47,32 | 117,4833… → 117,48 | 16,3193… → 16,32 | oui |
-| 3 (soldant) | 300 | 1 398,60 − 466,20 − 652,68 = 279,72 | 101,40 − 33,80 − 47,32 = 20,28 | 251,75 − 83,92 − 117,48 = 50,35 | 34,97 − 11,66 − 16,32 = 6,99 | oui |
+`moisExigibilite = max(mois de paiement + 1 ; mois de prise en compte, ou mois suivant si prise en compte le jour limite ou après)` ;
+jour limite 1–28 (défaut 20) ; `dateLimiteReversement` = jour limite du mois d'exigibilité ; **« Régularisation »** si le
+résultat diffère du mois de paiement + 1. Prise en compte = saisie (manuel), confirmation (fichier), affectation (argent
+non identifié), **date de paiement** pour la reprise (D10). Aucune taxe sur un paiement à confirmer ou non affecté.
 
-Contrôles : 279,72 + 0 + 20,28 = 300 = Z. §9.3 : 83,92 + 117,48 = 201,40 dus ; non acquis 251,75 − 201,40 = 50,35. §9.4 : 1 500 × 15 ÷ 31 = 725,806 → 725,81.
+Vérification du tableau du CDC §5.3 : 10/09 pris le 12/09 → octobre ; 28/09 → 02/10 → octobre ; 28/09 → 25/10 →
+novembre (régularisation) ; 15/07 → 10/09 → septembre (régularisation) ; 15/07 → 20/09 → octobre (régularisation).
 
-**CDC §9.7** (taxe 7,25 %, pas d'accessoires, T/S = 1/1,0725 = 0,9324009324…)
+### 7.3 Accessoires et honoraires (CDC §5.4, §3.6)
 
-| Police | Z | T·Z/S exact | AB | AD | Conforme |
-|---|---|---|---|---|---|
-| A | 100 000 | 93 240,0932… | 93 240,09 | 6 759,91 | oui |
-| B | 90 000 | 83 916,0839… | 83 916,08 | 6 083,92 | oui |
-| C | 60 000 | 55 944,0559… | 55 944,06 | 4 055,94 | oui |
-| Total | 250 000 | | 233 100,23 | 16 899,77 | oui |
+- **Part d'accessoires** : taux de la police > taux du partenaire > taux par défaut ; **figé** à la confirmation (D9) ; changement de taux : proposition de l'appliquer aux encaissements dont la part partenaire n'est pas payée ; part payée jamais modifiée. Arrondi : V2-A7 (proposition : part partenaire arrondie half-up, part SIM = AC − part partenaire).
+- **Bénéficiaire des honoraires** : celui en vigueur à la **date de prise en compte**, figé ; changement non rétroactif.
 
-**CDC §9.9** : 200 000 / 1,0725 = 186 480,1865… → AB = 186 480,19 ; AD = 13 519,81. Conforme. Les 100 000 non taxables ne créent aucun versement.
+### 7.4 Vérifications chiffrées (moteur actuel)
 
-### Divergences signalées
-
-1. **§9.7 et §9.9 ne donnent pas la prime S des contrats** (ambiguïté 19). Le calcul ci-dessus suppose T/S = 1/1,0725 exact ; en réalité T est stocké au centime (ou pris du fichier). L'écart, au plus 0,005 × Z/S, peut faire basculer un arrondi proche de la demi-unité : police C à 0,0009 du seuil (bascule vers 55 944,05 dès que Z/S > 0,18 avec un T arrondi par défaut), police B à 0,0011. Aucun risque si ces versements soldent leur contrat. Dans la tolérance de recette (1 FCFA).
-2. **Contrat incohérent, T + U + V ≠ S** (ambiguïté 18, en attente du client) : toléré à 1 FCFA en saisie, **accepté à l'import quel que soit l'écart** (§9.8 : 50 FCFA). Hors versement soldant, AD = Z − AB − AC diffère de V·Z/S. Sur le versement soldant, les deux invariants du CDC §5.2 ne peuvent plus tenir ensemble : soit ΣAD = V (reliquat exact de V) mais AB + AC + AD ≠ Z, soit AB + AC + AD = Z mais ΣAD ≠ V.
-
-### Moteur de calcul (`backend/src/encCalcul.ts`, commit 2)
-
-Fonctions pures, aucun accès à la base, couvertes par `backend/src/encCalcul.test.ts` (vitest, `npm test`).
-- **Décimal** : clone local de decimal.js (`EncDecimal`, arrondi half-up), jamais `Decimal.set` global. Entrées : chaînes ou
-  objets « Decimal.js-like » (dont `Prisma.Decimal`, converti par `toFixed()` : le `Decimal` embarqué par Prisma n'est pas
-  reconnu comme instance par un autre clone). Un `number` est refusé à la compilation et à l'exécution. Sorties acceptées
-  telles quelles par Prisma.
-- **Paramètres en arguments** : délai d'exigibilité et jour limite (viendront d'`EncParametre`).
-- **Règle d'arrondi** : isolée dans `regleArrondiProvisoire` (seule fonction à modifier si l'ambiguïté 18 est tranchée
-  autrement) ; `calculerVersement` accepte une autre règle en paramètre.
-- **Saisie directe** : base « prime TTC » refusée pour la taxe et les accessoires (circulaire, ambiguïté 7), acceptée pour la
-  commission et les honoraires.
-- **Calcul inverse** : défini seulement pour les bases par défaut et des accessoires en taux (refus explicite sinon) ;
-  V = S − T − U pour que la prime TTC saisie reste exacte.
-- **Trop-perçu** : refusé par le moteur ; sa validation par le responsable est un circuit à part (ambiguïté 16).
-- **Échéancier** : montants **tronqués** au centime, reliquat sur la dernière (la dernière ne peut jamais être négative) ;
-  jour de la date d'effet conservé, ramené au dernier jour du mois s'il n'existe pas (31/01 → 28/02 → 31/03).
-- **Semaine ISO** : libellé « Sem N - AAAA » sans zéro devant le numéro, année ISO.
-
----
-
-## 9. Fichiers partagés avec le binôme (Pointage RH / FeedbackApp)
-
-Auteurs d'après `git log` au 2026-09-26.
-
-| Fichier | Auteurs | Modification nécessaire |
+| Cas | Résultat du moteur | Conforme |
 |---|---|---|
-| `backend/prisma/schema.prisma` | Arist 19, Thierry 5 | Modèles `Enc*`, relations inverses sur `User` (≈ 20), valeur `ENCAISSEMENTS` dans `NotificationCategory` |
-| `backend/prisma/migrations/` | les deux | Nouvelles migrations : coordonner l'ordre des horodatages (une migration insérée avant une migration déjà appliquée est refusée) |
-| `backend/prisma/seed.ts` | Arist 9, Thierry 2 | Module `encaissements`, permissions `enc.*`, 5 rôles, bénéficiaires uniques, comptes de test |
-| `backend/src/index.ts`, `client-safe.ts` | les deux | Exports du module |
-| `frontend/src/app/(dashboard)/page.tsx` | Thierry 6, Arist 3 | Carte du module (lien, icône, raison d'accès) |
-| `nav.ts`, `Sidebar.tsx`, `AppShell.tsx`, `(dashboard)/layout.tsx` | Arist majoritaire, Thierry 2 à 5 | Branche « Encaissements » et booléens de permission |
-| `frontend/src/lib/topbarAlerts.ts` | Thierry | Alertes « taxes à reverser avant le 20 », « échéances en retard » |
-| `NotificationDetailModal.tsx`, `NotificationDrawer.tsx`, `lib/notifications/notificationService.ts` | Thierry | La modale a un type union de catégories codé en dur ; le tiroir affiche selon la catégorie : ajouter `ENCAISSEMENTS` |
-| `lib/auth.ts`, `auth.config.ts`, `proxy.ts`, `(auth)/*` | les deux (+ 2) | Double authentification du Responsable (CDC §8.3) : champs sur `User`, étape après le mot de passe, exemption du middleware |
-| `app/api/cron/*` + planification (`docker-compose.*.yml`, `DEPLOIEMENT.md`) | Thierry (cron absences) | Crons : échéances en retard, rappels de taxes, alertes de suspens (même `CRON_SECRET`) |
-| `delegations/actions.ts` | Arist | `MODULES_DELEGABLES` : ajouter `"encaissements"` si la délégation est voulue |
-| `admin/users/actions.ts` | Arist | `supprimerUtilisateurAction` : compter les nouvelles relations vers `User` |
-| `package.json` (racine, backend, frontend), lockfile | les deux | vitest (commit 2), parseur CSV (Lot 2) |
-| `CLAUDE.md` | les deux | Section du module |
+| 9.1 | AB 466,20 / 652,68 / 279,72 ; AD 33,80 / 47,32 / 20,28 ; commission 83,92 / 117,48 / 50,35 ; honoraires 11,66 / 16,32 / 6,99 | oui |
+| 9.4 | AB 93 240,09 / 83 916,08 / 55 944,06 ; AD 6 759,91 / 6 083,92 / 4 055,94 | oui |
+| 9.5 | AB 186 480,19 ; AD 13 519,81 | oui |
+| 9.6 | AC 50 ; P1 20 / 30 ; P2 35 / 15 ; à 50 % : 25 / 25 | oui |
+| 9.8 | AD 67,60 × 3 puis 608,39 (soldant) ; total 811,19 | oui |
 
-Sans modification : `admin/roles/page.tsx` et `/admin/modules` (génériques), `getAccessibleModules` (le module apparaît par ses permissions), `reinitialisation.ts` (A2).
+### 7.5 Évolution du moteur (commit « Moteur V2 »)
+
+Garder : décimal, prorata (règle D3, renommée définitive), contre-passation, semaine ISO, DDF, statuts, effet d'annulation.
+Remplacer : exigibilité (fonction unique §7.2). Adapter : trop-perçu sur demande, avenant, « à récupérer » → « à
+régulariser ». Supprimer : calcul inverse, saisie directe, échéancier. Ajouter : partage des accessoires, bénéficiaire à
+une date, règles de doublon (F1), de reprise (F1.5), de rapprochement (F5) et d'agrégation des frais, toutes en fonctions
+pures testées. Tests renumérotés selon la recette V2.6 (analyse §2.1).
 
 ---
 
-## 10. Ambiguïtés du cahier et statut
+## 8. Imports et relevés
 
-Statuts : **OUVERT** (à trancher), **PROVISOIRE** (retenu en attendant confirmation), **TRANCHÉ** (daté).
+### 8.1 Fichier de production (CDC F1, §7.1)
+
+Nouvelle production du mois ; colonnes A à AH lues **par position** (en-têtes = contrôle) ; colonne « Branche » reconnue
+par son en-tête, sinon branche choisie à l'import ; branche inconnue de la liste (P1) → signalement ; colonnes calculées
+(N, Q, R, AA à AH) ignorées. Police nouvelle → contrat + paiement **à confirmer** (notre numéro PAI ; PaiementID du fichier en `paiementIdFichier`, D7) ;
+police connue → mise à jour du contrat (avenant, D8) et table de cas du CDC F1.4 (déjà présent, doublon possible à 1 FCFA
+et 7 jours, à compléter, Wave non conforme, autre cas, sans paiement), chaque cas tracé en `EncSignalement`. Totaux de
+contrôle (lignes, primes TTC). Lignes annulées dans un fichier importé par la Finance : rejetées. Écarts de taux de contrôle
+et incohérences : signalés sans bloquer.
+
+### 8.2 Reprise initiale (CDC F1.5, D10)
+
+Une seule fois, en deux temps : **aperçu** puis **validation**, par la **Finance seule** (D1).
+- Les PaiementID du classeur **deviennent nos numéros PAI** ; séquence remontée au maximum repris (D7).
+- Paiements repris **confirmés**, **prise en compte = date de paiement réelle** (pas de « Régularisation »).
+- Dates de bascule par nature (taxe, commission, honoraires, part accessoires) fixées par la Finance ; pour chaque nature, un paiement dont la **date d'enregistrement (colonne A)** est ≤ bascule est marqué « payé » avec la source **REPRISE** ; décision SIM : **taxes au 30/09/2026**, les trois autres sans bascule (tout reste à payer).
+- Prérequis : partage des accessoires (partenaires et exceptions par police) et bénéficiaire des honoraires **saisis avant** (montants figés à la reprise).
+- Rapport de reprise par nature et par branche (marqué « payé (reprise) » / restant à payer) avant validation ; exceptions corrigées ensuite en décochant.
+- La règle P2 (taxe non cochable avant exigibilité) **ne s'applique pas** à la reprise, en attendant la réponse sur V2-A27d.
+- Points ouverts : V2-A27b (branche des paiements repris) et V2-A27d (bascule des taxes au 30/09 ou au 31/08) — **questions posées au client** ; V2-A27c, A27e.
+
+### 8.3 Relevés (CDC F5, §7.2)
+
+Format du relevé Wave vérifié sur le relevé réel d'août (analyse §6) : `.xls` Excel 97-2003, une feuille par période,
+en-têtes ligne 1, 13 colonnes du §7.2 ; horodatage = date Excel ; montants entiers ; types `api_checkout`,
+`merchant_payment`, `agent_transaction` (négatifs). Opérateur reconnu par les **en-têtes**, pas par le nom du fichier.
+Rapprochement sur l'identifiant de transaction (`T_…`), la référence client et l'identifiant de session API ; 4 groupes et
+transaction partagée (CDC F5.6) ; D11 pour les lignes ignorées et les frais. **Le relevé réel ne va jamais dans le dépôt**
+(dossier local `C:\Projets\donnees-sensibles\`, hors dépôt ; `/donnees-sensibles/` reste dans le `.gitignore` par
+précaution) : tests sur un relevé synthétique au même format.
+
+### 8.4 Bibliothèque de lecture
+
+**SheetJS CE 0.20.3**, distribué par l'éditeur (le paquet npm `xlsx` 0.18.5 n'est plus maintenu et porte
+CVE-2023-30533 et CVE-2024-22363). Archive versionnée dans le dépôt (dépendance `file:`, empreinte vérifiée), lecture
+côté serveur uniquement, taille et nombre de lignes bornés, formules et HTML désactivés, une seule fonction d'entrée
+`lireTableur`. ExcelJS reste la bibliothèque d'**écriture** des exports. Détail : analyse §7.
+
+---
+
+## 9. Fichiers partagés avec le binôme
+
+| Fichier | Modification prévue |
+|---|---|
+| `backend/prisma/schema.prisma`, `migrations/` | Modèles `Enc*` et relations inverses sur `User` ; migrations horodatées après les dernières appliquées |
+| `backend/prisma/seed.ts` | Ajouts groupés (permissions, rôles, paramètres, comptes de test hors production) |
+| `backend/src/index.ts` | Exports du module |
+| `frontend/src/app/(dashboard)/page.tsx`, `nav.ts`, `Sidebar.tsx`, `AppShell.tsx`, `(dashboard)/layout.tsx` | Onglets de la branche Encaissements |
+| `frontend/src/lib/topbarAlerts.ts`, notifications, cron | Rappel des taxes 5 jours avant le jour limite, alerte de retard (CDC §8.1) |
+| `admin/users/actions.ts` | Comptage des nouvelles relations vers `User` |
+| `package.json`, lockfile | SheetJS CE (archive versionnée) |
+| `CLAUDE.md` | Section du module |
+
+La double authentification (CDC §8.2) est un chantier du portail, hors module.
+
+---
+
+## 10. Ambiguïtés et statut
+
+Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
+
+### 10.1 Ambiguïtés de la V2 (numérotation de l'analyse, préfixe « V2- »)
 
 | # | Sujet | Statut |
 |---|---|---|
-| 1 | Un import de production par l'équipe technique ou la finance crée des versements (colonne Z), alors que la technique ne peut pas « saisir ou valider des encaissements » (§2) | OUVERT |
-| 2 | Versements « figés à la validation » (§3.2) mais « recalculés » si la prime change (F2.4) ; rang « recalculé » (col. R) : un versement antidaté décale rangs et reliquat ; la correction d'un versement validé par le Responsable n'est pas décrite | OUVERT |
-| 3 | Types d'annulation : F4.2 « sans effet / résiliation / ristourne » ; §5.7 « sans effet / résiliation / non-paiement » | OUVERT |
-| 4 | Double source du statut Annulé (§3.1 statut d'annulation, §5.6 statut calculé) | OUVERT |
-| 5 | Aucun profil n'a la validation d'un versement (Brouillon → Validé) ; F3.7 suggère une validation immédiate à l'enregistrement. Question posée au client : qui valide un versement ? Aucune permission créée en attendant (commit 3a) | OUVERT — **BLOQUANT pour le commit Versement** |
-| 6 | Statut « Rapproché » d'un versement (F9.5) absent de la liste §3.2 — proposition : attribut `rapprocheAt`, le statut reste Validé | PROVISOIRE |
-| 7 | Base de taux « prime TTC » (§3.7) : calcul circulaire, aucune formule inverse (§5.1) | OUVERT |
-| 8 | Règle d'arrondi du prorata non définie | PROVISOIRE (2026-09-26, section 8) |
-| 9 | §9.6 : bordereau « de 1 000 000 » alors que 12 000 de lignes En attente « n'y figurent pas » (988 000 ?) | OUVERT |
-| 10 | Renouvellements et avenants : même police ou nouvelle ? évolution de la prime ? | OUVERT |
-| 11a | Lot de rattachement de F10 (suspens) | TRANCHÉ 2026-09-26 : Lot 2 |
-| 11b | Date de situation D (§5.4) « hors annulations » : traitement d'une annulation datée après D | OUVERT |
-| 12 | Divers : « six objets principaux » (§3) ; bénéficiaires des honoraires et accessoires non définis (provisoire : bénéficiaires uniques créés par le seed) ; option O2 absente du §11 ; avances et acomptes sans règle détaillée | OUVERT |
-| 13 | Double authentification du Responsable (§8.3) : absente du projet, dans aucun lot | OUVERT |
-| 14 | Acompte non affecté (F5.6) vs « somme des affectations = montant du règlement » (§8.1) | OUVERT |
-| 15 | Année des numéros `PAI-AAAA` / `SUS-AAAA` : année de saisie ou de paiement | OUVERT |
-| 16 | Trop-perçu (§5.3) : « report sur un autre contrat » non décrit ; soumis à la clôture du mois d'origine ? | OUVERT |
-| 17 | Régularisation après déclôture (F11.5) : née automatiquement à la re-clôture ou saisie ? | OUVERT |
-| 18 | Contrat incohérent (T + U + V ≠ S) : invariant prioritaire au versement soldant (ΣAD = V ou AB + AC + AD = Z) | OUVERT — en attente du client |
-| 19 | §9.7 et §9.9 ne donnent pas la prime S : écart possible de 0,01 sur une ligne (dans la tolérance) | OUVERT (non bloquant) |
-| 20 | Lignes dues à montant nul (ex. accessoires = 0) : créées ou non ? | TRANCHÉ 2026-09-26 : aucune ligne due créée pour un montant nul |
-| 21 | Lignes dues négatives issues d'une contre-passation : compensation avec la ligne d'origine si elle n'est pas payée, montant à récupérer si elle est payée ? | OUVERT — à trancher avant le Lot 3 |
-| 22 | Suspens identifié PILE le jour limite (le 20) : déclaration du mois ou du mois suivant ? L'échéance du jour même « suit »-elle l'identification (F10.6) ? Choix provisoire du moteur : mois suivant | OUVERT (choix provisoire documenté par un test) |
+| V2-A1 | PaiementID d'un paiement importé | TRANCHÉ 2026-09-28 (D7, version révisée) |
+| V2-A1b | PaiementID du fichier et de l'application dans la même série (conflit d'unicité) | TRANCHÉ 2026-09-28 (D7 : numéro propre, PaiementID du fichier dans un champ séparé) |
+| V2-A1c | Origine des PaiementID des fichiers mensuels (système de production ? série propre ?) | OUVERT — question posée au client |
+| V2-A2 | Ordre de deux prises en compte le même jour ; « Finalement reçu » | OUVERT |
+| V2-A3 | Arrondi | TRANCHÉ 2026-09-28 (D3) |
+| V2-A4 | Avenant | TRANCHÉ 2026-09-28 (D8) |
+| V2-A5 | Changement de partenaire ou de branche d'une police connue | OUVERT |
+| V2-A6 | Ventilation de l'excédent d'un trop-perçu | OUVERT |
+| V2-A7 | Arrondi des parts d'accessoires ; T et V absents du 9.6 | OUVERT |
+| V2-A8 | Correction d'un encaissement | OUVERT |
+| V2-A9 | Contre-passation d'une taxe déjà payée | OUVERT |
+| V2-A10 | Paiement incomplet d'une police nouvelle | OUVERT |
+| V2-A11 | « Ajouter quand même » : à confirmer ou confirmé | OUVERT |
+| V2-A12 | Règles de doublon (statuts comparés, ordre, portée de la référence) | OUVERT |
+| V2-A13 | Date de début de NOVELIA | OUVERT (avant la reprise) |
+| V2-A14 | Lignes annulées importées par la Finance | OUVERT |
+| V2-A15 | Liste des branches | PROVISOIRE (P1) |
+| V2-A16 | Affectation partielle et classement d'un même paiement non identifié | OUVERT |
+| V2-A17 | Source d'un encaissement issu d'une affectation | OUVERT |
+| V2-A18 | Année du numéro SUS | OUVERT |
+| V2-A19 | Dates de référence des états | OUVERT |
+| V2-A20 | Taux de contrôle : base, tolérance, lot | OUVERT |
+| V2-A21 | Relevé : toutes branches ou branche choisie | OUVERT |
+| V2-A22 | Groupe 4 du relevé en Lot 1 | OUVERT |
+| V2-A23 | Frais : tests comptés (RÉSOLU, D11) ; deux relevés partiels du même mois | OUVERT (en partie) |
+| V2-A24 | Annulation : reste dû après résiliation ; effet sur la taxe à la production | RÉSOLU V2.6 en partie (9.13) |
+| V2-A25 | Paiement mobile saisi au net | OUVERT |
+| V2-A26 | Ligne de relevé correspondant à un « non reçu » | OUVERT |
+| V2-A27 | Reprise initiale | RÉSOLU V2.6 (D10) |
+| V2-A27b | Reprise : une fois pour tout le classeur ou par branche ; affectation des branches | OUVERT — question posée au client |
+| V2-A27c | Date et référence du « payé (reprise) » | OUVERT |
+| V2-A27d | Conflit entre la bascule des taxes au 30/09 et P2 (taxes de septembre exigibles en octobre) : bascule au 30/09 ou au 31/08 ? | OUVERT — question posée au client ; en attendant, P2 ne s'applique pas à la reprise |
+| V2-A27e | Paiement repris sans date en colonne A | OUVERT |
+| V2-A28 | Référence et date future pour les paiements du fichier | OUVERT |
+| V2-A29 | Contenu de l'export du registre | OUVERT |
+| V2-A30 | Onglet « À vérifier » pour l'équipe technique | OUVERT |
+| V2-A31 | Mise en service | TRANCHÉ 2026-09-28 (D5) |
+| V2-A32 | Libellé du module | TRANCHÉ 2026-09-28 : « Encaissements, taxes » (D4) |
+| V2-A33 | Téléchargement des fichiers de production (données clients) | TRANCHÉ 2026-09-28 : Finance et équipe technique (D6) |
+| V2-A34 | « Taxe payée » non cochable avant exigibilité | PROVISOIRE (P2) : actions de l'utilisateur seulement, reprise exclue |
+| R3 | Numérotation des renouvellements (équipe technique) | OUVERT |
+| R7 | Date d'effet d'une annulation « sans effet » | OUVERT |
+
+### 10.2 Ambiguïtés de la V1 (numérotation historique, citée par le code déjà poussé)
+
+| # V1 | Sujet | Sort |
+|---|---|---|
+| 1 | Import technique qui crée des versements | Remplacée (paiements « à confirmer ») |
+| 2 | Figé / recalculé / rang | Tranchée (figé, ordre de prise en compte) |
+| 3, 4 | Types et statut d'annulation | Tranchées (3 types) |
+| 5 | Validation d'un versement | **Close** : la notion disparaît |
+| 6 | « Rapproché » | Remplacée (lien vers la ligne de relevé) |
+| 7 | Base « prime TTC » circulaire | Sans objet (plus de calcul de contrat) |
+| 8 | Arrondi du prorata | Tranchée (D3) |
+| 9, 11a, 11b, 17 | Bordereau, lot de F10, date de situation, déclôture | Sans objet |
+| 10 | Avenants, renouvellements | D8 ; renouvellements : R3 |
+| 12 | Bénéficiaires | Tranchée (NOVELIA daté, partage des accessoires) |
+| 13 | Double authentification | Tranchée (portail, avant production) |
+| 14, 16 | Acompte, trop-perçu | Tranchées ; excédent : V2-A6 |
+| 15 | Année des numéros | PAI tranchée (saisie) ; SUS : V2-A18 |
+| 18 | Contrat incohérent | Tranchée (ΣAD = V, CDC §5.2) |
+| 19 | Prime absente des cas chiffrés | Toujours vrai pour 9.4 et 9.6 (sans effet sur les résultats) |
+| 20, 21 | Lignes dues nulles ; contre-passation et lignes dues | Sans objet ; remplacée par V2-A9 |
+| 22 | Identifié pile le jour limite | Tranchée : mois suivant (CDC §5.3) |
 
 ---
 
-## 11. Découpage en commits (Lot 1)
+## 11. Découpage en commits
 
-1. **Docs** : cahier des charges, ce document, section du module dans `CLAUDE.md`.
-2. **Moteur de calcul pur** : vitest, `encCalcul.ts` (clone local de decimal.js, compatible `Prisma.Decimal`, aucune dépendance à la base), tests sur §9.1, 9.3, 9.4 (prime acquise), 9.7, 9.8 (saisie directe et calcul inverse), 9.9 et cas limites.
-3. **Fondations**, en deux commits :
-   - **3a — câblage** : module `encaissements`, permissions `enc.*` (sans validation de versement, ambiguïté 5), 5 rôles, `enc.mettre_en_service` au DG, migration idempotente, entrée de navigation et carte du tableau de bord réservées à `enc.consulter`, page d'accueil « en construction ».
-   - **3b — socle technique** : `EncSequence`, `EncAudit` + triggers conditionnels, `EncMiseEnService`, `EncParametre` (défauts en seed), `EncPieceJointe` et sa route. Mise en œuvre (migration `20260927142216_encaissements_socle_technique`) :
-     - **Relations vers `User`** : toutes en `onDelete: Restrict`, et comptées par `supprimerUtilisateurAction` (refus propre plutôt qu'une erreur de base).
-     - **Triggers** (fonctions `enc_interdire`, `enc_interdire_apres_mise_en_service`, `enc_sequence_garde`) : `EncMiseEnService` jamais modifiée, supprimée ni vidée (`TRUNCATE` compris), une seule ligne (`CHECK id = 1`) ; `EncAudit` : `UPDATE` toujours refusé, `DELETE`/`TRUNCATE` refusés après mise en service ; `EncSequence` : après mise en service, ni `DELETE`, ni `TRUNCATE`, ni baisse, ni renommage.
-     - **Séquences** (`encSequence.ts`) : `INSERT … ON CONFLICT DO UPDATE … RETURNING`, qui crée aussi la clé d'une nouvelle année ou d'un nouveau mois ; `remonterSequence` (import) ne fait jamais baisser (`GREATEST`). L'année de la clé reste fournie par l'appelant (ambiguïté 15 non tranchée).
-     - **Paramètres** (`encParametres.ts`, source unique) : délai d'exigibilité 1 mois, jour limite 20, tolérance 1 FCFA, rappel 5 jours avant la date limite, alerte suspens à 60 jours. Posés par la migration (`ON CONFLICT DO NOTHING`, jamais d'écrasement) ET par le seed, car le seed ne tourne qu'une fois en production. Valeur illisible ou absente = erreur, jamais de repli silencieux sur le défaut.
-     - **Audit** (`encAudit.ts`) : seule voie d'écriture, dans la transaction de l'opération auditée ; aucune fonction de modification ni de suppression.
-     - **Pièces jointes** : route d'upload commune ouverte à toute permission `enc.*` d'écriture (pas à `enc.consulter`) ; `enregistrerEncPieceJointe` (`frontend/src/lib/encaissements/pieceJointe.ts`) recalcule taille, SHA-256 et type depuis le fichier et refuse un fichier déjà rattaché (au module ou à la Trésorerie) ; téléchargement par `GET /api/encaissements/pieces-jointes/[id]`, gardé par `enc.consulter`.
-     - **Seed** : vide les tables `Enc*` d'une base de développement, et **refuse de tourner, avant toute suppression**, sur une base où le module est mis en service.
-     - **Purge globale** : vérifiée intacte après ce commit (aucune table `Enc*` dans la sauvegarde ni dans la purge, fichiers des pièces du module conservés).
-4. **Référentiels** : produits, partenaires (+ bénéficiaires), types d'opération, taux (contrôle de chevauchement de la section 7), écrans, import/export Excel du paramétrage.
-5. **Contrat** : création et modification (saisie directe, calcul inverse), fiche, recherche paginée, contrôles bloquants §8.1.
-6. **Versement** (F3) : verrou, valeurs figées, `PaiementID`, **lignes dues créées dans la même transaction**, contre-passation, alerte de référence en double, trop-perçu.
-7. **Échéancier** (F8).
-8. **Encaissement groupé** (F3 bis) et avance partenaire.
-9. **Import de production** (F1) : aperçu puis confirmation, rapport, remontée des séquences.
-10. **Export Excel** du registre (§7, colonnes A à AH) et états du Lot 1.
-11. **Mise en service et recette du Lot 1** : action `enc.mettre_en_service`, scripts sur les cas chiffrés, jeu de 200 000 versements pour les temps de réponse, documentation.
+### Déjà poussés (conception V1)
 
-**Commit « Sécurité » (socle partagé, hors numérotation du Lot 1, à livrer avant le commit 11)** — noté le 2026-09-27 :
-- **Trigger interdisant `DELETE` et `UPDATE` sur `ReinitialisationSysteme`**, comme pour `EncMiseEnService`. Aujourd'hui, seule la clé étrangère `RESTRICT` vers `User` empêche indirectement sa disparition ; un `DELETE` direct de la ligne réactiverait la réinitialisation globale, déjà exécutée en production le 26/09/2026. Attention : `enregistrerNettoyageFichiers` (`reinitialisation.ts`) fait un `UPDATE` des compteurs de fichiers juste après le commit de la purge — le trigger doit soit n'autoriser que ces deux colonnes, soit ce compteur doit être écrit autrement.
-- **Décompte des relations vérifiées par `supprimerUtilisateurAction`** : le commentaire de la fonction dit 15, un commentaire interne et `CLAUDE.md` disent 18, le code en vérifie 21. Corriger les trois textes, et profiter de la relecture pour décider du sort des relations que l'action ne vérifie pas (refus brut de la base sur `RemboursementRetour.proposeParId`, `RetourExceptionnel.saisiParId`, `RetourExterne.creeParId`, `JournalBanque.creeParId` ; effacement silencieux de l'auteur, relations en `SET NULL`, sur `LigneDemande.decideParId`, `RemboursementRetour.valideParId`, `RetourExceptionnel.valideParId`, `RetourExterne.collaborateurId`, `Feedback.recipientId`, `Feedback.moderatedById`).
+| Commit | Contenu | Sort en V2 |
+|---|---|---|
+| `f7f0212` Docs | Cahier V1, conception V1 | Remplacés (archive, cette conception) |
+| `422ffa7` Moteur | `encCalcul.ts` + tests | À adapter (§7.5) |
+| `e55471e` 3a | Module, 17 permissions, 5 rôles, navigation, accueil | Migration corrective (§4) |
+| `815056f` 3b | Séquences, audit immuable, paramètres, pièces jointes | Gardé ; paramètres adaptés (§5.1) |
+
+### Lot 1 V2.6
+
+| # | Commit | Attend |
+|---|---|---|
+| 0 | **Docs** : V2.6 et maquette, archives, analyse, cette conception, `CLAUDE.md`, `.gitignore` | — |
+| 1 | **Moteur V2** (§7.5) | V2-A6, V2-A7 |
+| 2 | **Permissions et paramètres V2** : migration corrective, seed, tests | — (permissions validées, D1) |
+| 3 | **Référentiels, contrat, paramétrage de base** (branches, honoraires, partage des accessoires) | V2-A13, V2-A15 |
+| 4 | **Lecture de tableurs et règles d'import** (SheetJS, F1, F1.5, relevé synthétique) | V2-A1c, A10, A12, A14, A28 |
+| 5 | **Import de production (F1)** | — |
+| 6 | **Recherche et fiche police (F2)** | — |
+| 7 | **Saisie (F3)**, montants figés (D9) | V2-A2, A6 |
+| 8 | **Paiement multiple (F4)** | — |
+| 9 | **Confirmation (F5) et signalements** | V2-A11, A30 |
+| 10 | **Relevés et frais (F5)** | V2-A21 à A23, A25, A26 |
+| 11 | **Reprise initiale (F1.5)** | V2-A27b à A27e |
+| 12 | **Recette du Lot 1** et mise en service | — |

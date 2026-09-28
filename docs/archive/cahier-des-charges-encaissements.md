@@ -1,3 +1,5 @@
+> **Remplacé par la V2.6** — [cahier-des-charges-encaissements-v2.md](../cahier-des-charges-encaissements-v2.md), reçue le 2026-09-28. Document conservé pour l’historique uniquement.
+
 # 1. Contexte, objet et périmètre
 
 L’application remplace le classeur Excel de suivi des paiements (colonnes A à AH). Elle doit gérer les contrats payés en plusieurs versements et en déduire, pour chaque versement, la part de prime nette, d’accessoires, de taxes, de commission et d’honoraires.

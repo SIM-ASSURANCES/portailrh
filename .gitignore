@@ -103,3 +103,6 @@ frontend/powershell.cmd
 frontend/powershell.bat
 CHARTE GRAPHIQUE SIM ASSURANCE CI (1) (1).pdf
 exemple
+
+# Données clients (relevés bancaires et mobile money, classeurs) : jamais dans le dépôt
+/donnees-sensibles/
