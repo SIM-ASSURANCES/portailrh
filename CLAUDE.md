@@ -5470,6 +5470,25 @@ Guide complet : [DEPLOIEMENT.md](DEPLOIEMENT.md). Image construite
 (GHCR), déployée sur Dokploy via `docker-compose.raw.yml` (mode « Raw »,
 pas de build côté Dokploy).
 
+> **⚠️ Avertissement — état de la production**
+> - **La réinitialisation globale a été exécutée EN PRODUCTION** le 26/09/2026 à 18:08:33 par Aristide Nikiema, connecté avec le compte
+>   de test `dg@simassurances.test` (« DG Test »), sur décision conjointe d'Aristide Nikiema et de Thierry Kouamé
+>   (binôme), en préparation de la mise en production. Empreinte de la sauvegarde :
+>   `475462467e966f0644064dbd98557736b064509343f388fa316d72272df0f0f6`. Elle est **désactivée définitivement**
+>   (ligne `ReinitialisationSysteme`, jamais purgée ; la supprimer, même en SQL direct, la réactiverait).
+> - **Les comptes de test du seed doivent être neutralisés en production avant le déploiement du module
+>   Encaissements** : le rôle DG reçoit `enc.mettre_en_service`, et `dg@simassurances.test` a un mot de passe de test
+>   connu.
+>   - **Neutraliser = DÉSACTIVER** le compte dans `/admin/users` (connexion refusée, sessions en cours coupées
+>     immédiatement, historique intact, réversible) — **jamais supprimer** : la suppression est refusée pour tout
+>     compte ayant une trace d'activité, et sinon peut effacer silencieusement des auteurs (relations en `SET NULL`).
+>   - **Ne jamais attribuer le rôle DG à un compte de test** : la permission appartient au rôle, pas au compte.
+> - **Ne jamais relancer le seed en production.** `seed.ts` vide les tables une par une (`deleteMany`), **hors
+>   transaction** : il échouerait au plus tard sur `user.deleteMany()` (clé étrangère `RESTRICT` depuis
+>   `ReinitialisationSysteme`, `RetourExterne`, `JournalBanque`…) **après** avoir déjà effacé une partie des vraies
+>   données (historique, notifications, feedbacks, demandes, pointages…). Le marqueur `/app/uploads/.seeded` du
+>   service `init` ne protège que le démarrage automatique, pas un lancement manuel.
+
 - **Migrations automatiques (`prisma migrate deploy`) à chaque démarrage,
   seed JAMAIS automatisé** — le seed fait des `deleteMany`, protégé par un
   marqueur `.seeded` sur le volume `uploads` en production ; un service
