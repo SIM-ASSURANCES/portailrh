@@ -37,7 +37,7 @@ export const ENC_PARAMETRES = [
     libelle: "Jour limite de reversement des taxes",
     defaut: "20",
     min: 1,
-    max: 31,
+    max: 28, // CDC V2.6 §3.6
     type: "entier",
     source: "§3.5 Référentiels (paramètres), §5.4",
   },
@@ -115,9 +115,10 @@ export function assemblerParametres(lignes: { cle: string; valeur: string }[]): 
   return resultat;
 }
 
-/** Paramètres attendus par `calculerExigibilite` / `calculerExigibiliteSuspens` (encCalcul.ts). */
+/** Paramètres attendus par `calculerExigibilite` (encCalcul.ts). Le délai d'exigibilité n'est plus paramétrable
+ *  (N+1 fixe, CDC V2.6 §5.3) : sa ligne sera retirée par la migration corrective des paramètres. */
 export function parametresExigibilite(p: EncParametresValeurs): ParametresExigibilite {
-  return { delaiMois: p["taxe.delai_exigibilite_mois"], jourLimite: p["taxe.jour_limite_reversement"] };
+  return { jourLimite: p["taxe.jour_limite_reversement"] };
 }
 
 /** Lit et type tous les paramètres (client ou transaction Prisma). */

@@ -293,7 +293,7 @@ decimal.js, arrondi half-up), jamais de `number` pour un montant.
 - **Stockage au centime, affichage à l'unité FCFA** ; la recette au centime porte sur les valeurs stockées.
 - **Ordre** : ordre de **prise en compte** (CDC F3.7), fourni par l'appelant (cumul des confirmés précédents).
 - **Avenant** (D8) : les confirmés restent figés ; les suivants utilisent S…X à jour ; reliquat du soldant = nouveaux totaux − cumul ; nouvelle prime inférieure à l'encaissé → alerte trop-perçu.
-- **Trop-perçu** : autorisé après alerte (CDC §5.6) ; ventilation de l'excédent : V2-A6.
+- **Trop-perçu** : plus refusé par le moteur, qui renvoie l'excédent comme **alerte** ; la Finance décide (CDC §5.6). Ventilation **PROVISOIRE** (V2-A6) : l'encaissement solde le contrat et reçoit les reliquats exacts, l'excédent n'est ventilé sur aucun élément ; si le contrat était déjà soldé, tout le montant est excédent.
 - **Contre-passation** : copie négative **exacte** des montants figés (dont parts d'accessoires), rattachée au **même mois d'exigibilité** ; « à régulariser » si une part est déjà marquée payée.
 
 ### 7.2 Exigibilité de la taxe (CDC §5.3)
@@ -308,7 +308,7 @@ novembre (régularisation) ; 15/07 → 10/09 → septembre (régularisation) ; 1
 
 ### 7.3 Accessoires et honoraires (CDC §5.4, §3.6)
 
-- **Part d'accessoires** : taux de la police > taux du partenaire > taux par défaut ; **figé** à la confirmation (D9) ; changement de taux : proposition de l'appliquer aux encaissements dont la part partenaire n'est pas payée ; part payée jamais modifiée. Arrondi : V2-A7 (proposition : part partenaire arrondie half-up, part SIM = AC − part partenaire).
+- **Part d'accessoires** : taux de la police > taux du partenaire > taux par défaut ; **figé** à la confirmation (D9) ; changement de taux : proposition de l'appliquer aux encaissements dont la part partenaire n'est pas payée ; part payée jamais modifiée. Arrondi retenu le 2026-09-28 : part partenaire arrondie half-up au centime, part SIM = AC − part partenaire ; recalcul d'une part non payée sur le même AC figé (`recalculerPartAccessoires`).
 - **Bénéficiaire des honoraires** : celui en vigueur à la **date de prise en compte**, figé ; changement non rétroactif.
 
 ### 7.4 Vérifications chiffrées (moteur actuel)
@@ -321,13 +321,25 @@ novembre (régularisation) ; 15/07 → 10/09 → septembre (régularisation) ; 1
 | 9.6 | AC 50 ; P1 20 / 30 ; P2 35 / 15 ; à 50 % : 25 / 25 | oui |
 | 9.8 | AD 67,60 × 3 puis 608,39 (soldant) ; total 811,19 | oui |
 
-### 7.5 Évolution du moteur (commit « Moteur V2 »)
+### 7.5 Moteur V2 (`backend/src/encCalcul.ts`)
 
-Garder : décimal, prorata (règle D3, renommée définitive), contre-passation, semaine ISO, DDF, statuts, effet d'annulation.
-Remplacer : exigibilité (fonction unique §7.2). Adapter : trop-perçu sur demande, avenant, « à récupérer » → « à
-régulariser ». Supprimer : calcul inverse, saisie directe, échéancier. Ajouter : partage des accessoires, bénéficiaire à
-une date, règles de doublon (F1), de reprise (F1.5), de rapprochement (F5) et d'agrégation des frais, toutes en fonctions
-pures testées. Tests renumérotés selon la recette V2.6 (analyse §2.1).
+**Fait (commit « Moteur V2 »)** :
+- `regleArrondi` (règle D3, définitive) ; `calculerVersement` sur les montants du contrat en vigueur (avenant D8) avec
+  `tropPercu` en alerte (§7.1) ;
+- `calculerExigibilite(datePaiement, datePriseEnCompte, { jourLimite })` (§7.2, jour limite 1–28, `estRegularisation`) et
+  `calculerExigibiliteReprise` (prise en compte = date de paiement, jamais de régularisation) ;
+- `choisirTauxAccessoires` (police > partenaire > défaut, avec la source), `partagerAccessoires`,
+  `recalculerPartAccessoires` (part déjà payée jamais modifiée) ;
+- `figerEncaissement` (prorata + parts d'accessoires + exigibilité) et `contrepasser` (copie négative exacte, parts
+  d'accessoires comprises, même mois d'exigibilité) ; `naturesARegulariser` ;
+- `situationNature` : « à récupérer » devient `aRegulariser` ;
+- supprimés : calcul inverse, décomposition par taux, échéancier ;
+- tests renumérotés selon la recette V2.6 : 9.1, 9.4, 9.5, 9.6, 9.8, 9.9, 9.13 (partie calcul), tableau §5.3, et cas limites.
+
+**Reste à ajouter** (commits suivants) : bénéficiaire des honoraires à une date, règles de doublon (F1), de reprise
+(F1.5), de rapprochement (F5) et d'agrégation des frais, toutes en fonctions pures testées. Les séquences `RGS`/`BRD`
+(`encSequence.ts`) et la ligne `taxe.delai_exigibilite_mois` (`encParametres.ts`, déjà ignorée par le moteur) partent au
+commit « Permissions et paramètres V2 » ; la borne du jour limite est déjà ramenée à 28.
 
 ---
 
@@ -405,8 +417,8 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | V2-A3 | Arrondi | TRANCHÉ 2026-09-28 (D3) |
 | V2-A4 | Avenant | TRANCHÉ 2026-09-28 (D8) |
 | V2-A5 | Changement de partenaire ou de branche d'une police connue | OUVERT |
-| V2-A6 | Ventilation de l'excédent d'un trop-perçu | OUVERT |
-| V2-A7 | Arrondi des parts d'accessoires ; T et V absents du 9.6 | OUVERT |
+| V2-A6 | Ventilation de l'excédent d'un trop-perçu | PROVISOIRE (moteur, 2026-09-28) : reliquats exacts au soldant, excédent non ventilé — à confirmer par le client |
+| V2-A7 | Arrondi des parts d'accessoires ; T et V absents du 9.6 | Arrondi retenu le 2026-09-28 (part partenaire half-up, part SIM = AC − part partenaire) ; T et V du 9.6 choisis dans les tests (1 400 et 100) |
 | V2-A8 | Correction d'un encaissement | OUVERT |
 | V2-A9 | Contre-passation d'une taxe déjà payée | OUVERT |
 | V2-A10 | Paiement incomplet d'une police nouvelle | OUVERT |
@@ -472,7 +484,7 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | Commit | Contenu | Sort en V2 |
 |---|---|---|
 | `f7f0212` Docs | Cahier V1, conception V1 | Remplacés (archive, cette conception) |
-| `422ffa7` Moteur | `encCalcul.ts` + tests | À adapter (§7.5) |
+| `422ffa7` Moteur | `encCalcul.ts` + tests | Adapté par le commit « Moteur V2 » (§7.5) |
 | `e55471e` 3a | Module, 17 permissions, 5 rôles, navigation, accueil | Migration corrective (§4) |
 | `815056f` 3b | Séquences, audit immuable, paramètres, pièces jointes | Gardé ; paramètres adaptés (§5.1) |
 
@@ -481,7 +493,7 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | # | Commit | Attend |
 |---|---|---|
 | 0 | **Docs** : V2.6 et maquette, archives, analyse, cette conception, `CLAUDE.md`, `.gitignore` | — |
-| 1 | **Moteur V2** (§7.5) | V2-A6, V2-A7 |
+| 1 | **Moteur V2** (§7.5) — fait | — |
 | 2 | **Permissions et paramètres V2** : migration corrective, seed, tests | — (permissions validées, D1) |
 | 3 | **Référentiels, contrat, paramétrage de base** (branches, honoraires, partage des accessoires) | V2-A13, V2-A15 |
 | 4 | **Lecture de tableurs et règles d'import** (SheetJS, F1, F1.5, relevé synthétique) | V2-A1c, A10, A12, A14, A28 |

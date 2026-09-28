@@ -1,17 +1,19 @@
 import DecimalJs from "decimal.js";
 
 /**
- * Moteur de calcul PUR du module Encaissements (voir docs/encaissements-conception.md et le cahier des charges,
- * §5 « Règles de calcul »). Aucun accès à la base, aucune date système implicite, aucun paramètre en dur :
- * le délai d'exigibilité et le jour limite de reversement sont des arguments (ils viendront d'EncParametre).
+ * Moteur de calcul PUR du module « Encaissements, taxes » (docs/encaissements-conception.md §7 ; cahier des charges
+ * V2.6, §5 « Règles de calcul »). Aucun accès à la base, aucune date système implicite, aucun paramètre en dur : le jour
+ * limite de reversement et les taux de partage des accessoires sont des arguments (ils viennent d'EncParametre, des
+ * partenaires et des polices).
  *
  * Décimal : clone LOCAL de decimal.js (arrondi half-up), jamais `Decimal.set` global qui modifierait la
  * configuration partagée. Aucun `Number()` sur un montant : les entrées sont des chaînes ou des objets
  * « Decimal.js-like » (dont `Prisma.Decimal`), convertis par `toFixed()` (exact, sans notation exponentielle).
- * Les sorties sont des instances decimal.js, acceptées telles quelles par Prisma en écriture.
+ * Les sorties sont des instances decimal.js, acceptées telles quelles par Prisma en écriture. Calcul et stockage au
+ * centime ; l'affichage arrondi à l'unité FCFA se fait à l'écran (arbitrage D3 du 2026-09-28).
  *
- * Dates : jours calendaires lus en UTC (un champ Prisma `@db.Date` arrive à minuit UTC). Fonctions de date
- * construites avec `jourCalendaire(a, m, j)`.
+ * Dates : jours calendaires lus en UTC (un champ Prisma `@db.Date` arrive à minuit UTC). Construire les dates avec
+ * `jourCalendaire(a, m, j)`.
  */
 
 export const EncDecimal = DecimalJs.clone({
@@ -49,12 +51,15 @@ export function montant(valeur: MontantEntree): Montant {
   return new EncDecimal(valeur.toFixed());
 }
 
+function versMontant(valeur: MontantEntree | Montant): Montant {
+  return valeur instanceof EncDecimal ? valeur : montant(valeur as MontantEntree);
+}
+
 const ZERO = new EncDecimal(0);
 
 /** Arrondi au centime, half-up (0,005 → 0,01 ; −0,005 → −0,01, arrondi « à l'écart de zéro » de decimal.js). */
 export function arrondirCentime(valeur: MontantEntree | Montant): Montant {
-  const d = valeur instanceof EncDecimal ? valeur : montant(valeur as MontantEntree);
-  return d.toDecimalPlaces(2, EncDecimal.ROUND_HALF_UP);
+  return versMontant(valeur).toDecimalPlaces(2, EncDecimal.ROUND_HALF_UP);
 }
 
 function somme(valeurs: Montant[]): Montant {
@@ -71,51 +76,29 @@ export function jourCalendaire(annee: number, mois: number, jour: number): Date 
   return new Date(Date.UTC(annee, mois - 1, jour));
 }
 
-function joursDansMois(annee: number, mois0: number): number {
-  return new Date(Date.UTC(annee, mois0 + 1, 0)).getUTCDate();
+function premierInstant(date: Date): number {
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }
 
 function premierDuMois(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 }
 
-/** Ajoute `n` mois en gardant le jour d'origine, ramené au dernier jour du mois s'il n'existe pas (31/01 + 1 → 28/02). */
-function ajouterMois(date: Date, n: number, jourAncre = date.getUTCDate()): Date {
-  const total = date.getUTCMonth() + n;
-  const annee = date.getUTCFullYear() + Math.floor(total / 12);
-  const mois0 = ((total % 12) + 12) % 12;
-  return new Date(Date.UTC(annee, mois0, Math.min(jourAncre, joursDansMois(annee, mois0))));
+/** 1er du mois `n` mois plus tard (le mois de départ est ramené à son 1er jour). */
+function moisSuivant(date: Date, n = 1): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + n, 1));
 }
 
 function ecartJours(debut: Date, fin: Date): number {
   return Math.round((premierInstant(fin) - premierInstant(debut)) / MS_PAR_JOUR);
 }
 
-function premierInstant(date: Date): number {
-  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-}
-
 // ---------------------------------------------------------------------------------------------------------------
-// Décomposition de la prime (§5.1, §3.7 saisie directe)
+// Prorata d'un encaissement (§5.2) — règle d'arrondi D3 (définitive le 2026-09-28)
 // ---------------------------------------------------------------------------------------------------------------
 
-export type BaseTaux = "PRIME_NETTE" | "PRIME_NETTE_ACCESSOIRES" | "PRIME_TTC";
-
-export interface TauxContrat {
-  /** Fractions décimales (0.0725 pour 7,25 %). */
-  tauxTaxe: MontantEntree;
-  tauxCommission: MontantEntree;
-  tauxGestion: MontantEntree;
-  /** Soit un taux, soit un montant fixe ; zéro si aucun des deux. */
-  tauxAccessoires?: MontantEntree;
-  montantFixeAccessoires?: MontantEntree;
-  baseAccessoires?: BaseTaux;
-  baseTaxe?: BaseTaux;
-  baseCommission?: BaseTaux;
-  baseGestion?: BaseTaux;
-}
-
-/** Montants d'un contrat : S prime TTC, T prime nette, U accessoires, V taxes, W commission, X honoraires. */
+/** Montants d'un contrat, tels que fournis par le fichier de production : S prime TTC, T prime nette, U accessoires,
+ *  V taxes, W commission, X honoraires. Jamais recalculés (CDC principe 1). */
 export interface MontantsContrat {
   S: Montant;
   T: Montant;
@@ -125,79 +108,8 @@ export interface MontantsContrat {
   X: Montant;
 }
 
-function baseDe(base: BaseTaux, T: Montant, U: Montant, S: Montant | null, quoi: string): Montant {
-  if (base === "PRIME_NETTE") return T;
-  if (base === "PRIME_NETTE_ACCESSOIRES") return T.plus(U);
-  if (S === null) {
-    throw new EncCalculError(
-      "BASE_CIRCULAIRE",
-      `Base « prime TTC » impossible pour ${quoi} : la prime TTC dépend de ce montant (calcul circulaire, ambiguïté 7).`
-    );
-  }
-  return S;
-}
-
-/** Saisie directe depuis la prime nette (§3.7) : U, V, S, puis W et X, chacun arrondi au centime. */
-export function decomposerDepuisPrimeNette(primeNette: MontantEntree, taux: TauxContrat): MontantsContrat {
-  const T = arrondirCentime(primeNette);
-  if (T.lte(0)) throw new EncCalculError("PRIME_INVALIDE", "La prime nette doit être supérieure à 0.");
-  if (taux.tauxAccessoires !== undefined && taux.montantFixeAccessoires !== undefined) {
-    throw new EncCalculError("ACCESSOIRES_AMBIGUS", "Accessoires : renseigner un taux OU un montant fixe, pas les deux.");
-  }
-  const U =
-    taux.montantFixeAccessoires !== undefined
-      ? arrondirCentime(taux.montantFixeAccessoires)
-      : taux.tauxAccessoires !== undefined
-        ? arrondirCentime(baseDe(taux.baseAccessoires ?? "PRIME_NETTE", T, ZERO, null, "les accessoires").times(montant(taux.tauxAccessoires)))
-        : ZERO;
-  const V = arrondirCentime(baseDe(taux.baseTaxe ?? "PRIME_NETTE_ACCESSOIRES", T, U, null, "la taxe").times(montant(taux.tauxTaxe)));
-  const S = T.plus(U).plus(V);
-  const W = arrondirCentime(baseDe(taux.baseCommission ?? "PRIME_NETTE", T, U, S, "la commission").times(montant(taux.tauxCommission)));
-  const X = arrondirCentime(baseDe(taux.baseGestion ?? "PRIME_NETTE", T, U, S, "les honoraires").times(montant(taux.tauxGestion)));
-  return { S, T, U, V, W, X };
-}
-
-/**
- * Calcul inverse depuis la prime TTC (§5.1) : T = S ÷ [(1 + taux accessoires) × (1 + taux taxe)].
- * Défini uniquement pour les bases par défaut et des accessoires en taux : refusé explicitement sinon.
- * V = S − T − U, pour que la prime TTC saisie reste exacte au centime.
- */
-export function decomposerDepuisPrimeTtc(primeTtc: MontantEntree, taux: TauxContrat): MontantsContrat {
-  const S = arrondirCentime(primeTtc);
-  if (S.lte(0)) throw new EncCalculError("PRIME_INVALIDE", "La prime TTC doit être supérieure à 0.");
-  if (taux.montantFixeAccessoires !== undefined) {
-    throw new EncCalculError(
-      "CALCUL_INVERSE_IMPOSSIBLE",
-      "Calcul inverse impossible avec des accessoires en montant fixe : saisir la prime nette."
-    );
-  }
-  const basesNonDefaut = [
-    ["accessoires", taux.baseAccessoires, "PRIME_NETTE"],
-    ["taxe", taux.baseTaxe, "PRIME_NETTE_ACCESSOIRES"],
-    ["commission", taux.baseCommission, "PRIME_NETTE"],
-    ["gestion", taux.baseGestion, "PRIME_NETTE"],
-  ].filter(([, base, defaut]) => base !== undefined && base !== defaut);
-  if (basesNonDefaut.length > 0) {
-    throw new EncCalculError(
-      "CALCUL_INVERSE_IMPOSSIBLE",
-      `Calcul inverse défini seulement pour les bases par défaut ; base modifiée pour : ${basesNonDefaut.map(([n]) => n).join(", ")}.`
-    );
-  }
-  const ta = taux.tauxAccessoires !== undefined ? montant(taux.tauxAccessoires) : ZERO;
-  const tt = montant(taux.tauxTaxe);
-  const T = arrondirCentime(S.dividedBy(ta.plus(1).times(tt.plus(1))));
-  const U = arrondirCentime(T.times(ta));
-  const V = S.minus(T).minus(U);
-  const W = arrondirCentime(T.times(montant(taux.tauxCommission)));
-  const X = arrondirCentime(T.times(montant(taux.tauxGestion)));
-  return { S, T, U, V, W, X };
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// Prorata d'un versement (§5.2) — règle d'arrondi PROVISOIRE isolée (ambiguïté 18)
-// ---------------------------------------------------------------------------------------------------------------
-
-/** Cumul des versements VALIDÉS précédents du contrat (contre-passations incluses, avec leur signe). */
+/** Cumul des encaissements CONFIRMÉS précédents du contrat, dans l'ordre de prise en compte (contre-passations
+ *  incluses, avec leur signe). */
 export interface CumulVersements {
   Z: Montant;
   AB: Montant;
@@ -217,20 +129,23 @@ export interface VentilationVersement {
 
 export interface VersementCalcule extends VentilationVersement {
   Z: Montant;
-  AA: Montant; // restant dû après ce versement
+  /** Restant dû après cet encaissement ; négatif en cas de trop-perçu. */
+  AA: Montant;
+  /** L'encaissement solde le contrat (il reçoit le reliquat exact de chaque élément). */
   estSoldant: boolean;
+  /** Part de Z au-delà du restant dû (ALERTE : la décision revient à l'appelant, CDC §5.6) ; null sinon. */
+  tropPercu: Montant | null;
 }
 
 export type RegleVentilation = (contrat: MontantsContrat, cumul: CumulVersements, Z: Montant, estSoldant: boolean) => VentilationVersement;
 
 /**
- * RÈGLE D'ARRONDI PROVISOIRE (conception §8, arbitrage A7 du 2026-09-26). Seul endroit à modifier si le client
- * tranche autrement l'ambiguïté 18 (contrat incohérent, T + U + V ≠ S).
- * - Non soldant : AB et AC arrondis half-up, AD = Z − AB − AC, commission et honoraires arrondis indépendamment.
- * - Soldant : reliquat exact de chaque composante (total du contrat − cumul). Si T + U + V ≠ S, AB + AC + AD ≠ Z
- *   sur ce versement (ΣAD = V privilégié) : comportement provisoire, en attente du client.
+ * RÈGLE D'ARRONDI (arbitrage A7 du 2026-09-26, rendu définitif par D3 le 2026-09-28) :
+ * - non soldant : AB et AC arrondis half-up, AD = Z − AB − AC, commission et honoraires arrondis indépendamment ;
+ * - soldant : reliquat exact de chaque élément (total du contrat − cumul). Si T + U + V ≠ S, la taxe totale encaissée
+ *   reste celle du fichier (ΣAD = V) et la ventilation du soldant peut s'écarter de Z de quelques francs (CDC §5.2).
  */
-export const regleArrondiProvisoire: RegleVentilation = (contrat, cumul, Z, estSoldant) => {
+export const regleArrondi: RegleVentilation = (contrat, cumul, Z, estSoldant) => {
   if (estSoldant) {
     return {
       AB: contrat.T.minus(cumul.AB),
@@ -245,6 +160,8 @@ export const regleArrondiProvisoire: RegleVentilation = (contrat, cumul, Z, estS
   const AC = fraction(contrat.U);
   return { AB, AC, AD: Z.minus(AB).minus(AC), commission: fraction(contrat.W), honoraires: fraction(contrat.X) };
 };
+
+const VENTILATION_NULLE: VentilationVersement = { AB: ZERO, AC: ZERO, AD: ZERO, commission: ZERO, honoraires: ZERO };
 
 export function cumulVide(): CumulVersements {
   return { Z: ZERO, AB: ZERO, AC: ZERO, AD: ZERO, commission: ZERO, honoraires: ZERO };
@@ -261,93 +178,83 @@ export function ajouterAuCumul(cumul: CumulVersements, v: VersementCalcule): Cum
   };
 }
 
-/** Calcule un nouveau versement positif. Le trop-perçu (§5.3) est refusé ici : sa validation est un circuit à part (ambiguïté 16). */
+/**
+ * Calcule un encaissement positif à partir des montants du contrat EN VIGUEUR (un avenant les a peut-être modifiés :
+ * les encaissements déjà confirmés restent figés, celui-ci utilise les nouveaux montants et le soldant reçoit le reliquat
+ * sur les nouveaux totaux — D8).
+ *
+ * Trop-perçu (Z au-delà du restant dû) : n'est plus refusé ; `tropPercu` renvoie l'excédent comme ALERTE, la Finance
+ * décide (CDC §5.6). Ventilation retenue en attendant le client (ambiguïté V2-A6, provisoire) : l'encaissement solde le
+ * contrat et reçoit les reliquats exacts ; l'excédent n'est ventilé sur aucun élément (aucune taxe sur une somme qui
+ * n'est pas une prime). Si le contrat était déjà soldé (restant ≤ 0, par exemple après un avenant à la baisse), tout Z
+ * est excédent et aucun élément n'est ventilé.
+ */
 export function calculerVersement(
   contrat: MontantsContrat,
   cumul: CumulVersements,
-  montantRecu: MontantEntree,
-  regle: RegleVentilation = regleArrondiProvisoire
+  montantRecu: MontantEntree | Montant,
+  regle: RegleVentilation = regleArrondi
 ): VersementCalcule {
   const Z = arrondirCentime(montantRecu);
   if (Z.lte(0)) throw new EncCalculError("MONTANT_INVALIDE", "Le montant reçu doit être supérieur à 0.");
   const restantAvant = contrat.S.minus(cumul.Z);
-  if (Z.gt(restantAvant)) {
-    throw new EncCalculError(
-      "TROP_PERCU",
-      `Le versement (${Z.toFixed(2)}) dépasse le restant dû (${restantAvant.toFixed(2)}) : trop-perçu, validation du responsable requise.`
-    );
+  const AA = restantAvant.minus(Z);
+  if (restantAvant.lte(0)) {
+    return { Z, AA, estSoldant: false, tropPercu: Z, ...VENTILATION_NULLE };
   }
-  const estSoldant = Z.eq(restantAvant);
-  return { Z, AA: restantAvant.minus(Z), estSoldant, ...regle(contrat, cumul, Z, estSoldant) };
-}
-
-/** Contre-passation (F3.9) : copie négative EXACTE des valeurs figées, jamais recalculée. */
-export function contrepasser(original: VersementCalcule, restantDuActuel: MontantEntree | Montant): VersementCalcule {
-  const restant = restantDuActuel instanceof EncDecimal ? restantDuActuel : montant(restantDuActuel as MontantEntree);
-  return {
-    Z: original.Z.negated(),
-    AB: original.AB.negated(),
-    AC: original.AC.negated(),
-    AD: original.AD.negated(),
-    commission: original.commission.negated(),
-    honoraires: original.honoraires.negated(),
-    AA: restant.plus(original.Z),
-    estSoldant: false,
-  };
+  const estSoldant = Z.gte(restantAvant);
+  return { Z, AA, estSoldant, tropPercu: AA.lt(0) ? AA.negated() : null, ...regle(contrat, cumul, Z, estSoldant) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Exigibilité de la taxe (§5.4, F10.6) et semaine ISO (§7, colonne AG)
+// Exigibilité de la taxe (§5.3)
 // ---------------------------------------------------------------------------------------------------------------
 
 export interface ParametresExigibilite {
-  /** Délai d'exigibilité en mois (1 dans le cahier : taxe du mois N exigible en N+1). */
-  delaiMois: number;
-  /** Jour limite de reversement dans le mois d'exigibilité (20 dans le cahier). */
+  /** Jour limite de reversement dans le mois d'exigibilité : 20 par défaut, 1 à 28 (CDC §3.6). */
   jourLimite: number;
 }
 
 export interface Exigibilite {
-  moisEncaissement: Date;
+  moisPaiement: Date;
   moisExigibilite: Date;
   dateLimite: Date;
+  /** Le mois retenu dépasse (mois de paiement + 1) : taxe reportée, mention « Régularisation » (CDC §5.3). */
+  estRegularisation: boolean;
 }
 
 function verifierJourLimite(jourLimite: number) {
-  if (!Number.isInteger(jourLimite) || jourLimite < 1 || jourLimite > 31) {
-    throw new EncCalculError("PARAMETRE_INVALIDE", "Le jour limite de reversement doit être un entier entre 1 et 31.");
+  if (!Number.isInteger(jourLimite) || jourLimite < 1 || jourLimite > 28) {
+    throw new EncCalculError("PARAMETRE_INVALIDE", "Le jour limite de reversement doit être un entier entre 1 et 28.");
   }
-}
-
-function dateLimiteDuMois(mois: Date, jourLimite: number): Date {
-  const a = mois.getUTCFullYear();
-  const m0 = mois.getUTCMonth();
-  return new Date(Date.UTC(a, m0, Math.min(jourLimite, joursDansMois(a, m0))));
-}
-
-/** Versement identifié dès sa réception : taxe du mois N exigible en N + délai, à reverser avant le jour limite. */
-export function calculerExigibilite(datePaiement: Date, params: ParametresExigibilite): Exigibilite {
-  if (!Number.isInteger(params.delaiMois) || params.delaiMois < 0) {
-    throw new EncCalculError("PARAMETRE_INVALIDE", "Le délai d'exigibilité doit être un entier positif ou nul.");
-  }
-  verifierJourLimite(params.jourLimite);
-  const moisEncaissement = premierDuMois(datePaiement);
-  const moisExigibilite = ajouterMois(moisEncaissement, params.delaiMois);
-  return { moisEncaissement, moisExigibilite, dateLimite: dateLimiteDuMois(moisExigibilite, params.jourLimite) };
 }
 
 /**
- * Suspens identifié tardivement (F10.6) : la taxe va sur la première déclaration dont l'échéance SUIT la date
- * d'identification (identifié le 10/11 → avant le 20/11 ; le 25/11 → avant le 20/12). Pas de règle N+1.
- * Identifié PILE le jour limite : choix PROVISOIRE « déclaration suivante » (l'échéance du jour même ne « suit » pas
- * l'identification) — ambiguïté 22, OUVERTE.
+ * Mois d'exigibilité = le plus tardif de : (mois de paiement + 1) et (mois de prise en compte, ou mois suivant si la
+ * prise en compte a lieu le jour limite ou après). La prise en compte est la date de saisie (manuelle), de confirmation
+ * (fichier) ou d'affectation (argent non identifié). À reverser avant le jour limite du mois d'exigibilité.
  */
-export function calculerExigibiliteSuspens(dateIdentification: Date, params: Pick<ParametresExigibilite, "jourLimite">): Exigibilite {
+export function calculerExigibilite(datePaiement: Date, datePriseEnCompte: Date, params: ParametresExigibilite): Exigibilite {
   verifierJourLimite(params.jourLimite);
-  const moisIdentification = premierDuMois(dateIdentification);
-  const limiteDuMois = dateLimiteDuMois(moisIdentification, params.jourLimite);
-  const moisExigibilite = premierInstant(dateIdentification) < premierInstant(limiteDuMois) ? moisIdentification : ajouterMois(moisIdentification, 1);
-  return { moisEncaissement: moisIdentification, moisExigibilite, dateLimite: dateLimiteDuMois(moisExigibilite, params.jourLimite) };
+  if (premierInstant(datePriseEnCompte) < premierInstant(datePaiement)) {
+    throw new EncCalculError("DATES_INVALIDES", "La date de prise en compte ne peut pas précéder la date de paiement.");
+  }
+  const moisPaiement = premierDuMois(datePaiement);
+  const normal = moisSuivant(moisPaiement);
+  const selonPriseEnCompte =
+    datePriseEnCompte.getUTCDate() < params.jourLimite ? premierDuMois(datePriseEnCompte) : moisSuivant(datePriseEnCompte);
+  const moisExigibilite = selonPriseEnCompte > normal ? selonPriseEnCompte : normal;
+  return {
+    moisPaiement,
+    moisExigibilite,
+    dateLimite: new Date(Date.UTC(moisExigibilite.getUTCFullYear(), moisExigibilite.getUTCMonth(), params.jourLimite)),
+    estRegularisation: moisExigibilite > normal,
+  };
+}
+
+/** Reprise initiale (CDC F1.5) : la prise en compte est la date de paiement réelle ; jamais de « Régularisation ». */
+export function calculerExigibiliteReprise(datePaiement: Date, params: ParametresExigibilite): Exigibilite {
+  return calculerExigibilite(datePaiement, datePaiement, params);
 }
 
 /** Semaine ISO 8601 au format de la colonne AG : « Sem 53 - 2026 » (année ISO, pas année civile). */
@@ -364,7 +271,123 @@ export function semaineIso(date: Date): { semaine: number; annee: number; libell
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Statuts, DDF, annulation (§5.3, §5.6, §5.7), dus / payés (§5.5)
+// Partage des accessoires (§5.4)
+// ---------------------------------------------------------------------------------------------------------------
+
+export type SourceTauxAccessoires = "POLICE" | "PARTENAIRE" | "DEFAUT";
+
+export interface TauxAccessoires {
+  /** Part du PARTENAIRE, en fraction (0,4 pour 40 %) ; la part SIM est le complément. */
+  taux: Montant;
+  source: SourceTauxAccessoires;
+}
+
+function verifierTaux(taux: Montant, quoi: string): Montant {
+  if (taux.lt(0) || taux.gt(1)) {
+    throw new EncCalculError("TAUX_INVALIDE", `Part partenaire des accessoires (${quoi}) : fraction entre 0 et 1 attendue.`);
+  }
+  return taux;
+}
+
+/** Taux retenu, dans l'ordre : celui de la police, sinon celui du partenaire, sinon le taux par défaut. */
+export function choisirTauxAccessoires(p: {
+  police?: MontantEntree | Montant | null;
+  partenaire?: MontantEntree | Montant | null;
+  defaut: MontantEntree | Montant;
+}): TauxAccessoires {
+  if (p.police !== undefined && p.police !== null) return { taux: verifierTaux(versMontant(p.police), "police"), source: "POLICE" };
+  if (p.partenaire !== undefined && p.partenaire !== null) {
+    return { taux: verifierTaux(versMontant(p.partenaire), "partenaire"), source: "PARTENAIRE" };
+  }
+  return { taux: verifierTaux(versMontant(p.defaut), "défaut"), source: "DEFAUT" };
+}
+
+export interface PartageAccessoires {
+  taux: Montant;
+  partPartenaire: Montant;
+  partSim: Montant;
+}
+
+/** Découpe AC : part partenaire arrondie au centime (half-up), part SIM = AC − part partenaire (la somme vaut AC). */
+export function partagerAccessoires(AC: MontantEntree | Montant, taux: MontantEntree | Montant): PartageAccessoires {
+  const ac = versMontant(AC);
+  const t = verifierTaux(versMontant(taux), "encaissement");
+  const partPartenaire = arrondirCentime(ac.times(t));
+  return { taux: t, partPartenaire, partSim: ac.minus(partPartenaire) };
+}
+
+/**
+ * Changement de taux (CDC §5.4) : une part partenaire DÉJÀ PAYÉE n'est jamais modifiée ; une part non payée est
+ * recalculée sur le même AC (figé) avec le nouveau taux, si l'utilisateur a choisi de l'appliquer aux encaissements déjà
+ * enregistrés. La résolution du taux (police > partenaire > défaut) reste à la charge de l'appelant.
+ */
+export function recalculerPartAccessoires(
+  actuel: PartageAccessoires,
+  AC: MontantEntree | Montant,
+  partPartenairePayee: boolean,
+  nouveauTaux: MontantEntree | Montant
+): PartageAccessoires {
+  if (partPartenairePayee) return actuel;
+  return partagerAccessoires(AC, nouveauTaux);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Encaissement figé à la confirmation, contre-passation (§3.2, F3.5)
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Tous les montants figés d'un encaissement confirmé (D9) : ventilation, parts d'accessoires, exigibilité. */
+export interface EncaissementFige extends VersementCalcule {
+  accessoires: PartageAccessoires;
+  exigibilite: Exigibilite;
+}
+
+/** Calcule et fige un encaissement à sa confirmation : prorata, partage des accessoires, exigibilité de la taxe. */
+export function figerEncaissement(p: {
+  contrat: MontantsContrat;
+  cumul: CumulVersements;
+  montantRecu: MontantEntree | Montant;
+  tauxAccessoires: MontantEntree | Montant;
+  exigibilite: Exigibilite;
+}): EncaissementFige {
+  const v = calculerVersement(p.contrat, p.cumul, p.montantRecu);
+  return { ...v, accessoires: partagerAccessoires(v.AC, p.tauxAccessoires), exigibilite: p.exigibilite };
+}
+
+/**
+ * Contre-passation (CDC F3.5) : copie négative EXACTE des montants figés de l'encaissement d'origine (Z, AB, AC, AD,
+ * commission, honoraires, parts d'accessoires), sans nouveau calcul au prorata ; elle garde le mois d'exigibilité de
+ * l'origine (la taxe est retirée du même mois). `restantDuActuel` = reste dû du contrat avant la contre-passation.
+ */
+export function contrepasser(original: EncaissementFige, restantDuActuel: MontantEntree | Montant): EncaissementFige {
+  return {
+    Z: original.Z.negated(),
+    AB: original.AB.negated(),
+    AC: original.AC.negated(),
+    AD: original.AD.negated(),
+    commission: original.commission.negated(),
+    honoraires: original.honoraires.negated(),
+    AA: versMontant(restantDuActuel).plus(original.Z),
+    estSoldant: false,
+    tropPercu: null,
+    accessoires: {
+      taux: original.accessoires.taux,
+      partPartenaire: original.accessoires.partPartenaire.negated(),
+      partSim: original.accessoires.partSim.negated(),
+    },
+    exigibilite: { ...original.exigibilite },
+  };
+}
+
+export type NaturePayee = "TAXE" | "COMMISSION" | "HONORAIRES" | "ACCESSOIRES";
+
+/** Natures déjà marquées « payé » sur un encaissement contre-passé ou annulé : à signaler « à régulariser », sans
+ *  calcul automatique (CDC F3.5, F8.4). */
+export function naturesARegulariser(payees: Partial<Record<NaturePayee, boolean>>): NaturePayee[] {
+  return (["TAXE", "COMMISSION", "HONORAIRES", "ACCESSOIRES"] as const).filter((n) => payees[n] === true);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Statuts, DDF, annulation (§5.6, F8), dû / payé par nature
 // ---------------------------------------------------------------------------------------------------------------
 
 /** DDF (colonne N) = échéance − date d'effet, en jours. */
@@ -385,10 +408,11 @@ export function statutContrat(dateJour: Date, dateEffet: Date, dateEcheance: Dat
 
 export type StatutPaiement = "NON_PAYE" | "PARTIELLEMENT_PAYE" | "TOTALEMENT_PAYE" | "TROP_PERCU" | "ANNULE";
 
+/** Statut de paiement d'une police (CDC §5.6), sur le total des encaissements CONFIRMÉS. */
 export function statutPaiement(totalEncaisse: MontantEntree | Montant, primeTtc: MontantEntree | Montant, annule: boolean): StatutPaiement {
   if (annule) return "ANNULE";
-  const total = totalEncaisse instanceof EncDecimal ? totalEncaisse : montant(totalEncaisse as MontantEntree);
-  const S = primeTtc instanceof EncDecimal ? primeTtc : montant(primeTtc as MontantEntree);
+  const total = versMontant(totalEncaisse);
+  const S = versMontant(primeTtc);
   if (total.lte(0)) return "NON_PAYE";
   if (total.lt(S)) return "PARTIELLEMENT_PAYE";
   if (total.eq(S)) return "TOTALEMENT_PAYE";
@@ -405,7 +429,7 @@ export interface EffetAnnulation {
   restantDu: Montant;
 }
 
-/** Prime acquise et effets d'une annulation (§5.7 ; les régularisations de taxes, commissions et honoraires viennent au Lot 4). */
+/** Prime acquise et effets d'une annulation (CDC F8 ; les signaux « à régulariser » viennent au Lot 4). */
 export function calculerEffetAnnulation(
   type: TypeAnnulation,
   p: { primeTtc: MontantEntree; encaisse: MontantEntree; dateEffet: Date; dateEcheance: Date; dateAnnulation: Date }
@@ -431,13 +455,15 @@ export interface SituationNature {
   paye: Montant;
   restantAPayer: Montant;
   nonAcquis: Montant;
-  aRecuperer: Montant;
+  /** Payé au-delà du dû (après une contre-passation ou une annulation) : signalé « à régulariser », sans calcul
+   *  automatique de créance (CDC F8.4). */
+  aRegulariser: Montant;
 }
 
-/** Dû / payé / restant / non acquis / à récupérer pour une nature (commission, honoraires, accessoires) d'un contrat (§5.5). */
+/** Dû / payé / restant / non acquis / à régulariser pour une nature (commission, honoraires, accessoires) d'un contrat. */
 export function situationNature(totalContrat: MontantEntree | Montant, dusParVersement: Montant[], paye: MontantEntree | Montant): SituationNature {
-  const total = totalContrat instanceof EncDecimal ? totalContrat : montant(totalContrat as MontantEntree);
-  const payeD = paye instanceof EncDecimal ? paye : montant(paye as MontantEntree);
+  const total = versMontant(totalContrat);
+  const payeD = versMontant(paye);
   const du = somme(dusParVersement);
   const ecart = du.minus(payeD);
   return {
@@ -445,36 +471,6 @@ export function situationNature(totalContrat: MontantEntree | Montant, dusParVer
     paye: payeD,
     restantAPayer: ecart.gt(0) ? ecart : ZERO,
     nonAcquis: total.minus(du),
-    aRecuperer: ecart.lt(0) ? ecart.negated() : ZERO,
+    aRegulariser: ecart.lt(0) ? ecart.negated() : ZERO,
   };
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// Échéancier prévu (F8)
-// ---------------------------------------------------------------------------------------------------------------
-
-export interface EcheancePrevue {
-  numero: number;
-  date: Date;
-  montant: Montant;
-}
-
-/**
- * « Répartir en N échéances mensuelles » à partir de la date d'effet : montants tronqués au centime, reliquat sur la
- * dernière (troncature plutôt qu'arrondi : la dernière échéance ne peut jamais devenir négative). Le jour de la
- * date d'effet est conservé, ramené au dernier jour du mois s'il n'existe pas (31/01 → 28/02 → 31/03).
- */
-export function repartirEnEcheances(primeTtc: MontantEntree, nombre: number, dateEffet: Date): EcheancePrevue[] {
-  if (!Number.isInteger(nombre) || nombre < 1) {
-    throw new EncCalculError("PARAMETRE_INVALIDE", "Le nombre d'échéances doit être un entier supérieur ou égal à 1.");
-  }
-  const S = arrondirCentime(primeTtc);
-  if (S.lte(0)) throw new EncCalculError("PRIME_INVALIDE", "La prime TTC doit être supérieure à 0.");
-  const part = S.dividedBy(nombre).toDecimalPlaces(2, EncDecimal.ROUND_DOWN);
-  const jourAncre = dateEffet.getUTCDate();
-  return Array.from({ length: nombre }, (_, i) => ({
-    numero: i + 1,
-    date: ajouterMois(dateEffet, i, jourAncre),
-    montant: i === nombre - 1 ? S.minus(part.times(nombre - 1)) : part,
-  }));
 }

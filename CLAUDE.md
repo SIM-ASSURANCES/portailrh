@@ -4675,7 +4675,8 @@ Contrats **uniquement issus du fichier de production** (jamais créés à l'écr
 fichier de production (paiements « à confirmer »), saisie à l'écran, relevé mobile money ou bancaire. **Seul un
 encaissement confirmé compte**, ses montants sont **figés à la confirmation**. Tout se suit **par branche**.
 
-**En place (conception V1, à adapter)** : moteur de calcul pur (`backend/src/encCalcul.ts`, vitest) ; module, 17
+**En place** : moteur de calcul pur **V2** (`backend/src/encCalcul.ts`, vitest : prorata, exigibilité §5.3 avec « Régularisation »
+et reprise, partage des accessoires, contre-passation, trop-perçu en alerte) ; conception V1 à adapter : module, 17
 permissions `enc.*` et 5 rôles (commit 3a) ; séquences atomiques, audit `EncAudit` immuable par trigger, paramètres,
 pièces jointes `EncPieceJointe` (commit 3b). Les permissions et rôles V1 seront remplacés par une **migration
 corrective** (3 profils : Équipe technique, Finance, Consultation) — **jamais en modifiant une migration déjà poussée**.

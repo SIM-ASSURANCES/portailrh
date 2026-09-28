@@ -25,7 +25,7 @@ describe("Paramètres Encaissements — migration synchronisée avec encParametr
 
   it("valeurs du cahier : exigibilité N+1, reversement avant le 20, tolérance 1 FCFA", () => {
     const p = assemblerParametres(defauts);
-    expect(parametresExigibilite(p)).toEqual({ delaiMois: 1, jourLimite: 20 });
+    expect(parametresExigibilite(p)).toEqual({ jourLimite: 20 });
     expect(p["controle.tolerance_fcfa"]).toBe(1);
   });
 });
@@ -33,7 +33,7 @@ describe("Paramètres Encaissements — migration synchronisée avec encParametr
 describe("Paramètres Encaissements — lecture typée, jamais de repli silencieux", () => {
   it("refuse une valeur non numérique, hors bornes ou une clé inconnue", () => {
     expect(() => lireValeurParametre("taxe.jour_limite_reversement", "vingt")).toThrow(EncParametreError);
-    expect(() => lireValeurParametre("taxe.jour_limite_reversement", "32")).toThrow(/hors bornes/);
+    expect(() => lireValeurParametre("taxe.jour_limite_reversement", "29")).toThrow(/hors bornes/);
     expect(() => lireValeurParametre("taxe.jour_limite_reversement", "20.5")).toThrow(EncParametreError);
     expect(() => lireValeurParametre("inconnu", "1")).toThrow(/inconnu/);
   });
