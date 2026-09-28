@@ -712,6 +712,10 @@ export async function supprimerUtilisateurAction(
     signalementsRetourEmis,
     signalementsRetourResolus,
     reinitialisationsEffectuees,
+    encAudits,
+    encMisesEnService,
+    encParametresModifies,
+    encPiecesDeposees,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -737,6 +741,11 @@ export async function supprimerUtilisateurAction(
     prisma.signalementRetour.count({ where: { resoluParId: userId } }),
     // Journal de la réinitialisation à usage unique (jamais purgé) : le compte du DG qui l'a déclenchée n'est plus supprimable.
     prisma.reinitialisationSysteme.count({ where: { effectueeParId: userId } }),
+    // Module Encaissements : 4 relations vers User, toutes en RESTRICT (docs/encaissements-conception.md §5.1).
+    prisma.encAudit.count({ where: { userId } }),
+    prisma.encMiseEnService.count({ where: { activeeParId: userId } }),
+    prisma.encParametre.count({ where: { majParId: userId } }),
+    prisma.encPieceJointe.count({ where: { deposeeParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -764,6 +773,10 @@ export async function supprimerUtilisateurAction(
   if (signalementsRetourResolus > 0)
     blocages.push(`résolu ${signalementsRetourResolus} signalement(s) d'erreur sur un retour de caisse`);
   if (reinitialisationsEffectuees > 0) blocages.push("déclenché la réinitialisation avant mise en production (journal d'audit permanent)");
+  if (encAudits > 0) blocages.push(`${encAudits} entrée(s) dans le journal d'audit des encaissements`);
+  if (encMisesEnService > 0) blocages.push("mis le module Encaissements en service");
+  if (encParametresModifies > 0) blocages.push(`modifié ${encParametresModifies} paramètre(s) des encaissements`);
+  if (encPiecesDeposees > 0) blocages.push(`déposé ${encPiecesDeposees} pièce(s) jointe(s) des encaissements`);
 
   if (blocages.length > 0) {
     const liste =

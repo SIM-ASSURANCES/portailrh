@@ -114,6 +114,12 @@ model User {
   /// Messages FeedbackApp que cet utilisateur a modérés (action RH/DG,
   /// sans rapport avec l'auteur du message).
   feedbacksModeres Feedback[] @relation("FeedbackModeratedBy")
+
+  /// Module Encaissements (docs/encaissements-conception.md §5.1) — toutes en `onDelete: Restrict`.
+  encAudits         EncAudit[]         @relation("EncAuditUser")
+  encMisesEnService EncMiseEnService[] @relation("EncMiseEnServiceActiveePar")
+  encParametresMaj  EncParametre[]     @relation("EncParametreMajPar")
+  encPiecesDeposees EncPieceJointe[]   @relation("EncPieceJointeDeposeePar")
 }
 
 model Role {
@@ -1337,4 +1343,76 @@ model JournalBanque {
   creeAt     DateTime            @default(now())
 
   @@index([reglementId])
+}
+
+// =====================================================================================================================
+// Module Encaissements, taxes et commissions — socle technique (docs/encaissements-conception.md §5.1 et §6).
+// Toutes les relations vers User sont en onDelete: Restrict : une trace d'audit ou d'auteur ne doit jamais
+// disparaître ni devenir anonyme par la suppression d'un compte.
+// =====================================================================================================================
+
+/// Mise en service du module : une seule ligne possible (id = 1, contrainte CHECK en SQL). Sa présence verrouille
+/// l'audit (plus aucun DELETE sur EncAudit) et les séquences. UPDATE/DELETE/TRUNCATE toujours interdits par trigger.
+model EncMiseEnService {
+  id               Int      @id @default(1)
+  activeeAt        DateTime @default(now())
+  activeeParId     String
+  activeePar       User     @relation("EncMiseEnServiceActiveePar", fields: [activeeParId], references: [id], onDelete: Restrict)
+  /// Empreinte SHA-256 de la sauvegarde JSON téléchargée juste avant la remise à zéro (section 6).
+  sauvegardeSha256 String
+}
+
+/// Compteurs de numérotation (PAI-AAAA, SUS-AAAA, RGS-AAAA, BRD-AAAA-MM). Incrément atomique uniquement
+/// (backend/src/encSequence.ts), jamais count()+1. Après mise en service : DELETE et baisse de valeur interdits.
+model EncSequence {
+  cle    String @id
+  valeur Int    @default(0)
+}
+
+/// Paramètres du module (clé → valeur texte typée par backend/src/encParametres.ts). Défauts posés par la migration
+/// ET par le seed ; majParId nul = valeur par défaut jamais modifiée.
+model EncParametre {
+  cle      String   @id
+  valeur   String
+  majParId String?
+  majPar   User?    @relation("EncParametreMajPar", fields: [majParId], references: [id], onDelete: Restrict)
+  majAt    DateTime @default(now())
+}
+
+/// Journal d'audit du module, en ajout seul : UPDATE toujours interdit, DELETE/TRUNCATE interdits dès qu'une ligne
+/// EncMiseEnService existe (triggers SQL). Écriture uniquement via backend/src/encAudit.ts.
+model EncAudit {
+  id       BigInt    @id @default(autoincrement())
+  entite   String
+  entiteId String
+  action   String
+  avant    Json?
+  apres    Json?
+  motif    String?
+  /// Mois de rattachement (1er du mois) pour le rapport « changements depuis la clôture » (F11.4).
+  mois     DateTime? @db.Date
+  userId   String
+  user     User      @relation("EncAuditUser", fields: [userId], references: [id], onDelete: Restrict)
+  ip       String?
+  at       DateTime  @default(now())
+
+  @@index([entite, entiteId])
+  @@index([mois, at])
+  @@index([at])
+}
+
+/// Pièce jointe du module, séparée de PieceJointe (que la purge globale vide sans filtre). Fichier déposé par la route
+/// d'upload commune (uploads/), métadonnées recalculées côté serveur depuis le fichier (encPieceJointe.ts).
+model EncPieceJointe {
+  id           String   @id @default(cuid())
+  url          String   @unique
+  nomOrigine   String?
+  mime         String
+  taille       Int
+  sha256       String
+  deposeeParId String
+  deposeePar   User     @relation("EncPieceJointeDeposeePar", fields: [deposeeParId], references: [id], onDelete: Restrict)
+  deposeeAt    DateTime @default(now())
+
+  @@index([sha256])
 }

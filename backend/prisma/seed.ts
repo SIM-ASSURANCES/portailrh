@@ -8,6 +8,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
 import { ENC_MODULE_KEY, ENC_PERMISSIONS, ENC_PERMISSION_MISE_EN_SERVICE, ENC_ROLES_DEPART } from "../src/encPermissions";
+import { ENC_PARAMETRES } from "../src/encParametres";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -16,6 +17,12 @@ const SALT_ROUNDS = 10;
 const TEST_PASSWORD = "password123";
 
 async function main() {
+  // Module Encaissements : une base mise en service ne se reseede JAMAIS (audit et séquences verrouillés par trigger).
+  // Refus AVANT toute suppression, pour ne rien effacer à moitié.
+  if ((await prisma.encMiseEnService.count()) > 0) {
+    throw new Error("Module Encaissements mis en service sur cette base : seed refusé, aucune donnée supprimée.");
+  }
+
   console.log("Suppression des données existantes...");
 
   // Suppression par ordre inverse des dépendances
@@ -41,6 +48,11 @@ async function main() {
   await prisma.absence.deleteMany();
   await prisma.jourFerie.deleteMany();
   await prisma.parametrageHoraire.deleteMany();
+  // Module Encaissements (socle technique) : relations vers User en RESTRICT, à vider avant les comptes.
+  await prisma.encAudit.deleteMany();
+  await prisma.encPieceJointe.deleteMany();
+  await prisma.encSequence.deleteMany();
+  await prisma.encParametre.deleteMany();
   await prisma.user.deleteMany();
   await prisma.service.deleteMany();
   await prisma.role.deleteMany();
@@ -478,6 +490,10 @@ async function main() {
   console.log(
     `Paramétrage horaire créé : ${parametrageHoraire.heureDebutMatin}-${parametrageHoraire.heureFinMatin} / ${parametrageHoraire.heureDebutApresMidi}-${parametrageHoraire.heureFinApresMidi}`
   );
+
+  // Module Encaissements : paramètres par défaut (source unique : src/encParametres.ts, aussi posés par la migration).
+  await prisma.encParametre.createMany({ data: ENC_PARAMETRES.map((p) => ({ cle: p.cle, valeur: p.defaut })) });
+  console.log(`Paramètres Encaissements : ${ENC_PARAMETRES.length}`);
 
   console.log("\n=== Résumé du seed ===");
   console.log(`Rôles : ${createdUsers.length === 5 ? 5 : "?"}`);

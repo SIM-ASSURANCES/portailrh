@@ -41,6 +41,15 @@ export const ENC_PERMISSION_MISE_EN_SERVICE = {
 
 export type EncPermissionKey = (typeof ENC_PERMISSIONS)[number]["key"];
 
+/**
+ * Permissions autorisant le dépôt d'une pièce jointe par la route d'upload commune : toute permission d'écriture du
+ * module (la simple consultation n'en dépose jamais). Le rattachement à une ressource précise reste revérifié par
+ * l'action serveur qui crée l'`EncPieceJointe`, avec sa propre permission.
+ */
+export const ENC_PERMISSIONS_DEPOT_PIECE_JOINTE: readonly EncPermissionKey[] = ENC_PERMISSIONS.map((p) => p.key).filter(
+  (k) => k !== "enc.consulter"
+);
+
 /** Cinq rôles de départ = les cinq profils du cahier des charges (§2). Jeux de permissions POSITIVES uniquement. */
 export const ENC_ROLES_DEPART: {
   name: string;

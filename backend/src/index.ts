@@ -25,6 +25,13 @@ export * from "./beneficiaire";
 export * from "./feedback";
 export * from "./reinitialisation";
 
+// Module Encaissements : socle technique (séquences, audit, paramètres, permissions). Le moteur de calcul
+// (encCalcul.ts) n'est pas réexporté ici : il est importé directement là où il sert.
+export * from "./encSequence";
+export * from "./encAudit";
+export * from "./encParametres";
+export * from "./encPermissions";
+
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).
 export * from "./permissions";
