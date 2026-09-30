@@ -120,6 +120,13 @@ model User {
   encMisesEnService EncMiseEnService[] @relation("EncMiseEnServiceActiveePar")
   encParametresMaj  EncParametre[]     @relation("EncParametreMajPar")
   encPiecesDeposees EncPieceJointe[]   @relation("EncPieceJointeDeposeePar")
+  /// Paramètres V2 (docs/encaissements-conception.md §5.2) — toutes en `onDelete: Restrict`, sauf les créateurs des
+  /// deux référentiels dont la toute première ligne est posée par la migration (`creeParId` nul dans ce seul cas).
+  encBranchesCreees               EncBranche[]               @relation("EncBrancheCreePar")
+  encBeneficiairesHonorairesCrees EncBeneficiaireHonoraires[] @relation("EncBeneficiaireHonorairesCreePar")
+  encPartenairesCrees             EncPartenaire[]             @relation("EncPartenaireCreePar")
+  encPartenairesMajs              EncPartenaire[]             @relation("EncPartenaireMajPar")
+  encTauxControleMajs             EncTauxControle[]           @relation("EncTauxControleMajPar")
 }
 
 model Role {
@@ -1415,4 +1422,82 @@ model EncPieceJointe {
   deposeeAt    DateTime @default(now())
 
   @@index([sha256])
+}
+
+// =====================================================================================================================
+// Paramètres V2 (docs/encaissements-conception.md §5.2, CDC V2.6 §3.6/F9) — pas d'écran (Lot 3) : modèle, migration et
+// actions serveur seulement. Aucun contrat ni encaissement n'existe encore (Lot 1) : `EncContrat.partAccessoiresPartenaire`
+// (l'exception par police du §5.4) est réservée dans le modèle du Lot 1, pas ici.
+// =====================================================================================================================
+
+/// Liste des branches (CDC principe 6, "tout se suit par branche") — arbitrage PROVISOIRE (P1, 2026-09-28) : paramétrée
+/// par la Finance, en l'absence de réponse écrite du client. Jamais supprimée (seulement désactivée) : une branche
+/// désactivée reste la valeur exacte de toute donnée déjà rattachée.
+model EncBranche {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  libelle   String
+  actif     Boolean  @default(true)
+  creeParId String
+  creePar   User     @relation("EncBrancheCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt    DateTime @default(now())
+  majAt     DateTime @updatedAt
+}
+
+/// Bénéficiaire des honoraires, DATÉ (CDC §3.6) : jamais une ligne modifiée, toujours une nouvelle ligne à une nouvelle
+/// `dateDebut` — l'historique complet reste lisible. Le bénéficiaire en vigueur pour un encaissement est celui dont la
+/// `dateDebut` est la plus récente sans dépasser sa date de prise en compte (`encReferentiels.ts`, Lot 1). `creeParId`
+/// nul UNIQUEMENT pour la ligne « NOVELIA » posée par la migration (aucun utilisateur réel à cet instant).
+model EncBeneficiaireHonoraires {
+  id        String   @id @default(cuid())
+  nom       String
+  dateDebut DateTime @unique @db.Date
+  creeParId String?
+  creePar   User?    @relation("EncBeneficiaireHonorairesCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt    DateTime @default(now())
+}
+
+/// Partenaires (CDC §3.6, F9) : partage des accessoires par partenaire. `cleNom` = nom normalisé
+/// (`encReferentiels.ts`), clé de rapprochement pour l'import de production (Lot 1, où la création automatique et
+/// l'usage réel commencent) ; ici, seule la création manuelle existe (F9 le permet aussi). `partAccessoiresPartenaire`
+/// nul = taux par défaut (`EncParametre` `accessoires.part_partenaire_defaut`) ; jamais un second calcul du complément
+/// SIM stocké : toujours 1 − ce taux, calculé à l'usage (`encCalcul.partagerAccessoires`).
+model EncPartenaire {
+  id                        String            @id @default(cuid())
+  cleNom                    String            @unique
+  nom                       String
+  partAccessoiresPartenaire Decimal?          @db.Decimal(7, 6)
+  creeParId                 String
+  creePar                   User              @relation("EncPartenaireCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt                    DateTime          @default(now())
+  majParId                  String?
+  majPar                    User?             @relation("EncPartenaireMajPar", fields: [majParId], references: [id], onDelete: Restrict)
+  majAt                     DateTime          @updatedAt
+  tauxControle              EncTauxControle[]
+}
+
+/// Taux de contrôle FACULTATIFS (CDC §3.6, F9) : signalent un écart à l'import (Lot 1), ne modifient JAMAIS un montant.
+/// Clé (produitCode, partenaireId), l'un des deux pouvant être nul (contrôle valable pour tous les produits d'un
+/// partenaire, ou pour un produit quel que soit le partenaire) — jamais les deux nuls à la fois (CHECK en SQL, aucun
+/// contrôle "global" décrit par le cahier). `produitCode` reste un simple texte : aucun référentiel produit n'existe
+/// (les produits viennent du fichier de production, Lot 1), rapproché à l'import sur cette même valeur.
+/// `@@unique` : n'empêche que le doublon (produit, partenaire) EXACT — la sémantique NULL de Postgres (NULL ≠ NULL)
+/// ne bloque jamais deux lignes "produit seul" ou "partenaire seul" par ailleurs identiques ; laissé tel quel (aucune
+/// contrainte NULLS NOT DISTINCT ici), l'écran F9 (Lot 3) devra vérifier ce cas lui-même avant insertion.
+model EncTauxControle {
+  id              String         @id @default(cuid())
+  produitCode     String?
+  partenaireId    String?
+  partenaire      EncPartenaire? @relation(fields: [partenaireId], references: [id], onDelete: Restrict)
+  tauxTaxe        Decimal?       @db.Decimal(7, 6)
+  tauxCommission  Decimal?       @db.Decimal(7, 6)
+  tauxAccessoires Decimal?       @db.Decimal(7, 6)
+  tauxHonoraires  Decimal?       @db.Decimal(7, 6)
+  majParId        String
+  majPar          User           @relation("EncTauxControleMajPar", fields: [majParId], references: [id], onDelete: Restrict)
+  majAt           DateTime       @updatedAt
+
+  @@unique([produitCode, partenaireId])
+  @@index([produitCode])
+  @@index([partenaireId])
 }

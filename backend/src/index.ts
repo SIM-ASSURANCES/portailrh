@@ -31,6 +31,7 @@ export * from "./encSequence";
 export * from "./encAudit";
 export * from "./encParametres";
 export * from "./encPermissions";
+export * from "./encReferentiels";
 
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).

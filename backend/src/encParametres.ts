@@ -1,8 +1,10 @@
 // Paramètres du module Encaissements (docs/encaissements-conception.md §5.1, modèle `EncParametre`).
 //
-// Source UNIQUE des clés et valeurs par défaut : reprise par le seed ET par la migration
-// `20260927142216_encaissements_socle_technique` (le seed ne tourne qu'une fois en production, la migration pose donc
-// aussi les défauts sur une base existante). `encParametres.test.ts` échoue si les deux divergent.
+// Source UNIQUE des clés et valeurs par défaut : reprise par le seed ET par les migrations
+// `20260927142216_encaissements_socle_technique` (5 premiers paramètres) et
+// `20260930000000_encaissements_parametres_v2` (retire `taxe.delai_exigibilite_mois`, ajoute
+// `accessoires.part_partenaire_defaut`) — le seed ne tourne qu'une fois en production, les migrations posent donc
+// aussi les défauts sur une base existante. `encParametres.test.ts` échoue si l'une des deux diverge.
 //
 // Les valeurs sont stockées en texte et typées ici : une valeur illisible en base est une erreur, jamais remplacée
 // silencieusement par le défaut (un paramètre faux doit se voir, pas se corriger tout seul).
@@ -16,22 +18,13 @@ export interface EncParametreDefinition {
   defaut: string;
   min: number;
   max: number;
-  /** Entier strict, ou décimal (au centime) positif. */
-  type: "entier" | "montant";
+  /** Entier strict, décimal (au centime) positif, ou fraction (0 à 1, 6 décimales au plus — `Decimal(7,6)`). */
+  type: "entier" | "montant" | "taux";
   /** Référence au cahier des charges (docs/cahier-des-charges-encaissements.md). */
   source: string;
 }
 
 export const ENC_PARAMETRES = [
-  {
-    cle: "taxe.delai_exigibilite_mois",
-    libelle: "Délai d'exigibilité des taxes (mois)",
-    defaut: "1",
-    min: 0,
-    max: 12,
-    type: "entier",
-    source: "§3.5 Référentiels (paramètres), §5.4",
-  },
   {
     cle: "taxe.jour_limite_reversement",
     libelle: "Jour limite de reversement des taxes",
@@ -68,6 +61,15 @@ export const ENC_PARAMETRES = [
     type: "entier",
     source: "F10.9",
   },
+  {
+    cle: "accessoires.part_partenaire_defaut",
+    libelle: "Part partenaire par défaut sur les accessoires (fraction 0 à 1)",
+    defaut: "0",
+    min: 0,
+    max: 1,
+    type: "taux",
+    source: "§3.6 Référentiels (partenaires), branché sur choisirTauxAccessoires (encCalcul.ts)",
+  },
 ] as const satisfies readonly EncParametreDefinition[];
 
 export type EncParametreCle = (typeof ENC_PARAMETRES)[number]["cle"];
@@ -87,11 +89,11 @@ export function lireValeurParametre(cle: string, valeur: string): number {
   const def = DEFINITIONS.get(cle);
   if (!def) throw new EncParametreError(`Paramètre inconnu : « ${cle} ».`);
   const texte = valeur.trim();
-  const motif = def.type === "entier" ? /^\d+$/ : /^\d+(\.\d{1,2})?$/;
+  const motif = def.type === "entier" ? /^\d+$/ : def.type === "montant" ? /^\d+(\.\d{1,2})?$/ : /^\d+(\.\d{1,6})?$/;
   if (!motif.test(texte)) {
-    throw new EncParametreError(
-      `${def.libelle} : « ${valeur} » n'est pas ${def.type === "entier" ? "un entier" : "un montant (2 décimales au plus)"}.`
-    );
+    const attendu =
+      def.type === "entier" ? "un entier" : def.type === "montant" ? "un montant (2 décimales au plus)" : "un taux (6 décimales au plus)";
+    throw new EncParametreError(`${def.libelle} : « ${valeur} » n'est pas ${attendu}.`);
   }
   const n = Number(texte);
   if (n < def.min || n > def.max) {
@@ -116,9 +118,20 @@ export function assemblerParametres(lignes: { cle: string; valeur: string }[]): 
 }
 
 /** Paramètres attendus par `calculerExigibilite` (encCalcul.ts). Le délai d'exigibilité n'est plus paramétrable
- *  (N+1 fixe, CDC V2.6 §5.3) : sa ligne sera retirée par la migration corrective des paramètres. */
+ *  (N+1 fixe, CDC V2.6 §5.3) : sa ligne a été retirée d'`EncParametre` par la migration
+ *  `20260930000000_encaissements_parametres_v2`. */
 export function parametresExigibilite(p: EncParametresValeurs): ParametresExigibilite {
   return { jourLimite: p["taxe.jour_limite_reversement"] };
+}
+
+/**
+ * Part partenaire par défaut des accessoires, formatée pour `choisirTauxAccessoires`/`partagerAccessoires`
+ * (`encCalcul.ts`, arg `defaut`) : ces fonctions attendent un `MontantEntree` (chaîne ou Decimal), jamais un `number`
+ * nu — la valeur déjà validée par `assemblerParametres` est donc reconvertie en chaîne à 6 décimales, la même
+ * précision que la colonne `Decimal(7,6)` où elle finit par être comparée/stockée (`EncPartenaire`/`EncTauxControle`).
+ */
+export function tauxAccessoiresDefaut(p: EncParametresValeurs): string {
+  return p["accessoires.part_partenaire_defaut"].toFixed(6);
 }
 
 /** Lit et type tous les paramètres (client ou transaction Prisma). */

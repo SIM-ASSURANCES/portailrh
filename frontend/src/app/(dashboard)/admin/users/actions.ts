@@ -716,6 +716,11 @@ export async function supprimerUtilisateurAction(
     encMisesEnService,
     encParametresModifies,
     encPiecesDeposees,
+    encBranchesCreees,
+    encBeneficiairesHonorairesCrees,
+    encPartenairesCrees,
+    encPartenairesMajs,
+    encTauxControleMajs,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -746,6 +751,13 @@ export async function supprimerUtilisateurAction(
     prisma.encMiseEnService.count({ where: { activeeParId: userId } }),
     prisma.encParametre.count({ where: { majParId: userId } }),
     prisma.encPieceJointe.count({ where: { deposeeParId: userId } }),
+    // Module Encaissements (paramètres V2) : 5 relations vers User supplémentaires — `creeParId` d'EncBeneficiaireHonoraires
+    // est nullable (nul uniquement pour la ligne NOVELIA posée par la migration, jamais par un compte réel).
+    prisma.encBranche.count({ where: { creeParId: userId } }),
+    prisma.encBeneficiaireHonoraires.count({ where: { creeParId: userId } }),
+    prisma.encPartenaire.count({ where: { creeParId: userId } }),
+    prisma.encPartenaire.count({ where: { majParId: userId } }),
+    prisma.encTauxControle.count({ where: { majParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -777,6 +789,12 @@ export async function supprimerUtilisateurAction(
   if (encMisesEnService > 0) blocages.push("mis le module Encaissements en service");
   if (encParametresModifies > 0) blocages.push(`modifié ${encParametresModifies} paramètre(s) des encaissements`);
   if (encPiecesDeposees > 0) blocages.push(`déposé ${encPiecesDeposees} pièce(s) jointe(s) des encaissements`);
+  if (encBranchesCreees > 0) blocages.push(`créé ${encBranchesCreees} branche(s) des encaissements`);
+  if (encBeneficiairesHonorairesCrees > 0)
+    blocages.push(`créé ${encBeneficiairesHonorairesCrees} ligne(s) de bénéficiaire des honoraires (encaissements)`);
+  if (encPartenairesCrees > 0) blocages.push(`créé ${encPartenairesCrees} partenaire(s) des encaissements`);
+  if (encPartenairesMajs > 0) blocages.push(`modifié ${encPartenairesMajs} partenaire(s) des encaissements`);
+  if (encTauxControleMajs > 0) blocages.push(`modifié ${encTauxControleMajs} taux de contrôle des encaissements`);
 
   if (blocages.length > 0) {
     const liste =

@@ -4681,8 +4681,58 @@ et reprise, partage des accessoires, contre-passation, trop-perçu en alerte) ; 
 seul) posées par une **migration corrective** (`20260928150000_encaissements_permissions_v2`, jamais en modifiant la
 migration 3a déjà poussée), qui retire les 17 permissions et les rôles « Gestionnaire »/« Responsable » du V1, avec un
 garde-fou qui arrête toute la migration si l'un de ces deux rôles porte encore un compte ; séquences atomiques, audit
-`EncAudit` immuable par trigger, paramètres, pièces jointes `EncPieceJointe` (commit 3b, paramètres encore à adapter à
-la V2 : conception §5.1).
+`EncAudit` immuable par trigger, paramètres (§5.1, adaptés à la V2 — voir ci-dessous), pièces jointes `EncPieceJointe` ;
+**référentiels et paramètres V2** (commit du 2026-09-30, `20260930000000_encaissements_parametres_v2`, conception §5.2) —
+branches (`EncBranche`, liste paramétrée par la Finance, P1 provisoire), bénéficiaire des honoraires daté
+(`EncBeneficiaireHonoraires`), partenaires et partage des accessoires (`EncPartenaire`), taux de contrôle facultatifs
+(`EncTauxControle`) — schéma, contrôle applicatif (`backend/src/encReferentiels.ts`) et Server Actions
+(`frontend/src/app/(dashboard)/encaissements/parametres/actions.ts`) SANS écran, le F9 arrivant au Lot 3.
+
+**Paramètres V2 (2026-09-30, conception §5.1/§5.2)** : `taxe.delai_exigibilite_mois` retirée d'`EncParametre` (N+1
+fixe, CDC V2.6 §5.3) ; `accessoires.part_partenaire_defaut` ajoutée (0–1, type `"taux"` nouveau dans
+`encParametres.ts`, branchée sur `choisirTauxAccessoires` via `tauxAccessoiresDefaut`) ; `taxe.jour_limite_reversement`
+désormais bornée 1–28 aussi en base (`CHECK`, en plus du contrôle applicatif déjà existant). Bénéficiaire des
+honoraires : NOVELIA posée une seule fois par la migration (`creeParId` nul, seul cas), date de début au **2000-01-01**
+comme repère « depuis toujours » (`ENC_BENEFICIAIRE_HONORAIRES_INITIAL`, `encReferentiels.ts`) — **TRANCHÉ 2026-09-30**
+(V2-A13, conception §10.1) : le client a confirmé que NOVELIA est bénéficiaire des honoraires depuis toujours, cette
+date est donc retenue définitivement, plus une valeur provisoire à remplacer. `EncTauxControle` porte un
+`@@unique([produitCode, partenaireId])` qui
+n'empêche que le doublon EXACT (la sémantique NULL de Postgres ne bloque jamais deux lignes « produit seul » ou
+« partenaire seul » par ailleurs identiques) — l'écran F9 (Lot 3) devra vérifier ce cas lui-même.
+
+**Diagnostic du blocage `plpgsql` local, et vérification refaite sur un vrai PostgreSQL** — l'échec initial
+(`ERROR: could not load library "C:/Program Files/PostgreSQL/18/lib/plpgsql.dll" : unknown error 4551`) est
+**`ERROR_SYSTEM_INTEGRITY_POLICY_VIOLATION`** (Smart App Control / contrôle d'application Windows), pas un bug de
+code — confirmé en le reproduisant avec un simple `DO $$ BEGIN PERFORM 1; END $$;` sans aucun rapport avec ce module.
+**Volontairement non touché** (la sécurité Windows de la machine ne relève pas de ce projet). Un nouveau conteneur
+Docker jetable **`postgres:16`** (même version majeure que la production, voir `docker-compose.raw.yml`, `--rm`, port
+5433) a servi à vérifier réellement cette migration, sans dépendre de l'installation locale :
+- Toutes les migrations, depuis zéro, sans seed, appliquées avec succès — y compris `20260927142216_encaissements_socle_technique`
+  (la seule autre migration du projet à utiliser `plpgsql`, `enc_interdire()`) et la nouvelle `20260930000000`.
+- Les 4 tables existent ; `taxe.delai_exigibilite_mois` absente, `accessoires.part_partenaire_defaut` présente à `0` ;
+  NOVELIA présente (`creeParId` nul, `dateDebut` 2000-01-01).
+- Le `CHECK` 1–28 refuse `0` et `29`, accepte `1` et `28` (testé par écriture directe sur `EncParametre`).
+- Le trigger d'immuabilité d'`EncAudit` (posé par 3b) fonctionne réellement sur ce Postgres 16 : `UPDATE` refusé
+  (`ENC_IMMUABLE`), `DELETE` encore accepté (normal, mise en service pas encore active).
+- **Rejeu de la migration (idempotence)** : le fichier complet, rejoué une seconde fois, échoue au premier
+  `CREATE TABLE` (« relation "EncBranche" already exists ») — **comportement normal, pas un défaut** : cette
+  migration crée des tables, exactement comme `20260927142216_encaissements_socle_technique` (revérifié : le même
+  rejeu échoue de la même façon, « relation "EncMiseEnService" already exists ») et comme toute migration additive du
+  projet, jamais conçue pour être rejouée (protégée par `_prisma_migrations`, pas par de l'idempotence SQL). Le seul
+  bloc à vocation idempotente, celui des « Ajouts manuels » (`DELETE`/`INSERT ... ON CONFLICT DO NOTHING`), rejoué
+  seul, échoue lui aussi dès le premier `ALTER TABLE ADD CONSTRAINT` (Postgres n'a pas de `ADD CONSTRAINT IF NOT
+  EXISTS`) — attendu et sans précédent contraire dans le projet : les migrations correctives déjà idempotentes
+  (`20260928150000_encaissements_permissions_v2`) ne posent jamais de contrainte, seulement des lignes. Le `DELETE`
+  et les deux `INSERT ... ON CONFLICT DO NOTHING`, pris isolément, restent bien idempotents.
+- Conteneur supprimé après vérification (`docker stop`, `--rm`).
+
+**La base de dev locale `sim_portail` n'est plus touchée** (retesté avec le même `DO $$ ... $$` minimal, sans aucune
+écriture : fonctionne, ainsi que sur une nouvelle base locale jetable) — le blocage semble avoir été ponctuel (Smart
+App Control bloque puis autorise après une vérification de réputation en arrière-plan, cohérent avec ce qui a été
+observé). **La Trésorerie n'a jamais utilisé `plpgsql`** : recherche exhaustive (`LANGUAGE plpgsql`/`CREATE
+FUNCTION`/`CREATE TRIGGER` dans toutes les migrations du projet) ne trouve qu'un seul fichier concerné,
+`20260927142216_encaissements_socle_technique` (Encaissements uniquement) — aucun risque pour le reste du portail,
+même pendant que le blocage local était actif.
 
 **Décisions du 2026-09-28 (détail : conception §1)** :
 - **Arrondi** : calcul et stockage au centime (règle du moteur : AD = Z − AB − AC, reliquat exact au soldant), affichage à l'unité FCFA.

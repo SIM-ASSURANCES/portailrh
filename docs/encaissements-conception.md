@@ -154,33 +154,47 @@ model EncPieceJointe   { id  url @unique  nomOrigine?  mime  taille  sha256  dep
 
 | Clé | Défaut | Bornes | Statut |
 |---|---|---|---|
-| `taxe.jour_limite_reversement` | 20 | **1–28** (aujourd'hui 1–31 dans le code) | À adapter |
+| `taxe.jour_limite_reversement` | 20 | **1–28** | Fait (2026-09-30) : borne 1–28 posée en base par un CHECK (migration `20260930000000_encaissements_parametres_v2`), en plus du contrôle applicatif |
 | `controle.tolerance_fcfa` | 1 | 0–1 000 | Garder |
 | `taxe.rappel_jours_avant_limite` | 5 | 0–31 | Garder |
 | `suspens.alerte_jours` | 60 | 1–3 650 | Garder (argent non identifié) |
-| `accessoires.part_partenaire_defaut` | 0 | 0–1 (fraction) | **À ajouter** [L1] |
-| `taxe.delai_exigibilite_mois` | 1 | — | **À retirer** (N+1 fixe) ; ligne supprimée par la migration corrective |
+| `accessoires.part_partenaire_defaut` | 0 | 0–1 (fraction) | Fait (2026-09-30), branché sur `choisirTauxAccessoires` via `tauxAccessoiresDefaut` (`encParametres.ts`) |
+| `taxe.delai_exigibilite_mois` | 1 | — | Fait (2026-09-30) : retirée (N+1 fixe), `DELETE` par la même migration corrective |
 
 `EncAudit.mois` (ancien rapport « changements depuis la clôture ») devient inutilisé ; il reste inoffensif et n'est pas
 retiré.
 
-### 5.2 Référentiels et paramètres métier
+### 5.2 Référentiels et paramètres métier — **fait (2026-09-30)**, sans écran (F9 au Lot 3)
+
+Migration corrective `20260930000000_encaissements_parametres_v2` (ne modifie jamais `20260927100000_encaissements_module`/
+`20260927142216_encaissements_socle_technique`, déjà poussées). Fonctions pures (normalisation, bénéficiaire en vigueur,
+conversion pourcentage↔fraction) dans `backend/src/encReferentiels.ts` ; Server Actions (gardées par `enc.parametrer`,
+`EncAudit` avant/après) déjà écrites, avant tout écran, à `frontend/src/app/(dashboard)/encaissements/parametres/actions.ts`.
 
 ```prisma
 model EncBranche {                                   // [L1] liste paramétrée par la Finance (P1)
-  id  nom @unique  actif Boolean  creeParId  creeAt
+  id  code @unique  libelle  actif Boolean  creeParId  creeAt  majAt
 }
 model EncPartenaire {                                // [L1] créé à l'import, ajout manuel possible
-  id  cleNom @unique  nom  partAccessoiresPartenaire Decimal(7,6)?  creeAt      // part null = défaut
+  id  cleNom @unique  nom  partAccessoiresPartenaire Decimal(7,6)?  creeParId  creeAt  majParId?  majAt   // part null = défaut
 }
 model EncBeneficiaireHonoraires {                    // [L1] NOVELIA ; bénéficiaire en vigueur à la date de prise en compte
-  id  nom  dateDebut @unique @db.Date  creeParId  creeAt
+  id  nom  dateDebut @unique @db.Date  creeParId?  creeAt   // creeParId nul UNIQUEMENT pour la ligne NOVELIA (posée par la migration)
 }
 model EncTauxControle {                              // [L1 ou L3, V2-A20] signalement seulement, jamais un montant
   id  produitCode?  partenaireId?  tauxTaxe?  tauxCommission?  tauxAccessoires?  tauxHonoraires?  majParId  majAt
-  @@unique([produitCode, partenaireId])
+  @@unique([produitCode, partenaireId])    // n'empêche que le doublon EXACT (NULL ≠ NULL en SQL) ; CHECK séparé : au moins un des deux non nul
 }
 ```
+
+**Écart avec le sketch d'origine** : `EncBranche` porte `code` (identifiant technique court, `A-Z0-9_-`, 2 à 20
+caractères, normalisé par `normaliserCodeBranche`) **et** `libelle` (affichage), plutôt qu'un `nom @unique` unique —
+plus proche de l'usage réel (« AUTO », « VIE » comme codes courts, avec un intitulé complet séparé).
+
+**Bénéficiaire des honoraires — date de départ de NOVELIA (V2-A13, TRANCHÉ 2026-09-30)** : le client a confirmé que
+NOVELIA est bénéficiaire des honoraires **depuis toujours** — la date **2000-01-01** (repère « depuis toujours »),
+posée par `ENC_BENEFICIAIRE_HONORAIRES_INITIAL` (`encReferentiels.ts`) et reprise à l'identique par la migration ET
+par `seed.ts` (source unique), est donc **retenue définitivement**, pas une valeur à remplacer.
 
 ### 5.3 Contrats et encaissements
 
@@ -347,10 +361,12 @@ novembre (régularisation) ; 15/07 → 10/09 → septembre (régularisation) ; 1
 - supprimés : calcul inverse, décomposition par taux, échéancier ;
 - tests renumérotés selon la recette V2.6 : 9.1, 9.4, 9.5, 9.6, 9.8, 9.9, 9.13 (partie calcul), tableau §5.3, et cas limites.
 
-**Reste à ajouter** (commits suivants) : bénéficiaire des honoraires à une date, règles de doublon (F1), de reprise
-(F1.5), de rapprochement (F5) et d'agrégation des frais, toutes en fonctions pures testées. Les séquences `RGS`/`BRD`
-(`encSequence.ts`) et la ligne `taxe.delai_exigibilite_mois` (`encParametres.ts`, déjà ignorée par le moteur) partent au
-commit « Permissions et paramètres V2 » ; la borne du jour limite est déjà ramenée à 28.
+**Reste à ajouter** (commits suivants) : règles de doublon (F1), de reprise (F1.5), de rapprochement (F5) et
+d'agrégation des frais, toutes en fonctions pures testées. Bénéficiaire des honoraires à une date : fait (2026-09-30,
+`encReferentiels.beneficiaireHonorairesEnVigueur`, §5.2). Les séquences `RGS`/`BRD` (`encSequence.ts`) restent à
+ajouter. La ligne `taxe.delai_exigibilite_mois` (`encParametres.ts`) a bien été retirée par le commit « Paramètres
+V2 » (2026-09-30, pas « Permissions et paramètres V2 » — les deux ont finalement été deux commits séparés) ; la borne
+du jour limite est ramenée à 28, désormais posée en base aussi (CHECK, §5.1).
 
 ---
 
@@ -435,7 +451,7 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | V2-A10 | Paiement incomplet d'une police nouvelle | OUVERT |
 | V2-A11 | « Ajouter quand même » : à confirmer ou confirmé | OUVERT |
 | V2-A12 | Règles de doublon (statuts comparés, ordre, portée de la référence) | OUVERT |
-| V2-A13 | Date de début de NOVELIA | OUVERT (avant la reprise) |
+| V2-A13 | Date de début de NOVELIA | TRANCHÉ 2026-09-30 : NOVELIA bénéficiaire depuis toujours (réponse du client) — 2000-01-01 retenue définitivement (`ENC_BENEFICIAIRE_HONORAIRES_INITIAL`, §5.2) |
 | V2-A14 | Lignes annulées importées par la Finance | OUVERT |
 | V2-A15 | Liste des branches | PROVISOIRE (P1) |
 | V2-A16 | Affectation partielle et classement d'un même paiement non identifié | OUVERT |
@@ -506,8 +522,9 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | 0 | **Docs** : V2.6 et maquette, archives, analyse, cette conception, `CLAUDE.md`, `.gitignore` | — |
 | 1 | **Moteur V2** (§7.5) — fait | — |
 | 2 | **Permissions V2** : migration corrective, seed, tests — fait | — |
-| 2b | **Paramètres V2** : retirer la ligne `taxe.delai_exigibilite_mois`, ajouter `accessoires.part_partenaire_defaut` | — |
-| 3 | **Référentiels, contrat, paramétrage de base** (branches, honoraires, partage des accessoires) | V2-A13, V2-A15 |
+| 2b | **Paramètres V2** : retirer la ligne `taxe.delai_exigibilite_mois`, ajouter `accessoires.part_partenaire_defaut`, borne 1–28 en base (CHECK) — fait (2026-09-30) | — |
+| 3a | **Référentiels et paramétrage de base** (branches, bénéficiaire des honoraires daté, partenaires, taux de contrôle) — fait (2026-09-30), sans écran (F9 au Lot 3) | V2-A13 tranchée (NOVELIA depuis toujours), V2-A15 (branches, toujours provisoire, P1) |
+| 3b | **`EncContrat`** (reste à faire) | — |
 | 4 | **Lecture de tableurs et règles d'import** (SheetJS, F1, F1.5, relevé synthétique) | V2-A1c, A10, A12, A14, A28 |
 | 5 | **Import de production (F1)** | — |
 | 6 | **Recherche et fiche police (F2)** | — |

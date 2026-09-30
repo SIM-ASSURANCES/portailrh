@@ -9,6 +9,7 @@ import { PrismaClient } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
 import { ENC_MODULE_KEY, ENC_PERMISSIONS, ENC_PERMISSION_MISE_EN_SERVICE, ENC_ROLES_DEPART } from "../src/encPermissions";
 import { ENC_PARAMETRES } from "../src/encParametres";
+import { ENC_BENEFICIAIRE_HONORAIRES_INITIAL } from "../src/encReferentiels";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -53,6 +54,11 @@ async function main() {
   await prisma.encPieceJointe.deleteMany();
   await prisma.encSequence.deleteMany();
   await prisma.encParametre.deleteMany();
+  // Module Encaissements (paramètres V2) : EncTauxControle référence EncPartenaire, donc supprimé avant lui.
+  await prisma.encTauxControle.deleteMany();
+  await prisma.encPartenaire.deleteMany();
+  await prisma.encBeneficiaireHonoraires.deleteMany();
+  await prisma.encBranche.deleteMany();
   await prisma.user.deleteMany();
   await prisma.service.deleteMany();
   await prisma.role.deleteMany();
@@ -494,6 +500,17 @@ async function main() {
   // Module Encaissements : paramètres par défaut (source unique : src/encParametres.ts, aussi posés par la migration).
   await prisma.encParametre.createMany({ data: ENC_PARAMETRES.map((p) => ({ cle: p.cle, valeur: p.defaut })) });
   console.log(`Paramètres Encaissements : ${ENC_PARAMETRES.length}`);
+
+  // Bénéficiaire des honoraires (CDC §3.6) : NOVELIA, posé une seule fois — `creeParId` nul (aucun utilisateur réel à
+  // cet instant, seul cas où ce champ est nul), même valeur que la migration corrective
+  // `20260930000000_encaissements_parametres_v2` (source unique : ENC_BENEFICIAIRE_HONORAIRES_INITIAL, encReferentiels.ts).
+  await prisma.encBeneficiaireHonoraires.create({
+    data: {
+      nom: ENC_BENEFICIAIRE_HONORAIRES_INITIAL.nom,
+      dateDebut: new Date(ENC_BENEFICIAIRE_HONORAIRES_INITIAL.dateDebut),
+    },
+  });
+  console.log(`Bénéficiaire des honoraires initial : ${ENC_BENEFICIAIRE_HONORAIRES_INITIAL.nom}`);
 
   console.log("\n=== Résumé du seed ===");
   console.log(`Rôles : ${createdUsers.length === 5 ? 5 : "?"}`);
