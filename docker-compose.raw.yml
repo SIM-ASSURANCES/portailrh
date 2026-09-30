@@ -15,7 +15,7 @@
 #                        séparées par des virgules)
 #
 # Facultatives :
-#   SYSTEM_START_DATE    AAAA-MM-JJ, défaut 2026-10-01 : le calcul des
+#   SYSTEM_START_DATE    AAAA-MM-JJ, défaut 2026-10-05 : le calcul des
 #                        absences ignore tout ce qui est antérieur
 #   CRON_SECRET          openssl rand -hex 24 ; sans elle, /api/cron/absences
 #                        répond 401 (aucune absence calculée automatiquement)
@@ -134,7 +134,7 @@ services:
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
       ALLOWED_OFFICE_IPS: ${ALLOWED_OFFICE_IPS:?ALLOWED_OFFICE_IPS obligatoire - IP publique du bureau (onglet Environment)}
-      SYSTEM_START_DATE: ${SYSTEM_START_DATE:-2026-10-01}
+      SYSTEM_START_DATE: ${SYSTEM_START_DATE:-2026-10-05}
       CRON_SECRET: ${CRON_SECRET:-}
       # SMTP facultatif (reinitialisation de mot de passe par email) : sans
       # SMTP_HOST, l'email est "simule" (log + notification interne, lien
