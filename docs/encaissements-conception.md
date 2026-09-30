@@ -62,6 +62,31 @@
 | P1 | **PROVISOIRE** (proposé au client, sans réponse écrite) : liste des **branches paramétrée par la Finance** |
 | P2 | **PROVISOIRE** : case « taxe payée » **non cochable tant que la taxe n'est pas exigible**, pour les **actions de l'utilisateur** (F7) ; la **reprise en est exclue** en attendant la réponse du client sur V2-A27d |
 
+### 2026-09-30 (F1 — import mensuel du fichier de production, hors reprise F1.5)
+
+Découpage en 4 commits validé (4a lecture pure, 4b règles pures, 4c application en base, 4d écran — §11). Limites de
+lecture (aucune donnée précise dans le cahier au-delà de l'objectif de performance) : **10 Mo** (comme les pièces
+jointes) et **20 000 lignes**.
+
+| # | Décision |
+|---|---|
+| D12 | **V2-A12 (doublon), PROVISOIRE — à confirmer par le client** : « déjà présent » compare avec **tous** les encaissements existants du contrat, y compris les « non reçus » (un paiement déclaré non reçu ne doit pas revenir silencieusement) ; « doublon possible » (±1 FCFA, ±7 jours) compare uniquement avec les encaissements **confirmés** et **à confirmer** |
+| D13 | **V2-A10 tranché** : paiement incomplet sur une police **nouvelle** — le contrat est créé normalement (ses données viennent des autres colonnes, indépendantes du paiement), seul le paiement est signalé « à compléter » |
+| D14 | **V2-A14 tranché** : ligne marquée annulée dans un fichier importé par la **Finance** → ligne **rejetée entièrement** (ni création ni mise à jour du contrat), signalée. Fichier importé par l'**Équipe technique** → contrat importé normalement, signalement « annulation non appliquée — en attente L4 » (les champs d'annulation ne sont pas encore construits, `EncContrat.annulationType`/etc. restent `[L4]`) |
+| D15 | **V2-A28 tranché** : ligne de fichier dont la date de paiement est future → contrat importé, **paiement NON créé**, signalé « à compléter » (même contrôle que la saisie manuelle, §8.1) |
+| — | **Rappel A1b** (déjà tranché, D7) : le PaiementID **du fichier** va dans `paiementIdFichier` (anti-doublon seulement) ; chaque encaissement reçoit **notre** numéro PAI (`prochainNumero`, `encSequence.ts`) |
+| — | **Route de dépôt** : PAS d'élargissement de la route commune Trésorerie (`/api/treso/pieces-jointes/upload`) aux tableurs — une route **dédiée** aux imports du module (`.xls`/`.xlsx`/`.csv` acceptés SEULEMENT là), gardée par `enc.importer_production`, prévue au commit 4c |
+| — | **Transaction d'import** : le timeout par défaut de `$transaction` (5 s) ne tiendra pas 5 000 lignes — timeout explicite et/ou insertions par lots, à mesurer réellement sur la base Docker (commit 4c) |
+
+**Découverte pendant le commit 4a, bloquante pour 4b (V2-A14)** : ni le CDC (§3.1, « Statut d'annulation, date, motif |
+Colonnes du fichier ou saisie par l'équipe technique | Voir F8 ») ni la maquette (34 en-têtes A à AH,
+`Maquette_registre_paiements.html`) ne précisent QUELLE colonne du fichier signale qu'une ligne est annulée — F8
+(annulation) est explicitement Lot 4, ses colonnes ne sont donc décrites nulle part d'accessible pour l'instant.
+**Conséquence assumée pour 4b** : `encImportLecture.ts` (4a) ne lit et n'expose AUCUN indicateur d'annulation (rien à
+lire, la colonne réelle est inconnue) ; la détection prévue par D14 ne pourra être codée en 4b qu'une fois cette
+colonne identifiée (probablement `TypeOpération`, colonne G, à confirmer — ou une question à poser au client, à
+ajouter à la section 10 le cas échéant, une fois 4b entamé).
+
 ---
 
 ## 2. Existant réutilisable
@@ -403,12 +428,34 @@ transaction partagée (CDC F5.6) ; D11 pour les lignes ignorées et les frais. *
 (dossier local `C:\Projets\donnees-sensibles\`, hors dépôt ; `/donnees-sensibles/` reste dans le `.gitignore` par
 précaution) : tests sur un relevé synthétique au même format.
 
-### 8.4 Bibliothèque de lecture
+### 8.4 Bibliothèque de lecture — **fait (commit 4a, 2026-09-30)**
 
 **SheetJS CE 0.20.3**, distribué par l'éditeur (le paquet npm `xlsx` 0.18.5 n'est plus maintenu et porte
-CVE-2023-30533 et CVE-2024-22363). Archive versionnée dans le dépôt (dépendance `file:`, empreinte vérifiée), lecture
-côté serveur uniquement, taille et nombre de lignes bornés, formules et HTML désactivés, une seule fonction d'entrée
-`lireTableur`. ExcelJS reste la bibliothèque d'**écriture** des exports. Détail : analyse §7.
+CVE-2023-30533 et CVE-2024-22363). Archive versionnée dans le dépôt (`backend/vendor/xlsx-0.20.3.tgz`, dépendance
+`file:./vendor/xlsx-0.20.3.tgz` dans `backend/package.json`), téléchargée depuis `https://cdn.sheetjs.com/xlsx-0.20.3/
+xlsx-0.20.3.tgz` et vérifiée (nom `xlsx`, version `0.20.3`, auteur `sheetjs` dans son `package.json` interne) —
+empreinte SHA-256 de l'archive : `8dc73fc3b00203e72d176e85b50938627c7b086e607c682e8d3c22c02bb99fe8`. Lecture côté
+serveur uniquement (`backend/src/encImportLecture.ts`), taille bornée à 10 Mo et nombre de lignes à 20 000 (aucune
+valeur précise dans le cahier, au-delà de l'objectif « 5 000 lignes < 2 min » — ces deux plafonds sont ajustables),
+formules/HTML/styles désactivés (`cellFormula: false`, `cellHTML: false`, `cellStyles: false`, `cellDates: true`),
+une seule fonction d'entrée `lireTableur(buffer) → { lignes, brancheColonnePresente, nbLignesVidesIgnorees }`.
+ExcelJS reste la bibliothèque d'**écriture** des exports. Détail du choix : analyse §7.
+
+**Dockerfile** — la dépendance `file:` de `backend/vendor/` est résolue par `npm ci` RELATIVEMENT à
+`backend/package.json` : les stages `deps` et `prod-deps` (copies sélectives de `package.json`, avant `npm ci`) ont
+tous deux reçu un `COPY backend/vendor ./backend/vendor` juste avant leur `npm ci`/`npm ci --omit=dev` — sans quoi
+l'un ou l'autre échouerait avec un fichier introuvable. Vérifié par un vrai `docker build` de l'image complète
+(voir CLAUDE.md pour le résultat).
+
+**Permissivité délibérée** : `lireTableur` ne lève une exception que pour des problèmes STRUCTURELS (en-têtes
+incorrects, fichier vide/illisible, trop volumineux, trop de lignes) — un champ de contenu absent ou illisible sur
+une ligne donnée (police, dates, montants, mode, référence) devient `null`, jamais une exception qui ferait échouer
+tout le fichier : une ligne incomplète est une donnée métier pour les règles F1 (commit 4b, cas « à compléter »),
+pas une erreur de lecture.
+
+**Découverte, bloquante pour 4b** : aucune colonne du fichier n'est identifiée pour signaler qu'une ligne est
+annulée (§3.1 renvoie à F8, Lot 4, sans préciser la colonne ; les 34 en-têtes de la maquette n'en contiennent
+aucune) — `lireTableur` ne lit donc aucun indicateur d'annulation. Voir l'arbitrage D14 (2026-09-30) plus haut.
 
 ---
 
@@ -448,11 +495,11 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | V2-A7 | Arrondi des parts d'accessoires ; T et V absents du 9.6 | Arrondi retenu le 2026-09-28 (part partenaire half-up, part SIM = AC − part partenaire) ; T et V du 9.6 choisis dans les tests (1 400 et 100) |
 | V2-A8 | Correction d'un encaissement | OUVERT |
 | V2-A9 | Contre-passation d'une taxe déjà payée | OUVERT |
-| V2-A10 | Paiement incomplet d'une police nouvelle | OUVERT |
+| V2-A10 | Paiement incomplet d'une police nouvelle | TRANCHÉ 2026-09-30 (D13) : contrat créé, paiement signalé « à compléter » |
 | V2-A11 | « Ajouter quand même » : à confirmer ou confirmé | OUVERT |
-| V2-A12 | Règles de doublon (statuts comparés, ordre, portée de la référence) | OUVERT |
+| V2-A12 | Règles de doublon (statuts comparés, ordre, portée de la référence) | PROVISOIRE 2026-09-30 (D12) — à confirmer par le client |
 | V2-A13 | Date de début de NOVELIA | TRANCHÉ 2026-09-30 : NOVELIA bénéficiaire depuis toujours (réponse du client) — 2000-01-01 retenue définitivement (`ENC_BENEFICIAIRE_HONORAIRES_INITIAL`, §5.2) |
-| V2-A14 | Lignes annulées importées par la Finance | OUVERT |
+| V2-A14 | Lignes annulées importées par la Finance | TRANCHÉ 2026-09-30 (D14) : rejetée entièrement si Finance, importée normalement + signalée si Équipe technique — **colonne du fichier qui porte cette information encore inconnue** (découverte 4a, voir arbitrages 2026-09-30), bloque le codage effectif de la règle en 4b |
 | V2-A15 | Liste des branches | PROVISOIRE (P1) |
 | V2-A16 | Affectation partielle et classement d'un même paiement non identifié | OUVERT |
 | V2-A17 | Source d'un encaissement issu d'une affectation | OUVERT |
@@ -470,7 +517,7 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | V2-A27c | Date et référence du « payé (reprise) » | OUVERT |
 | V2-A27d | Conflit entre la bascule des taxes au 30/09 et P2 (taxes de septembre exigibles en octobre) : bascule au 30/09 ou au 31/08 ? | OUVERT — question posée au client ; en attendant, P2 ne s'applique pas à la reprise |
 | V2-A27e | Paiement repris sans date en colonne A | OUVERT |
-| V2-A28 | Référence et date future pour les paiements du fichier | OUVERT |
+| V2-A28 | Référence et date future pour les paiements du fichier | TRANCHÉ 2026-09-30 (D15) : contrat importé, paiement non créé, signalé « à compléter » |
 | V2-A29 | Contenu de l'export du registre | OUVERT |
 | V2-A30 | Onglet « À vérifier » pour l'équipe technique | OUVERT |
 | V2-A31 | Mise en service | TRANCHÉ 2026-09-28 (D5) |
@@ -525,8 +572,11 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | 2b | **Paramètres V2** : retirer la ligne `taxe.delai_exigibilite_mois`, ajouter `accessoires.part_partenaire_defaut`, borne 1–28 en base (CHECK) — fait (2026-09-30) | — |
 | 3a | **Référentiels et paramétrage de base** (branches, bénéficiaire des honoraires daté, partenaires, taux de contrôle) — fait (2026-09-30), sans écran (F9 au Lot 3) | V2-A13 tranchée (NOVELIA depuis toujours), V2-A15 (branches, toujours provisoire, P1) |
 | 3b | **`EncContrat`** (reste à faire) | — |
-| 4 | **Lecture de tableurs et règles d'import** (SheetJS, F1, F1.5, relevé synthétique) | V2-A1c, A10, A12, A14, A28 |
-| 5 | **Import de production (F1)** | — |
+| 4a | **Lecture du fichier de production** (`lireTableur`, pure, SheetJS CE vendue) — fait (2026-09-30) | — (voir découverte "colonne d'annulation" ci-dessous, pour 4b) |
+| 4b | **Règles F1** (doublon, avenant, écarts, incohérences — pures) | V2-A12 (PROVISOIRE), V2-A10/A14/A28 tranchées (voir arbitrages 2026-09-30) |
+| 4c | **Application en base** (`EncContrat`/`EncEncaissement`/`EncImport`/`EncSignalement`, transaction, route de dépôt dédiée) | — |
+| 4d | **Écran d'import** | V2-A30 (non bloquante) |
+| — | Découpage validé le 2026-09-30 (4 commits au lieu de « Lecture de tableurs et règles d'import » + « Import de production » ci-dessus, listés à titre d'historique) ; F1.5 (reprise) reste un commit séparé, plus tard, une fois A27b/A27d/A1c répondues. |
 | 6 | **Recherche et fiche police (F2)** | — |
 | 7 | **Saisie (F3)**, montants figés (D9) | V2-A2, A6 |
 | 8 | **Paiement multiple (F4)** | — |

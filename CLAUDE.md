@@ -4746,14 +4746,84 @@ même pendant que le blocage local était actif.
 
 **Données clients** : les relevés bancaires et mobile money (et tout extrait du classeur) ne vont **jamais** dans le dépôt,
 ni dans `docs/`, ni dans des tests. Dossier local `C:\Projets\donnees-sensibles\`, **hors du dépôt** (la ligne
-`/donnees-sensibles/` du `.gitignore` reste par précaution) ; tests sur des relevés synthétiques. Lecture `.xls`/`.xlsx`/`.csv` : **SheetJS CE 0.20.3** proposé (archive de l'éditeur versionnée ; le
-paquet npm `xlsx` 0.18.5 n'est plus maintenu et porte des failles connues) ; ExcelJS reste l'outil d'écriture des exports.
+`/donnees-sensibles/` du `.gitignore` reste par précaution) ; tests sur des relevés synthétiques. Lecture `.xls`/`.xlsx`/`.csv` : **SheetJS CE 0.20.3 vendue** (`backend/vendor/xlsx-0.20.3.tgz`, dépendance
+`file:`, empreinte vérifiée — voir "Lot 1 — F1" ci-dessous) ; le paquet npm `xlsx` 0.18.5 n'est plus maintenu et porte
+des failles connues ; ExcelJS reste l'outil d'écriture des exports.
 
 **Toujours valables (2026-09-26)** : module autonome (préfixe `Enc`, clé `encaissements`, routes `/encaissements`) ;
 hors purge globale, avec sa propre remise à zéro (`enc.mettre_en_service`, DG seul, espace système) ; audit immuable
 (limite : connexion en superutilisateur, le CDC demande un compte applicatif aux droits limités et une conservation de 10
 ans) ; `EncPieceJointe` séparée de `PieceJointe` ; taux et parts en fraction `Decimal(7,6)` ; montants `Decimal(14,2)`,
 jamais en `number`.
+
+### Lot 1 — F1 : import mensuel du fichier de production (hors reprise F1.5)
+
+Découpage validé le 2026-09-30 en **4 commits** (plutôt qu'un seul "Lecture de tableurs et règles d'import" — voir
+conception §11) : **4a** lecture pure du fichier, **4b** règles F1 pures (doublon/avenant/écarts), **4c** application
+en base (transaction), **4d** écran. F1.5 (reprise initiale) reste un commit séparé, plus tard, une fois V2-A27b/
+V2-A27d/V2-A1c répondues par le client — rien dans ces 4 commits ne construit la reprise.
+
+**Décisions du 2026-09-30** (détail et raisonnement : conception §1, arbitrages D12-D15) :
+- **V2-A12 (doublon), PROVISOIRE** : « déjà présent » compare avec TOUS les encaissements existants (y compris
+  « non reçus ») ; « doublon possible » (±1 FCFA, ±7 jours) compare seulement avec confirmés + à confirmer.
+- **V2-A10 tranché** : paiement incomplet sur police nouvelle → contrat créé, paiement signalé « à compléter ».
+- **V2-A14 tranché** : ligne annulée d'un fichier Finance → rejetée entièrement (ni contrat ni paiement) ; fichier
+  Équipe technique → contrat importé normalement, signalement « annulation non appliquée — en attente L4 ».
+- **V2-A28 tranché** : date de paiement future sur une ligne de fichier → contrat importé, paiement NON créé,
+  signalé « à compléter » (même règle que la saisie manuelle, §8.1).
+- Route de dépôt du fichier : **dédiée** au module (`.xls`/`.xlsx`/`.csv`, gardée par `enc.importer_production`),
+  jamais un élargissement de la route commune Trésorerie (tous ses utilisateurs pourraient sinon déposer des
+  tableurs) — prévue au commit 4c.
+- Transaction d'import (4c) : le timeout par défaut de `$transaction` (5 s) ne tiendra pas 5 000 lignes — timeout
+  explicite et/ou insertions par lots, à mesurer réellement sur une base Docker.
+
+#### Commit 4a — Lecture du fichier de production (fait, 2026-09-30)
+
+- **`backend/src/encImportLecture.ts`** (nouveau) — seule fonction d'entrée `lireTableur(buffer) →
+  { lignes, brancheColonnePresente, nbLignesVidesIgnorees }` (§8.4). Colonnes A à AH (34, position fixe) lues par
+  POSITION, en-têtes contrôlés (symboles ▲/✦ de la maquette ignorés à la comparaison) ; colonne « Branche »
+  optionnelle reconnue par son en-tête, à n'importe quelle position (CDC §7.1) ; colonnes calculées ignorées
+  (N, Q, R, AA à AH — y compris "Observations", AF : le cahier ne fait aucune exception sur cette plage, jamais
+  repris tel quel depuis le fichier) ; montants (S, T, U, V, W, X, Z — **mêmes noms que `MontantsContrat`,
+  `encCalcul.ts`**, jamais une nomenclature parallèle) arrondis au centime en passant par une chaîne (jamais le
+  flottant brut, qui peut porter un résidu binaire) ; `normaliserMode` = portage direct de `normMode`
+  (`Maquette_registre_paiements.html`). Limites : 10 Mo, 20 000 lignes (aucune valeur précise dans le cahier
+  au-delà de l'objectif « 5 000 lignes < 2 min »).
+- **Permissif à dessein** : seuls des problèmes STRUCTURELS (en-têtes incorrects, fichier vide/illisible, trop
+  volumineux, trop de lignes) lèvent `EncImportLectureError` — un champ absent/illisible sur une ligne (police,
+  dates, montants, paiement) devient `null`, jamais une exception qui ferait échouer tout le fichier : une ligne
+  incomplète est une décision du commit 4b (règles F1, cas « à compléter »), pas une erreur de lecture.
+- **Piège trouvé et corrigé avant la mise en service** : `sheetRows: LIGNES_MAX + 1` passé à `XLSX.read` tronque
+  SILENCIEUSEMENT toute ligne au-delà de la limite AVANT que le contrôle `donnees.length > LIGNES_MAX` ne puisse
+  jamais la voir — un fichier de 20 001 lignes ne levait donc AUCUNE erreur (import partiel silencieux, l'inverse du
+  comportement voulu). Corrigé en demandant `LIGNES_MAX + 2` lignes à SheetJS (marge d'une ligne, jamais un plafond
+  réellement illimité) : le contrôle explicite voit alors bien le dépassement. Trouvé par un vrai test (20 001 lignes
+  minimales, sous la limite de taille pour isoler cette limite précise de celle des 10 Mo), pas par relecture de code.
+- **`backend/vendor/xlsx-0.20.3.tgz`** — téléchargé depuis `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`,
+  vérifié (nom/version/auteur dans son `package.json` interne), empreinte SHA-256
+  `8dc73fc3b00203e72d176e85b50938627c7b086e607c682e8d3c22c02bb99fe8`. `backend/package.json` :
+  `"xlsx": "file:./vendor/xlsx-0.20.3.tgz"` — `package-lock.json` confirme `resolved: "file:backend/vendor/
+  xlsx-0.20.3.tgz"` (jamais le registre npm).
+- **`Dockerfile` corrigé** — les stages `deps` et `prod-deps` copient sélectivement les `package.json` AVANT `npm
+  ci`/`npm ci --omit=dev` ; sans `backend/vendor/` copié au même moment, l'un et l'autre échoueraient (la dépendance
+  `file:` est résolue par npm relativement à `backend/package.json`, absent son dossier vendu à cet instant du
+  build). Un `COPY backend/vendor ./backend/vendor` ajouté juste avant chaque `npm ci` des deux stages. **Vérifié
+  par un vrai `docker build` de l'image complète** (`docker build -t sim-portail-encimport-test .`) : les 4 stages
+  (`deps`, `builder`, `prod-deps`, `runner`) passent avec succès, `npm ci`/`npm ci --omit=dev` incluses (auraient
+  échoué immédiatement sans le correctif), `npm run build` (Next.js, 65 routes) compris — **exit code 0**. Seul
+  avertissement Docker, préexistant et sans rapport (`AUTH_SECRET` en `ENV`, déjà documenté dans le Dockerfile comme
+  un placeholder de build jamais utilisé au runtime). Image de test supprimée après vérification (`docker rmi`).
+- **Découverte, bloquante pour le commit 4b (V2-A14)** : aucune colonne du fichier n'est identifiée pour signaler
+  qu'une ligne est annulée — le CDC (§3.1) renvoie à F8 (Lot 4) sans nommer de colonne, et les 34 en-têtes de la
+  maquette n'en contiennent aucune. `encImportLecture.ts` ne lit donc, à dessein, aucun indicateur d'annulation ; la
+  règle D14 ne pourra être codée qu'une fois cette colonne identifiée (conception §1, 2026-09-30).
+- Tests : `backend/src/encImportLecture.test.ts`, 29 cas — fixtures `.xlsx` générées EN MÉMOIRE par SheetJS
+  lui-même (jamais un fichier réel ni même un `.xlsx` versionné dans le dépôt), en-têtes valides/invalides/nombre de
+  colonnes incorrect, colonne Branche présente/absente/casse, colonnes calculées jamais reprises, arrondi au
+  centime, ligne de paiement incomplète (permissive), numéro de police manquant (permissif), ligne entièrement
+  vide ignorée, `numeroLigne` correct, les 3 limites structurelles (taille/lignes/illisible), `normaliserMode` sur
+  tous les cas de la maquette.
+- `vitest` (122/122 tests backend), `tsc --noEmit` et `eslint` passent sans erreur.
 
 ## Socle Portail — Authentification et permissions
 
