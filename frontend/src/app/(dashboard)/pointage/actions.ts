@@ -102,8 +102,18 @@ export async function enregistrerPointageAction(
       };
     }
 
+    // Précision GPS obligatoire : l'omettre ne doit jamais permettre de sauter
+    // le contrôle ci-dessous (les clients légitimes l'envoient toujours avec
+    // les coordonnées, voir useGeolocation).
+    if (geoPrecision === undefined) {
+      return {
+        status: "error",
+        message: "Précision GPS non transmise. Réessayez le pointage.",
+      };
+    }
+
     // Précision GPS insuffisante (trop imprécis pour garantir la position)
-    if (geoPrecision !== undefined && !isGeoPrecisionAcceptable(geoPrecision)) {
+    if (!isGeoPrecisionAcceptable(geoPrecision)) {
       return {
         status: "error",
         message: `Signal GPS trop faible (précision : ${Math.round(geoPrecision)}m). Déplacez-vous en extérieur et réessayez.`,

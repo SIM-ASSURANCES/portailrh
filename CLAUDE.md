@@ -4019,6 +4019,7 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 - **Flux SSE `/api/pointage/stream`** : exige une session (`auth()`, 401 sinon), même garde que `/api/events`. Rappel : `authorized()` laisse passer `/api/*`, chaque route se protège elle-même.
 - **`/api/network-config`** : outil de dev (URL réseau du QR code en local), répond 404 quand `NODE_ENV === "production"`.
 - **`backend/prisma/set-admin.ts`** (lancé par `init` à chaque déploiement) : sans `ADMIN_EMAIL`/`ADMIN_PASSWORD`, message et sortie en code 0 (ne bloque jamais `init`). Un admin existant garde son mot de passe (changement fait depuis `/profil` préservé), sauf `ADMIN_FORCE_PASSWORD_RESET=true`. Rattrapage `Role.estAdmin` conservé.
+- **Pointage géolocalisé** : la précision GPS est obligatoire (absente ⇒ refus) avant le contrôle de précision. Limite connue : coordonnées et précision viennent du navigateur, donc restent falsifiables — l'activation de la géolocalisation est une décision RH.
 
 ## Module FeedbackApp — anonymat total
 
