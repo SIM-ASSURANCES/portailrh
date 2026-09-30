@@ -281,12 +281,31 @@ model EncImport {                                    // [L1]
 }
 model EncSignalement {                               // [L1]
   id  importId  contratId?  numPolice  brancheId?
-  analyse (DEJA_PRESENT | DOUBLON_POSSIBLE | A_COMPLETER | REF_WAVE_NON_CONFORME | AJOUTE | SANS_PAIEMENT
-           | PRIME_MODIFIEE | INCOHERENCE | ECART_TAUX | LIGNE_ANNULEE_REJETEE | BRANCHE_INCONNUE)
+  analyse (DEJA_PRESENT | DOUBLON_POSSIBLE | A_COMPLETER | REFERENCE_MANQUANTE | REF_WAVE_NON_CONFORME | AJOUTE
+           | SANS_PAIEMENT | PRIME_MODIFIEE | INCOHERENCE | ECART_TAUX | LIGNE_ANNULEE_REJETEE
+           | ANNULATION_EN_ATTENTE_L4 | BRANCHE_INCONNUE)
   niveau (A_TRAITER | INFO)  statut (A_TRAITER | INFO | TRAITE)
   paiementIndique Json?  encaissementExistantId?  encaissementCreeId?  primeAvant?  primeApres?
   traiteParId?  traiteAt?  resolution?  creeAt
 }
+```
+**Deux valeurs ajoutées (commit 4b, 2026-09-30), absentes du sketch d'origine** — le vrai `enum` Prisma devra les
+recevoir au commit 4c :
+- **`ANNULATION_EN_ATTENTE_L4`** — cas « Équipe technique » de V2-A14 (D14), jamais un rejet (contrat importé
+  normalement), donc distincte de `LIGNE_ANNULEE_REJETEE`.
+- **`REFERENCE_MANQUANTE`** — **deux corrections post-revue successives (2026-09-30)**. Un premier essai avait fondu
+  la référence manquante dans `A_COMPLETER`, au motif que CDC §3.2 l'exige pour « tout nouvel encaissement ».
+  **Corrigé (1)** : le tableau F1.4 (le cas « manquant ») ne cite que date, mode et montant — l'obligation de
+  référence du §3.2 vise la SAISIE À L'ÉCRAN, pas le fichier de production. Une ligne sans référence est donc
+  **ajoutée « à confirmer »** (pas bloquée), avec un signalement À TRAITER dédié. Un deuxième essai sautait alors le
+  contrôle « doublon possible » (fuzzy, ±1 FCFA/±7 jours) pour ces lignes, en pensant à tort que le groupe 3 du
+  rapprochement (CDC F5 : « même montant à 3 jours près, sans référence commune ») en avait seul la charge.
+  **Corrigé (2)** : l'ORDRE voulu est **déjà présent → doublon possible → à compléter (date/mode/montant) → puis,
+  SEULEMENT si la ligne est ajoutée, `REFERENCE_MANQUANTE` (ou `REF_WAVE_NON_CONFORME`) s'ajoute au signalement
+  `AJOUTE`, jamais à sa place**. Une ligne sans référence qui ressemble à un encaissement existant (±1 FCFA, ±7
+  jours) reste donc un doublon possible, non ajoutée — le groupe 3 du rapprochement sert pour les cas que ce
+  contrôle ne détecte pas, jamais pour le remplacer.
+```prisma
 model EncReleveLigne {                               // [L1]
   id  importId  numeroLigne  date  references String[]  referencePrincipale?
   montantBrut  montantNet?  frais  typeTransaction?  nomContrepartie?  telephone?
@@ -505,7 +524,7 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | V2-A17 | Source d'un encaissement issu d'une affectation | OUVERT |
 | V2-A18 | Année du numéro SUS | OUVERT |
 | V2-A19 | Dates de référence des états | OUVERT |
-| V2-A20 | Taux de contrôle : base, tolérance, lot | OUVERT |
+| V2-A20 | Taux de contrôle : base, tolérance, lot | RÉSOLU 2026-09-30 pour les 4 natures : taxe = V/(T+U), commission = W/T, honoraires = X/T (base reprise de la maquette) ; accessoires = U/T (base implicite reprise du V1) — **PROVISOIRE, à confirmer par le client**. Tolérance toujours fournie par l'appelant, aucune valeur par défaut |
 | V2-A21 | Relevé : toutes branches ou branche choisie | OUVERT |
 | V2-A22 | Groupe 4 du relevé en Lot 1 | OUVERT |
 | V2-A23 | Frais : tests comptés (RÉSOLU, D11) ; deux relevés partiels du même mois | OUVERT (en partie) |
@@ -573,7 +592,7 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | 3a | **Référentiels et paramétrage de base** (branches, bénéficiaire des honoraires daté, partenaires, taux de contrôle) — fait (2026-09-30), sans écran (F9 au Lot 3) | V2-A13 tranchée (NOVELIA depuis toujours), V2-A15 (branches, toujours provisoire, P1) |
 | 3b | **`EncContrat`** (reste à faire) | — |
 | 4a | **Lecture du fichier de production** (`lireTableur`, pure, SheetJS CE vendue) — fait (2026-09-30) | — (voir découverte "colonne d'annulation" ci-dessous, pour 4b) |
-| 4b | **Règles F1** (doublon, avenant, écarts, incohérences — pures) | V2-A12 (PROVISOIRE), V2-A10/A14/A28 tranchées (voir arbitrages 2026-09-30) |
+| 4b | **Règles F1** (doublon, avenant, écarts, incohérences — pures) — fait (2026-09-30) | V2-A12 (PROVISOIRE), V2-A10/A14/A28 tranchées (voir arbitrages 2026-09-30) ; V2-A20 (taux de contrôle) résolue pour taxe/commission/honoraires (base reprise de la maquette), toujours OUVERTE pour les accessoires |
 | 4c | **Application en base** (`EncContrat`/`EncEncaissement`/`EncImport`/`EncSignalement`, transaction, route de dépôt dédiée) | — |
 | 4d | **Écran d'import** | V2-A30 (non bloquante) |
 | — | Découpage validé le 2026-09-30 (4 commits au lieu de « Lecture de tableurs et règles d'import » + « Import de production » ci-dessus, listés à titre d'historique) ; F1.5 (reprise) reste un commit séparé, plus tard, une fois A27b/A27d/A1c répondues. |

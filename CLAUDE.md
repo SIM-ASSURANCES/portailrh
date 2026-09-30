@@ -4825,6 +4825,42 @@ V2-A27d/V2-A1c répondues par le client — rien dans ces 4 commits ne construit
   tous les cas de la maquette.
 - `vitest` (122/122 tests backend), `tsc --noEmit` et `eslint` passent sans erreur.
 
+#### Commit 4b — Règles F1 (fait, 2026-09-30)
+
+- **`backend/src/encImportRegles.ts`** (nouveau, PUR) — `analyserLigne(ligne, contexte, options)` décide, pour une
+  ligne déjà lue (4a) : contrat à créer/mettre à jour (toujours renseigné sauf rejet V2-A14), avenant (`PRIME_MODIFIEE`
+  si S/T/U/V/W/X ont changé), paiement à créer ou non, et les signalements du tableau F1.4 + incohérence T+U+V≠S +
+  écart de taux de contrôle + branche inconnue. Aucun accès base : le contexte (contrat existant, ses encaissements,
+  taux de contrôle attendus, branches connues, tolérances, date du jour) est fourni par l'appelant — rien n'est lu ni
+  deviné en interne.
+- **V2-A14 (annulation)** : implémenté en POINT D'EXTENSION SEULEMENT (`LigneAAnalyser.indicateurAnnulation?`,
+  jamais peuplé par `encImportLecture.ts` aujourd'hui — aucune colonne connue, question posée au client : en-têtes
+  envisagés « Statut/Date/Motif/Type annulation »). La règle elle-même (Finance → `LIGNE_ANNULEE_REJETEE`, rejet
+  entier ; Équipe technique → contrat+paiement importés normalement + `ANNULATION_EN_ATTENTE_L4`, **valeur d'enum
+  nouvelle**, absente du sketch d'origine) est codée et testée avec une ligne construite à la main.
+- **Écart de taux de contrôle (V2-A20)** : bases reprises de la maquette (seule formule disponible : taxe = V/(T+U),
+  commission = W/T, honoraires = X/T) ; **accessoires = U/T** (base implicite reprise du V1) — **PROVISOIRE, à
+  confirmer par le client** (correction du 2026-09-30 : d'abord non implémenté faute de formule, puis ajouté sur
+  cette base par défaut). Tolérance toujours fournie par l'appelant, jamais un défaut deviné.
+- **Deux corrections post-revue successives (2026-09-30) — référence manquante** : un premier essai classait une
+  référence manquante dans « à compléter » (paiement non créé), par analogie avec CDC §3.2 (« référence obligatoire
+  pour tout nouvel encaissement »). **Corrigé (1)** : le tableau F1.4 ne cite que date/mode/montant pour le cas
+  « manquant » — l'exigence de référence du §3.2 vise la SAISIE À L'ÉCRAN, pas le fichier. Une ligne sans référence
+  est donc ajoutée à confirmer (signalement À TRAITER `REFERENCE_MANQUANTE`, **valeur d'enum nouvelle**). Un
+  deuxième essai sautait alors le contrôle « doublon possible » (fuzzy, ±1 FCFA/±7 jours) pour ces lignes, en pensant
+  à tort que le groupe 3 du rapprochement (CDC F5) en avait seul la charge. **Corrigé (2)** : l'ORDRE voulu est
+  déjà présent → doublon possible → à compléter → puis, SEULEMENT si la ligne est ajoutée, `REFERENCE_MANQUANTE`
+  (ou `REF_WAVE_NON_CONFORME`) s'ajoute au signalement `AJOUTE`, jamais à sa place — une ligne sans référence qui
+  ressemble à un encaissement existant reste donc un doublon possible, non ajoutée.
+- Recette : cas 9.2 (paiement fichier technique) et 9.3 (doublon Wave 400 FCFA/3 jours) reproduits exactement ; les
+  6 cas du tableau F1.4 ; référence manquante SANS doublon détecté (ajoutée, signalée) ET référence manquante AVEC
+  un doublon détecté (non ajoutée, « doublon possible », pas « référence manquante ») ; avenant ; incohérence
+  T+U+V≠S (dans/hors tolérance) ; écart de taux (commission ET accessoires) ; date future (V2-A28, y compris la
+  date du jour elle-même acceptée) ; branche inconnue (avec/sans liste fournie) ; les deux branches de V2-A14 +
+  confirmation qu'aucun vrai résultat de lecture ne déclenche jamais cette règle aujourd'hui.
+- Tests : `backend/src/encImportRegles.test.ts`, 32 cas. `vitest` (154/154 tests backend), `tsc --noEmit` et
+  `eslint` passent sans erreur (backend et frontend) ; `next build` (65 routes) inchangé.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif
