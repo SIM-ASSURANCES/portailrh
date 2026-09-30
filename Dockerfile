@@ -84,6 +84,31 @@ ENV AUTH_SECRET="build-time-placeholder-not-used-at-runtime"
 # Les vraies valeurs de production sont, elles, injectées au DÉMARRAGE du
 # conteneur par docker-compose.yml (variable d'environnement réelle, jamais
 # un fichier), bien après la fin de ce build.
+#
+# EXCEPTION — clés Firebase du client web (notifications push) : Next.js
+# fige toute variable NEXT_PUBLIC_* dans le bundle navigateur AU BUILD ;
+# la définir dans le compose au démarrage n'a aucun effet. Ce sont des
+# identifiants publics par nature (envoyés à chaque navigateur), pas des
+# secrets : ils se passent donc en --build-arg. Vides par défaut : le
+# client teste leur présence et n'active simplement pas le push (même
+# comportement qu'aujourd'hui). Exemple :
+#   docker build --build-arg NEXT_PUBLIC_FIREBASE_API_KEY=... (x6) \
+#     -t ghcr.io/sim-assurances/portailrh:vN .
+# La clé privée serveur
+# (FIREBASE_SERVICE_ACCOUNT_JSON), elle, reste une variable du compose,
+# jamais un argument de build.
+ARG NEXT_PUBLIC_FIREBASE_API_KEY=""
+ARG NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=""
+ARG NEXT_PUBLIC_FIREBASE_PROJECT_ID=""
+ARG NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=""
+ARG NEXT_PUBLIC_FIREBASE_APP_ID=""
+ARG NEXT_PUBLIC_FIREBASE_VAPID_KEY=""
+ENV NEXT_PUBLIC_FIREBASE_API_KEY=$NEXT_PUBLIC_FIREBASE_API_KEY \
+    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN \
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID=$NEXT_PUBLIC_FIREBASE_PROJECT_ID \
+    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID \
+    NEXT_PUBLIC_FIREBASE_APP_ID=$NEXT_PUBLIC_FIREBASE_APP_ID \
+    NEXT_PUBLIC_FIREBASE_VAPID_KEY=$NEXT_PUBLIC_FIREBASE_VAPID_KEY
 RUN npm run build
 
 # ---------- Stage 3 : prod-deps (dépendances de production uniquement) ----------

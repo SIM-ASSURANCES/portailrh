@@ -5454,6 +5454,10 @@ pas de build côté Dokploy).
   au vendredi à 17h30 et 20h00 UTC (= Abidjan) ; inactif tant que
   `CRON_SECRET` n'est pas défini (à définir seulement après désactivation
   des comptes de test et réglage de `SYSTEM_START_DATE`).
+- **Clés `NEXT_PUBLIC_FIREBASE_*`** : figées au build par Next.js, donc
+  passées en `--build-arg` (Dockerfile, vides par défaut = push inactif) ;
+  les mettre dans le compose n'a aucun effet. `FIREBASE_SERVICE_ACCOUNT_JSON`
+  (secret serveur) reste une variable du compose.
 - Service de base de données nommé **`portailrh-db`** — jamais `db`
   (réseau `dokploy-network` partagé entre tous les projets du serveur,
   ambiguïté DNS sinon).

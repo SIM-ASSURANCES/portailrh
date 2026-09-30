@@ -52,7 +52,7 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
       ALLOWED_OFFICE_IPS: ${ALLOWED_OFFICE_IPS:-}
       CRON_SECRET: ${CRON_SECRET:-}
-      SYSTEM_START_DATE: ${SYSTEM_START_DATE:-2026-09-01}
+      SYSTEM_START_DATE: ${SYSTEM_START_DATE:-2026-10-01}
     volumes:
       - uploads:/app/uploads
     networks:
