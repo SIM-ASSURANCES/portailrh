@@ -1513,7 +1513,7 @@ logique dans `backend/src/reinitialisation.ts`.
 - **Fichiers** : supprimés de `uploads/` APRÈS le commit (hors transaction, garde anti path traversal) ; un échec de fichier
   n'annule rien et est compté.
 - **Après la purge** : régler `SYSTEM_START_DATE` sur la date de bascule (le cron `/api/cron/absences` ignore tout ce qui est antérieur) —
-  `.env` en local ; **en production `docker-compose.raw.yml` le fixe en dur** (et `docker-compose.dokploy.yml` le lit d'une variable Dokploy).
+  `.env` en local ; **en production, variable de l'onglet Environment de Dokploy** (`docker-compose.raw.yml` : défaut `2026-10-01`).
   Rappel affiché au DG (message de succès et page d'audit). Non automatisable depuis l'application. La numérotation `DEM-AAAA-NNNNNN`
   repart de 1 (elle est dérivée du nombre de demandes).
 - **Testé** sur une base PostgreSQL jetable (jamais la base de développement) : purge complète via l'interface (bouton grisé sans
@@ -4018,7 +4018,7 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 ### 7. Durcissement sécurité (2026-09-30)
 - **Flux SSE `/api/pointage/stream`** : exige une session (`auth()`, 401 sinon), même garde que `/api/events`. Rappel : `authorized()` laisse passer `/api/*`, chaque route se protège elle-même.
 - **`/api/network-config`** : outil de dev (URL réseau du QR code en local), répond 404 quand `NODE_ENV === "production"`.
-- **`backend/prisma/set-admin.ts`** (lancé par `init` à chaque déploiement) : sans `ADMIN_EMAIL`/`ADMIN_PASSWORD`, message et sortie en code 0 (ne bloque jamais `init`). Un admin existant garde son mot de passe (changement fait depuis `/profil` préservé), sauf `ADMIN_FORCE_PASSWORD_RESET=true`. Rattrapage `Role.estAdmin` conservé.
+- **`backend/prisma/set-admin.ts`** (plus appelé par `init`, lancement manuel à la première installation) : sans `ADMIN_EMAIL`/`ADMIN_PASSWORD`, message et sortie en code 0 (ne bloque jamais `init`). Un admin existant garde son mot de passe (changement fait depuis `/profil` préservé), sauf `ADMIN_FORCE_PASSWORD_RESET=true`. Rattrapage `Role.estAdmin` conservé.
 - **Pointage géolocalisé** : la précision GPS est obligatoire (absente ⇒ refus) avant le contrôle de précision. Limite connue : coordonnées et précision viennent du navigateur, donc restent falsifiables — l'activation de la géolocalisation est une décision RH.
 - **IP de confiance** : `getTrustedClientIp` (`backend/src/pointage-utils.ts`) retient l'IP la plus à droite de `x-forwarded-for` (ajoutée par Traefik, seul proxy devant l'app), repli `x-real-ip`. Utilisée par `enregistrerPointageAction` ; les autres lectures de l'en-tête (login, audit, FeedbackApp) restent à migrer. `getClientIp` (IP la plus à gauche) est falsifiable par le client.
 
@@ -4716,10 +4716,11 @@ l'accès admin d'un rôle prend effet immédiatement).
   du manifeste de build Next.js, injoignable en pratique). Ce durcissement
   remplace l'ancienne protection dynamique « dernier rôle admin » (comptage
   à chaque tentative de retrait), devenue sans objet.
-- `backend/prisma/set-admin.ts` (relancé à chaque déploiement) rétablit
-  systématiquement `estAdmin: true` sur le rôle nommé « Admin » s'il ne
-  l'est plus — filet de sécurité pour toute base migrée depuis un état
-  antérieur à `estAdmin`.
+- `backend/prisma/set-admin.ts` rétablit `estAdmin: true` sur le rôle
+  nommé « Admin » s'il ne l'est plus — filet de sécurité pour toute base
+  migrée depuis un état antérieur à `estAdmin`. Il n'est plus lancé à
+  chaque déploiement (retiré du service `init`, 2026-09-30) : lancement
+  manuel à la première installation seulement.
 - **Anomalie connue, non résolue** : le rôle « Admin » porte aujourd'hui en
   base 23 `RolePermission` réelles (toutes les permissions `treso.*`/
   `pointage.*`), ce qui contredit l'invariant documenté ci-dessus. Origine
@@ -5441,9 +5442,14 @@ pas de build côté Dokploy).
 - **Migrations automatiques (`prisma migrate deploy`) à chaque démarrage,
   seed JAMAIS automatisé** — le seed fait des `deleteMany`, protégé par un
   marqueur `.seeded` sur le volume `uploads` en production ; un service
-  `init` one-shot l'exécute une seule fois puis lance
-  `backend/prisma/set-admin.ts` (idempotent), avant que le service `app`
-  ne démarre.
+  `init` one-shot l'exécute une seule fois, avant que le service `app`
+  ne démarre. `set-admin.ts` n'y est plus appelé (il réécrivait le mot de
+  passe admin) : lancement manuel à la première installation.
+- **`docker-compose.raw.yml` est un modèle sans secret** : valeurs sensibles
+  en variables de l'onglet Environment de Dokploy (liste en tête du
+  fichier ; `AUTH_SECRET`, `POSTGRES_PASSWORD`, `ALLOWED_OFFICE_IPS`
+  obligatoires via `${…:?}`). L'historique Git garde les anciennes valeurs :
+  seule leur rotation protège.
 - Service de base de données nommé **`portailrh-db`** — jamais `db`
   (réseau `dokploy-network` partagé entre tous les projets du serveur,
   ambiguïté DNS sinon).

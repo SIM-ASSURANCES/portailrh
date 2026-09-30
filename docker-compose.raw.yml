@@ -1,9 +1,33 @@
 # ============================================================
 # sim-portail — Dokploy mode "Raw" (compose collé, sans dépôt Git)
 # Image pré-construite : ghcr.io/sim-assurances/portailrh:v7
+# (mettre à jour le tag vN des services "init" ET "app" à chaque version)
 # ------------------------------------------------------------
-# Onglet Environment de Dokploy — SEULE variable à renseigner :
-#   AUTH_SECRET        (openssl rand -base64 32)
+# MODÈLE : aucune valeur secrète dans ce fichier. Toutes les valeurs
+# sensibles se renseignent dans l'onglet Environment de Dokploy.
+#
+# Obligatoires (le déploiement refuse de démarrer sans elles) :
+#   AUTH_SECRET          openssl rand -base64 32
+#   POSTGRES_PASSWORD    openssl rand -hex 24  (hexadécimal UNIQUEMENT :
+#                        la valeur est insérée telle quelle dans DATABASE_URL
+#                        et dans une requête SQL de resynchronisation)
+#   ALLOWED_OFFICE_IPS   IP publique du bureau (plusieurs IP ou plages CIDR
+#                        séparées par des virgules)
+#
+# Facultatives :
+#   SYSTEM_START_DATE    AAAA-MM-JJ, défaut 2026-10-01 : le calcul des
+#                        absences ignore tout ce qui est antérieur
+#   CRON_SECRET          openssl rand -hex 24 ; sans elle, /api/cron/absences
+#                        répond 401 (aucune absence calculée automatiquement)
+#   SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_FROM SMTP_SECURE
+#                        sans SMTP_HOST : emails simulés (logs + notification)
+#   FIREBASE_SERVICE_ACCOUNT_JSON  notifications push (JSON sur une ligne)
+#   POSTGRES_USER / POSTGRES_DB    défauts = valeurs historiques ; ne JAMAIS
+#                        les changer sur un volume existant
+#
+# Rotation du mot de passe de la base : changer POSTGRES_PASSWORD puis
+# redéployer. L'entrypoint de "portailrh-db" resynchronise le mot de passe
+# au démarrage, et DATABASE_URL est construite à partir de la même variable.
 # ------------------------------------------------------------
 # IMPORTANT — le service de base s'appelle "portailrh-db", PAS "db".
 # Le service "app" est attaché à "dokploy-network", réseau PARTAGÉ par tous les
@@ -22,13 +46,13 @@ services:
     image: postgres:16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: portailrh_sim
-      POSTGRES_PASSWORD: RepensTOI26
-      POSTGRES_DB: db_portailrh_sim
+      POSTGRES_USER: ${POSTGRES_USER:-portailrh_sim}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obligatoire - onglet Environment (openssl rand -hex 24)}
+      POSTGRES_DB: ${POSTGRES_DB:-db_portailrh_sim}
     volumes:
       - pgdata_v2:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U portailrh_sim -d db_portailrh_sim"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-portailrh_sim} -d ${POSTGRES_DB:-db_portailrh_sim}"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -55,7 +79,12 @@ services:
   # base en production effacerait les vraies donnees. Il est donc protege par
   # un marqueur (/app/uploads/.seeded, sur le volume persistant "uploads") :
   # il ne s'execute qu'une seule fois, au tout premier deploiement.
-  # `set-admin.ts` est idempotent : rejoue a chaque deploiement sans risque.
+  #
+  # `set-admin.ts` n'est volontairement PLUS appele ici : il reecrivait le
+  # mot de passe administrateur a chaque deploiement. Premiere installation
+  # uniquement : le lancer une fois a la main depuis le terminal Dokploy du
+  # conteneur "app" (cd backend && ADMIN_EMAIL=... ADMIN_PASSWORD=... npx tsx
+  # prisma/set-admin.ts), puis changer le mot de passe depuis /profil.
   init:
     image: ghcr.io/sim-assurances/portailrh:v7
     pull_policy: always
@@ -64,10 +93,7 @@ services:
       portailrh-db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://portailrh_sim:RepensTOI26@portailrh-db:5432/db_portailrh_sim
-      ADMIN_EMAIL: admin@simassurances.com
-      ADMIN_PASSWORD: Simas@2026
-      ADMIN_NAME: Administrateur SIM
+      DATABASE_URL: postgresql://${POSTGRES_USER:-portailrh_sim}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obligatoire}@portailrh-db:5432/${POSTGRES_DB:-db_portailrh_sim}
     volumes:
       - uploads:/app/uploads
     entrypoint:
@@ -88,8 +114,6 @@ services:
           npx prisma db seed
           touch /app/uploads/.seeded
         fi
-        echo "[init] configuration du compte administrateur..."
-        npx tsx prisma/set-admin.ts
         echo "[init] termine."
 
   # ---------- Application ----------
@@ -103,23 +127,29 @@ services:
       init:
         condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql://portailrh_sim:RepensTOI26@portailrh-db:5432/db_portailrh_sim
+      DATABASE_URL: postgresql://${POSTGRES_USER:-portailrh_sim}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obligatoire}@portailrh-db:5432/${POSTGRES_DB:-db_portailrh_sim}
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET obligatoire - onglet Environment (openssl rand -base64 32)}
       AUTH_URL: https://portailrh.mysimassurances.com
       AUTH_TRUST_HOST: "true"
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
-      ALLOWED_OFFICE_IPS: "41.66.41.16"
-      SYSTEM_START_DATE: "2026-09-01"
+      ALLOWED_OFFICE_IPS: ${ALLOWED_OFFICE_IPS:?ALLOWED_OFFICE_IPS obligatoire - IP publique du bureau (onglet Environment)}
+      SYSTEM_START_DATE: ${SYSTEM_START_DATE:-2026-10-01}
+      CRON_SECRET: ${CRON_SECRET:-}
       # SMTP facultatif (reinitialisation de mot de passe par email) : sans
-      # ces 4 variables, l'email est "simule" (log + notification interne,
-      # lien affiche/cliquable dans /admin), jamais d'erreur bloquante. A
-      # decommenter et renseigner pour un envoi SMTP reel.
-      # SMTP_HOST: smtp.example.com
-      # SMTP_PORT: "587"
-      # SMTP_USER: portail@sim-assurances.ci
-      # SMTP_PASS: ${SMTP_PASS:-}
-      # SMTP_SECURE: "false"
+      # SMTP_HOST, l'email est "simule" (log + notification interne, lien
+      # affiche/cliquable dans /admin), jamais d'erreur bloquante.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      # Notifications push, cote serveur (facultatif : sans elle, les pushs
+      # FCM sont desactives, les notifications internes restent actives).
+      # Les cles NEXT_PUBLIC_FIREBASE_* sont, elles, figees au BUILD de
+      # l'image (voir Dockerfile) : les definir ici n'aurait aucun effet.
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
     volumes:
       - uploads:/app/uploads
     networks:
