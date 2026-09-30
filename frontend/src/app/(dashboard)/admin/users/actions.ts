@@ -721,6 +721,12 @@ export async function supprimerUtilisateurAction(
     encPartenairesCrees,
     encPartenairesMajs,
     encTauxControleMajs,
+    encImportsFaits,
+    encImportsValides,
+    encEncaissementsSaisis,
+    encEncaissementsConfirmes,
+    encEncaissementsNonRecus,
+    encSignalementsTraites,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -758,6 +764,13 @@ export async function supprimerUtilisateurAction(
     prisma.encPartenaire.count({ where: { creeParId: userId } }),
     prisma.encPartenaire.count({ where: { majParId: userId } }),
     prisma.encTauxControle.count({ where: { majParId: userId } }),
+    // Import F1 (commit 4c) : 6 relations vers User supplémentaires.
+    prisma.encImport.count({ where: { importeParId: userId } }),
+    prisma.encImport.count({ where: { valideParId: userId } }),
+    prisma.encEncaissement.count({ where: { saisiParId: userId } }),
+    prisma.encEncaissement.count({ where: { confirmeParId: userId } }),
+    prisma.encEncaissement.count({ where: { nonRecuParId: userId } }),
+    prisma.encSignalement.count({ where: { traiteParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -795,6 +808,12 @@ export async function supprimerUtilisateurAction(
   if (encPartenairesCrees > 0) blocages.push(`créé ${encPartenairesCrees} partenaire(s) des encaissements`);
   if (encPartenairesMajs > 0) blocages.push(`modifié ${encPartenairesMajs} partenaire(s) des encaissements`);
   if (encTauxControleMajs > 0) blocages.push(`modifié ${encTauxControleMajs} taux de contrôle des encaissements`);
+  if (encImportsFaits > 0) blocages.push(`importé ${encImportsFaits} fichier(s) (encaissements)`);
+  if (encImportsValides > 0) blocages.push(`validé ${encImportsValides} import(s) (encaissements)`);
+  if (encEncaissementsSaisis > 0) blocages.push(`saisi ${encEncaissementsSaisis} encaissement(s)`);
+  if (encEncaissementsConfirmes > 0) blocages.push(`confirmé ${encEncaissementsConfirmes} encaissement(s)`);
+  if (encEncaissementsNonRecus > 0) blocages.push(`déclaré ${encEncaissementsNonRecus} encaissement(s) non reçu(s)`);
+  if (encSignalementsTraites > 0) blocages.push(`traité ${encSignalementsTraites} signalement(s) (encaissements)`);
 
   if (blocages.length > 0) {
     const liste =

@@ -8,8 +8,13 @@ import { prisma } from "backend";
 
 /**
  * Téléchargement d'une pièce jointe du module Encaissements (`EncPieceJointe`) — jamais d'accès public à `uploads/`.
- * Toute pièce du module est consultable avec `enc.consulter` (le cahier donne la consultation à tous les profils du
- * module, y compris l'audit). Une pièce de la Trésorerie n'est jamais servie ici (autre table, autre route).
+ * Une pièce de la Trésorerie n'est jamais servie ici (autre table, autre route).
+ *
+ * Permission selon l'origine de la pièce :
+ * - fichier de production d'un import `PRODUCTION` (F1, D6 : « téléchargement Finance + Technique seulement ») →
+ *   `enc.importer_production` (Équipe technique + Finance uniquement, jamais Consultation — voir `encPermissions.ts`) ;
+ * - toute autre pièce (aucun `EncImport` lié, ou un import d'un autre `type` à venir) → repli sur `enc.consulter`
+ *   (le cahier donne la consultation à tous les profils du module, y compris l'audit).
  */
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -18,13 +23,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!session) {
     return new NextResponse("Non authentifié.", { status: 401 });
   }
-  if (!hasPermission(session, "enc.consulter")) {
-    return new NextResponse("Accès refusé.", { status: 403 });
-  }
 
-  const piece = await prisma.encPieceJointe.findUnique({ where: { id } });
+  const piece = await prisma.encPieceJointe.findUnique({ where: { id }, include: { encImport: true } });
   if (!piece) {
     return new NextResponse("Pièce jointe introuvable.", { status: 404 });
+  }
+
+  const permissionRequise = piece.encImport?.type === "PRODUCTION" ? "enc.importer_production" : "enc.consulter";
+  if (!hasPermission(session, permissionRequise)) {
+    return new NextResponse("Accès refusé.", { status: 403 });
   }
 
   let chemin: string;

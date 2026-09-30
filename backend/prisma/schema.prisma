@@ -127,6 +127,13 @@ model User {
   encPartenairesCrees             EncPartenaire[]             @relation("EncPartenaireCreePar")
   encPartenairesMajs              EncPartenaire[]             @relation("EncPartenaireMajPar")
   encTauxControleMajs             EncTauxControle[]           @relation("EncTauxControleMajPar")
+  /// Import F1 (docs/encaissements-conception.md §5.3/§5.5) — toutes en `onDelete: Restrict`.
+  encImportsFaits        EncImport[]       @relation("EncImportImportePar")
+  encImportsValides      EncImport[]       @relation("EncImportValidePar")
+  encEncaissementsSaisis EncEncaissement[] @relation("EncEncaissementSaisiPar")
+  encEncaissementsConfirmes EncEncaissement[] @relation("EncEncaissementConfirmePar")
+  encEncaissementsNonRecus  EncEncaissement[] @relation("EncEncaissementNonRecuPar")
+  encSignalementsTraites EncSignalement[] @relation("EncSignalementTraitePar")
 }
 
 model Role {
@@ -1421,6 +1428,9 @@ model EncPieceJointe {
   deposeePar   User     @relation("EncPieceJointeDeposeePar", fields: [deposeeParId], references: [id], onDelete: Restrict)
   deposeeAt    DateTime @default(now())
 
+  /// Import F1 (§5.3, commit 4c) — champ virtuel (le fichier importé, conservé comme preuve, D6), aucune colonne ici.
+  encImport EncImport?
+
   @@index([sha256])
 }
 
@@ -1442,6 +1452,13 @@ model EncBranche {
   creePar   User     @relation("EncBrancheCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
   creeAt    DateTime @default(now())
   majAt     DateTime @updatedAt
+
+  /// Import F1 (§5.3/§5.5, commit 4c) — champs virtuels (aucune colonne ici), déclarés pour résoudre les relations
+  /// nommées côté `EncContrat`/`EncEncaissement`/`EncImport`/`EncSignalement`.
+  encContrats          EncContrat[]
+  encEncaissements     EncEncaissement[]
+  encImportsParDefaut  EncImport[]       @relation("EncImportBrancheParDefaut")
+  encSignalements      EncSignalement[]
 }
 
 /// Bénéficiaire des honoraires, DATÉ (CDC §3.6) : jamais une ligne modifiée, toujours une nouvelle ligne à une nouvelle
@@ -1474,6 +1491,8 @@ model EncPartenaire {
   majPar                    User?             @relation("EncPartenaireMajPar", fields: [majParId], references: [id], onDelete: Restrict)
   majAt                     DateTime          @updatedAt
   tauxControle              EncTauxControle[]
+  /// Import F1 (§5.3, commit 4c) — champ virtuel, aucune colonne ici.
+  encContrats               EncContrat[]
 }
 
 /// Taux de contrôle FACULTATIFS (CDC §3.6, F9) : signalent un écart à l'import (Lot 1), ne modifient JAMAIS un montant.
@@ -1500,4 +1519,266 @@ model EncTauxControle {
   @@unique([produitCode, partenaireId])
   @@index([produitCode])
   @@index([partenaireId])
+}
+
+// =====================================================================================================================
+// Contrats et encaissements (docs/encaissements-conception.md §5.3, CDC V2.6 F1/F3) — commit 4c (2026-09-30) : import
+// (F1) seulement. Confirmation (F5), correction/contre-passation (F3.5), argent non identifié (F6), relevés (F5),
+// annulation (F8) et reprise (F1.5) restent des commits ultérieurs — les colonnes qu'ils rempliront existent déjà
+// (schéma stable), mais restent toutes `null` tant que ces commits n'existent pas.
+// =====================================================================================================================
+
+enum EncSourceEncaissement {
+  FICHIER
+  SAISIE
+}
+
+enum EncStatutEncaissement {
+  A_CONFIRMER
+  CONFIRME
+  NON_RECU
+}
+
+enum EncTypeImport {
+  PRODUCTION
+  RELEVE
+  REPRISE
+}
+
+enum EncStatutImport {
+  APERCU
+  VALIDE
+  ABANDONNE
+}
+
+enum EncAnalyseSignalement {
+  DEJA_PRESENT
+  DOUBLON_POSSIBLE
+  A_COMPLETER
+  REFERENCE_MANQUANTE
+  REF_WAVE_NON_CONFORME
+  AJOUTE
+  SANS_PAIEMENT
+  PRIME_MODIFIEE
+  INCOHERENCE
+  ECART_TAUX
+  LIGNE_ANNULEE_REJETEE
+  ANNULATION_EN_ATTENTE_L4
+  BRANCHE_INCONNUE
+}
+
+enum EncNiveauSignalement {
+  A_TRAITER
+  INFO
+}
+
+enum EncStatutSignalement {
+  A_TRAITER
+  INFO
+  TRAITE
+}
+
+/// Contrat (CDC §3.1, F1) — UNIQUEMENT issu du fichier de production, jamais créé à l'écran. Toutes les informations
+/// sont en lecture seule pour l'utilisateur, toujours RÉÉCRITES depuis le fichier à chaque import touchant cette
+/// police (y compris un avenant, D8 — signalé `PRIME_MODIFIEE`, jamais bloqué) — SAUF `partAccessoiresPartenaire`
+/// (exception par police, §3.1/§5.4 : "passe avant le taux du partenaire", saisie facultative à l'écran F2, jamais
+/// présente dans le fichier, jamais touchée par un import). Changement de branche/partenaire sur avenant : autorisé
+/// (le fichier fait foi), question ouverte V2-A5 non tranchée par ce commit.
+model EncContrat {
+  id             String     @id @default(cuid())
+  numPolice      String     @unique
+  brancheId      String
+  branche        EncBranche @relation(fields: [brancheId], references: [id], onDelete: Restrict)
+  typeContrat    String?
+  produitLibelle String?
+  produitCode    String?
+  typeOperation  String?
+  clientId       String?
+  clientNom      String?
+  partenaireId   String?
+  partenaire     EncPartenaire? @relation(fields: [partenaireId], references: [id], onDelete: Restrict)
+  dateEffet      DateTime   @db.Date
+  dateEcheance   DateTime?  @db.Date
+  typePolice     String?
+  /// Montants du contrat (CDC §3.1), mêmes noms que `MontantsContrat` (encCalcul.ts) : S prime TTC, T prime nette,
+  /// U accessoires, V taxes, W commission, X honoraires — jamais recalculés, toujours ceux du fichier.
+  S Decimal @db.Decimal(14, 2)
+  T Decimal @db.Decimal(14, 2)
+  U Decimal @db.Decimal(14, 2)
+  V Decimal @db.Decimal(14, 2)
+  W Decimal @db.Decimal(14, 2)
+  X Decimal @db.Decimal(14, 2)
+  partAccessoiresPartenaire Decimal? @db.Decimal(7, 6)
+  creeParImportId String
+  creeParImport   EncImport  @relation("EncContratCreeParImport", fields: [creeParImportId], references: [id], onDelete: Restrict)
+  majParImportId  String?
+  majParImport    EncImport? @relation("EncContratMajParImport", fields: [majParImportId], references: [id], onDelete: Restrict)
+  creeAt DateTime @default(now())
+  majAt  DateTime @updatedAt
+
+  encaissements EncEncaissement[]
+  signalements  EncSignalement[]
+
+  @@index([brancheId])
+  @@index([partenaireId])
+  @@index([clientNom])
+  @@index([produitCode])
+}
+
+/// Encaissement / versement (CDC §3.2, F1/F3) — un seul modèle pour toutes les voies de saisie ; seule F1 (source
+/// `FICHIER`, statut `A_CONFIRMER`) écrit dans ce commit. Montants figés à la CONFIRMATION (AA à AD, commission,
+/// honoraires, parts d'accessoires, exigibilité) : colonnes déjà présentes (schéma stable pour F5, commit ultérieur)
+/// mais TOUJOURS `null` ici, jamais renseignées par l'import.
+model EncEncaissement {
+  id                String                @id @default(cuid())
+  /// NOTRE numéro (PAI-AAAA-NNNNNN, `encSequence.ts`) — attribué à la création, jamais réutilisé (D7).
+  paiementId        String                @unique
+  /// PaiementID DU FICHIER, s'il existe : anti-doublon SEULEMENT (D7/A1b), jamais notre identifiant. `@unique` sur
+  /// une colonne nullable = unique seulement quand renseignée (sémantique Postgres native).
+  paiementIdFichier String?               @unique
+  contratId         String
+  contrat           EncContrat            @relation(fields: [contratId], references: [id], onDelete: Restrict)
+  brancheId         String
+  branche           EncBranche            @relation(fields: [brancheId], references: [id], onDelete: Restrict)
+  source            EncSourceEncaissement
+  statut            EncStatutEncaissement @default(A_CONFIRMER)
+  datePaiement      DateTime              @db.Date
+  mode              String
+  /// `null` UNIQUEMENT pour le cas « référence manquante » (F1.4, décision du 2026-09-30) — un encaissement SAISI
+  /// (F3, hors de ce commit) l'exige toujours (CDC §3.2).
+  reference String?
+  Z         Decimal @db.Decimal(14, 2)
+  dateSaisie DateTime
+  saisiParId String
+  saisiPar   User     @relation("EncEncaissementSaisiPar", fields: [saisiParId], references: [id], onDelete: Restrict)
+  dateConfirmation DateTime?
+  confirmeParId    String?
+  confirmePar      User?     @relation("EncEncaissementConfirmePar", fields: [confirmeParId], references: [id], onDelete: Restrict)
+  datePriseEnCompte  DateTime? @db.Date
+  ordrePriseEnCompte Int?
+  motifNonReception String?
+  nonRecuParId      String?
+  nonRecuPar        User?     @relation("EncEncaissementNonRecuPar", fields: [nonRecuParId], references: [id], onDelete: Restrict)
+  nonRecuAt         DateTime?
+  referenceGroupe String?
+  groupeId        String?
+  nonIdentifieId  String?
+  importId        String?
+  import          EncImport? @relation(fields: [importId], references: [id], onDelete: Restrict)
+  importLigne     Int?
+  releveLigneId   String?
+  contrePasseId   String?          @unique
+  contrePasse     EncEncaissement? @relation("EncEncaissementContrepassation", fields: [contrePasseId], references: [id], onDelete: Restrict)
+  contrePassePar  EncEncaissement? @relation("EncEncaissementContrepassation")
+  motifContrePassation String?
+  /// Figés à la confirmation (D9, F5 — commit ultérieur) : jamais renseignés par ce commit.
+  AA         Decimal? @db.Decimal(14, 2)
+  AB         Decimal? @db.Decimal(14, 2)
+  AC         Decimal? @db.Decimal(14, 2)
+  AD         Decimal? @db.Decimal(14, 2)
+  commission Decimal? @db.Decimal(14, 2)
+  honoraires Decimal? @db.Decimal(14, 2)
+  partAccessoiresTaux       Decimal?  @db.Decimal(7, 6)
+  partAccessoiresPartenaire Decimal?  @db.Decimal(14, 2)
+  partAccessoiresSim        Decimal?  @db.Decimal(14, 2)
+  moisExigibilite           DateTime? @db.Date
+  dateLimiteReversement     DateTime? @db.Date
+  estRegularisation         Boolean   @default(false)
+  beneficiaireHonorairesId  String?
+  /// Marquages « payé » hors application (F7, commit ultérieur) : date + référence par nature, jamais renseignés ici.
+  taxePayeeDate             DateTime?
+  taxePayeeReference        String?
+  commissionPayeeDate       DateTime?
+  commissionPayeeReference  String?
+  honorairesPayesDate       DateTime?
+  honorairesPayesReference  String?
+  accessoiresPayesDate      DateTime?
+  accessoiresPayesReference String?
+  aRegulariser Boolean @default(false)
+  observations String?
+
+  signalementsExistant EncSignalement[] @relation("EncSignalementEncaissementExistant")
+  signalementsCree     EncSignalement[] @relation("EncSignalementEncaissementCree")
+
+  @@index([contratId, statut, ordrePriseEnCompte])
+  @@index([statut, datePaiement])
+  @@index([reference])
+  @@index([moisExigibilite])
+  @@index([datePriseEnCompte])
+  @@index([importId])
+}
+
+/// Import d'un fichier (CDC F1/F1.5/F5, §3.4 partiel) — un seul modèle pour les 3 types ; seul `PRODUCTION` est écrit
+/// par ce commit (`RELEVE` = F5, `REPRISE` = F1.5, hors périmètre). Le fichier est conservé comme preuve (D6) via
+/// `EncPieceJointe` (`fichierId`) — jamais dans le dépôt ni dans un test (données clients).
+model EncImport {
+  id         String          @id @default(cuid())
+  type       EncTypeImport
+  statut     EncStatutImport
+  nomFichier String
+  sha256     String
+  fichierId  String?         @unique
+  fichier    EncPieceJointe? @relation(fields: [fichierId], references: [id], onDelete: Restrict)
+  brancheParDefautId String?
+  brancheParDefaut   EncBranche? @relation("EncImportBrancheParDefaut", fields: [brancheParDefautId], references: [id], onDelete: Restrict)
+  operateur  String?
+  /// Reprise (D10, F1.5, hors périmètre de ce commit) : jamais renseignées pour un import `PRODUCTION`.
+  basculeTaxe        DateTime? @db.Date
+  basculeCommission  DateTime? @db.Date
+  basculeHonoraires  DateTime? @db.Date
+  basculeAccessoires DateTime? @db.Date
+  nbLignes              Int
+  totalPrimesTtc        Decimal? @db.Decimal(14, 2)
+  nbContratsCrees       Int      @default(0)
+  nbContratsMaj         Int      @default(0)
+  nbPaiementsAConfirmer Int      @default(0)
+  nbATraiter            Int      @default(0)
+  importeParId String
+  importePar   User      @relation("EncImportImportePar", fields: [importeParId], references: [id], onDelete: Restrict)
+  importeAt    DateTime
+  valideParId  String?
+  validePar    User?     @relation("EncImportValidePar", fields: [valideParId], references: [id], onDelete: Restrict)
+  valideAt     DateTime?
+
+  contratsCrees EncContrat[]      @relation("EncContratCreeParImport")
+  contratsMajs  EncContrat[]      @relation("EncContratMajParImport")
+  encaissements EncEncaissement[]
+  signalements  EncSignalement[]
+}
+
+/// Signalement (CDC §3.4, F1.4) — trace de chaque cas à traiter ou pour information levé par un import. `niveau`
+/// (sévérité, posée à la création) et `statut` (cycle de vie : démarre égal à `niveau`, `TRAITE` par un futur écran)
+/// sont deux champs DISTINCTS.
+model EncSignalement {
+  id        String    @id @default(cuid())
+  importId  String
+  import    EncImport @relation(fields: [importId], references: [id], onDelete: Restrict)
+  contratId String?
+  contrat   EncContrat? @relation(fields: [contratId], references: [id], onDelete: Restrict)
+  /// `null` UNIQUEMENT si la ligne du fichier n'avait aucun numéro de police (cas hors tableau F1.4, ne bloque pas le
+  /// reste de l'import — décision du commit 4c).
+  numPolice String?
+  brancheId String?
+  branche   EncBranche? @relation(fields: [brancheId], references: [id], onDelete: Restrict)
+  analyse   EncAnalyseSignalement
+  niveau    EncNiveauSignalement
+  statut    EncStatutSignalement
+  /// Paiement tel qu'indiqué dans le fichier (date/mode/référence/montant), pour les cas sans `EncEncaissement` créé.
+  paiementIndique Json?
+  encaissementExistantId String?
+  encaissementExistant   EncEncaissement? @relation("EncSignalementEncaissementExistant", fields: [encaissementExistantId], references: [id], onDelete: Restrict)
+  encaissementCreeId     String?
+  encaissementCree       EncEncaissement? @relation("EncSignalementEncaissementCree", fields: [encaissementCreeId], references: [id], onDelete: Restrict)
+  primeAvant Json?
+  primeApres Json?
+  detail     String
+  traiteParId String?
+  traitePar   User?     @relation("EncSignalementTraitePar", fields: [traiteParId], references: [id], onDelete: Restrict)
+  traiteAt    DateTime?
+  resolution  String?
+  creeAt      DateTime  @default(now())
+
+  @@index([importId])
+  @@index([contratId])
+  @@index([statut])
 }

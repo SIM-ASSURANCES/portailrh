@@ -4861,6 +4861,63 @@ V2-A27d/V2-A1c répondues par le client — rien dans ces 4 commits ne construit
 - Tests : `backend/src/encImportRegles.test.ts`, 32 cas. `vitest` (154/154 tests backend), `tsc --noEmit` et
   `eslint` passent sans erreur (backend et frontend) ; `next build` (65 routes) inchangé.
 
+#### Commit 4c — Application en base (fait, 2026-09-30)
+
+- **Modèles** `EncContrat`, `EncEncaissement` (statut `A_CONFIRMER`/`CONFIRME`/`NON_RECU`, champs figés à la
+  confirmation laissés `null`), `EncImport`, `EncSignalement` (enum `EncAnalyseSignalement`, 13 valeurs = celles de
+  4b) — migration additive `20260930140000_encaissements_import_production`. `EncSignalement.numPolice` nullable (ligne
+  sans police). 6 nouvelles relations vers `User` → `supprimerUtilisateurAction` compte désormais aussi imports,
+  encaissements (saisis/confirmés/non reçus) et signalements traités.
+- **`backend/src/encImportApplication.ts`** — `appliquerImportProduction(tx, lignes, params)`, toujours dans la
+  transaction de l'appelant : refuse l'import ENTIER si une branche est inconnue (avant toute écriture), crée
+  `EncImport` (`VALIDE` d'emblée, pas d'aperçu en F1), puis par ligne : verrou `pg_advisory_xact_lock` sur la police,
+  résolution en LECTURE SEULE d'un partenaire déjà existant (`trouverPartenaireIdExistant`) et des taux de contrôle
+  attendus (`resoudreTauxControleAttendus` — voir plus bas), `analyserLigne` (4b) avec ce contexte réel, contrat créé
+  ou remis à jour (jamais `partAccessoiresPartenaire`), partenaire absent créé automatiquement (verrou dédié,
+  `creeParId` = auteur de l'import), encaissement `A_CONFIRMER` avec NOTRE numéro PAI, signalements ; un audit
+  `import_production` final. `toleranceIncoherenceFcfa` reçu en chaîne (`MontantEntree`) : le frontend n'a jamais à
+  importer `encCalcul.ts` (toujours non réexporté).
+- **Taux de contrôle câblés dès ce commit** (correction avant commit, 2026-09-30 — les tables/actions du commit 3a
+  existaient déjà, restées non branchées à l'import dans un premier essai) : `resoudreTauxControleAttendus` cherche
+  une ligne `EncTauxControle` par spécificité décroissante (produit+partenaire exact > partenaire seul > produit
+  seul) ; sans ligne correspondante, `analyserLigne` saute le contrôle (comportement 4b inchangé, zéro signalement).
+- **Écart comparé en MONTANT, pas en pourcentage** (second correctif avant commit, 2026-09-30) : un premier essai
+  comparait deux fractions avec une tolérance en points (2 points) — signalé comme insuffisant (2 points auraient
+  laissé passer 20 % de commission attendue contre 18 % réels, plusieurs dizaines de FCFA d'écart réel). Corrigé :
+  montant attendu = taux paramétré × base (T+U pour la taxe, T pour commission/honoraires/accessoires), comparé au
+  montant réel du fichier (V/W/X/U), tolérance = `toleranceIncoherenceFcfa` (LA MÊME que l'incohérence T+U+V≠S,
+  `controle.tolerance_fcfa`, CDC V1 §3.8, 1 FCFA par défaut) — jamais une seconde tolérance dédiée. Plus de garde
+  `T > 0` nécessaire (aucune division). Aucun `EncParametre` ni écran F9 ne fixe encore la base « accessoires = U/T »
+  elle-même (V2-A20 toujours partiellement ouverte), à confirmer par le client.
+- **Dépôt** : route DÉDIÉE `POST /api/encaissements/import/upload` (`.xls`/`.xlsx`/`.csv`, 10 Mo,
+  `enc.importer_production`) ; la route commune Trésorerie est inchangée. `lib/encaissements/pieceJointe.ts` accepte
+  désormais ces trois extensions. **Téléchargement** (`/api/encaissements/pieces-jointes/[id]`) : `enc.importer_production`
+  pour le fichier d'un import `PRODUCTION` (D6, Finance + Technique), `enc.consulter` pour le reste.
+- **Action serveur** `importerProductionAction` (`encaissements/import/actions.ts`, sans écran — 4d) : revérifie
+  `enc.importer_production`, lit le fichier déposé, exige une branche par défaut si le fichier n'a pas de colonne
+  « Branche », enregistre la pièce jointe et applique l'import dans UNE transaction (timeout **300 s**, `maxWait` 10 s).
+  **Origine de l'import (V2-A14) — corrigée avant commit** : déduite de `enc.annuler_contrat` (exclusive à l'Équipe
+  technique), jamais de `enc.marquer_paye` (un premier essai s'y était trompé — même résultat ici par coïncidence,
+  mais la mauvaise permission conceptuellement) ni d'un nom de rôle : la règle du CDC est « l'annulation est réservée
+  à qui peut annuler ».
+- **Vérifié sur PostgreSQL 16 (Docker, migrations depuis zéro, sans seed), fichier synthétique anonymisé généré par
+  script, 7 scénarios** : 5 000 lignes importées en **45-54 s** selon les passages → 5 000 contrats, 5 000 paiements
+  à confirmer, 20 partenaires, 0 à traiter ; **réimport du même fichier** (~33-39 s) → 0 contrat créé, 5 000 mis à
+  jour, 0 paiement, 5 000 « déjà présent » ; **branche inconnue** → refusé, aucune ligne écrite (pas même
+  `EncImport`) ; **concurrence réelle, 3 variantes** — même police/paiements différents → 1 seul contrat (1 création
+  + 1 mise à jour) ; même police/même paiement AVEC PaiementID → 1 seul encaissement, l'autre « déjà présent » ; même
+  police/même paiement SANS PaiementID (clé date+montant) → même garantie, confirmant que le verrou de police couvre
+  aussi le contrôle anti-doublon, pas seulement la création du contrat ; **taux de contrôle** — sans ligne
+  `EncTauxControle`, 0 signalement ; une ligne posée pour le produit (commission attendue 50 %) → `ECART_TAUX`
+  détaillant un écart de **447,55 FCFA** (montant attendu 699,30 FCFA contre 251,75 FCFA réels), jamais un pourcentage
+  seul, sur les imports SUIVANTS uniquement (jamais rétroactif sur les 5 000 lignes déjà importées avant le
+  paramétrage). Conteneur, script et bases jetables supprimés (3 passages Docker au total pour ce commit, un par
+  correctif). Piège de test noté : `EncImport.fichierId` est unique — chaque import doit avoir sa propre pièce
+  jointe (c'est le cas en usage réel : chaque dépôt reçoit un nouvel UUID).
+- Tests : `backend/src/encImportApplication.test.ts` (6 cas) + 2 nouveaux cas dans `encImportRegles.test.ts` (écart
+  détecté en montant même dans l'ancienne tolérance en points ; silence dans la tolérance de 1 FCFA). `vitest`
+  (162/162 backend).
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif

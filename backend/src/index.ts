@@ -32,6 +32,11 @@ export * from "./encAudit";
 export * from "./encParametres";
 export * from "./encPermissions";
 export * from "./encReferentiels";
+// F1 (import mensuel du fichier de production) : lecture (4a), règles (4b), application en base (4c) — encCalcul.ts,
+// lui, reste non réexporté (importé directement là où il sert, commentaire ci-dessus).
+export * from "./encImportLecture";
+export * from "./encImportRegles";
+export * from "./encImportApplication";
 
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).
