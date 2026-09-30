@@ -7,6 +7,9 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
+import { ENC_MODULE_KEY, ENC_PERMISSIONS, ENC_PERMISSION_MISE_EN_SERVICE, ENC_ROLES_DEPART } from "../src/encPermissions";
+import { ENC_PARAMETRES } from "../src/encParametres";
+import { ENC_BENEFICIAIRE_HONORAIRES_INITIAL } from "../src/encReferentiels";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -15,6 +18,12 @@ const SALT_ROUNDS = 10;
 const TEST_PASSWORD = "password123";
 
 async function main() {
+  // Module Encaissements : une base mise en service ne se reseede JAMAIS (audit et séquences verrouillés par trigger).
+  // Refus AVANT toute suppression, pour ne rien effacer à moitié.
+  if ((await prisma.encMiseEnService.count()) > 0) {
+    throw new Error("Module Encaissements mis en service sur cette base : seed refusé, aucune donnée supprimée.");
+  }
+
   console.log("Suppression des données existantes...");
 
   // Suppression par ordre inverse des dépendances
@@ -40,6 +49,16 @@ async function main() {
   await prisma.absence.deleteMany();
   await prisma.jourFerie.deleteMany();
   await prisma.parametrageHoraire.deleteMany();
+  // Module Encaissements (socle technique) : relations vers User en RESTRICT, à vider avant les comptes.
+  await prisma.encAudit.deleteMany();
+  await prisma.encPieceJointe.deleteMany();
+  await prisma.encSequence.deleteMany();
+  await prisma.encParametre.deleteMany();
+  // Module Encaissements (paramètres V2) : EncTauxControle référence EncPartenaire, donc supprimé avant lui.
+  await prisma.encTauxControle.deleteMany();
+  await prisma.encPartenaire.deleteMany();
+  await prisma.encBeneficiaireHonoraires.deleteMany();
+  await prisma.encBranche.deleteMany();
   await prisma.user.deleteMany();
   await prisma.service.deleteMany();
   await prisma.role.deleteMany();
@@ -120,6 +139,17 @@ async function main() {
     `Rôles créés : ${roleCollaborateur.name}, ${roleFinance.name}, ${roleDG.name}, ${roleAdmin.name}, ${roleRH.name}, ${roleAssistantFinance.name}`
   );
 
+  // Module Encaissements (voir docs/encaissements-conception.md §4) : 3 rôles de départ, modifiables ensuite.
+  const rolesEncaissements = await Promise.all(
+    ENC_ROLES_DEPART.map((r) =>
+      prisma.role.upsert({
+        where: { name: r.name },
+        update: { description: r.description },
+        create: { name: r.name, description: r.description },
+      })
+    )
+  );
+
   console.log("Création des modules...");
 
   const [moduleTresorerie, modulePointage, moduleFeedback, moduleSysteme] = await Promise.all([
@@ -147,6 +177,12 @@ async function main() {
   ]);
 
   console.log(`Modules créés : ${moduleTresorerie.label}, ${modulePointage.label}, ${moduleFeedback.label}`);
+
+  const moduleEncaissements = await prisma.module.upsert({
+    where: { key: ENC_MODULE_KEY },
+    update: { label: "Encaissements, taxes et commissions" },
+    create: { key: ENC_MODULE_KEY, label: "Encaissements, taxes et commissions" },
+  });
 
   console.log("Création des permissions...");
 
@@ -199,6 +235,9 @@ async function main() {
       label: "Réinitialiser les données de test avant mise en production (usage unique)",
       moduleId: moduleSysteme.id,
     },
+    // Module Encaissements (source unique : src/encPermissions.ts). La mise en service va au module technique « systeme ».
+    ...ENC_PERMISSIONS.map((p) => ({ key: p.key, label: p.label, moduleId: moduleEncaissements.id })),
+    { ...ENC_PERMISSION_MISE_EN_SERVICE, moduleId: moduleSysteme.id },
   ];
 
   const createdPermissions = await Promise.all(
@@ -259,6 +298,8 @@ async function main() {
       "feedback.moderer",
       // Réinitialisation à usage unique : DG SEUL (jamais Admin, jamais héritée d'estAdmin).
       "systeme.reinitialiser",
+      // Mise en service du module Encaissements : même modèle, DG seul.
+      ENC_PERMISSION_MISE_EN_SERVICE.key,
     ],
     // EXCEPTION DÉLIBÉRÉE à l'invariant "le rôle Admin n'a aucune
     // RolePermission explicite" (voir CLAUDE.md "estAdmin — accès à la
@@ -288,6 +329,8 @@ async function main() {
     // dépense directe (délégables au cas par cas par le Responsable
     // Finance, voir CLAUDE.md).
     [roleAssistantFinance.id]: ["treso.effectuer_reglement", "treso.receptionner_retour"],
+    // Module Encaissements : un rôle par profil du cahier (§2).
+    ...Object.fromEntries(rolesEncaissements.map((role, i) => [role.id, ENC_ROLES_DEPART[i].permissions])),
   };
 
   let rolePermissionCount = 0;
@@ -346,6 +389,11 @@ async function main() {
     { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id, serviceId: null },
     { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id, serviceId: serviceByName["Ressources Humaines"].id },
     { fullName: "Assistant Finance Test", email: "assistant-finance@simassurances.test", roleId: roleAssistantFinance.id, serviceId: serviceByName["Finance"].id },
+    // Module Encaissements : un compte de test par rôle de départ, JAMAIS en production (l'image fixe
+    // NODE_ENV=production, y compris pour le service `init` qui exécute ce seed au premier déploiement).
+    ...(process.env.NODE_ENV === "production"
+      ? []
+      : ENC_ROLES_DEPART.map((r, i) => ({ ...r.compteTest, roleId: rolesEncaissements[i].id, serviceId: serviceByName["Finance"].id }))),
   ];
 
   const createdUsers = await Promise.all(
@@ -448,6 +496,21 @@ async function main() {
   console.log(
     `Paramétrage horaire créé : ${parametrageHoraire.heureDebutMatin}-${parametrageHoraire.heureFinMatin} / ${parametrageHoraire.heureDebutApresMidi}-${parametrageHoraire.heureFinApresMidi}`
   );
+
+  // Module Encaissements : paramètres par défaut (source unique : src/encParametres.ts, aussi posés par la migration).
+  await prisma.encParametre.createMany({ data: ENC_PARAMETRES.map((p) => ({ cle: p.cle, valeur: p.defaut })) });
+  console.log(`Paramètres Encaissements : ${ENC_PARAMETRES.length}`);
+
+  // Bénéficiaire des honoraires (CDC §3.6) : NOVELIA, posé une seule fois — `creeParId` nul (aucun utilisateur réel à
+  // cet instant, seul cas où ce champ est nul), même valeur que la migration corrective
+  // `20260930000000_encaissements_parametres_v2` (source unique : ENC_BENEFICIAIRE_HONORAIRES_INITIAL, encReferentiels.ts).
+  await prisma.encBeneficiaireHonoraires.create({
+    data: {
+      nom: ENC_BENEFICIAIRE_HONORAIRES_INITIAL.nom,
+      dateDebut: new Date(ENC_BENEFICIAIRE_HONORAIRES_INITIAL.dateDebut),
+    },
+  });
+  console.log(`Bénéficiaire des honoraires initial : ${ENC_BENEFICIAIRE_HONORAIRES_INITIAL.nom}`);
 
   console.log("\n=== Résumé du seed ===");
   console.log(`Rôles : ${createdUsers.length === 5 ? 5 : "?"}`);

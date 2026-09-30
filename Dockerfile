@@ -50,6 +50,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # résoudre le graphe de dépendances, même avant que leur code n'existe.
 COPY package.json package-lock.json ./
 COPY backend/package.json ./backend/package.json
+# Module Encaissements : `backend/package.json` déclare `xlsx` comme dépendance `file:./vendor/xlsx-0.20.3.tgz`
+# (SheetJS CE, vendue dans le dépôt — voir docs/encaissements-conception.md §8.4). Cette référence est résolue par
+# npm RELATIVEMENT à `backend/package.json`, donc `backend/vendor/` doit déjà exister dans l'image À CET ENDROIT,
+# AVANT `npm ci` — sans cette copie, `npm ci` échouerait ici avec "no such file" (la copie sélective ci-dessus ne
+# prend, par construction, que les `package.json`, jamais leurs dépendances vendues).
+COPY backend/vendor ./backend/vendor
 COPY frontend/package.json ./frontend/package.json
 RUN npm ci
 
@@ -124,6 +130,9 @@ FROM ${NODE_IMAGE} AS prod-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY backend/package.json ./backend/package.json
+# Même raison que le stage "deps" ci-dessus : `xlsx` (SheetJS CE) est une dépendance `file:` résolue relativement à
+# `backend/package.json`, requise avant `npm ci`.
+COPY backend/vendor ./backend/vendor
 COPY frontend/package.json ./frontend/package.json
 RUN npm ci --omit=dev
 

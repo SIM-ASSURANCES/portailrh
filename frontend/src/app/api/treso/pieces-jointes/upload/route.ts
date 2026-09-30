@@ -5,6 +5,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
+import { ENC_PERMISSIONS_DEPOT_PIECE_JOINTE } from "backend";
 
 /**
  * Upload d'une pièce jointe (Demande, ligne de dépense d'un retour de
@@ -58,7 +59,10 @@ export async function POST(request: Request) {
     hasPermission(session, "treso.declarer_retour") ||
     hasPermission(session, "treso.saisir_depense_directe") ||
     isAdmin(session) ||
-    hasPermission(session, "treso.effectuer_reglement");
+    hasPermission(session, "treso.effectuer_reglement") ||
+    // Module Encaissements : route d'upload commune (conception, arbitrage A3) ; le fichier n'est rattaché qu'ensuite
+    // par une action du module, qui crée l'EncPieceJointe avec sa propre permission (lib/encaissements/pieceJointe.ts).
+    ENC_PERMISSIONS_DEPOT_PIECE_JOINTE.some((cle) => hasPermission(session, cle));
   if (!peutUploader) {
     return NextResponse.json({ error: "Action non autorisée." }, { status: 403 });
   }

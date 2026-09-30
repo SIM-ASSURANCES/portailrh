@@ -93,6 +93,10 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
   if (moduleKey === "feedback") {
     return { href: "/feedback/nouveau", reason: "no_access" };
   }
+  // Module Encaissements : accueil réservé à `enc.consulter` (sinon « Aucun accès », jamais « Bientôt disponible »).
+  if (moduleKey === "encaissements") {
+    return { href: hasPermission(session, "enc.consulter") ? "/encaissements" : null, reason: "no_access" };
+  }
   return { href: null, reason: "coming_soon" };
 }
 
@@ -299,6 +303,9 @@ export default async function DashboardHomePage({
           variant="error"
           message="Vous n'avez pas la permission de modérer les feedbacks."
         />
+      ) : null}
+      {error === "acces_refuse_encaissements" ? (
+        <ToastOnMount variant="error" message="Vous n'avez pas accès au module Encaissements." />
       ) : null}
       {error === "acces_refuse_recevoir_feedback" ? (
         <ToastOnMount

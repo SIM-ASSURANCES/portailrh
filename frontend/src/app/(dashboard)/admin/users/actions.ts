@@ -712,6 +712,15 @@ export async function supprimerUtilisateurAction(
     signalementsRetourEmis,
     signalementsRetourResolus,
     reinitialisationsEffectuees,
+    encAudits,
+    encMisesEnService,
+    encParametresModifies,
+    encPiecesDeposees,
+    encBranchesCreees,
+    encBeneficiairesHonorairesCrees,
+    encPartenairesCrees,
+    encPartenairesMajs,
+    encTauxControleMajs,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -737,6 +746,18 @@ export async function supprimerUtilisateurAction(
     prisma.signalementRetour.count({ where: { resoluParId: userId } }),
     // Journal de la réinitialisation à usage unique (jamais purgé) : le compte du DG qui l'a déclenchée n'est plus supprimable.
     prisma.reinitialisationSysteme.count({ where: { effectueeParId: userId } }),
+    // Module Encaissements : 4 relations vers User, toutes en RESTRICT (docs/encaissements-conception.md §5.1).
+    prisma.encAudit.count({ where: { userId } }),
+    prisma.encMiseEnService.count({ where: { activeeParId: userId } }),
+    prisma.encParametre.count({ where: { majParId: userId } }),
+    prisma.encPieceJointe.count({ where: { deposeeParId: userId } }),
+    // Module Encaissements (paramètres V2) : 5 relations vers User supplémentaires — `creeParId` d'EncBeneficiaireHonoraires
+    // est nullable (nul uniquement pour la ligne NOVELIA posée par la migration, jamais par un compte réel).
+    prisma.encBranche.count({ where: { creeParId: userId } }),
+    prisma.encBeneficiaireHonoraires.count({ where: { creeParId: userId } }),
+    prisma.encPartenaire.count({ where: { creeParId: userId } }),
+    prisma.encPartenaire.count({ where: { majParId: userId } }),
+    prisma.encTauxControle.count({ where: { majParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -764,6 +785,16 @@ export async function supprimerUtilisateurAction(
   if (signalementsRetourResolus > 0)
     blocages.push(`résolu ${signalementsRetourResolus} signalement(s) d'erreur sur un retour de caisse`);
   if (reinitialisationsEffectuees > 0) blocages.push("déclenché la réinitialisation avant mise en production (journal d'audit permanent)");
+  if (encAudits > 0) blocages.push(`${encAudits} entrée(s) dans le journal d'audit des encaissements`);
+  if (encMisesEnService > 0) blocages.push("mis le module Encaissements en service");
+  if (encParametresModifies > 0) blocages.push(`modifié ${encParametresModifies} paramètre(s) des encaissements`);
+  if (encPiecesDeposees > 0) blocages.push(`déposé ${encPiecesDeposees} pièce(s) jointe(s) des encaissements`);
+  if (encBranchesCreees > 0) blocages.push(`créé ${encBranchesCreees} branche(s) des encaissements`);
+  if (encBeneficiairesHonorairesCrees > 0)
+    blocages.push(`créé ${encBeneficiairesHonorairesCrees} ligne(s) de bénéficiaire des honoraires (encaissements)`);
+  if (encPartenairesCrees > 0) blocages.push(`créé ${encPartenairesCrees} partenaire(s) des encaissements`);
+  if (encPartenairesMajs > 0) blocages.push(`modifié ${encPartenairesMajs} partenaire(s) des encaissements`);
+  if (encTauxControleMajs > 0) blocages.push(`modifié ${encTauxControleMajs} taux de contrôle des encaissements`);
 
   if (blocages.length > 0) {
     const liste =

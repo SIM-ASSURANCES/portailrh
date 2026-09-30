@@ -131,6 +131,8 @@ export interface NavFlags {
   canRecevoirFeedback?: boolean;
   /** `feedback.moderer` : active l'accès à "Modération feedbacks" (RH & DG). */
   canModererFeedback?: boolean;
+  /** `enc.consulter` : affiche la branche "Encaissements" (revérifié côté serveur par `encaissements/layout.tsx`). */
+  canConsulterEncaissements?: boolean;
 }
 
 /**
@@ -217,6 +219,7 @@ export function getNavBranches({
   canConsulterHistorique,
   canRecevoirFeedback,
   canModererFeedback,
+  canConsulterEncaissements,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -407,6 +410,19 @@ export function getNavBranches({
               } satisfies NavGroup,
             ]
           : []),
+      ],
+    },
+    // Module Encaissements (voir docs/encaissements-conception.md) : branche masquée sans `enc.consulter`.
+    {
+      key: "encaissements",
+      label: "Encaissements",
+      icon: "briefcase",
+      groups: [
+        {
+          items: canConsulterEncaissements
+            ? [{ label: "Accueil", href: "/encaissements", icon: "layout-grid", exact: true } satisfies NavItem]
+            : [],
+        },
       ],
     },
   ];

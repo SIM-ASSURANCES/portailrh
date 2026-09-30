@@ -114,6 +114,19 @@ model User {
   /// Messages FeedbackApp que cet utilisateur a modérés (action RH/DG,
   /// sans rapport avec l'auteur du message).
   feedbacksModeres Feedback[] @relation("FeedbackModeratedBy")
+
+  /// Module Encaissements (docs/encaissements-conception.md §5.1) — toutes en `onDelete: Restrict`.
+  encAudits         EncAudit[]         @relation("EncAuditUser")
+  encMisesEnService EncMiseEnService[] @relation("EncMiseEnServiceActiveePar")
+  encParametresMaj  EncParametre[]     @relation("EncParametreMajPar")
+  encPiecesDeposees EncPieceJointe[]   @relation("EncPieceJointeDeposeePar")
+  /// Paramètres V2 (docs/encaissements-conception.md §5.2) — toutes en `onDelete: Restrict`, sauf les créateurs des
+  /// deux référentiels dont la toute première ligne est posée par la migration (`creeParId` nul dans ce seul cas).
+  encBranchesCreees               EncBranche[]               @relation("EncBrancheCreePar")
+  encBeneficiairesHonorairesCrees EncBeneficiaireHonoraires[] @relation("EncBeneficiaireHonorairesCreePar")
+  encPartenairesCrees             EncPartenaire[]             @relation("EncPartenaireCreePar")
+  encPartenairesMajs              EncPartenaire[]             @relation("EncPartenaireMajPar")
+  encTauxControleMajs             EncTauxControle[]           @relation("EncTauxControleMajPar")
 }
 
 model Role {
@@ -1337,4 +1350,154 @@ model JournalBanque {
   creeAt     DateTime            @default(now())
 
   @@index([reglementId])
+}
+
+// =====================================================================================================================
+// Module Encaissements, taxes et commissions — socle technique (docs/encaissements-conception.md §5.1 et §6).
+// Toutes les relations vers User sont en onDelete: Restrict : une trace d'audit ou d'auteur ne doit jamais
+// disparaître ni devenir anonyme par la suppression d'un compte.
+// =====================================================================================================================
+
+/// Mise en service du module : une seule ligne possible (id = 1, contrainte CHECK en SQL). Sa présence verrouille
+/// l'audit (plus aucun DELETE sur EncAudit) et les séquences. UPDATE/DELETE/TRUNCATE toujours interdits par trigger.
+model EncMiseEnService {
+  id               Int      @id @default(1)
+  activeeAt        DateTime @default(now())
+  activeeParId     String
+  activeePar       User     @relation("EncMiseEnServiceActiveePar", fields: [activeeParId], references: [id], onDelete: Restrict)
+  /// Empreinte SHA-256 de la sauvegarde JSON téléchargée juste avant la remise à zéro (section 6).
+  sauvegardeSha256 String
+}
+
+/// Compteurs de numérotation (PAI-AAAA, SUS-AAAA, RGS-AAAA, BRD-AAAA-MM). Incrément atomique uniquement
+/// (backend/src/encSequence.ts), jamais count()+1. Après mise en service : DELETE et baisse de valeur interdits.
+model EncSequence {
+  cle    String @id
+  valeur Int    @default(0)
+}
+
+/// Paramètres du module (clé → valeur texte typée par backend/src/encParametres.ts). Défauts posés par la migration
+/// ET par le seed ; majParId nul = valeur par défaut jamais modifiée.
+model EncParametre {
+  cle      String   @id
+  valeur   String
+  majParId String?
+  majPar   User?    @relation("EncParametreMajPar", fields: [majParId], references: [id], onDelete: Restrict)
+  majAt    DateTime @default(now())
+}
+
+/// Journal d'audit du module, en ajout seul : UPDATE toujours interdit, DELETE/TRUNCATE interdits dès qu'une ligne
+/// EncMiseEnService existe (triggers SQL). Écriture uniquement via backend/src/encAudit.ts.
+model EncAudit {
+  id       BigInt    @id @default(autoincrement())
+  entite   String
+  entiteId String
+  action   String
+  avant    Json?
+  apres    Json?
+  motif    String?
+  /// Mois de rattachement (1er du mois) pour le rapport « changements depuis la clôture » (F11.4).
+  mois     DateTime? @db.Date
+  userId   String
+  user     User      @relation("EncAuditUser", fields: [userId], references: [id], onDelete: Restrict)
+  ip       String?
+  at       DateTime  @default(now())
+
+  @@index([entite, entiteId])
+  @@index([mois, at])
+  @@index([at])
+}
+
+/// Pièce jointe du module, séparée de PieceJointe (que la purge globale vide sans filtre). Fichier déposé par la route
+/// d'upload commune (uploads/), métadonnées recalculées côté serveur depuis le fichier (encPieceJointe.ts).
+model EncPieceJointe {
+  id           String   @id @default(cuid())
+  url          String   @unique
+  nomOrigine   String?
+  mime         String
+  taille       Int
+  sha256       String
+  deposeeParId String
+  deposeePar   User     @relation("EncPieceJointeDeposeePar", fields: [deposeeParId], references: [id], onDelete: Restrict)
+  deposeeAt    DateTime @default(now())
+
+  @@index([sha256])
+}
+
+// =====================================================================================================================
+// Paramètres V2 (docs/encaissements-conception.md §5.2, CDC V2.6 §3.6/F9) — pas d'écran (Lot 3) : modèle, migration et
+// actions serveur seulement. Aucun contrat ni encaissement n'existe encore (Lot 1) : `EncContrat.partAccessoiresPartenaire`
+// (l'exception par police du §5.4) est réservée dans le modèle du Lot 1, pas ici.
+// =====================================================================================================================
+
+/// Liste des branches (CDC principe 6, "tout se suit par branche") — arbitrage PROVISOIRE (P1, 2026-09-28) : paramétrée
+/// par la Finance, en l'absence de réponse écrite du client. Jamais supprimée (seulement désactivée) : une branche
+/// désactivée reste la valeur exacte de toute donnée déjà rattachée.
+model EncBranche {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  libelle   String
+  actif     Boolean  @default(true)
+  creeParId String
+  creePar   User     @relation("EncBrancheCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt    DateTime @default(now())
+  majAt     DateTime @updatedAt
+}
+
+/// Bénéficiaire des honoraires, DATÉ (CDC §3.6) : jamais une ligne modifiée, toujours une nouvelle ligne à une nouvelle
+/// `dateDebut` — l'historique complet reste lisible. Le bénéficiaire en vigueur pour un encaissement est celui dont la
+/// `dateDebut` est la plus récente sans dépasser sa date de prise en compte (`encReferentiels.ts`, Lot 1). `creeParId`
+/// nul UNIQUEMENT pour la ligne « NOVELIA » posée par la migration (aucun utilisateur réel à cet instant).
+model EncBeneficiaireHonoraires {
+  id        String   @id @default(cuid())
+  nom       String
+  dateDebut DateTime @unique @db.Date
+  creeParId String?
+  creePar   User?    @relation("EncBeneficiaireHonorairesCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt    DateTime @default(now())
+}
+
+/// Partenaires (CDC §3.6, F9) : partage des accessoires par partenaire. `cleNom` = nom normalisé
+/// (`encReferentiels.ts`), clé de rapprochement pour l'import de production (Lot 1, où la création automatique et
+/// l'usage réel commencent) ; ici, seule la création manuelle existe (F9 le permet aussi). `partAccessoiresPartenaire`
+/// nul = taux par défaut (`EncParametre` `accessoires.part_partenaire_defaut`) ; jamais un second calcul du complément
+/// SIM stocké : toujours 1 − ce taux, calculé à l'usage (`encCalcul.partagerAccessoires`).
+model EncPartenaire {
+  id                        String            @id @default(cuid())
+  cleNom                    String            @unique
+  nom                       String
+  partAccessoiresPartenaire Decimal?          @db.Decimal(7, 6)
+  creeParId                 String
+  creePar                   User              @relation("EncPartenaireCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt                    DateTime          @default(now())
+  majParId                  String?
+  majPar                    User?             @relation("EncPartenaireMajPar", fields: [majParId], references: [id], onDelete: Restrict)
+  majAt                     DateTime          @updatedAt
+  tauxControle              EncTauxControle[]
+}
+
+/// Taux de contrôle FACULTATIFS (CDC §3.6, F9) : signalent un écart à l'import (Lot 1), ne modifient JAMAIS un montant.
+/// Clé (produitCode, partenaireId), l'un des deux pouvant être nul (contrôle valable pour tous les produits d'un
+/// partenaire, ou pour un produit quel que soit le partenaire) — jamais les deux nuls à la fois (CHECK en SQL, aucun
+/// contrôle "global" décrit par le cahier). `produitCode` reste un simple texte : aucun référentiel produit n'existe
+/// (les produits viennent du fichier de production, Lot 1), rapproché à l'import sur cette même valeur.
+/// `@@unique` : n'empêche que le doublon (produit, partenaire) EXACT — la sémantique NULL de Postgres (NULL ≠ NULL)
+/// ne bloque jamais deux lignes "produit seul" ou "partenaire seul" par ailleurs identiques ; laissé tel quel (aucune
+/// contrainte NULLS NOT DISTINCT ici), l'écran F9 (Lot 3) devra vérifier ce cas lui-même avant insertion.
+model EncTauxControle {
+  id              String         @id @default(cuid())
+  produitCode     String?
+  partenaireId    String?
+  partenaire      EncPartenaire? @relation(fields: [partenaireId], references: [id], onDelete: Restrict)
+  tauxTaxe        Decimal?       @db.Decimal(7, 6)
+  tauxCommission  Decimal?       @db.Decimal(7, 6)
+  tauxAccessoires Decimal?       @db.Decimal(7, 6)
+  tauxHonoraires  Decimal?       @db.Decimal(7, 6)
+  majParId        String
+  majPar          User           @relation("EncTauxControleMajPar", fields: [majParId], references: [id], onDelete: Restrict)
+  majAt           DateTime       @updatedAt
+
+  @@unique([produitCode, partenaireId])
+  @@index([produitCode])
+  @@index([partenaireId])
 }

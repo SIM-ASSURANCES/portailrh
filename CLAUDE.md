@@ -4666,6 +4666,172 @@ réellement).
   environnement) — description précise fournie dans le résumé de la
   tâche pour validation par le maître de stage.
 
+## Module « Encaissements, taxes » (en conception, V2)
+
+> **Cahier des charges de référence : V2.6** — [docs/cahier-des-charges-encaissements-v2.md](docs/cahier-des-charges-encaissements-v2.md)
+> (reçue le 2026-09-28 ; fait foi face à la maquette [docs/Maquette_registre_paiements.html](docs/Maquette_registre_paiements.html)).
+> **Conception de référence** : [docs/encaissements-conception.md](docs/encaissements-conception.md) (arbitrages datés,
+> permissions, modèle de données, calculs, imports, ambiguïtés et statut, découpage en commits). Raisonnement et écarts :
+> [docs/encaissements-analyse-impact-v2.md](docs/encaissements-analyse-impact-v2.md). Le cahier V1 et les réponses du
+> 28/09 sont **remplacés** ([docs/archive/](docs/archive/)). Toute évolution de la conception se fait dans le même commit
+> que le code qui l'applique.
+
+Remplace le classeur Excel de suivi des paiements (colonnes A à AH). **Pas un outil comptable** : ni écritures, ni
+clôture ; l'application calcule ce qui est dû, les paiements sortants se font hors application puis sont cochés « payés ».
+Contrats **uniquement issus du fichier de production** (jamais créés à l'écran) ; encaissements par **trois voies** :
+fichier de production (paiements « à confirmer »), saisie à l'écran, relevé mobile money ou bancaire. **Seul un
+encaissement confirmé compte**, ses montants sont **figés à la confirmation**. Tout se suit **par branche**.
+
+**En place** : moteur de calcul pur **V2** (`backend/src/encCalcul.ts`, vitest : prorata, exigibilité §5.3 avec « Régularisation »
+et reprise, partage des accessoires, contre-passation, trop-perçu en alerte) ; **permissions V2** — 3 profils validés,
+9 permissions `enc.*` (Équipe technique, Finance, Consultation ; `enc.mettre_en_service` à part, module technique, DG
+seul) posées par une **migration corrective** (`20260928150000_encaissements_permissions_v2`, jamais en modifiant la
+migration 3a déjà poussée), qui retire les 17 permissions et les rôles « Gestionnaire »/« Responsable » du V1, avec un
+garde-fou qui arrête toute la migration si l'un de ces deux rôles porte encore un compte ; séquences atomiques, audit
+`EncAudit` immuable par trigger, paramètres (§5.1, adaptés à la V2 — voir ci-dessous), pièces jointes `EncPieceJointe` ;
+**référentiels et paramètres V2** (commit du 2026-09-30, `20260930000000_encaissements_parametres_v2`, conception §5.2) —
+branches (`EncBranche`, liste paramétrée par la Finance, P1 provisoire), bénéficiaire des honoraires daté
+(`EncBeneficiaireHonoraires`), partenaires et partage des accessoires (`EncPartenaire`), taux de contrôle facultatifs
+(`EncTauxControle`) — schéma, contrôle applicatif (`backend/src/encReferentiels.ts`) et Server Actions
+(`frontend/src/app/(dashboard)/encaissements/parametres/actions.ts`) SANS écran, le F9 arrivant au Lot 3.
+
+**Paramètres V2 (2026-09-30, conception §5.1/§5.2)** : `taxe.delai_exigibilite_mois` retirée d'`EncParametre` (N+1
+fixe, CDC V2.6 §5.3) ; `accessoires.part_partenaire_defaut` ajoutée (0–1, type `"taux"` nouveau dans
+`encParametres.ts`, branchée sur `choisirTauxAccessoires` via `tauxAccessoiresDefaut`) ; `taxe.jour_limite_reversement`
+désormais bornée 1–28 aussi en base (`CHECK`, en plus du contrôle applicatif déjà existant). Bénéficiaire des
+honoraires : NOVELIA posée une seule fois par la migration (`creeParId` nul, seul cas), date de début au **2000-01-01**
+comme repère « depuis toujours » (`ENC_BENEFICIAIRE_HONORAIRES_INITIAL`, `encReferentiels.ts`) — **TRANCHÉ 2026-09-30**
+(V2-A13, conception §10.1) : le client a confirmé que NOVELIA est bénéficiaire des honoraires depuis toujours, cette
+date est donc retenue définitivement, plus une valeur provisoire à remplacer. `EncTauxControle` porte un
+`@@unique([produitCode, partenaireId])` qui
+n'empêche que le doublon EXACT (la sémantique NULL de Postgres ne bloque jamais deux lignes « produit seul » ou
+« partenaire seul » par ailleurs identiques) — l'écran F9 (Lot 3) devra vérifier ce cas lui-même.
+
+**Diagnostic du blocage `plpgsql` local, et vérification refaite sur un vrai PostgreSQL** — l'échec initial
+(`ERROR: could not load library "C:/Program Files/PostgreSQL/18/lib/plpgsql.dll" : unknown error 4551`) est
+**`ERROR_SYSTEM_INTEGRITY_POLICY_VIOLATION`** (Smart App Control / contrôle d'application Windows), pas un bug de
+code — confirmé en le reproduisant avec un simple `DO $$ BEGIN PERFORM 1; END $$;` sans aucun rapport avec ce module.
+**Volontairement non touché** (la sécurité Windows de la machine ne relève pas de ce projet). Un nouveau conteneur
+Docker jetable **`postgres:16`** (même version majeure que la production, voir `docker-compose.raw.yml`, `--rm`, port
+5433) a servi à vérifier réellement cette migration, sans dépendre de l'installation locale :
+- Toutes les migrations, depuis zéro, sans seed, appliquées avec succès — y compris `20260927142216_encaissements_socle_technique`
+  (la seule autre migration du projet à utiliser `plpgsql`, `enc_interdire()`) et la nouvelle `20260930000000`.
+- Les 4 tables existent ; `taxe.delai_exigibilite_mois` absente, `accessoires.part_partenaire_defaut` présente à `0` ;
+  NOVELIA présente (`creeParId` nul, `dateDebut` 2000-01-01).
+- Le `CHECK` 1–28 refuse `0` et `29`, accepte `1` et `28` (testé par écriture directe sur `EncParametre`).
+- Le trigger d'immuabilité d'`EncAudit` (posé par 3b) fonctionne réellement sur ce Postgres 16 : `UPDATE` refusé
+  (`ENC_IMMUABLE`), `DELETE` encore accepté (normal, mise en service pas encore active).
+- **Rejeu de la migration (idempotence)** : le fichier complet, rejoué une seconde fois, échoue au premier
+  `CREATE TABLE` (« relation "EncBranche" already exists ») — **comportement normal, pas un défaut** : cette
+  migration crée des tables, exactement comme `20260927142216_encaissements_socle_technique` (revérifié : le même
+  rejeu échoue de la même façon, « relation "EncMiseEnService" already exists ») et comme toute migration additive du
+  projet, jamais conçue pour être rejouée (protégée par `_prisma_migrations`, pas par de l'idempotence SQL). Le seul
+  bloc à vocation idempotente, celui des « Ajouts manuels » (`DELETE`/`INSERT ... ON CONFLICT DO NOTHING`), rejoué
+  seul, échoue lui aussi dès le premier `ALTER TABLE ADD CONSTRAINT` (Postgres n'a pas de `ADD CONSTRAINT IF NOT
+  EXISTS`) — attendu et sans précédent contraire dans le projet : les migrations correctives déjà idempotentes
+  (`20260928150000_encaissements_permissions_v2`) ne posent jamais de contrainte, seulement des lignes. Le `DELETE`
+  et les deux `INSERT ... ON CONFLICT DO NOTHING`, pris isolément, restent bien idempotents.
+- Conteneur supprimé après vérification (`docker stop`, `--rm`).
+
+**La base de dev locale `sim_portail` n'est plus touchée** (retesté avec le même `DO $$ ... $$` minimal, sans aucune
+écriture : fonctionne, ainsi que sur une nouvelle base locale jetable) — le blocage semble avoir été ponctuel (Smart
+App Control bloque puis autorise après une vérification de réputation en arrière-plan, cohérent avec ce qui a été
+observé). **La Trésorerie n'a jamais utilisé `plpgsql`** : recherche exhaustive (`LANGUAGE plpgsql`/`CREATE
+FUNCTION`/`CREATE TRIGGER` dans toutes les migrations du projet) ne trouve qu'un seul fichier concerné,
+`20260927142216_encaissements_socle_technique` (Encaissements uniquement) — aucun risque pour le reste du portail,
+même pendant que le blocage local était actif.
+
+**Décisions du 2026-09-28 (détail : conception §1)** :
+- **Arrondi** : calcul et stockage au centime (règle du moteur : AD = Z − AB − AC, reliquat exact au soldant), affichage à l'unité FCFA.
+- **PaiementID** : à la **reprise**, ceux du classeur deviennent nos numéros `PAI` (séquence remontée au maximum repris) ; pour les **fichiers mensuels**, le PaiementID du fichier va dans un **champ séparé** (anti-doublon) et chaque encaissement reçoit **notre** numéro `PAI-AAAA` (année de saisie) ; l'export écrit notre numéro en colonne B.
+- **Avenant** : confirmés figés, suivants sur les nouveaux montants, reliquat sur les nouveaux totaux, alerte trop-perçu si la nouvelle prime est inférieure à l'encaissé.
+- **Exigibilité, parts d'accessoires et bénéficiaire des honoraires calculés et figés dès le Lot 1** ; écrans aux Lots 2 et 3.
+- **Reprise initiale** (CDC F1.5), **Finance seule** (`enc.importer_production` et `enc.marquer_paye`) : prise en compte = date de paiement ; bascule par nature sur la colonne A (taxes au 30/09/2026 — date reposée au client —, autres natures sans bascule) ; le paramétrage des accessoires et des honoraires doit la précéder.
+- **Relevés** : négatifs et paiements < 100 FCFA ignorés pour le rapprochement mais **comptés dans les frais des opérateurs**.
+- Fichiers importés conservés comme preuve (données clients) : **relevés téléchargeables par la Finance seulement**, **fichiers de production par la Finance et l'équipe technique** (jamais la Consultation). Remise à zéro avant production conservée.
+- **Permissions V2 : 9, validées** (conception §4). Provisoires : liste des branches paramétrée par la Finance ; « taxe payée » non cochable avant exigibilité pour les actions de l'utilisateur (la reprise en est exclue).
+
+**Données clients** : les relevés bancaires et mobile money (et tout extrait du classeur) ne vont **jamais** dans le dépôt,
+ni dans `docs/`, ni dans des tests. Dossier local `C:\Projets\donnees-sensibles\`, **hors du dépôt** (la ligne
+`/donnees-sensibles/` du `.gitignore` reste par précaution) ; tests sur des relevés synthétiques. Lecture `.xls`/`.xlsx`/`.csv` : **SheetJS CE 0.20.3 vendue** (`backend/vendor/xlsx-0.20.3.tgz`, dépendance
+`file:`, empreinte vérifiée — voir "Lot 1 — F1" ci-dessous) ; le paquet npm `xlsx` 0.18.5 n'est plus maintenu et porte
+des failles connues ; ExcelJS reste l'outil d'écriture des exports.
+
+**Toujours valables (2026-09-26)** : module autonome (préfixe `Enc`, clé `encaissements`, routes `/encaissements`) ;
+hors purge globale, avec sa propre remise à zéro (`enc.mettre_en_service`, DG seul, espace système) ; audit immuable
+(limite : connexion en superutilisateur, le CDC demande un compte applicatif aux droits limités et une conservation de 10
+ans) ; `EncPieceJointe` séparée de `PieceJointe` ; taux et parts en fraction `Decimal(7,6)` ; montants `Decimal(14,2)`,
+jamais en `number`.
+
+### Lot 1 — F1 : import mensuel du fichier de production (hors reprise F1.5)
+
+Découpage validé le 2026-09-30 en **4 commits** (plutôt qu'un seul "Lecture de tableurs et règles d'import" — voir
+conception §11) : **4a** lecture pure du fichier, **4b** règles F1 pures (doublon/avenant/écarts), **4c** application
+en base (transaction), **4d** écran. F1.5 (reprise initiale) reste un commit séparé, plus tard, une fois V2-A27b/
+V2-A27d/V2-A1c répondues par le client — rien dans ces 4 commits ne construit la reprise.
+
+**Décisions du 2026-09-30** (détail et raisonnement : conception §1, arbitrages D12-D15) :
+- **V2-A12 (doublon), PROVISOIRE** : « déjà présent » compare avec TOUS les encaissements existants (y compris
+  « non reçus ») ; « doublon possible » (±1 FCFA, ±7 jours) compare seulement avec confirmés + à confirmer.
+- **V2-A10 tranché** : paiement incomplet sur police nouvelle → contrat créé, paiement signalé « à compléter ».
+- **V2-A14 tranché** : ligne annulée d'un fichier Finance → rejetée entièrement (ni contrat ni paiement) ; fichier
+  Équipe technique → contrat importé normalement, signalement « annulation non appliquée — en attente L4 ».
+- **V2-A28 tranché** : date de paiement future sur une ligne de fichier → contrat importé, paiement NON créé,
+  signalé « à compléter » (même règle que la saisie manuelle, §8.1).
+- Route de dépôt du fichier : **dédiée** au module (`.xls`/`.xlsx`/`.csv`, gardée par `enc.importer_production`),
+  jamais un élargissement de la route commune Trésorerie (tous ses utilisateurs pourraient sinon déposer des
+  tableurs) — prévue au commit 4c.
+- Transaction d'import (4c) : le timeout par défaut de `$transaction` (5 s) ne tiendra pas 5 000 lignes — timeout
+  explicite et/ou insertions par lots, à mesurer réellement sur une base Docker.
+
+#### Commit 4a — Lecture du fichier de production (fait, 2026-09-30)
+
+- **`backend/src/encImportLecture.ts`** (nouveau) — seule fonction d'entrée `lireTableur(buffer) →
+  { lignes, brancheColonnePresente, nbLignesVidesIgnorees }` (§8.4). Colonnes A à AH (34, position fixe) lues par
+  POSITION, en-têtes contrôlés (symboles ▲/✦ de la maquette ignorés à la comparaison) ; colonne « Branche »
+  optionnelle reconnue par son en-tête, à n'importe quelle position (CDC §7.1) ; colonnes calculées ignorées
+  (N, Q, R, AA à AH — y compris "Observations", AF : le cahier ne fait aucune exception sur cette plage, jamais
+  repris tel quel depuis le fichier) ; montants (S, T, U, V, W, X, Z — **mêmes noms que `MontantsContrat`,
+  `encCalcul.ts`**, jamais une nomenclature parallèle) arrondis au centime en passant par une chaîne (jamais le
+  flottant brut, qui peut porter un résidu binaire) ; `normaliserMode` = portage direct de `normMode`
+  (`Maquette_registre_paiements.html`). Limites : 10 Mo, 20 000 lignes (aucune valeur précise dans le cahier
+  au-delà de l'objectif « 5 000 lignes < 2 min »).
+- **Permissif à dessein** : seuls des problèmes STRUCTURELS (en-têtes incorrects, fichier vide/illisible, trop
+  volumineux, trop de lignes) lèvent `EncImportLectureError` — un champ absent/illisible sur une ligne (police,
+  dates, montants, paiement) devient `null`, jamais une exception qui ferait échouer tout le fichier : une ligne
+  incomplète est une décision du commit 4b (règles F1, cas « à compléter »), pas une erreur de lecture.
+- **Piège trouvé et corrigé avant la mise en service** : `sheetRows: LIGNES_MAX + 1` passé à `XLSX.read` tronque
+  SILENCIEUSEMENT toute ligne au-delà de la limite AVANT que le contrôle `donnees.length > LIGNES_MAX` ne puisse
+  jamais la voir — un fichier de 20 001 lignes ne levait donc AUCUNE erreur (import partiel silencieux, l'inverse du
+  comportement voulu). Corrigé en demandant `LIGNES_MAX + 2` lignes à SheetJS (marge d'une ligne, jamais un plafond
+  réellement illimité) : le contrôle explicite voit alors bien le dépassement. Trouvé par un vrai test (20 001 lignes
+  minimales, sous la limite de taille pour isoler cette limite précise de celle des 10 Mo), pas par relecture de code.
+- **`backend/vendor/xlsx-0.20.3.tgz`** — téléchargé depuis `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`,
+  vérifié (nom/version/auteur dans son `package.json` interne), empreinte SHA-256
+  `8dc73fc3b00203e72d176e85b50938627c7b086e607c682e8d3c22c02bb99fe8`. `backend/package.json` :
+  `"xlsx": "file:./vendor/xlsx-0.20.3.tgz"` — `package-lock.json` confirme `resolved: "file:backend/vendor/
+  xlsx-0.20.3.tgz"` (jamais le registre npm).
+- **`Dockerfile` corrigé** — les stages `deps` et `prod-deps` copient sélectivement les `package.json` AVANT `npm
+  ci`/`npm ci --omit=dev` ; sans `backend/vendor/` copié au même moment, l'un et l'autre échoueraient (la dépendance
+  `file:` est résolue par npm relativement à `backend/package.json`, absent son dossier vendu à cet instant du
+  build). Un `COPY backend/vendor ./backend/vendor` ajouté juste avant chaque `npm ci` des deux stages. **Vérifié
+  par un vrai `docker build` de l'image complète** (`docker build -t sim-portail-encimport-test .`) : les 4 stages
+  (`deps`, `builder`, `prod-deps`, `runner`) passent avec succès, `npm ci`/`npm ci --omit=dev` incluses (auraient
+  échoué immédiatement sans le correctif), `npm run build` (Next.js, 65 routes) compris — **exit code 0**. Seul
+  avertissement Docker, préexistant et sans rapport (`AUTH_SECRET` en `ENV`, déjà documenté dans le Dockerfile comme
+  un placeholder de build jamais utilisé au runtime). Image de test supprimée après vérification (`docker rmi`).
+- **Découverte, bloquante pour le commit 4b (V2-A14)** : aucune colonne du fichier n'est identifiée pour signaler
+  qu'une ligne est annulée — le CDC (§3.1) renvoie à F8 (Lot 4) sans nommer de colonne, et les 34 en-têtes de la
+  maquette n'en contiennent aucune. `encImportLecture.ts` ne lit donc, à dessein, aucun indicateur d'annulation ; la
+  règle D14 ne pourra être codée qu'une fois cette colonne identifiée (conception §1, 2026-09-30).
+- Tests : `backend/src/encImportLecture.test.ts`, 29 cas — fixtures `.xlsx` générées EN MÉMOIRE par SheetJS
+  lui-même (jamais un fichier réel ni même un `.xlsx` versionné dans le dépôt), en-têtes valides/invalides/nombre de
+  colonnes incorrect, colonne Branche présente/absente/casse, colonnes calculées jamais reprises, arrondi au
+  centime, ligne de paiement incomplète (permissive), numéro de police manquant (permissif), ligne entièrement
+  vide ignorée, `numeroLigne` correct, les 3 limites structurelles (taille/lignes/illisible), `normaliserMode` sur
+  tous les cas de la maquette.
+- `vitest` (122/122 tests backend), `tsc --noEmit` et `eslint` passent sans erreur.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif
@@ -5438,6 +5604,25 @@ charge par son propre mécanisme natif — `@next/env` chargé depuis
 Guide complet : [DEPLOIEMENT.md](DEPLOIEMENT.md). Image construite
 (GHCR), déployée sur Dokploy via `docker-compose.raw.yml` (mode « Raw »,
 pas de build côté Dokploy).
+
+> **⚠️ Avertissement — état de la production**
+> - **La réinitialisation globale a été exécutée EN PRODUCTION** le 26/09/2026 à 18:08:33 par Aristide Nikiema, connecté avec le compte
+>   de test `dg@simassurances.test` (« DG Test »), sur décision conjointe d'Aristide Nikiema et de Thierry Kouamé
+>   (binôme), en préparation de la mise en production. Empreinte de la sauvegarde :
+>   `475462467e966f0644064dbd98557736b064509343f388fa316d72272df0f0f6`. Elle est **désactivée définitivement**
+>   (ligne `ReinitialisationSysteme`, jamais purgée ; la supprimer, même en SQL direct, la réactiverait).
+> - **Les comptes de test du seed doivent être neutralisés en production avant le déploiement du module
+>   Encaissements** : le rôle DG reçoit `enc.mettre_en_service`, et `dg@simassurances.test` a un mot de passe de test
+>   connu.
+>   - **Neutraliser = DÉSACTIVER** le compte dans `/admin/users` (connexion refusée, sessions en cours coupées
+>     immédiatement, historique intact, réversible) — **jamais supprimer** : la suppression est refusée pour tout
+>     compte ayant une trace d'activité, et sinon peut effacer silencieusement des auteurs (relations en `SET NULL`).
+>   - **Ne jamais attribuer le rôle DG à un compte de test** : la permission appartient au rôle, pas au compte.
+> - **Ne jamais relancer le seed en production.** `seed.ts` vide les tables une par une (`deleteMany`), **hors
+>   transaction** : il échouerait au plus tard sur `user.deleteMany()` (clé étrangère `RESTRICT` depuis
+>   `ReinitialisationSysteme`, `RetourExterne`, `JournalBanque`…) **après** avoir déjà effacé une partie des vraies
+>   données (historique, notifications, feedbacks, demandes, pointages…). Le marqueur `/app/uploads/.seeded` du
+>   service `init` ne protège que le démarrage automatique, pas un lancement manuel.
 
 - **Migrations automatiques (`prisma migrate deploy`) à chaque démarrage,
   seed JAMAIS automatisé** — le seed fait des `deleteMany`, protégé par un

@@ -50,6 +50,7 @@ interface AppShellProps {
   canConsulterHistorique?: boolean;
   /** `feedback.moderer` : ajoute "Modération Feedbacks" (RH & DG). */
   canModererFeedback?: boolean;
+  canConsulterEncaissements?: boolean;
   /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
   canRecevoirFeedback?: boolean;
   unreadNotificationsCount?: number;
@@ -88,6 +89,7 @@ export function AppShell({
   canPointer = false,
   canConsulterHistorique = false,
   canModererFeedback = false,
+  canConsulterEncaissements = false,
   canRecevoirFeedback = false,
   unreadNotificationsCount = 0,
   topbarAlert = null,
@@ -194,6 +196,7 @@ export function AppShell({
         canPointer={canPointer}
         canConsulterHistorique={canConsulterHistorique}
         canModererFeedback={canModererFeedback}
+        canConsulterEncaissements={canConsulterEncaissements}
         canRecevoirFeedback={canRecevoirFeedback}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
