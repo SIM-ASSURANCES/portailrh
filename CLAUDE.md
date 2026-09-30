@@ -4015,6 +4015,9 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 - **Refonte Profil & Audit** : Vues de profil personnalisées par rôle (`/profil`), élimination des waterfalls de rendu dans `LogsList.tsx` et traçabilité des services.
 - **Durcissement FeedbackApp** : Exclusion du rôle technique Admin des destinataires de feedback (`peutRecevoirFeedback: false`), modération RH/DG, système de notation structurée.
 
+### 7. Durcissement sécurité (2026-09-30)
+- **Flux SSE `/api/pointage/stream`** : exige une session (`auth()`, 401 sinon), même garde que `/api/events`. Rappel : `authorized()` laisse passer `/api/*`, chaque route se protège elle-même.
+
 ## Module FeedbackApp — anonymat total
 
 Troisième module : permet à QUICONQUE (employé connecté ou visiteur sans

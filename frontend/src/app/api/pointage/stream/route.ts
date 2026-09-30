@@ -1,9 +1,18 @@
+import { auth } from "@/lib/auth";
 import { pointageEmitter } from "@/lib/events";
 import { NextRequest } from "next/server";
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
+  // `authorized()` (auth.config.ts) laisse passer toutes les routes /api/* :
+  // chaque route se protège elle-même. Même garde que /api/events — auth()
+  // lit uniquement le JWT, aucune requête base de données.
+  const session = await auth();
+  if (!session?.user?.id) {
+    return new Response("Non authentifié.", { status: 401 });
+  }
+
   const responseStream = new TransformStream();
   const writer = responseStream.writable.getWriter();
   const encoder = new TextEncoder();
