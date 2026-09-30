@@ -50,9 +50,11 @@ export interface ContexteContrat {
 }
 
 /** Taux de contrôle ATTENDUS pour le produit/partenaire de cette ligne (fraction 0-1, ex. 0.0725 pour 7,25 %),
- *  résolus par l'appelant (`EncTauxControle`, accès base) — jamais ici. `tauxAccessoires` se compare au taux RÉEL
- *  U / T (base implicite reprise du V1, PROVISOIRE — à confirmer par le client, V2-A20 toujours partiellement
- *  ouverte) : aucune formule alternative n'est décrite ni par le cahier ni par la maquette. */
+ *  résolus par l'appelant (`EncTauxControle`, accès base) — jamais ici. Comparés en MONTANT, pas en pourcentage (voir
+ *  `OptionsReglesImport.toleranceIncoherenceFcfa` ci-dessous — décision du 2026-09-30, corrige un premier essai en
+ *  points de pourcentage). `tauxAccessoires` se compare au montant réel U (base T, IMPLICITE reprise du V1,
+ *  PROVISOIRE — à confirmer par le client, V2-A20 toujours partiellement ouverte) : aucune formule alternative n'est
+ *  décrite ni par le cahier ni par la maquette. */
 export interface TauxControleAttendus {
   tauxTaxe?: Montant | null;
   tauxCommission?: Montant | null;
@@ -65,15 +67,20 @@ export interface OptionsReglesImport {
   origineImport: "FINANCE" | "EQUIPE_TECHNIQUE";
   /** Date du jour (jamais lue en interne) — sert au contrôle « pas de date future » (V2-A28/CDC §8.1). */
   aujourdHui: Date;
-  /** `controle.tolerance_fcfa` (EncParametre) — tolérance de l'incohérence T+U+V ≠ S, en FCFA. */
+  /** `controle.tolerance_fcfa` (EncParametre) — tolérance de l'incohérence T+U+V ≠ S, EN FCFA. Réutilisée TELLE
+   *  QUELLE pour l'écart de taux de contrôle ci-dessous (décision du 2026-09-30, CDC V1 §3.8 : même précédent écrit,
+   *  « écart en FCFA », 1 FCFA par défaut) — jamais une seconde tolérance dédiée en points de pourcentage : un écart
+   *  de 2 points de pourcentage peut représenter un écart de montant énorme ou négligeable selon la base, la
+   *  tolérance doit donc toujours porter sur le MONTANT, jamais sur le taux lui-même. */
   toleranceIncoherenceFcfa: Montant;
   /** Codes `EncBranche` actifs ; `null` = liste non vérifiée (le contrôle « branche inconnue » est alors sauté). */
   branchesConnues: readonly string[] | null;
   /** Branche choisie par l'utilisateur à l'import, si le fichier n'a pas de colonne « Branche ». */
   brancheParDefaut: string | null;
-  /** Taux de contrôle attendus pour cette ligne, et leur tolérance (fraction, ex. 0.02 = 2 points) — les DEUX
-   *  ensemble ou aucun des deux : aucune tolérance par défaut n'existe (V2-A20 ouverte), jamais devinée ici. */
-  tauxControle?: { attendus: TauxControleAttendus; toleranceFraction: Montant };
+  /** Taux de contrôle attendus pour cette ligne — `undefined` = aucun contrôle configuré (produit/partenaire),
+   *  `analyserLigne` saute alors ce contrôle sans jamais deviner de défaut. Pas de tolérance dédiée ici : voir
+   *  `toleranceIncoherenceFcfa` ci-dessus. */
+  tauxControle?: TauxControleAttendus;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -286,28 +293,34 @@ export function analyserLigne(ligne: LigneAAnalyser, contexte: ContexteContrat, 
     }
   }
 
-  // 5. Écart de taux de contrôle (CDC §3.6 : signale, ne modifie jamais un montant). Bases reprises de
-  //    Maquette_registre_paiements.html (seule formule disponible, la maquette ne couvre pourtant pas les taux de
-  //    contrôle eux-mêmes) : taxe = V / (T + U), commission = W / T, honoraires = X / T. Accessoires = U / T, base
-  //    IMPLICITE reprise du V1 — PROVISOIRE, à confirmer par le client (V2-A20 reste partiellement ouverte).
-  if (contrat && options.tauxControle && contrat.T.gt(0)) {
-    const { attendus, toleranceFraction } = options.tauxControle;
-    const verifier = (libelle: string, reel: Montant, attendu: Montant | null | undefined) => {
+  // 5. Écart de taux de contrôle (CDC §3.6 : signale, ne modifie jamais un montant). Comparaison en MONTANT — montant
+  //    attendu = taux paramétré × base —, jamais en pourcentage : un écart de quelques points de taux peut recouvrir
+  //    un montant énorme ou négligeable selon la base, la tolérance doit donc toujours porter sur le montant.
+  //    Tolérance = `toleranceIncoherenceFcfa` (même précédent écrit que l'incohérence T+U+V≠S, CDC V1 §3.8, 1 FCFA
+  //    par défaut) — décision du 2026-09-30, corrige un premier essai qui comparait des fractions avec une tolérance
+  //    en points (un écart de 2 points aurait laissé passer 20 % de commission au lieu de 18 %, une dérive bien
+  //    supérieure à 1 FCFA en valeur réelle). Bases reprises de Maquette_registre_paiements.html (seule formule
+  //    disponible) : taxe sur (T+U), commission/honoraires/accessoires sur T — accessoires PROVISOIRE (V2-A20
+  //    reste partiellement ouverte). Jamais besoin de garde `T > 0` : sans division, `attendu × 0 = 0` reste un
+  //    montant attendu valide (un écart réel sur une base nulle est alors, à raison, toujours signalé).
+  if (contrat && options.tauxControle) {
+    const { tauxTaxe, tauxCommission, tauxHonoraires, tauxAccessoires } = options.tauxControle;
+    const verifier = (libelle: string, reelMontant: Montant, base: Montant, attendu: Montant | null | undefined) => {
       if (attendu === null || attendu === undefined) return;
-      const ecart = reel.minus(attendu).abs();
-      if (ecart.gt(toleranceFraction)) {
+      const montantAttendu = attendu.times(base);
+      const ecart = reelMontant.minus(montantAttendu).abs();
+      if (ecart.gt(options.toleranceIncoherenceFcfa)) {
         signalements.push({
           analyse: "ECART_TAUX",
           niveau: "A_TRAITER",
-          detail: `Taux de ${libelle} réel (${reel.times(100).toFixed(2)} %) hors tolérance du taux de contrôle attendu (${attendu.times(100).toFixed(2)} %).`,
+          detail: `Montant de ${libelle} réel (${reelMontant.toFixed(2)} FCFA) hors tolérance du montant attendu (${montantAttendu.toFixed(2)} FCFA, taux de ${attendu.times(100).toFixed(2)} % × ${base.toFixed(2)} FCFA) : écart ${ecart.toFixed(2)} FCFA.`,
         });
       }
     };
-    const baseTaxe = contrat.T.plus(contrat.U);
-    if (baseTaxe.gt(0)) verifier("taxe", contrat.V.div(baseTaxe), attendus.tauxTaxe);
-    verifier("commission", contrat.W.div(contrat.T), attendus.tauxCommission);
-    verifier("honoraires", contrat.X.div(contrat.T), attendus.tauxHonoraires);
-    verifier("accessoires", contrat.U.div(contrat.T), attendus.tauxAccessoires);
+    verifier("taxe", contrat.V, contrat.T.plus(contrat.U), tauxTaxe);
+    verifier("commission", contrat.W, contrat.T, tauxCommission);
+    verifier("honoraires", contrat.X, contrat.T, tauxHonoraires);
+    verifier("accessoires", contrat.U, contrat.T, tauxAccessoires);
   }
 
   // 6. Paiement — tableau des cas F1.4 (CDC F1.4) + V2-A10/A28 (D13/D15) + REFERENCE_MANQUANTE (2026-09-30).

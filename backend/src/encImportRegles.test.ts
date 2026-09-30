@@ -261,11 +261,12 @@ describe("analyserLigne — incohérence T + U + V ≠ S", () => {
   });
 });
 
-describe("analyserLigne — écart de taux de contrôle (bases reprises de la maquette, V2-A20 partiellement ouverte)", () => {
-  it("signale un écart de taux de commission hors tolérance", () => {
-    const options: OptionsReglesImport = { ...OPTIONS_BASE, tauxControle: { attendus: { tauxCommission: montant("0.10") }, toleranceFraction: montant("0.01") } };
+describe("analyserLigne — écart de taux de contrôle, comparé en MONTANT (décision du 2026-09-30, corrige un premier essai en points de pourcentage)", () => {
+  it("signale un écart de taux de commission hors tolérance (montant attendu vs montant réel)", () => {
+    const options: OptionsReglesImport = { ...OPTIONS_BASE, tauxControle: { tauxCommission: montant("0.10") } };
     const decision = analyserLigne(ligneBase(), CONTEXTE_NOUVELLE, options);
-    // W/T = 251.75/1398.60 ≈ 0.18 (18 %), attendu 10 % ± 1 point -> écart signalé.
+    // Montant attendu = 10 % × T (1398.60) = 139.86 ; réel W = 251.75 -> écart 111.89 FCFA, bien au-delà de la
+    // tolérance de 1 FCFA (OPTIONS_BASE.toleranceIncoherenceFcfa).
     expect(decision.signalements.some((s) => s.analyse === "ECART_TAUX" && s.detail.includes("commission"))).toBe(true);
   });
 
@@ -274,12 +275,32 @@ describe("analyserLigne — écart de taux de contrôle (bases reprises de la ma
     expect(decision.signalements.some((s) => s.analyse === "ECART_TAUX")).toBe(false);
   });
 
-  it("accessoires (décision 2026-09-30, PROVISOIRE) : taux réel U / T comparé au taux attendu", () => {
-    // U = 139.86 (10 % de T = 1398.60, avec S/V/W ajustés pour rester cohérent) -> réel 10 %, attendu 5 % ± 1 point.
+  it("accessoires (décision 2026-09-30, PROVISOIRE) : montant réel U comparé au montant attendu (taux × T)", () => {
+    // U = 139.86 (10 % de T = 1398.60, avec S/V ajustés pour rester cohérent) -> attendu 5 % × T = 69.93, écart
+    // 69.93 FCFA, bien au-delà de la tolérance de 1 FCFA.
     const ligne = ligneBase({ S: montant("1639.86"), U: montant("139.86") });
-    const options: OptionsReglesImport = { ...OPTIONS_BASE, tauxControle: { attendus: { tauxAccessoires: montant("0.05") }, toleranceFraction: montant("0.01") } };
+    const options: OptionsReglesImport = { ...OPTIONS_BASE, tauxControle: { tauxAccessoires: montant("0.05") } };
     const decision = analyserLigne(ligne, CONTEXTE_NOUVELLE, options);
     expect(decision.signalements.some((s) => s.analyse === "ECART_TAUX" && s.detail.includes("accessoires"))).toBe(true);
+  });
+
+  it("détecte un écart réel même quand l'ancienne tolérance en points l'aurait laissé passer (20 % attendu, 18 % réel)", () => {
+    // Exactement l'exemple ayant motivé la correction : W/T = 251.75/1398.60 ≈ 18 %, attendu 20 % — seulement 2
+    // points de pourcentage d'écart (une ancienne tolérance de 2 points l'aurait laissé passer), mais 27.97 FCFA de
+    // différence réelle, largement au-delà du 1 FCFA de tolérance appliqué au MONTANT.
+    const options: OptionsReglesImport = { ...OPTIONS_BASE, tauxControle: { tauxCommission: montant("0.20") } };
+    const decision = analyserLigne(ligneBase(), CONTEXTE_NOUVELLE, options);
+    const signalement = decision.signalements.find((s) => s.analyse === "ECART_TAUX" && s.detail.includes("commission"));
+    expect(signalement).toBeDefined();
+    expect(signalement?.detail).toContain("27.97");
+  });
+
+  it("ne signale rien si le montant attendu est dans la tolérance de 1 FCFA du montant réel", () => {
+    const ligne = ligneBase({ T: montant("1000"), W: montant("200") });
+    const options: OptionsReglesImport = { ...OPTIONS_BASE, tauxControle: { tauxCommission: montant("0.20") } };
+    const decision = analyserLigne(ligne, CONTEXTE_NOUVELLE, options);
+    // Montant attendu = 20 % × 1000 = 200.00, exactement égal au réel -> écart nul, jamais signalé.
+    expect(decision.signalements.some((s) => s.analyse === "ECART_TAUX")).toBe(false);
   });
 });
 
