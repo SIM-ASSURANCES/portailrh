@@ -5635,10 +5635,6 @@ pas de build côté Dokploy).
   fichier ; `AUTH_SECRET`, `POSTGRES_PASSWORD`, `ALLOWED_OFFICE_IPS`
   obligatoires via `${…:?}`). L'historique Git garde les anciennes valeurs :
   seule leur rotation protège.
-- **Service `cron`** (alpine, `crond`) : appelle `/api/cron/absences` du lundi
-  au vendredi à 17h30 et 20h00 UTC (= Abidjan) ; inactif tant que
-  `CRON_SECRET` n'est pas défini (à définir seulement après désactivation
-  des comptes de test et réglage de `SYSTEM_START_DATE`).
 - **Clés `NEXT_PUBLIC_FIREBASE_*`** : figées au build par Next.js, donc
   passées en `--build-arg` (Dockerfile, vides par défaut = push inactif) ;
   les mettre dans le compose n'a aucun effet. `FIREBASE_SERVICE_ACCOUNT_JSON`
