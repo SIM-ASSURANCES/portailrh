@@ -5,8 +5,16 @@ import { networkInterfaces } from "os";
  * GET /api/network-config
  * Retourne l'URL réseau du serveur pour les QR codes
  * Utile pour scanner depuis un autre appareil du réseau local
+ *
+ * Outil de développement uniquement : en production, elle révélerait l'IP
+ * interne du serveur à n'importe qui. `QRCodeDownload` ne l'appelle que sur
+ * localhost, et retombe sur `window.location.origin` si elle échoue.
  */
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     // Récupère le hostname du serveur depuis les headers de la requête
     const host = request.headers.get("host") || "localhost:3000";

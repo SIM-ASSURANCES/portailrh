@@ -4017,6 +4017,7 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 
 ### 7. Durcissement sécurité (2026-09-30)
 - **Flux SSE `/api/pointage/stream`** : exige une session (`auth()`, 401 sinon), même garde que `/api/events`. Rappel : `authorized()` laisse passer `/api/*`, chaque route se protège elle-même.
+- **`/api/network-config`** : outil de dev (URL réseau du QR code en local), répond 404 quand `NODE_ENV === "production"`.
 
 ## Module FeedbackApp — anonymat total
 
