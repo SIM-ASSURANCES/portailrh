@@ -17,8 +17,9 @@
 # Facultatives :
 #   SYSTEM_START_DATE    AAAA-MM-JJ, défaut 2026-10-01 : le calcul des
 #                        absences ignore tout ce qui est antérieur
-#   CRON_SECRET          openssl rand -hex 24 ; sans elle, /api/cron/absences
-#                        répond 401 (aucune absence calculée automatiquement)
+#   CRON_SECRET          openssl rand -hex 24 ; active le service "cron"
+#                        (voir plus bas). Sans elle, /api/cron/absences
+#                        répond 401 : aucune absence calculée automatiquement
 #   SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_FROM SMTP_SECURE
 #                        sans SMTP_HOST : emails simulés (logs + notification)
 #   FIREBASE_SERVICE_ACCOUNT_JSON  notifications push (JSON sur une ligne)
@@ -162,6 +163,41 @@ services:
       - traefik.http.routers.portailrh.entrypoints=websecure
       - traefik.http.routers.portailrh.tls.certresolver=letsencrypt
       - traefik.http.services.portailrh.loadbalancer.server.port=3000
+
+  # ---------- Planificateur : calcul automatique des absences ----------
+  # Appelle /api/cron/absences du lundi au vendredi a 17h30 et 20h00 UTC
+  # (= heure d'Abidjan), apres l'heure de fin et le delai d'alerte d'oubli
+  # de depart. La route est idempotente et rattrape les 2 derniers jours.
+  # INACTIF tant que CRON_SECRET n'est pas defini. Ne le definir qu'apres
+  # avoir desactive les comptes de test et regle SYSTEM_START_DATE, sinon
+  # ils seraient comptes absents.
+  cron:
+    image: alpine:3.20
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      CRON_SECRET: ${CRON_SECRET:-}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -z "$$CRON_SECRET" ]; then
+          echo "[cron] CRON_SECRET absent : aucun appel planifie."
+          exec tail -f /dev/null
+        fi
+        # crond ne transmet pas l'environnement aux taches : le jeton est
+        # ecrit au demarrage dans un script du conteneur, jamais dans ce fichier.
+        cat > /usr/local/bin/absences.sh <<EOF
+        #!/bin/sh
+        echo "[cron] \$$(date -u '+%F %T') appel de /api/cron/absences"
+        wget -q -O - --header "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/absences || echo "[cron] echec de l'appel"
+        echo
+        EOF
+        chmod 700 /usr/local/bin/absences.sh
+        printf '30 17 * * 1-5 /usr/local/bin/absences.sh > /proc/1/fd/1 2>&1\n0 20 * * 1-5 /usr/local/bin/absences.sh > /proc/1/fd/1 2>&1\n' > /etc/crontabs/root
+        echo "[cron] actif : 17h30 et 20h00 UTC, du lundi au vendredi."
+        exec crond -f -l 8
 
 volumes:
   pgdata_v2:

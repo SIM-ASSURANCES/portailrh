@@ -5450,6 +5450,10 @@ pas de build côté Dokploy).
   fichier ; `AUTH_SECRET`, `POSTGRES_PASSWORD`, `ALLOWED_OFFICE_IPS`
   obligatoires via `${…:?}`). L'historique Git garde les anciennes valeurs :
   seule leur rotation protège.
+- **Service `cron`** (alpine, `crond`) : appelle `/api/cron/absences` du lundi
+  au vendredi à 17h30 et 20h00 UTC (= Abidjan) ; inactif tant que
+  `CRON_SECRET` n'est pas défini (à définir seulement après désactivation
+  des comptes de test et réglage de `SYSTEM_START_DATE`).
 - Service de base de données nommé **`portailrh-db`** — jamais `db`
   (réseau `dokploy-network` partagé entre tous les projets du serveur,
   ambiguïté DNS sinon).
