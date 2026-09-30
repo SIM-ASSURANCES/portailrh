@@ -53,10 +53,9 @@ export interface BeneficiaireHonoraires {
 
 /**
  * Ligne « NOVELIA » posée par la migration (jamais par une action utilisateur, `creeParId` nul en base pour cette
- * seule ligne). Date de début choisie PROVISOIREMENT au 2000-01-01 comme repère « depuis toujours » : le cahier
- * décrit NOVELIA comme le bénéficiaire actuel sans donner de date d'origine réelle, et aucun encaissement n'existe
- * encore (Lot 1) pour qu'une date plus tardive change quoi que ce soit en pratique. À confirmer avec le client si une
- * vraie date de début existe et doit remplacer celle-ci.
+ * seule ligne). Date de début au 2000-01-01 comme repère « depuis toujours » — TRANCHÉ le 2026-09-30 (V2-A13) : le
+ * client a confirmé que NOVELIA est bénéficiaire des honoraires depuis toujours, cette date est donc retenue
+ * définitivement, pas une valeur provisoire à remplacer.
  */
 export const ENC_BENEFICIAIRE_HONORAIRES_INITIAL = { nom: "NOVELIA", dateDebut: "2000-01-01" } as const;
 
