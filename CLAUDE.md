@@ -4020,6 +4020,7 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 - **`/api/network-config`** : outil de dev (URL réseau du QR code en local), répond 404 quand `NODE_ENV === "production"`.
 - **`backend/prisma/set-admin.ts`** (lancé par `init` à chaque déploiement) : sans `ADMIN_EMAIL`/`ADMIN_PASSWORD`, message et sortie en code 0 (ne bloque jamais `init`). Un admin existant garde son mot de passe (changement fait depuis `/profil` préservé), sauf `ADMIN_FORCE_PASSWORD_RESET=true`. Rattrapage `Role.estAdmin` conservé.
 - **Pointage géolocalisé** : la précision GPS est obligatoire (absente ⇒ refus) avant le contrôle de précision. Limite connue : coordonnées et précision viennent du navigateur, donc restent falsifiables — l'activation de la géolocalisation est une décision RH.
+- **IP de confiance** : `getTrustedClientIp` (`backend/src/pointage-utils.ts`) retient l'IP la plus à droite de `x-forwarded-for` (ajoutée par Traefik, seul proxy devant l'app), repli `x-real-ip`. Utilisée par `enregistrerPointageAction` ; les autres lectures de l'en-tête (login, audit, FeedbackApp) restent à migrer. `getClientIp` (IP la plus à gauche) est falsifiable par le client.
 
 ## Module FeedbackApp — anonymat total
 

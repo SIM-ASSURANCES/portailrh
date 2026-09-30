@@ -12,6 +12,29 @@ export function getClientIp(headersList: Headers): string {
   return forwardedFor?.split(",")[0].trim() || headersList.get("x-real-ip") || "127.0.0.1";
 }
 
+/**
+ * IP du client telle que vue par le proxy de confiance (Traefik), le seul
+ * proxy devant l'application en production (un test depuis le bureau
+ * montre une seule IP dans `x-forwarded-for`, l'IP publique du bureau).
+ *
+ * On retient l'IP la plus à DROITE de `x-forwarded-for` : c'est celle que
+ * Traefik ajoute lui-même en bout de liste, jamais une valeur choisie par
+ * le client. Les IP plus à gauche peuvent venir d'un en-tête forgé par le
+ * client (contrairement à `getClientIp`, qui prend la plus à gauche).
+ * Correct que Traefik supprime ou conserve l'en-tête reçu du client.
+ * À revoir si un second proxy (CDN...) est un jour placé devant Traefik.
+ */
+export function getTrustedClientIp(headersList: Headers): string {
+  const forwardedFor = headersList.get("x-forwarded-for");
+  const rightmost = forwardedFor
+    ?.split(",")
+    .map((ip) => ip.trim())
+    .filter(Boolean)
+    .pop();
+  const ip = rightmost || headersList.get("x-real-ip")?.trim() || "IP_INCONNUE";
+  return ip.replace(/^::ffff:/, "");
+}
+
 // export function isOfficeIpAllowed(clientIp: string, whitelist: string): boolean {
 //   const allowedIps = whitelist.split(",").map((ip) => ip.trim()).filter(Boolean);
 //   return allowedIps.length > 0 && allowedIps.includes(clientIp);
