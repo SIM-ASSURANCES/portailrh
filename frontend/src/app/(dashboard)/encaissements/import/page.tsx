@@ -34,13 +34,56 @@ export default async function ImportProductionPage() {
     }),
   ]);
 
+  // Branches lues dans la colonne du fichier : enregistrées sur l'import (`branchesFichier`, codes). Repli, SEULEMENT
+  // pour les imports antérieurs à cette colonne (vide) : reconstitution depuis les signalements et les contrats créés.
+  const codesFichier = (i: (typeof imports)[number]): string[] | null =>
+    Array.isArray(i.branchesFichier) ? i.branchesFichier.filter((c): c is string => typeof c === "string") : null;
+  const idsRepli = imports.filter((i) => !i.brancheParDefaut && codesFichier(i) === null).map((i) => i.id);
+  const codesUtiles = [...new Set(imports.flatMap((i) => codesFichier(i) ?? []))];
+
+  const branchesConnues = codesUtiles.length
+    ? await prisma.encBranche.findMany({ where: { code: { in: codesUtiles } }, select: { code: true, libelle: true } })
+    : [];
+  const libelleDuCode = new Map(branchesConnues.map((b) => [b.code, b.libelle]));
+
+  const repli = new Map<string, Set<string>>();
+  if (idsRepli.length > 0) {
+    const [sigs, contrats] = await Promise.all([
+      prisma.encSignalement.findMany({
+        where: { importId: { in: idsRepli }, brancheId: { not: null } },
+        distinct: ["importId", "brancheId"],
+        select: { importId: true, branche: { select: { libelle: true } } },
+      }),
+      prisma.encContrat.findMany({
+        where: { creeParImportId: { in: idsRepli } },
+        distinct: ["creeParImportId", "brancheId"],
+        select: { creeParImportId: true, branche: { select: { libelle: true } } },
+      }),
+    ]);
+    const ajouter = (importId: string, libelle: string | undefined) => {
+      if (!libelle) return;
+      if (!repli.has(importId)) repli.set(importId, new Set());
+      repli.get(importId)!.add(libelle);
+    };
+    sigs.forEach((s) => ajouter(s.importId, s.branche?.libelle));
+    contrats.forEach((c) => ajouter(c.creeParImportId, c.branche.libelle));
+  }
+
+  const libelleBranche = (i: (typeof imports)[number]) => {
+    if (i.brancheParDefaut) return i.brancheParDefaut.libelle;
+    const codes = codesFichier(i);
+    const noms = codes ? codes.map((c) => libelleDuCode.get(c) ?? c) : [...(repli.get(i.id) ?? [])];
+    noms.sort((a, b) => a.localeCompare(b, "fr"));
+    return `${noms.length ? noms.join(", ") : "—"} (colonne du fichier)`;
+  };
+
   const rows: HistoriqueImportRow[] = imports.map((i) => ({
     id: i.id,
     importeAt: i.importeAt.toISOString(),
     importeAtLabel: formatDateHeure(i.importeAt),
     auteur: i.importePar.fullName,
     nomFichier: i.nomFichier,
-    branche: i.brancheParDefaut?.libelle ?? "Colonne du fichier",
+    branche: libelleBranche(i),
     nbLignes: i.nbLignes,
     nbContratsCrees: i.nbContratsCrees,
     nbContratsMaj: i.nbContratsMaj,

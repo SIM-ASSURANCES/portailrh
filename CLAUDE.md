@@ -4942,6 +4942,20 @@ V2-A27d/V2-A1c répondues par le client — rien dans ces 4 commits ne construit
   téléchargement, route de dépôt 403, action appelée directement refusée, branches inaccessibles) ; 0 erreur
   JavaScript en console. Base, serveur, fichiers déposés, script et Playwright supprimés après.
 
+#### Commit 4e — Retouches de l'écran d'import (2026-10-02, aucune migration)
+
+- Historique : nom réel de la ou des branches suivi de « (colonne du fichier) » quand elles viennent du fichier.
+  **`EncImport.branchesFichier`** (`Json?`, codes triés sans doublon, migration additive
+  `20261002090000_encaissements_import_branches_fichier`) enregistre au moment de l'import les codes lus dans la
+  colonne « Branche » (`null` si la branche a été choisie à l'écran). La reconstitution depuis les signalements et
+  les contrats créés n'est plus qu'un **repli** pour les imports antérieurs (colonne vide) — fragile seule : un
+  réimport sans création ni signalement y perdait sa branche. Vérifié sur PostgreSQL 16 jetable (migrations depuis
+  zéro, aucun écart schéma/base, import réel → `["AUTO","SANTE"]`), puis appliqué sur la base de dev.
+- Tableaux de signalements : numéro de police jamais coupé (`whitespace-nowrap`).
+- Détail « doublon possible » : mention « Ajouter quand même » retirée tant que le bouton n'existe pas (il viendra
+  avec la fiche police et les actions sur signalements : Ajouter quand même, Ouvrir la police, Marquer traité). Les
+  signalements déjà enregistrés gardent leur ancien texte (jamais réécrits).
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif

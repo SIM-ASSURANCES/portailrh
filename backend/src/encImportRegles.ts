@@ -353,7 +353,7 @@ export function analyserLigne(ligne: LigneAAnalyser, contexte: ContexteContrat, 
     signalements.push({
       analyse: "DOUBLON_POSSIBLE",
       niveau: "A_TRAITER",
-      detail: `Doublon possible : même montant (± 1 FCFA) à 7 jours près d'un encaissement existant (référence « ${doublonPossible.reference ?? "—"} »). « Ajouter quand même » disponible.`,
+      detail: `Doublon possible : même montant (± 1 FCFA) à 7 jours près d'un encaissement existant (référence « ${doublonPossible.reference ?? "—"} »).`,
       encaissementExistantId: doublonPossible.id,
     });
   } else if (dateModeMontantManquant(ligne)) {

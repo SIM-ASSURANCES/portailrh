@@ -1722,6 +1722,10 @@ model EncImport {
   brancheParDefautId String?
   brancheParDefaut   EncBranche? @relation("EncImportBrancheParDefaut", fields: [brancheParDefautId], references: [id], onDelete: Restrict)
   operateur  String?
+  /// Codes `EncBranche` lus dans la colonne « Branche » du fichier (tableau JSON trié, sans doublon), enregistrés au
+  /// moment de l'import (commit 4e). `null` : aucune branche lue dans le fichier (branche par défaut choisie à l'écran),
+  /// ou import antérieur à cette colonne — l'historique se rabat alors sur une reconstitution.
+  branchesFichier Json?
   /// Reprise (D10, F1.5, hors périmètre de ce commit) : jamais renseignées pour un import `PRODUCTION`.
   basculeTaxe        DateTime? @db.Date
   basculeCommission  DateTime? @db.Date

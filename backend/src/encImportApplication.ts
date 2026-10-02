@@ -198,6 +198,10 @@ export async function appliquerImportProduction(
     );
   }
 
+  // Codes lus dans la colonne « Branche » du fichier (jamais la branche par défaut choisie à l'écran) : conservés sur
+  // l'import pour l'historique, plutôt que reconstitués après coup depuis les contrats/signalements (fragile).
+  const branchesFichier = [...new Set(lignes.map((l) => l.brancheCode).filter((c): c is string => c !== null))].sort();
+
   // 2. Ligne EncImport (totaux définitifs posés à la fin, une fois toutes les lignes traitées).
   const imp = await db.encImport.create({
     data: {
@@ -207,6 +211,7 @@ export async function appliquerImportProduction(
       sha256: params.sha256,
       fichierId: params.fichierId,
       brancheParDefautId: params.brancheParDefaut ? (idParCode.get(params.brancheParDefaut) ?? null) : null,
+      branchesFichier: branchesFichier.length > 0 ? branchesFichier : undefined,
       nbLignes: lignes.length,
       importeParId: params.importeParId,
       importeAt: params.maintenant,

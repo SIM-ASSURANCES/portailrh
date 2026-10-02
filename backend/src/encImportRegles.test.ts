@@ -105,7 +105,7 @@ describe("analyserLigne — cas de recette du cahier", () => {
       {
         analyse: "DOUBLON_POSSIBLE",
         niveau: "A_TRAITER",
-        detail: "Doublon possible : même montant (± 1 FCFA) à 7 jours près d'un encaissement existant (référence « T_MANUEL12345A »). « Ajouter quand même » disponible.",
+        detail: "Doublon possible : même montant (± 1 FCFA) à 7 jours près d'un encaissement existant (référence « T_MANUEL12345A »).",
         encaissementExistantId: "enc-manuel",
       },
     ]);
@@ -158,7 +158,7 @@ describe("analyserLigne — tableau F1.4", () => {
       {
         analyse: "DOUBLON_POSSIBLE",
         niveau: "A_TRAITER",
-        detail: "Doublon possible : même montant (± 1 FCFA) à 7 jours près d'un encaissement existant (référence « T_AUTRE00000002 »). « Ajouter quand même » disponible.",
+        detail: "Doublon possible : même montant (± 1 FCFA) à 7 jours près d'un encaissement existant (référence « T_AUTRE00000002 »).",
         encaissementExistantId: "enc-proche",
       },
     ]);

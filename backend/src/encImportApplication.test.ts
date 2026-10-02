@@ -280,6 +280,29 @@ describe("appliquerImportProduction — orchestration (base factice en mémoire)
     expect(signalements[0].numPolice).toBeNull();
   });
 
+  it("enregistre sur l'import les branches lues dans le fichier (triées, sans doublon), jamais la branche par défaut", async () => {
+    const { db, branches, imports } = creerDbFactice();
+    branches.push({ id: "b-auto", code: "AUTO", actif: true }, { id: "b-sante", code: "SANTE", actif: true });
+
+    await appliquerImportProduction(
+      db as never,
+      [
+        ligneBase({ numPolice: "P-1", paiementIdFichier: "F-1", brancheCode: "SANTE" }),
+        ligneBase({ numPolice: "P-2", paiementIdFichier: "F-2", brancheCode: "AUTO" }),
+        ligneBase({ numPolice: "P-3", paiementIdFichier: "F-3", brancheCode: "SANTE" }),
+      ],
+      PARAMS_BASE
+    );
+    expect(imports[0].branchesFichier).toEqual(["AUTO", "SANTE"]);
+
+    // Fichier sans colonne « Branche » : branche choisie à l'écran, rien n'est enregistré comme « lu dans le fichier ».
+    await appliquerImportProduction(db as never, [ligneBase({ numPolice: "P-4", paiementIdFichier: "F-4", brancheCode: null })], {
+      ...PARAMS_BASE,
+      brancheParDefaut: "AUTO",
+    });
+    expect(imports[1].branchesFichier).toBeUndefined();
+  });
+
   it("écart de taux de contrôle : silencieux sans EncTauxControle, signalé (ECART_TAUX) dès qu'une ligne existe pour le produit", async () => {
     const { db, branches, tauxControles, signalements } = creerDbFactice();
     branches.push({ id: "branche-auto", code: "AUTO", actif: true });
