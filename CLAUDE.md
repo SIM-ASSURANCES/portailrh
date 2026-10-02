@@ -4918,6 +4918,30 @@ V2-A27d/V2-A1c répondues par le client — rien dans ces 4 commits ne construit
   détecté en montant même dans l'ancienne tolérance en points ; silence dans la tolérance de 1 FCFA). `vitest`
   (162/162 backend).
 
+#### Commit 4d — Écran d'import (fait, 2026-10-02, dernier commit du F1, aucune migration)
+
+- **`/encaissements/import`** (`enc.consulter`) : formulaire `ImportProductionForm` visible seulement avec
+  `enc.importer_production` (revérifiée par chaque action) — dépôt via la route dédiée, puis
+  `inspecterFichierProductionAction` (lecture seule : nombre de lignes, colonne « Branche » présente ?) ; la branche
+  n'est demandée QUE si le fichier n'en porte pas (branches ACTIVES), et sans aucune branche un message renvoie vers
+  la gestion des branches. Pendant l'import : bouton désactivé (pas de double envoi) et message d'attente (~1 min pour
+  5 000 lignes) ; au succès, redirection vers le rapport. Historique des 50 derniers imports (`HistoriqueImportsTable`).
+- **Rapport `/encaissements/import/[id]`** : chiffres clés en haut (`StatCard` partagé, inchangé), lignes rejetées
+  avec motif (ligne annulée rejetée ou sans numéro de police), puis signalements À TRAITER et POUR INFO (compteurs
+  par type complets ; détail plafonné à 500/200 lignes pour rester lisible et léger). Lien de téléchargement du
+  fichier pour `enc.importer_production` seulement (même règle que la route, D6).
+- **`/encaissements/branches`** (`enc.parametrer`) : liste, ajout, désactivation/réactivation — réutilise
+  `creerBrancheAction`/`toggleBrancheActiveAction` (3a, `EncAudit` déjà tracé). Seul morceau du F9 livré.
+- Libellés en clair (`components/encaissements/libelles.ts`) : modes (« Chèque », « Orange Money »…), types de
+  signalement, montants à l'unité FCFA, dates formatées côté serveur (fuseau Africa/Abidjan, pas d'écart
+  d'hydratation). Accès depuis l'accueil `/encaissements` (cartes) — navigation globale et composants partagés intacts.
+- **Vérifié (Playwright, `next start` sur PostgreSQL 16 jetable, fichiers anonymisés générés par script)** : 29/29
+  contrôles — Finance (sans branche → message ; crée une branche → proposée ; import → rapport 20 contrats/20
+  paiements), Équipe technique (fichier avec colonne Branche, aucun choix demandé, rapport), réimport (0 créé, 20 mis
+  à jour, 20 « déjà présent »), Consultation (ni dépôt ni bouton, historique et rapport lisibles, pas de
+  téléchargement, route de dépôt 403, action appelée directement refusée, branches inaccessibles) ; 0 erreur
+  JavaScript en console. Base, serveur, fichiers déposés, script et Playwright supprimés après.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif

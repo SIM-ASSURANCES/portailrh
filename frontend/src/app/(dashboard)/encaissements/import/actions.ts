@@ -1,8 +1,7 @@
 "use server";
 
-// Import mensuel du fichier de production (module Encaissements, CDC V2.6 F1, commit 4c). SANS écran pour l'instant
-// (le F1.4/F1 arrive avec commit 4d) — cette Server Action vit déjà à la route qui portera cet écran, même convention
-// que `encaissements/parametres/actions.ts` pour une fonctionnalité livrée avant son interface.
+// Import mensuel du fichier de production (module Encaissements, CDC V2.6 F1, commits 4c/4d) — utilisées par l'écran
+// `/encaissements/import` (`ImportProductionForm.tsx`).
 //
 // Réservée à `enc.importer_production`, revérifiée ICI (jamais seulement via le layout `/encaissements`, qui ne garde
 // que `enc.consulter`) : lit le fichier déjà déposé par `POST /api/encaissements/import/upload` (jamais reçu en
@@ -58,6 +57,32 @@ function messageErreurMetier(e: unknown): string | null {
   if (e instanceof EncReferentielError) return e.message;
   if (e instanceof EncPieceJointeError) return e.message;
   return null;
+}
+
+type InspecterFichierResult =
+  | { status: "success"; nbLignes: number; brancheColonnePresente: boolean }
+  | { status: "error"; message: string };
+
+/**
+ * Lecture seule du fichier déposé, AVANT l'import : nombre de lignes et présence d'une colonne « Branche » — l'écran
+ * ne demande une branche par défaut que si le fichier n'en porte pas. N'écrit rien ; l'import revérifie tout.
+ */
+export async function inspecterFichierProductionAction(url: string): Promise<InspecterFichierResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "enc.importer_production")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  try {
+    const lecture = lireTableur(await readFile(cheminFichierUpload(url)));
+    return { status: "success", nbLignes: lecture.lignes.length, brancheColonnePresente: lecture.brancheColonnePresente };
+  } catch (e) {
+    const message = messageErreurMetier(e);
+    if (message) return { status: "error", message };
+    if (e instanceof Error && "code" in e && e.code === "ENOENT") {
+      return { status: "error", message: "Fichier introuvable sur le serveur : téléversez-le de nouveau." };
+    }
+    throw e;
+  }
 }
 
 export async function importerProductionAction(input: {
