@@ -1618,11 +1618,28 @@ model EncContrat {
 
   encaissements EncEncaissement[]
   signalements  EncSignalement[]
+  /// Index de recherche par début de mot (F2, commit 5a-bis) — tenu à jour par l'import, voir `encRecherche.ts`.
+  mots          EncContratMot[]
 
   @@index([brancheId])
   @@index([partenaireId])
   @@index([clientNom])
   @@index([produitCode])
+}
+
+/// Index de recherche par DÉBUT DE MOT (F2, commit 5a-bis, option B, sans extension PostgreSQL) : un mot normalisé
+/// (minuscules, sans accents, apostrophes/tirets retirés, plus les parties d'un mot composé) par ligne, tiré du n° de
+/// police, du client (nom, ID), du partenaire, du produit, de la branche et des références de paiement du contrat.
+/// Réécrit par l'import dans la même transaction que le contrat (`indexerMotsContrat`), rempli pour l'existant par
+/// la migration. Colonne `mot` en collation "C" (posée par la migration, non modélisée par Prisma) : le btree
+/// ordinaire ci-dessous sert alors un `LIKE 'x%'`, impossible sous la collation de la base (`en_US.utf8`).
+model EncContratMot {
+  contratId String
+  contrat   EncContrat @relation(fields: [contratId], references: [id], onDelete: Cascade)
+  mot       String
+
+  @@id([contratId, mot])
+  @@index([mot, contratId])
 }
 
 /// Encaissement / versement (CDC §3.2, F1/F3) — un seul modèle pour toutes les voies de saisie ; seule F1 (source

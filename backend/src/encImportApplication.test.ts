@@ -39,7 +39,8 @@ function creerDbFactice() {
   let seq = 0;
   const nextId = (prefixe: string) => `${prefixe}-${++seq}`;
 
-  const branches: { id: string; code: string; actif: boolean }[] = [];
+  const branches: { id: string; code: string; actif: boolean; libelle?: string }[] = [];
+  const mots: { contratId: string; mot: string }[] = [];
   const partenaires = new Map<string, { id: string; cleNom: string; [cle: string]: unknown }>();
   const contrats = new Map<string, ContratRow>(); // clé = numPolice
   const contratsParId = new Map<string, ContratRow>();
@@ -51,7 +52,7 @@ function creerDbFactice() {
 
   const db = {
     encBranche: {
-      findMany: async () => branches.filter((b) => b.actif).map((b) => ({ id: b.id, code: b.code })),
+      findMany: async () => branches.filter((b) => b.actif).map((b) => ({ id: b.id, code: b.code, libelle: b.libelle ?? b.code })),
     },
     encPartenaire: {
       findUnique: async ({ where }: { where: { cleNom: string } }) => partenaires.get(where.cleNom) ?? null,
@@ -114,6 +115,17 @@ function creerDbFactice() {
         return row;
       },
     },
+    encContratMot: {
+      deleteMany: async ({ where }: { where: { contratId: string } }) => {
+        const avant = mots.length;
+        for (let i = mots.length - 1; i >= 0; i--) if (mots[i].contratId === where.contratId) mots.splice(i, 1);
+        return { count: avant - mots.length };
+      },
+      createMany: async ({ data }: { data: { contratId: string; mot: string }[] }) => {
+        for (const m of data) if (!mots.some((x) => x.contratId === m.contratId && x.mot === m.mot)) mots.push(m);
+        return { count: data.length };
+      },
+    },
     encAudit: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
         const row = { id: nextId("audit"), ...data };
@@ -141,7 +153,7 @@ function creerDbFactice() {
 
   const tauxControles: { produitCode: string | null; partenaireId: string | null; tauxTaxe: unknown; tauxCommission: unknown; tauxAccessoires: unknown; tauxHonoraires: unknown }[] = [];
 
-  return { db, branches, partenaires, contrats, encaissements, imports, signalements, audits, tauxControles };
+  return { db, branches, partenaires, contrats, encaissements, imports, signalements, audits, tauxControles, mots };
 }
 
 function ligneBase(overrides: Partial<LigneFichierProduction> = {}): LigneAAnalyser {
@@ -320,5 +332,23 @@ describe("appliquerImportProduction — orchestration (base factice en mémoire)
     const ecarts = signalements.filter((s) => s.analyse === "ECART_TAUX");
     expect(ecarts).toHaveLength(1);
     expect(ecarts[0].detail).toContain("commission");
+  });
+
+  it("index de recherche (5a-bis) : mots du contrat écrits à la création, réécrits avec la nouvelle référence", async () => {
+    const { db, branches, mots } = creerDbFactice();
+    branches.push({ id: "branche-auto", code: "AUTO", actif: true, libelle: "Automobile" });
+
+    await appliquerImportProduction(db as never, [ligneBase({ clientNom: "N'Guessan Kouamé" })], PARAMS_BASE);
+    const apres1 = mots.map((m) => m.mot).sort();
+    for (const attendu of ["tst2026000001", "tst", "000001", "nguessan", "guessan", "kouame", "partenaire", "automobile", "auto", "chq000001"]) {
+      expect(apres1).toContain(attendu);
+    }
+
+    const ligne2 = ligneBase({ clientNom: "N'Guessan Kouamé", paiementIdFichier: "TECH-000002", reference: "OM-777", datePaiement: jourCalendaire(2026, 9, 20) });
+    await appliquerImportProduction(db as never, [ligne2], PARAMS_BASE);
+    const apres2 = mots.map((m) => m.mot);
+    expect(apres2).toContain("chq000001"); // référence déjà enregistrée, toujours indexée
+    expect(apres2).toContain("om777"); // nouvelle référence
+    expect(new Set(apres2).size).toBe(apres2.length); // jamais de doublon
   });
 });

@@ -1,6 +1,6 @@
 /**
  * Libellés en clair du module Encaissements — jamais un code technique affiché à l'écran (modes de paiement, types de
- * signalement). Partagés par l'écran d'import, le rapport et l'historique.
+ * signalement, source et statut d'un paiement). Partagés par l'import, le rapport, la recherche et la fiche police.
  */
 
 /** Codes produits par `normaliserMode` (encImportLecture.ts) ; tout autre libellé du fichier est affiché tel quel. */
@@ -56,4 +56,41 @@ export function formatDateCourte(date: Date | string | null | undefined): string
 
 export function formatDateHeure(date: Date | string): string {
   return new Date(date).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short", timeZone: "Africa/Abidjan" });
+}
+
+/** Clés = valeurs de l'enum Prisma `EncSourceEncaissement`. */
+const SOURCE_LIBELLE: Record<string, string> = {
+  FICHIER: "Fichier de production",
+  SAISIE: "Saisie à l'écran",
+};
+
+export function libelleSource(source: string): string {
+  return SOURCE_LIBELLE[source] ?? source;
+}
+
+/** Clés = valeurs de l'enum Prisma `EncStatutEncaissement`. */
+export const STATUT_ENCAISSEMENT: Record<string, { libelle: string; variant: "warning" | "success" | "danger" }> = {
+  A_CONFIRMER: { libelle: "À confirmer", variant: "warning" },
+  CONFIRME: { libelle: "Confirmé", variant: "success" },
+  NON_RECU: { libelle: "Non reçu", variant: "danger" },
+};
+
+/** Situation d'un contrat (paiements confirmés seulement) : jamais un reste dû négatif, « Trop-perçu » à la place. */
+export function libelleSituation(situation: { type: "reste" | "trop" | "solde"; montant: string }): string {
+  if (situation.type === "trop") return `Trop-perçu : ${formatFcfa(situation.montant)}`;
+  if (situation.type === "reste") return `Reste dû : ${formatFcfa(situation.montant)}`;
+  return "Soldé";
+}
+
+/** Paiement tel qu'indiqué dans le fichier (`EncSignalement.paiementIndique`), en une ligne lisible. */
+export function paiementLisible(json: unknown): string | null {
+  if (!json || typeof json !== "object") return null;
+  const p = json as { datePaiement?: string | null; mode?: string | null; montant?: string | null; reference?: string | null };
+  const morceaux = [
+    p.datePaiement ? formatDateCourte(p.datePaiement) : null,
+    p.mode ? libelleMode(p.mode) : null,
+    p.montant ? formatFcfa(p.montant) : null,
+    p.reference ? `réf. ${p.reference}` : null,
+  ].filter(Boolean);
+  return morceaux.length > 0 ? morceaux.join(" · ") : null;
 }

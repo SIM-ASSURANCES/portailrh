@@ -132,6 +132,23 @@ lire, la colonne réelle est inconnue) ; la détection prévue par D14 ne pourra
 colonne identifiée (probablement `TypeOpération`, colonne G, à confirmer — ou une question à poser au client, à
 ajouter à la section 10 le cas échéant, une fois 4b entamé).
 
+### 2026-10-02 (F2 — recherche et fiche police ; onglet « À vérifier »)
+
+| # | Décision |
+|---|---|
+| D16 | **Recherche sans extension PostgreSQL.** D'abord option C (5a : normalisation `lower()`/`translate()` des deux côtés, balayage complet, plus un chemin rapide par les index existants pour un n° de police ou une référence). Mesuré à **150 000 contrats** (3 ans, CDC : 50 000 par an) : balayage jusqu'à 2,4 s. **Remplacée par l'option B au commit 5a-bis (D20)** |
+| D17 | **Encaissé** = somme des Z des paiements **CONFIRMÉS** (les futures contre-passations négatives y entrent d'elles-mêmes) ; **reste dû** = prime TTC − encaissé ; négatif → affiché « **Trop-perçu** » avec le montant, jamais un reste dû négatif (`encSituation.ts`) |
+| D18 | « Marquer traité » et « Ajouter quand même » (5b, 5c) : `enc.confirmer_paiement` (Finance) ; Technique et Consultation en lecture |
+| D19 | Anciens signalements « doublon possible » sans PaiementID du fichier : « Ajouter quand même » **autorisé** (5c) |
+
+### 2026-10-04 (F2 — option B, commit 5a-bis)
+
+| # | Décision |
+|---|---|
+| D20 | **Recherche par début de mot**, table d'index `EncContratMot` (contratId, mot), sans extension PostgreSQL : chaque mot saisi doit commencer au moins un mot du contrat. Mots tirés du n° de police, du client (nom, ID), du partenaire (nom ENREGISTRÉ), du produit (libellé, code), de la branche (code, libellé) **et des références de paiement** (même table plutôt qu'une colonne normalisée sur `EncEncaissement` : un seul index, une seule requête). Normalisation : minuscules, accents français retirés, apostrophes/tirets retirés ; **les parties d'un mot composé sont aussi indexées** (« N'Guessan » → nguessan, n, guessan ; « POL-0031337 » → pol0031337, pol, 0031337). **Limite assumée : un fragment au milieu d'un mot (« uessan ») ne trouve rien.** N° de police ou référence EXACTS : toujours par les index existants d'abord (le contrat exact seul) |
+| D21 | **Collation « C » sur la colonne `mot` plutôt que `text_pattern_ops`** : même effet (un btree sert `LIKE 'x%'` malgré la collation `en_US.utf8` de la base), mais Prisma 7 ne déclare `text_pattern_ops` que sous forme brute (`raw`) et la voit comme un écart permanent (`migrate diff` non vide ; `migrate dev` recréerait l'index à chaque nouvelle migration). La collation de colonne, ignorée par Prisma à la comparaison, donne zéro écart (vérifié). Le préfixe de n° de police et de référence passe par cette même table (mots normalisés, insensible à la casse et aux tirets) : pas d'index supplémentaire sur les colonnes brutes |
+| D22 | **Entretien** : `indexerMotsContrat` réécrit les mots dans la MÊME transaction que l'écriture du contrat ou du paiement (import F1). Réimport sans changement des champs indexés ni nouveau paiement : rien n'est réécrit. **Tout futur point qui crée un contrat ou un paiement avec référence (F3 saisie, 5c « Ajouter quand même », relevés) doit l'appeler.** Les noms de partenaire et de branche ne changent jamais aujourd'hui ; si un renommage apparaît, réindexer les contrats concernés. Remplissage des contrats existants **dans la migration** (SQL pur, idempotent `ON CONFLICT DO NOTHING`, mêmes règles que le TypeScript — 0 écart sur 150 000 contrats comparés) ; suppression d'un contrat : mots supprimés en cascade |
+
 ---
 
 ## 2. Existant réutilisable
@@ -642,10 +659,14 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | 4c | **Application en base** (`EncContrat`/`EncEncaissement`/`EncImport`/`EncSignalement`, migration `20260930140000_encaissements_import_production`, transaction 300 s, verrous, route de dépôt dédiée, action serveur sans écran) — fait (2026-09-30) ; 5 000 lignes en 45-54 s sur PostgreSQL 16 | Décisions §1 (commit 4c) à valider |
 | 4d | **Écran d'import** — fait (2026-10-02) : `/encaissements/import` (dépôt, branche demandée seulement si le fichier n'a pas de colonne « Branche », attente pendant l'import), rapport `/encaissements/import/[id]` (chiffres clés, lignes rejetées, signalements À TRAITER puis POUR INFO — détail plafonné à 500/200 lignes, compteurs complets), historique, et gestion minimale des branches `/encaissements/branches` (`enc.parametrer`, actions 3a réutilisées). Aucune migration | V2-A30 (non bloquante) |
 | — | Découpage validé le 2026-09-30 (4 commits au lieu de « Lecture de tableurs et règles d'import » + « Import de production » ci-dessus, listés à titre d'historique) ; F1.5 (reprise) reste un commit séparé, plus tard, une fois A27b/A27d/A1c répondues. |
-| 6 | **Recherche et fiche police (F2)** | — |
+| 5a | **Recherche et fiche police (F2)** — fait (2026-10-02) : barre de recherche dans le layout du module (jamais l'en-tête global), 8 suggestions et page de résultats `/encaissements/recherche` (50), fiche police `/encaissements/contrats/[id]` en lecture (situation D17, barre des versements, paiements, signalements de la police) ; cadres Taxes, Commissions, Honoraires et Accessoires aux lots 2 et 3. Aucune migration | — |
+| 5a-bis | **Recherche, option B** (D20-D22) : table `EncContratMot` (colonne `mot` en collation « C », index btree), migration additive `20261004090000_encaissements_recherche_mots` avec remplissage, entretien à l'import — fait (2026-10-04). Contient aussi les fichiers du 5a absents du commit `6be7697` (seul le déplacement de `SignalementsTable` y figurait) | — |
+| 5b | **Onglet « À vérifier »** : signalements À TRAITER de tous les imports, filtres (branche, type), compteur sur l'accueil, « Ouvrir la police », « Marquer traité » (qui, quand, `EncAudit`) | — |
+| 5c | **« Ajouter quand même »** (doublon possible) : crée le paiement « à confirmer » depuis les données de la ligne ; `paiementIndique` enrichi de `paiementIdFichier` et `numeroLigne` (JSON, sans migration) | — |
 | 7 | **Saisie (F3)**, montants figés (D9) | V2-A2, A6 |
 | 8 | **Paiement multiple (F4)** | — |
 | 9 | **Confirmation (F5) et signalements** | V2-A11, A30 |
 | 10 | **Relevés et frais (F5)** | V2-A21 à A23, A25, A26 |
 | 11 | **Reprise initiale (F1.5)** | V2-A27b à A27e |
+| 12a | **Recherche, option B** — **fait au commit 5a-bis (2026-10-04)**, voir D20-D22. Mesures à 150 000 contrats : pire temps 4 ms (objectif < 1 s, < 200 ms pour les noms) | D16, D20 |
 | 12 | **Recette du Lot 1** et mise en service | — |

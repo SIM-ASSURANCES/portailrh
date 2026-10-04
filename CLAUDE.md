@@ -4956,6 +4956,100 @@ V2-A27d/V2-A1c répondues par le client — rien dans ces 4 commits ne construit
   avec la fiche police et les actions sur signalements : Ajouter quand même, Ouvrir la police, Marquer traité). Les
   signalements déjà enregistrés gardent leur ancien texte (jamais réécrits).
 
+#### Commit 5a — Recherche et fiche police (F2) (fait, 2026-10-02, aucune migration)
+
+- **Recherche** (`backend/src/encRecherche.ts`, `rechercherContratIds`) : n° de police, client (nom ou identifiant),
+  partenaire, produit (libellé ou code), branche (code ou libellé), référence d'un paiement du contrat ; plusieurs mots
+  (ET entre les mots, OU entre les champs, 6 mots au plus), jokers `%`/`_` cherchés tels quels. **Option C**
+  (décision du 2026-10-02, sans extension PostgreSQL) : les deux côtés normalisés de la même façon, en JavaScript pour
+  la saisie, avec `lower()`/`translate()` pour les colonnes (accents français, apostrophes et tirets ignorés).
+- **Chemin rapide sans migration** : une saisie qui ressemble à un n° de police ou à une référence de paiement
+  (`ressembleIdentifiant` : un seul mot, au moins 3 caractères dont un chiffre) passe d'abord par les index
+  existants (`numPolice` unique, `EncEncaissement.reference`) — égalité (saisie telle quelle, majuscules,
+  minuscules), puis préfixe insensible à la casse (`upper(...) LIKE`, sans `translate()` ; la collation de la base,
+  `en_US.utf8`, empêche l'index de servir au préfixe). Le balayage `translate()` n'a lieu que si rien n'est trouvé,
+  et pour les noms. Un n° de police exact masque donc les contrats qui ne contiendraient ce texte que dans un nom.
+- **Temps mesurés** (PostgreSQL 16 jetable, données synthétiques générées en SQL, pire de 3 passages à chaud) :
+
+  | Recherche | 50 000 contrats / 100 000 paiements | 150 000 / 300 000 (3 ans) |
+  |---|---|---|
+  | N° de police exact (toute casse) | 3 ms | 2 ms |
+  | Référence de paiement exacte (toute casse) | 1 ms | 1 ms |
+  | Préfixe de police / de référence | 50 / 46 ms | 77 / 86 ms |
+  | Nom « nguessan » | 252 ms | 483 ms |
+  | Partenaire | 280 ms | 1 158 ms |
+  | Identifiant non trouvé (repli sur le balayage) | 770 ms | 1 994 ms |
+  | Trois mots | 983 ms | 2 403 ms |
+  | Aucun résultat | 1 107 ms | 2 140 ms |
+
+  **Le balayage dépasse 1 s dès 50 000 contrats sur ces données** (une première mesure à 691 ms utilisait des noms et
+  références plus courts) et atteint 2,4 s à 150 000. **Tâche avant mise en service** (conception §11, ligne 12a) :
+  option B, colonne de recherche normalisée et indexée, à faire tant qu'il n'y a pas de données réelles. Essai
+  écarté : un texte normalisé unique par contrat (références agrégées) était plus lent.
+- **Situation** (`backend/src/encSituation.ts`, `calculerSituationContrat`) : encaissé = somme des Z **confirmés**,
+  reste dû = prime TTC − encaissé ; négatif → « Trop-perçu », jamais un reste dû négatif.
+- **Barre de recherche** (`components/encaissements/RechercheContrats.tsx`) montée dans
+  `(dashboard)/encaissements/layout.tsx` uniquement (jamais l'en-tête global) : 8 suggestions (police, client,
+  partenaire, branche, reste dû) via `suggererContratsAction` (`enc.consulter`), délai 250 ms, garde contre les
+  réponses dans le désordre, flèches/Entrée/Échap. Entrée ouvre la suggestion choisie (ou l'unique suggestion), sinon
+  la page de résultats `/encaissements/recherche?q=` (50 premiers par n° de police). Le survol choisit une suggestion
+  (comportement de liste standard).
+- **Fiche police** `/encaissements/contrats/[id]` (lecture seule, `enc.consulter`) : prime TTC, encaissé, reste dû ou
+  trop-perçu, barre des versements (confirmé / à confirmer, ce dernier jamais compté), informations du contrat avec
+  liens vers les imports qui l'ont créé et mis à jour, montants du fichier (S à X), paiements (n° PAI, date, mode,
+  référence, montant, source, statut, saisi/confirmé le), signalements de la police (par contrat **ou** par n° de
+  police : une ligne rejetée n'a pas de contrat ; 200 plus récents). `SignalementsTable` et `paiementLisible`
+  déplacés dans `components/encaissements/` (partagés avec le rapport d'import).
+- Vérifié : vitest (`encRecherche`, `encSituation`), Playwright sur PostgreSQL 16 jetable avec le fichier de test
+  anonymisé importé par l'écran réel (22 contrôles : accents/apostrophes/tirets, plusieurs mots, référence de paiement,
+  Entrée/clic/Échap, page de résultats, fiche, trop-perçu, accès Finance/Technique/Consultation, refus sans
+  `enc.consulter`, aucune erreur console, pas de défilement horizontal à 390 px).
+
+#### Commit 5a-bis — Recherche par début de mot (option B, 2026-10-04, migration additive)
+
+Remplace le balayage `translate()` du 5a, trop lent à 150 000 contrats (2,4 s). Décisions D20-D22 (conception).
+**Le commit 5a poussé (`6be7697`) ne contenait que le déplacement de `SignalementsTable`** (la commande `git add`
+citait l'ancien chemin du fichier déplacé, refusé par git, ce qui a annulé tout l'ajout) : les fichiers du 5a sont
+livrés avec ce commit.
+
+- **`EncContratMot`** (`contratId`, `mot`, clé primaire composée, suppression en cascade avec le contrat) : mots
+  normalisés du n° de police, du client (nom, ID), du partenaire (nom enregistré), du produit, de la branche et des
+  références de paiement, **plus les parties d'un mot composé** (« N'Guessan » → nguessan, n, guessan ; « POL-0031337 »
+  → pol0031337, pol, 0031337). `motsIndexes` (TypeScript) et le remplissage SQL de la migration appliquent les mêmes
+  règles (0 écart sur 150 000 contrats comparés).
+- **Colonne `mot` en collation « C »** (posée par la migration, non modélisée par Prisma) + btree ordinaire : sert
+  `LIKE 'x%'` malgré la collation `en_US.utf8` de la base. Choisie au lieu de `text_pattern_ops`, que Prisma 7 ne
+  déclare qu'en `raw` et voit comme un écart permanent (`migrate dev` recréerait l'index à chaque migration) ;
+  avec la collation, `migrate diff` ne voit aucune différence (vérifié).
+- **Recherche** (`rechercherContratIds`) : n° de police ou référence EXACTS d'abord par les index existants (le
+  contrat exact seul) ; sinon chaque mot saisi doit commencer au moins un mot du contrat — un `EXISTS` par mot (un
+  `INTERSECT` d'ensembles prenait 245 ms sur « courtage 7 », mot présent dans tous les contrats). **Limite assumée :
+  un fragment au milieu d'un mot (« uessan ») ne trouve rien.**
+- **Entretien** : `indexerMotsContrat` dans la transaction de l'import, à chaque contrat écrit (sauf réimport sans
+  changement des champs indexés ni nouveau paiement). **Tout futur point qui crée un contrat ou un paiement avec
+  référence (F3, 5c, relevés) doit l'appeler.**
+- **Migration `20261004090000_encaissements_recherche_mots`** : table, index, clé étrangère, remplissage des contrats
+  existants (SQL pur, idempotent ; rejoué : `INSERT 0 0`). Durée du remplissage : 23 s pour 50 000 contrats, 87 s
+  pour 150 000 (3,5 millions de mots, 586 Mo avec index). Sans effet en production (aucun contrat avant la mise en
+  service). **À appliquer sur la base de dev** (`prisma migrate deploy`) : sans la table, la recherche échoue.
+- **Temps mesurés** (PostgreSQL 16 jetable, données synthétiques, pire de 3 passages à chaud, code final) :
+
+  | Recherche | 50 000 contrats | 150 000 contrats |
+  |---|---|---|
+  | N° de police exact (toute casse) | 3 ms | 3 ms |
+  | Préfixe / partie numérique du n° de police | 4 / 4 ms | 4 / 3 ms |
+  | Référence exacte (toute casse) / préfixe | 3 / 3 ms | 1 / 3 ms |
+  | Identifiant inexistant / identifiant client | 2 / 3 ms | 3 / 3 ms |
+  | Nom « nguessan » / partie « guessan » | 5 / 4 ms | 4 / 4 ms |
+  | Milieu de mot « uessan » (0 résultat, voulu) | 10 ms | 1 ms |
+  | Trois mots (0 / 1 contrat) | 3 / 2 ms | 1 / 2 ms |
+  | Partenaire « courtage 7 » | 3 ms | 2 ms |
+  | Aucun résultat / un caractère | 1 / 2 ms | 1 / 1 ms |
+
+- **Coût à l'import** (5 000 lignes, sur la base à 150 000 contrats) : nouvel import 64,4 s avec l'index contre 61,0 s
+  sans (≈ 5 %) ; réimport sans changement 41,8 s (le saut évite toute réécriture).
+
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif

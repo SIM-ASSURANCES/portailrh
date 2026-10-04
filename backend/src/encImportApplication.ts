@@ -14,6 +14,7 @@ import { montant } from "./encCalcul";
 import { ecrireAudit, versJsonAudit, type EncAuditDb } from "./encAudit";
 import { cleSequenceAnnuelle, prochainNumero, type EncSequenceDb } from "./encSequence";
 import { normaliserNomPartenaire } from "./encReferentiels";
+import { indexerMotsContrat } from "./encRecherche";
 import {
   analyserLigne,
   type ContexteContrat,
@@ -40,6 +41,7 @@ export type EncImportApplicationDb = Pick<
   | "encSignalement"
   | "encTauxControle"
   | "encAudit"
+  | "encContratMot"
   | "$queryRaw"
   | "$executeRaw"
 >;
@@ -107,11 +109,11 @@ async function resoudrePartenaire(
   importeParId: string,
   maintenant: Date,
   ip: string | null | undefined
-): Promise<string> {
+): Promise<{ id: string; nom: string }> {
   const cleNom = normaliserNomPartenaire(nomBrut);
   await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"partenaire:" + cleNom})::bigint)`;
   const existant = await db.encPartenaire.findUnique({ where: { cleNom } });
-  if (existant) return existant.id;
+  if (existant) return { id: existant.id, nom: existant.nom };
 
   const cree = await db.encPartenaire.create({ data: { cleNom, nom: nomBrut.trim(), creeParId: importeParId } });
   await ecrireAudit(db, {
@@ -123,7 +125,7 @@ async function resoudrePartenaire(
     ip,
     mois: maintenant,
   });
-  return cree.id;
+  return { id: cree.id, nom: cree.nom };
 }
 
 /** Lecture SEULE (jamais de création) — sert uniquement à retrouver un taux de contrôle déjà associé à CE partenaire
@@ -189,8 +191,9 @@ export async function appliquerImportProduction(
     const code = ligne.brancheCode ?? params.brancheParDefaut;
     if (code) codesUtilises.add(code);
   }
-  const branchesActives = await db.encBranche.findMany({ where: { actif: true }, select: { id: true, code: true } });
+  const branchesActives = await db.encBranche.findMany({ where: { actif: true }, select: { id: true, code: true, libelle: true } });
   const idParCode = new Map(branchesActives.map((b) => [b.code, b.id]));
+  const libelleParCode = new Map(branchesActives.map((b) => [b.code, b.libelle]));
   const inconnues = [...codesUtilises].filter((c) => !idParCode.has(c));
   if (inconnues.length > 0) {
     throw new EncImportApplicationError(
@@ -308,10 +311,11 @@ export async function appliquerImportProduction(
 
     // Partenaire : résolu SEULEMENT si le contrat va réellement être écrit (jamais pour une ligne rejetée en bloc,
     // V2-A14/Finance — `decision.contrat` vaut alors `null`).
-    const partenaireId =
+    const partenaire =
       decision.contrat && ligne.partenaireNom
         ? await resoudrePartenaire(db, ligne.partenaireNom, params.importeParId, params.maintenant, params.ip)
         : null;
+    const partenaireId = partenaire?.id ?? null;
 
     const brancheEffective = ligne.brancheCode ?? params.brancheParDefaut;
     const brancheId = brancheEffective ? (idParCode.get(brancheEffective) ?? null) : null;
@@ -375,6 +379,43 @@ export async function appliquerImportProduction(
       });
       encaissementCreeId = cree.id;
       nbPaiementsAConfirmer += 1;
+    }
+
+    // Index de recherche (F2, 5a-bis) : réécrit dans la même transaction dès que le contrat est écrit — nom du
+    // partenaire TEL QU'ENREGISTRÉ (pas celui de la ligne, qui peut différer à la ponctuation près), libellé de la
+    // branche, références de tous les paiements du contrat (existants et celui créé ci-dessus).
+    // Réimport sans changement (mêmes champs indexés, aucun nouveau paiement) : les mots déjà enregistrés sont
+    // identiques, rien à réécrire — évite deux requêtes par ligne sur un réimport complet.
+    const motsInchanges =
+      contratExistant !== null &&
+      encaissementCreeId === null &&
+      contratExistant.clientNom === ligne.clientNom &&
+      contratExistant.clientId === ligne.clientId &&
+      contratExistant.produitLibelle === ligne.produitLibelle &&
+      contratExistant.produitCode === ligne.produitCode &&
+      contratExistant.partenaireId === partenaireId &&
+      contratExistant.brancheId === brancheId;
+    if (decision.contrat && contratId && !motsInchanges) {
+      const references = [
+        ...(contratExistant?.encaissements.map((e) => e.reference) ?? []),
+        decision.paiementACreer && encaissementCreeId ? decision.paiementACreer.reference : null,
+      ];
+      await indexerMotsContrat(
+        db,
+        contratId,
+        [
+          ligne.numPolice,
+          ligne.clientNom,
+          ligne.clientId,
+          ligne.produitLibelle,
+          ligne.produitCode,
+          partenaire?.nom,
+          brancheEffective,
+          brancheEffective ? libelleParCode.get(brancheEffective) : null,
+          ...references,
+        ],
+        !contratExistant
+      );
     }
 
     const paiementIndique = versJsonAudit(construireLignePaiementIndique(ligne));

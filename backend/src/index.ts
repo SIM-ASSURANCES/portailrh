@@ -37,6 +37,9 @@ export * from "./encReferentiels";
 export * from "./encImportLecture";
 export * from "./encImportRegles";
 export * from "./encImportApplication";
+// F2 (recherche, fiche police) — commit 5a.
+export * from "./encRecherche";
+export * from "./encSituation";
 
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).

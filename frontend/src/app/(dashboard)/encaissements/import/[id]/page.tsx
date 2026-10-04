@@ -1,35 +1,16 @@
 import { notFound, redirect } from "next/navigation";
 
 import { Icon } from "@/components/icons";
-import {
-  formatDateCourte,
-  formatDateHeure,
-  formatFcfa,
-  libelleAnalyse,
-  libelleMode,
-} from "@/components/encaissements/libelles";
+import { formatDateHeure, formatFcfa, libelleAnalyse, paiementLisible } from "@/components/encaissements/libelles";
+import { SignalementsTable, type SignalementRow } from "@/components/encaissements/SignalementsTable";
 import { Badge, Card, PageHeader, StatCard } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
-
-import { SignalementsTable, type SignalementRow } from "./SignalementsTable";
 
 /** Plafonds d'affichage du détail (les compteurs restent exacts) : un import de 5 000 lignes peut produire autant de
  *  signalements « déjà présent », illisibles et lourds à afficher en une seule page. */
 const MAX_A_TRAITER = 500;
 const MAX_INFO = 200;
-
-function paiementLisible(json: unknown): string | null {
-  if (!json || typeof json !== "object") return null;
-  const p = json as { datePaiement?: string | null; mode?: string | null; montant?: string | null; reference?: string | null };
-  const morceaux = [
-    p.datePaiement ? formatDateCourte(p.datePaiement) : null,
-    p.mode ? libelleMode(p.mode) : null,
-    p.montant ? formatFcfa(p.montant) : null,
-    p.reference ? `réf. ${p.reference}` : null,
-  ].filter(Boolean);
-  return morceaux.length > 0 ? morceaux.join(" · ") : null;
-}
 
 export default async function RapportImportPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
