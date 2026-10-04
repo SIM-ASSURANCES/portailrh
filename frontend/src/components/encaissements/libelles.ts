@@ -94,3 +94,17 @@ export function paiementLisible(json: unknown): string | null {
   ].filter(Boolean);
   return morceaux.length > 0 ? morceaux.join(" · ") : null;
 }
+
+/** État d'un signalement d'import : à traiter, pour information, ou traité (par qui, quand, comment). */
+export function etatSignalement(s: {
+  statut: string;
+  traiteAt?: Date | null;
+  traitePar?: { fullName: string } | null;
+  resolution?: string | null;
+}): string {
+  if (s.statut === "A_TRAITER") return "À traiter";
+  if (s.statut === "INFO") return "Pour information";
+  const qui = s.traitePar ? ` par ${s.traitePar.fullName}` : "";
+  const quand = s.traiteAt ? ` le ${formatDateHeure(s.traiteAt)}` : "";
+  return `Traité${qui}${quand}${s.resolution ? ` (${s.resolution})` : ""}`;
+}

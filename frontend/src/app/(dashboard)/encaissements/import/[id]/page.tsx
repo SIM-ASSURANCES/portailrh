@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { Icon } from "@/components/icons";
-import { formatDateHeure, formatFcfa, libelleAnalyse, paiementLisible } from "@/components/encaissements/libelles";
+import { etatSignalement, formatDateHeure, formatFcfa, libelleAnalyse, paiementLisible } from "@/components/encaissements/libelles";
 import { SignalementsTable, type SignalementRow } from "@/components/encaissements/SignalementsTable";
 import { Badge, Card, PageHeader, StatCard } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
@@ -36,6 +36,10 @@ export default async function RapportImportPage({ params }: { params: Promise<{ 
     niveau: true,
     detail: true,
     paiementIndique: true,
+    statut: true,
+    traiteAt: true,
+    resolution: true,
+    traitePar: { select: { fullName: true } },
     branche: { select: { libelle: true } },
   } as const;
 
@@ -75,6 +79,7 @@ export default async function RapportImportPage({ params }: { params: Promise<{ 
     branche: s.branche?.libelle ?? null,
     paiement: paiementLisible(s.paiementIndique),
     detail: s.detail,
+    etat: etatSignalement(s),
   });
 
   const peutTelecharger = hasPermission(session, "enc.importer_production") && imp.fichier !== null;
@@ -127,7 +132,7 @@ export default async function RapportImportPage({ params }: { params: Promise<{ 
             Lignes rejetées ({nbRejets})
           </h2>
           <p className="text-sm text-muted-foreground">Ces lignes n&apos;ont créé ni contrat ni paiement ; le motif est indiqué pour chacune.</p>
-          <SignalementsTable rows={rejets.map(versRow)} emptyMessage="Aucune ligne rejetée." />
+          <SignalementsTable rows={rejets.map(versRow)} emptyMessage="Aucune ligne rejetée." afficherEtat />
         </Card>
       )}
 
@@ -197,7 +202,7 @@ function SectionSignalements({
           Détail limité aux {plafond} premiers signalements ; les compteurs ci-dessus restent complets.
         </p>
       )}
-      <SignalementsTable rows={rows} emptyMessage={vide} />
+      <SignalementsTable rows={rows} emptyMessage={vide} afficherEtat />
     </section>
   );
 }

@@ -5050,6 +5050,29 @@ livrés avec ce commit.
   sans (≈ 5 %) ; réimport sans changement 41,8 s (le saut évite toute réécriture).
 
 
+#### Commit 5b — Onglet « À vérifier » (2026-10-04, aucune migration)
+
+- **`/encaissements/a-verifier`** (`enc.consulter`) : signalements À TRAITER (`statut`) de tous les imports, plus
+  anciens d'abord, 50 par page, filtres branche et type en GET (types proposés avec leur nombre). « Ouvrir la police » :
+  la fiche, ou la recherche par n° de police pour une ligne rejetée (aucun contrat). Compteur sur l'accueil du module.
+- **« Marquer traité »** (`marquerSignalementTraite`, `backend/src/encSignalements.ts` ; action
+  `marquerSignalementTraiteAction`, `enc.confirmer_paiement` revérifiée) : `statut` → `TRAITE`, `traiteParId`,
+  `traiteAt`, `resolution` = « Marqué traité » ou « Marqué traité — commentaire » (facultatif, 500 caractères), audit
+  `EncAudit` `marquer_traite` dans la même transaction. Mise à jour conditionnelle (`updateMany` sur `statut =
+  A_TRAITER`) : refusée si le signalement n'est plus à traiter ; deux traitements simultanés → un seul réussit.
+  Équipe technique et Consultation : aucun bouton, action refusée si appelée directement.
+- Colonne **« État »** (À traiter / Pour information / Traité par … le … (résolution)) sur les signalements de la fiche
+  police et du rapport d'import (`SignalementsTable`, prop `afficherEtat` ; `etatSignalement` dans `libelles.ts`).
+- Rien ici ne crée de contrat ni de paiement : l'index des mots (D22) n'est pas concerné. « Ajouter quand même » (5c)
+  devra appeler `indexerMotsContrat`.
+- **Vérifié** : vitest (5 cas `encSignalements`) ; Playwright sur PostgreSQL 16 jetable (fichier anonymisé importé
+  par l'écran, 60 signalements synthétiques ajoutés pour la pagination), 15 contrôles : compteur 66 puis 65, pages
+  50 + 16, filtre par type, marquer traité avec commentaire, second traitement refusé, état sur la fiche et le
+  rapport, Technique et Consultation en lecture (aucun bouton, action rejouée refusée), 0 erreur console ; audit en
+  base (1 ligne, commentaire en motif) ; deux traitements simultanés sur PostgreSQL → 1 réussi, 1 refusé, 1 audit.
+- **Piège d'environnement** : arrêter la tâche qui a lancé `next start` ne tue pas le processus node (un serveur du
+  5a occupait encore le port 3100). Après un test, arrêter le processus par son numéro.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif

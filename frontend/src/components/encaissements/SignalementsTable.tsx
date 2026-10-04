@@ -11,9 +11,19 @@ export interface SignalementRow {
   /** Déjà mis en forme côté serveur (date, mode en clair, montant). */
   paiement: string | null;
   detail: string;
+  /** Déjà mis en forme côté serveur (« À traiter », « Traité par … le … — commentaire »…) ; affiché si `afficherEtat`. */
+  etat?: string | null;
 }
 
-export function SignalementsTable({ rows, emptyMessage }: { rows: SignalementRow[]; emptyMessage: string }) {
+export function SignalementsTable({
+  rows,
+  emptyMessage,
+  afficherEtat = false,
+}: {
+  rows: SignalementRow[];
+  emptyMessage: string;
+  afficherEtat?: boolean;
+}) {
   return (
     <DataTable
       rowKey={(r) => r.id}
@@ -32,6 +42,7 @@ export function SignalementsTable({ rows, emptyMessage }: { rows: SignalementRow
         { key: "branche", header: "Branche", accessor: (r) => r.branche ?? "—" },
         { key: "paiement", header: "Paiement indiqué", accessor: (r) => r.paiement ?? "—" },
         { key: "detail", header: "Détail", accessor: (r) => r.detail, className: "min-w-[16rem]" },
+        ...(afficherEtat ? [{ key: "etat", header: "État", accessor: (r: SignalementRow) => r.etat ?? "—", className: "min-w-[10rem]" }] : []),
       ]}
     />
   );

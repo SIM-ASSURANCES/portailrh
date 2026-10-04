@@ -40,6 +40,8 @@ export * from "./encImportApplication";
 // F2 (recherche, fiche police) — commit 5a.
 export * from "./encRecherche";
 export * from "./encSituation";
+// Onglet « À vérifier » (traitement des signalements) — commit 5b.
+export * from "./encSignalements";
 
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).

@@ -149,6 +149,12 @@ ajouter à la section 10 le cas échéant, une fois 4b entamé).
 | D21 | **Collation « C » sur la colonne `mot` plutôt que `text_pattern_ops`** : même effet (un btree sert `LIKE 'x%'` malgré la collation `en_US.utf8` de la base), mais Prisma 7 ne déclare `text_pattern_ops` que sous forme brute (`raw`) et la voit comme un écart permanent (`migrate diff` non vide ; `migrate dev` recréerait l'index à chaque nouvelle migration). La collation de colonne, ignorée par Prisma à la comparaison, donne zéro écart (vérifié). Le préfixe de n° de police et de référence passe par cette même table (mots normalisés, insensible à la casse et aux tirets) : pas d'index supplémentaire sur les colonnes brutes |
 | D22 | **Entretien** : `indexerMotsContrat` réécrit les mots dans la MÊME transaction que l'écriture du contrat ou du paiement (import F1). Réimport sans changement des champs indexés ni nouveau paiement : rien n'est réécrit. **Tout futur point qui crée un contrat ou un paiement avec référence (F3 saisie, 5c « Ajouter quand même », relevés) doit l'appeler.** Les noms de partenaire et de branche ne changent jamais aujourd'hui ; si un renommage apparaît, réindexer les contrats concernés. Remplissage des contrats existants **dans la migration** (SQL pur, idempotent `ON CONFLICT DO NOTHING`, mêmes règles que le TypeScript — 0 écart sur 150 000 contrats comparés) ; suppression d'un contrat : mots supprimés en cascade |
 
+### 2026-10-04 (onglet « À vérifier », commit 5b)
+
+| # | Décision |
+|---|---|
+| D23 | **« Marquer traité »** sans migration : réutilise les colonnes déjà prévues de `EncSignalement` (`statut` → `TRAITE`, `traiteParId`, `traiteAt`, `resolution`). `resolution` porte « Marqué traité » ou « Marqué traité — commentaire » (500 caractères au plus), pour distinguer plus tard « Ajouté quand même » (5c). Mise à jour conditionnelle sur `statut = A_TRAITER` : refusée si le signalement n'est plus à traiter, et deux traitements simultanés ne réussissent jamais tous les deux (vérifié sur PostgreSQL). Audit `EncAudit` (action `marquer_traite`, commentaire en motif) dans la même transaction. `enc.confirmer_paiement` (D18) ; Équipe technique et Consultation en lecture seule |
+
 ---
 
 ## 2. Existant réutilisable
@@ -661,7 +667,7 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | — | Découpage validé le 2026-09-30 (4 commits au lieu de « Lecture de tableurs et règles d'import » + « Import de production » ci-dessus, listés à titre d'historique) ; F1.5 (reprise) reste un commit séparé, plus tard, une fois A27b/A27d/A1c répondues. |
 | 5a | **Recherche et fiche police (F2)** — fait (2026-10-02) : barre de recherche dans le layout du module (jamais l'en-tête global), 8 suggestions et page de résultats `/encaissements/recherche` (50), fiche police `/encaissements/contrats/[id]` en lecture (situation D17, barre des versements, paiements, signalements de la police) ; cadres Taxes, Commissions, Honoraires et Accessoires aux lots 2 et 3. Aucune migration | — |
 | 5a-bis | **Recherche, option B** (D20-D22) : table `EncContratMot` (colonne `mot` en collation « C », index btree), migration additive `20261004090000_encaissements_recherche_mots` avec remplissage, entretien à l'import — fait (2026-10-04). Contient aussi les fichiers du 5a absents du commit `6be7697` (seul le déplacement de `SignalementsTable` y figurait) | — |
-| 5b | **Onglet « À vérifier »** : signalements À TRAITER de tous les imports, filtres (branche, type), compteur sur l'accueil, « Ouvrir la police », « Marquer traité » (qui, quand, `EncAudit`) | — |
+| 5b | **Onglet « À vérifier »** — fait (2026-10-04) : `/encaissements/a-verifier`, signalements À TRAITER de tous les imports (plus anciens d'abord, 50 par page, filtres branche et type en GET), compteur sur l'accueil du module, « Ouvrir la police » (fiche, ou recherche par n° pour une ligne rejetée sans contrat), « Marquer traité » (D23). Colonne « État » ajoutée aux signalements de la fiche police et du rapport d'import. Aucune migration | — |
 | 5c | **« Ajouter quand même »** (doublon possible) : crée le paiement « à confirmer » depuis les données de la ligne ; `paiementIndique` enrichi de `paiementIdFichier` et `numeroLigne` (JSON, sans migration) | — |
 | 7 | **Saisie (F3)**, montants figés (D9) | V2-A2, A6 |
 | 8 | **Paiement multiple (F4)** | — |

@@ -7,6 +7,7 @@ import {
   formatDateHeure,
   formatFcfa,
   libelleMode,
+  etatSignalement,
   libelleSource,
   paiementLisible,
 } from "@/components/encaissements/libelles";
@@ -65,7 +66,18 @@ export default async function FichePolicePage({ params }: { params: Promise<{ id
       where: { OR: [{ contratId: id }, { numPolice: contrat.numPolice }] },
       orderBy: [{ niveau: "asc" }, { creeAt: "desc" }],
       take: SIGNALEMENTS_MAX,
-      select: { id: true, numPolice: true, analyse: true, detail: true, paiementIndique: true, branche: { select: { libelle: true } } },
+      select: {
+        id: true,
+        numPolice: true,
+        analyse: true,
+        detail: true,
+        paiementIndique: true,
+        statut: true,
+        traiteAt: true,
+        resolution: true,
+        traitePar: { select: { fullName: true } },
+        branche: { select: { libelle: true } },
+      },
     }),
     prisma.encSignalement.count({ where: { OR: [{ contratId: id }, { numPolice: contrat.numPolice }] } }),
   ]);
@@ -243,8 +255,10 @@ export default async function FichePolicePage({ params }: { params: Promise<{ id
             branche: s.branche?.libelle ?? null,
             paiement: paiementLisible(s.paiementIndique),
             detail: s.detail,
+            etat: etatSignalement(s),
           }))}
           emptyMessage="Aucun signalement pour cette police."
+          afficherEtat
         />
       </section>
     </div>

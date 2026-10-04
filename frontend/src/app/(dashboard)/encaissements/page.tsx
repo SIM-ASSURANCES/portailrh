@@ -2,8 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Icon, type IconName } from "@/components/icons";
-import { PageHeader } from "@/components/ui";
+import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
+import { prisma } from "backend";
 
 /** Accueil du module Encaissements. Garde revérifiée ici, indépendamment du layout. */
 export default async function EncaissementsAccueilPage() {
@@ -12,7 +13,19 @@ export default async function EncaissementsAccueilPage() {
     redirect("/?error=acces_refuse_encaissements");
   }
 
-  const liens: { href: string; icon: IconName; titre: string; texte: string }[] = [
+  const nbATraiter = await prisma.encSignalement.count({ where: { statut: "A_TRAITER" } });
+
+  const liens: { href: string; icon: IconName; titre: string; texte: string; compteur?: number }[] = [
+    {
+      href: "/encaissements/a-verifier",
+      icon: "alert-triangle",
+      titre: "À vérifier",
+      texte:
+        nbATraiter === 0
+          ? "Aucun signalement d'import à traiter."
+          : `${nbATraiter.toLocaleString("fr-FR")} signalement(s) d'import à traiter.`,
+      compteur: nbATraiter,
+    },
     {
       href: "/encaissements/import",
       icon: "file-text",
@@ -42,14 +55,19 @@ export default async function EncaissementsAccueilPage() {
             <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
               <Icon name={l.icon} className="size-5" />
             </span>
-            <span>
-              <span className="block font-bold text-foreground group-hover:text-primary">{l.titre}</span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2 font-bold text-foreground group-hover:text-primary">
+                {l.titre}
+                {l.compteur !== undefined ? (
+                  <Badge variant={l.compteur > 0 ? "warning" : "success"}>{l.compteur.toLocaleString("fr-FR")}</Badge>
+                ) : null}
+              </span>
               <span className="mt-1 block text-sm text-muted-foreground">{l.texte}</span>
             </span>
           </Link>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">Les autres écrans du module (fiche police, confirmation, relevés…) arrivent dans les lots suivants.</p>
+      <p className="text-xs text-muted-foreground">Les autres écrans du module (confirmation, relevés…) arrivent dans les lots suivants.</p>
     </div>
   );
 }
