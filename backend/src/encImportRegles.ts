@@ -199,7 +199,10 @@ function dateModeMontantManquant(ligne: LigneAAnalyser): boolean {
 /** « Déjà présent » (F1.4) : ne requiert AUCUN champ en particulier — chaque clause se garde elle-même (une ligne
  *  sans référence peut par exemple encore matcher par PaiementID). Compare avec TOUS les encaissements existants, y
  *  compris "non reçus" (V2-A12, PROVISOIRE 2026-09-30, D12). */
-function chercherDejaPresent(ligne: LigneAAnalyser, existants: readonly EncaissementExistantResume[]): EncaissementExistantResume | null {
+export function chercherDejaPresent<E extends EncaissementExistantResume>(
+  ligne: Pick<LigneAAnalyser, "paiementIdFichier" | "reference" | "datePaiement" | "Z">,
+  existants: readonly E[]
+): E | null {
   for (const e of existants) {
     const memePaiementId = ligne.paiementIdFichier !== null && e.paiementIdFichier === ligne.paiementIdFichier;
     const memeReference = ligne.reference !== null && e.reference === ligne.reference;

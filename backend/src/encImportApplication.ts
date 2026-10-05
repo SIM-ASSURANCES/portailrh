@@ -80,11 +80,14 @@ export interface ResultatApplicationImport {
   nbInfo: number;
 }
 
-interface PaiementIndique {
+export interface PaiementIndique {
   datePaiement: string | null;
   mode: string | null;
   reference: string | null;
   montant: string | null;
+  /** PaiementID du fichier et n° de ligne (commit 5c, pour « Ajouter quand même ») — absents des signalements antérieurs. */
+  paiementIdFichier?: string | null;
+  numeroLigne?: number | null;
 }
 
 function construireLignePaiementIndique(ligne: LigneAAnalyser): PaiementIndique {
@@ -93,6 +96,8 @@ function construireLignePaiementIndique(ligne: LigneAAnalyser): PaiementIndique 
     mode: ligne.mode,
     reference: ligne.reference,
     montant: ligne.Z ? ligne.Z.toFixed(2) : null,
+    paiementIdFichier: ligne.paiementIdFichier,
+    numeroLigne: ligne.numeroLigne,
   };
 }
 

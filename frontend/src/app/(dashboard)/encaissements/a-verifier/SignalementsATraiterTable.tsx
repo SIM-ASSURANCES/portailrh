@@ -5,6 +5,7 @@ import Link from "next/link";
 import { libelleAnalyse } from "@/components/encaissements/libelles";
 import { DataTable } from "@/components/ui";
 
+import { AjouterQuandMemeButton } from "./AjouterQuandMemeButton";
 import { MarquerTraiteButton } from "./MarquerTraiteButton";
 
 /** Valeurs déjà mises en forme côté serveur (date, mode en clair, montant). */
@@ -68,6 +69,7 @@ export function SignalementsATraiterTable({ rows, peutTraiter }: { rows: Signale
                     Ouvrir la police
                   </Link>
                 ) : null}
+                {peutTraiter && r.analyse === "DOUBLON_POSSIBLE" ? <AjouterQuandMemeButton signalementId={r.id} /> : null}
                 {peutTraiter ? <MarquerTraiteButton signalementId={r.id} /> : null}
               </div>
             );

@@ -351,4 +351,11 @@ describe("appliquerImportProduction — orchestration (base factice en mémoire)
     expect(apres2).toContain("om777"); // nouvelle référence
     expect(new Set(apres2).size).toBe(apres2.length); // jamais de doublon
   });
+
+  it("paiement indiqué : conserve le PaiementID du fichier et le n° de ligne (5c, « Ajouter quand même »)", async () => {
+    const { db, branches, signalements } = creerDbFactice();
+    branches.push({ id: "branche-auto", code: "AUTO", actif: true });
+    await appliquerImportProduction(db as never, [ligneBase({ numeroLigne: 7, paiementIdFichier: "FX-0007" })], PARAMS_BASE);
+    expect(signalements[0].paiementIndique).toMatchObject({ paiementIdFichier: "FX-0007", numeroLigne: 7, reference: "CHQ-000001", montant: "500.00" });
+  });
 });

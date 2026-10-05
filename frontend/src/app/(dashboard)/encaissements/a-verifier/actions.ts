@@ -1,6 +1,6 @@
 "use server";
 
-// Onglet « À vérifier » (commit 5b) : « Marquer traité » un signalement d'import. Réservé à `enc.confirmer_paiement`
+// Onglet « À vérifier » (commits 5b, 5c) : « Marquer traité » et « Ajouter quand même ». Réservés à `enc.confirmer_paiement`
 // (Finance, décision du 2026-10-02), revérifié ici — Équipe technique et Consultation n'ont que la lecture.
 
 import { revalidatePath } from "next/cache";
@@ -9,7 +9,13 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { getClientIp } from "@/lib/auditLog";
 import { publishDataChanged } from "@/lib/eventBus";
-import { COMMENTAIRE_TRAITEMENT_MAX, EncSignalementError, marquerSignalementTraite, prisma } from "backend";
+import {
+  ajouterPaiementQuandMeme,
+  COMMENTAIRE_TRAITEMENT_MAX,
+  EncSignalementError,
+  marquerSignalementTraite,
+  prisma,
+} from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -45,4 +51,31 @@ export async function marquerSignalementTraiteAction(signalementId: string, comm
   revalidatePath("/encaissements", "layout");
   publishDataChanged();
   return { status: "success", message: "Signalement marqué traité." };
+}
+
+/**
+ * « Ajouter quand même » sur un « doublon possible » (commit 5c) : crée le paiement « à confirmer » tel qu'indiqué
+ * dans le fichier et traite le signalement. Même garde que « Marquer traité » (`enc.confirmer_paiement`).
+ */
+export async function ajouterQuandMemeAction(signalementId: string): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "enc.confirmer_paiement")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  if (typeof signalementId !== "string" || !signalementId) return { status: "error", message: "Données invalides." };
+
+  const ip = await getClientIp();
+  let paiementId: string;
+  try {
+    ({ paiementId } = await prisma.$transaction((tx) =>
+      ajouterPaiementQuandMeme(tx, { signalementId, userId: session.user.id, ip, maintenant: new Date() })
+    ));
+  } catch (e) {
+    if (e instanceof EncSignalementError) return { status: "error", message: e.message };
+    throw e;
+  }
+
+  revalidatePath("/encaissements", "layout");
+  publishDataChanged();
+  return { status: "success", message: `Paiement ${paiementId} ajouté (à confirmer).` };
 }

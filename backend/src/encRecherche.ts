@@ -88,6 +88,11 @@ export async function indexerMotsContrat(
   nouveau = false
 ): Promise<void> {
   if (!nouveau) await db.encContratMot.deleteMany({ where: { contratId } });
+  await ajouterMotsContrat(db, contratId, textes);
+}
+
+/** Ajoute des mots à l'index d'un contrat sans effacer les autres (ex. référence d'un paiement ajouté, 5c). */
+export async function ajouterMotsContrat(db: EncIndexMotsDb, contratId: string, textes: readonly (string | null | undefined)[]): Promise<void> {
   const mots = motsIndexes(textes);
   if (mots.length > 0) {
     await db.encContratMot.createMany({ data: mots.map((mot) => ({ contratId, mot })), skipDuplicates: true });

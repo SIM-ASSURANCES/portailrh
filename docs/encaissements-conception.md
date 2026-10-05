@@ -155,6 +155,12 @@ ajouter à la section 10 le cas échéant, une fois 4b entamé).
 |---|---|
 | D23 | **« Marquer traité »** sans migration : réutilise les colonnes déjà prévues de `EncSignalement` (`statut` → `TRAITE`, `traiteParId`, `traiteAt`, `resolution`). `resolution` porte « Marqué traité » ou « Marqué traité — commentaire » (500 caractères au plus), pour distinguer plus tard « Ajouté quand même » (5c). Mise à jour conditionnelle sur `statut = A_TRAITER` : refusée si le signalement n'est plus à traiter, et deux traitements simultanés ne réussissent jamais tous les deux (vérifié sur PostgreSQL). Audit `EncAudit` (action `marquer_traite`, commentaire en motif) dans la même transaction. `enc.confirmer_paiement` (D18) ; Équipe technique et Consultation en lecture seule |
 
+### 2026-10-05 (« Ajouter quand même », commit 5c)
+
+| # | Décision |
+|---|---|
+| D24 | **« Ajouter quand même »** sur un « doublon possible » (`ajouterPaiementQuandMeme`, `enc.confirmer_paiement`) : crée le paiement « à confirmer » tel qu'indiqué dans le fichier (`source FICHIER`, notre numéro PAI, PaiementID du fichier et n° de ligne s'ils sont connus, import d'origine), sous le même verrou par police que l'import. Le signalement passe à TRAITÉ (`resolution` « Ajouté quand même — PAI-… », `encaissementCreeId`). Garde-fous : refusé si le signalement n'est plus À TRAITER, si le paiement indiqué est incomplet, ou si le même paiement est déjà enregistré (même règle « déjà présent » que l'import — couvre un second signalement de la même ligne laissé par un réimport). Index des mots mis à jour (D22) avec la référence du paiement. Deux audits (`EncEncaissement` `ajout_quand_meme`, `EncSignalement` `ajouter_quand_meme`). Sans migration : `paiementIndique` (JSON) conserve désormais le PaiementID du fichier et le n° de ligne ; les anciens signalements qui ne les ont pas restent ajoutables (D19) |
+
 ---
 
 ## 2. Existant réutilisable
@@ -668,7 +674,7 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | 5a | **Recherche et fiche police (F2)** — fait (2026-10-02) : barre de recherche dans le layout du module (jamais l'en-tête global), 8 suggestions et page de résultats `/encaissements/recherche` (50), fiche police `/encaissements/contrats/[id]` en lecture (situation D17, barre des versements, paiements, signalements de la police) ; cadres Taxes, Commissions, Honoraires et Accessoires aux lots 2 et 3. Aucune migration | — |
 | 5a-bis | **Recherche, option B** (D20-D22) : table `EncContratMot` (colonne `mot` en collation « C », index btree), migration additive `20261004090000_encaissements_recherche_mots` avec remplissage, entretien à l'import — fait (2026-10-04). Contient aussi les fichiers du 5a absents du commit `6be7697` (seul le déplacement de `SignalementsTable` y figurait) | — |
 | 5b | **Onglet « À vérifier »** — fait (2026-10-04) : `/encaissements/a-verifier`, signalements À TRAITER de tous les imports (plus anciens d'abord, 50 par page, filtres branche et type en GET), compteur sur l'accueil du module, « Ouvrir la police » (fiche, ou recherche par n° pour une ligne rejetée sans contrat), « Marquer traité » (D23). Colonne « État » ajoutée aux signalements de la fiche police et du rapport d'import. Aucune migration | — |
-| 5c | **« Ajouter quand même »** (doublon possible) : crée le paiement « à confirmer » depuis les données de la ligne ; `paiementIndique` enrichi de `paiementIdFichier` et `numeroLigne` (JSON, sans migration) | — |
+| 5c | **« Ajouter quand même »** — fait (2026-10-05) : bouton sur les doublons possibles de l'onglet « À vérifier » (confirmation en deux temps), D24. Aucune migration | — |
 | 7 | **Saisie (F3)**, montants figés (D9) | V2-A2, A6 |
 | 8 | **Paiement multiple (F4)** | — |
 | 9 | **Confirmation (F5) et signalements** | V2-A11, A30 |

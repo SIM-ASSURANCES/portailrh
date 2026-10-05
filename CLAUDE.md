@@ -5073,6 +5073,27 @@ livrés avec ce commit.
 - **Piège d'environnement** : arrêter la tâche qui a lancé `next start` ne tue pas le processus node (un serveur du
   5a occupait encore le port 3100). Après un test, arrêter le processus par son numéro.
 
+#### Commit 5c — « Ajouter quand même » (2026-10-05, aucune migration)
+
+- **Import** : `paiementIndique` (JSON du signalement) conserve désormais aussi `paiementIdFichier` et `numeroLigne`.
+- **`ajouterPaiementQuandMeme`** (`backend/src/encSignalements.ts` ; action `ajouterQuandMemeAction`,
+  `enc.confirmer_paiement` revérifiée) sur un signalement « doublon possible » À TRAITER : verrou par police (le même
+  que l'import), relecture du statut, création du paiement « à confirmer » depuis `paiementIndique` (`source
+  FICHIER`, notre numéro PAI, PaiementID du fichier et n° de ligne s'ils existent, `importId` d'origine, `saisiParId`
+  = qui ajoute), signalement → TRAITÉ (`resolution` « Ajouté quand même — PAI-… », `encaissementCreeId`), mots de la
+  référence ajoutés à l'index (`ajouterMotsContrat`, D22), deux audits. Refusé si plus À TRAITER, paiement indiqué
+  incomplet, ou paiement déjà enregistré (`chercherDejaPresent`, désormais exportée par `encImportRegles.ts`, même
+  règle que l'import). Anciens signalements sans PaiementID/n° de ligne : ajoutables (D19).
+- **Écran** : bouton « Ajouter quand même » (confirmation en deux temps) sur les lignes « doublon possible » de
+  l'onglet « À vérifier », Finance seulement.
+- **Vérifié** : vitest (4 cas d'ajout + 1 cas d'import sur `paiementIndique`) ; Playwright sur PostgreSQL 16 jetable
+  (fichier anonymisé importé par l'écran ; doublon TEST-0004, référence « OM-4402 » distincte du paiement existant),
+  11 contrôles : « OM-4402 » introuvable avant puis trouvé après (référence exacte, et « om44 » par l'index des mots),
+  deux clics simultanés → 1 paiement créé et 1 refus, fiche police (2 paiements, signalement « Ajouté quand même »),
+  second ajout rejoué refusé, Technique et Consultation sans bouton et refusées en appel direct, 0 erreur console ; en
+  base : 1 paiement (PaiementID FX-0005, ligne 5, à confirmer), mot « om4402 » indexé, 2 audits ; **réimport du même
+  fichier** : la ligne revient « déjà présent », aucun nouveau doublon ni paiement.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif
