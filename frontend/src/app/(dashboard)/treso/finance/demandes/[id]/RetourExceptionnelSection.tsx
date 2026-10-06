@@ -17,10 +17,7 @@ const STATUT_VARIANT = { EN_ATTENTE_VALIDATION: "warning", VALIDE: "success", RE
 export async function RetourExceptionnelSection({ demandeId }: { demandeId: string }) {
   const session = await getSession();
   const estAssistant = !!session && hasPermission(session, "treso.receptionner_retour");
-  const estResponsable =
-    !!session &&
-    hasPermission(session, "treso.valider_demande") &&
-    !hasPermission(session, "treso.approuver_validation_complete");
+  const estResponsable = !!session && hasPermission(session, "treso.valider_retour_exceptionnel");
 
   const retours = await prisma.retourExceptionnel.findMany({
     where: { demandeId },

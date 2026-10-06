@@ -5922,6 +5922,35 @@ tâche, `alimenterCaisseAction`/`definirSoldeOuvertureAction`/
 `corrigerSoldeOuvertureAction` partageaient toutes les trois la garde de
 `effectuer_reglement`, jamais des permissions dédiées.
 
+**Permissions explicites qui remplacent la règle « Resp » (2026-10-06, migration
+`20261006100000_tresorerie_permissions_explicites`)** — « Resp » désignait un rôle qui a `treso.valider_demande`
+ET n'a PAS `treso.approuver_validation_complete` : une déduction fragile (un rôle qui reçoit aussi la permission du DG
+perdait en silence toutes ces actions, cause du blocage de la démo). **Aucune garde ne déduit plus un acteur d'une
+combinaison de permissions** : chaque action a sa permission.
+
+| Permission | Action |
+|---|---|
+| `treso.decider_finance` | Valider ou rejeter les lignes d'une demande (`validerLignesAction`) |
+| `treso.soumettre_dg` | Resoumettre au DG après un rejet de la validation complète |
+| `treso.annuler_reglement` | Annuler un règlement confirmé |
+| `treso.ajuster_retour` | Ajuster le total déclaré d'un retour de caisse |
+| `treso.valider_remboursement` | Valider ou rejeter un remboursement de retour |
+| `treso.valider_retour_exceptionnel` | Valider ou rejeter un retour exceptionnel post-clôture |
+| `treso.creer_retour_externe` | Retour externe (écran, action, téléchargement de ses pièces) |
+| `treso.modifier_budget_categorie` | Budget d'une catégorie (en plus de l'Admin) |
+| `treso.deleguer_acces` | Déléguer des accès (lue sur les permissions du RÔLE, jamais celles reçues par délégation) |
+| `treso.modifier_description` | Description d'une demande et libellé de ses lignes |
+
+La migration accorde les 9 premières **aux rôles qui remplissaient la règle « Resp » au moment de la migration**
+(calculé en SQL, jamais un nom de rôle), et `modifier_description` à « Resp OU `treso.effectuer_reglement` » (garde
+d'avant). Vérifié sans perte ni gain de droit : équivalence exacte rôle par rôle sur une base « existante » (ancien
+seed + rôles dérivés comme la base de dev : Admin avec la permission du DG, Finance avec la permission du DG, rôle
+combiné Finance/RH), migration rejouée sans effet, base neuve avec le nouveau seed, et 13 contrôles Playwright à
+l'écran. **Conséquence assumée** : un rôle qui portait déjà `approuver_validation_complete` en plus (cas de la démo)
+ne reçoit rien — comme avant, il reste bloqué ; il faut lui cocher les permissions voulues dans `/admin/roles`.
+Une délégation de `treso.valider_demande` ou `treso.effectuer_reglement` ne donne plus ces actions (aucune n'existait
+en dev au moment du changement ; à vérifier en production avant déploiement).
+
 **Pointage RH** (`pointage.*`) : `pointer`, `consulter_historique`,
 `consulter_tous`, `pointage_exceptionnel`, `corriger_pointage`,
 `gerer_horaires`, `voir_dashboard_rh`, `voir_reporting`.

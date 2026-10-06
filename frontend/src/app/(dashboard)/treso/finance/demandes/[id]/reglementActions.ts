@@ -546,11 +546,7 @@ export async function annulerReglementAction(
   motif: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (
-    !session ||
-    !hasPermission(session, "treso.valider_demande") ||
-    hasPermission(session, "treso.approuver_validation_complete")
-  ) {
+  if (!session || !hasPermission(session, "treso.annuler_reglement")) {
     return { status: "error", message: "Action non autorisée." };
   }
 

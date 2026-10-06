@@ -36,12 +36,10 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
   const { id } = await params;
   const session = await getSession();
   const canReceptionner = !!session && hasPermission(session, "treso.receptionner_retour");
-  // Ajustement du total déclaré : Responsable Finance UNIQUEMENT (même garde que
-  // `ajusterTotalDeclareRetourAction`, revérifiée côté serveur).
-  const canAjusterTotal =
-    !!session &&
-    hasPermission(session, "treso.valider_demande") &&
-    !hasPermission(session, "treso.approuver_validation_complete");
+  // Mêmes permissions que `ajusterTotalDeclareRetourAction` et `validerRemboursementRetourAction` (revérifiées
+  // côté serveur).
+  const canAjusterTotal = !!session && hasPermission(session, "treso.ajuster_retour");
+  const canValiderRemboursement = !!session && hasPermission(session, "treso.valider_remboursement");
   const canConsulterLectureSeule = !!session && hasPermission(session, "treso.valider_demande");
   if (!canReceptionner && !canConsulterLectureSeule) {
     redirect("/?error=acces_refuse_receptionner_retour");
@@ -187,7 +185,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
                 <a href={`/api/treso/pieces-jointes/${r.pieceJointe.id}`} className="inline-block text-xs text-info underline-offset-4 hover:text-primary hover:underline">
                   Télécharger le justificatif
                 </a>
-                {r.statut === "EN_ATTENTE_VALIDATION" && canAjusterTotal && r.proposeParId !== session!.user.id ? (
+                {r.statut === "EN_ATTENTE_VALIDATION" && canValiderRemboursement && r.proposeParId !== session!.user.id ? (
                   <RemboursementDecision remboursementId={r.id} />
                 ) : null}
               </li>

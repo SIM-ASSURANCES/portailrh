@@ -40,8 +40,7 @@ export default async function CategoriserDemandePage({
   // "Libellé de demande modifiable..." — même conflit déjà rencontré pour
   // "Déléguer des accès") : la garde exacte de `modifierDescriptionAction`
   // est reproduite ici à l'identique, jamais une approximation.
-  const canModifierDescription =
-    (canValider && !canApprouverValidationComplete) || canEffectuerReglement;
+  const canModifierDescription = hasPermission(session, "treso.modifier_description");
   // Tâche "Validation ligne par ligne" (voir CLAUDE.md) — même garde exacte
   // que `canModifierDescription` (le libellé d'une ligne n'est jamais une
   // décision de validation, ouvert au Responsable ET à l'Assistant Finance).
@@ -50,7 +49,9 @@ export default async function CategoriserDemandePage({
   // Finance UNIQUEMENT (jamais l'Assistant) — voir la garde identique dans
   // `validerLignesAction` (actions.ts) et le résumé de la tâche pour la
   // justification de ce choix.
-  const canValiderLignes = canValider && !canApprouverValidationComplete;
+  const canValiderLignes = hasPermission(session, "treso.decider_finance");
+  const canSoumettreDG = hasPermission(session, "treso.soumettre_dg");
+  const canAnnulerReglement = hasPermission(session, "treso.annuler_reglement");
 
   const demande = await prisma.demande.findUnique({
     where: { id },
@@ -400,12 +401,12 @@ export default async function CategoriserDemandePage({
             ) : null}
             {/* Tâche "Resoumission au DG après rejet" (voir CLAUDE.md) —
                 garde de permission DISTINCTE et opposée à celle des deux
-                boutons ci-dessus (`canValiderLignes` = Responsable Finance
-                UNIQUEMENT, jamais le DG) : visible uniquement si le DERNIER
+                boutons ci-dessus (`canSoumettreDG` = permission explicite
+                `treso.soumettre_dg`, que le DG n'a pas) : visible uniquement si le DERNIER
                 évènement DG connu est bien un rejet (jamais "jamais encore
                 examinée" ni "approbation annulée" — revérifié de toute façon
                 côté serveur). */}
-            {canValiderLignes &&
+            {canSoumettreDG &&
             !demande.validationCompleteParDG &&
             dernierEvenementDG?.action === "rejet_validation_complete" ? (
               <ValidationCompleteDGActions demandeId={demande.id} mode="resoumission" />
@@ -665,7 +666,7 @@ export default async function CategoriserDemandePage({
             // (Assistant Finance) : réutilise `canValiderLignes`, déjà
             // calculé plus haut pour la même identification "Responsable
             // Finance UNIQUEMENT".
-            canAnnulerReglementConfirme={canValiderLignes}
+            canAnnulerReglementConfirme={canAnnulerReglement}
           />
           <RegularisationSummary
             demandeId={demande.id}

@@ -8,12 +8,7 @@ import { RetourExterneForm } from "./RetourExterneForm";
 
 export default async function RetoursExternesPage() {
   const session = await getSession();
-  // Responsable Finance uniquement (exclut le DG, qui porte aussi valider_demande).
-  if (
-    !session ||
-    !hasPermission(session, "treso.valider_demande") ||
-    hasPermission(session, "treso.approuver_validation_complete")
-  ) {
+  if (!session || !hasPermission(session, "treso.creer_retour_externe")) {
     redirect("/?error=acces_refuse_dashboard_finance");
   }
 

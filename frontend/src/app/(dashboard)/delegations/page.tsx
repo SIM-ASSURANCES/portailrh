@@ -33,10 +33,9 @@ const MODULES_DELEGABLES = ["tresorerie", "pointage"] as const;
  */
 export default async function DelegationsPage() {
   const session = await getSession();
-  const peutDeleguer =
-    !!session &&
-    session.rolePermissions.includes("treso.valider_demande") &&
-    !session.rolePermissions.includes("treso.approuver_validation_complete");
+  // Permission explicite `treso.deleguer_acces` (2026-10-06), lue sur les permissions du RÔLE (jamais celles
+  // reçues par délégation : pas de délégation en cascade).
+  const peutDeleguer = !!session && session.rolePermissions.includes("treso.deleguer_acces");
 
   if (!session || !peutDeleguer) {
     redirect("/?error=acces_refuse_delegations");

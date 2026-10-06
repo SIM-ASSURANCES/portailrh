@@ -46,10 +46,7 @@ export default async function FinanceCategoriesPage() {
   }
 
   const admin = isAdmin(session);
-  const canModifierBudget =
-    admin ||
-    (hasPermission(session, "treso.valider_demande") &&
-      !hasPermission(session, "treso.approuver_validation_complete"));
+  const canModifierBudget = admin || hasPermission(session, "treso.modifier_budget_categorie");
 
   const categories = await prisma.categorie.findMany({
     include: { objets: { orderBy: { label: "asc" } } },

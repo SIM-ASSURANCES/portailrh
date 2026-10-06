@@ -410,9 +410,7 @@ export async function modifierDescriptionAction(
   const session = await getSession();
   const peutModifier =
     !!session &&
-    ((hasPermission(session, "treso.valider_demande") &&
-      !hasPermission(session, "treso.approuver_validation_complete")) ||
-      hasPermission(session, "treso.effectuer_reglement"));
+    hasPermission(session, "treso.modifier_description");
   if (!peutModifier) {
     return { status: "error", message: "Action non autorisée." };
   }
@@ -482,9 +480,7 @@ export async function modifierLibelleLigneAction(
   const session = await getSession();
   const peutModifier =
     !!session &&
-    ((hasPermission(session, "treso.valider_demande") &&
-      !hasPermission(session, "treso.approuver_validation_complete")) ||
-      hasPermission(session, "treso.effectuer_reglement"));
+    hasPermission(session, "treso.modifier_description");
   if (!peutModifier) {
     return { status: "error", message: "Action non autorisée." };
   }
@@ -653,10 +649,7 @@ export async function validerLignesAction(
   decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE"; motif?: string }[]
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  const peutValider =
-    !!session &&
-    hasPermission(session, "treso.valider_demande") &&
-    !hasPermission(session, "treso.approuver_validation_complete");
+  const peutValider = !!session && hasPermission(session, "treso.decider_finance");
   if (!peutValider) {
     return { status: "error", message: "Action non autorisée." };
   }
@@ -1592,11 +1585,7 @@ export async function resoumettreValidationCompleteDGAction(
   motif: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (
-    !session ||
-    !hasPermission(session, "treso.valider_demande") ||
-    hasPermission(session, "treso.approuver_validation_complete")
-  ) {
+  if (!session || !hasPermission(session, "treso.soumettre_dg")) {
     return { status: "error", message: "Action non autorisée." };
   }
 

@@ -124,9 +124,7 @@ export default async function DashboardFinancePage() {
   // pas actionnable par ce rôle précis : reste visible (chiffre de
   // consultation), devient simplement non cliquable.
   const canReceptionnerRetour = hasPermission(session, "treso.receptionner_retour");
-  // Retour externe : Responsable Finance uniquement (exclut le DG, qui porte aussi valider_demande).
-  const canRetourExterne =
-    hasPermission(session, "treso.valider_demande") && !hasPermission(session, "treso.approuver_validation_complete");
+  const canRetourExterne = hasPermission(session, "treso.creer_retour_externe");
 
   const totalATraiter =
     enAttenteValidation.nombre +

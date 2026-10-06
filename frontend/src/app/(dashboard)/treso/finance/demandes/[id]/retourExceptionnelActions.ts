@@ -24,10 +24,9 @@ function estAssistantFinance(session: NonNullable<Awaited<ReturnType<typeof getS
   return hasPermission(session, "treso.receptionner_retour");
 }
 
-// Responsable Finance : même garde exacte que `validerLignesAction` —
-// `treso.valider_demande` ET PAS `treso.approuver_validation_complete` (exclut le DG).
+// Validation ou rejet d'un retour exceptionnel : permission explicite (2026-10-06).
 function estResponsableFinance(session: NonNullable<Awaited<ReturnType<typeof getSession>>>) {
-  return hasPermission(session, "treso.valider_demande") && !hasPermission(session, "treso.approuver_validation_complete");
+  return hasPermission(session, "treso.valider_retour_exceptionnel");
 }
 
 const saisieSchema = z.object({

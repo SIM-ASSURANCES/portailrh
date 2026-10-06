@@ -705,11 +705,7 @@ export async function ajusterTotalDeclareRetourAction(
   motif: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (
-    !session ||
-    !hasPermission(session, "treso.valider_demande") ||
-    hasPermission(session, "treso.approuver_validation_complete")
-  ) {
+  if (!session || !hasPermission(session, "treso.ajuster_retour")) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -1039,7 +1035,7 @@ export async function proposerRemboursementRetourAction(
 }
 
 function estResponsable(session: NonNullable<Awaited<ReturnType<typeof getSession>>>) {
-  return hasPermission(session, "treso.valider_demande") && !hasPermission(session, "treso.approuver_validation_complete");
+  return hasPermission(session, "treso.valider_remboursement");
 }
 
 /** Validation (Responsable Finance) : SORTIE de caisse, dépense du retour d'origine relevée du même montant. */

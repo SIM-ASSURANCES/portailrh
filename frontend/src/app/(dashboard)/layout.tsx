@@ -48,10 +48,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "treso.effectuer_reglement") ||
         hasPermission(session, "treso.receptionner_retour")
       }
-      canRetourExterne={
-        hasPermission(session, "treso.valider_demande") &&
-        !hasPermission(session, "treso.approuver_validation_complete")
-      }
+      canRetourExterne={hasPermission(session, "treso.creer_retour_externe")}
       canReceptionnerRetour={hasPermission(session, "treso.receptionner_retour")}
       canVoirDashboardFinance={hasPermission(session, "treso.voir_dashboard_finance")}
       canVoirReporting={hasPermission(session, "treso.voir_reporting")}
@@ -97,34 +94,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "pointage.voir_dashboard_rh") ||
         hasPermission(session, "pointage.voir_reporting")
       }
-      // Restreint au Responsable Finance uniquement (Tâche "Restreindre
-      // 'Déléguer des accès'", voir CLAUDE.md) — `treso.valider_demande`
-      // SEULE ne suffit pas à écarter le DG (qui la possède aussi) : la
-      // deuxième condition (absence de `treso.approuver_validation_complete`,
-      // le marqueur du DG) exclut spécifiquement ce rôle, jamais une
-      // comparaison de nom de rôle en dur. Basé sur `rolePermissions`
-      // (jamais `permissions`, qui inclurait des permissions reçues par
-      // délégation) — même garde exacte que `delegations/page.tsx` et
+      // Déléguer des accès : permission explicite `treso.deleguer_acces` (2026-10-06, remplace la règle
+      // « valider_demande sans approuver_validation_complete »). Lue sur `rolePermissions` (jamais `permissions`, qui
+      // inclurait des permissions reçues par délégation) — même garde que `delegations/page.tsx` et
       // `accorderDelegationAction`.
-      //
-      // CONFLIT DE MERGE (origin/thierry-kouame) résolu en faveur de cette
-      // version : la branche de Thierry portait encore l'ancienne condition
-      // large (`treso.*`/`pointage.* — n'importe laquelle`), antérieure à
-      // cette restriction. Vérifié avant de trancher : `delegations/page.tsx`
-      // et `accorderDelegationAction` (les points d'application réels)
-      // portent déjà cette même garde restreinte après fusion, inchangés par
-      // les commits de Thierry (son seul changement dans `delegations/actions.ts`
-      // concerne le renommage `createNotification` -> `notify`, jamais cette
-      // logique de permission) — garder la condition large ici aurait donc
-      // seulement affiché le lien "Déléguer des accès" à des comptes
-      // (RH/DG/Assistant Finance) qui se seraient ensuite fait rediriger en
-      // cliquant dessus, sans aucune différence réelle de sécurité. Signalé
-      // à l'utilisateur malgré tout (voir résumé) : c'est la même prop
-      // modifiée des deux côtés au même endroit exact.
-      canDelegerAcces={
-        session.rolePermissions.includes("treso.valider_demande") &&
-        !session.rolePermissions.includes("treso.approuver_validation_complete")
-      }
+      canDelegerAcces={session.rolePermissions.includes("treso.deleguer_acces")}
       canReinitialiser={hasPermission(session, "systeme.reinitialiser") && !(await reinitialisationEffectuee())}
       canPointer={hasPermission(session, "pointage.pointer")}
       canConsulterHistorique={hasPermission(session, "pointage.consulter_historique")}

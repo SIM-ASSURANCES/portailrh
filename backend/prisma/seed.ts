@@ -217,6 +217,22 @@ async function main() {
       label: "Gérer les catégories et objets d'achat (créer/supprimer)",
       moduleId: moduleTresorerie.id,
     },
+    // Permissions explicites qui remplacent la règle « Resp » (2026-10-06, migration
+    // 20261006100000_tresorerie_permissions_explicites, mêmes libellés).
+    { key: "treso.decider_finance", label: "Décider à l'étape Finance (valider ou rejeter les lignes)", moduleId: moduleTresorerie.id },
+    { key: "treso.soumettre_dg", label: "Soumettre ou resoumettre une demande au DG", moduleId: moduleTresorerie.id },
+    { key: "treso.annuler_reglement", label: "Annuler un règlement confirmé", moduleId: moduleTresorerie.id },
+    { key: "treso.ajuster_retour", label: "Ajuster le total déclaré d'un retour de caisse", moduleId: moduleTresorerie.id },
+    { key: "treso.valider_remboursement", label: "Valider ou rejeter un remboursement de retour", moduleId: moduleTresorerie.id },
+    { key: "treso.valider_retour_exceptionnel", label: "Valider ou rejeter un retour exceptionnel post-clôture", moduleId: moduleTresorerie.id },
+    { key: "treso.creer_retour_externe", label: "Enregistrer un retour externe (hors demande)", moduleId: moduleTresorerie.id },
+    { key: "treso.modifier_budget_categorie", label: "Modifier le budget d'une catégorie", moduleId: moduleTresorerie.id },
+    { key: "treso.deleguer_acces", label: "Déléguer des accès", moduleId: moduleTresorerie.id },
+    {
+      key: "treso.modifier_description",
+      label: "Modifier la description d'une demande et le libellé de ses lignes",
+      moduleId: moduleTresorerie.id,
+    },
     { key: "pointage.pointer", label: "Pointer (arrivée / départ)", moduleId: modulePointage.id },
     { key: "pointage.consulter_historique", label: "Consulter son propre historique de pointage", moduleId: modulePointage.id },
     { key: "pointage.consulter_tous", label: "Consulter les pointages de tous les employés", moduleId: modulePointage.id },
@@ -284,6 +300,17 @@ async function main() {
       "treso.voir_reporting",
       "treso.saisir_depense_directe",
       "treso.gerer_categories",
+      // Actions autrefois déduites de « valider_demande sans approuver_validation_complete » (2026-10-06).
+      "treso.decider_finance",
+      "treso.soumettre_dg",
+      "treso.annuler_reglement",
+      "treso.ajuster_retour",
+      "treso.valider_remboursement",
+      "treso.valider_retour_exceptionnel",
+      "treso.creer_retour_externe",
+      "treso.modifier_budget_categorie",
+      "treso.deleguer_acces",
+      "treso.modifier_description",
     ],
     [roleDG.id]: [
       "treso.valider_demande",
@@ -328,7 +355,7 @@ async function main() {
     // l'alimentation de caisse/la correction du solde d'ouverture/la
     // dépense directe (délégables au cas par cas par le Responsable
     // Finance, voir CLAUDE.md).
-    [roleAssistantFinance.id]: ["treso.effectuer_reglement", "treso.receptionner_retour"],
+    [roleAssistantFinance.id]: ["treso.effectuer_reglement", "treso.receptionner_retour", "treso.modifier_description"],
     // Module Encaissements : un rôle par profil du cahier (§2).
     ...Object.fromEntries(rolesEncaissements.map((role, i) => [role.id, ENC_ROLES_DEPART[i].permissions])),
   };
