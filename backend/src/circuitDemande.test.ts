@@ -9,7 +9,9 @@ import {
   friseProgression,
   MESSAGE_DEUX_PERSONNES,
   messageAttente,
+  raisonIndisponible,
   refusApprobationCloture,
+  versDemandeCircuit,
   transition,
   type ActeurCircuit,
   type ActionCircuit,
@@ -374,5 +376,29 @@ describe("deux personnes distinctes pour une validation complète (Finance ≠ D
 
   it("un rejet n'est pas une décision Finance (n'enregistre pas de décideur)", () => {
     expect(ok(demande("FINANCE"), CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: false }).effets.decideurFinance).toBeUndefined();
+  });
+});
+
+describe("raisons des boutons grisés (écran = serveur)", () => {
+  it("phrase d'attente selon l'étape, null quand l'action est possible", () => {
+    expect(raisonIndisponible(demande("SERVICE"), FINANCE, "DECIDER_LIGNES")).toBe("En attente de la validation du responsable de service.");
+    expect(raisonIndisponible(demande("DG"), FINANCE, "SOUMETTRE_DG")).toBe("En attente de la décision du DG.");
+    expect(raisonIndisponible(demande("FINANCE"), FINANCE, "SOUMETTRE_DG")).toBeNull();
+    expect(raisonIndisponible(demande("REJET_DG"), FINANCE, "RESOUMETTRE_DG")).toBeNull();
+    expect(raisonIndisponible(demande("FINANCE"), ASSISTANT, "DECIDER_LIGNES")).toBe("Action non autorisée.");
+    expect(raisonIndisponible(demande("DECISION_FINALE"), FINANCE, "SOUMETTRE_DG")).toContain("déjà approuvé");
+  });
+  it("versDemandeCircuit reprend les champs de la ligne", () => {
+    const d = versDemandeCircuit({
+      etapeCircuit: "DG",
+      createurId: "c",
+      typeDemande: "STANDARD",
+      etapeServiceRequise: true,
+      etapeFinanceRequise: true,
+      modeEtapeDG: "OPTIONNELLE",
+      dgApprobateurId: null,
+      decideurFinanceId: "f",
+    });
+    expect(d).toEqual({ etape: "DG", createurId: "c", typeDemande: "STANDARD", etapeServiceRequise: true, etapeFinanceRequise: true, modeEtapeDG: "OPTIONNELLE", approbateurDGId: null, decideurFinanceId: "f" });
   });
 });

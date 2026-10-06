@@ -120,10 +120,14 @@ export function LignesValidationTable({
   categories,
   objets,
   budgetParCategorie,
+  raisonIndisponible = null,
 }: {
   demandeId: string;
   lignes: LigneValidation[];
   canValider: boolean;
+  /** Circuit de validation : pourquoi la décision est grisée à cette étape (phrase du moteur), à la place du message
+   *  de rôle. */
+  raisonIndisponible?: string | null;
   canModifierLibelle: boolean;
   libelleModifiable: boolean;
   canCategoriser: boolean;
@@ -206,7 +210,8 @@ export function LignesValidationTable({
             onChangeMotif={(motif) => setDecisionMotif(ligne.id, motif)}
             canModifierLibelle={canModifierLibelle}
             libelleModifiable={libelleModifiable}
-            decisionsPending={isPending}
+            // Valider/Rejeter grisés aussi hors de l'étape de la Finance (circuit) ou sans le droit de décider.
+            decisionsPending={isPending || !canValider}
             canCategoriser={canCategoriser}
             categories={categories}
             objets={objets}
@@ -221,7 +226,9 @@ export function LignesValidationTable({
             Montant qui sera validé :{" "}
             <span className="tabular-nums">{montantQuiSeraValide.toLocaleString("fr-FR")} FCFA</span>
           </p>
-          {!canValider ? (
+          {!canValider && raisonIndisponible ? (
+            <p className="text-xs text-muted-foreground">{raisonIndisponible}</p>
+          ) : !canValider ? (
             <p className="text-xs text-muted-foreground">
               Votre rôle ne permet pas de valider ou rejeter les lignes de cette demande — réservé au
               rôle Finance.

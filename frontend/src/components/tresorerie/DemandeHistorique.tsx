@@ -35,6 +35,19 @@ const ACTION_LABELS: Record<string, string> = {
   // `declaration_retour_assistant`) : c'est une information sur SON
   // ARGENT, jamais de la gestion interne à masquer.
   detaillage_retour: "Détail réel du retour renseigné par l'Assistant Finance",
+  // Circuit de validation (2026-10-06).
+  circuit_initialise: "Circuit de validation",
+  validation_service: "Validée par le responsable de service",
+  renvoi_correction: "Renvoyée au demandeur pour correction",
+  soumission_dg: "Soumise au DG",
+  resoumission_dg: "Resoumise au DG",
+  validation_dg: "Validée par le DG",
+  rejet_dg: "Rejetée par le DG",
+  decision_circuit: "Décision finale",
+  correction_demande: "Version avant correction",
+  resoumission_correction: "Corrigée et resoumise",
+  abandon: "Abandonnée par le demandeur",
+  exception_depense_directe: "Dépense directe décidée par son auteur (exception)",
   // Tâche "Signalement d'erreur par le Collaborateur" — les deux actions
   // restent visibles au Collaborateur : la première est SA PROPRE action,
   // la seconde répond directement à son signalement.

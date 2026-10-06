@@ -7,6 +7,7 @@ import type { EtapeCircuit, NiveauRejet } from "./generated/prisma/enums";
 import {
   determinerParcours,
   etapeInitiale,
+  LIBELLE_ETAPE_CIRCUIT,
   transition,
   type ActeurCircuit,
   type ActionCircuit,
@@ -71,7 +72,7 @@ export async function initialiserCircuit(
   const etape = etapeInitiale(parcours);
   return {
     data: { ...champsParcours(parcours), etapeCircuit: etape },
-    detail: `Circuit : ${CAS_LIBELLE[parcours.cas]}. Première étape : ${etape}.`,
+    detail: `Circuit : ${CAS_LIBELLE[parcours.cas]}. Première étape : ${LIBELLE_ETAPE_CIRCUIT[etape]}.`,
   };
 }
 
@@ -171,7 +172,7 @@ export async function appliquerTransitionCircuit(
     return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
   }
 
-  const morceaux: string[] = [`${d.etapeCircuit} → ${r.etapeSuivante}`];
+  const morceaux: string[] = [`${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}`];
   if (r.effets.niveauRejet) morceaux.push(`niveau ${NIVEAU_LIBELLE[r.effets.niveauRejet]}`);
   if (motif) morceaux.push(`motif : ${motif}`);
   if (r.effets.approbationClotureParDG) morceaux.push("vaut approbation de clôture du DG");
@@ -350,7 +351,7 @@ export async function corrigerEtResoumettre(
       entity: "Demande",
       entityId: demandeId,
       action: "resoumission_correction",
-      detail: `Corrigée et resoumise (tour ${d.tourCircuit + 1}) : ${CAS_LIBELLE[parcours.cas]}. Première étape : ${etape}. Montant : ${montant.toLocaleString("fr-FR")}.`,
+      detail: `Corrigée et resoumise (tour ${d.tourCircuit + 1}) : ${CAS_LIBELLE[parcours.cas]}. Première étape : ${LIBELLE_ETAPE_CIRCUIT[etape]}. Montant : ${montant.toLocaleString("fr-FR")}.`,
       userId,
     },
   });

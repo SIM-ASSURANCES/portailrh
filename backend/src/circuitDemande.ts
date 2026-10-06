@@ -182,6 +182,18 @@ export type ResultatTransition =
 
 const MOTIF_MIN = 3;
 
+/** Nom d'une étape pour les écrans et l'historique. */
+export const LIBELLE_ETAPE_CIRCUIT: Record<EtapeCircuit, string> = {
+  SERVICE: "Service",
+  FINANCE: "Finance",
+  DG: "DG",
+  REJET_DG: "Rejet DG",
+  DECISION_FINALE: "Décision finale",
+  TERMINEE: "Terminée",
+  A_CORRIGER: "À corriger",
+  ABANDONNEE: "Abandonnée",
+};
+
 /** Phrase affichée à qui n'a rien à faire à l'étape courante (boutons grisés, écrans du commit 4). */
 export function messageAttente(etape: EtapeCircuit): string {
   switch (etape) {
@@ -268,6 +280,7 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
 
     case "SOUMETTRE_DG": {
       if (!a(acteur, "treso.soumettre_dg")) return refus("Action non autorisée.");
+      if (etape === "DECISION_FINALE") return refus("Le DG a déjà approuvé cette demande : reste la décision finale de la Finance.");
       if (etape !== "FINANCE") return refus(messageAttente(etape));
       if (demande.modeEtapeDG !== "OPTIONNELLE") {
         return refus("La soumission au DG n'est pas requise pour cette demande (demande émise par le DG).");
@@ -397,4 +410,42 @@ export function friseProgression(
     { etape: "DG", statut: !dgRequise ? "NON_REQUISE" : dgFaite ? "FAITE" : statut(2, true) },
     { etape: "ASSISTANT", statut: demande.etape === "TERMINEE" ? "EN_COURS" : "A_VENIR" },
   ];
+}
+
+/** Champs `Demande` lus par le circuit (ligne Prisma) → `DemandeCircuit`. */
+export function versDemandeCircuit(d: {
+  etapeCircuit: EtapeCircuit;
+  createurId: string;
+  typeDemande: TypeDemandeCircuit;
+  etapeServiceRequise: boolean;
+  etapeFinanceRequise: boolean;
+  modeEtapeDG: ModeEtapeDG;
+  dgApprobateurId: string | null;
+  decideurFinanceId: string | null;
+}): DemandeCircuit {
+  return {
+    etape: d.etapeCircuit,
+    createurId: d.createurId,
+    typeDemande: d.typeDemande,
+    etapeServiceRequise: d.etapeServiceRequise,
+    etapeFinanceRequise: d.etapeFinanceRequise,
+    modeEtapeDG: d.modeEtapeDG,
+    approbateurDGId: d.dgApprobateurId,
+    decideurFinanceId: d.decideurFinanceId,
+  };
+}
+
+/**
+ * Pourquoi un bouton est grisé : la phrase que le serveur renverrait pour cette action, ou `null` si l'action est
+ * possible maintenant. Une seule source pour l'écran et le serveur (`transition`).
+ */
+export function raisonIndisponible(demande: DemandeCircuit, acteur: ActeurCircuit, type: TypeActionCircuit): string | null {
+  const action: ActionCircuit =
+    type === "REJETER" || type === "REJETER_DG"
+      ? { type, motif: "motif" }
+      : type === "DECIDER_LIGNES"
+        ? { type, auMoinsUneValidee: true }
+        : { type };
+  const r = transition(demande, acteur, action);
+  return r.ok ? null : r.message;
 }

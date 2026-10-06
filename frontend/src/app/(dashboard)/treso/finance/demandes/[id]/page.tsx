@@ -10,8 +10,11 @@ import { RegularisationSummary } from "@/components/tresorerie/RegularisationSum
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { getMontantsLignesParStatut, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
+import { chargerActeur, raisonIndisponible, versDemandeCircuit, type TypeActionCircuit } from "backend";
+import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
 
 import { CategorisationForm } from "./CategorisationForm";
+import { CircuitFinanceActions } from "./CircuitFinanceActions";
 import { ClotureActions } from "./ClotureActions";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { LignesValidationTable } from "./LignesValidationTable";
@@ -79,6 +82,17 @@ export default async function CategoriserDemandePage({
   // lignes sont pourtant déjà toutes décidées) — seul `demande.lignes.length`
   // est nécessaire ici, pour choisir QUEL composant rendre.
   const demandeAauMoinsUneLigne = demande.lignes.length > 0;
+
+  // Circuit de validation (commit 4) : ce que ce compte peut faire à l'étape courante, et sinon pourquoi — la phrase
+  // que le serveur renverrait (`raisonIndisponible`, moteur du circuit), affichée sous les boutons grisés.
+  const demandeCircuit = versDemandeCircuit(demande);
+  const acteurCircuit = session ? await chargerActeur(prisma, session, demande.createurId) : null;
+  const raisonCircuit = (type: TypeActionCircuit) =>
+    acteurCircuit ? raisonIndisponible(demandeCircuit, acteurCircuit, type) : "Action non autorisée.";
+  const raisonDecider = raisonCircuit("DECIDER_LIGNES");
+  const etapeAvecDecisionFinance = ["SERVICE", "FINANCE", "DG", "REJET_DG", "DECISION_FINALE"].includes(
+    demande.etapeCircuit
+  );
   // Tâche "Bug d'affichage 'Montant restant à valider'" (voir CLAUDE.md) :
   // pour une demande AVEC lignes, `montant - montantValide` (formule de
   // l'ancien modèle par montant global, toujours valable pour une
@@ -340,6 +354,12 @@ export default async function CategoriserDemandePage({
           invisible sans scroller volontairement — vérifié explicitement par
           un parcours navigateur réel sur un cycle complet. Position
           désormais fixe, uniforme quel que soit le statut. */}
+      <FriseCircuit
+        demande={{ ...demandeCircuit, soumiseAuDG: demande.soumiseAuDG }}
+        niveauRejet={demande.niveauRejet}
+        motifRejet={demande.motifRejet}
+      />
+
       <DemandeHistorique demandeId={demande.id} />
 
       {/* Tâche "L'Assistant Finance déclare les dépenses sur toute demande,
@@ -498,7 +518,8 @@ export default async function CategoriserDemandePage({
             <LignesValidationTable
               demandeId={demande.id}
               lignes={lignesPourTable}
-              canValider={canValiderLignes}
+              canValider={canValiderLignes && raisonDecider === null}
+              raisonIndisponible={canValiderLignes ? raisonDecider : null}
               canModifierLibelle={canModifierLibelleLigne}
               libelleModifiable
               canCategoriser={canCategoriser}
@@ -510,9 +531,21 @@ export default async function CategoriserDemandePage({
             <ValidationActions
               demandeId={demande.id}
               montantDemande={Number(demande.montant)}
-              disabled={!canValider}
+              disabled={!canValider || raisonDecider !== null}
+              raisonIndisponible={canValider ? raisonDecider : null}
             />
           )}
+
+          {etapeAvecDecisionFinance ? (
+            <CircuitFinanceActions
+              demandeId={demande.id}
+              apresRejetDG={demande.etapeCircuit === "REJET_DG"}
+              afficherRejet={demandeAauMoinsUneLigne}
+              raisonSoumettre={raisonCircuit("SOUMETTRE_DG")}
+              raisonRejeter={raisonCircuit("REJETER")}
+              raisonResoumettre={raisonCircuit("RESOUMETTRE_DG")}
+            />
+          ) : null}
         </>
       ) : demande.statut === "REJETEE" ? (
         <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">

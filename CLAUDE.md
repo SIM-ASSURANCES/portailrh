@@ -1876,8 +1876,17 @@ reste à l'étape Service (aucun écran pour la valider).
   `validerTotalementAction`/`validerPartiellementAction` pour la dépense directe, `rejeterDemandeAction`,
   `cloturerDemandeAction`, description et libellés) ; nouvelles dans `treso/circuit/actions.ts` (étape Service,
   soumission et resoumission au DG, décision DG, abandon, correction et resoumission), sans écran avant le commit 4.
-- **Reste pour le commit 4** : retirer `treso.valider_demande` du DG (décision 10), files Finance par étape
-  (`DEMANDES_EN_ATTENTE_VALIDATION_WHERE` compte encore les demandes à l'étape Service), masquer les permissions de
+- **Commit 4, morceau 1 — écrans Finance** : frise d'avancement `components/tresorerie/FriseCircuit.tsx` (Service,
+  Finance, DG si soumise ou imposée, Assistant ; étape en cours, faites, « non requise » ; calcul `friseProgression`),
+  affichée sur la page Finance d'une demande ; files par étape sur `/treso/finance/demandes` (Étape Finance — plus le
+  reliquat d'une dépense directe —, Rejetées par le DG, Décision finale : `FILES_FINANCE_WHERE`), et l'indicateur
+  « À traiter » n° 1 du tableau de bord compte exactement ces files (`DEMANDES_A_TRAITER_FINANCE_WHERE`) ; boutons
+  Valider / Rejeter / Soumettre au DG (`CircuitFinanceActions.tsx`, décision ligne par ligne) toujours visibles, grisés
+  hors de l'étape de la Finance avec la phrase du moteur (`raisonIndisponible`, la même que le serveur renverrait) ;
+  après un rejet du DG : Resoumettre au DG / Rejeter vers le collaborateur (motif obligatoire). Libellés
+  d'historique des actions du circuit (`DemandeHistorique`), étapes lisibles (`LIBELLE_ETAPE_CIRCUIT`). Vérifié :
+  Playwright 29/29 (chaque étape, avec captures, mobile 390 px).
+- **Reste pour le commit 4** : retirer `treso.valider_demande` du DG (décision 10), masquer les permissions de
   décision dans `/delegations`, et **garder visible dans l'historique une ligne retirée à la correction, avec ses
   décisions** (lecture depuis la version recopiée en JSON, ou suppression logique) : on ne modifie jamais une écriture
   déjà passée.

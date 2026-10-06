@@ -1,7 +1,7 @@
 import type { ModeReglement, Prisma } from "./generated/prisma/client";
 import { prisma } from "./prisma";
 import {
-  DEMANDES_EN_ATTENTE_VALIDATION_WHERE,
+  DEMANDES_A_TRAITER_FINANCE_WHERE,
   getMontantConsommeCategorie,
   getSoldesARegulariserParReglements,
   VALIDATION_COMPLETE_EN_ATTENTE_WHERE,
@@ -120,8 +120,10 @@ async function getRepartitionDemandesValidees() {
  * Excel (`reporting.ts`) — un seul point de calcul, jamais deux.
  */
 export async function getDemandesEnAttenteValidation(): Promise<{ nombre: number }> {
+  // Circuit de validation (2026-10-06) : seules les demandes où la Finance a quelque chose à faire (files par étape),
+  // jamais celles qui attendent le responsable de service ou le DG.
   const nombre = await prisma.demande.count({
-    where: DEMANDES_EN_ATTENTE_VALIDATION_WHERE,
+    where: DEMANDES_A_TRAITER_FINANCE_WHERE,
   });
   return { nombre };
 }

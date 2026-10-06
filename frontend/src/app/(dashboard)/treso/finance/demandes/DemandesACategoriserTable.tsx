@@ -28,11 +28,17 @@ function truncate(text: string, max = 50): string {
  * Wrapper Client Component autour de DataTable — voir UsersTable.tsx
  * (console admin) ou MesDemandesTable.tsx (Ticket 1) pour l'explication.
  */
-export function DemandesACategoriserTable({ demandes }: { demandes: DemandeRow[] }) {
+export function DemandesACategoriserTable({
+  demandes,
+  emptyMessage = "Aucune demande en attente de catégorisation.",
+}: {
+  demandes: DemandeRow[];
+  emptyMessage?: string;
+}) {
   return (
     <DataTable
       rowKey={(d) => d.id}
-      emptyMessage="Aucune demande en attente de catégorisation."
+      emptyMessage={emptyMessage}
       columns={[
         { key: "reference", header: "Référence", sortable: true, accessor: (d) => d.reference },
         { key: "createurNom", header: "Créateur", sortable: true, accessor: (d) => d.createurNom },
