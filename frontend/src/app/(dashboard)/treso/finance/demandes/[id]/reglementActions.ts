@@ -26,7 +26,7 @@ type SimpleActionResult = { status: "success" | "error"; message: string };
  * et confirmation ; l'annulation d'un règlement déjà confirmé, la
  * consultation et les retours de caisse ne sont volontairement PAS bloqués. */
 const MESSAGE_GEL_REJET_DG =
-  "Rejetée par le DG — en attente de resoumission par le Responsable Finance : aucun règlement possible pour l'instant.";
+  "Rejetée par le DG — en attente de resoumission par Finance : aucun règlement possible pour l'instant.";
 
 const montantSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
 const modeSchema = z.enum(["CAISSE", "BANQUE"]);

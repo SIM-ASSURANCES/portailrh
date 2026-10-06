@@ -40,7 +40,7 @@ const ACTION_LABELS: Record<string, string> = {
   // la seconde répond directement à son signalement.
   signalement_retour: "Erreur signalée par le collaborateur",
   correction_signalement_retour: "Détail du retour corrigé suite à un signalement",
-  ajustement_total_retour: "Total déclaré du retour ajusté par le Responsable Finance",
+  ajustement_total_retour: "Total déclaré du retour ajusté par Finance",
   // Retour de caisse exceptionnel post-clôture (voir CLAUDE.md) : la saisie et
   // le rejet restent internes (jamais montrés au Collaborateur, évite une fausse
   // alerte) ; seule la validation lui est visible.

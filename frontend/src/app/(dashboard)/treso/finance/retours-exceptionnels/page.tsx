@@ -34,7 +34,7 @@ export default async function RetoursExceptionnelsPage() {
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title="Retours exceptionnels en attente de validation"
-        description="Retours de caisse saisis sur des demandes déjà clôturées, à valider par le Responsable Finance."
+        description="Retours de caisse saisis sur des demandes déjà clôturées, à valider par Finance."
       />
       {retours.length === 0 ? (
         <p className="text-sm text-muted-foreground">Aucun retour exceptionnel en attente.</p>

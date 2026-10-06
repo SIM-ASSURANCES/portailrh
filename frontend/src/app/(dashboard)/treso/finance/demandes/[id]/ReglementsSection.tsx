@@ -61,7 +61,7 @@ export async function ReglementsSection({
 
       {gele ? (
         <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
-          Rejetée par le DG — en attente de resoumission par le Responsable Finance. Aucun règlement ne peut être
+          Rejetée par le DG — en attente de resoumission par Finance. Aucun règlement ne peut être
           créé, modifié ou confirmé tant que la validation complète n&apos;a pas été approuvée.
         </p>
       ) : null}

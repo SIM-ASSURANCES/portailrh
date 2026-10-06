@@ -113,7 +113,8 @@ export default async function DashboardFinancePage() {
   // caisse") — le DG (voir_dashboard_finance sans effectuer_reglement)
   // voit le rappel mais pas de lien vers une action qu'il ne peut pas
   // effectuer, même principe que `canReceptionnerRetour` ci-dessous.
-  const canGererSoldeOuverture = isAdmin(session) || hasPermission(session, "treso.effectuer_reglement");
+  // Même permission que `definirSoldeOuvertureAction`/`corrigerSoldeOuvertureAction` (le lien mène à ces actions).
+  const canGererSoldeOuverture = isAdmin(session) || hasPermission(session, "treso.corriger_solde_ouverture");
 
   // Le DG a `voir_dashboard_finance` mais jamais `receptionner_retour`
   // (rôle validation/consultation, voir seed) : sans ce garde-fou, la carte
@@ -314,7 +315,7 @@ export default async function DashboardFinancePage() {
 
       {/* Retours exceptionnels post-clôture (voir CLAUDE.md) — indicateur
           SÉPARÉ des 6 de "À traiter" (et de `RETOUR_EN_ATTENTE_WHERE`) : en
-          attente de validation du Responsable Finance. Pas de compteur "en
+          attente de validation de Finance. Pas de compteur "en
           attente de saisie" (déclenchement manuel, aucune détection). */}
       <section className="space-y-4">
         <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">

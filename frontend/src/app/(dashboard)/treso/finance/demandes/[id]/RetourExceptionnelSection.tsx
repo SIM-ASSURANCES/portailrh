@@ -66,7 +66,7 @@ export async function RetourExceptionnelSection({ demandeId }: { demandeId: stri
                 <div className="pt-1">
                   {r.saisiParId === session!.user.id ? (
                     <p className="text-xs text-muted-foreground">
-                      Vous avez saisi ce retour : un autre Responsable Finance doit le valider (séparation des tâches).
+                      Vous avez saisi ce retour : un autre compte Finance doit le valider (séparation des tâches).
                     </p>
                   ) : (
                     <RetourExceptionnelDecision retourId={r.id} disabled={false} />

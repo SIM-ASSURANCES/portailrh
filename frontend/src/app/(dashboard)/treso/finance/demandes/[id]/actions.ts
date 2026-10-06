@@ -1334,7 +1334,7 @@ export async function approuverValidationCompleteAction(demandeId: string): Prom
       return {
         status: "error",
         message:
-          "En attente de resoumission par le Responsable Finance avant nouvelle décision du DG : approbation impossible.",
+          "En attente de resoumission par Finance avant nouvelle décision du DG : approbation impossible.",
       };
     }
   }

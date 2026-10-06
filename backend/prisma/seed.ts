@@ -82,8 +82,8 @@ async function main() {
     }),
     prisma.role.upsert({
       where: { name: "Finance" },
-      update: { description: "Équipe finance / trésorerie (Responsable Finance : décide)" },
-      create: { name: "Finance", description: "Équipe finance / trésorerie (Responsable Finance : décide)" },
+      update: { description: "Équipe finance / trésorerie : décide (valide, rejette, clôture)" },
+      create: { name: "Finance", description: "Équipe finance / trésorerie : décide (valide, rejette, clôture)" },
     }),
     prisma.role.upsert({
       where: { name: "DG" },

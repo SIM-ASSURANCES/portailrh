@@ -96,7 +96,7 @@ export async function creerRetourExceptionnelAction(
         entity: "Demande",
         entityId: demandeId,
         action: "retour_exceptionnel_saisie",
-        detail: `Retour exceptionnel post-clôture saisi : ${parsed.data.montant.toLocaleString("fr-FR")} FCFA — motif : ${parsed.data.motif} (en attente de validation du Responsable Finance).`,
+        detail: `Retour exceptionnel post-clôture saisi : ${parsed.data.montant.toLocaleString("fr-FR")} FCFA — motif : ${parsed.data.motif} (en attente de validation de Finance).`,
         userId: session.user.id,
       },
     });
@@ -105,7 +105,7 @@ export async function creerRetourExceptionnelAction(
   revalider(demandeId);
   // Aucune notification au collaborateur à ce stade (évite une fausse alerte
   // si le Responsable rejette) — voir la spec.
-  return { status: "success", message: "Retour exceptionnel enregistré — en attente de validation du Responsable Finance." };
+  return { status: "success", message: "Retour exceptionnel enregistré — en attente de validation de Finance." };
 }
 
 /** Validation (Responsable Finance UNIQUEMENT, jamais l'auteur de la saisie). */

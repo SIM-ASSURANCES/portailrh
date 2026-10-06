@@ -224,7 +224,7 @@ export function LignesValidationTable({
           {!canValider ? (
             <p className="text-xs text-muted-foreground">
               Votre rôle ne permet pas de valider ou rejeter les lignes de cette demande — réservé au
-              Responsable Finance.
+              rôle Finance.
             </p>
           ) : raisonBlocage ? (
             <p className="text-xs text-muted-foreground">{raisonBlocage}</p>

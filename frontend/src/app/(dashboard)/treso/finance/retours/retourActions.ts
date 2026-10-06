@@ -768,7 +768,7 @@ export async function ajusterTotalDeclareRetourAction(
   await prisma.$transaction(async (tx) => {
     if (delta > 0) {
       // Fusion avec la ligne "non détaillé" existante plutôt qu'une seconde ligne.
-      await ajouterAuNonDetaille(tx, retourId, delta, dateLignes, `Ajustement du total déclaré par le Responsable Finance (${parsedMotif.data}).`);
+      await ajouterAuNonDetaille(tx, retourId, delta, dateLignes, `Ajustement du total déclaré par Finance (${parsedMotif.data}).`);
     } else {
       let aRetirer = -delta;
       for (const g of generiques) {
@@ -813,7 +813,7 @@ export async function ajusterTotalDeclareRetourAction(
 
   await notifierParPermission("treso.receptionner_retour", {
     titre: "Total déclaré ajusté sur un retour de caisse",
-    message: `Le Responsable Finance a ajusté le total déclaré (${ancienTotal.toLocaleString("fr-FR")} → ${nouveauTotal.toLocaleString("fr-FR")} FCFA) du retour de la demande ${retour.reglement.demande.reference} : vous pouvez maintenant corriger le détail.`,
+    message: `Finance a ajusté le total déclaré (${ancienTotal.toLocaleString("fr-FR")} → ${nouveauTotal.toLocaleString("fr-FR")} FCFA) du retour de la demande ${retour.reglement.demande.reference} : vous pouvez maintenant corriger le détail.`,
     lien: `/treso/finance/retours/${retourId}`,
   });
 
@@ -1025,13 +1025,13 @@ export async function proposerRemboursementRetourAction(
         entity: "Demande",
         entityId: demandeId,
         action: "remboursement_retour_propose",
-        detail: `Remboursement de ${parsed.data.montant.toLocaleString("fr-FR")} FCFA proposé par ${session.user.fullName} suite au signalement du retour de caisse (montant proposé par le collaborateur : ${Number(signalement.montantPropose).toLocaleString("fr-FR")} FCFA) — motif : ${parsed.data.motif}. En attente de validation du Responsable Finance (réf. ${rb.id}).`,
+        detail: `Remboursement de ${parsed.data.montant.toLocaleString("fr-FR")} FCFA proposé par ${session.user.fullName} suite au signalement du retour de caisse (montant proposé par le collaborateur : ${Number(signalement.montantPropose).toLocaleString("fr-FR")} FCFA) — motif : ${parsed.data.motif}. En attente de validation de Finance (réf. ${rb.id}).`,
         userId: session.user.id,
       },
     });
   });
   revaliderCorrection(demandeId, retourId);
-  return { status: "success", message: "Remboursement proposé — en attente de validation du Responsable Finance." };
+  return { status: "success", message: "Remboursement proposé — en attente de validation de Finance." };
 }
 
 function estResponsable(session: NonNullable<Awaited<ReturnType<typeof getSession>>>) {

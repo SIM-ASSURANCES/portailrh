@@ -5951,6 +5951,20 @@ ne reçoit rien — comme avant, il reste bloqué ; il faut lui cocher les permi
 Une délégation de `treso.valider_demande` ou `treso.effectuer_reglement` ne donne plus ces actions (aucune n'existait
 en dev au moment du changement ; à vérifier en production avant déploiement).
 
+**Corrections associées (2026-10-06)** :
+- **Justificatifs du solde d'ouverture et des alimentations de caisse** (`GET /api/treso/pieces-jointes/[id]`, pièces
+  rattachées à `JournalCaisse`) : téléchargeables par les mêmes permissions que la garde de
+  `/treso/finance/solde-ouverture`, la page qui affiche ces historiques (Admin, `corriger_solde_ouverture`,
+  `alimenter_caisse`, `effectuer_reglement`, `receptionner_retour`). Avant : Admin ou `effectuer_reglement`
+  seulement — Finance, qui dépose ces justificatifs, ne pouvait pas les télécharger. DG et Collaborateur : 403.
+- **Lien « Corriger » / « en définir un maintenant »** du tableau de bord Finance : gardé par
+  `corriger_solde_ouverture` (ou Admin), la permission des actions vers lesquelles il mène. Avant :
+  `effectuer_reglement`, que seul l'Assistant a, et l'Assistant n'a pas accès à ce tableau de bord — personne ne
+  voyait le lien.
+- **Libellés** : « Responsable Finance » n'est pas un rôle. Les textes visibles disent désormais « Finance » (le rôle
+  réel) ; « Assistant Finance » est un rôle réel et reste. Les textes d'historique déjà enregistrés en base ne sont
+  pas réécrits.
+
 **Pointage RH** (`pointage.*`) : `pointer`, `consulter_historique`,
 `consulter_tous`, `pointage_exceptionnel`, `corriger_pointage`,
 `gerer_horaires`, `voir_dashboard_rh`, `voir_reporting`.

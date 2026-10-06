@@ -76,9 +76,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     accesAutorise = isAdmin(session) || hasPermission(session, "treso.creer_retour_externe");
   } else {
     // Pièce du solde d'ouverture (`journalCaisseId`, pas de demande
-    // d'origine) — même permission EXACTE que definirSoldeOuvertureAction/
-    // corrigerSoldeOuvertureAction, jamais élargie au reste de Finance/DG.
-    accesAutorise = isAdmin(session) || hasPermission(session, "treso.effectuer_reglement");
+    // d'origine) et des alimentations de caisse — mêmes permissions que la garde de
+    // `/treso/finance/solde-ouverture`, la page qui affiche ces historiques : qui voit l'historique peut télécharger
+    // ses justificatifs (Finance, qui les dépose, y compris), jamais le DG ni le Collaborateur.
+    accesAutorise =
+      isAdmin(session) ||
+      hasPermission(session, "treso.corriger_solde_ouverture") ||
+      hasPermission(session, "treso.alimenter_caisse") ||
+      hasPermission(session, "treso.effectuer_reglement") ||
+      hasPermission(session, "treso.receptionner_retour");
   }
 
   if (!accesAutorise) {
