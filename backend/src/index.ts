@@ -42,6 +42,9 @@ export * from "./encRecherche";
 export * from "./encSituation";
 // Services et responsables (circuit de validation des demandes, 2026-10-06).
 export * from "./services";
+// Circuit de validation des demandes (commit 3) : moteur pur et application en base.
+export * from "./circuitDemande";
+export * from "./circuitDemandeDb";
 // Onglet « À vérifier » (traitement des signalements) — commit 5b.
 export * from "./encSignalements";
 

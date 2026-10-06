@@ -173,6 +173,7 @@ export default async function DashboardHomePage({
       ? prisma.demande.count({
           where: {
             validationCompleteParDG: false,
+            approbationClotureNonRequise: false,
             statut: { in: ["REGLEE", "PARTIELLEMENT_REGLEE"] },
           },
         })

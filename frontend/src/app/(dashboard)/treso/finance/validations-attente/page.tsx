@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
-import { getBeneficiaireNom } from "backend";
+import { getBeneficiaireNom, VALIDATION_COMPLETE_EN_ATTENTE_WHERE } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 
@@ -32,7 +32,8 @@ export default async function ValidationsAttentePage() {
   }
 
   const demandes = await prisma.demande.findMany({
-    where: { montantValide: { gt: 0 }, validationCompleteParDG: false },
+    // Jamais les demandes émises par le DG (approbation non requise) ; celles approuvées à l'étape DG en sortent.
+    where: VALIDATION_COMPLETE_EN_ATTENTE_WHERE,
     select: {
       id: true,
       reference: true,

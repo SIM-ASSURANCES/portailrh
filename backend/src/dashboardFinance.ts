@@ -4,6 +4,7 @@ import {
   DEMANDES_EN_ATTENTE_VALIDATION_WHERE,
   getMontantConsommeCategorie,
   getSoldesARegulariserParReglements,
+  VALIDATION_COMPLETE_EN_ATTENTE_WHERE,
 } from "./tresorerie";
 
 /**
@@ -262,7 +263,7 @@ export async function getRetoursExceptionnelsEnAttenteValidation(): Promise<Comp
  */
 export async function getValidationsCompletesEnAttente(): Promise<{ nombre: number }> {
   const nombre = await prisma.demande.count({
-    where: { montantValide: { gt: 0 }, validationCompleteParDG: false },
+    where: VALIDATION_COMPLETE_EN_ATTENTE_WHERE,
   });
   return { nombre };
 }

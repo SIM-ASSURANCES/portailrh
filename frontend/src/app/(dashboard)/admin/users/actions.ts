@@ -716,6 +716,7 @@ export async function supprimerUtilisateurAction(
     demandesCreees,
     demandesBeneficiees,
     demandesApprouveesDG,
+    demandesDecideesFinance,
     reglementsFaits,
     retoursDeclares,
     retoursReceptionnes,
@@ -753,6 +754,7 @@ export async function supprimerUtilisateurAction(
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
     prisma.demande.count({ where: { dgApprobateurId: userId } }),
+    prisma.demande.count({ where: { decideurFinanceId: userId } }),
     prisma.reglement.count({ where: { auteurId: userId } }),
     prisma.retourCaisse.count({ where: { declarantId: userId } }),
     prisma.retourCaisse.count({ where: { receptionneParId: userId } }),
@@ -800,6 +802,7 @@ export async function supprimerUtilisateurAction(
   if (demandesBeneficiees > 0) blocages.push(`été bénéficiaire de ${demandesBeneficiees} demande(s)`);
   if (demandesApprouveesDG > 0)
     blocages.push(`approuvé ${demandesApprouveesDG} validation(s) complète(s) en tant que DG`);
+  if (demandesDecideesFinance > 0) blocages.push(`pris la décision Finance de ${demandesDecideesFinance} demande(s)`);
   if (reglementsFaits > 0) blocages.push(`effectué ${reglementsFaits} règlement(s)`);
   if (retoursDeclares > 0) blocages.push(`déclaré ${retoursDeclares} retour(s) de caisse`);
   if (retoursReceptionnes > 0) blocages.push(`réceptionné ${retoursReceptionnes} retour(s) de caisse`);

@@ -56,6 +56,7 @@ model User {
   demandesBeneficiees           Demande[]         @relation("DemandeBeneficiaire")
   /// Demandes dont ce DG a approuvé la "validation complète" (verrou de clôture, Ticket 7).
   demandesApprouveesDG          Demande[]         @relation("DgApprobateurValidationComplete")
+  demandesDecideesFinance       Demande[]         @relation("DemandeDecideurFinance")
   reglementsFaits               Reglement[]       @relation("ReglementAuteur")
   retoursDeclares               RetourCaisse[]    @relation("RetourDeclarant")
   retoursReceptionnes           RetourCaisse[]    @relation("RetourReceptionnaire")
@@ -342,6 +343,38 @@ enum StatutDemande {
   EN_ATTENTE_REGULARISATION
   REGULARISEE
   CLOTUREE
+  /// Abandonnée par le demandeur depuis « À corriger » (circuit de validation, 2026-10-06) : état terminal, comme
+  /// REJETEE (qui ne reste que pour les anciennes demandes) et CLOTUREE.
+  ABANDONNEE
+}
+
+/// Étape du circuit de validation (2026-10-06, moteur : backend/src/circuitDemande.ts). Distincte de `statut`, qui
+/// reste piloté par `calculerStatutDemande` (montants validés et réglés) : une demande reste EN_ATTENTE_VALIDATION
+/// pendant tout le circuit. TERMINEE = décision finale prise (puis cycle de règlement), et aussi toute demande
+/// antérieure au circuit déjà décidée, rejetée ou clôturée.
+enum EtapeCircuit {
+  SERVICE
+  FINANCE
+  DG
+  REJET_DG
+  DECISION_FINALE
+  TERMINEE
+  A_CORRIGER
+  ABANDONNEE
+}
+
+/// Étape DG d'une demande : jamais (demande du DG), possible si Finance soumet, ou imposée (demande de la Finance).
+enum ModeEtapeDG {
+  NON_REQUISE
+  OPTIONNELLE
+  OBLIGATOIRE
+}
+
+/// Niveau qui a rejeté une demande (renvoi en correction, ou rejet par le DG).
+enum NiveauRejet {
+  SERVICE
+  FINANCE
+  DG
 }
 
 /// Statut de validation d'une `LigneDemande` — Tâche "Validation ligne par
@@ -520,8 +553,34 @@ model Demande {
   /// est la somme des (quantite × prixUnitaire) — jamais saisi directement.
   lignes LigneDemande[]
 
+  /// Motif du dernier rejet : ancien rejet définitif, ou renvoi en correction / rejet DG du circuit (voir
+  /// `niveauRejet`).
   motifRejet   String?
   motifCloture String?
+
+  /// Circuit de validation (2026-10-06, voir backend/src/circuitDemande.ts). Pas de valeur par défaut pour
+  /// `etapeCircuit` : toute création de demande choisit sa première étape.
+  etapeCircuit                 EtapeCircuit
+  /// Parcours figé à la soumission (recalculé à chaque resoumission après correction).
+  etapeServiceRequise          Boolean      @default(false)
+  etapeFinanceRequise          Boolean      @default(true)
+  modeEtapeDG                  ModeEtapeDG  @default(OPTIONNELLE)
+  /// Soumise au DG par la Finance pendant le tour en cours (étape DG passée ou en cours).
+  soumiseAuDG                  Boolean      @default(false)
+  /// Demande émise par le DG : l'approbation de clôture n'est pas demandée (mention dans l'historique). Lue
+  /// seulement par `approbationClotureObtenue` (tresorerie.ts), avec `validationCompleteParDG`.
+  approbationClotureNonRequise Boolean      @default(false)
+  /// Niveau du dernier rejet (renvoi en correction ou rejet DG), avec `motifRejet`. `null` hors rejet.
+  niveauRejet                  NiveauRejet?
+  /// Numéro du tour : 1 à la création, +1 à chaque resoumission après correction (versions dans l'historique).
+  tourCircuit                  Int          @default(1)
+  /// Compte qui a pris la décision Finance (lignes ou montant) : jamais le même que l'approbateur DG (étape DG ou
+  /// approbation de clôture), voir `MESSAGE_DEUX_PERSONNES`. `null` tant qu'aucune décision Finance n'est prise.
+  decideurFinanceId            String?
+  decideurFinance              User?        @relation("DemandeDecideurFinance", fields: [decideurFinanceId], references: [id])
+  /// Dernière version de la description écrite par le DEMANDEUR lors d'une correction. `null` = jamais corrigée :
+  /// sa version est alors `descriptionOriginale ?? description`. Le demandeur voit toujours sa dernière version.
+  descriptionDemandeur         String?
 
   /// Rejet du reliquat non encore validé d'une demande `PARTIELLEMENT_VALIDEE`
   /// (Finance ou DG, `treso.valider_demande`) — voir CLAUDE.md "Rejet du
@@ -571,6 +630,7 @@ model Demande {
   // PERF-06 : Index sur validationCompleteParDG pour les compteurs DG du
   // dashboard Finance et le filtre "validations en attente DG".
   @@index([validationCompleteParDG, statut])
+  @@index([etapeCircuit])
 }
 
 /// Stockage local sur disque (`./uploads/`, hors dépôt git — voir
@@ -650,6 +710,9 @@ model LigneDemande {
   /// version (jamais `libelle` si elle diverge) ; Finance voit les deux
   /// côte à côte dès qu'elles divergent.
   libelleOriginal String?
+  /// Dernière version du libellé écrite par le DEMANDEUR lors d'une correction (même principe que
+  /// `Demande.descriptionDemandeur`) ; `null` = jamais corrigé.
+  libelleDemandeur String?
 
   /// `EN_ATTENTE` par défaut, posée UNE SEULE FOIS par
   /// `validerLignesAction` (décision unique et complète, jamais de

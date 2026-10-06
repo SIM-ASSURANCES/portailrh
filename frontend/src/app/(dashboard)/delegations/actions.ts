@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getSession, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { prisma } from "backend";
+import { PERMISSIONS_DECISION_NON_DELEGABLES, prisma } from "backend";
 
 /** Seules les branches Trésorerie et Pointage RH sont délégables — jamais
  * une permission hors de ces deux modules (il n'en existe pas d'autre à ce
@@ -37,6 +37,10 @@ async function verifierEligibiliteDonneur(
   }
   if (!MODULES_DELEGABLES.includes(permission.module.key as (typeof MODULES_DELEGABLES)[number])) {
     return { ok: false, message: "Cette fonctionnalité ne peut pas être déléguée." };
+  }
+  // Décisions du circuit de validation : jamais délégables (décision du 2026-10-06).
+  if (PERMISSIONS_DECISION_NON_DELEGABLES.includes(permission.key)) {
+    return { ok: false, message: "Une permission de décision du circuit de validation ne peut pas être déléguée." };
   }
   if (!session.rolePermissions.includes(permission.key)) {
     return {

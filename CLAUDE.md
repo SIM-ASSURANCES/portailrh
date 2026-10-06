@@ -1816,6 +1816,78 @@ clôture Finance, jamais l'une sans l'autre ni l'inverse).
   écriture `JournalCaisse`), et historique associés supprimés après
   vérification.
 
+### Circuit de validation des demandes — moteur (commit 3, 2026-10-06)
+
+Les décisions du 2026-10-06 (voir « Services et responsables » plus bas pour les règles du demandeur) appliquées côté
+serveur ; les écrans (frise, boutons grisés, files) arrivent au commit 4, les notifications et rappels au commit 5.
+**Les commits 3 et 4 se déploient ensemble** : sans les écrans du commit 4, une nouvelle demande d'un collaborateur
+reste à l'étape Service (aucun écran pour la valider).
+
+- **Moteur pur** `backend/src/circuitDemande.ts` (57 tests vitest : chaque transition, chaque cas du demandeur,
+  la frise) : `determinerParcours` (cas a > b > c > d, dépense directe), `transition` (qui peut agir, vers quelle
+  étape), `actionsPossibles`, `messageAttente`, `friseProgression`. **Application en base**
+  `backend/src/circuitDemandeDb.ts` : `initialiserCircuit`, `appliquerTransitionCircuit` (changement d'étape
+  conditionné à l'étape lue : deux décisions simultanées, une seule passe), `corrigerEtResoumettre`.
+- **Modèle** (migration `20261006120000_circuit_validation_demandes`) : `Demande.etapeCircuit` (SERVICE, FINANCE, DG,
+  REJET_DG, DECISION_FINALE, TERMINEE, A_CORRIGER, ABANDONNEE ; sans valeur par défaut, chaque création choisit sa
+  première étape), parcours figé à la soumission (`etapeServiceRequise`, `etapeFinanceRequise`, `modeEtapeDG` :
+  NON_REQUISE / OPTIONNELLE / OBLIGATOIRE), `soumiseAuDG`, `approbationClotureNonRequise`, `niveauRejet` (avec
+  `motifRejet`), `tourCircuit`, `descriptionDemandeur` et `LigneDemande.libelleDemandeur` (dernière version écrite
+  par le demandeur). `StatutDemande` gagne `ABANDONNEE` (terminal, comme REJETEE et CLOTUREE).
+  `calculerStatutDemande` reste la seule fonction du statut : une demande reste EN_ATTENTE_VALIDATION pendant tout
+  le circuit. **Aucun champ de la validation complète n'est retiré.**
+- **Données existantes** : demandes en cours (en attente, aucune ligne décidée) → étape Finance, Service non requise ;
+  toutes les autres → TERMINEE, inchangées (y compris les anciennes demandes aux lignes toutes rejetées, qui restent
+  sans issue comme avant).
+- **Rejets** : tout rejet mène à « À corriger » (`rejeterDemandeAction`, lignes toutes rejetées) ; REJETEE ne reste
+  que pour les anciennes demandes. Le demandeur corrige (lignes, montants, motif, pièce jointe) et resoumet — le
+  circuit repart de la première étape applicable, parcours recalculé, tour + 1, version précédente recopiée en JSON
+  dans l'historique (`correction_demande`), `descriptionOriginale`/`libelleOriginal` jamais réécrites — ou
+  abandonne. **Limite assumée** : une ligne retirée à la correction est supprimée ; ses entrées d'historique
+  `validation_ligne`/`rejet_ligne` ne s'affichent plus, mais la version recopiée les contient.
+- **Étape DG** (`treso.decider_dg`, nouvelle, donnée par la migration aux rôles qui portent `systeme.reinitialiser` —
+  le DG seul —, **jamais** à ceux qui portent `approuver_validation_complete` : en production, Finance et Admin la
+  portent aussi ; vérifié sur une base qui reproduit ce cas, seul le DG la reçoit) : validation
+  → décision finale Finance, et **vaut l'approbation de clôture** (`validationCompleteParDG`, `dgApprobateurId`) —
+  règle unique `DECISION_DG_VAUT_APPROBATION_CLOTURE` ; rejet → retour à la Finance (resoumettre ou renvoyer au
+  demandeur). Cas (b) : le DG décide ligne par ligne, décision finale. Cas (a) : approbation de clôture non requise
+  (`approbationClotureObtenue`, seule lecture de la règle, utilisée par `cloturerDemandeAction`) ;
+  `approuverValidationCompleteAction` la refuse. File « Validations complètes en attente » :
+  `VALIDATION_COMPLETE_EN_ATTENTE_WHERE` (jamais les demandes émises par le DG).
+- **Deux personnes distinctes pour une validation complète** : le compte qui décide comme Finance
+  (`Demande.decideurFinanceId`, posé à la décision Finance, repris par la migration pour les demandes déjà décidées)
+  et celui qui approuve comme DG (étape DG : `dgApprobateurId` ; approbation de clôture) ne sont jamais le même, et
+  aucun n'est le demandeur — `MESSAGE_DEUX_PERSONNES` dans `transition` (décision Finance après l'étape DG, étape DG
+  après une décision Finance) et `refusApprobationCloture` (`approuverValidationCompleteAction`), plus
+  `validerComplementaireAction`. Une resoumission après correction remet à zéro ces décisions
+  (`decideurFinanceId`, `validationCompleteParDG`, `dgApprobateurId`) : elles portaient sur l'ancienne version,
+  l'historique les garde. Test : un compte portant toutes les permissions de décision réussit la première étape et
+  échoue à la seconde (vitest, et Playwright dans les deux ordres).
+- **Personne ne décide sa propre demande**, sauf la dépense directe saisie par Finance (décision 6, entrée
+  `exception_depense_directe` dans l'historique). Le cas (b) se repère par le service nommé « Finance »
+  (`SERVICE_FINANCE`) ou par les permissions du RÔLE (`decider_finance`, `effectuer_reglement`,
+  `receptionner_retour`) ; le cas (a) par `treso.decider_dg` sur le rôle.
+- **Assistant Finance** : garde `modifier_description`, refusée côté serveur tant que la décision finale n'est pas
+  prise (`decisionFinalePrise`). Ses actions d'exécution restaient déjà impossibles avant (`montantValide` nul).
+- **Permissions de décision jamais délégables** (`PERMISSIONS_DECISION_NON_DELEGABLES` : `decider_finance`,
+  `soumettre_dg`, `decider_dg`, `approuver_validation_complete`) : l'octroi est refusé et une délégation existante
+  n'est jamais comptée par `getSession()`.
+- **Actions** : existantes branchées sur le moteur (`validerLignesAction` — Finance ou DG selon l'étape —,
+  `validerTotalementAction`/`validerPartiellementAction` pour la dépense directe, `rejeterDemandeAction`,
+  `cloturerDemandeAction`, description et libellés) ; nouvelles dans `treso/circuit/actions.ts` (étape Service,
+  soumission et resoumission au DG, décision DG, abandon, correction et resoumission), sans écran avant le commit 4.
+- **Reste pour le commit 4** : retirer `treso.valider_demande` du DG (décision 10), files Finance par étape
+  (`DEMANDES_EN_ATTENTE_VALIDATION_WHERE` compte encore les demandes à l'étape Service), masquer les permissions de
+  décision dans `/delegations`, et **garder visible dans l'historique une ligne retirée à la correction, avec ses
+  décisions** (lecture depuis la version recopiée en JSON, ou suppression logique) : on ne modifie jamais une écriture
+  déjà passée.
+- **Vérifié** : vitest (63 tests du moteur, 256 au total) ; migration sur une base jetable portant des demandes dans
+  tous les états (aucun écart schéma/base, partie permission rejouée sans effet) ; couche base sur base seedée, 35
+  scénarios (cas a à d, dépense directe, rejet et resoumission DG, concurrence, correction avec versions, abandon,
+  file DG) ; Playwright, 11 contrôles sur les écrans existants (création → bonne étape, Finance refusée à l'étape
+  Service, lignes toutes rejetées → À corriger, Assistant et description, délégation refusée et délégation existante
+  ignorée).
+
 ### Séparation Responsable Finance / Assistant Finance (2026-09-21)
 
 Séparation stricte des tâches (segregation of duties) au sein de l'équipe
@@ -5984,6 +6056,10 @@ combinaison de permissions** : chaque action a sa permission.
 | `treso.modifier_budget_categorie` | Budget d'une catégorie (en plus de l'Admin) |
 | `treso.deleguer_acces` | Déléguer des accès (lue sur les permissions du RÔLE, jamais celles reçues par délégation) |
 | `treso.modifier_description` | Description d'une demande et libellé de ses lignes |
+| `treso.decider_dg` | Décider à l'étape DG du circuit (migration `20261006120000`, rôles portant `systeme.reinitialiser` : le DG seul) |
+
+**Jamais délégables** (circuit, 2026-10-06) : `treso.decider_finance`, `treso.soumettre_dg`, `treso.decider_dg`,
+`treso.approuver_validation_complete` — voir « Circuit de validation des demandes — moteur ».
 
 La migration accorde les 9 premières **aux rôles qui remplissaient la règle « Resp » au moment de la migration**
 (calculé en SQL, jamais un nom de rôle), et `modifier_description` à « Resp OU `treso.effectuer_reglement` » (garde

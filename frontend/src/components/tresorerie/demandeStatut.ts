@@ -33,6 +33,7 @@ export const STATUT_DEMANDE_BADGE_VARIANT: Record<StatutDemande, BadgeVariant> =
   EN_ATTENTE_REGULARISATION: "warning",
   REGULARISEE: "success",
   CLOTUREE: "neutral",
+  ABANDONNEE: "neutral",
 };
 
 export const STATUT_DEMANDE_LABEL: Record<StatutDemande, string> = {
@@ -47,6 +48,7 @@ export const STATUT_DEMANDE_LABEL: Record<StatutDemande, string> = {
   EN_ATTENTE_REGULARISATION: "En attente de régularisation",
   REGULARISEE: "Régularisée",
   CLOTUREE: "Clôturée",
+  ABANDONNEE: "Abandonnée",
 };
 
 /**

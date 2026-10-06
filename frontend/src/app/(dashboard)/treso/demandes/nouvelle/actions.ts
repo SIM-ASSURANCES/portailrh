@@ -8,7 +8,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
 import { generateDemandeReference } from "backend";
-import { chargerServiceDuDemandeur, messageBlocageCreationDemande } from "backend";
+import { chargerServiceDuDemandeur, initialiserCircuit, messageBlocageCreationDemande } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
 const MAX_ATTEMPTS = 5;
@@ -124,12 +124,16 @@ export async function creerDemandeAction(
         ? { beneficiaireUserId: null, beneficiaireNom: "SIM Assurances CI" }
         : { beneficiaireUserId: null, beneficiaireNom: null };
 
+  // Circuit de validation : parcours selon le demandeur (règles a à d) et première étape applicable.
+  const circuit = await initialiserCircuit(prisma, session.user.id, "STANDARD");
+
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const reference = await generateDemandeReference();
 
     try {
       const demande = await prisma.demande.create({
         data: {
+          ...circuit.data,
           reference,
           montant,
           description: motif,
@@ -166,6 +170,9 @@ export async function creerDemandeAction(
           detail: `Création de la demande d'achat ${demande.reference} (${lignes.length} ligne(s), ${montant.toLocaleString("fr-FR")} ${devise})`,
           userId: session.user.id,
         },
+      });
+      await prisma.historiqueEntry.create({
+        data: { entity: "Demande", entityId: demande.id, action: "circuit_initialise", detail: circuit.detail, userId: session.user.id },
       });
 
       publishDataChanged();

@@ -84,6 +84,27 @@ export const DEMANDES_EN_ATTENTE_VALIDATION_WHERE = {
  * son `statut` (`PARTIELLEMENT_VALIDEE` y compris, voir le bug ci-dessus).
  * `false` pour une demande sans ligne (pas concernée par ce modèle).
  */
+/**
+ * Approbation de clôture obtenue (circuit de validation, 2026-10-06) : le DG a approuvé la validation complète (file
+ * « Validations complètes en attente », ou sa décision à l'étape DG, qui la vaut — voir
+ * `DECISION_DG_VAUT_APPROBATION_CLOTURE`), ou la demande a été émise par le DG (approbation non requise). SEULE
+ * lecture de cette règle : `cloturerDemandeAction` et les écrans passent par ici.
+ */
+export function approbationClotureObtenue(d: { validationCompleteParDG: boolean; approbationClotureNonRequise: boolean }): boolean {
+  return d.validationCompleteParDG || d.approbationClotureNonRequise;
+}
+
+/**
+ * File « Validations complètes en attente » du DG : demandes avec un montant validé, sans approbation de clôture,
+ * jamais émises par lui (approbation non requise). Une demande approuvée à l'étape DG en sort d'elle-même
+ * (`validationCompleteParDG` déjà vrai).
+ */
+export const VALIDATION_COMPLETE_EN_ATTENTE_WHERE = {
+  montantValide: { gt: 0 },
+  validationCompleteParDG: false,
+  approbationClotureNonRequise: false,
+} satisfies Prisma.DemandeWhereInput;
+
 export function lignesToutesDecidees(lignes: { statutValidation: string }[]): boolean {
   return lignes.length > 0 && lignes.every((l) => l.statutValidation !== "EN_ATTENTE");
 }
@@ -1250,7 +1271,7 @@ export async function calculerStatutDemande(demandeId: string): Promise<StatutDe
     throw new Error(`calculerStatutDemande : demande ${demandeId} introuvable.`);
   }
 
-  if (demande.statut === "REJETEE" || demande.statut === "CLOTUREE") {
+  if (demande.statut === "REJETEE" || demande.statut === "CLOTUREE" || demande.statut === "ABANDONNEE") {
     return demande.statut;
   }
 

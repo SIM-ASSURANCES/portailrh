@@ -97,6 +97,7 @@ export function parseReportingFilters(searchParams: SearchParamsLike): Reporting
         "EN_ATTENTE_REGULARISATION",
         "REGULARISEE",
         "CLOTUREE",
+        "ABANDONNEE",
       ] as const
     ).includes(statut as StatutDemande)
       ? (statut as StatutDemande)

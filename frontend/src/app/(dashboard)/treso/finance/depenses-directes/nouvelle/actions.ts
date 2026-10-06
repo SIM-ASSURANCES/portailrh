@@ -8,7 +8,7 @@ import { Prisma } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
-import { generateDemandeReference } from "backend";
+import { generateDemandeReference, initialiserCircuit } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
 const MAX_ATTEMPTS = 5;
@@ -134,6 +134,9 @@ export async function creerDepenseDirecteAction(
     beneficiaireLabel = utilisateur.fullName;
   }
 
+  // Circuit de validation (décision 6) : départ à l'étape Finance, Service non requise, exception tracée.
+  const circuit = await initialiserCircuit(prisma, session.user.id, "DEPENSE_DIRECTE");
+
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const reference = await generateDemandeReference();
 
@@ -142,6 +145,7 @@ export async function creerDepenseDirecteAction(
 
       const demande = await prisma.demande.create({
         data: {
+          ...circuit.data,
           reference,
           montant,
           description,
@@ -164,6 +168,9 @@ export async function creerDepenseDirecteAction(
           detail: `Dépense directe saisie par ${session.user.fullName} — nature « ${NATURE_DEPENSE_DIRECTE_LABEL[nature]} », bénéficiaire ${BENEFICIAIRE_TYPE_LABEL[beneficiaireType].toLowerCase()} « ${beneficiaireLabel} »`,
           userId: session.user.id,
         },
+      });
+      await prisma.historiqueEntry.create({
+        data: { entity: "Demande", entityId: demande.id, action: "circuit_initialise", detail: circuit.detail, userId: session.user.id },
       });
 
       publishDataChanged();

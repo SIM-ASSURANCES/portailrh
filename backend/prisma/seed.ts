@@ -230,6 +230,8 @@ async function main() {
     { key: "treso.creer_retour_externe", label: "Enregistrer un retour externe (hors demande)", moduleId: moduleTresorerie.id },
     { key: "treso.modifier_budget_categorie", label: "Modifier le budget d'une catégorie", moduleId: moduleTresorerie.id },
     { key: "treso.deleguer_acces", label: "Déléguer des accès", moduleId: moduleTresorerie.id },
+    // Circuit de validation (2026-10-06) : décision à l'étape DG.
+    { key: "treso.decider_dg", label: "Décider à l'étape DG (valider ou rejeter une demande soumise)", moduleId: moduleTresorerie.id },
     {
       key: "treso.modifier_description",
       label: "Modifier la description d'une demande et le libellé de ses lignes",
@@ -319,6 +321,7 @@ async function main() {
       "treso.voir_dashboard_finance",
       "treso.voir_reporting",
       "treso.approuver_validation_complete",
+      "treso.decider_dg",
       "pointage.consulter_tous",
       "pointage.voir_dashboard_rh",
       "pointage.voir_reporting",
