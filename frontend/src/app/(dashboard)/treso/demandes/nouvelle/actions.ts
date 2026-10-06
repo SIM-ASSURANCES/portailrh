@@ -8,6 +8,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
 import { generateDemandeReference } from "backend";
+import { chargerServiceDuDemandeur, messageBlocageCreationDemande } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
 const MAX_ATTEMPTS = 5;
@@ -84,6 +85,11 @@ export async function creerDemandeAction(
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.creer_demande")) {
     return { status: "error", message: "Action non autorisée." };
+  }
+  // Le service du demandeur doit avoir un responsable actif (étape « Service » du circuit de validation).
+  const blocageService = messageBlocageCreationDemande(await chargerServiceDuDemandeur(prisma, session.user.id));
+  if (blocageService) {
+    return { status: "error", message: blocageService };
   }
 
   const parsed = demandeSchema.safeParse(input);

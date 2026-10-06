@@ -21,6 +21,7 @@ import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { getSoldeCaisse, getSoldeOuvertureInfo, prisma } from "backend";
 
 import { BudgetCategorieBars } from "./BudgetCategorieBars";
+import { EquipeEtResponsables } from "./EquipeEtResponsables";
 import { FinanceActionCard } from "./FinanceActionCard";
 import { ReglementsModeDonut } from "./ReglementsModeDonut";
 import { SoldeCaisseTrendChart } from "./SoldeCaisseTrendChart";
@@ -419,6 +420,8 @@ export default async function DashboardFinancePage() {
           </div>
         </section>
       ) : null}
+
+      <EquipeEtResponsables />
 
       <p className="text-sm text-muted-foreground">
         <Link

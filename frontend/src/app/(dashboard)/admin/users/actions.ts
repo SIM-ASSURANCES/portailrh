@@ -10,7 +10,7 @@ import { z } from "zod";
 import { getSession, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
-import { fieldErrorsFromZod, type ActionState } from "backend";
+import { fieldErrorsFromZod, getServicesDontResponsable, type ActionState } from "backend";
 import { logAuditAction } from "@/lib/auditLog";
 import { sendEmail, generateWelcomeEmail } from "@/lib/email";
 import { notify } from "@/lib/notifications";
@@ -45,7 +45,8 @@ const createUserSchema = z.object({
     .regex(/[0-9]/, "Au moins un chiffre requis")
     .regex(/[^A-Za-z0-9]/, "Au moins un caractère spécial requis"),
   roleId: z.string().min(1, "Rôle requis"),
-  serviceId: z.string().optional().transform(v => v === "" ? null : v),
+  // Service obligatoire (circuit de validation, 2026-10-06) : la base reste tolérante, le formulaire l'exige.
+  serviceId: z.string({ message: "Le service est obligatoire" }).min(1, "Le service est obligatoire"),
 });
 
 /**
@@ -150,7 +151,8 @@ const createInvitationSchema = z.object({
   fullName: z.string().min(2, "Le nom doit contenir au moins 2 caractères"),
   email: z.string().email("Email invalide"),
   roleId: z.string().min(1, "Rôle requis"),
-  serviceId: z.string().optional().transform(v => v === "" ? null : v),
+  // Service obligatoire (circuit de validation, 2026-10-06) : la base reste tolérante, le formulaire l'exige.
+  serviceId: z.string({ message: "Le service est obligatoire" }).min(1, "Le service est obligatoire"),
 });
 
 /**
@@ -381,6 +383,16 @@ export async function toggleUserActiveAction(
   if (userId === session.user.id) {
     return { status: "error", message: "Impossible de modifier votre propre compte." };
   }
+  // Le responsable d'un service ne peut pas être désactivé sans qu'un autre soit désigné (étape « Service »).
+  if (!active) {
+    const servicesResponsable = await getServicesDontResponsable(prisma, userId);
+    if (servicesResponsable.length > 0) {
+      return {
+        status: "error",
+        message: `Ce compte est responsable du service ${servicesResponsable.join(", ")} : désignez d'abord un autre responsable (Administration › Services).`,
+      };
+    }
+  }
 
   const user = await prisma.user.update({ 
     where: { id: userId }, 
@@ -510,6 +522,9 @@ export async function updateUserServiceAction(
       return { status: "error", message: "Utilisateur introuvable." };
     }
 
+    if (!serviceId) {
+      return { status: "error", message: "Le service est obligatoire : choisissez un autre service plutôt que de le retirer." };
+    }
     if (user.serviceId === serviceId) {
       return { status: "success", message: "Service inchangé." };
     }
@@ -663,6 +678,13 @@ export async function supprimerUtilisateurAction(
   const user = await prisma.user.findUnique({ where: { id: userId }, include: { role: true } });
   if (!user) {
     return { status: "error", message: "Utilisateur introuvable." };
+  }
+  const servicesResponsable = await getServicesDontResponsable(prisma, userId);
+  if (servicesResponsable.length > 0) {
+    return {
+      status: "error",
+      message: `Ce compte est responsable du service ${servicesResponsable.join(", ")} : désignez d'abord un autre responsable (Administration › Services).`,
+    };
   }
 
   // Jamais se retrouver sans aucun administrateur dans le système.

@@ -5358,6 +5358,50 @@ géré via `/admin/services`, ajouté par Thierry). Deux points d'écriture :
   global sans rapport. **À confirmer si le bug réapparaît malgré ce
   changement** : signe qu'une autre cause reste à trouver.
 
+### Services et responsables (circuit de validation, commit 2, 2026-10-06)
+
+Complète le modèle `Service` de Thierry sans rien casser (pointage, reporting par service inchangés).
+
+- **8 services** (migration `20261006110000_services_responsables`, idempotente) : Commercial, Informatique,
+  Direction DG, Finance, RH, Technique, Comptabilité, Marketing. « Direction » → « Direction DG » et « Ressources
+  Humaines » → « RH » sont **renommés en gardant leur identifiant** (rattachements et filtres intacts) ; les services
+  manquants sont créés avec un identifiant aléatoire (différent d'une base à l'autre). Vérifié sur une base
+  PostgreSQL 16 portant les 5 anciens services et des membres.
+- **`Service.responsableId`** (`User`, clé `RESTRICT`) : valide l'étape « Service » des demandes des membres du
+  service. **N'importe quel compte actif**, membre du service ou non (décision du 2026-10-06) ; le sélecteur affiche
+  le service de chacun à côté de son nom (« Nom — Service »). Facultatif en base (comptes créés après la migration),
+  **obligatoire à l'écran** : création d'un service refusée sans responsable, et on le remplace
+  (`definirResponsableServiceAction`, Admin, audit `CHANGE_RESPONSABLE`), on ne le retire jamais.
+- **Service obligatoire pour un compte** à l'écran (création, invitation, sélecteur du tableau : plus d'option
+  « Aucun service », `updateUserServiceAction` refuse le retrait) ; la base reste tolérante. Un compte existant sans
+  service garde tout son accès, sauf la création d'une demande.
+- **Création d'une demande refusée** (page ET `creerDemandeAction`, `messageBlocageCreationDemande`,
+  `backend/src/services.ts`) si le demandeur n'a pas de service, si son service n'a pas de responsable, ou si ce
+  responsable est désactivé — un message par cas. Jamais une demande bloquée plus tard dans le circuit.
+- **Alertes** : « Service(s) sans responsable » sur `/admin` et `/admin/services` ; carte « Rôles et responsables »
+  sur le tableau de bord Finance (`EquipeEtResponsables.tsx` : comptes ayant `treso.decider_finance` par leur rôle, et
+  responsable de chaque service, signalé s'il manque ou est désactivé).
+- **Un responsable ne peut être ni désactivé ni supprimé** tant qu'il l'est (désigner d'abord un autre responsable).
+- **Seed** : chaque compte de test a un service, et chacun des 8 services un responsable — Commercial
+  `responsable-commercial@`, Technique `responsable-technique@`, Comptabilité `responsable-comptabilite@`, Marketing
+  `responsable-marketing@` (rôle Collaborateur), Finance `finance@`, Direction DG `dg@`, RH `rh@`, Informatique
+  `admin@`. Le cas « service sans responsable » se teste sur une base jetable en retirant le responsable.
+- **Vérifié** (Playwright, `next start`, PostgreSQL 16 jetable, 18 contrôles) : sélecteur « Nom — Service » proposant
+  tout compte actif ; demande créée par un membre de Commercial ; responsable retiré → message à la place du
+  formulaire, action rejouée refusée, alertes `/admin` et `/admin/services` ; responsable désigné depuis un autre
+  service → alerte disparue, formulaire revenu ; désactivation d'un responsable refusée ; pas d'option « Aucun
+  service » ; compte sans service et responsable désactivé → messages dédiés ; carte Finance ; aucune erreur JS.
+
+**Règles du circuit décidées pour le commit 3 (2026-10-06), à appliquer dans cet ordre de priorité** — personne ne
+valide jamais sa propre demande :
+1. **Demandeur DG** : l'étape DG est sautée ; la Finance décide.
+2. **Demandeur du service Finance, ou de rôle Finance ou Assistant Finance** (repéré par permission, jamais par nom
+   de rôle) : les étapes Service et Finance sont sautées ; la demande va au DG.
+3. **Demandeur responsable de service** : l'étape Service est sautée ; puis Finance.
+4. **Tous les autres** : Service, puis Finance.
+
+Une étape sautée s'affiche « non requise » dans la frise de progression.
+
 ### Console admin (`/admin`)
 
 Routes : `/admin/users` (créer manuellement ou par invitation, activer/

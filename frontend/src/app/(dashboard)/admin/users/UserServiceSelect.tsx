@@ -45,8 +45,10 @@ export function UserServiceSelect({
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const precedent = value;
-    const newServiceId = e.target.value === "" ? null : e.target.value;
-    setValue(e.target.value);
+    // Service obligatoire : on peut changer de service, jamais le retirer (l'option vide n'est pas choisissable).
+    const newServiceId = e.target.value;
+    if (!newServiceId) return;
+    setValue(newServiceId);
 
     startTransition(async () => {
       const res = await updateUserServiceAction(userId, newServiceId);
@@ -62,10 +64,8 @@ export function UserServiceSelect({
   return (
     <Select
       name={`service-${userId}`}
-      options={[
-        { value: "", label: "Aucun service" },
-        ...services.map((s) => ({ value: s.id, label: s.name })),
-      ]}
+      placeholder="À attribuer…"
+      options={services.map((s) => ({ value: s.id, label: s.name }))}
       value={value}
       onChange={handleChange}
       disabled={isPending}

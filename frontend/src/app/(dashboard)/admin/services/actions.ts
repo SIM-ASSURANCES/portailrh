@@ -20,9 +20,18 @@ export async function createServiceAction(
 
   const name = formData.get("name")?.toString().trim();
   const description = formData.get("description")?.toString().trim() || null;
+  const responsableId = formData.get("responsableId")?.toString() || "";
 
   if (!name) {
     return { status: "error", message: "Le nom du service est requis.", fieldErrors: { name: "Requis" } };
+  }
+  // Responsable obligatoire (circuit de validation, 2026-10-06) : il valide l'étape « Service » des demandes.
+  if (!responsableId) {
+    return { status: "error", message: "Le responsable du service est obligatoire.", fieldErrors: { responsableId: "Requis" } };
+  }
+  const responsable = await prisma.user.findUnique({ where: { id: responsableId }, select: { fullName: true, isActive: true } });
+  if (!responsable || !responsable.isActive) {
+    return { status: "error", message: "Le responsable choisi doit être un compte actif.", fieldErrors: { responsableId: "Compte actif requis" } };
   }
 
   try {
@@ -32,14 +41,14 @@ export async function createServiceAction(
     }
 
     const service = await prisma.service.create({
-      data: { name, description },
+      data: { name, description, responsableId },
     });
 
     await logAuditAction({
       entity: "Service",
       entityId: service.id,
       action: "CREATE",
-      detail: `Création du service « ${service.name} »${service.description ? ` (${service.description})` : ""}`,
+      detail: `Création du service « ${service.name} »${service.description ? ` (${service.description})` : ""}, responsable : ${responsable.fullName}`,
       userId: session.user.id,
       userFullName: session.user.fullName,
       userEmail: session.user.email,
@@ -91,6 +100,54 @@ export async function deleteServiceAction(serviceId: string): Promise<ActionStat
     revalidatePath("/admin/services");
     publishDataChanged();
     return { status: "success", message: "Service supprimé." };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Erreur serveur";
+    return { status: "error", message: msg };
+  }
+}
+
+/**
+ * Désigne le responsable d'un service (circuit de validation, 2026-10-06) : il valide l'étape « Service » des demandes
+ * des membres du service. Obligatoire : on le remplace, on ne le retire jamais. Compte actif exigé.
+ */
+export async function definirResponsableServiceAction(serviceId: string, responsableId: string): Promise<ActionState> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  if (!responsableId) {
+    return { status: "error", message: "Le responsable du service est obligatoire." };
+  }
+  try {
+    const [service, responsable] = await Promise.all([
+      prisma.service.findUnique({ where: { id: serviceId }, include: { responsable: { select: { fullName: true } } } }),
+      prisma.user.findUnique({ where: { id: responsableId }, select: { fullName: true, isActive: true } }),
+    ]);
+    if (!service) return { status: "error", message: "Service introuvable." };
+    if (!responsable || !responsable.isActive) {
+      return { status: "error", message: "Le responsable choisi doit être un compte actif." };
+    }
+    if (service.responsableId === responsableId) {
+      return { status: "success", message: "Responsable inchangé." };
+    }
+
+    await prisma.service.update({ where: { id: serviceId }, data: { responsableId } });
+
+    await logAuditAction({
+      entity: "Service",
+      entityId: serviceId,
+      action: "CHANGE_RESPONSABLE",
+      detail: `Responsable du service « ${service.name} » : ${service.responsable?.fullName ?? "aucun"} → ${responsable.fullName}`,
+      userId: session.user.id,
+      userFullName: session.user.fullName,
+      userEmail: session.user.email,
+      logFileName: "services.log",
+    });
+
+    revalidatePath("/admin/services");
+    revalidatePath("/admin");
+    publishDataChanged();
+    return { status: "success", message: `${responsable.fullName} est désormais responsable du service « ${service.name} ».` };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Erreur serveur";
     return { status: "error", message: msg };

@@ -2,15 +2,23 @@
 
 import { DataTable, type DataTableColumn } from "@/components/ui";
 import { ServiceDeleteButton } from "./ServiceDeleteButton";
+import { ServiceResponsableSelect } from "./ServiceResponsableSelect";
 
 type ServiceData = {
   id: string;
   name: string;
   description: string | null;
+  responsableId: string | null;
   _count: { users: number };
 };
 
-export function ServicesTable({ services }: { services: ServiceData[] }) {
+export function ServicesTable({
+  services,
+  utilisateurs,
+}: {
+  services: ServiceData[];
+  utilisateurs: { id: string; label: string }[];
+}) {
   const columns: DataTableColumn<ServiceData>[] = [
     {
       key: "name",
@@ -22,6 +30,18 @@ export function ServicesTable({ services }: { services: ServiceData[] }) {
       header: "Description",
       accessor: (s) => s.description,
       render: (s) => s.description || <span className="text-muted-foreground italic">Aucune</span>,
+    },
+    {
+      key: "responsable",
+      header: "Responsable",
+      render: (s) => (
+        <ServiceResponsableSelect
+          serviceId={s.id}
+          serviceNom={s.name}
+          currentResponsableId={s.responsableId}
+          utilisateurs={utilisateurs}
+        />
+      ),
     },
     {
       key: "users_count",

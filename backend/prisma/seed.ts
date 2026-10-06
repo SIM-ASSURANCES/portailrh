@@ -59,6 +59,8 @@ async function main() {
   await prisma.encPartenaire.deleteMany();
   await prisma.encBeneficiaireHonoraires.deleteMany();
   await prisma.encBranche.deleteMany();
+  // Un service pointe vers son responsable (clé RESTRICT) : le détacher avant de supprimer les comptes.
+  await prisma.service.updateMany({ data: { responsableId: null } });
   await prisma.user.deleteMany();
   await prisma.service.deleteMany();
   await prisma.role.deleteMany();
@@ -384,12 +386,16 @@ async function main() {
 
   console.log("Création des services...");
 
+  // Les 8 services (migration 20261006110000_services_responsables, mêmes noms).
   const servicesData = [
     { name: "Commercial" },
+    { name: "Informatique" },
+    { name: "Direction DG" },
     { name: "Finance" },
-    { name: "Direction" },
-    { name: "Ressources Humaines" },
+    { name: "RH" },
     { name: "Technique" },
+    { name: "Comptabilité" },
+    { name: "Marketing" },
   ];
 
   const createdServices = await Promise.all(
@@ -412,9 +418,35 @@ async function main() {
   const testUsers = [
     { fullName: "Collaborateur Test", email: "collaborateur@simassurances.test", roleId: roleCollaborateur.id, serviceId: serviceByName["Commercial"].id },
     { fullName: "Finance Test", email: "finance@simassurances.test", roleId: roleFinance.id, serviceId: serviceByName["Finance"].id },
-    { fullName: "DG Test", email: "dg@simassurances.test", roleId: roleDG.id, serviceId: serviceByName["Direction"].id },
-    { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id, serviceId: null },
-    { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id, serviceId: serviceByName["Ressources Humaines"].id },
+    { fullName: "DG Test", email: "dg@simassurances.test", roleId: roleDG.id, serviceId: serviceByName["Direction DG"].id },
+    { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id, serviceId: serviceByName["Informatique"].id },
+    { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id, serviceId: serviceByName["RH"].id },
+    // Responsable du service Commercial (circuit de validation) : un Collaborateur, sans nouveau rôle.
+    {
+      fullName: "Responsable Commercial Test",
+      email: "responsable-commercial@simassurances.test",
+      roleId: roleCollaborateur.id,
+      serviceId: serviceByName["Commercial"].id,
+    },
+    // Responsables de Technique, Comptabilité et Marketing : même principe (Collaborateurs, membres de leur service).
+    {
+      fullName: "Responsable Technique Test",
+      email: "responsable-technique@simassurances.test",
+      roleId: roleCollaborateur.id,
+      serviceId: serviceByName["Technique"].id,
+    },
+    {
+      fullName: "Responsable Comptabilité Test",
+      email: "responsable-comptabilite@simassurances.test",
+      roleId: roleCollaborateur.id,
+      serviceId: serviceByName["Comptabilité"].id,
+    },
+    {
+      fullName: "Responsable Marketing Test",
+      email: "responsable-marketing@simassurances.test",
+      roleId: roleCollaborateur.id,
+      serviceId: serviceByName["Marketing"].id,
+    },
     { fullName: "Assistant Finance Test", email: "assistant-finance@simassurances.test", roleId: roleAssistantFinance.id, serviceId: serviceByName["Finance"].id },
     // Module Encaissements : un compte de test par rôle de départ, JAMAIS en production (l'image fixe
     // NODE_ENV=production, y compris pour le service `init` qui exécute ce seed au premier déploiement).
@@ -447,6 +479,24 @@ async function main() {
   );
 
   console.log(`${createdUsers.length} utilisateurs créés.`);
+
+  // Responsables de service (étape « Service » du circuit de validation) : chacun des 8 services en a un. Le cas
+  // « service sans responsable » se teste sur une base jetable, en retirant le responsable dans le test.
+  const userByEmail = Object.fromEntries(createdUsers.map((u) => [u.email, u]));
+  const responsables: [string, string][] = [
+    ["Commercial", "responsable-commercial@simassurances.test"],
+    ["Finance", "finance@simassurances.test"],
+    ["Direction DG", "dg@simassurances.test"],
+    ["RH", "rh@simassurances.test"],
+    ["Informatique", "admin@simassurances.test"],
+    ["Technique", "responsable-technique@simassurances.test"],
+    ["Comptabilité", "responsable-comptabilite@simassurances.test"],
+    ["Marketing", "responsable-marketing@simassurances.test"],
+  ];
+  for (const [service, email] of responsables) {
+    await prisma.service.update({ where: { id: serviceByName[service].id }, data: { responsableId: userByEmail[email].id } });
+  }
+  console.log(`${responsables.length} responsables de service désignés.`);
 
   console.log("Création des catégories...");
 

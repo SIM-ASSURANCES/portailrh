@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { PageHeader } from "@/components/ui";
+import { getServicesSansResponsable, prisma } from "backend";
 
 const sections = [
   {
@@ -30,13 +31,24 @@ const sections = [
   },
 ];
 
-export default function AdminHomePage() {
+export default async function AdminHomePage() {
+  const sansResponsable = await getServicesSansResponsable(prisma);
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
       <PageHeader
         title="Administration"
         description="Gestion des utilisateurs, des rôles et des modules du portail."
       />
+      {sansResponsable.length > 0 ? (
+        <p role="alert" className="rounded-md bg-warning-bg px-4 py-3 text-sm text-warning">
+          {sansResponsable.length === 1 ? "Service sans responsable" : "Services sans responsable"} :{" "}
+          <span className="font-semibold">{sansResponsable.map((s) => s.name).join(", ")}</span> —{" "}
+          <Link href="/admin/services" className="font-medium underline underline-offset-4">
+            désigner un responsable
+          </Link>
+          . Leurs membres ne peuvent pas créer de demande en attendant.
+        </p>
+      ) : null}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {sections.map((section) => (
           <Link

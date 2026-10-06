@@ -42,7 +42,9 @@ model User {
   /// Expire 1 heure après la demande de réinitialisation
   resetPasswordExpiresAt DateTime?
   serviceId              String?
-  service                Service?  @relation(fields: [serviceId], references: [id])
+  service                Service?  @relation("ServiceMembres", fields: [serviceId], references: [id])
+  /// Services dont ce compte est le responsable (étape « Service » du circuit de validation, 2026-10-06).
+  servicesResponsable    Service[] @relation("ServiceResponsable")
   photoUrl               String?   @default("/default-avatar.svg")
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
@@ -1000,8 +1002,13 @@ model Service {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  users User[]
+  users User[] @relation("ServiceMembres")
+  /// Responsable du service : valide l'étape « Service » des demandes de ses membres. Facultatif en base (comptes
+  /// créés après la migration) ; exigé par l'écran d'administration ; création de demande refusée sans lui.
+  responsableId String?
+  responsable   User?   @relation("ServiceResponsable", fields: [responsableId], references: [id], onDelete: Restrict)
 
+  @@index([responsableId])
   @@map("Service")
 }
 

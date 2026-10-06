@@ -40,6 +40,8 @@ export * from "./encImportApplication";
 // F2 (recherche, fiche police) — commit 5a.
 export * from "./encRecherche";
 export * from "./encSituation";
+// Services et responsables (circuit de validation des demandes, 2026-10-06).
+export * from "./services";
 // Onglet « À vérifier » (traitement des signalements) — commit 5b.
 export * from "./encSignalements";
 
