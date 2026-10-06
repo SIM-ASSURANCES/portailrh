@@ -5951,6 +5951,17 @@ ne reçoit rien — comme avant, il reste bloqué ; il faut lui cocher les permi
 Une délégation de `treso.valider_demande` ou `treso.effectuer_reglement` ne donne plus ces actions (aucune n'existait
 en dev au moment du changement ; à vérifier en production avant déploiement).
 
+**Rattrapage des permissions du seed sans migration (2026-10-06, `20261006090000_permissions_base_rattrapage`,
+placée AVANT la précédente)** : une base de production n'est seedée qu'une fois ; trois permissions ajoutées au seed
+après le premier déploiement (2026-08-29) n'étaient créées par aucune migration — `treso.saisir_depense_directe`
+(30/08), `treso.approuver_validation_complete` (01/09), `treso.gerer_categories` (11/09). La migration garantit les 14
+permissions de base `treso.*` et donne chaque permission QU'ELLE CRÉE aux rôles de sa permission « sœur » :
+`gerer_categories` et `saisir_depense_directe` ← `treso.categoriser_demande`, `approuver_validation_complete` ←
+`systeme.reinitialiser` (DG seul). Elle doit passer avant `20261006100000`, qui repère Finance par « valider_demande
+sans approuver_validation_complete » : sans elle, un DG privé de `approuver_validation_complete` recevrait les 10
+permissions de décision Finance. Toutes les autres permissions (`enc.*`, `feedback.moderer`, `systeme.reinitialiser`,
+etc.) ont déjà leur migration. **Toute nouvelle permission ajoutée au seed doit avoir sa migration.**
+
 **Corrections associées (2026-10-06)** :
 - **Justificatifs du solde d'ouverture et des alimentations de caisse** (`GET /api/treso/pieces-jointes/[id]`, pièces
   rattachées à `JournalCaisse`) : téléchargeables par les mêmes permissions que la garde de
