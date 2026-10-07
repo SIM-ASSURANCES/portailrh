@@ -10,8 +10,14 @@ import { z } from "zod";
 import { getSession, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
-import { fieldErrorsFromZod, getServicesDontResponsable, type ActionState } from "backend";
+import {
+  fieldErrorsFromZod,
+  messageRefusResponsableSansRemplacant,
+  servicesQuittesSansRemplacant,
+  type ActionState,
+} from "backend";
 import { logAuditAction } from "@/lib/auditLog";
+import { designerResponsableService } from "@/lib/responsableService";
 import { sendEmail, generateWelcomeEmail } from "@/lib/email";
 import { notify } from "@/lib/notifications";
 
@@ -88,6 +94,23 @@ export async function createUserAction(
     };
   }
 
+  // Case « Responsable de ce service » : si un autre responsable existe, la confirmation est exigée (vérifiée AVANT de
+  // créer le compte, pour ne jamais créer un compte à moitié).
+  const devenirResponsable = formData.get("responsableDuService") === "on";
+  const confirmerRemplacement = formData.get("confirmerRemplacement") === "on";
+  if (devenirResponsable && !confirmerRemplacement) {
+    const svc = await prisma.service.findUnique({
+      where: { id: parsed.data.serviceId },
+      select: { name: true, responsable: { select: { fullName: true } } },
+    });
+    if (svc?.responsable) {
+      return {
+        status: "error",
+        message: `${svc.responsable.fullName} est actuellement responsable du service « ${svc.name} » : confirmez le remplacement (il reste membre de son service, il n'en est plus responsable).`,
+      };
+    }
+  }
+
   const passwordHash = await bcrypt.hash(parsed.data.password, SALT_ROUNDS);
 
   const user = await prisma.user.create({
@@ -141,10 +164,16 @@ export async function createUserAction(
     console.error("Erreur lors de l'envoi de l'email de bienvenue:", err);
   }
 
+  let messageResponsable = "";
+  if (devenirResponsable) {
+    const r = await designerResponsableService(session, parsed.data.serviceId, user.id, true);
+    messageResponsable = r.status === "error" ? ` Compte créé, mais pas désigné responsable : ${r.message}` : r.status === "success" ? ` ${r.message ?? ""}` : "";
+  }
+
   revalidatePath("/admin/users");
   publishDataChanged();
 
-  return { status: "success", message: `Utilisateur ${user.email} créé et email d'accueil envoyé.` };
+  return { status: "success", message: `Utilisateur ${user.email} créé et email d'accueil envoyé.${messageResponsable}` };
 }
 
 const createInvitationSchema = z.object({
@@ -383,15 +412,10 @@ export async function toggleUserActiveAction(
   if (userId === session.user.id) {
     return { status: "error", message: "Impossible de modifier votre propre compte." };
   }
-  // Le responsable d'un service ne peut pas être désactivé sans qu'un autre soit désigné (étape « Service »).
+  // Le seul responsable d'un service ne peut pas être désactivé sans remplaçant (étape « Service »).
   if (!active) {
-    const servicesResponsable = await getServicesDontResponsable(prisma, userId);
-    if (servicesResponsable.length > 0) {
-      return {
-        status: "error",
-        message: `Ce compte est responsable du service ${servicesResponsable.join(", ")} : désignez d'abord un autre responsable (Administration › Services).`,
-      };
-    }
+    const refus = await refusResponsableSansRemplacant(userId, "desactiver");
+    if (refus) return { status: "error", message: refus };
   }
 
   const user = await prisma.user.update({ 
@@ -504,6 +528,36 @@ export async function modifierRoleUtilisateurAction(
   return { status: "success", message: `Rôle de ${user.fullName} mis à jour : ${nouveauRole.name}.` };
 }
 
+/** Refus de désactiver ou supprimer le seul responsable d'un ou plusieurs services sans remplaçant (`null` : permis). */
+async function refusResponsableSansRemplacant(userId: string, action: "desactiver" | "supprimer"): Promise<string | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { fullName: true, servicesResponsable: { select: { name: true }, orderBy: { name: "asc" } } },
+  });
+  if (!user) return null;
+  return messageRefusResponsableSansRemplacant(user.fullName, user.servicesResponsable.map((s) => s.name), action);
+}
+
+/**
+ * Désigne un compte responsable du service dont il est membre (case « Responsable de ce service » de la liste des
+ * utilisateurs). Si un autre responsable existe, `confirmerRemplacement` est exigé (le message le nomme).
+ */
+export async function designerResponsableDeSonServiceAction(userId: string, confirmerRemplacement = false): Promise<ActionState> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { serviceId: true } });
+  if (!user) return { status: "error", message: "Utilisateur introuvable." };
+  if (!user.serviceId) return { status: "error", message: "Ce compte n'a pas de service : attribuez-lui d'abord un service." };
+  try {
+    return await designerResponsableService(session, user.serviceId, userId, confirmerRemplacement === true);
+  } catch (err) {
+    console.error(err);
+    return { status: "error", message: "Erreur serveur" };
+  }
+}
+
 export async function updateUserServiceAction(
   userId: string,
   serviceId: string | null
@@ -528,6 +582,15 @@ export async function updateUserServiceAction(
     if (user.serviceId === serviceId) {
       return { status: "success", message: "Service inchangé." };
     }
+    // Le seul responsable du service qu'il quitte ne part pas sans remplaçant (responsable extérieur d'autres services :
+    // inchangé, permis).
+    const responsabilites = await prisma.service.findMany({ where: { responsableId: userId }, select: { id: true, name: true } });
+    const refus = messageRefusResponsableSansRemplacant(
+      user.fullName,
+      servicesQuittesSansRemplacant(user, responsabilites, serviceId),
+      "changer_service"
+    );
+    if (refus) return { status: "error", message: refus };
 
     let newService = null;
     if (serviceId) {
@@ -679,13 +742,8 @@ export async function supprimerUtilisateurAction(
   if (!user) {
     return { status: "error", message: "Utilisateur introuvable." };
   }
-  const servicesResponsable = await getServicesDontResponsable(prisma, userId);
-  if (servicesResponsable.length > 0) {
-    return {
-      status: "error",
-      message: `Ce compte est responsable du service ${servicesResponsable.join(", ")} : désignez d'abord un autre responsable (Administration › Services).`,
-    };
-  }
+  const refusResponsable = await refusResponsableSansRemplacant(userId, "supprimer");
+  if (refusResponsable) return { status: "error", message: refusResponsable };
 
   // Jamais se retrouver sans aucun administrateur dans le système.
   if (user.role.estAdmin) {

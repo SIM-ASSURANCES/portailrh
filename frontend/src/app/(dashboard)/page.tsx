@@ -4,7 +4,8 @@ import { Icon } from "@/components/icons";
 import { EmptyState, PageHeader, ToastOnMount } from "@/components/ui";
 import { BRAND_ICON_PATHS, BRAND_ICON_VIEWBOX } from "@/components/ui/brandIcon";
 import { getAccessibleModules, getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { DEMANDES_A_TRAITER_FINANCE_WHERE, prisma, getMesRetoursADeclarer } from "backend";
+import { DEMANDES_A_TRAITER_FINANCE_WHERE, getServicesSansResponsable, prisma, getMesRetoursADeclarer } from "backend";
+import { explicationServicesSansResponsable } from "@/components/admin/ServicesSansResponsableBanniere";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 import { DashboardNotificationsSection, type DashboardAlertItem } from "@/components/dashboard/DashboardNotificationsSection";
 
@@ -147,6 +148,7 @@ export default async function DashboardHomePage({
     demandesAValiderResult,
     validationsDGResult,
     absencesAControlerResult,
+    servicesSansResponsable,
   ] = await Promise.all([
     session?.user
       ? prisma.notification.findMany({
@@ -184,6 +186,8 @@ export default async function DashboardHomePage({
     session?.user && hasPermission(session, "pointage.voir_dashboard_rh")
       ? prisma.absence.count({ where: { statut: "A_CONTROLER" } })
       : Promise.resolve(0),
+    // Comptes qui gèrent les utilisateurs et services (console d'administration) : services sans responsable.
+    session?.user && isAdmin(session) ? getServicesSansResponsable(prisma) : Promise.resolve([]),
   ]);
 
   const serializedNotifications = rawNotifications.map((n) => ({
@@ -256,6 +260,17 @@ export default async function DashboardHomePage({
         href: "/pointage/rh/absences",
         variant: "info",
         icon: "users",
+      });
+    }
+
+    if (servicesSansResponsable.length > 0) {
+      alerts.push({
+        id: "services_sans_responsable",
+        title: `${servicesSansResponsable.length} service(s) sans responsable`,
+        description: explicationServicesSansResponsable(servicesSansResponsable.map((s) => s.name)),
+        href: "/admin/services",
+        variant: "danger",
+        icon: "alert-triangle",
       });
     }
   }

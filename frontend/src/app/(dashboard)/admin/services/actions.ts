@@ -8,6 +8,7 @@ import { type ActionState } from "backend";
 import { getSession, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { logAuditAction } from "@/lib/auditLog";
+import { designerResponsableService } from "@/lib/responsableService";
 
 export async function createServiceAction(
   prevState: ActionState,
@@ -107,10 +108,16 @@ export async function deleteServiceAction(serviceId: string): Promise<ActionStat
 }
 
 /**
- * Désigne le responsable d'un service (circuit de validation, 2026-10-06) : il valide l'étape « Service » des demandes
- * des membres du service. Obligatoire : on le remplace, on ne le retire jamais. Compte actif exigé.
+ * Désigne ou change le responsable d'un service (écran Services, bouton « Désigner / Changer »). Réservée à la gestion
+ * des utilisateurs et services (`isAdmin`, revérifiée ici). Obligatoire : on le remplace, on ne le retire jamais. Le
+ * remplacement d'un responsable existant exige `confirmerRemplacement` (l'écran le demande en le nommant). Voir
+ * `designerResponsableService` (journal, demandes à l'étape Service transférées).
  */
-export async function definirResponsableServiceAction(serviceId: string, responsableId: string): Promise<ActionState> {
+export async function definirResponsableServiceAction(
+  serviceId: string,
+  responsableId: string,
+  confirmerRemplacement = false
+): Promise<ActionState> {
   const session = await getSession();
   if (!session || !isAdmin(session)) {
     return { status: "error", message: "Action non autorisée." };
@@ -119,35 +126,7 @@ export async function definirResponsableServiceAction(serviceId: string, respons
     return { status: "error", message: "Le responsable du service est obligatoire." };
   }
   try {
-    const [service, responsable] = await Promise.all([
-      prisma.service.findUnique({ where: { id: serviceId }, include: { responsable: { select: { fullName: true } } } }),
-      prisma.user.findUnique({ where: { id: responsableId }, select: { fullName: true, isActive: true } }),
-    ]);
-    if (!service) return { status: "error", message: "Service introuvable." };
-    if (!responsable || !responsable.isActive) {
-      return { status: "error", message: "Le responsable choisi doit être un compte actif." };
-    }
-    if (service.responsableId === responsableId) {
-      return { status: "success", message: "Responsable inchangé." };
-    }
-
-    await prisma.service.update({ where: { id: serviceId }, data: { responsableId } });
-
-    await logAuditAction({
-      entity: "Service",
-      entityId: serviceId,
-      action: "CHANGE_RESPONSABLE",
-      detail: `Responsable du service « ${service.name} » : ${service.responsable?.fullName ?? "aucun"} → ${responsable.fullName}`,
-      userId: session.user.id,
-      userFullName: session.user.fullName,
-      userEmail: session.user.email,
-      logFileName: "services.log",
-    });
-
-    revalidatePath("/admin/services");
-    revalidatePath("/admin");
-    publishDataChanged();
-    return { status: "success", message: `${responsable.fullName} est désormais responsable du service « ${service.name} ».` };
+    return await designerResponsableService(session, serviceId, responsableId, confirmerRemplacement === true);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Erreur serveur";
     return { status: "error", message: msg };

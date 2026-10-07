@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { ServicesSansResponsableBanniere } from "@/components/admin/ServicesSansResponsableBanniere";
 import { PageHeader } from "@/components/ui";
 import { getServicesSansResponsable, prisma } from "backend";
 
@@ -39,16 +40,7 @@ export default async function AdminHomePage() {
         title="Administration"
         description="Gestion des utilisateurs, des rôles et des modules du portail."
       />
-      {sansResponsable.length > 0 ? (
-        <p role="alert" className="rounded-md bg-warning-bg px-4 py-3 text-sm text-warning">
-          {sansResponsable.length === 1 ? "Service sans responsable" : "Services sans responsable"} :{" "}
-          <span className="font-semibold">{sansResponsable.map((s) => s.name).join(", ")}</span> —{" "}
-          <Link href="/admin/services" className="font-medium underline underline-offset-4">
-            désigner un responsable
-          </Link>
-          . Leurs membres ne peuvent pas créer de demande en attendant.
-        </p>
-      ) : null}
+      <ServicesSansResponsableBanniere services={sansResponsable} lienServices />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {sections.map((section) => (
           <Link
