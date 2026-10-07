@@ -18,6 +18,14 @@ import {
 
 type Db = Prisma.TransactionClient;
 
+/**
+ * Demandes à l'étape Service dont le compte est le responsable ACTUEL du service du demandeur (jamais celles d'un
+ * autre service) : page « Demandes de mon service » et compteur du menu.
+ */
+export function demandesServiceAValiderWhere(responsableId: string): Prisma.DemandeWhereInput {
+  return { etapeCircuit: "SERVICE", createur: { service: { responsableId } } };
+}
+
 /** Nom du service dont les membres suivent le cas (b) (décision du 2026-10-06). Un nom de SERVICE, jamais de rôle. */
 export const SERVICE_FINANCE = "Finance";
 

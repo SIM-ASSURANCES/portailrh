@@ -1886,6 +1886,17 @@ reste à l'étape Service (aucun écran pour la valider).
   après un rejet du DG : Resoumettre au DG / Rejeter vers le collaborateur (motif obligatoire). Libellés
   d'historique des actions du circuit (`DemandeHistorique`), étapes lisibles (`LIBELLE_ETAPE_CIRCUIT`). Vérifié :
   Playwright 29/29 (chaque étape, avec captures, mobile 390 px).
+- **Commit 4, morceau 2 — écran du responsable de service** : `/treso/service` (« Demandes de mon service à
+  valider » : demandes à l'étape Service dont le compte est le responsable ACTUEL du service du demandeur,
+  `demandesServiceAValiderWhere`, jamais un autre service) et `/treso/service/[id]` (lignes, montant, motif dans la
+  version du demandeur, pièces jointes, frise, historique sans la gestion interne Finance ; introuvable — 404 — pour
+  tout autre compte) ; boutons Valider / Rejeter (motif de 3 caractères minimum, `rejeterEtapeServiceAction` =
+  `rejeterDemandeAction` + rafraîchissement) grisés hors de l'étape avec la phrase du moteur. Aucune permission
+  requise : c'est `Service.responsableId` qui désigne le décideur (un responsable sans droit Trésorerie, ex. RH, y
+  accède). Menu « Mon service » avec compteur (`NavItem.compteur`), seulement pour un responsable d'au moins un
+  service. Le responsable du service du demandeur peut aussi télécharger les pièces jointes de la demande
+  (`/api/treso/pieces-jointes/[id]`). Vérifié : Playwright 23/23 (responsable-commercial@, collaborateur de
+  Commercial, refus serveur pour le responsable d'un autre service et pour le demandeur).
 - **Reste pour le commit 4** : retirer `treso.valider_demande` du DG (décision 10), masquer les permissions de
   décision dans `/delegations`, et **garder visible dans l'historique une ligne retirée à la correction, avec ses
   décisions** (lecture depuis la version recopiée en JSON, ou suppression logique) : on ne modifie jamais une écriture

@@ -18,6 +18,8 @@ export interface NavItem {
    * cliquable ("Bientôt disponible") plutôt qu'un lien mort vers une 404.
    */
   comingSoon?: boolean;
+  /** Nombre affiché en pastille à droite du libellé (rien si 0 ou absent). */
+  compteur?: number;
 }
 
 export interface NavGroup {
@@ -133,6 +135,11 @@ export interface NavFlags {
   canModererFeedback?: boolean;
   /** `enc.consulter` : affiche la branche "Encaissements" (revérifié côté serveur par `encaissements/layout.tsx`). */
   canConsulterEncaissements?: boolean;
+  /**
+   * Circuit de validation : demandes à l'étape Service à valider par ce compte. `null` si le compte n'est
+   * responsable d'aucun service (entrée « Demandes de mon service » absente), sinon le nombre (pastille).
+   */
+  demandesServiceAValider?: number | null;
 }
 
 /**
@@ -220,6 +227,7 @@ export function getNavBranches({
   canRecevoirFeedback,
   canModererFeedback,
   canConsulterEncaissements,
+  demandesServiceAValider = null,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -269,6 +277,16 @@ export function getNavBranches({
               : []),
             ...(canAccesDemandes
               ? [{ label: "Demandes", href: "/treso/demandes", icon: "file-text" } satisfies NavItem]
+              : []),
+            ...(demandesServiceAValider !== null
+              ? [
+                  {
+                    label: "Mon service",
+                    href: "/treso/service",
+                    icon: "users",
+                    compteur: demandesServiceAValider,
+                  } satisfies NavItem,
+                ]
               : []),
             ...(canSaisirDepenseDirecte
               ? [

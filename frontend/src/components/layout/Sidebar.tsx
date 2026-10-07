@@ -61,6 +61,8 @@ interface SidebarProps {
   /** `feedback.moderer` : ajoute "Modération Feedbacks" (RH & DG). */
   canModererFeedback?: boolean;
   canConsulterEncaissements?: boolean;
+  /** Voir `NavFlags.demandesServiceAValider`. */
+  demandesServiceAValider?: number | null;
   /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
   canRecevoirFeedback?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
@@ -120,6 +122,7 @@ export function Sidebar({
   canConsulterHistorique = false,
   canModererFeedback = false,
   canConsulterEncaissements = false,
+  demandesServiceAValider = null,
   canRecevoirFeedback = false,
   mobileOpen,
   onCloseMobile,
@@ -145,6 +148,7 @@ export function Sidebar({
     canRecevoirFeedback,
     canModererFeedback,
     canConsulterEncaissements,
+    demandesServiceAValider,
   });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0]?.key ?? null
@@ -397,6 +401,16 @@ function ItemLink({
     >
       <Icon name={item.icon} className="size-[18px] shrink-0" />
       {!collapsed ? <span className="truncate">{item.label}</span> : null}
+      {!collapsed && item.compteur ? (
+        <span
+          aria-label={`${item.compteur} à traiter`}
+          className={`ml-auto rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${
+            active ? "bg-primary-foreground text-primary" : "bg-warning-bg text-warning"
+          }`}
+        >
+          {item.compteur}
+        </span>
+      ) : null}
     </Link>
   );
 }

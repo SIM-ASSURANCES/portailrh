@@ -18,6 +18,8 @@ import {
   type CorrectionDemande,
 } from "backend";
 
+import { rejeterDemandeAction } from "../finance/demandes/[id]/actions";
+
 type Resultat = { status: "success"; message: string } | { status: "error"; message: string };
 
 function rafraichir(demandeId: string) {
@@ -25,7 +27,9 @@ function rafraichir(demandeId: string) {
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath("/treso/finance/demandes");
   revalidatePath("/treso/demandes");
-  revalidatePath("/");
+  revalidatePath("/treso/service");
+  revalidatePath(`/treso/service/${demandeId}`);
+  revalidatePath("/", "layout");
   publishDataChanged();
 }
 
@@ -49,6 +53,17 @@ async function agir(
 /** Étape Service : le responsable du service du demandeur valide. */
 export async function validerEtapeServiceAction(demandeId: string): Promise<Resultat> {
   return agir(demandeId, { type: "VALIDER_SERVICE" }, (ref) => `Demande ${ref} validée pour le service.`);
+}
+
+/**
+ * Étape Service : le responsable rejette (motif obligatoire, 3 caractères minimum) ; la demande part en correction.
+ * Même action que tout rejet vers le demandeur (moteur, historique, notification), plus le rafraîchissement des
+ * écrans du responsable.
+ */
+export async function rejeterEtapeServiceAction(demandeId: string, motif: string): Promise<Resultat> {
+  const r = await rejeterDemandeAction(demandeId, motif ?? "");
+  if (r.status === "success") rafraichir(demandeId);
+  return { status: r.status === "success" ? "success" : "error", message: r.message ?? "" };
 }
 
 /** Étape Finance : soumission au DG (avant toute décision ligne par ligne). */

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { reinitialisationEffectuee } from "backend";
+import { demandesServiceAValiderWhere, prisma, reinitialisationEffectuee } from "backend";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 
@@ -19,10 +19,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect("/login");
   }
 
-  const [unreadCount, topbarAlert] = await Promise.all([
+  const [unreadCount, topbarAlert, servicesResponsable] = await Promise.all([
     getUnreadNotificationsCount(),
     getTopbarAlert(session.user.id, hasPermission(session, "pointage.pointer")),
+    prisma.service.count({ where: { responsableId: session.user.id } }),
   ]);
+  // « Demandes de mon service » : seulement pour un responsable d'au moins un service (circuit de validation).
+  const demandesServiceAValider =
+    servicesResponsable > 0
+      ? await prisma.demande.count({ where: demandesServiceAValiderWhere(session.user.id) })
+      : null;
 
   return (
     <AppShell
@@ -104,6 +110,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canConsulterHistorique={hasPermission(session, "pointage.consulter_historique")}
       canModererFeedback={hasPermission(session, "feedback.moderer")}
       canConsulterEncaissements={hasPermission(session, "enc.consulter")}
+      demandesServiceAValider={demandesServiceAValider}
       canRecevoirFeedback={session.peutRecevoirFeedback}
       unreadNotificationsCount={unreadCount}
     >

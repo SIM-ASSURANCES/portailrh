@@ -260,6 +260,9 @@ export default async function DashboardHomePage({
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+      {error === "acces_refuse_service" ? (
+        <ToastOnMount variant="error" message="Cette page est réservée aux responsables de service." />
+      ) : null}
       {error === "acces_refuse_admin" ? (
         <ToastOnMount variant="error" message="Accès réservé aux administrateurs." />
       ) : null}

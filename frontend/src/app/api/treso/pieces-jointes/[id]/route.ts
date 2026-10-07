@@ -50,7 +50,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const piece = await prisma.pieceJointe.findUnique({
     where: { id },
     include: {
-      demande: { select: { createurId: true, beneficiaireUserId: true } },
+      demande: {
+        select: { createurId: true, beneficiaireUserId: true, createur: { select: { service: { select: { responsableId: true } } } } },
+      },
       retourExterne: { select: { id: true } },
       retourExterneCheque: { select: { id: true } },
     },
@@ -70,7 +72,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       hasPermission(session, "treso.voir_dashboard_finance");
     const estCreateurOuBeneficiaire =
       piece.demande.createurId === session.user.id || piece.demande.beneficiaireUserId === session.user.id;
-    accesAutorise = estFinanceOuDG || estCreateurOuBeneficiaire;
+    // Circuit de validation : le responsable ACTUEL du service du demandeur, qui décide l'étape Service.
+    const estResponsableService = piece.demande.createur.service?.responsableId === session.user.id;
+    accesAutorise = estFinanceOuDG || estCreateurOuBeneficiaire || estResponsableService;
   } else if (piece.retourExterne || piece.retourExterneCheque) {
     // Retour externe : même permission que l'action (`treso.creer_retour_externe`), ou Admin.
     accesAutorise = isAdmin(session) || hasPermission(session, "treso.creer_retour_externe");
