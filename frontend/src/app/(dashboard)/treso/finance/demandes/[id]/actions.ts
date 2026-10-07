@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify, notifyByPermission } from "@/lib/notifications";
+import { notifierApprobationCloture, notifierEtapeCircuit } from "@/lib/notificationsCircuit";
 import { prisma, refusConflitInteret } from "backend";
 import { calculerStatutDemande, getEcart, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
 import {
@@ -24,12 +25,9 @@ class RefusCircuit extends Error {}
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
 /**
- * Notifie le créateur ET les approbateurs DG qu'une demande vient
- * d'atteindre une validation ENTIÈRE (montantValide === montant demandé) —
- * factorisé car ce même évènement peut être produit par trois Server
- * Actions distinctes (validation totale, validation partielle qui
- * atteint en réalité le montant total, validation complémentaire qui
- * comble le dernier reliquat). Voir CLAUDE.md "Notifications Trésorerie".
+ * Validation complémentaire qui comble le reliquat d'une dépense directe (hors circuit : la décision finale est déjà
+ * prise) : notifie le créateur, puis ceux qui peuvent approuver la clôture si elle reste due. Les décisions du
+ * circuit notifient par `notifierEtapeCircuit`.
  */
 async function notifierDemandeEntierementValidee(
   demande: { id: string; reference: string; createurId: string },
@@ -44,17 +42,7 @@ async function notifierDemandeEntierementValidee(
     priority: "IMPORTANT",
     category: "TRESORERIE",
   });
-  // Exclut l'auteur de la validation (Finance ou DG) : un rôle combiné
-  // portant aussi `treso.approuver_validation_complete` ne doit pas se
-  // notifier lui-même de sa propre action.
-  await notifyByPermission("treso.approuver_validation_complete", {
-    titre: "Demande à approuver (validation complète)",
-    message: `La demande ${demande.reference} est entièrement validée et attend votre approbation avant clôture.`,
-    lien: "/treso/finance/validations-attente",
-    excludeUserId: actorUserId,
-    priority: "IMPORTANT",
-    category: "TRESORERIE",
-  });
+  await notifierApprobationCloture(demande.id, actorUserId);
 }
 
 const categorisationSchema = z.object({
@@ -818,28 +806,8 @@ export async function validerLignesAction(
   await calculerStatutDemande(demandeId);
   revalidateDemandePaths(demandeId);
 
-  const montantDemande = Number(demande.montant);
-  if (Math.round(montantValide * 100) >= Math.round(montantDemande * 100)) {
-    await notifierDemandeEntierementValidee(demande, montantValide, session.user.id);
-  } else if (montantValide > 0) {
-    await notify({
-      userId: demande.createurId,
-      titre: "Demande validée partiellement",
-      message: `Votre demande ${demande.reference} a été validée partiellement (${montantValide.toLocaleString("fr-FR")} FCFA sur ${montantDemande.toLocaleString("fr-FR")} FCFA demandés) — certaines lignes ont été rejetées.`,
-      lien: `/treso/demandes/${demandeId}`,
-      priority: "IMPORTANT",
-      category: "TRESORERIE",
-    });
-  } else {
-    await notify({
-      userId: demande.createurId,
-      titre: "Demande à corriger",
-      message: `Toutes les lignes de votre demande ${demande.reference} ont été rejetées : corrigez-la et resoumettez-la, ou abandonnez-la.`,
-      lien: `/treso/demandes/${demandeId}`,
-      priority: "CRITIQUE",
-      category: "TRESORERIE",
-    });
-  }
+  // Décision finale (demandeur, Assistant Finance, approbation de clôture si due) ou renvoi en correction.
+  await notifierEtapeCircuit(demandeId, session.user.id);
 
   return {
     status: "success",
@@ -892,7 +860,7 @@ export async function validerTotalementAction(demandeId: string): Promise<Simple
   );
   if (refus) return { status: "error", message: refus };
   revalidateDemandePaths(demandeId);
-  await notifierDemandeEntierementValidee(demande, montantDemande, session.user.id);
+  await notifierEtapeCircuit(demandeId, session.user.id);
 
   return { status: "success", message: `Demande ${demande.reference} validée totalement.` };
 }
@@ -966,18 +934,7 @@ export async function validerPartiellementAction(
   if (refus) return { status: "error", message: refus };
   revalidateDemandePaths(demandeId);
 
-  if (estFinalementTotale) {
-    await notifierDemandeEntierementValidee(demande, parsedMontant.data, session.user.id);
-  } else {
-    await notify({
-      userId: demande.createurId,
-      titre: "Demande validée partiellement",
-      message: `Votre demande ${demande.reference} a été validée partiellement (${parsedMontant.data.toLocaleString("fr-FR")} FCFA sur ${montantDemande.toLocaleString("fr-FR")} FCFA demandés).`,
-      lien: `/treso/demandes/${demandeId}`,
-      priority: "IMPORTANT",
-      category: "TRESORERIE",
-    });
-  }
+  await notifierEtapeCircuit(demandeId, session.user.id);
 
   return {
     status: "success",
@@ -1217,14 +1174,7 @@ export async function rejeterDemandeAction(
 
   revalidateDemandePaths(demandeId);
 
-  await notify({
-    userId: demande.createurId,
-    titre: "Demande à corriger",
-    message: `Votre demande ${demande.reference} vous a été renvoyée pour correction. Motif : ${parsedMotif.data}`,
-    lien: `/treso/demandes/${demandeId}`,
-    priority: "CRITIQUE",
-    category: "TRESORERIE",
-  });
+  await notifierEtapeCircuit(demandeId, session.user.id);
 
   return { status: "success", message: `Demande ${demande.reference} renvoyée au demandeur pour correction.` };
 }
@@ -1514,9 +1464,8 @@ export async function rejeterValidationCompleteAction(
   revalidateDemandePaths(demandeId);
   revalidatePath("/treso/finance/validations-attente");
 
-  // Destinataires : la Finance (`treso.valider_demande`, que le DG ne porte plus depuis la décision 10) ; l'auteur
-  // reste exclu, par précaution.
-  await notifyByPermission("treso.valider_demande", {
+  // Destinataires : ceux qui peuvent resoumettre au DG (`treso.soumettre_dg`) ; l'auteur reste exclu, par précaution.
+  await notifyByPermission("treso.soumettre_dg", {
     titre: "Validation complète rejetée par le DG",
     message: `Le DG a rejeté (à l'examen) la validation complète de la demande ${demande.reference}. Motif : ${parsedMotif.data}`,
     lien: `/treso/finance/demandes/${demandeId}`,
@@ -1718,14 +1667,7 @@ export async function resoumettreValidationCompleteDGAction(
   revalidateDemandePaths(demandeId);
   revalidatePath("/treso/finance/validations-attente");
 
-  await notifyByPermission("treso.approuver_validation_complete", {
-    titre: "Demande resoumise pour validation complète",
-    message: `La demande ${demande.reference}, précédemment rejetée, a été resoumise pour un nouvel examen. Motif : ${parsedMotif.data}`,
-    lien: "/treso/finance/validations-attente",
-    excludeUserId: session.user.id,
-    priority: "IMPORTANT",
-    category: "TRESORERIE",
-  });
+  await notifierApprobationCloture(demandeId, session.user.id);
 
   return {
     status: "success",

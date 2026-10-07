@@ -7,6 +7,7 @@ import { BENEFICIAIRE_TYPE_LABEL } from "backend";
 import { Prisma } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { notifierEtapeCircuit } from "@/lib/notificationsCircuit";
 import { prisma } from "backend";
 import { generateDemandeReference, initialiserCircuit } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
@@ -177,6 +178,8 @@ export async function creerDepenseDirecteAction(
       });
 
       publishDataChanged();
+      // Première étape : notifie ceux qui doivent agir (responsable du service, Finance ou DG selon le parcours).
+      await notifierEtapeCircuit(demande.id, session.user.id);
 
       return {
         status: "success",

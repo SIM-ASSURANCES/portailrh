@@ -139,11 +139,14 @@ export async function initialiserCircuit(
   createurId: string,
   type: TypeDemandeCircuit,
   options: OptionsParcours = {}
-): Promise<{ data: ReturnType<typeof champsParcours> & { etapeCircuit: EtapeCircuit }; detail: string }> {
+): Promise<{
+  data: ReturnType<typeof champsParcours> & { etapeCircuit: EtapeCircuit; etapeCircuitDepuis: Date };
+  detail: string;
+}> {
   const parcours = determinerParcours(await chargerProfilDemandeur(db, createurId), type, options);
   const etape = etapeInitiale(parcours);
   return {
-    data: { ...champsParcours(parcours), etapeCircuit: etape },
+    data: { ...champsParcours(parcours), etapeCircuit: etape, etapeCircuitDepuis: new Date() },
     detail: `Circuit : ${CAS_LIBELLE[parcours.cas]}. Première étape : ${LIBELLE_ETAPE_CIRCUIT[etape]}.`,
   };
 }
@@ -223,7 +226,7 @@ export async function appliquerTransitionCircuit(
 
   const maintenant = new Date();
   const motif = "motif" in action ? action.motif.trim() : null;
-  const data: Prisma.DemandeUncheckedUpdateManyInput = { etapeCircuit: r.etapeSuivante };
+  const data: Prisma.DemandeUncheckedUpdateManyInput = { etapeCircuit: r.etapeSuivante, etapeCircuitDepuis: maintenant };
   if (r.effets.niveauRejet) {
     data.niveauRejet = r.effets.niveauRejet;
     data.motifRejet = motif ?? "Toutes les lignes ont été rejetées.";
@@ -367,6 +370,7 @@ export async function corrigerEtResoumettre(
     where: { id: demandeId, etapeCircuit: "A_CORRIGER" },
     data: {
       etapeCircuit: etape,
+      etapeCircuitDepuis: new Date(),
       ...champsParcours(parcours),
       soumiseAuDG: false,
       niveauRejet: null,

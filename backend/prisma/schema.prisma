@@ -574,6 +574,10 @@ model Demande {
   niveauRejet                  NiveauRejet?
   /// Numéro du tour : 1 à la création, +1 à chaque resoumission après correction (versions dans l'historique).
   tourCircuit                  Int          @default(1)
+  /// Entrée dans l'étape courante (posée à chaque changement d'étape) : base des rappels à 48 h.
+  etapeCircuitDepuis           DateTime     @default(now())
+  /// Dernier rappel envoyé pour cette demande (au plus un par 24 h, voir `circuitNotifications.ts`).
+  dernierRappelAt              DateTime?
   /// Compte qui a pris la décision Finance (lignes ou montant) : jamais le même que l'approbateur DG (étape DG ou
   /// approbation de clôture), voir `MESSAGE_DEUX_PERSONNES`. `null` tant qu'aucune décision Finance n'est prise.
   decideurFinanceId            String?

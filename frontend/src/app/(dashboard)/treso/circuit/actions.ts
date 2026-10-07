@@ -2,13 +2,15 @@
 
 // Circuit de validation des demandes (commit 3, 2026-10-06) : actions des étapes qui n'avaient pas d'action
 // existante. Le moteur (`backend/src/circuitDemande.ts`) décide qui peut agir à l'étape courante ; chaque action
-// revérifie tout côté serveur, quel que soit l'affichage. Les écrans arrivent au commit 4, les notifications au
-// commit 5. Rejet vers le demandeur : `rejeterDemandeAction` (espace Finance), commune à tous les niveaux.
+// revérifie tout côté serveur, quel que soit l'affichage. Après chaque passage d'étape, ceux qui doivent agir sont
+// notifiés (`notifierEtapeCircuit`, commit 5). Rejet vers le demandeur : `rejeterDemandeAction` (espace Finance),
+// commune à tous les niveaux.
 
 import { revalidatePath } from "next/cache";
 
 import { getSession } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { notifierEtapeCircuit } from "@/lib/notificationsCircuit";
 import {
   appliquerTransitionCircuit,
   chargerActeur,
@@ -49,6 +51,7 @@ async function agir(
   const r = await prisma.$transaction((tx) => appliquerTransitionCircuit(tx, demandeId, acteur, action));
   if (!r.ok) return { status: "error", message: r.message };
   rafraichir(demandeId);
+  await notifierEtapeCircuit(demandeId, session.user.id);
   return { status: "success", message: succes(demande.reference) };
 }
 
@@ -128,5 +131,6 @@ export async function corrigerEtResoumettreDemandeAction(
   );
   if (!r.ok) return { status: "error", message: r.message };
   rafraichir(demandeId);
+  await notifierEtapeCircuit(demandeId, session.user.id);
   return { status: "success", message: `Demande ${demande.reference} corrigée et resoumise.` };
 }

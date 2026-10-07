@@ -45,6 +45,7 @@ export * from "./services";
 // Circuit de validation des demandes (commit 3) : moteur pur et application en base.
 export * from "./circuitDemande";
 export * from "./circuitDemandeDb";
+export * from "./circuitNotifications";
 // Onglet « À vérifier » (traitement des signalements) — commit 5b.
 export * from "./encSignalements";
 

@@ -6,6 +6,7 @@ import { Prisma } from "backend";
 import { DEVISE_CODES } from "@/components/tresorerie/devise";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { notifierEtapeCircuit } from "@/lib/notificationsCircuit";
 import { prisma } from "backend";
 import { generateDemandeReference } from "backend";
 import { chargerServiceDuDemandeur, initialiserCircuit, messageBlocageCreationDemande } from "backend";
@@ -176,6 +177,8 @@ export async function creerDemandeAction(
       });
 
       publishDataChanged();
+      // Première étape : notifie ceux qui doivent agir (responsable du service, Finance ou DG selon le parcours).
+      await notifierEtapeCircuit(demande.id, session.user.id);
 
       return {
         status: "success",

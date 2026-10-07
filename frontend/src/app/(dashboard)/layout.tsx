@@ -1,10 +1,12 @@
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { demandesEtapeDGWhere, demandesServiceAValiderWhere, prisma, reinitialisationEffectuee } from "backend";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
+import { envoyerRappelsCircuit } from "@/lib/notificationsCircuit";
 
 import { PushPermissionPrompt } from "@/components/notifications/PushPermissionPrompt";
 
@@ -18,6 +20,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!session) {
     redirect("/login");
   }
+
+  // Rappels à 48 h du circuit de validation, calculés à la volée après l'envoi de la page (aucune tâche planifiée) :
+  // au plus un rappel par 24 h et par demande, quel que soit le nombre de pages affichées.
+  after(() => envoyerRappelsCircuit());
 
   const [unreadCount, topbarAlert, servicesResponsable] = await Promise.all([
     getUnreadNotificationsCount(),

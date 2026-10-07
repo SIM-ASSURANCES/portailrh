@@ -1970,6 +1970,27 @@ reste à l'étape Service (aucun écran pour la valider).
     pas délégables (le serveur les refusait déjà) ; une note l'indique.
   - Une ancienne délégation de `valider_demande` accordée par le DG ne compte plus (calcul dynamique de
     `getSession`), mais la ligne de délégation reste en base.
+- **Commit 5 — notifications et rappels (2026-10-09)** : migration `20261009090000_circuit_notifications_rappels`
+  (`Demande.etapeCircuitDepuis`, posée à chaque changement d'étape par `circuitDemandeDb.ts`, reprise de l'historique
+  pour les demandes existantes ; `Demande.dernierRappelAt`). Logique pure dans `backend/src/circuitNotifications.ts`,
+  envoi par le service existant (`notify` : base, cloche, push, e-mail) dans `frontend/src/lib/notificationsCircuit.ts`
+  — aucun second système. Après chaque passage d'étape (création comprise), `notifierEtapeCircuit` relit la demande et
+  notifie **seulement ceux qui peuvent agir**, mêmes règles que `transition` : Service → responsable actuel du service
+  (actif) ; Finance et rejet DG → `decider_finance` ou `soumettre_dg` ; décision finale → `decider_finance` sauf le DG
+  qui a validé ; DG → `decider_dg` sauf le décideur Finance ; À corriger → le demandeur, avec niveau et motif ;
+  Terminée → le demandeur (montant validé) et `effectuer_reglement` (ni demandeur ni bénéficiaire). Jamais l'auteur de
+  l'action, jamais le demandeur (sauf l'auteur d'une dépense directe à l'étape Finance). Une étape sautée ne notifie
+  personne. L'ancien « Demande à approuver » envoyé à TOUS les porteurs de `approuver_validation_complete` (Finance et
+  Admin en production) est remplacé : « à décider (étape DG) » quand le DG agit à l'étape DG, « à approuver avant
+  clôture » seulement si l'approbation reste due (pas après une validation à l'étape DG, pas pour une demande du DG),
+  à ceux que `refusApprobationCloture` n'écarte pas. Rejet de l'approbation de clôture : `soumettre_dg` (au lieu de
+  `valider_demande`). **Rappels** : à 48 h à la même étape (Service, Finance, DG, rejet DG, décision finale, à
+  corriger), aux destinataires actuels de l'étape, au plus un par 24 h et par demande (2026-10-09, au lieu d'un par
+  heure) — calculés à la volée après
+  l'affichage d'une page du portail (`after()` dans `(dashboard)/layout.tsx`), réservation conditionnée à
+  `dernierRappelAt` (deux affichages simultanés : un seul rappel). Vérifié : vitest (22 tests, 293 au total),
+  Playwright 31/31 sur base jetable (collaborateur@, responsable-commercial@, finance@, dg@, assistant-finance@, Finance
+  et Admin portant l'approbation de clôture comme en production).
 - **Vérifié** : vitest (63 tests du moteur, 256 au total) ; migration sur une base jetable portant des demandes dans
   tous les états (aucun écart schéma/base, partie permission rejouée sans effet) ; couche base sur base seedée, 35
   scénarios (cas a à d, dépense directe, rejet et resoumission DG, concurrence, correction avec versions, abandon,
@@ -5562,6 +5583,29 @@ valide jamais sa propre demande :
 4. **Tous les autres** : Service, puis Finance.
 
 Une étape sautée s'affiche « non requise » dans la frise de progression.
+
+**Responsable visible et attribuable (2026-10-07, aucune migration, circuit inchangé)** :
+- **Écran Services** : responsable (nom, e-mail) ou badge rouge « Aucun responsable », nombre de membres, bouton
+  « Désigner / Changer » (`ServiceResponsablePicker.tsx`, recherche parmi les comptes actifs ; un responsable peut être
+  extérieur au service et responsable de plusieurs services). Remplacer un responsable demande une confirmation qui le
+  nomme (il reste membre de son service).
+- **Liste des utilisateurs** : badges « Responsable · <service> », filtre « Responsables seulement », case « Responsable
+  de ce service » par ligne (`UserResponsableToggle.tsx`) ; même case dans le formulaire de création (le compte n'est
+  créé que si la confirmation est donnée quand un autre responsable existe). L'invitation n'a pas cette case : un compte
+  invité est inactif, il ne peut pas encore être responsable.
+- **Bannière** « services sans responsable » (`components/admin/ServicesSansResponsableBanniere.tsx`) sur `/admin/services`,
+  `/admin` et l'accueil des comptes `isAdmin`.
+- **Seule porte d'écriture** : `designerResponsableService` (`frontend/src/lib/responsableService.ts`) →
+  `changerResponsableService` (`backend/src/services.ts`, transaction, écriture conditionnée au responsable lu : deux
+  changements simultanés, un seul passe). Garde `isAdmin` (la permission qui gère utilisateurs et services) revérifiée
+  par chaque action ; audit `CHANGE_RESPONSABLE` (auteur, date, ancien → nouveau). Les demandes à l'étape Service
+  suivent d'elles-mêmes le responsable actuel (`demandesServiceAValiderWhere`) : chacune reçoit une ligne d'historique
+  `changement_responsable_service` ; le message prévient si certaines sont celles du nouveau responsable (il ne pourra
+  pas les valider lui-même — règle du circuit, inchangée).
+- **Refus serveur** (`messageRefusResponsableSansRemplacant`) : désactiver, supprimer, ou changer de service un compte
+  qui est le seul responsable d'un service dont il est membre, sans remplaçant. Changer de service reste possible s'il
+  n'est responsable que de services dont il n'est pas membre.
+- Vérifié : vitest (refus et remplacement, 271 tests backend), Playwright 31/31 sur base PostgreSQL 16 jetable.
 
 ### Console admin (`/admin`)
 
