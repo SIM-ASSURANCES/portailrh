@@ -4,7 +4,7 @@ import { Icon } from "@/components/icons";
 import { EmptyState, PageHeader, ToastOnMount } from "@/components/ui";
 import { BRAND_ICON_PATHS, BRAND_ICON_VIEWBOX } from "@/components/ui/brandIcon";
 import { getAccessibleModules, getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { prisma, getMesRetoursADeclarer } from "backend";
+import { DEMANDES_A_TRAITER_FINANCE_WHERE, prisma, getMesRetoursADeclarer } from "backend";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 import { DashboardNotificationsSection, type DashboardAlertItem } from "@/components/dashboard/DashboardNotificationsSection";
 
@@ -166,8 +166,10 @@ export default async function DashboardHomePage({
     session?.user && hasPermission(session, "treso.declarer_retour")
       ? getMesRetoursADeclarer(session.user.id)
       : Promise.resolve({ nombre: 0 }),
-    session?.user && hasPermission(session, "treso.valider_demande")
-      ? prisma.demande.count({ where: { statut: "EN_ATTENTE_VALIDATION" } })
+    // Files de la Finance (circuit) : jamais les demandes qui attendent encore le responsable de service ou le DG —
+    // les mêmes que l'indicateur « À traiter » n° 1 et la page « Demandes en attente de validation ».
+    session?.user && hasPermission(session, "treso.decider_finance")
+      ? prisma.demande.count({ where: DEMANDES_A_TRAITER_FINANCE_WHERE })
       : Promise.resolve(0),
     session?.user && hasPermission(session, "treso.approuver_validation_complete")
       ? prisma.demande.count({

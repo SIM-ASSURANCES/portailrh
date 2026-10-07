@@ -39,7 +39,10 @@ import { RetoursEnAttenteTable } from "./RetoursEnAttenteTable";
 export default async function RetoursEnAttentePage() {
   const session = await getSession();
   const canReceptionner = !!session && hasPermission(session, "treso.receptionner_retour");
-  const canConsulterLectureSeule = !!session && hasPermission(session, "treso.valider_demande");
+  // Décision 10 (2026-10-08) : le DG n'a plus `treso.valider_demande` ; il consulte par `treso.voir_dashboard_finance`.
+  const canConsulterLectureSeule =
+    !!session &&
+    (hasPermission(session, "treso.valider_demande") || hasPermission(session, "treso.voir_dashboard_finance"));
   if (!canReceptionner && !canConsulterLectureSeule) {
     redirect("/?error=acces_refuse_receptionner_retour");
   }

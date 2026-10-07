@@ -1955,8 +1955,21 @@ reste à l'étape Service (aucun écran pour la valider).
     responsable-commercial@, finance@, dg@, assistant-finance@ et un second Assistant) : rejet aux niveaux Service,
     Finance (lignes toutes rejetées) et DG (cas b), rejet DG puis renvoi au demandeur, deux corrections avec lignes
     retirées, resoumissions, abandon, DG demandeur corrigeant sa demande, bénéficiaire, mobile 390 px.
-- **Reste pour le commit 4** : retirer `treso.valider_demande` du DG (décision 10), masquer les permissions de
-  décision dans `/delegations`.
+- **Commit 4, morceau 5 — nettoyage (2026-10-08)** :
+  - **`treso.valider_demande` retirée du DG** (décision 10 ; seed et migration
+    `20261008090000_valider_demande_retiree_du_dg`) : la migration la retire des rôles qui portent `treso.decider_dg`
+    sans `treso.decider_finance`, sans nommer de rôle ; idempotente. Sur une base qui reproduit la production
+    (Finance et Admin avec `approuver_validation_complete`, DG avec `valider_demande`), seul le DG la perd ; un rôle
+    combiné DG + Finance la garde. Le DG décide à l'étape DG et approuve la clôture ; il ne fait plus de validation
+    complémentaire d'une dépense directe et n'a plus la file « Demandes en attente de validation ».
+  - Les écrans de consultation anciennement liés à `valider_demande` acceptent aussi `treso.voir_dashboard_finance`
+    (« Toutes les demandes », « Retours en attente » et le détail d'un retour en lecture seule, retours exceptionnels).
+  - L'alerte d'accueil « demande(s) en attente de validation » compte exactement les files Finance
+    (`DEMANDES_A_TRAITER_FINANCE_WHERE`, jamais l'étape Service), seulement pour un compte avec `treso.decider_finance`.
+  - `/delegations` ne propose plus les 4 permissions de décision (`PERMISSIONS_DECISION_NON_DELEGABLES`), qui ne sont
+    pas délégables (le serveur les refusait déjà) ; une note l'indique.
+  - Une ancienne délégation de `valider_demande` accordée par le DG ne compte plus (calcul dynamique de
+    `getSession`), mais la ligne de délégation reste en base.
 - **Vérifié** : vitest (63 tests du moteur, 256 au total) ; migration sur une base jetable portant des demandes dans
   tous les états (aucun écart schéma/base, partie permission rejouée sans effet) ; couche base sur base seedée, 35
   scénarios (cas a à d, dépense directe, rejet et resoumission DG, concurrence, correction avec versions, abandon,

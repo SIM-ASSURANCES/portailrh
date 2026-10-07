@@ -321,7 +321,8 @@ async function main() {
       "treso.modifier_description",
     ],
     [roleDG.id]: [
-      "treso.valider_demande",
+      // Décision 10 (2026-10-08) : plus de "treso.valider_demande" — le DG décide à l'étape DG (decider_dg) et approuve
+      // la clôture ; ses consultations passent par "treso.voir_dashboard_finance".
       "treso.voir_dashboard_finance",
       "treso.voir_reporting",
       "treso.approuver_validation_complete",

@@ -1514,8 +1514,8 @@ export async function rejeterValidationCompleteAction(
   revalidateDemandePaths(demandeId);
   revalidatePath("/treso/finance/validations-attente");
 
-  // Exclut le DG lui-même (`treso.valider_demande` peut aussi être porté
-  // par le DG) — il ne doit pas se notifier de sa propre décision.
+  // Destinataires : la Finance (`treso.valider_demande`, que le DG ne porte plus depuis la décision 10) ; l'auteur
+  // reste exclu, par précaution.
   await notifyByPermission("treso.valider_demande", {
     titre: "Validation complète rejetée par le DG",
     message: `Le DG a rejeté (à l'examen) la validation complète de la demande ${demande.reference}. Motif : ${parsedMotif.data}`,

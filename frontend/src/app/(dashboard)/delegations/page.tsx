@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession } from "@/lib/auth";
-import { prisma } from "backend";
+import { PERMISSIONS_DECISION_NON_DELEGABLES, prisma } from "backend";
 
 import { DelegationForm } from "./DelegationForm";
 
@@ -10,22 +10,15 @@ const MODULES_DELEGABLES = ["tresorerie", "pointage"] as const;
 
 /**
  * Écran de délégation individuelle de permissions (voir CLAUDE.md
- * "Délégation individuelle de permissions") : restreint au Responsable
- * Finance UNIQUEMENT (Tâche "Restreindre 'Déléguer des accès' au
- * Responsable Finance", voir CLAUDE.md) — exclu pour RH (même pour ses
- * propres permissions Pointage RH), l'Assistant Finance et le DG.
+ * "Délégation individuelle de permissions") : réservé aux rôles qui portent
+ * `treso.deleguer_acces` (la Finance dans le seed), lue sur
+ * `session.rolePermissions`, jamais `session.permissions` — seul ce que le
+ * donneur possède via son PROPRE rôle compte, jamais une permission reçue par
+ * délégation.
  *
- * **`treso.valider_demande` ET PAS `treso.approuver_validation_complete`**
- * (sur `session.rolePermissions`, jamais `session.permissions` — voir
- * `getSession()`, même principe qu'avant : seul ce que le donneur possède
- * via son PROPRE rôle compte, jamais une permission reçue par délégation).
- * `treso.valider_demande` seule NE SUFFIT PAS à identifier le Responsable
- * Finance : le rôle DG la possède aussi (il valide/rejette les demandes au
- * même titre que Finance, voir CLAUDE.md "Module Trésorerie"). La
- * deuxième condition (absence de `treso.approuver_validation_complete`,
- * le marqueur du DG, jamais transmis à Finance dans le seed) exclut donc
- * spécifiquement le DG sans jamais comparer de nom de rôle en dur — même
- * principe que `estAdmin`/`peutEtreBeneficiaireDelegation`.
+ * Les permissions de décision du circuit (`PERMISSIONS_DECISION_NON_DELEGABLES`)
+ * ne sont jamais proposées : le serveur les refuse déjà à l'octroi et ne compte
+ * jamais une délégation existante (2026-10-08).
  *
  * Gardée ici (page) ET revérifiée dans chaque Server Action
  * (`accorderDelegationAction`) — jamais uniquement le masquage du lien de
@@ -48,7 +41,7 @@ export default async function DelegationsPage() {
     // dès l'affichage, en plus de la revérification serveur).
     prisma.permission.findMany({
       where: {
-        key: { in: session.rolePermissions },
+        key: { in: session.rolePermissions.filter((cle) => !PERMISSIONS_DECISION_NON_DELEGABLES.includes(cle)) },
         module: { key: { in: [...MODULES_DELEGABLES] } },
       },
       include: { module: true },
@@ -95,6 +88,11 @@ export default async function DelegationsPage() {
         title="Déléguer des accès"
         description="Accorder à un compte déjà existant l'un de vos propres droits Trésorerie ou Pointage RH — jamais plus que ce que vous possédez vous-même."
       />
+
+      <p className="rounded-md bg-info-bg px-3 py-2 text-sm text-info" data-decisions-non-delegables>
+        Les décisions du circuit de validation (décision de la Finance, soumission au DG, décision et approbation du DG)
+        ne se délèguent pas : elles ne sont pas proposées ici.
+      </p>
 
       <DelegationForm
         utilisateurs={utilisateurs}
