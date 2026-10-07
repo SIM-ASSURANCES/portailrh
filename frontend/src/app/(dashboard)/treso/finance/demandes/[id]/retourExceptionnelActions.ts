@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { getDepensesDeclarees, getRetoursRecus, getTotalRegle, prisma } from "backend";
+import { getDepensesDeclarees, getRetoursRecus, getTotalRegle, prisma, refusConflitInteret } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -53,6 +53,11 @@ export async function creerRetourExceptionnelAction(
   const session = await getSession();
   if (!session || !estAssistantFinance(session)) {
     return { status: "error", message: "Action non autorisée." };
+  }
+  // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le demandeur ni le bénéficiaire de la demande.
+  const refusConflit = await refusConflitInteret(prisma, { demandeId }, session.user.id);
+  if (refusConflit) {
+    return { status: "error", message: refusConflit };
   }
 
   const parsed = saisieSchema.safeParse({ montant, motif, pieceJointeUrl: pieceJointeUrl || undefined });
@@ -113,6 +118,11 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
   const session = await getSession();
   if (!session || !estResponsableFinance(session)) {
     return { status: "error", message: "Action non autorisée." };
+  }
+  // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le demandeur ni le bénéficiaire de la demande.
+  const refusConflit = await refusConflitInteret(prisma, { retourExceptionnelId: retourId }, session.user.id);
+  if (refusConflit) {
+    return { status: "error", message: refusConflit };
   }
 
   const retour = await prisma.retourExceptionnel.findUnique({
@@ -232,6 +242,11 @@ export async function rejeterRetourExceptionnelAction(retourId: string, motifRej
   const session = await getSession();
   if (!session || !estResponsableFinance(session)) {
     return { status: "error", message: "Action non autorisée." };
+  }
+  // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le demandeur ni le bénéficiaire de la demande.
+  const refusConflit = await refusConflitInteret(prisma, { retourExceptionnelId: retourId }, session.user.id);
+  if (refusConflit) {
+    return { status: "error", message: refusConflit };
   }
   const parsedMotif = z.string().trim().min(3, "Le motif de rejet est obligatoire (3 caractères minimum).").safeParse(motifRejet);
   if (!parsedMotif.success) {

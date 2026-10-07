@@ -8,6 +8,8 @@ import {
   determinerParcours,
   etapeInitiale,
   LIBELLE_ETAPE_CIRCUIT,
+  refusExecutionPropreDemande,
+  type OptionsParcours,
   transition,
   type ActeurCircuit,
   type ActionCircuit,
@@ -32,6 +34,58 @@ export function demandesServiceAValiderWhere(responsableId: string): Prisma.Dema
  */
 export function demandesEtapeDGWhere(dgId: string): Prisma.DemandeWhereInput {
   return { etapeCircuit: "DG", createurId: { not: dgId } };
+}
+
+/**
+ * Gardes de conflit d'intérêts (2026-10-07) : retrouve la demande à partir de l'objet visé (règlement, retour de
+ * caisse, ligne de dépense, remboursement, retour exceptionnel) et renvoie le refus si `userId` en est le demandeur
+ * ou le bénéficiaire (`refusExecutionPropreDemande`), sinon `null`. Objet introuvable : `null` (l'action le refuse
+ * ensuite avec son propre message).
+ */
+export async function refusConflitInteret(
+  db: Db,
+  cible:
+    | { demandeId: string }
+    | { reglementId: string }
+    | { retourCaisseId: string }
+    | { depenseLigneId: string }
+    | { remboursementId: string }
+    | { retourExceptionnelId: string },
+  userId: string
+): Promise<string | null> {
+  const champs = { createurId: true, beneficiaireUserId: true } as const;
+  let demande: { createurId: string; beneficiaireUserId: string | null } | null | undefined = null;
+  if ("demandeId" in cible) {
+    demande = await db.demande.findUnique({ where: { id: cible.demandeId }, select: champs });
+  } else if ("reglementId" in cible) {
+    demande = (await db.reglement.findUnique({ where: { id: cible.reglementId }, select: { demande: { select: champs } } }))?.demande;
+  } else if ("retourCaisseId" in cible) {
+    demande = (
+      await db.retourCaisse.findUnique({
+        where: { id: cible.retourCaisseId },
+        select: { reglement: { select: { demande: { select: champs } } } },
+      })
+    )?.reglement.demande;
+  } else if ("depenseLigneId" in cible) {
+    demande = (
+      await db.depenseLigne.findUnique({
+        where: { id: cible.depenseLigneId },
+        select: { retourCaisse: { select: { reglement: { select: { demande: { select: champs } } } } } },
+      })
+    )?.retourCaisse.reglement.demande;
+  } else if ("remboursementId" in cible) {
+    demande = (
+      await db.remboursementRetour.findUnique({
+        where: { id: cible.remboursementId },
+        select: { retourCaisse: { select: { reglement: { select: { demande: { select: champs } } } } } },
+      })
+    )?.retourCaisse.reglement.demande;
+  } else {
+    demande = (
+      await db.retourExceptionnel.findUnique({ where: { id: cible.retourExceptionnelId }, select: { demande: { select: champs } } })
+    )?.demande;
+  }
+  return demande ? refusExecutionPropreDemande(demande, userId) : null;
 }
 
 /** Nom du service dont les membres suivent le cas (b) (décision du 2026-10-06). Un nom de SERVICE, jamais de rôle. */
@@ -76,15 +130,17 @@ const CAS_LIBELLE: Record<Parcours["cas"], string> = {
   RESPONSABLE: "demandeur responsable de son service — étape Service non requise",
   AUTRE: "étapes Service puis Finance",
   DEPENSE_DIRECTE: "dépense directe saisie par la Finance — étape Service non requise (exception tracée)",
+  DEPENSE_DIRECTE_POUR_SOI: "dépense directe saisie par la Finance pour elle-même — le DG décide (étapes Service et Finance non requises)",
 };
 
 /** Parcours et première étape d'une nouvelle demande, avec la ligne d'historique qui l'explique. */
 export async function initialiserCircuit(
   db: Db,
   createurId: string,
-  type: TypeDemandeCircuit
+  type: TypeDemandeCircuit,
+  options: OptionsParcours = {}
 ): Promise<{ data: ReturnType<typeof champsParcours> & { etapeCircuit: EtapeCircuit }; detail: string }> {
-  const parcours = determinerParcours(await chargerProfilDemandeur(db, createurId), type);
+  const parcours = determinerParcours(await chargerProfilDemandeur(db, createurId), type, options);
   const etape = etapeInitiale(parcours);
   return {
     data: { ...champsParcours(parcours), etapeCircuit: etape },
@@ -279,7 +335,9 @@ export async function corrigerEtResoumettre(
       : Number(d.montant);
   if (!(montant > 0)) return { ok: false, message: "Le total général doit être supérieur à 0." };
 
-  const parcours = determinerParcours(await chargerProfilDemandeur(db, d.createurId), d.typeDemande);
+  const parcours = determinerParcours(await chargerProfilDemandeur(db, d.createurId), d.typeDemande, {
+    beneficiaireEstLeCreateur: d.beneficiaireUserId === d.createurId,
+  });
   const etape = etapeInitiale(parcours);
 
   // Version précédente, recopiée AVANT toute modification.

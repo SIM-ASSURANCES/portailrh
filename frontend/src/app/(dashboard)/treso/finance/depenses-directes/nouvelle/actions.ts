@@ -135,7 +135,10 @@ export async function creerDepenseDirecteAction(
   }
 
   // Circuit de validation (décision 6) : départ à l'étape Finance, Service non requise, exception tracée.
-  const circuit = await initialiserCircuit(prisma, session.user.id, "DEPENSE_DIRECTE");
+  const circuit = await initialiserCircuit(prisma, session.user.id, "DEPENSE_DIRECTE", {
+    // Garde 9 : une dépense directe pour soi-même est décidée par le DG (comme le cas b).
+    beneficiaireEstLeCreateur: beneficiaireUserIdFinal === session.user.id,
+  });
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const reference = await generateDemandeReference();

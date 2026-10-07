@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify, notifyByPermission } from "@/lib/notifications";
-import { prisma } from "backend";
+import { prisma, refusConflitInteret } from "backend";
 import { calculerStatutDemande, getEcart, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
 import {
   appliquerTransitionCircuit,
@@ -427,6 +427,11 @@ export async function modifierDescriptionAction(
   if (!peutModifier) {
     return { status: "error", message: "Action non autorisée." };
   }
+  // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le demandeur ni le bénéficiaire de la demande.
+  const refusConflit = await refusConflitInteret(prisma, { demandeId }, session.user.id);
+  if (refusConflit) {
+    return { status: "error", message: refusConflit };
+  }
 
   const parsed = modifierDescriptionSchema.safeParse({ demandeId, description: nouvelleDescription });
   if (!parsed.success) {
@@ -501,6 +506,14 @@ export async function modifierLibelleLigneAction(
     hasPermission(session, "treso.modifier_description");
   if (!peutModifier) {
     return { status: "error", message: "Action non autorisée." };
+  }
+  // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le demandeur ni le bénéficiaire de la demande.
+  const ligneVisee = await prisma.ligneDemande.findUnique({ where: { id: ligneId }, select: { demandeId: true } });
+  const refusConflit = ligneVisee
+    ? await refusConflitInteret(prisma, { demandeId: ligneVisee.demandeId }, session.user.id)
+    : null;
+  if (refusConflit) {
+    return { status: "error", message: refusConflit };
   }
 
   const parsed = modifierLibelleLigneSchema.safeParse({ ligneId, libelle: nouveauLibelle });
@@ -847,7 +860,7 @@ export async function validerLignesAction(
  */
 export async function validerTotalementAction(demandeId: string): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !hasPermission(session, "treso.valider_demande")) {
+  if (!session || !(hasPermission(session, "treso.valider_demande") || hasPermission(session, "treso.decider_dg"))) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -902,7 +915,7 @@ export async function validerPartiellementAction(
   montant: number
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !hasPermission(session, "treso.valider_demande")) {
+  if (!session || !(hasPermission(session, "treso.valider_demande") || hasPermission(session, "treso.decider_dg"))) {
     return { status: "error", message: "Action non autorisée." };
   }
 

@@ -18,6 +18,7 @@ import {
 } from "backend";
 
 import { LignesValidationTable } from "../../finance/demandes/[id]/LignesValidationTable";
+import { ValidationActions } from "../../finance/demandes/[id]/ValidationActions";
 import { DgDecisionActions } from "./DgDecisionActions";
 
 /**
@@ -171,12 +172,22 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
         </section>
       ) : null}
 
-      <DgDecisionActions
-        demandeId={demande.id}
-        decisionParLigne={decisionParLigne}
-        raisonValider={raisonIndisponible(demandeCircuit, acteur, "VALIDER_DG")}
-        raisonRejeter={raisonIndisponible(demandeCircuit, acteur, decisionParLigne ? "REJETER" : "REJETER_DG")}
-      />
+      {decisionParLigne && demande.lignes.length === 0 ? (
+        // Garde 9 : dépense directe de la Finance pour elle-même, sans lignes — le DG décide le montant.
+        <ValidationActions
+          demandeId={demande.id}
+          montantDemande={Number(demande.montant)}
+          disabled={raisonDecider !== null}
+          raisonIndisponible={raisonDecider}
+        />
+      ) : (
+        <DgDecisionActions
+          demandeId={demande.id}
+          decisionParLigne={decisionParLigne}
+          raisonValider={raisonIndisponible(demandeCircuit, acteur, "VALIDER_DG")}
+          raisonRejeter={raisonIndisponible(demandeCircuit, acteur, decisionParLigne ? "REJETER" : "REJETER_DG")}
+        />
+      )}
 
       <DemandeHistorique demandeId={demande.id} />
     </div>

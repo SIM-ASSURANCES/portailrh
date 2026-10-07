@@ -168,7 +168,7 @@ export async function creerReglementAction(
     return { status: "error", message: "Demande introuvable." };
   }
   // Conflit d'intérêts : jamais l'exécution de sa propre demande.
-  const refusPropre = refusExecutionPropreDemande(demande.createurId, session.user.id);
+  const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
   if (refusPropre) {
     return { status: "error", message: refusPropre };
   }
@@ -266,7 +266,7 @@ export async function modifierReglementAction(
 
   const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
   if (demande) {
-    const refusPropre = refusExecutionPropreDemande(demande.createurId, session.user.id);
+    const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
     if (refusPropre) return { status: "error", message: refusPropre };
   }
   if (!demande) {
@@ -371,7 +371,7 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   // `getTotalRegle` pour un seul clic sur "Confirmer" (voir CLAUDE.md
   // "Diagnostic de latence — requêtes redondantes").
   const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId } });
-  const refusPropre = refusExecutionPropreDemande(demande.createurId, session.user.id);
+  const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
   if (refusPropre) {
     return { status: "error", message: refusPropre };
   }
@@ -584,7 +584,7 @@ export async function annulerReglementAction(
       message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).`,
     };
   }
-  const refusPropre = refusExecutionPropreDemande(reglement.demande.createurId, session.user.id);
+  const refusPropre = refusExecutionPropreDemande(reglement.demande, session.user.id);
   if (refusPropre) {
     return { status: "error", message: refusPropre };
   }

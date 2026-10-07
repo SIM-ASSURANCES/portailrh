@@ -51,7 +51,12 @@ export interface ProfilDemandeur {
 
 export type TypeDemandeCircuit = "STANDARD" | "DEPENSE_DIRECTE";
 
-export type CasDemandeur = "DG" | "FINANCE" | "RESPONSABLE" | "AUTRE" | "DEPENSE_DIRECTE";
+export type CasDemandeur = "DG" | "FINANCE" | "RESPONSABLE" | "AUTRE" | "DEPENSE_DIRECTE" | "DEPENSE_DIRECTE_POUR_SOI";
+
+/** Options du parcours : une dépense directe dont le bénéficiaire est son auteur (garde 9, 2026-10-07). */
+export interface OptionsParcours {
+  beneficiaireEstLeCreateur?: boolean;
+}
 
 /** Parcours figé à la soumission (recalculé à chaque resoumission). */
 export interface Parcours {
@@ -63,17 +68,20 @@ export interface Parcours {
   approbationClotureNonRequise: boolean;
 }
 
-export function casDemandeur(profil: ProfilDemandeur, type: TypeDemandeCircuit): CasDemandeur {
-  if (type === "DEPENSE_DIRECTE") return "DEPENSE_DIRECTE";
+export function casDemandeur(profil: ProfilDemandeur, type: TypeDemandeCircuit, options: OptionsParcours = {}): CasDemandeur {
+  // Garde 9 : la Finance qui saisit une dépense directe pour elle-même ne la décide pas — le DG, comme le cas (b).
+  if (type === "DEPENSE_DIRECTE") return options.beneficiaireEstLeCreateur ? "DEPENSE_DIRECTE_POUR_SOI" : "DEPENSE_DIRECTE";
   if (profil.estDG) return "DG";
   if (profil.estFinance) return "FINANCE";
   if (profil.estResponsableDeSonService) return "RESPONSABLE";
   return "AUTRE";
 }
 
-export function determinerParcours(profil: ProfilDemandeur, type: TypeDemandeCircuit): Parcours {
-  const cas = casDemandeur(profil, type);
+export function determinerParcours(profil: ProfilDemandeur, type: TypeDemandeCircuit, options: OptionsParcours = {}): Parcours {
+  const cas = casDemandeur(profil, type, options);
   switch (cas) {
+    case "DEPENSE_DIRECTE_POUR_SOI":
+      return { cas, etapeServiceRequise: false, etapeFinanceRequise: false, modeEtapeDG: "OBLIGATOIRE", approbationClotureNonRequise: false };
     case "DEPENSE_DIRECTE":
       // Décision 6 : départ à l'étape Finance, Service non requise, Finance peut soumettre au DG.
       return { cas, etapeServiceRequise: false, etapeFinanceRequise: true, modeEtapeDG: "OPTIONNELLE", approbationClotureNonRequise: false };
@@ -456,8 +464,16 @@ export function raisonIndisponible(demande: DemandeCircuit, acteur: ActeurCircui
  * ces permissions (Assistant Finance, Finance) : un AUTRE compte le fait. `null` si l'action est permise.
  */
 export const MESSAGE_EXECUTION_PROPRE_DEMANDE =
-  "Vous êtes le demandeur : le règlement, le décaissement et la réception des retours de votre propre demande sont faits par un autre compte.";
+  "Vous êtes le demandeur ou le bénéficiaire de cette demande : un autre compte s'en charge (règlement, décaissement, retours, description).";
 
-export function refusExecutionPropreDemande(createurId: string, userId: string): string | null {
-  return createurId === userId ? MESSAGE_EXECUTION_PROPRE_DEMANDE : null;
+/**
+ * Gardes 1 à 4, 6 et 8 (2026-10-07) : le demandeur ET le bénéficiaire (compte du portail) n'exécutent jamais l'argent
+ * de la demande ni ne documentent ses retours — règlements, réception, déclaration et détail des dépenses par
+ * l'Assistant, remboursements, retours exceptionnels, description et libellés. Un autre compte le fait.
+ */
+export function refusExecutionPropreDemande(
+  demande: { createurId: string; beneficiaireUserId?: string | null },
+  userId: string
+): string | null {
+  return demande.createurId === userId || demande.beneficiaireUserId === userId ? MESSAGE_EXECUTION_PROPRE_DEMANDE : null;
 }

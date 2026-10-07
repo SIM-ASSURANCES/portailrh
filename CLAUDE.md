@@ -1916,6 +1916,22 @@ reste à l'étape Service (aucun écran pour la valider).
   seul ne peut pas régler sa propre demande, et aucune délégation ne le contourne aujourd'hui (Finance n'a plus
   `effectuer_reglement` dans son rôle, donc ne peut pas le déléguer) — il faut un second compte Assistant Finance.
   Vérifié : migration (3 rôles, rejouée sans effet), Playwright 14/14.
+- **Commit 4, morceau 3c — gardes de conflit d'intérêts (2026-10-07)** : `refusExecutionPropreDemande(demande, userId)`
+  refuse désormais le demandeur **et le bénéficiaire** (compte du portail, garde 8). `refusConflitInteret(db, cible,
+  userId)` (`circuitDemandeDb.ts`) retrouve la demande depuis un règlement, un retour de caisse, une ligne de dépense,
+  un remboursement ou un retour exceptionnel, et sert de garde serveur (après le contrôle de permission) à :
+  déclaration des dépenses par l'Assistant, détail, ajustement du total, marquage non justifié, justification après
+  réception, retour complémentaire (gardes 1, 2) ; proposition, validation et rejet d'un remboursement (garde 3) ;
+  saisie, validation et rejet d'un retour exceptionnel post-clôture (garde 4) ; description et libellés de lignes
+  (garde 6). **Garde 9** : une dépense directe dont le bénéficiaire est son auteur (Finance pour elle-même) suit le
+  cas `DEPENSE_DIRECTE_POUR_SOI` (étapes Service et Finance non requises, étape DG obligatoire, décision du DG vaut
+  approbation de clôture) ; sans lignes, le DG décide le montant avec `ValidationActions` sur `/treso/dg/[id]`
+  (`validerTotalementAction`/`validerPartiellementAction` acceptent `treso.decider_dg`, le moteur filtrant par
+  étape). **Non codés, volontairement** : catégoriser (garde 5) et clôturer (garde 7) sa propre demande.
+  `treso.declarer_retour` donnée à Finance, Assistant Finance et DG (seed, migration
+  `20261007120000_declarer_retour_finance_dg`, par permission sœur, idempotente) : ils déclarent le retour de leurs
+  propres demandes comme tout demandeur. Vérifié : migration (3 rôles, rejouée sans effet), vitest (67 tests du
+  moteur, 260 au total), Playwright 22/22 avec un second compte Assistant Finance qui agit à la place du demandeur.
 - **Reste pour le commit 4** : retirer `treso.valider_demande` du DG (décision 10), masquer les permissions de
   décision dans `/delegations`, et **garder visible dans l'historique une ligne retirée à la correction, avec ses
   décisions** (lecture depuis la version recopiée en JSON, ou suppression logique) : on ne modifie jamais une écriture

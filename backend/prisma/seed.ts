@@ -295,8 +295,10 @@ async function main() {
     // pour qu'une seule personne ne puisse jamais à la fois valider une
     // dépense ET la régler.
     [roleFinance.id]: [
-      // Décision 3 du circuit (2026-10-07) : la Finance crée aussi des demandes (cas b : le DG les décide).
+      // Décision 3 du circuit (2026-10-07) : la Finance crée aussi des demandes (cas b : le DG les décide), et déclare
+      // le retour de caisse des siennes (un autre compte le réceptionne).
       "treso.creer_demande",
+      "treso.declarer_retour",
       "treso.categoriser_demande",
       "treso.valider_demande",
       "treso.cloturer_demande",
@@ -324,8 +326,9 @@ async function main() {
       "treso.voir_reporting",
       "treso.approuver_validation_complete",
       "treso.decider_dg",
-      // Décision 3 : le DG crée aussi des demandes (cas a : la Finance les décide).
+      // Décision 3 : le DG crée aussi des demandes (cas a : la Finance les décide) et déclare leur retour de caisse.
       "treso.creer_demande",
+      "treso.declarer_retour",
       "pointage.consulter_tous",
       "pointage.voir_dashboard_rh",
       "pointage.voir_reporting",
@@ -370,6 +373,7 @@ async function main() {
       "treso.receptionner_retour",
       "treso.modifier_description",
       "treso.creer_demande",
+      "treso.declarer_retour",
     ],
     // Module Encaissements : un rôle par profil du cahier (§2).
     ...Object.fromEntries(rolesEncaissements.map((role, i) => [role.id, ENC_ROLES_DEPART[i].permissions])),
