@@ -140,6 +140,8 @@ export interface NavFlags {
    * responsable d'aucun service (entrée « Demandes de mon service » absente), sinon le nombre (pastille).
    */
   demandesServiceAValider?: number | null;
+  /** Circuit de validation : demandes à l'étape DG (`treso.decider_dg`), `null` sans cette permission (entrée absente). */
+  demandesDGADecider?: number | null;
 }
 
 /**
@@ -228,6 +230,7 @@ export function getNavBranches({
   canModererFeedback,
   canConsulterEncaissements,
   demandesServiceAValider = null,
+  demandesDGADecider = null,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -348,6 +351,16 @@ export function getNavBranches({
                     label: "Reporting",
                     href: "/treso/finance/reporting",
                     icon: "download",
+                  } satisfies NavItem,
+                ]
+              : []),
+            ...(demandesDGADecider !== null
+              ? [
+                  {
+                    label: "Étape DG",
+                    href: "/treso/dg",
+                    icon: "briefcase",
+                    compteur: demandesDGADecider,
                   } satisfies NavItem,
                 ]
               : []),

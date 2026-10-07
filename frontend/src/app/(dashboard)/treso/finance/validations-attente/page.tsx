@@ -33,7 +33,7 @@ export default async function ValidationsAttentePage() {
 
   const demandes = await prisma.demande.findMany({
     // Jamais les demandes émises par le DG (approbation non requise) ; celles approuvées à l'étape DG en sortent.
-    where: VALIDATION_COMPLETE_EN_ATTENTE_WHERE,
+    where: { ...VALIDATION_COMPLETE_EN_ATTENTE_WHERE, createurId: { not: session.user.id } },
     select: {
       id: true,
       reference: true,

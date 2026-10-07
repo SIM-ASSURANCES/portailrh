@@ -69,7 +69,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       hasPermission(session, "treso.categoriser_demande") ||
       hasPermission(session, "treso.valider_demande") ||
       hasPermission(session, "treso.receptionner_retour") ||
-      hasPermission(session, "treso.voir_dashboard_finance");
+      hasPermission(session, "treso.voir_dashboard_finance") ||
+      // Circuit de validation : le DG décide à l'étape DG (sans dépendre de treso.valider_demande).
+      hasPermission(session, "treso.decider_dg");
     const estCreateurOuBeneficiaire =
       piece.demande.createurId === session.user.id || piece.demande.beneficiaireUserId === session.user.id;
     // Circuit de validation : le responsable ACTUEL du service du demandeur, qui décide l'étape Service.

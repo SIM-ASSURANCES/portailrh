@@ -174,6 +174,7 @@ export default async function DashboardHomePage({
           where: {
             validationCompleteParDG: false,
             approbationClotureNonRequise: false,
+            createurId: { not: session.user.id },
             statut: { in: ["REGLEE", "PARTIELLEMENT_REGLEE"] },
           },
         })
@@ -260,6 +261,9 @@ export default async function DashboardHomePage({
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+      {error === "acces_refuse_dg" ? (
+        <ToastOnMount variant="error" message="Cette page est réservée à la décision du DG." />
+      ) : null}
       {error === "acces_refuse_service" ? (
         <ToastOnMount variant="error" message="Cette page est réservée aux responsables de service." />
       ) : null}

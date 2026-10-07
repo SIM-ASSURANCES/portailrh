@@ -1897,6 +1897,18 @@ reste à l'étape Service (aucun écran pour la valider).
   service. Le responsable du service du demandeur peut aussi télécharger les pièces jointes de la demande
   (`/api/treso/pieces-jointes/[id]`). Vérifié : Playwright 23/23 (responsable-commercial@, collaborateur de
   Commercial, refus serveur pour le responsable d'un autre service et pour le demandeur).
+- **Commit 4, morceau 3 — écrans du DG** : `/treso/dg` (« Étape DG », `treso.decider_dg` : « Soumises par la
+  Finance » et « Demandes de la Finance » = cas b ; `demandesEtapeDGWhere`) et `/treso/dg/[id]` (lignes une par une,
+  montants, motif, pièces, frise, historique). Demande soumise : Valider (vaut l'approbation de clôture) / Rejeter
+  (motif ≥ 3, retour à la Finance). Cas b : décision ligne par ligne avec le composant de la Finance
+  (`LignesValidationTable`, sans catégorisation ni libellé), finale, et « Rejeter la demande » (renvoi au demandeur,
+  `rejeterDemandeEtapeDGAction`). Boutons grisés hors étape avec la phrase du moteur (règle des deux personnes
+  comprise). Menu « Étape DG » avec compteur. File « Validations complètes en attente » conservée pour les demandes
+  jamais soumises, sans les demandes du DG connecté (aussi dans les compteurs du tableau de bord Finance et de
+  l'accueil). `treso.decider_dg` ouvre aussi les pièces jointes des demandes. Vérifié : Playwright 33/33 (dg@,
+  finance@, collaborateur@, responsable-commercial@ : rejet DG puis resoumission, cas b, file, action hors étape
+  refusée, deux personnes). **Décision 3 non appliquée** : seul le rôle Collaborateur a `treso.creer_demande` ; une
+  demande du cas b (Finance, Assistant) ou du DG ne peut pas encore être créée à l'écran.
 - **Reste pour le commit 4** : retirer `treso.valider_demande` du DG (décision 10), masquer les permissions de
   décision dans `/delegations`, et **garder visible dans l'historique une ligne retirée à la correction, avec ses
   décisions** (lecture depuis la version recopiée en JSON, ou suppression logique) : on ne modifie jamais une écriture

@@ -263,9 +263,13 @@ export async function getRetoursExceptionnelsEnAttenteValidation(): Promise<Comp
  * page appelante revérifie cette permission, jamais supposée acquise du
  * simple fait d'avoir accès au dashboard Finance.
  */
-export async function getValidationsCompletesEnAttente(): Promise<{ nombre: number }> {
+export async function getValidationsCompletesEnAttente(exclureCreateurId?: string): Promise<{ nombre: number }> {
+  // `exclureCreateurId` : le DG connecté — jamais ses propres demandes (il ne les approuve pas).
   const nombre = await prisma.demande.count({
-    where: VALIDATION_COMPLETE_EN_ATTENTE_WHERE,
+    where: {
+      ...VALIDATION_COMPLETE_EN_ATTENTE_WHERE,
+      ...(exclureCreateurId ? { createurId: { not: exclureCreateurId } } : {}),
+    },
   });
   return { nombre };
 }

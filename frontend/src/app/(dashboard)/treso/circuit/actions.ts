@@ -28,6 +28,8 @@ function rafraichir(demandeId: string) {
   revalidatePath("/treso/finance/demandes");
   revalidatePath("/treso/demandes");
   revalidatePath("/treso/service");
+  revalidatePath("/treso/dg");
+  revalidatePath(`/treso/dg/${demandeId}`);
   revalidatePath(`/treso/service/${demandeId}`);
   revalidatePath("/", "layout");
   publishDataChanged();
@@ -61,6 +63,16 @@ export async function validerEtapeServiceAction(demandeId: string): Promise<Resu
  * écrans du responsable.
  */
 export async function rejeterEtapeServiceAction(demandeId: string, motif: string): Promise<Resultat> {
+  const r = await rejeterDemandeAction(demandeId, motif ?? "");
+  if (r.status === "success") rafraichir(demandeId);
+  return { status: r.status === "success" ? "success" : "error", message: r.message ?? "" };
+}
+
+/**
+ * Étape DG, cas b (demande de la Finance) : le DG rejette la demande entière (motif obligatoire) ; elle part en
+ * correction. Même action que tout rejet vers le demandeur, plus le rafraîchissement des écrans du DG.
+ */
+export async function rejeterDemandeEtapeDGAction(demandeId: string, motif: string): Promise<Resultat> {
   const r = await rejeterDemandeAction(demandeId, motif ?? "");
   if (r.status === "success") rafraichir(demandeId);
   return { status: r.status === "success" ? "success" : "error", message: r.message ?? "" };

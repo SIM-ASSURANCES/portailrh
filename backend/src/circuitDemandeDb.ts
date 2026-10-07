@@ -26,6 +26,14 @@ export function demandesServiceAValiderWhere(responsableId: string): Prisma.Dema
   return { etapeCircuit: "SERVICE", createur: { service: { responsableId } } };
 }
 
+/**
+ * Demandes à l'étape DG pour ce compte DG : soumises par la Finance (décision sur la demande entière) ou émises par la
+ * Finance (cas b, décision ligne par ligne). Jamais les siennes (une demande du DG ne passe jamais par l'étape DG).
+ */
+export function demandesEtapeDGWhere(dgId: string): Prisma.DemandeWhereInput {
+  return { etapeCircuit: "DG", createurId: { not: dgId } };
+}
+
 /** Nom du service dont les membres suivent le cas (b) (décision du 2026-10-06). Un nom de SERVICE, jamais de rôle. */
 export const SERVICE_FINANCE = "Finance";
 

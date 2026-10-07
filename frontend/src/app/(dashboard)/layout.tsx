@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { demandesServiceAValiderWhere, prisma, reinitialisationEffectuee } from "backend";
+import { demandesEtapeDGWhere, demandesServiceAValiderWhere, prisma, reinitialisationEffectuee } from "backend";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 
@@ -29,6 +29,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
     servicesResponsable > 0
       ? await prisma.demande.count({ where: demandesServiceAValiderWhere(session.user.id) })
       : null;
+  // « Étape DG » : seulement pour un compte qui décide à l'étape DG.
+  const demandesDGADecider = hasPermission(session, "treso.decider_dg")
+    ? await prisma.demande.count({ where: demandesEtapeDGWhere(session.user.id) })
+    : null;
 
   return (
     <AppShell
@@ -111,6 +115,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canModererFeedback={hasPermission(session, "feedback.moderer")}
       canConsulterEncaissements={hasPermission(session, "enc.consulter")}
       demandesServiceAValider={demandesServiceAValider}
+      demandesDGADecider={demandesDGADecider}
       canRecevoirFeedback={session.peutRecevoirFeedback}
       unreadNotificationsCount={unreadCount}
     >

@@ -63,6 +63,8 @@ interface SidebarProps {
   canConsulterEncaissements?: boolean;
   /** Voir `NavFlags.demandesServiceAValider`. */
   demandesServiceAValider?: number | null;
+  /** Voir `NavFlags.demandesDGADecider`. */
+  demandesDGADecider?: number | null;
   /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
   canRecevoirFeedback?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
@@ -123,6 +125,7 @@ export function Sidebar({
   canModererFeedback = false,
   canConsulterEncaissements = false,
   demandesServiceAValider = null,
+  demandesDGADecider = null,
   canRecevoirFeedback = false,
   mobileOpen,
   onCloseMobile,
@@ -149,6 +152,7 @@ export function Sidebar({
     canModererFeedback,
     canConsulterEncaissements,
     demandesServiceAValider,
+    demandesDGADecider,
   });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0]?.key ?? null

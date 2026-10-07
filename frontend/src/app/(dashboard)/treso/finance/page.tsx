@@ -94,7 +94,7 @@ export default async function DashboardFinancePage() {
     getDepensesNonJustifiees(),
     getDecaissementsARegulariser(),
     canApprouverValidationComplete
-      ? getValidationsCompletesEnAttente()
+      ? getValidationsCompletesEnAttente(session?.user.id)
       : Promise.resolve({ nombre: 0 }),
     getEvolutionSoldeCaisse(30),
     getTopCategoriesBudget(5),

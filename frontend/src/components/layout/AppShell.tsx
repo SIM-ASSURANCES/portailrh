@@ -52,6 +52,7 @@ interface AppShellProps {
   canModererFeedback?: boolean;
   canConsulterEncaissements?: boolean;
   demandesServiceAValider?: number | null;
+  demandesDGADecider?: number | null;
   /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
   canRecevoirFeedback?: boolean;
   unreadNotificationsCount?: number;
@@ -92,6 +93,7 @@ export function AppShell({
   canModererFeedback = false,
   canConsulterEncaissements = false,
   demandesServiceAValider = null,
+  demandesDGADecider = null,
   canRecevoirFeedback = false,
   unreadNotificationsCount = 0,
   topbarAlert = null,
@@ -200,6 +202,7 @@ export function AppShell({
         canModererFeedback={canModererFeedback}
         canConsulterEncaissements={canConsulterEncaissements}
         demandesServiceAValider={demandesServiceAValider}
+        demandesDGADecider={demandesDGADecider}
         canRecevoirFeedback={canRecevoirFeedback}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
