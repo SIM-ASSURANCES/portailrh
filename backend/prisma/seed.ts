@@ -295,6 +295,8 @@ async function main() {
     // pour qu'une seule personne ne puisse jamais à la fois valider une
     // dépense ET la régler.
     [roleFinance.id]: [
+      // Décision 3 du circuit (2026-10-07) : la Finance crée aussi des demandes (cas b : le DG les décide).
+      "treso.creer_demande",
       "treso.categoriser_demande",
       "treso.valider_demande",
       "treso.cloturer_demande",
@@ -322,6 +324,8 @@ async function main() {
       "treso.voir_reporting",
       "treso.approuver_validation_complete",
       "treso.decider_dg",
+      // Décision 3 : le DG crée aussi des demandes (cas a : la Finance les décide).
+      "treso.creer_demande",
       "pointage.consulter_tous",
       "pointage.voir_dashboard_rh",
       "pointage.voir_reporting",
@@ -360,7 +364,13 @@ async function main() {
     // l'alimentation de caisse/la correction du solde d'ouverture/la
     // dépense directe (délégables au cas par cas par le Responsable
     // Finance, voir CLAUDE.md).
-    [roleAssistantFinance.id]: ["treso.effectuer_reglement", "treso.receptionner_retour", "treso.modifier_description"],
+    // Décision 3 : l'Assistant crée aussi des demandes (cas b), mais n'exécute jamais l'argent des siennes.
+    [roleAssistantFinance.id]: [
+      "treso.effectuer_reglement",
+      "treso.receptionner_retour",
+      "treso.modifier_description",
+      "treso.creer_demande",
+    ],
     // Module Encaissements : un rôle par profil du cahier (§2).
     ...Object.fromEntries(rolesEncaissements.map((role, i) => [role.id, ENC_ROLES_DEPART[i].permissions])),
   };

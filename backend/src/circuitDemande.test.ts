@@ -8,6 +8,8 @@ import {
   etapeInitiale,
   friseProgression,
   MESSAGE_DEUX_PERSONNES,
+  MESSAGE_EXECUTION_PROPRE_DEMANDE,
+  refusExecutionPropreDemande,
   messageAttente,
   raisonIndisponible,
   refusApprobationCloture,
@@ -400,5 +402,12 @@ describe("raisons des boutons grisés (écran = serveur)", () => {
       decideurFinanceId: "f",
     });
     expect(d).toEqual({ etape: "DG", createurId: "c", typeDemande: "STANDARD", etapeServiceRequise: true, etapeFinanceRequise: true, modeEtapeDG: "OPTIONNELLE", approbateurDGId: null, decideurFinanceId: "f" });
+  });
+});
+
+describe("conflit d'intérêts : jamais l'exécution de sa propre demande", () => {
+  it("refusé au demandeur, permis à tout autre compte", () => {
+    expect(refusExecutionPropreDemande("u-assist", "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
+    expect(refusExecutionPropreDemande("u-assist", "u-autre")).toBeNull();
   });
 });

@@ -449,3 +449,15 @@ export function raisonIndisponible(demande: DemandeCircuit, acteur: ActeurCircui
   const r = transition(demande, acteur, action);
   return r.ok ? null : r.message;
 }
+
+/**
+ * Conflit d'intérêts (décision 3, 2026-10-07) : personne n'exécute l'argent de sa propre demande — règlement (création,
+ * modification, confirmation = décaissement, annulation) et réception d'un retour de caisse. Le demandeur peut porter
+ * ces permissions (Assistant Finance, Finance) : un AUTRE compte le fait. `null` si l'action est permise.
+ */
+export const MESSAGE_EXECUTION_PROPRE_DEMANDE =
+  "Vous êtes le demandeur : le règlement, le décaissement et la réception des retours de votre propre demande sont faits par un autre compte.";
+
+export function refusExecutionPropreDemande(createurId: string, userId: string): string | null {
+  return createurId === userId ? MESSAGE_EXECUTION_PROPRE_DEMANDE : null;
+}

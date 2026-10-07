@@ -1907,8 +1907,15 @@ reste à l'étape Service (aucun écran pour la valider).
   jamais soumises, sans les demandes du DG connecté (aussi dans les compteurs du tableau de bord Finance et de
   l'accueil). `treso.decider_dg` ouvre aussi les pièces jointes des demandes. Vérifié : Playwright 33/33 (dg@,
   finance@, collaborateur@, responsable-commercial@ : rejet DG puis resoumission, cas b, file, action hors étape
-  refusée, deux personnes). **Décision 3 non appliquée** : seul le rôle Collaborateur a `treso.creer_demande` ; une
-  demande du cas b (Finance, Assistant) ou du DG ne peut pas encore être créée à l'écran.
+  refusée, deux personnes).
+- **Commit 4, morceau 3b — décision 3 et conflit d'intérêts** : `treso.creer_demande` donnée à Finance, Assistant
+  Finance et DG (seed, et migration `20261007090000_creer_demande_finance_dg` : rôles portant `decider_finance`,
+  `effectuer_reglement` ou `decider_dg`, jamais un nom de rôle ; idempotente) — création et « mes demandes » ouvertes
+  par cette permission. **Personne n'exécute l'argent de sa propre demande** (`refusExecutionPropreDemande`) : créer,
+  modifier, confirmer (décaisser) ou annuler un règlement, réceptionner un retour. **Limite** : un Assistant Finance
+  seul ne peut pas régler sa propre demande, et aucune délégation ne le contourne aujourd'hui (Finance n'a plus
+  `effectuer_reglement` dans son rôle, donc ne peut pas le déléguer) — il faut un second compte Assistant Finance.
+  Vérifié : migration (3 rôles, rejouée sans effet), Playwright 14/14.
 - **Reste pour le commit 4** : retirer `treso.valider_demande` du DG (décision 10), masquer les permissions de
   décision dans `/delegations`, et **garder visible dans l'historique une ligne retirée à la correction, avec ses
   décisions** (lecture depuis la version recopiée en JSON, ou suppression logique) : on ne modifie jamais une écriture

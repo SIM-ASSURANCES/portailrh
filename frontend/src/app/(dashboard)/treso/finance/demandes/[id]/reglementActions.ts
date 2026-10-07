@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { prisma, type Prisma } from "backend";
+import { prisma, refusExecutionPropreDemande, type Prisma } from "backend";
 import {
   calculerStatutDemande,
   getCategoriesConcerneesDemande,
@@ -167,6 +167,11 @@ export async function creerReglementAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
+  // Conflit d'intérêts : jamais l'exécution de sa propre demande.
+  const refusPropre = refusExecutionPropreDemande(demande.createurId, session.user.id);
+  if (refusPropre) {
+    return { status: "error", message: refusPropre };
+  }
   if (demande.validationCompleteRejeteeParDG) {
     return { status: "error", message: MESSAGE_GEL_REJET_DG };
   }
@@ -260,6 +265,10 @@ export async function modifierReglementAction(
   }
 
   const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
+  if (demande) {
+    const refusPropre = refusExecutionPropreDemande(demande.createurId, session.user.id);
+    if (refusPropre) return { status: "error", message: refusPropre };
+  }
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
@@ -362,6 +371,10 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   // `getTotalRegle` pour un seul clic sur "Confirmer" (voir CLAUDE.md
   // "Diagnostic de latence — requêtes redondantes").
   const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId } });
+  const refusPropre = refusExecutionPropreDemande(demande.createurId, session.user.id);
+  if (refusPropre) {
+    return { status: "error", message: refusPropre };
+  }
   if (demande.validationCompleteRejeteeParDG) {
     return { status: "error", message: MESSAGE_GEL_REJET_DG };
   }
@@ -570,6 +583,10 @@ export async function annulerReglementAction(
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).`,
     };
+  }
+  const refusPropre = refusExecutionPropreDemande(reglement.demande.createurId, session.user.id);
+  if (refusPropre) {
+    return { status: "error", message: refusPropre };
   }
 
   const operations: Prisma.PrismaPromise<unknown>[] = [

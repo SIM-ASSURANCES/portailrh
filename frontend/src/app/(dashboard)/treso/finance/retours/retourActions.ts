@@ -7,7 +7,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notifierParPermission, notify } from "@/lib/notifications";
 import { snapshotLigne, type CorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
-import { calculerMontantARetournerNet, getRecuNetSignalement, getSoldeCaisse, prisma } from "backend";
+import { calculerMontantARetournerNet, getRecuNetSignalement, getSoldeCaisse, prisma, refusExecutionPropreDemande } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -245,6 +245,11 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   }
   if (retour.estReceptionne) {
     return { status: "error", message: "Ce retour de caisse est déjà réceptionné." };
+  }
+  // Conflit d'intérêts : jamais la réception du retour de sa propre demande.
+  const refusPropre = refusExecutionPropreDemande(retour.reglement.demande.createurId, session.user.id);
+  if (refusPropre) {
+    return { status: "error", message: refusPropre };
   }
   // Tâche "Réouverture exceptionnelle post-clôture pour retour de caisse
   // oublié" (voir CLAUDE.md) : une demande CLOTUREE reste bloquée pour
