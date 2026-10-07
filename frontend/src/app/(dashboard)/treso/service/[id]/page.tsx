@@ -8,6 +8,7 @@ import {
   BENEFICIAIRE_TYPE_LABEL,
   chargerActeur,
   getBeneficiaireNom,
+  motifLigneDemandeur,
   prisma,
   raisonIndisponible,
   versDemandeCircuit,
@@ -72,10 +73,13 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
               <dd className="mt-1 text-sm text-foreground">{demande.dateLivraisonSouhaitee.toLocaleDateString("fr-FR")}</dd>
             </div>
           ) : null}
-          <div className="sm:col-span-2">
-            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Motif de l&apos;achat</dt>
-            <dd className="mt-1 whitespace-pre-line text-sm text-foreground">{motif}</dd>
-          </div>
+          {/* Ancien motif d'en-tête (lecture seule) : une demande récente porte un motif par ligne. */}
+          {motif ? (
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Motif de l&apos;achat</dt>
+              <dd className="mt-1 whitespace-pre-line text-sm text-foreground">{motif}</dd>
+            </div>
+          ) : null}
           <div className="sm:col-span-2">
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pièces jointes</dt>
             <dd className="mt-1 space-x-3 text-sm text-foreground">
@@ -108,6 +112,11 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
                   <span className="ml-2 text-xs font-normal text-muted-foreground tabular-nums">
                     {l.quantite} × {Number(l.prixUnitaire).toLocaleString("fr-FR")} FCFA
                   </span>
+                  {motifLigneDemandeur(l) ? (
+                    <span data-motif-ligne className="block text-xs font-normal text-muted-foreground">
+                      Motif : {motifLigneDemandeur(l)}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="text-sm font-bold text-foreground tabular-nums">
                   {(l.quantite * Number(l.prixUnitaire)).toLocaleString("fr-FR")} FCFA

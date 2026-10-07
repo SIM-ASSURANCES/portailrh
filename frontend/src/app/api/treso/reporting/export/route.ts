@@ -108,6 +108,7 @@ export async function GET(request: NextRequest) {
     // vide pour une DEPENSE_DIRECTE (une seule ligne = la demande entière,
     // comportement inchangé).
     { header: "Ligne d'article", key: "libelleLigne", width: 24 },
+    { header: "Motif", key: "motif", width: 36 },
     { header: "Créateur", key: "createur", width: 22 },
     { header: "Service", key: "service", width: 18 },
     { header: "Catégorie", key: "categorie", width: 18 },
@@ -120,6 +121,7 @@ export async function GET(request: NextRequest) {
     sheetDemandes.addRow({
       reference: d.reference,
       libelleLigne: d.libelleLigne ?? "—",
+      motif: d.motif ?? "—",
       createur: d.createurNom,
       service: d.service ?? "—",
       categorie: d.categorieLabel,

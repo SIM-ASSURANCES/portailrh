@@ -24,6 +24,7 @@
 export * from "./generated/prisma/enums";
 export * from "./validation";
 export * from "./beneficiaire";
+export * from "./motifLigne";
 // Constantes/validations pures uniquement (compteur de caractères côté
 // client) — depuis `./feedback-constants`, JAMAIS depuis `./feedback` :
 // même un `export { X } from "./feedback"` nommé (pas `export *`)

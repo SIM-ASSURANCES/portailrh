@@ -2666,9 +2666,23 @@ demande non catégorisée, comme pour une dépense directe). Retiré du Select
 d'en-tête, du zod de `creerDemandeAction` et de l'écriture Prisma — ne pas
 le réintroduire côté collaborateur sans décision explicite contraire.
 
-**Motif de l'achat** — `Textarea` élargie (`rows={7}`, contre 4
-auparavant) avec un placeholder invitant à préciser contexte/usage/urgence
-— même champ (`Demande.description`), pas un champ séparé.
+**Motif par ligne (2026-10-09, remplace le « Motif de l'achat » d'en-tête)** — migration idempotente
+`20261009120000_motif_par_ligne` : `LigneDemande.motif`, `motifOriginal`, `motifDemandeur` (nullables en base) et
+`Demande.description` rendue nullable. Le libellé (désignation de l'article) ne jouait pas ce rôle : nouvelle colonne.
+- Obligatoire à la création (`creerDemandeAction`) et à la correction (`corrigerEtResoumettre`), 3 caractères minimum
+  (`refusMotifLigne`, `MOTIF_LIGNE_MIN`, `backend/src/motifLigne.ts`). Une nouvelle demande standard n'a plus de motif
+  d'en-tête (`description: null`).
+- Versions et droits **identiques au libellé** : `modifierMotifLigneAction` (mêmes gardes que
+  `modifierLibelleLigneAction` : `treso.modifier_description`, jamais le demandeur ni le bénéficiaire, Assistant après la
+  décision finale, verrou `CLOTUREE` ; historique `modification_motif_ligne`, gestion interne) ; `motifOriginal` posé
+  une seule fois ; le demandeur voit toujours sa version (`motifLigneDemandeur`) ; une correction versionne le motif
+  comme le libellé et la version recopiée dans l'historique porte le motif de chaque ligne.
+- Affiché partout où la ligne s'affiche : demandeur, Service, Finance et Assistant (`LignesValidationTable`), DG,
+  historique des versions, export Excel (feuille « Demandes », colonne « Motif »). Listes : `resumeMotifDemande`
+  (« libellé : motif »). Aucune notification ne citait le motif de l'achat (elles citent le motif d'un rejet).
+- **Anciennes demandes** : leur motif d'en-tête reste en base et s'affiche en **lecture seule** (`modifierDescriptionAction`
+  refuse une demande standard) ; leurs lignes sans motif en reçoivent un à la prochaine correction. La dépense directe
+  (sans ligne) garde sa description, modifiable comme avant.
 
 **Prix unitaire** — `LigneEdit.prixUnitaire` est une **chaîne**, pas un
 nombre (`""` par défaut, jamais `"0"`) : un état initial numérique à `0`
@@ -2683,9 +2697,16 @@ Placeholder `"0"` à titre indicatif ; converti en nombre
 Finance ni aux deux PDF (toujours « FCFA » en dur) — sans conséquence tant
 qu'aucune demande n'utilise une autre devise.
 
-Mapping bénéficiaire à la création : Collaborateur/Stagiaire → créateur
-connecté ; SIM Assurances CI → nom libre pré-rempli ; Fournisseur/prestataire
-→ pas encore de champ de nom dédié.
+**Champ « Bénéficiaire » (2026-10-09, remplace la liste « Entité bénéficiaire »)** — « Moi-même » (par défaut), un autre
+compte ACTIF du portail (revérifié côté serveur) ou un nom libre ; `champsBeneficiaire` (`backend/src/beneficiaire.ts`)
+remplit les trois champs existants : un compte → `COLLABORATEUR` + compte (aucun profil ne distingue un stagiaire sur un
+compte) ; un nom libre → `ENTREPRISE` pour « SIM Assurances (CI) », sinon `FOURNISSEUR`, avec le nom saisi. Jamais un
+compte et un nom à la fois. Les anciennes demandes gardent leur type et leur bénéficiaire. Aucune règle changée : la garde 8
+(`refusExecutionPropreDemande`), les pièces jointes, le filtre et la colonne bénéficiaire du reporting, le reçu et le bon
+de caisse lisent les mêmes champs. Vérifié : vitest (13 tests, 306 au total), Playwright sur base jetable (demande à
+plusieurs lignes et motifs, bénéficiaire autre compte, Service → Finance → DG → correction → resoumission, garde 8 sur
+l'Assistant bénéficiaire, règlement par un second Assistant, reçu, export filtré, ancienne demande antérieure à la
+migration).
 
 ### Validation ligne par ligne
 

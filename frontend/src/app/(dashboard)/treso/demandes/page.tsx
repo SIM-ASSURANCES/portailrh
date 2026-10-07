@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Button, PageHeader, ToastOnMount } from "@/components/ui";
-import { getBeneficiaireNom } from "backend";
+import { getBeneficiaireNom, resumeMotifDemande } from "backend";
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
@@ -54,14 +54,14 @@ export default async function MesDemandesPage({
       createurId: session.user.id,
       ...(statutsFiltre.length > 0 ? { statut: { in: statutsFiltre } } : {}),
     },
-    include: { beneficiaireUser: true },
+    include: { beneficiaireUser: true, lignes: { select: { libelle: true, motif: true }, orderBy: { createdAt: "asc" } } },
     orderBy: { createdAt: "desc" },
   });
 
   const demandes = rawDemandes.map((d) => ({
     id: d.id,
     reference: d.reference,
-    description: d.description,
+    description: resumeMotifDemande(d.description, d.lignes),
     montant: Number(d.montant),
     devise: d.devise,
     statut: d.statut,

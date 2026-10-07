@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { demandesEtapeDGWhere, prisma } from "backend";
+import { demandesEtapeDGWhere, prisma, resumeMotifDemande } from "backend";
 
 import { DemandesDGTable } from "./DemandesDGTable";
 
@@ -19,7 +19,10 @@ export default async function EtapeDGPage() {
 
   const demandes = await prisma.demande.findMany({
     where: demandesEtapeDGWhere(session.user.id),
-    include: { createur: { select: { fullName: true, service: { select: { name: true } } } } },
+    include: {
+      createur: { select: { fullName: true, service: { select: { name: true } } } },
+      lignes: { select: { libelle: true, motif: true }, orderBy: { createdAt: "asc" } },
+    },
     orderBy: { createdAt: "asc" },
   });
   const ligne = (d: (typeof demandes)[number]) => ({
@@ -28,7 +31,7 @@ export default async function EtapeDGPage() {
     demandeur: d.createur.fullName,
     service: d.createur.service?.name ?? "—",
     montant: Number(d.montant),
-    motif: d.description,
+    motif: resumeMotifDemande(d.description, d.lignes),
     createdAt: d.createdAt.toISOString(),
   });
   const soumises = demandes.filter((d) => d.modeEtapeDG !== "OBLIGATOIRE").map(ligne);

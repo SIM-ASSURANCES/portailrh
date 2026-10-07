@@ -489,7 +489,10 @@ model Demande {
   /// Montant demandé (nom de champ conservé pour limiter la casse — voir
   /// CLAUDE.md "Refonte V1"). Distinct de `montantValide` ci-dessous.
   montant              Decimal       @db.Decimal(14, 2)
-  description          String
+  /// Motif d'en-tête (« Motif de l'achat »). Depuis le motif par ligne (2026-10-09), `null` pour une nouvelle demande
+  /// standard : le motif est porté par chaque `LigneDemande.motif`. Conservé tel quel, en lecture seule, sur les
+  /// anciennes demandes ; toujours renseigné pour une dépense directe (sa description).
+  description          String?
   /// Version ORIGINALE de `description`, immuable une fois posée — voir
   /// CLAUDE.md "Libellé de demande modifiable avec traçabilité permanente".
   /// `null` tant que `description` n'a JAMAIS été modifiée depuis la
@@ -717,6 +720,14 @@ model LigneDemande {
   /// Dernière version du libellé écrite par le DEMANDEUR lors d'une correction (même principe que
   /// `Demande.descriptionDemandeur`) ; `null` = jamais corrigé.
   libelleDemandeur String?
+
+  /// Motif de la ligne (pourquoi cet article), obligatoire à la création et à la correction (2026-10-09). `null`
+  /// seulement pour les lignes antérieures, dont le motif est l'ancien motif d'en-tête (`Demande.description`).
+  /// Versions et droits d'édition identiques au libellé : `motifOriginal` (posé une seule fois, à la première
+  /// modification par Finance ou par une correction), `motifDemandeur` (dernière version écrite par le demandeur).
+  motif          String?
+  motifOriginal  String?
+  motifDemandeur String?
 
   /// `EN_ATTENTE` par défaut, posée UNE SEULE FOIS par
   /// `validerLignesAction` (décision unique et complète, jamais de

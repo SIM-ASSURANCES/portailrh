@@ -85,10 +85,13 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
               <dd className="mt-1 text-sm text-foreground">{demande.dateLivraisonSouhaitee.toLocaleDateString("fr-FR")}</dd>
             </div>
           ) : null}
-          <div className="sm:col-span-2">
-            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Motif de l&apos;achat</dt>
-            <dd className="mt-1 whitespace-pre-line text-sm text-foreground">{demande.description}</dd>
-          </div>
+          {/* Ancien motif d'en-tête ou description d'une dépense directe ; une demande récente porte un motif par ligne. */}
+          {demande.description ? (
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Motif de l&apos;achat</dt>
+              <dd className="mt-1 whitespace-pre-line text-sm text-foreground">{demande.description}</dd>
+            </div>
+          ) : null}
           <div className="sm:col-span-2">
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pièces jointes</dt>
             <dd className="mt-1 space-x-3 text-sm text-foreground">
@@ -124,6 +127,8 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
             id: l.id,
             libelle: l.libelle,
             libelleOriginal: l.libelleOriginal,
+            motif: l.motif,
+            motifOriginal: l.motifOriginal,
             quantite: l.quantite,
             prixUnitaire: Number(l.prixUnitaire),
             statutValidation: l.statutValidation,
@@ -155,6 +160,11 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
                   <span className="ml-2 text-xs font-normal text-muted-foreground tabular-nums">
                     {l.quantite} × {Number(l.prixUnitaire).toLocaleString("fr-FR")} {devise}
                   </span>
+                  {l.motif ? (
+                    <span data-motif-ligne className="block text-xs font-normal text-muted-foreground">
+                      Motif : {l.motif}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="flex items-center gap-2">
                   {l.statutValidation !== "EN_ATTENTE" ? (

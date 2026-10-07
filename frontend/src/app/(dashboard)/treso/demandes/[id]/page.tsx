@@ -20,7 +20,7 @@ import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma } from "backend";
+import { motifLigneDemandeur, prisma } from "backend";
 
 import { CorrectionDemande } from "./CorrectionDemande";
 import { ReglementsRecusSection } from "./ReglementsRecusSection";
@@ -186,12 +186,16 @@ export default async function MaDemandeDetailPage({
               (`descriptionOriginale` si Finance l'a modifiée depuis,
               jamais la version modifiée) — choix documenté, le CDC ne
               tranchant pas explicitement ce point. */}
-          <div className="sm:col-span-2">
-            <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Description du besoin
-            </dt>
-            <dd className="whitespace-pre-line text-sm text-foreground">{descriptionDemandeur}</dd>
-          </div>
+          {/* Motif d'en-tête : seulement pour une ancienne demande (lecture seule) ou une dépense directe. Une demande
+              récente porte un motif par ligne (tableau des articles). */}
+          {descriptionDemandeur ? (
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {demande.typeDemande === "STANDARD" ? "Motif de l'achat (ancienne demande)" : "Description du besoin"}
+              </dt>
+              <dd className="whitespace-pre-line text-sm text-foreground">{descriptionDemandeur}</dd>
+            </div>
+          ) : null}
           {demande.commentaire ? (
             <div className="sm:col-span-2">
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -263,7 +267,12 @@ export default async function MaDemandeDetailPage({
                           toujours la version ORIGINALE du libellé, jamais la
                           version modifiée par Finance — même principe que
                           `descriptionOriginale` pour la demande elle-même. */}
-                      <td className="px-3 py-2 text-foreground">{libelleDemandeur(ligne)}</td>
+                      <td className="px-3 py-2 text-foreground">
+                        {libelleDemandeur(ligne)}
+                        {motifLigneDemandeur(ligne) ? (
+                          <p data-motif-ligne className="mt-0.5 text-xs text-muted-foreground">Motif : {motifLigneDemandeur(ligne)}</p>
+                        ) : null}
+                      </td>
                       <td className="px-3 py-2 text-right text-foreground">{ligne.quantite}</td>
                       <td className="px-3 py-2 text-right text-foreground">
                         {formatMontantDevise(Number(ligne.prixUnitaire), demande.devise)}
@@ -276,7 +285,7 @@ export default async function MaDemandeDetailPage({
                           {STATUT_LIGNE_DEMANDE_LABEL[ligne.statutValidation]}
                         </Badge>
                         {ligne.statutValidation === "REJETEE" && ligne.motifRejet ? (
-                          <p className="mt-1 text-xs text-muted-foreground">Motif : {ligne.motifRejet}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">Motif du rejet : {ligne.motifRejet}</p>
                         ) : null}
                       </td>
                     </tr>
@@ -334,6 +343,7 @@ export default async function MaDemandeDetailPage({
             lignesInitiales={demande.lignes.map((l) => ({
               id: l.id,
               libelle: libelleDemandeur(l),
+              motif: motifLigneDemandeur(l) ?? "",
               quantite: l.quantite,
               prixUnitaire: Number(l.prixUnitaire),
             }))}

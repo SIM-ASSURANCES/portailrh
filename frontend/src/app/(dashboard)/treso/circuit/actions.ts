@@ -119,10 +119,11 @@ export async function corrigerEtResoumettreDemandeAction(
   const lignes = Array.isArray(correction?.lignes) ? correction.lignes : [];
   const r = await prisma.$transaction((tx) =>
     corrigerEtResoumettre(tx, demandeId, session.user.id, {
-      description: String(correction?.description ?? ""),
+      description: correction?.description === undefined ? undefined : String(correction.description),
       lignes: lignes.map((l) => ({
         id: l.id ? String(l.id) : undefined,
         libelle: String(l.libelle ?? ""),
+        motif: String(l.motif ?? ""),
         quantite: Number(l.quantite),
         prixUnitaire: Number(l.prixUnitaire),
       })),

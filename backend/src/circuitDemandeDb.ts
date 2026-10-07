@@ -17,6 +17,7 @@ import {
   type ProfilDemandeur,
   type TypeDemandeCircuit,
 } from "./circuitDemande";
+import { refusMotifLigne } from "./motifLigne";
 
 type Db = Prisma.TransactionClient;
 
@@ -278,12 +279,16 @@ export interface LigneCorrigee {
   /** Ligne existante à modifier ; absente = nouvelle ligne. Une ligne existante non renvoyée est retirée. */
   id?: string;
   libelle: string;
+  /** Motif de la ligne, obligatoire (2026-10-09). */
+  motif: string;
   quantite: number;
   prixUnitaire: number;
 }
 
 export interface CorrectionDemande {
-  description: string;
+  /** Motif d'en-tête : modifiable seulement pour une dépense directe (sans ligne). Ignoré pour une demande standard,
+   *  dont le motif est porté par chaque ligne (l'ancien motif d'en-tête reste en lecture seule). */
+  description?: string;
   lignes: LigneCorrigee[];
   /** Nouvelle pièce jointe (les précédentes sont conservées). */
   pieceJointeUrl?: string;
@@ -321,13 +326,18 @@ export async function corrigerEtResoumettre(
   );
   if (!r.ok) return r;
 
-  const description = correction.description.trim();
-  if (description.length < 3) return { ok: false, message: "Merci de préciser le motif de l'achat (3 caractères minimum)." };
-  if (d.typeDemande === "STANDARD" && correction.lignes.length === 0) {
+  const estStandard = d.typeDemande === "STANDARD";
+  const description = estStandard ? d.description : (correction.description ?? "").trim();
+  if (!estStandard && (description ?? "").length < 3) {
+    return { ok: false, message: "Merci de préciser le motif de l'achat (3 caractères minimum)." };
+  }
+  if (estStandard && correction.lignes.length === 0) {
     return { ok: false, message: "Ajoutez au moins une ligne d'article." };
   }
   for (const l of correction.lignes) {
     if (!l.libelle.trim()) return { ok: false, message: "Chaque ligne doit avoir un libellé." };
+    const refusMotif = refusMotifLigne(l.motif);
+    if (refusMotif) return { ok: false, message: refusMotif };
     if (!Number.isInteger(l.quantite) || l.quantite < 1) return { ok: false, message: "Chaque ligne doit avoir un nombre entier supérieur à 0." };
     if (!(l.prixUnitaire >= 0)) return { ok: false, message: "Prix unitaire invalide." };
   }
@@ -355,6 +365,7 @@ export async function corrigerEtResoumettre(
     lignes: d.lignes.map((l) => ({
       id: l.id,
       libelle: l.libelle,
+      motif: l.motif,
       quantite: l.quantite,
       prixUnitaire: Number(l.prixUnitaire),
       decision: l.statutValidation,
@@ -385,7 +396,7 @@ export async function corrigerEtResoumettre(
       montant,
       montantValide: null,
       statut: "EN_ATTENTE_VALIDATION",
-      ...(description !== d.description
+      ...(!estStandard && description !== d.description
         ? { description, descriptionDemandeur: description, descriptionOriginale: d.descriptionOriginale ?? d.description }
         : {}),
     },
@@ -408,6 +419,7 @@ export async function corrigerEtResoumettre(
 
   for (const l of correction.lignes) {
     const libelle = l.libelle.trim();
+    const motif = l.motif.trim();
     const decisionRemiseAZero = { statutValidation: "EN_ATTENTE" as const, motifRejet: null, decideParId: null, decideAt: null };
     if (l.id) {
       const avant = existantes.get(l.id)!;
@@ -420,10 +432,14 @@ export async function corrigerEtResoumettre(
           ...(libelle !== avant.libelle
             ? { libelle, libelleDemandeur: libelle, libelleOriginal: avant.libelleOriginal ?? avant.libelle }
             : {}),
+          // Même versionnement que le libellé ; une ancienne ligne sans motif reçoit son premier motif.
+          ...(motif !== avant.motif
+            ? { motif, motifDemandeur: motif, motifOriginal: avant.motifOriginal ?? avant.motif }
+            : {}),
         },
       });
     } else {
-      await db.ligneDemande.create({ data: { demandeId, libelle, quantite: l.quantite, prixUnitaire: l.prixUnitaire } });
+      await db.ligneDemande.create({ data: { demandeId, libelle, motif, quantite: l.quantite, prixUnitaire: l.prixUnitaire } });
     }
   }
   if (correction.pieceJointeUrl) {

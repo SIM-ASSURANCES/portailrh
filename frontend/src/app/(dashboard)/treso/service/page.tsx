@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession } from "@/lib/auth";
-import { demandesServiceAValiderWhere, prisma } from "backend";
+import { demandesServiceAValiderWhere, prisma, resumeMotifDemande } from "backend";
 
 import { DemandesServiceTable } from "./DemandesServiceTable";
 
@@ -25,7 +25,10 @@ export default async function DemandesServicePage() {
 
   const demandes = await prisma.demande.findMany({
     where: demandesServiceAValiderWhere(session.user.id),
-    include: { createur: { select: { fullName: true, service: { select: { name: true } } } } },
+    include: {
+      createur: { select: { fullName: true, service: { select: { name: true } } } },
+      lignes: { select: { libelle: true, motif: true }, orderBy: { createdAt: "asc" } },
+    },
     orderBy: { createdAt: "asc" },
   });
 
@@ -44,7 +47,7 @@ export default async function DemandesServicePage() {
           demandeur: d.createur.fullName,
           service: d.createur.service?.name ?? "—",
           montant: Number(d.montant),
-          motif: d.description,
+          motif: resumeMotifDemande(d.description, d.lignes),
           createdAt: d.createdAt.toISOString(),
         }))}
       />

@@ -22,7 +22,7 @@ import {
 
 /** Refus du moteur du circuit levé DANS une transaction pour l'annuler entièrement (jamais exporté). */
 class RefusCircuit extends Error {}
-import { fieldErrorsFromZod, type ActionState } from "backend";
+import { fieldErrorsFromZod, MOTIF_LIGNE_MIN, type ActionState } from "backend";
 
 /**
  * Validation complémentaire qui comble le reliquat d'une dépense directe (hors circuit : la décision finale est déjà
@@ -433,6 +433,11 @@ export async function modifierDescriptionAction(
   if (demande.statut === "CLOTUREE") {
     return { status: "error", message: "Cette demande est clôturée : sa description ne peut plus être modifiée." };
   }
+  // Motif par ligne (2026-10-09) : une demande d'achat porte un motif par ligne ; son ancien motif d'en-tête reste en
+  // lecture seule. Seule la dépense directe (sans ligne) garde une description modifiable.
+  if (demande.typeDemande === "STANDARD") {
+    return { status: "error", message: "Le motif d'une demande d'achat se modifie ligne par ligne." };
+  }
   // Circuit (décision 5) : sans pouvoir de décision Finance (l'Assistant), modification seulement après la décision
   // finale.
   if (!hasPermission(session, "treso.decider_finance") && !decisionFinalePrise(demande.etapeCircuit)) {
@@ -548,6 +553,60 @@ export async function modifierLibelleLigneAction(
   revalidateDemandePaths(ligne.demandeId);
 
   return { status: "success", message: "Libellé modifié." };
+}
+
+const modifierMotifLigneSchema = z.object({
+  ligneId: z.string().min(1),
+  motif: z.string().trim().min(MOTIF_LIGNE_MIN, `Le motif doit contenir au moins ${MOTIF_LIGNE_MIN} caractères`),
+});
+
+/**
+ * Modifie le motif d'UNE ligne d'article (`LigneDemande.motif`, 2026-10-09). Mêmes droits et mêmes gardes que
+ * `modifierLibelleLigneAction` (permission `treso.modifier_description`, jamais le demandeur ni le bénéficiaire,
+ * Assistant après la décision finale seulement, verrou `CLOTUREE`), même versionnement : `motifOriginal` posé une
+ * seule fois, le demandeur voit toujours sa version.
+ */
+export async function modifierMotifLigneAction(ligneId: string, nouveauMotif: string): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.modifier_description")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  const ligneVisee = await prisma.ligneDemande.findUnique({ where: { id: ligneId }, select: { demandeId: true } });
+  const refusConflit = ligneVisee
+    ? await refusConflitInteret(prisma, { demandeId: ligneVisee.demandeId }, session.user.id)
+    : null;
+  if (refusConflit) return { status: "error", message: refusConflit };
+
+  const parsed = modifierMotifLigneSchema.safeParse({ ligneId, motif: nouveauMotif });
+  if (!parsed.success) return { status: "error", message: parsed.error.issues[0].message };
+
+  const ligne = await prisma.ligneDemande.findUnique({ where: { id: parsed.data.ligneId }, include: { demande: true } });
+  if (!ligne) return { status: "error", message: "Ligne introuvable." };
+  if (ligne.demande.statut === "CLOTUREE") {
+    return { status: "error", message: "Cette demande est clôturée : le motif ne peut plus être modifié." };
+  }
+  if (!hasPermission(session, "treso.decider_finance") && !decisionFinalePrise(ligne.demande.etapeCircuit)) {
+    return { status: "error", message: MESSAGE_ATTENTE_VALIDATION_FINALE };
+  }
+  if (parsed.data.motif === ligne.motif) return { status: "success", message: "Aucun changement à enregistrer." };
+
+  await prisma.$transaction([
+    prisma.ligneDemande.update({
+      where: { id: parsed.data.ligneId },
+      data: { motif: parsed.data.motif, motifOriginal: ligne.motifOriginal ?? ligne.motif },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "LigneDemande",
+        entityId: parsed.data.ligneId,
+        action: "modification_motif_ligne",
+        detail: `Motif modifié par ${session.user.fullName} — ancienne version : « ${ligne.motif ?? "aucun"} »`,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+  revalidateDemandePaths(ligne.demandeId);
+  return { status: "success", message: "Motif modifié." };
 }
 
 function revalidateDemandePaths(demandeId: string) {

@@ -481,6 +481,8 @@ export function estExecutantFinance(permissions: readonly string[]): boolean {
 export interface LigneVersion {
   id: string;
   libelle: string;
+  /** Motif de la ligne (absent des versions antérieures au 2026-10-09, et `null` pour une ancienne ligne). */
+  motif?: string | null;
   quantite: number;
   prixUnitaire: number;
   decision: "EN_ATTENTE" | "VALIDEE" | "REJETEE";
@@ -494,7 +496,8 @@ export interface LigneVersion {
 export interface VersionDemande {
   tour: number;
   rejet: { niveau: "SERVICE" | "FINANCE" | "DG" | null; motif: string | null };
-  description: string;
+  /** Motif d'en-tête : `null` pour une demande à motifs par ligne. */
+  description: string | null;
   montant: number;
   lignes: LigneVersion[];
 }

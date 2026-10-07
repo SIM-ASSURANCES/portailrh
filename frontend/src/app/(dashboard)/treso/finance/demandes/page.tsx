@@ -1,5 +1,5 @@
 import { PageHeader } from "@/components/ui";
-import { FILES_FINANCE_WHERE, getBeneficiaireNom } from "backend";
+import { FILES_FINANCE_WHERE, getBeneficiaireNom, resumeMotifDemande } from "backend";
 import { prisma } from "backend";
 
 import { DemandesACategoriserTable } from "./DemandesACategoriserTable";
@@ -16,7 +16,7 @@ export default async function FinanceDemandesPage() {
   const charger = (where: object) =>
     prisma.demande.findMany({
       where,
-      include: { createur: true, beneficiaireUser: true },
+      include: { createur: true, beneficiaireUser: true, lignes: { select: { libelle: true, motif: true }, orderBy: { createdAt: "asc" } } },
       orderBy: { createdAt: "asc" },
     });
   const [etapeFinance, reliquats, rejetDG, decisionFinale] = await Promise.all([
@@ -33,7 +33,7 @@ export default async function FinanceDemandesPage() {
       createurNom: d.createur.fullName,
       beneficiaireNom: getBeneficiaireNom(d),
       montant: Number(d.montant),
-      description: d.description,
+      description: resumeMotifDemande(d.description, d.lignes),
       createdAt: d.createdAt,
       statut: d.statut,
       typeDemande: d.typeDemande,

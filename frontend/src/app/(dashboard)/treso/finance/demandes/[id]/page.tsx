@@ -124,6 +124,8 @@ export default async function CategoriserDemandePage({
     id: ligne.id,
     libelle: ligne.libelle,
     libelleOriginal: ligne.libelleOriginal,
+    motif: ligne.motif,
+    motifOriginal: ligne.motifOriginal,
     quantite: ligne.quantite,
     prixUnitaire: Number(ligne.prixUnitaire),
     statutValidation: ligne.statutValidation,
@@ -330,17 +332,33 @@ export default async function CategoriserDemandePage({
               </dd>
             </div>
           ) : null}
-          <DescriptionEditor
-            demandeId={demande.id}
-            description={demande.description}
-            descriptionOriginale={demande.descriptionOriginale}
-            disabled={
-              !canModifierDescription || demande.statut === "CLOTUREE" || !!attenteValidationFinale || !!conflitInteret
-            }
-            raisonIndisponible={
-              canModifierDescription && demande.statut !== "CLOTUREE" ? (attenteValidationFinale ?? conflitInteret) : null
-            }
-          />
+          {/* Motif par ligne (2026-10-09) : une demande d'achat n'a plus de motif d'en-tête ; celui d'une ancienne demande
+              reste affiché en lecture seule. La dépense directe garde sa description modifiable. */}
+          {demande.typeDemande === "DEPENSE_DIRECTE" ? (
+            <DescriptionEditor
+              demandeId={demande.id}
+              description={demande.description ?? ""}
+              descriptionOriginale={demande.descriptionOriginale}
+              disabled={
+                !canModifierDescription || demande.statut === "CLOTUREE" || !!attenteValidationFinale || !!conflitInteret
+              }
+              raisonIndisponible={
+                canModifierDescription && demande.statut !== "CLOTUREE" ? (attenteValidationFinale ?? conflitInteret) : null
+              }
+            />
+          ) : demande.description ? (
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Motif de l&apos;achat (ancienne demande, lecture seule)
+              </dt>
+              {demande.descriptionOriginale != null ? (
+                <dd className="mt-1 text-xs text-muted-foreground">
+                  Version initiale : <span className="italic">{demande.descriptionOriginale}</span>
+                </dd>
+              ) : null}
+              <dd className="whitespace-pre-line text-sm text-foreground">{demande.description}</dd>
+            </div>
+          ) : null}
           {demande.commentaire ? (
             <div className="sm:col-span-2">
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">

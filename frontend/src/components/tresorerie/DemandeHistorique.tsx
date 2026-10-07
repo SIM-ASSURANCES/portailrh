@@ -81,6 +81,7 @@ const ACTION_LABELS: Record<string, string> = {
   validation_ligne: "Ligne d'article validée",
   rejet_ligne: "Ligne d'article rejetée",
   modification_libelle_ligne: "Libellé d'une ligne d'article modifié",
+  modification_motif_ligne: "Motif d'une ligne d'article modifié",
   // Tâche "Catégorisation par ligne" (voir CLAUDE.md) — même entité
   // `LigneDemande` que ci-dessus.
   categorisation_ligne: "Catégorisation d'une ligne d'article",
@@ -164,13 +165,16 @@ function VersionCorrection({
           </>
         ) : null}
       </p>
-      {afficherDescription ? <p className="text-xs text-muted-foreground">Motif de l&apos;achat : {version.description}</p> : null}
+      {afficherDescription && version.description ? (
+        <p className="text-xs text-muted-foreground">Motif de l&apos;achat : {version.description}</p>
+      ) : null}
       {version.lignes.length > 0 ? (
         <ul className="space-y-1 rounded-md bg-muted p-2">
           {version.lignes.map((l) => (
             <li key={l.id} className="text-xs text-foreground">
               <span className="font-medium">{l.libelle}</span> — {l.quantite} × {l.prixUnitaire.toLocaleString("fr-FR")} FCFA ·{" "}
               <DecisionLigne ligne={l} />
+              {l.motif ? <span className="block text-muted-foreground">Motif : {l.motif}</span> : null}
             </li>
           ))}
         </ul>
@@ -183,6 +187,7 @@ function VersionCorrection({
               <li key={l.id} className="text-xs text-foreground">
                 <span className="font-medium line-through">{l.libelle}</span> — {l.quantite} ×{" "}
                 {l.prixUnitaire.toLocaleString("fr-FR")} FCFA · décision : <DecisionLigne ligne={l} />
+                {l.motif ? <span className="block text-muted-foreground">Motif : {l.motif}</span> : null}
               </li>
             ))}
           </ul>
@@ -220,6 +225,7 @@ const ACTIONS_GESTION_INTERNE = new Set([
   "CATEGORISER",
   "modification_description",
   "modification_libelle_ligne",
+  "modification_motif_ligne",
   "categorisation_ligne",
   "retour_exceptionnel_saisie",
   "retour_exceptionnel_rejete",

@@ -22,6 +22,7 @@ export * from "./geo-utils";
 export * from "./reference";
 export * from "./validation";
 export * from "./beneficiaire";
+export * from "./motifLigne";
 export * from "./feedback";
 export * from "./reinitialisation";
 
