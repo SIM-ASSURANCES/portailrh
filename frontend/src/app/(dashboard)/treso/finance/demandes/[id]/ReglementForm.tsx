@@ -34,11 +34,14 @@ export function ReglementForm({
   resteARegler,
   categoriesConcernees,
   disabled = false,
+  raisonIndisponible = null,
 }: {
   demandeId: string;
   resteARegler: number;
   categoriesConcernees: CategorieAllocationOption[];
   disabled?: boolean;
+  /** Phrase affichée sous le bouton grisé à la place du message de rôle (conflit d'intérêts). */
+  raisonIndisponible?: string | null;
 }) {
   const [state, formAction, isPending] = useActionState(creerReglementAction, IDLE_ACTION_STATE);
   const [open, setOpen] = useState(false);
@@ -80,7 +83,7 @@ export function ReglementForm({
         </Button>
         {disabled ? (
           <p className="text-xs text-muted-foreground">
-            Votre rôle ne permet pas d&apos;effectuer de règlement.
+            {raisonIndisponible ?? "Votre rôle ne permet pas d'effectuer de règlement."}
           </p>
         ) : null}
       </div>

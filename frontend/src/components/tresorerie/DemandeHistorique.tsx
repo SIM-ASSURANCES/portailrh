@@ -1,5 +1,11 @@
 import { parseCorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
-import { prisma } from "backend";
+import {
+  lignesRetireesParCorrection,
+  lireVersionCorrection,
+  prisma,
+  type LigneVersion,
+  type VersionDemande,
+} from "backend";
 
 /**
  * Libellés lisibles pour les actions déjà connues. Volontairement non
@@ -114,6 +120,78 @@ function ListeLignes({ titre, lignes }: { titre: string; lignes: LigneSnapshot[]
   );
 }
 
+const DECISION_LIGNE: Record<LigneVersion["decision"], string> = {
+  EN_ATTENTE: "En attente",
+  VALIDEE: "Validée",
+  REJETEE: "Rejetée",
+};
+
+const NIVEAU_REJET: Record<string, string> = { SERVICE: "responsable de service", FINANCE: "Finance", DG: "DG" };
+
+function DecisionLigne({ ligne }: { ligne: LigneVersion }) {
+  return (
+    <>
+      {DECISION_LIGNE[ligne.decision] ?? ligne.decision}
+      {ligne.decision === "REJETEE" && ligne.motifRejet ? <> (motif : {ligne.motifRejet})</> : null}
+      {ligne.decidePar ? <> — par {ligne.decidePar}</> : null}
+      {ligne.decideAt ? <> le {new Date(ligne.decideAt).toLocaleDateString("fr-FR")}</> : null}
+    </>
+  );
+}
+
+/**
+ * Version d'une demande recopiée avant une correction (`correction_demande`) : tour, rejet, montant et lignes avec
+ * leurs décisions ; puis les lignes RETIRÉES à cette correction (absentes de la version suivante), avec leur décision —
+ * elles n'existent plus en base, l'historique les relit ici (2026-10-07).
+ */
+function VersionCorrection({
+  version,
+  retirees,
+  afficherDescription,
+}: {
+  version: VersionDemande;
+  retirees: LigneVersion[];
+  afficherDescription: boolean;
+}) {
+  return (
+    <div className="mt-1 space-y-2" data-version-tour={version.tour}>
+      <p className="text-foreground">
+        Tour {version.tour} — {version.montant.toLocaleString("fr-FR")} FCFA
+        {version.rejet?.niveau ? (
+          <>
+            {" "}— rejetée par {NIVEAU_REJET[version.rejet.niveau] ?? version.rejet.niveau}
+            {version.rejet.motif ? <> (motif : {version.rejet.motif})</> : null}
+          </>
+        ) : null}
+      </p>
+      {afficherDescription ? <p className="text-xs text-muted-foreground">Motif de l&apos;achat : {version.description}</p> : null}
+      {version.lignes.length > 0 ? (
+        <ul className="space-y-1 rounded-md bg-muted p-2">
+          {version.lignes.map((l) => (
+            <li key={l.id} className="text-xs text-foreground">
+              <span className="font-medium">{l.libelle}</span> — {l.quantite} × {l.prixUnitaire.toLocaleString("fr-FR")} FCFA ·{" "}
+              <DecisionLigne ligne={l} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {retirees.length > 0 ? (
+        <div className="rounded-md border border-dashed border-danger p-2" data-lignes-retirees>
+          <p className="text-xs font-semibold uppercase tracking-wide text-danger">Lignes retirées à cette correction</p>
+          <ul className="mt-1 space-y-1">
+            {retirees.map((l) => (
+              <li key={l.id} className="text-xs text-foreground">
+                <span className="font-medium line-through">{l.libelle}</span> — {l.quantite} ×{" "}
+                {l.prixUnitaire.toLocaleString("fr-FR")} FCFA · décision : <DecisionLigne ligne={l} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function labelForAction(action: string): string {
   return ACTION_LABELS[action] ?? action;
 }
@@ -174,19 +252,37 @@ export async function DemandeHistorique({
   // demandeId` — il faut donc d'abord connaître les lignes de CETTE
   // demande pour les inclure dans le même historique fusionné.
   const lignes = await prisma.ligneDemande.findMany({ where: { demandeId }, select: { id: true } });
-  const ligneIds = lignes.map((ligne) => ligne.id);
+  const idsActuels = lignes.map((ligne) => ligne.id);
+  const filtreAction = masquerGestionInterne ? { action: { notIn: Array.from(ACTIONS_GESTION_INTERNE) } } : {};
 
-  const entries = await prisma.historiqueEntry.findMany({
-    where: {
-      OR: [
-        { entity: "Demande", entityId: demandeId },
-        ...(ligneIds.length > 0 ? [{ entity: "LigneDemande", entityId: { in: ligneIds } }] : []),
-      ],
-      ...(masquerGestionInterne ? { action: { notIn: Array.from(ACTIONS_GESTION_INTERNE) } } : {}),
-    },
+  const entreesDemande = await prisma.historiqueEntry.findMany({
+    where: { entity: "Demande", entityId: demandeId, ...filtreAction },
     include: { user: true },
     orderBy: { createdAt: "asc" },
   });
+
+  // Circuit (2026-10-07) : une ligne retirée pendant une correction n'existe plus en base ; elle reste lisible dans la
+  // version recopiée (`correction_demande`), et ses propres entrées (validation/rejet) restent dans l'historique.
+  const versions = entreesDemande
+    .filter((e) => e.action === "correction_demande")
+    .map((e) => ({ id: e.id, version: lireVersionCorrection(e.detail) }))
+    .filter((x): x is { id: string; version: VersionDemande } => x.version !== null);
+  const retireesParVersion = lignesRetireesParCorrection(
+    versions.map((x) => x.version),
+    idsActuels
+  );
+  const versionParEntree = new Map(versions.map((x, i) => [x.id, { version: x.version, retirees: retireesParVersion[i] }]));
+  const ligneIds = Array.from(new Set([...idsActuels, ...versions.flatMap((x) => x.version.lignes.map((l) => l.id))]));
+
+  const entreesLignes =
+    ligneIds.length > 0
+      ? await prisma.historiqueEntry.findMany({
+          where: { entity: "LigneDemande", entityId: { in: ligneIds }, ...filtreAction },
+          include: { user: true },
+          orderBy: { createdAt: "asc" },
+        })
+      : [];
+  const entries = [...entreesDemande, ...entreesLignes].sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime());
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
@@ -202,6 +298,16 @@ export async function DemandeHistorique({
                 {entry.user.fullName} — {entry.createdAt.toLocaleString("fr-FR")}
               </p>
               {(() => {
+                const versionCorrection = versionParEntree.get(entry.id);
+                if (versionCorrection) {
+                  return (
+                    <VersionCorrection
+                      version={versionCorrection.version}
+                      retirees={versionCorrection.retirees}
+                      afficherDescription={!masquerGestionInterne}
+                    />
+                  );
+                }
                 const correction = parseCorrectionDetail(entry.detail);
                 if (!correction) return entry.detail ? <p className="mt-1 text-foreground">{entry.detail}</p> : null;
                 return (

@@ -6,15 +6,23 @@ import {
   STATUT_LIGNE_DEMANDE_BADGE_VARIANT,
   STATUT_LIGNE_DEMANDE_LABEL,
 } from "@/components/tresorerie/demandeStatut";
-import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom, getMontantsLignesParStatut } from "backend";
+import {
+  BENEFICIAIRE_TYPE_LABEL,
+  getBeneficiaireNom,
+  getMontantsLignesParStatut,
+  LIBELLE_ETAPE_CIRCUIT,
+  versDemandeCircuit,
+} from "backend";
 import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
+import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 
+import { CorrectionDemande } from "./CorrectionDemande";
 import { ReglementsRecusSection } from "./ReglementsRecusSection";
 import { RetoursCaisseSection } from "./RetoursCaisseSection";
 import { RetoursExceptionnelsCollaborateur } from "./RetoursExceptionnelsCollaborateur";
@@ -80,6 +88,12 @@ export default async function MaDemandeDetailPage({
   const { montantEnAttente: montantLignesEnAttente, montantRejete: montantLignesRejete } =
     getMontantsLignesParStatut(demande.lignes);
 
+  // Circuit de validation (commit 4) : le demandeur voit TOUJOURS sa propre version (la dernière qu'il a écrite, sinon
+  // celle d'origine) — jamais une modification de la Finance.
+  const descriptionDemandeur = demande.descriptionDemandeur ?? demande.descriptionOriginale ?? demande.description;
+  const libelleDemandeur = (l: (typeof demande.lignes)[number]) => l.libelleDemandeur ?? l.libelleOriginal ?? l.libelle;
+  const aCorriger = demande.etapeCircuit === "A_CORRIGER";
+
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
@@ -107,9 +121,13 @@ export default async function MaDemandeDetailPage({
               Statut
             </dt>
             <dd className="mt-1.5">
-              <Badge variant={STATUT_DEMANDE_BADGE_VARIANT[demande.statut]}>
-                {STATUT_DEMANDE_LABEL[demande.statut]}
-              </Badge>
+              {aCorriger ? (
+                <Badge variant="warning">À corriger</Badge>
+              ) : (
+                <Badge variant={STATUT_DEMANDE_BADGE_VARIANT[demande.statut]}>
+                  {STATUT_DEMANDE_LABEL[demande.statut]}
+                </Badge>
+              )}
             </dd>
           </div>
           <div>
@@ -172,7 +190,7 @@ export default async function MaDemandeDetailPage({
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Description du besoin
             </dt>
-            <dd className="text-sm text-foreground">{demande.descriptionOriginale ?? demande.description}</dd>
+            <dd className="whitespace-pre-line text-sm text-foreground">{descriptionDemandeur}</dd>
           </div>
           {demande.commentaire ? (
             <div className="sm:col-span-2">
@@ -245,7 +263,7 @@ export default async function MaDemandeDetailPage({
                           toujours la version ORIGINALE du libellé, jamais la
                           version modifiée par Finance — même principe que
                           `descriptionOriginale` pour la demande elle-même. */}
-                      <td className="px-3 py-2 text-foreground">{ligne.libelleOriginal ?? ligne.libelle}</td>
+                      <td className="px-3 py-2 text-foreground">{libelleDemandeur(ligne)}</td>
                       <td className="px-3 py-2 text-right text-foreground">{ligne.quantite}</td>
                       <td className="px-3 py-2 text-right text-foreground">
                         {formatMontantDevise(Number(ligne.prixUnitaire), demande.devise)}
@@ -277,6 +295,62 @@ export default async function MaDemandeDetailPage({
           sans scroller volontairement — vérifié explicitement par un
           parcours navigateur réel sur un cycle complet. Position désormais
           fixe, uniforme quel que soit le statut. */}
+      <FriseCircuit
+        demande={{ ...versDemandeCircuit(demande), soumiseAuDG: demande.soumiseAuDG }}
+        niveauRejet={demande.niveauRejet}
+        motifRejet={demande.motifRejet}
+      />
+
+      {aCorriger ? (
+        <section
+          aria-label="Demande à corriger"
+          className="space-y-4 rounded-2xl border border-warning bg-surface p-4 shadow-elevated sm:p-6"
+        >
+          <div className="space-y-1">
+            <h2 className="text-sm font-bold text-foreground">Votre demande vous a été renvoyée</h2>
+            <p className="text-sm text-foreground">
+              Rejetée par{" "}
+              <span className="font-semibold">
+                {demande.niveauRejet === "SERVICE"
+                  ? "le responsable de service"
+                  : demande.niveauRejet === "DG"
+                    ? "le DG"
+                    : "la Finance"}
+              </span>
+              {demande.motifRejet ? (
+                <>
+                  {" "}— motif : <span className="font-semibold">{demande.motifRejet}</span>
+                </>
+              ) : null}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Corrigez-la (articles, montants, motif, pièce jointe) puis resoumettez-la, ou abandonnez-la.
+            </p>
+          </div>
+          <CorrectionDemande
+            demandeId={demande.id}
+            avecLignes={demande.typeDemande === "STANDARD"}
+            descriptionInitiale={descriptionDemandeur}
+            lignesInitiales={demande.lignes.map((l) => ({
+              id: l.id,
+              libelle: libelleDemandeur(l),
+              quantite: l.quantite,
+              prixUnitaire: Number(l.prixUnitaire),
+            }))}
+            devise={demande.devise}
+          />
+        </section>
+      ) : demande.etapeCircuit === "ABANDONNEE" ? (
+        <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+          Vous avez abandonné cette demande : elle ne peut plus être corrigée ni resoumise.
+        </p>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Étape en cours :{" "}
+          <span className="font-semibold text-foreground">{LIBELLE_ETAPE_CIRCUIT[demande.etapeCircuit]}</span>
+        </p>
+      )}
+
       <DemandeHistorique demandeId={demande.id} masquerGestionInterne />
 
       {/* REFONTE V1 (temporaire, voir CLAUDE.md "Refonte V1 en cours") :

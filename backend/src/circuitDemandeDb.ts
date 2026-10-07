@@ -298,7 +298,10 @@ export async function corrigerEtResoumettre(
   userId: string,
   correction: CorrectionDemande
 ): Promise<ResultatCircuit> {
-  const d = await db.demande.findUnique({ where: { id: demandeId }, include: { lignes: { orderBy: { createdAt: "asc" } } } });
+  const d = await db.demande.findUnique({
+    where: { id: demandeId },
+    include: { lignes: { orderBy: { createdAt: "asc" }, include: { decidePar: { select: { fullName: true } } } } },
+  });
   if (!d) return { ok: false, message: "Demande introuvable." };
 
   const r = transition(
@@ -353,6 +356,9 @@ export async function corrigerEtResoumettre(
       prixUnitaire: Number(l.prixUnitaire),
       decision: l.statutValidation,
       motifRejet: l.motifRejet,
+      // Auteur et date de la décision : l'historique affiche une ligne retirée avec sa décision (2026-10-07).
+      decidePar: l.decidePar?.fullName ?? null,
+      decideAt: l.decideAt?.toISOString() ?? null,
     })),
   };
 

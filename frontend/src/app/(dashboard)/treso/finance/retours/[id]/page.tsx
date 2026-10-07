@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { detailMontantDefinitif, etatRetourAffiche } from "@/lib/retourAffichage";
-import { getCouvertureRetoursPostCloture, getMontantsDefinitifsRetours, getRecuNetSignalement, prisma } from "backend";
+import { getCouvertureRetoursPostCloture, getMontantsDefinitifsRetours, getRecuNetSignalement, prisma, refusExecutionPropreDemande } from "backend";
 
 import { DetaillerDepensesForm } from "./DetaillerDepensesForm";
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
@@ -62,6 +62,11 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
   if (!retour) {
     notFound();
   }
+
+  // Sa propre demande (demandeur ou bénéficiaire) : réception, détail, justification et remboursement grisés avec la
+  // phrase que le serveur renvoie (`refusExecutionPropreDemande`, gardes 1 à 3 et 8).
+  const conflitInteret = session ? refusExecutionPropreDemande(retour.reglement.demande, session.user.id) : null;
+  const peutAgirRetour = canReceptionner && !conflitInteret;
 
   // Même imputation des retours post-clôture que l'écran Collaborateur (source unique).
   const couverture = await getCouvertureRetoursPostCloture(retour.reglement.demandeId);
@@ -121,6 +126,12 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
         </p>
       ) : null}
 
+      {conflitInteret && (canReceptionner || canValiderRemboursement || canAjusterTotal) ? (
+        <p className="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning" data-conflit-interet>
+          {conflitInteret}
+        </p>
+      ) : null}
+
       {signalementActif ? (
         <div className="space-y-1 rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
           <p className="font-semibold">
@@ -143,7 +154,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
                 montantRecu={recuNetSignalement}
                 regulariseDeja={Math.round((recuNetSignalement - Number(retour.montantARetourner)) * 100) !== 0}
                 montantPropose={Number(signalementActif.montantPropose)}
-                peutAgir={canReceptionner}
+                peutAgir={peutAgirRetour}
                 remboursementEnAttente={retour.remboursements.some((r) => r.statut === "EN_ATTENTE_VALIDATION")}
               />
             </div>
@@ -152,7 +163,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
             Ce signalement débloque exceptionnellement la correction du détail ci-dessous — il sera marqué résolu
             automatiquement dès l&apos;enregistrement de la correction.
           </p>
-          {canAjusterTotal ? (
+          {canAjusterTotal && !conflitInteret ? (
             <div className="pt-2">
               <AjusterTotalDeclareForm retourId={retour.id} totalActuel={totalDeclare} />
             </div>
@@ -185,7 +196,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
                 <a href={`/api/treso/pieces-jointes/${r.pieceJointe.id}`} className="inline-block text-xs text-info underline-offset-4 hover:text-primary hover:underline">
                   Télécharger le justificatif
                 </a>
-                {r.statut === "EN_ATTENTE_VALIDATION" && canValiderRemboursement && r.proposeParId !== session!.user.id ? (
+                {r.statut === "EN_ATTENTE_VALIDATION" && canValiderRemboursement && !conflitInteret && r.proposeParId !== session!.user.id ? (
                   <RemboursementDecision remboursementId={r.id} />
                 ) : null}
               </li>
@@ -206,7 +217,13 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
               <Badge variant="danger">Réouverture exceptionnelle (demande clôturée)</Badge>
             ) : null}
           </div>
-          {!retour.estReceptionne ? <ReceptionnerAction retourId={retour.id} disabled={!canReceptionner} /> : null}
+          {!retour.estReceptionne ? (
+            <ReceptionnerAction
+              retourId={retour.id}
+              disabled={!peutAgirRetour}
+              raisonIndisponible={canReceptionner ? conflitInteret : null}
+            />
+          ) : null}
         </div>
 
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -266,7 +283,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
             <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Lignes de dépenses déclarées
             </h2>
-            {canReceptionner && !peutDetailler ? (
+            {peutAgirRetour && !peutDetailler ? (
               <p className="text-xs text-muted-foreground">
                 {cloturéeSansException
                   ? "Cette demande est clôturée : le détail n'est plus modifiable."
@@ -274,7 +291,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
               </p>
             ) : null}
           </div>
-          {canReceptionner && peutDetailler ? (
+          {peutAgirRetour && peutDetailler ? (
             <div className="space-y-2">
               <h3 className="text-sm font-bold text-foreground">Détailler les dépenses</h3>
               <DetaillerDepensesForm
@@ -319,7 +336,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
                       Motif{d.motifNonJustifiePar ? ` (${d.motifNonJustifiePar.fullName})` : ""} : {d.motifNonJustifie}
                     </p>
                   ) : null}
-                  {canReceptionner && retour.estReceptionne && !cloturéeSansException && d.justification === "SANS_PIECE" && d.motifNonJustifie ? (
+                  {peutAgirRetour && retour.estReceptionne && !cloturéeSansException && d.justification === "SANS_PIECE" && d.motifNonJustifie ? (
                     <JustifierApresReception depenseLigneId={d.id} />
                   ) : null}
                 </li>

@@ -232,6 +232,11 @@ export function decisionFinalePrise(etape: EtapeCircuit): boolean {
   return etape === "TERMINEE";
 }
 
+/** Demande encore en route vers la décision finale (ni terminée ni abandonnée) : l'Assistant y attend. */
+export function attendDecisionFinale(etape: EtapeCircuit): boolean {
+  return !decisionFinalePrise(etape) && etape !== "ABANDONNEE";
+}
+
 const a = (acteur: ActeurCircuit, cle: string) => acteur.permissions.includes(cle);
 
 function refus(message: string): ResultatTransition {
@@ -455,7 +460,68 @@ export function raisonIndisponible(demande: DemandeCircuit, acteur: ActeurCircui
         ? { type, auMoinsUneValidee: true }
         : { type };
   const r = transition(demande, acteur, action);
-  return r.ok ? null : r.message;
+  if (r.ok) return null;
+  // Assistant Finance (exécution sans décision) : avant la décision finale, il attend — jamais « Action non autorisée. ».
+  if (r.message === "Action non autorisée." && estExecutantFinance(acteur.permissions) && attendDecisionFinale(demande.etape)) {
+    return MESSAGE_ATTENTE_VALIDATION_FINALE;
+  }
+  return r.message;
+}
+
+/**
+ * Compte d'exécution de la Finance (règlement ou réception des retours) qui ne décide pas : l'Assistant Finance.
+ * Repéré par ses permissions, jamais par le nom de son rôle.
+ */
+export function estExecutantFinance(permissions: readonly string[]): boolean {
+  const execute = permissions.includes("treso.effectuer_reglement") || permissions.includes("treso.receptionner_retour");
+  return execute && !permissions.includes("treso.decider_finance") && !permissions.includes("treso.decider_dg");
+}
+
+/** Ligne d'une version recopiée dans l'historique avant une correction (`correction_demande`). */
+export interface LigneVersion {
+  id: string;
+  libelle: string;
+  quantite: number;
+  prixUnitaire: number;
+  decision: "EN_ATTENTE" | "VALIDEE" | "REJETEE";
+  motifRejet: string | null;
+  /** Absents des versions recopiées avant le 2026-10-07. */
+  decidePar?: string | null;
+  decideAt?: string | null;
+}
+
+/** Version d'une demande recopiée avant une correction. */
+export interface VersionDemande {
+  tour: number;
+  rejet: { niveau: "SERVICE" | "FINANCE" | "DG" | null; motif: string | null };
+  description: string;
+  montant: number;
+  lignes: LigneVersion[];
+}
+
+const PREFIXE_VERSION = /^Version du tour \d+ avant correction : /;
+
+/** Lit la version recopiée dans le détail d'une entrée `correction_demande` ; `null` si illisible. */
+export function lireVersionCorrection(detail: string | null | undefined): VersionDemande | null {
+  if (!detail || !PREFIXE_VERSION.test(detail)) return null;
+  try {
+    const v = JSON.parse(detail.replace(PREFIXE_VERSION, "")) as VersionDemande;
+    return Array.isArray(v?.lignes) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lignes retirées à chaque correction : une ligne d'une version absente de la version suivante (ou des lignes
+ * actuelles, pour la dernière correction). Les versions sont données dans l'ordre chronologique. Clé : l'index de la
+ * version dans `versions`.
+ */
+export function lignesRetireesParCorrection(versions: VersionDemande[], idsLignesActuelles: readonly string[]): LigneVersion[][] {
+  return versions.map((v, i) => {
+    const suivantes = new Set(i + 1 < versions.length ? versions[i + 1].lignes.map((l) => l.id) : idsLignesActuelles);
+    return v.lignes.filter((l) => !suivantes.has(l.id));
+  });
 }
 
 /**

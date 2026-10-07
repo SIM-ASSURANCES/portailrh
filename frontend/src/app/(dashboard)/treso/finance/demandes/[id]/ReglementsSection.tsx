@@ -22,7 +22,8 @@ export async function ReglementsSection({
   demandeId,
   montantValide,
   canEffectuerReglement: canEffectuerReglementBrut,
-  canAnnulerReglementConfirme,
+  canAnnulerReglementConfirme: canAnnulerReglementConfirmeBrut,
+  raisonIndisponible = null,
 }: {
   demandeId: string;
   montantValide: number;
@@ -32,6 +33,8 @@ export async function ReglementsSection({
    * UNIQUEMENT le bouton "Annuler" d'un règlement déjà confirmé, jamais
    * Modifier/Confirmer (restés sur `canEffectuerReglement`, inchangés). */
   canAnnulerReglementConfirme: boolean;
+  /** Conflit d'intérêts (demandeur ou bénéficiaire de la demande) : la phrase du serveur ; tous les boutons grisés. */
+  raisonIndisponible?: string | null;
 }) {
   const [reglements, totalRegle, resteARegler, categoriesConcernees, demandeGel] = await Promise.all([
     prisma.reglement.findMany({
@@ -53,7 +56,8 @@ export async function ReglementsSection({
   // création/modification/confirmation désactivées, avec message explicite
   // à l'endroit où l'Assistant Finance tenterait d'agir.
   const gele = demandeGel?.validationCompleteRejeteeParDG ?? false;
-  const canEffectuerReglement = canEffectuerReglementBrut && !gele;
+  const canEffectuerReglement = canEffectuerReglementBrut && !gele && !raisonIndisponible;
+  const canAnnulerReglementConfirme = canAnnulerReglementConfirmeBrut && !raisonIndisponible;
 
   return (
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
@@ -63,6 +67,12 @@ export async function ReglementsSection({
         <p className="rounded-md bg-danger-bg px-3 py-2 text-sm text-danger">
           Rejetée par le DG — en attente de resoumission par Finance. Aucun règlement ne peut être
           créé, modifié ou confirmé tant que la validation complète n&apos;a pas été approuvée.
+        </p>
+      ) : null}
+
+      {raisonIndisponible ? (
+        <p className="rounded-md bg-warning-bg px-3 py-2 text-sm text-warning" data-conflit-interet>
+          {raisonIndisponible}
         </p>
       ) : null}
 
@@ -137,6 +147,7 @@ export async function ReglementsSection({
             restant: c.restant,
           }))}
           disabled={!canEffectuerReglement}
+          raisonIndisponible={raisonIndisponible}
         />
       ) : null}
     </div>

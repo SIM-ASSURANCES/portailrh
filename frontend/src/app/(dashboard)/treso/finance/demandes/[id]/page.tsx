@@ -10,7 +10,16 @@ import { RegularisationSummary } from "@/components/tresorerie/RegularisationSum
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { getMontantsLignesParStatut, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
-import { chargerActeur, raisonIndisponible, versDemandeCircuit, type TypeActionCircuit } from "backend";
+import {
+  chargerActeur,
+  attendDecisionFinale,
+  estExecutantFinance,
+  MESSAGE_ATTENTE_VALIDATION_FINALE,
+  raisonIndisponible,
+  refusExecutionPropreDemande,
+  versDemandeCircuit,
+  type TypeActionCircuit,
+} from "backend";
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
 
 import { CategorisationForm } from "./CategorisationForm";
@@ -90,6 +99,15 @@ export default async function CategoriserDemandePage({
   const raisonCircuit = (type: TypeActionCircuit) =>
     acteurCircuit ? raisonIndisponible(demandeCircuit, acteurCircuit, type) : "Action non autorisée.";
   const raisonDecider = raisonCircuit("DECIDER_LIGNES");
+  // Assistant Finance (exécution sans décision) avant la décision finale : il voit la demande, tous ses boutons sont
+  // grisés avec « En attente de la validation finale », jamais « Action non autorisée. » (commit 4, morceau 4).
+  const attenteValidationFinale =
+    session && estExecutantFinance(session.permissions) && attendDecisionFinale(demande.etapeCircuit)
+      ? MESSAGE_ATTENTE_VALIDATION_FINALE
+      : null;
+  // Sa propre demande (demandeur ou bénéficiaire) : règlement, décaissement et retours grisés avec la phrase que le
+  // serveur renvoie (`refusExecutionPropreDemande`).
+  const conflitInteret = session ? refusExecutionPropreDemande(demande, session.user.id) : null;
   const etapeAvecDecisionFinance = ["SERVICE", "FINANCE", "DG", "REJET_DG", "DECISION_FINALE"].includes(
     demande.etapeCircuit
   );
@@ -316,7 +334,12 @@ export default async function CategoriserDemandePage({
             demandeId={demande.id}
             description={demande.description}
             descriptionOriginale={demande.descriptionOriginale}
-            disabled={!canModifierDescription || demande.statut === "CLOTUREE"}
+            disabled={
+              !canModifierDescription || demande.statut === "CLOTUREE" || !!attenteValidationFinale || !!conflitInteret
+            }
+            raisonIndisponible={
+              canModifierDescription && demande.statut !== "CLOTUREE" ? (attenteValidationFinale ?? conflitInteret) : null
+            }
           />
           {demande.commentaire ? (
             <div className="sm:col-span-2">
@@ -373,6 +396,7 @@ export default async function CategoriserDemandePage({
         demandeId={demande.id}
         demandeEstCloturee={demande.statut === "CLOTUREE"}
         canDeclarerAssistant={canGererJustification}
+        raisonIndisponible={conflitInteret}
       />
 
       {/* Retour de caisse exceptionnel post-clôture (voir CLAUDE.md) — uniquement
@@ -519,9 +543,9 @@ export default async function CategoriserDemandePage({
               demandeId={demande.id}
               lignes={lignesPourTable}
               canValider={canValiderLignes && raisonDecider === null}
-              raisonIndisponible={canValiderLignes ? raisonDecider : null}
+              raisonIndisponible={canValiderLignes ? raisonDecider : attenteValidationFinale}
               canModifierLibelle={canModifierLibelleLigne}
-              libelleModifiable
+              libelleModifiable={!attenteValidationFinale && !conflitInteret}
               canCategoriser={canCategoriser}
               categories={categories.map((c) => ({ id: c.id, label: c.label }))}
               objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
@@ -532,7 +556,7 @@ export default async function CategoriserDemandePage({
               demandeId={demande.id}
               montantDemande={Number(demande.montant)}
               disabled={!canValider || raisonDecider !== null}
-              raisonIndisponible={canValider ? raisonDecider : null}
+              raisonIndisponible={canValider ? raisonDecider : attenteValidationFinale}
             />
           )}
 
@@ -666,7 +690,7 @@ export default async function CategoriserDemandePage({
               lignes={lignesPourTable}
               canValider={false}
               canModifierLibelle={canModifierLibelleLigne}
-              libelleModifiable
+              libelleModifiable={!conflitInteret}
               canCategoriser={false}
               categories={[]}
               objets={[]}
@@ -700,6 +724,7 @@ export default async function CategoriserDemandePage({
             // calculé plus haut pour la même identification "Responsable
             // Finance UNIQUEMENT".
             canAnnulerReglementConfirme={canAnnulerReglement}
+            raisonIndisponible={canEffectuerReglement || canAnnulerReglement ? conflitInteret : null}
           />
           <RegularisationSummary
             demandeId={demande.id}

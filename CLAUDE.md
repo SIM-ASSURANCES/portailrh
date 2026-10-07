@@ -1932,10 +1932,31 @@ reste à l'étape Service (aucun écran pour la valider).
   `20261007120000_declarer_retour_finance_dg`, par permission sœur, idempotente) : ils déclarent le retour de leurs
   propres demandes comme tout demandeur. Vérifié : migration (3 rôles, rejouée sans effet), vitest (67 tests du
   moteur, 260 au total), Playwright 22/22 avec un second compte Assistant Finance qui agit à la place du demandeur.
+- **Commit 4, morceau 4 — écrans du demandeur et de l'Assistant Finance (2026-10-07)** :
+  - **Demandeur** (Collaborateur, et Finance, Assistant ou DG sur leurs propres demandes), `/treso/demandes/[id]` :
+    frise, étape en cours ; à « À corriger », niveau et motif du rejet avec **Corriger et resoumettre**
+    (`CorrectionDemande.tsx` : lignes, quantités, prix, motif, nouvelle pièce jointe ; une dépense directe n'a que le
+    motif) et **Abandonner** (confirmation avant l'action). Badge « À corriger ». Le demandeur voit toujours SA version
+    (`descriptionDemandeur ?? descriptionOriginale ?? description`, idem `libelleDemandeur` pour les lignes) — corrige
+    un défaut : après une correction, l'ancien libellé (`libelleOriginal`) s'affichait.
+  - **Historique** (`DemandeHistorique`) : chaque `correction_demande` s'affiche lisiblement (tour, rejet, montant,
+    lignes et décisions) avec « Lignes retirées à cette correction » (`lireVersionCorrection`,
+    `lignesRetireesParCorrection`) ; les entrées validation/rejet d'une ligne retirée restent listées. La version
+    recopiée porte désormais l'auteur et la date de chaque décision (`decidePar`, `decideAt` ; absents des versions
+    antérieures). Le motif de l'achat d'une version n'est pas montré au Collaborateur (gestion interne).
+  - **Assistant Finance** (`estExecutantFinance` : règlement ou réception sans `decider_finance`/`decider_dg`) : avant
+    la décision finale (`attendDecisionFinale` : ni terminée ni abandonnée), tous ses boutons sont grisés avec
+    « En attente de la validation finale. » — `raisonIndisponible` remplace « Action non autorisée. » pour lui ; le
+    serveur, lui, refuse comme avant. Ils se dégrisent à la décision finale.
+  - **Sa propre demande** (demandeur ou bénéficiaire) : règlement (ajout, modification, confirmation = décaissement,
+    annulation), déclaration par l'Assistant, réception, détail, justification, ajustement et remboursement grisés ou
+    masqués avec la phrase du serveur (`refusExecutionPropreDemande`).
+  - Vérifié : vitest (70 tests du moteur, 264 au total), Playwright 35/35 sur base jetable (collaborateur@,
+    responsable-commercial@, finance@, dg@, assistant-finance@ et un second Assistant) : rejet aux niveaux Service,
+    Finance (lignes toutes rejetées) et DG (cas b), rejet DG puis renvoi au demandeur, deux corrections avec lignes
+    retirées, resoumissions, abandon, DG demandeur corrigeant sa demande, bénéficiaire, mobile 390 px.
 - **Reste pour le commit 4** : retirer `treso.valider_demande` du DG (décision 10), masquer les permissions de
-  décision dans `/delegations`, et **garder visible dans l'historique une ligne retirée à la correction, avec ses
-  décisions** (lecture depuis la version recopiée en JSON, ou suppression logique) : on ne modifie jamais une écriture
-  déjà passée.
+  décision dans `/delegations`.
 - **Vérifié** : vitest (63 tests du moteur, 256 au total) ; migration sur une base jetable portant des demandes dans
   tous les états (aucun écart schéma/base, partie permission rejouée sans effet) ; couche base sur base seedée, 35
   scénarios (cas a à d, dépense directe, rejet et resoumission DG, concurrence, correction avec versions, abandon,

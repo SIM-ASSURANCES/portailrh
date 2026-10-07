@@ -4,6 +4,10 @@ import {
   actionsPossibles,
   casDemandeur,
   decisionFinalePrise,
+  estExecutantFinance,
+  lignesRetireesParCorrection,
+  lireVersionCorrection,
+  MESSAGE_ATTENTE_VALIDATION_FINALE,
   determinerParcours,
   etapeInitiale,
   friseProgression,
@@ -387,7 +391,7 @@ describe("raisons des boutons grisés (écran = serveur)", () => {
     expect(raisonIndisponible(demande("DG"), FINANCE, "SOUMETTRE_DG")).toBe("En attente de la décision du DG.");
     expect(raisonIndisponible(demande("FINANCE"), FINANCE, "SOUMETTRE_DG")).toBeNull();
     expect(raisonIndisponible(demande("REJET_DG"), FINANCE, "RESOUMETTRE_DG")).toBeNull();
-    expect(raisonIndisponible(demande("FINANCE"), ASSISTANT, "DECIDER_LIGNES")).toBe("Action non autorisée.");
+    expect(raisonIndisponible(demande("FINANCE"), ASSISTANT, "DECIDER_LIGNES")).toBe(MESSAGE_ATTENTE_VALIDATION_FINALE);
     expect(raisonIndisponible(demande("DECISION_FINALE"), FINANCE, "SOUMETTRE_DG")).toContain("déjà approuvé");
   });
   it("versDemandeCircuit reprend les champs de la ligne", () => {
@@ -421,5 +425,47 @@ describe("conflit d'intérêts : jamais l'exécution de sa propre demande", () =
     expect(ok(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: true })).toEqual({ ok: true, etapeSuivante: "TERMINEE", effets: { approbationClotureParDG: true } });
     // Pour un autre bénéficiaire : parcours habituel de la dépense directe.
     expect(determinerParcours(PROFIL.finance, "DEPENSE_DIRECTE", { beneficiaireEstLeCreateur: false }).cas).toBe("DEPENSE_DIRECTE");
+  });
+});
+
+describe("Assistant Finance avant la décision finale (commit 4, morceau 4)", () => {
+  it("ses boutons de décision affichent « En attente de la validation finale », jamais « Action non autorisée. »", () => {
+    for (const etape of ["SERVICE", "FINANCE", "DG", "REJET_DG", "DECISION_FINALE"] as const) {
+      for (const type of ["DECIDER_LIGNES", "SOUMETTRE_DG", "REJETER", "RESOUMETTRE_DG"] as const) {
+        expect(raisonIndisponible(demande(etape), ASSISTANT, type)).not.toBe("Action non autorisée.");
+      }
+    }
+    expect(raisonIndisponible(demande("FINANCE"), ASSISTANT, "DECIDER_LIGNES")).toBe(MESSAGE_ATTENTE_VALIDATION_FINALE);
+    expect(raisonIndisponible(demande("DECISION_FINALE"), ASSISTANT, "REJETER")).toBe(MESSAGE_ATTENTE_VALIDATION_FINALE);
+    // Le serveur, lui, refuse toujours de la même façon (transition inchangée).
+    expect(ko(demande("FINANCE"), ASSISTANT, { type: "DECIDER_LIGNES", auMoinsUneValidee: true })).toBe("Action non autorisée.");
+    // Un compte sans permission d'exécution garde le message habituel.
+    expect(raisonIndisponible(demande("FINANCE"), acteur("u-x"), "DECIDER_LIGNES")).toBe("Action non autorisée.");
+  });
+  it("repéré par ses permissions : exécution sans décision", () => {
+    expect(estExecutantFinance(ASSISTANT.permissions)).toBe(true);
+    expect(estExecutantFinance(FINANCE.permissions)).toBe(false);
+    expect(estExecutantFinance(["treso.effectuer_reglement", "treso.decider_finance"])).toBe(false);
+    expect(estExecutantFinance(DG.permissions)).toBe(false);
+  });
+});
+
+describe("versions recopiées avant correction : lignes retirées", () => {
+  const v = (tour: number, ids: string[]) => ({
+    tour,
+    rejet: { niveau: "FINANCE" as const, motif: "m" },
+    description: "d",
+    montant: 1,
+    lignes: ids.map((id) => ({ id, libelle: id, quantite: 1, prixUnitaire: 1, decision: "REJETEE" as const, motifRejet: "x" })),
+  });
+  it("lit le détail d'une entrée correction_demande", () => {
+    expect(lireVersionCorrection(`Version du tour 1 avant correction : ${JSON.stringify(v(1, ["a"]))}`)?.lignes[0].id).toBe("a");
+    expect(lireVersionCorrection("autre chose")).toBeNull();
+    expect(lireVersionCorrection("Version du tour 1 avant correction : {pas du json")).toBeNull();
+  });
+  it("une ligne absente de la version suivante (ou des lignes actuelles) est retirée à cette correction", () => {
+    const r = lignesRetireesParCorrection([v(1, ["a", "b", "c"]), v(2, ["a", "c", "d"])], ["a"]);
+    expect(r[0].map((l) => l.id)).toEqual(["b"]);
+    expect(r[1].map((l) => l.id)).toEqual(["c", "d"]);
   });
 });
