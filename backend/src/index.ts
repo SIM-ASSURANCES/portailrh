@@ -49,6 +49,7 @@ export * from "./circuitDemandeDb";
 export * from "./circuitNotifications";
 // Onglet « À vérifier » (traitement des signalements) — commit 5b.
 export * from "./encSignalements";
+export * from "./encConfirmation";
 
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).

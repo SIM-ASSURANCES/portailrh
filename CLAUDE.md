@@ -5340,6 +5340,35 @@ signalements dont 60 000 à traiter, pire de 3 passages à chaud) :
 Plans vérifiés : index `(statut, creeAt)` avec tri incrémental sur `id` ; fiche police en deux balayages d'index
 (`contratId`, `numPolice`). Aucun écart schéma/base (`migrate diff` vide).
 
+#### Commit 6a — Moteur de confirmation (2026-10-08, backend seul, aucune migration)
+
+`backend/src/encConfirmation.ts` : **`confirmerEncaissement(db, { encaissementId, userId, maintenant, reprise?,
+accepterTropPercu?, datePriseEnCompte? })`**, SEULE fonction qui confirme un encaissement, pour toutes les voies (F5 « Reçu » et « Finalement
+reçu », F3, F4, relevé) — aucun autre code n'écrit les montants figés. Toujours dans la transaction de l'appelant :
+- verrou par police de l'import (`police:<numPolice>`), puis relecture du statut (`A_CONFIRMER` ou `NON_RECU`) ;
+- **garde-fou** : date de prise en compte TOUJOURS le jour de l'action (`maintenant`) ; une date fournie par l'appelant
+  n'est qu'un contrôle et est refusée si elle diffère (ni passée ni future). Seule exception, le mode **`reprise`**
+  explicite (F1.5) : prise en compte = date de paiement réelle, jamais de « Régularisation », audit
+  `confirmation_reprise` ; rang = dernier rang confirmé du contrat + 1 (D27) ;
+- montants figés par `figerEncaissement` sur le cumul des confirmés (contre-passations comprises) : AA, AB, AC, AD,
+  commission, honoraires, reliquat exact au soldant ; exigibilité §5.3 (mois, date limite au jour paramétré,
+  « Régularisation ») ; part d'accessoires police > partenaire > défaut ; bénéficiaire des honoraires en vigueur à la
+  date de prise en compte (`beneficiaireHonorairesId`) ;
+- **trop-perçu** : renvoie `TROP_PERCU_A_CONFIRMER` (excédent, restant dû) SANS RIEN ÉCRIRE ; confirmé seulement avec
+  `accepterTropPercu`, motif tracé dans l'audit (D30 : jamais en lot ni en confirmation automatique ; excédent non
+  ventilé, D28) ;
+- écriture conditionnée au statut lu (`updateMany`), audit `confirmation` ou `finalement_recu` (rang, montants figés,
+  part d'accessoires et sa source, exigibilité, bénéficiaire, trop-perçu), mois de rattachement = prise en compte.
+Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner des versements) : testé sans base.
+- **Vérifié** : vitest — 9.1 au centime (AA, AB, AD, commission, honoraires, mois), 9.4 (AB et AD des 3
+  polices, octobre), 9.8 (67,60 × 3 puis reliquat 608,39 en octobre, total 811,19), les 5 lignes du tableau §5.3 et un
+  jour limite paramétré, 9.5 partie calcul (AD 13 519,81, novembre, avant le 20/11, « Régularisation »), 9.6 (parts
+  d'accessoires), bénéficiaire selon la prise en compte, rang, trop-perçu, « Finalement reçu », refus, garde-fou de la date (passée,
+  future refusées ; reprise à la date de paiement sans « Régularisation », autre date refusée en reprise) — 19 tests. PostgreSQL 16
+  jetable : deux confirmations simultanées de la même police → rangs 1 et 2 dans l'ordre réel, montants cohérents
+  avec cet ordre (total des taxes 101,40) ; le même encaissement confirmé deux fois en même temps → un seul passe.
+- **Pas encore branché** : aucun écran ni action ne l'appelle avant 6b (F5) et 6c (F3).
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif
@@ -6204,6 +6233,10 @@ pas de build côté Dokploy).
   `init` one-shot l'exécute une seule fois puis lance
   `backend/prisma/set-admin.ts` (idempotent), avant que le service `app`
   ne démarre.
+- **Horodatage des migrations** : toute nouvelle migration doit avoir un horodatage **strictement supérieur à la
+  dernière migration existante** (`ls backend/prisma/migrations | tail -3`) — certaines migrations Trésorerie sont
+  datées en avance (2026-10-09). Vérifier avant chaque création : au commit 6-0, un nom au 2026-10-08 collait avec une
+  migration existante et se serait placé avant des migrations déjà appliquées.
 - Service de base de données nommé **`portailrh-db`** — jamais `db`
   (réseau `dokploy-network` partagé entre tous les projets du serveur,
   ambiguïté DNS sinon).
