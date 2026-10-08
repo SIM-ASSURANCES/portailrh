@@ -5369,6 +5369,34 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
   avec cet ordre (total des taxes 101,40) ; le même encaissement confirmé deux fois en même temps → un seul passe.
 - **Pas encore branché** : aucun écran ni action ne l'appelle avant 6b (F5) et 6c (F3).
 
+#### Commit 6b — Confirmation F5 ligne par ligne et par lot (2026-10-08, aucune migration)
+
+- **`/encaissements/a-confirmer`** (« Confirmation des paiements »), **réservé à `enc.confirmer_paiement`** (page,
+  actions et export ; Équipe technique et Consultation redirigées, actions refusées même rejouées directement, export
+  403). Carte avec compteur sur l'accueil du module (Finance seulement). Paiements « à confirmer » ou « non reçus »,
+  plus anciens d'abord, 50 par page ; filtres GET période de paiement, mode, partenaire, branche, recherche (même
+  recherche que la barre du module) — `lib/encaissements/filtresAConfirmer.ts`, partagé avec l'export ; nombre et total
+  affichés. Reste dû actuel de la police affiché, badge « Trop-perçu possible » quand le montant le dépasse.
+- **Ligne** : « Reçu » (ou « Finalement reçu » sur un non reçu) → `confirmerEncaissement` (6a) ; un trop-perçu ouvre
+  une demande d'accord explicite sous la ligne, rien n'est écrit avant. « Non reçu » : motif obligatoire (3 caractères),
+  `marquerNonRecu` (`backend/src/encConfirmationLot.ts` : sous le verrou de police, seulement depuis « à confirmer »,
+  statut NON_RECU + motif + auteur + date, audit `non_recu`, rien ne compte).
+- **Lot** : cases, case d'en-tête, barre de sélection (nombre, total), confirmation avant d'appliquer ; « Reçu » ou
+  « Non reçu » (même motif pour tous). `confirmerEnLot` / `marquerNonRecuEnLot` : une transaction PAR paiement (un
+  paiement déjà traité par un lot simultané est compté « déjà traité », les autres continuent), 200 paiements au plus ;
+  **trop-perçu écarté du lot** (D30), signalé pour une confirmation ligne par ligne.
+- **Export Excel des « non reçus »** (`GET /api/encaissements/non-recus/export`, filtres de l'écran) : paiement, police,
+  client, partenaire, branche, date, mode, référence, montant, source, motif, auteur et date du marquage.
+- **Fiche police** : colonnes figées des paiements confirmés (rang, reste après, prime nette, accessoires, taxe,
+  commission, honoraires), mois d'exigibilité et date limite, badge « Régularisation » avec dates de paiement et de
+  prise en compte ; motif d'un non reçu.
+- **Vérifié** : vitest (6 tests : cas 9.2 côté serveur, non reçu, lots avec trop-perçu écarté et déjà-traité refusé,
+  limites) ; Playwright 28/28 sur PostgreSQL 16 jetable, fichier synthétique importé par l'écran réel (enc-finance@,
+  enc-technique@, enc-consultation@) : 9.2 de bout en bout (à confirmer sans taxe → « Reçu » : AA 1 000, AB 466,20,
+  AD 33,80, fiche à jour), non reçu + export + « Finalement reçu », lot de 4 dont un trop-perçu écarté puis confirmé
+  explicitement (AA −500), deux lots simultanés (chaque paiement confirmé une seule fois), accès refusés. Mobile non
+  vérifié (tableau en défilement horizontal sous la largeur du contenu).
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif

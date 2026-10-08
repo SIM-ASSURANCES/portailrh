@@ -6,6 +6,7 @@ import {
   formatDateCourte,
   formatDateHeure,
   formatFcfa,
+  formatMoisAnnee,
   libelleMode,
   etatSignalement,
   libelleSource,
@@ -59,6 +60,19 @@ export default async function FichePolicePage({ params }: { params: Promise<{ id
         statut: true,
         dateSaisie: true,
         dateConfirmation: true,
+        // Montants et exigibilité figés à la confirmation (commit 6a) ; motif d'un « non reçu ».
+        datePriseEnCompte: true,
+        ordrePriseEnCompte: true,
+        AA: true,
+        AB: true,
+        AC: true,
+        AD: true,
+        commission: true,
+        honoraires: true,
+        moisExigibilite: true,
+        dateLimiteReversement: true,
+        estRegularisation: true,
+        motifNonReception: true,
       },
     }),
     // Par contrat OU par n° de police : une ligne rejetée (annulée) n'a jamais créé de contrat mais porte la police.
@@ -109,6 +123,24 @@ export default async function FichePolicePage({ params }: { params: Promise<{ id
     statut: e.statut,
     dateSaisie: formatDateHeure(e.dateSaisie),
     dateConfirmation: e.dateConfirmation ? formatDateHeure(e.dateConfirmation) : null,
+    fige:
+      e.statut === "CONFIRME" && e.AB !== null
+        ? {
+            rang: e.ordrePriseEnCompte,
+            AA: formatFcfa(e.AA?.toString()),
+            AB: formatFcfa(e.AB.toString()),
+            AC: formatFcfa(e.AC?.toString()),
+            AD: formatFcfa(e.AD?.toString()),
+            commission: formatFcfa(e.commission?.toString()),
+            honoraires: formatFcfa(e.honoraires?.toString()),
+            moisExigibilite: formatMoisAnnee(e.moisExigibilite),
+            dateLimite: formatDateCourte(e.dateLimiteReversement),
+            regularisation: e.estRegularisation
+              ? `Régularisation — payé le ${formatDateCourte(e.datePaiement)}, pris en compte le ${formatDateCourte(e.datePriseEnCompte)}`
+              : null,
+          }
+        : null,
+    motifNonReception: e.motifNonReception,
   }));
 
   const infos: { libelle: string; valeur: ReactNode }[] = [

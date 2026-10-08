@@ -13,7 +13,11 @@ export default async function EncaissementsAccueilPage() {
     redirect("/?error=acces_refuse_encaissements");
   }
 
-  const nbATraiter = await prisma.encSignalement.count({ where: { statut: "A_TRAITER" } });
+  const peutConfirmer = hasPermission(session, "enc.confirmer_paiement");
+  const [nbATraiter, nbAConfirmer] = await Promise.all([
+    prisma.encSignalement.count({ where: { statut: "A_TRAITER" } }),
+    peutConfirmer ? prisma.encEncaissement.count({ where: { statut: "A_CONFIRMER" } }) : Promise.resolve(0),
+  ]);
 
   const liens: { href: string; icon: IconName; titre: string; texte: string; compteur?: number }[] = [
     {
@@ -35,6 +39,19 @@ export default async function EncaissementsAccueilPage() {
         : "Consulter l'historique et les rapports d'import.",
     },
   ];
+  // Confirmation F5 (commit 6b) : Finance seulement.
+  if (peutConfirmer) {
+    liens.unshift({
+      href: "/encaissements/a-confirmer",
+      icon: "circle-check",
+      titre: "Confirmation des paiements",
+      texte:
+        nbAConfirmer === 0
+          ? "Aucun paiement à confirmer."
+          : `${nbAConfirmer.toLocaleString("fr-FR")} paiement(s) du fichier à confirmer d'après les relevés.`,
+      compteur: nbAConfirmer,
+    });
+  }
   if (hasPermission(session, "enc.parametrer")) {
     liens.push({ href: "/encaissements/branches", icon: "folder-tree", titre: "Branches", texte: "Ajouter ou désactiver une branche." });
   }
@@ -67,7 +84,7 @@ export default async function EncaissementsAccueilPage() {
           </Link>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">Les autres écrans du module (confirmation, relevés…) arrivent dans les lots suivants.</p>
+      <p className="text-xs text-muted-foreground">Les autres écrans du module (saisie, relevés…) arrivent dans les lots suivants.</p>
     </div>
   );
 }

@@ -50,6 +50,7 @@ export * from "./circuitNotifications";
 // Onglet « À vérifier » (traitement des signalements) — commit 5b.
 export * from "./encSignalements";
 export * from "./encConfirmation";
+export * from "./encConfirmationLot";
 
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).

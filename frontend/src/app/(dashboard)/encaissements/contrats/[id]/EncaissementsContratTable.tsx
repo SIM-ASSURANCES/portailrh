@@ -19,6 +19,20 @@ export interface EncaissementRow {
   statut: string;
   dateSaisie: string;
   dateConfirmation: string | null;
+  /** Montants et exigibilité figés à la confirmation (commit 6a), déjà mis en forme ; `null` si non confirmé. */
+  fige: {
+    rang: number | null;
+    AA: string;
+    AB: string;
+    AC: string;
+    AD: string;
+    commission: string;
+    honoraires: string;
+    moisExigibilite: string;
+    dateLimite: string;
+    regularisation: string | null;
+  } | null;
+  motifNonReception: string | null;
 }
 
 export function EncaissementsContratTable({ rows }: { rows: EncaissementRow[] }) {
@@ -70,8 +84,50 @@ export function EncaissementsContratTable({ rows }: { rows: EncaissementRow[] })
           accessor: (r) => STATUT_ENCAISSEMENT[r.statut]?.libelle ?? r.statut,
           render: (r) => {
             const s = STATUT_ENCAISSEMENT[r.statut];
-            return <Badge variant={s?.variant ?? "neutral"}>{s?.libelle ?? r.statut}</Badge>;
+            return (
+              <span>
+                <Badge variant={s?.variant ?? "neutral"}>{s?.libelle ?? r.statut}</Badge>
+                {r.fige?.rang ? <span className="mt-1 block text-xs text-muted-foreground">Rang {r.fige.rang}</span> : null}
+                {r.motifNonReception ? <span className="mt-1 block text-xs text-danger">{r.motifNonReception}</span> : null}
+              </span>
+            );
           },
+        },
+        {
+          key: "fige",
+          header: "Montants figés",
+          render: (r) =>
+            r.fige ? (
+              <span data-montants-figes className="block whitespace-nowrap text-xs tabular-nums">
+                Reste après : <span className="font-semibold">{r.fige.AA}</span>
+                <span className="block">Prime nette {r.fige.AB} · Accessoires {r.fige.AC}</span>
+                <span className="block">Taxe {r.fige.AD}</span>
+                <span className="block text-muted-foreground">
+                  Commission {r.fige.commission} · Honoraires {r.fige.honoraires}
+                </span>
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">—</span>
+            ),
+        },
+        {
+          key: "exigibilite",
+          header: "Taxe exigible",
+          render: (r) =>
+            r.fige ? (
+              <span data-exigibilite className="block text-xs">
+                <span className="font-semibold capitalize">{r.fige.moisExigibilite}</span>
+                <span className="block text-muted-foreground">avant le {r.fige.dateLimite}</span>
+                {r.fige.regularisation ? (
+                  <span className="mt-1 block">
+                    <Badge variant="warning">Régularisation</Badge>
+                    <span className="mt-0.5 block text-muted-foreground">{r.fige.regularisation.replace("Régularisation — ", "")}</span>
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">—</span>
+            ),
         },
         {
           key: "dates",
