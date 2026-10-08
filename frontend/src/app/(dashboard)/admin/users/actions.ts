@@ -808,6 +808,7 @@ export async function supprimerUtilisateurAction(
     encEncaissementsConfirmes,
     encEncaissementsNonRecus,
     encSignalementsTraites,
+    justificationsDecidees,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -853,6 +854,8 @@ export async function supprimerUtilisateurAction(
     prisma.encEncaissement.count({ where: { confirmeParId: userId } }),
     prisma.encEncaissement.count({ where: { nonRecuParId: userId } }),
     prisma.encSignalement.count({ where: { traiteParId: userId } }),
+    // Pointage V2 : justifications de retard / départ anticipé décidées par ce compte (RESTRICT).
+    prisma.justificationPointage.count({ where: { decideurId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -897,6 +900,8 @@ export async function supprimerUtilisateurAction(
   if (encEncaissementsConfirmes > 0) blocages.push(`confirmé ${encEncaissementsConfirmes} encaissement(s)`);
   if (encEncaissementsNonRecus > 0) blocages.push(`déclaré ${encEncaissementsNonRecus} encaissement(s) non reçu(s)`);
   if (encSignalementsTraites > 0) blocages.push(`traité ${encSignalementsTraites} signalement(s) (encaissements)`);
+  if (justificationsDecidees > 0)
+    blocages.push(`décidé ${justificationsDecidees} justification(s) de retard ou de départ anticipé`);
 
   if (blocages.length > 0) {
     const liste =

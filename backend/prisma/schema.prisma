@@ -92,6 +92,8 @@ model User {
   correctionsEffectuees  CorrectionPointage[]    @relation("CorrectionEffectuePar")
   absencesDeclarees      Absence[]               @relation("AbsenceEmploye")
   absencesControlees     Absence[]               @relation("AbsenceControlePar")
+  /// Justifications de retard / départ anticipé décidées (acceptées ou refusées) par ce compte (pointage V2).
+  justificationsDecidees JustificationPointage[]  @relation("JustificationPointageDecideur")
   notifications          Notification[]
   /// Tokens FCM (notifications push, voir CLAUDE.md côté Thierry) —
   /// plusieurs appareils/navigateurs possibles par utilisateur.
@@ -1130,6 +1132,17 @@ model ParametrageHoraire {
   bureauLongitude       Float?   @default(-3.9374753)
   /// Rayon autorisé en mètres autour du bureau (min: 30, max: 200, défaut: 50)
   rayonAutorise         Int      @default(50)
+  /// Tolérance d'arrivée en minutes (pointage V2, 2026-10-08) : une arrivée jusqu'à `heureDebutMatin` + tolérance
+  /// n'est pas un retard ; au-delà, le retard se compte depuis `heureDebutMatin` (la tolérance est un seuil, jamais
+  /// un décalage de l'horaire). Paramétrable par la RH (`/pointage/rh/horaires`).
+  toleranceRetardMinutes                Int @default(15)
+  /// Délai entre un pointage en retard (ou un départ anticipé) et la demande de justification (premier envoi).
+  delaiDemandeJustificationMinutes      Int @default(15)
+  /// Écart entre deux envois de la demande de justification.
+  intervalleRelanceJustificationMinutes Int @default(30)
+  /// Nombre TOTAL d'envois de la demande de justification, premier envoi compris (email + push + interne pour le
+  /// premier, push + interne pour les suivants).
+  nombreMaxRelancesJustification        Int @default(3)
   updatedAt             DateTime @updatedAt
 }
 
@@ -1163,8 +1176,56 @@ model Pointage {
   createdAt DateTime @default(now())
 
   corrections CorrectionPointage[]
+  /// Justification demandée après coup pour un retard ou un départ anticipé (pointage V2) : absente pour un pointage
+  /// à l'heure. Le motif du retard n'est plus saisi au pointage (`motif` ci-dessus reste pour l'historique et les
+  /// pointages RH exceptionnels).
+  justification JustificationPointage?
 
   @@index([userId, heure])
+}
+
+/// Cycle de la justification d'un retard ou d'un départ anticipé (pointage V2, 2026-10-08).
+enum StatutJustificationPointage {
+  /// Demandée (ou à demander) au collaborateur ; les envois et relances partent tant qu'elle reste dans cet état.
+  EN_ATTENTE
+  /// Motif envoyé par le collaborateur, en attente de la décision de son responsable (ou de la RH).
+  SOUMISE
+  ACCEPTEE
+  REFUSEE
+  /// Fin de journée atteinte sans motif : le décideur en est averti, le collaborateur peut encore justifier.
+  NON_JUSTIFIEE
+}
+
+/// Justification d'un pointage en retard (arrivée) ou anticipé (départ), une seule par pointage. Décidée par le
+/// responsable du service du collaborateur, ou par la RH (`pointage.corriger_pointage`) quand il n'y a pas de
+/// responsable, qu'il est inactif ou que le collaborateur est lui-même ce responsable. Registre séparé du pointage,
+/// comme `CorrectionPointage` : rien n'est écrasé.
+model JustificationPointage {
+  id     String                      @id @default(cuid())
+  statut StatutJustificationPointage @default(EN_ATTENTE)
+  /// Motif saisi par le collaborateur (obligatoire pour passer à SOUMISE).
+  motif     String?
+  soumiseAt DateTime?
+
+  /// Envois de la demande de justification (premier envoi compris) et date du dernier : pilotent les relances.
+  nombreEnvois   Int       @default(0)
+  dernierEnvoiAt DateTime?
+  /// Passage à NON_JUSTIFIEE (fin de journée sans motif).
+  clotureeAt     DateTime?
+
+  decideurId String?
+  decideur   User?     @relation("JustificationPointageDecideur", fields: [decideurId], references: [id], onDelete: Restrict)
+  decisionAt DateTime?
+  /// Motif du refus, obligatoire pour REFUSEE.
+  motifRefus String?
+
+  pointageId String   @unique
+  pointage   Pointage @relation(fields: [pointageId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([statut])
 }
 
 model CorrectionPointage {

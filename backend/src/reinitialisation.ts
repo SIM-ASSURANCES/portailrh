@@ -50,6 +50,7 @@ export async function chargerJeuxReinitialisation(db: Db) {
   const notificationTresorerie = await db.notification.findMany({ where: { category: "TRESORERIE" }, ...parId });
   // Pointage RH / FeedbackApp (ordre de suppression validé par Thierry)
   const correctionPointage = await db.correctionPointage.findMany(parId);
+  const justificationPointage = await db.justificationPointage.findMany(parId);
   const pointage = await db.pointage.findMany(parId);
   const absence = await db.absence.findMany(parId);
   const plageAbsenceAutorisee = await db.plageAbsenceAutorisee.findMany(parId);
@@ -80,6 +81,7 @@ export async function chargerJeuxReinitialisation(db: Db) {
     historiqueTresorerie,
     notificationTresorerie,
     correctionPointage,
+    justificationPointage,
     pointage,
     absence,
     plageAbsenceAutorisee,
@@ -175,6 +177,7 @@ export async function executerReinitialisation({
 
       // ---- Pointage RH / FeedbackApp (ordre validé par Thierry)
       d.correctionPointage = (await tx.correctionPointage.deleteMany()).count;
+      d.justificationPointage = (await tx.justificationPointage.deleteMany()).count;
       d.pointage = (await tx.pointage.deleteMany()).count;
       d.absence = (await tx.absence.deleteMany()).count;
       d.plageAbsenceAutorisee = (await tx.plageAbsenceAutorisee.deleteMany()).count;

@@ -17,6 +17,11 @@ const updateHorairesSchema = z.object({
   heureDebutApresMidi: timeStringSchema,
   heureFinApresMidi: timeStringSchema,
   delaiAlerteOubliDepartMinutes: z.coerce.number().min(0, "Le délai ne peut pas être négatif").max(360, "Maximum 360 minutes").default(30),
+  // Pointage V2 : tolérance d'arrivée et rythme des demandes de justification.
+  toleranceRetardMinutes: z.coerce.number().int("Nombre entier attendu").min(0, "La tolérance ne peut pas être négative").max(120, "Maximum 120 minutes"),
+  delaiDemandeJustificationMinutes: z.coerce.number().int("Nombre entier attendu").min(0, "Le délai ne peut pas être négatif").max(240, "Maximum 240 minutes"),
+  intervalleRelanceJustificationMinutes: z.coerce.number().int("Nombre entier attendu").min(5, "Minimum 5 minutes").max(480, "Maximum 480 minutes"),
+  nombreMaxRelancesJustification: z.coerce.number().int("Nombre entier attendu").min(1, "Au moins un envoi").max(10, "Maximum 10 envois"),
 });
 
 export async function updateHorairesAction(
@@ -37,6 +42,10 @@ export async function updateHorairesAction(
     heureDebutApresMidi: formData.get("heureDebutApresMidi"),
     heureFinApresMidi: formData.get("heureFinApresMidi"),
     delaiAlerteOubliDepartMinutes: formData.get("delaiAlerteOubliDepartMinutes"),
+    toleranceRetardMinutes: formData.get("toleranceRetardMinutes"),
+    delaiDemandeJustificationMinutes: formData.get("delaiDemandeJustificationMinutes"),
+    intervalleRelanceJustificationMinutes: formData.get("intervalleRelanceJustificationMinutes"),
+    nombreMaxRelancesJustification: formData.get("nombreMaxRelancesJustification"),
   });
 
   if (!parseResult.success) {
