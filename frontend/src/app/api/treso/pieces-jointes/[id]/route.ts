@@ -50,7 +50,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const piece = await prisma.pieceJointe.findUnique({
     where: { id },
     include: {
-      demande: { select: { createurId: true, beneficiaireUserId: true } },
+      demande: {
+        select: { createurId: true, beneficiaireUserId: true, createur: { select: { service: { select: { responsableId: true } } } } },
+      },
       retourExterne: { select: { id: true } },
       retourExterneCheque: { select: { id: true } },
     },
@@ -67,20 +69,28 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       hasPermission(session, "treso.categoriser_demande") ||
       hasPermission(session, "treso.valider_demande") ||
       hasPermission(session, "treso.receptionner_retour") ||
-      hasPermission(session, "treso.voir_dashboard_finance");
+      hasPermission(session, "treso.voir_dashboard_finance") ||
+      // Circuit de validation : le DG décide à l'étape DG (sans dépendre de treso.valider_demande).
+      hasPermission(session, "treso.decider_dg");
     const estCreateurOuBeneficiaire =
       piece.demande.createurId === session.user.id || piece.demande.beneficiaireUserId === session.user.id;
-    accesAutorise = estFinanceOuDG || estCreateurOuBeneficiaire;
+    // Circuit de validation : le responsable ACTUEL du service du demandeur, qui décide l'étape Service.
+    const estResponsableService = piece.demande.createur.service?.responsableId === session.user.id;
+    accesAutorise = estFinanceOuDG || estCreateurOuBeneficiaire || estResponsableService;
   } else if (piece.retourExterne || piece.retourExterneCheque) {
-    // Retour externe : Responsable Finance (même garde que l'action) ou Admin.
-    accesAutorise =
-      isAdmin(session) ||
-      (hasPermission(session, "treso.valider_demande") && !hasPermission(session, "treso.approuver_validation_complete"));
+    // Retour externe : même permission que l'action (`treso.creer_retour_externe`), ou Admin.
+    accesAutorise = isAdmin(session) || hasPermission(session, "treso.creer_retour_externe");
   } else {
     // Pièce du solde d'ouverture (`journalCaisseId`, pas de demande
-    // d'origine) — même permission EXACTE que definirSoldeOuvertureAction/
-    // corrigerSoldeOuvertureAction, jamais élargie au reste de Finance/DG.
-    accesAutorise = isAdmin(session) || hasPermission(session, "treso.effectuer_reglement");
+    // d'origine) et des alimentations de caisse — mêmes permissions que la garde de
+    // `/treso/finance/solde-ouverture`, la page qui affiche ces historiques : qui voit l'historique peut télécharger
+    // ses justificatifs (Finance, qui les dépose, y compris), jamais le DG ni le Collaborateur.
+    accesAutorise =
+      isAdmin(session) ||
+      hasPermission(session, "treso.corriger_solde_ouverture") ||
+      hasPermission(session, "treso.alimenter_caisse") ||
+      hasPermission(session, "treso.effectuer_reglement") ||
+      hasPermission(session, "treso.receptionner_retour");
   }
 
   if (!accesAutorise) {

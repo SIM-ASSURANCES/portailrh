@@ -30,3 +30,42 @@ export function getBeneficiaireNom(demande: {
 }): string {
   return demande.beneficiaireUser?.fullName ?? demande.beneficiaireNom ?? "—";
 }
+
+/**
+ * Champ « Bénéficiaire » du formulaire de demande d'achat (2026-10-09, remplace la liste « Entité bénéficiaire ») :
+ * moi-même (par défaut), un autre compte actif du portail, ou un nom libre.
+ */
+export type ChoixBeneficiaire =
+  | { mode: "MOI" }
+  | { mode: "COMPTE"; userId: string }
+  | { mode: "NOM"; nom: string };
+
+const normaliserNom = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+/** Noms libres reconnus comme l'entreprise elle-même (type ENTREPRISE) ; tout autre nom est un FOURNISSEUR. */
+const NOMS_ENTREPRISE = new Set(["sim assurances", "sim assurances ci", "sim assurance", "sim assurance ci"]);
+
+/**
+ * Les trois champs existants du bénéficiaire d'une demande, à partir du choix. Un compte (moi-même ou un autre) donne
+ * le type COLLABORATEUR : aucun profil ne distingue un stagiaire sur un compte du portail. Un nom libre donne un type
+ * externe : ENTREPRISE pour « SIM Assurances (CI) », sinon FOURNISSEUR. Jamais un compte ET un nom à la fois.
+ */
+export function champsBeneficiaire(
+  choix: ChoixBeneficiaire,
+  createurId: string
+): { beneficiaireType: BeneficiaireType; beneficiaireUserId: string | null; beneficiaireNom: string | null } {
+  if (choix.mode === "MOI") return { beneficiaireType: "COLLABORATEUR", beneficiaireUserId: createurId, beneficiaireNom: null };
+  if (choix.mode === "COMPTE") return { beneficiaireType: "COLLABORATEUR", beneficiaireUserId: choix.userId, beneficiaireNom: null };
+  const nom = choix.nom.trim();
+  return {
+    beneficiaireType: NOMS_ENTREPRISE.has(normaliserNom(nom)) ? "ENTREPRISE" : "FOURNISSEUR",
+    beneficiaireUserId: null,
+    beneficiaireNom: nom,
+  };
+}

@@ -66,10 +66,9 @@ export function InvitationCreateForm({
         <Select
           name="serviceId"
           label="Service"
-          options={[
-            { value: "", label: "Aucun service" },
-            ...services.map((s) => ({ value: s.id, label: s.name })),
-          ]}
+          required
+          placeholder="Choisir un service…"
+          options={services.map((s) => ({ value: s.id, label: s.name }))}
           error={state.status === "error" ? state.fieldErrors?.serviceId : undefined}
         />
         <div className="sm:col-span-2">

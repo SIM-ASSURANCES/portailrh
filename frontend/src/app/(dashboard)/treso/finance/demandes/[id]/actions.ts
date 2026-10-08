@@ -6,17 +6,28 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify, notifyByPermission } from "@/lib/notifications";
-import { prisma } from "backend";
+import { notifierApprobationCloture, notifierEtapeCircuit } from "@/lib/notificationsCircuit";
+import { prisma, refusConflitInteret } from "backend";
 import { calculerStatutDemande, getEcart, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
-import { fieldErrorsFromZod, type ActionState } from "backend";
+import {
+  appliquerTransitionCircuit,
+  approbationClotureObtenue,
+  chargerActeur,
+  decisionFinalePrise,
+  MESSAGE_ATTENTE_VALIDATION_FINALE,
+  MESSAGE_DEUX_PERSONNES,
+  refusApprobationCloture,
+  type ActeurCircuit,
+} from "backend";
+
+/** Refus du moteur du circuit levé DANS une transaction pour l'annuler entièrement (jamais exporté). */
+class RefusCircuit extends Error {}
+import { fieldErrorsFromZod, MOTIF_LIGNE_MIN, type ActionState } from "backend";
 
 /**
- * Notifie le créateur ET les approbateurs DG qu'une demande vient
- * d'atteindre une validation ENTIÈRE (montantValide === montant demandé) —
- * factorisé car ce même évènement peut être produit par trois Server
- * Actions distinctes (validation totale, validation partielle qui
- * atteint en réalité le montant total, validation complémentaire qui
- * comble le dernier reliquat). Voir CLAUDE.md "Notifications Trésorerie".
+ * Validation complémentaire qui comble le reliquat d'une dépense directe (hors circuit : la décision finale est déjà
+ * prise) : notifie le créateur, puis ceux qui peuvent approuver la clôture si elle reste due. Les décisions du
+ * circuit notifient par `notifierEtapeCircuit`.
  */
 async function notifierDemandeEntierementValidee(
   demande: { id: string; reference: string; createurId: string },
@@ -31,17 +42,7 @@ async function notifierDemandeEntierementValidee(
     priority: "IMPORTANT",
     category: "TRESORERIE",
   });
-  // Exclut l'auteur de la validation (Finance ou DG) : un rôle combiné
-  // portant aussi `treso.approuver_validation_complete` ne doit pas se
-  // notifier lui-même de sa propre action.
-  await notifyByPermission("treso.approuver_validation_complete", {
-    titre: "Demande à approuver (validation complète)",
-    message: `La demande ${demande.reference} est entièrement validée et attend votre approbation avant clôture.`,
-    lien: "/treso/finance/validations-attente",
-    excludeUserId: actorUserId,
-    priority: "IMPORTANT",
-    category: "TRESORERIE",
-  });
+  await notifierApprobationCloture(demande.id, actorUserId);
 }
 
 const categorisationSchema = z.object({
@@ -410,11 +411,14 @@ export async function modifierDescriptionAction(
   const session = await getSession();
   const peutModifier =
     !!session &&
-    ((hasPermission(session, "treso.valider_demande") &&
-      !hasPermission(session, "treso.approuver_validation_complete")) ||
-      hasPermission(session, "treso.effectuer_reglement"));
+    hasPermission(session, "treso.modifier_description");
   if (!peutModifier) {
     return { status: "error", message: "Action non autorisée." };
+  }
+  // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le demandeur ni le bénéficiaire de la demande.
+  const refusConflit = await refusConflitInteret(prisma, { demandeId }, session.user.id);
+  if (refusConflit) {
+    return { status: "error", message: refusConflit };
   }
 
   const parsed = modifierDescriptionSchema.safeParse({ demandeId, description: nouvelleDescription });
@@ -428,6 +432,16 @@ export async function modifierDescriptionAction(
   }
   if (demande.statut === "CLOTUREE") {
     return { status: "error", message: "Cette demande est clôturée : sa description ne peut plus être modifiée." };
+  }
+  // Motif par ligne (2026-10-09) : une demande d'achat porte un motif par ligne ; son ancien motif d'en-tête reste en
+  // lecture seule. Seule la dépense directe (sans ligne) garde une description modifiable.
+  if (demande.typeDemande === "STANDARD") {
+    return { status: "error", message: "Le motif d'une demande d'achat se modifie ligne par ligne." };
+  }
+  // Circuit (décision 5) : sans pouvoir de décision Finance (l'Assistant), modification seulement après la décision
+  // finale.
+  if (!hasPermission(session, "treso.decider_finance") && !decisionFinalePrise(demande.etapeCircuit)) {
+    return { status: "error", message: MESSAGE_ATTENTE_VALIDATION_FINALE };
   }
   if (parsed.data.description === demande.description) {
     return { status: "success", message: "Aucun changement à enregistrer." };
@@ -482,11 +496,17 @@ export async function modifierLibelleLigneAction(
   const session = await getSession();
   const peutModifier =
     !!session &&
-    ((hasPermission(session, "treso.valider_demande") &&
-      !hasPermission(session, "treso.approuver_validation_complete")) ||
-      hasPermission(session, "treso.effectuer_reglement"));
+    hasPermission(session, "treso.modifier_description");
   if (!peutModifier) {
     return { status: "error", message: "Action non autorisée." };
+  }
+  // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le demandeur ni le bénéficiaire de la demande.
+  const ligneVisee = await prisma.ligneDemande.findUnique({ where: { id: ligneId }, select: { demandeId: true } });
+  const refusConflit = ligneVisee
+    ? await refusConflitInteret(prisma, { demandeId: ligneVisee.demandeId }, session.user.id)
+    : null;
+  if (refusConflit) {
+    return { status: "error", message: refusConflit };
   }
 
   const parsed = modifierLibelleLigneSchema.safeParse({ ligneId, libelle: nouveauLibelle });
@@ -503,6 +523,9 @@ export async function modifierLibelleLigneAction(
   }
   if (ligne.demande.statut === "CLOTUREE") {
     return { status: "error", message: "Cette demande est clôturée : le libellé ne peut plus être modifié." };
+  }
+  if (!hasPermission(session, "treso.decider_finance") && !decisionFinalePrise(ligne.demande.etapeCircuit)) {
+    return { status: "error", message: MESSAGE_ATTENTE_VALIDATION_FINALE };
   }
   if (parsed.data.libelle === ligne.libelle) {
     return { status: "success", message: "Aucun changement à enregistrer." };
@@ -532,11 +555,68 @@ export async function modifierLibelleLigneAction(
   return { status: "success", message: "Libellé modifié." };
 }
 
+const modifierMotifLigneSchema = z.object({
+  ligneId: z.string().min(1),
+  motif: z.string().trim().min(MOTIF_LIGNE_MIN, `Le motif doit contenir au moins ${MOTIF_LIGNE_MIN} caractères`),
+});
+
+/**
+ * Modifie le motif d'UNE ligne d'article (`LigneDemande.motif`, 2026-10-09). Mêmes droits et mêmes gardes que
+ * `modifierLibelleLigneAction` (permission `treso.modifier_description`, jamais le demandeur ni le bénéficiaire,
+ * Assistant après la décision finale seulement, verrou `CLOTUREE`), même versionnement : `motifOriginal` posé une
+ * seule fois, le demandeur voit toujours sa version.
+ */
+export async function modifierMotifLigneAction(ligneId: string, nouveauMotif: string): Promise<SimpleActionResult> {
+  const session = await getSession();
+  if (!session || !hasPermission(session, "treso.modifier_description")) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  const ligneVisee = await prisma.ligneDemande.findUnique({ where: { id: ligneId }, select: { demandeId: true } });
+  const refusConflit = ligneVisee
+    ? await refusConflitInteret(prisma, { demandeId: ligneVisee.demandeId }, session.user.id)
+    : null;
+  if (refusConflit) return { status: "error", message: refusConflit };
+
+  const parsed = modifierMotifLigneSchema.safeParse({ ligneId, motif: nouveauMotif });
+  if (!parsed.success) return { status: "error", message: parsed.error.issues[0].message };
+
+  const ligne = await prisma.ligneDemande.findUnique({ where: { id: parsed.data.ligneId }, include: { demande: true } });
+  if (!ligne) return { status: "error", message: "Ligne introuvable." };
+  if (ligne.demande.statut === "CLOTUREE") {
+    return { status: "error", message: "Cette demande est clôturée : le motif ne peut plus être modifié." };
+  }
+  if (!hasPermission(session, "treso.decider_finance") && !decisionFinalePrise(ligne.demande.etapeCircuit)) {
+    return { status: "error", message: MESSAGE_ATTENTE_VALIDATION_FINALE };
+  }
+  if (parsed.data.motif === ligne.motif) return { status: "success", message: "Aucun changement à enregistrer." };
+
+  await prisma.$transaction([
+    prisma.ligneDemande.update({
+      where: { id: parsed.data.ligneId },
+      data: { motif: parsed.data.motif, motifOriginal: ligne.motifOriginal ?? ligne.motif },
+    }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "LigneDemande",
+        entityId: parsed.data.ligneId,
+        action: "modification_motif_ligne",
+        detail: `Motif modifié par ${session.user.fullName} — ancienne version : « ${ligne.motif ?? "aucun"} »`,
+        userId: session.user.id,
+      },
+    }),
+  ]);
+  revalidateDemandePaths(ligne.demandeId);
+  return { status: "success", message: "Motif modifié." };
+}
+
 function revalidateDemandePaths(demandeId: string) {
   revalidatePath("/treso/finance/demandes");
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath("/treso/demandes");
   revalidatePath(`/treso/demandes/${demandeId}`);
+  // Circuit de validation : écrans du DG (décision ligne par ligne du cas b, file de l'étape DG).
+  revalidatePath("/treso/dg");
+  revalidatePath(`/treso/dg/${demandeId}`);
   // Ticket 8 : validation/rejet/clôture changent la répartition des
   // demandes VALIDEE — revalider tout l'espace Finance (dashboard + listes
   // "à décaisser"/"à régulariser") en une fois via `type: "layout"`.
@@ -562,25 +642,38 @@ async function enregistrerValidation(
   userId: string,
   montantValideCumule: number,
   montantCetteEtape: number,
-  action: "validation" | "validation_complementaire"
-): Promise<void> {
-  await prisma.$transaction([
-    prisma.demande.update({
-      where: { id: demandeId },
-      data: { montantValide: montantValideCumule },
-    }),
-    prisma.historiqueEntry.create({
-      data: {
-        entity: "Demande",
-        entityId: demandeId,
-        action,
-        detail: `Montant validé à cette étape : ${montantCetteEtape.toLocaleString("fr-FR")} FCFA (cumul validé : ${montantValideCumule.toLocaleString("fr-FR")} FCFA)`,
-        userId,
-      },
-    }),
-  ]);
+  action: "validation" | "validation_complementaire",
+  // Décision initiale : transition du circuit (étape Finance ou décision finale → Terminée), dans la même
+  // transaction. Absent pour une validation complémentaire (décision finale déjà prise).
+  acteurCircuit?: ActeurCircuit
+): Promise<string | null> {
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (acteurCircuit) {
+        const r = await appliquerTransitionCircuit(tx, demandeId, acteurCircuit, {
+          type: "DECIDER_LIGNES",
+          auMoinsUneValidee: true,
+        });
+        if (!r.ok) throw new RefusCircuit(r.message);
+      }
+      await tx.demande.update({ where: { id: demandeId }, data: { montantValide: montantValideCumule } });
+      await tx.historiqueEntry.create({
+        data: {
+          entity: "Demande",
+          entityId: demandeId,
+          action,
+          detail: `Montant validé à cette étape : ${montantCetteEtape.toLocaleString("fr-FR")} FCFA (cumul validé : ${montantValideCumule.toLocaleString("fr-FR")} FCFA)`,
+          userId,
+        },
+      });
+    });
+  } catch (e) {
+    if (e instanceof RefusCircuit) return e.message;
+    throw e;
+  }
 
   await calculerStatutDemande(demandeId);
+  return null;
 }
 
 /**
@@ -653,10 +746,10 @@ export async function validerLignesAction(
   decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE"; motif?: string }[]
 ): Promise<SimpleActionResult> {
   const session = await getSession();
+  // Finance à l'étape Finance ou de décision finale, DG pour une demande de la Finance (cas b) : c'est le moteur du
+  // circuit qui tranche selon l'étape (`appliquerTransitionCircuit` ci-dessous).
   const peutValider =
-    !!session &&
-    hasPermission(session, "treso.valider_demande") &&
-    !hasPermission(session, "treso.approuver_validation_complete");
+    !!session && (hasPermission(session, "treso.decider_finance") || hasPermission(session, "treso.decider_dg"));
   if (!peutValider) {
     return { status: "error", message: "Action non autorisée." };
   }
@@ -715,13 +808,16 @@ export async function validerLignesAction(
   const decideAt = new Date();
   let montantValide = 0;
 
-  const ligneUpdates = parsedDecisions.data.map((d) => {
-    const ligne = ligneParId.get(d.ligneId)!;
-    const motif = d.statut === "REJETEE" ? d.motif!.trim() : null;
+  for (const d of parsedDecisions.data) {
     if (d.statut === "VALIDEE") {
+      const ligne = ligneParId.get(d.ligneId)!;
       montantValide += ligne.quantite * Number(ligne.prixUnitaire);
     }
-    return prisma.ligneDemande.update({
+  }
+
+  const ligneUpdates = (tx: Pick<typeof prisma, "ligneDemande">) => parsedDecisions.data.map((d) => {
+    const motif = d.statut === "REJETEE" ? d.motif!.trim() : null;
+    return tx.ligneDemande.update({
       where: { id: d.ligneId },
       data: {
         statutValidation: d.statut,
@@ -732,9 +828,9 @@ export async function validerLignesAction(
     });
   });
 
-  const historiqueEntries = parsedDecisions.data.map((d) => {
+  const historiqueEntries = (tx: Pick<typeof prisma, "historiqueEntry">) => parsedDecisions.data.map((d) => {
     const ligne = ligneParId.get(d.ligneId)!;
-    return prisma.historiqueEntry.create({
+    return tx.historiqueEntry.create({
       data: {
         entity: "LigneDemande",
         entityId: d.ligneId,
@@ -748,37 +844,29 @@ export async function validerLignesAction(
     });
   });
 
-  await prisma.$transaction([
-    ...ligneUpdates,
-    prisma.demande.update({ where: { id: demandeId }, data: { montantValide } }),
-    ...historiqueEntries,
-  ]);
+  const acteurCircuit = await chargerActeur(prisma, session, demande.createurId);
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Toutes rejetées : la demande part en correction (décision 1), jamais un état sans issue.
+      const r = await appliquerTransitionCircuit(tx, demandeId, acteurCircuit, {
+        type: "DECIDER_LIGNES",
+        auMoinsUneValidee: montantValide > 0,
+      });
+      if (!r.ok) throw new RefusCircuit(r.message);
+      for (const op of ligneUpdates(tx)) await op;
+      await tx.demande.update({ where: { id: demandeId }, data: { montantValide } });
+      for (const op of historiqueEntries(tx)) await op;
+    });
+  } catch (e) {
+    if (e instanceof RefusCircuit) return { status: "error", message: e.message };
+    throw e;
+  }
 
   await calculerStatutDemande(demandeId);
   revalidateDemandePaths(demandeId);
 
-  const montantDemande = Number(demande.montant);
-  if (Math.round(montantValide * 100) >= Math.round(montantDemande * 100)) {
-    await notifierDemandeEntierementValidee(demande, montantValide, session.user.id);
-  } else if (montantValide > 0) {
-    await notify({
-      userId: demande.createurId,
-      titre: "Demande validée partiellement",
-      message: `Votre demande ${demande.reference} a été validée partiellement (${montantValide.toLocaleString("fr-FR")} FCFA sur ${montantDemande.toLocaleString("fr-FR")} FCFA demandés) — certaines lignes ont été rejetées.`,
-      lien: `/treso/demandes/${demandeId}`,
-      priority: "IMPORTANT",
-      category: "TRESORERIE",
-    });
-  } else {
-    await notify({
-      userId: demande.createurId,
-      titre: "Lignes de votre demande rejetées",
-      message: `Toutes les lignes de votre demande ${demande.reference} ont été rejetées.`,
-      lien: `/treso/demandes/${demandeId}`,
-      priority: "CRITIQUE",
-      category: "TRESORERIE",
-    });
-  }
+  // Décision finale (demandeur, Assistant Finance, approbation de clôture si due) ou renvoi en correction.
+  await notifierEtapeCircuit(demandeId, session.user.id);
 
   return {
     status: "success",
@@ -799,7 +887,7 @@ export async function validerLignesAction(
  */
 export async function validerTotalementAction(demandeId: string): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !hasPermission(session, "treso.valider_demande")) {
+  if (!session || !(hasPermission(session, "treso.valider_demande") || hasPermission(session, "treso.decider_dg"))) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -821,9 +909,17 @@ export async function validerTotalementAction(demandeId: string): Promise<Simple
   }
 
   const montantDemande = Number(demande.montant);
-  await enregistrerValidation(demandeId, session.user.id, montantDemande, montantDemande, "validation");
+  const refus = await enregistrerValidation(
+    demandeId,
+    session.user.id,
+    montantDemande,
+    montantDemande,
+    "validation",
+    await chargerActeur(prisma, session, demande.createurId)
+  );
+  if (refus) return { status: "error", message: refus };
   revalidateDemandePaths(demandeId);
-  await notifierDemandeEntierementValidee(demande, montantDemande, session.user.id);
+  await notifierEtapeCircuit(demandeId, session.user.id);
 
   return { status: "success", message: `Demande ${demande.reference} validée totalement.` };
 }
@@ -846,7 +942,7 @@ export async function validerPartiellementAction(
   montant: number
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !hasPermission(session, "treso.valider_demande")) {
+  if (!session || !(hasPermission(session, "treso.valider_demande") || hasPermission(session, "treso.decider_dg"))) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -886,21 +982,18 @@ export async function validerPartiellementAction(
 
   const estFinalementTotale = Math.round(parsedMontant.data * 100) >= Math.round(montantDemande * 100);
 
-  await enregistrerValidation(demandeId, session.user.id, parsedMontant.data, parsedMontant.data, "validation");
+  const refus = await enregistrerValidation(
+    demandeId,
+    session.user.id,
+    parsedMontant.data,
+    parsedMontant.data,
+    "validation",
+    await chargerActeur(prisma, session, demande.createurId)
+  );
+  if (refus) return { status: "error", message: refus };
   revalidateDemandePaths(demandeId);
 
-  if (estFinalementTotale) {
-    await notifierDemandeEntierementValidee(demande, parsedMontant.data, session.user.id);
-  } else {
-    await notify({
-      userId: demande.createurId,
-      titre: "Demande validée partiellement",
-      message: `Votre demande ${demande.reference} a été validée partiellement (${parsedMontant.data.toLocaleString("fr-FR")} FCFA sur ${montantDemande.toLocaleString("fr-FR")} FCFA demandés).`,
-      lien: `/treso/demandes/${demandeId}`,
-      priority: "IMPORTANT",
-      category: "TRESORERIE",
-    });
-  }
+  await notifierEtapeCircuit(demandeId, session.user.id);
 
   return {
     status: "success",
@@ -945,6 +1038,10 @@ export async function validerComplementaireAction(
       status: "error",
       message: `Une validation complémentaire n'est possible que sur une demande partiellement validée (statut actuel : ${demande.statut}).`,
     };
+  }
+  // Deux personnes distinctes : le compte qui a approuvé comme DG ne valide pas comme Finance.
+  if (demande.dgApprobateurId === session.user.id) {
+    return { status: "error", message: MESSAGE_DEUX_PERSONNES };
   }
   if (demande.reliquatRejete) {
     return {
@@ -1110,8 +1207,10 @@ export async function rejeterDemandeAction(
   demandeId: string,
   motif: string
 ): Promise<SimpleActionResult> {
+  // Circuit (2026-10-06) : le moteur décide qui peut rejeter à l'étape courante (responsable de service, Finance,
+  // DG pour une demande de la Finance) ; la demande part en correction, jamais en REJETEE (anciennes demandes seules).
   const session = await getSession();
-  if (!session || !hasPermission(session, "treso.valider_demande")) {
+  if (!session) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -1124,41 +1223,19 @@ export async function rejeterDemandeAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
-  if (demande.statut !== "EN_ATTENTE_VALIDATION") {
-    return {
-      status: "error",
-      message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
-    };
+  const acteurCircuit = await chargerActeur(prisma, session, demande.createurId);
+  const r = await prisma.$transaction((tx) =>
+    appliquerTransitionCircuit(tx, demandeId, acteurCircuit, { type: "REJETER", motif: parsedMotif.data })
+  );
+  if (!r.ok) {
+    return { status: "error", message: r.message };
   }
-
-  await prisma.$transaction([
-    prisma.demande.update({
-      where: { id: demandeId },
-      data: { statut: "REJETEE", motifRejet: parsedMotif.data },
-    }),
-    prisma.historiqueEntry.create({
-      data: {
-        entity: "Demande",
-        entityId: demandeId,
-        action: "rejet",
-        detail: parsedMotif.data,
-        userId: session.user.id,
-      },
-    }),
-  ]);
 
   revalidateDemandePaths(demandeId);
 
-  await notify({
-    userId: demande.createurId,
-    titre: "Demande rejetée",
-    message: `Votre demande ${demande.reference} a été rejetée. Motif : ${parsedMotif.data}`,
-    lien: `/treso/demandes/${demandeId}`,
-    priority: "CRITIQUE",
-    category: "TRESORERIE",
-  });
+  await notifierEtapeCircuit(demandeId, session.user.id);
 
-  return { status: "success", message: `Demande ${demande.reference} rejetée.` };
+  return { status: "success", message: `Demande ${demande.reference} renvoyée au demandeur pour correction.` };
 }
 
 const motifClotureSchema = z
@@ -1221,7 +1298,7 @@ export async function cloturerDemandeAction(
   // `Demande`) : avant tout le reste, une demande ne peut être clôturée
   // (totale ou partielle) que si le DG a donné son approbation complète,
   // même si Finance a déjà intégralement réglé.
-  if (!demande.validationCompleteParDG) {
+  if (!approbationClotureObtenue(demande)) {
     return {
       status: "error",
       message: "La clôture nécessite l'approbation complète du DG au préalable.",
@@ -1324,6 +1401,11 @@ export async function approuverValidationCompleteAction(demandeId: string): Prom
   if (demande.validationCompleteParDG) {
     return { status: "error", message: "La validation complète a déjà été approuvée pour cette demande." };
   }
+  // Deux personnes distinctes (jamais le décideur Finance), jamais le demandeur, non requise si émise par le DG.
+  const refusApprobation = refusApprobationCloture(demande, session.user.id);
+  if (refusApprobation) {
+    return { status: "error", message: refusApprobation };
+  }
   // Après un rejet, le DG ne peut plus approuver directement : seule une
   // resoumission du Responsable Finance (dernier évènement DG =
   // `resoumission_validation_complete`) rouvre cette possibilité. Revérifié
@@ -1341,7 +1423,7 @@ export async function approuverValidationCompleteAction(demandeId: string): Prom
       return {
         status: "error",
         message:
-          "En attente de resoumission par le Responsable Finance avant nouvelle décision du DG : approbation impossible.",
+          "En attente de resoumission par Finance avant nouvelle décision du DG : approbation impossible.",
       };
     }
   }
@@ -1441,9 +1523,8 @@ export async function rejeterValidationCompleteAction(
   revalidateDemandePaths(demandeId);
   revalidatePath("/treso/finance/validations-attente");
 
-  // Exclut le DG lui-même (`treso.valider_demande` peut aussi être porté
-  // par le DG) — il ne doit pas se notifier de sa propre décision.
-  await notifyByPermission("treso.valider_demande", {
+  // Destinataires : ceux qui peuvent resoumettre au DG (`treso.soumettre_dg`) ; l'auteur reste exclu, par précaution.
+  await notifyByPermission("treso.soumettre_dg", {
     titre: "Validation complète rejetée par le DG",
     message: `Le DG a rejeté (à l'examen) la validation complète de la demande ${demande.reference}. Motif : ${parsedMotif.data}`,
     lien: `/treso/finance/demandes/${demandeId}`,
@@ -1592,11 +1673,7 @@ export async function resoumettreValidationCompleteDGAction(
   motif: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (
-    !session ||
-    !hasPermission(session, "treso.valider_demande") ||
-    hasPermission(session, "treso.approuver_validation_complete")
-  ) {
+  if (!session || !hasPermission(session, "treso.soumettre_dg")) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -1649,14 +1726,7 @@ export async function resoumettreValidationCompleteDGAction(
   revalidateDemandePaths(demandeId);
   revalidatePath("/treso/finance/validations-attente");
 
-  await notifyByPermission("treso.approuver_validation_complete", {
-    titre: "Demande resoumise pour validation complète",
-    message: `La demande ${demande.reference}, précédemment rejetée, a été resoumise pour un nouvel examen. Motif : ${parsedMotif.data}`,
-    lien: "/treso/finance/validations-attente",
-    excludeUserId: session.user.id,
-    priority: "IMPORTANT",
-    category: "TRESORERIE",
-  });
+  await notifierApprobationCloture(demandeId, session.user.id);
 
   return {
     status: "success",

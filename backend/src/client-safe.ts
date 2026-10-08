@@ -24,6 +24,7 @@
 export * from "./generated/prisma/enums";
 export * from "./validation";
 export * from "./beneficiaire";
+export * from "./motifLigne";
 // Constantes/validations pures uniquement (compteur de caractères côté
 // client) — depuis `./feedback-constants`, JAMAIS depuis `./feedback` :
 // même un `export { X } from "./feedback"` nommé (pas `export *`)
@@ -42,3 +43,5 @@ export { FEEDBACK_CONTENT_MIN, FEEDBACK_CONTENT_MAX } from "./feedback-constants
 // pour le bundle (fichier pur), même si seul le serveur l'appelle en
 // pratique (jamais faire confiance à un `content` envoyé par le client).
 export * from "./feedback-questions";
+// Circuit de validation des demandes : moteur PUR (import de types seulement), sûr pour un Client Component.
+export * from "./circuitDemande";

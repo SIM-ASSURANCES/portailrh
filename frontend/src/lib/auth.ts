@@ -2,7 +2,14 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 
-import { prisma, hasPermission, isAdmin, getAccessibleModules, ensureFeedbackModuleAndPermission } from "backend";
+import {
+  prisma,
+  hasPermission,
+  isAdmin,
+  getAccessibleModules,
+  ensureFeedbackModuleAndPermission,
+  PERMISSIONS_DECISION_NON_DELEGABLES,
+} from "backend";
 import { cache } from "react";
 
 import { authConfig } from "./auth.config";
@@ -225,9 +232,12 @@ export const getSession = cache(async (): Promise<{
 
   const rolePermissions = role?.permissions.map((rp) => rp.permission.key) ?? [];
 
+  // Une permission de décision du circuit n'est jamais comptée par délégation (décision du 2026-10-06), même si la
+  // délégation existait avant cette règle.
   const delegatedKeys = delegations
     .filter(
       (d) =>
+        !PERMISSIONS_DECISION_NON_DELEGABLES.includes(d.permission.key) &&
         d.donneur.isActive &&
         d.donneur.role.permissions.some((rp) => rp.permission.key === d.permission.key)
     )

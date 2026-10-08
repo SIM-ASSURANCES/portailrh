@@ -16,7 +16,16 @@ import { receptionnerRetourAction } from "../retourActions";
  * **`disabled`** — même convention que partout ailleurs dans le module
  * (Responsable Finance en lecture seule) : reste visible, jamais masqué.
  */
-export function ReceptionnerAction({ retourId, disabled = false }: { retourId: string; disabled?: boolean }) {
+export function ReceptionnerAction({
+  retourId,
+  disabled = false,
+  raisonIndisponible = null,
+}: {
+  retourId: string;
+  disabled?: boolean;
+  /** Phrase sous le bouton grisé (conflit d'intérêts : la phrase que le serveur renverrait). */
+  raisonIndisponible?: string | null;
+}) {
   const [isPending, startTransition] = useTransition();
 
   function handleReceptionner() {
@@ -31,8 +40,11 @@ export function ReceptionnerAction({ retourId, disabled = false }: { retourId: s
   }
 
   return (
-    <Button type="button" loading={isPending} disabled={disabled} onClick={handleReceptionner}>
-      Réceptionner
-    </Button>
+    <div className="flex flex-col items-end gap-1">
+      <Button type="button" loading={isPending} disabled={disabled} onClick={handleReceptionner}>
+        Réceptionner
+      </Button>
+      {raisonIndisponible ? <p className="max-w-xs text-right text-xs text-muted-foreground">{raisonIndisponible}</p> : null}
+    </div>
   );
 }

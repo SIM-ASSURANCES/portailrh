@@ -8,6 +8,7 @@ import { type ActionState } from "backend";
 import { getSession, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { logAuditAction } from "@/lib/auditLog";
+import { designerResponsableService } from "@/lib/responsableService";
 
 export async function createServiceAction(
   prevState: ActionState,
@@ -20,9 +21,18 @@ export async function createServiceAction(
 
   const name = formData.get("name")?.toString().trim();
   const description = formData.get("description")?.toString().trim() || null;
+  const responsableId = formData.get("responsableId")?.toString() || "";
 
   if (!name) {
     return { status: "error", message: "Le nom du service est requis.", fieldErrors: { name: "Requis" } };
+  }
+  // Responsable obligatoire (circuit de validation, 2026-10-06) : il valide l'étape « Service » des demandes.
+  if (!responsableId) {
+    return { status: "error", message: "Le responsable du service est obligatoire.", fieldErrors: { responsableId: "Requis" } };
+  }
+  const responsable = await prisma.user.findUnique({ where: { id: responsableId }, select: { fullName: true, isActive: true } });
+  if (!responsable || !responsable.isActive) {
+    return { status: "error", message: "Le responsable choisi doit être un compte actif.", fieldErrors: { responsableId: "Compte actif requis" } };
   }
 
   try {
@@ -32,14 +42,14 @@ export async function createServiceAction(
     }
 
     const service = await prisma.service.create({
-      data: { name, description },
+      data: { name, description, responsableId },
     });
 
     await logAuditAction({
       entity: "Service",
       entityId: service.id,
       action: "CREATE",
-      detail: `Création du service « ${service.name} »${service.description ? ` (${service.description})` : ""}`,
+      detail: `Création du service « ${service.name} »${service.description ? ` (${service.description})` : ""}, responsable : ${responsable.fullName}`,
       userId: session.user.id,
       userFullName: session.user.fullName,
       userEmail: session.user.email,
@@ -91,6 +101,32 @@ export async function deleteServiceAction(serviceId: string): Promise<ActionStat
     revalidatePath("/admin/services");
     publishDataChanged();
     return { status: "success", message: "Service supprimé." };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Erreur serveur";
+    return { status: "error", message: msg };
+  }
+}
+
+/**
+ * Désigne ou change le responsable d'un service (écran Services, bouton « Désigner / Changer »). Réservée à la gestion
+ * des utilisateurs et services (`isAdmin`, revérifiée ici). Obligatoire : on le remplace, on ne le retire jamais. Le
+ * remplacement d'un responsable existant exige `confirmerRemplacement` (l'écran le demande en le nommant). Voir
+ * `designerResponsableService` (journal, demandes à l'étape Service transférées).
+ */
+export async function definirResponsableServiceAction(
+  serviceId: string,
+  responsableId: string,
+  confirmerRemplacement = false
+): Promise<ActionState> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  if (!responsableId) {
+    return { status: "error", message: "Le responsable du service est obligatoire." };
+  }
+  try {
+    return await designerResponsableService(session, serviceId, responsableId, confirmerRemplacement === true);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Erreur serveur";
     return { status: "error", message: msg };

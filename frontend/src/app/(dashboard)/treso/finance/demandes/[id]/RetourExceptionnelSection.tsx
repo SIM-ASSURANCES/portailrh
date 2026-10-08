@@ -17,10 +17,7 @@ const STATUT_VARIANT = { EN_ATTENTE_VALIDATION: "warning", VALIDE: "success", RE
 export async function RetourExceptionnelSection({ demandeId }: { demandeId: string }) {
   const session = await getSession();
   const estAssistant = !!session && hasPermission(session, "treso.receptionner_retour");
-  const estResponsable =
-    !!session &&
-    hasPermission(session, "treso.valider_demande") &&
-    !hasPermission(session, "treso.approuver_validation_complete");
+  const estResponsable = !!session && hasPermission(session, "treso.valider_retour_exceptionnel");
 
   const retours = await prisma.retourExceptionnel.findMany({
     where: { demandeId },
@@ -69,7 +66,7 @@ export async function RetourExceptionnelSection({ demandeId }: { demandeId: stri
                 <div className="pt-1">
                   {r.saisiParId === session!.user.id ? (
                     <p className="text-xs text-muted-foreground">
-                      Vous avez saisi ce retour : un autre Responsable Finance doit le valider (séparation des tâches).
+                      Vous avez saisi ce retour : un autre compte Finance doit le valider (séparation des tâches).
                     </p>
                   ) : (
                     <RetourExceptionnelDecision retourId={r.id} disabled={false} />

@@ -10,8 +10,14 @@ import { z } from "zod";
 import { getSession, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
-import { fieldErrorsFromZod, type ActionState } from "backend";
+import {
+  fieldErrorsFromZod,
+  messageRefusResponsableSansRemplacant,
+  servicesQuittesSansRemplacant,
+  type ActionState,
+} from "backend";
 import { logAuditAction } from "@/lib/auditLog";
+import { designerResponsableService } from "@/lib/responsableService";
 import { sendEmail, generateWelcomeEmail } from "@/lib/email";
 import { notify } from "@/lib/notifications";
 
@@ -45,7 +51,8 @@ const createUserSchema = z.object({
     .regex(/[0-9]/, "Au moins un chiffre requis")
     .regex(/[^A-Za-z0-9]/, "Au moins un caractère spécial requis"),
   roleId: z.string().min(1, "Rôle requis"),
-  serviceId: z.string().optional().transform(v => v === "" ? null : v),
+  // Service obligatoire (circuit de validation, 2026-10-06) : la base reste tolérante, le formulaire l'exige.
+  serviceId: z.string({ message: "Le service est obligatoire" }).min(1, "Le service est obligatoire"),
 });
 
 /**
@@ -85,6 +92,23 @@ export async function createUserAction(
       message: "Le formulaire contient des erreurs.",
       fieldErrors: { email: "Cet email est déjà utilisé." },
     };
+  }
+
+  // Case « Responsable de ce service » : si un autre responsable existe, la confirmation est exigée (vérifiée AVANT de
+  // créer le compte, pour ne jamais créer un compte à moitié).
+  const devenirResponsable = formData.get("responsableDuService") === "on";
+  const confirmerRemplacement = formData.get("confirmerRemplacement") === "on";
+  if (devenirResponsable && !confirmerRemplacement) {
+    const svc = await prisma.service.findUnique({
+      where: { id: parsed.data.serviceId },
+      select: { name: true, responsable: { select: { fullName: true } } },
+    });
+    if (svc?.responsable) {
+      return {
+        status: "error",
+        message: `${svc.responsable.fullName} est actuellement responsable du service « ${svc.name} » : confirmez le remplacement (il reste membre de son service, il n'en est plus responsable).`,
+      };
+    }
   }
 
   const passwordHash = await bcrypt.hash(parsed.data.password, SALT_ROUNDS);
@@ -140,17 +164,24 @@ export async function createUserAction(
     console.error("Erreur lors de l'envoi de l'email de bienvenue:", err);
   }
 
+  let messageResponsable = "";
+  if (devenirResponsable) {
+    const r = await designerResponsableService(session, parsed.data.serviceId, user.id, true);
+    messageResponsable = r.status === "error" ? ` Compte créé, mais pas désigné responsable : ${r.message}` : r.status === "success" ? ` ${r.message ?? ""}` : "";
+  }
+
   revalidatePath("/admin/users");
   publishDataChanged();
 
-  return { status: "success", message: `Utilisateur ${user.email} créé et email d'accueil envoyé.` };
+  return { status: "success", message: `Utilisateur ${user.email} créé et email d'accueil envoyé.${messageResponsable}` };
 }
 
 const createInvitationSchema = z.object({
   fullName: z.string().min(2, "Le nom doit contenir au moins 2 caractères"),
   email: z.string().email("Email invalide"),
   roleId: z.string().min(1, "Rôle requis"),
-  serviceId: z.string().optional().transform(v => v === "" ? null : v),
+  // Service obligatoire (circuit de validation, 2026-10-06) : la base reste tolérante, le formulaire l'exige.
+  serviceId: z.string({ message: "Le service est obligatoire" }).min(1, "Le service est obligatoire"),
 });
 
 /**
@@ -381,6 +412,11 @@ export async function toggleUserActiveAction(
   if (userId === session.user.id) {
     return { status: "error", message: "Impossible de modifier votre propre compte." };
   }
+  // Le seul responsable d'un service ne peut pas être désactivé sans remplaçant (étape « Service »).
+  if (!active) {
+    const refus = await refusResponsableSansRemplacant(userId, "desactiver");
+    if (refus) return { status: "error", message: refus };
+  }
 
   const user = await prisma.user.update({ 
     where: { id: userId }, 
@@ -492,6 +528,36 @@ export async function modifierRoleUtilisateurAction(
   return { status: "success", message: `Rôle de ${user.fullName} mis à jour : ${nouveauRole.name}.` };
 }
 
+/** Refus de désactiver ou supprimer le seul responsable d'un ou plusieurs services sans remplaçant (`null` : permis). */
+async function refusResponsableSansRemplacant(userId: string, action: "desactiver" | "supprimer"): Promise<string | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { fullName: true, servicesResponsable: { select: { name: true }, orderBy: { name: "asc" } } },
+  });
+  if (!user) return null;
+  return messageRefusResponsableSansRemplacant(user.fullName, user.servicesResponsable.map((s) => s.name), action);
+}
+
+/**
+ * Désigne un compte responsable du service dont il est membre (case « Responsable de ce service » de la liste des
+ * utilisateurs). Si un autre responsable existe, `confirmerRemplacement` est exigé (le message le nomme).
+ */
+export async function designerResponsableDeSonServiceAction(userId: string, confirmerRemplacement = false): Promise<ActionState> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { serviceId: true } });
+  if (!user) return { status: "error", message: "Utilisateur introuvable." };
+  if (!user.serviceId) return { status: "error", message: "Ce compte n'a pas de service : attribuez-lui d'abord un service." };
+  try {
+    return await designerResponsableService(session, user.serviceId, userId, confirmerRemplacement === true);
+  } catch (err) {
+    console.error(err);
+    return { status: "error", message: "Erreur serveur" };
+  }
+}
+
 export async function updateUserServiceAction(
   userId: string,
   serviceId: string | null
@@ -510,9 +576,21 @@ export async function updateUserServiceAction(
       return { status: "error", message: "Utilisateur introuvable." };
     }
 
+    if (!serviceId) {
+      return { status: "error", message: "Le service est obligatoire : choisissez un autre service plutôt que de le retirer." };
+    }
     if (user.serviceId === serviceId) {
       return { status: "success", message: "Service inchangé." };
     }
+    // Le seul responsable du service qu'il quitte ne part pas sans remplaçant (responsable extérieur d'autres services :
+    // inchangé, permis).
+    const responsabilites = await prisma.service.findMany({ where: { responsableId: userId }, select: { id: true, name: true } });
+    const refus = messageRefusResponsableSansRemplacant(
+      user.fullName,
+      servicesQuittesSansRemplacant(user, responsabilites, serviceId),
+      "changer_service"
+    );
+    if (refus) return { status: "error", message: refus };
 
     let newService = null;
     if (serviceId) {
@@ -664,6 +742,8 @@ export async function supprimerUtilisateurAction(
   if (!user) {
     return { status: "error", message: "Utilisateur introuvable." };
   }
+  const refusResponsable = await refusResponsableSansRemplacant(userId, "supprimer");
+  if (refusResponsable) return { status: "error", message: refusResponsable };
 
   // Jamais se retrouver sans aucun administrateur dans le système.
   if (user.role.estAdmin) {
@@ -694,6 +774,7 @@ export async function supprimerUtilisateurAction(
     demandesCreees,
     demandesBeneficiees,
     demandesApprouveesDG,
+    demandesDecideesFinance,
     reglementsFaits,
     retoursDeclares,
     retoursReceptionnes,
@@ -721,10 +802,17 @@ export async function supprimerUtilisateurAction(
     encPartenairesCrees,
     encPartenairesMajs,
     encTauxControleMajs,
+    encImportsFaits,
+    encImportsValides,
+    encEncaissementsSaisis,
+    encEncaissementsConfirmes,
+    encEncaissementsNonRecus,
+    encSignalementsTraites,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
     prisma.demande.count({ where: { dgApprobateurId: userId } }),
+    prisma.demande.count({ where: { decideurFinanceId: userId } }),
     prisma.reglement.count({ where: { auteurId: userId } }),
     prisma.retourCaisse.count({ where: { declarantId: userId } }),
     prisma.retourCaisse.count({ where: { receptionneParId: userId } }),
@@ -758,6 +846,13 @@ export async function supprimerUtilisateurAction(
     prisma.encPartenaire.count({ where: { creeParId: userId } }),
     prisma.encPartenaire.count({ where: { majParId: userId } }),
     prisma.encTauxControle.count({ where: { majParId: userId } }),
+    // Import F1 (commit 4c) : 6 relations vers User supplémentaires.
+    prisma.encImport.count({ where: { importeParId: userId } }),
+    prisma.encImport.count({ where: { valideParId: userId } }),
+    prisma.encEncaissement.count({ where: { saisiParId: userId } }),
+    prisma.encEncaissement.count({ where: { confirmeParId: userId } }),
+    prisma.encEncaissement.count({ where: { nonRecuParId: userId } }),
+    prisma.encSignalement.count({ where: { traiteParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -765,6 +860,7 @@ export async function supprimerUtilisateurAction(
   if (demandesBeneficiees > 0) blocages.push(`été bénéficiaire de ${demandesBeneficiees} demande(s)`);
   if (demandesApprouveesDG > 0)
     blocages.push(`approuvé ${demandesApprouveesDG} validation(s) complète(s) en tant que DG`);
+  if (demandesDecideesFinance > 0) blocages.push(`pris la décision Finance de ${demandesDecideesFinance} demande(s)`);
   if (reglementsFaits > 0) blocages.push(`effectué ${reglementsFaits} règlement(s)`);
   if (retoursDeclares > 0) blocages.push(`déclaré ${retoursDeclares} retour(s) de caisse`);
   if (retoursReceptionnes > 0) blocages.push(`réceptionné ${retoursReceptionnes} retour(s) de caisse`);
@@ -795,6 +891,12 @@ export async function supprimerUtilisateurAction(
   if (encPartenairesCrees > 0) blocages.push(`créé ${encPartenairesCrees} partenaire(s) des encaissements`);
   if (encPartenairesMajs > 0) blocages.push(`modifié ${encPartenairesMajs} partenaire(s) des encaissements`);
   if (encTauxControleMajs > 0) blocages.push(`modifié ${encTauxControleMajs} taux de contrôle des encaissements`);
+  if (encImportsFaits > 0) blocages.push(`importé ${encImportsFaits} fichier(s) (encaissements)`);
+  if (encImportsValides > 0) blocages.push(`validé ${encImportsValides} import(s) (encaissements)`);
+  if (encEncaissementsSaisis > 0) blocages.push(`saisi ${encEncaissementsSaisis} encaissement(s)`);
+  if (encEncaissementsConfirmes > 0) blocages.push(`confirmé ${encEncaissementsConfirmes} encaissement(s)`);
+  if (encEncaissementsNonRecus > 0) blocages.push(`déclaré ${encEncaissementsNonRecus} encaissement(s) non reçu(s)`);
+  if (encSignalementsTraites > 0) blocages.push(`traité ${encSignalementsTraites} signalement(s) (encaissements)`);
 
   if (blocages.length > 0) {
     const liste =

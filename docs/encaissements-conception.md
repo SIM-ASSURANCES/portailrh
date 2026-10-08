@@ -75,8 +75,53 @@ jointes) et **20 000 lignes**.
 | D14 | **V2-A14 tranché** : ligne marquée annulée dans un fichier importé par la **Finance** → ligne **rejetée entièrement** (ni création ni mise à jour du contrat), signalée. Fichier importé par l'**Équipe technique** → contrat importé normalement, signalement « annulation non appliquée — en attente L4 » (les champs d'annulation ne sont pas encore construits, `EncContrat.annulationType`/etc. restent `[L4]`) |
 | D15 | **V2-A28 tranché** : ligne de fichier dont la date de paiement est future → contrat importé, **paiement NON créé**, signalé « à compléter » (même contrôle que la saisie manuelle, §8.1) |
 | — | **Rappel A1b** (déjà tranché, D7) : le PaiementID **du fichier** va dans `paiementIdFichier` (anti-doublon seulement) ; chaque encaissement reçoit **notre** numéro PAI (`prochainNumero`, `encSequence.ts`) |
-| — | **Route de dépôt** : PAS d'élargissement de la route commune Trésorerie (`/api/treso/pieces-jointes/upload`) aux tableurs — une route **dédiée** aux imports du module (`.xls`/`.xlsx`/`.csv` acceptés SEULEMENT là), gardée par `enc.importer_production`, prévue au commit 4c |
-| — | **Transaction d'import** : le timeout par défaut de `$transaction` (5 s) ne tiendra pas 5 000 lignes — timeout explicite et/ou insertions par lots, à mesurer réellement sur la base Docker (commit 4c) |
+| — | **Route de dépôt** : PAS d'élargissement de la route commune Trésorerie (`/api/treso/pieces-jointes/upload`) aux tableurs — une route **dédiée** aux imports du module (`.xls`/`.xlsx`/`.csv` acceptés SEULEMENT là), gardée par `enc.importer_production` — **faite au commit 4c** (`POST /api/encaissements/import/upload`) |
+| — | **Transaction d'import** : le timeout par défaut de `$transaction` (5 s) ne tiendra pas 5 000 lignes — **commit 4c** : une seule transaction, timeout explicite **300 s** (`maxWait` 10 s), pas de lots ; mesuré sur PostgreSQL 16 (Docker) : **5 000 lignes en 45 à 54 s**, réimport en ~34 s |
+
+**Décisions prises au commit 4c (2026-09-30), à valider** :
+- **Branche inconnue → import REFUSÉ en entier** (demandé explicitement) : vérifiée pour TOUTES les lignes AVANT la
+  moindre écriture (pas même la ligne `EncImport`). Remplace, au niveau de l'import, le signalement ligne à ligne
+  `BRANCHE_INCONNUE` de 4b, qui reste dans les règles pures (jamais atteint en pratique par l'application en base).
+- **Partenaire créé automatiquement** (CDC §3.6) : `EncPartenaire.creeParId` étant NOT NULL (migration déjà poussée),
+  le créateur enregistré est l'**utilisateur qui a lancé l'import** — aucun acteur « système » n'existe dans le projet.
+  Audit `creation_automatique_import`.
+- **Concurrence** : `pg_advisory_xact_lock` (verrou de transaction) sur la police (`police:<n°>`) et sur la clé du
+  partenaire (`partenaire:<clé>`), préfixes distincts pour ne jamais partager un verrou entre les deux usages.
+- **Ligne sans numéro de police** (cas non couvert par F1.4) : un signalement `A_COMPLETER` pour la ligne, ni contrat
+  ni paiement, l'import continue. Conséquence : `EncSignalement.numPolice` est **nullable** (écart au sketch §5.5).
+- **Pas d'étape « aperçu »** pour F1 (contrairement à F1.5) : `EncImport` créé directement `VALIDE`, validé par
+  l'auteur de l'import à la même heure. **Rappel explicite pour le commit F1.5** (2026-09-30, §8.2 le dit déjà, répété
+  ici pour qu'il ne soit pas manqué en reprenant `appliquerImportProduction` comme base) : la reprise, elle, DOIT
+  ajouter une vraie étape d'aperçu (rapport par nature/branche) **avant** que `EncImport.statut` passe à `VALIDE` —
+  ni `appliquerImportProduction` ni sa Server Action (`importerProductionAction`) ne doivent être réutilisées telles
+  quelles pour F1.5 sans cette étape intercalée.
+- **Contrat toujours remis à jour** depuis le fichier (CDC §3.1), sauf `partAccessoiresPartenaire` (exception par
+  police, jamais touchée par un import). Un réimport compte donc des « contrats mis à jour », jamais créés.
+- **Origine de l'import** (V2-A14) — **corrigé le 2026-09-30, avant commit** : un premier essai la déduisait de
+  `enc.marquer_paye` (exclusive à Finance) ; la vraie règle du CDC est « l'annulation est réservée à qui peut annuler »,
+  jamais liée aux rôles Finance/Technique en tant que tels. Déduite désormais de `enc.annuler_contrat` (exclusive à
+  l'Équipe technique) : qui la détient → ligne annulée prise en compte (contrat importé, L4) ; qui ne l'a pas
+  (Finance) → ligne rejetée entièrement. Les deux formulations pointaient vers le même résultat ICI (les deux seuls
+  rôles porteurs d'`enc.importer_production` se répartissent à l'identique sur les deux permissions), mais la seconde
+  seule reflète la vraie règle métier — jamais un nom de rôle en dur.
+- **Téléchargement du fichier de production** (D6, Finance + Technique) : la route
+  `GET /api/encaissements/pieces-jointes/[id]` exige `enc.importer_production` pour une pièce liée à un import
+  `PRODUCTION`, `enc.consulter` pour toute autre pièce.
+- **Taux de contrôle câblés sur l'import** — **ajouté le 2026-09-30, avant commit** (les tables/actions du commit 3a
+  existaient déjà) : `resoudreTauxControleAttendus` cherche par spécificité décroissante (produit+partenaire exact >
+  partenaire seul > produit seul, confirmé) ; sans ligne `EncTauxControle` correspondante, `analyserLigne` saute le
+  contrôle (comportement 4b inchangé). Ordre de spécificité non décrit par le cahier (F9 n'a pas d'écran), à
+  confirmer si F9 introduit une règle différente.
+- **Écart de taux de contrôle comparé en MONTANT, pas en pourcentage** — **corrigé le 2026-09-30, second passage
+  avant commit** : un premier essai comparait deux FRACTIONS avec une tolérance en points (2 points) — signalé comme
+  insuffisant (un écart de 2 points aurait laissé passer 20 % de commission attendue contre 18 % réels, une dérive de
+  plusieurs dizaines de FCFA). Corrigé : montant attendu = taux paramétré × base (T+U pour la taxe, T pour
+  commission/honoraires/accessoires), comparé au montant RÉEL du fichier (V/W/X/U), tolérance = `toleranceIncoherenceFcfa`
+  (la MÊME que l'incohérence T+U+V≠S, `controle.tolerance_fcfa`, CDC V1 §3.8, 1 FCFA par défaut) — jamais une seconde
+  tolérance dédiée. Réutiliser ce paramètre déjà existant (plutôt que d'en créer un nouveau) est un choix
+  d'implémentation, pas explicitement demandé pour ce précédent V1 précis — signalé, à confirmer par le client comme
+  la base « accessoires = U/T » (4b). Plus besoin de garde `T > 0` : sans division, `attendu × 0 = 0` reste un
+  montant valide.
 
 **Découverte pendant le commit 4a, bloquante pour 4b (V2-A14)** : ni le CDC (§3.1, « Statut d'annulation, date, motif |
 Colonnes du fichier ou saisie par l'équipe technique | Voir F8 ») ni la maquette (34 en-têtes A à AH,
@@ -86,6 +131,35 @@ Colonnes du fichier ou saisie par l'équipe technique | Voir F8 ») ni la maquet
 lire, la colonne réelle est inconnue) ; la détection prévue par D14 ne pourra être codée en 4b qu'une fois cette
 colonne identifiée (probablement `TypeOpération`, colonne G, à confirmer — ou une question à poser au client, à
 ajouter à la section 10 le cas échéant, une fois 4b entamé).
+
+### 2026-10-02 (F2 — recherche et fiche police ; onglet « À vérifier »)
+
+| # | Décision |
+|---|---|
+| D16 | **Recherche sans extension PostgreSQL.** D'abord option C (5a : normalisation `lower()`/`translate()` des deux côtés, balayage complet, plus un chemin rapide par les index existants pour un n° de police ou une référence). Mesuré à **150 000 contrats** (3 ans, CDC : 50 000 par an) : balayage jusqu'à 2,4 s. **Remplacée par l'option B au commit 5a-bis (D20)** |
+| D17 | **Encaissé** = somme des Z des paiements **CONFIRMÉS** (les futures contre-passations négatives y entrent d'elles-mêmes) ; **reste dû** = prime TTC − encaissé ; négatif → affiché « **Trop-perçu** » avec le montant, jamais un reste dû négatif (`encSituation.ts`) |
+| D18 | « Marquer traité » et « Ajouter quand même » (5b, 5c) : `enc.confirmer_paiement` (Finance) ; Technique et Consultation en lecture |
+| D19 | Anciens signalements « doublon possible » sans PaiementID du fichier : « Ajouter quand même » **autorisé** (5c) |
+
+### 2026-10-04 (F2 — option B, commit 5a-bis)
+
+| # | Décision |
+|---|---|
+| D20 | **Recherche par début de mot**, table d'index `EncContratMot` (contratId, mot), sans extension PostgreSQL : chaque mot saisi doit commencer au moins un mot du contrat. Mots tirés du n° de police, du client (nom, ID), du partenaire (nom ENREGISTRÉ), du produit (libellé, code), de la branche (code, libellé) **et des références de paiement** (même table plutôt qu'une colonne normalisée sur `EncEncaissement` : un seul index, une seule requête). Normalisation : minuscules, accents français retirés, apostrophes/tirets retirés ; **les parties d'un mot composé sont aussi indexées** (« N'Guessan » → nguessan, n, guessan ; « POL-0031337 » → pol0031337, pol, 0031337). **Limite assumée : un fragment au milieu d'un mot (« uessan ») ne trouve rien.** N° de police ou référence EXACTS : toujours par les index existants d'abord (le contrat exact seul) |
+| D21 | **Collation « C » sur la colonne `mot` plutôt que `text_pattern_ops`** : même effet (un btree sert `LIKE 'x%'` malgré la collation `en_US.utf8` de la base), mais Prisma 7 ne déclare `text_pattern_ops` que sous forme brute (`raw`) et la voit comme un écart permanent (`migrate diff` non vide ; `migrate dev` recréerait l'index à chaque nouvelle migration). La collation de colonne, ignorée par Prisma à la comparaison, donne zéro écart (vérifié). Le préfixe de n° de police et de référence passe par cette même table (mots normalisés, insensible à la casse et aux tirets) : pas d'index supplémentaire sur les colonnes brutes |
+| D22 | **Entretien** : `indexerMotsContrat` réécrit les mots dans la MÊME transaction que l'écriture du contrat ou du paiement (import F1). Réimport sans changement des champs indexés ni nouveau paiement : rien n'est réécrit. **Tout futur point qui crée un contrat ou un paiement avec référence (F3 saisie, 5c « Ajouter quand même », relevés) doit l'appeler.** Les noms de partenaire et de branche ne changent jamais aujourd'hui ; si un renommage apparaît, réindexer les contrats concernés. Remplissage des contrats existants **dans la migration** (SQL pur, idempotent `ON CONFLICT DO NOTHING`, mêmes règles que le TypeScript — 0 écart sur 150 000 contrats comparés) ; suppression d'un contrat : mots supprimés en cascade |
+
+### 2026-10-04 (onglet « À vérifier », commit 5b)
+
+| # | Décision |
+|---|---|
+| D23 | **« Marquer traité »** sans migration : réutilise les colonnes déjà prévues de `EncSignalement` (`statut` → `TRAITE`, `traiteParId`, `traiteAt`, `resolution`). `resolution` porte « Marqué traité » ou « Marqué traité — commentaire » (500 caractères au plus), pour distinguer plus tard « Ajouté quand même » (5c). Mise à jour conditionnelle sur `statut = A_TRAITER` : refusée si le signalement n'est plus à traiter, et deux traitements simultanés ne réussissent jamais tous les deux (vérifié sur PostgreSQL). Audit `EncAudit` (action `marquer_traite`, commentaire en motif) dans la même transaction. `enc.confirmer_paiement` (D18) ; Équipe technique et Consultation en lecture seule |
+
+### 2026-10-05 (« Ajouter quand même », commit 5c)
+
+| # | Décision |
+|---|---|
+| D24 | **« Ajouter quand même »** sur un « doublon possible » (`ajouterPaiementQuandMeme`, `enc.confirmer_paiement`) : crée le paiement « à confirmer » tel qu'indiqué dans le fichier (`source FICHIER`, notre numéro PAI, PaiementID du fichier et n° de ligne s'ils sont connus, import d'origine), sous le même verrou par police que l'import. Le signalement passe à TRAITÉ (`resolution` « Ajouté quand même — PAI-… », `encaissementCreeId`). Garde-fous : refusé si le signalement n'est plus À TRAITER, si le paiement indiqué est incomplet, ou si le même paiement est déjà enregistré (même règle « déjà présent » que l'import — couvre un second signalement de la même ligne laissé par un réimport). Index des mots mis à jour (D22) avec la référence du paiement. Deux audits (`EncEncaissement` `ajout_quand_meme`, `EncSignalement` `ajouter_quand_meme`). Sans migration : `paiementIndique` (JSON) conserve désormais le PaiementID du fichier et le n° de ligne ; les anciens signalements qui ne les ont pas restent ajoutables (D19) |
 
 ---
 
@@ -281,12 +355,32 @@ model EncImport {                                    // [L1]
 }
 model EncSignalement {                               // [L1]
   id  importId  contratId?  numPolice  brancheId?
-  analyse (DEJA_PRESENT | DOUBLON_POSSIBLE | A_COMPLETER | REF_WAVE_NON_CONFORME | AJOUTE | SANS_PAIEMENT
-           | PRIME_MODIFIEE | INCOHERENCE | ECART_TAUX | LIGNE_ANNULEE_REJETEE | BRANCHE_INCONNUE)
+  analyse (DEJA_PRESENT | DOUBLON_POSSIBLE | A_COMPLETER | REFERENCE_MANQUANTE | REF_WAVE_NON_CONFORME | AJOUTE
+           | SANS_PAIEMENT | PRIME_MODIFIEE | INCOHERENCE | ECART_TAUX | LIGNE_ANNULEE_REJETEE
+           | ANNULATION_EN_ATTENTE_L4 | BRANCHE_INCONNUE)
   niveau (A_TRAITER | INFO)  statut (A_TRAITER | INFO | TRAITE)
   paiementIndique Json?  encaissementExistantId?  encaissementCreeId?  primeAvant?  primeApres?
   traiteParId?  traiteAt?  resolution?  creeAt
 }
+```
+**Deux valeurs ajoutées (commit 4b, 2026-09-30), absentes du sketch d'origine** — reçues par le vrai `enum` Prisma
+`EncAnalyseSignalement` au commit 4c (13 valeurs, identiques à `AnalyseSignalement` d'`encImportRegles.ts`) ; même
+commit : `numPolice` rendu **nullable** (ligne sans numéro de police, voir §1, décisions du commit 4c) :
+- **`ANNULATION_EN_ATTENTE_L4`** — cas « Équipe technique » de V2-A14 (D14), jamais un rejet (contrat importé
+  normalement), donc distincte de `LIGNE_ANNULEE_REJETEE`.
+- **`REFERENCE_MANQUANTE`** — **deux corrections post-revue successives (2026-09-30)**. Un premier essai avait fondu
+  la référence manquante dans `A_COMPLETER`, au motif que CDC §3.2 l'exige pour « tout nouvel encaissement ».
+  **Corrigé (1)** : le tableau F1.4 (le cas « manquant ») ne cite que date, mode et montant — l'obligation de
+  référence du §3.2 vise la SAISIE À L'ÉCRAN, pas le fichier de production. Une ligne sans référence est donc
+  **ajoutée « à confirmer »** (pas bloquée), avec un signalement À TRAITER dédié. Un deuxième essai sautait alors le
+  contrôle « doublon possible » (fuzzy, ±1 FCFA/±7 jours) pour ces lignes, en pensant à tort que le groupe 3 du
+  rapprochement (CDC F5 : « même montant à 3 jours près, sans référence commune ») en avait seul la charge.
+  **Corrigé (2)** : l'ORDRE voulu est **déjà présent → doublon possible → à compléter (date/mode/montant) → puis,
+  SEULEMENT si la ligne est ajoutée, `REFERENCE_MANQUANTE` (ou `REF_WAVE_NON_CONFORME`) s'ajoute au signalement
+  `AJOUTE`, jamais à sa place**. Une ligne sans référence qui ressemble à un encaissement existant (±1 FCFA, ±7
+  jours) reste donc un doublon possible, non ajoutée — le groupe 3 du rapprochement sert pour les cas que ce
+  contrôle ne détecte pas, jamais pour le remplacer.
+```prisma
 model EncReleveLigne {                               // [L1]
   id  importId  numeroLigne  date  references String[]  referencePrincipale?
   montantBrut  montantNet?  frais  typeTransaction?  nomContrepartie?  telephone?
@@ -505,7 +599,7 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | V2-A17 | Source d'un encaissement issu d'une affectation | OUVERT |
 | V2-A18 | Année du numéro SUS | OUVERT |
 | V2-A19 | Dates de référence des états | OUVERT |
-| V2-A20 | Taux de contrôle : base, tolérance, lot | OUVERT |
+| V2-A20 | Taux de contrôle : base, tolérance, lot | RÉSOLU 2026-09-30 pour les 4 natures : taxe = V/(T+U), commission = W/T, honoraires = X/T (base reprise de la maquette) ; accessoires = U/T (base implicite reprise du V1) — **PROVISOIRE, à confirmer par le client**. Tolérance toujours fournie par l'appelant, aucune valeur par défaut |
 | V2-A21 | Relevé : toutes branches ou branche choisie | OUVERT |
 | V2-A22 | Groupe 4 du relevé en Lot 1 | OUVERT |
 | V2-A23 | Frais : tests comptés (RÉSOLU, D11) ; deux relevés partiels du même mois | OUVERT (en partie) |
@@ -571,16 +665,20 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | 2 | **Permissions V2** : migration corrective, seed, tests — fait | — |
 | 2b | **Paramètres V2** : retirer la ligne `taxe.delai_exigibilite_mois`, ajouter `accessoires.part_partenaire_defaut`, borne 1–28 en base (CHECK) — fait (2026-09-30) | — |
 | 3a | **Référentiels et paramétrage de base** (branches, bénéficiaire des honoraires daté, partenaires, taux de contrôle) — fait (2026-09-30), sans écran (F9 au Lot 3) | V2-A13 tranchée (NOVELIA depuis toujours), V2-A15 (branches, toujours provisoire, P1) |
-| 3b | **`EncContrat`** (reste à faire) | — |
+| 3b | **`EncContrat`** — fait au commit 4c (2026-09-30) | — |
 | 4a | **Lecture du fichier de production** (`lireTableur`, pure, SheetJS CE vendue) — fait (2026-09-30) | — (voir découverte "colonne d'annulation" ci-dessous, pour 4b) |
-| 4b | **Règles F1** (doublon, avenant, écarts, incohérences — pures) | V2-A12 (PROVISOIRE), V2-A10/A14/A28 tranchées (voir arbitrages 2026-09-30) |
-| 4c | **Application en base** (`EncContrat`/`EncEncaissement`/`EncImport`/`EncSignalement`, transaction, route de dépôt dédiée) | — |
-| 4d | **Écran d'import** | V2-A30 (non bloquante) |
+| 4b | **Règles F1** (doublon, avenant, écarts, incohérences — pures) — fait (2026-09-30) | V2-A12 (PROVISOIRE), V2-A10/A14/A28 tranchées (voir arbitrages 2026-09-30) ; V2-A20 (taux de contrôle) résolue pour taxe/commission/honoraires (base reprise de la maquette), toujours OUVERTE pour les accessoires |
+| 4c | **Application en base** (`EncContrat`/`EncEncaissement`/`EncImport`/`EncSignalement`, migration `20260930140000_encaissements_import_production`, transaction 300 s, verrous, route de dépôt dédiée, action serveur sans écran) — fait (2026-09-30) ; 5 000 lignes en 45-54 s sur PostgreSQL 16 | Décisions §1 (commit 4c) à valider |
+| 4d | **Écran d'import** — fait (2026-10-02) : `/encaissements/import` (dépôt, branche demandée seulement si le fichier n'a pas de colonne « Branche », attente pendant l'import), rapport `/encaissements/import/[id]` (chiffres clés, lignes rejetées, signalements À TRAITER puis POUR INFO — détail plafonné à 500/200 lignes, compteurs complets), historique, et gestion minimale des branches `/encaissements/branches` (`enc.parametrer`, actions 3a réutilisées). Aucune migration | V2-A30 (non bloquante) |
 | — | Découpage validé le 2026-09-30 (4 commits au lieu de « Lecture de tableurs et règles d'import » + « Import de production » ci-dessus, listés à titre d'historique) ; F1.5 (reprise) reste un commit séparé, plus tard, une fois A27b/A27d/A1c répondues. |
-| 6 | **Recherche et fiche police (F2)** | — |
+| 5a | **Recherche et fiche police (F2)** — fait (2026-10-02) : barre de recherche dans le layout du module (jamais l'en-tête global), 8 suggestions et page de résultats `/encaissements/recherche` (50), fiche police `/encaissements/contrats/[id]` en lecture (situation D17, barre des versements, paiements, signalements de la police) ; cadres Taxes, Commissions, Honoraires et Accessoires aux lots 2 et 3. Aucune migration | — |
+| 5a-bis | **Recherche, option B** (D20-D22) : table `EncContratMot` (colonne `mot` en collation « C », index btree), migration additive `20261004090000_encaissements_recherche_mots` avec remplissage, entretien à l'import — fait (2026-10-04). Contient aussi les fichiers du 5a absents du commit `6be7697` (seul le déplacement de `SignalementsTable` y figurait) | — |
+| 5b | **Onglet « À vérifier »** — fait (2026-10-04) : `/encaissements/a-verifier`, signalements À TRAITER de tous les imports (plus anciens d'abord, 50 par page, filtres branche et type en GET), compteur sur l'accueil du module, « Ouvrir la police » (fiche, ou recherche par n° pour une ligne rejetée sans contrat), « Marquer traité » (D23). Colonne « État » ajoutée aux signalements de la fiche police et du rapport d'import. Aucune migration | — |
+| 5c | **« Ajouter quand même »** — fait (2026-10-05) : bouton sur les doublons possibles de l'onglet « À vérifier » (confirmation en deux temps), D24. Aucune migration | — |
 | 7 | **Saisie (F3)**, montants figés (D9) | V2-A2, A6 |
 | 8 | **Paiement multiple (F4)** | — |
 | 9 | **Confirmation (F5) et signalements** | V2-A11, A30 |
 | 10 | **Relevés et frais (F5)** | V2-A21 à A23, A25, A26 |
 | 11 | **Reprise initiale (F1.5)** | V2-A27b à A27e |
+| 12a | **Recherche, option B** — **fait au commit 5a-bis (2026-10-04)**, voir D20-D22. Mesures à 150 000 contrats : pire temps 4 ms (objectif < 1 s, < 200 ms pour les noms) | D16, D20 |
 | 12 | **Recette du Lot 1** et mise en service | — |

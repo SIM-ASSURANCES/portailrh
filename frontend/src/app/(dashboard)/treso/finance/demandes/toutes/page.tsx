@@ -56,6 +56,8 @@ export default async function ToutesLesDemandesPage({
   const canAccess =
     !!session &&
     (hasPermission(session, "treso.valider_demande") ||
+      // Décision 10 (2026-10-08) : le DG consulte par `treso.voir_dashboard_finance`.
+      hasPermission(session, "treso.voir_dashboard_finance") ||
       hasPermission(session, "treso.effectuer_reglement") ||
       hasPermission(session, "treso.receptionner_retour"));
   if (!canAccess) {

@@ -84,6 +84,46 @@ export const DEMANDES_EN_ATTENTE_VALIDATION_WHERE = {
  * son `statut` (`PARTIELLEMENT_VALIDEE` y compris, voir le bug ci-dessus).
  * `false` pour une demande sans ligne (pas concernée par ce modèle).
  */
+/**
+ * Approbation de clôture obtenue (circuit de validation, 2026-10-06) : le DG a approuvé la validation complète (file
+ * « Validations complètes en attente », ou sa décision à l'étape DG, qui la vaut — voir
+ * `DECISION_DG_VAUT_APPROBATION_CLOTURE`), ou la demande a été émise par le DG (approbation non requise). SEULE
+ * lecture de cette règle : `cloturerDemandeAction` et les écrans passent par ici.
+ */
+export function approbationClotureObtenue(d: { validationCompleteParDG: boolean; approbationClotureNonRequise: boolean }): boolean {
+  return d.validationCompleteParDG || d.approbationClotureNonRequise;
+}
+
+/**
+ * File « Validations complètes en attente » du DG : demandes avec un montant validé, sans approbation de clôture,
+ * jamais émises par lui (approbation non requise). Une demande approuvée à l'étape DG en sort d'elle-même
+ * (`validationCompleteParDG` déjà vrai).
+ */
+export const VALIDATION_COMPLETE_EN_ATTENTE_WHERE = {
+  montantValide: { gt: 0 },
+  validationCompleteParDG: false,
+  approbationClotureNonRequise: false,
+} satisfies Prisma.DemandeWhereInput;
+
+/**
+ * Files de la Finance dans le circuit de validation (2026-10-06) : une file par étape où la Finance agit — à
+ * décider (étape Finance), après un rejet du DG (resoumettre ou renvoyer au demandeur), décision finale après
+ * l'approbation du DG. S'y ajoute le reliquat d'une dépense directe partiellement validée (validation
+ * complémentaire, décision finale déjà prise). Les demandes aux étapes Service et DG, à corriger ou abandonnées n'y
+ * sont jamais : la Finance n'y a rien à faire.
+ */
+export const FILES_FINANCE_WHERE = {
+  FINANCE: { etapeCircuit: "FINANCE" },
+  REJET_DG: { etapeCircuit: "REJET_DG" },
+  DECISION_FINALE: { etapeCircuit: "DECISION_FINALE" },
+  RELIQUAT: { etapeCircuit: "TERMINEE", statut: "PARTIELLEMENT_VALIDEE", reliquatRejete: false, lignes: { none: {} } },
+} satisfies Record<string, Prisma.DemandeWhereInput>;
+
+/** Toutes les files de la Finance : indicateur « À traiter » n° 1 du tableau de bord et page des files. */
+export const DEMANDES_A_TRAITER_FINANCE_WHERE = {
+  OR: [FILES_FINANCE_WHERE.FINANCE, FILES_FINANCE_WHERE.REJET_DG, FILES_FINANCE_WHERE.DECISION_FINALE, FILES_FINANCE_WHERE.RELIQUAT],
+} satisfies Prisma.DemandeWhereInput;
+
 export function lignesToutesDecidees(lignes: { statutValidation: string }[]): boolean {
   return lignes.length > 0 && lignes.every((l) => l.statutValidation !== "EN_ATTENTE");
 }
@@ -1250,7 +1290,7 @@ export async function calculerStatutDemande(demandeId: string): Promise<StatutDe
     throw new Error(`calculerStatutDemande : demande ${demandeId} introuvable.`);
   }
 
-  if (demande.statut === "REJETEE" || demande.statut === "CLOTUREE") {
+  if (demande.statut === "REJETEE" || demande.statut === "CLOTUREE" || demande.statut === "ABANDONNEE") {
     return demande.statut;
   }
 

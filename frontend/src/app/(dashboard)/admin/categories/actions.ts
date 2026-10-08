@@ -205,9 +205,7 @@ const budgetAlloueSchema = z
 function peutModifierBudget(session: { estAdmin: boolean; permissions: string[] } | null): boolean {
   return (
     !!session &&
-    (isAdmin(session) ||
-      (hasPermission(session, "treso.valider_demande") &&
-        !hasPermission(session, "treso.approuver_validation_complete")))
+    (isAdmin(session) || hasPermission(session, "treso.modifier_budget_categorie"))
   );
 }
 

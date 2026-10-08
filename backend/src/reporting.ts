@@ -97,6 +97,7 @@ export function parseReportingFilters(searchParams: SearchParamsLike): Reporting
         "EN_ATTENTE_REGULARISATION",
         "REGULARISEE",
         "CLOTUREE",
+        "ABANDONNEE",
       ] as const
     ).includes(statut as StatutDemande)
       ? (statut as StatutDemande)
@@ -247,6 +248,8 @@ interface DemandeAvecRelations {
   statut: StatutDemande;
   typeDemande: TypeDemande;
   createdAt: Date;
+  /** Motif d'en-tête : anciennes demandes et dépenses directes ; `null` pour une demande à motifs par ligne. */
+  description: string | null;
   categorieId: string | null;
   objetId: string | null;
   categorie: { label: string } | null;
@@ -261,6 +264,7 @@ interface DemandeAvecRelations {
   lignes: {
     id: string;
     libelle: string;
+    motif: string | null;
     quantite: number;
     prixUnitaire: Prisma.Decimal;
     statutValidation: string;
@@ -873,6 +877,8 @@ export interface ReportingDemandeDetail {
    * ligne") — `null` pour une `DEPENSE_DIRECTE` (une seule ligne de
    * feuille = la demande entière, comme avant cette tâche). */
   libelleLigne: string | null;
+  /** Motif de la ligne (2026-10-09), sinon le motif d'en-tête (anciennes demandes, dépense directe). */
+  motif: string | null;
   createurNom: string;
   service: string | null;
   categorieLabel: string;
@@ -900,6 +906,7 @@ export async function getReportingDemandesDetail(filters: ReportingFilters): Pro
       rows.push({
         reference: d.reference,
         libelleLigne: unite.ligneId ? (d.lignes.find((l) => l.id === unite.ligneId)?.libelle ?? null) : null,
+        motif: (unite.ligneId ? d.lignes.find((l) => l.id === unite.ligneId)?.motif : null) ?? d.description,
         createurNom: d.createur.fullName,
         service: d.createur.service,
         categorieLabel: unite.categorieLabel,

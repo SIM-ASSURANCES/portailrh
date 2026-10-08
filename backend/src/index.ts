@@ -22,6 +22,7 @@ export * from "./geo-utils";
 export * from "./reference";
 export * from "./validation";
 export * from "./beneficiaire";
+export * from "./motifLigne";
 export * from "./feedback";
 export * from "./reinitialisation";
 
@@ -32,6 +33,22 @@ export * from "./encAudit";
 export * from "./encParametres";
 export * from "./encPermissions";
 export * from "./encReferentiels";
+// F1 (import mensuel du fichier de production) : lecture (4a), règles (4b), application en base (4c) — encCalcul.ts,
+// lui, reste non réexporté (importé directement là où il sert, commentaire ci-dessus).
+export * from "./encImportLecture";
+export * from "./encImportRegles";
+export * from "./encImportApplication";
+// F2 (recherche, fiche police) — commit 5a.
+export * from "./encRecherche";
+export * from "./encSituation";
+// Services et responsables (circuit de validation des demandes, 2026-10-06).
+export * from "./services";
+// Circuit de validation des demandes (commit 3) : moteur pur et application en base.
+export * from "./circuitDemande";
+export * from "./circuitDemandeDb";
+export * from "./circuitNotifications";
+// Onglet « À vérifier » (traitement des signalements) — commit 5b.
+export * from "./encSignalements";
 
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).

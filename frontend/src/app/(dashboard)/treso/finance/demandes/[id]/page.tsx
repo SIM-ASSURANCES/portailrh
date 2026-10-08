@@ -10,8 +10,20 @@ import { RegularisationSummary } from "@/components/tresorerie/RegularisationSum
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { getMontantsLignesParStatut, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
+import {
+  chargerActeur,
+  attendDecisionFinale,
+  estExecutantFinance,
+  MESSAGE_ATTENTE_VALIDATION_FINALE,
+  raisonIndisponible,
+  refusExecutionPropreDemande,
+  versDemandeCircuit,
+  type TypeActionCircuit,
+} from "backend";
+import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
 
 import { CategorisationForm } from "./CategorisationForm";
+import { CircuitFinanceActions } from "./CircuitFinanceActions";
 import { ClotureActions } from "./ClotureActions";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { LignesValidationTable } from "./LignesValidationTable";
@@ -40,8 +52,7 @@ export default async function CategoriserDemandePage({
   // "Libellé de demande modifiable..." — même conflit déjà rencontré pour
   // "Déléguer des accès") : la garde exacte de `modifierDescriptionAction`
   // est reproduite ici à l'identique, jamais une approximation.
-  const canModifierDescription =
-    (canValider && !canApprouverValidationComplete) || canEffectuerReglement;
+  const canModifierDescription = hasPermission(session, "treso.modifier_description");
   // Tâche "Validation ligne par ligne" (voir CLAUDE.md) — même garde exacte
   // que `canModifierDescription` (le libellé d'une ligne n'est jamais une
   // décision de validation, ouvert au Responsable ET à l'Assistant Finance).
@@ -50,7 +61,9 @@ export default async function CategoriserDemandePage({
   // Finance UNIQUEMENT (jamais l'Assistant) — voir la garde identique dans
   // `validerLignesAction` (actions.ts) et le résumé de la tâche pour la
   // justification de ce choix.
-  const canValiderLignes = canValider && !canApprouverValidationComplete;
+  const canValiderLignes = hasPermission(session, "treso.decider_finance");
+  const canSoumettreDG = hasPermission(session, "treso.soumettre_dg");
+  const canAnnulerReglement = hasPermission(session, "treso.annuler_reglement");
 
   const demande = await prisma.demande.findUnique({
     where: { id },
@@ -78,6 +91,26 @@ export default async function CategoriserDemandePage({
   // lignes sont pourtant déjà toutes décidées) — seul `demande.lignes.length`
   // est nécessaire ici, pour choisir QUEL composant rendre.
   const demandeAauMoinsUneLigne = demande.lignes.length > 0;
+
+  // Circuit de validation (commit 4) : ce que ce compte peut faire à l'étape courante, et sinon pourquoi — la phrase
+  // que le serveur renverrait (`raisonIndisponible`, moteur du circuit), affichée sous les boutons grisés.
+  const demandeCircuit = versDemandeCircuit(demande);
+  const acteurCircuit = session ? await chargerActeur(prisma, session, demande.createurId) : null;
+  const raisonCircuit = (type: TypeActionCircuit) =>
+    acteurCircuit ? raisonIndisponible(demandeCircuit, acteurCircuit, type) : "Action non autorisée.";
+  const raisonDecider = raisonCircuit("DECIDER_LIGNES");
+  // Assistant Finance (exécution sans décision) avant la décision finale : il voit la demande, tous ses boutons sont
+  // grisés avec « En attente de la validation finale », jamais « Action non autorisée. » (commit 4, morceau 4).
+  const attenteValidationFinale =
+    session && estExecutantFinance(session.permissions) && attendDecisionFinale(demande.etapeCircuit)
+      ? MESSAGE_ATTENTE_VALIDATION_FINALE
+      : null;
+  // Sa propre demande (demandeur ou bénéficiaire) : règlement, décaissement et retours grisés avec la phrase que le
+  // serveur renvoie (`refusExecutionPropreDemande`).
+  const conflitInteret = session ? refusExecutionPropreDemande(demande, session.user.id) : null;
+  const etapeAvecDecisionFinance = ["SERVICE", "FINANCE", "DG", "REJET_DG", "DECISION_FINALE"].includes(
+    demande.etapeCircuit
+  );
   // Tâche "Bug d'affichage 'Montant restant à valider'" (voir CLAUDE.md) :
   // pour une demande AVEC lignes, `montant - montantValide` (formule de
   // l'ancien modèle par montant global, toujours valable pour une
@@ -91,6 +124,8 @@ export default async function CategoriserDemandePage({
     id: ligne.id,
     libelle: ligne.libelle,
     libelleOriginal: ligne.libelleOriginal,
+    motif: ligne.motif,
+    motifOriginal: ligne.motifOriginal,
     quantite: ligne.quantite,
     prixUnitaire: Number(ligne.prixUnitaire),
     statutValidation: ligne.statutValidation,
@@ -297,12 +332,33 @@ export default async function CategoriserDemandePage({
               </dd>
             </div>
           ) : null}
-          <DescriptionEditor
-            demandeId={demande.id}
-            description={demande.description}
-            descriptionOriginale={demande.descriptionOriginale}
-            disabled={!canModifierDescription || demande.statut === "CLOTUREE"}
-          />
+          {/* Motif par ligne (2026-10-09) : une demande d'achat n'a plus de motif d'en-tête ; celui d'une ancienne demande
+              reste affiché en lecture seule. La dépense directe garde sa description modifiable. */}
+          {demande.typeDemande === "DEPENSE_DIRECTE" ? (
+            <DescriptionEditor
+              demandeId={demande.id}
+              description={demande.description ?? ""}
+              descriptionOriginale={demande.descriptionOriginale}
+              disabled={
+                !canModifierDescription || demande.statut === "CLOTUREE" || !!attenteValidationFinale || !!conflitInteret
+              }
+              raisonIndisponible={
+                canModifierDescription && demande.statut !== "CLOTUREE" ? (attenteValidationFinale ?? conflitInteret) : null
+              }
+            />
+          ) : demande.description ? (
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Motif de l&apos;achat (ancienne demande, lecture seule)
+              </dt>
+              {demande.descriptionOriginale != null ? (
+                <dd className="mt-1 text-xs text-muted-foreground">
+                  Version initiale : <span className="italic">{demande.descriptionOriginale}</span>
+                </dd>
+              ) : null}
+              <dd className="whitespace-pre-line text-sm text-foreground">{demande.description}</dd>
+            </div>
+          ) : null}
           {demande.commentaire ? (
             <div className="sm:col-span-2">
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -339,6 +395,12 @@ export default async function CategoriserDemandePage({
           invisible sans scroller volontairement — vérifié explicitement par
           un parcours navigateur réel sur un cycle complet. Position
           désormais fixe, uniforme quel que soit le statut. */}
+      <FriseCircuit
+        demande={{ ...demandeCircuit, soumiseAuDG: demande.soumiseAuDG }}
+        niveauRejet={demande.niveauRejet}
+        motifRejet={demande.motifRejet}
+      />
+
       <DemandeHistorique demandeId={demande.id} />
 
       {/* Tâche "L'Assistant Finance déclare les dépenses sur toute demande,
@@ -352,6 +414,7 @@ export default async function CategoriserDemandePage({
         demandeId={demande.id}
         demandeEstCloturee={demande.statut === "CLOTUREE"}
         canDeclarerAssistant={canGererJustification}
+        raisonIndisponible={conflitInteret}
       />
 
       {/* Retour de caisse exceptionnel post-clôture (voir CLAUDE.md) — uniquement
@@ -400,12 +463,12 @@ export default async function CategoriserDemandePage({
             ) : null}
             {/* Tâche "Resoumission au DG après rejet" (voir CLAUDE.md) —
                 garde de permission DISTINCTE et opposée à celle des deux
-                boutons ci-dessus (`canValiderLignes` = Responsable Finance
-                UNIQUEMENT, jamais le DG) : visible uniquement si le DERNIER
+                boutons ci-dessus (`canSoumettreDG` = permission explicite
+                `treso.soumettre_dg`, que le DG n'a pas) : visible uniquement si le DERNIER
                 évènement DG connu est bien un rejet (jamais "jamais encore
                 examinée" ni "approbation annulée" — revérifié de toute façon
                 côté serveur). */}
-            {canValiderLignes &&
+            {canSoumettreDG &&
             !demande.validationCompleteParDG &&
             dernierEvenementDG?.action === "rejet_validation_complete" ? (
               <ValidationCompleteDGActions demandeId={demande.id} mode="resoumission" />
@@ -497,9 +560,10 @@ export default async function CategoriserDemandePage({
             <LignesValidationTable
               demandeId={demande.id}
               lignes={lignesPourTable}
-              canValider={canValiderLignes}
+              canValider={canValiderLignes && raisonDecider === null}
+              raisonIndisponible={canValiderLignes ? raisonDecider : attenteValidationFinale}
               canModifierLibelle={canModifierLibelleLigne}
-              libelleModifiable
+              libelleModifiable={!attenteValidationFinale && !conflitInteret}
               canCategoriser={canCategoriser}
               categories={categories.map((c) => ({ id: c.id, label: c.label }))}
               objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
@@ -509,9 +573,21 @@ export default async function CategoriserDemandePage({
             <ValidationActions
               demandeId={demande.id}
               montantDemande={Number(demande.montant)}
-              disabled={!canValider}
+              disabled={!canValider || raisonDecider !== null}
+              raisonIndisponible={canValider ? raisonDecider : attenteValidationFinale}
             />
           )}
+
+          {etapeAvecDecisionFinance ? (
+            <CircuitFinanceActions
+              demandeId={demande.id}
+              apresRejetDG={demande.etapeCircuit === "REJET_DG"}
+              afficherRejet={demandeAauMoinsUneLigne}
+              raisonSoumettre={raisonCircuit("SOUMETTRE_DG")}
+              raisonRejeter={raisonCircuit("REJETER")}
+              raisonResoumettre={raisonCircuit("RESOUMETTRE_DG")}
+            />
+          ) : null}
         </>
       ) : demande.statut === "REJETEE" ? (
         <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
@@ -632,7 +708,7 @@ export default async function CategoriserDemandePage({
               lignes={lignesPourTable}
               canValider={false}
               canModifierLibelle={canModifierLibelleLigne}
-              libelleModifiable
+              libelleModifiable={!conflitInteret}
               canCategoriser={false}
               categories={[]}
               objets={[]}
@@ -665,7 +741,8 @@ export default async function CategoriserDemandePage({
             // (Assistant Finance) : réutilise `canValiderLignes`, déjà
             // calculé plus haut pour la même identification "Responsable
             // Finance UNIQUEMENT".
-            canAnnulerReglementConfirme={canValiderLignes}
+            canAnnulerReglementConfirme={canAnnulerReglement}
+            raisonIndisponible={canEffectuerReglement || canAnnulerReglement ? conflitInteret : null}
           />
           <RegularisationSummary
             demandeId={demande.id}

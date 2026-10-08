@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { prisma, type Prisma } from "backend";
+import { prisma, refusExecutionPropreDemande, type Prisma } from "backend";
 import {
   calculerStatutDemande,
   getCategoriesConcerneesDemande,
@@ -26,7 +26,7 @@ type SimpleActionResult = { status: "success" | "error"; message: string };
  * et confirmation ; l'annulation d'un règlement déjà confirmé, la
  * consultation et les retours de caisse ne sont volontairement PAS bloqués. */
 const MESSAGE_GEL_REJET_DG =
-  "Rejetée par le DG — en attente de resoumission par le Responsable Finance : aucun règlement possible pour l'instant.";
+  "Rejetée par le DG — en attente de resoumission par Finance : aucun règlement possible pour l'instant.";
 
 const montantSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
 const modeSchema = z.enum(["CAISSE", "BANQUE"]);
@@ -167,6 +167,11 @@ export async function creerReglementAction(
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
+  // Conflit d'intérêts : jamais l'exécution de sa propre demande.
+  const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
+  if (refusPropre) {
+    return { status: "error", message: refusPropre };
+  }
   if (demande.validationCompleteRejeteeParDG) {
     return { status: "error", message: MESSAGE_GEL_REJET_DG };
   }
@@ -260,6 +265,10 @@ export async function modifierReglementAction(
   }
 
   const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
+  if (demande) {
+    const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
+    if (refusPropre) return { status: "error", message: refusPropre };
+  }
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
@@ -362,6 +371,10 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   // `getTotalRegle` pour un seul clic sur "Confirmer" (voir CLAUDE.md
   // "Diagnostic de latence — requêtes redondantes").
   const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId } });
+  const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
+  if (refusPropre) {
+    return { status: "error", message: refusPropre };
+  }
   if (demande.validationCompleteRejeteeParDG) {
     return { status: "error", message: MESSAGE_GEL_REJET_DG };
   }
@@ -546,11 +559,7 @@ export async function annulerReglementAction(
   motif: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (
-    !session ||
-    !hasPermission(session, "treso.valider_demande") ||
-    hasPermission(session, "treso.approuver_validation_complete")
-  ) {
+  if (!session || !hasPermission(session, "treso.annuler_reglement")) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -574,6 +583,10 @@ export async function annulerReglementAction(
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).`,
     };
+  }
+  const refusPropre = refusExecutionPropreDemande(reglement.demande, session.user.id);
+  if (refusPropre) {
+    return { status: "error", message: refusPropre };
   }
 
   const operations: Prisma.PrismaPromise<unknown>[] = [

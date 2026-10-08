@@ -7,12 +7,15 @@ import { Icon } from "@/components/icons";
 import { STATUT_LIGNE_DEMANDE_BADGE_VARIANT, STATUT_LIGNE_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 
+import { MOTIF_LIGNE_MIN } from "backend/client";
+
 import { BudgetCategorieApercu, type BudgetCategorieInfo } from "./CategorisationForm";
 import {
   categoriserLigneAction,
   creerCategorieInlineAction,
   creerObjetInlineAction,
   modifierLibelleLigneAction,
+  modifierMotifLigneAction,
   validerLignesAction,
 } from "./actions";
 
@@ -33,6 +36,9 @@ export type LigneValidation = {
   id: string;
   libelle: string;
   libelleOriginal: string | null;
+  /** Motif de la ligne (2026-10-09) ; `null` pour une ancienne ligne (motif d'en-tête de la demande). */
+  motif?: string | null;
+  motifOriginal?: string | null;
   quantite: number;
   prixUnitaire: number;
   statutValidation: LigneStatut;
@@ -120,10 +126,14 @@ export function LignesValidationTable({
   categories,
   objets,
   budgetParCategorie,
+  raisonIndisponible = null,
 }: {
   demandeId: string;
   lignes: LigneValidation[];
   canValider: boolean;
+  /** Circuit de validation : pourquoi la décision est grisée à cette étape (phrase du moteur), à la place du message
+   *  de rôle. */
+  raisonIndisponible?: string | null;
   canModifierLibelle: boolean;
   libelleModifiable: boolean;
   canCategoriser: boolean;
@@ -206,7 +216,8 @@ export function LignesValidationTable({
             onChangeMotif={(motif) => setDecisionMotif(ligne.id, motif)}
             canModifierLibelle={canModifierLibelle}
             libelleModifiable={libelleModifiable}
-            decisionsPending={isPending}
+            // Valider/Rejeter grisés aussi hors de l'étape de la Finance (circuit) ou sans le droit de décider.
+            decisionsPending={isPending || !canValider}
             canCategoriser={canCategoriser}
             categories={categories}
             objets={objets}
@@ -221,10 +232,12 @@ export function LignesValidationTable({
             Montant qui sera validé :{" "}
             <span className="tabular-nums">{montantQuiSeraValide.toLocaleString("fr-FR")} FCFA</span>
           </p>
-          {!canValider ? (
+          {!canValider && raisonIndisponible ? (
+            <p className="text-xs text-muted-foreground">{raisonIndisponible}</p>
+          ) : !canValider ? (
             <p className="text-xs text-muted-foreground">
               Votre rôle ne permet pas de valider ou rejeter les lignes de cette demande — réservé au
-              Responsable Finance.
+              rôle Finance.
             </p>
           ) : raisonBlocage ? (
             <p className="text-xs text-muted-foreground">{raisonBlocage}</p>
@@ -358,6 +371,7 @@ function LigneCard({
               </div>
             </div>
           )}
+          <MotifLigneEditor ligne={ligne} canModifier={canModifierLibelle} modifiable={libelleModifiable} />
           {/* Quantité / prix unitaire — informations secondaires, jamais en
               compétition visuelle avec le libellé/le total. */}
           <p className="mt-1.5 text-xs text-muted-foreground">
@@ -460,6 +474,94 @@ function LigneCard({
  * ligne vaut X FCFA" et "sa catégorie a Y FCFA de restant", jamais deux
  * informations dissociées à rapprocher mentalement.
  */
+/**
+ * Motif d'une ligne (2026-10-09) : mêmes droits d'édition que le libellé (`canModifier`/`modifiable` du libellé),
+ * version initiale affichée en permanence dès qu'elle diverge. Rien pour une ancienne ligne sans motif.
+ */
+function MotifLigneEditor({
+  ligne,
+  canModifier,
+  modifiable,
+}: {
+  ligne: LigneValidation;
+  canModifier: boolean;
+  modifiable: boolean;
+}) {
+  const [ouvert, setOuvert] = useState(false);
+  const [valeur, setValeur] = useState(ligne.motif ?? "");
+  const [erreur, setErreur] = useState<string | undefined>();
+  const [isPending, startTransition] = useTransition();
+  if (!ligne.motif && !ouvert) return null;
+
+  function enregistrer() {
+    if (valeur.trim().length < MOTIF_LIGNE_MIN) {
+      setErreur(`Le motif doit contenir au moins ${MOTIF_LIGNE_MIN} caractères.`);
+      return;
+    }
+    setErreur(undefined);
+    startTransition(async () => {
+      const r = await modifierMotifLigneAction(ligne.id, valeur.trim());
+      if (r.status === "success") {
+        toast.success(r.message);
+        setOuvert(false);
+      } else toast.error(r.message);
+    });
+  }
+
+  return (
+    <div data-motif-ligne className="mt-1 text-sm">
+      {ligne.motifOriginal != null ? (
+        <p className="text-xs text-muted-foreground">
+          Motif initial : <span className="italic">{ligne.motifOriginal}</span>
+        </p>
+      ) : null}
+      {!ouvert ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-foreground">
+            <span className="text-muted-foreground">Motif : </span>
+            {ligne.motif}
+          </p>
+          {canModifier ? (
+            <button
+              type="button"
+              disabled={!modifiable}
+              aria-label="Modifier le motif"
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-info hover:text-info disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:text-muted-foreground"
+              onClick={() => {
+                setValeur(ligne.motif ?? "");
+                setOuvert(true);
+              }}
+            >
+              <Icon name="pencil" className="size-3" />
+              Modifier
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="animate-fade-in-up space-y-2">
+          <Input
+            aria-label="Motif de la ligne"
+            value={valeur}
+            onChange={(e) => {
+              setValeur(e.target.value);
+              if (erreur) setErreur(undefined);
+            }}
+            error={erreur}
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" loading={isPending} onClick={enregistrer}>
+              Enregistrer
+            </Button>
+            <Button type="button" variant="secondary" disabled={isPending} onClick={() => setOuvert(false)}>
+              Annuler
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LigneBudgetApercu({ montantLigne, info }: { montantLigne: number; info: BudgetCategorieInfo }) {
   return (
     <div className="mt-2 space-y-2 rounded-lg border border-border bg-muted/30 p-2.5">

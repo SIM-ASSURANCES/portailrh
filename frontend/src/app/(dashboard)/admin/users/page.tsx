@@ -1,18 +1,25 @@
 import { PageHeader } from "@/components/ui";
-import { prisma } from "backend";
+import { getResponsabilitesParUtilisateur, prisma } from "backend";
 
 import { NewUserSection } from "./NewUserSection";
 import { UsersTable } from "./UsersTable";
 
 export default async function AdminUsersPage() {
-  const [usersRaw, roles, services] = await Promise.all([
+  const [usersRaw, roles, servicesRaw, responsabilites] = await Promise.all([
     prisma.user.findMany({
       include: { role: true, service: true },
       orderBy: { fullName: "asc" },
     }),
     prisma.role.findMany({ orderBy: { name: "asc" } }),
-    prisma.service.findMany({ orderBy: { name: "asc" } }),
+    prisma.service.findMany({ orderBy: { name: "asc" }, include: { responsable: { select: { fullName: true } } } }),
+    getResponsabilitesParUtilisateur(prisma),
   ]);
+  const services = servicesRaw.map((s) => ({
+    id: s.id,
+    name: s.name,
+    responsableId: s.responsableId,
+    responsableNom: s.responsable?.fullName ?? null,
+  }));
 
   // "En attente d'activation" (invitation par lien pas encore finalisée) —
   // calculé ici, jamais transmis au Client Component sous forme de
@@ -27,6 +34,7 @@ export default async function AdminUsersPage() {
     role: u.role,
     service: u.service,
     isPending: !u.passwordHash,
+    responsabilites: responsabilites.get(u.id) ?? [],
   }));
 
   return (

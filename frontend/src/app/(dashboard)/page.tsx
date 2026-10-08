@@ -4,7 +4,8 @@ import { Icon } from "@/components/icons";
 import { EmptyState, PageHeader, ToastOnMount } from "@/components/ui";
 import { BRAND_ICON_PATHS, BRAND_ICON_VIEWBOX } from "@/components/ui/brandIcon";
 import { getAccessibleModules, getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { prisma, getMesRetoursADeclarer } from "backend";
+import { DEMANDES_A_TRAITER_FINANCE_WHERE, getServicesSansResponsable, prisma, getMesRetoursADeclarer } from "backend";
+import { explicationServicesSansResponsable } from "@/components/admin/ServicesSansResponsableBanniere";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 import { DashboardNotificationsSection, type DashboardAlertItem } from "@/components/dashboard/DashboardNotificationsSection";
 
@@ -147,6 +148,7 @@ export default async function DashboardHomePage({
     demandesAValiderResult,
     validationsDGResult,
     absencesAControlerResult,
+    servicesSansResponsable,
   ] = await Promise.all([
     session?.user
       ? prisma.notification.findMany({
@@ -166,13 +168,17 @@ export default async function DashboardHomePage({
     session?.user && hasPermission(session, "treso.declarer_retour")
       ? getMesRetoursADeclarer(session.user.id)
       : Promise.resolve({ nombre: 0 }),
-    session?.user && hasPermission(session, "treso.valider_demande")
-      ? prisma.demande.count({ where: { statut: "EN_ATTENTE_VALIDATION" } })
+    // Files de la Finance (circuit) : jamais les demandes qui attendent encore le responsable de service ou le DG —
+    // les mêmes que l'indicateur « À traiter » n° 1 et la page « Demandes en attente de validation ».
+    session?.user && hasPermission(session, "treso.decider_finance")
+      ? prisma.demande.count({ where: DEMANDES_A_TRAITER_FINANCE_WHERE })
       : Promise.resolve(0),
     session?.user && hasPermission(session, "treso.approuver_validation_complete")
       ? prisma.demande.count({
           where: {
             validationCompleteParDG: false,
+            approbationClotureNonRequise: false,
+            createurId: { not: session.user.id },
             statut: { in: ["REGLEE", "PARTIELLEMENT_REGLEE"] },
           },
         })
@@ -180,6 +186,8 @@ export default async function DashboardHomePage({
     session?.user && hasPermission(session, "pointage.voir_dashboard_rh")
       ? prisma.absence.count({ where: { statut: "A_CONTROLER" } })
       : Promise.resolve(0),
+    // Comptes qui gèrent les utilisateurs et services (console d'administration) : services sans responsable.
+    session?.user && isAdmin(session) ? getServicesSansResponsable(prisma) : Promise.resolve([]),
   ]);
 
   const serializedNotifications = rawNotifications.map((n) => ({
@@ -254,11 +262,28 @@ export default async function DashboardHomePage({
         icon: "users",
       });
     }
+
+    if (servicesSansResponsable.length > 0) {
+      alerts.push({
+        id: "services_sans_responsable",
+        title: `${servicesSansResponsable.length} service(s) sans responsable`,
+        description: explicationServicesSansResponsable(servicesSansResponsable.map((s) => s.name)),
+        href: "/admin/services",
+        variant: "danger",
+        icon: "alert-triangle",
+      });
+    }
   }
 
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+      {error === "acces_refuse_dg" ? (
+        <ToastOnMount variant="error" message="Cette page est réservée à la décision du DG." />
+      ) : null}
+      {error === "acces_refuse_service" ? (
+        <ToastOnMount variant="error" message="Cette page est réservée aux responsables de service." />
+      ) : null}
       {error === "acces_refuse_admin" ? (
         <ToastOnMount variant="error" message="Accès réservé aux administrateurs." />
       ) : null}

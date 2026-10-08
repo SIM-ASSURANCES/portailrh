@@ -166,7 +166,7 @@ export function ValidationCompleteDGActions({
         </Button>
         {attenteResoumission ? (
           <p className="w-full text-xs text-muted-foreground">
-            En attente de resoumission par le Responsable Finance avant nouvelle décision du DG.
+            En attente de resoumission par Finance avant nouvelle décision du DG.
           </p>
         ) : null}
         <Button type="button" variant="danger" disabled={isPending} onClick={() => setMode("rejeter")}>

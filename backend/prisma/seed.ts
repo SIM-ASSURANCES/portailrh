@@ -59,6 +59,8 @@ async function main() {
   await prisma.encPartenaire.deleteMany();
   await prisma.encBeneficiaireHonoraires.deleteMany();
   await prisma.encBranche.deleteMany();
+  // Un service pointe vers son responsable (clé RESTRICT) : le détacher avant de supprimer les comptes.
+  await prisma.service.updateMany({ data: { responsableId: null } });
   await prisma.user.deleteMany();
   await prisma.service.deleteMany();
   await prisma.role.deleteMany();
@@ -82,8 +84,8 @@ async function main() {
     }),
     prisma.role.upsert({
       where: { name: "Finance" },
-      update: { description: "Équipe finance / trésorerie (Responsable Finance : décide)" },
-      create: { name: "Finance", description: "Équipe finance / trésorerie (Responsable Finance : décide)" },
+      update: { description: "Équipe finance / trésorerie : décide (valide, rejette, clôture)" },
+      create: { name: "Finance", description: "Équipe finance / trésorerie : décide (valide, rejette, clôture)" },
     }),
     prisma.role.upsert({
       where: { name: "DG" },
@@ -217,6 +219,24 @@ async function main() {
       label: "Gérer les catégories et objets d'achat (créer/supprimer)",
       moduleId: moduleTresorerie.id,
     },
+    // Permissions explicites qui remplacent la règle « Resp » (2026-10-06, migration
+    // 20261006100000_tresorerie_permissions_explicites, mêmes libellés).
+    { key: "treso.decider_finance", label: "Décider à l'étape Finance (valider ou rejeter les lignes)", moduleId: moduleTresorerie.id },
+    { key: "treso.soumettre_dg", label: "Soumettre ou resoumettre une demande au DG", moduleId: moduleTresorerie.id },
+    { key: "treso.annuler_reglement", label: "Annuler un règlement confirmé", moduleId: moduleTresorerie.id },
+    { key: "treso.ajuster_retour", label: "Ajuster le total déclaré d'un retour de caisse", moduleId: moduleTresorerie.id },
+    { key: "treso.valider_remboursement", label: "Valider ou rejeter un remboursement de retour", moduleId: moduleTresorerie.id },
+    { key: "treso.valider_retour_exceptionnel", label: "Valider ou rejeter un retour exceptionnel post-clôture", moduleId: moduleTresorerie.id },
+    { key: "treso.creer_retour_externe", label: "Enregistrer un retour externe (hors demande)", moduleId: moduleTresorerie.id },
+    { key: "treso.modifier_budget_categorie", label: "Modifier le budget d'une catégorie", moduleId: moduleTresorerie.id },
+    { key: "treso.deleguer_acces", label: "Déléguer des accès", moduleId: moduleTresorerie.id },
+    // Circuit de validation (2026-10-06) : décision à l'étape DG.
+    { key: "treso.decider_dg", label: "Décider à l'étape DG (valider ou rejeter une demande soumise)", moduleId: moduleTresorerie.id },
+    {
+      key: "treso.modifier_description",
+      label: "Modifier la description d'une demande et le libellé de ses lignes",
+      moduleId: moduleTresorerie.id,
+    },
     { key: "pointage.pointer", label: "Pointer (arrivée / départ)", moduleId: modulePointage.id },
     { key: "pointage.consulter_historique", label: "Consulter son propre historique de pointage", moduleId: modulePointage.id },
     { key: "pointage.consulter_tous", label: "Consulter les pointages de tous les employés", moduleId: modulePointage.id },
@@ -275,6 +295,10 @@ async function main() {
     // pour qu'une seule personne ne puisse jamais à la fois valider une
     // dépense ET la régler.
     [roleFinance.id]: [
+      // Décision 3 du circuit (2026-10-07) : la Finance crée aussi des demandes (cas b : le DG les décide), et déclare
+      // le retour de caisse des siennes (un autre compte le réceptionne).
+      "treso.creer_demande",
+      "treso.declarer_retour",
       "treso.categoriser_demande",
       "treso.valider_demande",
       "treso.cloturer_demande",
@@ -284,12 +308,28 @@ async function main() {
       "treso.voir_reporting",
       "treso.saisir_depense_directe",
       "treso.gerer_categories",
+      // Actions autrefois déduites de « valider_demande sans approuver_validation_complete » (2026-10-06).
+      "treso.decider_finance",
+      "treso.soumettre_dg",
+      "treso.annuler_reglement",
+      "treso.ajuster_retour",
+      "treso.valider_remboursement",
+      "treso.valider_retour_exceptionnel",
+      "treso.creer_retour_externe",
+      "treso.modifier_budget_categorie",
+      "treso.deleguer_acces",
+      "treso.modifier_description",
     ],
     [roleDG.id]: [
-      "treso.valider_demande",
+      // Décision 10 (2026-10-08) : plus de "treso.valider_demande" — le DG décide à l'étape DG (decider_dg) et approuve
+      // la clôture ; ses consultations passent par "treso.voir_dashboard_finance".
       "treso.voir_dashboard_finance",
       "treso.voir_reporting",
       "treso.approuver_validation_complete",
+      "treso.decider_dg",
+      // Décision 3 : le DG crée aussi des demandes (cas a : la Finance les décide) et déclare leur retour de caisse.
+      "treso.creer_demande",
+      "treso.declarer_retour",
       "pointage.consulter_tous",
       "pointage.voir_dashboard_rh",
       "pointage.voir_reporting",
@@ -328,7 +368,14 @@ async function main() {
     // l'alimentation de caisse/la correction du solde d'ouverture/la
     // dépense directe (délégables au cas par cas par le Responsable
     // Finance, voir CLAUDE.md).
-    [roleAssistantFinance.id]: ["treso.effectuer_reglement", "treso.receptionner_retour"],
+    // Décision 3 : l'Assistant crée aussi des demandes (cas b), mais n'exécute jamais l'argent des siennes.
+    [roleAssistantFinance.id]: [
+      "treso.effectuer_reglement",
+      "treso.receptionner_retour",
+      "treso.modifier_description",
+      "treso.creer_demande",
+      "treso.declarer_retour",
+    ],
     // Module Encaissements : un rôle par profil du cahier (§2).
     ...Object.fromEntries(rolesEncaissements.map((role, i) => [role.id, ENC_ROLES_DEPART[i].permissions])),
   };
@@ -357,12 +404,16 @@ async function main() {
 
   console.log("Création des services...");
 
+  // Les 8 services (migration 20261006110000_services_responsables, mêmes noms).
   const servicesData = [
     { name: "Commercial" },
+    { name: "Informatique" },
+    { name: "Direction DG" },
     { name: "Finance" },
-    { name: "Direction" },
-    { name: "Ressources Humaines" },
+    { name: "RH" },
     { name: "Technique" },
+    { name: "Comptabilité" },
+    { name: "Marketing" },
   ];
 
   const createdServices = await Promise.all(
@@ -385,9 +436,35 @@ async function main() {
   const testUsers = [
     { fullName: "Collaborateur Test", email: "collaborateur@simassurances.test", roleId: roleCollaborateur.id, serviceId: serviceByName["Commercial"].id },
     { fullName: "Finance Test", email: "finance@simassurances.test", roleId: roleFinance.id, serviceId: serviceByName["Finance"].id },
-    { fullName: "DG Test", email: "dg@simassurances.test", roleId: roleDG.id, serviceId: serviceByName["Direction"].id },
-    { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id, serviceId: null },
-    { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id, serviceId: serviceByName["Ressources Humaines"].id },
+    { fullName: "DG Test", email: "dg@simassurances.test", roleId: roleDG.id, serviceId: serviceByName["Direction DG"].id },
+    { fullName: "Admin Test", email: "admin@simassurances.test", roleId: roleAdmin.id, serviceId: serviceByName["Informatique"].id },
+    { fullName: "RH Test", email: "rh@simassurances.test", roleId: roleRH.id, serviceId: serviceByName["RH"].id },
+    // Responsable du service Commercial (circuit de validation) : un Collaborateur, sans nouveau rôle.
+    {
+      fullName: "Responsable Commercial Test",
+      email: "responsable-commercial@simassurances.test",
+      roleId: roleCollaborateur.id,
+      serviceId: serviceByName["Commercial"].id,
+    },
+    // Responsables de Technique, Comptabilité et Marketing : même principe (Collaborateurs, membres de leur service).
+    {
+      fullName: "Responsable Technique Test",
+      email: "responsable-technique@simassurances.test",
+      roleId: roleCollaborateur.id,
+      serviceId: serviceByName["Technique"].id,
+    },
+    {
+      fullName: "Responsable Comptabilité Test",
+      email: "responsable-comptabilite@simassurances.test",
+      roleId: roleCollaborateur.id,
+      serviceId: serviceByName["Comptabilité"].id,
+    },
+    {
+      fullName: "Responsable Marketing Test",
+      email: "responsable-marketing@simassurances.test",
+      roleId: roleCollaborateur.id,
+      serviceId: serviceByName["Marketing"].id,
+    },
     { fullName: "Assistant Finance Test", email: "assistant-finance@simassurances.test", roleId: roleAssistantFinance.id, serviceId: serviceByName["Finance"].id },
     // Module Encaissements : un compte de test par rôle de départ, JAMAIS en production (l'image fixe
     // NODE_ENV=production, y compris pour le service `init` qui exécute ce seed au premier déploiement).
@@ -420,6 +497,24 @@ async function main() {
   );
 
   console.log(`${createdUsers.length} utilisateurs créés.`);
+
+  // Responsables de service (étape « Service » du circuit de validation) : chacun des 8 services en a un. Le cas
+  // « service sans responsable » se teste sur une base jetable, en retirant le responsable dans le test.
+  const userByEmail = Object.fromEntries(createdUsers.map((u) => [u.email, u]));
+  const responsables: [string, string][] = [
+    ["Commercial", "responsable-commercial@simassurances.test"],
+    ["Finance", "finance@simassurances.test"],
+    ["Direction DG", "dg@simassurances.test"],
+    ["RH", "rh@simassurances.test"],
+    ["Informatique", "admin@simassurances.test"],
+    ["Technique", "responsable-technique@simassurances.test"],
+    ["Comptabilité", "responsable-comptabilite@simassurances.test"],
+    ["Marketing", "responsable-marketing@simassurances.test"],
+  ];
+  for (const [service, email] of responsables) {
+    await prisma.service.update({ where: { id: serviceByName[service].id }, data: { responsableId: userByEmail[email].id } });
+  }
+  console.log(`${responsables.length} responsables de service désignés.`);
 
   console.log("Création des catégories...");
 

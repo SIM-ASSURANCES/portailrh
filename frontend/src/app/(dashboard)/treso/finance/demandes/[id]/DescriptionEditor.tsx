@@ -41,11 +41,14 @@ export function DescriptionEditor({
   description,
   descriptionOriginale,
   disabled = false,
+  raisonIndisponible = null,
 }: {
   demandeId: string;
   description: string;
   descriptionOriginale: string | null;
   disabled?: boolean;
+  /** Phrase sous le bouton grisé (attente de la décision finale, conflit d'intérêts), à la place du message de rôle. */
+  raisonIndisponible?: string | null;
 }) {
   const [ouvert, setOuvert] = useState(false);
   const [valeur, setValeur] = useState(description);
@@ -133,7 +136,7 @@ export function DescriptionEditor({
       </div>
       {disabled ? (
         <p className="text-xs text-muted-foreground">
-          Votre rôle ne permet pas de modifier la description, ou cette demande est clôturée.
+          {raisonIndisponible ?? "Votre rôle ne permet pas de modifier la description, ou cette demande est clôturée."}
         </p>
       ) : null}
     </div>

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui";
 
 import { InvitationCreateForm } from "./InvitationCreateForm";
 import { UserCreateForm } from "./UserCreateForm";
+import type { ServiceAvecResponsable } from "./UserResponsableToggle";
 
 type Mode = "manuel" | "invitation";
 
@@ -17,7 +18,7 @@ type Mode = "manuel" | "invitation";
  * de passe). Les deux restent pleinement disponibles, jamais l'une au
  * détriment de l'autre.
  */
-export function NewUserSection({ roles, services }: { roles: { id: string; name: string }[], services: { id: string; name: string }[] }) {
+export function NewUserSection({ roles, services }: { roles: { id: string; name: string }[], services: ServiceAvecResponsable[] }) {
   const [mode, setMode] = useState<Mode>("manuel");
 
   return (

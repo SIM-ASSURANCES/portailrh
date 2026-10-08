@@ -28,10 +28,13 @@ export async function RetoursCaisseFinanceSection({
   demandeId,
   demandeEstCloturee,
   canDeclarerAssistant,
+  raisonIndisponible = null,
 }: {
   demandeId: string;
   demandeEstCloturee: boolean;
   canDeclarerAssistant: boolean;
+  /** Conflit d'intérêts (demandeur ou bénéficiaire) : déclaration grisée avec la phrase du serveur. */
+  raisonIndisponible?: string | null;
 }) {
   const reglements = await prisma.reglement.findMany({
     where: { demandeId, estConfirme: true, estAnnule: false },
@@ -81,6 +84,7 @@ export async function RetoursCaisseFinanceSection({
                   montantReglement={Number(r.montant)}
                   motifReouvertureRequis={demandeEstCloturee}
                   modeReglement={r.mode}
+                  raisonIndisponible={raisonIndisponible}
                 />
               ) : null}
             </li>

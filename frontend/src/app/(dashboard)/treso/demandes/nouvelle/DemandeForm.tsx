@@ -6,9 +6,9 @@ import { toast } from "sonner";
 
 import Link from "next/link";
 
-import { Button, Card, Input, Select, Textarea } from "@/components/ui";
+import { Button, Card, Input, Select } from "@/components/ui";
 import { Icon } from "@/components/icons";
-import { BENEFICIAIRE_TYPE_OPTIONS } from "backend/client";
+import { MOTIF_LIGNE_MIN, type ChoixBeneficiaire } from "backend/client";
 import { DEVISE_OPTIONS, formatMontantDevise } from "@/components/tresorerie/devise";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
@@ -17,6 +17,8 @@ import { creerDemandeAction } from "./actions";
 type LigneEdit = {
   key: string;
   libelle: string;
+  /** Motif de la ligne (pourquoi cet article), obligatoire. */
+  motif: string;
   quantite: number;
   /**
    * Chaîne brute telle que tapée, jamais un nombre : un état initial à `0`
@@ -32,6 +34,7 @@ function nouvelleLigne(): LigneEdit {
   return {
     key: `ligne-${Math.random().toString(36).slice(2)}`,
     libelle: "",
+    motif: "",
     quantite: 1,
     prixUnitaire: "",
   };
@@ -43,9 +46,10 @@ type FieldErrors = Partial<Record<string, string>>;
  * Formulaire de création d'une demande d'achat ("Demande d'Achat").
  *
  * Deux blocs : le "Tableau des articles" (première chose à remplir — une
- * liste dynamique de lignes libellé/nombre/prix unitaire, au moins une
- * obligatoire) puis l'en-tête (bénéficiaire, date de livraison, devise,
- * motif). Le "Total général" est recalculé en direct et n'est jamais
+ * liste dynamique de lignes libellé/motif/nombre/prix unitaire, au moins une
+ * obligatoire ; le motif est porté par chaque ligne depuis le 2026-10-09) puis
+ * l'en-tête (bénéficiaire : moi-même, un autre compte ou un nom libre ; date de
+ * livraison, devise). Le "Total général" est recalculé en direct et n'est jamais
  * saisi : le `montant` de la demande est recomposé côté serveur à partir
  * des lignes (voir `creerDemandeAction`).
  *
@@ -58,14 +62,23 @@ type FieldErrors = Partial<Record<string, string>>;
  * directement l'action via `useTransition` (même pattern que
  * `RetourCaisseForm`, Phase D), pas via `<form action={...}>`.
  */
-export function DemandeForm() {
+type ModeBeneficiaire = ChoixBeneficiaire["mode"];
+
+const OPTIONS_BENEFICIAIRE: { value: ModeBeneficiaire; label: string }[] = [
+  { value: "MOI", label: "Moi-même" },
+  { value: "COMPTE", label: "Un autre compte du portail" },
+  { value: "NOM", label: "Un nom libre (fournisseur, entreprise…)" },
+];
+
+export function DemandeForm({ comptes }: { comptes: { value: string; label: string }[] }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  const [beneficiaireType, setBeneficiaireType] = useState("");
+  const [modeBeneficiaire, setModeBeneficiaire] = useState<ModeBeneficiaire>("MOI");
+  const [compteBeneficiaire, setCompteBeneficiaire] = useState("");
+  const [nomBeneficiaire, setNomBeneficiaire] = useState("");
   const [dateLivraison, setDateLivraison] = useState("");
   const [devise, setDevise] = useState("XOF");
-  const [motif, setMotif] = useState("");
   const [lignes, setLignes] = useState<LigneEdit[]>([nouvelleLigne()]);
   const [pieceJointeUrl, setPieceJointeUrl] = useState<string | null>(null);
 
@@ -96,13 +109,15 @@ export function DemandeForm() {
 
   function handleSubmit() {
     const errors: FieldErrors = {};
-    if (!beneficiaireType) errors.beneficiaireType = "Entité bénéficiaire requise";
-    if (motif.trim().length < 3) errors.motif = "Merci de préciser le motif de l'achat";
+    if (modeBeneficiaire === "COMPTE" && !compteBeneficiaire) errors.beneficiaire = "Choisissez un compte.";
+    if (modeBeneficiaire === "NOM" && nomBeneficiaire.trim().length < 2) errors.beneficiaire = "Saisissez le nom du bénéficiaire.";
     setFieldErrors(errors);
 
     let ligneError: string | undefined;
     if (lignes.some((l) => !l.libelle.trim())) {
       ligneError = "Chaque ligne doit avoir un libellé.";
+    } else if (lignes.some((l) => l.motif.trim().length < MOTIF_LIGNE_MIN)) {
+      ligneError = `Chaque ligne doit avoir un motif (${MOTIF_LIGNE_MIN} caractères minimum).`;
     } else if (lignes.some((l) => !l.quantite || l.quantite < 1)) {
       ligneError = "Chaque ligne doit avoir un nombre supérieur à 0.";
     } else if (totalGeneral <= 0) {
@@ -115,13 +130,19 @@ export function DemandeForm() {
     }
 
     startTransition(async () => {
+      const beneficiaire: ChoixBeneficiaire =
+        modeBeneficiaire === "COMPTE"
+          ? { mode: "COMPTE", userId: compteBeneficiaire }
+          : modeBeneficiaire === "NOM"
+            ? { mode: "NOM", nom: nomBeneficiaire }
+            : { mode: "MOI" };
       const result = await creerDemandeAction({
-        beneficiaireType,
+        beneficiaire,
         dateLivraisonSouhaitee: dateLivraison || undefined,
         devise,
-        motif,
         lignes: lignes.map((l) => ({
           libelle: l.libelle,
+          motif: l.motif,
           quantite: l.quantite,
           prixUnitaire: Number(l.prixUnitaire) || 0,
         })),
@@ -137,7 +158,8 @@ export function DemandeForm() {
       } else if (result.status === "error") {
         if (result.fieldErrors) {
           setFieldErrors(result.fieldErrors);
-          if (result.fieldErrors.lignes) setErreurLignes(result.fieldErrors.lignes);
+          const erreurLigne = Object.entries(result.fieldErrors).find(([k]) => k.startsWith("lignes"))?.[1];
+          if (erreurLigne) setErreurLignes(erreurLigne);
         }
         toast.error(result.message);
       }
@@ -180,7 +202,7 @@ export function DemandeForm() {
         <div className="mt-4 space-y-3">
           {/* En-têtes de colonnes (desktop) */}
           <div className="hidden gap-3 border-b border-border pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:grid sm:grid-cols-[1fr_90px_140px_120px_36px]">
-            <span>Libellé</span>
+            <span>Libellé et motif</span>
             <span>Nombre</span>
             <span>Prix unitaire</span>
             <span className="text-right">Total</span>
@@ -231,7 +253,7 @@ export function DemandeForm() {
                   <span className="mr-2 text-xs font-medium text-muted-foreground sm:hidden">Total</span>
                   {formatMontantDevise(total, devise)}
                 </div>
-                <div className="flex justify-end">
+                <div className="flex justify-end sm:row-start-1 sm:col-start-5">
                   {lignes.length > 1 ? (
                     <button
                       type="button"
@@ -242,6 +264,15 @@ export function DemandeForm() {
                       <Icon name="x" className="size-4" />
                     </button>
                   ) : null}
+                </div>
+                <div className="sm:col-span-4">
+                  <span className="mb-1 block text-xs font-medium text-muted-foreground sm:hidden">Motif</span>
+                  <Input
+                    aria-label="Motif de la ligne"
+                    placeholder="Motif : pourquoi cet article (usage prévu, urgence…)"
+                    value={ligne.motif}
+                    onChange={(e) => updateLigne(ligne.key, { motif: e.target.value })}
+                  />
                 </div>
               </div>
             );
@@ -270,14 +301,34 @@ export function DemandeForm() {
         </h2>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Select
-            label="Entité bénéficiaire"
-            placeholder="Sélectionner..."
-            options={[...BENEFICIAIRE_TYPE_OPTIONS]}
-            defaultValue={beneficiaireType}
-            onChange={(e) => setBeneficiaireType(e.target.value)}
-            error={fieldErrors.beneficiaireType}
-          />
+          <div className="space-y-2 sm:col-span-2">
+            <Select
+              label="Bénéficiaire"
+              options={OPTIONS_BENEFICIAIRE}
+              value={modeBeneficiaire}
+              onChange={(e) => setModeBeneficiaire(e.target.value as ModeBeneficiaire)}
+              error={modeBeneficiaire === "MOI" ? fieldErrors.beneficiaire : undefined}
+            />
+            {modeBeneficiaire === "COMPTE" ? (
+              <Select
+                label="Compte bénéficiaire"
+                placeholder="Sélectionner un compte..."
+                options={comptes}
+                value={compteBeneficiaire}
+                onChange={(e) => setCompteBeneficiaire(e.target.value)}
+                error={fieldErrors.beneficiaire}
+              />
+            ) : null}
+            {modeBeneficiaire === "NOM" ? (
+              <Input
+                label="Nom du bénéficiaire"
+                hint="Fournisseur, prestataire ou « SIM Assurances CI »."
+                value={nomBeneficiaire}
+                onChange={(e) => setNomBeneficiaire(e.target.value)}
+                error={fieldErrors.beneficiaire}
+              />
+            ) : null}
+          </div>
           <Input
             label="Date de livraison souhaitée"
             type="date"
@@ -296,16 +347,6 @@ export function DemandeForm() {
           />
         </div>
 
-        <div className="mt-4">
-          <Textarea
-            label="Motif de l'achat"
-            rows={7}
-            placeholder="Décrivez précisément ce qui est demandé : contexte, usage prévu, urgence éventuelle..."
-            value={motif}
-            onChange={(e) => setMotif(e.target.value)}
-            error={fieldErrors.motif}
-          />
-        </div>
         <div className="mt-4">
           <PieceJointeUpload onChange={setPieceJointeUrl} />
         </div>

@@ -39,10 +39,13 @@ export function ValidationActions({
   demandeId,
   montantDemande,
   disabled = false,
+  raisonIndisponible = null,
 }: {
   demandeId: string;
   montantDemande: number;
   disabled?: boolean;
+  /** Circuit de validation : pourquoi les boutons sont grisés à cette étape (phrase du moteur). */
+  raisonIndisponible?: string | null;
 }) {
   const [mode, setMode] = useState<Mode>("idle");
   const [montantPartiel, setMontantPartiel] = useState("");
@@ -125,7 +128,7 @@ export function ValidationActions({
       ) : null}
       {disabled ? (
         <p className="text-xs text-muted-foreground">
-          Votre rôle ne permet pas de valider ou rejeter une demande.
+          {raisonIndisponible ?? "Votre rôle ne permet pas de valider ou rejeter une demande."}
         </p>
       ) : null}
 

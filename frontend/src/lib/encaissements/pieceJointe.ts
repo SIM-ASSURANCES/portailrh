@@ -7,22 +7,28 @@ import type { PrismaClient } from "backend";
 /**
  * Pièces jointes du module Encaissements (docs/encaissements-conception.md §5.1, modèle `EncPieceJointe`).
  *
- * Le fichier est déposé par la route d'upload COMMUNE (`POST /api/treso/pieces-jointes/upload`, même dossier
- * `uploads/`), qui ne renvoie que son nom généré. L'action serveur du module appelle ensuite
+ * Le fichier est déposé par une route d'upload dédiée à son usage — `POST /api/treso/pieces-jointes/upload` (PDF/JPG/
+ * PNG, pièces justificatives) ou `POST /api/encaissements/import/upload` (XLS/XLSX/CSV, fichiers de production F1,
+ * gardée par `enc.importer_production`, jamais la route commune de la Trésorerie élargie) —, toutes deux dans le même
+ * dossier `uploads/` et ne renvoyant que le nom généré. L'action serveur du module appelle ensuite
  * `enregistrerEncPieceJointe`, dans sa propre transaction et après avoir vérifié sa propre permission : les
  * métadonnées (taille, SHA-256, type) sont RECALCULÉES ici depuis le fichier sur disque, jamais reçues du client.
- * Le téléchargement passe par `GET /api/encaissements/pieces-jointes/[id]`, gardé par `enc.consulter`.
+ * Le téléchargement passe par `GET /api/encaissements/pieces-jointes/[id]` (permission selon l'origine de la pièce —
+ * voir le commentaire de cette route).
  */
 
 export const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 
-/** Nom produit par la route d'upload : UUID v4 + extension autorisée, rien d'autre. */
-const NOM_FICHIER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(pdf|jpg|png)$/;
+/** Nom produit par une route d'upload : UUID v4 + extension autorisée, rien d'autre. */
+const NOM_FICHIER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(pdf|jpg|png|xls|xlsx|csv)$/;
 
 export const MIME_PAR_EXTENSION: Record<string, string> = {
   pdf: "application/pdf",
   jpg: "image/jpeg",
   png: "image/png",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  csv: "text/csv",
 };
 
 export class EncPieceJointeError extends Error {

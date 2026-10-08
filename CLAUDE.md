@@ -1816,6 +1816,188 @@ clôture Finance, jamais l'une sans l'autre ni l'inverse).
   écriture `JournalCaisse`), et historique associés supprimés après
   vérification.
 
+### Circuit de validation des demandes — moteur (commit 3, 2026-10-06)
+
+Les décisions du 2026-10-06 (voir « Services et responsables » plus bas pour les règles du demandeur) appliquées côté
+serveur ; les écrans (frise, boutons grisés, files) arrivent au commit 4, les notifications et rappels au commit 5.
+**Les commits 3 et 4 se déploient ensemble** : sans les écrans du commit 4, une nouvelle demande d'un collaborateur
+reste à l'étape Service (aucun écran pour la valider).
+
+- **Moteur pur** `backend/src/circuitDemande.ts` (57 tests vitest : chaque transition, chaque cas du demandeur,
+  la frise) : `determinerParcours` (cas a > b > c > d, dépense directe), `transition` (qui peut agir, vers quelle
+  étape), `actionsPossibles`, `messageAttente`, `friseProgression`. **Application en base**
+  `backend/src/circuitDemandeDb.ts` : `initialiserCircuit`, `appliquerTransitionCircuit` (changement d'étape
+  conditionné à l'étape lue : deux décisions simultanées, une seule passe), `corrigerEtResoumettre`.
+- **Modèle** (migration `20261006120000_circuit_validation_demandes`) : `Demande.etapeCircuit` (SERVICE, FINANCE, DG,
+  REJET_DG, DECISION_FINALE, TERMINEE, A_CORRIGER, ABANDONNEE ; sans valeur par défaut, chaque création choisit sa
+  première étape), parcours figé à la soumission (`etapeServiceRequise`, `etapeFinanceRequise`, `modeEtapeDG` :
+  NON_REQUISE / OPTIONNELLE / OBLIGATOIRE), `soumiseAuDG`, `approbationClotureNonRequise`, `niveauRejet` (avec
+  `motifRejet`), `tourCircuit`, `descriptionDemandeur` et `LigneDemande.libelleDemandeur` (dernière version écrite
+  par le demandeur). `StatutDemande` gagne `ABANDONNEE` (terminal, comme REJETEE et CLOTUREE).
+  `calculerStatutDemande` reste la seule fonction du statut : une demande reste EN_ATTENTE_VALIDATION pendant tout
+  le circuit. **Aucun champ de la validation complète n'est retiré.**
+- **Données existantes** : demandes en cours (en attente, aucune ligne décidée) → étape Finance, Service non requise ;
+  toutes les autres → TERMINEE, inchangées (y compris les anciennes demandes aux lignes toutes rejetées, qui restent
+  sans issue comme avant).
+- **Rejets** : tout rejet mène à « À corriger » (`rejeterDemandeAction`, lignes toutes rejetées) ; REJETEE ne reste
+  que pour les anciennes demandes. Le demandeur corrige (lignes, montants, motif, pièce jointe) et resoumet — le
+  circuit repart de la première étape applicable, parcours recalculé, tour + 1, version précédente recopiée en JSON
+  dans l'historique (`correction_demande`), `descriptionOriginale`/`libelleOriginal` jamais réécrites — ou
+  abandonne. **Limite assumée** : une ligne retirée à la correction est supprimée ; ses entrées d'historique
+  `validation_ligne`/`rejet_ligne` ne s'affichent plus, mais la version recopiée les contient.
+- **Étape DG** (`treso.decider_dg`, nouvelle, donnée par la migration aux rôles qui portent `systeme.reinitialiser` —
+  le DG seul —, **jamais** à ceux qui portent `approuver_validation_complete` : en production, Finance et Admin la
+  portent aussi ; vérifié sur une base qui reproduit ce cas, seul le DG la reçoit) : validation
+  → décision finale Finance, et **vaut l'approbation de clôture** (`validationCompleteParDG`, `dgApprobateurId`) —
+  règle unique `DECISION_DG_VAUT_APPROBATION_CLOTURE` ; rejet → retour à la Finance (resoumettre ou renvoyer au
+  demandeur). Cas (b) : le DG décide ligne par ligne, décision finale. Cas (a) : approbation de clôture non requise
+  (`approbationClotureObtenue`, seule lecture de la règle, utilisée par `cloturerDemandeAction`) ;
+  `approuverValidationCompleteAction` la refuse. File « Validations complètes en attente » :
+  `VALIDATION_COMPLETE_EN_ATTENTE_WHERE` (jamais les demandes émises par le DG).
+- **Deux personnes distinctes pour une validation complète** : le compte qui décide comme Finance
+  (`Demande.decideurFinanceId`, posé à la décision Finance, repris par la migration pour les demandes déjà décidées)
+  et celui qui approuve comme DG (étape DG : `dgApprobateurId` ; approbation de clôture) ne sont jamais le même, et
+  aucun n'est le demandeur — `MESSAGE_DEUX_PERSONNES` dans `transition` (décision Finance après l'étape DG, étape DG
+  après une décision Finance) et `refusApprobationCloture` (`approuverValidationCompleteAction`), plus
+  `validerComplementaireAction`. Une resoumission après correction remet à zéro ces décisions
+  (`decideurFinanceId`, `validationCompleteParDG`, `dgApprobateurId`) : elles portaient sur l'ancienne version,
+  l'historique les garde. Test : un compte portant toutes les permissions de décision réussit la première étape et
+  échoue à la seconde (vitest, et Playwright dans les deux ordres).
+- **Personne ne décide sa propre demande**, sauf la dépense directe saisie par Finance (décision 6, entrée
+  `exception_depense_directe` dans l'historique). Le cas (b) se repère par le service nommé « Finance »
+  (`SERVICE_FINANCE`) ou par les permissions du RÔLE (`decider_finance`, `effectuer_reglement`,
+  `receptionner_retour`) ; le cas (a) par `treso.decider_dg` sur le rôle.
+- **Assistant Finance** : garde `modifier_description`, refusée côté serveur tant que la décision finale n'est pas
+  prise (`decisionFinalePrise`). Ses actions d'exécution restaient déjà impossibles avant (`montantValide` nul).
+- **Permissions de décision jamais délégables** (`PERMISSIONS_DECISION_NON_DELEGABLES` : `decider_finance`,
+  `soumettre_dg`, `decider_dg`, `approuver_validation_complete`) : l'octroi est refusé et une délégation existante
+  n'est jamais comptée par `getSession()`.
+- **Actions** : existantes branchées sur le moteur (`validerLignesAction` — Finance ou DG selon l'étape —,
+  `validerTotalementAction`/`validerPartiellementAction` pour la dépense directe, `rejeterDemandeAction`,
+  `cloturerDemandeAction`, description et libellés) ; nouvelles dans `treso/circuit/actions.ts` (étape Service,
+  soumission et resoumission au DG, décision DG, abandon, correction et resoumission), sans écran avant le commit 4.
+- **Commit 4, morceau 1 — écrans Finance** : frise d'avancement `components/tresorerie/FriseCircuit.tsx` (Service,
+  Finance, DG si soumise ou imposée, Assistant ; étape en cours, faites, « non requise » ; calcul `friseProgression`),
+  affichée sur la page Finance d'une demande ; files par étape sur `/treso/finance/demandes` (Étape Finance — plus le
+  reliquat d'une dépense directe —, Rejetées par le DG, Décision finale : `FILES_FINANCE_WHERE`), et l'indicateur
+  « À traiter » n° 1 du tableau de bord compte exactement ces files (`DEMANDES_A_TRAITER_FINANCE_WHERE`) ; boutons
+  Valider / Rejeter / Soumettre au DG (`CircuitFinanceActions.tsx`, décision ligne par ligne) toujours visibles, grisés
+  hors de l'étape de la Finance avec la phrase du moteur (`raisonIndisponible`, la même que le serveur renverrait) ;
+  après un rejet du DG : Resoumettre au DG / Rejeter vers le collaborateur (motif obligatoire). Libellés
+  d'historique des actions du circuit (`DemandeHistorique`), étapes lisibles (`LIBELLE_ETAPE_CIRCUIT`). Vérifié :
+  Playwright 29/29 (chaque étape, avec captures, mobile 390 px).
+- **Commit 4, morceau 2 — écran du responsable de service** : `/treso/service` (« Demandes de mon service à
+  valider » : demandes à l'étape Service dont le compte est le responsable ACTUEL du service du demandeur,
+  `demandesServiceAValiderWhere`, jamais un autre service) et `/treso/service/[id]` (lignes, montant, motif dans la
+  version du demandeur, pièces jointes, frise, historique sans la gestion interne Finance ; introuvable — 404 — pour
+  tout autre compte) ; boutons Valider / Rejeter (motif de 3 caractères minimum, `rejeterEtapeServiceAction` =
+  `rejeterDemandeAction` + rafraîchissement) grisés hors de l'étape avec la phrase du moteur. Aucune permission
+  requise : c'est `Service.responsableId` qui désigne le décideur (un responsable sans droit Trésorerie, ex. RH, y
+  accède). Menu « Mon service » avec compteur (`NavItem.compteur`), seulement pour un responsable d'au moins un
+  service. Le responsable du service du demandeur peut aussi télécharger les pièces jointes de la demande
+  (`/api/treso/pieces-jointes/[id]`). Vérifié : Playwright 23/23 (responsable-commercial@, collaborateur de
+  Commercial, refus serveur pour le responsable d'un autre service et pour le demandeur).
+- **Commit 4, morceau 3 — écrans du DG** : `/treso/dg` (« Étape DG », `treso.decider_dg` : « Soumises par la
+  Finance » et « Demandes de la Finance » = cas b ; `demandesEtapeDGWhere`) et `/treso/dg/[id]` (lignes une par une,
+  montants, motif, pièces, frise, historique). Demande soumise : Valider (vaut l'approbation de clôture) / Rejeter
+  (motif ≥ 3, retour à la Finance). Cas b : décision ligne par ligne avec le composant de la Finance
+  (`LignesValidationTable`, sans catégorisation ni libellé), finale, et « Rejeter la demande » (renvoi au demandeur,
+  `rejeterDemandeEtapeDGAction`). Boutons grisés hors étape avec la phrase du moteur (règle des deux personnes
+  comprise). Menu « Étape DG » avec compteur. File « Validations complètes en attente » conservée pour les demandes
+  jamais soumises, sans les demandes du DG connecté (aussi dans les compteurs du tableau de bord Finance et de
+  l'accueil). `treso.decider_dg` ouvre aussi les pièces jointes des demandes. Vérifié : Playwright 33/33 (dg@,
+  finance@, collaborateur@, responsable-commercial@ : rejet DG puis resoumission, cas b, file, action hors étape
+  refusée, deux personnes).
+- **Commit 4, morceau 3b — décision 3 et conflit d'intérêts** : `treso.creer_demande` donnée à Finance, Assistant
+  Finance et DG (seed, et migration `20261007090000_creer_demande_finance_dg` : rôles portant `decider_finance`,
+  `effectuer_reglement` ou `decider_dg`, jamais un nom de rôle ; idempotente) — création et « mes demandes » ouvertes
+  par cette permission. **Personne n'exécute l'argent de sa propre demande** (`refusExecutionPropreDemande`) : créer,
+  modifier, confirmer (décaisser) ou annuler un règlement, réceptionner un retour. **Limite** : un Assistant Finance
+  seul ne peut pas régler sa propre demande, et aucune délégation ne le contourne aujourd'hui (Finance n'a plus
+  `effectuer_reglement` dans son rôle, donc ne peut pas le déléguer) — il faut un second compte Assistant Finance.
+  Vérifié : migration (3 rôles, rejouée sans effet), Playwright 14/14.
+- **Commit 4, morceau 3c — gardes de conflit d'intérêts (2026-10-07)** : `refusExecutionPropreDemande(demande, userId)`
+  refuse désormais le demandeur **et le bénéficiaire** (compte du portail, garde 8). `refusConflitInteret(db, cible,
+  userId)` (`circuitDemandeDb.ts`) retrouve la demande depuis un règlement, un retour de caisse, une ligne de dépense,
+  un remboursement ou un retour exceptionnel, et sert de garde serveur (après le contrôle de permission) à :
+  déclaration des dépenses par l'Assistant, détail, ajustement du total, marquage non justifié, justification après
+  réception, retour complémentaire (gardes 1, 2) ; proposition, validation et rejet d'un remboursement (garde 3) ;
+  saisie, validation et rejet d'un retour exceptionnel post-clôture (garde 4) ; description et libellés de lignes
+  (garde 6). **Garde 9** : une dépense directe dont le bénéficiaire est son auteur (Finance pour elle-même) suit le
+  cas `DEPENSE_DIRECTE_POUR_SOI` (étapes Service et Finance non requises, étape DG obligatoire, décision du DG vaut
+  approbation de clôture) ; sans lignes, le DG décide le montant avec `ValidationActions` sur `/treso/dg/[id]`
+  (`validerTotalementAction`/`validerPartiellementAction` acceptent `treso.decider_dg`, le moteur filtrant par
+  étape). **Non codés, volontairement** : catégoriser (garde 5) et clôturer (garde 7) sa propre demande.
+  `treso.declarer_retour` donnée à Finance, Assistant Finance et DG (seed, migration
+  `20261007120000_declarer_retour_finance_dg`, par permission sœur, idempotente) : ils déclarent le retour de leurs
+  propres demandes comme tout demandeur. Vérifié : migration (3 rôles, rejouée sans effet), vitest (67 tests du
+  moteur, 260 au total), Playwright 22/22 avec un second compte Assistant Finance qui agit à la place du demandeur.
+- **Commit 4, morceau 4 — écrans du demandeur et de l'Assistant Finance (2026-10-07)** :
+  - **Demandeur** (Collaborateur, et Finance, Assistant ou DG sur leurs propres demandes), `/treso/demandes/[id]` :
+    frise, étape en cours ; à « À corriger », niveau et motif du rejet avec **Corriger et resoumettre**
+    (`CorrectionDemande.tsx` : lignes, quantités, prix, motif, nouvelle pièce jointe ; une dépense directe n'a que le
+    motif) et **Abandonner** (confirmation avant l'action). Badge « À corriger ». Le demandeur voit toujours SA version
+    (`descriptionDemandeur ?? descriptionOriginale ?? description`, idem `libelleDemandeur` pour les lignes) — corrige
+    un défaut : après une correction, l'ancien libellé (`libelleOriginal`) s'affichait.
+  - **Historique** (`DemandeHistorique`) : chaque `correction_demande` s'affiche lisiblement (tour, rejet, montant,
+    lignes et décisions) avec « Lignes retirées à cette correction » (`lireVersionCorrection`,
+    `lignesRetireesParCorrection`) ; les entrées validation/rejet d'une ligne retirée restent listées. La version
+    recopiée porte désormais l'auteur et la date de chaque décision (`decidePar`, `decideAt` ; absents des versions
+    antérieures). Le motif de l'achat d'une version n'est pas montré au Collaborateur (gestion interne).
+  - **Assistant Finance** (`estExecutantFinance` : règlement ou réception sans `decider_finance`/`decider_dg`) : avant
+    la décision finale (`attendDecisionFinale` : ni terminée ni abandonnée), tous ses boutons sont grisés avec
+    « En attente de la validation finale. » — `raisonIndisponible` remplace « Action non autorisée. » pour lui ; le
+    serveur, lui, refuse comme avant. Ils se dégrisent à la décision finale.
+  - **Sa propre demande** (demandeur ou bénéficiaire) : règlement (ajout, modification, confirmation = décaissement,
+    annulation), déclaration par l'Assistant, réception, détail, justification, ajustement et remboursement grisés ou
+    masqués avec la phrase du serveur (`refusExecutionPropreDemande`).
+  - Vérifié : vitest (70 tests du moteur, 264 au total), Playwright 35/35 sur base jetable (collaborateur@,
+    responsable-commercial@, finance@, dg@, assistant-finance@ et un second Assistant) : rejet aux niveaux Service,
+    Finance (lignes toutes rejetées) et DG (cas b), rejet DG puis renvoi au demandeur, deux corrections avec lignes
+    retirées, resoumissions, abandon, DG demandeur corrigeant sa demande, bénéficiaire, mobile 390 px.
+- **Commit 4, morceau 5 — nettoyage (2026-10-08)** :
+  - **`treso.valider_demande` retirée du DG** (décision 10 ; seed et migration
+    `20261008090000_valider_demande_retiree_du_dg`) : la migration la retire des rôles qui portent `treso.decider_dg`
+    sans `treso.decider_finance`, sans nommer de rôle ; idempotente. Sur une base qui reproduit la production
+    (Finance et Admin avec `approuver_validation_complete`, DG avec `valider_demande`), seul le DG la perd ; un rôle
+    combiné DG + Finance la garde. Le DG décide à l'étape DG et approuve la clôture ; il ne fait plus de validation
+    complémentaire d'une dépense directe et n'a plus la file « Demandes en attente de validation ».
+  - Les écrans de consultation anciennement liés à `valider_demande` acceptent aussi `treso.voir_dashboard_finance`
+    (« Toutes les demandes », « Retours en attente » et le détail d'un retour en lecture seule, retours exceptionnels).
+  - L'alerte d'accueil « demande(s) en attente de validation » compte exactement les files Finance
+    (`DEMANDES_A_TRAITER_FINANCE_WHERE`, jamais l'étape Service), seulement pour un compte avec `treso.decider_finance`.
+  - `/delegations` ne propose plus les 4 permissions de décision (`PERMISSIONS_DECISION_NON_DELEGABLES`), qui ne sont
+    pas délégables (le serveur les refusait déjà) ; une note l'indique.
+  - Une ancienne délégation de `valider_demande` accordée par le DG ne compte plus (calcul dynamique de
+    `getSession`), mais la ligne de délégation reste en base.
+- **Commit 5 — notifications et rappels (2026-10-09)** : migration `20261009090000_circuit_notifications_rappels`
+  (`Demande.etapeCircuitDepuis`, posée à chaque changement d'étape par `circuitDemandeDb.ts`, reprise de l'historique
+  pour les demandes existantes ; `Demande.dernierRappelAt`). Logique pure dans `backend/src/circuitNotifications.ts`,
+  envoi par le service existant (`notify` : base, cloche, push, e-mail) dans `frontend/src/lib/notificationsCircuit.ts`
+  — aucun second système. Après chaque passage d'étape (création comprise), `notifierEtapeCircuit` relit la demande et
+  notifie **seulement ceux qui peuvent agir**, mêmes règles que `transition` : Service → responsable actuel du service
+  (actif) ; Finance et rejet DG → `decider_finance` ou `soumettre_dg` ; décision finale → `decider_finance` sauf le DG
+  qui a validé ; DG → `decider_dg` sauf le décideur Finance ; À corriger → le demandeur, avec niveau et motif ;
+  Terminée → le demandeur (montant validé) et `effectuer_reglement` (ni demandeur ni bénéficiaire). Jamais l'auteur de
+  l'action, jamais le demandeur (sauf l'auteur d'une dépense directe à l'étape Finance). Une étape sautée ne notifie
+  personne. L'ancien « Demande à approuver » envoyé à TOUS les porteurs de `approuver_validation_complete` (Finance et
+  Admin en production) est remplacé : « à décider (étape DG) » quand le DG agit à l'étape DG, « à approuver avant
+  clôture » seulement si l'approbation reste due (pas après une validation à l'étape DG, pas pour une demande du DG),
+  à ceux que `refusApprobationCloture` n'écarte pas. Rejet de l'approbation de clôture : `soumettre_dg` (au lieu de
+  `valider_demande`). **Rappels** : à 48 h à la même étape (Service, Finance, DG, rejet DG, décision finale, à
+  corriger), aux destinataires actuels de l'étape, au plus un par 24 h et par demande (2026-10-09, au lieu d'un par
+  heure) — calculés à la volée après
+  l'affichage d'une page du portail (`after()` dans `(dashboard)/layout.tsx`), réservation conditionnée à
+  `dernierRappelAt` (deux affichages simultanés : un seul rappel). Vérifié : vitest (22 tests, 293 au total),
+  Playwright 31/31 sur base jetable (collaborateur@, responsable-commercial@, finance@, dg@, assistant-finance@, Finance
+  et Admin portant l'approbation de clôture comme en production).
+- **Vérifié** : vitest (63 tests du moteur, 256 au total) ; migration sur une base jetable portant des demandes dans
+  tous les états (aucun écart schéma/base, partie permission rejouée sans effet) ; couche base sur base seedée, 35
+  scénarios (cas a à d, dépense directe, rejet et resoumission DG, concurrence, correction avec versions, abandon,
+  file DG) ; Playwright, 11 contrôles sur les écrans existants (création → bonne étape, Finance refusée à l'étape
+  Service, lignes toutes rejetées → À corriger, Assistant et description, délégation refusée et délégation existante
+  ignorée).
+
 ### Séparation Responsable Finance / Assistant Finance (2026-09-21)
 
 Séparation stricte des tâches (segregation of duties) au sein de l'équipe
@@ -2484,9 +2666,23 @@ demande non catégorisée, comme pour une dépense directe). Retiré du Select
 d'en-tête, du zod de `creerDemandeAction` et de l'écriture Prisma — ne pas
 le réintroduire côté collaborateur sans décision explicite contraire.
 
-**Motif de l'achat** — `Textarea` élargie (`rows={7}`, contre 4
-auparavant) avec un placeholder invitant à préciser contexte/usage/urgence
-— même champ (`Demande.description`), pas un champ séparé.
+**Motif par ligne (2026-10-09, remplace le « Motif de l'achat » d'en-tête)** — migration idempotente
+`20261009120000_motif_par_ligne` : `LigneDemande.motif`, `motifOriginal`, `motifDemandeur` (nullables en base) et
+`Demande.description` rendue nullable. Le libellé (désignation de l'article) ne jouait pas ce rôle : nouvelle colonne.
+- Obligatoire à la création (`creerDemandeAction`) et à la correction (`corrigerEtResoumettre`), 3 caractères minimum
+  (`refusMotifLigne`, `MOTIF_LIGNE_MIN`, `backend/src/motifLigne.ts`). Une nouvelle demande standard n'a plus de motif
+  d'en-tête (`description: null`).
+- Versions et droits **identiques au libellé** : `modifierMotifLigneAction` (mêmes gardes que
+  `modifierLibelleLigneAction` : `treso.modifier_description`, jamais le demandeur ni le bénéficiaire, Assistant après la
+  décision finale, verrou `CLOTUREE` ; historique `modification_motif_ligne`, gestion interne) ; `motifOriginal` posé
+  une seule fois ; le demandeur voit toujours sa version (`motifLigneDemandeur`) ; une correction versionne le motif
+  comme le libellé et la version recopiée dans l'historique porte le motif de chaque ligne.
+- Affiché partout où la ligne s'affiche : demandeur, Service, Finance et Assistant (`LignesValidationTable`), DG,
+  historique des versions, export Excel (feuille « Demandes », colonne « Motif »). Listes : `resumeMotifDemande`
+  (« libellé : motif »). Aucune notification ne citait le motif de l'achat (elles citent le motif d'un rejet).
+- **Anciennes demandes** : leur motif d'en-tête reste en base et s'affiche en **lecture seule** (`modifierDescriptionAction`
+  refuse une demande standard) ; leurs lignes sans motif en reçoivent un à la prochaine correction. La dépense directe
+  (sans ligne) garde sa description, modifiable comme avant.
 
 **Prix unitaire** — `LigneEdit.prixUnitaire` est une **chaîne**, pas un
 nombre (`""` par défaut, jamais `"0"`) : un état initial numérique à `0`
@@ -2501,9 +2697,16 @@ Placeholder `"0"` à titre indicatif ; converti en nombre
 Finance ni aux deux PDF (toujours « FCFA » en dur) — sans conséquence tant
 qu'aucune demande n'utilise une autre devise.
 
-Mapping bénéficiaire à la création : Collaborateur/Stagiaire → créateur
-connecté ; SIM Assurances CI → nom libre pré-rempli ; Fournisseur/prestataire
-→ pas encore de champ de nom dédié.
+**Champ « Bénéficiaire » (2026-10-09, remplace la liste « Entité bénéficiaire »)** — « Moi-même » (par défaut), un autre
+compte ACTIF du portail (revérifié côté serveur) ou un nom libre ; `champsBeneficiaire` (`backend/src/beneficiaire.ts`)
+remplit les trois champs existants : un compte → `COLLABORATEUR` + compte (aucun profil ne distingue un stagiaire sur un
+compte) ; un nom libre → `ENTREPRISE` pour « SIM Assurances (CI) », sinon `FOURNISSEUR`, avec le nom saisi. Jamais un
+compte et un nom à la fois. Les anciennes demandes gardent leur type et leur bénéficiaire. Aucune règle changée : la garde 8
+(`refusExecutionPropreDemande`), les pièces jointes, le filtre et la colonne bénéficiaire du reporting, le reçu et le bon
+de caisse lisent les mêmes champs. Vérifié : vitest (13 tests, 306 au total), Playwright sur base jetable (demande à
+plusieurs lignes et motifs, bénéficiaire autre compte, Service → Finance → DG → correction → resoumission, garde 8 sur
+l'Assistant bénéficiaire, règlement par un second Assistant, reçu, export filtré, ancienne demande antérieure à la
+migration).
 
 ### Validation ligne par ligne
 
@@ -4832,6 +5035,275 @@ V2-A27d/V2-A1c répondues par le client — rien dans ces 4 commits ne construit
   tous les cas de la maquette.
 - `vitest` (122/122 tests backend), `tsc --noEmit` et `eslint` passent sans erreur.
 
+#### Commit 4b — Règles F1 (fait, 2026-09-30)
+
+- **`backend/src/encImportRegles.ts`** (nouveau, PUR) — `analyserLigne(ligne, contexte, options)` décide, pour une
+  ligne déjà lue (4a) : contrat à créer/mettre à jour (toujours renseigné sauf rejet V2-A14), avenant (`PRIME_MODIFIEE`
+  si S/T/U/V/W/X ont changé), paiement à créer ou non, et les signalements du tableau F1.4 + incohérence T+U+V≠S +
+  écart de taux de contrôle + branche inconnue. Aucun accès base : le contexte (contrat existant, ses encaissements,
+  taux de contrôle attendus, branches connues, tolérances, date du jour) est fourni par l'appelant — rien n'est lu ni
+  deviné en interne.
+- **V2-A14 (annulation)** : implémenté en POINT D'EXTENSION SEULEMENT (`LigneAAnalyser.indicateurAnnulation?`,
+  jamais peuplé par `encImportLecture.ts` aujourd'hui — aucune colonne connue, question posée au client : en-têtes
+  envisagés « Statut/Date/Motif/Type annulation »). La règle elle-même (Finance → `LIGNE_ANNULEE_REJETEE`, rejet
+  entier ; Équipe technique → contrat+paiement importés normalement + `ANNULATION_EN_ATTENTE_L4`, **valeur d'enum
+  nouvelle**, absente du sketch d'origine) est codée et testée avec une ligne construite à la main.
+- **Écart de taux de contrôle (V2-A20)** : bases reprises de la maquette (seule formule disponible : taxe = V/(T+U),
+  commission = W/T, honoraires = X/T) ; **accessoires = U/T** (base implicite reprise du V1) — **PROVISOIRE, à
+  confirmer par le client** (correction du 2026-09-30 : d'abord non implémenté faute de formule, puis ajouté sur
+  cette base par défaut). Tolérance toujours fournie par l'appelant, jamais un défaut deviné.
+- **Deux corrections post-revue successives (2026-09-30) — référence manquante** : un premier essai classait une
+  référence manquante dans « à compléter » (paiement non créé), par analogie avec CDC §3.2 (« référence obligatoire
+  pour tout nouvel encaissement »). **Corrigé (1)** : le tableau F1.4 ne cite que date/mode/montant pour le cas
+  « manquant » — l'exigence de référence du §3.2 vise la SAISIE À L'ÉCRAN, pas le fichier. Une ligne sans référence
+  est donc ajoutée à confirmer (signalement À TRAITER `REFERENCE_MANQUANTE`, **valeur d'enum nouvelle**). Un
+  deuxième essai sautait alors le contrôle « doublon possible » (fuzzy, ±1 FCFA/±7 jours) pour ces lignes, en pensant
+  à tort que le groupe 3 du rapprochement (CDC F5) en avait seul la charge. **Corrigé (2)** : l'ORDRE voulu est
+  déjà présent → doublon possible → à compléter → puis, SEULEMENT si la ligne est ajoutée, `REFERENCE_MANQUANTE`
+  (ou `REF_WAVE_NON_CONFORME`) s'ajoute au signalement `AJOUTE`, jamais à sa place — une ligne sans référence qui
+  ressemble à un encaissement existant reste donc un doublon possible, non ajoutée.
+- Recette : cas 9.2 (paiement fichier technique) et 9.3 (doublon Wave 400 FCFA/3 jours) reproduits exactement ; les
+  6 cas du tableau F1.4 ; référence manquante SANS doublon détecté (ajoutée, signalée) ET référence manquante AVEC
+  un doublon détecté (non ajoutée, « doublon possible », pas « référence manquante ») ; avenant ; incohérence
+  T+U+V≠S (dans/hors tolérance) ; écart de taux (commission ET accessoires) ; date future (V2-A28, y compris la
+  date du jour elle-même acceptée) ; branche inconnue (avec/sans liste fournie) ; les deux branches de V2-A14 +
+  confirmation qu'aucun vrai résultat de lecture ne déclenche jamais cette règle aujourd'hui.
+- Tests : `backend/src/encImportRegles.test.ts`, 32 cas. `vitest` (154/154 tests backend), `tsc --noEmit` et
+  `eslint` passent sans erreur (backend et frontend) ; `next build` (65 routes) inchangé.
+
+#### Commit 4c — Application en base (fait, 2026-09-30)
+
+- **Modèles** `EncContrat`, `EncEncaissement` (statut `A_CONFIRMER`/`CONFIRME`/`NON_RECU`, champs figés à la
+  confirmation laissés `null`), `EncImport`, `EncSignalement` (enum `EncAnalyseSignalement`, 13 valeurs = celles de
+  4b) — migration additive `20260930140000_encaissements_import_production`. `EncSignalement.numPolice` nullable (ligne
+  sans police). 6 nouvelles relations vers `User` → `supprimerUtilisateurAction` compte désormais aussi imports,
+  encaissements (saisis/confirmés/non reçus) et signalements traités.
+- **`backend/src/encImportApplication.ts`** — `appliquerImportProduction(tx, lignes, params)`, toujours dans la
+  transaction de l'appelant : refuse l'import ENTIER si une branche est inconnue (avant toute écriture), crée
+  `EncImport` (`VALIDE` d'emblée, pas d'aperçu en F1), puis par ligne : verrou `pg_advisory_xact_lock` sur la police,
+  résolution en LECTURE SEULE d'un partenaire déjà existant (`trouverPartenaireIdExistant`) et des taux de contrôle
+  attendus (`resoudreTauxControleAttendus` — voir plus bas), `analyserLigne` (4b) avec ce contexte réel, contrat créé
+  ou remis à jour (jamais `partAccessoiresPartenaire`), partenaire absent créé automatiquement (verrou dédié,
+  `creeParId` = auteur de l'import), encaissement `A_CONFIRMER` avec NOTRE numéro PAI, signalements ; un audit
+  `import_production` final. `toleranceIncoherenceFcfa` reçu en chaîne (`MontantEntree`) : le frontend n'a jamais à
+  importer `encCalcul.ts` (toujours non réexporté).
+- **Taux de contrôle câblés dès ce commit** (correction avant commit, 2026-09-30 — les tables/actions du commit 3a
+  existaient déjà, restées non branchées à l'import dans un premier essai) : `resoudreTauxControleAttendus` cherche
+  une ligne `EncTauxControle` par spécificité décroissante (produit+partenaire exact > partenaire seul > produit
+  seul) ; sans ligne correspondante, `analyserLigne` saute le contrôle (comportement 4b inchangé, zéro signalement).
+- **Écart comparé en MONTANT, pas en pourcentage** (second correctif avant commit, 2026-09-30) : un premier essai
+  comparait deux fractions avec une tolérance en points (2 points) — signalé comme insuffisant (2 points auraient
+  laissé passer 20 % de commission attendue contre 18 % réels, plusieurs dizaines de FCFA d'écart réel). Corrigé :
+  montant attendu = taux paramétré × base (T+U pour la taxe, T pour commission/honoraires/accessoires), comparé au
+  montant réel du fichier (V/W/X/U), tolérance = `toleranceIncoherenceFcfa` (LA MÊME que l'incohérence T+U+V≠S,
+  `controle.tolerance_fcfa`, CDC V1 §3.8, 1 FCFA par défaut) — jamais une seconde tolérance dédiée. Plus de garde
+  `T > 0` nécessaire (aucune division). Aucun `EncParametre` ni écran F9 ne fixe encore la base « accessoires = U/T »
+  elle-même (V2-A20 toujours partiellement ouverte), à confirmer par le client.
+- **Dépôt** : route DÉDIÉE `POST /api/encaissements/import/upload` (`.xls`/`.xlsx`/`.csv`, 10 Mo,
+  `enc.importer_production`) ; la route commune Trésorerie est inchangée. `lib/encaissements/pieceJointe.ts` accepte
+  désormais ces trois extensions. **Téléchargement** (`/api/encaissements/pieces-jointes/[id]`) : `enc.importer_production`
+  pour le fichier d'un import `PRODUCTION` (D6, Finance + Technique), `enc.consulter` pour le reste.
+- **Action serveur** `importerProductionAction` (`encaissements/import/actions.ts`, sans écran — 4d) : revérifie
+  `enc.importer_production`, lit le fichier déposé, exige une branche par défaut si le fichier n'a pas de colonne
+  « Branche », enregistre la pièce jointe et applique l'import dans UNE transaction (timeout **300 s**, `maxWait` 10 s).
+  **Origine de l'import (V2-A14) — corrigée avant commit** : déduite de `enc.annuler_contrat` (exclusive à l'Équipe
+  technique), jamais de `enc.marquer_paye` (un premier essai s'y était trompé — même résultat ici par coïncidence,
+  mais la mauvaise permission conceptuellement) ni d'un nom de rôle : la règle du CDC est « l'annulation est réservée
+  à qui peut annuler ».
+- **Vérifié sur PostgreSQL 16 (Docker, migrations depuis zéro, sans seed), fichier synthétique anonymisé généré par
+  script, 7 scénarios** : 5 000 lignes importées en **45-54 s** selon les passages → 5 000 contrats, 5 000 paiements
+  à confirmer, 20 partenaires, 0 à traiter ; **réimport du même fichier** (~33-39 s) → 0 contrat créé, 5 000 mis à
+  jour, 0 paiement, 5 000 « déjà présent » ; **branche inconnue** → refusé, aucune ligne écrite (pas même
+  `EncImport`) ; **concurrence réelle, 3 variantes** — même police/paiements différents → 1 seul contrat (1 création
+  + 1 mise à jour) ; même police/même paiement AVEC PaiementID → 1 seul encaissement, l'autre « déjà présent » ; même
+  police/même paiement SANS PaiementID (clé date+montant) → même garantie, confirmant que le verrou de police couvre
+  aussi le contrôle anti-doublon, pas seulement la création du contrat ; **taux de contrôle** — sans ligne
+  `EncTauxControle`, 0 signalement ; une ligne posée pour le produit (commission attendue 50 %) → `ECART_TAUX`
+  détaillant un écart de **447,55 FCFA** (montant attendu 699,30 FCFA contre 251,75 FCFA réels), jamais un pourcentage
+  seul, sur les imports SUIVANTS uniquement (jamais rétroactif sur les 5 000 lignes déjà importées avant le
+  paramétrage). Conteneur, script et bases jetables supprimés (3 passages Docker au total pour ce commit, un par
+  correctif). Piège de test noté : `EncImport.fichierId` est unique — chaque import doit avoir sa propre pièce
+  jointe (c'est le cas en usage réel : chaque dépôt reçoit un nouvel UUID).
+- Tests : `backend/src/encImportApplication.test.ts` (6 cas) + 2 nouveaux cas dans `encImportRegles.test.ts` (écart
+  détecté en montant même dans l'ancienne tolérance en points ; silence dans la tolérance de 1 FCFA). `vitest`
+  (162/162 backend).
+
+#### Commit 4d — Écran d'import (fait, 2026-10-02, dernier commit du F1, aucune migration)
+
+- **`/encaissements/import`** (`enc.consulter`) : formulaire `ImportProductionForm` visible seulement avec
+  `enc.importer_production` (revérifiée par chaque action) — dépôt via la route dédiée, puis
+  `inspecterFichierProductionAction` (lecture seule : nombre de lignes, colonne « Branche » présente ?) ; la branche
+  n'est demandée QUE si le fichier n'en porte pas (branches ACTIVES), et sans aucune branche un message renvoie vers
+  la gestion des branches. Pendant l'import : bouton désactivé (pas de double envoi) et message d'attente (~1 min pour
+  5 000 lignes) ; au succès, redirection vers le rapport. Historique des 50 derniers imports (`HistoriqueImportsTable`).
+- **Rapport `/encaissements/import/[id]`** : chiffres clés en haut (`StatCard` partagé, inchangé), lignes rejetées
+  avec motif (ligne annulée rejetée ou sans numéro de police), puis signalements À TRAITER et POUR INFO (compteurs
+  par type complets ; détail plafonné à 500/200 lignes pour rester lisible et léger). Lien de téléchargement du
+  fichier pour `enc.importer_production` seulement (même règle que la route, D6).
+- **`/encaissements/branches`** (`enc.parametrer`) : liste, ajout, désactivation/réactivation — réutilise
+  `creerBrancheAction`/`toggleBrancheActiveAction` (3a, `EncAudit` déjà tracé). Seul morceau du F9 livré.
+- Libellés en clair (`components/encaissements/libelles.ts`) : modes (« Chèque », « Orange Money »…), types de
+  signalement, montants à l'unité FCFA, dates formatées côté serveur (fuseau Africa/Abidjan, pas d'écart
+  d'hydratation). Accès depuis l'accueil `/encaissements` (cartes) — navigation globale et composants partagés intacts.
+- **Vérifié (Playwright, `next start` sur PostgreSQL 16 jetable, fichiers anonymisés générés par script)** : 29/29
+  contrôles — Finance (sans branche → message ; crée une branche → proposée ; import → rapport 20 contrats/20
+  paiements), Équipe technique (fichier avec colonne Branche, aucun choix demandé, rapport), réimport (0 créé, 20 mis
+  à jour, 20 « déjà présent »), Consultation (ni dépôt ni bouton, historique et rapport lisibles, pas de
+  téléchargement, route de dépôt 403, action appelée directement refusée, branches inaccessibles) ; 0 erreur
+  JavaScript en console. Base, serveur, fichiers déposés, script et Playwright supprimés après.
+
+#### Commit 4e — Retouches de l'écran d'import (2026-10-02, aucune migration)
+
+- Historique : nom réel de la ou des branches suivi de « (colonne du fichier) » quand elles viennent du fichier.
+  **`EncImport.branchesFichier`** (`Json?`, codes triés sans doublon, migration additive
+  `20261002090000_encaissements_import_branches_fichier`) enregistre au moment de l'import les codes lus dans la
+  colonne « Branche » (`null` si la branche a été choisie à l'écran). La reconstitution depuis les signalements et
+  les contrats créés n'est plus qu'un **repli** pour les imports antérieurs (colonne vide) — fragile seule : un
+  réimport sans création ni signalement y perdait sa branche. Vérifié sur PostgreSQL 16 jetable (migrations depuis
+  zéro, aucun écart schéma/base, import réel → `["AUTO","SANTE"]`), puis appliqué sur la base de dev.
+- Tableaux de signalements : numéro de police jamais coupé (`whitespace-nowrap`).
+- Détail « doublon possible » : mention « Ajouter quand même » retirée tant que le bouton n'existe pas (il viendra
+  avec la fiche police et les actions sur signalements : Ajouter quand même, Ouvrir la police, Marquer traité). Les
+  signalements déjà enregistrés gardent leur ancien texte (jamais réécrits).
+
+#### Commit 5a — Recherche et fiche police (F2) (fait, 2026-10-02, aucune migration)
+
+- **Recherche** (`backend/src/encRecherche.ts`, `rechercherContratIds`) : n° de police, client (nom ou identifiant),
+  partenaire, produit (libellé ou code), branche (code ou libellé), référence d'un paiement du contrat ; plusieurs mots
+  (ET entre les mots, OU entre les champs, 6 mots au plus), jokers `%`/`_` cherchés tels quels. **Option C**
+  (décision du 2026-10-02, sans extension PostgreSQL) : les deux côtés normalisés de la même façon, en JavaScript pour
+  la saisie, avec `lower()`/`translate()` pour les colonnes (accents français, apostrophes et tirets ignorés).
+- **Chemin rapide sans migration** : une saisie qui ressemble à un n° de police ou à une référence de paiement
+  (`ressembleIdentifiant` : un seul mot, au moins 3 caractères dont un chiffre) passe d'abord par les index
+  existants (`numPolice` unique, `EncEncaissement.reference`) — égalité (saisie telle quelle, majuscules,
+  minuscules), puis préfixe insensible à la casse (`upper(...) LIKE`, sans `translate()` ; la collation de la base,
+  `en_US.utf8`, empêche l'index de servir au préfixe). Le balayage `translate()` n'a lieu que si rien n'est trouvé,
+  et pour les noms. Un n° de police exact masque donc les contrats qui ne contiendraient ce texte que dans un nom.
+- **Temps mesurés** (PostgreSQL 16 jetable, données synthétiques générées en SQL, pire de 3 passages à chaud) :
+
+  | Recherche | 50 000 contrats / 100 000 paiements | 150 000 / 300 000 (3 ans) |
+  |---|---|---|
+  | N° de police exact (toute casse) | 3 ms | 2 ms |
+  | Référence de paiement exacte (toute casse) | 1 ms | 1 ms |
+  | Préfixe de police / de référence | 50 / 46 ms | 77 / 86 ms |
+  | Nom « nguessan » | 252 ms | 483 ms |
+  | Partenaire | 280 ms | 1 158 ms |
+  | Identifiant non trouvé (repli sur le balayage) | 770 ms | 1 994 ms |
+  | Trois mots | 983 ms | 2 403 ms |
+  | Aucun résultat | 1 107 ms | 2 140 ms |
+
+  **Le balayage dépasse 1 s dès 50 000 contrats sur ces données** (une première mesure à 691 ms utilisait des noms et
+  références plus courts) et atteint 2,4 s à 150 000. **Tâche avant mise en service** (conception §11, ligne 12a) :
+  option B, colonne de recherche normalisée et indexée, à faire tant qu'il n'y a pas de données réelles. Essai
+  écarté : un texte normalisé unique par contrat (références agrégées) était plus lent.
+- **Situation** (`backend/src/encSituation.ts`, `calculerSituationContrat`) : encaissé = somme des Z **confirmés**,
+  reste dû = prime TTC − encaissé ; négatif → « Trop-perçu », jamais un reste dû négatif.
+- **Barre de recherche** (`components/encaissements/RechercheContrats.tsx`) montée dans
+  `(dashboard)/encaissements/layout.tsx` uniquement (jamais l'en-tête global) : 8 suggestions (police, client,
+  partenaire, branche, reste dû) via `suggererContratsAction` (`enc.consulter`), délai 250 ms, garde contre les
+  réponses dans le désordre, flèches/Entrée/Échap. Entrée ouvre la suggestion choisie (ou l'unique suggestion), sinon
+  la page de résultats `/encaissements/recherche?q=` (50 premiers par n° de police). Le survol choisit une suggestion
+  (comportement de liste standard).
+- **Fiche police** `/encaissements/contrats/[id]` (lecture seule, `enc.consulter`) : prime TTC, encaissé, reste dû ou
+  trop-perçu, barre des versements (confirmé / à confirmer, ce dernier jamais compté), informations du contrat avec
+  liens vers les imports qui l'ont créé et mis à jour, montants du fichier (S à X), paiements (n° PAI, date, mode,
+  référence, montant, source, statut, saisi/confirmé le), signalements de la police (par contrat **ou** par n° de
+  police : une ligne rejetée n'a pas de contrat ; 200 plus récents). `SignalementsTable` et `paiementLisible`
+  déplacés dans `components/encaissements/` (partagés avec le rapport d'import).
+- Vérifié : vitest (`encRecherche`, `encSituation`), Playwright sur PostgreSQL 16 jetable avec le fichier de test
+  anonymisé importé par l'écran réel (22 contrôles : accents/apostrophes/tirets, plusieurs mots, référence de paiement,
+  Entrée/clic/Échap, page de résultats, fiche, trop-perçu, accès Finance/Technique/Consultation, refus sans
+  `enc.consulter`, aucune erreur console, pas de défilement horizontal à 390 px).
+
+#### Commit 5a-bis — Recherche par début de mot (option B, 2026-10-04, migration additive)
+
+Remplace le balayage `translate()` du 5a, trop lent à 150 000 contrats (2,4 s). Décisions D20-D22 (conception).
+**Le commit 5a poussé (`6be7697`) ne contenait que le déplacement de `SignalementsTable`** (la commande `git add`
+citait l'ancien chemin du fichier déplacé, refusé par git, ce qui a annulé tout l'ajout) : les fichiers du 5a sont
+livrés avec ce commit.
+
+- **`EncContratMot`** (`contratId`, `mot`, clé primaire composée, suppression en cascade avec le contrat) : mots
+  normalisés du n° de police, du client (nom, ID), du partenaire (nom enregistré), du produit, de la branche et des
+  références de paiement, **plus les parties d'un mot composé** (« N'Guessan » → nguessan, n, guessan ; « POL-0031337 »
+  → pol0031337, pol, 0031337). `motsIndexes` (TypeScript) et le remplissage SQL de la migration appliquent les mêmes
+  règles (0 écart sur 150 000 contrats comparés).
+- **Colonne `mot` en collation « C »** (posée par la migration, non modélisée par Prisma) + btree ordinaire : sert
+  `LIKE 'x%'` malgré la collation `en_US.utf8` de la base. Choisie au lieu de `text_pattern_ops`, que Prisma 7 ne
+  déclare qu'en `raw` et voit comme un écart permanent (`migrate dev` recréerait l'index à chaque migration) ;
+  avec la collation, `migrate diff` ne voit aucune différence (vérifié).
+- **Recherche** (`rechercherContratIds`) : n° de police ou référence EXACTS d'abord par les index existants (le
+  contrat exact seul) ; sinon chaque mot saisi doit commencer au moins un mot du contrat — un `EXISTS` par mot (un
+  `INTERSECT` d'ensembles prenait 245 ms sur « courtage 7 », mot présent dans tous les contrats). **Limite assumée :
+  un fragment au milieu d'un mot (« uessan ») ne trouve rien.**
+- **Entretien** : `indexerMotsContrat` dans la transaction de l'import, à chaque contrat écrit (sauf réimport sans
+  changement des champs indexés ni nouveau paiement). **Tout futur point qui crée un contrat ou un paiement avec
+  référence (F3, 5c, relevés) doit l'appeler.**
+- **Migration `20261004090000_encaissements_recherche_mots`** : table, index, clé étrangère, remplissage des contrats
+  existants (SQL pur, idempotent ; rejoué : `INSERT 0 0`). Durée du remplissage : 23 s pour 50 000 contrats, 87 s
+  pour 150 000 (3,5 millions de mots, 586 Mo avec index). Sans effet en production (aucun contrat avant la mise en
+  service). **À appliquer sur la base de dev** (`prisma migrate deploy`) : sans la table, la recherche échoue.
+- **Temps mesurés** (PostgreSQL 16 jetable, données synthétiques, pire de 3 passages à chaud, code final) :
+
+  | Recherche | 50 000 contrats | 150 000 contrats |
+  |---|---|---|
+  | N° de police exact (toute casse) | 3 ms | 3 ms |
+  | Préfixe / partie numérique du n° de police | 4 / 4 ms | 4 / 3 ms |
+  | Référence exacte (toute casse) / préfixe | 3 / 3 ms | 1 / 3 ms |
+  | Identifiant inexistant / identifiant client | 2 / 3 ms | 3 / 3 ms |
+  | Nom « nguessan » / partie « guessan » | 5 / 4 ms | 4 / 4 ms |
+  | Milieu de mot « uessan » (0 résultat, voulu) | 10 ms | 1 ms |
+  | Trois mots (0 / 1 contrat) | 3 / 2 ms | 1 / 2 ms |
+  | Partenaire « courtage 7 » | 3 ms | 2 ms |
+  | Aucun résultat / un caractère | 1 / 2 ms | 1 / 1 ms |
+
+- **Coût à l'import** (5 000 lignes, sur la base à 150 000 contrats) : nouvel import 64,4 s avec l'index contre 61,0 s
+  sans (≈ 5 %) ; réimport sans changement 41,8 s (le saut évite toute réécriture).
+
+
+#### Commit 5b — Onglet « À vérifier » (2026-10-04, aucune migration)
+
+- **`/encaissements/a-verifier`** (`enc.consulter`) : signalements À TRAITER (`statut`) de tous les imports, plus
+  anciens d'abord, 50 par page, filtres branche et type en GET (types proposés avec leur nombre). « Ouvrir la police » :
+  la fiche, ou la recherche par n° de police pour une ligne rejetée (aucun contrat). Compteur sur l'accueil du module.
+- **« Marquer traité »** (`marquerSignalementTraite`, `backend/src/encSignalements.ts` ; action
+  `marquerSignalementTraiteAction`, `enc.confirmer_paiement` revérifiée) : `statut` → `TRAITE`, `traiteParId`,
+  `traiteAt`, `resolution` = « Marqué traité » ou « Marqué traité — commentaire » (facultatif, 500 caractères), audit
+  `EncAudit` `marquer_traite` dans la même transaction. Mise à jour conditionnelle (`updateMany` sur `statut =
+  A_TRAITER`) : refusée si le signalement n'est plus à traiter ; deux traitements simultanés → un seul réussit.
+  Équipe technique et Consultation : aucun bouton, action refusée si appelée directement.
+- Colonne **« État »** (À traiter / Pour information / Traité par … le … (résolution)) sur les signalements de la fiche
+  police et du rapport d'import (`SignalementsTable`, prop `afficherEtat` ; `etatSignalement` dans `libelles.ts`).
+- Rien ici ne crée de contrat ni de paiement : l'index des mots (D22) n'est pas concerné. « Ajouter quand même » (5c)
+  devra appeler `indexerMotsContrat`.
+- **Vérifié** : vitest (5 cas `encSignalements`) ; Playwright sur PostgreSQL 16 jetable (fichier anonymisé importé
+  par l'écran, 60 signalements synthétiques ajoutés pour la pagination), 15 contrôles : compteur 66 puis 65, pages
+  50 + 16, filtre par type, marquer traité avec commentaire, second traitement refusé, état sur la fiche et le
+  rapport, Technique et Consultation en lecture (aucun bouton, action rejouée refusée), 0 erreur console ; audit en
+  base (1 ligne, commentaire en motif) ; deux traitements simultanés sur PostgreSQL → 1 réussi, 1 refusé, 1 audit.
+- **Piège d'environnement** : arrêter la tâche qui a lancé `next start` ne tue pas le processus node (un serveur du
+  5a occupait encore le port 3100). Après un test, arrêter le processus par son numéro.
+
+#### Commit 5c — « Ajouter quand même » (2026-10-05, aucune migration)
+
+- **Import** : `paiementIndique` (JSON du signalement) conserve désormais aussi `paiementIdFichier` et `numeroLigne`.
+- **`ajouterPaiementQuandMeme`** (`backend/src/encSignalements.ts` ; action `ajouterQuandMemeAction`,
+  `enc.confirmer_paiement` revérifiée) sur un signalement « doublon possible » À TRAITER : verrou par police (le même
+  que l'import), relecture du statut, création du paiement « à confirmer » depuis `paiementIndique` (`source
+  FICHIER`, notre numéro PAI, PaiementID du fichier et n° de ligne s'ils existent, `importId` d'origine, `saisiParId`
+  = qui ajoute), signalement → TRAITÉ (`resolution` « Ajouté quand même — PAI-… », `encaissementCreeId`), mots de la
+  référence ajoutés à l'index (`ajouterMotsContrat`, D22), deux audits. Refusé si plus À TRAITER, paiement indiqué
+  incomplet, ou paiement déjà enregistré (`chercherDejaPresent`, désormais exportée par `encImportRegles.ts`, même
+  règle que l'import). Anciens signalements sans PaiementID/n° de ligne : ajoutables (D19).
+- **Écran** : bouton « Ajouter quand même » (confirmation en deux temps) sur les lignes « doublon possible » de
+  l'onglet « À vérifier », Finance seulement.
+- **Vérifié** : vitest (4 cas d'ajout + 1 cas d'import sur `paiementIndique`) ; Playwright sur PostgreSQL 16 jetable
+  (fichier anonymisé importé par l'écran ; doublon TEST-0004, référence « OM-4402 » distincte du paiement existant),
+  11 contrôles : « OM-4402 » introuvable avant puis trouvé après (référence exacte, et « om44 » par l'index des mots),
+  deux clics simultanés → 1 paiement créé et 1 refus, fiche police (2 paiements, signalement « Ajouté quand même »),
+  second ajout rejoué refusé, Technique et Consultation sans bouton et refusées en appel direct, 0 erreur console ; en
+  base : 1 paiement (PaiementID FX-0005, ligne 5, à confirmer), mot « om4402 » indexé, 2 audits ; **réimport du même
+  fichier** : la ligne revient « déjà présent », aucun nouveau doublon ni paiement.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif
@@ -5096,6 +5568,73 @@ géré via `/admin/services`, ajouté par Thierry). Deux points d'écriture :
   d'échec réel de l'action, jamais un effet de bord d'un rafraîchissement
   global sans rapport. **À confirmer si le bug réapparaît malgré ce
   changement** : signe qu'une autre cause reste à trouver.
+
+### Services et responsables (circuit de validation, commit 2, 2026-10-06)
+
+Complète le modèle `Service` de Thierry sans rien casser (pointage, reporting par service inchangés).
+
+- **8 services** (migration `20261006110000_services_responsables`, idempotente) : Commercial, Informatique,
+  Direction DG, Finance, RH, Technique, Comptabilité, Marketing. « Direction » → « Direction DG » et « Ressources
+  Humaines » → « RH » sont **renommés en gardant leur identifiant** (rattachements et filtres intacts) ; les services
+  manquants sont créés avec un identifiant aléatoire (différent d'une base à l'autre). Vérifié sur une base
+  PostgreSQL 16 portant les 5 anciens services et des membres.
+- **`Service.responsableId`** (`User`, clé `RESTRICT`) : valide l'étape « Service » des demandes des membres du
+  service. **N'importe quel compte actif**, membre du service ou non (décision du 2026-10-06) ; le sélecteur affiche
+  le service de chacun à côté de son nom (« Nom — Service »). Facultatif en base (comptes créés après la migration),
+  **obligatoire à l'écran** : création d'un service refusée sans responsable, et on le remplace
+  (`definirResponsableServiceAction`, Admin, audit `CHANGE_RESPONSABLE`), on ne le retire jamais.
+- **Service obligatoire pour un compte** à l'écran (création, invitation, sélecteur du tableau : plus d'option
+  « Aucun service », `updateUserServiceAction` refuse le retrait) ; la base reste tolérante. Un compte existant sans
+  service garde tout son accès, sauf la création d'une demande.
+- **Création d'une demande refusée** (page ET `creerDemandeAction`, `messageBlocageCreationDemande`,
+  `backend/src/services.ts`) si le demandeur n'a pas de service, si son service n'a pas de responsable, ou si ce
+  responsable est désactivé — un message par cas. Jamais une demande bloquée plus tard dans le circuit.
+- **Alertes** : « Service(s) sans responsable » sur `/admin` et `/admin/services` ; carte « Rôles et responsables »
+  sur le tableau de bord Finance (`EquipeEtResponsables.tsx` : comptes ayant `treso.decider_finance` par leur rôle, et
+  responsable de chaque service, signalé s'il manque ou est désactivé).
+- **Un responsable ne peut être ni désactivé ni supprimé** tant qu'il l'est (désigner d'abord un autre responsable).
+- **Seed** : chaque compte de test a un service, et chacun des 8 services un responsable — Commercial
+  `responsable-commercial@`, Technique `responsable-technique@`, Comptabilité `responsable-comptabilite@`, Marketing
+  `responsable-marketing@` (rôle Collaborateur), Finance `finance@`, Direction DG `dg@`, RH `rh@`, Informatique
+  `admin@`. Le cas « service sans responsable » se teste sur une base jetable en retirant le responsable.
+- **Vérifié** (Playwright, `next start`, PostgreSQL 16 jetable, 18 contrôles) : sélecteur « Nom — Service » proposant
+  tout compte actif ; demande créée par un membre de Commercial ; responsable retiré → message à la place du
+  formulaire, action rejouée refusée, alertes `/admin` et `/admin/services` ; responsable désigné depuis un autre
+  service → alerte disparue, formulaire revenu ; désactivation d'un responsable refusée ; pas d'option « Aucun
+  service » ; compte sans service et responsable désactivé → messages dédiés ; carte Finance ; aucune erreur JS.
+
+**Règles du circuit décidées pour le commit 3 (2026-10-06), à appliquer dans cet ordre de priorité** — personne ne
+valide jamais sa propre demande :
+1. **Demandeur DG** : l'étape DG est sautée ; la Finance décide.
+2. **Demandeur du service Finance, ou de rôle Finance ou Assistant Finance** (repéré par permission, jamais par nom
+   de rôle) : les étapes Service et Finance sont sautées ; la demande va au DG.
+3. **Demandeur responsable de service** : l'étape Service est sautée ; puis Finance.
+4. **Tous les autres** : Service, puis Finance.
+
+Une étape sautée s'affiche « non requise » dans la frise de progression.
+
+**Responsable visible et attribuable (2026-10-07, aucune migration, circuit inchangé)** :
+- **Écran Services** : responsable (nom, e-mail) ou badge rouge « Aucun responsable », nombre de membres, bouton
+  « Désigner / Changer » (`ServiceResponsablePicker.tsx`, recherche parmi les comptes actifs ; un responsable peut être
+  extérieur au service et responsable de plusieurs services). Remplacer un responsable demande une confirmation qui le
+  nomme (il reste membre de son service).
+- **Liste des utilisateurs** : badges « Responsable · <service> », filtre « Responsables seulement », case « Responsable
+  de ce service » par ligne (`UserResponsableToggle.tsx`) ; même case dans le formulaire de création (le compte n'est
+  créé que si la confirmation est donnée quand un autre responsable existe). L'invitation n'a pas cette case : un compte
+  invité est inactif, il ne peut pas encore être responsable.
+- **Bannière** « services sans responsable » (`components/admin/ServicesSansResponsableBanniere.tsx`) sur `/admin/services`,
+  `/admin` et l'accueil des comptes `isAdmin`.
+- **Seule porte d'écriture** : `designerResponsableService` (`frontend/src/lib/responsableService.ts`) →
+  `changerResponsableService` (`backend/src/services.ts`, transaction, écriture conditionnée au responsable lu : deux
+  changements simultanés, un seul passe). Garde `isAdmin` (la permission qui gère utilisateurs et services) revérifiée
+  par chaque action ; audit `CHANGE_RESPONSABLE` (auteur, date, ancien → nouveau). Les demandes à l'étape Service
+  suivent d'elles-mêmes le responsable actuel (`demandesServiceAValiderWhere`) : chacune reçoit une ligne d'historique
+  `changement_responsable_service` ; le message prévient si certaines sont celles du nouveau responsable (il ne pourra
+  pas les valider lui-même — règle du circuit, inchangée).
+- **Refus serveur** (`messageRefusResponsableSansRemplacant`) : désactiver, supprimer, ou changer de service un compte
+  qui est le seul responsable d'un service dont il est membre, sans remplaçant. Changer de service reste possible s'il
+  n'est responsable que de services dont il n'est pas membre.
+- Vérifié : vitest (refus et remplacement, 271 tests backend), Playwright 31/31 sur base PostgreSQL 16 jetable.
 
 ### Console admin (`/admin`)
 
@@ -5669,6 +6208,64 @@ Responsable Finance / Assistant Finance" (voir plus bas) — avant cette
 tâche, `alimenterCaisseAction`/`definirSoldeOuvertureAction`/
 `corrigerSoldeOuvertureAction` partageaient toutes les trois la garde de
 `effectuer_reglement`, jamais des permissions dédiées.
+
+**Permissions explicites qui remplacent la règle « Resp » (2026-10-06, migration
+`20261006100000_tresorerie_permissions_explicites`)** — « Resp » désignait un rôle qui a `treso.valider_demande`
+ET n'a PAS `treso.approuver_validation_complete` : une déduction fragile (un rôle qui reçoit aussi la permission du DG
+perdait en silence toutes ces actions, cause du blocage de la démo). **Aucune garde ne déduit plus un acteur d'une
+combinaison de permissions** : chaque action a sa permission.
+
+| Permission | Action |
+|---|---|
+| `treso.decider_finance` | Valider ou rejeter les lignes d'une demande (`validerLignesAction`) |
+| `treso.soumettre_dg` | Resoumettre au DG après un rejet de la validation complète |
+| `treso.annuler_reglement` | Annuler un règlement confirmé |
+| `treso.ajuster_retour` | Ajuster le total déclaré d'un retour de caisse |
+| `treso.valider_remboursement` | Valider ou rejeter un remboursement de retour |
+| `treso.valider_retour_exceptionnel` | Valider ou rejeter un retour exceptionnel post-clôture |
+| `treso.creer_retour_externe` | Retour externe (écran, action, téléchargement de ses pièces) |
+| `treso.modifier_budget_categorie` | Budget d'une catégorie (en plus de l'Admin) |
+| `treso.deleguer_acces` | Déléguer des accès (lue sur les permissions du RÔLE, jamais celles reçues par délégation) |
+| `treso.modifier_description` | Description d'une demande et libellé de ses lignes |
+| `treso.decider_dg` | Décider à l'étape DG du circuit (migration `20261006120000`, rôles portant `systeme.reinitialiser` : le DG seul) |
+
+**Jamais délégables** (circuit, 2026-10-06) : `treso.decider_finance`, `treso.soumettre_dg`, `treso.decider_dg`,
+`treso.approuver_validation_complete` — voir « Circuit de validation des demandes — moteur ».
+
+La migration accorde les 9 premières **aux rôles qui remplissaient la règle « Resp » au moment de la migration**
+(calculé en SQL, jamais un nom de rôle), et `modifier_description` à « Resp OU `treso.effectuer_reglement` » (garde
+d'avant). Vérifié sans perte ni gain de droit : équivalence exacte rôle par rôle sur une base « existante » (ancien
+seed + rôles dérivés comme la base de dev : Admin avec la permission du DG, Finance avec la permission du DG, rôle
+combiné Finance/RH), migration rejouée sans effet, base neuve avec le nouveau seed, et 13 contrôles Playwright à
+l'écran. **Conséquence assumée** : un rôle qui portait déjà `approuver_validation_complete` en plus (cas de la démo)
+ne reçoit rien — comme avant, il reste bloqué ; il faut lui cocher les permissions voulues dans `/admin/roles`.
+Une délégation de `treso.valider_demande` ou `treso.effectuer_reglement` ne donne plus ces actions (aucune n'existait
+en dev au moment du changement ; à vérifier en production avant déploiement).
+
+**Rattrapage des permissions du seed sans migration (2026-10-06, `20261006090000_permissions_base_rattrapage`,
+placée AVANT la précédente)** : une base de production n'est seedée qu'une fois ; trois permissions ajoutées au seed
+après le premier déploiement (2026-08-29) n'étaient créées par aucune migration — `treso.saisir_depense_directe`
+(30/08), `treso.approuver_validation_complete` (01/09), `treso.gerer_categories` (11/09). La migration garantit les 14
+permissions de base `treso.*` et donne chaque permission QU'ELLE CRÉE aux rôles de sa permission « sœur » :
+`gerer_categories` et `saisir_depense_directe` ← `treso.categoriser_demande`, `approuver_validation_complete` ←
+`systeme.reinitialiser` (DG seul). Elle doit passer avant `20261006100000`, qui repère Finance par « valider_demande
+sans approuver_validation_complete » : sans elle, un DG privé de `approuver_validation_complete` recevrait les 10
+permissions de décision Finance. Toutes les autres permissions (`enc.*`, `feedback.moderer`, `systeme.reinitialiser`,
+etc.) ont déjà leur migration. **Toute nouvelle permission ajoutée au seed doit avoir sa migration.**
+
+**Corrections associées (2026-10-06)** :
+- **Justificatifs du solde d'ouverture et des alimentations de caisse** (`GET /api/treso/pieces-jointes/[id]`, pièces
+  rattachées à `JournalCaisse`) : téléchargeables par les mêmes permissions que la garde de
+  `/treso/finance/solde-ouverture`, la page qui affiche ces historiques (Admin, `corriger_solde_ouverture`,
+  `alimenter_caisse`, `effectuer_reglement`, `receptionner_retour`). Avant : Admin ou `effectuer_reglement`
+  seulement — Finance, qui dépose ces justificatifs, ne pouvait pas les télécharger. DG et Collaborateur : 403.
+- **Lien « Corriger » / « en définir un maintenant »** du tableau de bord Finance : gardé par
+  `corriger_solde_ouverture` (ou Admin), la permission des actions vers lesquelles il mène. Avant :
+  `effectuer_reglement`, que seul l'Assistant a, et l'Assistant n'a pas accès à ce tableau de bord — personne ne
+  voyait le lien.
+- **Libellés** : « Responsable Finance » n'est pas un rôle. Les textes visibles disent désormais « Finance » (le rôle
+  réel) ; « Assistant Finance » est un rôle réel et reste. Les textes d'historique déjà enregistrés en base ne sont
+  pas réécrits.
 
 **Pointage RH** (`pointage.*`) : `pointer`, `consulter_historique`,
 `consulter_tous`, `pointage_exceptionnel`, `corriger_pointage`,

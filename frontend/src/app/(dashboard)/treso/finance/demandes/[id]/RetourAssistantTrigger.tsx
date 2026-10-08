@@ -17,19 +17,25 @@ export function RetourAssistantTrigger({
   montantReglement,
   motifReouvertureRequis,
   modeReglement,
+  raisonIndisponible = null,
 }: {
   reglementId: string;
   montantReglement: number;
   motifReouvertureRequis: boolean;
   modeReglement: "CAISSE" | "BANQUE";
+  /** Conflit d'intérêts : bouton grisé avec la phrase du serveur. */
+  raisonIndisponible?: string | null;
 }) {
   const [open, setOpen] = useState(false);
 
-  if (!open) {
+  if (!open || raisonIndisponible) {
     return (
-      <Button type="button" variant="secondary" onClick={() => setOpen(true)}>
-        Aucun retour du collaborateur — déclarer les dépenses
-      </Button>
+      <div className="space-y-1">
+        <Button type="button" variant="secondary" disabled={!!raisonIndisponible} onClick={() => setOpen(true)}>
+          Aucun retour du collaborateur — déclarer les dépenses
+        </Button>
+        {raisonIndisponible ? <p className="text-xs text-muted-foreground">{raisonIndisponible}</p> : null}
+      </div>
     );
   }
 

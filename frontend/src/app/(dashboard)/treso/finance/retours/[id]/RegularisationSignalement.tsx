@@ -93,13 +93,13 @@ export function RegularisationSignalement({
 
   const max = Math.abs(ecart);
   if (remboursementEnAttente) {
-    return <p className="text-xs">Un remboursement est en attente de validation du Responsable Finance.</p>;
+    return <p className="text-xs">Un remboursement est en attente de validation de Finance.</p>;
   }
   return (
     <div className="space-y-3 rounded-md border border-danger/30 bg-surface p-3 text-foreground">
       <p className="text-sm">
         Le collaborateur a rendu <strong>{fcfa(max)}</strong> de trop (proposé {fcfa(montantPropose)}, réceptionné{" "}
-        {fcfa(montantRecu)}). Proposez un remboursement : la caisse ne sera débitée qu&apos;après validation du Responsable
+        {fcfa(montantRecu)}). Proposez un remboursement : la caisse ne sera débitée qu&apos;après validation de
         Finance.
       </p>
       <Input

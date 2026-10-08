@@ -7,8 +7,9 @@ import { BENEFICIAIRE_TYPE_LABEL } from "backend";
 import { Prisma } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { notifierEtapeCircuit } from "@/lib/notificationsCircuit";
 import { prisma } from "backend";
-import { generateDemandeReference } from "backend";
+import { generateDemandeReference, initialiserCircuit } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
 const MAX_ATTEMPTS = 5;
@@ -134,6 +135,12 @@ export async function creerDepenseDirecteAction(
     beneficiaireLabel = utilisateur.fullName;
   }
 
+  // Circuit de validation (décision 6) : départ à l'étape Finance, Service non requise, exception tracée.
+  const circuit = await initialiserCircuit(prisma, session.user.id, "DEPENSE_DIRECTE", {
+    // Garde 9 : une dépense directe pour soi-même est décidée par le DG (comme le cas b).
+    beneficiaireEstLeCreateur: beneficiaireUserIdFinal === session.user.id,
+  });
+
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const reference = await generateDemandeReference();
 
@@ -142,6 +149,7 @@ export async function creerDepenseDirecteAction(
 
       const demande = await prisma.demande.create({
         data: {
+          ...circuit.data,
           reference,
           montant,
           description,
@@ -165,8 +173,13 @@ export async function creerDepenseDirecteAction(
           userId: session.user.id,
         },
       });
+      await prisma.historiqueEntry.create({
+        data: { entity: "Demande", entityId: demande.id, action: "circuit_initialise", detail: circuit.detail, userId: session.user.id },
+      });
 
       publishDataChanged();
+      // Première étape : notifie ceux qui doivent agir (responsable du service, Finance ou DG selon le parcours).
+      await notifierEtapeCircuit(demande.id, session.user.id);
 
       return {
         status: "success",
