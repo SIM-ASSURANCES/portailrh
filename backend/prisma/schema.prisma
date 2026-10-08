@@ -1887,4 +1887,8 @@ model EncSignalement {
   @@index([importId])
   @@index([contratId])
   @@index([statut])
+  /// Onglet « À vérifier » : signalements à traiter, plus anciens d'abord (commit 6-0).
+  @@index([statut, creeAt])
+  /// Fiche police : signalements d'une ligne rejetée, retrouvés par n° de police (commit 6-0).
+  @@index([numPolice])
 }

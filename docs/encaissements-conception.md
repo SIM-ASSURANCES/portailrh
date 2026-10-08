@@ -161,6 +161,25 @@ ajouter à la section 10 le cas échéant, une fois 4b entamé).
 |---|---|
 | D24 | **« Ajouter quand même »** sur un « doublon possible » (`ajouterPaiementQuandMeme`, `enc.confirmer_paiement`) : crée le paiement « à confirmer » tel qu'indiqué dans le fichier (`source FICHIER`, notre numéro PAI, PaiementID du fichier et n° de ligne s'ils sont connus, import d'origine), sous le même verrou par police que l'import. Le signalement passe à TRAITÉ (`resolution` « Ajouté quand même — PAI-… », `encaissementCreeId`). Garde-fous : refusé si le signalement n'est plus À TRAITER, si le paiement indiqué est incomplet, ou si le même paiement est déjà enregistré (même règle « déjà présent » que l'import — couvre un second signalement de la même ligne laissé par un réimport). Index des mots mis à jour (D22) avec la référence du paiement. Deux audits (`EncEncaissement` `ajout_quand_meme`, `EncSignalement` `ajouter_quand_meme`). Sans migration : `paiementIndique` (JSON) conserve désormais le PaiementID du fichier et le n° de ligne ; les anciens signalements qui ne les ont pas restent ajoutables (D19) |
 
+
+### 2026-10-06 (bloc F3/F4/F5 — plan 6-0 à 6f, remplace les commits 7 à 10 du §11)
+
+| # | Décision |
+|---|---|
+| D25 | **Plan du bloc** validé : 6-0 index de `EncSignalement` (en premier) ; 6a moteur de confirmation ; 6b F5 ligne par ligne et par lot ; 6c F3 saisie depuis la fiche police ; 6d F4 paiement pour plusieurs contrats ; 6e lecture et rapprochement des relevés (pur) ; 6f import des relevés, écran des 4 groupes, frais des opérateurs. Détail au §11. La reprise F1.5 reste après ; la correction et la contre-passation (F3.5, cas 9.9) sont hors bloc |
+| D26 | **Une seule fonction `confirmerEncaissement`** (6a) pour toutes les voies (saisie, paiement multiple, confirmation, relevé) : verrou par police (le même que l'import), date et rang de prise en compte (dernier rang + 1), montants figés (AA, AB, AC, AD, commission, honoraires ; reliquat exact à l'encaissement qui solde), exigibilité §5.3 (« Régularisation », date limite au jour paramétré), part d'accessoires figée (police > partenaire > défaut), bénéficiaire des honoraires en vigueur à la date de prise en compte, trop-perçu détecté et renvoyé à l'appelant, `EncAudit` |
+| D27 | **V2-A2** : l'ordre de prise en compte est l'ordre RÉEL de confirmation (rang = dernier + 1, sous le verrou de police) ; « Finalement reçu » sur un « non reçu » = nouvelle prise en compte à sa propre date |
+| D28 | **V2-A6** : règle provisoire du moteur maintenue (reliquats exacts au soldant, excédent non ventilé) |
+| D29 | **V2-A11** : un paiement « Ajouter quand même » reste « à confirmer » (il passe par F5 comme tout paiement du fichier) |
+| D30 | **Trop-perçu** : exclu des lots et de la confirmation automatique ; décision ligne par ligne, confirmée explicitement |
+| D31 | **V2-A21** : l'écran du relevé suit la branche choisie en haut de l'écran (F5.1) |
+| D32 | **V2-A22** : groupe 4 (montant égal à 3 jours près) affiché et exportable dès 6f ; le bouton d'action viendra avec F6 |
+| D33 | **V2-A23**, **PROVISOIRE** (le CDC dit « remplacer », à confirmer par le client) : frais des opérateurs dédoublonnés par identifiant de transaction quand deux relevés se recouvrent |
+| D34 | **V2-A25**, **PROVISOIRE** (à confirmer par le client) : un paiement mobile saisi au NET (ex. 990) alors que le client a payé 1 000 est confirmé au montant BRUT du relevé — sinon 10 FCFA de reste dû resteraient pour toujours. Trace dans `EncAudit` et sur la fiche police : montant saisi, montant corrigé, relevé et ligne |
+| D35 | **V2-A26** : une ligne de relevé qui correspond à un paiement « non reçu » est montrée à part, avec « Finalement reçu » |
+| D36 | **Cas 9.10** : vérifié sur le relevé réel `C:\Projets\donnees-sensibles\Releve_Wave_aout_2026_2809.xls`, lecture locale seulement, jamais copié dans le dépôt, seuls les totaux sont rapportés. Attendu : 110 paiements, brut 397 900, frais 3 977, net 393 923 |
+| D37 | **F3.5 hors bloc** : une correction = contre-passation + nouvel encaissement, jamais une modification silencieuse d'un encaissement confirmé |
+| D38 | **Index de `EncSignalement`** (6-0, migration additive `20261009130000_encaissements_index_signalements`) : `(statut, creeAt)` pour « À vérifier », `(numPolice)` pour la fiche police. Mesures sur PostgreSQL 16 (150 000 contrats, 300 000 signalements dont 60 000 à traiter, pire de 3 passages à chaud) : « À vérifier » page 1 19 ms → 5 ms, page 100 17 ms → 4 ms, filtrée par branche 19 ms → 0,5 ms ; fiche police (contrat OU n° de police) 17 ms → 1,3 ms et son compteur 19 ms → 0,3 ms ; compteur de l'accueil inchangé (10 à 17 ms, il compte 60 000 lignes) |
 ---
 
 ## 2. Existant réutilisable
@@ -581,16 +600,16 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | V2-A1 | PaiementID d'un paiement importé | TRANCHÉ 2026-09-28 (D7, version révisée) |
 | V2-A1b | PaiementID du fichier et de l'application dans la même série (conflit d'unicité) | TRANCHÉ 2026-09-28 (D7 : numéro propre, PaiementID du fichier dans un champ séparé) |
 | V2-A1c | Origine des PaiementID des fichiers mensuels (système de production ? série propre ?) | OUVERT — question posée au client |
-| V2-A2 | Ordre de deux prises en compte le même jour ; « Finalement reçu » | OUVERT |
+| V2-A2 | Ordre de deux prises en compte le même jour ; « Finalement reçu » | TRANCHÉ 2026-10-06 (D27) |
 | V2-A3 | Arrondi | TRANCHÉ 2026-09-28 (D3) |
 | V2-A4 | Avenant | TRANCHÉ 2026-09-28 (D8) |
 | V2-A5 | Changement de partenaire ou de branche d'une police connue | OUVERT |
-| V2-A6 | Ventilation de l'excédent d'un trop-perçu | PROVISOIRE (moteur, 2026-09-28) : reliquats exacts au soldant, excédent non ventilé — à confirmer par le client |
+| V2-A6 | Ventilation de l'excédent d'un trop-perçu | PROVISOIRE (moteur, 2026-09-28, maintenu le 2026-10-06, D28) : reliquats exacts au soldant, excédent non ventilé — à confirmer par le client |
 | V2-A7 | Arrondi des parts d'accessoires ; T et V absents du 9.6 | Arrondi retenu le 2026-09-28 (part partenaire half-up, part SIM = AC − part partenaire) ; T et V du 9.6 choisis dans les tests (1 400 et 100) |
 | V2-A8 | Correction d'un encaissement | OUVERT |
 | V2-A9 | Contre-passation d'une taxe déjà payée | OUVERT |
 | V2-A10 | Paiement incomplet d'une police nouvelle | TRANCHÉ 2026-09-30 (D13) : contrat créé, paiement signalé « à compléter » |
-| V2-A11 | « Ajouter quand même » : à confirmer ou confirmé | OUVERT |
+| V2-A11 | « Ajouter quand même » : à confirmer ou confirmé | TRANCHÉ 2026-10-06 (D29) : à confirmer |
 | V2-A12 | Règles de doublon (statuts comparés, ordre, portée de la référence) | PROVISOIRE 2026-09-30 (D12) — à confirmer par le client |
 | V2-A13 | Date de début de NOVELIA | TRANCHÉ 2026-09-30 : NOVELIA bénéficiaire depuis toujours (réponse du client) — 2000-01-01 retenue définitivement (`ENC_BENEFICIAIRE_HONORAIRES_INITIAL`, §5.2) |
 | V2-A14 | Lignes annulées importées par la Finance | TRANCHÉ 2026-09-30 (D14) : rejetée entièrement si Finance, importée normalement + signalée si Équipe technique — **colonne du fichier qui porte cette information encore inconnue** (découverte 4a, voir arbitrages 2026-09-30), bloque le codage effectif de la règle en 4b |
@@ -600,12 +619,12 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | V2-A18 | Année du numéro SUS | OUVERT |
 | V2-A19 | Dates de référence des états | OUVERT |
 | V2-A20 | Taux de contrôle : base, tolérance, lot | RÉSOLU 2026-09-30 pour les 4 natures : taxe = V/(T+U), commission = W/T, honoraires = X/T (base reprise de la maquette) ; accessoires = U/T (base implicite reprise du V1) — **PROVISOIRE, à confirmer par le client**. Tolérance toujours fournie par l'appelant, aucune valeur par défaut |
-| V2-A21 | Relevé : toutes branches ou branche choisie | OUVERT |
-| V2-A22 | Groupe 4 du relevé en Lot 1 | OUVERT |
-| V2-A23 | Frais : tests comptés (RÉSOLU, D11) ; deux relevés partiels du même mois | OUVERT (en partie) |
+| V2-A21 | Relevé : toutes branches ou branche choisie | TRANCHÉ 2026-10-06 (D31) : branche choisie |
+| V2-A22 | Groupe 4 du relevé en Lot 1 | TRANCHÉ 2026-10-06 (D32) : affiché et exporté en 6f, bouton avec F6 |
+| V2-A23 | Frais : tests comptés (RÉSOLU, D11) ; deux relevés partiels du même mois | PROVISOIRE 2026-10-06 (D33) : dédoublonnés par identifiant de transaction — à confirmer par le client |
 | V2-A24 | Annulation : reste dû après résiliation ; effet sur la taxe à la production | RÉSOLU V2.6 en partie (9.13) |
-| V2-A25 | Paiement mobile saisi au net | OUVERT |
-| V2-A26 | Ligne de relevé correspondant à un « non reçu » | OUVERT |
+| V2-A25 | Paiement mobile saisi au net | PROVISOIRE 2026-10-06 (D34) : confirmé au brut du relevé, avec trace — à confirmer par le client |
+| V2-A26 | Ligne de relevé correspondant à un « non reçu » | TRANCHÉ 2026-10-06 (D35) : montrée à part, avec « Finalement reçu » |
 | V2-A27 | Reprise initiale | RÉSOLU V2.6 (D10) |
 | V2-A27b | Reprise : une fois pour tout le classeur ou par branche ; affectation des branches | OUVERT — question posée au client |
 | V2-A27c | Date et référence du « payé (reprise) » | OUVERT |
@@ -675,10 +694,15 @@ Statuts : **TRANCHÉ** (daté), **RÉSOLU V2.6**, **PROVISOIRE**, **OUVERT**.
 | 5a-bis | **Recherche, option B** (D20-D22) : table `EncContratMot` (colonne `mot` en collation « C », index btree), migration additive `20261004090000_encaissements_recherche_mots` avec remplissage, entretien à l'import — fait (2026-10-04). Contient aussi les fichiers du 5a absents du commit `6be7697` (seul le déplacement de `SignalementsTable` y figurait) | — |
 | 5b | **Onglet « À vérifier »** — fait (2026-10-04) : `/encaissements/a-verifier`, signalements À TRAITER de tous les imports (plus anciens d'abord, 50 par page, filtres branche et type en GET), compteur sur l'accueil du module, « Ouvrir la police » (fiche, ou recherche par n° pour une ligne rejetée sans contrat), « Marquer traité » (D23). Colonne « État » ajoutée aux signalements de la fiche police et du rapport d'import. Aucune migration | — |
 | 5c | **« Ajouter quand même »** — fait (2026-10-05) : bouton sur les doublons possibles de l'onglet « À vérifier » (confirmation en deux temps), D24. Aucune migration | — |
-| 7 | **Saisie (F3)**, montants figés (D9) | V2-A2, A6 |
-| 8 | **Paiement multiple (F4)** | — |
-| 9 | **Confirmation (F5) et signalements** | V2-A11, A30 |
-| 10 | **Relevés et frais (F5)** | V2-A21 à A23, A25, A26 |
+| — | **Bloc F3/F4/F5 (D25, 2026-10-06)** : les commits 6-0 à 6f remplacent les anciens 7 (saisie F3), 8 (paiement multiple F4), 9 (confirmation F5 et signalements) et 10 (relevés et frais) | — |
+| 6-0 | **Index de `EncSignalement`** : `(statut, creeAt)` et `(numPolice)`, migration additive `20261009130000_encaissements_index_signalements` — fait (2026-10-08), mesures D38 | — |
+| 6a | **Moteur de confirmation** (backend seul, sans écran ni migration) : `confirmerEncaissement`, seule fonction pour toutes les voies (D26). Tests vitest : 9.1, 9.4, 9.8 (mensualités, reliquat 608,39), tableau §5.3, 9.5 partie calcul (AD 13 519,81, exigible novembre, « Régularisation ») ; Docker : deux confirmations simultanées sur la même police → rangs 1 et 2 | V2-A2 (D27), V2-A6 (D28), trop-perçu (D30) |
+| 6b | **F5 ligne par ligne et par lot** (sans migration) : liste des paiements à confirmer (filtres période, mode, partenaire, statut, recherche, branche ; nombre et total) ; « Reçu », « Non reçu » (motif obligatoire), « Finalement reçu » ; lot avec cases, case d'en-tête et confirmation avant d'appliquer ; export Excel des « non reçus » ; fiche police : colonnes figées, mois d'exigibilité, date limite, « Régularisation » ; `enc.confirmer_paiement`. Tests : 9.2 de bout en bout ; Playwright (Finance agit ; Technique et Consultation refusées même en appel direct ; deux lots simultanés ; export) | V2-A11 (D29), trop-perçu (D30) |
+| 6c | **F3 saisie depuis la fiche police** (sans migration) : « Ajouter un versement », reste dû proposé, confirmé dès l'enregistrement par 6a ; contrôles §8.1 (date, mode, référence et montant obligatoires ; pas de date future ; montant > 0 ; Wave : `T_` suivi d'au moins 10 lettres ou chiffres) ; alerte référence déjà utilisée ; alerte trop-perçu à confirmer explicitement ; index des mots (D22). Tests : 9.8 saisi à l'écran ; format Wave refusé/accepté ; Playwright | — |
+| 6d | **F4 un paiement pour plusieurs contrats** (sans migration) : en-tête (date, mode, référence, montant total) ; lignes choisies parmi les polices existantes (recherche du 5a), reste dû affiché ; compteur total / réparti / écart, enregistrement seulement à écart nul ; N encaissements confirmés partageant `referenceGroupe` et `groupeId` ; référence partagée non signalée dans le groupe ; trop-perçu par ligne ; D22. Tests : 9.4 au centime (AB et AD des 3 polices, exigibles octobre 2026) ; Playwright | — |
+| 6e | **Lecture et rapprochement des relevés** (backend pur, sans migration) : Wave `.xls`/`.xlsx`/`.csv` (en-têtes dans les 15 premières lignes ; brut, net, frais ; références : identifiant de transaction, référence client, session API ; nom et téléphone de la contrepartie) ; négatifs et < 100 FCFA ignorés pour le rapprochement mais comptés dans les frais ; 4 groupes (normalisation des références, référence de 6+ caractères contenue dans l'autre, brut ou net à 1 FCFA, transactions partagées, montant égal à 3 jours près). Tests vitest sur relevés synthétiques : 9.7, 9.11 et sa variante (écart de 500 FCFA) | V2-A22 (D32), V2-A25 (D34) |
+| 6f | **Import des relevés, écran des 4 groupes, frais des opérateurs** : migration additive `EncReleve`, `EncReleveLigne`, `EncFraisOperateur`, `EncPreferenceUtilisateur` (table propre au module, `User` intact) ; écran d'import + choix de la branche ; 4 groupes avec cases et validation par lot ; option « Confirmer automatiquement les correspondances exactes » mémorisée par utilisateur ; chaque confirmation note le relevé et la ligne (`releveLigneId`) ; frais par mois et par opérateur ; fichier conservé, téléchargeable par la Finance seulement. Tests Docker + Playwright : 9.7 (avec et sans l'option), 9.10 (second import sans double comptage, relevé réel D36), 9.11, droits, téléchargement refusé hors Finance | V2-A21 (D31), V2-A23 (D33), V2-A26 (D35), cas 9.10 (D36) |
+| — | **Hors bloc** : correction et contre-passation (F3.5, cas 9.9), D37 | — |
 | 11 | **Reprise initiale (F1.5)** | V2-A27b à A27e |
 | 12a | **Recherche, option B** — **fait au commit 5a-bis (2026-10-04)**, voir D20-D22. Mesures à 150 000 contrats : pire temps 4 ms (objectif < 1 s, < 200 ms pour les noms) | D16, D20 |
 | 12 | **Recette du Lot 1** et mise en service | — |

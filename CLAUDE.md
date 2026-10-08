@@ -5297,6 +5297,49 @@ livrés avec ce commit.
   base : 1 paiement (PaiementID FX-0005, ligne 5, à confirmer), mot « om4402 » indexé, 2 audits ; **réimport du même
   fichier** : la ligne revient « déjà présent », aucun nouveau doublon ni paiement.
 
+#### Bloc F3/F4/F5 — plan 6-0 à 6f (validé le 2026-10-06, D25-D37 de la conception)
+
+Remplace les commits 7 à 10 du §11 (saisie, paiement multiple, confirmation, relevés) ; la reprise F1.5 reste après ;
+la correction et la contre-passation (F3.5, cas 9.9) sont hors bloc. Détail de chaque commit et de ses tests : conception
+§11. Ordre : **6-0** index de `EncSignalement` ; **6a** moteur de confirmation `confirmerEncaissement` (backend seul,
+seule fonction pour toutes les voies : verrou par police, rang de prise en compte, montants figés, exigibilité §5.3,
+part d'accessoires, bénéficiaire des honoraires, trop-perçu renvoyé, `EncAudit`) ; **6b** F5 ligne par ligne et par
+lot ; **6c** F3 saisie depuis la fiche police ; **6d** F4 un paiement pour plusieurs contrats ; **6e** lecture et
+rapprochement des relevés (pur) ; **6f** import des relevés, écran des 4 groupes, frais des opérateurs (migration
+`EncReleve`, `EncReleveLigne`, `EncFraisOperateur`, `EncPreferenceUtilisateur` — jamais une colonne sur `User`).
+
+Décisions du 2026-10-06 :
+- **V2-A2** : ordre RÉEL de confirmation (dernier rang + 1) ; « Finalement reçu » = nouvelle prise en compte à sa date.
+- **V2-A6** : règle provisoire du moteur maintenue (excédent non ventilé).
+- **V2-A11** : « Ajouter quand même » reste « à confirmer ».
+- **Trop-perçu** : exclu des lots et de la confirmation automatique, décision ligne par ligne.
+- **V2-A21** : l'écran du relevé suit la branche choisie (F5.1). **V2-A22** : groupe 4 affiché et exporté en 6f,
+  bouton avec F6. **V2-A26** : ligne de relevé d'un « non reçu » montrée à part, avec « Finalement reçu ».
+- **V2-A23, PROVISOIRE** : frais dédoublonnés par identifiant de transaction (le CDC dit « remplacer » ; à confirmer).
+- **V2-A25, PROVISOIRE** : un paiement saisi au NET est confirmé au BRUT du relevé (sinon un reste dû de quelques FCFA
+  resterait pour toujours), avec trace dans `EncAudit` et sur la fiche (montant saisi, montant corrigé, relevé, ligne).
+- **Cas 9.10** : relevé réel `C:\Projets\donnees-sensibles\Releve_Wave_aout_2026_2809.xls`, lecture locale seulement,
+  **jamais copié dans le dépôt**, seuls les totaux sont rapportés (attendu : 110 paiements, brut 397 900, frais 3 977,
+  net 393 923).
+- **F3.5** : une correction = contre-passation + nouvel encaissement, jamais une modification silencieuse.
+
+#### Commit 6-0 — Index de `EncSignalement` (2026-10-08, migration additive)
+
+`@@index([statut, creeAt])` (onglet « À vérifier », plus anciens d'abord) et `@@index([numPolice])` (fiche police,
+signalements d'une ligne rejetée sans contrat) — migration `20261009130000_encaissements_index_signalements`
+(`CREATE INDEX IF NOT EXISTS`, rejouée sans effet). Mesures sur PostgreSQL 16 jetable (150 000 contrats, 300 000
+signalements dont 60 000 à traiter, pire de 3 passages à chaud) :
+
+| Requête | Avant | Après |
+|---|---|---|
+| « À vérifier », page 1 / page 100 | 19 / 17 ms | 5 / 4 ms |
+| « À vérifier » filtré par branche | 19 ms | 0,5 ms |
+| Fiche police (contrat OU n° de police) / son compteur | 17 / 19 ms | 1,3 / 0,3 ms |
+| Compteur de l'accueil (60 000 lignes comptées) | 7 à 12 ms | 10 à 17 ms (inchangé) |
+
+Plans vérifiés : index `(statut, creeAt)` avec tri incrémental sur `id` ; fiche police en deux balayages d'index
+(`contratId`, `numPolice`). Aucun écart schéma/base (`migrate diff` vide).
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif
