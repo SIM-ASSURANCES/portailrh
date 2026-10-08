@@ -4249,6 +4249,51 @@ Plan et règles : [docs/PLAN_POINTAGE_V2.md](docs/PLAN_POINTAGE_V2.md) (§2 vali
   d'un jour non ouvré devient un simple bouton « Pointer mon arrivée ». `PointageForm.tsx` supprimé.
 - Vérifié : vitest (22 tests `pointage-utils`), tsc, eslint, `next build`. Parcours à l'écran non encore testés.
 
+### 8. Pointage V2 — lot 4 : justification et décision (2026-10-08)
+
+Aucune migration. Les envois automatiques (premier envoi à 15 min, relances, clôture) arrivent au lot 5 : sans eux, le
+collaborateur trouve sa justification à faire dans « Mon historique ».
+
+- **Moteur pur** `backend/src/justificationPointage.ts` (20 tests vitest) :
+  - `resoudreDecideurJustification({ collaborateurId, service })` : le responsable ACTUEL du service ; sinon la RH
+    (`PERMISSION_RH_POINTAGE`) pour `SANS_SERVICE`, `SANS_RESPONSABLE`, `RESPONSABLE_INACTIF`, `EST_RESPONSABLE`
+    (le DG tombe dans ce dernier cas, responsable de « Direction DG »).
+  - `refusDecideur(decideur, acteur, collaborateurId)` : recalculé à chaque action ; jamais le collaborateur, même
+    porteur de la permission RH ; la RH ne décide pas à la place d'un responsable utilisable.
+  - `transitionJustification` : soumission depuis `EN_ATTENTE` ou `NON_JUSTIFIEE` (motif nettoyé, 3 à 500 caractères) ;
+    décision depuis `SOUMISE` seulement (refus : motif de 3 caractères minimum) ; `ACCEPTEE` et `REFUSEE` définitives.
+  - Libellés de statut, actions d'historique, messages (variante RH « X, responsable du service Y, … »).
+- **Application en base** (frontend) : `soumettreJustificationAction` (`pointage/justifier/[pointageId]/actions.ts`) et
+  `accepter`/`refuserJustificationAction` (`pointage/justifications/actions.ts`). Écriture `updateMany` conditionnée au
+  statut lu (deux décisions simultanées : une seule passe, l'autre reçoit « déjà acceptée ») ; une `HistoriqueEntry`
+  `entity: "JustificationPointage"` par transition (`soumission_`, `acceptation_`, `refus_justification`), entité
+  ajoutée à `ENTITES_HISTORIQUE_POINTAGE` (`reinitialisation.ts`). Lecture et décideur : `frontend/src/lib/justificationsPointage.ts`.
+- **Notifications** (`IMPORTANT`, catégorie `POINTAGE`) : à la soumission, le responsable (lien `/pointage/justifications`)
+  ou, cas RH, `notifyByPermission(PERMISSION_RH_POINTAGE)` sauf le collaborateur ; à la décision, le collaborateur (lien
+  vers sa page de justification, motif du refus).
+- **Écrans** :
+  - `/pointage/justifier/[pointageId]` : propriétaire du pointage avec `pointage.pointer` (sinon 404) ; date, heure,
+    minutes de retard ou départ, statut, motif, refus éventuel, et qui examinera (responsable nommé ou « la RH ») ;
+    formulaire tant que le statut le permet.
+  - `/pointage/justifications` : file du décideur actuel (filtrée en code), Accepter / Refuser avec motif ; onglet
+    « Traitées » (décisions prises par ce compte, ou sur des collaborateurs dont il est aujourd'hui décideur). Accès :
+    responsable d'au moins un service ou `PERMISSION_RH_POINTAGE`. Menu « Justifications » avec compteur ; la branche
+    Pointage reste visible pour un responsable sans permission `pointage.*`.
+  - « Mon historique » : colonne « Justification » (badge, lien « Justifier » ou « Voir »).
+- **Lien de l'email sans être connecté — bug corrigé** : le middleware d'Auth.js renvoie vers /login avec un
+  `callbackUrl` ABSOLU (`http://hôte/…`), que l'action de connexion jetait (seuls les chemins relatifs étaient acceptés) :
+  tout lien profond revenait sur l'accueil. `cheminRetourConnexion` (`backend/src/cheminRetour.ts`, 3 tests) garde le
+  chemin si l'URL vise le même hôte que la requête, sinon « / » (aucune redirection ouverte).
+- **Limites** : une justification du seul compte RH (responsable du service RH) ne peut être décidée par personne si
+  aucun autre compte ne porte `pointage.corriger_pointage` ; `notifyByPermission` lit les permissions du rôle, donc un
+  compte qui a reçu cette permission par délégation voit la file RH mais n'est pas notifié.
+- Vérifié : vitest (398 tests, seul échec connu `feedback.test.ts`), tsc, eslint, `next build` ; Playwright 35/35 sur
+  PostgreSQL 16 jetable (`collaborateur@`, `responsable-commercial@`, `rh@`) : retard sans formulaire et justification
+  EN_ATTENTE, historique, lien sans session → /login → retour sur la page, envoi, notification au seul responsable,
+  404 pour un autre compte, acceptation, refus avec motif affiché au collaborateur, cas RH (le responsable ne voit pas sa
+  propre justification, message « responsable du service Commercial »), deux décisions RH simultanées (une seule
+  tracée), file refusée au collaborateur, 390 px sans défilement horizontal, aucune erreur JavaScript.
+
 ## Module FeedbackApp — anonymat total
 
 Troisième module : permet à QUICONQUE (employé connecté ou visiteur sans

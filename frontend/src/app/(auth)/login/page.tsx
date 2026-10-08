@@ -7,6 +7,7 @@ import { Input } from "@/components/ui";
 import { getSession, signIn } from "@/lib/auth";
 import { headers } from "next/headers";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { cheminRetourConnexion } from "backend";
 
 import { AuthShell } from "../AuthShell";
 import { LoginSubmitButton } from "./LoginSubmitButton";
@@ -31,11 +32,7 @@ async function authenticate(formData: FormData) {
   }
 
   try {
-    const rawCallbackUrl = String(formData.get("callbackUrl") || "/");
-    const callbackUrl =
-      rawCallbackUrl.startsWith("/") && !rawCallbackUrl.startsWith("/login")
-        ? rawCallbackUrl
-        : "/";
+    const callbackUrl = cheminRetourConnexion(String(formData.get("callbackUrl") || "/"), headersList.get("host"));
     await signIn("credentials", {
       email: formData.get("email"),
       password: formData.get("password"),

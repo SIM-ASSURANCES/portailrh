@@ -17,7 +17,7 @@ type Db = Prisma.TransactionClient;
 export const CONFIRMATION_REINITIALISATION = "REINITIALISER";
 
 const ENTITES_HISTORIQUE_TRESORERIE = ["Demande", "LigneDemande", "JournalCaisse", "RetourExterne"];
-const ENTITES_HISTORIQUE_POINTAGE = ["Pointage", "PointageQR", "PointageGeo"];
+const ENTITES_HISTORIQUE_POINTAGE = ["Pointage", "PointageQR", "PointageGeo", "JustificationPointage"];
 const CATEGORIES_NOTIFICATION_POINTAGE = ["RH", "POINTAGE"] as const;
 
 export class ReinitialisationError extends Error {}

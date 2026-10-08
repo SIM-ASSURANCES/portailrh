@@ -110,6 +110,13 @@ nécessaire.
   EN_ATTENTE créée dans la transaction, alerte « Anomalie » retirée.
 - `SmartPointage.tsx` : RETARD_ARRIVEE automatique, départ anticipé confirmé, `PointageForm.tsx` supprimé.
 
+**Lot 4 — justification et décision** (non commité, 2026-10-08)
+- `backend/src/justificationPointage.ts` (décideur, droit de décider, transitions, messages) et ses tests ;
+  `backend/src/cheminRetour.ts` (retour après connexion sur un lien profond).
+- Actions : `pointage/justifier/[pointageId]/actions.ts`, `pointage/justifications/actions.ts` ; lecture :
+  `frontend/src/lib/justificationsPointage.ts` ; écrans `/pointage/justifier/[pointageId]`, `/pointage/justifications`,
+  colonne « Justification » de l'historique, menu « Justifications ». Détail et limites : `CLAUDE.md`, section 8.
+
 ## 4. Lots restants
 
 Chaque lot fait l'objet d'un commit séparé, testé, avec un message au format des commits existants. La logique
