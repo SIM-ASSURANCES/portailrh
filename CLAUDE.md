@@ -5397,6 +5397,30 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
   explicitement (AA −500), deux lots simultanés (chaque paiement confirmé une seule fois), accès refusés. Mobile non
   vérifié (tableau en défilement horizontal sous la largeur du contenu).
 
+#### Commit 6c — Saisie d'un versement depuis la fiche police (F3, 2026-10-08, aucune migration)
+
+- **« Ajouter un versement »** sur la fiche police (`AjouterVersement.tsx`), réservé à `enc.saisir_encaissement`
+  (bouton absent sinon, action `saisirVersementAction` revérifiée côté serveur) : date (aujourd'hui par défaut),
+  mode, référence, montant (le reste dû est proposé). Enregistré ET confirmé dans la même transaction.
+- **`saisirEncaissement`** (`backend/src/encSaisie.ts`) : sous le verrou de police, crée l'encaissement (`source
+  SAISIE`, notre numéro PAI, audit `saisie`) puis le confirme par `confirmerEncaissement` (6a, D26) ; référence ajoutée
+  à l'index des mots (D22).
+- **Contrôles §8.1** (`controlerSaisie`, purs, erreurs par champ) : date, mode, référence et montant obligatoires ;
+  date de paiement jamais dans le futur (le jour même accepté) ; montant > 0, deux décimales au plus ; Wave : `T_`
+  suivi d'au moins 10 lettres ou chiffres (`estIdentifiantWave`, la même règle que l'import).
+- **Alertes à confirmer explicitement, rien n'est écrit avant** (ni numéro consommé) : référence déjà utilisée dans un
+  autre paiement (« Enregistrer quand même », motif tracé dans l'audit) ; trop-perçu (« Confirmer le trop-perçu »,
+  D30). Un champ modifié après une alerte annule l'accord donné.
+- **Vérifié** : vitest (9 tests : contrôles, 9.8 saisi à l'écran avec rangs et taxes, alertes sans écriture puis
+  acceptées) ; Playwright 19/19 sur PostgreSQL 16 jetable (reste dû proposé ; 9.8 à l'écran : 67,60 ×3 puis 608,39,
+  reste dû 0, « Régularisation » pour une saisie tardive ; Wave refusé puis accepté ; date future refusée ; référence
+  déjà utilisée ; trop-perçu ; référence cherchable ; Technique et Consultation sans bouton et refusées même en appel
+  direct ; formulaire sans défilement horizontal à 768 px).
+- **À faire avant la mise en service — tablette** (CDC §8.2 : « utilisable sur tablette ») : les tableaux larges du
+  module défilent encore horizontalement en largeur étroite — liste « Confirmation des paiements » (6b) et tableau des
+  paiements de la fiche police (colonnes figées ajoutées en 6b), visible à 768 px. Le formulaire de saisie (6c), lui,
+  tient à 768 px. À traiter dans un commit dédié (cartes empilées ou colonnes réduites sous la largeur d'une tablette).
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif

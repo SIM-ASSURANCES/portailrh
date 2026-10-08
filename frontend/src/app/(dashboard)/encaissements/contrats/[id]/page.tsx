@@ -17,6 +17,7 @@ import { Badge, Card, PageHeader, StatCard } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { calculerSituationContrat, prisma } from "backend";
 
+import { AjouterVersement } from "./AjouterVersement";
 import { EncaissementsContratTable, type EncaissementRow } from "./EncaissementsContratTable";
 
 const SIGNALEMENTS_MAX = 200;
@@ -270,7 +271,17 @@ export default async function FichePolicePage({ params }: { params: Promise<{ id
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-base font-bold">Paiements ({rows.length})</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base font-bold">Paiements ({rows.length})</h2>
+        </div>
+        {/* F3 (commit 6c) : saisie d'un versement, confirmé dès l'enregistrement ; le reste dû est proposé. */}
+        {hasPermission(session, "enc.saisir_encaissement") ? (
+          <AjouterVersement
+            contratId={contrat.id}
+            resteDu={situation.resteDu.gt(0) ? situation.resteDu.toFixed(2).replace(/.00$/, "") : ""}
+            aujourdHui={new Date().toISOString().slice(0, 10)}
+          />
+        ) : null}
         <EncaissementsContratTable rows={rows} />
       </section>
 

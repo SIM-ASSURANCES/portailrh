@@ -51,6 +51,7 @@ export * from "./circuitNotifications";
 export * from "./encSignalements";
 export * from "./encConfirmation";
 export * from "./encConfirmationLot";
+export * from "./encSaisie";
 
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).
