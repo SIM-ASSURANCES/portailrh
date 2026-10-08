@@ -1,6 +1,12 @@
 // src/lib/pointage-utils.ts
 import { ParametrageHoraire } from "./generated/prisma/client";
 
+/**
+ * Permission qui désigne la RH pour les alertes du pointage et la décision des justifications sans responsable.
+ * Détenue par le seul rôle RH (seed) : jamais un nom de rôle en dur (voir CLAUDE.md "Aide-mémoire — permissions").
+ */
+export const PERMISSION_RH_POINTAGE = "pointage.corriger_pointage";
+
 export type PointageDevice = "TELEPHONE" | "ORDINATEUR";
 
 export function detectPointageDevice(userAgent: string): PointageDevice {
@@ -121,6 +127,58 @@ export function checkLateStatus(
 export function timeToMinutes(timeStr: string): number {
   const [hours, minutes] = timeStr.split(":").map(Number);
   return hours * 60 + minutes;
+}
+
+/**
+ * Plage d'absence autorisée (congé ou permission, modèle `PlageAbsenceAutorisee`) d'UNE journée, réduite à ses
+ * horaires "HH:MM". L'appelant filtre lui-même les plages de l'utilisateur et du jour concernés.
+ */
+export interface PlageHoraire {
+  heureDebut: string;
+  heureFin: string;
+}
+
+/** Fusionne des plages qui se chevauchent ou se touchent, en minutes depuis minuit, triées. */
+function fusionnerPlages(plages: readonly PlageHoraire[]): Array<[number, number]> {
+  const intervalles = plages
+    .map((p) => [parseTimeStringToMinutes(p.heureDebut), parseTimeStringToMinutes(p.heureFin)] as [number, number])
+    .filter(([debut, fin]) => fin > debut)
+    .sort((a, b) => a[0] - b[0]);
+  const fusion: Array<[number, number]> = [];
+  for (const [debut, fin] of intervalles) {
+    const dernier = fusion[fusion.length - 1];
+    if (dernier && debut <= dernier[1]) dernier[1] = Math.max(dernier[1], fin);
+    else fusion.push([debut, fin]);
+  }
+  return fusion;
+}
+
+/**
+ * `true` si les plages d'absence autorisée couvrent toute la journée de travail (de `heureDebutMatin` à
+ * `heureFinApresMidi`) : un collaborateur en congé ce jour-là n'est jamais marqué absent.
+ */
+export function journeeCouverteParAbsence(
+  plages: readonly PlageHoraire[],
+  horaires: { heureDebutMatin: string; heureFinApresMidi: string }
+): boolean {
+  const debut = parseTimeStringToMinutes(horaires.heureDebutMatin);
+  const fin = parseTimeStringToMinutes(horaires.heureFinApresMidi);
+  return fusionnerPlages(plages).some(([d, f]) => d <= debut && f >= fin);
+}
+
+/**
+ * Heure de référence de l'arrivée, en minutes depuis minuit : `heureDebutMatin`, repoussée à la fin d'une plage
+ * d'absence autorisée qui couvre ce début (permission du matin). Sans plage, c'est `heureDebutMatin`.
+ */
+export function heureReferenceArriveeMinutes(
+  horaires: { heureDebutMatin: string },
+  plages: readonly PlageHoraire[] = []
+): number {
+  let reference = parseTimeStringToMinutes(horaires.heureDebutMatin);
+  for (const [d, f] of fusionnerPlages(plages)) {
+    if (d <= reference && f > reference) reference = f;
+  }
+  return reference;
 }
 
 /**

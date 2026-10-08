@@ -2,7 +2,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import {prisma} from "backend";
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { timeToMinutes, getMessageDepart } from "backend";
+import { timeToMinutes, getMessageDepart, journeeCouverteParAbsence } from "backend";
 import { SmartPointage, PointageMode } from "../SmartPointage";
 
 export default async function PointagePage({ searchParams }: { searchParams: Promise<{ source?: string }> }) {
@@ -43,6 +43,16 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
   const heureLimiteArrivee = parametrage?.heureDebutMatin || "07:45";
   const heureLimiteDepart = parametrage?.heureFinApresMidi || "16:45";
 
+  // Congé ou permission couvrant toute la journée : aucun pointage attendu, jamais d'absence automatique.
+  const plagesDuJour = await prisma.plageAbsenceAutorisee.findMany({
+    where: { userId: session.user.id, date: { gte: startOfDay, lte: endOfDay } },
+    select: { heureDebut: true, heureFin: true },
+  });
+  const enAbsenceAutorisee = journeeCouverteParAbsence(plagesDuJour, {
+    heureDebutMatin: heureLimiteArrivee,
+    heureFinApresMidi: heureLimiteDepart,
+  });
+
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const limiteArriveeMinutes = timeToMinutes(heureLimiteArrivee);
   const limiteDepartMinutes = timeToMinutes(heureLimiteDepart);
@@ -59,6 +69,9 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
       messageAuto = jourFerie
         ? `Aujourd'hui est un jour férié (${jourFerie.libelle}). Aucun pointage obligatoire.`
         : "Aujourd'hui est un jour de repos (week-end). Aucun pointage obligatoire.";
+    } else if (enAbsenceAutorisee) {
+      mode = "NON_OUVRABLE";
+      messageAuto = "Une absence autorisée (congé ou permission) couvre votre journée. Aucun pointage obligatoire.";
     } else if (currentMinutes <= limiteArriveeMinutes) {
       mode = "AUTO_ARRIVEE";
       messageAuto = "Félicitations pour votre ponctualité ! Arrivée validée.";

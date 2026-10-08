@@ -13,11 +13,13 @@ import {
   isWithinRadius,
   isGeoPrecisionAcceptable,
   BUREAU_DEFAULT_COORDS,
+  PERMISSION_RH_POINTAGE,
+  journeeCouverteParAbsence,
 } from "backend";
 import { revalidatePath } from "next/cache";
 import { pointageEmitter } from "@/lib/events";
 import { ActionState, fieldErrorsFromZod } from "backend";
-import { notify } from "@/lib/notifications";
+import { notifyByPermission } from "@/lib/notifications";
 
 const pointageSchema = z.object({
   source: z.enum(["QR_CODE", "ORDINATEUR"]),
@@ -79,17 +81,13 @@ export async function enregistrerPointageAction(
 
     // La géolocalisation est désactivée par les RH
     if (!geoActive) {
-      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
-      for (const rh of rhUsers) {
-        await notify({
-          userId: rh.id,
-          titre: "⚠️ Alerte Sécurité Pointage",
-          message: `${session.user.fullName} a tenté de pointer hors réseau (IP: ${ip}). La géolocalisation est désactivée.`,
-          lien: "/pointage/rh",
-          priority: "IMPORTANT",
-          category: "POINTAGE",
-        });
-      }
+      await notifyByPermission(PERMISSION_RH_POINTAGE, {
+        titre: "⚠️ Alerte Sécurité Pointage",
+        message: `${session.user.fullName} a tenté de pointer hors réseau (IP: ${ip}). La géolocalisation est désactivée.`,
+        lien: "/pointage/rh",
+        priority: "IMPORTANT",
+        category: "POINTAGE",
+      });
       return {
         status: "error",
         message: "Le pointage n'est autorisé que depuis le réseau Wi-Fi de l'entreprise.",
@@ -132,17 +130,13 @@ export async function enregistrerPointageAction(
 
     if (!geoCheck.allowed) {
       // ── GARDE-FOU : collaborateur hors réseau ET hors du rayon géographique ──
-      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
-      for (const rh of rhUsers) {
-        await notify({
-          userId: rh.id,
-          titre: "🚨 Tentative de pointage non autorisée",
-          message: `${session.user.fullName} a tenté de pointer hors réseau et hors périmètre. IP: ${ip} | Distance au bureau: ${geoDistance}m (rayon: ${rayon}m). Aucun pointage enregistré.`,
-          lien: "/pointage/rh",
-          priority: "IMPORTANT",
-          category: "POINTAGE",
-        });
-      }
+      await notifyByPermission(PERMISSION_RH_POINTAGE, {
+        titre: "🚨 Tentative de pointage non autorisée",
+        message: `${session.user.fullName} a tenté de pointer hors réseau et hors périmètre. IP: ${ip} | Distance au bureau: ${geoDistance}m (rayon: ${rayon}m). Aucun pointage enregistré.`,
+        lien: "/pointage/rh",
+        priority: "IMPORTANT",
+        category: "POINTAGE",
+      });
       return {
         status: "error",
         message: `Pointage impossible : vous êtes à ${geoDistance}m du bureau. Le rayon autorisé est de ${rayon}m. Rapprochez-vous du bureau et réessayez.`,
@@ -301,33 +295,25 @@ export async function enregistrerPointageAction(
 
     // Notification RH pour les anomalies classiques (retard / départ anticipé)
     if (estRetard || estDepartAnticipe) {
-      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
       const raison = estRetard ? "retard" : "départ anticipé";
-      for (const rh of rhUsers) {
-        await notify({
-          userId: rh.id,
-          titre: "Anomalie de pointage signalée",
-          message: `${session.user.fullName} a signalé un ${raison}. Motif : ${motif}`,
-          lien: "/pointage/rh/presence",
-          priority: "IMPORTANT",
-          category: "POINTAGE",
-        });
-      }
+      await notifyByPermission(PERMISSION_RH_POINTAGE, {
+        titre: "Anomalie de pointage signalée",
+        message: `${session.user.fullName} a signalé un ${raison}. Motif : ${motif}`,
+        lien: "/pointage/rh/presence",
+        priority: "IMPORTANT",
+        category: "POINTAGE",
+      });
     }
 
     // Notification RH pour information : pointage validé par géolocalisation
     if (geoFallbackUsed) {
-      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
-      for (const rh of rhUsers) {
-        await notify({
-          userId: rh.id,
-          titre: "📍 Pointage par géolocalisation",
-          message: `${session.user.fullName} a pointé hors réseau Wi-Fi. Validé par GPS à ${geoDistance}m du bureau (précision: ${geoPrecision ? Math.round(geoPrecision) : "?"}m).`,
-          lien: "/pointage/rh/presence",
-          priority: "IMPORTANT",
-          category: "POINTAGE",
-        });
-      }
+      await notifyByPermission(PERMISSION_RH_POINTAGE, {
+        titre: "📍 Pointage par géolocalisation",
+        message: `${session.user.fullName} a pointé hors réseau Wi-Fi. Validé par GPS à ${geoDistance}m du bureau (précision: ${geoPrecision ? Math.round(geoPrecision) : "?"}m).`,
+        lien: "/pointage/rh/presence",
+        priority: "IMPORTANT",
+        category: "POINTAGE",
+      });
     }
 
     return { status: "success", message: "Pointage enregistré avec succès." };
@@ -398,6 +384,20 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
     return { status: "error", message: "La journée n'est pas encore terminée." };
   }
 
+  // Congé ou permission couvrant toute la journée : jamais d'absence automatique.
+  const plagesDuJour = await prisma.plageAbsenceAutorisee.findMany({
+    where: { userId: session.user.id, date: { gte: startOfDay, lte: endOfDay } },
+    select: { heureDebut: true, heureFin: true },
+  });
+  if (
+    journeeCouverteParAbsence(plagesDuJour, {
+      heureDebutMatin: parametrage?.heureDebutMatin || "07:45",
+      heureFinApresMidi: parametrage?.heureFinApresMidi || "16:45",
+    })
+  ) {
+    return { status: "error", message: "Absence autorisée (congé ou permission) enregistrée pour aujourd'hui." };
+  }
+
   const hasPointage = await prisma.pointage.findFirst({
     where: { userId: session.user.id, heure: { gte: startOfDay, lte: endOfDay } },
   });
@@ -422,17 +422,13 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
       },
     });
 
-    const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
-    for (const rh of rhUsers) {
-      await notify({
-        userId: rh.id,
-        titre: "Absence Automatique",
-        message: `${session.user.fullName} a été marqué(e) absent(e) (fin de journée atteinte sans pointage).`,
-        lien: "/pointage/rh/absences",
-        priority: "IMPORTANT",
-        category: "POINTAGE",
-      });
-    }
+    await notifyByPermission(PERMISSION_RH_POINTAGE, {
+      titre: "Absence Automatique",
+      message: `${session.user.fullName} a été marqué(e) absent(e) (fin de journée atteinte sans pointage).`,
+      lien: "/pointage/rh/absences",
+      priority: "IMPORTANT",
+      category: "POINTAGE",
+    });
 
     revalidatePath("/pointage");
     publishDataChanged();
