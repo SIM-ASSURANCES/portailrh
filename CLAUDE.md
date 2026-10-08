@@ -4225,6 +4225,30 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 - **Pointage géolocalisé** : la précision GPS est obligatoire (absente ⇒ refus) avant le contrôle de précision. Limite connue : coordonnées et précision viennent du navigateur, donc restent falsifiables — l'activation de la géolocalisation est une décision RH.
 - **IP de confiance** : `getTrustedClientIp` (`backend/src/pointage-utils.ts`) retient l'IP la plus à droite de `x-forwarded-for` (ajoutée par Traefik, seul proxy devant l'app), repli `x-real-ip`. Utilisée par `enregistrerPointageAction` ; les autres lectures de l'en-tête (login, audit, FeedbackApp) restent à migrer. `getClientIp` (IP la plus à gauche) est falsifiable par le client.
 
+### 7. Pointage V2 — lot 3 : une seule règle de retard, pointage automatique, départ confirmé (2026-10-08)
+
+Plan et règles : [docs/PLAN_POINTAGE_V2.md](docs/PLAN_POINTAGE_V2.md) (§2 validé, lot 3 au §4). Aucune migration.
+
+- **Une seule règle** (`backend/src/pointage-utils.ts`) : `checkLateStatus(now, horaires, plages)` — à l'heure jusqu'à
+  la référence + `toleranceRetardMinutes` INCLUSE, retard compté depuis la référence (07:45 + 15 : 08:00 à l'heure,
+  08:10 = 25 min) ; référence repoussée par une permission du matin. `heureReferenceDepartMinutes` /
+  `estDepartAnticipe` (fin de journée avancée au début d'une permission qui la couvre), `departTropTot`
+  (`DELAI_MINIMUM_DEPART_MINUTES = 30`), `horairesPointage(parametrage)` + `HORAIRES_PAR_DEFAUT` (07:45, 16:45, 15).
+  Utilisée par l'écran (`pointer/page.tsx`), `enregistrerPointageAction`, la correction RH et le pointage exceptionnel
+  RH — plus aucun calcul local de retard dans ces fichiers.
+- **Pointage collaborateur** (`enregistrerPointageAction`) : plus aucun motif (champ retiré du schéma zod) ; un départ
+  moins de 30 min après l'arrivée est refusé avec l'heure à partir de laquelle il sera possible ; un retard ou un
+  départ anticipé crée `JustificationPointage` (EN_ATTENTE) dans la même transaction que le pointage ; l'alerte RH
+  « Anomalie de pointage signalée » est supprimée (alertes de sécurité et information géolocalisation gardées).
+  Seule cette action crée une justification : la correction RH et le pointage exceptionnel RH recalculent seulement
+  retard et départ anticipé.
+- **Écran** (`SmartPointage.tsx`) : l'arrivée en retard est enregistrée automatiquement comme l'arrivée à l'heure
+  (message « Arrivée enregistrée à HH:MM, N min de retard… ») ; le départ anticipé exige « Pointer mon départ
+  anticipé » puis « Confirmer mon départ » (rien n'est créé à l'ouverture de l'écran) ; le panneau géolocalisation
+  passe avant l'écran « En poste » (sinon il ne s'affichait jamais pour un départ confirmé). La présence exceptionnelle
+  d'un jour non ouvré devient un simple bouton « Pointer mon arrivée ». `PointageForm.tsx` supprimé.
+- Vérifié : vitest (22 tests `pointage-utils`), tsc, eslint, `next build`. Parcours à l'écran non encore testés.
+
 ## Module FeedbackApp — anonymat total
 
 Troisième module : permet à QUICONQUE (employé connecté ou visiteur sans

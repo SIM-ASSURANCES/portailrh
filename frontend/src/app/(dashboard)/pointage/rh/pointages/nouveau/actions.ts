@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
-import { timeToMinutes } from "backend";
+import { checkLateStatus, estDepartAnticipe as calculerDepartAnticipe, horairesPointage } from "backend";
 import { revalidatePath } from "next/cache";
 import { ActionState, fieldErrorsFromZod } from "backend";
 import { notify } from "@/lib/notifications";
@@ -54,19 +54,19 @@ export async function enregistrerPointageRHAction(
     where: { isActive: true }
   });
   
-  const limiteArriveeMinutes = timeToMinutes(parametrage?.heureDebutMatin || "07:45");
-  const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
-  
-  const currentMinutes = pointageDate.getHours() * 60 + pointageDate.getMinutes();
-  
-  let estRetard = false;
-  let minutesRetard = null;
-  const estDepartAnticipe = type === "DEPART" && currentMinutes < limiteDepartMinutes;
-  
-  if (type === "ARRIVEE" && currentMinutes > limiteArriveeMinutes) {
-    estRetard = true;
-    minutesRetard = currentMinutes - limiteArriveeMinutes;
-  } 
+  // Lot 3 : même règle que le pointage du collaborateur (tolérance, permissions du jour pointé).
+  const horaires = horairesPointage(parametrage);
+  const debutJour = new Date(pointageDate.getFullYear(), pointageDate.getMonth(), pointageDate.getDate());
+  const finJour = new Date(pointageDate.getFullYear(), pointageDate.getMonth(), pointageDate.getDate(), 23, 59, 59, 999);
+  const plagesDuJour = await prisma.plageAbsenceAutorisee.findMany({
+    where: { userId: collaborateurId, date: { gte: debutJour, lte: finJour } },
+    select: { heureDebut: true, heureFin: true },
+  });
+
+  const lateStatus = type === "ARRIVEE" ? checkLateStatus(pointageDate, horaires, plagesDuJour) : null;
+  const estRetard = lateStatus?.estRetard ?? false;
+  const minutesRetard = estRetard && lateStatus ? lateStatus.minutesRetard : null;
+  const estDepartAnticipe = type === "DEPART" && calculerDepartAnticipe(pointageDate, horaires, plagesDuJour);
 
   try {
     const result = await prisma.$transaction(async (tx) => {

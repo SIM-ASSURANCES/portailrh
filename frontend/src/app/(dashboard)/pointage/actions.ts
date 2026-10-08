@@ -10,6 +10,10 @@ import {
   getTrustedClientIp,
   isOfficeIpAllowed,
   checkLateStatus,
+  estDepartAnticipe as calculerDepartAnticipe,
+  departTropTot,
+  horairesPointage,
+  DELAI_MINIMUM_DEPART_MINUTES,
   isWithinRadius,
   isGeoPrecisionAcceptable,
   BUREAU_DEFAULT_COORDS,
@@ -24,7 +28,8 @@ import { notifyByPermission } from "@/lib/notifications";
 const pointageSchema = z.object({
   source: z.enum(["QR_CODE", "ORDINATEUR"]),
   type: z.enum(["ARRIVEE", "DEPART"]),
-  motif: z.string().optional(),
+  // Plus de motif au pointage (lot 3) : un retard ou un départ anticipé se justifie après coup
+  // (JustificationPointage).
   // Coordonnées GPS (envoyées uniquement en mode fallback géolocalisation)
   geoLatitude: z.number().optional(),
   geoLongitude: z.number().optional(),
@@ -35,7 +40,6 @@ export async function enregistrerPointageAction(
   input: {
     source: "QR_CODE" | "ORDINATEUR";
     type: "ARRIVEE" | "DEPART";
-    motif?: string;
     geoLatitude?: number;
     geoLongitude?: number;
     geoPrecision?: number;
@@ -50,7 +54,7 @@ export async function enregistrerPointageAction(
     return { status: "error", message: "Données invalides", fieldErrors: fieldErrorsFromZod(parsed.error) };
   }
 
-  const { source, type, motif, geoLatitude, geoLongitude, geoPrecision } = parsed.data;
+  const { source, type, geoLatitude, geoLongitude, geoPrecision } = parsed.data;
 
   // ─────────────────────────────────────────────────────────────────────────
   // 1. Capture de l'IP du terminal
@@ -150,8 +154,8 @@ export async function enregistrerPointageAction(
   // ─────────────────────────────────────────────────────────────────────────
   // 4. Vérification des règles d'horaires
   // ─────────────────────────────────────────────────────────────────────────
-  const limiteArriveeMinutes = timeToMinutes(parametrage?.heureDebutMatin || "07:45");
-  const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
+  const horaires = horairesPointage(parametrage);
+  const limiteDepartMinutes = timeToMinutes(horaires.heureFinApresMidi);
 
   const now = new Date();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -164,7 +168,7 @@ export async function enregistrerPointageAction(
       userId: session.user.id,
       heure: { gte: startOfDay, lte: endOfDay },
     },
-    select: { type: true },
+    select: { type: true, heure: true },
   });
 
   const hasArrivee = allToday.some((p) => p.type === "ARRIVEE");
@@ -186,38 +190,35 @@ export async function enregistrerPointageAction(
     return { status: "error", message: "Vous avez déjà complété vos pointages pour aujourd'hui." };
   }
 
-  const heurePrevue =
-    type === "ARRIVEE"
-      ? parametrage?.heureDebutMatin || "07:45"
-      : parametrage?.heureFinApresMidi || "16:45";
+  // Lot 3 : un départ moins de 30 minutes après l'arrivée est refusé (évite un double scan accidentel).
+  const arrivee = allToday.find((p) => p.type === "ARRIVEE");
+  if (type === "DEPART" && arrivee && departTropTot(arrivee.heure, now)) {
+    const possibleA = new Date(arrivee.heure.getTime() + DELAI_MINIMUM_DEPART_MINUTES * 60 * 1000);
+    return {
+      status: "error",
+      message: `Départ impossible moins de ${DELAI_MINIMUM_DEPART_MINUTES} minutes après votre arrivée (pointée à ${formatHeure(arrivee.heure)}). Vous pourrez pointer votre départ à partir de ${formatHeure(possibleA)}.`,
+    };
+  }
 
+  // Permissions du jour : repoussent l'heure de référence de l'arrivée, avancent celle du départ.
+  const plagesDuJour = await prisma.plageAbsenceAutorisee.findMany({
+    where: { userId: session.user.id, date: { gte: startOfDay, lte: endOfDay } },
+    select: { heureDebut: true, heureFin: true },
+  });
+
+  const heurePrevue = type === "ARRIVEE" ? horaires.heureDebutMatin : horaires.heureFinApresMidi;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 5. Retard et départ anticipé : une seule règle (lot 3), aucun motif demandé ici
+  // ─────────────────────────────────────────────────────────────────────────
   let estRetard = false;
   let minutesRetard: number | null = null;
-
-  if (type === "ARRIVEE" && parametrage) {
-    const lateStatus = checkLateStatus(now, parametrage);
+  if (type === "ARRIVEE") {
+    const lateStatus = checkLateStatus(now, horaires, plagesDuJour);
     estRetard = lateStatus.estRetard;
     minutesRetard = estRetard ? lateStatus.minutesRetard : null;
-  } else if (type === "ARRIVEE" && currentMinutes > limiteArriveeMinutes) {
-    estRetard = true;
-    minutesRetard = currentMinutes - limiteArriveeMinutes;
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // 5. Défense en profondeur : motif obligatoire en cas d'anomalie
-  // ─────────────────────────────────────────────────────────────────────────
-  if (type === "ARRIVEE" && estRetard) {
-    if (!motif || motif.trim().length < 3) {
-      return { status: "error", message: "Un motif explicatif est obligatoire en cas de retard." };
-    }
-  }
-
-  const estDepartAnticipe = type === "DEPART" && currentMinutes < limiteDepartMinutes;
-  if (estDepartAnticipe) {
-    if (!motif || motif.trim().length < 3) {
-      return { status: "error", message: "Un motif est obligatoire en cas de départ anticipé." };
-    }
-  }
+  const estDepartAnticipe = type === "DEPART" && calculerDepartAnticipe(now, horaires, plagesDuJour);
 
   // Source effective : GEOLOCALISATION si fallback, sinon source déclarée
   const sourceEffective = geoFallbackUsed ? "GEOLOCALISATION" : source;
@@ -236,7 +237,6 @@ export async function enregistrerPointageAction(
           estRetard,
           minutesRetard,
           estDepartAnticipe,
-          motif: motif || null,
           ipAddress: ip,
           // Données GPS (nulles si pointage réseau normal)
           geoLatitude: geoFallbackUsed ? (geoLatitude ?? null) : null,
@@ -244,6 +244,8 @@ export async function enregistrerPointageAction(
           geoPrecision: geoFallbackUsed ? (geoPrecision ?? null) : null,
           geoDistance: geoFallbackUsed ? geoDistance : null,
           userId: session.user.id,
+          // Retard ou départ anticipé : justification à demander (EN_ATTENTE), dans la même transaction.
+          ...(estRetard || estDepartAnticipe ? { justification: { create: {} } } : {}),
         },
       });
 
@@ -293,17 +295,8 @@ export async function enregistrerPointageAction(
     publishDataChanged();
     pointageEmitter.emit("pointage-updated");
 
-    // Notification RH pour les anomalies classiques (retard / départ anticipé)
-    if (estRetard || estDepartAnticipe) {
-      const raison = estRetard ? "retard" : "départ anticipé";
-      await notifyByPermission(PERMISSION_RH_POINTAGE, {
-        titre: "Anomalie de pointage signalée",
-        message: `${session.user.fullName} a signalé un ${raison}. Motif : ${motif}`,
-        lien: "/pointage/rh/presence",
-        priority: "IMPORTANT",
-        category: "POINTAGE",
-      });
-    }
+    // Plus d'alerte RH « anomalie » au pointage (lot 3) : le retard ou le départ anticipé suit le circuit de
+    // justification.
 
     // Notification RH pour information : pointage validé par géolocalisation
     if (geoFallbackUsed) {
@@ -316,6 +309,18 @@ export async function enregistrerPointageAction(
       });
     }
 
+    if (estRetard) {
+      return {
+        status: "success",
+        message: `Arrivée enregistrée à ${formatHeure(now)}, ${minutesRetard} min de retard. Un lien pour justifier vous sera envoyé.`,
+      };
+    }
+    if (estDepartAnticipe) {
+      return {
+        status: "success",
+        message: "Départ enregistré. Un lien pour justifier votre départ anticipé vous sera envoyé.",
+      };
+    }
     return { status: "success", message: "Pointage enregistré avec succès." };
   } catch {
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };
@@ -435,4 +440,9 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
   }
 
   return { status: "success", message: "Absence automatique enregistrée." };
+}
+
+/** Heure locale « HH:MM » (le serveur tourne à l'heure d'Abidjan, comme tout le module). */
+function formatHeure(d: Date): string {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }

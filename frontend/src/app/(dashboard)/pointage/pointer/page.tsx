@@ -2,7 +2,14 @@ import { getSession, hasPermission } from "@/lib/auth";
 import {prisma} from "backend";
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { timeToMinutes, getMessageDepart, journeeCouverteParAbsence } from "backend";
+import {
+  checkLateStatus,
+  estDepartAnticipe,
+  getMessageDepart,
+  horairesPointage,
+  journeeCouverteParAbsence,
+  timeToMinutes,
+} from "backend";
 import { SmartPointage, PointageMode } from "../SmartPointage";
 
 export default async function PointagePage({ searchParams }: { searchParams: Promise<{ source?: string }> }) {
@@ -40,22 +47,17 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
   const parametrage = await prisma.parametrageHoraire.findFirst({
     where: { isActive: true }
   });
-  const heureLimiteArrivee = parametrage?.heureDebutMatin || "07:45";
-  const heureLimiteDepart = parametrage?.heureFinApresMidi || "16:45";
+  const horaires = horairesPointage(parametrage);
 
   // Congé ou permission couvrant toute la journée : aucun pointage attendu, jamais d'absence automatique.
   const plagesDuJour = await prisma.plageAbsenceAutorisee.findMany({
     where: { userId: session.user.id, date: { gte: startOfDay, lte: endOfDay } },
     select: { heureDebut: true, heureFin: true },
   });
-  const enAbsenceAutorisee = journeeCouverteParAbsence(plagesDuJour, {
-    heureDebutMatin: heureLimiteArrivee,
-    heureFinApresMidi: heureLimiteDepart,
-  });
+  const enAbsenceAutorisee = journeeCouverteParAbsence(plagesDuJour, horaires);
 
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const limiteArriveeMinutes = timeToMinutes(heureLimiteArrivee);
-  const limiteDepartMinutes = timeToMinutes(heureLimiteDepart);
+  const limiteDepartMinutes = timeToMinutes(horaires.heureFinApresMidi);
 
   // 4. Analyser le mode à appliquer
   let mode: PointageMode = "TERMINE";
@@ -72,18 +74,22 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
     } else if (enAbsenceAutorisee) {
       mode = "NON_OUVRABLE";
       messageAuto = "Une absence autorisée (congé ou permission) couvre votre journée. Aucun pointage obligatoire.";
-    } else if (currentMinutes <= limiteArriveeMinutes) {
-      mode = "AUTO_ARRIVEE";
-      messageAuto = "Félicitations pour votre ponctualité ! Arrivée validée.";
     } else if (currentMinutes >= limiteDepartMinutes) {
       mode = "ABSENCE_AUTO";
       messageAuto = "Journée terminée sans pointage. Vous avez été marqué(e) comme absent(e).";
+    } else if (!checkLateStatus(now, horaires, plagesDuJour).estRetard) {
+      // Lot 3 : même règle que le serveur (tolérance incluse, permission du matin prise en compte).
+      mode = "AUTO_ARRIVEE";
+      messageAuto = "Félicitations pour votre ponctualité ! Arrivée validée.";
     } else {
+      // En retard : enregistré automatiquement aussi, sans motif (le lien de justification suit).
       mode = "RETARD_ARRIVEE";
     }
   } else if (pointagesDuJour.length === 1) {
     typePointage = "DEPART";
-    if (currentMinutes >= limiteDepartMinutes) {
+    // Lot 3 : départ automatique seulement s'il n'est pas anticipé (une permission de fin de journée avance l'heure) ;
+    // sinon le collaborateur doit confirmer son départ anticipé (EN_POSTE, jamais rien créé à l'ouverture).
+    if (!estDepartAnticipe(now, horaires, plagesDuJour)) {
       mode = "AUTO_DEPART";
       messageAuto = getMessageDepart();
     } else {

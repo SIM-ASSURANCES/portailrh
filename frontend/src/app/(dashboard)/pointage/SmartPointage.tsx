@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { Button, Card } from "@/components/ui";
 import { Calendar } from "lucide-react";
-import { PointageForm } from "./PointageForm";
 import { enregistrerPointageAction, enregistrerAbsenceAutomatiqueAction } from "./actions";
 import { useGeolocation } from "@/hooks/useGeolocation";
 
@@ -120,9 +119,10 @@ function GeoFallbackPanel({
 
 // ─── Composant principal ──────────────────────────────────────────────────────
 export function SmartPointage({ mode, messageAuto, type, source }: Props) {
-  const [, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
   const [isDone, setIsDone] = useState(false);
-  const [showEarlyForm, setShowEarlyForm] = useState(false);
+  // Départ anticipé : jamais automatique, le collaborateur confirme explicitement (lot 3).
+  const [confirmDepart, setConfirmDepart] = useState(false);
   // Déclenchement du mode géolocalisation (IP rejetée)
   const [needsGeo, setNeedsGeo] = useState(false);
   // Indicateur visuel : pointage effectué via géoloc
@@ -145,7 +145,17 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
       });
 
       if (result.status === "success") {
-        toast.success(geoPayload ? "Pointage géolocalisé enregistré ✅" : messageAuto);
+        // Retard, départ anticipé ou présence exceptionnelle : le message du serveur (heure, minutes de retard,
+        // lien de justification à venir) ; sinon le message automatique de la page.
+        const messageDuServeur = mode === "RETARD_ARRIVEE" || mode === "EN_POSTE" || forcePointage;
+        toast.success(
+          messageDuServeur
+            ? result.message || "Pointage enregistré."
+            : geoPayload
+              ? "Pointage géolocalisé enregistré ✅"
+              : messageAuto
+        );
+        setConfirmDepart(false);
         setIsDone(true);
         setNeedsGeo(false);
         router.refresh();
@@ -155,13 +165,15 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
       } else if (result.status === "error") {
         toast.error(result.message || "Erreur de traitement");
         submittedRef.current = null;
+        setConfirmDepart(false);
       }
     });
   };
 
   // ── Déclenchement automatique sans friction ────────────────────────────────
+  // Lot 3 : l'arrivée en retard est enregistrée automatiquement elle aussi, sans motif (justification après coup).
   useEffect(() => {
-    if (mode === "AUTO_ARRIVEE" || mode === "AUTO_DEPART" || mode === "ABSENCE_AUTO") {
+    if (mode === "AUTO_ARRIVEE" || mode === "RETARD_ARRIVEE" || mode === "AUTO_DEPART" || mode === "ABSENCE_AUTO") {
       const alreadySubmitted =
         submittedRef.current?.mode === mode &&
         submittedRef.current?.type === type;
@@ -197,6 +209,7 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
     setIsDone(false);
     setNeedsGeo(false);
     setGeoDistance(null);
+    setConfirmDepart(false);
   }
 
   const isEnPoste = mode === "EN_POSTE" || (isDone && type === "ARRIVEE");
@@ -239,38 +252,7 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
     );
   }
 
-  // ── En poste ───────────────────────────────────────────────────────────────
-  if (isEnPoste && !showEarlyForm) {
-    return (
-      <Card className="p-6 text-center animate-fade-in-up">
-        {geoDistance !== null && (
-          <div className="flex items-center justify-center gap-1.5 mb-4 text-xs text-muted-foreground">
-            <GeoIcon className="size-3.5 text-primary" />
-            <span>Pointé par géolocalisation — {geoDistance}m du bureau</span>
-          </div>
-        )}
-        <h2 className="text-xl font-bold mb-2">Vous êtes en poste</h2>
-        <p className="text-muted-foreground mb-6">
-          Votre arrivée a été enregistrée. L&apos;heure de fin de journée n&apos;est pas encore atteinte.
-        </p>
-        <Button variant="primary" className="w-full" onClick={() => setShowEarlyForm(true)}>
-          Pointer mon départ anticipé
-        </Button>
-      </Card>
-    );
-  }
-
-  // ── Analyse en cours (avant la réponse du serveur) ─────────────────────────
-  if ((mode === "AUTO_ARRIVEE" || mode === "AUTO_DEPART" || mode === "ABSENCE_AUTO") && !needsGeo) {
-    return (
-      <Card className="p-8 text-center animate-fade-in-up">
-        <h2 className="text-xl font-bold mb-4">Analyse en cours…</h2>
-        <Spinner />
-      </Card>
-    );
-  }
-
-  // ── Panneau géolocalisation (fallback hors réseau) ─────────────────────────
+  // ── Panneau géolocalisation (fallback hors réseau) — avant « En poste » pour le départ confirmé ──
   if (needsGeo) {
     return (
       <Card className="p-6 animate-fade-in-up space-y-4">
@@ -294,21 +276,81 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
     );
   }
 
-  // ── Retard / Départ anticipé (formulaire motif) ───────────────────────────
+  // ── En poste ───────────────────────────────────────────────────────────────
+  if (isEnPoste) {
+    // Le bouton n'agit qu'en mode EN_POSTE (prop `type` = DEPART) : juste après une arrivée, la page se rafraîchit.
+    const departPossible = mode === "EN_POSTE";
+    return (
+      <Card className="p-6 text-center animate-fade-in-up">
+        {geoDistance !== null && (
+          <div className="flex items-center justify-center gap-1.5 mb-4 text-xs text-muted-foreground">
+            <GeoIcon className="size-3.5 text-primary" />
+            <span>Pointé par géolocalisation — {geoDistance}m du bureau</span>
+          </div>
+        )}
+        <h2 className="text-xl font-bold mb-2">Vous êtes en poste</h2>
+        <p className="text-muted-foreground mb-6">
+          Votre arrivée a été enregistrée. L&apos;heure de fin de journée n&apos;est pas encore atteinte.
+        </p>
+        {confirmDepart ? (
+          <div className="space-y-3">
+            <p className="font-bold">Confirmer mon départ maintenant ?</p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                variant="primary"
+                className="w-full"
+                loading={isPending}
+                onClick={() => submitPointage()}
+              >
+                Confirmer mon départ
+              </Button>
+              <Button
+                variant="secondary"
+                className="w-full"
+                disabled={isPending}
+                onClick={() => setConfirmDepart(false)}
+              >
+                Annuler
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            variant="primary"
+            className="w-full"
+            disabled={!departPossible}
+            onClick={() => setConfirmDepart(true)}
+          >
+            Pointer mon départ anticipé
+          </Button>
+        )}
+      </Card>
+    );
+  }
+
+  // ── Analyse en cours (avant la réponse du serveur) ─────────────────────────
+  if (mode === "AUTO_ARRIVEE" || mode === "RETARD_ARRIVEE" || mode === "AUTO_DEPART" || mode === "ABSENCE_AUTO") {
+    return (
+      <Card className="p-8 text-center animate-fade-in-up">
+        <h2 className="text-xl font-bold mb-4">Analyse en cours…</h2>
+        <Spinner />
+      </Card>
+    );
+  }
+
+  // ── Présence exceptionnelle (jour non ouvré) : arrivée pointée sur demande, sans motif ──
   return (
-    <Card className="p-6 animate-fade-in-up">
-      <h2 className="text-xl font-bold mb-2">
-        {mode === "RETARD_ARRIVEE" ? "Vous êtes en retard" : "Départ anticipé"}
-      </h2>
-      <p className="text-muted-foreground mb-6">
-        L&apos;heure réglementaire n&apos;a pas été respectée. Un motif est obligatoire pour valider votre pointage.
-      </p>
-      <PointageForm type={type} source={source} />
-      {mode === "EN_POSTE" && showEarlyForm && (
-        <Button variant="secondary" className="w-full mt-2" onClick={() => setShowEarlyForm(false)}>
+    <Card className="p-6 text-center animate-fade-in-up">
+      <h2 className="text-xl font-bold mb-2">Présence exceptionnelle</h2>
+      <p className="text-muted-foreground mb-6">Enregistrer votre arrivée pour aujourd&apos;hui ?</p>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button variant="primary" className="w-full" loading={isPending} onClick={() => submitPointage()}>
+          Pointer mon arrivée
+        </Button>
+        <Button variant="secondary" className="w-full" disabled={isPending} onClick={() => setForcePointage(false)}>
           Annuler
         </Button>
-      )}
+      </div>
     </Card>
   );
 }

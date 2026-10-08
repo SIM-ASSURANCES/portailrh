@@ -1,5 +1,4 @@
 // src/lib/pointage-utils.ts
-import { ParametrageHoraire } from "./generated/prisma/client";
 
 /**
  * Permission qui désigne la RH pour les alertes du pointage et la décision des justifications sans responsable.
@@ -98,28 +97,82 @@ export function getMinutesSinceMidnight(date: Date): number {
   return date.getHours() * 60 + date.getMinutes();
 }
 
-export function checkLateStatus(
-  now: Date,
-  config: ParametrageHoraire
-): { estRetard: boolean; minutesRetard: number } {
-  const currentMinutes = getMinutesSinceMidnight(now);
-  
-  // L'employé est tenu d'être présent dès le matin.
-  // Tout pointage d'arrivée se calcule donc par rapport à l'heure de début de matinée.
-  const referenceMinutes = parseTimeStringToMinutes(config.heureDebutMatin);
+/**
+ * Horaires utilisés par les règles de retard et de départ (Pointage V2, lot 3). Type structurel : un
+ * `ParametrageHoraire` convient tel quel ; sans paramétrage, voir `horairesPointage`.
+ */
+export interface HorairesPointage {
+  heureDebutMatin: string;
+  heureFinApresMidi: string;
+  toleranceRetardMinutes: number;
+}
 
-  if (currentMinutes > referenceMinutes) {
-    return {
-      estRetard: true,
-      minutesRetard: currentMinutes - referenceMinutes,
-    };
-  }
+/** Valeurs par défaut quand aucun paramétrage horaire n'est actif (mêmes défauts que le schéma). */
+export const HORAIRES_PAR_DEFAUT: HorairesPointage = {
+  heureDebutMatin: "07:45",
+  heureFinApresMidi: "16:45",
+  toleranceRetardMinutes: 15,
+};
 
+/** Horaires effectifs : le paramétrage actif, complété par les valeurs par défaut. */
+export function horairesPointage(parametrage: Partial<HorairesPointage> | null | undefined): HorairesPointage {
   return {
-    estRetard: false,
-    minutesRetard: 0,
+    heureDebutMatin: parametrage?.heureDebutMatin || HORAIRES_PAR_DEFAUT.heureDebutMatin,
+    heureFinApresMidi: parametrage?.heureFinApresMidi || HORAIRES_PAR_DEFAUT.heureFinApresMidi,
+    toleranceRetardMinutes: parametrage?.toleranceRetardMinutes ?? HORAIRES_PAR_DEFAUT.toleranceRetardMinutes,
   };
 }
+
+/** Un départ est refusé moins de 30 minutes après l'arrivée (règle du 2026-10-08, PLAN_POINTAGE_V2 §2). */
+export const DELAI_MINIMUM_DEPART_MINUTES = 30;
+
+/**
+ * SEULE règle de retard du module (lot 3) : à l'heure jusqu'à la référence + tolérance INCLUSE ; au-delà, le retard
+ * se compte depuis la référence (07:45 + 15 : 07:58 à l'heure, 08:10 = 25 min). La référence est `heureDebutMatin`,
+ * repoussée à la fin d'une permission du matin (`heureReferenceArriveeMinutes`).
+ */
+export function checkLateStatus(
+  now: Date,
+  config: Pick<HorairesPointage, "heureDebutMatin" | "toleranceRetardMinutes">,
+  plages: readonly PlageHoraire[] = []
+): { estRetard: boolean; minutesRetard: number } {
+  const minutes = getMinutesSinceMidnight(now);
+  const reference = heureReferenceArriveeMinutes(config, plages);
+  if (minutes > reference + Math.max(0, config.toleranceRetardMinutes)) {
+    return { estRetard: true, minutesRetard: minutes - reference };
+  }
+  return { estRetard: false, minutesRetard: 0 };
+}
+
+/**
+ * Heure de référence du départ, en minutes depuis minuit : `heureFinApresMidi`, ramenée au début d'une plage
+ * d'absence autorisée qui couvre cette fin (permission de fin de journée). Symétrique de l'arrivée.
+ */
+export function heureReferenceDepartMinutes(
+  horaires: Pick<HorairesPointage, "heureFinApresMidi">,
+  plages: readonly PlageHoraire[] = []
+): number {
+  let reference = parseTimeStringToMinutes(horaires.heureFinApresMidi);
+  for (const [d, f] of [...fusionnerPlages(plages)].reverse()) {
+    if (d < reference && f >= reference) reference = d;
+  }
+  return reference;
+}
+
+/** Départ avant l'heure de référence du départ (jamais automatique : le collaborateur confirme, lot 3). */
+export function estDepartAnticipe(
+  now: Date,
+  config: Pick<HorairesPointage, "heureFinApresMidi">,
+  plages: readonly PlageHoraire[] = []
+): boolean {
+  return getMinutesSinceMidnight(now) < heureReferenceDepartMinutes(config, plages);
+}
+
+/** `true` si le départ intervient moins de `DELAI_MINIMUM_DEPART_MINUTES` après l'arrivée : il est refusé. */
+export function departTropTot(heureArrivee: Date, now: Date): boolean {
+  return now.getTime() - heureArrivee.getTime() < DELAI_MINIMUM_DEPART_MINUTES * 60 * 1000;
+}
+
 /**
  * Convertit une heure "HH:MM" en minutes écoulées depuis minuit
  * pour faciliter les comparaisons mathématiques.

@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
-import { prisma, checkLateStatus, timeToMinutes } from "backend";
+import { prisma, checkLateStatus, estDepartAnticipe as calculerDepartAnticipe, horairesPointage } from "backend";
 import { revalidatePath } from "next/cache";
 import { ActionState, fieldErrorsFromZod } from "backend";
 import { notify } from "@/lib/notifications";
@@ -64,17 +64,21 @@ export async function corrigerPointageAction(
   const parametrage = await prisma.parametrageHoraire.findFirst({
     where: { isActive: true }
   });
+  // Lot 3 : même règle que le pointage du collaborateur (tolérance, permissions du jour corrigé).
+  const horaires = horairesPointage(parametrage);
+  const debutJour = new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate());
+  const finJour = new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate(), 23, 59, 59, 999);
+  const plagesDuJour = await prisma.plageAbsenceAutorisee.findMany({
+    where: { userId: existingPointage.userId, date: { gte: debutJour, lte: finJour } },
+    select: { heureDebut: true, heureFin: true },
+  });
 
   if (existingPointage.type === "ARRIVEE") {
-    if (parametrage) {
-      const lateStatus = checkLateStatus(newDate, parametrage);
-      estRetard = lateStatus.estRetard;
-      minutesRetard = estRetard ? lateStatus.minutesRetard : null;
-    }
+    const lateStatus = checkLateStatus(newDate, horaires, plagesDuJour);
+    estRetard = lateStatus.estRetard;
+    minutesRetard = estRetard ? lateStatus.minutesRetard : null;
   } else if (existingPointage.type === "DEPART") {
-    const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
-    const currentMinutes = newDate.getHours() * 60 + newDate.getMinutes();
-    estDepartAnticipe = currentMinutes < limiteDepartMinutes;
+    estDepartAnticipe = calculerDepartAnticipe(newDate, horaires, plagesDuJour);
   }
 
   try {

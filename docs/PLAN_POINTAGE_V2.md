@@ -100,6 +100,16 @@ nécessaire.
   - le seed (`deleteMany`) ;
   - `backend/src/reinitialisation.ts`.
 
+**Lot 3 — une seule règle de retard, pointage automatique, départ confirmé** (non commité, 2026-10-08)
+- `pointage-utils.ts` : `checkLateStatus(now, horaires, plages)` avec tolérance et permission du matin,
+  `heureReferenceDepartMinutes`, `estDepartAnticipe`, `departTropTot`, `DELAI_MINIMUM_DEPART_MINUTES`,
+  `horairesPointage` / `HORAIRES_PAR_DEFAUT` ; tests dans `pointage-utils.test.ts`.
+- Règle utilisée par `pointer/page.tsx`, `enregistrerPointageAction`, `rh/corrections/actions.ts`,
+  `rh/pointages/nouveau/actions.ts` (ces deux dernières chargent les permissions du jour du collaborateur).
+- `enregistrerPointageAction` : sans motif, départ refusé à moins de 30 min de l'arrivée, `JustificationPointage`
+  EN_ATTENTE créée dans la transaction, alerte « Anomalie » retirée.
+- `SmartPointage.tsx` : RETARD_ARRIVEE automatique, départ anticipé confirmé, `PointageForm.tsx` supprimé.
+
 ## 4. Lots restants
 
 Chaque lot fait l'objet d'un commit séparé, testé, avec un message au format des commits existants. La logique
