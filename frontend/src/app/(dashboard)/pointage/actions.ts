@@ -7,6 +7,7 @@ import { prisma } from "backend";
 import { headers } from "next/headers";
 import {
   timeToMinutes,
+  getTrustedClientIp,
   isOfficeIpAllowed,
   checkLateStatus,
   isWithinRadius,
@@ -53,8 +54,9 @@ export async function enregistrerPointageAction(
   // 1. Capture de l'IP du terminal
   // ─────────────────────────────────────────────────────────────────────────
   const headersList = await headers();
-  const rawIp = headersList.get("x-forwarded-for") || "IP_INCONNUE";
-  const ip = rawIp.replace(/^::ffff:/, "");
+  // IP ajoutée par le proxy de confiance, jamais l'en-tête brut (voir
+  // getTrustedClientIp) : plusieurs IP "a, b" faisaient échouer le contrôle.
+  const ip = getTrustedClientIp(headersList);
 
   const whitelistEnv = process.env.ALLOWED_OFFICE_IPS || "";
   const ipAutorisee = isOfficeIpAllowed(ip, whitelistEnv);
@@ -102,8 +104,18 @@ export async function enregistrerPointageAction(
       };
     }
 
+    // Précision GPS obligatoire : l'omettre ne doit jamais permettre de sauter
+    // le contrôle ci-dessous (les clients légitimes l'envoient toujours avec
+    // les coordonnées, voir useGeolocation).
+    if (geoPrecision === undefined) {
+      return {
+        status: "error",
+        message: "Précision GPS non transmise. Réessayez le pointage.",
+      };
+    }
+
     // Précision GPS insuffisante (trop imprécis pour garantir la position)
-    if (geoPrecision !== undefined && !isGeoPrecisionAcceptable(geoPrecision)) {
+    if (!isGeoPrecisionAcceptable(geoPrecision)) {
       return {
         status: "error",
         message: `Signal GPS trop faible (précision : ${Math.round(geoPrecision)}m). Déplacez-vous en extérieur et réessayez.`,

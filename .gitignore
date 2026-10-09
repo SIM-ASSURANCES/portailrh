@@ -65,8 +65,6 @@ graphify-out/
 #own file
 audit_pointage.md
 audit_module_pointage.md
-frontend/src/app/(dashboard)/pointage/ticket.txt
-
 # Stockage local des fichiers uploadés (pièces jointes Demande/DepenseLigne,
 # photos de profil) — jamais commité, correspond au volume Docker nommé
 # "uploads" monté sur /app/uploads (voir docker-compose.yml/Dockerfile,
@@ -96,11 +94,11 @@ frontend/public/uploads/profiles/*
 .postman
 /postman/
 
-backend/src/__tests__/
 powershell.cmd
 powershell.bat
 frontend/powershell.cmd
 frontend/powershell.bat
+frontend/src/app/(dashboard)/pointage/ticket.txt
 CHARTE GRAPHIQUE SIM ASSURANCE CI (1) (1).pdf
 exemple
 
