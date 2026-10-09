@@ -4188,7 +4188,7 @@ la latence réelle hors de cet artefact.
 Module complet de gestion des temps de présence, retards, départs anticipés et absences du personnel, développé et durci par Thierry Kouame.
 
 ### 1. Modèle de données & Rôles
-- **Modèles Prisma** ([backend/prisma/schema.prisma](backend/prisma/schema.prisma)) : `Pointage` (sources `QR_CODE`, `ORDINATEUR`, `RH_EXCEPTIONNEL`, `GEOLOCALISATION`), `ParametrageHoraire` (horaires et coordonnées GPS bureau), `CorrectionPointage` (registre d'audit transparent, zéro édition silencieuse), `Absence` (`A_CONTROLER`, `CONFIRMEE`, `JUSTIFIEE`), `JourFerie` (jours chômés).
+- **Modèles Prisma** ([backend/prisma/schema.prisma](backend/prisma/schema.prisma)) : `Pointage` (sources `QR_CODE`, `ORDINATEUR`, `RH_EXCEPTIONNEL`, `GEOLOCALISATION`), `ParametrageHoraire` (horaires et coordonnées GPS bureau), `CorrectionPointage` (registre d'audit transparent, zéro édition silencieuse), `Absence` (`A_CONTROLER`, `CONFIRMEE`, `JUSTIFIEE`), `JourFerie` (jours chômés), **`JustificationPointage`** (Pointage V2 : une par retard ou départ anticipé, statuts `EN_ATTENTE`/`SOUMISE`/`ACCEPTEE`/`REFUSEE`/`NON_JUSTIFIEE`, décideur = responsable du service, **repli RH = détenteurs de `pointage.corriger_pointage`** ; `Pointage.motif` n'est plus écrit, gardé pour l'historique).
 - **Permissions `pointage.*`** : 8 permissions fines réparties entre Collaborateur (`pointer`, `consulter_historique`), RH (les 8 droits complets), DG (lecture seule `/rh/presence` et reporting), et Admin (supervision).
 
 ### 2. Double barrière de sécurité & Géolocalisation
@@ -4196,7 +4196,7 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 - **Fallback Géolocalisation GPS (Formule de Haversine)** : Si l'agent est hors réseau Wi-Fi, calcul automatique de la distance au siège SIM Assurances (`bureauLatitude`, `bureauLongitude`, `rayonAutorise` configurable entre 30m et 200m). Filtre de précision GPS (seuil 150m max) et alerte de sécurité instantanée aux RH en cas de tentative hors périmètre.
 
 ### 3. Parcours Collaborateur & Temps Réel
-- **Composant adaptatif** (`SmartPointage.tsx`) : Détection automatique du statut journalier (arrivée, départ), motif obligatoire en cas de retard (après 07h45) ou de départ anticipé (avant 16h45).
+- **Composant adaptatif** (`SmartPointage.tsx`) : Détection automatique du statut journalier (arrivée, départ). **Plus aucun motif au pointage** (Pointage V2, lots 3 à 5) : retard au-delà de la tolérance enregistré immédiatement, départ anticipé confirmé explicitement ; justification ensuite via `/pointage/justifier/[pointageId]`, décision sur `/pointage/justifications`, relances par la tâche planifiée `/api/cron/relances-justification` (toutes les 5 min, `CRON_SECRET`). Voir sections 7 à 11 ci-dessous.
 - **Pointage Mobile par QR Code** (`/pointage/qr` -> `/pointage/pointer?source=QR_CODE`) : Scan sécurisé à l'accueil de l'entreprise.
 - **Synchronisation Server-Sent Events (SSE)** (`/api/pointage/stream`) : Tout pointage actualise instantanément les compteurs et listes des tableaux de bord RH sans rechargement.
 
@@ -4330,6 +4330,34 @@ collaborateur trouve sa justification à faire dans « Mon historique ».
 - Vérifié : vitest (règle sur chemins validés, y compris refusés), Playwright sur base jetable 12/12 (liens pointage,
   QR, lien absolu du middleware : cochée ; sans lien, /treso, liens refusés : décochée ; décochage manuel envoyé sans
   `rememberMe` ; retour sur /pointage/pointer).
+
+### 11. Pointage V2 — lot 7 : écrans RH, reporting, documentation (2026-10-09)
+
+Une seule source de lecture, aucun recalcul : les écrans et l'export lisent le statut stocké de `JustificationPointage`
+et les champs `estRetard`/`minutesRetard` calculés au pointage par `checkLateStatus` (lot 3). Aucune migration, aucune
+permission nouvelle.
+- **`justificationAffichee(pointage)`** (`backend/src/justificationPointage.ts`) : statut, libellé
+  (`LIBELLE_STATUT_JUSTIFICATION`, lot 4), motif (celui de la justification, sinon l'ancien `Pointage.motif`) et
+  « Décidée par » (seulement pour `ACCEPTEE`/`REFUSEE`). Sans justification : libellé « — », ancien motif.
+- **`utilisateursCouvertsParAbsence(plages, horaires)`** (`backend/src/pointage-utils.ts`) : comptes dont la journée est
+  entièrement couverte (`journeeCouverteParAbsence`, la règle du cron des absences, lot 1).
+- **Présence du jour** (`pointage/rh/presence`) : onglet Retards avec colonne « Justification » (badge
+  `VARIANTE_STATUT_JUSTIFICATION`, « par X ») et motif lu par `justificationAffichee` ; badge sous l'heure d'un départ
+  anticipé ; nouvel onglet et compteur **« Absence autorisée »** (« Congé 00:00–23:59 », « Permission … ») — ces
+  comptes ne sont ni absents (même si une ligne `Absence` existe) ni manquants ; un compte présent n'y figure jamais.
+- **Reporting et export** (`getDetailsRetards`, `ReportingTables.tsx`, feuille « Détails des retards ») : colonnes
+  « Justification », « Motif », « Décidée par », mêmes valeurs à l'écran et dans le fichier.
+- **Réinitialisation** : `ENTITES_HISTORIQUE_POINTAGE` contient toujours `JustificationPointage` (vérifié) ; le dépôt n'a
+  aucun test de réinitialisation.
+- **Limites connues, non traitées (hors lot 7)** : le détail du reporting ne liste que les retards (pas les départs
+  anticipés) ; `getDetailsRetards` garde son `take` par défaut de 50 lignes, export compris ; le reporting n'inclut que
+  les comptes portant `pointage.pointer` ; une permission partielle n'apparaît pas en « Absence autorisée » ; aucun écran
+  ne crée encore de `PlageAbsenceAutorisee`.
+- Documentation : `docs/GUIDE_FONCTIONNEL_POINTAGE.md` et `docs/POINTAGE_ARCHITECTURE.md` (motif obligatoire retiré,
+  circuit, paramètres, tâche planifiée).
+- Vérifié : vitest (`lectureRhPointage.test.ts`, 5 tests), Playwright 14/14 sur base jetable (rh@ : justifications
+  SOUMISE et ACCEPTEE « par RH Test », repli sur l'ancien motif, départ anticipé « Justification attendue », congé et
+  permission de journée en « Absence autorisée », écran du reporting et export cohérents).
 
 ## Module FeedbackApp — anonymat total
 
@@ -6505,6 +6533,10 @@ etc.) ont déjà leur migration. **Toute nouvelle permission ajoutée au seed do
 **Pointage RH** (`pointage.*`) : `pointer`, `consulter_historique`,
 `consulter_tous`, `pointage_exceptionnel`, `corriger_pointage`,
 `gerer_horaires`, `voir_dashboard_rh`, `voir_reporting`.
+`corriger_pointage` est aussi la **permission de repli RH** du circuit de justification (Pointage V2) : ses détenteurs
+décident quand le collaborateur est responsable de son service, est DG, ou que son service n'a pas de responsable actif.
+Le responsable de service décide sans permission (`Service.responsableId`). Routes : `/pointage/justifier/[pointageId]`,
+`/pointage/justifications`, `/api/cron/relances-justification` ; modèle `JustificationPointage`.
 
 **Champs de rôle transverses** (jamais un nom de rôle en dur) :
 `Role.estAdmin` (accès `/admin`, figé à la création),

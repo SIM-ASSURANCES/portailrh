@@ -71,7 +71,10 @@ export async function GET(request: NextRequest) {
     { header: "Heure prévue", key: "heurePrevue", width: 15 },
     { header: "Heure réelle", key: "heureReelle", width: 15 },
     { header: "Minutes de retard", key: "minutesRetard", width: 20 },
+    // Pointage V2, lot 7 : mêmes valeurs qu'à l'écran (`justificationAffichee`, via `getDetailsRetards`).
+    { header: "Justification", key: "justification", width: 24 },
     { header: "Motif", key: "motif", width: 40 },
+    { header: "Décidée par", key: "decideePar", width: 25 },
   ];
 
   details.data.forEach((d) => {
@@ -81,7 +84,9 @@ export async function GET(request: NextRequest) {
       heurePrevue: d.heurePrevue || "—",
       heureReelle: d.heureReelle.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
       minutesRetard: d.minutesRetard || 0,
+      justification: d.justification,
       motif: d.motif || "—",
+      decideePar: d.decideePar || "—",
     });
   });
   styleHeaderRow(sheetDetails);

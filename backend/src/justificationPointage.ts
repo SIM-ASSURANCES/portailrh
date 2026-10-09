@@ -369,3 +369,38 @@ export function messageClotureJustification(params: {
     message: `${qui} n'a pas justifié son ${descriptionAnomalie(pointage)}. Il peut encore le faire.`,
   };
 }
+
+// ───────────────────────── Lot 7 : lecture RH (présence du jour, reporting, export) ─────────────────────────
+
+/** Justification telle que lue avec un pointage (statut réel, motif saisi, auteur de la décision). */
+export interface JustificationLue {
+  statut: StatutJustificationPointage;
+  motif: string | null;
+  decideur: { fullName: string } | null;
+}
+
+export interface JustificationAffichee {
+  /** `null` : pointage sans justification (à l'heure, ou ancien pointage antérieur au lot 3). */
+  statut: StatutJustificationPointage | null;
+  libelle: string;
+  /** Motif de la justification, sinon l'ancien motif saisi au pointage (historique). */
+  motif: string | null;
+  /** Auteur de la décision, seulement une fois acceptée ou refusée. */
+  decideePar: string | null;
+}
+
+/**
+ * Ce que les écrans RH et l'export affichent pour un pointage (Pointage V2, lot 7) — UNE seule source : statut réel de
+ * `JustificationPointage`, motif de la justification avec repli sur `Pointage.motif`, « Décidée par ».
+ */
+export function justificationAffichee(pointage: { motif: string | null; justification: JustificationLue | null }): JustificationAffichee {
+  const j = pointage.justification;
+  if (!j) return { statut: null, libelle: "—", motif: pointage.motif ?? null, decideePar: null };
+  const decidee = j.statut === "ACCEPTEE" || j.statut === "REFUSEE";
+  return {
+    statut: j.statut,
+    libelle: LIBELLE_STATUT_JUSTIFICATION[j.statut],
+    motif: j.motif ?? pointage.motif ?? null,
+    decideePar: decidee ? (j.decideur?.fullName ?? null) : null,
+  };
+}

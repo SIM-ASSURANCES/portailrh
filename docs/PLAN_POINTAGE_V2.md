@@ -129,6 +129,12 @@ nécessaire.
   (pas simple sans exposer `rememberMe`). Test sur téléphone à faire par Thierry ou Aristide. Détail : `CLAUDE.md`,
   section 10.
 
+**Lot 7 — écrans RH, reporting, documentation** (non commité, 2026-10-09)
+- `justificationAffichee` (`justificationPointage.ts`) et `utilisateursCouvertsParAbsence` (`pointage-utils.ts`), tests
+  `lectureRhPointage.test.ts` ; présence du jour (colonne « Justification », onglet « Absence autorisée ») ; reporting et
+  export (« Justification », « Motif », « Décidée par ») ; guide fonctionnel, architecture et `CLAUDE.md` (section 11)
+  à jour. Aucune migration. Limites restantes : `CLAUDE.md`, section 11.
+
 ## 4. Lots restants
 
 Chaque lot fait l'objet d'un commit séparé, testé, avec un message au format des commits existants. La logique

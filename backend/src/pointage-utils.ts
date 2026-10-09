@@ -244,3 +244,15 @@ export function getMessageDepart(): string {
   }
   return "Pointage validé. Bonne fin de journée et à demain !";
 }
+/**
+ * Collaborateurs dont la journée est entièrement couverte par une absence autorisée (Pointage V2, lot 7, présence du
+ * jour) : même règle que le cron des absences et l'écran de pointage (`journeeCouverteParAbsence`), jamais recalculée.
+ */
+export function utilisateursCouvertsParAbsence(
+  plages: readonly ({ userId: string } & PlageHoraire)[],
+  horaires: { heureDebutMatin: string; heureFinApresMidi: string }
+): Set<string> {
+  const parUtilisateur = new Map<string, PlageHoraire[]>();
+  for (const p of plages) parUtilisateur.set(p.userId, [...(parUtilisateur.get(p.userId) ?? []), p]);
+  return new Set([...parUtilisateur].filter(([, ps]) => journeeCouverteParAbsence(ps, horaires)).map(([id]) => id));
+}

@@ -1,6 +1,8 @@
 "use client";
 
 import { DataTable, Badge } from "@/components/ui";
+import { VARIANTE_STATUT_JUSTIFICATION } from "@/components/pointage/justificationStatut";
+import type { StatutJustificationPointage } from "backend";
 
 type AgregeData = {
   id: string;
@@ -21,7 +23,11 @@ type DetailsData = {
   heurePrevue: string | null;
   heureReelle: Date;
   minutesRetard: number | null;
+  /** Pointage V2, lot 7 : statut réel de la justification (`null` pour un ancien pointage) et son libellé. */
+  justificationStatut: StatutJustificationPointage | null;
+  justification: string;
   motif: string | null;
+  decideePar: string | null;
 };
 
 export function ReportingSummaryTable({ data }: { data: AgregeData[] }) {
@@ -91,7 +97,19 @@ export function ReportingDetailsTable({ data }: { data: DetailsData[] }) {
           accessor: (r) => r.minutesRetard,
           render: (r) => <Badge variant="primary">{r.minutesRetard} min</Badge>
         },
+        {
+          key: "justification",
+          header: "Justification",
+          accessor: (r) => r.justification,
+          render: (r) =>
+            r.justificationStatut ? (
+              <Badge variant={VARIANTE_STATUT_JUSTIFICATION[r.justificationStatut]}>{r.justification}</Badge>
+            ) : (
+              "—"
+            ),
+        },
         { key: "motif", header: "Motif", accessor: (r) => r.motif || "-" },
+        { key: "decideePar", header: "Décidée par", accessor: (r) => r.decideePar || "-" },
       ]}
       data={data}
     />

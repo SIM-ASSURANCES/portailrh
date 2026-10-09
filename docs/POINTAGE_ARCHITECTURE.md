@@ -89,6 +89,8 @@ erDiagram
     User ||--o{ PlageAbsenceAutorisee : "plages autorisées"
     
     Pointage ||--o{ CorrectionPointage : "historique corrections"
+    Pointage ||--o| JustificationPointage : "justification (retard ou départ anticipé)"
+    User ||--o{ JustificationPointage : "justificationsDecidees"
     
     ParametrageHoraire {
         string id PK
@@ -98,6 +100,10 @@ erDiagram
         string heureFinApresMidi
         boolean isActive
         int delaiAlerteOubliDepartMinutes
+        int toleranceRetardMinutes
+        int delaiDemandeJustificationMinutes
+        int intervalleRelanceJustificationMinutes
+        int nombreMaxRelancesJustification
         boolean geolocalisationActive
         float bureauLatitude
         float bureauLongitude
@@ -121,6 +127,20 @@ erDiagram
         int geoDistance
         string userId FK
         string effectueParId FK
+    }
+
+    JustificationPointage {
+        string id PK
+        StatutJustificationPointage statut
+        string motif
+        datetime soumiseAt
+        int nombreEnvois
+        datetime dernierEnvoiAt
+        datetime clotureeAt
+        string decideurId FK
+        datetime decisionAt
+        string motifRefus
+        string pointageId FK
     }
 
     CorrectionPointage {
@@ -169,7 +189,7 @@ Enregistre chaque acte de présence.
 - `heurePrevue` : Heure théorique au moment du pointage (ex : `"07:45"` ou `"16:45"`), conservée pour l'historique même si les horaires de l'entreprise évoluent ultérieurement.
 - `estRetard` / `minutesRetard` : Flag et nombre de minutes de retard constatées par rapport à `heureDebutMatin`.
 - `estDepartAnticipe` : Détection si l'employé quitte le bureau avant `heureFinApresMidi`.
-- `motif` : Motif explicatif obligatoire en cas de retard ou de départ anticipé.
+- `motif` : Ancien motif saisi au moment du pointage, **conservé pour l'historique uniquement**. Depuis le Pointage V2 (lot 3), le pointage s'enregistre sans motif : le motif d'un retard ou d'un départ anticipé vit dans `JustificationPointage`. Les écrans RH et le reporting lisent la justification, avec repli sur ce champ pour les pointages antérieurs (`justificationAffichee`, `backend/src/justificationPointage.ts`).
 - Données géographiques : `geoLatitude`, `geoLongitude`, `geoPrecision`, `geoDistance` (stockés uniquement en cas de validation GPS).
 - `effectueParId` : Null si le collaborateur a pointé lui-même ; contient l'ID du gestionnaire RH s'il s'agit d'un pointage exceptionnel.
 
@@ -181,6 +201,15 @@ Singleton de configuration actif (`isActive: true`).
 - `geolocalisationActive` (booléen) : Interrupteur général du secours GPS.
 - `bureauLatitude` (`5.3628189`) / `bureauLongitude` (`-3.9374753`) : Coordonnées GPS du siège SIM Assurances.
 - `rayonAutorise` (défaut : `50` mètres, borné entre 30m et 200m).
+- `toleranceRetardMinutes` (défaut : `15`) : arrivée jusqu'à `heureDebutMatin` + tolérance **incluse** = à l'heure ; au-delà, retard compté depuis `heureDebutMatin` (`checkLateStatus`, `backend/src/pointage-utils.ts`, seule règle de retard).
+- `delaiDemandeJustificationMinutes` (`15`), `intervalleRelanceJustificationMinutes` (`30`), `nombreMaxRelancesJustification` (`3`, premier envoi compris) : pilotent les envois de la tâche planifiée (§6.5). Réglables par la RH (`/pointage/rh/horaires`).
+
+#### 2 bis. `JustificationPointage`
+Une par pointage en retard ou en départ anticipé, créée `EN_ATTENTE` dans la transaction du pointage.
+- `statut` : `EN_ATTENTE` (justification attendue) → `SOUMISE` (motif envoyé par le collaborateur) → `ACCEPTEE` ou `REFUSEE` (décision, refus avec `motifRefus` obligatoire). `NON_JUSTIFIEE` : clôture de fin de journée sans motif ; le collaborateur peut encore soumettre ensuite.
+- `decideurId` : le **responsable du service** du collaborateur ; **repli RH** (détenteurs de `pointage.corriger_pointage`) si le collaborateur est lui-même responsable de son service, est DG, ou si le service n'a pas de responsable actif.
+- `nombreEnvois`, `dernierEnvoiAt`, `clotureeAt` : état des envois, lu par la tâche planifiée pour ne jamais envoyer deux fois.
+- Libellés et couleurs uniques : `LIBELLE_STATUT_JUSTIFICATION` (backend) et `VARIANTE_STATUT_JUSTIFICATION` (frontend).
 
 #### 3. `CorrectionPointage`
 Registre d'audit obligatoire de toute modification opérée par les RH.
@@ -214,7 +243,7 @@ Le contrôle d'accès s'appuie sur le système de permissions fines géré par [
 | `pointage.consulter_historique` | Consulter son propre journal de pointage | Collaborateur, RH |
 | `pointage.consulter_tous` | Voir les pointages de l'ensemble des employés | RH, DG |
 | `pointage.pointage_exceptionnel` | Enregistrer un pointage au nom d'un tiers | RH |
-| `pointage.corriger_pointage` | Modifier l'heure d'un pointage avec motif | RH |
+| `pointage.corriger_pointage` | Modifier l'heure d'un pointage avec motif ; décider des justifications en repli du responsable de service (Pointage V2) | RH |
 | `pointage.gerer_horaires` | Modifier les horaires et la configuration GPS | RH |
 | `pointage.voir_dashboard_rh` | Accéder à la vue de présence en direct | RH, DG |
 | `pointage.voir_reporting` | Consulter les statistiques et générer les exports | RH, DG |
@@ -281,16 +310,17 @@ stateDiagram-v2
     
     state ArriveePossible {
         [*] --> CheckHeureArrivee
-        CheckHeureArrivee --> HeureNormale: Avant 07:45
-        CheckHeureArrivee --> RetardDetecte: Après 07:45
-        RetardDetecte --> SaisieMotifObligatoire: Motif >= 3 caractères requis
+        CheckHeureArrivee --> HeureNormale: Jusqu'à 07:45 + tolérance incluse
+        CheckHeureArrivee --> RetardDetecte: Au-delà de la tolérance
+        RetardDetecte --> JustificationEnAttente: Enregistré sans motif
     }
     
     state DepartPossible {
         [*] --> CheckHeureDepart
         CheckHeureDepart --> DepartNormal: Après 16:45
         CheckHeureDepart --> DepartAnticipeDetecte: Avant 16:45
-        DepartAnticipeDetecte --> SaisieMotifDepart: Motif >= 3 caractères requis
+        DepartAnticipeDetecte --> ConfirmationDepart: Confirmation explicite, sans motif
+        ConfirmationDepart --> JustificationEnAttente: Enregistré (refusé à moins de 30 min de l'arrivée)
     }
     
     ArriveePossible --> PointageEnregistre: Soumission
@@ -304,10 +334,11 @@ stateDiagram-v2
 1. **Ordre Chronologique Strict** : Impossible d'enregistrer un `DEPART` sans `ARRIVEE` préalable.
 2. **Unicité Quotidienne** : Maximum 1 arrivée et 1 départ par collaborateur et par date calendaire.
 3. **Péremption de la Journée** : Si un collaborateur tente de pointer son arrivée après l'heure de départ de référence (`16:45`), l'arrivée est refusée car la journée de travail est considérée comme échue (l'absence automatique prend le relais).
-4. **Justification des Anomalies** :
-   - Arrivée en retard : Champ motif obligatoire (`motif.trim().length >= 3`).
-   - Départ anticipé : Champ motif obligatoire (`motif.trim().length >= 3`).
-   - Les anomalies déclenchent une notification `IMPORTANT` envoyée aux RH (`/pointage/rh/presence`).
+4. **Justification des Anomalies (Pointage V2)** :
+   - Arrivée en retard : enregistrée immédiatement, **sans motif** (le scan pointe directement) ; une `JustificationPointage` `EN_ATTENTE` est créée dans la même transaction.
+   - Départ anticipé : jamais automatique, bouton puis confirmation explicite, sans motif ; refusé moins de 30 minutes après l'arrivée ; même circuit de justification.
+   - Le collaborateur justifie depuis `/pointage/justifier/[pointageId]` (lien reçu par email, push et notification interne ; retour après connexion validé par `cheminRetour.ts`, « Se souvenir de moi » coché par défaut sur ce lien).
+   - Le décideur (responsable du service, ou RH en repli) accepte ou refuse depuis `/pointage/justifications`.
 5. **Expérience Utilisateur Chaleureuse** : La fonction `getMessageDepart()` ([backend/src/pointage-utils.ts](file:///c:/Users/dmass/Documents/portailrh/backend/src/pointage-utils.ts)) adapte le message de confirmation :
    - Le vendredi : *"Pointage validé. Bon week-end et à lundi !"*
    - Du lundi au jeudi : *"Pointage validé. Bonne fin de journée et à demain !"*
@@ -319,7 +350,7 @@ stateDiagram-v2
 Le traitement des absences et anomalies est orchestré par le Route Handler [frontend/src/app/api/cron/absences/route.ts](file:///c:/Users/dmass/Documents/portailrh/frontend/src/app/api/cron/absences/route.ts), exécuté périodiquement via un orchestrateur de tâches (Vercel Cron, Dokploy Cron ou Crontab Linux).
 
 ### 6.1 Sécurisation de la Route
-La route exige un token Bearer dans l'en-tête `Authorization` correspondant à la variable secrète `CRON_SECRET`.
+La route exige un token Bearer dans l'en-tête `Authorization` correspondant à la variable secrète `CRON_SECRET` (contrôle partagé avec la route des relances de justification : `backend/src/cronAuth.ts`, `frontend/src/lib/cronAuth.ts`).
 
 ### 6.2 Algorithme de Détection des Absences
 
@@ -348,12 +379,19 @@ Les RH disposent sur l'écran `/pointage/rh/presence` d'un bouton d'action [Reco
 
 ---
 
+### 6.5 Demandes, relances et clôture des justifications (`/api/cron/relances-justification`)
+- Appelée **toutes les 5 minutes** (cron-job.org en production, `CRON_SECRET`, voir `DEPLOIEMENT.md` §7).
+- Pour chaque justification `EN_ATTENTE`, `prochaineActionJustification` (pure, `backend/src/justificationPointage.ts`) décide : premier envoi à `pointage + delaiDemandeJustificationMinutes` (collaborateur : `CRITIQUE` = interne + push + email ; décideur : `IMPORTANT`), rappels toutes les `intervalleRelanceJustificationMinutes` (collaborateur : `IMPORTANT`) jusqu'à `nombreMaxRelancesJustification` envois, puis clôture `NON_JUSTIFIEE` à `heureFinApresMidi` du jour du pointage, au moins un intervalle après le dernier envoi (décideur prévenu).
+- Écriture conditionnée à l'état lu : deux exécutions simultanées n'envoient jamais deux fois. Une tâche en panne rattrape au passage suivant.
+
 ## 7. Console & Boîte à Outils Métier RH
 
 La section d'administration RH sous `/pointage/rh` offre un ensemble complet d'écrans spécialisés :
 
 ### 7.1 Suivi des Présences en Temps Réel (`/pointage/rh/presence`)
-- Visualisation en direct sous forme d'onglets : **Tous**, **Présents**, **Retards**, **Absents**.
+- Visualisation en direct sous forme d'onglets : **Présents**, **Retards**, **Absents**, **Absence autorisée**, **Manquants**.
+- Onglet Retards : statut réel de la justification (badge, « par X » une fois décidée) et motif (`justificationAffichee` : motif de la justification, sinon ancien `Pointage.motif`). Départ anticipé : badge du statut sous l'heure de départ.
+- Absence autorisée : journée entièrement couverte par des `PlageAbsenceAutorisee` (`utilisateursCouvertsParAbsence` → `journeeCouverteParAbsence`, la règle du cron des absences) ; ces collaborateurs ne sont comptés ni absents ni manquants. Une permission partielle n'y figure pas.
 - Connecté en temps réel au flux Server-Sent Events : tout nouveau pointage s'affiche instantanément sans recharger la page.
 - Visualisation des détails GPS (coordonnées, distance calculée par rapport au bureau, précision du terminal).
 
@@ -382,7 +420,7 @@ Permet aux RH de saisir un pointage à la place d'un collaborateur (oubli de bad
 - Route de génération de fichier : [frontend/src/app/api/pointage/rh/reporting/export/route.ts](file:///c:/Users/dmass/Documents/portailrh/frontend/src/app/api/pointage/rh/reporting/export/route.ts) utilisant `exceljs`.
 - Export binaire au format `.xlsx` comprenant 2 feuilles formatées aux couleurs institutionnelles de SIM Assurances (`#004B9C`) :
   1. **Feuille Résumé** : Collaborateur, Service, Jours travaillés, Présences, Absences, Jours de retard, Minutes totales de retard.
-  2. **Feuille Détails des Retards** : Date, Collaborateur, Heure prévue, Heure réelle constatée, Minutes de retard, Motif fourni.
+  2. **Feuille Détails des Retards** : Date, Collaborateur, Heure prévue, Heure réelle constatée, Minutes de retard, Justification (statut), Motif (justification, sinon ancien motif), Décidée par (seulement si acceptée ou refusée). Mêmes colonnes et mêmes valeurs à l'écran (`getDetailsRetards`, `backend/src/pointageReporting.ts`).
 
 ---
 
@@ -507,7 +545,7 @@ Les variables d'environnement requises pour le module de pointage et les notific
 DATABASE_URL="postgresql://user:password@localhost:5432/sim_portail?schema=public"
 
 # ── SÉCURITÉ DU CRON ──
-# Jeton secret obligatoire pour autoriser l'exécution de /api/cron/absences
+# Jeton secret obligatoire pour autoriser l'exécution de /api/cron/absences et /api/cron/relances-justification
 CRON_SECRET="votre_cle_secrete_cron_robuste"
 SYSTEM_START_DATE="2026-09-07"
 

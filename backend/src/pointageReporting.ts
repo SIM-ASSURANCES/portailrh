@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { Prisma } from "./generated/prisma/client";
 import { z } from "zod";
+import { justificationAffichee } from "./justificationPointage";
 
 export const pointageReportingSchema = z.object({
   dateDebut: z.string().optional(),
@@ -180,6 +181,8 @@ export async function getDetailsRetards(filters: PointageReportingFilters, skip 
       user: {
         select: { fullName: true, service: { select: { name: true } } },
       },
+      // Pointage V2, lot 7 : statut réel de la justification, son motif et l'auteur de la décision.
+      justification: { select: { statut: true, motif: true, decideur: { select: { fullName: true } } } },
     },
     orderBy: { heure: "desc" },
     skip,
@@ -189,16 +192,23 @@ export async function getDetailsRetards(filters: PointageReportingFilters, skip 
   const total = await prisma.pointage.count({ where });
 
   return {
-    data: retards.map((r) => ({
-      id: r.id,
-      collaborateur: r.user.fullName,
-      service: r.user.service?.name ?? null,
-      date: r.heure,
-      heurePrevue: r.heurePrevue,
-      heureReelle: r.heure,
-      minutesRetard: r.minutesRetard,
-      motif: r.motif,
-    })),
+    data: retards.map((r) => {
+      // Une seule source pour l'écran et l'export : statut réel, motif (justification, sinon ancien motif), décidée par.
+      const j = justificationAffichee({ motif: r.motif, justification: r.justification });
+      return {
+        id: r.id,
+        collaborateur: r.user.fullName,
+        service: r.user.service?.name ?? null,
+        date: r.heure,
+        heurePrevue: r.heurePrevue,
+        heureReelle: r.heure,
+        minutesRetard: r.minutesRetard,
+        justificationStatut: j.statut,
+        justification: j.libelle,
+        motif: j.motif,
+        decideePar: j.decideePar,
+      };
+    }),
     total,
   };
 }
