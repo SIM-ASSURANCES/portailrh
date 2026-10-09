@@ -208,6 +208,17 @@ describe("libelleValidation", () => {
   it("renvoi en correction : niveau lu dans le détail", () => {
     expect(libelleValidation("renvoi_correction", "Service → À corriger — niveau Service — motif : x")?.niveau).toBe("Service");
   });
+  it("soumission et décisions du DG ligne par ligne (2026-10-10)", () => {
+    expect(libelleValidation("soumission_lignes_dg", "Finance → DG — 2 lignes sur 3 soumises au DG : « A », « B »")).toEqual({
+      niveau: "Finance",
+      libelle: "2 lignes sur 3 soumises au DG : « A », « B »",
+    });
+    expect(libelleValidation("refus_ligne_dg", "DG — ligne « B » refusée — motif : trop cher — DG → Décision finale")).toEqual({
+      niveau: "DG",
+      libelle: "ligne « B » refusée — motif : trop cher",
+    });
+    expect(libelleValidation("validation_ligne_dg", "DG — ligne « A » validée")?.libelle).toBe("ligne « A » validée");
+  });
   it("action hors validation : ignorée", () => {
     expect(libelleValidation("reglement", null)).toBeNull();
   });

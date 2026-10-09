@@ -20,6 +20,7 @@ import {
 
 import { LignesValidationTable } from "../../finance/demandes/[id]/LignesValidationTable";
 import { ValidationActions } from "../../finance/demandes/[id]/ValidationActions";
+import { DecisionLignesDG } from "./DecisionLignesDG";
 import { DgDecisionActions } from "./DgDecisionActions";
 
 /**
@@ -41,7 +42,16 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
       createur: { select: { fullName: true, service: { select: { name: true } } } },
       beneficiaireUser: true,
       pieces: true,
-      lignes: { orderBy: { createdAt: "asc" }, include: { decidePar: true, categorie: true, objet: true } },
+      lignes: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          decidePar: true,
+          categorie: true,
+          objet: true,
+          decisionDGPar: { select: { fullName: true } },
+          soumiseDGPar: { select: { fullName: true } },
+        },
+      },
     },
   });
   if (!demande) notFound();
@@ -50,6 +60,9 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
   const acteur = await chargerActeur(prisma, session, demande.createurId);
   const decisionParLigne = demande.modeEtapeDG === "OBLIGATOIRE";
   const raisonDecider = raisonIndisponible(demandeCircuit, acteur, "DECIDER_LIGNES");
+  // Soumission au DG ligne par ligne (2026-10-10) : le DG ne voit et ne décide que les lignes soumises par la Finance.
+  const soumissionParLignes = demande.lignes.length > 0 && demande.typeDemande === "STANDARD" && demande.modeEtapeDG === "OPTIONNELLE";
+  const lignesSoumises = demande.lignes.filter((l) => l.soumiseAuDG);
   const devise = demande.devise === "XOF" ? "FCFA" : demande.devise;
 
   return (
@@ -150,6 +163,25 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           objets={[]}
           budgetParCategorie={{}}
         />
+      ) : soumissionParLignes ? (
+        <DecisionLignesDG
+          devise={devise}
+          raisonDecider={raisonIndisponible(demandeCircuit, acteur, "DECIDER_LIGNE_DG")}
+          lignes={lignesSoumises.map((l) => ({
+            id: l.id,
+            libelle: l.libelle,
+            motif: l.motif,
+            quantite: l.quantite,
+            prixUnitaire: Number(l.prixUnitaire),
+            categorieLabel: l.categorie?.label ?? null,
+            objetLabel: l.objet?.label ?? null,
+            decisionDG: l.decisionDG,
+            decisionDGParNom: l.decisionDGPar?.fullName ?? null,
+            decisionDGAt: l.decisionDGAt,
+            motifRefusDG: l.motifRefusDG,
+            soumiseParNom: l.soumiseDGPar?.fullName ?? null,
+          }))}
+        />
       ) : demande.lignes.length > 0 ? (
         <section aria-label="Articles demandés" className="space-y-3 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Articles demandés</h2>
@@ -195,7 +227,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
             refusDemandeSansCategorie(demande) ? `${refusDemandeSansCategorie(demande)} La catégorie est renseignée par la Finance.` : null
           }
         />
-      ) : (
+      ) : soumissionParLignes ? null : (
         <DgDecisionActions
           demandeId={demande.id}
           decisionParLigne={decisionParLigne}

@@ -50,6 +50,10 @@ const ACTION_LABELS: Record<string, string> = {
   resoumission_dg: "Resoumise au DG",
   validation_dg: "Validée par le DG",
   rejet_dg: "Rejetée par le DG",
+  // Soumission au DG ligne par ligne (2026-10-10).
+  soumission_lignes_dg: "Lignes soumises au DG",
+  validation_ligne_dg: "Ligne validée par le DG",
+  refus_ligne_dg: "Ligne refusée par le DG",
   decision_circuit: "Décision finale",
   correction_demande: "Version avant correction",
   resoumission_correction: "Corrigée et resoumise",

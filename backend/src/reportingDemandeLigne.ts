@@ -169,6 +169,15 @@ export function libelleValidation(action: string, detail: string | null): { nive
     case "soumission_dg":
     case "resoumission_dg":
       return { niveau: "Finance", libelle: "soumise au DG" };
+    // Soumission au DG ligne par ligne (2026-10-10) : le détail porte déjà les lignes concernées.
+    case "soumission_lignes_dg":
+      return { niveau: "Finance", libelle: detail?.split(" → DG — ")[1] ?? "lignes soumises au DG" };
+    case "validation_ligne_dg":
+    case "refus_ligne_dg":
+      return {
+        niveau: "DG",
+        libelle: (detail?.replace(/^DG — /, "").split(" — DG → ")[0]) ?? (action === "validation_ligne_dg" ? "ligne validée" : "ligne refusée"),
+      };
     case "validation_dg":
       return { niveau: "DG", libelle: "validée" };
     case "rejet_dg":

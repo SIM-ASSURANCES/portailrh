@@ -2626,6 +2626,49 @@ Aucune migration, aucun droit ni garde de conflit d'intérêts modifié, aucune 
   reçu 200/403/404, Assistant bénéficiaire grisé, reporting et export sur une ligne par demande, filtre bénéficiaire,
   mobile 390 px).
 
+#### Soumission au DG ligne par ligne (2026-10-10, suite des retouches)
+
+Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permission créés) : `LigneDemande.soumiseAuDG`,
+`soumiseDGAt`/`soumiseDGParId`, `decisionDG` (enum `DecisionLigneDG` : VALIDEE/REFUSEE, `null` = en attente du DG),
+`decisionDGAt`/`decisionDGParId`, `motifRefusDG`. La décision finale de la ligne reste `statutValidation`.
+- **Règles** (moteur pur `circuitDemande.ts`, tests `circuitLignesDG.test.ts`) : à l'étape Finance (ou à la décision
+  finale, ou pendant que le DG décide), la Finance (`treso.soumettre_dg`) soumet les lignes choisies
+  (`SOUMETTRE_LIGNES_DG`, catégorie obligatoire, `refusSoumissionLignes`) ; la demande passe ou reste à l'étape DG. Le DG
+  (`treso.decider_dg`) ne voit et ne décide que les lignes soumises, une par une (`DECIDER_LIGNE_DG`, motif ≥ 3 au refus) ;
+  la dernière décidée passe la demande à la décision finale. Une ligne refusée revient à la Finance : resoumise, ou
+  refusée définitivement à la décision finale. **DG définitif** (décision du 2026-10-10, `refusDecisionsFinales`) : une
+  ligne validée par le DG reste validée (son auteur et sa date sont gardés), une ligne refusée par le DG n'est jamais
+  validée par la Finance seule, et la Finance ne rejette plus la demande entière dès qu'une ligne est validée par le DG.
+  **Décision finale bloquée** tant qu'une ligne soumise attend le DG (`MESSAGE_LIGNES_EN_ATTENTE_DG`). Deux personnes :
+  un compte qui a décidé une ligne comme DG ne prend pas la décision finale. Catégorie d'une ligne soumise (en attente ou
+  validée) verrouillée.
+- **Clôture (règle 5, un seul endroit)** : `approbateurClotureParLignesDG` + constante
+  `APPROBATION_CLOTURE_SI_TOUTES_LIGNES_VALIDEES_PAR_DG` — la décision finale vaut approbation de clôture du DG (au nom
+  du DG qui a validé) seulement si toutes les lignes validées l'ont été par le DG ; sinon le DG l'approuve à la fin.
+- **Inchangés** : cas b (DG obligatoire, il décide toutes les lignes d'un coup, `validerLignesAction`), dépense directe
+  sans ligne (soumission et décision de la demande entière, étape « Rejet DG »), garde 8, rappels (48 h puis 24 h ; une
+  soumission complémentaire à l'étape DG ne change pas `etapeCircuitDepuis`).
+- **Base** (`circuitDemandeDb.ts`) : `soumettreLignesAuDG`, `deciderLigneDG`, verrou `SELECT … FOR UPDATE` sur la demande
+  (aussi dans `appliquerTransitionCircuit`) pour que deux décisions simultanées ne manquent jamais le passage à la
+  décision finale. Actions `soumettreLignesAuDGAction` / `deciderLigneDGAction` (`treso/circuit/actions.ts`), tout refus
+  annule la transaction. Historique : `soumission_lignes_dg`, `validation_ligne_dg`, `refus_ligne_dg` (visibles du
+  collaborateur, comme `soumission_dg`).
+- **Écrans** : Finance (`LignesValidationTable` : état DG par ligne, cases « Soumettre / Resoumettre au DG », décisions
+  verrouillées selon le DG ; plus de bouton « Soumettre au DG » de la demande entière), DG (`DecisionLignesDG` : lignes
+  soumises seulement), frise (« 2 lignes sur 4 soumises · 1 en attente… », `detailLignesDG`).
+- **Notifications** : le DG à chaque soumission ; la Finance qui peut agir (`decider_finance` ou `soumettre_dg`) à chaque
+  refus (`notificationRefusLigneDG`) — le refus de la dernière ligne en attente n'envoie que la notification de décision
+  finale (décompte validées/refusées), jamais deux.
+- **Rattrapage** (décision du 2026-10-10, selon l'étape) des demandes soumises par l'ancien circuit : toutes leurs lignes
+  « soumises » ; étape DG : en attente ; décision finale : validées par le DG (auteur et date de son approbation) ; rejet
+  DG : refusées (motif du rejet) et la demande passe à la décision finale ; terminées : historique seulement.
+- Reporting : colonne « Validations » complétée par ces actions (sinon incomplète). `supprimerUtilisateurAction` compte
+  les 2 nouvelles relations vers `User`.
+- Vérifié : vitest (31 tests, 396 au total), tsc, eslint, `next build` ; migration depuis zéro (72) et sur une base dans
+  l'ancien état (rattrapage contrôlé ligne par ligne, rejeu sans effet), `migrate diff` vide ; Playwright 39/39
+  (soumission partielle, refus puis resoumission, blocage et refus serveur de la décision finale, DG définitif côté
+  serveur, clôture mixte et tout-DG, notifications, historique, mobile 390 px).
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié

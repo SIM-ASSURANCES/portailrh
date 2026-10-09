@@ -67,6 +67,8 @@ model User {
   /// Finance — `validerLignesAction` (voir CLAUDE.md "Validation ligne par
   /// ligne").
   lignesDemandeDecidees         LigneDemande[]    @relation("LigneDemandeDecideur")
+  lignesSoumisesAuDG            LigneDemande[]    @relation("LigneDemandeSoumiseDGPar")
+  lignesDecideesParDG           LigneDemande[]    @relation("LigneDemandeDecisionDGPar")
   /// Signalements d'erreur sur un retour de caisse — voir CLAUDE.md
   /// "Signalement d'erreur par le Collaborateur".
   signalementsRetourEmis        SignalementRetour[] @relation("SignalementRetourSignalePar")
@@ -387,6 +389,12 @@ enum StatutLigneDemande {
   EN_ATTENTE
   VALIDEE
   REJETEE
+}
+
+/// Décision du DG sur une ligne soumise par la Finance (2026-10-10). `null` sur la ligne = en attente du DG.
+enum DecisionLigneDG {
+  VALIDEE
+  REFUSEE
 }
 
 /// Type de bénéficiaire d'une Demande — distinct du Demandeur (créateur).
@@ -741,6 +749,20 @@ model LigneDemande {
   decideParId      String?
   decidePar        User?              @relation("LigneDemandeDecideur", fields: [decideParId], references: [id])
   decideAt         DateTime?
+
+  /// Soumission de la ligne au DG par la Finance (2026-10-10, `treso.soumettre_dg`) : seules les lignes soumises sont
+  /// vues et décidées par le DG. Une ligne refusée par le DG revient à la Finance (resoumission ou refus définitif).
+  /// La décision finale de la ligne reste `statutValidation`, posée à la décision finale de la Finance.
+  soumiseAuDG      Boolean            @default(false)
+  soumiseDGAt      DateTime?
+  soumiseDGParId   String?
+  soumiseDGPar     User?              @relation("LigneDemandeSoumiseDGPar", fields: [soumiseDGParId], references: [id])
+  /// `null` tant que la ligne soumise attend le DG.
+  decisionDG       DecisionLigneDG?
+  decisionDGAt     DateTime?
+  decisionDGParId  String?
+  decisionDGPar    User?              @relation("LigneDemandeDecisionDGPar", fields: [decisionDGParId], references: [id])
+  motifRefusDG     String?
 
   demandeId String
   demande   Demande @relation(fields: [demandeId], references: [id])

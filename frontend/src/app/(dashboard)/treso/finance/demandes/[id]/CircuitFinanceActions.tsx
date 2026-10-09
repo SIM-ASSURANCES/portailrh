@@ -25,6 +25,7 @@ export function CircuitFinanceActions({
   raisonSoumettre,
   raisonRejeter,
   raisonResoumettre,
+  soumissionParLignes = false,
 }: {
   demandeId: string;
   /** Étape « Rejet DG » : actions de retour (resoumettre, renvoyer au demandeur). */
@@ -34,6 +35,8 @@ export function CircuitFinanceActions({
   raisonSoumettre: string | null;
   raisonRejeter: string | null;
   raisonResoumettre: string | null;
+  /** Soumission au DG ligne par ligne (2026-10-10) : elle se fait depuis le tableau des lignes, pas de bouton ici. */
+  soumissionParLignes?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [rejetOuvert, setRejetOuvert] = useState(false);
@@ -56,7 +59,8 @@ export function CircuitFinanceActions({
   const libelleRejet = apresRejetDG ? "Rejeter vers le collaborateur" : "Rejeter la demande";
   // Une seule phrase : celle du bouton principal, sinon celle du rejet (souvent la même étape d'attente).
   const raison =
-    (apresRejetDG ? raisonResoumettre : raisonSoumettre) ?? (afficherRejet || apresRejetDG ? raisonRejeter : null);
+    (apresRejetDG ? raisonResoumettre : soumissionParLignes ? null : raisonSoumettre) ??
+    (afficherRejet || apresRejetDG ? raisonRejeter : null);
 
   return (
     <section aria-label="Décision de la Finance" className="space-y-3 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
@@ -73,7 +77,7 @@ export function CircuitFinanceActions({
           >
             Resoumettre au DG
           </Button>
-        ) : (
+        ) : soumissionParLignes ? null : (
           <Button
             type="button"
             variant="secondary"
