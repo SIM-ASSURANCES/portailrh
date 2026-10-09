@@ -1,8 +1,9 @@
 import Link from "next/link";
 
 import { Badge, Button } from "@/components/ui";
-import { prisma } from "backend";
+import { calculerMontantARetournerNet, prisma } from "backend";
 
+import { DetaillerDepensesReglement } from "./DetaillerDepensesReglement";
 import { RetourAssistantTrigger } from "./RetourAssistantTrigger";
 
 /**
@@ -45,12 +46,17 @@ export async function RetoursCaisseFinanceSection({
   if (reglements.length === 0) {
     return null;
   }
+  // Détail sans retour de caisse (2026-10-10) : montant remis restant à expliquer par règlement (même calcul qu'une
+  // déclaration de retour).
+  const disponibles = await Promise.all(
+    reglements.map((r) => calculerMontantARetournerNet({ reglementId: r.id, totalDepensesNouvelles: 0 }))
+  );
 
   return (
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
       <h2 className="text-sm font-semibold text-foreground">Retours de caisse</h2>
       <ul className="space-y-4">
-        {reglements.map((r) => {
+        {reglements.map((r, index) => {
           const aUnRetourEnAttente = r.retours.some((retour) => !retour.estReceptionne);
           return (
             <li key={r.id} className="space-y-3 rounded-md border border-border p-3">
@@ -78,7 +84,9 @@ export async function RetoursCaisseFinanceSection({
               ) : (
                 <p className="text-xs text-muted-foreground">Aucun retour déclaré pour l&apos;instant.</p>
               )}
-              {!aUnRetourEnAttente && canDeclarerAssistant ? (
+              {!aUnRetourEnAttente && canDeclarerAssistant && r.mode === "CAISSE" && !demandeEstCloturee ? (
+                <DetaillerDepensesReglement reglementId={r.id} disponible={disponibles[index]} raisonIndisponible={raisonIndisponible} />
+              ) : !aUnRetourEnAttente && canDeclarerAssistant ? (
                 <RetourAssistantTrigger
                   reglementId={r.id}
                   montantReglement={Number(r.montant)}

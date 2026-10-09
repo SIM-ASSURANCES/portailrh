@@ -5,6 +5,9 @@ import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { detailMontantDefinitif, etatRetourAffiche } from "@/lib/retourAffichage";
 import {
+  calculerMontantARetournerNet,
+  estFicheRegularisation,
+  estLigneReste,
   estRetourNul,
   getCouvertureRetoursPostCloture,
   getMontantsDefinitifsRetours,
@@ -13,6 +16,7 @@ import {
   refusExecutionPropreDemande,
 } from "backend";
 
+import { DepenseLigneEdition } from "./DepenseLigneEdition";
 import { DetaillerDepensesForm } from "./DetaillerDepensesForm";
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
 import { JustifierApresReception } from "./JustifierApresReception";
@@ -106,6 +110,11 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
   const cloturéeSansException = retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle;
   const bloqueParReception = retour.estReceptionne && !signalementActif;
   const peutDetailler = !cloturéeSansException && !bloqueParReception;
+  // Fiche de régularisation (détail sans retour, 2026-10-10) : total libre, borné par le montant remis restant à expliquer.
+  const fiche = estFicheRegularisation({ ...retour, mode: retour.reglement.mode });
+  const disponibleFiche = fiche
+    ? await calculerMontantARetournerNet({ reglementId: retour.reglementId, totalDepensesNouvelles: 0, excludeRetourId: retour.id })
+    : 0;
   const lignesInitiales: LigneDetailInput[] = retour.depenses
     .filter((d) => !(d.objet === "Dépenses non détaillées" && !d.motifNonJustifie))
     .map((d) => ({
@@ -316,7 +325,8 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
               <DetaillerDepensesForm
                 key={JSON.stringify(lignesInitiales.map((l) => [l.libelle, l.montant, l.justifiee]))}
                 retourId={retour.id}
-                montantCible={totalDeclare}
+                libre={fiche}
+                montantCible={fiche ? disponibleFiche : totalDeclare}
                 lignesInitiales={lignesInitiales}
               />
             </div>
@@ -357,6 +367,20 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
                   ) : null}
                   {peutAgirRetour && retour.estReceptionne && !cloturéeSansException && d.justification === "SANS_PIECE" && d.motifNonJustifie ? (
                     <JustifierApresReception depenseLigneId={d.id} />
+                  ) : null}
+                  {/* Correction ou suppression d'une dépense détaillée (2026-10-10), motif obligatoire, tant que la demande
+                      n'est pas clôturée (réouverture exceptionnelle : règle existante). */}
+                  {peutAgirRetour && !cloturéeSansException && !estLigneReste(d) ? (
+                    <DepenseLigneEdition
+                      depense={{
+                        id: d.id,
+                        libelle: d.objet,
+                        montant: Number(d.montant),
+                        justifiee: d.justification !== "SANS_PIECE",
+                        motifNonJustifie: d.motifNonJustifie,
+                        aPieceJointe: !!d.pieceJointe,
+                      }}
+                    />
                   ) : null}
                 </li>
               ))}

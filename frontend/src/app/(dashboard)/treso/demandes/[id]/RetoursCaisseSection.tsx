@@ -1,5 +1,6 @@
 import {
   calculerMontantARetournerNet,
+  estFicheRegularisation,
   getCouvertureRetoursPostCloture,
   getDateDernierReglementConfirme,
   getMontantsDefinitifsRetours,
@@ -101,6 +102,8 @@ export async function RetoursCaisseSection({
               peutSignaler: peutDeclarer || !!retour.motifReouvertureExceptionnelle,
               dateRetour: retour.dateRetour,
               creeParAssistant: retour.creeParAssistant,
+              // Fiche de régularisation de l'Assistant (détail sans retour) : la déclaration du collaborateur la complète.
+              estFiche: estFicheRegularisation({ ...retour, mode: r.mode }),
               // Modification (avant réception) réservée au déclarant
               // original — cohérent avec la déclaration elle-même. Un
               // retour créé par l'Assistant Finance (declarantId = son

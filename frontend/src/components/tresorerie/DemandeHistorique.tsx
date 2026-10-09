@@ -28,6 +28,9 @@ const ACTION_LABELS: Record<string, string> = {
   modification_retour: "Retour de caisse modifié",
   reception_retour: "Retour de caisse réceptionné",
   retour_nul_constate: "Retour nul constaté (rien à rendre)",
+  // Correction d'une dépense détaillée par l'Assistant Finance (2026-10-10) : avant/après et motif dans le détail.
+  modification_depense: "Dépense modifiée",
+  suppression_depense: "Dépense supprimée",
   // Tâche "L'Assistant Finance déclare les dépenses sur toute demande,
   // retour ou pas" (voir CLAUDE.md) — l'Assistant se substitue au
   // collaborateur absent, sur une demande encore active.

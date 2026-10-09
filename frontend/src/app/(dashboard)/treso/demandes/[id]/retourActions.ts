@@ -8,6 +8,7 @@ import { publishDataChanged } from "@/lib/eventBus";
 import { notifyByPermission } from "@/lib/notifications";
 import {
   calculerMontantARetournerNet,
+  estFicheRegularisation,
   getDateDernierReglementConfirme,
   MESSAGE_RIEN_A_RENDRE,
   prisma,
@@ -160,8 +161,12 @@ export async function creerRetourCaisseAction(
     };
   }
   // Tâche "Retours multiples autorisés sur une même demande" : jamais deux
-  // retours EN ATTENTE simultanément sur le même règlement.
-  if (reglement.retours.some((r) => !r.estReceptionne)) {
+  // retours EN ATTENTE simultanément sur le même règlement — sauf la fiche de régularisation de l'Assistant Finance
+  // (détail renseigné sans retour, 2026-10-10), que cette déclaration vient compléter.
+  const enAttente = reglement.retours.filter((r) => !r.estReceptionne);
+  const ficheEnAttente =
+    enAttente.length === 1 && estFicheRegularisation({ ...enAttente[0], mode: reglement.mode }) ? enAttente[0] : null;
+  if (enAttente.length > 0 && !ficheEnAttente) {
     return {
       status: "error",
       message: "Un retour est déjà en attente de réception pour ce règlement : attendez qu'il soit traité avant d'en déclarer un nouveau.",
@@ -189,6 +194,10 @@ export async function creerRetourCaisseAction(
         message: `La date du retour ne peut pas être antérieure au dernier règlement confirmé sur cette demande (${dateDernierReglement.toLocaleDateString("fr-FR")}).`,
       };
     }
+  }
+
+  if (ficheEnAttente) {
+    return completerFicheRegularisation(ficheEnAttente.id, reglement, parsedMontant.data, parsedDateRetour.data, session.user.id);
   }
 
   const montantDepense = Math.max(0, Number(reglement.montant) - parsedMontant.data);
@@ -259,6 +268,74 @@ export async function creerRetourCaisseAction(
     status: "success",
     message: `Retour de caisse déclaré : ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner.`,
   };
+}
+
+/**
+ * Le collaborateur déclare son retour alors que l'Assistant Finance a déjà détaillé les dépenses sans retour (fiche de
+ * régularisation, 2026-10-10) : sa déclaration complète la fiche. Il ne peut pas rendre plus que ce qui n'est pas déjà
+ * expliqué par le détail ; la part ni détaillée ni rendue devient « Dépenses non détaillées », comme dans une
+ * déclaration simplifiée. Montant à rendre = même calcul (`calculerMontantARetournerNet`). Aucune écriture de caisse ici
+ * (elle viendra à la réception).
+ */
+async function completerFicheRegularisation(
+  ficheId: string,
+  reglement: { id: string; demandeId: string; demande: { reference: string } },
+  montantRetourne: number,
+  dateRetour: string,
+  userId: string
+): Promise<SimpleActionResult> {
+  const fiche = await prisma.retourCaisse.findUnique({ where: { id: ficheId }, include: { depenses: true } });
+  if (!fiche) return { status: "error", message: "Retour de caisse introuvable." };
+  const disponible = await calculerMontantARetournerNet({ reglementId: reglement.id, totalDepensesNouvelles: 0, excludeRetourId: ficheId });
+  const detaille = fiche.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
+  const maxRetour = Math.round((disponible - detaille) * 100) / 100;
+  if (Math.round(montantRetourne * 100) > Math.round(maxRetour * 100)) {
+    return {
+      status: "error",
+      message: `Vous ne pouvez pas déclarer plus de ${maxRetour.toLocaleString("fr-FR")} FCFA : l'équipe Finance a déjà détaillé ${detaille.toLocaleString("fr-FR")} FCFA de dépenses sur ce règlement.`,
+    };
+  }
+  const nonExplique = Math.round((maxRetour - montantRetourne) * 100) / 100;
+  const lignes = construireLigneSynthetique(nonExplique, new Date(dateRetour));
+  const montantARetourner = await calculerMontantARetournerNet({
+    reglementId: reglement.id,
+    totalDepensesNouvelles: detaille + nonExplique,
+    excludeRetourId: ficheId,
+  });
+
+  const maj = await prisma.$transaction(async (tx) => {
+    // Conditionné : la fiche n'a été ni réceptionnée ni complétée entre-temps.
+    const { count } = await tx.retourCaisse.updateMany({
+      where: { id: ficheId, estReceptionne: false, dateRetour: null },
+      data: { montantARetourner, dateRetour: new Date(dateRetour) },
+    });
+    if (count === 0) return false;
+    for (const l of lignes) await tx.depenseLigne.create({ data: { retourCaisseId: ficheId, ...l } });
+    await tx.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: reglement.demandeId,
+        action: "declaration_retour",
+        detail: `Retour de caisse déclaré : ${montantRetourne.toLocaleString("fr-FR")} FCFA retournés (dépenses déjà détaillées par la Finance : ${detaille.toLocaleString("fr-FR")} FCFA${nonExplique > 0 ? `, ${nonExplique.toLocaleString("fr-FR")} FCFA de solde non détaillé` : ""}), ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner`,
+        userId,
+      },
+    });
+    return true;
+  });
+  if (!maj) return { status: "error", message: "Ce retour a changé entre-temps : rechargez la page." };
+
+  revalidatePath(`/treso/demandes/${reglement.demandeId}`);
+  revalidatePath("/treso/demandes");
+  revalidatePath("/treso/finance", "layout");
+  publishDataChanged();
+  await notifyByPermission("treso.receptionner_retour", {
+    titre: "Retour de caisse à réceptionner",
+    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}.`,
+    lien: "/treso/finance/retours",
+    priority: "IMPORTANT",
+    category: "TRESORERIE",
+  });
+  return { status: "success", message: `Retour de caisse déclaré : ${montantARetourner.toLocaleString("fr-FR")} FCFA à retourner.` };
 }
 
 /**

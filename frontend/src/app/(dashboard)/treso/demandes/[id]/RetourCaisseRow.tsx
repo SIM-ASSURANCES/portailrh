@@ -45,6 +45,8 @@ export interface RetourData {
    * blocage : ses pièces jointes restent consultables comme n'importe
    * quel autre retour. */
   creeParAssistant: boolean;
+  /** Fiche de régularisation (détail renseigné par l'Assistant sans retour) : ne bloque pas la déclaration. */
+  estFiche?: boolean;
   /** Non réceptionné, demande non clôturée, ET utilisateur connecté = déclarant original. */
   peutModifier: boolean;
   /** Même condition que la garde serveur de `signalerErreurRetourAction` : demande non clôturée, ou retour en réouverture exceptionnelle. */
@@ -291,7 +293,7 @@ export function RetourCaisseRow({
 }: RetourCaisseRowData) {
   const [formOpen, setFormOpen] = useState(false);
 
-  const aUnRetourEnAttente = retours.some((r) => !r.estReceptionne);
+  const aUnRetourEnAttente = retours.some((r) => !r.estReceptionne && !r.estFiche);
 
   return (
     <li className="space-y-3 rounded-md border border-border p-4">
@@ -307,7 +309,7 @@ export function RetourCaisseRow({
           </p>
         ) : peutDeclarer ? (
           <Button type="button" onClick={() => setFormOpen(true)}>
-            {retours.length === 0 ? "Déclarer un retour de caisse" : "Déclarer un nouveau retour de caisse"}
+            {retours.every((r) => r.estFiche) ? "Déclarer un retour de caisse" : "Déclarer un nouveau retour de caisse"}
           </Button>
         ) : retours.length === 0 ? (
           <Badge variant="neutral">Non déclaré</Badge>

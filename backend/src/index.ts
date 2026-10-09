@@ -26,6 +26,7 @@ export * from "./motifLigne";
 export * from "./categorisationObligatoire";
 export * from "./retourNul";
 export * from "./reportingDemandeLigne";
+export * from "./regularisationDepenses";
 export * from "./feedback";
 export * from "./reinitialisation";
 

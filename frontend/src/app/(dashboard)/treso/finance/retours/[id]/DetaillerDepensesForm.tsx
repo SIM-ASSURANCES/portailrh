@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
-import { detaillerDepensesRetourAction, type LigneDetailInput } from "../retourActions";
+import { detaillerDepensesReglementAction, detaillerDepensesRetourAction, type LigneDetailInput } from "../retourActions";
 
 type LigneEdit = LigneDetailInput & { key: string };
 
@@ -38,12 +38,18 @@ function nouvelleLigne(): LigneEdit {
  */
 export function DetaillerDepensesForm({
   retourId,
+  reglementId,
+  libre = false,
   montantCible,
   lignesInitiales,
   onCancel,
   onSuccess,
 }: {
-  retourId: string;
+  /** Retour existant à détailler ; sinon `reglementId` : détail sans retour (fiche de régularisation, 2026-10-10). */
+  retourId?: string;
+  reglementId?: string;
+  /** Fiche de régularisation : `montantCible` est le montant remis restant à expliquer, le reste est à rendre. */
+  libre?: boolean;
   montantCible: number;
   lignesInitiales: LigneDetailInput[];
   onCancel?: () => void;
@@ -115,7 +121,9 @@ export function DetaillerDepensesForm({
         justifiee: l.justifiee,
         motif: l.justifiee ? undefined : l.motif!.trim(),
       }));
-      const result = await detaillerDepensesRetourAction(retourId, payload);
+      const result = retourId
+        ? await detaillerDepensesRetourAction(retourId, payload)
+        : await detaillerDepensesReglementAction(reglementId!, payload);
       if (result.status === "success") {
         toast.success(result.message);
         setEnregistre({ nombre: lignes.length, total: totalSaisi });
@@ -131,11 +139,19 @@ export function DetaillerDepensesForm({
 
   return (
     <div className="animate-fade-in-up w-full space-y-4 rounded-md border border-border p-4">
-      <p className="text-xs text-muted-foreground">
-        Montant total déclaré par le collaborateur :{" "}
-        <span className="font-semibold text-foreground">{montantCible.toLocaleString("fr-FR")} FCFA</span> — répartissez-le
-        en une ou plusieurs entrées (la somme ne peut pas le dépasser).
-      </p>
+      {libre ? (
+        <p className="text-xs text-muted-foreground">
+          Montant remis restant à expliquer :{" "}
+          <span className="font-semibold text-foreground">{montantCible.toLocaleString("fr-FR")} FCFA</span> — détaillez
+          les dépenses (la somme ne peut pas le dépasser) ; ce qui n&apos;est pas détaillé reste à rendre par le collaborateur.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Montant total déclaré par le collaborateur :{" "}
+          <span className="font-semibold text-foreground">{montantCible.toLocaleString("fr-FR")} FCFA</span> — répartissez-le
+          en une ou plusieurs entrées (la somme ne peut pas le dépasser).
+        </p>
+      )}
 
       <div className="space-y-4">
         {lignes.map((ligne, index) => (
@@ -221,7 +237,7 @@ export function DetaillerDepensesForm({
           <p className="text-sm font-semibold text-foreground">{totalSaisi.toLocaleString("fr-FR")} FCFA</p>
         </div>
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Reste non détaillé</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{libre ? "Reste à rendre" : "Reste non détaillé"}</p>
           <p className={`text-sm font-semibold ${reste < 0 ? "text-danger" : "text-foreground"}`}>
             {reste < 0 ? `${Math.abs(reste).toLocaleString("fr-FR")} FCFA en trop` : `${reste.toLocaleString("fr-FR")} FCFA`}
           </p>

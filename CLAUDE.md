@@ -2669,6 +2669,10 @@ Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permis
   (soumission partielle, refus puis resoumission, blocage et refus serveur de la décision finale, DG définitif côté
   serveur, clôture mixte et tout-DG, notifications, historique, mobile 390 px).
 
+- **Détail des dépenses sans retour (2026-10-10)** : l'Assistant Finance détaille directement depuis la demande (`detaillerDepensesReglementAction`, règlement Caisse, demande non clôturée) ; le détail est rangé dans une fiche de régularisation (`RetourCaisse` créé d'office, `estFicheRegularisation`), montant à rendre = remis − détaillé (`calculerMontantARetournerNet`, inchangée) ; une déclaration ultérieure du collaborateur complète cette fiche (`completerFicheRegularisation`), la réception écrit seule en caisse ; retour nul possible, plus préalable.
+- **Correction d'une dépense détaillée** (`modifierDepenseDetailleeAction`/`supprimerDepenseDetailleeAction`, motif obligatoire ≥ 3, mêmes gardes que la saisie) jusqu'à la clôture : aucune dépense n'a d'écriture de caisse, la correction se fait sur l'enregistrement ; total fixé d'un retour déclaré ou réceptionné (écart vers « Dépenses non détaillées », `planModificationDepense`), total libre d'une fiche (montant à rendre recalculé) ; pièce remplacée détachée, jamais supprimée.
+- **Historique** : `detaillage_retour` (saisie), `modification_depense`/`suppression_depense` (JSON avant/après + motif, phrase `resumeModificationDepense`), affichés par `DemandeHistorique` ; aucune migration ; la « catégorie » d'une dépense = son type (justifiée / sans pièce formelle), `DepenseLigne` n'ayant pas de catégorie.
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié
