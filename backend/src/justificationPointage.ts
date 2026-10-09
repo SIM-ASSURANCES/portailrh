@@ -260,3 +260,112 @@ export function libelleDecideur(decideur: DecideurJustification, responsableNom:
   if (decideur.type === "RESPONSABLE") return `votre responsable de service${responsableNom ? `, ${responsableNom}` : ""}`;
   return "la RH";
 }
+
+// ───────────────────────── Lot 5 : envois, relances et clôture (tâche planifiée) ─────────────────────────
+
+/** Paramètres de relance réglés par la RH (`ParametrageHoraire`, lot 2) et fin de journée. */
+export interface ParametresRelanceJustification {
+  delaiDemandeJustificationMinutes: number;
+  intervalleRelanceJustificationMinutes: number;
+  /** Nombre total d'envois au collaborateur, premier compris. */
+  nombreMaxRelancesJustification: number;
+  /** « HH:MM » : fin de journée, borne des relances et moment de la clôture. */
+  heureFinApresMidi: string;
+}
+
+export interface EtatRelanceJustification {
+  statut: StatutJustificationPointage;
+  nombreEnvois: number;
+  dernierEnvoiAt: Date | null;
+  /** Heure du pointage concerné (arrivée en retard ou départ anticipé). */
+  heurePointage: Date;
+}
+
+export type ActionRelanceJustification = { type: "ENVOI"; numero: number } | { type: "CLOTURE" } | { type: "AUCUNE" };
+
+const MINUTE_MS = 60 * 1000;
+
+/** Fin de journée du pointage : le jour du pointage à `heureFinApresMidi`, en heure locale du serveur (comme le module). */
+export function finJourneeJustification(heurePointage: Date, heureFinApresMidi: string): Date {
+  const [h, m] = heureFinApresMidi.split(":").map(Number);
+  const fin = new Date(heurePointage);
+  fin.setHours(h || 0, m || 0, 0, 0);
+  return fin;
+}
+
+/**
+ * Prochaine action de la tâche planifiée pour une justification (plan, lot 5) :
+ * 1. statut autre que EN_ATTENTE → AUCUNE ;
+ * 2. aucun envoi et `now ≥ pointage + délai` → ENVOI(1) ;
+ * 3. `0 < envois < maximum`, avant la fin de journée, `now ≥ dernier envoi + intervalle` → ENVOI(envois + 1) ;
+ * 4. au moins un envoi, `now ≥ fin de journée` et `now ≥ dernier envoi + intervalle` → CLOTURE ;
+ * 5. sinon AUCUNE.
+ * Une tâche en panne rattrape d'elle-même : un envoi en retard part au premier passage, la clôture un intervalle plus tard.
+ */
+export function prochaineActionJustification(
+  etat: EtatRelanceJustification,
+  params: ParametresRelanceJustification,
+  now: Date
+): ActionRelanceJustification {
+  if (etat.statut !== "EN_ATTENTE") return { type: "AUCUNE" };
+  const t = now.getTime();
+  const finJournee = finJourneeJustification(etat.heurePointage, params.heureFinApresMidi).getTime();
+  if (etat.nombreEnvois === 0) {
+    return t >= etat.heurePointage.getTime() + params.delaiDemandeJustificationMinutes * MINUTE_MS
+      ? { type: "ENVOI", numero: 1 }
+      : { type: "AUCUNE" };
+  }
+  const prochainPossible = (etat.dernierEnvoiAt ?? etat.heurePointage).getTime() + params.intervalleRelanceJustificationMinutes * MINUTE_MS;
+  if (etat.nombreEnvois < params.nombreMaxRelancesJustification && t < finJournee && t >= prochainPossible) {
+    return { type: "ENVOI", numero: etat.nombreEnvois + 1 };
+  }
+  if (t >= finJournee && t >= prochainPossible) return { type: "CLOTURE" };
+  return { type: "AUCUNE" };
+}
+
+/** Au collaborateur : demande (1er envoi) ou relance de justification. */
+export function messageDemandeJustification(params: { pointage: PointageJustifie; numero: number; nombreMax: number }): MessageJustification {
+  const { pointage, numero, nombreMax } = params;
+  const objet = descriptionAnomalie(pointage);
+  if (numero === 1) {
+    return {
+      titre: pointage.type === "ARRIVEE" ? "Justifiez votre retard" : "Justifiez votre départ anticipé",
+      message: `Merci de justifier votre ${objet}. Ouvrez le lien pour saisir votre motif.`,
+    };
+  }
+  return {
+    titre: `Rappel (${numero}/${nombreMax}) : justification attendue`,
+    message: `Votre ${objet} n'est toujours pas justifié. Ouvrez le lien pour saisir votre motif.`,
+  };
+}
+
+/** Au décideur, au premier envoi : le collaborateur doit justifier. */
+export function messageAlerteDecideurJustification(params: {
+  collaborateurNom: string;
+  serviceNom: string | null;
+  decideur: DecideurJustification;
+  pointage: PointageJustifie;
+}): MessageJustification {
+  const { collaborateurNom, serviceNom, decideur, pointage } = params;
+  const qui = presentationCollaborateur(collaborateurNom, serviceNom, decideur);
+  const fait = pointage.type === "ARRIVEE" ? `est arrivé en retard de ${pointage.minutesRetard ?? 0} min` : "est parti en avance";
+  return {
+    titre: pointage.type === "ARRIVEE" ? "Retard à justifier" : "Départ anticipé à justifier",
+    message: `${qui} ${fait} le ${dateCourte(pointage.heure)} (${heureCourte(pointage.heure)}). Il doit justifier ; vous déciderez de son motif.`,
+  };
+}
+
+/** Au décideur, à la clôture : le collaborateur n'a pas justifié (il le peut encore). */
+export function messageClotureJustification(params: {
+  collaborateurNom: string;
+  serviceNom: string | null;
+  decideur: DecideurJustification;
+  pointage: PointageJustifie;
+}): MessageJustification {
+  const { collaborateurNom, serviceNom, decideur, pointage } = params;
+  const qui = presentationCollaborateur(collaborateurNom, serviceNom, decideur);
+  return {
+    titre: "Justification non reçue",
+    message: `${qui} n'a pas justifié son ${descriptionAnomalie(pointage)}. Il peut encore le faire.`,
+  };
+}

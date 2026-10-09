@@ -20,6 +20,7 @@ export * from "./pointageReporting";
 export * from "./pointage-utils";
 export * from "./justificationPointage";
 export * from "./cheminRetour";
+export * from "./cronAuth";
 export * from "./geo-utils";
 export * from "./reference";
 export * from "./validation";

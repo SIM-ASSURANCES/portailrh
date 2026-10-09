@@ -4294,6 +4294,30 @@ collaborateur trouve sa justification à faire dans « Mon historique ».
   propre justification, message « responsable du service Commercial »), deux décisions RH simultanées (une seule
   tracée), file refusée au collaborateur, 390 px sans défilement horizontal, aucune erreur JavaScript.
 
+### 9. Pointage V2 — lot 5 : envois, relances et clôture (tâche planifiée, 2026-10-09)
+
+- **Moteur pur** (`backend/src/justificationPointage.ts`) : `prochaineActionJustification(etat, params, now)` → `ENVOI(n)`,
+  `CLOTURE` ou `AUCUNE`, exactement les 5 règles du plan (1er envoi à pointage + délai ; relances tous les
+  `intervalleRelanceJustificationMinutes`, au plus `nombreMaxRelancesJustification` envois premier compris, avant la fin
+  de journée ; clôture à `heureFinApresMidi` du jour du pointage, au moins un intervalle après le dernier envoi ;
+  rattrapage automatique si la tâche était en panne). Heure locale du serveur, comme le module. Messages :
+  `messageDemandeJustification`, `messageAlerteDecideurJustification`, `messageClotureJustification`. Tests :
+  `relancesJustification.test.ts` (retard 08:10, départ 16:40, statut déjà soumis, maximum atteint, panne la veille).
+- **Route** `GET /api/cron/relances-justification`, toutes les 5 minutes (cron-job.org, `DEPLOIEMENT.md` §7). Protégée
+  par `refusCron` (`frontend/src/lib/cronAuth.ts` → `secretCronValide`, `backend/src/cronAuth.ts` : `Authorization:
+  Bearer <CRON_SECRET>`, temps constant, refus si `CRON_SECRET` absent) — aussi utilisée par `/api/cron/absences`.
+  Idempotence : chaque envoi est réservé par `updateMany` sur le `nombreEnvois` attendu, la clôture par `updateMany`
+  EN_ATTENTE → NON_JUSTIFIEE (`clotureeAt`) ; rien ne part si la réservation échoue. Envois (§2) : collaborateur 1er
+  envoi `CRITIQUE` (interne + push + e-mail, lien `/pointage/justifier/{id}` préfixé par `AUTH_URL`), relances
+  `IMPORTANT` ; décideur (responsable actuel du service, sinon RH du pointage sans le collaborateur) au 1er envoi et à
+  la clôture seulement. Journal : une ligne `[Cron relances-justification]` chiffrée par exécution (examinées, envois,
+  clôtures, déjà traitées, erreurs), erreurs repérées par identifiant de justification seulement.
+- **Clôture sans entrée d'historique** : `HistoriqueEntry.userId` est obligatoire et la tâche n'a pas d'auteur (comme le
+  cron des absences) ; la clôture est tracée sur la ligne (`statut`, `clotureeAt`). Aucune migration.
+- Vérifié : vitest (14 nouveaux tests), tsc, eslint, `next build` ; intégration sur base jetable (401 sans en-tête, mauvais
+  secret ou sans « Bearer » ; deux appels simultanés = 3 envois et 1 clôture au total ; troisième appel sans effet ;
+  responsable alerté, RH alertée pour un responsable en retard, aucun autre compte notifié).
+
 ## Module FeedbackApp — anonymat total
 
 Troisième module : permet à QUICONQUE (employé connecté ou visiteur sans

@@ -2,38 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma, journeeCouverteParAbsence, PERMISSION_RH_POINTAGE } from "backend";
 import type { Prisma, PlageHoraire } from "backend";
 import { notify, notifyByPermission } from "@/lib/notifications";
-import { timingSafeEqual } from "node:crypto";
+import { refusCron } from "@/lib/cronAuth";
 
 export async function GET(request: Request) {
-  // SEC-06 : Comparaison en temps constant pour éviter les attaques par timing
-  // sur le CRON_SECRET (un `!==` standard révèle la longueur du token par le
-  // temps de réponse — `timingSafeEqual` garantit une durée identique quelle
-  // que soit la valeur comparée).
-  const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
-
-  let isAuthorized = false;
-  if (cronSecret && authHeader) {
-    try {
-      const expectedToken = `Bearer ${cronSecret}`;
-      // Les deux buffers doivent avoir exactement la même longueur pour
-      // `timingSafeEqual` — un test de longueur préalable court-circuiterait
-      // le timing, mais exposer "mauvaise longueur" n'apporte pas d'info utile
-      // sur le secret lui-même.
-      if (authHeader.length === expectedToken.length) {
-        isAuthorized = timingSafeEqual(
-          Buffer.from(authHeader),
-          Buffer.from(expectedToken)
-        );
-      }
-    } catch {
-      isAuthorized = false;
-    }
-  }
-
-  if (!isAuthorized) {
-    return new NextResponse("Unauthorized", { status: 401 });
-  }
+  // SEC-06 : secret du cron comparé à temps constant, refus sans CRON_SECRET (contrôle commun, `@/lib/cronAuth`).
+  const refus = refusCron(request);
+  if (refus) return refus;
 
   try {
     const today = new Date();

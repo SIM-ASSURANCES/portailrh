@@ -42,8 +42,12 @@ cp .env.example .env
 
   (si `openssl` n'est pas disponible : `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`)
 
-- `AUTH_URL` — laissez `http://localhost:3000` pour un test local ;
-  ajustez avec le domaine réel si l'application est exposée publiquement.
+- `AUTH_URL` — laissez `http://localhost:3000` pour un test local. **En production, c'est l'URL publique réelle**
+  (schéma et domaine exacts, ex. `https://portail.example.ci`) : elle sert de référence au retour après connexion (un
+  lien reçu par e-mail ramène sur la bonne page) et préfixe les liens des e-mails. Mal renseignée, l'utilisateur
+  retombe sur l'accueil après connexion au lieu de la page demandée.
+- `CRON_SECRET` — secret des tâches planifiées (voir « 7. Tâches planifiées »). Sans lui, les routes `/api/cron/*`
+  refusent tout appel (401). Générez-le avec `openssl rand -hex 24`.
 
 `POSTGRES_USER` et `POSTGRES_DB` ont des valeurs par défaut raisonnables
 (`sim_portail`) si vous ne les modifiez pas. `DATABASE_URL` n'a **pas**
@@ -144,6 +148,31 @@ prête à l'accueillir : `docker-compose.yml` définit un volume nommé
 possédé par l'utilisateur applicatif non-root — aucun changement de
 configuration Docker ne sera nécessaire le jour où cette fonctionnalité
 sera développée.
+
+## 7. Tâches planifiées (cron-job.org)
+
+Les tâches planifiées sont des routes HTTP appelées par [cron-job.org](https://cron-job.org). Chaque appel doit porter
+l'en-tête `Authorization: Bearer <CRON_SECRET>` (comparé à temps constant ; sans `CRON_SECRET` configuré, tout appel est
+refusé avec 401).
+
+| Tâche | URL | Fréquence |
+|---|---|---|
+| Relances de justification du pointage (retard, départ anticipé) | `https://<domaine>/api/cron/relances-justification` | **toutes les 5 minutes** |
+| Absences et oublis de départ | `https://<domaine>/api/cron/absences` | selon le réglage existant |
+
+Réglage sur cron-job.org (« Create cronjob ») :
+1. **URL** : `https://<domaine>/api/cron/relances-justification`, méthode `GET`.
+2. **Schedule** : toutes les 5 minutes (« Every 5 minutes »).
+3. **Advanced → Headers** : ajouter `Authorization` avec la valeur `Bearer <CRON_SECRET>` (le même secret que la
+   variable d'environnement de l'application).
+4. Enregistrer, puis lancer « Test run » : la réponse attendue est un JSON `{"success":true, "envois": …, "clotures": …}`.
+   Une réponse 401 signifie un en-tête absent ou un secret différent.
+
+Sans cette tâche, **aucune demande de justification ne part** (le collaborateur n'est ni prévenu ni relancé, son
+responsable non plus). Chaque exécution laisse une ligne `[Cron relances-justification]` dans les logs de l'application
+(nombre de justifications examinées, envois, clôtures, erreurs). Deux appels rapprochés ou simultanés n'envoient jamais
+deux fois la même relance. Penser aussi à vérifier sur `/admin/notifications` que les responsables de service ont
+activé les notifications push.
 
 ## Récapitulatif des choix techniques
 

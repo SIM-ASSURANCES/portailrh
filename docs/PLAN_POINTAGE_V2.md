@@ -117,6 +117,12 @@ nécessaire.
   `frontend/src/lib/justificationsPointage.ts` ; écrans `/pointage/justifier/[pointageId]`, `/pointage/justifications`,
   colonne « Justification » de l'historique, menu « Justifications ». Détail et limites : `CLAUDE.md`, section 8.
 
+**Lot 5 — envois, relances et clôture** (non commité, 2026-10-09)
+- `prochaineActionJustification` et les messages des envois dans `justificationPointage.ts` (tests :
+  `relancesJustification.test.ts`) ; contrôle du secret extrait dans `backend/src/cronAuth.ts` et
+  `frontend/src/lib/cronAuth.ts`, utilisé par les deux routes ; route `api/cron/relances-justification`. Exploitation :
+  `DEPLOIEMENT.md` §7 (cron-job.org toutes les 5 minutes, `CRON_SECRET`, `AUTH_URL`). Détail : `CLAUDE.md`, section 9.
+
 ## 4. Lots restants
 
 Chaque lot fait l'objet d'un commit séparé, testé, avec un message au format des commits existants. La logique
