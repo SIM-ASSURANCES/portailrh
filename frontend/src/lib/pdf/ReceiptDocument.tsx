@@ -4,7 +4,8 @@ import { COLORS } from "./colors";
 import { formatDate, formatMontant } from "./format";
 import "./registerFonts";
 
-const styles = StyleSheet.create({
+/** Styles partagés avec le reçu de retour de caisse (`RetourReceiptDocument.tsx`) : même gabarit, mêmes mentions. */
+export const styles = StyleSheet.create({
   page: {
     fontFamily: "Montserrat",
     fontSize: 10,

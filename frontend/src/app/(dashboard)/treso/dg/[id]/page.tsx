@@ -14,6 +14,7 @@ import {
   getBeneficiaireNom,
   prisma,
   raisonIndisponible,
+  refusDemandeSansCategorie,
   versDemandeCircuit,
 } from "backend";
 
@@ -189,6 +190,10 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           montantDemande={Number(demande.montant)}
           disabled={raisonDecider !== null}
           raisonIndisponible={raisonDecider}
+          // Le DG ne catégorise pas : la Finance renseigne la catégorie avant sa décision.
+          raisonValidationIndisponible={
+            refusDemandeSansCategorie(demande) ? `${refusDemandeSansCategorie(demande)} La catégorie est renseignée par la Finance.` : null
+          }
         />
       ) : (
         <DgDecisionActions

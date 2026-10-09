@@ -6,7 +6,13 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notifyByPermission } from "@/lib/notifications";
-import { calculerMontantARetournerNet, getDateDernierReglementConfirme, prisma } from "backend";
+import {
+  calculerMontantARetournerNet,
+  getDateDernierReglementConfirme,
+  MESSAGE_RIEN_A_RENDRE,
+  prisma,
+  rienARendre,
+} from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -160,6 +166,15 @@ export async function creerRetourCaisseAction(
       status: "error",
       message: "Un retour est déjà en attente de réception pour ce règlement : attendez qu'il soit traité avant d'en déclarer un nouveau.",
     };
+  }
+
+  // Retour nul (2026-10-08) : un retour déjà traité a tout couvert (solde à rendre calculé nul) — rien n'est réclamé au
+  // collaborateur, une nouvelle déclaration n'aurait pas d'objet.
+  if (
+    reglement.retours.length > 0 &&
+    rienARendre(await calculerMontantARetournerNet({ reglementId, totalDepensesNouvelles: 0 }))
+  ) {
+    return { status: "error", message: MESSAGE_RIEN_A_RENDRE };
   }
 
   // Tâche "Libellés et validations sur le formulaire de retour" : la date de

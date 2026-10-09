@@ -2554,9 +2554,9 @@ discrète).
 ### Reporting et export
 
 `backend/src/reporting.ts` / `treso/finance/reporting/page.tsx` / export
-Excel (**12 feuilles** : Demandes, Validations, Règlements, Retours de
-caisse, Fonds remis, Régularisations, Dépenses effectuées, Dépenses non
-justifiées, Journal de caisse, Reporting, Suivi budgétaire, Dashboard).
+Excel. **Depuis le 2026-10-08 : une seule ligne par demande** (voir « Retouches Trésorerie du 2026-10-08 » plus bas) —
+feuilles : Demandes (une ligne par demande), Mouvements banque, Retours externes, Fonds remis, Journal de caisse,
+Reporting (synthèse par catégorie/objet), Suivi budgétaire, Dashboard.
 
 Colonnes du tableau agrégé (par Catégorie puis Objet) :
 
@@ -2581,6 +2581,50 @@ inchangés) : « Écart » → **Solde à régulariser**, « Dépense déclarée
 
 Filtres disponibles : période, demandeur, **bénéficiaire** (distinct du
 demandeur), service, catégorie/objet, mode, statut, type de demande.
+
+### Retouches Trésorerie du 2026-10-08 (catégorie obligatoire, retour nul, reporting par demande)
+
+Aucune migration, aucun droit ni garde de conflit d'intérêts modifié, aucune écriture comptable existante touchée.
+
+- **Catégorie obligatoire pour valider** (`backend/src/categorisationObligatoire.ts`, pur, partagé serveur/écran) : une
+  ligne VALIDÉE doit porter une catégorie, une ligne rejetée non. Serveur : `validerLignesAction` (Finance à l'étape
+  Finance et à la décision finale, DG pour les lignes du cas b, nouvelle décision après une correction — les lignes
+  repassent en attente), `validerTotalementAction`/`validerPartiellementAction`/`validerComplementaireAction` (dépense
+  directe sans ligne, y compris le DG pour une dépense directe de la Finance pour elle-même). Écran : « Valider » grisé
+  par ligne avec la phrase, « Valider totalement / partiellement / complémentaire » grisés pour une dépense directe sans
+  catégorie (« Rejeter » reste possible). Non concernés (ne valident aucune ligne) : validation de l'étape Service,
+  validation du DG d'une demande soumise (la Finance décide ensuite les lignes), approbation de clôture. Retirer la
+  catégorie d'une ligne déjà validée n'a aucun chemin : `categoriserLigneAction` refuse une ligne décidée et exige une
+  catégorie, `categoriserDemandeAction` refuse hors attente, une catégorie utilisée ne se supprime pas. Il n'existe pas de
+  bouton « tout valider » : la décision groupée est l'unique « Enregistrer les décisions » de `validerLignesAction`.
+- **Retour nul** (`backend/src/retourNul.ts`) : quand le montant à rendre calculé vaut 0 sur un règlement Caisse, la
+  réception (`receptionnerRetourAction`, bouton « Constater le retour nul ») n'écrit **aucun** mouvement dans
+  `JournalCaisse` ; l'historique de la demande reçoit `retour_nul_constate` (auteur, date, heure, montants). Mêmes
+  gardes qu'avant (`treso.receptionner_retour`, jamais le demandeur ni le bénéficiaire) ; réception désormais
+  conditionnée (`updateMany` sur `estReceptionne: false` : deux clics simultanés, une seule écriture). Côté
+  collaborateur, quand un retour a déjà tout couvert, plus de bouton de déclaration mais « Rien à rendre… » ;
+  `creerRetourCaisseAction` refuse aussi ce cas. Le chemin de l'Assistant reste : déclarer (« Aucun retour du
+  collaborateur »), détailler, constater.
+- **Reçu PDF du retour** (`GET /api/treso/retours/[id]/recu`, `lib/pdf/RetourReceiptDocument.tsx`, styles partagés
+  avec `ReceiptDocument`) : disponible dès que le retour est réceptionné ou constaté nul ; référence
+  `<demande>-RC<rang>` (rang parmi les retours réceptionnés de la demande, ordre de réception) ; accès = celui de
+  l'écran du retour (`receptionner_retour`, `valider_demande`, `voir_dashboard_finance`) ou le créateur de la demande ;
+  404 tant que non réceptionné, 403 sinon. Liens sur le détail Finance du retour et sur l'écran du collaborateur.
+- **Reporting une ligne par demande** (`backend/src/reportingDemandeLigne.ts` pur + `getReportingParDemande` dans
+  `reporting.ts`, requêtes groupées) : écran (`ReportingDemandesTable`, en tête de page, synthèses par catégorie
+  conservées en dessous) et feuille Excel « Demandes » ont les mêmes colonnes (`COLONNES_REPORTING_DEMANDE`) :
+  Référence, Créée le, Type, Statut, Étape du circuit, Demandeur, Service, Bénéficiaire, Lignes d'articles, Demandé,
+  Validations (Service, Finance, DG), Validé, Règlements, Réglé, Dépenses, Dépensé, Dont justifié, Retours de caisse,
+  Remboursements, Ajustements et régularisations, Retourné, Solde. Cellules multi-valeurs = un élément par ligne.
+  Totaux = mêmes règles que `getTotalRegle`/`getDepensesDeclarees`/`getRetoursRecus`/`getEcart`. Feuilles retirées :
+  Validations, Règlements, Retours de caisse, Régularisations, Dépenses effectuées, Dépense sans pièce formelle,
+  Compléments et remboursements ; leurs huit fonctions `getReporting…Detail` (et `parseMontantValideCetteEtape`) ont
+  été supprimées de `reporting.ts` (2026-10-09, 534 lignes).
+- Vérifié : vitest (24 nouveaux tests, 364 au total), tsc, eslint, `next build` ; base PostgreSQL 16 jetable
+  (migrations depuis zéro, `migrate diff` vide) ; Playwright 47/47 (refus serveur par rejeu de la Server Action, rejet
+  sans catégorie accepté, dépense directe catégorisée puis validée, retour nul de bout en bout sans écriture de caisse,
+  reçu 200/403/404, Assistant bénéficiaire grisé, reporting et export sur une ligne par demande, filtre bénéficiaire,
+  mobile 390 px).
 
 ### Solde d'ouverture de caisse
 

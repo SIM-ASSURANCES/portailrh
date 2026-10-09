@@ -4,7 +4,14 @@ import { notFound, redirect } from "next/navigation";
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { detailMontantDefinitif, etatRetourAffiche } from "@/lib/retourAffichage";
-import { getCouvertureRetoursPostCloture, getMontantsDefinitifsRetours, getRecuNetSignalement, prisma, refusExecutionPropreDemande } from "backend";
+import {
+  estRetourNul,
+  getCouvertureRetoursPostCloture,
+  getMontantsDefinitifsRetours,
+  getRecuNetSignalement,
+  prisma,
+  refusExecutionPropreDemande,
+} from "backend";
 
 import { DetaillerDepensesForm } from "./DetaillerDepensesForm";
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
@@ -225,8 +232,17 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
               retourId={retour.id}
               disabled={!peutAgirRetour}
               raisonIndisponible={canReceptionner ? conflitInteret : null}
+              retourNul={estRetourNul({ montantARetourner: Number(retour.montantARetourner), mode: retour.reglement.mode })}
             />
-          ) : null}
+          ) : (
+            // Reçu du retour (nul ou non) dès que l'Assistant l'a réceptionné : mêmes accès que cet écran.
+            <a
+              href={`/api/treso/retours/${retour.id}/recu`}
+              className="text-sm font-medium text-primary underline-offset-2 hover:underline"
+            >
+              Télécharger le reçu du retour
+            </a>
+          )}
         </div>
 
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">

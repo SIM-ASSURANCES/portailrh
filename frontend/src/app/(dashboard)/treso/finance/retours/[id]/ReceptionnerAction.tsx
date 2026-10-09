@@ -20,9 +20,13 @@ export function ReceptionnerAction({
   retourId,
   disabled = false,
   raisonIndisponible = null,
+  retourNul = false,
 }: {
   retourId: string;
   disabled?: boolean;
+  /** Rien à rendre (règlement Caisse, montant à retourner nul) : la réception constate le retour nul, sans mouvement
+   *  de caisse. */
+  retourNul?: boolean;
   /** Phrase sous le bouton grisé (conflit d'intérêts : la phrase que le serveur renverrait). */
   raisonIndisponible?: string | null;
 }) {
@@ -42,8 +46,13 @@ export function ReceptionnerAction({
   return (
     <div className="flex flex-col items-end gap-1">
       <Button type="button" loading={isPending} disabled={disabled} onClick={handleReceptionner}>
-        Réceptionner
+        {retourNul ? "Constater le retour nul" : "Réceptionner"}
       </Button>
+      {retourNul ? (
+        <p className="max-w-xs text-right text-xs text-muted-foreground">
+          Rien à rendre : aucun mouvement de caisse, le constat est inscrit dans l&apos;historique de la demande.
+        </p>
+      ) : null}
       {raisonIndisponible ? <p className="max-w-xs text-right text-xs text-muted-foreground">{raisonIndisponible}</p> : null}
     </div>
   );

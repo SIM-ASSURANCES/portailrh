@@ -8,7 +8,10 @@ import { publishDataChanged } from "@/lib/eventBus";
 import { notifierParPermission, notify } from "@/lib/notifications";
 import { snapshotLigne, type CorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
 import {
+  ACTION_RETOUR_NUL_CONSTATE,
   calculerMontantARetournerNet,
+  detailRetourNulConstate,
+  estRetourNul,
   getRecuNetSignalement,
   getSoldeCaisse,
   prisma,
@@ -249,7 +252,7 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
 
   const retour = await prisma.retourCaisse.findUnique({
     where: { id: retourId },
-    include: { reglement: { include: { demande: true } } },
+    include: { reglement: { include: { demande: true } }, depenses: { select: { montant: true } } },
   });
 
   if (!retour) {
@@ -283,42 +286,57 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   // (règle impérative n°3 — la Banque n'impacte pas la caisse) ; le mouvement
   // `JournalBanque` RETOUR a déjà été écrit à la déclaration, avec son bordereau.
   const estBanque = retour.reglement.mode === "BANQUE";
-  await prisma.$transaction([
-    prisma.retourCaisse.update({
-      where: { id: retourId },
+  // Retour nul (2026-10-08) : rien à rendre sur un règlement Caisse — aucun mouvement de 0 FCFA dans le journal de
+  // caisse, seulement le constat (qui, quand) dans l'historique de la demande. Mêmes gardes que toute réception.
+  const nul = estRetourNul({ montantARetourner: Number(montant), mode: retour.reglement.mode });
+  const receptionneAt = new Date();
+  const totalDepenses = retour.depenses.reduce((t, d) => t + Number(d.montant), 0);
+  const ecrit = await prisma.$transaction(async (tx) => {
+    // Écriture conditionnée : deux réceptions simultanées, une seule passe (jamais deux écritures de caisse).
+    const { count } = await tx.retourCaisse.updateMany({
+      where: { id: retourId, estReceptionne: false },
       data: {
         estReceptionne: true,
         receptionneParId: session.user.id,
-        receptionneAt: new Date(),
+        receptionneAt,
       },
-    }),
-    ...(estBanque
-      ? []
-      : [
-          prisma.journalCaisse.create({
-            data: {
-              type: "ENTREE",
-              montant,
-              source: "retour_caisse_receptionne",
-              refId: retourId,
-              // Traçabilité (section 13) : la demande d'origine (via
-              // Reglement -> Demande) et l'utilisateur qui réceptionne,
-              // identique à `receptionneParId` ci-dessus.
-              demandeId,
-              userId: session.user.id,
-            },
-          }),
-        ]),
-    prisma.historiqueEntry.create({
+    });
+    if (count === 0) return false;
+    if (!estBanque && !nul) {
+      await tx.journalCaisse.create({
+        data: {
+          type: "ENTREE",
+          montant,
+          source: "retour_caisse_receptionne",
+          refId: retourId,
+          // Traçabilité (section 13) : la demande d'origine (via Reglement -> Demande) et l'utilisateur qui
+          // réceptionne, identique à `receptionneParId` ci-dessus.
+          demandeId,
+          userId: session.user.id,
+        },
+      });
+    }
+    await tx.historiqueEntry.create({
       data: {
         entity: "Demande",
         entityId: demandeId,
-        action: "reception_retour",
-        detail: `Retour de caisse réceptionné : ${Number(montant).toLocaleString("fr-FR")} FCFA`,
+        action: nul ? ACTION_RETOUR_NUL_CONSTATE : "reception_retour",
+        detail: nul
+          ? detailRetourNulConstate({
+              auteurNom: session.user.fullName,
+              date: receptionneAt,
+              montantRegle: Number(retour.reglement.montant),
+              totalDepenses,
+            })
+          : `Retour de caisse réceptionné : ${Number(montant).toLocaleString("fr-FR")} FCFA`,
         userId: session.user.id,
       },
-    }),
-  ]);
+    });
+    return true;
+  });
+  if (!ecrit) {
+    return { status: "error", message: "Ce retour de caisse est déjà réceptionné." };
+  }
 
   revalidatePath("/treso/finance/retours");
   revalidatePath(`/treso/demandes/${demandeId}`);
@@ -328,7 +346,10 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   revalidatePath("/treso/finance", "layout");
   publishDataChanged();
 
-  return { status: "success", message: "Retour de caisse réceptionné." };
+  return {
+    status: "success",
+    message: nul ? "Retour nul constaté : rien à rendre, aucun mouvement de caisse." : "Retour de caisse réceptionné.",
+  };
 }
 
 const ligneDetailSchema = z

@@ -23,6 +23,7 @@ import {
 /** Refus du moteur du circuit levé DANS une transaction pour l'annuler entièrement (jamais exporté). */
 class RefusCircuit extends Error {}
 import { fieldErrorsFromZod, MOTIF_LIGNE_MIN, type ActionState } from "backend";
+import { refusDemandeSansCategorie, refusLignesValideesSansCategorie } from "backend";
 
 /**
  * Validation complémentaire qui comble le reliquat d'une dépense directe (hors circuit : la décision finale est déjà
@@ -805,6 +806,10 @@ export async function validerLignesAction(
     }
   }
 
+  // Catégorisation obligatoire (2026-10-08) : une ligne validée doit porter une catégorie ; une ligne rejetée, non.
+  const refusCategorie = refusLignesValideesSansCategorie(parsedDecisions.data, demande.lignes);
+  if (refusCategorie) return { status: "error", message: refusCategorie };
+
   const decideAt = new Date();
   let montantValide = 0;
 
@@ -908,6 +913,9 @@ export async function validerTotalementAction(demandeId: string): Promise<Simple
     };
   }
 
+  const refusCategorieTotale = refusDemandeSansCategorie(demande);
+  if (refusCategorieTotale) return { status: "error", message: refusCategorieTotale };
+
   const montantDemande = Number(demande.montant);
   const refus = await enregistrerValidation(
     demandeId,
@@ -967,6 +975,9 @@ export async function validerPartiellementAction(
       message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
     };
   }
+
+  const refusCategoriePartielle = refusDemandeSansCategorie(demande);
+  if (refusCategoriePartielle) return { status: "error", message: refusCategoriePartielle };
 
   const montantDemande = Number(demande.montant);
 
@@ -1049,6 +1060,9 @@ export async function validerComplementaireAction(
       message: "Le reliquat de cette demande a été rejeté, aucune validation complémentaire n'est plus possible.",
     };
   }
+  // Une demande validée avant la règle de catégorisation obligatoire peut n'avoir aucune catégorie : refusée aussi.
+  const refusCategorieComplement = refusDemandeSansCategorie(demande);
+  if (refusCategorieComplement) return { status: "error", message: refusCategorieComplement };
 
   const montantDemande = Number(demande.montant);
   const montantValideActuel = Number(demande.montantValide ?? 0);

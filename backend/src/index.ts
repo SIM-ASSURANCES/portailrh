@@ -23,6 +23,9 @@ export * from "./reference";
 export * from "./validation";
 export * from "./beneficiaire";
 export * from "./motifLigne";
+export * from "./categorisationObligatoire";
+export * from "./retourNul";
+export * from "./reportingDemandeLigne";
 export * from "./feedback";
 export * from "./reinitialisation";
 

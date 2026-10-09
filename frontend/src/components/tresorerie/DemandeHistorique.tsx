@@ -27,6 +27,7 @@ const ACTION_LABELS: Record<string, string> = {
   declaration_retour: "Retour de caisse déclaré",
   modification_retour: "Retour de caisse modifié",
   reception_retour: "Retour de caisse réceptionné",
+  retour_nul_constate: "Retour nul constaté (rien à rendre)",
   // Tâche "L'Assistant Finance déclare les dépenses sur toute demande,
   // retour ou pas" (voir CLAUDE.md) — l'Assistant se substitue au
   // collaborateur absent, sur une demande encore active.

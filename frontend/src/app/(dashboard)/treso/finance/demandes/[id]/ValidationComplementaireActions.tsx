@@ -27,9 +27,12 @@ type Mode = "idle" | "complementaire" | "rejeter";
 export function ValidationComplementaireActions({
   demandeId,
   montantRestant,
+  raisonValidationIndisponible = null,
 }: {
   demandeId: string;
   montantRestant: number;
+  /** Catégorisation obligatoire : demande sans catégorie (validée avant la règle) — validation grisée, rejet possible. */
+  raisonValidationIndisponible?: string | null;
 }) {
   const [mode, setMode] = useState<Mode>("idle");
   const [montant, setMontant] = useState("");
@@ -85,13 +88,18 @@ export function ValidationComplementaireActions({
 
       {mode === "idle" ? (
         <div className="flex flex-wrap gap-3">
-          <Button type="button" onClick={() => setMode("complementaire")}>
+          <Button type="button" disabled={!!raisonValidationIndisponible} onClick={() => setMode("complementaire")}>
             Validation complémentaire
           </Button>
           <Button type="button" variant="danger" onClick={() => setMode("rejeter")}>
             Rejeter le reliquat
           </Button>
         </div>
+      ) : null}
+      {mode === "idle" && raisonValidationIndisponible ? (
+        <p data-sans-categorie className="text-xs text-muted-foreground">
+          {raisonValidationIndisponible}
+        </p>
       ) : null}
 
       {mode === "complementaire" ? (

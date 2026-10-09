@@ -7,7 +7,7 @@ import { Icon } from "@/components/icons";
 import { STATUT_LIGNE_DEMANDE_BADGE_VARIANT, STATUT_LIGNE_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 
-import { MOTIF_LIGNE_MIN } from "backend/client";
+import { MESSAGE_LIGNE_SANS_CATEGORIE, MOTIF_LIGNE_MIN } from "backend/client";
 
 import { BudgetCategorieApercu, type BudgetCategorieInfo } from "./CategorisationForm";
 import {
@@ -168,7 +168,11 @@ export function LignesValidationTable({
     const decision = decisions[ligne.id];
     return !decision || decision.statut !== "REJETEE" || decision.motif.trim().length >= 3;
   });
-  const peutEnregistrer = canValider && toutesDecidees && motifsValides && !isPending;
+  // Catégorisation obligatoire : une ligne validée doit porter une catégorie (revérifié par le serveur).
+  const valideesSansCategorie = lignes.some(
+    (ligne) => decisions[ligne.id]?.statut === "VALIDEE" && !ligne.categorieId
+  );
+  const peutEnregistrer = canValider && toutesDecidees && motifsValides && !valideesSansCategorie && !isPending;
 
   // Bug signalé "l'interaction se bloque après avoir cliqué Rejeter" (voir
   // CLAUDE.md) : le bouton restait CORRECTEMENT désactivé tant qu'un motif
@@ -180,7 +184,9 @@ export function LignesValidationTable({
     ? "Chaque ligne doit avoir une décision (Valider ou Rejeter) avant de pouvoir enregistrer."
     : !motifsValides
       ? "Un motif de rejet d'au moins 3 caractères est requis pour chaque ligne rejetée."
-      : null;
+      : valideesSansCategorie
+        ? MESSAGE_LIGNE_SANS_CATEGORIE
+        : null;
 
   function handleEnregistrer() {
     const payload = lignes.map((ligne) => {
@@ -430,7 +436,7 @@ function LigneCard({
                 <Button
                   type="button"
                   variant={decision?.statut === "VALIDEE" ? "primary" : "secondary"}
-                  disabled={decisionsPending}
+                  disabled={decisionsPending || !ligne.categorieId}
                   onClick={() => onChangeStatut("VALIDEE")}
                 >
                   Valider
@@ -444,6 +450,11 @@ function LigneCard({
                   Rejeter
                 </Button>
               </div>
+              {!ligne.categorieId ? (
+                <p data-sans-categorie className="text-xs text-muted-foreground">
+                  {MESSAGE_LIGNE_SANS_CATEGORIE}
+                </p>
+              ) : null}
               {decision?.statut === "REJETEE" ? (
                 <Textarea
                   aria-label="Motif du rejet de la ligne"

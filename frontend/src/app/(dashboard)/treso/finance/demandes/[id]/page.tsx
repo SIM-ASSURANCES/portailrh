@@ -8,7 +8,7 @@ import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge
 import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesIntervenantes";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma } from "backend";
+import { prisma, refusDemandeSansCategorie } from "backend";
 import { getMontantsLignesParStatut, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
 import {
   chargerActeur,
@@ -575,6 +575,7 @@ export default async function CategoriserDemandePage({
               montantDemande={Number(demande.montant)}
               disabled={!canValider || raisonDecider !== null}
               raisonIndisponible={canValider ? raisonDecider : attenteValidationFinale}
+              raisonValidationIndisponible={refusDemandeSansCategorie(demande)}
             />
           )}
 
@@ -729,6 +730,7 @@ export default async function CategoriserDemandePage({
             <ValidationComplementaireActions
               demandeId={demande.id}
               montantRestant={Number(demande.montant) - Number(demande.montantValide)}
+              raisonValidationIndisponible={refusDemandeSansCategorie(demande)}
             />
           ) : null}
           <ReglementsSection
