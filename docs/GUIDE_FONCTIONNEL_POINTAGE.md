@@ -153,9 +153,11 @@ Une erreur de manipulation (ex. départ pointé par inadvertance à midi au lieu
 1. Sélectionnez la période (ex : du 1er au 31 du mois).
 2. Filtrez éventuellement par Service (ex : Commercial, Finance, Technique) ou pour un collaborateur précis.
 3. Cliquez sur **"Exporter en Excel"**.
-4. Vous obtenez un fichier `.xlsx` prêt pour la paie avec deux onglets aux couleurs de SIM Assurances :
+4. Vous obtenez un fichier `.xlsx` prêt pour la paie avec trois onglets aux couleurs de SIM Assurances :
    - **Résumé** : Total des jours travaillés, présences, absences, nombre de retards et cumul des minutes de retard par personne.
-   - **Détails des retards** : Chaque retard répertorié ligne par ligne avec l'heure exacte, le statut de la *Justification*, le *Motif* (celui de la justification, sinon l'ancien motif du pointage) et *Décidée par* (renseigné seulement une fois la justification acceptée ou refusée). Les mêmes colonnes s'affichent à l'écran.
+   - **Détails des retards** : Chaque retard répertorié ligne par ligne avec l'heure exacte, les minutes de retard, le statut de la *Justification*, le *Motif* (celui de la justification, sinon l'ancien motif du pointage) et *Décidée par* (renseigné seulement une fois la justification acceptée ou refusée).
+   - **Départs anticipés** : Chaque départ anticipé ligne par ligne, avec les mêmes colonnes que les retards sauf les minutes (l'avance d'un départ n'est pas enregistrée au pointage).
+5. **L'export contient toujours toutes les lignes** de la période et des filtres choisis, sans limite. À l'écran, le détail des retards et celui des départs anticipés s'affichent dans deux sections séparées, avec les mêmes colonnes que le fichier, et sont paginés à 50 lignes chacun (boutons *Précédent* / *Suivant* indépendants). Au-delà de 50 lignes, l'écran indique *"N lignes affichées sur M, export complet disponible"*.
 
 ---
 

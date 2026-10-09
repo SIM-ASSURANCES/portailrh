@@ -418,9 +418,12 @@ Permet aux RH de saisir un pointage à la place d'un collaborateur (oubli de bad
 ### 7.6 Moteur de Reporting & Export Excel Multi-Feuilles (`/pointage/rh/reporting`)
 - Filtres combinables : période (bornée à 180 jours max), collaborateur, service.
 - Route de génération de fichier : [frontend/src/app/api/pointage/rh/reporting/export/route.ts](file:///c:/Users/dmass/Documents/portailrh/frontend/src/app/api/pointage/rh/reporting/export/route.ts) utilisant `exceljs`.
-- Export binaire au format `.xlsx` comprenant 2 feuilles formatées aux couleurs institutionnelles de SIM Assurances (`#004B9C`) :
+- Export binaire au format `.xlsx` comprenant 3 feuilles formatées aux couleurs institutionnelles de SIM Assurances (`#004B9C`) :
   1. **Feuille Résumé** : Collaborateur, Service, Jours travaillés, Présences, Absences, Jours de retard, Minutes totales de retard.
-  2. **Feuille Détails des Retards** : Date, Collaborateur, Heure prévue, Heure réelle constatée, Minutes de retard, Justification (statut), Motif (justification, sinon ancien motif), Décidée par (seulement si acceptée ou refusée). Mêmes colonnes et mêmes valeurs à l'écran (`getDetailsRetards`, `backend/src/pointageReporting.ts`).
+  2. **Feuille Détails des retards** : Date, Collaborateur, Heure prévue, Heure réelle constatée, Minutes de retard, Justification (statut), Motif (justification, sinon ancien motif), Décidée par (seulement si acceptée ou refusée).
+  3. **Feuille Départs anticipés** : mêmes colonnes sans « Minutes de retard » (l'avance d'un départ n'est pas enregistrée au pointage et n'est pas recalculée).
+- Source unique pour l'écran et l'export (`backend/src/pointageReporting.ts`) : `construireRequeteDetails` (retard = arrivée `estRetard`, départ anticipé = départ `estDepartAnticipe`, valeurs posées au pointage ; mêmes filtres et même tri) et `ligneDetailPointage` (`justificationAffichee`), exposées par `getDetailsRetards` et `getDetailsDepartsAnticipes`.
+- **Export complet** : appelées sans pagination, ces fonctions renvoient toutes les lignes ; l'export n'a aucune limite. **Écran paginé** : deux sections (« Détail des retards », « Détail des départs anticipés »), 50 lignes chacune, paramètres `page` et `pageDeparts` indépendants ; au-delà de 50 lignes, la mention « N lignes affichées sur M, export complet disponible » s'affiche.
 
 ---
 

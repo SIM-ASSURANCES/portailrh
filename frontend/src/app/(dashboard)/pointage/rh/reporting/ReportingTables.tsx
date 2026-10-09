@@ -68,7 +68,14 @@ export function ReportingSummaryTable({ data }: { data: AgregeData[] }) {
   );
 }
 
-export function ReportingDetailsTable({ data }: { data: DetailsData[] }) {
+/** Détail des retards ou des départs anticipés (sans colonne de minutes : l'avance n'est pas enregistrée au pointage). */
+export function ReportingDetailsTable({
+  data,
+  avecMinutesRetard = true,
+}: {
+  data: DetailsData[];
+  avecMinutesRetard?: boolean;
+}) {
   return (
     <DataTable
       rowKey={(r) => r.id}
@@ -91,12 +98,16 @@ export function ReportingDetailsTable({ data }: { data: DetailsData[] }) {
           accessor: (r) => r.heureReelle,
           render: (r) => new Date(r.heureReelle).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
         },
-        { 
-          key: "minutesRetard", 
-          header: "Minutes", 
-          accessor: (r) => r.minutesRetard,
-          render: (r) => <Badge variant="primary">{r.minutesRetard} min</Badge>
-        },
+        ...(avecMinutesRetard
+          ? [
+              {
+                key: "minutesRetard",
+                header: "Minutes",
+                accessor: (r: DetailsData) => r.minutesRetard,
+                render: (r: DetailsData) => <Badge variant="primary">{r.minutesRetard} min</Badge>,
+              },
+            ]
+          : []),
         {
           key: "justification",
           header: "Justification",

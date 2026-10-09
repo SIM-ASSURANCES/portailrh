@@ -1,7 +1,13 @@
 import ExcelJS from "exceljs";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSession, hasPermission } from "@/lib/auth";
-import { getReportingAgrégé, getDetailsRetards, pointageReportingSchema } from "backend";
+import {
+  getDetailsDepartsAnticipes,
+  getDetailsRetards,
+  getReportingAgrégé,
+  pointageReportingSchema,
+  type LigneDetailPointage,
+} from "backend";
 
 const HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF004B9C" } };
 const HEADER_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -11,6 +17,43 @@ function styleHeaderRow(sheet: ExcelJS.Worksheet) {
     cell.fill = HEADER_FILL;
     cell.font = HEADER_FONT;
   });
+}
+
+/**
+ * Feuille de détail (retards ou départs anticipés) : mêmes colonnes et mêmes valeurs qu'à l'écran (`ligneDetailPointage`,
+ * `justificationAffichee`). Toutes les lignes, sans limite. Pas de colonne de minutes pour un départ anticipé : l'avance
+ * n'est pas enregistrée au pointage et ne doit pas être recalculée ici.
+ */
+function ajouterFeuilleDetail(
+  workbook: ExcelJS.Workbook,
+  nom: string,
+  lignes: LigneDetailPointage[],
+  avecMinutesRetard: boolean,
+) {
+  const sheet = workbook.addWorksheet(nom);
+  sheet.columns = [
+    { header: "Date", key: "date", width: 15 },
+    { header: "Collaborateur", key: "collaborateur", width: 30 },
+    { header: "Heure prévue", key: "heurePrevue", width: 15 },
+    { header: "Heure réelle", key: "heureReelle", width: 15 },
+    ...(avecMinutesRetard ? [{ header: "Minutes de retard", key: "minutesRetard", width: 20 }] : []),
+    { header: "Justification", key: "justification", width: 24 },
+    { header: "Motif", key: "motif", width: 40 },
+    { header: "Décidée par", key: "decideePar", width: 25 },
+  ];
+  lignes.forEach((d) => {
+    sheet.addRow({
+      date: d.date.toLocaleDateString("fr-FR"),
+      collaborateur: d.collaborateur,
+      heurePrevue: d.heurePrevue || "—",
+      heureReelle: d.heureReelle.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
+      minutesRetard: d.minutesRetard || 0,
+      justification: d.justification,
+      motif: d.motif || "—",
+      decideePar: d.decideePar || "—",
+    });
+  });
+  styleHeaderRow(sheet);
 }
 
 export async function GET(request: NextRequest) {
@@ -29,9 +72,11 @@ export async function GET(request: NextRequest) {
   const parsedFilters = pointageReportingSchema.safeParse(searchParams);
   const filters = parsedFilters.success ? parsedFilters.data : {};
 
-  const [agrege, details] = await Promise.all([
+  // Export complet : aucune pagination, toutes les lignes du détail.
+  const [agrege, retards, departs] = await Promise.all([
     getReportingAgrégé(filters),
     getDetailsRetards(filters),
+    getDetailsDepartsAnticipes(filters),
   ]);
 
   const workbook = new ExcelJS.Workbook();
@@ -63,33 +108,9 @@ export async function GET(request: NextRequest) {
   });
   styleHeaderRow(sheetResume);
 
-  // 2. Feuille Détail des retards
-  const sheetDetails = workbook.addWorksheet("Détails des retards");
-  sheetDetails.columns = [
-    { header: "Date", key: "date", width: 15 },
-    { header: "Collaborateur", key: "collaborateur", width: 30 },
-    { header: "Heure prévue", key: "heurePrevue", width: 15 },
-    { header: "Heure réelle", key: "heureReelle", width: 15 },
-    { header: "Minutes de retard", key: "minutesRetard", width: 20 },
-    // Pointage V2, lot 7 : mêmes valeurs qu'à l'écran (`justificationAffichee`, via `getDetailsRetards`).
-    { header: "Justification", key: "justification", width: 24 },
-    { header: "Motif", key: "motif", width: 40 },
-    { header: "Décidée par", key: "decideePar", width: 25 },
-  ];
-
-  details.data.forEach((d) => {
-    sheetDetails.addRow({
-      date: d.date.toLocaleDateString("fr-FR"),
-      collaborateur: d.collaborateur,
-      heurePrevue: d.heurePrevue || "—",
-      heureReelle: d.heureReelle.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }),
-      minutesRetard: d.minutesRetard || 0,
-      justification: d.justification,
-      motif: d.motif || "—",
-      decideePar: d.decideePar || "—",
-    });
-  });
-  styleHeaderRow(sheetDetails);
+  // 2 et 3. Détail des retards, détail des départs anticipés.
+  ajouterFeuilleDetail(workbook, "Détails des retards", retards.data, true);
+  ajouterFeuilleDetail(workbook, "Départs anticipés", departs.data, false);
 
   const buffer = await workbook.xlsx.writeBuffer();
   const dateStr = new Date().toISOString().slice(0, 10);

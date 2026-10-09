@@ -4349,8 +4349,8 @@ permission nouvelle.
   « Justification », « Motif », « Décidée par », mêmes valeurs à l'écran et dans le fichier.
 - **Réinitialisation** : `ENTITES_HISTORIQUE_POINTAGE` contient toujours `JustificationPointage` (vérifié) ; le dépôt n'a
   aucun test de réinitialisation.
-- **Limites connues, non traitées (hors lot 7)** : le détail du reporting ne liste que les retards (pas les départs
-  anticipés) ; `getDetailsRetards` garde son `take` par défaut de 50 lignes, export compris ; le reporting n'inclut que
+- **Limites connues, non traitées (hors lot 7)** : ~~détail limité aux retards ; export tronqué à 50 lignes~~ (corrigés
+  au lot 8, section 12) ; le reporting n'inclut que
   les comptes portant `pointage.pointer` ; une permission partielle n'apparaît pas en « Absence autorisée » ; aucun écran
   ne crée encore de `PlageAbsenceAutorisee`.
 - Documentation : `docs/GUIDE_FONCTIONNEL_POINTAGE.md` et `docs/POINTAGE_ARCHITECTURE.md` (motif obligatoire retiré,
@@ -4358,6 +4358,28 @@ permission nouvelle.
 - Vérifié : vitest (`lectureRhPointage.test.ts`, 5 tests), Playwright 14/14 sur base jetable (rh@ : justifications
   SOUMISE et ACCEPTEE « par RH Test », repli sur l'ancien motif, départ anticipé « Justification attendue », congé et
   permission de journée en « Absence autorisée », écran du reporting et export cohérents).
+
+### 12. Pointage V2 — lot 8 : départs anticipés dans le reporting, export complet (2026-10-09)
+
+Aucune migration, aucune permission.
+- **Une seule requête et une seule ligne** (`backend/src/pointageReporting.ts`) : `construireRequeteDetails(type,
+  filters, pagination?)` (`RETARD` = arrivée `estRetard`, `DEPART_ANTICIPE` = départ `estDepartAnticipe`, tous deux
+  posés au pointage par les règles du lot 3, jamais recalculés ; mêmes filtres, tri du plus récent au plus ancien) et
+  `ligneDetailPointage` (via `justificationAffichee` : statut, motif, « Décidée par »). `getDetailsRetards` et
+  `getDetailsDepartsAnticipes(filters, pagination?)` : **sans pagination = toutes les lignes** (l'ancien `take` de 50 par
+  défaut, qui tronquait l'export, a disparu ; l'écran passe `{ skip, take }` explicitement).
+- **Écran** (`/pointage/rh/reporting`) : section « Détail des départs anticipés » sous celle des retards, chacune paginée
+  à 50 (`page`, `pageDeparts`, indépendants) ; au-delà, « N lignes affichées sur M, export complet disponible ».
+- **Export** : feuille « Départs anticipés » après « Détails des retards », toutes les lignes, mêmes colonnes **sauf
+  « Minutes de retard »** : l'avance d'un départ n'est pas enregistrée au pointage, et la déduire de `heurePrevue`
+  (fin de journée non ajustée d'une permission) serait un second calcul divergent. Même choix à l'écran.
+- `docs/GUIDE_FONCTIONNEL_POINTAGE.md` et `docs/POINTAGE_ARCHITECTURE.md` décrivent encore deux feuilles (non modifiés,
+  hors périmètre du lot).
+- Vérifié : vitest (`reportingDetailsPointage.test.ts`, 6 tests), tsc, eslint, `next build` ; Playwright sur PostgreSQL 16
+  jetable (60 retards, 55 départs anticipés, rh@) : mentions « 50 sur 60 » et « 50 sur 55 », page 2 des départs (5
+  lignes, page des retards conservée), « Total : 0 » sous la limite, départs refusé/accepté « par Responsable Commercial
+  Test »/envoyé, 390 px sans défilement horizontal, export à 3 feuilles avec 60 et 55 lignes, colonnes et valeurs
+  identiques à l'écran (ancien motif en repli), aucune erreur JavaScript.
 
 ## Module FeedbackApp — anonymat total
 

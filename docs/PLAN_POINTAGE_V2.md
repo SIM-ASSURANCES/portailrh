@@ -135,6 +135,11 @@ nécessaire.
   export (« Justification », « Motif », « Décidée par ») ; guide fonctionnel, architecture et `CLAUDE.md` (section 11)
   à jour. Aucune migration. Limites restantes : `CLAUDE.md`, section 11.
 
+**Lot 8 — départs anticipés dans le reporting, export complet** (non commité, 2026-10-09)
+- `construireRequeteDetails`, `ligneDetailPointage`, `getDetailsDepartsAnticipes` (`pointageReporting.ts`, tests
+  `reportingDetailsPointage.test.ts`) ; section et feuille « Départs anticipés » (sans colonne de minutes) ; export sans
+  limite de lignes, écran paginé à 50 avec mention. Détail : `CLAUDE.md`, section 12.
+
 ## 4. Lots restants
 
 Chaque lot fait l'objet d'un commit séparé, testé, avec un message au format des commits existants. La logique
