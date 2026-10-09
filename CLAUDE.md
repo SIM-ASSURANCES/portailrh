@@ -5511,6 +5511,7 @@ revérifie la permission **dans son propre code**, jamais seulement via un
 layout ou le masquage de l'UI.
 
 - Provider Credentials uniquement, sessions JWT (pas d'adapter Prisma).
+- **Retour après connexion (audit open redirect, 2026-10-10)** : UN SEUL point de validation, `cheminRetourConnexion` (`backend/src/cheminRetour.ts`), utilisé par la page de connexion ET le callback `redirect` d'Auth.js (`auth.config.ts`) — jamais de redirection après connexion sans passer par lui. Résultat toujours un chemin interne de la liste `PREFIXES_RETOUR_INTERNES` (sinon « / ») ; résolution `new URL(valeur, origine)` avec l'origine CONFIGURÉE (`AUTH_URL`, `origineSiteConfiguree`), jamais l'en-tête Host / x-forwarded-host ; refus des barres inverses, espaces, caractères de contrôle, identifiants, schémas et formes encodées (3 niveaux) ; `/login` admis seulement pour la déconnexion (option `autoriserConnexion`). `AUTH_URL` doit donc être l'URL publique réelle (sinon le lien absolu posé par le middleware retombe sur l'accueil).
 - Email de connexion : nettoyé (`trim()`) et recherché insensible à la
   casse (`mode: "insensitive"`) ; le mot de passe reste sensible à la
   casse.

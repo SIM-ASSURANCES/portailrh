@@ -7,7 +7,7 @@ import { Input } from "@/components/ui";
 import { getSession, signIn } from "@/lib/auth";
 import { headers } from "next/headers";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { cheminRetourConnexion } from "backend";
+import { cheminRetourConnexion, origineSiteConfiguree } from "backend";
 
 import { AuthShell } from "../AuthShell";
 import { LoginSubmitButton } from "./LoginSubmitButton";
@@ -27,12 +27,14 @@ async function authenticate(formData: FormData) {
   // Limite à 5 tentatives par minute par IP+email
   const rlKey = `login_${ip}_${email}`;
   if (!checkRateLimit(rlKey, 5, 60 * 1000)) {
-    const callbackUrl = String(formData.get("callbackUrl") || "/");
+    const callbackUrl = cheminRetourConnexion(formData.get("callbackUrl"), origineSiteConfiguree());
     redirect(`/login?error=2&callbackUrl=${encodeURIComponent(callbackUrl)}`);
   }
 
   try {
-    const callbackUrl = cheminRetourConnexion(String(formData.get("callbackUrl") || "/"), headersList.get("host"));
+    // Seul point de validation du retour après connexion (`cheminRetour.ts`) ; origine de référence = configuration
+    // (`AUTH_URL`), jamais l'en-tête Host envoyé par le client.
+    const callbackUrl = cheminRetourConnexion(formData.get("callbackUrl"), origineSiteConfiguree());
     await signIn("credentials", {
       email: formData.get("email"),
       password: formData.get("password"),
@@ -45,7 +47,7 @@ async function authenticate(formData: FormData) {
     });
   } catch (error) {
     if (error instanceof AuthError) {
-      const callbackUrl = String(formData.get("callbackUrl") || "/");
+      const callbackUrl = cheminRetourConnexion(formData.get("callbackUrl"), origineSiteConfiguree());
       redirect(`/login?error=1&callbackUrl=${encodeURIComponent(callbackUrl)}`);
     }
     throw error;
