@@ -123,6 +123,12 @@ nécessaire.
   `frontend/src/lib/cronAuth.ts`, utilisé par les deux routes ; route `api/cron/relances-justification`. Exploitation :
   `DEPLOIEMENT.md` §7 (cron-job.org toutes les 5 minutes, `CRON_SECRET`, `AUTH_URL`). Détail : `CLAUDE.md`, section 9.
 
+**Lot 6 — « Se souvenir de moi »** (non commité, 2026-10-09)
+- Case cochée par défaut sur la connexion quand le chemin de retour validé commence par `/pointage/`
+  (`seSouvenirDeMoiParDefaut`, `cheminRetour.ts`) ; durées inchangées ; « Session mémorisée jusqu'au … » non affiché
+  (pas simple sans exposer `rememberMe`). Test sur téléphone à faire par Thierry ou Aristide. Détail : `CLAUDE.md`,
+  section 10.
+
 ## 4. Lots restants
 
 Chaque lot fait l'objet d'un commit séparé, testé, avec un message au format des commits existants. La logique

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cheminRetourConnexion, LONGUEUR_MAX_CHEMIN_RETOUR, origineSiteConfiguree } from "./cheminRetour";
+import { cheminRetourConnexion, LONGUEUR_MAX_CHEMIN_RETOUR, origineSiteConfiguree, seSouvenirDeMoiParDefaut } from "./cheminRetour";
 
 // Audit open redirect (2026-10-10) : la validation ne renvoie jamais qu'un chemin interne autorisé, sinon « / ».
 const ORIGINE = "http://localhost:3000";
@@ -93,5 +93,25 @@ describe("origineSiteConfiguree", () => {
     expect(origineSiteConfiguree({ NEXTAUTH_URL: "http://localhost:3000" })).toBe("http://localhost:3000");
     expect(origineSiteConfiguree({})).toBeNull();
     expect(origineSiteConfiguree({ AUTH_URL: "pas une url" })).toBeNull();
+  });
+});
+
+describe("seSouvenirDeMoiParDefaut (lot 6) — décidé sur le chemin validé", () => {
+  const coche = (valeur: unknown) => seSouvenirDeMoiParDefaut(cheminRetourConnexion(valeur, ORIGINE));
+  it("cochée pour un retour vers le pointage", () => {
+    expect(coche("/pointage/pointer")).toBe(true);
+    expect(coche("/pointage/pointer?source=QR_CODE")).toBe(true);
+    expect(coche("/pointage/justifier/abc")).toBe(true);
+    expect(coche("http://localhost:3000/pointage/justifier/abc")).toBe(true);
+  });
+  it("décochée ailleurs, sans valeur ou pour une valeur refusée", () => {
+    expect(coche("/treso/demandes/x")).toBe(false);
+    expect(coche(undefined)).toBe(false);
+    expect(coche("")).toBe(false);
+    expect(coche("/")).toBe(false);
+    expect(coche("/pointage")).toBe(false);
+    for (const v of ["//evil.com/pointage/pointer", "/\\evil.com/pointage/", "https://evil.com/pointage/pointer", "/pointage/../login", "/%2F%2Fevil.com/pointage/"]) {
+      expect(coche(v)).toBe(false);
+    }
   });
 });

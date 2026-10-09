@@ -120,3 +120,12 @@ export function cheminRetourConnexion(
 export function origineSiteConfiguree(env: Record<string, string | undefined> = process.env): string | null {
   return origineDe(env.AUTH_URL ?? env.NEXTAUTH_URL ?? null);
 }
+
+/**
+ * « Se souvenir de moi » coché par défaut (Pointage V2, lot 6) : seulement quand le chemin de retour DÉJÀ VALIDÉ par
+ * `cheminRetourConnexion` mène au pointage (`/pointage/…`, arrivée depuis le QR ou un lien de justification). Jamais
+ * appelée sur une valeur brute : un chemin refusé par la validation vaut « / » et ne coche donc jamais la case.
+ */
+export function seSouvenirDeMoiParDefaut(cheminValide: string): boolean {
+  return cheminValide.startsWith("/pointage/");
+}

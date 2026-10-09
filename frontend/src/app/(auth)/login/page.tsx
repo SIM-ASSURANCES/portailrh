@@ -7,7 +7,7 @@ import { Input } from "@/components/ui";
 import { getSession, signIn } from "@/lib/auth";
 import { headers } from "next/headers";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { cheminRetourConnexion, origineSiteConfiguree } from "backend";
+import { cheminRetourConnexion, origineSiteConfiguree, seSouvenirDeMoiParDefaut } from "backend";
 
 import { AuthShell } from "../AuthShell";
 import { LoginSubmitButton } from "./LoginSubmitButton";
@@ -70,6 +70,9 @@ export default async function LoginPage({
   }
 
   const { error, callbackUrl, activated, reset } = await searchParams;
+  // Une seule lecture du chemin de retour, par le point de validation unique (`cheminRetour.ts`) ; la case « Se souvenir
+  // de moi » est cochée par défaut sur ce chemin VALIDÉ quand il mène au pointage (lot 6) — décochable à tout moment.
+  const cheminRetour = cheminRetourConnexion(callbackUrl, origineSiteConfiguree());
 
   return (
     <AuthShell>
@@ -131,7 +134,7 @@ export default async function LoginPage({
           required
           autoComplete="current-password"
         />
-        <input type="hidden" name="callbackUrl" value={callbackUrl ?? "/"} />
+        <input type="hidden" name="callbackUrl" value={cheminRetour} />
 
         {/* "Se souvenir de moi" + Lien "Mot de passe oublié ?" */}
         <div className="flex items-center justify-between text-sm">
@@ -139,6 +142,7 @@ export default async function LoginPage({
             <input
               type="checkbox"
               name="rememberMe"
+              defaultChecked={seSouvenirDeMoiParDefaut(cheminRetour)}
               className="h-4 w-4 rounded border-border accent-primary"
             />
             Se souvenir de moi

@@ -4318,6 +4318,19 @@ collaborateur trouve sa justification à faire dans « Mon historique ».
   secret ou sans « Bearer » ; deux appels simultanés = 3 envois et 1 clôture au total ; troisième appel sans effet ;
   responsable alerté, RH alertée pour un responsable en retard, aucun autre compte notifié).
 
+### 10. Pointage V2 — lot 6 : « Se souvenir de moi » coché par défaut vers le pointage (2026-10-09)
+
+- Page de connexion : le chemin de retour est lu UNE fois, par `cheminRetourConnexion` (point de validation unique) ; la
+  case est cochée par défaut (`defaultChecked`) quand ce chemin VALIDÉ commence par `/pointage/`
+  (`seSouvenirDeMoiParDefaut`, `backend/src/cheminRetour.ts`) — arrivée par le QR (`/pointage/qr`, posé par le
+  middleware) ou un lien de justification. Un chemin refusé vaut « / » et ne coche jamais. Le champ caché porte lui aussi
+  le chemin validé. L'utilisateur peut décocher. Durées de session inchangées (`auth.config.ts` non modifié).
+- « Session mémorisée jusqu'au … » non affiché : il faudrait exposer `rememberMe` ou l'expiration du jeton, ce que le
+  plan exclut (« seulement si c'est simple »).
+- Vérifié : vitest (règle sur chemins validés, y compris refusés), Playwright sur base jetable 12/12 (liens pointage,
+  QR, lien absolu du middleware : cochée ; sans lien, /treso, liens refusés : décochée ; décochage manuel envoyé sans
+  `rememberMe` ; retour sur /pointage/pointer).
+
 ## Module FeedbackApp — anonymat total
 
 Troisième module : permet à QUICONQUE (employé connecté ou visiteur sans
