@@ -2,12 +2,11 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
+import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
+import { DetailDepensesRetour } from "@/components/tresorerie/DetailDepensesRetour";
 import { getSession, hasPermission } from "@/lib/auth";
 import { detailMontantDefinitif, etatRetourAffiche } from "@/lib/retourAffichage";
 import {
-  calculerMontantARetournerNet,
-  estFicheRegularisation,
-  estLigneReste,
   estRetourNul,
   getCouvertureRetoursPostCloture,
   getMontantsDefinitifsRetours,
@@ -16,13 +15,9 @@ import {
   refusExecutionPropreDemande,
 } from "backend";
 
-import { DepenseLigneEdition } from "./DepenseLigneEdition";
-import { DetaillerDepensesForm } from "./DetaillerDepensesForm";
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
-import { JustifierApresReception } from "./JustifierApresReception";
 import { ReceptionnerAction } from "./ReceptionnerAction";
 import { RegularisationSignalement, RemboursementDecision } from "./RegularisationSignalement";
-import type { LigneDetailInput } from "../retourActions";
 
 /**
  * Détail complet d'un retour de caisse (Tâche "Écran 'Voir' avant
@@ -96,35 +91,10 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     .filter((d) => d.justification === "SANS_PIECE")
     .reduce((sum, d) => sum + Number(d.montant), 0);
 
-  // Tâche "L'Assistant Finance détaille réellement le retour" (voir
-  // CLAUDE.md) : le mécanisme unifié de détail reste possible tant que le
-  // retour n'est pas réceptionné (comme avant) OU, une fois réceptionné,
-  // UNIQUEMENT s'il existe un signalement actif du collaborateur (Tâche
-  // "Signalement d'erreur par le Collaborateur") — même garde EXACTE que
-  // `detaillerDepensesRetourAction` côté serveur, jamais dupliquée sous une
-  // forme divergente ici (celle-ci ne sert qu'à décider l'affichage).
   const signalementActif = retour.signalements[0] ?? null;
   // Reçu net au regard du signalement (réceptionné + compléments − remboursements) : le signalement reste actif après une
   // régularisation de caisse, jusqu'à la correction du détail.
   const recuNetSignalement = signalementActif ? await getRecuNetSignalement(retour.id, signalementActif.id) : 0;
-  const cloturéeSansException = retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle;
-  const bloqueParReception = retour.estReceptionne && !signalementActif;
-  const peutDetailler = !cloturéeSansException && !bloqueParReception;
-  // Fiche de régularisation (détail sans retour, 2026-10-10) : total libre, borné par le montant remis restant à expliquer.
-  const fiche = estFicheRegularisation({ ...retour, mode: retour.reglement.mode });
-  const disponibleFiche = fiche
-    ? await calculerMontantARetournerNet({ reglementId: retour.reglementId, totalDepensesNouvelles: 0, excludeRetourId: retour.id })
-    : 0;
-  const lignesInitiales: LigneDetailInput[] = retour.depenses
-    .filter((d) => !(d.objet === "Dépenses non détaillées" && !d.motifNonJustifie))
-    .map((d) => ({
-    libelle: d.objet,
-    montant: Number(d.montant),
-    pieceJointeFournie: !!d.pieceJointe,
-    pieceJointeUrl: undefined,
-    justifiee: d.justification !== "SANS_PIECE",
-    motif: d.motifNonJustifie ?? undefined,
-  }));
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
@@ -307,87 +277,15 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
         </dl>
 
         <div className="space-y-3 border-t border-border pt-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Lignes de dépenses déclarées
-            </h2>
-            {peutAgirRetour && !peutDetailler ? (
-              <p className="text-xs text-muted-foreground">
-                {cloturéeSansException
-                  ? "Cette demande est clôturée : le détail n'est plus modifiable."
-                  : "Ce retour est réceptionné : un signalement actif du collaborateur est nécessaire pour corriger le détail."}
-              </p>
-            ) : null}
-          </div>
-          {peutAgirRetour && peutDetailler ? (
-            <div className="space-y-2">
-              <h3 className="text-sm font-bold text-foreground">Détailler les dépenses</h3>
-              <DetaillerDepensesForm
-                key={JSON.stringify(lignesInitiales.map((l) => [l.libelle, l.montant, l.justifiee]))}
-                retourId={retour.id}
-                libre={fiche}
-                montantCible={fiche ? disponibleFiche : totalDeclare}
-                lignesInitiales={lignesInitiales}
-              />
-            </div>
-          ) : null}
-          {retour.depenses.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Retour intégral — aucune dépense déclarée.</p>
-          ) : (
-            <ul className="space-y-3">
-              {retour.depenses.map((d) => (
-                <li key={d.id} className="space-y-1.5 rounded-lg border border-border p-3 text-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium text-foreground">
-                      {d.objet} — {Number(d.montant).toLocaleString("fr-FR")} FCFA
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {d.date.toLocaleDateString("fr-FR")} · {d.justification === "SANS_PIECE" ? "Dépense sans pièce formelle" : "Dépense justifiée"}
-                    </span>
-                  </div>
-                  {d.nature ? <p className="text-xs text-muted-foreground">{d.nature}</p> : null}
-                  {d.commentaire ? <p className="text-xs text-foreground">{d.commentaire}</p> : null}
-                  {d.pieceJointe ? (
-                    <a
-                      href={`/api/treso/pieces-jointes/${d.pieceJointe.id}`}
-                      className="inline-block text-xs text-info underline-offset-4 hover:text-primary hover:underline"
-                    >
-                      Télécharger la pièce jointe
-                    </a>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Aucune pièce jointe fournie.</p>
-                  )}
-                  {d.justification !== "SANS_PIECE" && !d.motifNonJustifie ? (
-                    <p className="text-xs text-success">Dépense justifiée.</p>
-                  ) : null}
-                  {d.motifNonJustifie ? (
-                    <p className="text-xs text-warning">
-                      Motif{d.motifNonJustifiePar ? ` (${d.motifNonJustifiePar.fullName})` : ""} : {d.motifNonJustifie}
-                    </p>
-                  ) : null}
-                  {peutAgirRetour && retour.estReceptionne && !cloturéeSansException && d.justification === "SANS_PIECE" && d.motifNonJustifie ? (
-                    <JustifierApresReception depenseLigneId={d.id} />
-                  ) : null}
-                  {/* Correction ou suppression d'une dépense détaillée (2026-10-10), motif obligatoire, tant que la demande
-                      n'est pas clôturée (réouverture exceptionnelle : règle existante). */}
-                  {peutAgirRetour && !cloturéeSansException && !estLigneReste(d) ? (
-                    <DepenseLigneEdition
-                      depense={{
-                        id: d.id,
-                        libelle: d.objet,
-                        montant: Number(d.montant),
-                        justifiee: d.justification !== "SANS_PIECE",
-                        motifNonJustifie: d.motifNonJustifie,
-                        aPieceJointe: !!d.pieceJointe,
-                      }}
-                    />
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Détail des dépenses</h2>
+          {/* Même composant que la Régularisation de la demande (2026-10-10) : lignes modifiables, reste calculé avec
+              « Détailler », totaux ; correction possible tant que la demande n'est pas clôturée. */}
+          <DetailDepensesRetour retourId={retour.id} canReceptionner={canReceptionner} userId={session?.user.id ?? null} />
         </div>
       </div>
+
+      {/* Même historique que la demande : saisie de départ et chaque modification (avant/après, auteur, date, motif). */}
+      <DemandeHistorique demandeId={retour.reglement.demandeId} />
     </div>
   );
 }

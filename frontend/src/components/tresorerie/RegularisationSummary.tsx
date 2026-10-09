@@ -1,11 +1,6 @@
-import {
-  getDepenseLignesDetail,
-  getDepensesDeclareesParJustification,
-  getRetoursRecus,
-  getTotalRegle,
-} from "backend";
+import { getDepensesDeclareesParJustification, getRetoursRecus, getTotalRegle, prisma } from "backend";
 
-import Link from "next/link";
+import { DetailDepensesRetour } from "./DetailDepensesRetour";
 
 /**
  * Chiffres de régularisation d'une demande ("Fonds remis (Caisse + Banque)",
@@ -63,18 +58,28 @@ export async function RegularisationSummary({
   title = "Régularisation",
   canGererJustification = false,
   showDetail = canGererJustification,
+  userId = null,
 }: {
   demandeId: string;
   montantValide: number;
   title?: string;
   canGererJustification?: boolean;
   showDetail?: boolean;
+  /** Compte connecté : conflit d'intérêts (garde 8) du détail des dépenses. */
+  userId?: string | null;
 }) {
   const [decaisse, depenses, retoursRecus, lignes] = await Promise.all([
     getTotalRegle(demandeId),
     getDepensesDeclareesParJustification(demandeId),
     getRetoursRecus(demandeId),
-    showDetail ? getDepenseLignesDetail(demandeId) : Promise.resolve([]),
+    // Détail des dépenses : un bloc par retour de caisse, même composant que l'écran du retour (2026-10-10).
+    showDetail
+      ? prisma.retourCaisse.findMany({
+          where: { reglement: { demandeId } },
+          select: { id: true, reglement: { select: { montant: true, mode: true } } },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
   ]);
   const depensesDeclarees = depenses.justifiees + depenses.nonJustifiees;
   const ecart = decaisse - depensesDeclarees - retoursRecus;
@@ -141,47 +146,16 @@ export async function RegularisationSummary({
           {lignes.length === 0 ? (
             <p className="text-sm text-muted-foreground">Aucune dépense déclarée pour l&apos;instant.</p>
           ) : (
-            <ul className="space-y-3">
-              {lignes.map((ligne) => (
-                <li key={ligne.id} className="space-y-1 rounded-lg border border-border p-3 text-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium text-foreground">
-                      {ligne.objet} — {ligne.montant.toLocaleString("fr-FR")} FCFA
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {ligne.date.toLocaleDateString("fr-FR")} · {ligne.justification === "SANS_PIECE" ? "Dépense sans pièce formelle" : "Dépense justifiée"}
-                    </span>
-                  </div>
-                  {ligne.pieceJointeId ? (
-                    <a
-                      href={`/api/treso/pieces-jointes/${ligne.pieceJointeId}`}
-                      className="inline-block text-xs text-info underline-offset-4 hover:text-primary hover:underline"
-                    >
-                      Voir la pièce jointe
-                    </a>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Aucune pièce jointe.</p>
-                  )}
-                  {ligne.motifNonJustifie ? (
-                    <p className="text-xs text-warning">
-                      Motif{ligne.motifNonJustifiePar ? ` (${ligne.motifNonJustifiePar})` : ""} : {ligne.motifNonJustifie}
-                    </p>
-                  ) : null}
-                  {ligne.retourEstReceptionne ? (
-                    <p className="text-xs text-muted-foreground">
-                      Retour déjà réceptionné : détail verrouillé.
-                    </p>
-                  ) : canGererJustification ? (
-                    <Link
-                      href={`/treso/finance/retours/${ligne.retourCaisseId}`}
-                      className="inline-block text-xs font-semibold text-info underline-offset-4 hover:text-primary hover:underline"
-                    >
-                      Détailler les dépenses (montant + motif + pièce jointe)
-                    </Link>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+            lignes.map((retour) => (
+              <div key={retour.id} className="space-y-2">
+                {lignes.length > 1 ? (
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Règlement {retour.reglement.mode === "CAISSE" ? "Caisse" : "Banque"} de {Number(retour.reglement.montant).toLocaleString("fr-FR")} FCFA
+                  </p>
+                ) : null}
+                <DetailDepensesRetour retourId={retour.id} canReceptionner={canGererJustification} userId={userId} />
+              </div>
+            ))
           )}
         </div>
       ) : null}

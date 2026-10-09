@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import * as regles from "./regularisationDepenses";
 import {
   estFicheRegularisation,
   estLigneReste,
+  planAjoutLignes,
   planModificationDepense,
+  totauxDetailRetour,
   refusMotifModification,
   resumeModificationDepense,
 } from "./regularisationDepenses";
@@ -47,10 +50,6 @@ describe("modification et suppression d'une dépense détaillée", () => {
     expect(r).toEqual({ ok: true, montantReste: 0, montantARetourner: 50000 - 12500 - 10000 });
   });
 
-  it("fiche : suppression → la dépense sort du détail, à rendre recalculé", () => {
-    const r = planModificationDepense({ fiche: true, lignes, cibleId: "b", nouveauMontant: null, disponibleFiche: 50000 });
-    expect(r).toEqual({ ok: true, montantReste: 0, montantARetourner: 35000 });
-  });
 
   it("fiche : jamais plus que le montant remis restant à expliquer", () => {
     const r = planModificationDepense({ fiche: true, lignes, cibleId: "a", nouveauMontant: 45000, disponibleFiche: 50000 });
@@ -62,11 +61,6 @@ describe("modification et suppression d'une dépense détaillée", () => {
     expect(planModificationDepense({ fiche: false, lignes: avecReste, cibleId: "a", nouveauMontant: 12500, disponibleFiche: 0 })).toEqual({
       ok: true,
       montantReste: 7500,
-      montantARetourner: null,
-    });
-    expect(planModificationDepense({ fiche: false, lignes: avecReste, cibleId: "b", nouveauMontant: null, disponibleFiche: 0 })).toEqual({
-      ok: true,
-      montantReste: 15000,
       montantARetourner: null,
     });
   });
@@ -105,5 +99,72 @@ describe("historique lisible", () => {
     expect(
       resumeModificationDepense({ avant: { libelle: "Repas", montant: 8000, type: "justifiee" }, apres: null, motif: "Doublon" })
     ).toBe("Dépense supprimée : « Repas » 8 000 FCFA (Dépense justifiée), motif : Doublon");
+  });
+});
+
+describe("correction du détail après retour nul ou réception (2026-10-10)", () => {
+  it("après un retour nul (réceptionné, 0 rendu) : total lié à remis − 0, lignes modifiables dans ce total", () => {
+    // Constat : une seule ligne de 100 000, retour nul réceptionné ; la ligne baisse à 60 000 → 40 000 en reste.
+    const r = planModificationDepense({
+      fiche: false,
+      lignes: [{ id: "a", montant: 100000, reste: false }],
+      cibleId: "a",
+      nouveauMontant: 60000,
+      disponibleFiche: 0,
+    });
+    expect(r).toEqual({ ok: true, montantReste: 40000, montantARetourner: null });
+  });
+
+  it("après un retour réceptionné avec mouvement de caisse : hausse au-delà du total refusée", () => {
+    // Remis 50 000, rendu 20 000 (écriture de caisse) : total dépensé lié = 30 000.
+    const lignes = [
+      { id: "a", montant: 25000, reste: false },
+      { id: "r", montant: 5000, reste: true },
+    ];
+    expect(planModificationDepense({ fiche: false, lignes, cibleId: "a", nouveauMontant: 30000, disponibleFiche: 0 })).toEqual({
+      ok: true,
+      montantReste: 0,
+      montantARetourner: null,
+    });
+    expect(planModificationDepense({ fiche: false, lignes, cibleId: "a", nouveauMontant: 30001, disponibleFiche: 0 }).ok).toBe(false);
+  });
+
+  it("« Détailler » le reste : nouvelles lignes prises sur le reste, jamais au-delà", () => {
+    expect(planAjoutLignes({ fiche: false, totalActuel: 100000, reste: 40000, disponibleFiche: 0, ajout: [25000, 15000] })).toEqual({
+      ok: true,
+      montantReste: 0,
+      montantARetourner: null,
+    });
+    expect(planAjoutLignes({ fiche: false, totalActuel: 100000, reste: 40000, disponibleFiche: 0, ajout: [45000] }).ok).toBe(false);
+    expect(planAjoutLignes({ fiche: false, totalActuel: 100000, reste: 40000, disponibleFiche: 0, ajout: [] }).ok).toBe(false);
+  });
+
+  it("« Détailler » une fiche : le montant à rendre baisse d'autant", () => {
+    expect(planAjoutLignes({ fiche: true, totalActuel: 30000, reste: 0, disponibleFiche: 50000, ajout: [5000] })).toEqual({
+      ok: true,
+      montantReste: 0,
+      montantARetourner: 15000,
+    });
+    expect(planAjoutLignes({ fiche: true, totalActuel: 30000, reste: 0, disponibleFiche: 50000, ajout: [25000] }).ok).toBe(false);
+  });
+
+  it("recalcul des totaux : détaillé, reste, non justifié, retourné", () => {
+    const lignes = [
+      { montant: 60000, reste: false, sansPiece: true },
+      { montant: 25000, reste: false, sansPiece: false },
+      { montant: 15000, reste: true, sansPiece: true },
+    ];
+    expect(totauxDetailRetour({ montantRegle: 100000, fiche: false, estReceptionne: true, montantARetourner: 0, lignes })).toEqual({
+      remis: 100000,
+      detaille: 85000,
+      reste: 15000,
+      nonJustifie: 60000,
+      retourne: 0,
+    });
+    expect(totauxDetailRetour({ montantRegle: 50000, fiche: true, estReceptionne: false, montantARetourner: 20000, lignes: [lignes[1]] }).reste).toBe(20000);
+  });
+
+  it("aucune suppression : aucune fonction de suppression n'est exposée", () => {
+    expect(Object.keys(regles).some((k) => /suppr/i.test(k))).toBe(false);
   });
 });

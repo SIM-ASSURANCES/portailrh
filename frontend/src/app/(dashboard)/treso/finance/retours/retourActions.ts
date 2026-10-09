@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import type { Prisma } from "backend";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
@@ -15,6 +16,7 @@ import {
   estLigneReste,
   estRetourNul,
   LIBELLE_DEPENSES_NON_DETAILLEES,
+  planAjoutLignes,
   planModificationDepense,
   refusMotifModification,
   resumeModificationDepense,
@@ -490,14 +492,9 @@ export async function detaillerDepensesRetourAction(
     };
   }
 
+  // 2026-10-10 : ni la réception du retour ni l'absence de signalement ne bloquent plus la correction du détail par
+  // l'Assistant ; un signalement actif reste résolu par cette correction (circuit du collaborateur inchangé).
   const signalementActif = retour.signalements[0] ?? null;
-  if (retour.estReceptionne && !signalementActif) {
-    return {
-      status: "error",
-      message:
-        "Ce retour de caisse a déjà été réceptionné : la modification du détail nécessite un signalement actif du collaborateur.",
-    };
-  }
 
   // Fiche de régularisation (2026-10-10) : détail renseigné sans retour du collaborateur — total libre, le montant à
   // rendre en découle (même calcul qu'une déclaration : `calculerMontantARetournerNet`). Tout autre retour garde son
@@ -595,7 +592,7 @@ export async function detaillerDepensesRetourAction(
       v: 1,
       resume: signalementActif
         ? `Détail du retour corrigé par l'Assistant Finance suite au signalement du collaborateur (${apres.length} ligne(s), ${montantCible.toLocaleString("fr-FR")} FCFA) — signalement résolu.`
-        : `Détail réel du retour renseigné par l'Assistant Finance (${apres.length} ligne(s), ${montantCible.toLocaleString("fr-FR")} FCFA).`,
+        : `Dépenses détaillées par l'Assistant Finance (${apres.length} ligne(s), ${montantCible.toLocaleString("fr-FR")} FCFA).`,
       signalement: signalementActif?.commentaire ?? null,
       avant,
       apres,
@@ -1428,32 +1425,89 @@ const modificationDepenseSchema = z.object({
 });
 
 /**
- * Corrige (ou supprime, `input = null`) UNE dépense détaillée (2026-10-10), tant que la demande n'est pas clôturée
- * (réouverture exceptionnelle : règle existante). Une dépense détaillée n'a jamais d'écriture de caisse : elle se corrige
- * sur l'enregistrement. Le total d'un retour à total fixé (déclaré ou réceptionné) ne bouge pas — l'écart passe par la
- * ligne de reste ; celui d'une fiche de régularisation est libre, son montant à rendre est recalculé. Pièce jointe
- * remplacée : l'ancienne est détachée, jamais supprimée. Motif obligatoire, entrée d'historique avant/après.
+ * Gardes communes de la correction du détail par l'Assistant Finance (2026-10-10) : permission, garde 8, demande non
+ * clôturée (réouverture exceptionnelle : règle existante). Ni la réception du retour ni un signalement du collaborateur
+ * ne conditionnent plus la correction.
  */
-async function corrigerDepenseDetaillee(
-  depenseId: string,
-  input: ModificationDepenseInput | null,
-  motifModification: string
-): Promise<SimpleActionResult> {
+async function gardesCorrectionDetail(cible: { depenseLigneId: string } | { retourCaisseId: string }) {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.receptionner_retour")) {
-    return { status: "error", message: "Action non autorisée." };
+    return { ok: false as const, message: "Action non autorisée." };
   }
-  const refusConflit = await refusConflitInteret(prisma, { depenseLigneId: depenseId }, session.user.id);
-  if (refusConflit) return { status: "error", message: refusConflit };
-  const refusMotif = refusMotifModification(motifModification);
-  if (refusMotif) return { status: "error", message: refusMotif };
+  const refusConflit = await refusConflitInteret(prisma, cible, session.user.id);
+  if (refusConflit) return { ok: false as const, message: refusConflit };
+  return { ok: true as const, session };
+}
 
-  const parsed = input ? modificationDepenseSchema.safeParse(input) : null;
-  if (parsed && !parsed.success) return { status: "error", message: parsed.error.issues[0].message };
-  const nouvelle = parsed?.success ? parsed.data : null;
+/** Réécrit la ligne de reste d'un retour à total fixé (recalculée, jamais saisie) ou le montant à rendre d'une fiche. */
+async function appliquerReste(
+  tx: Prisma.TransactionClient,
+  retour: { id: string; dateRetour: Date | null; createdAt: Date },
+  fiche: boolean,
+  plan: { montantReste: number; montantARetourner: number | null }
+): Promise<LigneSnapshot | null> {
+  if (fiche) {
+    await tx.retourCaisse.update({ where: { id: retour.id }, data: { montantARetourner: plan.montantARetourner! } });
+    return null;
+  }
+  await tx.depenseLigne.deleteMany({
+    where: { retourCaisseId: retour.id, objet: LIBELLE_DEPENSES_NON_DETAILLEES, motifNonJustifie: null },
+  });
+  if (plan.montantReste <= 0) return null;
+  const reste = await tx.depenseLigne.create({
+    include: { pieceJointe: { select: { id: true, url: true } } },
+    data: {
+      retourCaisseId: retour.id,
+      montant: plan.montantReste,
+      objet: LIBELLE_DEPENSES_NON_DETAILLEES,
+      date: retour.dateRetour ?? retour.createdAt,
+      justification: "SANS_PIECE",
+      commentaire: "Reste du montant déclaré non encore détaillé par l'équipe Finance.",
+    },
+  });
+  return snapshotLigne(reste);
+}
+
+/**
+ * Un signalement actif du collaborateur est résolu par la correction du détail (règle existante : jamais par la
+ * régularisation de caisse) ; il n'est plus une CONDITION de cette correction pour l'Assistant (2026-10-10).
+ */
+async function resoudreSignalementActif(tx: Prisma.TransactionClient, retourId: string, userId: string): Promise<string | null> {
+  const actif = await tx.signalementRetour.findFirst({ where: { retourCaisseId: retourId, estResolu: false } });
+  if (!actif) return null;
+  await tx.signalementRetour.update({
+    where: { id: actif.id },
+    data: { estResolu: true, resoluParId: userId, resoluAt: new Date() },
+  });
+  return actif.commentaire;
+}
+
+/**
+ * Corrige UNE dépense détaillée (2026-10-10) — libellé, montant, type (justifiée avec pièce / sans pièce formelle),
+ * pièce jointe — tant que la demande n'est pas clôturée, que le retour soit réceptionné ou non, signalement ou non. Une
+ * dépense détaillée n'a jamais d'écriture de caisse : elle se corrige sur l'enregistrement. Le total d'un retour à total
+ * fixé (déclaré, ou réceptionné : remis − retourné, lié à l'écriture de caisse de la réception) ne bouge pas — l'écart
+ * passe par la ligne de reste, une hausse au-delà est refusée ; celui d'une fiche de régularisation est libre, son
+ * montant à rendre est recalculé. Pièce remplacée : l'ancienne est détachée, jamais supprimée. La suppression n'existe
+ * pas : une ligne saisie par erreur se corrige en la modifiant. Motif obligatoire, historique avant/après.
+ */
+export async function modifierDepenseDetailleeAction(
+  depenseId: string,
+  input: ModificationDepenseInput,
+  motifModification: string
+): Promise<SimpleActionResult> {
+  const g = await gardesCorrectionDetail({ depenseLigneId: String(depenseId) });
+  if (!g.ok) return { status: "error", message: g.message };
+  const { session } = g;
+  const motif = String(motifModification ?? "");
+  const refusMotif = refusMotifModification(motif);
+  if (refusMotif) return { status: "error", message: refusMotif };
+  const parsed = modificationDepenseSchema.safeParse(input);
+  if (!parsed.success) return { status: "error", message: parsed.error.issues[0].message };
+  const nouvelle = parsed.data;
 
   const ligne = await prisma.depenseLigne.findUnique({
-    where: { id: depenseId },
+    where: { id: String(depenseId) },
     include: {
       pieceJointe: { select: { id: true, url: true } },
       retourCaisse: { include: { reglement: { include: { demande: true } }, depenses: true } },
@@ -1466,14 +1520,12 @@ async function corrigerDepenseDetaillee(
     return { status: "error", message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).` };
   }
   if (estLigneReste(ligne)) {
-    return { status: "error", message: "La ligne « Dépenses non détaillées » se met à jour d'elle-même." };
+    return { status: "error", message: "La ligne « Dépenses non détaillées » est un reste calculé : détaillez-la plutôt." };
   }
-  if (nouvelle) {
-    const piece = nouvelle.pieceJointeUrl ?? (ligne.pieceJointe ? "existante" : undefined);
-    if (nouvelle.justifiee && !piece) return { status: "error", message: "Une pièce jointe est obligatoire pour une dépense justifiée." };
-    if (!nouvelle.justifiee && (nouvelle.motifNonJustifie ?? "").trim().length < 3) {
-      return { status: "error", message: "Le motif est obligatoire (3 caractères minimum) pour une dépense non justifiée." };
-    }
+  const piece = nouvelle.pieceJointeUrl ?? (ligne.pieceJointe ? "existante" : undefined);
+  if (nouvelle.justifiee && !piece) return { status: "error", message: "Une pièce jointe est obligatoire pour une dépense justifiée." };
+  if (!nouvelle.justifiee && (nouvelle.motifNonJustifie ?? "").trim().length < 3) {
+    return { status: "error", message: "Le motif est obligatoire (3 caractères minimum) pour une dépense non justifiée." };
   }
 
   const fiche = estFicheRegularisation({ ...retour, mode: retour.reglement.mode });
@@ -1483,8 +1535,8 @@ async function corrigerDepenseDetaillee(
   const plan = planModificationDepense({
     fiche,
     lignes: retour.depenses.map((d) => ({ id: d.id, montant: Number(d.montant), reste: estLigneReste(d) })),
-    cibleId: depenseId,
-    nouveauMontant: nouvelle ? nouvelle.montant : null,
+    cibleId: ligne.id,
+    nouveauMontant: nouvelle.montant,
     disponibleFiche,
   });
   if (!plan.ok) return { status: "error", message: plan.message };
@@ -1493,93 +1545,134 @@ async function corrigerDepenseDetaillee(
   const maintenant = new Date();
   await prisma.$transaction(async (tx) => {
     const avant = snapshotLigne(ligne);
-    let apres: LigneSnapshot | null = null;
-    // Pièce remplacée, ligne supprimée ou passée sans pièce : la pièce est détachée vers la demande, jamais supprimée.
-    const detacherPiece = !!ligne.pieceJointe && (!nouvelle || !!nouvelle.pieceJointeUrl || !nouvelle.justifiee);
-    if (detacherPiece) {
-      await tx.pieceJointe.update({ where: { id: ligne.pieceJointe!.id }, data: { depenseLigneId: null, demandeId } });
+    // Pièce remplacée ou ligne passée sans pièce : la pièce est détachée vers la demande, jamais supprimée.
+    if (ligne.pieceJointe && (!!nouvelle.pieceJointeUrl || !nouvelle.justifiee)) {
+      await tx.pieceJointe.update({ where: { id: ligne.pieceJointe.id }, data: { depenseLigneId: null, demandeId } });
     }
-    if (nouvelle) {
-      const maj = await tx.depenseLigne.update({
-        where: { id: depenseId },
-        include: { pieceJointe: { select: { id: true, url: true } } },
-        data: {
-          objet: nouvelle.libelle,
-          montant: nouvelle.montant,
-          justification: nouvelle.justifiee ? "FACTURE" : "SANS_PIECE",
-          ...(nouvelle.justifiee
-            ? { motifNonJustifie: null, motifNonJustifieParId: null, motifNonJustifieAt: null }
-            : { motifNonJustifie: nouvelle.motifNonJustifie!.trim(), motifNonJustifieParId: session.user.id, motifNonJustifieAt: maintenant }),
-          ...(nouvelle.justifiee && nouvelle.pieceJointeUrl
-            ? { pieceJointe: { create: { url: nouvelle.pieceJointeUrl, demandeId } } }
-            : {}),
-        },
-      });
-      apres = snapshotLigne(maj);
-    } else {
-      await tx.depenseLigne.delete({ where: { id: depenseId } });
-    }
-
-    // Ligne de reste (total fixé) ou montant à rendre (fiche) : recalculés, jamais saisis.
-    if (fiche) {
-      await tx.retourCaisse.update({ where: { id: retour.id }, data: { montantARetourner: plan.montantARetourner! } });
-    } else {
-      await tx.depenseLigne.deleteMany({
-        where: { retourCaisseId: retour.id, objet: LIBELLE_DEPENSES_NON_DETAILLEES, motifNonJustifie: null },
-      });
-      if (plan.montantReste > 0) {
-        await tx.depenseLigne.create({
-          data: {
-            retourCaisseId: retour.id,
-            montant: plan.montantReste,
-            objet: LIBELLE_DEPENSES_NON_DETAILLEES,
-            date: retour.dateRetour ?? retour.createdAt,
-            justification: "SANS_PIECE",
-            commentaire: "Reste du montant déclaré non encore détaillé par l'équipe Finance.",
-          },
-        });
-      }
-    }
+    const maj = await tx.depenseLigne.update({
+      where: { id: ligne.id },
+      include: { pieceJointe: { select: { id: true, url: true } } },
+      data: {
+        objet: nouvelle.libelle,
+        montant: nouvelle.montant,
+        justification: nouvelle.justifiee ? "FACTURE" : "SANS_PIECE",
+        ...(nouvelle.justifiee
+          ? { motifNonJustifie: null, motifNonJustifieParId: null, motifNonJustifieAt: null }
+          : { motifNonJustifie: nouvelle.motifNonJustifie!.trim(), motifNonJustifieParId: session.user.id, motifNonJustifieAt: maintenant }),
+        ...(nouvelle.justifiee && nouvelle.pieceJointeUrl ? { pieceJointe: { create: { url: nouvelle.pieceJointeUrl, demandeId } } } : {}),
+      },
+    });
+    const apres = snapshotLigne(maj);
+    await appliquerReste(tx, retour, fiche, plan);
+    const signalement = await resoudreSignalementActif(tx, retour.id, session.user.id);
 
     const detail: CorrectionDetail = {
       v: 1,
-      resume: resumeModificationDepense({
-        avant: { libelle: avant.libelle, montant: avant.montant, type: avant.type },
-        apres: apres ? { libelle: apres.libelle, montant: apres.montant, type: apres.type } : null,
-        motif: motifModification,
-      }),
-      signalement: null,
+      resume:
+        resumeModificationDepense({
+          avant: { libelle: avant.libelle, montant: avant.montant, type: avant.type },
+          apres: { libelle: apres.libelle, montant: apres.montant, type: apres.type },
+          motif,
+        }) + (signalement ? " — signalement du collaborateur résolu" : ""),
+      signalement,
       avant: [avant],
-      apres: apres ? [apres] : [],
-      motif: motifModification.trim(),
+      apres: [apres],
+      motif: motif.trim(),
     };
     await tx.historiqueEntry.create({
-      data: {
-        entity: "Demande",
-        entityId: demandeId,
-        action: nouvelle ? "modification_depense" : "suppression_depense",
-        detail: JSON.stringify(detail),
-        userId: session.user.id,
-      },
+      data: { entity: "Demande", entityId: demandeId, action: "modification_depense", detail: JSON.stringify(detail), userId: session.user.id },
     });
   });
 
-  revalidatePath(`/treso/finance/retours/${retour.id}`);
+  revaliderDetail(retour.id, demandeId);
+  return { status: "success", message: "Dépense modifiée." };
+}
+
+/**
+ * « Détailler » (2026-10-10) : transforme le reste non détaillé en vraies lignes (libellé, montant, type, pièce jointe si
+ * justifiée) — pris sur la ligne de reste d'un retour à total fixé, ou sur le montant à rendre d'une fiche de
+ * régularisation. Mêmes gardes que la correction ; entrée d'historique avant (reste) / après (nouvelles lignes, reste).
+ */
+export async function detaillerResteAction(retourId: string, lignes: LigneDetailInput[]): Promise<SimpleActionResult> {
+  const g = await gardesCorrectionDetail({ retourCaisseId: String(retourId) });
+  if (!g.ok) return { status: "error", message: g.message };
+  const { session } = g;
+  const parsedLignes = lignesDetailSchema.safeParse(lignes);
+  if (!parsedLignes.success) return { status: "error", message: parsedLignes.error.issues[0].message };
+
+  const retour = await prisma.retourCaisse.findUnique({
+    where: { id: String(retourId) },
+    include: { reglement: { include: { demande: true } }, depenses: { include: { pieceJointe: { select: { id: true, url: true } } } } },
+  });
+  if (!retour) return { status: "error", message: "Retour de caisse introuvable." };
+  const demande = retour.reglement.demande;
+  if (demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle) {
+    return { status: "error", message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).` };
+  }
+
+  const fiche = estFicheRegularisation({ ...retour, mode: retour.reglement.mode });
+  const disponibleFiche = fiche
+    ? await calculerMontantARetournerNet({ reglementId: retour.reglementId, totalDepensesNouvelles: 0, excludeRetourId: retour.id })
+    : 0;
+  const lignesReste = retour.depenses.filter((d) => estLigneReste(d));
+  const plan = planAjoutLignes({
+    fiche,
+    totalActuel: retour.depenses.reduce((s, d) => s + Number(d.montant), 0),
+    reste: lignesReste.reduce((s, d) => s + Number(d.montant), 0),
+    disponibleFiche,
+    ajout: parsedLignes.data.map((l) => l.montant),
+  });
+  if (!plan.ok) return { status: "error", message: plan.message };
+
+  const demandeId = demande.id;
+  const maintenant = new Date();
+  const ajout = parsedLignes.data.reduce((s, l) => s + l.montant, 0);
+  await prisma.$transaction(async (tx) => {
+    const avant: LigneSnapshot[] = lignesReste.map(snapshotLigne);
+    const apres: LigneSnapshot[] = [];
+    for (const l of parsedLignes.data) {
+      const creee = await tx.depenseLigne.create({
+        include: { pieceJointe: { select: { id: true, url: true } } },
+        data: {
+          retourCaisseId: retour.id,
+          montant: l.montant,
+          objet: l.libelle,
+          date: retour.dateRetour ?? maintenant,
+          justification: l.justifiee ? "FACTURE" : "SANS_PIECE",
+          ...(l.justifiee
+            ? {}
+            : { motifNonJustifie: l.motif!.trim(), motifNonJustifieParId: session.user.id, motifNonJustifieAt: maintenant }),
+          ...(l.pieceJointeFournie && l.pieceJointeUrl ? { pieceJointe: { create: { url: l.pieceJointeUrl, demandeId } } } : {}),
+        },
+      });
+      apres.push(snapshotLigne(creee));
+    }
+    const reste = await appliquerReste(tx, retour, fiche, plan);
+    if (reste) apres.push(reste);
+    const signalement = await resoudreSignalementActif(tx, retour.id, session.user.id);
+    const detail: CorrectionDetail = {
+      v: 1,
+      resume:
+        `Dépenses détaillées par l'Assistant Finance : ${parsedLignes.data.length} ligne(s), ${ajout.toLocaleString("fr-FR")} FCFA pris sur le reste` +
+        (fiche ? ` (reste à rendre : ${plan.montantARetourner!.toLocaleString("fr-FR")} FCFA)` : ` (reste non détaillé : ${plan.montantReste.toLocaleString("fr-FR")} FCFA)`) +
+        (signalement ? " — signalement du collaborateur résolu" : ""),
+      signalement,
+      avant,
+      apres,
+    };
+    await tx.historiqueEntry.create({
+      data: { entity: "Demande", entityId: demandeId, action: "detaillage_retour", detail: JSON.stringify(detail), userId: session.user.id },
+    });
+  });
+
+  revaliderDetail(retour.id, demandeId);
+  return { status: "success", message: "Dépenses détaillées." };
+}
+
+function revaliderDetail(retourId: string, demandeId: string) {
+  revalidatePath(`/treso/finance/retours/${retourId}`);
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath(`/treso/demandes/${demandeId}`);
   revalidatePath("/treso/finance", "layout");
   publishDataChanged();
-  return { status: "success", message: nouvelle ? "Dépense modifiée." : "Dépense supprimée." };
-}
-
-export async function modifierDepenseDetailleeAction(
-  depenseId: string,
-  input: ModificationDepenseInput,
-  motifModification: string
-): Promise<SimpleActionResult> {
-  return corrigerDepenseDetaillee(String(depenseId), input, String(motifModification ?? ""));
-}
-
-export async function supprimerDepenseDetailleeAction(depenseId: string, motifModification: string): Promise<SimpleActionResult> {
-  return corrigerDepenseDetaillee(String(depenseId), null, String(motifModification ?? ""));
 }

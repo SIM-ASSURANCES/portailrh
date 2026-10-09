@@ -9,19 +9,20 @@ import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import { MOTIF_MODIFICATION_DEPENSE_MIN } from "backend/client";
 
-import { modifierDepenseDetailleeAction, supprimerDepenseDetailleeAction } from "../retourActions";
+import { modifierDepenseDetailleeAction } from "../retourActions";
 
 /**
- * Corriger ou supprimer UNE dépense détaillée (2026-10-10) : mêmes champs que la saisie (type, libellé, montant, motif
- * d'une dépense sans pièce, pièce jointe) et un motif de modification obligatoire, tracé dans l'historique avec les
- * valeurs avant/après. Le serveur revérifie tout (permission, garde 8, clôture, montant).
+ * Corriger UNE dépense détaillée (2026-10-10) : mêmes champs que la saisie (type avec ou sans pièce formelle, libellé,
+ * montant, motif d'une dépense sans pièce, pièce jointe) et un motif de modification obligatoire, tracé dans
+ * l'historique avec les valeurs avant/après. Pas de suppression : une ligne saisie par erreur se corrige en la modifiant.
+ * Le serveur revérifie tout (permission, garde 8, clôture, montant).
  */
 export function DepenseLigneEdition({
   depense,
 }: {
   depense: { id: string; libelle: string; montant: number; justifiee: boolean; motifNonJustifie: string | null; aPieceJointe: boolean };
 }) {
-  const [mode, setMode] = useState<"repos" | "modifier" | "supprimer">("repos");
+  const [mode, setMode] = useState<"repos" | "modifier">("repos");
   const [libelle, setLibelle] = useState(depense.libelle);
   const [montant, setMontant] = useState(String(depense.montant));
   const [justifiee, setJustifiee] = useState(depense.justifiee);
@@ -54,16 +55,13 @@ export function DepenseLigneEdition({
         <Button type="button" variant="secondary" onClick={() => setMode("modifier")}>
           Modifier
         </Button>
-        <Button type="button" variant="danger" onClick={() => setMode("supprimer")}>
-          Supprimer
-        </Button>
       </div>
     );
   }
 
   const champMotif = (
     <Textarea
-      label={mode === "supprimer" ? "Motif de la suppression" : "Motif de la modification"}
+      label="Motif de la modification"
       required
       rows={2}
       value={motif}
@@ -127,25 +125,7 @@ export function DepenseLigneEdition({
             </Button>
           </div>
         </>
-      ) : (
-        <>
-          {champMotif}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="danger"
-              loading={isPending}
-              disabled={!motifValide || isPending}
-              onClick={() => envoyer(() => supprimerDepenseDetailleeAction(depense.id, motif))}
-            >
-              Confirmer la suppression
-            </Button>
-            <Button type="button" variant="secondary" disabled={isPending} onClick={() => setMode("repos")}>
-              Annuler
-            </Button>
-          </div>
-        </>
-      )}
+      ) : null}
     </div>
   );
 }

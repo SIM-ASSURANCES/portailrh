@@ -44,7 +44,7 @@ const ACTION_LABELS: Record<string, string> = {
   // CLAUDE.md) — volontairement VISIBLE au Collaborateur (comme
   // `declaration_retour_assistant`) : c'est une information sur SON
   // ARGENT, jamais de la gestion interne à masquer.
-  detaillage_retour: "Détail réel du retour renseigné par l'Assistant Finance",
+  detaillage_retour: "Dépenses détaillées par l'Assistant Finance",
   // Circuit de validation (2026-10-06).
   circuit_initialise: "Circuit de validation",
   validation_service: "Validée par le responsable de service",

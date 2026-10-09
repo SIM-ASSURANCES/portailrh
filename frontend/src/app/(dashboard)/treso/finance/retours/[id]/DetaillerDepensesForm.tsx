@@ -7,7 +7,12 @@ import { toast } from "sonner";
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
-import { detaillerDepensesReglementAction, detaillerDepensesRetourAction, type LigneDetailInput } from "../retourActions";
+import {
+  detaillerDepensesReglementAction,
+  detaillerDepensesRetourAction,
+  detaillerResteAction,
+  type LigneDetailInput,
+} from "../retourActions";
 
 type LigneEdit = LigneDetailInput & { key: string };
 
@@ -40,6 +45,7 @@ export function DetaillerDepensesForm({
   retourId,
   reglementId,
   libre = false,
+  ajout = false,
   montantCible,
   lignesInitiales,
   onCancel,
@@ -50,6 +56,8 @@ export function DetaillerDepensesForm({
   reglementId?: string;
   /** Fiche de régularisation : `montantCible` est le montant remis restant à expliquer, le reste est à rendre. */
   libre?: boolean;
+  /** « Détailler » le reste (2026-10-10) : les entrées s'ajoutent, prises sur le reste (`montantCible`). */
+  ajout?: boolean;
   montantCible: number;
   lignesInitiales: LigneDetailInput[];
   onCancel?: () => void;
@@ -121,9 +129,11 @@ export function DetaillerDepensesForm({
         justifiee: l.justifiee,
         motif: l.justifiee ? undefined : l.motif!.trim(),
       }));
-      const result = retourId
-        ? await detaillerDepensesRetourAction(retourId, payload)
-        : await detaillerDepensesReglementAction(reglementId!, payload);
+      const result = !retourId
+        ? await detaillerDepensesReglementAction(reglementId!, payload)
+        : ajout
+          ? await detaillerResteAction(retourId, payload)
+          : await detaillerDepensesRetourAction(retourId, payload);
       if (result.status === "success") {
         toast.success(result.message);
         setEnregistre({ nombre: lignes.length, total: totalSaisi });
@@ -139,7 +149,13 @@ export function DetaillerDepensesForm({
 
   return (
     <div className="animate-fade-in-up w-full space-y-4 rounded-md border border-border p-4">
-      {libre ? (
+      {ajout ? (
+        <p className="text-xs text-muted-foreground">
+          Reste à détailler :{" "}
+          <span className="font-semibold text-foreground">{montantCible.toLocaleString("fr-FR")} FCFA</span> — ajoutez une ou
+          plusieurs dépenses (la somme ne peut pas le dépasser) ; ce qui n&apos;est pas détaillé reste en reste.
+        </p>
+      ) : libre ? (
         <p className="text-xs text-muted-foreground">
           Montant remis restant à expliquer :{" "}
           <span className="font-semibold text-foreground">{montantCible.toLocaleString("fr-FR")} FCFA</span> — détaillez

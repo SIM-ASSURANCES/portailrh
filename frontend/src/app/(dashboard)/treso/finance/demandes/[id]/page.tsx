@@ -677,6 +677,7 @@ export default async function CategoriserDemandePage({
             demandeId={demande.id}
             montantValide={Number(demande.montantValide ?? 0)}
             showDetail
+            userId={session?.user.id ?? null}
           />
           <PersonnesIntervenantes demandeId={demande.id} demandeurNom={demande.createur.fullName} />
           {demande.motifCloture ? (
@@ -766,6 +767,7 @@ export default async function CategoriserDemandePage({
             demandeId={demande.id}
             montantValide={Number(demande.montantValide)}
             canGererJustification={canGererJustification}
+            userId={session?.user.id ?? null}
           />
           {(STATUTS_VALIDATION_COMPLETE.includes(demande.statut) || lignesToutesDecidees(demande.lignes)) &&
           canCloturerDemande ? (
