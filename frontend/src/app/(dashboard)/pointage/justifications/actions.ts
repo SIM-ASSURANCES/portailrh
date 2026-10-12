@@ -39,7 +39,8 @@ async function deciderJustification(
   const collaborateur = justification.pointage.user;
   const refus = refusDecideur(
     decideurDuCollaborateur(collaborateur, await chargerComptesRH()),
-    { id: session.user.id, permissions: session.permissions },
+    // Permissions du RÔLE, jamais les délégations : un délégué de la permission RH ne décide pas (2026-10-12).
+    { id: session.user.id, rolePermissions: session.rolePermissions },
     collaborateur.id
   );
   if (refus) return { status: "error", message: refus };

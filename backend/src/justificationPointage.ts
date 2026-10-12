@@ -64,10 +64,14 @@ export function resoudreDecideurJustification(params: {
   return comptesRH.some((id) => id !== collaborateurId) ? { type: "RH", raison } : { type: "DG", raison };
 }
 
-/** Compte qui tente de décider : son identifiant et ses permissions effectives (session). */
+/**
+ * Compte qui tente de décider : son identifiant et les permissions de son RÔLE (`session.rolePermissions`), jamais les
+ * permissions effectives qui incluent les délégations (2026-10-12) : un délégué de `pointage.corriger_pointage` peut
+ * corriger des pointages (ces actions lisent `hasPermission`), mais ne décide pas une justification.
+ */
 export interface ActeurJustification {
   id: string;
-  permissions: readonly string[];
+  rolePermissions: readonly string[];
 }
 
 export const MESSAGE_PROPRE_JUSTIFICATION = "Vous ne pouvez pas décider de votre propre justification.";
@@ -91,9 +95,9 @@ export function refusDecideur(
     return acteur.id === decideur.responsableId ? null : MESSAGE_RESERVE_RESPONSABLE;
   }
   if (decideur.type === "DG") {
-    return acteur.permissions.includes(PERMISSION_DG_JUSTIFICATION) ? null : MESSAGE_RESERVE_DG;
+    return acteur.rolePermissions.includes(PERMISSION_DG_JUSTIFICATION) ? null : MESSAGE_RESERVE_DG;
   }
-  return acteur.permissions.includes(PERMISSION_RH_POINTAGE) ? null : MESSAGE_RESERVE_RH;
+  return acteur.rolePermissions.includes(PERMISSION_RH_POINTAGE) ? null : MESSAGE_RESERVE_RH;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -294,6 +298,25 @@ export function destinatairesDecideur(decideur: DecideurJustification, collabora
     permission: decideur.type === "DG" ? PERMISSION_DG_JUSTIFICATION : PERMISSION_RH_POINTAGE,
     exclureUserId: collaborateurId,
   };
+}
+
+/**
+ * Menu « Justifications » (2026-10-12) : compteur à afficher, `null` pour masquer le menu. Un compte RH (par son rôle)
+ * le voit toujours ; le DG seulement si sa file de décision n'est pas vide ou s'il a déjà décidé une justification
+ * (onglet « Traitées »), même s'il est responsable d'un service (dans le seed, « Direction DG ») : une justification d'un
+ * membre de son service remplit sa file. Un autre responsable de service le voit toujours.
+ */
+export function compteurMenuJustifications(params: {
+  estResponsable: boolean;
+  estRH: boolean;
+  estDG: boolean;
+  file: number;
+  dejaDecide: boolean;
+}): number | null {
+  const { estResponsable, estRH, estDG, file, dejaDecide } = params;
+  if (estRH) return file;
+  if (estDG) return file > 0 || dejaDecide ? file : null;
+  return estResponsable ? file : null;
 }
 
 /** Qui examinera la justification, pour l'écran du collaborateur. */

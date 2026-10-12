@@ -10,11 +10,11 @@ import {
   resoudreDecideurJustification,
   PERMISSION_DG_JUSTIFICATION,
   PERMISSION_RH_POINTAGE,
+  compteurMenuJustifications,
   type DecideurJustification,
   type Prisma,
   type StatutJustificationPointage,
 } from "backend";
-import { hasPermission } from "@/lib/auth";
 
 /** Collaborateur avec son service actuel et le responsable de ce service (de quoi résoudre le décideur). */
 export const SELECT_COLLABORATEUR_JUSTIFICATION = {
@@ -56,10 +56,13 @@ export function decideurDuCollaborateur(
   });
 }
 
-/** Session telle que lue par `getSession()` (les champs utiles ici). */
+/**
+ * Session telle que lue par `getSession()` (les champs utiles ici). Le droit de DÉCIDER une justification se lit sur
+ * `rolePermissions` (rôle réel), jamais sur `permissions` qui inclut les délégations (2026-10-12).
+ */
 export interface SessionDecideur {
   user: { id: string };
-  permissions: string[];
+  rolePermissions: string[];
 }
 
 /**
@@ -68,12 +71,29 @@ export interface SessionDecideur {
  * a déjà décidé (onglet « Traitées »).
  */
 export async function estDecideurJustifications(session: SessionDecideur): Promise<boolean> {
-  if (hasPermission(session, PERMISSION_RH_POINTAGE)) return true;
+  if (session.rolePermissions.includes(PERMISSION_RH_POINTAGE)) return true;
   const n = await prisma.service.count({ where: { responsableId: session.user.id } });
   if (n > 0) return true;
-  if (!hasPermission(session, PERMISSION_DG_JUSTIFICATION)) return false;
+  if (!session.rolePermissions.includes(PERMISSION_DG_JUSTIFICATION)) return false;
   if ((await chargerComptesRH()).length <= 1) return true;
   return (await prisma.justificationPointage.count({ where: { decideurId: session.user.id } })) > 0;
+}
+
+/**
+ * Compteur du menu « Justifications » (`null` : menu masqué) — `compteurMenuJustifications` : RH toujours ; DG
+ * seulement si sa file n'est pas vide ou s'il a déjà décidé (même responsable d'un service) ; autre responsable toujours.
+ */
+export async function compteurMenuJustificationsSession(session: SessionDecideur): Promise<number | null> {
+  const estRH = session.rolePermissions.includes(PERMISSION_RH_POINTAGE);
+  const estDG = session.rolePermissions.includes(PERMISSION_DG_JUSTIFICATION);
+  const estResponsable = (await prisma.service.count({ where: { responsableId: session.user.id } })) > 0;
+  if (!estRH && !estDG && !estResponsable) return null;
+  const file = (await chargerJustificationsDecideur(session, ["SOUMISE"])).length;
+  const dejaDecide =
+    !estRH && estDG && file === 0
+      ? (await prisma.justificationPointage.count({ where: { decideurId: session.user.id } })) > 0
+      : false;
+  return compteurMenuJustifications({ estResponsable, estRH, estDG, file, dejaDecide });
 }
 
 const INCLUDE_JUSTIFICATION = {
@@ -107,7 +127,7 @@ export async function chargerJustificationsDecideur(
     orderBy: options.ordre === "desc" ? { updatedAt: "desc" } : { soumiseAt: "asc" },
     take: options.limite,
   });
-  const acteur = { id: session.user.id, permissions: session.permissions };
+  const acteur = { id: session.user.id, rolePermissions: session.rolePermissions };
   const comptesRH = await chargerComptesRH();
   return lignes.filter((j) => {
     if (options.inclureDecideesPar && j.decideurId === session.user.id) return true;

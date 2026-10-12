@@ -149,9 +149,9 @@ nécessaire.
 **Décision des justifications en trois niveaux** (non commité, 2026-10-12)
 - Responsable du service, sinon un autre compte RH actif, sinon le DG (`treso.decider_dg`) ; jamais soi-même ;
   notifications et écran sur les mêmes règles (`destinatairesDecideur`, `estDecideurJustifications`). Tests
-  `decideurJustificationNiveaux.test.ts`, Playwright `e2e/pointage-decision-dg.mjs`. Non-délégation de
-  `pointage.corriger_pointage` en attente de décision (elle est déjà délégable pour les corrections). Détail :
-  `CLAUDE.md`, section 14.
+  `decideurJustificationNiveaux.test.ts`, Playwright `e2e/pointage-decision-dg.mjs`. Le droit de décider se lit
+  sur les permissions du rôle (un délégué de `pointage.corriger_pointage` corrige mais ne décide pas) ; menu du DG
+  affiché seulement si sa file n'est pas vide ou s'il a déjà décidé. Détail : `CLAUDE.md`, section 14.
 
 ## 4. Lots restants
 

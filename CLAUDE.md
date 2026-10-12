@@ -4517,19 +4517,24 @@ Aucune migration, aucune permission nouvelle.
   décident à la place d'un responsable présent ; le DG ne décide pas au niveau RH.
 - **Notifications** : `destinatairesDecideur` (pur) → responsable, sinon comptes RH, sinon DG, toujours sans le
   collaborateur ; utilisé par la soumission et par la tâche de relances. Le DG n'est notifié que dans le repli.
-- **Écran** `/pointage/justifications` et menu « Justifications » : `estDecideurJustifications` admet aussi le DG quand
-  le repli est possible (au plus un compte RH actif) ou s'il a déjà décidé ; carte « décision DG (aucun autre compte
-  RH) ». Page du collaborateur : « examinée par le DG ».
-- **Délégation de `pointage.corriger_pointage` : NON modifiée** (décision en attente). `/delegations` permet déjà de la
-  déléguer (module `pointage` délégable) à un donneur dont le rôle porte `treso.deleguer_acces` ET cette permission (rôle
-  combiné Finance/RH ; aucun rôle du seed ne cumule les deux), et les actions RH de correction, de pointage
-  exceptionnel et d'absences lisent `hasPermission` (délégations comprises). L'ajouter à
-  `PERMISSIONS_DECISION_NON_DELEGABLES` couperait aussi ces corrections déléguées (`getSession` ignore alors les
-  délégations existantes). Conséquence actuelle : un délégué peut décider au niveau RH (`refusDecideur` lit les
-  permissions effectives) ; au niveau DG, impossible (`treso.decider_dg` non délégable). Option proposée : lire
-  `rolePermissions` dans `refusDecideur` seulement, sans toucher à la liste.
-- Vérifié : vitest (`decideurJustificationNiveaux.test.ts`, 15 tests ; 540 au total, seul échec connu `feedback.test.ts`),
-  tsc, eslint, `next build` ; Playwright `e2e/pointage-decision-dg.mjs` 15/15 sur base jetable (rh@ seul RH en retard :
+- **Écran** `/pointage/justifications` : `estDecideurJustifications` admet aussi le DG quand le repli est possible (au
+  plus un compte RH actif) ou s'il a déjà décidé ; carte « décision DG (aucun autre compte RH) ». Page du collaborateur :
+  « examinée par le DG ».
+- **Menu « Justifications »** (`compteurMenuJustifications`, pur ; `compteurMenuJustificationsSession`) : un compte RH
+  (par son rôle) le voit toujours ; le DG seulement si sa file de décision n'est pas vide ou s'il a déjà décidé une
+  justification — **même s'il est responsable d'un service** (dans le seed, dg@ est responsable de « Direction DG » :
+  une justification d'un membre de ce service remplit sa file) ; un autre responsable de service le voit toujours.
+- **Décider se lit sur le RÔLE, corriger accepte la délégation (2026-10-12)** : `refusDecideur`
+  (`ActeurJustification.rolePermissions`), la file (`chargerJustificationsDecideur`), l'accès à l'écran et le menu lisent
+  `session.rolePermissions`, jamais `session.permissions` (qui inclut les délégations) — un délégué de
+  `pointage.corriger_pointage` ne décide pas une justification et ne voit pas l'écran de décision à ce titre.
+  `PERMISSIONS_DECISION_NON_DELEGABLES` n'est PAS modifiée : `/delegations` permet toujours de déléguer cette
+  permission (donneur dont le rôle porte `treso.deleguer_acces` ET elle, ex. rôle combiné Finance/RH), et les actions RH
+  de correction, de pointage exceptionnel et d'absences gardent `hasPermission` (délégations comprises).
+- Vérifié : vitest (`decideurJustificationNiveaux.test.ts`, 24 tests dont délégué refusé à la décision mais autorisé à
+  corriger, et le menu ; 549 au total, seul échec connu `feedback.test.ts`), tsc, eslint, `next build` ; Playwright
+  `e2e/pointage-decision-dg.mjs` 18/18 sur base jetable (dont menu du DG absent file vide, présent file non vide et après
+  une décision) (rh@ seul RH en retard :
   DG notifié, rh@ non notifié et sans sa justification dans sa file, assistant-finance@ refusé, DG accède à l'écran et
   au menu, accepte ; collaborateur ordinaire : responsable notifié, ni DG ni RH) ; `e2e/pointage-lot3bis.mjs` 22/22.
 

@@ -68,6 +68,15 @@ const [{ n: nbRH }] = await q(
 );
 verifier("seed : un seul compte RH actif", nbRH === 1, String(nbRH));
 
+// ── Menu du DG avant tout : file vide, jamais décidé → menu absent (l'écran reste accessible en repli) ─────────
+{
+  const d = await connecter("dg@simassurances.test");
+  await d.p.goto(`${B}/pointage/justifications`);
+  verifier("DG, file vide : menu « Justifications » absent", (await d.p.locator('aside nav a[href="/pointage/justifications"]').count()) === 0);
+  verifier("DG, file vide : écran toujours accessible", d.p.url().includes("/pointage/justifications"), d.p.url());
+  await d.ctx.close();
+}
+
 // ── Retardataire seul RH → DG ──────────────────────────────────────────────────────────────────────────────────
 {
   const debut = new Date();
@@ -94,7 +103,7 @@ verifier("seed : un seul compte RH actif", nbRH === 1, String(nbRH));
   const d = await connecter("dg@simassurances.test");
   await d.p.goto(`${B}/pointage/justifications`);
   verifier("DG : écran de décision accessible", d.p.url().includes("/pointage/justifications"), d.p.url());
-  verifier("DG : menu « Justifications » présent", (await d.p.locator('a[href="/pointage/justifications"]').count()) > 0);
+  verifier("DG, file non vide : menu « Justifications » présent", (await d.p.locator('aside nav a[href="/pointage/justifications"]').count()) > 0);
   verifier("DG : carte « décision DG »", (await d.p.locator("body").innerText()).includes("décision DG (aucun autre compte RH)"));
   await d.p.getByRole("button", { name: "Accepter" }).first().click();
   await d.p.locator('[data-sonner-toast][data-type="success"]').first().waitFor();
@@ -114,6 +123,7 @@ verifier("seed : un seul compte RH actif", nbRH === 1, String(nbRH));
   const d = await connecter("dg@simassurances.test");
   await d.p.goto(`${B}/pointage/justifications`);
   verifier("DG : ne voit pas la justification d'un collaborateur ordinaire", !(await d.p.locator("body").innerText()).includes("Embouteillage"));
+  verifier("DG, file vide mais déjà décidé : menu présent", (await d.p.locator('aside nav a[href="/pointage/justifications"]').count()) > 0);
   await d.ctx.close();
 }
 

@@ -12,7 +12,7 @@ import {
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 import { envoyerRappelsCircuit } from "@/lib/notificationsCircuit";
-import { chargerJustificationsDecideur, estDecideurJustifications } from "@/lib/justificationsPointage";
+import { compteurMenuJustificationsSession } from "@/lib/justificationsPointage";
 
 import { PushPermissionPrompt } from "@/components/notifications/PushPermissionPrompt";
 
@@ -45,11 +45,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const demandesDGADecider = hasPermission(session, "treso.decider_dg")
     ? await prisma.demande.count({ where: demandesEtapeDGWhere(session.user.id) })
     : null;
-  // « Justifications à traiter » (Pointage V2) : responsable d'au moins un service, RH du pointage, ou DG en repli
-  // (`estDecideurJustifications`, la même garde que l'écran).
-  const justificationsADecider = (await estDecideurJustifications(session))
-    ? (await chargerJustificationsDecideur(session, ["SOUMISE"])).length
-    : null;
+  // « Justifications à traiter » (Pointage V2) : responsable d'au moins un service ou RH (par le rôle) ; le DG seulement
+  // si sa file n'est pas vide ou s'il a déjà décidé (`compteurMenuJustifications`, 2026-10-12).
+  const justificationsADecider = await compteurMenuJustificationsSession(session);
 
   return (
     <AppShell

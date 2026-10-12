@@ -73,24 +73,24 @@ describe("refusDecideur", () => {
   const rh: DecideurJustification = { type: "RH", raison: "EST_RESPONSABLE" };
 
   it("cas responsable : seul le responsable actuel décide", () => {
-    expect(refusDecideur(responsable, { id: "resp", permissions: [] }, "collab")).toBeNull();
-    expect(refusDecideur(responsable, { id: "autre", permissions: [] }, "collab")).toBe(MESSAGE_RESERVE_RESPONSABLE);
+    expect(refusDecideur(responsable, { id: "resp", rolePermissions: [] }, "collab")).toBeNull();
+    expect(refusDecideur(responsable, { id: "autre", rolePermissions: [] }, "collab")).toBe(MESSAGE_RESERVE_RESPONSABLE);
     // La RH ne décide pas à la place d'un responsable présent.
-    expect(refusDecideur(responsable, { id: "rh", permissions: [PERMISSION_RH_POINTAGE] }, "collab")).toBe(
+    expect(refusDecideur(responsable, { id: "rh", rolePermissions: [PERMISSION_RH_POINTAGE] }, "collab")).toBe(
       MESSAGE_RESERVE_RESPONSABLE
     );
   });
 
   it("cas RH : la permission RH du pointage suffit", () => {
-    expect(refusDecideur(rh, { id: "rh", permissions: [PERMISSION_RH_POINTAGE] }, "collab")).toBeNull();
-    expect(refusDecideur(rh, { id: "x", permissions: ["pointage.pointer"] }, "collab")).toBe(MESSAGE_RESERVE_RH);
+    expect(refusDecideur(rh, { id: "rh", rolePermissions: [PERMISSION_RH_POINTAGE] }, "collab")).toBeNull();
+    expect(refusDecideur(rh, { id: "x", rolePermissions: ["pointage.pointer"] }, "collab")).toBe(MESSAGE_RESERVE_RH);
   });
 
   it("jamais le collaborateur lui-même, même avec la permission RH", () => {
-    expect(refusDecideur(rh, { id: "collab", permissions: [PERMISSION_RH_POINTAGE] }, "collab")).toBe(
+    expect(refusDecideur(rh, { id: "collab", rolePermissions: [PERMISSION_RH_POINTAGE] }, "collab")).toBe(
       MESSAGE_PROPRE_JUSTIFICATION
     );
-    expect(refusDecideur({ type: "RESPONSABLE", responsableId: "collab" }, { id: "collab", permissions: [] }, "collab")).toBe(
+    expect(refusDecideur({ type: "RESPONSABLE", responsableId: "collab" }, { id: "collab", rolePermissions: [] }, "collab")).toBe(
       MESSAGE_PROPRE_JUSTIFICATION
     );
   });
