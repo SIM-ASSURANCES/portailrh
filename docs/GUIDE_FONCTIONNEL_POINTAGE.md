@@ -15,7 +15,7 @@
 | **Quels sont les horaires de référence ?** | **Matin** : 07h45 – 12h15 \| **Après-midi** : 13h15 – 16h45. |
 | **Combien de fois par jour ?** | **2 fois** : une fois à l'arrivée (le matin) et une fois au départ (le soir). |
 | **Comment pointer ?** | Soit depuis votre **ordinateur au bureau**, soit en scannant le **QR Code officiel** avec votre smartphone, soit via **géolocalisation GPS** en secours. |
-| **Que se passe-t-il après 07h45 ?** | Vous êtes considéré en retard : le système vous demande d'indiquer obligatoirement un motif explicatif. |
+| **Que se passe-t-il après 07h45 ?** | Une tolérance réglée par les RH s'applique (15 min par défaut : arrivée jusqu'à 08h00 incluse = à l'heure). Au-delà, l'arrivée est enregistrée immédiatement, sans motif, et le retard est compté depuis 07h45. Un lien pour justifier votre retard vous est envoyé ensuite ; votre responsable de service accepte ou refuse la justification. |
 | **Que se passe-t-il si je n'ai pas pointé de la journée ?** | À la fin de la journée (après 16h45), une absence automatique `À contrôler` est créée pour que les RH puissent vérifier votre situation. |
 
 ---
@@ -67,26 +67,33 @@ SIM Assurances               à l'accueil avec            le GPS valide que
 ### 1. Pointer mon arrivée le matin
 1. Rendez-vous sur la page **Pointage**.
 2. **Si vous arrivez à l'heure (avant 07h45)** : Cliquez sur **"Valider mon Arrivée"**. Un message vert confirme la prise en compte.
-3. **Si vous arrivez après 07h45 (Retard)** :
-   - Un encadré orange apparaît indiquant votre nombre de minutes de retard.
-   - Un champ texte obligatoire s'affiche : *"Motif du retard"*.
-   - Renseignez la raison (ex. : *Bouchons exceptionnels carrefour Duncan*, *Rendez-vous médical préalable*).
-   - Cliquez sur **"Enregistrer mon arrivée avec motif"**.
+3. **Si vous arrivez après la tolérance (Retard)** :
+   - L'arrivée est enregistrée immédiatement, sans aucun motif à saisir (le scan du QR code pointe directement).
+   - Le message indique l'heure et le nombre de minutes de retard : *"Un lien pour justifier vous sera envoyé."*
+   - Voir **"Justifier un retard ou un départ anticipé"** ci-dessous.
 
 ### 2. Pointer mon départ en fin de journée
 1. En quittant le bureau, retournez sur la page **Pointage**.
 2. Le système reconnaît que vous avez déjà pointé votre arrivée ce matin et vous propose automatiquement le bouton **"Valider mon Départ"**.
 3. **Cas normal (après 16h45)** : Cliquez sur le bouton. Un message chaleureux s'affiche (avec un mot personnalisé pour le week-end si nous sommes vendredi !).
 4. **Départ anticipé (avant 16h45)** :
-   - Si vous devez partir plus tôt (urgence, permission autorisée), le système vous demande obligatoirement un motif.
-   - Indiquez la raison puis confirmez. Votre responsable RH en sera immédiatement informé.
+   - Le départ n'est jamais enregistré automatiquement : cliquez sur le bouton, puis **confirmez explicitement** le départ anticipé.
+   - Aucun motif n'est demandé à ce moment-là ; un départ moins de 30 minutes après l'arrivée est refusé.
+   - Un lien pour justifier votre départ anticipé vous est envoyé ensuite (même circuit que le retard).
+
+### 2 bis. Justifier un retard ou un départ anticipé
+1. Après le délai réglé par les RH (15 min par défaut), vous recevez un lien (email, notification push et notification dans le portail) vers **`/pointage/justifier/…`**. Le lien fonctionne depuis votre téléphone : après connexion, vous arrivez directement sur la page (la case « Se souvenir de moi » y est cochée par défaut).
+2. Saisissez votre motif et envoyez-le. Sans réponse, des rappels sont envoyés à intervalle régulier (30 min par défaut, 3 envois au total par défaut, réglables par les RH).
+3. **Qui décide ?** Le responsable de votre service accepte ou refuse (un refus est toujours motivé), depuis le menu **"Justifications"**. Si vous êtes vous-même responsable de votre service, si vous êtes DG, ou si votre service n'a pas de responsable actif, ce sont les RH qui décident.
+4. **Sans justification à la fin de la journée**, le retard ou le départ passe à *"Non justifié"* et votre décideur en est prévenu. Vous pouvez encore envoyer votre justification après coup.
+5. Les statuts possibles : *Justification attendue*, *Justification envoyée*, *Justification acceptée*, *Justification refusée*, *Non justifié*. Ils s'affichent dans votre historique.
 
 ### 3. Consulter mon historique personnel
 - Cliquez sur **"Historique"** dans le menu latéral.
 - Vous retrouvez un récapitulatif clair de toutes vos journées :
   - L'heure exacte de vos arrivées et départs.
   - L'heure contractuelle qui était prévue.
-  - Vos éventuels retards et les motifs que vous aviez saisis.
+  - Vos éventuels retards, le statut de leur justification et le motif envoyé.
   - Les corrections éventuelles apportées par les RH (avec le motif de modification en toute transparence).
 
 ---
@@ -108,8 +115,10 @@ Pointage RH
 
 ### 1. Voir les présences en direct (`/pointage/rh/presence`)
 - **Direct temps réel** : La liste se met à jour automatiquement dès qu'un employé pointe, sans avoir besoin de rafraîchir la page (grâce à la technologie Server-Sent Events).
-- Des compteurs en haut d'écran affichent le nombre de **Présents**, de **Retards** et d'**Absents**.
+- Des compteurs en haut d'écran affichent le nombre de **Présents**, de **Retards**, d'**Absents**, d'**Absences autorisées** et de **Manquants**.
 - Vous pouvez basculer d'un onglet à l'autre pour filtrer rapidement les personnes concernées.
+- Onglet **Retards** : colonne *Justification* (statut réel de la justification, et *"par …"* une fois acceptée ou refusée) et colonne *Motif* (celui de la justification ; pour un pointage antérieur au nouveau circuit, l'ancien motif saisi au pointage). Un départ anticipé affiche aussi le statut de sa justification sous l'heure de départ.
+- Onglet **Absence autorisée** : collaborateurs dont toute la journée est couverte par un congé ou une permission (même règle que la détection automatique des absences). Ils n'apparaissent ni parmi les absents, ni parmi les manquants. Une permission de quelques heures seulement n'y figure pas.
 
 ### 2. Traiter une absence (`/pointage/rh/absences`)
 - Chaque matin ou en fin de journée, les personnes n'ayant pas pointé apparaissent avec le statut orange **"À contrôler"**.
@@ -131,13 +140,24 @@ Une erreur de manipulation (ex. départ pointé par inadvertance à midi au lieu
 - **Règle d'or** : Chaque modification exige un motif et reste inscrite dans le grand livre d'audit du portail (l'ancienne heure et la nouvelle heure restent consultables pour éviter tout litige).
 - Si l'heure d'arrivée est modifiée, le calcul du retard est automatiquement recalculé.
 
+### 4 bis. Paramètres du circuit de justification (`/pointage/rh/horaires`)
+- **Tolérance de retard** (15 min par défaut) : arrivée jusqu'à l'heure de début + tolérance incluse = à l'heure ; au-delà, le retard est compté depuis l'heure de début.
+- **Délai avant la première demande de justification** (15 min par défaut), **intervalle entre deux rappels** (30 min par défaut) et **nombre maximal d'envois** (3 par défaut, premier compris).
+- Le premier envoi part par email, push et notification interne ; les rappels par push et notification interne. Le décideur est prévenu au premier envoi et à la clôture « Non justifié » (pas à chaque rappel).
+
+### 4 ter. Décider des justifications (`/pointage/justifications`)
+- Le responsable du service du collaborateur accepte ou refuse chaque justification envoyée (refus avec motif obligatoire).
+- **Repli RH** : les comptes qui ont la permission `pointage.corriger_pointage` décident à la place du responsable quand le collaborateur est lui-même responsable de son service, est DG, ou que son service n'a pas de responsable actif. L'alerte le dit explicitement (ex. *« X, responsable du service Commercial, est arrivé en retard de 25 min »*).
+
 ### 5. Exporter le reporting mensuel Excel (`/pointage/rh/reporting`)
 1. Sélectionnez la période (ex : du 1er au 31 du mois).
 2. Filtrez éventuellement par Service (ex : Commercial, Finance, Technique) ou pour un collaborateur précis.
 3. Cliquez sur **"Exporter en Excel"**.
-4. Vous obtenez un fichier `.xlsx` prêt pour la paie avec deux onglets aux couleurs de SIM Assurances :
+4. Vous obtenez un fichier `.xlsx` prêt pour la paie avec trois onglets aux couleurs de SIM Assurances :
    - **Résumé** : Total des jours travaillés, présences, absences, nombre de retards et cumul des minutes de retard par personne.
-   - **Détails des retards** : Chaque retard répertorié ligne par ligne avec l'heure exacte et le motif invoqué.
+   - **Détails des retards** : Chaque retard répertorié ligne par ligne avec l'heure exacte, les minutes de retard, le statut de la *Justification*, le *Motif* (celui de la justification, sinon l'ancien motif du pointage) et *Décidée par* (renseigné seulement une fois la justification acceptée ou refusée).
+   - **Départs anticipés** : Chaque départ anticipé ligne par ligne, avec les mêmes colonnes que les retards sauf les minutes (l'avance d'un départ n'est pas enregistrée au pointage).
+5. **L'export contient toujours toutes les lignes** de la période et des filtres choisis, sans limite. À l'écran, le détail des retards et celui des départs anticipés s'affichent dans deux sections séparées, avec les mêmes colonnes que le fichier, et sont paginés à 50 lignes chacun (boutons *Précédent* / *Suivant* indépendants). Au-delà de 50 lignes, l'écran indique *"N lignes affichées sur M, export complet disponible"*.
 
 ---
 
@@ -156,6 +176,12 @@ Vous avez bien pointé votre arrivée à 07h40, mais vous êtes parti à 17h san
 
 ### 3. Week-ends et jours fériés : Zéro fausse absence
 Le système ignore scrupuleusement les samedis et dimanches ainsi que tous les jours fériés enregistrés dans le calendrier de l'entreprise. Aucune absence automatique ne peut être générée sur ces journées.
+
+### 3 bis. Congés et permissions
+Un jour entièrement couvert par un congé ou une permission autorisée n'est jamais compté comme une absence ; le collaborateur apparaît dans l'onglet **Absence autorisée** de la présence du jour.
+
+### 3 ter. Demandes et rappels de justification (tâche planifiée)
+Une tâche automatique passe toutes les 5 minutes : elle envoie la première demande de justification après le délai, les rappels à intervalle régulier, puis clôt en *"Non justifié"* à la fin de la journée (au moins un intervalle après le dernier envoi). Elle ne renvoie jamais deux fois le même envoi.
 
 ### 4. Nouveaux arrivants et réactivations (Règle Option B)
 Si un collaborateur rejoint l'entreprise un mercredi ou si son compte est réactivé un jeudi :
@@ -195,13 +221,13 @@ En plus du pointage, plusieurs améliorations majeures simplifient votre quotidi
 > **Réponse** : Si vous êtes au sous-sol ou au milieu d'un bâtiment très épais, le GPS du téléphone peut être imprécis (> 150 mètres). Rapprochez-vous d'une fenêtre ou de l'entrée du bâtiment pendant quelques secondes, ou connectez-vous au réseau Wi-Fi de l'entreprise.
 
 #### Q4 : J'ai oublié de pointer ce matin en arrivant à 08h00. Que dois-je faire ?
-> **Réponse** : Pointez dès que vous vous en apercevez en indiquant en motif *"Oubli de badge à l'arrivée (arrivé à 08h00)"*. Le service RH pourra ajuster l'heure réelle lors de sa revue quotidienne.
+> **Réponse** : Pointez dès que vous vous en apercevez : l'arrivée est enregistrée à l'heure réelle du pointage, éventuellement en retard. Expliquez l'oubli dans la justification qui vous sera demandée (ex. *"Oubli de pointage, arrivé à 08h00"*) ; le service RH pourra ajuster l'heure lors de sa revue quotidienne.
 
 #### Q5 : Mes collègues peuvent-ils voir mes heures de pointage et mes retards ?
 > **Réponse** : **Non**. Chaque collaborateur ne peut consulter que son propre historique personnel. Seuls l'équipe RH et la Direction Générale ont accès au tableau de bord global de l'entreprise.
 
-#### Q6 : Pourquoi le système me demande-t-il un motif si je pars à 16h30 ?
-> **Réponse** : L'horaire de fin de journée de référence est fixé à 16h45. Tout départ avant cette heure est considéré comme un départ anticipé et nécessite d'indiquer une raison (ex: rendez-vous convenu avec le manager).
+#### Q6 : Pourquoi le système me demande-t-il une confirmation, puis une justification, si je pars à 16h30 ?
+> **Réponse** : L'horaire de fin de journée de référence est fixé à 16h45. Tout départ avant cette heure est un départ anticipé : vous le confirmez au moment de partir (pour qu'il ne soit jamais enregistré par erreur), puis vous recevez un lien pour le justifier (ex. : rendez-vous convenu avec votre responsable), qui accepte ou refuse.
 
 #### Q7 : Que se passe-t-il si les RH modifient l'un de mes pointages ?
 > **Réponse** : Vous recevez automatiquement une notification vous informant de la régularisation, et la mention de la correction ainsi que le motif saisi par les RH apparaissent clairement dans votre historique.

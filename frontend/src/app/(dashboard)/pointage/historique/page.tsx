@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma } from "backend";
+import { LIBELLE_STATUT_JUSTIFICATION, peutSoumettreJustification, prisma } from "backend";
 import { PageHeader, StatCard } from "@/components/ui";
 import { HistoriqueFilters } from "./HistoriqueFilters";
 
@@ -84,6 +84,7 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
           corrections: {
             orderBy: { createdAt: "asc" },
           },
+          justification: { select: { statut: true } },
         },
       })
       : Promise.resolve([]),
@@ -181,6 +182,13 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
       effectueParNom: p.effectuePar?.fullName ?? null,
       correctionsCount: p.corrections.length,
       dernierMotifCorrection: p.corrections.length > 0 ? p.corrections[p.corrections.length - 1].motif : null,
+      justification: p.justification
+        ? {
+            statut: p.justification.statut,
+            libelle: LIBELLE_STATUT_JUSTIFICATION[p.justification.statut],
+            peutJustifier: peutSoumettreJustification(p.justification.statut),
+          }
+        : null,
       isOriginal: false,
       groupId: p.id,
       sortTime: p.heure.toISOString(),

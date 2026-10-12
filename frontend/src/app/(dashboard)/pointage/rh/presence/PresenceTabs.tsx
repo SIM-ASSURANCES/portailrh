@@ -3,7 +3,10 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { Card } from "@/components/ui/Card";
+import { Badge } from "@/components/ui";
 import { Icon, type IconName } from "@/components/icons";
+import { VARIANTE_STATUT_JUSTIFICATION } from "@/components/pointage/justificationStatut";
+import type { JustificationAffichee } from "backend";
 
 export interface PresenceData {
   userId: string;
@@ -21,24 +24,41 @@ export interface PresenceData {
   sourceArrivee?: string | null;
   /** Distance au bureau en mètres (si pointage géolocalisé) */
   geoDistance?: number | null;
+  /** Pointage V2, lot 7 : justification du retard (statut réel, motif, décidée par). */
+  justification?: JustificationAffichee;
+  /** Justification d'un départ anticipé, le cas échéant. */
+  justificationDepart?: JustificationAffichee;
+  /** Absence autorisée couvrant la journée (« Congé 00:00–23:59 »). */
+  absenceAutorisee?: string;
+}
+
+function BadgeJustification({ j }: { j?: JustificationAffichee }) {
+  if (!j?.statut) return null;
+  return (
+    <Badge variant={VARIANTE_STATUT_JUSTIFICATION[j.statut]} className="text-[10px]">
+      {j.libelle}
+    </Badge>
+  );
 }
 
 interface PresenceTabsProps {
   presents: PresenceData[];
   retards: PresenceData[];
   absents: PresenceData[];
+  autorises: PresenceData[];
   manquants: PresenceData[];
 }
 
-type TabType = "presents" | "retards" | "absents" | "manquants";
+type TabType = "presents" | "retards" | "absents" | "autorises" | "manquants";
 
-export function PresenceTabs({ presents, retards, absents, manquants }: PresenceTabsProps) {
+export function PresenceTabs({ presents, retards, absents, autorises, manquants }: PresenceTabsProps) {
   const [activeTab, setActiveTab] = useState<TabType>("presents");
 
   const tabs = [
     { id: "presents", label: "Présents", count: presents.length, icon: "check-circle" },
     { id: "retards", label: "Retardataires", count: retards.length, icon: "clock" },
     { id: "absents", label: "Absents", count: absents.length, icon: "x-circle" },
+    { id: "autorises", label: "Absence autorisée", count: autorises.length, icon: "calendar" },
     { id: "manquants", label: "Manquants", count: manquants.length, icon: "help-circle" },
   ] as const;
 
@@ -47,6 +67,7 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
     if (activeTab === "presents") data = presents;
     if (activeTab === "retards") data = retards;
     if (activeTab === "absents") data = absents;
+    if (activeTab === "autorises") data = autorises;
     if (activeTab === "manquants") data = manquants;
 
     return (
@@ -62,7 +83,13 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
                 <th className="px-3 py-2 font-medium text-right">Retard</th>
               )}
               {activeTab === "retards" && (
+                <th className="px-3 py-2 font-medium text-right">Justification</th>
+              )}
+              {activeTab === "retards" && (
                 <th className="px-3 py-2 font-medium text-right">Motif</th>
+              )}
+              {activeTab === "autorises" && (
+                <th className="px-3 py-2 font-medium text-right">Absence autorisée</th>
               )}
               {(activeTab === "presents" || activeTab === "retards") && (
                 <th className="px-3 py-2 font-medium text-right">Heure de départ</th>
@@ -104,6 +131,23 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
                   </td>
                 )}
                 {activeTab === "retards" && (
+                  <td className="px-3 py-2 text-right" data-justification>
+                    {item.justification?.statut ? (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <BadgeJustification j={item.justification} />
+                        {item.justification.decideePar ? (
+                          <span className="text-[10px] text-muted-foreground">par {item.justification.decideePar}</span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
+                  </td>
+                )}
+                {activeTab === "autorises" && (
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">{item.absenceAutorisee}</td>
+                )}
+                {activeTab === "retards" && (
                   <td className="px-3 py-2 text-right">
                     {item.motif ? (
                       <span className="truncate max-w-[150px] inline-block italic text-muted-foreground text-[11px]" title={item.motif}>
@@ -120,6 +164,7 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
                       <div className="flex flex-col items-end">
                         <span className="font-medium text-foreground text-[13px]">{format(new Date(item.depart), "HH:mm")}</span>
                         <span className="text-[10px] text-muted-foreground">Prévu : {item.departPrevu || "-"}</span>
+                        <BadgeJustification j={item.justificationDepart} />
                       </div>
                     ) : (
                       <span className="text-muted-foreground">-</span>
@@ -130,7 +175,7 @@ export function PresenceTabs({ presents, retards, absents, manquants }: Presence
             ))}
             {data.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
+                <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                   Aucun collaborateur dans cette liste.
                 </td>
               </tr>

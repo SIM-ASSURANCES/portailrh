@@ -1,3 +1,4 @@
+import { cheminRetourConnexion, origineSiteConfiguree } from "backend/client";
 import type { NextAuthConfig } from "next-auth";
 import { encode as defaultJwtEncode } from "next-auth/jwt";
 
@@ -72,6 +73,14 @@ export const authConfig = {
   },
   providers: [], // Added in auth.ts because of bcrypt
   callbacks: {
+    // Audit open redirect (2026-10-10) : toute redirection décidée par Auth.js (retour après connexion via son API,
+    // cookie `authjs.callback-url`, déconnexion) passe par le SEUL point de validation `cheminRetourConnexion`. La
+    // destination est construite sur l'origine CONFIGURÉE (`AUTH_URL`), jamais sur un en-tête Host / x-forwarded-host
+    // forgé ; à défaut de configuration seulement, sur la base calculée par Auth.js. `/login` n'est admis qu'ici (déconnexion).
+    redirect({ url, baseUrl }) {
+      const origine = origineSiteConfiguree() ?? baseUrl;
+      return `${origine}${cheminRetourConnexion(url, origine, { autoriserConnexion: true })}`;
+    },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;

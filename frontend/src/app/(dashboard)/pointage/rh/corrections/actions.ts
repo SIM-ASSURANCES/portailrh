@@ -3,7 +3,8 @@
 import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
-import { prisma, checkLateStatus, timeToMinutes } from "backend";
+import { prisma, reglesPointage, horairesPointage } from "backend";
+import { lireJourNonOuvre } from "@/lib/joursOuvres";
 import { revalidatePath } from "next/cache";
 import { ActionState, fieldErrorsFromZod } from "backend";
 import { notify } from "@/lib/notifications";
@@ -56,26 +57,27 @@ export async function corrigerPointageAction(
     return { status: "error", message: "Pointage introuvable." };
   }
 
-  // Calculate retard if it's an arrival, or depart anticipe if it's a departure
-  let estRetard = false;
-  let minutesRetard = null;
-  let estDepartAnticipe = false;
-
   const parametrage = await prisma.parametrageHoraire.findFirst({
     where: { isActive: true }
   });
+  // Lot 3 : même règle que le pointage du collaborateur (tolérance, permissions du jour corrigé).
+  const horaires = horairesPointage(parametrage);
+  const debutJour = new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate());
+  const finJour = new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate(), 23, 59, 59, 999);
+  const plagesDuJour = await prisma.plageAbsenceAutorisee.findMany({
+    where: { userId: existingPointage.userId, date: { gte: debutJour, lte: finJour } },
+    select: { heureDebut: true, heureFin: true },
+  });
 
-  if (existingPointage.type === "ARRIVEE") {
-    if (parametrage) {
-      const lateStatus = checkLateStatus(newDate, parametrage);
-      estRetard = lateStatus.estRetard;
-      minutesRetard = estRetard ? lateStatus.minutesRetard : null;
-    }
-  } else if (existingPointage.type === "DEPART") {
-    const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
-    const currentMinutes = newDate.getHours() * 60 + newDate.getMinutes();
-    estDepartAnticipe = currentMinutes < limiteDepartMinutes;
-  }
+  // Lot 3 bis : un jour non ouvré n'a ni retard ni départ anticipé (même règle que le pointage du collaborateur).
+  const { jourNonOuvre } = await lireJourNonOuvre(newDate);
+  const { estRetard, minutesRetard, estDepartAnticipe } = reglesPointage(
+    existingPointage.type,
+    newDate,
+    horaires,
+    plagesDuJour,
+    jourNonOuvre
+  );
 
   try {
     await prisma.$transaction(async (tx) => {

@@ -45,6 +45,7 @@ async function main() {
   await prisma.objet.deleteMany();
   await prisma.categorie.deleteMany();
   await prisma.correctionPointage.deleteMany();
+  await prisma.justificationPointage.deleteMany();
   await prisma.pointage.deleteMany();
   await prisma.absence.deleteMany();
   await prisma.jourFerie.deleteMany();

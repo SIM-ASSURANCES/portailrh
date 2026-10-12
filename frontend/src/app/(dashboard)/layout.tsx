@@ -3,10 +3,16 @@ import { after } from "next/server";
 
 import { AppShell } from "@/components/layout/AppShell";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { demandesEtapeDGWhere, demandesServiceAValiderWhere, prisma, reinitialisationEffectuee } from "backend";
+import {
+  demandesEtapeDGWhere,
+  demandesServiceAValiderWhere,
+  prisma,
+  reinitialisationEffectuee,
+} from "backend";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 import { envoyerRappelsCircuit } from "@/lib/notificationsCircuit";
+import { compteurMenuJustificationsSession } from "@/lib/justificationsPointage";
 
 import { PushPermissionPrompt } from "@/components/notifications/PushPermissionPrompt";
 
@@ -39,6 +45,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const demandesDGADecider = hasPermission(session, "treso.decider_dg")
     ? await prisma.demande.count({ where: demandesEtapeDGWhere(session.user.id) })
     : null;
+  // « Justifications à traiter » (Pointage V2) : responsable d'au moins un service ou RH (par le rôle) ; le DG seulement
+  // si sa file n'est pas vide ou s'il a déjà décidé (`compteurMenuJustifications`, 2026-10-12).
+  const justificationsADecider = await compteurMenuJustificationsSession(session);
 
   return (
     <AppShell
@@ -124,6 +133,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canConsulterEncaissements={hasPermission(session, "enc.consulter")}
       demandesServiceAValider={demandesServiceAValider}
       demandesDGADecider={demandesDGADecider}
+      justificationsADecider={justificationsADecider}
       canRecevoirFeedback={session.peutRecevoirFeedback}
       unreadNotificationsCount={unreadCount}
     >

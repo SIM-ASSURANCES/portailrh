@@ -9,20 +9,31 @@ import {
   timeToMinutes,
   getTrustedClientIp,
   isOfficeIpAllowed,
-  checkLateStatus,
+  reglesPointage,
+  refusArriveeHoraire,
+  heureDepartPossible,
+  formatHeureLocale,
+  type HorairesPointage,
+  departTropTot,
+  horairesPointage,
+  DELAI_MINIMUM_DEPART_MINUTES,
   isWithinRadius,
   isGeoPrecisionAcceptable,
   BUREAU_DEFAULT_COORDS,
+  PERMISSION_RH_POINTAGE,
+  journeeCouverteParAbsence,
 } from "backend";
 import { revalidatePath } from "next/cache";
 import { pointageEmitter } from "@/lib/events";
 import { ActionState, fieldErrorsFromZod } from "backend";
-import { notify } from "@/lib/notifications";
+import { notifyByPermission } from "@/lib/notifications";
+import { lireJourNonOuvre } from "@/lib/joursOuvres";
 
 const pointageSchema = z.object({
   source: z.enum(["QR_CODE", "ORDINATEUR"]),
   type: z.enum(["ARRIVEE", "DEPART"]),
-  motif: z.string().optional(),
+  // Plus de motif au pointage (lot 3) : un retard ou un départ anticipé se justifie après coup
+  // (JustificationPointage).
   // Coordonnées GPS (envoyées uniquement en mode fallback géolocalisation)
   geoLatitude: z.number().optional(),
   geoLongitude: z.number().optional(),
@@ -33,7 +44,6 @@ export async function enregistrerPointageAction(
   input: {
     source: "QR_CODE" | "ORDINATEUR";
     type: "ARRIVEE" | "DEPART";
-    motif?: string;
     geoLatitude?: number;
     geoLongitude?: number;
     geoPrecision?: number;
@@ -48,7 +58,7 @@ export async function enregistrerPointageAction(
     return { status: "error", message: "Données invalides", fieldErrors: fieldErrorsFromZod(parsed.error) };
   }
 
-  const { source, type, motif, geoLatitude, geoLongitude, geoPrecision } = parsed.data;
+  const { source, type, geoLatitude, geoLongitude, geoPrecision } = parsed.data;
 
   // ─────────────────────────────────────────────────────────────────────────
   // 1. Capture de l'IP du terminal
@@ -79,17 +89,13 @@ export async function enregistrerPointageAction(
 
     // La géolocalisation est désactivée par les RH
     if (!geoActive) {
-      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
-      for (const rh of rhUsers) {
-        await notify({
-          userId: rh.id,
-          titre: "⚠️ Alerte Sécurité Pointage",
-          message: `${session.user.fullName} a tenté de pointer hors réseau (IP: ${ip}). La géolocalisation est désactivée.`,
-          lien: "/pointage/rh",
-          priority: "IMPORTANT",
-          category: "POINTAGE",
-        });
-      }
+      await notifyByPermission(PERMISSION_RH_POINTAGE, {
+        titre: "⚠️ Alerte Sécurité Pointage",
+        message: `${session.user.fullName} a tenté de pointer hors réseau (IP: ${ip}). La géolocalisation est désactivée.`,
+        lien: "/pointage/rh",
+        priority: "IMPORTANT",
+        category: "POINTAGE",
+      });
       return {
         status: "error",
         message: "Le pointage n'est autorisé que depuis le réseau Wi-Fi de l'entreprise.",
@@ -132,17 +138,13 @@ export async function enregistrerPointageAction(
 
     if (!geoCheck.allowed) {
       // ── GARDE-FOU : collaborateur hors réseau ET hors du rayon géographique ──
-      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
-      for (const rh of rhUsers) {
-        await notify({
-          userId: rh.id,
-          titre: "🚨 Tentative de pointage non autorisée",
-          message: `${session.user.fullName} a tenté de pointer hors réseau et hors périmètre. IP: ${ip} | Distance au bureau: ${geoDistance}m (rayon: ${rayon}m). Aucun pointage enregistré.`,
-          lien: "/pointage/rh",
-          priority: "IMPORTANT",
-          category: "POINTAGE",
-        });
-      }
+      await notifyByPermission(PERMISSION_RH_POINTAGE, {
+        titre: "🚨 Tentative de pointage non autorisée",
+        message: `${session.user.fullName} a tenté de pointer hors réseau et hors périmètre. IP: ${ip} | Distance au bureau: ${geoDistance}m (rayon: ${rayon}m). Aucun pointage enregistré.`,
+        lien: "/pointage/rh",
+        priority: "IMPORTANT",
+        category: "POINTAGE",
+      });
       return {
         status: "error",
         message: `Pointage impossible : vous êtes à ${geoDistance}m du bureau. Le rayon autorisé est de ${rayon}m. Rapprochez-vous du bureau et réessayez.`,
@@ -154,85 +156,46 @@ export async function enregistrerPointageAction(
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 4. Vérification des règles d'horaires
+  // 4. Règles d'horaires du jour (lot 3 bis : jour non ouvré = ni retard, ni départ anticipé, ni justification)
   // ─────────────────────────────────────────────────────────────────────────
-  const limiteArriveeMinutes = timeToMinutes(parametrage?.heureDebutMatin || "07:45");
-  const limiteDepartMinutes = timeToMinutes(parametrage?.heureFinApresMidi || "16:45");
-
+  const horaires = horairesPointage(parametrage);
   const now = new Date();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  const { jourNonOuvre } = await lireJourNonOuvre(now);
 
-  const allToday = await prisma.pointage.findMany({
-    where: {
-      userId: session.user.id,
-      heure: { gte: startOfDay, lte: endOfDay },
-    },
-    select: { type: true },
+  // Permissions du jour : repoussent l'heure de référence de l'arrivée, avancent celle du départ.
+  const plagesDuJour = await prisma.plageAbsenceAutorisee.findMany({
+    where: { userId: session.user.id, date: { gte: startOfDay, lte: endOfDay } },
+    select: { heureDebut: true, heureFin: true },
   });
 
-  const hasArrivee = allToday.some((p) => p.type === "ARRIVEE");
-  const hasDepart = allToday.some((p) => p.type === "DEPART");
-
-  if (type === "ARRIVEE" && hasArrivee) {
-    return { status: "error", message: "Vous avez déjà pointé votre arrivée aujourd'hui." };
-  }
-  if (type === "ARRIVEE" && currentMinutes >= limiteDepartMinutes) {
-    return { status: "error", message: "La journée de travail est terminée. Vous êtes considéré(e) comme absent(e)." };
-  }
-  if (type === "DEPART" && hasDepart) {
-    return { status: "error", message: "Vous avez déjà pointé votre départ aujourd'hui." };
-  }
-  if (type === "DEPART" && !hasArrivee) {
-    return { status: "error", message: "Vous devez pointer votre arrivée avant votre départ." };
-  }
-  if (allToday.length >= 2) {
-    return { status: "error", message: "Vous avez déjà complété vos pointages pour aujourd'hui." };
-  }
-
-  const heurePrevue =
-    type === "ARRIVEE"
-      ? parametrage?.heureDebutMatin || "07:45"
-      : parametrage?.heureFinApresMidi || "16:45";
-
-  let estRetard = false;
-  let minutesRetard: number | null = null;
-
-  if (type === "ARRIVEE" && parametrage) {
-    const lateStatus = checkLateStatus(now, parametrage);
-    estRetard = lateStatus.estRetard;
-    minutesRetard = estRetard ? lateStatus.minutesRetard : null;
-  } else if (type === "ARRIVEE" && currentMinutes > limiteArriveeMinutes) {
-    estRetard = true;
-    minutesRetard = currentMinutes - limiteArriveeMinutes;
-  }
+  const heurePrevue = type === "ARRIVEE" ? horaires.heureDebutMatin : horaires.heureFinApresMidi;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 5. Défense en profondeur : motif obligatoire en cas d'anomalie
+  // 5. Retard et départ anticipé : une seule règle (`reglesPointage`), aucun motif demandé ici
   // ─────────────────────────────────────────────────────────────────────────
-  if (type === "ARRIVEE" && estRetard) {
-    if (!motif || motif.trim().length < 3) {
-      return { status: "error", message: "Un motif explicatif est obligatoire en cas de retard." };
-    }
-  }
-
-  const estDepartAnticipe = type === "DEPART" && currentMinutes < limiteDepartMinutes;
-  if (estDepartAnticipe) {
-    if (!motif || motif.trim().length < 3) {
-      return { status: "error", message: "Un motif est obligatoire en cas de départ anticipé." };
-    }
-  }
+  const { estRetard, minutesRetard, estDepartAnticipe } = reglesPointage(type, now, horaires, plagesDuJour, jourNonOuvre);
 
   // Source effective : GEOLOCALISATION si fallback, sinon source déclarée
   const sourceEffective = geoFallbackUsed ? "GEOLOCALISATION" : source;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 6. Écriture atomique (Pointage + Traces d'historique)
+  // 6. Écriture atomique. Lot 3 bis : la relecture des pointages du jour, les refus et la création se font dans la
+  // même transaction, sous un verrou par collaborateur et par jour (deux onglets simultanés : un seul pointage).
   // ─────────────────────────────────────────────────────────────────────────
   try {
     await prisma.$transaction(async (tx) => {
+      const cleVerrou = `pointage:${session.user.id}:${startOfDay.getFullYear()}-${startOfDay.getMonth() + 1}-${startOfDay.getDate()}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${cleVerrou})::bigint)`;
+
+      const allToday = await tx.pointage.findMany({
+        where: { userId: session.user.id, heure: { gte: startOfDay, lte: endOfDay } },
+        select: { type: true, heure: true },
+      });
+      const refus = refusPointage(type, now, allToday, horaires, jourNonOuvre);
+      if (refus) throw new RefusPointage(refus);
+
       const pointage = await tx.pointage.create({
         data: {
           type,
@@ -242,7 +205,6 @@ export async function enregistrerPointageAction(
           estRetard,
           minutesRetard,
           estDepartAnticipe,
-          motif: motif || null,
           ipAddress: ip,
           // Données GPS (nulles si pointage réseau normal)
           geoLatitude: geoFallbackUsed ? (geoLatitude ?? null) : null,
@@ -250,6 +212,8 @@ export async function enregistrerPointageAction(
           geoPrecision: geoFallbackUsed ? (geoPrecision ?? null) : null,
           geoDistance: geoFallbackUsed ? geoDistance : null,
           userId: session.user.id,
+          // Retard ou départ anticipé : justification à demander (EN_ATTENTE), dans la même transaction.
+          ...(estRetard || estDepartAnticipe ? { justification: { create: {} } } : {}),
         },
       });
 
@@ -299,41 +263,69 @@ export async function enregistrerPointageAction(
     publishDataChanged();
     pointageEmitter.emit("pointage-updated");
 
-    // Notification RH pour les anomalies classiques (retard / départ anticipé)
-    if (estRetard || estDepartAnticipe) {
-      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
-      const raison = estRetard ? "retard" : "départ anticipé";
-      for (const rh of rhUsers) {
-        await notify({
-          userId: rh.id,
-          titre: "Anomalie de pointage signalée",
-          message: `${session.user.fullName} a signalé un ${raison}. Motif : ${motif}`,
-          lien: "/pointage/rh/presence",
-          priority: "IMPORTANT",
-          category: "POINTAGE",
-        });
-      }
-    }
+    // Plus d'alerte RH « anomalie » au pointage (lot 3) : le retard ou le départ anticipé suit le circuit de
+    // justification.
 
     // Notification RH pour information : pointage validé par géolocalisation
     if (geoFallbackUsed) {
-      const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
-      for (const rh of rhUsers) {
-        await notify({
-          userId: rh.id,
-          titre: "📍 Pointage par géolocalisation",
-          message: `${session.user.fullName} a pointé hors réseau Wi-Fi. Validé par GPS à ${geoDistance}m du bureau (précision: ${geoPrecision ? Math.round(geoPrecision) : "?"}m).`,
-          lien: "/pointage/rh/presence",
-          priority: "IMPORTANT",
-          category: "POINTAGE",
-        });
-      }
+      await notifyByPermission(PERMISSION_RH_POINTAGE, {
+        titre: "📍 Pointage par géolocalisation",
+        message: `${session.user.fullName} a pointé hors réseau Wi-Fi. Validé par GPS à ${geoDistance}m du bureau (précision: ${geoPrecision ? Math.round(geoPrecision) : "?"}m).`,
+        lien: "/pointage/rh/presence",
+        priority: "IMPORTANT",
+        category: "POINTAGE",
+      });
     }
 
+    if (estRetard) {
+      return {
+        status: "success",
+        message: `Arrivée enregistrée à ${formatHeure(now)}, ${minutesRetard} min de retard. Un lien pour justifier vous sera envoyé.`,
+      };
+    }
+    if (estDepartAnticipe) {
+      return {
+        status: "success",
+        message: "Départ enregistré. Un lien pour justifier votre départ anticipé vous sera envoyé.",
+      };
+    }
     return { status: "success", message: "Pointage enregistré avec succès." };
-  } catch {
+  } catch (e) {
+    if (e instanceof RefusPointage) return { status: "error", message: e.message };
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };
   }
+}
+
+/** Refus métier levé dans la transaction du pointage (annule la transaction, message renvoyé tel quel). */
+class RefusPointage extends Error {}
+
+/**
+ * Refus d'un pointage au vu des pointages du jour, relus sous le verrou. Libellés inchangés (lot 3) ; l'arrivée après
+ * la fin de journée n'est refusée qu'un jour ouvré (`refusArriveeHoraire`, lot 3 bis).
+ */
+function refusPointage(
+  type: "ARRIVEE" | "DEPART",
+  now: Date,
+  allToday: { type: "ARRIVEE" | "DEPART"; heure: Date }[],
+  horaires: HorairesPointage,
+  jourNonOuvre: boolean
+): string | null {
+  const hasArrivee = allToday.some((p) => p.type === "ARRIVEE");
+  const hasDepart = allToday.some((p) => p.type === "DEPART");
+  if (type === "ARRIVEE" && hasArrivee) return "Vous avez déjà pointé votre arrivée aujourd'hui.";
+  if (type === "ARRIVEE") {
+    const refusHoraire = refusArriveeHoraire(now, horaires, jourNonOuvre);
+    if (refusHoraire) return refusHoraire;
+  }
+  if (type === "DEPART" && hasDepart) return "Vous avez déjà pointé votre départ aujourd'hui.";
+  if (type === "DEPART" && !hasArrivee) return "Vous devez pointer votre arrivée avant votre départ.";
+  if (allToday.length >= 2) return "Vous avez déjà complété vos pointages pour aujourd'hui.";
+  // Un départ moins de 30 minutes après l'arrivée est refusé (évite un double scan accidentel).
+  const arrivee = allToday.find((p) => p.type === "ARRIVEE");
+  if (type === "DEPART" && arrivee && departTropTot(arrivee.heure, now)) {
+    return `Départ impossible moins de ${DELAI_MINIMUM_DEPART_MINUTES} minutes après votre arrivée (pointée à ${formatHeure(arrivee.heure)}). Vous pourrez pointer votre départ à partir de ${formatHeure(heureDepartPossible(arrivee.heure))}.`;
+  }
+  return null;
 }
 
 export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState> {
@@ -398,6 +390,20 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
     return { status: "error", message: "La journée n'est pas encore terminée." };
   }
 
+  // Congé ou permission couvrant toute la journée : jamais d'absence automatique.
+  const plagesDuJour = await prisma.plageAbsenceAutorisee.findMany({
+    where: { userId: session.user.id, date: { gte: startOfDay, lte: endOfDay } },
+    select: { heureDebut: true, heureFin: true },
+  });
+  if (
+    journeeCouverteParAbsence(plagesDuJour, {
+      heureDebutMatin: parametrage?.heureDebutMatin || "07:45",
+      heureFinApresMidi: parametrage?.heureFinApresMidi || "16:45",
+    })
+  ) {
+    return { status: "error", message: "Absence autorisée (congé ou permission) enregistrée pour aujourd'hui." };
+  }
+
   const hasPointage = await prisma.pointage.findFirst({
     where: { userId: session.user.id, heure: { gte: startOfDay, lte: endOfDay } },
   });
@@ -422,17 +428,13 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
       },
     });
 
-    const rhUsers = await prisma.user.findMany({ where: { role: { name: "RH" }, isActive: true } });
-    for (const rh of rhUsers) {
-      await notify({
-        userId: rh.id,
-        titre: "Absence Automatique",
-        message: `${session.user.fullName} a été marqué(e) absent(e) (fin de journée atteinte sans pointage).`,
-        lien: "/pointage/rh/absences",
-        priority: "IMPORTANT",
-        category: "POINTAGE",
-      });
-    }
+    await notifyByPermission(PERMISSION_RH_POINTAGE, {
+      titre: "Absence Automatique",
+      message: `${session.user.fullName} a été marqué(e) absent(e) (fin de journée atteinte sans pointage).`,
+      lien: "/pointage/rh/absences",
+      priority: "IMPORTANT",
+      category: "POINTAGE",
+    });
 
     revalidatePath("/pointage");
     publishDataChanged();
@@ -440,3 +442,6 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
 
   return { status: "success", message: "Absence automatique enregistrée." };
 }
+
+/** Heure locale « HH:MM » (une seule mise en forme, `formatHeureLocale`). */
+const formatHeure = formatHeureLocale;

@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { Prisma } from "./generated/prisma/client";
 import { z } from "zod";
+import { justificationAffichee, type JustificationLue } from "./justificationPointage";
 
 export const pointageReportingSchema = z.object({
   dateDebut: z.string().optional(),
@@ -152,18 +153,32 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
   });
 }
 
-export async function getDetailsRetards(filters: PointageReportingFilters, skip = 0, take = 50) {
-  const where: Prisma.PointageWhereInput = {
-    type: "ARRIVEE",
-    estRetard: true,
-    user: {
-      ...USER_CAN_POINT_WHERE,
-      ...(filters.service ? { service: { name: filters.service } } : {}),
-    },
+/** Détail du reporting : retards (arrivées) ou départs anticipés. */
+export type TypeDetailPointage = "RETARD" | "DEPART_ANTICIPE";
+
+/** Pagination de l'écran ; absente = toutes les lignes (export complet). */
+export interface PaginationDetails {
+  skip: number;
+  take: number;
+}
+
+/**
+ * Requête du détail, partagée par l'écran et l'export (même filtre, même tri) : seule la pagination diffère. Retard =
+ * arrivée avec `estRetard`, départ anticipé = départ avec `estDepartAnticipe`, tous deux calculés au pointage (lot 3),
+ * jamais recalculés ici.
+ */
+export function construireRequeteDetails(
+  type: TypeDetailPointage,
+  filters: PointageReportingFilters,
+  pagination?: PaginationDetails,
+) {
+  const where: Prisma.PointageWhereInput =
+    type === "RETARD" ? { type: "ARRIVEE", estRetard: true } : { type: "DEPART", estDepartAnticipe: true };
+  where.user = {
+    ...USER_CAN_POINT_WHERE,
+    ...(filters.service ? { service: { name: filters.service } } : {}),
   };
-
   if (filters.userId) where.userId = filters.userId;
-
   if (filters.dateDebut || filters.dateFin) {
     where.heure = {};
     if (filters.dateDebut) where.heure.gte = new Date(filters.dateDebut);
@@ -173,33 +188,65 @@ export async function getDetailsRetards(filters: PointageReportingFilters, skip 
       where.heure.lte = fin;
     }
   }
-
-  const retards = await prisma.pointage.findMany({
-    where,
-    include: {
-      user: {
-        select: { fullName: true, service: { select: { name: true } } },
-      },
-    },
-    orderBy: { heure: "desc" },
-    skip,
-    take,
-  });
-
-  const total = await prisma.pointage.count({ where });
-
   return {
-    data: retards.map((r) => ({
-      id: r.id,
-      collaborateur: r.user.fullName,
-      service: r.user.service?.name ?? null,
-      date: r.heure,
-      heurePrevue: r.heurePrevue,
-      heureReelle: r.heure,
-      minutesRetard: r.minutesRetard,
-      motif: r.motif,
-    })),
-    total,
+    where,
+    orderBy: { heure: "desc" as const },
+    ...(pagination ? { skip: pagination.skip, take: pagination.take } : {}),
   };
 }
 
+interface PointageDetailLu {
+  id: string;
+  heure: Date;
+  heurePrevue: string | null;
+  minutesRetard: number | null;
+  motif: string | null;
+  user: { fullName: string; service: { name: string } | null };
+  justification: JustificationLue | null;
+}
+
+/** Une ligne du détail : une seule source pour l'écran et l'export (`justificationAffichee`). */
+export function ligneDetailPointage(r: PointageDetailLu) {
+  const j = justificationAffichee({ motif: r.motif, justification: r.justification });
+  return {
+    id: r.id,
+    collaborateur: r.user.fullName,
+    service: r.user.service?.name ?? null,
+    date: r.heure,
+    heurePrevue: r.heurePrevue,
+    heureReelle: r.heure,
+    minutesRetard: r.minutesRetard,
+    justificationStatut: j.statut,
+    justification: j.libelle,
+    motif: j.motif,
+    decideePar: j.decideePar,
+  };
+}
+
+export type LigneDetailPointage = ReturnType<typeof ligneDetailPointage>;
+
+async function getDetails(type: TypeDetailPointage, filters: PointageReportingFilters, pagination?: PaginationDetails) {
+  const requete = construireRequeteDetails(type, filters, pagination);
+  const [lignes, total] = await Promise.all([
+    prisma.pointage.findMany({
+      ...requete,
+      include: {
+        user: { select: { fullName: true, service: { select: { name: true } } } },
+        // Pointage V2, lot 7 : statut réel de la justification, son motif et l'auteur de la décision.
+        justification: { select: { statut: true, motif: true, decideur: { select: { fullName: true } } } },
+      },
+    }),
+    prisma.pointage.count({ where: requete.where }),
+  ]);
+  return { data: lignes.map(ligneDetailPointage), total };
+}
+
+/** Détail des retards ; sans pagination, toutes les lignes (export). */
+export function getDetailsRetards(filters: PointageReportingFilters, pagination?: PaginationDetails) {
+  return getDetails("RETARD", filters, pagination);
+}
+
+/** Détail des départs anticipés ; sans pagination, toutes les lignes (export). */
+export function getDetailsDepartsAnticipes(filters: PointageReportingFilters, pagination?: PaginationDetails) {
+  return getDetails("DEPART_ANTICIPE", filters, pagination);
+}

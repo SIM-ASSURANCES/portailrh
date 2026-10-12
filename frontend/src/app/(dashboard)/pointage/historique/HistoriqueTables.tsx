@@ -1,7 +1,11 @@
 "use client";
 
+import Link from "next/link";
+
+import type { StatutJustificationPointage } from "backend";
 import { Badge, DataTable, type DataTableColumn } from "@/components/ui";
 import { Icon } from "@/components/icons";
+import { VARIANTE_STATUT_JUSTIFICATION } from "@/components/pointage/justificationStatut";
 
 type TypePointage = "ARRIVEE" | "DEPART";
 type SourcePointage = "QR_CODE" | "ORDINATEUR" | "RH_EXCEPTIONNEL" | "GEOLOCALISATION";
@@ -23,6 +27,8 @@ export type PointageRow = {
   isOriginal?: boolean;
   groupId?: string;
   sortTime?: string;
+  /** Pointage V2 (lot 4) : justification du retard ou du départ anticipé, si une est demandée. */
+  justification?: { statut: StatutJustificationPointage; libelle: string; peutJustifier: boolean } | null;
 };
 
 export type AbsenceRow = {
@@ -148,6 +154,22 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
           );
         }
         return <Badge variant="info">À l&apos;heure</Badge>;
+      },
+    },
+    {
+      key: "justification",
+      header: "Justification",
+      render: (row) => {
+        if (row.isOriginal || !row.justification) return <span className="text-xs text-muted-foreground">—</span>;
+        const href = `/pointage/justifier/${row.groupId ?? row.id}`;
+        return (
+          <div className="flex flex-col items-start gap-1">
+            <Badge variant={VARIANTE_STATUT_JUSTIFICATION[row.justification.statut]}>{row.justification.libelle}</Badge>
+            <Link href={href} className="text-xs font-semibold text-primary hover:underline">
+              {row.justification.peutJustifier ? "Justifier" : "Voir"}
+            </Link>
+          </div>
+        );
       },
     },
     {

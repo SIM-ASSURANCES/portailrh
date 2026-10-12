@@ -808,6 +808,7 @@ export async function supprimerUtilisateurAction(
     encEncaissementsConfirmes,
     encEncaissementsNonRecus,
     encSignalementsTraites,
+    justificationsDecidees,
     lignesSoumisesAuDG,
     lignesDecideesParDG,
   ] = await Promise.all([
@@ -855,6 +856,8 @@ export async function supprimerUtilisateurAction(
     prisma.encEncaissement.count({ where: { confirmeParId: userId } }),
     prisma.encEncaissement.count({ where: { nonRecuParId: userId } }),
     prisma.encSignalement.count({ where: { traiteParId: userId } }),
+    // Pointage V2 : justifications de retard / départ anticipé décidées par ce compte (RESTRICT).
+    prisma.justificationPointage.count({ where: { decideurId: userId } }),
     // Soumission au DG ligne par ligne (2026-10-10) : 2 relations vers User supplémentaires (SET NULL en base).
     prisma.ligneDemande.count({ where: { soumiseDGParId: userId } }),
     prisma.ligneDemande.count({ where: { decisionDGParId: userId } }),
@@ -902,6 +905,8 @@ export async function supprimerUtilisateurAction(
   if (encEncaissementsConfirmes > 0) blocages.push(`confirmé ${encEncaissementsConfirmes} encaissement(s)`);
   if (encEncaissementsNonRecus > 0) blocages.push(`déclaré ${encEncaissementsNonRecus} encaissement(s) non reçu(s)`);
   if (encSignalementsTraites > 0) blocages.push(`traité ${encSignalementsTraites} signalement(s) (encaissements)`);
+  if (justificationsDecidees > 0)
+    blocages.push(`décidé ${justificationsDecidees} justification(s) de retard ou de départ anticipé`);
   if (lignesSoumisesAuDG > 0) blocages.push(`soumis ${lignesSoumisesAuDG} ligne(s) d'article au DG`);
   if (lignesDecideesParDG > 0) blocages.push(`décidé ${lignesDecideesParDG} ligne(s) d'article en tant que DG`);
 

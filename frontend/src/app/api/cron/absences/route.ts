@@ -1,39 +1,13 @@
 import { NextResponse } from "next/server";
-import { prisma } from "backend";
-import type { Prisma } from "backend";
-import { notify } from "@/lib/notifications";
-import { timingSafeEqual } from "node:crypto";
+import { prisma, journeeCouverteParAbsence, PERMISSION_RH_POINTAGE } from "backend";
+import type { Prisma, PlageHoraire } from "backend";
+import { notify, notifyByPermission } from "@/lib/notifications";
+import { refusCron } from "@/lib/cronAuth";
 
 export async function GET(request: Request) {
-  // SEC-06 : Comparaison en temps constant pour éviter les attaques par timing
-  // sur le CRON_SECRET (un `!==` standard révèle la longueur du token par le
-  // temps de réponse — `timingSafeEqual` garantit une durée identique quelle
-  // que soit la valeur comparée).
-  const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
-
-  let isAuthorized = false;
-  if (cronSecret && authHeader) {
-    try {
-      const expectedToken = `Bearer ${cronSecret}`;
-      // Les deux buffers doivent avoir exactement la même longueur pour
-      // `timingSafeEqual` — un test de longueur préalable court-circuiterait
-      // le timing, mais exposer "mauvaise longueur" n'apporte pas d'info utile
-      // sur le secret lui-même.
-      if (authHeader.length === expectedToken.length) {
-        isAuthorized = timingSafeEqual(
-          Buffer.from(authHeader),
-          Buffer.from(expectedToken)
-        );
-      }
-    } catch {
-      isAuthorized = false;
-    }
-  }
-
-  if (!isAuthorized) {
-    return new NextResponse("Unauthorized", { status: 401 });
-  }
+  // SEC-06 : secret du cron comparé à temps constant, refus sans CRON_SECRET (contrôle commun, `@/lib/cronAuth`).
+  const refus = refusCron(request);
+  if (refus) return refus;
 
   try {
     const today = new Date();
@@ -131,6 +105,21 @@ export async function GET(request: Request) {
     });
     const absencesSet = new Set(absences.map(a => `${a.userId}_${formatDate(a.date)}`));
 
+    // Congés et permissions (`PlageAbsenceAutorisee`) : un jour entièrement couvert n'est jamais une absence.
+    const plages = await prisma.plageAbsenceAutorisee.findMany({
+      where: { date: { gte: startOfPeriod, lte: endOfPeriod } },
+      select: { userId: true, date: true, heureDebut: true, heureFin: true },
+    });
+    const plagesParJour = new Map<string, PlageHoraire[]>();
+    for (const p of plages) {
+      const key = `${p.userId}_${formatDate(p.date)}`;
+      plagesParJour.set(key, [...(plagesParJour.get(key) ?? []), p]);
+    }
+    const horairesJournee = {
+      heureDebutMatin: parametrage?.heureDebutMatin || "07:45",
+      heureFinApresMidi: parametrage?.heureFinApresMidi || "16:45",
+    };
+
     const absencesToCreate: Prisma.AbsenceCreateManyInput[] = [];
 
     for (let i = 0; i < joursAnalyses; i++) {
@@ -164,6 +153,7 @@ export async function GET(request: Request) {
         }
 
         const key = `${user.id}_${dateStr}`;
+        if (journeeCouverteParAbsence(plagesParJour.get(key) ?? [], horairesJournee)) continue;
         if (!pointagesSet.has(key) && !absencesSet.has(key)) {
           absencesToCreate.push({
             userId: user.id,
@@ -219,11 +209,6 @@ export async function GET(request: Request) {
       });
       const departAujSet = new Set(pointagesDepartAuj.map(p => p.userId));
 
-      const adminsAndRh = await prisma.user.findMany({
-        where: { isActive: true, role: { name: { in: ["ADMIN", "RH"] } } },
-        select: { id: true }
-      });
-
       for (const arrivee of pointagesArriveeAuj) {
         // S'il n'y a pas de pointage de départ pour ce collaborateur aujourd'hui
         if (!departAujSet.has(arrivee.userId)) {
@@ -247,17 +232,16 @@ export async function GET(request: Request) {
                category: "POINTAGE",
              });
 
-             // Notifier les RH et Administrateurs (Push + In-app : IMPORTANT)
-             for (const admin of adminsAndRh) {
-               await notify({
-                 userId: admin.id,
-                 titre: "Oubli de pointage détecté",
-                 message: `Le collaborateur ${arrivee.user.fullName} n'a pas pointé son départ aujourd'hui.`,
-                 lien: `/pointage/rh/presence?date=${formatDate(today)}`,
-                 priority: "IMPORTANT",
-                 category: "POINTAGE",
-               });
-             }
+             // Notifier la RH (Push + In-app : IMPORTANT), ciblée par permission et non par nom de rôle : l'ancien
+             // ciblage ["ADMIN", "RH"] ne trouvait jamais le rôle « Admin » (casse), qui n'a d'ailleurs aucune
+             // permission pointage.* par conception.
+             await notifyByPermission(PERMISSION_RH_POINTAGE, {
+               titre: "Oubli de pointage détecté",
+               message: `Le collaborateur ${arrivee.user.fullName} n'a pas pointé son départ aujourd'hui.`,
+               lien: `/pointage/rh/presence?date=${formatDate(today)}`,
+               priority: "IMPORTANT",
+               category: "POINTAGE",
+             });
 
              oublisDetectes++;
           }
