@@ -23,6 +23,10 @@ export * from "./reference";
 export * from "./validation";
 export * from "./beneficiaire";
 export * from "./motifLigne";
+export * from "./categorisationObligatoire";
+export * from "./retourNul";
+export * from "./reportingDemandeLigne";
+export * from "./regularisationDepenses";
 export * from "./feedback";
 export * from "./reinitialisation";
 
@@ -49,6 +53,9 @@ export * from "./circuitDemandeDb";
 export * from "./circuitNotifications";
 // Onglet « À vérifier » (traitement des signalements) — commit 5b.
 export * from "./encSignalements";
+export * from "./encConfirmation";
+export * from "./encConfirmationLot";
+export * from "./encSaisie";
 
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).

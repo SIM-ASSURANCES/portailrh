@@ -1,5 +1,7 @@
+import { LIBELLE_ETAPE_CIRCUIT } from "./circuitDemande";
+import { construireLigneReporting, type HistoriqueReporting, type LigneReportingDemande } from "./reportingDemandeLigne";
 import { getBeneficiaireNom } from "./beneficiaire";
-import type { ModeReglement, Prisma, StatutDemande, TypeDemande, TypeJustification } from "./generated/prisma/client";
+import type { ModeReglement, Prisma, StatutDemande, TypeDemande } from "./generated/prisma/client";
 import {
   getDemandesEnAttenteValidation,
   getDepensesNonJustifiees,
@@ -9,13 +11,7 @@ import {
   getRetoursEnAttenteReception,
 } from "./dashboardFinance";
 import { prisma } from "./prisma";
-import {
-  getDepensesDeclarees,
-  getMontantConsommeCategorie,
-  getRetoursRecus,
-  getSoldeCaisse,
-  getTotalRegle,
-} from "./tresorerie";
+import { getMontantConsommeCategorie, getSoldeCaisse } from "./tresorerie";
 
 /**
  * Filtres du reporting Trésorerie (Ticket 10), partagés entre l'écran
@@ -280,7 +276,7 @@ interface DemandeAvecRelations {
  * `DEPENSE_DIRECTE` (0 ligne, la demande ENTIÈRE porte sa propre catégorie)
  * et `STANDARD` (chaque LIGNE porte la sienne, potentiellement différente
  * d'une ligne à l'autre) sous une même forme, pour que
- * `getReportingRows`/`getReportingFondsRemis`/`getReportingDemandesDetail`
+ * `getReportingRows`/`getReportingFondsRemis`
  * n'aient qu'un seul bucketing à écrire, jamais deux chemins de code
  * séparés selon `typeDemande`.
  *
@@ -337,8 +333,8 @@ function getUnitesComptables(demandes: DemandeAvecRelations[]): UniteComptable[]
 /**
  * Demandes correspondant aux filtres, **après application du filtre
  * `mode`** (exclusion des demandes sans aucun règlement confirmé de ce
- * mode précis) — fonction interne partagée par `getReportingRows` et
- * `getReportingDemandesDetail`, pour ne calculer cette liste qu'une fois
+ * mode précis) — fonction interne partagée par `getReportingRows`, `getReportingParDemande` et les
+ * autres feuilles, pour ne calculer cette liste qu'une fois
  * par appel et garantir que le tableau agrégé et le détail Excel désignent
  * toujours le même ensemble de demandes. Le filtre `mode` ne sert qu'à
  * SÉLECTIONNER les demandes retenues ; les montants renvoyés
@@ -871,229 +867,6 @@ export async function getReportingSuiviBudgetaire(): Promise<ReportingSuiviBudge
   );
 }
 
-export interface ReportingDemandeDetail {
-  reference: string;
-  /** Libellé de la ligne d'article (voir CLAUDE.md "Catégorisation par
-   * ligne") — `null` pour une `DEPENSE_DIRECTE` (une seule ligne de
-   * feuille = la demande entière, comme avant cette tâche). */
-  libelleLigne: string | null;
-  /** Motif de la ligne (2026-10-09), sinon le motif d'en-tête (anciennes demandes, dépense directe). */
-  motif: string | null;
-  createurNom: string;
-  service: string | null;
-  categorieLabel: string;
-  objetLabel: string;
-  montant: number;
-  statut: StatutDemande;
-  createdAt: Date;
-}
-
-/**
- * Feuille "Demandes" de l'export — même ensemble que `getReportingRows`
- * (même "unité comptable" : une LIGNE d'article pour `STANDARD`, la
- * demande entière pour `DEPENSE_DIRECTE`, voir CLAUDE.md "Catégorisation
- * par ligne"). `statut`/`createdAt`/`createurNom`/`service` restent ceux
- * de la DEMANDE porteuse (une ligne n'a pas son propre statut de demande,
- * seulement son `statutValidation` — qui n'apparaît pas ici, cette feuille
- * reste au niveau "où en est la demande", pas "où en est la décision de
- * cette ligne précise").
- */
-export async function getReportingDemandesDetail(filters: ReportingFilters): Promise<ReportingDemandeDetail[]> {
-  const { demandes } = await getDemandesFiltrees(filters);
-  const rows: ReportingDemandeDetail[] = [];
-  for (const d of demandes) {
-    for (const unite of getUnitesComptables([d])) {
-      rows.push({
-        reference: d.reference,
-        libelleLigne: unite.ligneId ? (d.lignes.find((l) => l.id === unite.ligneId)?.libelle ?? null) : null,
-        motif: (unite.ligneId ? d.lignes.find((l) => l.id === unite.ligneId)?.motif : null) ?? d.description,
-        createurNom: d.createur.fullName,
-        service: d.createur.service,
-        categorieLabel: unite.categorieLabel,
-        objetLabel: unite.objetLabel,
-        montant: unite.montant,
-        statut: d.statut,
-        createdAt: d.createdAt,
-      });
-    }
-  }
-  return rows;
-}
-
-export interface ReportingReglementDetail {
-  demandeReference: string;
-  montant: number;
-  mode: ModeReglement;
-  confirmeLe: Date;
-  auteurNom: string;
-  /**
-   * Répartition par Catégorie (voir CLAUDE.md "Allocation budgétaire
-   * explicite par règlement") — chaîne vide si une seule catégorie est
-   * concernée (rendu inchangé par rapport à avant cette tâche, cette
-   * feuille n'a jamais affiché de catégorie), renseignée uniquement quand
-   * le règlement a plusieurs allocations : "Catégorie A: 20 000 FCFA,
-   * Catégorie B: 10 000 FCFA".
-   */
-  repartitionCategories: string;
-}
-
-/** Feuille "Règlements" de l'export : règlements confirmés des demandes filtrées. */
-export async function getReportingReglementsDetail(filters: ReportingFilters): Promise<ReportingReglementDetail[]> {
-  const { demandes } = await getDemandesFiltrees(filters);
-  const demandeIds = demandes.map((d) => d.id);
-  if (demandeIds.length === 0) {
-    return [];
-  }
-  const referenceParDemande = new Map(demandes.map((d) => [d.id, d.reference]));
-
-  const reglements = await prisma.reglement.findMany({
-    where: {
-      demandeId: { in: demandeIds },
-      estConfirme: true,
-      estAnnule: false,
-      ...(filters.mode ? { mode: filters.mode } : {}),
-    },
-    include: { auteur: true, allocations: { include: { categorie: true } } },
-    orderBy: { confirmeAt: "asc" },
-  });
-
-  return reglements.map((r) => ({
-    demandeReference: referenceParDemande.get(r.demandeId) ?? "—",
-    montant: Number(r.montant),
-    mode: r.mode,
-    confirmeLe: r.confirmeAt ?? r.createdAt,
-    auteurNom: r.auteur.fullName,
-    repartitionCategories:
-      r.allocations.length > 1
-        ? r.allocations.map((a) => `${a.categorie.label}: ${Number(a.montant).toLocaleString("fr-FR")} FCFA`).join(", ")
-        : "",
-  }));
-}
-
-export interface ReportingRetourDetail {
-  demandeReference: string;
-  /** Mode du règlement d'origine (Caisse ou Banque — voir CLAUDE.md "Retour sur règlement Banque"). */
-  mode: "CAISSE" | "BANQUE";
-  montantDepenseTotal: number;
-  montantARetourner: number;
-  montantNonJustifie: number;
-  estReceptionne: boolean;
-  declareLe: Date;
-}
-
-/**
- * Feuille "Retours de caisse" de l'export : retours liés aux demandes
- * filtrées.
- *
- * REFONTE V1 / Phase D (voir CLAUDE.md "Refonte V1 en cours") : un retour
- * n'a plus de montant dépensé/justification uniques (Ticket 5) — remplacés
- * par `montantDepenseTotal` (somme des `DepenseLigne`) et
- * `montantNonJustifie` (somme des lignes `SANS_PIECE`), agrégés en mémoire
- * via l'`include` ci-dessous (volume modeste, même convention que le reste
- * du reporting).
- */
-export async function getReportingRetoursDetail(filters: ReportingFilters): Promise<ReportingRetourDetail[]> {
-  const { demandes } = await getDemandesFiltrees(filters);
-  const demandeIds = demandes.map((d) => d.id);
-  if (demandeIds.length === 0) {
-    return [];
-  }
-  const referenceParDemande = new Map(demandes.map((d) => [d.id, d.reference]));
-
-  const retours = await prisma.retourCaisse.findMany({
-    where: { reglement: { demandeId: { in: demandeIds } } },
-    include: { reglement: true, depenses: true },
-    orderBy: { createdAt: "asc" },
-  });
-
-  return retours.map((r) => ({
-    demandeReference: referenceParDemande.get(r.reglement.demandeId) ?? "—",
-    mode: r.reglement.mode,
-    montantDepenseTotal: r.depenses.reduce((sum, d) => sum + Number(d.montant), 0),
-    montantARetourner: Number(r.montantARetourner),
-    montantNonJustifie: r.depenses
-      .filter((d) => d.justification === "SANS_PIECE")
-      .reduce((sum, d) => sum + Number(d.montant), 0),
-    estReceptionne: r.estReceptionne,
-    declareLe: r.createdAt,
-  }));
-}
-
-export interface ReportingComplementRemboursementDetail {
-  demandeReference: string;
-  retourOrigineRef: string;
-  signalementRef: string;
-  type: "Complément" | "Remboursement";
-  statut: string;
-  montant: number;
-  motif: string;
-  proposantNom: string;
-  validateurNom: string | null;
-  dateProposition: Date;
-  dateValidation: Date | null;
-  pieceId: string | null;
-}
-
-/**
- * Feuille "Compléments et remboursements" (voir CLAUDE.md "Correction d'un retour signalé") :
- * retours complémentaires (entrée de caisse) et remboursements (sortie de caisse) rattachés à un
- * signalement, pour les demandes filtrées. Distincte de "Retours externes" (aucun lien à une demande).
- */
-export async function getReportingComplementsRemboursementsDetail(
-  filters: ReportingFilters
-): Promise<ReportingComplementRemboursementDetail[]> {
-  const { demandes } = await getDemandesFiltrees(filters);
-  const demandeIds = demandes.map((d) => d.id);
-  if (demandeIds.length === 0) return [];
-  const referenceParDemande = new Map(demandes.map((d) => [d.id, d.reference]));
-
-  const [complements, remboursements] = await Promise.all([
-    prisma.retourCaisse.findMany({
-      where: { signalementOrigineId: { not: null }, reglement: { demandeId: { in: demandeIds } } },
-      include: { reglement: { select: { demandeId: true } }, declarant: { select: { fullName: true } }, receptionnePar: { select: { fullName: true } }, signalementOrigine: { include: { retourCaisse: { select: { id: true } } } } },
-    }),
-    prisma.remboursementRetour.findMany({
-      where: { retourCaisse: { reglement: { demandeId: { in: demandeIds } } } },
-      include: { retourCaisse: { select: { id: true, reglement: { select: { demandeId: true } } } }, proposePar: { select: { fullName: true } }, validePar: { select: { fullName: true } } },
-    }),
-  ]);
-
-  const lignes: ReportingComplementRemboursementDetail[] = [];
-  for (const c of complements) {
-    lignes.push({
-      demandeReference: referenceParDemande.get(c.reglement.demandeId) ?? "—",
-      retourOrigineRef: c.signalementOrigine?.retourCaisse.id ?? "—",
-      signalementRef: c.signalementOrigineId ?? "—",
-      type: "Complément",
-      statut: c.estReceptionne ? "Réceptionné" : "En attente de réception",
-      montant: Number(c.montantARetourner),
-      motif: c.signalementOrigine?.commentaire ?? "—",
-      proposantNom: c.declarant.fullName,
-      validateurNom: null,
-      dateProposition: c.createdAt,
-      dateValidation: null,
-      pieceId: null,
-    });
-  }
-  for (const r of remboursements) {
-    lignes.push({
-      demandeReference: referenceParDemande.get(r.retourCaisse.reglement.demandeId) ?? "—",
-      retourOrigineRef: r.retourCaisse.id,
-      signalementRef: r.signalementId,
-      type: "Remboursement",
-      statut: r.statut === "VALIDE" ? "Validé" : r.statut === "REJETE" ? "Rejeté" : "En attente de validation",
-      montant: Number(r.montant),
-      motif: r.motif,
-      proposantNom: r.proposePar.fullName,
-      validateurNom: r.validePar?.fullName ?? null,
-      dateProposition: r.proposeAt,
-      dateValidation: r.valideAt,
-      pieceId: r.pieceJointeId,
-    });
-  }
-  return lignes.sort((a, b) => a.dateProposition.getTime() - b.dateProposition.getTime());
-}
-
 export interface ReportingRetourExterneDetail {
   personne: string;
   estExterne: boolean;
@@ -1169,58 +942,6 @@ export async function getReportingJournalBanqueDetail(
   }));
 }
 
-export interface ReportingDepenseDetail {
-  demandeReference: string;
-  beneficiaireNom: string;
-  montant: number;
-  objet: string;
-  date: Date;
-  nature: string | null;
-  justification: TypeJustification;
-  nonJustifiee: boolean;
-}
-
-/**
- * Feuille "Dépenses déclarées" de l'export (Phase H) : chaque
- * `DepenseLigne` (Phase D, fonds remis) des retours liés aux demandes
- * filtrées — une ligne par dépense réelle, pas agrégée par retour comme
- * `getReportingRetoursDetail`. `nonJustifiee` reflète directement
- * `justification === "SANS_PIECE"`, redondant avec `justification`
- * elle-même mais exposé comme booléen dédié pour que la route d'export
- * puisse mettre ces lignes en évidence sans réinterpréter l'enum à chaque
- * fois (Tâche 3 : "Oui"/"Non" + surlignage).
- */
-export async function getReportingDepensesDetail(filters: ReportingFilters): Promise<ReportingDepenseDetail[]> {
-  const { demandes } = await getDemandesFiltrees(filters);
-  const demandeIds = demandes.map((d) => d.id);
-  if (demandeIds.length === 0) {
-    return [];
-  }
-  const infoParDemande = new Map(
-    demandes.map((d) => [d.id, { reference: d.reference, beneficiaireNom: getBeneficiaireNom(d) }])
-  );
-
-  const lignes = await prisma.depenseLigne.findMany({
-    where: { retourCaisse: { reglement: { demandeId: { in: demandeIds } } } },
-    include: { retourCaisse: { include: { reglement: true } } },
-    orderBy: { date: "asc" },
-  });
-
-  return lignes.map((l) => {
-    const info = infoParDemande.get(l.retourCaisse.reglement.demandeId);
-    return {
-      demandeReference: info?.reference ?? "—",
-      beneficiaireNom: info?.beneficiaireNom ?? "—",
-      montant: Number(l.montant),
-      objet: l.objet,
-      date: l.date,
-      nature: l.nature,
-      justification: l.justification,
-      nonJustifiee: l.justification === "SANS_PIECE",
-    };
-  });
-}
-
 export interface ReportingJournalDetail {
   type: string;
   montant: number;
@@ -1260,259 +981,6 @@ export async function getReportingJournalDetail(filters: ReportingFilters): Prom
     demandeReference: e.demande?.reference ?? "—",
     userNom: e.user.fullName,
   }));
-}
-
-/**
- * Extrait le montant validé "à cette étape" (par opposition au cumul) du
- * texte `HistoriqueEntry.detail` produit par `enregistrerValidation`
- * (`treso/finance/demandes/[id]/actions.ts`, Phase B) : toujours au format
- * exact `"Montant validé à cette étape : 250 000 FCFA (cumul validé : ...)"`
- * — jamais un texte saisi par un utilisateur, donc l'extraction par regex
- * est fiable tant que ce format ne change pas. Ni `HistoriqueEntry` ni les
- * Server Actions de validation n'ont de champ numérique dédié pour cette
- * valeur (hors périmètre de cette tâche d'en ajouter un) ; `null` si le
- * format ne correspond pas (jamais une exception qui ferait échouer tout
- * l'export pour une seule ligne).
- */
-function parseMontantValideCetteEtape(detail: string | null): number | null {
-  if (!detail) return null;
-  const match = detail.match(/Montant validé à cette étape\s*:\s*([\d\s  ]+)\s*FCFA/);
-  if (!match) return null;
-  const digits = match[1].replace(/[^\d]/g, "");
-  return digits ? Number(digits) : null;
-}
-
-export interface ReportingValidationDetail {
-  demandeReference: string;
-  /** "validation" | "validation_complementaire" | "rejet" — libellé humain géré côté appelant (mêmes `ACTION_LABELS` que `DemandeHistorique`). */
-  action: string;
-  userNom: string;
-  date: Date;
-  /** `null` pour un rejet (rien n'est validé), ou si le texte de l'entrée ne correspond pas au format attendu. */
-  montant: number | null;
-  detail: string | null;
-}
-
-/**
- * Feuille "Validations" de l'export (section 16) : une ligne par événement
- * de validation, validation complémentaire ou rejet (`HistoriqueEntry`,
- * Phase B/Ticket 3), pour les demandes filtrées.
- */
-export async function getReportingValidationsDetail(
-  filters: ReportingFilters
-): Promise<ReportingValidationDetail[]> {
-  const { demandes } = await getDemandesFiltrees(filters);
-  const demandeIds = demandes.map((d) => d.id);
-  if (demandeIds.length === 0) {
-    return [];
-  }
-  const referenceParDemande = new Map(demandes.map((d) => [d.id, d.reference]));
-
-  const entries = await prisma.historiqueEntry.findMany({
-    where: {
-      entity: "Demande",
-      entityId: { in: demandeIds },
-      action: { in: ["validation", "validation_complementaire", "rejet"] },
-    },
-    include: { user: true },
-    orderBy: { createdAt: "asc" },
-  });
-
-  return entries.map((e) => ({
-    demandeReference: referenceParDemande.get(e.entityId) ?? "—",
-    action: e.action,
-    userNom: e.user.fullName,
-    date: e.createdAt,
-    montant: parseMontantValideCetteEtape(e.detail),
-    detail: e.detail,
-  }));
-}
-
-export interface ReportingRegularisationDetail {
-  demandeReference: string;
-  montantValide: number;
-  /** Total réglé, tous modes confondus — `getTotalRegle`. */
-  totalRegle: number;
-  depensesDeclarees: number;
-  retoursRecus: number;
-  /** `totalRegle - depensesDeclarees - retoursRecus` — même formule que `getEcart` (`tresorerie.ts`), jamais plafonnée à 0. */
-  ecart: number;
-  motifCloture: string | null;
-  /** Date de la dernière `HistoriqueEntry` `cloture_totale`/`cloture_partielle` ; à défaut (donnée historique sans cette entrée), `updatedAt` de la demande. */
-  clotureeLe: Date;
-  /** Retours exceptionnels post-clôture VALIDÉS (déjà inclus dans `retoursRecus`) : total et date de la dernière validation — jamais la date de création de la demande. */
-  retoursExceptionnelsValides: number;
-  retourExceptionnelValideLe: Date | null;
-}
-
-/**
- * Feuille "Régularisations" de l'export (section 16) : une ligne par
- * demande **clôturée** (`CLOTUREE`) parmi les demandes filtrées, avec le
- * détail du solde à régulariser final — mêmes fonctions que celles déjà
- * affichées à l'écran (`RegularisationSummary`), jamais une deuxième
- * formule. Calcul par demande via `Promise.all` (pas de version batchée) :
- * même principe déjà accepté pour `a-regulariser` (Ticket 8, CLAUDE.md) —
- * l'ensemble des demandes clôturées reste par nature une file bornée, pas
- * "toutes les demandes" de l'organisation.
- */
-export async function getReportingRegularisationsDetail(
-  filters: ReportingFilters
-): Promise<ReportingRegularisationDetail[]> {
-  const { demandes } = await getDemandesFiltrees(filters);
-  let cloturees = demandes.filter((d) => d.statut === "CLOTUREE");
-
-  // Retours exceptionnels post-clôture : la période s'applique à leur date de
-  // VALIDATION (`valideAt`), jamais à la date de création de la demande. Une
-  // demande créée hors période reste donc listée si un retour exceptionnel y a
-  // été validé DANS la période (les autres filtres continuent de s'appliquer).
-  const periode = filters.du || filters.au ? { ...(filters.du ? { gte: filters.du } : {}), ...(filters.au ? { lte: filters.au } : {}) } : null;
-  if (periode) {
-    const dejaLa = new Set(cloturees.map((d) => d.id));
-    const validesEnPeriode = await prisma.retourExceptionnel.findMany({
-      where: { statut: "VALIDE", valideAt: periode },
-      select: { demandeId: true },
-    });
-    const manquants = new Set(validesEnPeriode.map((e) => e.demandeId).filter((id) => !dejaLa.has(id)));
-    if (manquants.size > 0) {
-      const { demandes: sansPeriode } = await getDemandesFiltrees({ ...filters, du: undefined, au: undefined });
-      cloturees = [...cloturees, ...sansPeriode.filter((d) => d.statut === "CLOTUREE" && manquants.has(d.id))];
-    }
-  }
-  if (cloturees.length === 0) {
-    return [];
-  }
-
-  const clotureIds = cloturees.map((d) => d.id);
-  const [clotureEntries, motifsEtDates] = await Promise.all([
-    prisma.historiqueEntry.findMany({
-      where: {
-        entity: "Demande",
-        entityId: { in: clotureIds },
-        action: { in: ["cloture_totale", "cloture_partielle"] },
-      },
-      orderBy: { createdAt: "asc" },
-    }),
-    prisma.demande.findMany({
-      where: { id: { in: clotureIds } },
-      select: { id: true, motifCloture: true, updatedAt: true },
-    }),
-  ]);
-
-  const clotureDateParDemande = new Map<string, Date>();
-  for (const e of clotureEntries) {
-    clotureDateParDemande.set(e.entityId, e.createdAt); // ordonné asc : la dernière écriture gagne.
-  }
-  const infoParDemande = new Map(motifsEtDates.map((d) => [d.id, d]));
-
-  const exceptionnelsValides = await prisma.retourExceptionnel.findMany({
-    where: { statut: "VALIDE", demandeId: { in: clotureIds }, ...(periode ? { valideAt: periode } : {}) },
-    select: { demandeId: true, montant: true, valideAt: true },
-  });
-
-  const details = await Promise.all(
-    cloturees.map(async (d) => {
-      const [totalRegle, depensesDeclarees, retoursRecus] = await Promise.all([
-        getTotalRegle(d.id),
-        getDepensesDeclarees(d.id),
-        getRetoursRecus(d.id),
-      ]);
-      const info = infoParDemande.get(d.id);
-      const exc = exceptionnelsValides.filter((e) => e.demandeId === d.id);
-      return {
-        demandeReference: d.reference,
-        montantValide: Number(d.montantValide ?? 0),
-        totalRegle,
-        depensesDeclarees,
-        retoursRecus,
-        ecart: totalRegle - depensesDeclarees - retoursRecus,
-        motifCloture: info?.motifCloture ?? null,
-        clotureeLe: clotureDateParDemande.get(d.id) ?? info?.updatedAt ?? d.createdAt,
-        retoursExceptionnelsValides: exc.reduce((s, e) => s + Number(e.montant), 0),
-        retourExceptionnelValideLe: exc.reduce<Date | null>(
-          (max, e) => (e.valideAt && (!max || e.valideAt > max) ? e.valideAt : max),
-          null
-        ),
-      };
-    })
-  );
-
-  return details;
-}
-
-export interface ReportingDepenseNonJustifieeDetail {
-  demandeReference: string;
-  demandeurNom: string;
-  beneficiaireNom: string;
-  service: string | null;
-  nombreOperations: number;
-  montantTotal: number;
-  periodeDebut: Date;
-  periodeFin: Date;
-}
-
-/**
- * Feuille "Dépenses non justifiées" de l'export (section 16) — **dédiée**,
- * distincte de la colonne "Non justifiée" de la feuille "Dépenses
- * déclarées" (celle-ci reste une ligne par `DepenseLigne`, cahier des
- * charges Phase H) : ici, une ligne PAR DEMANDE regroupant ses dépenses
- * `SANS_PIECE`, avec les colonnes exactes demandées (nombre d'opérations,
- * montant total, demandeur, bénéficiaire, service, période) — `service`
- * et `bénéficiaire` n'ayant de sens qu'au niveau d'une demande, pas d'une
- * ligne de dépense isolée.
- */
-export async function getReportingDepensesNonJustifieesDetail(
-  filters: ReportingFilters
-): Promise<ReportingDepenseNonJustifieeDetail[]> {
-  const { demandes } = await getDemandesFiltrees(filters);
-  const demandeIds = demandes.map((d) => d.id);
-  if (demandeIds.length === 0) {
-    return [];
-  }
-  const infoParDemande = new Map(
-    demandes.map((d) => [
-      d.id,
-      {
-        reference: d.reference,
-        demandeurNom: d.createur.fullName,
-        beneficiaireNom: getBeneficiaireNom(d),
-        service: d.createur.service,
-      },
-    ])
-  );
-
-  const lignes = await prisma.depenseLigne.findMany({
-    where: { justification: "SANS_PIECE", retourCaisse: { reglement: { demandeId: { in: demandeIds } } } },
-    include: { retourCaisse: { include: { reglement: true } } },
-    orderBy: { date: "asc" },
-  });
-
-  const buckets = new Map<string, ReportingDepenseNonJustifieeDetail>();
-  for (const l of lignes) {
-    const demandeId = l.retourCaisse.reglement.demandeId;
-    const info = infoParDemande.get(demandeId);
-    if (!info) continue;
-
-    const existing = buckets.get(demandeId);
-    if (existing) {
-      existing.nombreOperations += 1;
-      existing.montantTotal += Number(l.montant);
-      if (l.date < existing.periodeDebut) existing.periodeDebut = l.date;
-      if (l.date > existing.periodeFin) existing.periodeFin = l.date;
-    } else {
-      buckets.set(demandeId, {
-        demandeReference: info.reference,
-        demandeurNom: info.demandeurNom,
-        beneficiaireNom: info.beneficiaireNom,
-        service: info.service,
-        nombreOperations: 1,
-        montantTotal: Number(l.montant),
-        periodeDebut: l.date,
-        periodeFin: l.date,
-      });
-    }
-  }
-
-  return Array.from(buckets.values()).sort((a, b) => a.demandeReference.localeCompare(b.demandeReference));
 }
 
 export interface ReportingDashboardIndicateur {
@@ -1563,4 +1031,148 @@ export async function getReportingDashboardSnapshot(): Promise<ReportingDashboar
       montant: depensesNonJustifiees.montant,
     },
   ];
+}
+
+/**
+ * Reporting « une ligne par demande » (2026-10-08) — écran ET export Excel : mêmes filtres que le reste du reporting
+ * (`getDemandesFiltrees`), puis tout ce qui est rattaché à chaque demande chargé en une poignée de requêtes groupées
+ * (jamais une requête par demande), mis en forme par `construireLigneReporting` (pur, testé).
+ *
+ * Totaux identiques aux fonctions de référence : Réglé = `getTotalRegle` (confirmés, non annulés, tous modes), Dépensé =
+ * `getDepensesDeclarees` (toutes les lignes de dépense de tous les retours), Retourné = `getRetoursRecus` (retours
+ * réceptionnés + retours exceptionnels validés − remboursements validés), Solde = `getEcart`.
+ */
+export async function getReportingParDemande(
+  filters: ReportingFilters,
+  libelleStatut: (statut: StatutDemande) => string = (s) => s
+): Promise<LigneReportingDemande[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const ids = demandes.map((d) => d.id);
+  if (ids.length === 0) return [];
+
+  const [details, historique] = await Promise.all([
+    prisma.demande.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        etapeCircuit: true,
+        lignes: {
+          orderBy: { createdAt: "asc" },
+          include: { categorie: true, objet: true, decidePar: { select: { fullName: true } } },
+        },
+        reglements: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            auteur: { select: { fullName: true } },
+            retours: {
+              orderBy: { createdAt: "asc" },
+              include: {
+                declarant: { select: { fullName: true } },
+                receptionnePar: { select: { fullName: true } },
+                depenses: { orderBy: { date: "asc" } },
+                remboursements: {
+                  orderBy: { proposeAt: "asc" },
+                  include: { proposePar: { select: { fullName: true } }, validePar: { select: { fullName: true } } },
+                },
+              },
+            },
+          },
+        },
+        retoursExceptionnels: {
+          orderBy: { saisiAt: "asc" },
+          include: { saisiPar: { select: { fullName: true } }, validePar: { select: { fullName: true } } },
+        },
+      },
+    }),
+    prisma.historiqueEntry.findMany({
+      where: { entity: "Demande", entityId: { in: ids } },
+      include: { user: { select: { fullName: true } } },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+
+  const detailParId = new Map(details.map((d) => [d.id, d]));
+  const historiqueParId = new Map<string, HistoriqueReporting[]>();
+  for (const h of historique) {
+    const liste = historiqueParId.get(h.entityId) ?? [];
+    liste.push({ action: h.action, detail: h.detail, auteur: h.user.fullName, date: h.createdAt });
+    historiqueParId.set(h.entityId, liste);
+  }
+
+  return demandes.map((d) => {
+    const det = detailParId.get(d.id)!;
+    return construireLigneReporting({
+      reference: d.reference,
+      creeLe: d.createdAt,
+      typeDemande: d.typeDemande,
+      statut: libelleStatut(d.statut),
+      etapeCircuit: det.etapeCircuit ? LIBELLE_ETAPE_CIRCUIT[det.etapeCircuit] : null,
+      demandeur: d.createur.fullName,
+      service: d.createur.service,
+      beneficiaire: getBeneficiaireNom(d),
+      description: d.description,
+      categorie: d.categorie?.label ?? null,
+      objet: d.objet?.label ?? null,
+      montantDemande: Number(d.montant),
+      montantValide: Number(d.montantValide ?? 0),
+      lignes: det.lignes.map((l) => ({
+        libelle: l.libelle,
+        motif: l.motif,
+        quantite: l.quantite,
+        prixUnitaire: Number(l.prixUnitaire),
+        categorie: l.categorie?.label ?? null,
+        objet: l.objet?.label ?? null,
+        statut: l.statutValidation,
+        motifRejet: l.motifRejet,
+        decidePar: l.decidePar?.fullName ?? null,
+        decideLe: l.decideAt,
+      })),
+      reglements: det.reglements.map((r) => ({
+        montant: Number(r.montant),
+        mode: r.mode,
+        estConfirme: r.estConfirme,
+        estAnnule: r.estAnnule,
+        motifAnnulation: r.motifAnnulation,
+        auteur: r.auteur.fullName,
+        creeLe: r.createdAt,
+        confirmeLe: r.confirmeAt,
+        retours: r.retours.map((t) => ({
+          montantARetourner: Number(t.montantARetourner),
+          estReceptionne: t.estReceptionne,
+          receptionneLe: t.receptionneAt,
+          receptionnePar: t.receptionnePar?.fullName ?? null,
+          declarant: t.declarant.fullName,
+          declareLe: t.createdAt,
+          creeParAssistant: t.creeParAssistant,
+          complementSignalement: !!t.signalementOrigineId,
+          reouvertureExceptionnelle: !!t.motifReouvertureExceptionnelle,
+          depenses: t.depenses.map((dep) => ({
+            libelle: dep.objet,
+            montant: Number(dep.montant),
+            justifiee: dep.justification !== "SANS_PIECE",
+            motifNonJustifie: dep.motifNonJustifie,
+          })),
+          remboursements: t.remboursements.map((rb) => ({
+            montant: Number(rb.montant),
+            statut: rb.statut,
+            proposePar: rb.proposePar.fullName,
+            proposeLe: rb.proposeAt,
+            validePar: rb.validePar?.fullName ?? null,
+            valideLe: rb.valideAt,
+            motifRejet: rb.motifRejet,
+          })),
+        })),
+      })),
+      retoursExceptionnels: det.retoursExceptionnels.map((e) => ({
+        montant: Number(e.montant),
+        statut: e.statut,
+        saisiPar: e.saisiPar.fullName,
+        saisiLe: e.saisiAt,
+        validePar: e.validePar?.fullName ?? null,
+        valideLe: e.valideAt,
+        motifRejet: e.motifRejet,
+      })),
+      historique: historiqueParId.get(d.id) ?? [],
+    });
+  });
 }

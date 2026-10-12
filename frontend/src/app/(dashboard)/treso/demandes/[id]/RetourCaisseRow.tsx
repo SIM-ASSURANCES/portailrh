@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Badge, Button } from "@/components/ui";
 import type { TypeJustification } from "backend";
+import { MESSAGE_RIEN_A_RENDRE } from "backend/client";
 
 import { RetourCaisseForm } from "./RetourCaisseForm";
 import { detailMontantDefinitif, etatRetourAffiche, type MontantDefinitifAffiche } from "@/lib/retourAffichage";
@@ -44,6 +45,8 @@ export interface RetourData {
    * blocage : ses pièces jointes restent consultables comme n'importe
    * quel autre retour. */
   creeParAssistant: boolean;
+  /** Fiche de régularisation (détail renseigné par l'Assistant sans retour) : ne bloque pas la déclaration. */
+  estFiche?: boolean;
   /** Non réceptionné, demande non clôturée, ET utilisateur connecté = déclarant original. */
   peutModifier: boolean;
   /** Même condition que la garde serveur de `signalerErreurRetourAction` : demande non clôturée, ou retour en réouverture exceptionnelle. */
@@ -65,6 +68,8 @@ export interface RetourCaisseRowData {
   retours: RetourData[];
   /** Masque le bouton de déclaration une fois la demande clôturée (Ticket 7). */
   peutDeclarer: boolean;
+  /** Solde à rendre calculé nul (dépenses égales aux fonds remis) : aucune déclaration n'est réclamée. */
+  rienARendre?: boolean;
   /** Date plancher (`YYYY-MM-DD`) pour le champ "Date du retour" du
    * formulaire simplifié — voir CLAUDE.md "Libellés et validations sur le
    * formulaire de retour". */
@@ -214,6 +219,14 @@ function RetourExistant({
             {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
           </Badge>
           {retour.creeParAssistant ? <Badge variant="info">Déclaré par l&apos;Assistant Finance</Badge> : null}
+          {retour.estReceptionne ? (
+            <a
+              href={`/api/treso/retours/${retour.id}/recu`}
+              className="text-sm font-medium text-primary underline-offset-2 hover:underline"
+            >
+              Télécharger le reçu du retour
+            </a>
+          ) : null}
         </div>
         {retour.peutModifier && !editOpen ? (
           <Button type="button" variant="secondary" onClick={() => setEditOpen(true)}>
@@ -268,10 +281,19 @@ function RetourExistant({
  * simultanément sur le même règlement, mais un nouveau redevient possible
  * dès que le précédent est réceptionné.
  */
-export function RetourCaisseRow({ reglementId, modeReglement, montant, retours, peutDeclarer, dateMin, repere }: RetourCaisseRowData) {
+export function RetourCaisseRow({
+  reglementId,
+  modeReglement,
+  montant,
+  retours,
+  peutDeclarer,
+  rienARendre = false,
+  dateMin,
+  repere,
+}: RetourCaisseRowData) {
   const [formOpen, setFormOpen] = useState(false);
 
-  const aUnRetourEnAttente = retours.some((r) => !r.estReceptionne);
+  const aUnRetourEnAttente = retours.some((r) => !r.estReceptionne && !r.estFiche);
 
   return (
     <li className="space-y-3 rounded-md border border-border p-4">
@@ -280,9 +302,14 @@ export function RetourCaisseRow({ reglementId, modeReglement, montant, retours, 
             Caisse (voir `RetoursCaisseSection`) : la date, jamais le montant
             (déjà affiché dans la section Règlements). */}
         {repere ? <p className="font-medium text-foreground">{repere}</p> : null}
-        {formOpen || aUnRetourEnAttente ? null : peutDeclarer ? (
+        {formOpen || aUnRetourEnAttente ? null : peutDeclarer && rienARendre ? (
+          // Retour nul (2026-10-08) : rien à rendre, aucune déclaration n'est attendue du collaborateur.
+          <p data-rien-a-rendre className="text-sm text-muted-foreground">
+            {MESSAGE_RIEN_A_RENDRE}
+          </p>
+        ) : peutDeclarer ? (
           <Button type="button" onClick={() => setFormOpen(true)}>
-            {retours.length === 0 ? "Déclarer un retour de caisse" : "Déclarer un nouveau retour de caisse"}
+            {retours.every((r) => r.estFiche) ? "Déclarer un retour de caisse" : "Déclarer un nouveau retour de caisse"}
           </Button>
         ) : retours.length === 0 ? (
           <Badge variant="neutral">Non déclaré</Badge>

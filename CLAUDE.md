@@ -2554,9 +2554,9 @@ discrète).
 ### Reporting et export
 
 `backend/src/reporting.ts` / `treso/finance/reporting/page.tsx` / export
-Excel (**12 feuilles** : Demandes, Validations, Règlements, Retours de
-caisse, Fonds remis, Régularisations, Dépenses effectuées, Dépenses non
-justifiées, Journal de caisse, Reporting, Suivi budgétaire, Dashboard).
+Excel. **Depuis le 2026-10-08 : une seule ligne par demande** (voir « Retouches Trésorerie du 2026-10-08 » plus bas) —
+feuilles : Demandes (une ligne par demande), Mouvements banque, Retours externes, Fonds remis, Journal de caisse,
+Reporting (synthèse par catégorie/objet), Suivi budgétaire, Dashboard.
 
 Colonnes du tableau agrégé (par Catégorie puis Objet) :
 
@@ -2581,6 +2581,98 @@ inchangés) : « Écart » → **Solde à régulariser**, « Dépense déclarée
 
 Filtres disponibles : période, demandeur, **bénéficiaire** (distinct du
 demandeur), service, catégorie/objet, mode, statut, type de demande.
+
+### Retouches Trésorerie du 2026-10-08 (catégorie obligatoire, retour nul, reporting par demande)
+
+Aucune migration, aucun droit ni garde de conflit d'intérêts modifié, aucune écriture comptable existante touchée.
+
+- **Catégorie obligatoire pour valider** (`backend/src/categorisationObligatoire.ts`, pur, partagé serveur/écran) : une
+  ligne VALIDÉE doit porter une catégorie, une ligne rejetée non. Serveur : `validerLignesAction` (Finance à l'étape
+  Finance et à la décision finale, DG pour les lignes du cas b, nouvelle décision après une correction — les lignes
+  repassent en attente), `validerTotalementAction`/`validerPartiellementAction`/`validerComplementaireAction` (dépense
+  directe sans ligne, y compris le DG pour une dépense directe de la Finance pour elle-même). Écran : « Valider » grisé
+  par ligne avec la phrase, « Valider totalement / partiellement / complémentaire » grisés pour une dépense directe sans
+  catégorie (« Rejeter » reste possible). Non concernés (ne valident aucune ligne) : validation de l'étape Service,
+  validation du DG d'une demande soumise (la Finance décide ensuite les lignes), approbation de clôture. Retirer la
+  catégorie d'une ligne déjà validée n'a aucun chemin : `categoriserLigneAction` refuse une ligne décidée et exige une
+  catégorie, `categoriserDemandeAction` refuse hors attente, une catégorie utilisée ne se supprime pas. Il n'existe pas de
+  bouton « tout valider » : la décision groupée est l'unique « Enregistrer les décisions » de `validerLignesAction`.
+- **Retour nul** (`backend/src/retourNul.ts`) : quand le montant à rendre calculé vaut 0 sur un règlement Caisse, la
+  réception (`receptionnerRetourAction`, bouton « Constater le retour nul ») n'écrit **aucun** mouvement dans
+  `JournalCaisse` ; l'historique de la demande reçoit `retour_nul_constate` (auteur, date, heure, montants). Mêmes
+  gardes qu'avant (`treso.receptionner_retour`, jamais le demandeur ni le bénéficiaire) ; réception désormais
+  conditionnée (`updateMany` sur `estReceptionne: false` : deux clics simultanés, une seule écriture). Côté
+  collaborateur, quand un retour a déjà tout couvert, plus de bouton de déclaration mais « Rien à rendre… » ;
+  `creerRetourCaisseAction` refuse aussi ce cas. Le chemin de l'Assistant reste : déclarer (« Aucun retour du
+  collaborateur »), détailler, constater.
+- **Reçu PDF du retour** (`GET /api/treso/retours/[id]/recu`, `lib/pdf/RetourReceiptDocument.tsx`, styles partagés
+  avec `ReceiptDocument`) : disponible dès que le retour est réceptionné ou constaté nul ; référence
+  `<demande>-RC<rang>` (rang parmi les retours réceptionnés de la demande, ordre de réception) ; accès = celui de
+  l'écran du retour (`receptionner_retour`, `valider_demande`, `voir_dashboard_finance`) ou le créateur de la demande ;
+  404 tant que non réceptionné, 403 sinon. Liens sur le détail Finance du retour et sur l'écran du collaborateur.
+- **Reporting une ligne par demande** (`backend/src/reportingDemandeLigne.ts` pur + `getReportingParDemande` dans
+  `reporting.ts`, requêtes groupées) : écran (`ReportingDemandesTable`, en tête de page, synthèses par catégorie
+  conservées en dessous) et feuille Excel « Demandes » ont les mêmes colonnes (`COLONNES_REPORTING_DEMANDE`) :
+  Référence, Créée le, Type, Statut, Étape du circuit, Demandeur, Service, Bénéficiaire, Lignes d'articles, Demandé,
+  Validations (Service, Finance, DG), Validé, Règlements, Réglé, Dépenses, Dépensé, Dont justifié, Retours de caisse,
+  Remboursements, Ajustements et régularisations, Retourné, Solde. Cellules multi-valeurs = un élément par ligne.
+  Totaux = mêmes règles que `getTotalRegle`/`getDepensesDeclarees`/`getRetoursRecus`/`getEcart`. Feuilles retirées :
+  Validations, Règlements, Retours de caisse, Régularisations, Dépenses effectuées, Dépense sans pièce formelle,
+  Compléments et remboursements ; leurs huit fonctions `getReporting…Detail` (et `parseMontantValideCetteEtape`) ont
+  été supprimées de `reporting.ts` (2026-10-09, 534 lignes).
+- Vérifié : vitest (24 nouveaux tests, 364 au total), tsc, eslint, `next build` ; base PostgreSQL 16 jetable
+  (migrations depuis zéro, `migrate diff` vide) ; Playwright 47/47 (refus serveur par rejeu de la Server Action, rejet
+  sans catégorie accepté, dépense directe catégorisée puis validée, retour nul de bout en bout sans écriture de caisse,
+  reçu 200/403/404, Assistant bénéficiaire grisé, reporting et export sur une ligne par demande, filtre bénéficiaire,
+  mobile 390 px).
+
+#### Soumission au DG ligne par ligne (2026-10-10, suite des retouches)
+
+Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permission créés) : `LigneDemande.soumiseAuDG`,
+`soumiseDGAt`/`soumiseDGParId`, `decisionDG` (enum `DecisionLigneDG` : VALIDEE/REFUSEE, `null` = en attente du DG),
+`decisionDGAt`/`decisionDGParId`, `motifRefusDG`. La décision finale de la ligne reste `statutValidation`.
+- **Règles** (moteur pur `circuitDemande.ts`, tests `circuitLignesDG.test.ts`) : à l'étape Finance (ou à la décision
+  finale, ou pendant que le DG décide), la Finance (`treso.soumettre_dg`) soumet les lignes choisies
+  (`SOUMETTRE_LIGNES_DG`, catégorie obligatoire, `refusSoumissionLignes`) ; la demande passe ou reste à l'étape DG. Le DG
+  (`treso.decider_dg`) ne voit et ne décide que les lignes soumises, une par une (`DECIDER_LIGNE_DG`, motif ≥ 3 au refus) ;
+  la dernière décidée passe la demande à la décision finale. Une ligne refusée revient à la Finance : resoumise, ou
+  refusée définitivement à la décision finale. **DG définitif** (décision du 2026-10-10, `refusDecisionsFinales`) : une
+  ligne validée par le DG reste validée (son auteur et sa date sont gardés), une ligne refusée par le DG n'est jamais
+  validée par la Finance seule, et la Finance ne rejette plus la demande entière dès qu'une ligne est validée par le DG.
+  **Décision finale bloquée** tant qu'une ligne soumise attend le DG (`MESSAGE_LIGNES_EN_ATTENTE_DG`). Deux personnes :
+  un compte qui a décidé une ligne comme DG ne prend pas la décision finale. Catégorie d'une ligne soumise (en attente ou
+  validée) verrouillée.
+- **Clôture (règle 5, un seul endroit)** : `approbateurClotureParLignesDG` + constante
+  `APPROBATION_CLOTURE_SI_TOUTES_LIGNES_VALIDEES_PAR_DG` — la décision finale vaut approbation de clôture du DG (au nom
+  du DG qui a validé) seulement si toutes les lignes validées l'ont été par le DG ; sinon le DG l'approuve à la fin.
+- **Inchangés** : cas b (DG obligatoire, il décide toutes les lignes d'un coup, `validerLignesAction`), dépense directe
+  sans ligne (soumission et décision de la demande entière, étape « Rejet DG »), garde 8, rappels (48 h puis 24 h ; une
+  soumission complémentaire à l'étape DG ne change pas `etapeCircuitDepuis`).
+- **Base** (`circuitDemandeDb.ts`) : `soumettreLignesAuDG`, `deciderLigneDG`, verrou `SELECT … FOR UPDATE` sur la demande
+  (aussi dans `appliquerTransitionCircuit`) pour que deux décisions simultanées ne manquent jamais le passage à la
+  décision finale. Actions `soumettreLignesAuDGAction` / `deciderLigneDGAction` (`treso/circuit/actions.ts`), tout refus
+  annule la transaction. Historique : `soumission_lignes_dg`, `validation_ligne_dg`, `refus_ligne_dg` (visibles du
+  collaborateur, comme `soumission_dg`).
+- **Écrans** : Finance (`LignesValidationTable` : état DG par ligne, cases « Soumettre / Resoumettre au DG », décisions
+  verrouillées selon le DG ; plus de bouton « Soumettre au DG » de la demande entière), DG (`DecisionLignesDG` : lignes
+  soumises seulement), frise (« 2 lignes sur 4 soumises · 1 en attente… », `detailLignesDG`).
+- **Notifications** : le DG à chaque soumission ; la Finance qui peut agir (`decider_finance` ou `soumettre_dg`) à chaque
+  refus (`notificationRefusLigneDG`) — le refus de la dernière ligne en attente n'envoie que la notification de décision
+  finale (décompte validées/refusées), jamais deux.
+- **Rattrapage** (décision du 2026-10-10, selon l'étape) des demandes soumises par l'ancien circuit : toutes leurs lignes
+  « soumises » ; étape DG : en attente ; décision finale : validées par le DG (auteur et date de son approbation) ; rejet
+  DG : refusées (motif du rejet) et la demande passe à la décision finale ; terminées : historique seulement.
+- Reporting : colonne « Validations » complétée par ces actions (sinon incomplète). `supprimerUtilisateurAction` compte
+  les 2 nouvelles relations vers `User`.
+- Vérifié : vitest (31 tests, 396 au total), tsc, eslint, `next build` ; migration depuis zéro (72) et sur une base dans
+  l'ancien état (rattrapage contrôlé ligne par ligne, rejeu sans effet), `migrate diff` vide ; Playwright 39/39
+  (soumission partielle, refus puis resoumission, blocage et refus serveur de la décision finale, DG définitif côté
+  serveur, clôture mixte et tout-DG, notifications, historique, mobile 390 px).
+
+- **Détail des dépenses sans retour (2026-10-10)** : l'Assistant Finance détaille directement depuis la demande (`detaillerDepensesReglementAction`, règlement Caisse, demande non clôturée) ; le détail est rangé dans une fiche de régularisation (`RetourCaisse` créé d'office, `estFicheRegularisation`), montant à rendre = remis − détaillé (`calculerMontantARetournerNet`, inchangée) ; une déclaration ultérieure du collaborateur complète cette fiche (`completerFicheRegularisation`), la réception écrit seule en caisse ; retour nul possible, plus préalable.
+- **Correction du détail par l'Assistant (2026-10-10, suite du constat)** : tant que la demande n'est pas clôturée (réouverture exceptionnelle : règle existante), ni la réception du retour (retour nul compris) ni un signalement ne conditionnent plus la correction (`detaillerDepensesRetourAction`, `modifierDepenseDetailleeAction`, `detaillerResteAction`) ; un signalement actif reste résolu par la correction. **Pas de suppression** : une ligne se corrige par modification (libellé, montant, type avec ou sans pièce formelle, pièce jointe), motif obligatoire. Aucune dépense n'a d'écriture de caisse : correction sur l'enregistrement ; retour à total fixé (déclaré, ou réceptionné : remis − retourné, lié à l'écriture de la réception) → l'écart va dans la ligne de reste, une hausse au-delà est refusée (`planModificationDepense`) et un changement du montant rendu passe par complément / remboursement ; fiche de régularisation → total libre, montant à rendre recalculé.
+- **Reste « Dépenses non détaillées »** : calculé (ligne réécrite à chaque correction, ni modifiable ni supprimable), affiché comme reste avec « Détailler » (`detaillerResteAction`, `planAjoutLignes`) qui le transforme en vraies lignes. **Un seul composant** `components/tresorerie/DetailDepensesRetour.tsx` (totaux `totauxDetailRetour` : remis, détaillé, reste, sans pièce formelle, retourné ; lignes « Modifier » ; reste « Détailler ») sur l'écran du retour et dans la Régularisation de la demande ; l'écran du retour affiche aussi l'historique de la demande. Le collaborateur voit les lignes à jour en lecture seule et l'historique.
+- **Historique** : `detaillage_retour` (« Dépenses détaillées par l'Assistant Finance » : saisie et « Détailler »), `modification_depense` (JSON avant/après dont le type, motif, phrase `resumeModificationDepense`), anciennes entrées `suppression_depense` toujours lisibles ; aucune migration ; la « catégorie » d'une dépense = son type (justifiée / sans pièce formelle), `DepenseLigne` n'ayant pas de catégorie.
 
 ### Solde d'ouverture de caisse
 
@@ -5304,6 +5396,130 @@ livrés avec ce commit.
   base : 1 paiement (PaiementID FX-0005, ligne 5, à confirmer), mot « om4402 » indexé, 2 audits ; **réimport du même
   fichier** : la ligne revient « déjà présent », aucun nouveau doublon ni paiement.
 
+#### Bloc F3/F4/F5 — plan 6-0 à 6f (validé le 2026-10-06, D25-D37 de la conception)
+
+Remplace les commits 7 à 10 du §11 (saisie, paiement multiple, confirmation, relevés) ; la reprise F1.5 reste après ;
+la correction et la contre-passation (F3.5, cas 9.9) sont hors bloc. Détail de chaque commit et de ses tests : conception
+§11. Ordre : **6-0** index de `EncSignalement` ; **6a** moteur de confirmation `confirmerEncaissement` (backend seul,
+seule fonction pour toutes les voies : verrou par police, rang de prise en compte, montants figés, exigibilité §5.3,
+part d'accessoires, bénéficiaire des honoraires, trop-perçu renvoyé, `EncAudit`) ; **6b** F5 ligne par ligne et par
+lot ; **6c** F3 saisie depuis la fiche police ; **6d** F4 un paiement pour plusieurs contrats ; **6e** lecture et
+rapprochement des relevés (pur) ; **6f** import des relevés, écran des 4 groupes, frais des opérateurs (migration
+`EncReleve`, `EncReleveLigne`, `EncFraisOperateur`, `EncPreferenceUtilisateur` — jamais une colonne sur `User`).
+
+Décisions du 2026-10-06 :
+- **V2-A2** : ordre RÉEL de confirmation (dernier rang + 1) ; « Finalement reçu » = nouvelle prise en compte à sa date.
+- **V2-A6** : règle provisoire du moteur maintenue (excédent non ventilé).
+- **V2-A11** : « Ajouter quand même » reste « à confirmer ».
+- **Trop-perçu** : exclu des lots et de la confirmation automatique, décision ligne par ligne.
+- **V2-A21** : l'écran du relevé suit la branche choisie (F5.1). **V2-A22** : groupe 4 affiché et exporté en 6f,
+  bouton avec F6. **V2-A26** : ligne de relevé d'un « non reçu » montrée à part, avec « Finalement reçu ».
+- **V2-A23, PROVISOIRE** : frais dédoublonnés par identifiant de transaction (le CDC dit « remplacer » ; à confirmer).
+- **V2-A25, PROVISOIRE** : un paiement saisi au NET est confirmé au BRUT du relevé (sinon un reste dû de quelques FCFA
+  resterait pour toujours), avec trace dans `EncAudit` et sur la fiche (montant saisi, montant corrigé, relevé, ligne).
+- **Cas 9.10** : relevé réel `C:\Projets\donnees-sensibles\Releve_Wave_aout_2026_2809.xls`, lecture locale seulement,
+  **jamais copié dans le dépôt**, seuls les totaux sont rapportés (attendu : 110 paiements, brut 397 900, frais 3 977,
+  net 393 923).
+- **F3.5** : une correction = contre-passation + nouvel encaissement, jamais une modification silencieuse.
+
+#### Commit 6-0 — Index de `EncSignalement` (2026-10-08, migration additive)
+
+`@@index([statut, creeAt])` (onglet « À vérifier », plus anciens d'abord) et `@@index([numPolice])` (fiche police,
+signalements d'une ligne rejetée sans contrat) — migration `20261009130000_encaissements_index_signalements`
+(`CREATE INDEX IF NOT EXISTS`, rejouée sans effet). Mesures sur PostgreSQL 16 jetable (150 000 contrats, 300 000
+signalements dont 60 000 à traiter, pire de 3 passages à chaud) :
+
+| Requête | Avant | Après |
+|---|---|---|
+| « À vérifier », page 1 / page 100 | 19 / 17 ms | 5 / 4 ms |
+| « À vérifier » filtré par branche | 19 ms | 0,5 ms |
+| Fiche police (contrat OU n° de police) / son compteur | 17 / 19 ms | 1,3 / 0,3 ms |
+| Compteur de l'accueil (60 000 lignes comptées) | 7 à 12 ms | 10 à 17 ms (inchangé) |
+
+Plans vérifiés : index `(statut, creeAt)` avec tri incrémental sur `id` ; fiche police en deux balayages d'index
+(`contratId`, `numPolice`). Aucun écart schéma/base (`migrate diff` vide).
+
+#### Commit 6a — Moteur de confirmation (2026-10-08, backend seul, aucune migration)
+
+`backend/src/encConfirmation.ts` : **`confirmerEncaissement(db, { encaissementId, userId, maintenant, reprise?,
+accepterTropPercu?, datePriseEnCompte? })`**, SEULE fonction qui confirme un encaissement, pour toutes les voies (F5 « Reçu » et « Finalement
+reçu », F3, F4, relevé) — aucun autre code n'écrit les montants figés. Toujours dans la transaction de l'appelant :
+- verrou par police de l'import (`police:<numPolice>`), puis relecture du statut (`A_CONFIRMER` ou `NON_RECU`) ;
+- **garde-fou** : date de prise en compte TOUJOURS le jour de l'action (`maintenant`) ; une date fournie par l'appelant
+  n'est qu'un contrôle et est refusée si elle diffère (ni passée ni future). Seule exception, le mode **`reprise`**
+  explicite (F1.5) : prise en compte = date de paiement réelle, jamais de « Régularisation », audit
+  `confirmation_reprise` ; rang = dernier rang confirmé du contrat + 1 (D27) ;
+- montants figés par `figerEncaissement` sur le cumul des confirmés (contre-passations comprises) : AA, AB, AC, AD,
+  commission, honoraires, reliquat exact au soldant ; exigibilité §5.3 (mois, date limite au jour paramétré,
+  « Régularisation ») ; part d'accessoires police > partenaire > défaut ; bénéficiaire des honoraires en vigueur à la
+  date de prise en compte (`beneficiaireHonorairesId`) ;
+- **trop-perçu** : renvoie `TROP_PERCU_A_CONFIRMER` (excédent, restant dû) SANS RIEN ÉCRIRE ; confirmé seulement avec
+  `accepterTropPercu`, motif tracé dans l'audit (D30 : jamais en lot ni en confirmation automatique ; excédent non
+  ventilé, D28) ;
+- écriture conditionnée au statut lu (`updateMany`), audit `confirmation` ou `finalement_recu` (rang, montants figés,
+  part d'accessoires et sa source, exigibilité, bénéficiaire, trop-perçu), mois de rattachement = prise en compte.
+Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner des versements) : testé sans base.
+- **Vérifié** : vitest — 9.1 au centime (AA, AB, AD, commission, honoraires, mois), 9.4 (AB et AD des 3
+  polices, octobre), 9.8 (67,60 × 3 puis reliquat 608,39 en octobre, total 811,19), les 5 lignes du tableau §5.3 et un
+  jour limite paramétré, 9.5 partie calcul (AD 13 519,81, novembre, avant le 20/11, « Régularisation »), 9.6 (parts
+  d'accessoires), bénéficiaire selon la prise en compte, rang, trop-perçu, « Finalement reçu », refus, garde-fou de la date (passée,
+  future refusées ; reprise à la date de paiement sans « Régularisation », autre date refusée en reprise) — 19 tests. PostgreSQL 16
+  jetable : deux confirmations simultanées de la même police → rangs 1 et 2 dans l'ordre réel, montants cohérents
+  avec cet ordre (total des taxes 101,40) ; le même encaissement confirmé deux fois en même temps → un seul passe.
+- **Pas encore branché** : aucun écran ni action ne l'appelle avant 6b (F5) et 6c (F3).
+
+#### Commit 6b — Confirmation F5 ligne par ligne et par lot (2026-10-08, aucune migration)
+
+- **`/encaissements/a-confirmer`** (« Confirmation des paiements »), **réservé à `enc.confirmer_paiement`** (page,
+  actions et export ; Équipe technique et Consultation redirigées, actions refusées même rejouées directement, export
+  403). Carte avec compteur sur l'accueil du module (Finance seulement). Paiements « à confirmer » ou « non reçus »,
+  plus anciens d'abord, 50 par page ; filtres GET période de paiement, mode, partenaire, branche, recherche (même
+  recherche que la barre du module) — `lib/encaissements/filtresAConfirmer.ts`, partagé avec l'export ; nombre et total
+  affichés. Reste dû actuel de la police affiché, badge « Trop-perçu possible » quand le montant le dépasse.
+- **Ligne** : « Reçu » (ou « Finalement reçu » sur un non reçu) → `confirmerEncaissement` (6a) ; un trop-perçu ouvre
+  une demande d'accord explicite sous la ligne, rien n'est écrit avant. « Non reçu » : motif obligatoire (3 caractères),
+  `marquerNonRecu` (`backend/src/encConfirmationLot.ts` : sous le verrou de police, seulement depuis « à confirmer »,
+  statut NON_RECU + motif + auteur + date, audit `non_recu`, rien ne compte).
+- **Lot** : cases, case d'en-tête, barre de sélection (nombre, total), confirmation avant d'appliquer ; « Reçu » ou
+  « Non reçu » (même motif pour tous). `confirmerEnLot` / `marquerNonRecuEnLot` : une transaction PAR paiement (un
+  paiement déjà traité par un lot simultané est compté « déjà traité », les autres continuent), 200 paiements au plus ;
+  **trop-perçu écarté du lot** (D30), signalé pour une confirmation ligne par ligne.
+- **Export Excel des « non reçus »** (`GET /api/encaissements/non-recus/export`, filtres de l'écran) : paiement, police,
+  client, partenaire, branche, date, mode, référence, montant, source, motif, auteur et date du marquage.
+- **Fiche police** : colonnes figées des paiements confirmés (rang, reste après, prime nette, accessoires, taxe,
+  commission, honoraires), mois d'exigibilité et date limite, badge « Régularisation » avec dates de paiement et de
+  prise en compte ; motif d'un non reçu.
+- **Vérifié** : vitest (6 tests : cas 9.2 côté serveur, non reçu, lots avec trop-perçu écarté et déjà-traité refusé,
+  limites) ; Playwright 28/28 sur PostgreSQL 16 jetable, fichier synthétique importé par l'écran réel (enc-finance@,
+  enc-technique@, enc-consultation@) : 9.2 de bout en bout (à confirmer sans taxe → « Reçu » : AA 1 000, AB 466,20,
+  AD 33,80, fiche à jour), non reçu + export + « Finalement reçu », lot de 4 dont un trop-perçu écarté puis confirmé
+  explicitement (AA −500), deux lots simultanés (chaque paiement confirmé une seule fois), accès refusés. Mobile non
+  vérifié (tableau en défilement horizontal sous la largeur du contenu).
+
+#### Commit 6c — Saisie d'un versement depuis la fiche police (F3, 2026-10-08, aucune migration)
+
+- **« Ajouter un versement »** sur la fiche police (`AjouterVersement.tsx`), réservé à `enc.saisir_encaissement`
+  (bouton absent sinon, action `saisirVersementAction` revérifiée côté serveur) : date (aujourd'hui par défaut),
+  mode, référence, montant (le reste dû est proposé). Enregistré ET confirmé dans la même transaction.
+- **`saisirEncaissement`** (`backend/src/encSaisie.ts`) : sous le verrou de police, crée l'encaissement (`source
+  SAISIE`, notre numéro PAI, audit `saisie`) puis le confirme par `confirmerEncaissement` (6a, D26) ; référence ajoutée
+  à l'index des mots (D22).
+- **Contrôles §8.1** (`controlerSaisie`, purs, erreurs par champ) : date, mode, référence et montant obligatoires ;
+  date de paiement jamais dans le futur (le jour même accepté) ; montant > 0, deux décimales au plus ; Wave : `T_`
+  suivi d'au moins 10 lettres ou chiffres (`estIdentifiantWave`, la même règle que l'import).
+- **Alertes à confirmer explicitement, rien n'est écrit avant** (ni numéro consommé) : référence déjà utilisée dans un
+  autre paiement (« Enregistrer quand même », motif tracé dans l'audit) ; trop-perçu (« Confirmer le trop-perçu »,
+  D30). Un champ modifié après une alerte annule l'accord donné.
+- **Vérifié** : vitest (9 tests : contrôles, 9.8 saisi à l'écran avec rangs et taxes, alertes sans écriture puis
+  acceptées) ; Playwright 19/19 sur PostgreSQL 16 jetable (reste dû proposé ; 9.8 à l'écran : 67,60 ×3 puis 608,39,
+  reste dû 0, « Régularisation » pour une saisie tardive ; Wave refusé puis accepté ; date future refusée ; référence
+  déjà utilisée ; trop-perçu ; référence cherchable ; Technique et Consultation sans bouton et refusées même en appel
+  direct ; formulaire sans défilement horizontal à 768 px).
+- **À faire avant la mise en service — tablette** (CDC §8.2 : « utilisable sur tablette ») : les tableaux larges du
+  module défilent encore horizontalement en largeur étroite — liste « Confirmation des paiements » (6b) et tableau des
+  paiements de la fiche police (colonnes figées ajoutées en 6b), visible à 768 px. Le formulaire de saisie (6c), lui,
+  tient à 768 px. À traiter dans un commit dédié (cartes empilées ou colonnes réduites sous la largeur d'une tablette).
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif
@@ -6178,6 +6394,10 @@ pas de build côté Dokploy).
   passées en `--build-arg` (Dockerfile, vides par défaut = push inactif) ;
   les mettre dans le compose n'a aucun effet. `FIREBASE_SERVICE_ACCOUNT_JSON`
   (secret serveur) reste une variable du compose.
+- **Horodatage des migrations** : toute nouvelle migration doit avoir un horodatage **strictement supérieur à la
+  dernière migration existante** (`ls backend/prisma/migrations | tail -3`) — certaines migrations Trésorerie sont
+  datées en avance (2026-10-09). Vérifier avant chaque création : au commit 6-0, un nom au 2026-10-08 collait avec une
+  migration existante et se serait placé avant des migrations déjà appliquées.
 - Service de base de données nommé **`portailrh-db`** — jamais `db`
   (réseau `dokploy-network` partagé entre tous les projets du serveur,
   ambiguïté DNS sinon).

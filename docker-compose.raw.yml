@@ -1,6 +1,6 @@
 # ============================================================
 # sim-portail — Dokploy mode "Raw" (compose collé, sans dépôt Git)
-# Image pré-construite : ghcr.io/sim-assurances/portailrh:v7
+# Image pré-construite : ghcr.io/sim-assurances/portailrh:v11
 # (mettre à jour le tag vN des services "init" ET "app" à chaque version)
 # ------------------------------------------------------------
 # MODÈLE : aucune valeur secrète dans ce fichier. Toutes les valeurs
@@ -86,7 +86,7 @@ services:
   # conteneur "app" (cd backend && ADMIN_EMAIL=... ADMIN_PASSWORD=... npx tsx
   # prisma/set-admin.ts), puis changer le mot de passe depuis /profil.
   init:
-    image: ghcr.io/sim-assurances/portailrh:v7
+    image: ghcr.io/sim-assurances/portailrh:v11
     pull_policy: always
     restart: "no"
     depends_on:
@@ -118,7 +118,7 @@ services:
 
   # ---------- Application ----------
   app:
-    image: ghcr.io/sim-assurances/portailrh:v7
+    image: ghcr.io/sim-assurances/portailrh:v11
     pull_policy: always
     restart: unless-stopped
     depends_on:

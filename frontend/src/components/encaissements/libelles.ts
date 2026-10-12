@@ -108,3 +108,12 @@ export function etatSignalement(s: {
   const quand = s.traiteAt ? ` le ${formatDateHeure(s.traiteAt)}` : "";
   return `Traité${qui}${quand}${s.resolution ? ` (${s.resolution})` : ""}`;
 }
+
+/** Options du filtre « Mode » (codes produits par `normaliserMode`). */
+export const OPTIONS_MODE: { value: string; label: string }[] = Object.entries(MODE_LIBELLE).map(([value, label]) => ({ value, label }));
+
+/** Mois d'exigibilité en clair : « octobre 2026 ». */
+export function formatMoisAnnee(date: Date | string | null | undefined): string {
+  if (!date) return "—";
+  return new Date(date).toLocaleDateString("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" });
+}

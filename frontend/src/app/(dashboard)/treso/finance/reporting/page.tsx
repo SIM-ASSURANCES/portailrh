@@ -6,12 +6,16 @@ import { prisma } from "backend";
 import {
   getBeneficiairesConnus,
   getReportingFondsRemis,
+  getReportingParDemande,
   getReportingRows,
   getReportingSuiviBudgetaire,
   parseReportingFilters,
   reportingFiltersToQueryString,
 } from "backend";
 
+import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+
+import { ReportingDemandesTable } from "./ReportingDemandesTable";
 import { ReportingFiltersForm } from "./ReportingFiltersForm";
 
 function rawString(value: string | string[] | undefined): string | undefined {
@@ -47,8 +51,9 @@ export default async function ReportingPage({
   // (soft-delete) — les demandes historiques liées à une catégorie
   // désactivée depuis continuent d'apparaître normalement dans les
   // résultats, ce filtre ne porte que sur les OPTIONS du formulaire.
-  const [rows, fondsRemisRows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
+  const [lignesDemandes, rows, fondsRemisRows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
     await Promise.all([
+      getReportingParDemande(filters, (statut) => STATUT_DEMANDE_LABEL[statut]),
       getReportingRows(filters),
       getReportingFondsRemis(filters),
       getReportingSuiviBudgetaire(),
@@ -91,10 +96,10 @@ export default async function ReportingPage({
       : undefined;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
+    <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title="Reporting"
-        description="Analyse des demandes de trésorerie par catégorie et objet."
+        description="Une ligne par demande (articles, validations, règlements, dépenses, retours), puis la synthèse par catégorie et objet."
         actions={
           <a href={exportHref}>
             <Button type="button">Exporter en Excel</Button>
@@ -122,8 +127,10 @@ export default async function ReportingPage({
         }}
       />
 
+      <ReportingDemandesTable lignes={lignesDemandes} />
+
       <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
-        <h2 className="text-sm font-semibold text-foreground">Demandes par catégorie / objet</h2>
+        <h2 className="text-sm font-semibold text-foreground">Synthèse par catégorie / objet</h2>
         {/* Tableau analytique (colonnes numériques + ligne de total) : reste un
             tableau classique même sur mobile plutôt qu'un mode carte (peu
             adapté à une lecture en grille avec total) — défilement horizontal

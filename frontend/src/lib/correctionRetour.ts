@@ -22,6 +22,8 @@ export interface CorrectionDetail {
   signalement: string | null;
   avant: LigneSnapshot[];
   apres: LigneSnapshot[];
+  /** Motif d'une modification ou d'une suppression d'une dépense détaillée (2026-10-10). */
+  motif?: string;
 }
 
 export function parseCorrectionDetail(detail: string | null): CorrectionDetail | null {
