@@ -5,6 +5,7 @@ import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
 import { getSession } from "@/lib/auth";
 import { LIBELLE_STATUT_JUSTIFICATION, dateCourte, descriptionAnomalie, presentationCollaborateur } from "backend";
 import {
+  chargerComptesRH,
   chargerJustificationsDecideur,
   decideurDuCollaborateur,
   estDecideurJustifications,
@@ -27,11 +28,12 @@ export default async function JustificationsPage({ searchParams }: { searchParam
   const { onglet } = await searchParams;
   const traitees = onglet === "traitees";
 
-  const [aTraiter, dejaTraitees] = await Promise.all([
+  const [aTraiter, dejaTraitees, comptesRH] = await Promise.all([
     chargerJustificationsDecideur(session, ["SOUMISE"]),
     traitees
       ? chargerJustificationsDecideur(session, ["ACCEPTEE", "REFUSEE"], { inclureDecideesPar: true, ordre: "desc", limite: 300 })
       : Promise.resolve([]),
+    chargerComptesRH(),
   ]);
 
   const lignes = traitees ? dejaTraitees.slice(0, 100) : aTraiter;
@@ -61,7 +63,7 @@ export default async function JustificationsPage({ searchParams }: { searchParam
         <ul className="space-y-4">
           {lignes.map((j) => (
             <li key={j.id}>
-              <CarteJustification justification={j} lectureSeule={traitees} />
+              <CarteJustification justification={j} lectureSeule={traitees} comptesRH={comptesRH} />
             </li>
           ))}
         </ul>
@@ -84,9 +86,17 @@ function Onglet({ href, actif, children }: { href: string; actif: boolean; child
   );
 }
 
-function CarteJustification({ justification: j, lectureSeule }: { justification: JustificationAvecContexte; lectureSeule: boolean }) {
+function CarteJustification({
+  justification: j,
+  lectureSeule,
+  comptesRH,
+}: {
+  justification: JustificationAvecContexte;
+  lectureSeule: boolean;
+  comptesRH: readonly string[];
+}) {
   const collaborateur = j.pointage.user;
-  const decideur = decideurDuCollaborateur(collaborateur);
+  const decideur = decideurDuCollaborateur(collaborateur, comptesRH);
   const serviceNom = collaborateur.service?.name ?? null;
   return (
     <Card className="space-y-3 p-5">
@@ -97,7 +107,11 @@ function CarteJustification({ justification: j, lectureSeule }: { justification:
           </p>
           <p className="text-xs text-muted-foreground">
             {serviceNom ? `Service ${serviceNom}` : "Aucun service"}
-            {decideur.type === "RH" ? " · décision RH" : ""}
+            {decideur.type === "RH"
+              ? " · décision RH"
+              : decideur.type === "DG"
+                ? " · décision DG (aucun autre compte RH)"
+                : ""}
           </p>
         </div>
         <Badge variant={VARIANTE_STATUT_JUSTIFICATION[j.statut]}>{LIBELLE_STATUT_JUSTIFICATION[j.statut]}</Badge>

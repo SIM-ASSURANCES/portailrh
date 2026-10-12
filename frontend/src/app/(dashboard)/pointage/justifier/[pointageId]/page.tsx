@@ -11,7 +11,7 @@ import {
   peutSoumettreJustification,
   prisma,
 } from "backend";
-import { SELECT_COLLABORATEUR_JUSTIFICATION, decideurDuCollaborateur } from "@/lib/justificationsPointage";
+import { SELECT_COLLABORATEUR_JUSTIFICATION, chargerComptesRH, decideurDuCollaborateur } from "@/lib/justificationsPointage";
 import { VARIANTE_STATUT_JUSTIFICATION } from "@/components/pointage/justificationStatut";
 
 import { JustificationForm } from "./JustificationForm";
@@ -44,7 +44,7 @@ export default async function JustifierPointagePage({ params }: { params: Promis
   if (!pointage || pointage.userId !== session.user.id) notFound();
 
   const j = pointage.justification;
-  const decideur = decideurDuCollaborateur(pointage.user);
+  const decideur = decideurDuCollaborateur(pointage.user, await chargerComptesRH());
   const responsableNom = pointage.user.service?.responsable?.fullName ?? null;
   const estArrivee = pointage.type === "ARRIVEE";
 

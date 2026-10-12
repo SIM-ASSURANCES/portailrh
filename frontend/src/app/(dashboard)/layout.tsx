@@ -8,12 +8,11 @@ import {
   demandesServiceAValiderWhere,
   prisma,
   reinitialisationEffectuee,
-  PERMISSION_RH_POINTAGE,
 } from "backend";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 import { envoyerRappelsCircuit } from "@/lib/notificationsCircuit";
-import { chargerJustificationsDecideur } from "@/lib/justificationsPointage";
+import { chargerJustificationsDecideur, estDecideurJustifications } from "@/lib/justificationsPointage";
 
 import { PushPermissionPrompt } from "@/components/notifications/PushPermissionPrompt";
 
@@ -46,11 +45,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const demandesDGADecider = hasPermission(session, "treso.decider_dg")
     ? await prisma.demande.count({ where: demandesEtapeDGWhere(session.user.id) })
     : null;
-  // « Justifications à traiter » (Pointage V2, lot 4) : responsable d'au moins un service, ou RH du pointage.
-  const justificationsADecider =
-    servicesResponsable > 0 || hasPermission(session, PERMISSION_RH_POINTAGE)
-      ? (await chargerJustificationsDecideur(session, ["SOUMISE"])).length
-      : null;
+  // « Justifications à traiter » (Pointage V2) : responsable d'au moins un service, RH du pointage, ou DG en repli
+  // (`estDecideurJustifications`, la même garde que l'écran).
+  const justificationsADecider = (await estDecideurJustifications(session))
+    ? (await chargerJustificationsDecideur(session, ["SOUMISE"])).length
+    : null;
 
   return (
     <AppShell

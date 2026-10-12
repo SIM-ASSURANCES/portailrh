@@ -19,17 +19,19 @@ import {
 import { PERMISSION_RH_POINTAGE } from "./pointage-utils";
 
 const COMMERCIAL = { name: "Commercial", responsableId: "resp", responsableActif: true };
+/** Un compte RH actif distinct du collaborateur (cas courant). */
+const AUTRE_RH = ["rh"];
 
 describe("resoudreDecideurJustification", () => {
   it("collaborateur d'un service avec responsable actif : le responsable", () => {
-    expect(resoudreDecideurJustification({ collaborateurId: "collab", service: COMMERCIAL })).toEqual({
+    expect(resoudreDecideurJustification({ comptesRH: AUTRE_RH, collaborateurId: "collab", service: COMMERCIAL })).toEqual({
       type: "RESPONSABLE",
       responsableId: "resp",
     });
   });
 
   it("aucun service : la RH", () => {
-    expect(resoudreDecideurJustification({ collaborateurId: "collab", service: null })).toEqual({
+    expect(resoudreDecideurJustification({ comptesRH: AUTRE_RH, collaborateurId: "collab", service: null })).toEqual({
       type: "RH",
       raison: "SANS_SERVICE",
     });
@@ -37,24 +39,24 @@ describe("resoudreDecideurJustification", () => {
 
   it("service sans responsable : la RH", () => {
     expect(
-      resoudreDecideurJustification({ collaborateurId: "collab", service: { ...COMMERCIAL, responsableId: null } })
+      resoudreDecideurJustification({ comptesRH: AUTRE_RH, collaborateurId: "collab", service: { ...COMMERCIAL, responsableId: null } })
     ).toEqual({ type: "RH", raison: "SANS_RESPONSABLE" });
   });
 
   it("responsable désactivé : la RH", () => {
     expect(
-      resoudreDecideurJustification({ collaborateurId: "collab", service: { ...COMMERCIAL, responsableActif: false } })
+      resoudreDecideurJustification({ comptesRH: AUTRE_RH, collaborateurId: "collab", service: { ...COMMERCIAL, responsableActif: false } })
     ).toEqual({ type: "RH", raison: "RESPONSABLE_INACTIF" });
   });
 
   it("le collaborateur est le responsable de son service (DG compris) : la RH", () => {
-    expect(resoudreDecideurJustification({ collaborateurId: "resp", service: COMMERCIAL })).toEqual({
+    expect(resoudreDecideurJustification({ comptesRH: AUTRE_RH, collaborateurId: "resp", service: COMMERCIAL })).toEqual({
       type: "RH",
       raison: "EST_RESPONSABLE",
     });
     // Responsable désactivé ET lui-même : on dit d'abord qu'il est le responsable.
     expect(
-      resoudreDecideurJustification({ collaborateurId: "resp", service: { ...COMMERCIAL, responsableActif: false } })
+      resoudreDecideurJustification({ comptesRH: AUTRE_RH, collaborateurId: "resp", service: { ...COMMERCIAL, responsableActif: false } })
     ).toEqual({ type: "RH", raison: "EST_RESPONSABLE" });
   });
 

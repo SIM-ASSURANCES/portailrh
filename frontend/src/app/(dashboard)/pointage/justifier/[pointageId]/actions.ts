@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import {
   ACTION_HISTORIQUE_JUSTIFICATION,
-  PERMISSION_RH_POINTAGE,
+  destinatairesDecideur,
   messageSoumissionJustification,
   prisma,
   transitionJustification,
@@ -12,7 +12,7 @@ import {
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify, notifyByPermission } from "@/lib/notifications";
-import { SELECT_COLLABORATEUR_JUSTIFICATION, decideurDuCollaborateur } from "@/lib/justificationsPointage";
+import { SELECT_COLLABORATEUR_JUSTIFICATION, chargerComptesRH, decideurDuCollaborateur } from "@/lib/justificationsPointage";
 
 /**
  * Le collaborateur envoie le motif de son retard ou de son départ anticipé (Pointage V2, lot 4). Réservé au
@@ -64,7 +64,7 @@ export async function soumettreJustificationAction(pointageId: string, motif: st
 
   // Décideur recalculé maintenant, à partir du responsable actuel du service.
   const collaborateur = justification.pointage.user;
-  const decideur = decideurDuCollaborateur(collaborateur);
+  const decideur = decideurDuCollaborateur(collaborateur, await chargerComptesRH());
   const { titre, message } = messageSoumissionJustification({
     collaborateurNom: collaborateur.fullName,
     serviceNom: collaborateur.service?.name ?? null,
@@ -73,17 +73,18 @@ export async function soumettreJustificationAction(pointageId: string, motif: st
     motif: resultat.motif ?? "",
   });
   const lien = "/pointage/justifications";
-  if (decideur.type === "RESPONSABLE") {
-    await notify({ userId: decideur.responsableId, titre, message, lien, priority: "IMPORTANT", category: "POINTAGE" });
+  // Responsable, sinon RH, sinon DG (repli) ; jamais le collaborateur lui-même (`destinatairesDecideur`).
+  const dest = destinatairesDecideur(decideur, collaborateur.id);
+  if (dest.type === "COMPTE") {
+    await notify({ userId: dest.userId, titre, message, lien, priority: "IMPORTANT", category: "POINTAGE" });
   } else {
-    // Jamais le collaborateur lui-même, même s'il détient la permission RH.
-    await notifyByPermission(PERMISSION_RH_POINTAGE, {
+    await notifyByPermission(dest.permission, {
       titre,
       message,
       lien,
       priority: "IMPORTANT",
       category: "POINTAGE",
-      excludeUserId: session.user.id,
+      excludeUserId: dest.exclureUserId,
     });
   }
 

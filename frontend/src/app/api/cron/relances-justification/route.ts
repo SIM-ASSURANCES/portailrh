@@ -4,7 +4,7 @@ import {
   messageAlerteDecideurJustification,
   messageClotureJustification,
   messageDemandeJustification,
-  PERMISSION_RH_POINTAGE,
+  destinatairesDecideur,
   prisma,
   prochaineActionJustification,
   type DecideurJustification,
@@ -12,7 +12,7 @@ import {
   type ParametresRelanceJustification,
 } from "backend";
 import { refusCron } from "@/lib/cronAuth";
-import { decideurDuCollaborateur, SELECT_COLLABORATEUR_JUSTIFICATION } from "@/lib/justificationsPointage";
+import { chargerComptesRH, decideurDuCollaborateur, SELECT_COLLABORATEUR_JUSTIFICATION } from "@/lib/justificationsPointage";
 import { notify, notifyByPermission } from "@/lib/notifications";
 
 /**
@@ -56,6 +56,8 @@ export async function GET(request: Request) {
       },
     });
     bilan.examinees = justifications.length;
+    // Comptes RH lus une fois par exécution : décideur RH, sinon DG (2026-10-12).
+    const comptesRH = justifications.length > 0 ? await chargerComptesRH() : [];
 
     for (const j of justifications) {
       const action = prochaineActionJustification(
@@ -66,7 +68,7 @@ export async function GET(request: Request) {
       if (action.type === "AUCUNE") continue;
       try {
         const collaborateur = j.pointage.user;
-        const decideur = decideurDuCollaborateur(collaborateur);
+        const decideur = decideurDuCollaborateur(collaborateur, comptesRH);
         const contexte = {
           collaborateurNom: collaborateur.fullName,
           serviceNom: collaborateur.service?.name ?? null,
@@ -121,12 +123,13 @@ export async function GET(request: Request) {
   }
 }
 
-/** Décideur : le responsable actuel du service, sinon la RH du pointage (jamais le collaborateur lui-même). */
+/** Décideur : le responsable actuel du service, sinon la RH, sinon le DG ; jamais le collaborateur (`destinatairesDecideur`). */
 async function notifierDecideur(decideur: DecideurJustification, collaborateurId: string, m: MessageJustification) {
   const commun = { titre: m.titre, message: m.message, lien: "/pointage/justifications", priority: "IMPORTANT" as const, category: "POINTAGE" as const };
-  if (decideur.type === "RESPONSABLE") {
-    await notify({ userId: decideur.responsableId, ...commun });
+  const dest = destinatairesDecideur(decideur, collaborateurId);
+  if (dest.type === "COMPTE") {
+    await notify({ userId: dest.userId, ...commun });
   } else {
-    await notifyByPermission(PERMISSION_RH_POINTAGE, { ...commun, excludeUserId: collaborateurId });
+    await notifyByPermission(dest.permission, { ...commun, excludeUserId: dest.exclureUserId });
   }
 }

@@ -4280,7 +4280,7 @@ la latence réelle hors de cet artefact.
 Module complet de gestion des temps de présence, retards, départs anticipés et absences du personnel, développé et durci par Thierry Kouame.
 
 ### 1. Modèle de données & Rôles
-- **Modèles Prisma** ([backend/prisma/schema.prisma](backend/prisma/schema.prisma)) : `Pointage` (sources `QR_CODE`, `ORDINATEUR`, `RH_EXCEPTIONNEL`, `GEOLOCALISATION`), `ParametrageHoraire` (horaires et coordonnées GPS bureau), `CorrectionPointage` (registre d'audit transparent, zéro édition silencieuse), `Absence` (`A_CONTROLER`, `CONFIRMEE`, `JUSTIFIEE`), `JourFerie` (jours chômés), **`JustificationPointage`** (Pointage V2 : une par retard ou départ anticipé, statuts `EN_ATTENTE`/`SOUMISE`/`ACCEPTEE`/`REFUSEE`/`NON_JUSTIFIEE`, décideur = responsable du service, **repli RH = détenteurs de `pointage.corriger_pointage`** ; `Pointage.motif` n'est plus écrit, gardé pour l'historique).
+- **Modèles Prisma** ([backend/prisma/schema.prisma](backend/prisma/schema.prisma)) : `Pointage` (sources `QR_CODE`, `ORDINATEUR`, `RH_EXCEPTIONNEL`, `GEOLOCALISATION`), `ParametrageHoraire` (horaires et coordonnées GPS bureau), `CorrectionPointage` (registre d'audit transparent, zéro édition silencieuse), `Absence` (`A_CONTROLER`, `CONFIRMEE`, `JUSTIFIEE`), `JourFerie` (jours chômés), **`JustificationPointage`** (Pointage V2 : une par retard ou départ anticipé, statuts `EN_ATTENTE`/`SOUMISE`/`ACCEPTEE`/`REFUSEE`/`NON_JUSTIFIEE`, décideur = responsable du service, **repli RH = un autre compte dont le rôle porte `pointage.corriger_pointage`, dernier recours le DG (`treso.decider_dg`)**, voir section 14 ; `Pointage.motif` n'est plus écrit, gardé pour l'historique).
 - **Permissions `pointage.*`** : 8 permissions fines réparties entre Collaborateur (`pointer`, `consulter_historique`), RH (les 8 droits complets), DG (lecture seule `/rh/presence` et reporting), et Admin (supervision).
 
 ### 2. Double barrière de sécurité & Géolocalisation
@@ -4504,6 +4504,34 @@ Corrige les 4 écarts relevés par la vérification du lot 3. Aucune migration, 
   de relances sans justification, reporting (1 présence, 0 retard, 0 départ anticipé) ; message d'information, bouton
   désactivé puis réactivé sans rechargement, aucun toast rouge ; deux confirmations simultanées → un seul départ, l'autre
   « déjà pointé ». Le jour férié est testé par vitest, et par le script s'il est lancé en semaine (férié inséré).
+
+### 14. Pointage V2 — décision des justifications en trois niveaux (2026-10-12)
+
+Aucune migration, aucune permission nouvelle.
+- **Qui décide, par priorité** (`resoudreDecideurJustification`, `backend/src/justificationPointage.ts`) : (1) le
+  responsable actif du service, s'il n'est pas le collaborateur ; (2) sinon la RH, s'il existe un compte actif AUTRE que
+  le collaborateur dont le RÔLE porte `pointage.corriger_pointage` (`chargerComptesRH`, `frontend/src/lib/justificationsPointage.ts`,
+  même lecture que `notifyByPermission`) ; (3) sinon le DG, repéré par `PERMISSION_DG_JUSTIFICATION` = `treso.decider_dg`
+  (la permission de l'étape DG du circuit : seed et migration `20261006120000` la donnent au seul rôle DG, et elle n'est
+  pas délégable). Personne ne décide sa propre justification (`refusDecideur`), à aucun niveau ; ni la RH ni le DG ne
+  décident à la place d'un responsable présent ; le DG ne décide pas au niveau RH.
+- **Notifications** : `destinatairesDecideur` (pur) → responsable, sinon comptes RH, sinon DG, toujours sans le
+  collaborateur ; utilisé par la soumission et par la tâche de relances. Le DG n'est notifié que dans le repli.
+- **Écran** `/pointage/justifications` et menu « Justifications » : `estDecideurJustifications` admet aussi le DG quand
+  le repli est possible (au plus un compte RH actif) ou s'il a déjà décidé ; carte « décision DG (aucun autre compte
+  RH) ». Page du collaborateur : « examinée par le DG ».
+- **Délégation de `pointage.corriger_pointage` : NON modifiée** (décision en attente). `/delegations` permet déjà de la
+  déléguer (module `pointage` délégable) à un donneur dont le rôle porte `treso.deleguer_acces` ET cette permission (rôle
+  combiné Finance/RH ; aucun rôle du seed ne cumule les deux), et les actions RH de correction, de pointage
+  exceptionnel et d'absences lisent `hasPermission` (délégations comprises). L'ajouter à
+  `PERMISSIONS_DECISION_NON_DELEGABLES` couperait aussi ces corrections déléguées (`getSession` ignore alors les
+  délégations existantes). Conséquence actuelle : un délégué peut décider au niveau RH (`refusDecideur` lit les
+  permissions effectives) ; au niveau DG, impossible (`treso.decider_dg` non délégable). Option proposée : lire
+  `rolePermissions` dans `refusDecideur` seulement, sans toucher à la liste.
+- Vérifié : vitest (`decideurJustificationNiveaux.test.ts`, 15 tests ; 540 au total, seul échec connu `feedback.test.ts`),
+  tsc, eslint, `next build` ; Playwright `e2e/pointage-decision-dg.mjs` 15/15 sur base jetable (rh@ seul RH en retard :
+  DG notifié, rh@ non notifié et sans sa justification dans sa file, assistant-finance@ refusé, DG accède à l'écran et
+  au menu, accepte ; collaborateur ordinaire : responsable notifié, ni DG ni RH) ; `e2e/pointage-lot3bis.mjs` 22/22.
 
 ## Module FeedbackApp — anonymat total
 
@@ -6680,7 +6708,8 @@ etc.) ont déjà leur migration. **Toute nouvelle permission ajoutée au seed do
 `consulter_tous`, `pointage_exceptionnel`, `corriger_pointage`,
 `gerer_horaires`, `voir_dashboard_rh`, `voir_reporting`.
 `corriger_pointage` est aussi la **permission de repli RH** du circuit de justification (Pointage V2) : ses détenteurs
-décident quand le collaborateur est responsable de son service, est DG, ou que son service n'a pas de responsable actif.
+(autres que le collaborateur) décident quand le collaborateur est responsable de son service, est DG, ou que son service
+n'a pas de responsable actif ; s'il n'existe aucun autre compte RH actif, le DG (`treso.decider_dg`) décide (section 14).
 Le responsable de service décide sans permission (`Service.responsableId`). Routes : `/pointage/justifier/[pointageId]`,
 `/pointage/justifications`, `/api/cron/relances-justification` ; modèle `JustificationPointage`.
 

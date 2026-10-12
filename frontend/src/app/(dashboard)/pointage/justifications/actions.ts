@@ -12,7 +12,7 @@ import {
 import { getSession } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { SELECT_COLLABORATEUR_JUSTIFICATION, decideurDuCollaborateur } from "@/lib/justificationsPointage";
+import { SELECT_COLLABORATEUR_JUSTIFICATION, chargerComptesRH, decideurDuCollaborateur } from "@/lib/justificationsPointage";
 
 /**
  * Accepte ou refuse une justification envoyée (Pointage V2, lot 4). Le droit de décider est recalculé ici à partir du
@@ -38,7 +38,7 @@ async function deciderJustification(
 
   const collaborateur = justification.pointage.user;
   const refus = refusDecideur(
-    decideurDuCollaborateur(collaborateur),
+    decideurDuCollaborateur(collaborateur, await chargerComptesRH()),
     { id: session.user.id, permissions: session.permissions },
     collaborateur.id
   );

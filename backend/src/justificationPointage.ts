@@ -21,12 +21,21 @@ export interface ServiceCollaborateur {
   responsableActif: boolean;
 }
 
-/** Pourquoi la RH décide à la place d'un responsable de service. */
+/** Pourquoi la RH (ou, à défaut, le DG) décide à la place d'un responsable de service. */
 export type RaisonDecideurRH = "SANS_SERVICE" | "SANS_RESPONSABLE" | "RESPONSABLE_INACTIF" | "EST_RESPONSABLE";
+
+/**
+ * Permission qui désigne le DG, dernier recours de la décision (2026-10-12) : la même que l'étape DG du circuit des
+ * demandes (`treso.decider_dg`), donnée au seul rôle DG (seed, migration `20261006120000` : rôles portant
+ * `systeme.reinitialiser`) et jamais délégable (`PERMISSIONS_DECISION_NON_DELEGABLES`). Jamais un nom de rôle.
+ */
+export const PERMISSION_DG_JUSTIFICATION = "treso.decider_dg";
 
 export type DecideurJustification =
   | { type: "RESPONSABLE"; responsableId: string }
-  | { type: "RH"; raison: RaisonDecideurRH };
+  | { type: "RH"; raison: RaisonDecideurRH }
+  /** Dernier recours : aucun compte RH actif autre que le collaborateur. */
+  | { type: "DG"; raison: RaisonDecideurRH };
 
 /** Adapte le résultat de `chargerServiceDuDemandeur` (services.ts) au format attendu ici. */
 export function serviceCollaborateurDepuis(s: ServiceDuDemandeur): ServiceCollaborateur | null {
@@ -35,19 +44,24 @@ export function serviceCollaborateurDepuis(s: ServiceDuDemandeur): ServiceCollab
 }
 
 /**
- * Décideur d'une justification : le responsable du service du collaborateur ; à défaut la RH (détenteurs de
- * `PERMISSION_RH_POINTAGE`). Le DG tombe dans `EST_RESPONSABLE` (responsable de « Direction DG ») ou `SANS_SERVICE`.
+ * Décideur d'une justification, par priorité (2026-10-12) : (1) le responsable actif du service du collaborateur, s'il
+ * n'est pas le collaborateur ; (2) sinon la RH, s'il existe un compte RH actif AUTRE que le collaborateur ; (3) sinon le
+ * DG (`PERMISSION_DG_JUSTIFICATION`). `comptesRH` : comptes actifs dont le RÔLE porte `PERMISSION_RH_POINTAGE` (le
+ * collaborateur peut y figurer, il est écarté ici). Personne ne décide sa propre justification (`refusDecideur`).
  */
 export function resoudreDecideurJustification(params: {
   collaborateurId: string;
   service: ServiceCollaborateur | null;
+  comptesRH: readonly string[];
 }): DecideurJustification {
-  const { collaborateurId, service } = params;
-  if (!service) return { type: "RH", raison: "SANS_SERVICE" };
-  if (!service.responsableId) return { type: "RH", raison: "SANS_RESPONSABLE" };
-  if (service.responsableId === collaborateurId) return { type: "RH", raison: "EST_RESPONSABLE" };
-  if (!service.responsableActif) return { type: "RH", raison: "RESPONSABLE_INACTIF" };
-  return { type: "RESPONSABLE", responsableId: service.responsableId };
+  const { collaborateurId, service, comptesRH } = params;
+  let raison: RaisonDecideurRH;
+  if (!service) raison = "SANS_SERVICE";
+  else if (!service.responsableId) raison = "SANS_RESPONSABLE";
+  else if (service.responsableId === collaborateurId) raison = "EST_RESPONSABLE";
+  else if (!service.responsableActif) raison = "RESPONSABLE_INACTIF";
+  else return { type: "RESPONSABLE", responsableId: service.responsableId };
+  return comptesRH.some((id) => id !== collaborateurId) ? { type: "RH", raison } : { type: "DG", raison };
 }
 
 /** Compte qui tente de décider : son identifiant et ses permissions effectives (session). */
@@ -60,6 +74,7 @@ export const MESSAGE_PROPRE_JUSTIFICATION = "Vous ne pouvez pas décider de votr
 export const MESSAGE_RESERVE_RESPONSABLE =
   "Seul le responsable du service du collaborateur peut décider de cette justification.";
 export const MESSAGE_RESERVE_RH = "Cette justification est décidée par la RH.";
+export const MESSAGE_RESERVE_DG = "Cette justification est décidée par le DG (aucun autre compte RH ne peut le faire).";
 
 /**
  * Raison du refus si `acteur` ne peut pas décider de cette justification, `null` s'il le peut. Recalculée à chaque
@@ -74,6 +89,9 @@ export function refusDecideur(
   if (acteur.id === collaborateurId) return MESSAGE_PROPRE_JUSTIFICATION;
   if (decideur.type === "RESPONSABLE") {
     return acteur.id === decideur.responsableId ? null : MESSAGE_RESERVE_RESPONSABLE;
+  }
+  if (decideur.type === "DG") {
+    return acteur.permissions.includes(PERMISSION_DG_JUSTIFICATION) ? null : MESSAGE_RESERVE_DG;
   }
   return acteur.permissions.includes(PERMISSION_RH_POINTAGE) ? null : MESSAGE_RESERVE_RH;
 }
@@ -230,7 +248,12 @@ export function messageSoumissionJustification(params: {
 }): MessageJustification {
   const { collaborateurNom, serviceNom, decideur, pointage, motif } = params;
   const qui = presentationCollaborateur(collaborateurNom, serviceNom, decideur);
-  const suite = decideur.type === "RH" ? " Décision attendue de la RH." : " Décision attendue de votre part.";
+  const suite =
+    decideur.type === "RH"
+      ? " Décision attendue de la RH."
+      : decideur.type === "DG"
+        ? " Aucun autre compte RH ne peut décider : décision attendue de votre part."
+        : " Décision attendue de votre part.";
   return {
     titre: pointage.type === "ARRIVEE" ? "Justification de retard à examiner" : "Justification de départ à examiner",
     message: `${qui} a justifié son ${descriptionAnomalie(pointage)} : « ${motif} ».${suite}`,
@@ -255,10 +278,28 @@ export function messageDecisionJustification(params: {
   };
 }
 
+/**
+ * Destinataires des notifications adressées au décideur (2026-10-12), mêmes règles que la décision : le responsable du
+ * service ; sinon les comptes dont le rôle porte la permission RH ; sinon (dernier recours) ceux dont le rôle porte la
+ * permission du DG. Jamais le collaborateur ; le DG n'est notifié que dans le cas de repli.
+ */
+export type DestinatairesDecideur =
+  | { type: "COMPTE"; userId: string }
+  | { type: "PERMISSION"; permission: string; exclureUserId: string };
+
+export function destinatairesDecideur(decideur: DecideurJustification, collaborateurId: string): DestinatairesDecideur {
+  if (decideur.type === "RESPONSABLE") return { type: "COMPTE", userId: decideur.responsableId };
+  return {
+    type: "PERMISSION",
+    permission: decideur.type === "DG" ? PERMISSION_DG_JUSTIFICATION : PERMISSION_RH_POINTAGE,
+    exclureUserId: collaborateurId,
+  };
+}
+
 /** Qui examinera la justification, pour l'écran du collaborateur. */
 export function libelleDecideur(decideur: DecideurJustification, responsableNom: string | null): string {
   if (decideur.type === "RESPONSABLE") return `votre responsable de service${responsableNom ? `, ${responsableNom}` : ""}`;
-  return "la RH";
+  return decideur.type === "DG" ? "le DG" : "la RH";
 }
 
 // ───────────────────────── Lot 5 : envois, relances et clôture (tâche planifiée) ─────────────────────────
@@ -351,7 +392,9 @@ export function messageAlerteDecideurJustification(params: {
   const fait = pointage.type === "ARRIVEE" ? `est arrivé en retard de ${pointage.minutesRetard ?? 0} min` : "est parti en avance";
   return {
     titre: pointage.type === "ARRIVEE" ? "Retard à justifier" : "Départ anticipé à justifier",
-    message: `${qui} ${fait} le ${dateCourte(pointage.heure)} (${heureCourte(pointage.heure)}). Il doit justifier ; vous déciderez de son motif.`,
+    message: `${qui} ${fait} le ${dateCourte(pointage.heure)} (${heureCourte(pointage.heure)}). Il doit justifier ; vous déciderez de son motif.${
+      decideur.type === "DG" ? " (Aucun autre compte RH ne peut décider.)" : ""
+    }`,
   };
 }
 

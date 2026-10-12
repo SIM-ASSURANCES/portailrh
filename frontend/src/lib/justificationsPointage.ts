@@ -8,6 +8,7 @@ import {
   prisma,
   refusDecideur,
   resoudreDecideurJustification,
+  PERMISSION_DG_JUSTIFICATION,
   PERMISSION_RH_POINTAGE,
   type DecideurJustification,
   type Prisma,
@@ -30,12 +31,28 @@ export const SELECT_COLLABORATEUR_JUSTIFICATION = {
 
 export type CollaborateurJustification = Prisma.UserGetPayload<{ select: typeof SELECT_COLLABORATEUR_JUSTIFICATION }>;
 
-/** Décideur actuel d'une justification de ce collaborateur. */
-export function decideurDuCollaborateur(collaborateur: CollaborateurJustification): DecideurJustification {
+/**
+ * Comptes RH du pointage : actifs, dont le RÔLE porte `PERMISSION_RH_POINTAGE` (même lecture que `notifyByPermission`).
+ * Sert à savoir si un autre compte RH que le collaborateur peut décider, sinon le DG décide (2026-10-12).
+ */
+export async function chargerComptesRH(): Promise<string[]> {
+  const comptes = await prisma.user.findMany({
+    where: { isActive: true, role: { permissions: { some: { permission: { key: PERMISSION_RH_POINTAGE } } } } },
+    select: { id: true },
+  });
+  return comptes.map((c) => c.id);
+}
+
+/** Décideur actuel d'une justification de ce collaborateur (`comptesRH` : `chargerComptesRH`). */
+export function decideurDuCollaborateur(
+  collaborateur: CollaborateurJustification,
+  comptesRH: readonly string[]
+): DecideurJustification {
   const s = collaborateur.service;
   return resoudreDecideurJustification({
     collaborateurId: collaborateur.id,
     service: s ? { name: s.name, responsableId: s.responsableId, responsableActif: s.responsable?.isActive ?? false } : null,
+    comptesRH,
   });
 }
 
@@ -45,11 +62,18 @@ export interface SessionDecideur {
   permissions: string[];
 }
 
-/** Le compte peut-il avoir des justifications à décider (responsable d'au moins un service, ou RH du pointage) ? */
+/**
+ * Le compte peut-il avoir des justifications à décider : responsable d'au moins un service, RH du pointage, ou DG
+ * quand le repli est possible (au plus un compte RH actif : le seul RH ne décide pas sa propre justification) ou qu'il
+ * a déjà décidé (onglet « Traitées »).
+ */
 export async function estDecideurJustifications(session: SessionDecideur): Promise<boolean> {
   if (hasPermission(session, PERMISSION_RH_POINTAGE)) return true;
   const n = await prisma.service.count({ where: { responsableId: session.user.id } });
-  return n > 0;
+  if (n > 0) return true;
+  if (!hasPermission(session, PERMISSION_DG_JUSTIFICATION)) return false;
+  if ((await chargerComptesRH()).length <= 1) return true;
+  return (await prisma.justificationPointage.count({ where: { decideurId: session.user.id } })) > 0;
 }
 
 const INCLUDE_JUSTIFICATION = {
@@ -84,9 +108,10 @@ export async function chargerJustificationsDecideur(
     take: options.limite,
   });
   const acteur = { id: session.user.id, permissions: session.permissions };
+  const comptesRH = await chargerComptesRH();
   return lignes.filter((j) => {
     if (options.inclureDecideesPar && j.decideurId === session.user.id) return true;
     const collaborateur = j.pointage.user;
-    return refusDecideur(decideurDuCollaborateur(collaborateur), acteur, collaborateur.id) === null;
+    return refusDecideur(decideurDuCollaborateur(collaborateur, comptesRH), acteur, collaborateur.id) === null;
   });
 }

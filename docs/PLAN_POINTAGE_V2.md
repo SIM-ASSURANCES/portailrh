@@ -146,6 +146,13 @@ nécessaire.
   présence exceptionnelle acceptée à toute heure un jour non ouvré ; « Départ possible à partir de HH:MM » ; verrou par
   collaborateur et par jour contre le double départ ; Playwright dans `e2e/`. Détail : `CLAUDE.md`, section 13.
 
+**Décision des justifications en trois niveaux** (non commité, 2026-10-12)
+- Responsable du service, sinon un autre compte RH actif, sinon le DG (`treso.decider_dg`) ; jamais soi-même ;
+  notifications et écran sur les mêmes règles (`destinatairesDecideur`, `estDecideurJustifications`). Tests
+  `decideurJustificationNiveaux.test.ts`, Playwright `e2e/pointage-decision-dg.mjs`. Non-délégation de
+  `pointage.corriger_pointage` en attente de décision (elle est déjà délégable pour les corrections). Détail :
+  `CLAUDE.md`, section 14.
+
 ## 4. Lots restants
 
 Chaque lot fait l'objet d'un commit séparé, testé, avec un message au format des commits existants. La logique
