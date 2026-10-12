@@ -1,4 +1,11 @@
-import { getCouvertureRetoursPostCloture, getDateDernierReglementConfirme, getMontantsDefinitifsRetours } from "backend";
+import {
+  calculerMontantARetournerNet,
+  estFicheRegularisation,
+  getCouvertureRetoursPostCloture,
+  getDateDernierReglementConfirme,
+  getMontantsDefinitifsRetours,
+  rienARendre,
+} from "backend";
 import { prisma } from "backend";
 
 import { RetourCaisseRow } from "./RetourCaisseRow";
@@ -69,6 +76,11 @@ export async function RetoursCaisseSection({
   // "Montant à retourner définitif" (net après compléments/remboursements) : c'est l'argent du Collaborateur, il le voit aussi.
   const definitifs = await getMontantsDefinitifsRetours(reglements.flatMap((r) => r.retours.map((t) => t.id)));
 
+  // Solde à rendre de chaque règlement (même formule que la déclaration) : nul → rien n'est réclamé au collaborateur.
+  const soldes = await Promise.all(
+    reglements.map((r) => (r.retours.length > 0 ? calculerMontantARetournerNet({ reglementId: r.id, totalDepensesNouvelles: 0 }) : null))
+  );
+
   const dateMin = dateDernierReglement ? dateDernierReglement.toISOString().slice(0, 10) : undefined;
 
   return (
@@ -90,6 +102,8 @@ export async function RetoursCaisseSection({
               peutSignaler: peutDeclarer || !!retour.motifReouvertureExceptionnelle,
               dateRetour: retour.dateRetour,
               creeParAssistant: retour.creeParAssistant,
+              // Fiche de régularisation de l'Assistant (détail sans retour) : la déclaration du collaborateur la complète.
+              estFiche: estFicheRegularisation({ ...retour, mode: r.mode }),
               // Modification (avant réception) réservée au déclarant
               // original — cohérent avec la déclaration elle-même. Un
               // retour créé par l'Assistant Finance (declarantId = son
@@ -113,6 +127,7 @@ export async function RetoursCaisseSection({
                 : null,
             }))}
             peutDeclarer={peutDeclarer}
+            rienARendre={soldes[index] !== null && rienARendre(soldes[index]!)}
             dateMin={dateMin}
             repere={
               reglements.length > 1

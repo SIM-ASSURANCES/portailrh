@@ -39,6 +39,11 @@ export function FriseCircuit({
             <span className="min-w-0">
               <span className="block font-semibold">{LIBELLE_ETAPE[e.etape]}</span>
               <span className="block text-xs">{LIBELLE_STATUT[e.statut]}</span>
+              {e.detail ? (
+                <span data-detail-dg className="block text-xs">
+                  {e.detail}
+                </span>
+              ) : null}
             </span>
           </li>
         ))}

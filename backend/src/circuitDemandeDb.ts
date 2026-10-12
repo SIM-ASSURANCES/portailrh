@@ -7,8 +7,10 @@ import type { EtapeCircuit, NiveauRejet } from "./generated/prisma/enums";
 import {
   determinerParcours,
   etapeInitiale,
+  etatLigneDG,
   LIBELLE_ETAPE_CIRCUIT,
   refusExecutionPropreDemande,
+  versLigneCircuit,
   type OptionsParcours,
   transition,
   type ActeurCircuit,
@@ -178,11 +180,48 @@ const ACTION_HISTORIQUE: Record<ActionCircuit["type"], string> = {
   VALIDER_DG: "validation_dg",
   REJETER_DG: "rejet_dg",
   DECIDER_LIGNES: "decision_circuit",
+  SOUMETTRE_LIGNES_DG: "soumission_lignes_dg",
+  DECIDER_LIGNE_DG: "decision_ligne_dg",
   RESOUMETTRE_CORRECTION: "resoumission_correction",
   ABANDONNER: "abandon",
 };
 
 export type ResultatCircuit = { ok: true; etapeSuivante: EtapeCircuit } | { ok: false; message: string };
+
+/** Champs d'une ligne lus par le circuit (soumission au DG ligne par ligne, 2026-10-10). */
+export const SELECT_LIGNE_CIRCUIT = {
+  id: true,
+  libelle: true,
+  categorieId: true,
+  statutValidation: true,
+  soumiseAuDG: true,
+  decisionDG: true,
+  decisionDGParId: true,
+  decisionDGAt: true,
+} as const;
+
+/**
+ * Verrou de la demande pour la durée de la transaction : deux décisions simultanées sur des lignes différentes (ou une
+ * soumission et une décision finale) se succèdent, et la seconde relit l'état laissé par la première — la dernière
+ * ligne décidée par le DG rend toujours la main à la Finance.
+ */
+async function verrouillerDemande(db: Db, demandeId: string): Promise<void> {
+  await db.$queryRaw`SELECT "id" FROM "Demande" WHERE "id" = ${demandeId} FOR UPDATE`;
+}
+
+const SELECT_DEMANDE_CIRCUIT = {
+  etapeCircuit: true,
+  createurId: true,
+  typeDemande: true,
+  etapeServiceRequise: true,
+  etapeFinanceRequise: true,
+  modeEtapeDG: true,
+  dgApprobateurId: true,
+  decideurFinanceId: true,
+  lignes: { select: SELECT_LIGNE_CIRCUIT, orderBy: { createdAt: "asc" } },
+} as const;
+
+const listeLibelles = (libelles: string[]) => libelles.map((l) => `« ${l} »`).join(", ");
 
 /**
  * Applique une action du circuit (hors resoumission après correction, voir `corrigerEtResoumettre`). Les décisions
@@ -192,21 +231,10 @@ export async function appliquerTransitionCircuit(
   db: Db,
   demandeId: string,
   acteur: ActeurCircuit,
-  action: Exclude<ActionCircuit, { type: "RESOUMETTRE_CORRECTION" }>
+  action: Exclude<ActionCircuit, { type: "RESOUMETTRE_CORRECTION" | "SOUMETTRE_LIGNES_DG" | "DECIDER_LIGNE_DG" }>
 ): Promise<ResultatCircuit> {
-  const d = await db.demande.findUnique({
-    where: { id: demandeId },
-    select: {
-      etapeCircuit: true,
-      createurId: true,
-      typeDemande: true,
-      etapeServiceRequise: true,
-      etapeFinanceRequise: true,
-      modeEtapeDG: true,
-      dgApprobateurId: true,
-      decideurFinanceId: true,
-    },
-  });
+  await verrouillerDemande(db, demandeId);
+  const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
 
   const r = transition(
@@ -219,6 +247,7 @@ export async function appliquerTransitionCircuit(
       modeEtapeDG: d.modeEtapeDG,
       approbateurDGId: d.dgApprobateurId,
       decideurFinanceId: d.decideurFinanceId,
+      lignes: d.lignes.map(versLigneCircuit),
     },
     acteur,
     action
@@ -236,7 +265,8 @@ export async function appliquerTransitionCircuit(
   if (r.effets.approbationClotureParDG) {
     data.validationCompleteParDG = true;
     data.validationCompleteRejeteeParDG = false;
-    data.dgApprobateurId = acteur.userId;
+    // Règle 5 : le DG qui a validé les lignes (décision finale), sinon l'acteur lui-même (étape DG).
+    data.dgApprobateurId = r.effets.approbateurDGId ?? acteur.userId;
     data.dgApprouveAt = maintenant;
   }
   if (r.effets.decideurFinance) data.decideurFinanceId = acteur.userId;
@@ -273,6 +303,153 @@ export async function appliquerTransitionCircuit(
     });
   }
   return { ok: true, etapeSuivante: r.etapeSuivante };
+}
+
+/**
+ * La Finance soumet des lignes au DG, ou lui resoumet des lignes qu'il a refusées (2026-10-10, règle 1 et 3). La
+ * demande passe (ou reste) à l'étape DG ; seules les lignes soumises sont vues et décidées par le DG.
+ */
+export async function soumettreLignesAuDG(
+  db: Db,
+  demandeId: string,
+  acteur: ActeurCircuit,
+  ligneIds: readonly string[]
+): Promise<ResultatCircuit & { libelles?: string[] }> {
+  await verrouillerDemande(db, demandeId);
+  const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
+  if (!d) return { ok: false, message: "Demande introuvable." };
+  const lignes = d.lignes.map(versLigneCircuit);
+  const r = transition(
+    { ...circuitDepuis(d), lignes },
+    acteur,
+    { type: "SOUMETTRE_LIGNES_DG", ligneIds }
+  );
+  if (!r.ok) return r;
+
+  const maintenant = new Date();
+  const choisies = lignes.filter((l) => ligneIds.includes(l.id));
+  const resoumises = choisies.filter((l) => etatLigneDG(l) === "REFUSEE_DG");
+
+  const maj = await db.demande.updateMany({
+    where: { id: demandeId, etapeCircuit: d.etapeCircuit },
+    // Déjà à l'étape DG (soumission complémentaire) : la date d'entrée dans l'étape ne change pas (rappels inchangés).
+    data: { etapeCircuit: "DG", soumiseAuDG: true, ...(d.etapeCircuit !== "DG" ? { etapeCircuitDepuis: maintenant } : {}) },
+  });
+  if (maj.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
+  const majLignes = await db.ligneDemande.updateMany({
+    where: {
+      id: { in: [...ligneIds] },
+      demandeId,
+      statutValidation: "EN_ATTENTE",
+      OR: [{ soumiseAuDG: false }, { decisionDG: "REFUSEE" }],
+    },
+    data: {
+      soumiseAuDG: true,
+      soumiseDGAt: maintenant,
+      soumiseDGParId: acteur.userId,
+      decisionDG: null,
+      decisionDGAt: null,
+      decisionDGParId: null,
+      motifRefusDG: null,
+    },
+  });
+  if (majLignes.count !== ligneIds.length) return { ok: false, message: "Une ligne a changé entre-temps : rechargez la page." };
+
+  const libelles = choisies.map((l) => l.libelle);
+  await db.historiqueEntry.create({
+    data: {
+      entity: "Demande",
+      entityId: demandeId,
+      action: ACTION_HISTORIQUE.SOUMETTRE_LIGNES_DG,
+      detail:
+        `${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → DG — ${libelles.length} ligne${libelles.length > 1 ? "s" : ""} sur ` +
+        `${lignes.length} soumise${libelles.length > 1 ? "s" : ""} au DG : ${listeLibelles(libelles)}` +
+        (resoumises.length > 0 ? ` (resoumise${resoumises.length > 1 ? "s" : ""} après refus : ${listeLibelles(resoumises.map((l) => l.libelle))})` : ""),
+      userId: acteur.userId,
+    },
+  });
+  return { ok: true, etapeSuivante: "DG", libelles };
+}
+
+/**
+ * Le DG décide une ligne soumise (2026-10-10, règle 2) : validée, ou refusée avec motif (elle revient à la Finance).
+ * Quand plus aucune ligne n'attend le DG, la demande passe à la décision finale de la Finance.
+ */
+export async function deciderLigneDG(
+  db: Db,
+  ligneId: string,
+  acteur: ActeurCircuit,
+  decision: { valider: boolean; motif?: string }
+): Promise<ResultatCircuit & { demandeId?: string; libelle?: string }> {
+  const ligne = await db.ligneDemande.findUnique({ where: { id: ligneId }, select: { demandeId: true } });
+  if (!ligne) return { ok: false, message: "Ligne introuvable." };
+  const demandeId = ligne.demandeId;
+  await verrouillerDemande(db, demandeId);
+  const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
+  if (!d) return { ok: false, message: "Demande introuvable." };
+  const lignes = d.lignes.map(versLigneCircuit);
+  const motif = decision.motif?.trim() ?? "";
+  const r = transition(
+    { ...circuitDepuis(d), lignes },
+    acteur,
+    { type: "DECIDER_LIGNE_DG", ligneId, valider: decision.valider, motif }
+  );
+  if (!r.ok) return r;
+
+  const maintenant = new Date();
+  const majLigne = await db.ligneDemande.updateMany({
+    where: { id: ligneId, soumiseAuDG: true, decisionDG: null },
+    data: {
+      decisionDG: decision.valider ? "VALIDEE" : "REFUSEE",
+      decisionDGAt: maintenant,
+      decisionDGParId: acteur.userId,
+      motifRefusDG: decision.valider ? null : motif,
+    },
+  });
+  if (majLigne.count !== 1) return { ok: false, message: "Cette ligne a déjà été décidée." };
+  if (r.etapeSuivante !== "DG") {
+    const maj = await db.demande.updateMany({
+      where: { id: demandeId, etapeCircuit: "DG" },
+      data: { etapeCircuit: r.etapeSuivante, etapeCircuitDepuis: maintenant },
+    });
+    if (maj.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
+  }
+
+  const libelle = lignes.find((l) => l.id === ligneId)!.libelle;
+  await db.historiqueEntry.create({
+    data: {
+      entity: "Demande",
+      entityId: demandeId,
+      action: decision.valider ? "validation_ligne_dg" : "refus_ligne_dg",
+      detail:
+        (decision.valider ? `DG — ligne « ${libelle} » validée` : `DG — ligne « ${libelle} » refusée — motif : ${motif}`) +
+        (r.etapeSuivante !== "DG" ? ` — DG → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}` : ""),
+      userId: acteur.userId,
+    },
+  });
+  return { ok: true, etapeSuivante: r.etapeSuivante, demandeId, libelle };
+}
+
+function circuitDepuis(d: {
+  etapeCircuit: EtapeCircuit;
+  createurId: string;
+  typeDemande: TypeDemandeCircuit;
+  etapeServiceRequise: boolean;
+  etapeFinanceRequise: boolean;
+  modeEtapeDG: Parcours["modeEtapeDG"];
+  dgApprobateurId: string | null;
+  decideurFinanceId: string | null;
+}) {
+  return {
+    etape: d.etapeCircuit,
+    createurId: d.createurId,
+    typeDemande: d.typeDemande,
+    etapeServiceRequise: d.etapeServiceRequise,
+    etapeFinanceRequise: d.etapeFinanceRequise,
+    modeEtapeDG: d.modeEtapeDG,
+    approbateurDGId: d.dgApprobateurId,
+    decideurFinanceId: d.decideurFinanceId,
+  };
 }
 
 export interface LigneCorrigee {
@@ -373,6 +550,8 @@ export async function corrigerEtResoumettre(
       // Auteur et date de la décision : l'historique affiche une ligne retirée avec sa décision (2026-10-07).
       decidePar: l.decidePar?.fullName ?? null,
       decideAt: l.decideAt?.toISOString() ?? null,
+      // Soumission au DG ligne par ligne (2026-10-10) : décision du DG sur la ligne, le cas échéant.
+      ...(l.soumiseAuDG ? { decisionDG: l.decisionDG, motifRefusDG: l.motifRefusDG } : {}),
     })),
   };
 
@@ -420,7 +599,20 @@ export async function corrigerEtResoumettre(
   for (const l of correction.lignes) {
     const libelle = l.libelle.trim();
     const motif = l.motif.trim();
-    const decisionRemiseAZero = { statutValidation: "EN_ATTENTE" as const, motifRejet: null, decideParId: null, decideAt: null };
+    // Nouvelle version : décision finale et soumission au DG remises à zéro (l'historique garde les précédentes).
+    const decisionRemiseAZero = {
+      statutValidation: "EN_ATTENTE" as const,
+      motifRejet: null,
+      decideParId: null,
+      decideAt: null,
+      soumiseAuDG: false,
+      soumiseDGAt: null,
+      soumiseDGParId: null,
+      decisionDG: null,
+      decisionDGAt: null,
+      decisionDGParId: null,
+      motifRefusDG: null,
+    };
     if (l.id) {
       const avant = existantes.get(l.id)!;
       await db.ligneDemande.update({

@@ -8,7 +8,7 @@ import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge
 import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesIntervenantes";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma } from "backend";
+import { prisma, refusDemandeSansCategorie } from "backend";
 import { getMontantsLignesParStatut, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
 import {
   chargerActeur,
@@ -74,7 +74,10 @@ export default async function CategoriserDemandePage({
       beneficiaireUser: true,
       dgApprobateur: true,
       pieces: true,
-      lignes: { orderBy: { createdAt: "asc" }, include: { decidePar: true, categorie: true, objet: true } },
+      lignes: {
+        orderBy: { createdAt: "asc" },
+        include: { decidePar: true, categorie: true, objet: true, decisionDGPar: { select: { fullName: true } } },
+      },
     },
   });
 
@@ -95,6 +98,8 @@ export default async function CategoriserDemandePage({
   // Circuit de validation (commit 4) : ce que ce compte peut faire à l'étape courante, et sinon pourquoi — la phrase
   // que le serveur renverrait (`raisonIndisponible`, moteur du circuit), affichée sous les boutons grisés.
   const demandeCircuit = versDemandeCircuit(demande);
+  // Soumission au DG ligne par ligne (2026-10-10) : demande standard à lignes, étape DG optionnelle.
+  const soumissionParLignes = demandeAauMoinsUneLigne && demande.typeDemande === "STANDARD" && demande.modeEtapeDG === "OPTIONNELLE";
   const acteurCircuit = session ? await chargerActeur(prisma, session, demande.createurId) : null;
   const raisonCircuit = (type: TypeActionCircuit) =>
     acteurCircuit ? raisonIndisponible(demandeCircuit, acteurCircuit, type) : "Action non autorisée.";
@@ -136,6 +141,11 @@ export default async function CategoriserDemandePage({
     categorieLabel: ligne.categorie?.label ?? null,
     objetId: ligne.objetId,
     objetLabel: ligne.objet?.label ?? null,
+    soumiseAuDG: ligne.soumiseAuDG,
+    decisionDG: ligne.decisionDG,
+    decisionDGParNom: ligne.decisionDGPar?.fullName ?? null,
+    decisionDGAt: ligne.decisionDGAt,
+    motifRefusDG: ligne.motifRefusDG,
   }));
 
   // Les 3 requêtes ci-dessous sont mutuellement indépendantes (chacune ne
@@ -568,6 +578,11 @@ export default async function CategoriserDemandePage({
               categories={categories.map((c) => ({ id: c.id, label: c.label }))}
               objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
               budgetParCategorie={budgetParCategorie}
+              soumissionDG={
+                soumissionParLignes
+                  ? { possible: canSoumettreDG && raisonCircuit("SOUMETTRE_LIGNES_DG") === null, raison: raisonCircuit("SOUMETTRE_LIGNES_DG") }
+                  : null
+              }
             />
           ) : (
             <ValidationActions
@@ -575,6 +590,7 @@ export default async function CategoriserDemandePage({
               montantDemande={Number(demande.montant)}
               disabled={!canValider || raisonDecider !== null}
               raisonIndisponible={canValider ? raisonDecider : attenteValidationFinale}
+              raisonValidationIndisponible={refusDemandeSansCategorie(demande)}
             />
           )}
 
@@ -586,6 +602,7 @@ export default async function CategoriserDemandePage({
               raisonSoumettre={raisonCircuit("SOUMETTRE_DG")}
               raisonRejeter={raisonCircuit("REJETER")}
               raisonResoumettre={raisonCircuit("RESOUMETTRE_DG")}
+              soumissionParLignes={soumissionParLignes}
             />
           ) : null}
         </>
@@ -660,6 +677,7 @@ export default async function CategoriserDemandePage({
             demandeId={demande.id}
             montantValide={Number(demande.montantValide ?? 0)}
             showDetail
+            userId={session?.user.id ?? null}
           />
           <PersonnesIntervenantes demandeId={demande.id} demandeurNom={demande.createur.fullName} />
           {demande.motifCloture ? (
@@ -729,6 +747,7 @@ export default async function CategoriserDemandePage({
             <ValidationComplementaireActions
               demandeId={demande.id}
               montantRestant={Number(demande.montant) - Number(demande.montantValide)}
+              raisonValidationIndisponible={refusDemandeSansCategorie(demande)}
             />
           ) : null}
           <ReglementsSection
@@ -748,6 +767,7 @@ export default async function CategoriserDemandePage({
             demandeId={demande.id}
             montantValide={Number(demande.montantValide)}
             canGererJustification={canGererJustification}
+            userId={session?.user.id ?? null}
           />
           {(STATUTS_VALIDATION_COMPLETE.includes(demande.statut) || lignesToutesDecidees(demande.lignes)) &&
           canCloturerDemande ? (

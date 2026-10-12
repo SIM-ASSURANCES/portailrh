@@ -27,6 +27,10 @@ const ACTION_LABELS: Record<string, string> = {
   declaration_retour: "Retour de caisse déclaré",
   modification_retour: "Retour de caisse modifié",
   reception_retour: "Retour de caisse réceptionné",
+  retour_nul_constate: "Retour nul constaté (rien à rendre)",
+  // Correction d'une dépense détaillée par l'Assistant Finance (2026-10-10) : avant/après et motif dans le détail.
+  modification_depense: "Dépense modifiée",
+  suppression_depense: "Dépense supprimée",
   // Tâche "L'Assistant Finance déclare les dépenses sur toute demande,
   // retour ou pas" (voir CLAUDE.md) — l'Assistant se substitue au
   // collaborateur absent, sur une demande encore active.
@@ -40,7 +44,7 @@ const ACTION_LABELS: Record<string, string> = {
   // CLAUDE.md) — volontairement VISIBLE au Collaborateur (comme
   // `declaration_retour_assistant`) : c'est une information sur SON
   // ARGENT, jamais de la gestion interne à masquer.
-  detaillage_retour: "Détail réel du retour renseigné par l'Assistant Finance",
+  detaillage_retour: "Dépenses détaillées par l'Assistant Finance",
   // Circuit de validation (2026-10-06).
   circuit_initialise: "Circuit de validation",
   validation_service: "Validée par le responsable de service",
@@ -49,6 +53,10 @@ const ACTION_LABELS: Record<string, string> = {
   resoumission_dg: "Resoumise au DG",
   validation_dg: "Validée par le DG",
   rejet_dg: "Rejetée par le DG",
+  // Soumission au DG ligne par ligne (2026-10-10).
+  soumission_lignes_dg: "Lignes soumises au DG",
+  validation_ligne_dg: "Ligne validée par le DG",
+  refus_ligne_dg: "Ligne refusée par le DG",
   decision_circuit: "Décision finale",
   correction_demande: "Version avant correction",
   resoumission_correction: "Corrigée et resoumise",

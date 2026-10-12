@@ -10,12 +10,14 @@ import { revalidatePath } from "next/cache";
 
 import { getSession } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
-import { notifierEtapeCircuit } from "@/lib/notificationsCircuit";
+import { notifierEtapeCircuit, notifierRefusLigneDG } from "@/lib/notificationsCircuit";
 import {
   appliquerTransitionCircuit,
   chargerActeur,
   corrigerEtResoumettre,
+  deciderLigneDG,
   prisma,
+  soumettreLignesAuDG,
   type ActionCircuit,
   type CorrectionDemande,
 } from "backend";
@@ -39,7 +41,10 @@ function rafraichir(demandeId: string) {
 
 async function agir(
   demandeId: string,
-  action: Exclude<ActionCircuit, { type: "RESOUMETTRE_CORRECTION" | "DECIDER_LIGNES" | "REJETER" }>,
+  action: Exclude<
+    ActionCircuit,
+    { type: "RESOUMETTRE_CORRECTION" | "DECIDER_LIGNES" | "REJETER" | "SOUMETTRE_LIGNES_DG" | "DECIDER_LIGNE_DG" }
+  >,
   succes: (reference: string) => string
 ): Promise<Resultat> {
   const session = await getSession();
@@ -84,6 +89,80 @@ export async function rejeterDemandeEtapeDGAction(demandeId: string, motif: stri
 /** Étape Finance : soumission au DG (avant toute décision ligne par ligne). */
 export async function soumettreAuDGAction(demandeId: string): Promise<Resultat> {
   return agir(demandeId, { type: "SOUMETTRE_DG" }, (ref) => `Demande ${ref} soumise au DG.`);
+}
+
+/** Refus du moteur levé DANS la transaction pour l'annuler entièrement (aucune écriture partielle). */
+class RefusTransaction extends Error {}
+
+/**
+ * Étape Finance (ou décision finale, ou pendant que le DG décide) : la Finance soumet au DG les lignes choisies, ou lui
+ * resoumet des lignes qu'il a refusées (2026-10-10, `treso.soumettre_dg`). Le DG est notifié.
+ */
+export async function soumettreLignesAuDGAction(demandeId: string, ligneIds: string[]): Promise<Resultat> {
+  const session = await getSession();
+  if (!session) return { status: "error", message: "Action non autorisée." };
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId }, select: { createurId: true, reference: true } });
+  if (!demande) return { status: "error", message: "Demande introuvable." };
+  const ids = Array.isArray(ligneIds) ? ligneIds.map(String) : [];
+
+  const acteur = await chargerActeur(prisma, session, demande.createurId);
+  let nombre = 0;
+  try {
+    await prisma.$transaction(async (tx) => {
+      const r = await soumettreLignesAuDG(tx, demandeId, acteur, ids);
+      if (!r.ok) throw new RefusTransaction(r.message);
+      nombre = r.libelles?.length ?? 0;
+    });
+  } catch (e) {
+    if (e instanceof RefusTransaction) return { status: "error", message: e.message };
+    throw e;
+  }
+  rafraichir(demandeId);
+  await notifierEtapeCircuit(demandeId, session.user.id);
+  return {
+    status: "success",
+    message: `${nombre} ligne${nombre > 1 ? "s" : ""} de la demande ${demande.reference} soumise${nombre > 1 ? "s" : ""} au DG.`,
+  };
+}
+
+/**
+ * Étape DG : le DG décide UNE ligne soumise — validée, ou refusée avec motif (elle revient à la Finance, prévenue).
+ * La dernière ligne décidée rend la main à la Finance pour la décision finale.
+ */
+export async function deciderLigneDGAction(ligneId: string, valider: boolean, motif?: string): Promise<Resultat> {
+  const session = await getSession();
+  if (!session) return { status: "error", message: "Action non autorisée." };
+  const ligne = await prisma.ligneDemande.findUnique({
+    where: { id: String(ligneId) },
+    select: { demandeId: true, demande: { select: { createurId: true, reference: true } } },
+  });
+  if (!ligne) return { status: "error", message: "Ligne introuvable." };
+
+  const acteur = await chargerActeur(prisma, session, ligne.demande.createurId);
+  const decision = { valider: valider === true, motif: motif === undefined ? undefined : String(motif) };
+  let resultat: { etapeSuivante: string; libelle: string } = { etapeSuivante: "DG", libelle: "" };
+  try {
+    await prisma.$transaction(async (tx) => {
+      const r = await deciderLigneDG(tx, String(ligneId), acteur, decision);
+      if (!r.ok) throw new RefusTransaction(r.message);
+      resultat = { etapeSuivante: r.etapeSuivante, libelle: r.libelle ?? "" };
+    });
+  } catch (e) {
+    if (e instanceof RefusTransaction) return { status: "error", message: e.message };
+    throw e;
+  }
+  rafraichir(ligne.demandeId);
+  if (resultat.etapeSuivante !== "DG") {
+    await notifierEtapeCircuit(ligne.demandeId, session.user.id);
+  } else if (!decision.valider) {
+    await notifierRefusLigneDG(ligne.demandeId, session.user.id, { libelle: resultat.libelle, motif: (decision.motif ?? "").trim() });
+  }
+  return {
+    status: "success",
+    message:
+      `Ligne « ${resultat.libelle} » ${decision.valider ? "validée" : "refusée"}.` +
+      (resultat.etapeSuivante !== "DG" ? " Toutes les lignes soumises sont décidées : la Finance reprend la main." : ""),
+  };
 }
 
 /** Après un rejet du DG : la Finance resoumet au DG. */

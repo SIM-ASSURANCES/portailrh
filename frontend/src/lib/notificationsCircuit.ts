@@ -1,6 +1,7 @@
 import {
   notificationApprobationCloture,
   notificationRappel,
+  notificationRefusLigneDG,
   notificationsEtape,
   PERMISSIONS_NOTIFICATION_CIRCUIT,
   prisma,
@@ -39,10 +40,21 @@ async function chargerContexte(demandeId: string): Promise<ContexteNotificationC
       approbationClotureNonRequise: true,
       validationCompleteParDG: true,
       createur: { select: { fullName: true, service: { select: { responsableId: true } } } },
+      lignes: { where: { soumiseAuDG: true }, select: { decisionDG: true } },
     },
   });
   if (!d) return null;
+  const lignesDG =
+    d.lignes.length > 0
+      ? {
+          soumises: d.lignes.length,
+          enAttente: d.lignes.filter((l) => l.decisionDG === null).length,
+          validees: d.lignes.filter((l) => l.decisionDG === "VALIDEE").length,
+          refusees: d.lignes.filter((l) => l.decisionDG === "REFUSEE").length,
+        }
+      : undefined;
   return {
+    lignesDG,
     demandeId: d.id,
     reference: d.reference,
     etape: d.etapeCircuit,
@@ -124,5 +136,17 @@ export async function envoyerRappelsCircuit(maintenant = new Date()): Promise<vo
     }
   } catch (e) {
     console.error("[Circuit] Rappels impossibles :", e);
+  }
+}
+
+/** Refus d'une ligne par le DG qui ne termine pas son examen : la Finance qui peut agir est prévenue. */
+export async function notifierRefusLigneDG(demandeId: string, acteurId: string, refus: { libelle: string; motif: string }): Promise<void> {
+  try {
+    const ctx = await chargerContexte(demandeId);
+    if (!ctx) return;
+    const n = notificationRefusLigneDG(ctx, await chargerCandidats(ctx.responsableServiceId), refus, acteurId);
+    if (n) await envoyer([n]);
+  } catch (e) {
+    console.error(`[Circuit] Notification du refus DG (demande ${demandeId}) impossible :`, e);
   }
 }

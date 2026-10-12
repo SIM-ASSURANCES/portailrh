@@ -23,6 +23,8 @@ import {
 /** Refus du moteur du circuit levé DANS une transaction pour l'annuler entièrement (jamais exporté). */
 class RefusCircuit extends Error {}
 import { fieldErrorsFromZod, MOTIF_LIGNE_MIN, type ActionState } from "backend";
+import { refusDemandeSansCategorie, refusLignesValideesSansCategorie } from "backend";
+import { approbateurClotureParLignesDG, refusDecisionsFinales, versLigneCircuit } from "backend";
 
 /**
  * Validation complémentaire qui comble le reliquat d'une dépense directe (hors circuit : la décision finale est déjà
@@ -192,6 +194,13 @@ export async function categoriserLigneAction(
     return {
       status: "error",
       message: "Cette ligne a déjà été décidée : sa catégorisation ne peut plus être modifiée.",
+    };
+  }
+  // Soumise au DG (en attente ou validée par lui) : le DG décide sur la catégorie qu'il a vue, elle ne change plus.
+  if (ligne.soumiseAuDG && ligne.decisionDG !== "REFUSEE") {
+    return {
+      status: "error",
+      message: "Cette ligne est soumise au DG : sa catégorisation ne peut plus être modifiée (sauf si le DG la refuse).",
     };
   }
 
@@ -805,6 +814,20 @@ export async function validerLignesAction(
     }
   }
 
+  // Catégorisation obligatoire (2026-10-08) : une ligne validée doit porter une catégorie ; une ligne rejetée, non.
+  const refusCategorie = refusLignesValideesSansCategorie(parsedDecisions.data, demande.lignes);
+  if (refusCategorie) return { status: "error", message: refusCategorie };
+
+  // Soumission au DG ligne par ligne (2026-10-10) : aucune ligne n'attend le DG, une ligne validée par le DG reste
+  // validée, une ligne refusée par le DG ne peut qu'être refusée définitivement (« DG définitif »).
+  const refusDG = refusDecisionsFinales(demande.lignes.map(versLigneCircuit), parsedDecisions.data);
+  if (refusDG) return { status: "error", message: refusDG };
+  const statutParLigne = new Map(parsedDecisions.data.map((d) => [d.ligneId, d.statut]));
+  // Règle 5 : l'approbation de clôture est acquise si toutes les lignes validées l'ont été par le DG.
+  const approbateurClotureId = approbateurClotureParLignesDG(
+    demande.lignes.map((l) => ({ ...l, statut: statutParLigne.get(l.id) ?? "EN_ATTENTE" }))
+  );
+
   const decideAt = new Date();
   let montantValide = 0;
 
@@ -817,13 +840,16 @@ export async function validerLignesAction(
 
   const ligneUpdates = (tx: Pick<typeof prisma, "ligneDemande">) => parsedDecisions.data.map((d) => {
     const motif = d.statut === "REJETEE" ? d.motif!.trim() : null;
+    const ligne = ligneParId.get(d.ligneId)!;
+    // Une ligne validée par le DG garde son auteur et sa date de décision.
+    const parDG = d.statut === "VALIDEE" && ligne.decisionDG === "VALIDEE";
     return tx.ligneDemande.update({
       where: { id: d.ligneId },
       data: {
         statutValidation: d.statut,
         motifRejet: motif,
-        decideParId: session.user.id,
-        decideAt,
+        decideParId: parDG ? ligne.decisionDGParId : session.user.id,
+        decideAt: parDG ? (ligne.decisionDGAt ?? decideAt) : decideAt,
       },
     });
   });
@@ -837,8 +863,8 @@ export async function validerLignesAction(
         action: d.statut === "VALIDEE" ? "validation_ligne" : "rejet_ligne",
         detail:
           d.statut === "VALIDEE"
-            ? `Ligne « ${ligne.libelle} » validée (${ligne.quantite} × ${Number(ligne.prixUnitaire).toLocaleString("fr-FR")} FCFA)`
-            : `Ligne « ${ligne.libelle} » rejetée — motif : ${d.motif!.trim()}`,
+            ? `Ligne « ${ligne.libelle} » validée${ligne.decisionDG === "VALIDEE" ? " par le DG" : ""} (${ligne.quantite} × ${Number(ligne.prixUnitaire).toLocaleString("fr-FR")} FCFA)`
+            : `Ligne « ${ligne.libelle} » rejetée${ligne.decisionDG === "REFUSEE" ? " définitivement après refus du DG" : ""} — motif : ${d.motif!.trim()}`,
         userId: session.user.id,
       },
     });
@@ -851,6 +877,7 @@ export async function validerLignesAction(
       const r = await appliquerTransitionCircuit(tx, demandeId, acteurCircuit, {
         type: "DECIDER_LIGNES",
         auMoinsUneValidee: montantValide > 0,
+        approbateurClotureId,
       });
       if (!r.ok) throw new RefusCircuit(r.message);
       for (const op of ligneUpdates(tx)) await op;
@@ -907,6 +934,9 @@ export async function validerTotalementAction(demandeId: string): Promise<Simple
       message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
     };
   }
+
+  const refusCategorieTotale = refusDemandeSansCategorie(demande);
+  if (refusCategorieTotale) return { status: "error", message: refusCategorieTotale };
 
   const montantDemande = Number(demande.montant);
   const refus = await enregistrerValidation(
@@ -967,6 +997,9 @@ export async function validerPartiellementAction(
       message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
     };
   }
+
+  const refusCategoriePartielle = refusDemandeSansCategorie(demande);
+  if (refusCategoriePartielle) return { status: "error", message: refusCategoriePartielle };
 
   const montantDemande = Number(demande.montant);
 
@@ -1049,6 +1082,9 @@ export async function validerComplementaireAction(
       message: "Le reliquat de cette demande a été rejeté, aucune validation complémentaire n'est plus possible.",
     };
   }
+  // Une demande validée avant la règle de catégorisation obligatoire peut n'avoir aucune catégorie : refusée aussi.
+  const refusCategorieComplement = refusDemandeSansCategorie(demande);
+  if (refusCategorieComplement) return { status: "error", message: refusCategorieComplement };
 
   const montantDemande = Number(demande.montant);
   const montantValideActuel = Number(demande.montantValide ?? 0);

@@ -53,6 +53,8 @@ export interface ContexteNotificationCircuit {
   montantValide: number | null;
   approbationClotureNonRequise: boolean;
   validationCompleteParDG: boolean;
+  /** Soumission au DG ligne par ligne (2026-10-10) : décompte des lignes soumises, absent sans ligne soumise. */
+  lignesDG?: { soumises: number; enAttente: number; validees: number; refusees: number };
 }
 
 export type PrioriteNotification = "INFO" | "IMPORTANT" | "CRITIQUE";
@@ -68,6 +70,7 @@ export interface NotificationCircuit {
 const NIVEAU: Record<NiveauRejet, string> = { SERVICE: "Service", FINANCE: "Finance", DG: "DG" };
 
 const fcfa = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`;
+const pluriel = (n: number, mot: string) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 
 function avec(candidats: readonly CandidatNotification[], ...cles: string[]): string[] {
   return candidats.filter((c) => cles.some((k) => c.permissions.includes(k))).map((c) => c.id);
@@ -152,7 +155,9 @@ function demandeAction(ctx: ContexteNotificationCircuit): Omit<NotificationCircu
       return {
         titre: "Demande à décider (étape DG)",
         message:
-          ctx.modeEtapeDG === "OBLIGATOIRE"
+          ctx.lignesDG && ctx.lignesDG.soumises > 0 && ctx.modeEtapeDG === "OPTIONNELLE"
+            ? `${pluriel(ctx.lignesDG.enAttente, "ligne")} de la demande ${ref} de ${ctx.createurNom} vous ${ctx.lignesDG.enAttente > 1 ? "sont soumises" : "est soumise"} par la Finance : décidez-les une par une à l'étape DG.`
+            : ctx.modeEtapeDG === "OBLIGATOIRE"
             ? `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) attend votre décision à l'étape DG, ligne par ligne.`
             : `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) vous est soumise par la Finance : elle attend votre décision à l'étape DG.`,
         lien: `/treso/dg/${ctx.demandeId}`,
@@ -166,6 +171,16 @@ function demandeAction(ctx: ContexteNotificationCircuit): Omit<NotificationCircu
         priority: "IMPORTANT",
       };
     case "DECISION_FINALE":
+      if (ctx.lignesDG && ctx.lignesDG.soumises > 0) {
+        return {
+          titre: "Décisions du DG reçues : décision finale",
+          message:
+            `Le DG a décidé les lignes soumises de la demande ${ref} (${ctx.lignesDG.validees} validée(s), ${ctx.lignesDG.refusees} refusée(s)). ` +
+            (ctx.lignesDG.refusees > 0 ? "Resoumettez les lignes refusées ou refusez-les définitivement, puis prenez la décision finale." : "La décision finale revient à la Finance."),
+          lien: lienFinance(ctx.demandeId),
+          priority: "IMPORTANT",
+        };
+      }
       return {
         titre: "Demande validée par le DG : décision finale",
         message: `Le DG a validé la demande ${ref} : la décision finale revient à la Finance.`,
@@ -320,4 +335,27 @@ export async function reserverRappelsDus(
     if (maj.count === 1) reserves.push({ id: d.id, etapeCircuitDepuis: d.etapeCircuitDepuis });
   }
   return reserves;
+}
+
+/**
+ * Refus d'une ligne par le DG (2026-10-10, règle 3) : la Finance qui peut agir (décision ou soumission au DG) est
+ * prévenue à chaque refus — jamais le DG auteur du refus, jamais le demandeur. Le refus de la DERNIÈRE ligne en attente
+ * passe la demande à la décision finale : la notification d'étape (`notificationsEtape`) le dit déjà, celle-ci n'est
+ * alors pas envoyée (une seule notification par refus).
+ */
+export function notificationRefusLigneDG(
+  ctx: ContexteNotificationCircuit,
+  candidats: readonly CandidatNotification[],
+  refus: { libelle: string; motif: string },
+  acteurId: string
+): NotificationCircuit | null {
+  const destinataires = sans(avec(candidats, "treso.decider_finance", "treso.soumettre_dg"), ctx.createurId, acteurId);
+  if (destinataires.length === 0) return null;
+  return {
+    destinataires,
+    titre: "Ligne refusée par le DG",
+    message: `Le DG a refusé la ligne « ${refus.libelle} » de la demande ${ctx.reference}. Motif : ${refus.motif}. Resoumettez-la au DG ou refusez-la définitivement à la décision finale.`,
+    lien: lienFinance(ctx.demandeId),
+    priority: "IMPORTANT",
+  };
 }

@@ -40,10 +40,14 @@ export function ValidationActions({
   montantDemande,
   disabled = false,
   raisonIndisponible = null,
+  raisonValidationIndisponible = null,
 }: {
   demandeId: string;
   montantDemande: number;
   disabled?: boolean;
+  /** Catégorisation obligatoire : la demande n'a pas de catégorie — seuls les boutons de VALIDATION sont grisés,
+   *  « Rejeter » reste possible. */
+  raisonValidationIndisponible?: string | null;
   /** Circuit de validation : pourquoi les boutons sont grisés à cette étape (phrase du moteur). */
   raisonIndisponible?: string | null;
 }) {
@@ -115,10 +119,19 @@ export function ValidationActions({
 
       {mode === "idle" ? (
         <div className="flex flex-wrap gap-3">
-          <Button type="button" disabled={disabled} onClick={() => setMode("confirm-totale")}>
+          <Button
+            type="button"
+            disabled={disabled || !!raisonValidationIndisponible}
+            onClick={() => setMode("confirm-totale")}
+          >
             Valider totalement
           </Button>
-          <Button type="button" variant="secondary" disabled={disabled} onClick={() => setMode("partielle")}>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={disabled || !!raisonValidationIndisponible}
+            onClick={() => setMode("partielle")}
+          >
             Valider partiellement
           </Button>
           <Button type="button" variant="danger" disabled={disabled} onClick={() => setMode("rejeter")}>
@@ -129,6 +142,11 @@ export function ValidationActions({
       {disabled ? (
         <p className="text-xs text-muted-foreground">
           {raisonIndisponible ?? "Votre rôle ne permet pas de valider ou rejeter une demande."}
+        </p>
+      ) : null}
+      {!disabled && raisonValidationIndisponible ? (
+        <p data-sans-categorie className="text-xs text-muted-foreground">
+          {raisonValidationIndisponible}
         </p>
       ) : null}
 

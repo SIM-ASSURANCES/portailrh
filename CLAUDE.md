@@ -2554,9 +2554,9 @@ discrète).
 ### Reporting et export
 
 `backend/src/reporting.ts` / `treso/finance/reporting/page.tsx` / export
-Excel (**12 feuilles** : Demandes, Validations, Règlements, Retours de
-caisse, Fonds remis, Régularisations, Dépenses effectuées, Dépenses non
-justifiées, Journal de caisse, Reporting, Suivi budgétaire, Dashboard).
+Excel. **Depuis le 2026-10-08 : une seule ligne par demande** (voir « Retouches Trésorerie du 2026-10-08 » plus bas) —
+feuilles : Demandes (une ligne par demande), Mouvements banque, Retours externes, Fonds remis, Journal de caisse,
+Reporting (synthèse par catégorie/objet), Suivi budgétaire, Dashboard.
 
 Colonnes du tableau agrégé (par Catégorie puis Objet) :
 
@@ -2581,6 +2581,98 @@ inchangés) : « Écart » → **Solde à régulariser**, « Dépense déclarée
 
 Filtres disponibles : période, demandeur, **bénéficiaire** (distinct du
 demandeur), service, catégorie/objet, mode, statut, type de demande.
+
+### Retouches Trésorerie du 2026-10-08 (catégorie obligatoire, retour nul, reporting par demande)
+
+Aucune migration, aucun droit ni garde de conflit d'intérêts modifié, aucune écriture comptable existante touchée.
+
+- **Catégorie obligatoire pour valider** (`backend/src/categorisationObligatoire.ts`, pur, partagé serveur/écran) : une
+  ligne VALIDÉE doit porter une catégorie, une ligne rejetée non. Serveur : `validerLignesAction` (Finance à l'étape
+  Finance et à la décision finale, DG pour les lignes du cas b, nouvelle décision après une correction — les lignes
+  repassent en attente), `validerTotalementAction`/`validerPartiellementAction`/`validerComplementaireAction` (dépense
+  directe sans ligne, y compris le DG pour une dépense directe de la Finance pour elle-même). Écran : « Valider » grisé
+  par ligne avec la phrase, « Valider totalement / partiellement / complémentaire » grisés pour une dépense directe sans
+  catégorie (« Rejeter » reste possible). Non concernés (ne valident aucune ligne) : validation de l'étape Service,
+  validation du DG d'une demande soumise (la Finance décide ensuite les lignes), approbation de clôture. Retirer la
+  catégorie d'une ligne déjà validée n'a aucun chemin : `categoriserLigneAction` refuse une ligne décidée et exige une
+  catégorie, `categoriserDemandeAction` refuse hors attente, une catégorie utilisée ne se supprime pas. Il n'existe pas de
+  bouton « tout valider » : la décision groupée est l'unique « Enregistrer les décisions » de `validerLignesAction`.
+- **Retour nul** (`backend/src/retourNul.ts`) : quand le montant à rendre calculé vaut 0 sur un règlement Caisse, la
+  réception (`receptionnerRetourAction`, bouton « Constater le retour nul ») n'écrit **aucun** mouvement dans
+  `JournalCaisse` ; l'historique de la demande reçoit `retour_nul_constate` (auteur, date, heure, montants). Mêmes
+  gardes qu'avant (`treso.receptionner_retour`, jamais le demandeur ni le bénéficiaire) ; réception désormais
+  conditionnée (`updateMany` sur `estReceptionne: false` : deux clics simultanés, une seule écriture). Côté
+  collaborateur, quand un retour a déjà tout couvert, plus de bouton de déclaration mais « Rien à rendre… » ;
+  `creerRetourCaisseAction` refuse aussi ce cas. Le chemin de l'Assistant reste : déclarer (« Aucun retour du
+  collaborateur »), détailler, constater.
+- **Reçu PDF du retour** (`GET /api/treso/retours/[id]/recu`, `lib/pdf/RetourReceiptDocument.tsx`, styles partagés
+  avec `ReceiptDocument`) : disponible dès que le retour est réceptionné ou constaté nul ; référence
+  `<demande>-RC<rang>` (rang parmi les retours réceptionnés de la demande, ordre de réception) ; accès = celui de
+  l'écran du retour (`receptionner_retour`, `valider_demande`, `voir_dashboard_finance`) ou le créateur de la demande ;
+  404 tant que non réceptionné, 403 sinon. Liens sur le détail Finance du retour et sur l'écran du collaborateur.
+- **Reporting une ligne par demande** (`backend/src/reportingDemandeLigne.ts` pur + `getReportingParDemande` dans
+  `reporting.ts`, requêtes groupées) : écran (`ReportingDemandesTable`, en tête de page, synthèses par catégorie
+  conservées en dessous) et feuille Excel « Demandes » ont les mêmes colonnes (`COLONNES_REPORTING_DEMANDE`) :
+  Référence, Créée le, Type, Statut, Étape du circuit, Demandeur, Service, Bénéficiaire, Lignes d'articles, Demandé,
+  Validations (Service, Finance, DG), Validé, Règlements, Réglé, Dépenses, Dépensé, Dont justifié, Retours de caisse,
+  Remboursements, Ajustements et régularisations, Retourné, Solde. Cellules multi-valeurs = un élément par ligne.
+  Totaux = mêmes règles que `getTotalRegle`/`getDepensesDeclarees`/`getRetoursRecus`/`getEcart`. Feuilles retirées :
+  Validations, Règlements, Retours de caisse, Régularisations, Dépenses effectuées, Dépense sans pièce formelle,
+  Compléments et remboursements ; leurs huit fonctions `getReporting…Detail` (et `parseMontantValideCetteEtape`) ont
+  été supprimées de `reporting.ts` (2026-10-09, 534 lignes).
+- Vérifié : vitest (24 nouveaux tests, 364 au total), tsc, eslint, `next build` ; base PostgreSQL 16 jetable
+  (migrations depuis zéro, `migrate diff` vide) ; Playwright 47/47 (refus serveur par rejeu de la Server Action, rejet
+  sans catégorie accepté, dépense directe catégorisée puis validée, retour nul de bout en bout sans écriture de caisse,
+  reçu 200/403/404, Assistant bénéficiaire grisé, reporting et export sur une ligne par demande, filtre bénéficiaire,
+  mobile 390 px).
+
+#### Soumission au DG ligne par ligne (2026-10-10, suite des retouches)
+
+Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permission créés) : `LigneDemande.soumiseAuDG`,
+`soumiseDGAt`/`soumiseDGParId`, `decisionDG` (enum `DecisionLigneDG` : VALIDEE/REFUSEE, `null` = en attente du DG),
+`decisionDGAt`/`decisionDGParId`, `motifRefusDG`. La décision finale de la ligne reste `statutValidation`.
+- **Règles** (moteur pur `circuitDemande.ts`, tests `circuitLignesDG.test.ts`) : à l'étape Finance (ou à la décision
+  finale, ou pendant que le DG décide), la Finance (`treso.soumettre_dg`) soumet les lignes choisies
+  (`SOUMETTRE_LIGNES_DG`, catégorie obligatoire, `refusSoumissionLignes`) ; la demande passe ou reste à l'étape DG. Le DG
+  (`treso.decider_dg`) ne voit et ne décide que les lignes soumises, une par une (`DECIDER_LIGNE_DG`, motif ≥ 3 au refus) ;
+  la dernière décidée passe la demande à la décision finale. Une ligne refusée revient à la Finance : resoumise, ou
+  refusée définitivement à la décision finale. **DG définitif** (décision du 2026-10-10, `refusDecisionsFinales`) : une
+  ligne validée par le DG reste validée (son auteur et sa date sont gardés), une ligne refusée par le DG n'est jamais
+  validée par la Finance seule, et la Finance ne rejette plus la demande entière dès qu'une ligne est validée par le DG.
+  **Décision finale bloquée** tant qu'une ligne soumise attend le DG (`MESSAGE_LIGNES_EN_ATTENTE_DG`). Deux personnes :
+  un compte qui a décidé une ligne comme DG ne prend pas la décision finale. Catégorie d'une ligne soumise (en attente ou
+  validée) verrouillée.
+- **Clôture (règle 5, un seul endroit)** : `approbateurClotureParLignesDG` + constante
+  `APPROBATION_CLOTURE_SI_TOUTES_LIGNES_VALIDEES_PAR_DG` — la décision finale vaut approbation de clôture du DG (au nom
+  du DG qui a validé) seulement si toutes les lignes validées l'ont été par le DG ; sinon le DG l'approuve à la fin.
+- **Inchangés** : cas b (DG obligatoire, il décide toutes les lignes d'un coup, `validerLignesAction`), dépense directe
+  sans ligne (soumission et décision de la demande entière, étape « Rejet DG »), garde 8, rappels (48 h puis 24 h ; une
+  soumission complémentaire à l'étape DG ne change pas `etapeCircuitDepuis`).
+- **Base** (`circuitDemandeDb.ts`) : `soumettreLignesAuDG`, `deciderLigneDG`, verrou `SELECT … FOR UPDATE` sur la demande
+  (aussi dans `appliquerTransitionCircuit`) pour que deux décisions simultanées ne manquent jamais le passage à la
+  décision finale. Actions `soumettreLignesAuDGAction` / `deciderLigneDGAction` (`treso/circuit/actions.ts`), tout refus
+  annule la transaction. Historique : `soumission_lignes_dg`, `validation_ligne_dg`, `refus_ligne_dg` (visibles du
+  collaborateur, comme `soumission_dg`).
+- **Écrans** : Finance (`LignesValidationTable` : état DG par ligne, cases « Soumettre / Resoumettre au DG », décisions
+  verrouillées selon le DG ; plus de bouton « Soumettre au DG » de la demande entière), DG (`DecisionLignesDG` : lignes
+  soumises seulement), frise (« 2 lignes sur 4 soumises · 1 en attente… », `detailLignesDG`).
+- **Notifications** : le DG à chaque soumission ; la Finance qui peut agir (`decider_finance` ou `soumettre_dg`) à chaque
+  refus (`notificationRefusLigneDG`) — le refus de la dernière ligne en attente n'envoie que la notification de décision
+  finale (décompte validées/refusées), jamais deux.
+- **Rattrapage** (décision du 2026-10-10, selon l'étape) des demandes soumises par l'ancien circuit : toutes leurs lignes
+  « soumises » ; étape DG : en attente ; décision finale : validées par le DG (auteur et date de son approbation) ; rejet
+  DG : refusées (motif du rejet) et la demande passe à la décision finale ; terminées : historique seulement.
+- Reporting : colonne « Validations » complétée par ces actions (sinon incomplète). `supprimerUtilisateurAction` compte
+  les 2 nouvelles relations vers `User`.
+- Vérifié : vitest (31 tests, 396 au total), tsc, eslint, `next build` ; migration depuis zéro (72) et sur une base dans
+  l'ancien état (rattrapage contrôlé ligne par ligne, rejeu sans effet), `migrate diff` vide ; Playwright 39/39
+  (soumission partielle, refus puis resoumission, blocage et refus serveur de la décision finale, DG définitif côté
+  serveur, clôture mixte et tout-DG, notifications, historique, mobile 390 px).
+
+- **Détail des dépenses sans retour (2026-10-10)** : l'Assistant Finance détaille directement depuis la demande (`detaillerDepensesReglementAction`, règlement Caisse, demande non clôturée) ; le détail est rangé dans une fiche de régularisation (`RetourCaisse` créé d'office, `estFicheRegularisation`), montant à rendre = remis − détaillé (`calculerMontantARetournerNet`, inchangée) ; une déclaration ultérieure du collaborateur complète cette fiche (`completerFicheRegularisation`), la réception écrit seule en caisse ; retour nul possible, plus préalable.
+- **Correction du détail par l'Assistant (2026-10-10, suite du constat)** : tant que la demande n'est pas clôturée (réouverture exceptionnelle : règle existante), ni la réception du retour (retour nul compris) ni un signalement ne conditionnent plus la correction (`detaillerDepensesRetourAction`, `modifierDepenseDetailleeAction`, `detaillerResteAction`) ; un signalement actif reste résolu par la correction. **Pas de suppression** : une ligne se corrige par modification (libellé, montant, type avec ou sans pièce formelle, pièce jointe), motif obligatoire. Aucune dépense n'a d'écriture de caisse : correction sur l'enregistrement ; retour à total fixé (déclaré, ou réceptionné : remis − retourné, lié à l'écriture de la réception) → l'écart va dans la ligne de reste, une hausse au-delà est refusée (`planModificationDepense`) et un changement du montant rendu passe par complément / remboursement ; fiche de régularisation → total libre, montant à rendre recalculé.
+- **Reste « Dépenses non détaillées »** : calculé (ligne réécrite à chaque correction, ni modifiable ni supprimable), affiché comme reste avec « Détailler » (`detaillerResteAction`, `planAjoutLignes`) qui le transforme en vraies lignes. **Un seul composant** `components/tresorerie/DetailDepensesRetour.tsx` (totaux `totauxDetailRetour` : remis, détaillé, reste, sans pièce formelle, retourné ; lignes « Modifier » ; reste « Détailler ») sur l'écran du retour et dans la Régularisation de la demande ; l'écran du retour affiche aussi l'historique de la demande. Le collaborateur voit les lignes à jour en lecture seule et l'historique.
+- **Historique** : `detaillage_retour` (« Dépenses détaillées par l'Assistant Finance » : saisie et « Détailler »), `modification_depense` (JSON avant/après dont le type, motif, phrase `resumeModificationDepense`), anciennes entrées `suppression_depense` toujours lisibles ; aucune migration ; la « catégorie » d'une dépense = son type (justifiée / sans pièce formelle), `DepenseLigne` n'ayant pas de catégorie.
 
 ### Solde d'ouverture de caisse
 
