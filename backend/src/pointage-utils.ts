@@ -173,6 +173,92 @@ export function departTropTot(heureArrivee: Date, now: Date): boolean {
   return now.getTime() - heureArrivee.getTime() < DELAI_MINIMUM_DEPART_MINUTES * 60 * 1000;
 }
 
+/** Heure à partir de laquelle le départ est accepté : arrivée + `DELAI_MINIMUM_DEPART_MINUTES` (lot 3 bis). */
+export function heureDepartPossible(heureArrivee: Date): Date {
+  return new Date(heureArrivee.getTime() + DELAI_MINIMUM_DEPART_MINUTES * 60 * 1000);
+}
+
+/** Heure locale « HH:MM » (le serveur tourne à l'heure d'Abidjan, comme tout le module). */
+export function formatHeureLocale(d: Date): string {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Jour non ouvré : samedi, dimanche, ou jour férié enregistré par la RH (table `JourFerie`). Même règle que la
+ * détection des absences (`/api/cron/absences`) : jour de semaine local et date locale du jour férié.
+ */
+export function estJourNonOuvre(date: Date, joursFeries: readonly Date[] = []): boolean {
+  const jour = date.getDay();
+  if (jour === 0 || jour === 6) return true;
+  return joursFeries.some(
+    (f) => f.getFullYear() === date.getFullYear() && f.getMonth() === date.getMonth() && f.getDate() === date.getDate()
+  );
+}
+
+export interface ReglesPointage {
+  estRetard: boolean;
+  minutesRetard: number | null;
+  estDepartAnticipe: boolean;
+}
+
+/**
+ * Retard et départ anticipé d'un pointage (lot 3 bis) : la seule fonction qui les fixe, pour le pointage du
+ * collaborateur, la correction RH et le pointage exceptionnel RH. Un jour non ouvré n'a ni horaire ni retard ni
+ * départ anticipé (donc aucune justification).
+ */
+export function reglesPointage(
+  type: "ARRIVEE" | "DEPART",
+  now: Date,
+  horaires: HorairesPointage,
+  plages: readonly PlageHoraire[],
+  jourNonOuvre: boolean
+): ReglesPointage {
+  if (jourNonOuvre) return { estRetard: false, minutesRetard: null, estDepartAnticipe: false };
+  if (type === "ARRIVEE") {
+    const statut = checkLateStatus(now, horaires, plages);
+    return { estRetard: statut.estRetard, minutesRetard: statut.estRetard ? statut.minutesRetard : null, estDepartAnticipe: false };
+  }
+  return { estRetard: false, minutesRetard: null, estDepartAnticipe: estDepartAnticipe(now, horaires, plages) };
+}
+
+/**
+ * Mode de la page de pointage quand l'arrivée est déjà pointée (lot 3 bis). Départ automatique (`AUTO_DEPART`)
+ * seulement un jour OUVRÉ, au moins 30 minutes après l'arrivée, et si le départ n'est pas anticipé. Sinon `EN_POSTE` :
+ * le collaborateur clique sur le bouton de départ et confirme. Un jour non ouvré, jamais de départ automatique, quelle
+ * que soit l'ancienneté de l'arrivée (décision du 2026-10-11). `departPossibleA` : renseigné tant que les 30 minutes
+ * ne sont pas écoulées.
+ */
+export function choisirModeDepart(
+  heureArrivee: Date,
+  now: Date,
+  horaires: HorairesPointage,
+  plages: readonly PlageHoraire[],
+  jourNonOuvre: boolean
+): { mode: "AUTO_DEPART" | "EN_POSTE"; departPossibleA: Date | null } {
+  if (departTropTot(heureArrivee, now)) return { mode: "EN_POSTE", departPossibleA: heureDepartPossible(heureArrivee) };
+  if (jourNonOuvre) return { mode: "EN_POSTE", departPossibleA: null };
+  const { estDepartAnticipe: anticipe } = reglesPointage("DEPART", now, horaires, plages, false);
+  return { mode: anticipe ? "EN_POSTE" : "AUTO_DEPART", departPossibleA: null };
+}
+
+/** Message affiché quand une arrivée est refusée parce que la journée de travail est finie. */
+export const MESSAGE_JOURNEE_TERMINEE = "La journée de travail est terminée. Vous êtes considéré(e) comme absent(e).";
+
+/**
+ * Règle d'acceptation d'une arrivée par l'heure (lot 3 bis) : refusée à partir de `heureFinApresMidi` un jour ouvré
+ * seulement ; un jour non ouvré (présence exceptionnelle), acceptée à toute heure. `null` = acceptée.
+ */
+export function refusArriveeHoraire(
+  now: Date,
+  horaires: Pick<HorairesPointage, "heureFinApresMidi">,
+  jourNonOuvre: boolean
+): string | null {
+  if (jourNonOuvre) return null;
+  return getMinutesSinceMidnight(now) >= parseTimeStringToMinutes(horaires.heureFinApresMidi)
+    ? MESSAGE_JOURNEE_TERMINEE
+    : null;
+}
+
 /**
  * Convertit une heure "HH:MM" en minutes écoulées depuis minuit
  * pour faciliter les comparaisons mathématiques.

@@ -4,7 +4,8 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
-import { checkLateStatus, estDepartAnticipe as calculerDepartAnticipe, horairesPointage } from "backend";
+import { reglesPointage, horairesPointage } from "backend";
+import { lireJourNonOuvre } from "@/lib/joursOuvres";
 import { revalidatePath } from "next/cache";
 import { ActionState, fieldErrorsFromZod } from "backend";
 import { notify } from "@/lib/notifications";
@@ -63,10 +64,9 @@ export async function enregistrerPointageRHAction(
     select: { heureDebut: true, heureFin: true },
   });
 
-  const lateStatus = type === "ARRIVEE" ? checkLateStatus(pointageDate, horaires, plagesDuJour) : null;
-  const estRetard = lateStatus?.estRetard ?? false;
-  const minutesRetard = estRetard && lateStatus ? lateStatus.minutesRetard : null;
-  const estDepartAnticipe = type === "DEPART" && calculerDepartAnticipe(pointageDate, horaires, plagesDuJour);
+  // Lot 3 bis : un jour non ouvré n'a ni retard ni départ anticipé (même règle que le pointage du collaborateur).
+  const { jourNonOuvre } = await lireJourNonOuvre(pointageDate);
+  const { estRetard, minutesRetard, estDepartAnticipe } = reglesPointage(type, pointageDate, horaires, plagesDuJour, jourNonOuvre);
 
   try {
     const result = await prisma.$transaction(async (tx) => {

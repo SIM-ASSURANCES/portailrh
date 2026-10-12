@@ -3,13 +3,15 @@ import {prisma} from "backend";
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/PageHeader";
 import {
-  checkLateStatus,
-  estDepartAnticipe,
+  choisirModeDepart,
+  formatHeureLocale,
   getMessageDepart,
   horairesPointage,
   journeeCouverteParAbsence,
+  reglesPointage,
   timeToMinutes,
 } from "backend";
+import { lireJourNonOuvre } from "@/lib/joursOuvres";
 import { SmartPointage, PointageMode } from "../SmartPointage";
 
 export default async function PointagePage({ searchParams }: { searchParams: Promise<{ source?: string }> }) {
@@ -25,14 +27,8 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
-  // 1b. Vérifier si c'est un week-end ou un jour férié
-  const dayOfWeek = now.getDay();
-  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-  const jourFerie = await prisma.jourFerie.findFirst({
-    where: { date: { gte: startOfDay, lte: endOfDay } }
-  });
-  const isJourNonOuvre = isWeekend || !!jourFerie;
+  // 1b. Week-end ou jour férié : une seule règle (`estJourNonOuvre`, lot 3 bis), même source que les absences.
+  const { jourNonOuvre: isJourNonOuvre, jourFerie } = await lireJourNonOuvre(now);
 
   // 2. Récupérer les pointages d'aujourd'hui pour le collaborateur
   const pointagesDuJour = await prisma.pointage.findMany({
@@ -63,6 +59,7 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
   let mode: PointageMode = "TERMINE";
   let typePointage: "ARRIVEE" | "DEPART" = "ARRIVEE";
   let messageAuto = "";
+  let departPossibleA: { heure: string; iso: string } | undefined;
 
   if (pointagesDuJour.length === 0) {
     typePointage = "ARRIVEE";
@@ -77,7 +74,7 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
     } else if (currentMinutes >= limiteDepartMinutes) {
       mode = "ABSENCE_AUTO";
       messageAuto = "Journée terminée sans pointage. Vous avez été marqué(e) comme absent(e).";
-    } else if (!checkLateStatus(now, horaires, plagesDuJour).estRetard) {
+    } else if (!reglesPointage("ARRIVEE", now, horaires, plagesDuJour, false).estRetard) {
       // Lot 3 : même règle que le serveur (tolérance incluse, permission du matin prise en compte).
       mode = "AUTO_ARRIVEE";
       messageAuto = "Félicitations pour votre ponctualité ! Arrivée validée.";
@@ -87,13 +84,14 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
     }
   } else if (pointagesDuJour.length === 1) {
     typePointage = "DEPART";
-    // Lot 3 : départ automatique seulement s'il n'est pas anticipé (une permission de fin de journée avance l'heure) ;
-    // sinon le collaborateur doit confirmer son départ anticipé (EN_POSTE, jamais rien créé à l'ouverture).
-    if (!estDepartAnticipe(now, horaires, plagesDuJour)) {
-      mode = "AUTO_DEPART";
-      messageAuto = getMessageDepart();
-    } else {
-      mode = "EN_POSTE";
+    const arrivee = pointagesDuJour[0];
+    // Lot 3 bis : départ automatique seulement un jour ouvré, 30 min après l'arrivée, départ non anticipé ; sinon le
+    // collaborateur clique « Pointer mon départ » et confirme (jamais automatique un jour non ouvré).
+    const choix = choisirModeDepart(arrivee.heure, now, horaires, plagesDuJour, isJourNonOuvre);
+    mode = choix.mode;
+    if (choix.mode === "AUTO_DEPART") messageAuto = getMessageDepart();
+    if (choix.departPossibleA) {
+      departPossibleA = { heure: formatHeureLocale(choix.departPossibleA), iso: choix.departPossibleA.toISOString() };
     }
   }
 
@@ -111,6 +109,8 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
           messageAuto={messageAuto} 
           type={typePointage}
           source={isQR ? "QR_CODE" : "ORDINATEUR"}
+          departPossibleA={departPossibleA}
+          jourNonOuvre={isJourNonOuvre}
         />
       </div>
     </div>

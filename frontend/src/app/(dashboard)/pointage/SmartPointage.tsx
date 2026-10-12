@@ -15,6 +15,10 @@ interface Props {
   messageAuto: string;
   type: "ARRIVEE" | "DEPART";
   source: "QR_CODE" | "ORDINATEUR";
+  /** Lot 3 bis : arrivée de moins de 30 min, départ possible à partir de cette heure (« HH:MM » et instant exact). */
+  departPossibleA?: { heure: string; iso: string };
+  /** Jour non ouvré : départ toujours par le bouton, jamais anticipé (lot 3 bis). */
+  jourNonOuvre?: boolean;
 }
 
 // ─── Icône GPS ───────────────────────────────────────────────────────────────
@@ -118,7 +122,7 @@ function GeoFallbackPanel({
 }
 
 // ─── Composant principal ──────────────────────────────────────────────────────
-export function SmartPointage({ mode, messageAuto, type, source }: Props) {
+export function SmartPointage({ mode, messageAuto, type, source, departPossibleA, jourNonOuvre = false }: Props) {
   const [isPending, startTransition] = useTransition();
   const [isDone, setIsDone] = useState(false);
   // Départ anticipé : jamais automatique, le collaborateur confirme explicitement (lot 3).
@@ -132,6 +136,17 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
 
   const router = useRouter();
   const submittedRef = useRef<{ mode: string; type: string } | null>(null);
+
+  // Lot 3 bis : bouton de départ désactivé jusqu'à l'heure possible (arrivée + 30 min), puis réactivé sur place, sans
+  // rechargement (un rechargement pourrait déclencher un départ automatique pendant que la page reste simplement ouverte).
+  const [departDebloque, setDepartDebloque] = useState<string | null>(null);
+  useEffect(() => {
+    if (!departPossibleA) return;
+    const delai = Math.max(0, new Date(departPossibleA.iso).getTime() - Date.now());
+    const minuteur = setTimeout(() => setDepartDebloque(departPossibleA.iso), delai);
+    return () => clearTimeout(minuteur);
+  }, [departPossibleA]);
+  const departEnAttente = !!departPossibleA && departDebloque !== departPossibleA.iso;
 
   // ── Fonction de pointage, appelée avec ou sans coords GPS ──────────────────
   const submitPointage = (geoPayload?: { latitude: number; longitude: number; accuracy: number }) => {
@@ -290,8 +305,19 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
         )}
         <h2 className="text-xl font-bold mb-2">Vous êtes en poste</h2>
         <p className="text-muted-foreground mb-6">
-          Votre arrivée a été enregistrée. L&apos;heure de fin de journée n&apos;est pas encore atteinte.
+          {departPossibleA || jourNonOuvre
+            ? "Votre arrivée a été enregistrée."
+            : "Votre arrivée a été enregistrée. L'heure de fin de journée n'est pas encore atteinte."}
         </p>
+        {departEnAttente ? (
+          <p
+            role="status"
+            data-depart-possible
+            className="mb-4 rounded-md border border-info-border bg-info-bg px-3 py-2 text-sm text-info"
+          >
+            Départ possible à partir de {departPossibleA?.heure}
+          </p>
+        ) : null}
         {confirmDepart ? (
           <div className="space-y-3">
             <p className="font-bold">Confirmer mon départ maintenant ?</p>
@@ -318,10 +344,10 @@ export function SmartPointage({ mode, messageAuto, type, source }: Props) {
           <Button
             variant="primary"
             className="w-full"
-            disabled={!departPossible}
+            disabled={!departPossible || departEnAttente}
             onClick={() => setConfirmDepart(true)}
           >
-            Pointer mon départ anticipé
+            {departPossibleA || jourNonOuvre ? "Pointer mon départ" : "Pointer mon départ anticipé"}
           </Button>
         )}
       </Card>

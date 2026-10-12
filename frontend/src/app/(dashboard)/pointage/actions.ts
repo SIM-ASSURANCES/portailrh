@@ -9,8 +9,11 @@ import {
   timeToMinutes,
   getTrustedClientIp,
   isOfficeIpAllowed,
-  checkLateStatus,
-  estDepartAnticipe as calculerDepartAnticipe,
+  reglesPointage,
+  refusArriveeHoraire,
+  heureDepartPossible,
+  formatHeureLocale,
+  type HorairesPointage,
   departTropTot,
   horairesPointage,
   DELAI_MINIMUM_DEPART_MINUTES,
@@ -24,6 +27,7 @@ import { revalidatePath } from "next/cache";
 import { pointageEmitter } from "@/lib/events";
 import { ActionState, fieldErrorsFromZod } from "backend";
 import { notifyByPermission } from "@/lib/notifications";
+import { lireJourNonOuvre } from "@/lib/joursOuvres";
 
 const pointageSchema = z.object({
   source: z.enum(["QR_CODE", "ORDINATEUR"]),
@@ -152,53 +156,13 @@ export async function enregistrerPointageAction(
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 4. Vérification des règles d'horaires
+  // 4. Règles d'horaires du jour (lot 3 bis : jour non ouvré = ni retard, ni départ anticipé, ni justification)
   // ─────────────────────────────────────────────────────────────────────────
   const horaires = horairesPointage(parametrage);
-  const limiteDepartMinutes = timeToMinutes(horaires.heureFinApresMidi);
-
   const now = new Date();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-  const allToday = await prisma.pointage.findMany({
-    where: {
-      userId: session.user.id,
-      heure: { gte: startOfDay, lte: endOfDay },
-    },
-    select: { type: true, heure: true },
-  });
-
-  const hasArrivee = allToday.some((p) => p.type === "ARRIVEE");
-  const hasDepart = allToday.some((p) => p.type === "DEPART");
-
-  if (type === "ARRIVEE" && hasArrivee) {
-    return { status: "error", message: "Vous avez déjà pointé votre arrivée aujourd'hui." };
-  }
-  if (type === "ARRIVEE" && currentMinutes >= limiteDepartMinutes) {
-    return { status: "error", message: "La journée de travail est terminée. Vous êtes considéré(e) comme absent(e)." };
-  }
-  if (type === "DEPART" && hasDepart) {
-    return { status: "error", message: "Vous avez déjà pointé votre départ aujourd'hui." };
-  }
-  if (type === "DEPART" && !hasArrivee) {
-    return { status: "error", message: "Vous devez pointer votre arrivée avant votre départ." };
-  }
-  if (allToday.length >= 2) {
-    return { status: "error", message: "Vous avez déjà complété vos pointages pour aujourd'hui." };
-  }
-
-  // Lot 3 : un départ moins de 30 minutes après l'arrivée est refusé (évite un double scan accidentel).
-  const arrivee = allToday.find((p) => p.type === "ARRIVEE");
-  if (type === "DEPART" && arrivee && departTropTot(arrivee.heure, now)) {
-    const possibleA = new Date(arrivee.heure.getTime() + DELAI_MINIMUM_DEPART_MINUTES * 60 * 1000);
-    return {
-      status: "error",
-      message: `Départ impossible moins de ${DELAI_MINIMUM_DEPART_MINUTES} minutes après votre arrivée (pointée à ${formatHeure(arrivee.heure)}). Vous pourrez pointer votre départ à partir de ${formatHeure(possibleA)}.`,
-    };
-  }
+  const { jourNonOuvre } = await lireJourNonOuvre(now);
 
   // Permissions du jour : repoussent l'heure de référence de l'arrivée, avancent celle du départ.
   const plagesDuJour = await prisma.plageAbsenceAutorisee.findMany({
@@ -209,25 +173,29 @@ export async function enregistrerPointageAction(
   const heurePrevue = type === "ARRIVEE" ? horaires.heureDebutMatin : horaires.heureFinApresMidi;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 5. Retard et départ anticipé : une seule règle (lot 3), aucun motif demandé ici
+  // 5. Retard et départ anticipé : une seule règle (`reglesPointage`), aucun motif demandé ici
   // ─────────────────────────────────────────────────────────────────────────
-  let estRetard = false;
-  let minutesRetard: number | null = null;
-  if (type === "ARRIVEE") {
-    const lateStatus = checkLateStatus(now, horaires, plagesDuJour);
-    estRetard = lateStatus.estRetard;
-    minutesRetard = estRetard ? lateStatus.minutesRetard : null;
-  }
-  const estDepartAnticipe = type === "DEPART" && calculerDepartAnticipe(now, horaires, plagesDuJour);
+  const { estRetard, minutesRetard, estDepartAnticipe } = reglesPointage(type, now, horaires, plagesDuJour, jourNonOuvre);
 
   // Source effective : GEOLOCALISATION si fallback, sinon source déclarée
   const sourceEffective = geoFallbackUsed ? "GEOLOCALISATION" : source;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 6. Écriture atomique (Pointage + Traces d'historique)
+  // 6. Écriture atomique. Lot 3 bis : la relecture des pointages du jour, les refus et la création se font dans la
+  // même transaction, sous un verrou par collaborateur et par jour (deux onglets simultanés : un seul pointage).
   // ─────────────────────────────────────────────────────────────────────────
   try {
     await prisma.$transaction(async (tx) => {
+      const cleVerrou = `pointage:${session.user.id}:${startOfDay.getFullYear()}-${startOfDay.getMonth() + 1}-${startOfDay.getDate()}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${cleVerrou})::bigint)`;
+
+      const allToday = await tx.pointage.findMany({
+        where: { userId: session.user.id, heure: { gte: startOfDay, lte: endOfDay } },
+        select: { type: true, heure: true },
+      });
+      const refus = refusPointage(type, now, allToday, horaires, jourNonOuvre);
+      if (refus) throw new RefusPointage(refus);
+
       const pointage = await tx.pointage.create({
         data: {
           type,
@@ -322,9 +290,42 @@ export async function enregistrerPointageAction(
       };
     }
     return { status: "success", message: "Pointage enregistré avec succès." };
-  } catch {
+  } catch (e) {
+    if (e instanceof RefusPointage) return { status: "error", message: e.message };
     return { status: "error", message: "Erreur lors de l'enregistrement en base." };
   }
+}
+
+/** Refus métier levé dans la transaction du pointage (annule la transaction, message renvoyé tel quel). */
+class RefusPointage extends Error {}
+
+/**
+ * Refus d'un pointage au vu des pointages du jour, relus sous le verrou. Libellés inchangés (lot 3) ; l'arrivée après
+ * la fin de journée n'est refusée qu'un jour ouvré (`refusArriveeHoraire`, lot 3 bis).
+ */
+function refusPointage(
+  type: "ARRIVEE" | "DEPART",
+  now: Date,
+  allToday: { type: "ARRIVEE" | "DEPART"; heure: Date }[],
+  horaires: HorairesPointage,
+  jourNonOuvre: boolean
+): string | null {
+  const hasArrivee = allToday.some((p) => p.type === "ARRIVEE");
+  const hasDepart = allToday.some((p) => p.type === "DEPART");
+  if (type === "ARRIVEE" && hasArrivee) return "Vous avez déjà pointé votre arrivée aujourd'hui.";
+  if (type === "ARRIVEE") {
+    const refusHoraire = refusArriveeHoraire(now, horaires, jourNonOuvre);
+    if (refusHoraire) return refusHoraire;
+  }
+  if (type === "DEPART" && hasDepart) return "Vous avez déjà pointé votre départ aujourd'hui.";
+  if (type === "DEPART" && !hasArrivee) return "Vous devez pointer votre arrivée avant votre départ.";
+  if (allToday.length >= 2) return "Vous avez déjà complété vos pointages pour aujourd'hui.";
+  // Un départ moins de 30 minutes après l'arrivée est refusé (évite un double scan accidentel).
+  const arrivee = allToday.find((p) => p.type === "ARRIVEE");
+  if (type === "DEPART" && arrivee && departTropTot(arrivee.heure, now)) {
+    return `Départ impossible moins de ${DELAI_MINIMUM_DEPART_MINUTES} minutes après votre arrivée (pointée à ${formatHeure(arrivee.heure)}). Vous pourrez pointer votre départ à partir de ${formatHeure(heureDepartPossible(arrivee.heure))}.`;
+  }
+  return null;
 }
 
 export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState> {
@@ -442,7 +443,5 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
   return { status: "success", message: "Absence automatique enregistrée." };
 }
 
-/** Heure locale « HH:MM » (le serveur tourne à l'heure d'Abidjan, comme tout le module). */
-function formatHeure(d: Date): string {
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
+/** Heure locale « HH:MM » (une seule mise en forme, `formatHeureLocale`). */
+const formatHeure = formatHeureLocale;

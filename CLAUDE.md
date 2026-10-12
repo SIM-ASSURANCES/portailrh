@@ -4381,6 +4381,38 @@ Aucune migration, aucune permission.
   Test »/envoyé, 390 px sans défilement horizontal, export à 3 feuilles avec 60 et 55 lignes, colonnes et valeurs
   identiques à l'écran (ancien motif en repli), aucune erreur JavaScript.
 
+### 13. Pointage V2 — lot 3 bis : jour non ouvré, départ avant 30 min, double départ (2026-10-11)
+
+Corrige les 4 écarts relevés par la vérification du lot 3. Aucune migration, aucune permission.
+- **Jour non ouvré** : `estJourNonOuvre(date, joursFeries)` (`backend/src/pointage-utils.ts`) — samedi, dimanche ou date
+  de la table `JourFerie`, la même règle que la détection des absences (jour local), lue en base par `lireJourNonOuvre`
+  (`frontend/src/lib/joursOuvres.ts`). `reglesPointage(type, now, horaires, plages, jourNonOuvre)` est désormais la
+  SEULE fonction qui fixe retard, minutes et départ anticipé : tous nuls un jour non ouvré, donc aucune justification.
+  Utilisée par `enregistrerPointageAction`, `pointer/page.tsx`, la correction RH et le pointage exceptionnel RH. Seule
+  `enregistrerPointageAction` crée une justification : la tâche de relances n'a rien à traiter un jour non ouvré.
+- **Présence exceptionnelle** : `refusArriveeHoraire` refuse l'arrivée à partir de `heureFinApresMidi` un jour ouvré
+  seulement (même libellé `MESSAGE_JOURNEE_TERMINEE`). Le pointage compte dans « Présences » et jamais dans les retards.
+- **Départ avant 30 min** : `heureDepartPossible(arrivée)` (= arrivée + 30 min). Le serveur garde le refus et son
+  libellé. La page ne passe jamais en `AUTO_DEPART` dans ce cas (mode `EN_POSTE`) ; `SmartPointage` affiche « Départ
+  possible à partir de HH:MM » en information (`role="status"`, ton `info`, pas de toast), bouton « Pointer mon
+  départ » désactivé puis réactivé par un minuteur, **sans rechargement** (un rechargement pourrait déclencher un départ
+  automatique pendant que la page reste simplement ouverte).
+- **Tranché le 2026-10-11 : un jour non ouvré, jamais de départ automatique**, quelle que soit l'ancienneté de
+  l'arrivée : la page reste « en poste » avec le bouton « Pointer mon départ » puis confirmation (départ jamais
+  anticipé). Le départ automatique (`AUTO_DEPART`) ne vaut qu'un jour ouvré, 30 min après l'arrivée, départ non
+  anticipé. Seule règle : `choisirModeDepart(arrivée, now, horaires, plages, jourNonOuvre)` (`pointage-utils.ts`),
+  utilisée par `pointer/page.tsx` (prop `jourNonOuvre` de `SmartPointage` pour le libellé du bouton).
+- **Double départ** : dans `enregistrerPointageAction`, relecture des pointages du jour, refus (`refusPointage`, libellés
+  inchangés) et création dans une seule transaction sous `pg_advisory_xact_lock(hashtext('pointage:<user>:<jour>'))`.
+- **Tests** : vitest `jourNonOuvrePointage.test.ts` (samedi, dimanche, jour férié, jour ouvré, acceptation de
+  l'arrivée, heure de départ possible). **Playwright conservé dans le dépôt** : `e2e/` (README, `base-jetable.sh`,
+  `arreter.sh`, `pointage-lot3bis.mjs` ; Playwright installé sans l'enregistrer, base PostgreSQL jetable uniquement).
+  Résultat 22/22, lancé un dimanche : présence exceptionnelle sans retard ni justification ; réouverture de la page
+  plus de 30 min après l'arrivée : aucun départ créé, bouton « Pointer mon départ » ; départ confirmé non anticipé, tâche
+  de relances sans justification, reporting (1 présence, 0 retard, 0 départ anticipé) ; message d'information, bouton
+  désactivé puis réactivé sans rechargement, aucun toast rouge ; deux confirmations simultanées → un seul départ, l'autre
+  « déjà pointé ». Le jour férié est testé par vitest, et par le script s'il est lancé en semaine (férié inséré).
+
 ## Module FeedbackApp — anonymat total
 
 Troisième module : permet à QUICONQUE (employé connecté ou visiteur sans

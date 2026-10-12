@@ -140,6 +140,12 @@ nécessaire.
   `reportingDetailsPointage.test.ts`) ; section et feuille « Départs anticipés » (sans colonne de minutes) ; export sans
   limite de lignes, écran paginé à 50 avec mention. Détail : `CLAUDE.md`, section 12.
 
+**Lot 3 bis — corrections du lot 3** (non commité, 2026-10-11)
+- `estJourNonOuvre`, `reglesPointage`, `refusArriveeHoraire`, `heureDepartPossible` (`pointage-utils.ts`, tests
+  `jourNonOuvrePointage.test.ts`), `lireJourNonOuvre` ; jour non ouvré sans retard, départ anticipé ni justification ;
+  présence exceptionnelle acceptée à toute heure un jour non ouvré ; « Départ possible à partir de HH:MM » ; verrou par
+  collaborateur et par jour contre le double départ ; Playwright dans `e2e/`. Détail : `CLAUDE.md`, section 13.
+
 ## 4. Lots restants
 
 Chaque lot fait l'objet d'un commit séparé, testé, avec un message au format des commits existants. La logique
