@@ -7,6 +7,7 @@ import { Input } from "@/components/ui";
 import { getSession, signIn } from "@/lib/auth";
 import { headers } from "next/headers";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { cheminRetourConnexion, origineSiteConfiguree, seSouvenirDeMoiParDefaut } from "backend";
 
 import { AuthShell } from "../AuthShell";
 import { LoginSubmitButton } from "./LoginSubmitButton";
@@ -26,16 +27,14 @@ async function authenticate(formData: FormData) {
   // Limite à 5 tentatives par minute par IP+email
   const rlKey = `login_${ip}_${email}`;
   if (!checkRateLimit(rlKey, 5, 60 * 1000)) {
-    const callbackUrl = String(formData.get("callbackUrl") || "/");
+    const callbackUrl = cheminRetourConnexion(formData.get("callbackUrl"), origineSiteConfiguree());
     redirect(`/login?error=2&callbackUrl=${encodeURIComponent(callbackUrl)}`);
   }
 
   try {
-    const rawCallbackUrl = String(formData.get("callbackUrl") || "/");
-    const callbackUrl =
-      rawCallbackUrl.startsWith("/") && !rawCallbackUrl.startsWith("/login")
-        ? rawCallbackUrl
-        : "/";
+    // Seul point de validation du retour après connexion (`cheminRetour.ts`) ; origine de référence = configuration
+    // (`AUTH_URL`), jamais l'en-tête Host envoyé par le client.
+    const callbackUrl = cheminRetourConnexion(formData.get("callbackUrl"), origineSiteConfiguree());
     await signIn("credentials", {
       email: formData.get("email"),
       password: formData.get("password"),
@@ -48,7 +47,7 @@ async function authenticate(formData: FormData) {
     });
   } catch (error) {
     if (error instanceof AuthError) {
-      const callbackUrl = String(formData.get("callbackUrl") || "/");
+      const callbackUrl = cheminRetourConnexion(formData.get("callbackUrl"), origineSiteConfiguree());
       redirect(`/login?error=1&callbackUrl=${encodeURIComponent(callbackUrl)}`);
     }
     throw error;
@@ -71,6 +70,9 @@ export default async function LoginPage({
   }
 
   const { error, callbackUrl, activated, reset } = await searchParams;
+  // Une seule lecture du chemin de retour, par le point de validation unique (`cheminRetour.ts`) ; la case « Se souvenir
+  // de moi » est cochée par défaut sur ce chemin VALIDÉ quand il mène au pointage (lot 6) — décochable à tout moment.
+  const cheminRetour = cheminRetourConnexion(callbackUrl, origineSiteConfiguree());
 
   return (
     <AuthShell>
@@ -132,7 +134,7 @@ export default async function LoginPage({
           required
           autoComplete="current-password"
         />
-        <input type="hidden" name="callbackUrl" value={callbackUrl ?? "/"} />
+        <input type="hidden" name="callbackUrl" value={cheminRetour} />
 
         {/* "Se souvenir de moi" + Lien "Mot de passe oublié ?" */}
         <div className="flex items-center justify-between text-sm">
@@ -140,6 +142,7 @@ export default async function LoginPage({
             <input
               type="checkbox"
               name="rememberMe"
+              defaultChecked={seSouvenirDeMoiParDefaut(cheminRetour)}
               className="h-4 w-4 rounded border-border accent-primary"
             />
             Se souvenir de moi

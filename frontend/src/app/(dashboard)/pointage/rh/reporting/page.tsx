@@ -7,7 +7,9 @@ import {
   getCollaborateursFiltres,
   getReportingAgrégé,
   getDetailsRetards,
-  getReportingPeriodConstraints
+  getDetailsDepartsAnticipes,
+  getReportingPeriodConstraints,
+  type LigneDetailPointage,
 } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -43,9 +45,10 @@ export default async function ReportingRHPage({
     // Ou bien on affiche l'erreur sur la page
   }
 
-  const currentPage = Number(extractString(params.page)) || 1;
+  // L'écran pagine chaque détail (50 lignes) ; l'export, lui, contient toutes les lignes.
   const pageSize = 50;
-  const skip = (currentPage - 1) * pageSize;
+  const currentPage = Math.max(1, Number(extractString(params.page)) || 1);
+  const pageDeparts = Math.max(1, Number(extractString(params.pageDeparts)) || 1);
 
   const queryParams = new URLSearchParams();
   if (filters.dateDebut) queryParams.set("dateDebut", filters.dateDebut);
@@ -55,11 +58,17 @@ export default async function ReportingRHPage({
   
   const exportUrl = `/api/pointage/rh/reporting/export?${queryParams.toString()}`;
 
-  const [services, collaborateurs, agrege, details] = await Promise.all([
+  const vide = { data: [] as LigneDetailPointage[], total: 0 };
+  const [services, collaborateurs, agrege, details, departs] = await Promise.all([
     getServicesUniques(),
     getCollaborateursFiltres(),
     !periodCheck.error ? getReportingAgrégé(filters) : Promise.resolve([]),
-    !periodCheck.error ? getDetailsRetards(filters, skip, pageSize) : Promise.resolve({ data: [], total: 0 }),
+    !periodCheck.error
+      ? getDetailsRetards(filters, { skip: (currentPage - 1) * pageSize, take: pageSize })
+      : Promise.resolve(vide),
+    !periodCheck.error
+      ? getDetailsDepartsAnticipes(filters, { skip: (pageDeparts - 1) * pageSize, take: pageSize })
+      : Promise.resolve(vide),
   ]);
 
   return (
@@ -94,35 +103,85 @@ export default async function ReportingRHPage({
             <ReportingSummaryTable data={agrege} />
           </section>
 
-          <section>
-            <div className="flex justify-between items-end mb-4">
-              <h2 className="text-xl font-bold">Détail des retards</h2>
-              <div className="text-sm text-muted-foreground">
-                Total : {details.total}
-              </div>
-            </div>
-            <ReportingDetailsTable data={details.data} />
-            
-            {details.total > pageSize && (
-              <div className="flex items-center justify-between py-4">
-                <a 
-                  href={`?${new URLSearchParams({ ...Object.fromEntries(queryParams), page: String(Math.max(1, currentPage - 1)) }).toString()}`}
-                  className={`px-4 py-2 border rounded-md ${currentPage <= 1 ? "opacity-50 pointer-events-none" : ""}`}
-                >
-                  Précédent
-                </a>
-                <span>Page {currentPage} / {Math.ceil(details.total / pageSize)}</span>
-                <a 
-                  href={`?${new URLSearchParams({ ...Object.fromEntries(queryParams), page: String(currentPage + 1) }).toString()}`}
-                  className={`px-4 py-2 border rounded-md ${currentPage * pageSize >= details.total ? "opacity-50 pointer-events-none" : ""}`}
-                >
-                  Suivant
-                </a>
-              </div>
-            )}
-          </section>
+          <SectionDetail
+            titre="Détail des retards"
+            details={details}
+            page={currentPage}
+            paramPage="page"
+            pageSize={pageSize}
+            queryParams={queryParams}
+            autresParams={{ pageDeparts: String(pageDeparts) }}
+            avecMinutesRetard
+          />
+
+          <SectionDetail
+            titre="Détail des départs anticipés"
+            details={departs}
+            page={pageDeparts}
+            paramPage="pageDeparts"
+            pageSize={pageSize}
+            queryParams={queryParams}
+            autresParams={{ page: String(currentPage) }}
+            avecMinutesRetard={false}
+          />
         </div>
       )}
     </div>
+  );
+}
+
+/** Section de détail paginée ; signale quand l'écran n'affiche qu'une partie des lignes (l'export les contient toutes). */
+function SectionDetail({
+  titre,
+  details,
+  page,
+  paramPage,
+  pageSize,
+  queryParams,
+  autresParams,
+  avecMinutesRetard,
+}: {
+  titre: string;
+  details: { data: LigneDetailPointage[]; total: number };
+  page: number;
+  paramPage: string;
+  pageSize: number;
+  queryParams: URLSearchParams;
+  autresParams: Record<string, string>;
+  avecMinutesRetard: boolean;
+}) {
+  const lien = (p: number) =>
+    `?${new URLSearchParams({ ...Object.fromEntries(queryParams), ...autresParams, [paramPage]: String(p) }).toString()}`;
+  const tronque = details.total > pageSize;
+  return (
+    <section>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+        <h2 className="text-xl font-bold">{titre}</h2>
+        <div className="text-sm text-muted-foreground" data-total>
+          {tronque
+            ? `${details.data.length} lignes affichées sur ${details.total}, export complet disponible`
+            : `Total : ${details.total}`}
+        </div>
+      </div>
+      <ReportingDetailsTable data={details.data} avecMinutesRetard={avecMinutesRetard} />
+
+      {tronque && (
+        <div className="flex items-center justify-between py-4">
+          <a
+            href={lien(Math.max(1, page - 1))}
+            className={`px-4 py-2 border rounded-md ${page <= 1 ? "opacity-50 pointer-events-none" : ""}`}
+          >
+            Précédent
+          </a>
+          <span>Page {page} / {Math.ceil(details.total / pageSize)}</span>
+          <a
+            href={lien(page + 1)}
+            className={`px-4 py-2 border rounded-md ${page * pageSize >= details.total ? "opacity-50 pointer-events-none" : ""}`}
+          >
+            Suivant
+          </a>
+        </div>
+      )}
+    </section>
   );
 }

@@ -1,7 +1,7 @@
 import { getSession } from "@/lib/auth";
 import { PageHeader } from "@/components/ui";
 import { StatCard } from "@/components/ui/StatCard";
-import { prisma } from "backend";
+import { horairesPointage, justificationAffichee, prisma, utilisateursCouvertsParAbsence } from "backend";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth, format } from "date-fns";
 import { PresenceTabs, PresenceData } from "./PresenceTabs";
 import { Card } from "@/components/ui/Card";
@@ -33,7 +33,7 @@ export default async function PresenceDuJourPage({
 
   const isWeekend = now.getDay() === 0 || now.getDay() === 6;
 
-  const [pointagesDb, absentsDb, retardsDuMois, parametrage, jourFerie] = await Promise.all([
+  const [pointagesDb, absentsDb, retardsDuMois, parametrage, jourFerie, plagesDuJour] = await Promise.all([
     prisma.pointage.findMany({
       where: {
         heure: {
@@ -54,7 +54,9 @@ export default async function PresenceDuJourPage({
         motif: true,
         source: true,
         geoDistance: true,
-        user: { select: { fullName: true, email: true } }
+        user: { select: { fullName: true, email: true } },
+        // Pointage V2, lot 7 : statut réel de la justification (retard ou départ anticipé) et son motif.
+        justification: { select: { statut: true, motif: true, decideur: { select: { fullName: true } } } },
       },
     }),
     prisma.absence.findMany({
@@ -95,6 +97,12 @@ export default async function PresenceDuJourPage({
         },
       },
     }),
+    // Pointage V2, lot 7 : absences autorisées du jour (congés, permissions).
+    prisma.plageAbsenceAutorisee.findMany({
+      where: { date: { gte: todayStart, lte: todayEnd }, user: { isActive: true } },
+      select: { userId: true, heureDebut: true, heureFin: true, source: true, user: { select: { fullName: true, email: true } } },
+      orderBy: { heureDebut: "asc" },
+    }),
   ]);
 
   const isJourNonOuvre = isWeekend || !!jourFerie;
@@ -123,11 +131,15 @@ export default async function PresenceDuJourPage({
       if (p.estRetard) {
         u.estRetard = true;
         u.minutesRetard = (u.minutesRetard || 0) + (p.minutesRetard || 0);
-        u.motif = p.motif;
+        // Statut réel et motif de la justification, repli sur l'ancien motif du pointage (`justificationAffichee`).
+        u.justification = justificationAffichee(p);
+        u.motif = u.justification.motif;
       }
     } else if (p.type === "DEPART" && !u.depart) {
       u.depart = p.heure.toISOString();
       u.departPrevu = p.heurePrevue;
+      // Départ anticipé : justification lue de la même façon (aucune pour un départ à l'heure).
+      if (p.justification) u.justificationDepart = justificationAffichee(p);
     }
   });
 
@@ -135,12 +147,18 @@ export default async function PresenceDuJourPage({
   const presentsCount = presents.length;
   const retardsCount = presents.filter(p => p.estRetard).length;
   const retards = presents.filter(p => p.estRetard);
-  const absentsCount = absentsDb.length;
 
-  // Calcul des manquants (ni présents, ni déclarés absents)
+  // Absence autorisée (lot 7) : journée entièrement couverte par un congé ou une permission, même règle que le cron des
+  // absences (`journeeCouverteParAbsence`) — apparaît comme telle, jamais comme absent ni manquant.
   const presentsIds = presents.map((p) => p.userId);
+  const couvertsIds = utilisateursCouvertsParAbsence(plagesDuJour, horairesPointage(parametrage));
+  presentsIds.forEach((id) => couvertsIds.delete(id));
+  const absentsReels = absentsDb.filter((a) => !couvertsIds.has(a.userId));
+  const absentsCount = absentsReels.length;
+
+  // Calcul des manquants (ni présents, ni déclarés absents, ni en absence autorisée)
   const absentsIds = absentsDb.map((a) => a.userId);
-  const exclusIds = [...presentsIds, ...absentsIds];
+  const exclusIds = [...presentsIds, ...absentsIds, ...couvertsIds];
 
   const retardsUserIds = retardsDuMois.map((r) => r.userId);
 
@@ -184,11 +202,23 @@ export default async function PresenceDuJourPage({
 
   const manquantsCount = manquantsEffectifs.length;
 
-  const absents: PresenceData[] = absentsDb.map(a => ({
+  const absents: PresenceData[] = absentsReels.map(a => ({
     userId: a.userId,
     fullName: a.user.fullName,
     email: a.user.email
   }));
+
+  const autorises: PresenceData[] = [...couvertsIds].map((id) => {
+    const plages = plagesDuJour.filter((pl) => pl.userId === id);
+    return {
+      userId: id,
+      fullName: plages[0].user.fullName,
+      email: plages[0].user.email,
+      absenceAutorisee: plages
+        .map((pl) => `${pl.source === "CONGE" ? "Congé" : "Permission"} ${pl.heureDebut}–${pl.heureFin}`)
+        .join(", "),
+    };
+  });
 
   const manquants: PresenceData[] = manquantsEffectifs.map(m => ({
     userId: m.id,
@@ -238,7 +268,7 @@ export default async function PresenceDuJourPage({
         <RecoverAbsencesButton dateStr={format(now, "yyyy-MM-dd")} isEndOfDayPassed={isEndOfDayPassed} />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard
           icon="check-circle"
           tone="info"
@@ -258,6 +288,12 @@ export default async function PresenceDuJourPage({
           value={absentsCount}
         />
         <StatCard
+          icon="calendar"
+          tone="info"
+          label="Absences autorisées"
+          value={autorises.length}
+        />
+        <StatCard
           icon="help-circle"
           tone="info"
           label="Manquants"
@@ -272,6 +308,7 @@ export default async function PresenceDuJourPage({
             presents={presents} 
             retards={retards} 
             absents={absents} 
+            autorises={autorises}
             manquants={manquants} 
           />
         </div>

@@ -142,6 +142,11 @@ export interface NavFlags {
   demandesServiceAValider?: number | null;
   /** Circuit de validation : demandes à l'étape DG (`treso.decider_dg`), `null` sans cette permission (entrée absente). */
   demandesDGADecider?: number | null;
+  /**
+   * Pointage V2 (lot 4) : justifications de retard ou de départ anticipé dont ce compte est le décideur actuel.
+   * `null` si le compte n'est ni responsable d'un service ni RH du pointage (entrée absente), sinon le nombre.
+   */
+  justificationsADecider?: number | null;
 }
 
 /**
@@ -231,6 +236,7 @@ export function getNavBranches({
   canConsulterEncaissements,
   demandesServiceAValider = null,
   demandesDGADecider = null,
+  justificationsADecider = null,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -386,6 +392,16 @@ export function getNavBranches({
           items: [
             ...(canPointer ? [{ label: "Pointer", href: "/pointage/pointer", icon: "qr-code" } satisfies NavItem] : []),
             ...(canConsulterHistorique ? [{ label: "Mon historique", href: "/pointage/historique", icon: "book-text" } satisfies NavItem] : []),
+            ...(justificationsADecider !== null
+              ? [
+                  {
+                    label: "Justifications",
+                    href: "/pointage/justifications",
+                    icon: "check-circle",
+                    compteur: justificationsADecider,
+                  } satisfies NavItem,
+                ]
+              : []),
           ],
         },
         ...(canAccessPointageRH
@@ -458,7 +474,8 @@ export function getNavBranches({
     },
   ];
 
-  if (!hasPointageAccess) {
+  // Un responsable de service sans permission `pointage.*` garde la branche pour ses justifications à traiter.
+  if (!hasPointageAccess && justificationsADecider === null) {
     branches.splice(
       branches.findIndex((b) => b.key === "pointage"),
       1

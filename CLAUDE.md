@@ -4280,7 +4280,7 @@ la latence réelle hors de cet artefact.
 Module complet de gestion des temps de présence, retards, départs anticipés et absences du personnel, développé et durci par Thierry Kouame.
 
 ### 1. Modèle de données & Rôles
-- **Modèles Prisma** ([backend/prisma/schema.prisma](backend/prisma/schema.prisma)) : `Pointage` (sources `QR_CODE`, `ORDINATEUR`, `RH_EXCEPTIONNEL`, `GEOLOCALISATION`), `ParametrageHoraire` (horaires et coordonnées GPS bureau), `CorrectionPointage` (registre d'audit transparent, zéro édition silencieuse), `Absence` (`A_CONTROLER`, `CONFIRMEE`, `JUSTIFIEE`), `JourFerie` (jours chômés).
+- **Modèles Prisma** ([backend/prisma/schema.prisma](backend/prisma/schema.prisma)) : `Pointage` (sources `QR_CODE`, `ORDINATEUR`, `RH_EXCEPTIONNEL`, `GEOLOCALISATION`), `ParametrageHoraire` (horaires et coordonnées GPS bureau), `CorrectionPointage` (registre d'audit transparent, zéro édition silencieuse), `Absence` (`A_CONTROLER`, `CONFIRMEE`, `JUSTIFIEE`), `JourFerie` (jours chômés), **`JustificationPointage`** (Pointage V2 : une par retard ou départ anticipé, statuts `EN_ATTENTE`/`SOUMISE`/`ACCEPTEE`/`REFUSEE`/`NON_JUSTIFIEE`, décideur = responsable du service, **repli RH = un autre compte dont le rôle porte `pointage.corriger_pointage`, dernier recours le DG (`treso.decider_dg`)**, voir section 14 ; `Pointage.motif` n'est plus écrit, gardé pour l'historique).
 - **Permissions `pointage.*`** : 8 permissions fines réparties entre Collaborateur (`pointer`, `consulter_historique`), RH (les 8 droits complets), DG (lecture seule `/rh/presence` et reporting), et Admin (supervision).
 
 ### 2. Double barrière de sécurité & Géolocalisation
@@ -4288,7 +4288,7 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 - **Fallback Géolocalisation GPS (Formule de Haversine)** : Si l'agent est hors réseau Wi-Fi, calcul automatique de la distance au siège SIM Assurances (`bureauLatitude`, `bureauLongitude`, `rayonAutorise` configurable entre 30m et 200m). Filtre de précision GPS (seuil 150m max) et alerte de sécurité instantanée aux RH en cas de tentative hors périmètre.
 
 ### 3. Parcours Collaborateur & Temps Réel
-- **Composant adaptatif** (`SmartPointage.tsx`) : Détection automatique du statut journalier (arrivée, départ), motif obligatoire en cas de retard (après 07h45) ou de départ anticipé (avant 16h45).
+- **Composant adaptatif** (`SmartPointage.tsx`) : Détection automatique du statut journalier (arrivée, départ). **Plus aucun motif au pointage** (Pointage V2, lots 3 à 5) : retard au-delà de la tolérance enregistré immédiatement, départ anticipé confirmé explicitement ; justification ensuite via `/pointage/justifier/[pointageId]`, décision sur `/pointage/justifications`, relances par la tâche planifiée `/api/cron/relances-justification` (toutes les 5 min, `CRON_SECRET`). Voir sections 7 à 11 ci-dessous.
 - **Pointage Mobile par QR Code** (`/pointage/qr` -> `/pointage/pointer?source=QR_CODE`) : Scan sécurisé à l'accueil de l'entreprise.
 - **Synchronisation Server-Sent Events (SSE)** (`/api/pointage/stream`) : Tout pointage actualise instantanément les compteurs et listes des tableaux de bord RH sans rechargement.
 
@@ -4316,6 +4316,227 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 - **`backend/prisma/set-admin.ts`** (plus appelé par `init`, lancement manuel à la première installation) : sans `ADMIN_EMAIL`/`ADMIN_PASSWORD`, message et sortie en code 0 (ne bloque jamais `init`). Un admin existant garde son mot de passe (changement fait depuis `/profil` préservé), sauf `ADMIN_FORCE_PASSWORD_RESET=true`. Rattrapage `Role.estAdmin` conservé.
 - **Pointage géolocalisé** : la précision GPS est obligatoire (absente ⇒ refus) avant le contrôle de précision. Limite connue : coordonnées et précision viennent du navigateur, donc restent falsifiables — l'activation de la géolocalisation est une décision RH.
 - **IP de confiance** : `getTrustedClientIp` (`backend/src/pointage-utils.ts`) retient l'IP la plus à droite de `x-forwarded-for` (ajoutée par Traefik, seul proxy devant l'app), repli `x-real-ip`. Utilisée par `enregistrerPointageAction` ; les autres lectures de l'en-tête (login, audit, FeedbackApp) restent à migrer. `getClientIp` (IP la plus à gauche) est falsifiable par le client.
+
+### 7. Pointage V2 — lot 3 : une seule règle de retard, pointage automatique, départ confirmé (2026-10-08)
+
+Plan et règles : [docs/PLAN_POINTAGE_V2.md](docs/PLAN_POINTAGE_V2.md) (§2 validé, lot 3 au §4). Aucune migration.
+
+- **Une seule règle** (`backend/src/pointage-utils.ts`) : `checkLateStatus(now, horaires, plages)` — à l'heure jusqu'à
+  la référence + `toleranceRetardMinutes` INCLUSE, retard compté depuis la référence (07:45 + 15 : 08:00 à l'heure,
+  08:10 = 25 min) ; référence repoussée par une permission du matin. `heureReferenceDepartMinutes` /
+  `estDepartAnticipe` (fin de journée avancée au début d'une permission qui la couvre), `departTropTot`
+  (`DELAI_MINIMUM_DEPART_MINUTES = 30`), `horairesPointage(parametrage)` + `HORAIRES_PAR_DEFAUT` (07:45, 16:45, 15).
+  Utilisée par l'écran (`pointer/page.tsx`), `enregistrerPointageAction`, la correction RH et le pointage exceptionnel
+  RH — plus aucun calcul local de retard dans ces fichiers.
+- **Pointage collaborateur** (`enregistrerPointageAction`) : plus aucun motif (champ retiré du schéma zod) ; un départ
+  moins de 30 min après l'arrivée est refusé avec l'heure à partir de laquelle il sera possible ; un retard ou un
+  départ anticipé crée `JustificationPointage` (EN_ATTENTE) dans la même transaction que le pointage ; l'alerte RH
+  « Anomalie de pointage signalée » est supprimée (alertes de sécurité et information géolocalisation gardées).
+  Seule cette action crée une justification : la correction RH et le pointage exceptionnel RH recalculent seulement
+  retard et départ anticipé.
+- **Écran** (`SmartPointage.tsx`) : l'arrivée en retard est enregistrée automatiquement comme l'arrivée à l'heure
+  (message « Arrivée enregistrée à HH:MM, N min de retard… ») ; le départ anticipé exige « Pointer mon départ
+  anticipé » puis « Confirmer mon départ » (rien n'est créé à l'ouverture de l'écran) ; le panneau géolocalisation
+  passe avant l'écran « En poste » (sinon il ne s'affichait jamais pour un départ confirmé). La présence exceptionnelle
+  d'un jour non ouvré devient un simple bouton « Pointer mon arrivée ». `PointageForm.tsx` supprimé.
+- Vérifié : vitest (22 tests `pointage-utils`), tsc, eslint, `next build`. Parcours à l'écran non encore testés.
+
+### 8. Pointage V2 — lot 4 : justification et décision (2026-10-08)
+
+Aucune migration. Les envois automatiques (premier envoi à 15 min, relances, clôture) arrivent au lot 5 : sans eux, le
+collaborateur trouve sa justification à faire dans « Mon historique ».
+
+- **Moteur pur** `backend/src/justificationPointage.ts` (20 tests vitest) :
+  - `resoudreDecideurJustification({ collaborateurId, service })` : le responsable ACTUEL du service ; sinon la RH
+    (`PERMISSION_RH_POINTAGE`) pour `SANS_SERVICE`, `SANS_RESPONSABLE`, `RESPONSABLE_INACTIF`, `EST_RESPONSABLE`
+    (le DG tombe dans ce dernier cas, responsable de « Direction DG »).
+  - `refusDecideur(decideur, acteur, collaborateurId)` : recalculé à chaque action ; jamais le collaborateur, même
+    porteur de la permission RH ; la RH ne décide pas à la place d'un responsable utilisable.
+  - `transitionJustification` : soumission depuis `EN_ATTENTE` ou `NON_JUSTIFIEE` (motif nettoyé, 3 à 500 caractères) ;
+    décision depuis `SOUMISE` seulement (refus : motif de 3 caractères minimum) ; `ACCEPTEE` et `REFUSEE` définitives.
+  - Libellés de statut, actions d'historique, messages (variante RH « X, responsable du service Y, … »).
+- **Application en base** (frontend) : `soumettreJustificationAction` (`pointage/justifier/[pointageId]/actions.ts`) et
+  `accepter`/`refuserJustificationAction` (`pointage/justifications/actions.ts`). Écriture `updateMany` conditionnée au
+  statut lu (deux décisions simultanées : une seule passe, l'autre reçoit « déjà acceptée ») ; une `HistoriqueEntry`
+  `entity: "JustificationPointage"` par transition (`soumission_`, `acceptation_`, `refus_justification`), entité
+  ajoutée à `ENTITES_HISTORIQUE_POINTAGE` (`reinitialisation.ts`). Lecture et décideur : `frontend/src/lib/justificationsPointage.ts`.
+- **Notifications** (`IMPORTANT`, catégorie `POINTAGE`) : à la soumission, le responsable (lien `/pointage/justifications`)
+  ou, cas RH, `notifyByPermission(PERMISSION_RH_POINTAGE)` sauf le collaborateur ; à la décision, le collaborateur (lien
+  vers sa page de justification, motif du refus).
+- **Écrans** :
+  - `/pointage/justifier/[pointageId]` : propriétaire du pointage avec `pointage.pointer` (sinon 404) ; date, heure,
+    minutes de retard ou départ, statut, motif, refus éventuel, et qui examinera (responsable nommé ou « la RH ») ;
+    formulaire tant que le statut le permet.
+  - `/pointage/justifications` : file du décideur actuel (filtrée en code), Accepter / Refuser avec motif ; onglet
+    « Traitées » (décisions prises par ce compte, ou sur des collaborateurs dont il est aujourd'hui décideur). Accès :
+    responsable d'au moins un service ou `PERMISSION_RH_POINTAGE`. Menu « Justifications » avec compteur ; la branche
+    Pointage reste visible pour un responsable sans permission `pointage.*`.
+  - « Mon historique » : colonne « Justification » (badge, lien « Justifier » ou « Voir »).
+- **Lien de l'email sans être connecté — bug corrigé** : le middleware d'Auth.js renvoie vers /login avec un
+  `callbackUrl` ABSOLU (`http://hôte/…`), que l'action de connexion jetait (seuls les chemins relatifs étaient acceptés) :
+  tout lien profond revenait sur l'accueil. `cheminRetourConnexion` (`backend/src/cheminRetour.ts`, 3 tests) garde le
+  chemin si l'URL vise le même hôte que la requête, sinon « / » (aucune redirection ouverte).
+- **Limites** : une justification du seul compte RH (responsable du service RH) ne peut être décidée par personne si
+  aucun autre compte ne porte `pointage.corriger_pointage` ; `notifyByPermission` lit les permissions du rôle, donc un
+  compte qui a reçu cette permission par délégation voit la file RH mais n'est pas notifié.
+- Vérifié : vitest (398 tests, seul échec connu `feedback.test.ts`), tsc, eslint, `next build` ; Playwright 35/35 sur
+  PostgreSQL 16 jetable (`collaborateur@`, `responsable-commercial@`, `rh@`) : retard sans formulaire et justification
+  EN_ATTENTE, historique, lien sans session → /login → retour sur la page, envoi, notification au seul responsable,
+  404 pour un autre compte, acceptation, refus avec motif affiché au collaborateur, cas RH (le responsable ne voit pas sa
+  propre justification, message « responsable du service Commercial »), deux décisions RH simultanées (une seule
+  tracée), file refusée au collaborateur, 390 px sans défilement horizontal, aucune erreur JavaScript.
+
+### 9. Pointage V2 — lot 5 : envois, relances et clôture (tâche planifiée, 2026-10-09)
+
+- **Moteur pur** (`backend/src/justificationPointage.ts`) : `prochaineActionJustification(etat, params, now)` → `ENVOI(n)`,
+  `CLOTURE` ou `AUCUNE`, exactement les 5 règles du plan (1er envoi à pointage + délai ; relances tous les
+  `intervalleRelanceJustificationMinutes`, au plus `nombreMaxRelancesJustification` envois premier compris, avant la fin
+  de journée ; clôture à `heureFinApresMidi` du jour du pointage, au moins un intervalle après le dernier envoi ;
+  rattrapage automatique si la tâche était en panne). Heure locale du serveur, comme le module. Messages :
+  `messageDemandeJustification`, `messageAlerteDecideurJustification`, `messageClotureJustification`. Tests :
+  `relancesJustification.test.ts` (retard 08:10, départ 16:40, statut déjà soumis, maximum atteint, panne la veille).
+- **Route** `GET /api/cron/relances-justification`, toutes les 5 minutes (cron-job.org, `DEPLOIEMENT.md` §7). Protégée
+  par `refusCron` (`frontend/src/lib/cronAuth.ts` → `secretCronValide`, `backend/src/cronAuth.ts` : `Authorization:
+  Bearer <CRON_SECRET>`, temps constant, refus si `CRON_SECRET` absent) — aussi utilisée par `/api/cron/absences`.
+  Idempotence : chaque envoi est réservé par `updateMany` sur le `nombreEnvois` attendu, la clôture par `updateMany`
+  EN_ATTENTE → NON_JUSTIFIEE (`clotureeAt`) ; rien ne part si la réservation échoue. Envois (§2) : collaborateur 1er
+  envoi `CRITIQUE` (interne + push + e-mail, lien `/pointage/justifier/{id}` préfixé par `AUTH_URL`), relances
+  `IMPORTANT` ; décideur (responsable actuel du service, sinon RH du pointage sans le collaborateur) au 1er envoi et à
+  la clôture seulement. Journal : une ligne `[Cron relances-justification]` chiffrée par exécution (examinées, envois,
+  clôtures, déjà traitées, erreurs), erreurs repérées par identifiant de justification seulement.
+- **Clôture sans entrée d'historique** : `HistoriqueEntry.userId` est obligatoire et la tâche n'a pas d'auteur (comme le
+  cron des absences) ; la clôture est tracée sur la ligne (`statut`, `clotureeAt`). Aucune migration.
+- Vérifié : vitest (14 nouveaux tests), tsc, eslint, `next build` ; intégration sur base jetable (401 sans en-tête, mauvais
+  secret ou sans « Bearer » ; deux appels simultanés = 3 envois et 1 clôture au total ; troisième appel sans effet ;
+  responsable alerté, RH alertée pour un responsable en retard, aucun autre compte notifié).
+
+### 10. Pointage V2 — lot 6 : « Se souvenir de moi » coché par défaut vers le pointage (2026-10-09)
+
+- Page de connexion : le chemin de retour est lu UNE fois, par `cheminRetourConnexion` (point de validation unique) ; la
+  case est cochée par défaut (`defaultChecked`) quand ce chemin VALIDÉ commence par `/pointage/`
+  (`seSouvenirDeMoiParDefaut`, `backend/src/cheminRetour.ts`) — arrivée par le QR (`/pointage/qr`, posé par le
+  middleware) ou un lien de justification. Un chemin refusé vaut « / » et ne coche jamais. Le champ caché porte lui aussi
+  le chemin validé. L'utilisateur peut décocher. Durées de session inchangées (`auth.config.ts` non modifié).
+- « Session mémorisée jusqu'au … » non affiché : il faudrait exposer `rememberMe` ou l'expiration du jeton, ce que le
+  plan exclut (« seulement si c'est simple »).
+- Vérifié : vitest (règle sur chemins validés, y compris refusés), Playwright sur base jetable 12/12 (liens pointage,
+  QR, lien absolu du middleware : cochée ; sans lien, /treso, liens refusés : décochée ; décochage manuel envoyé sans
+  `rememberMe` ; retour sur /pointage/pointer).
+
+### 11. Pointage V2 — lot 7 : écrans RH, reporting, documentation (2026-10-09)
+
+Une seule source de lecture, aucun recalcul : les écrans et l'export lisent le statut stocké de `JustificationPointage`
+et les champs `estRetard`/`minutesRetard` calculés au pointage par `checkLateStatus` (lot 3). Aucune migration, aucune
+permission nouvelle.
+- **`justificationAffichee(pointage)`** (`backend/src/justificationPointage.ts`) : statut, libellé
+  (`LIBELLE_STATUT_JUSTIFICATION`, lot 4), motif (celui de la justification, sinon l'ancien `Pointage.motif`) et
+  « Décidée par » (seulement pour `ACCEPTEE`/`REFUSEE`). Sans justification : libellé « — », ancien motif.
+- **`utilisateursCouvertsParAbsence(plages, horaires)`** (`backend/src/pointage-utils.ts`) : comptes dont la journée est
+  entièrement couverte (`journeeCouverteParAbsence`, la règle du cron des absences, lot 1).
+- **Présence du jour** (`pointage/rh/presence`) : onglet Retards avec colonne « Justification » (badge
+  `VARIANTE_STATUT_JUSTIFICATION`, « par X ») et motif lu par `justificationAffichee` ; badge sous l'heure d'un départ
+  anticipé ; nouvel onglet et compteur **« Absence autorisée »** (« Congé 00:00–23:59 », « Permission … ») — ces
+  comptes ne sont ni absents (même si une ligne `Absence` existe) ni manquants ; un compte présent n'y figure jamais.
+- **Reporting et export** (`getDetailsRetards`, `ReportingTables.tsx`, feuille « Détails des retards ») : colonnes
+  « Justification », « Motif », « Décidée par », mêmes valeurs à l'écran et dans le fichier.
+- **Réinitialisation** : `ENTITES_HISTORIQUE_POINTAGE` contient toujours `JustificationPointage` (vérifié) ; le dépôt n'a
+  aucun test de réinitialisation.
+- **Limites connues, non traitées (hors lot 7)** : ~~détail limité aux retards ; export tronqué à 50 lignes~~ (corrigés
+  au lot 8, section 12) ; le reporting n'inclut que
+  les comptes portant `pointage.pointer` ; une permission partielle n'apparaît pas en « Absence autorisée » ; aucun écran
+  ne crée encore de `PlageAbsenceAutorisee`.
+- Documentation : `docs/GUIDE_FONCTIONNEL_POINTAGE.md` et `docs/POINTAGE_ARCHITECTURE.md` (motif obligatoire retiré,
+  circuit, paramètres, tâche planifiée).
+- Vérifié : vitest (`lectureRhPointage.test.ts`, 5 tests), Playwright 14/14 sur base jetable (rh@ : justifications
+  SOUMISE et ACCEPTEE « par RH Test », repli sur l'ancien motif, départ anticipé « Justification attendue », congé et
+  permission de journée en « Absence autorisée », écran du reporting et export cohérents).
+
+### 12. Pointage V2 — lot 8 : départs anticipés dans le reporting, export complet (2026-10-09)
+
+Aucune migration, aucune permission.
+- **Une seule requête et une seule ligne** (`backend/src/pointageReporting.ts`) : `construireRequeteDetails(type,
+  filters, pagination?)` (`RETARD` = arrivée `estRetard`, `DEPART_ANTICIPE` = départ `estDepartAnticipe`, tous deux
+  posés au pointage par les règles du lot 3, jamais recalculés ; mêmes filtres, tri du plus récent au plus ancien) et
+  `ligneDetailPointage` (via `justificationAffichee` : statut, motif, « Décidée par »). `getDetailsRetards` et
+  `getDetailsDepartsAnticipes(filters, pagination?)` : **sans pagination = toutes les lignes** (l'ancien `take` de 50 par
+  défaut, qui tronquait l'export, a disparu ; l'écran passe `{ skip, take }` explicitement).
+- **Écran** (`/pointage/rh/reporting`) : section « Détail des départs anticipés » sous celle des retards, chacune paginée
+  à 50 (`page`, `pageDeparts`, indépendants) ; au-delà, « N lignes affichées sur M, export complet disponible ».
+- **Export** : feuille « Départs anticipés » après « Détails des retards », toutes les lignes, mêmes colonnes **sauf
+  « Minutes de retard »** : l'avance d'un départ n'est pas enregistrée au pointage, et la déduire de `heurePrevue`
+  (fin de journée non ajustée d'une permission) serait un second calcul divergent. Même choix à l'écran.
+- `docs/GUIDE_FONCTIONNEL_POINTAGE.md` et `docs/POINTAGE_ARCHITECTURE.md` décrivent encore deux feuilles (non modifiés,
+  hors périmètre du lot).
+- Vérifié : vitest (`reportingDetailsPointage.test.ts`, 6 tests), tsc, eslint, `next build` ; Playwright sur PostgreSQL 16
+  jetable (60 retards, 55 départs anticipés, rh@) : mentions « 50 sur 60 » et « 50 sur 55 », page 2 des départs (5
+  lignes, page des retards conservée), « Total : 0 » sous la limite, départs refusé/accepté « par Responsable Commercial
+  Test »/envoyé, 390 px sans défilement horizontal, export à 3 feuilles avec 60 et 55 lignes, colonnes et valeurs
+  identiques à l'écran (ancien motif en repli), aucune erreur JavaScript.
+
+### 13. Pointage V2 — lot 3 bis : jour non ouvré, départ avant 30 min, double départ (2026-10-11)
+
+Corrige les 4 écarts relevés par la vérification du lot 3. Aucune migration, aucune permission.
+- **Jour non ouvré** : `estJourNonOuvre(date, joursFeries)` (`backend/src/pointage-utils.ts`) — samedi, dimanche ou date
+  de la table `JourFerie`, la même règle que la détection des absences (jour local), lue en base par `lireJourNonOuvre`
+  (`frontend/src/lib/joursOuvres.ts`). `reglesPointage(type, now, horaires, plages, jourNonOuvre)` est désormais la
+  SEULE fonction qui fixe retard, minutes et départ anticipé : tous nuls un jour non ouvré, donc aucune justification.
+  Utilisée par `enregistrerPointageAction`, `pointer/page.tsx`, la correction RH et le pointage exceptionnel RH. Seule
+  `enregistrerPointageAction` crée une justification : la tâche de relances n'a rien à traiter un jour non ouvré.
+- **Présence exceptionnelle** : `refusArriveeHoraire` refuse l'arrivée à partir de `heureFinApresMidi` un jour ouvré
+  seulement (même libellé `MESSAGE_JOURNEE_TERMINEE`). Le pointage compte dans « Présences » et jamais dans les retards.
+- **Départ avant 30 min** : `heureDepartPossible(arrivée)` (= arrivée + 30 min). Le serveur garde le refus et son
+  libellé. La page ne passe jamais en `AUTO_DEPART` dans ce cas (mode `EN_POSTE`) ; `SmartPointage` affiche « Départ
+  possible à partir de HH:MM » en information (`role="status"`, ton `info`, pas de toast), bouton « Pointer mon
+  départ » désactivé puis réactivé par un minuteur, **sans rechargement** (un rechargement pourrait déclencher un départ
+  automatique pendant que la page reste simplement ouverte).
+- **Tranché le 2026-10-11 : un jour non ouvré, jamais de départ automatique**, quelle que soit l'ancienneté de
+  l'arrivée : la page reste « en poste » avec le bouton « Pointer mon départ » puis confirmation (départ jamais
+  anticipé). Le départ automatique (`AUTO_DEPART`) ne vaut qu'un jour ouvré, 30 min après l'arrivée, départ non
+  anticipé. Seule règle : `choisirModeDepart(arrivée, now, horaires, plages, jourNonOuvre)` (`pointage-utils.ts`),
+  utilisée par `pointer/page.tsx` (prop `jourNonOuvre` de `SmartPointage` pour le libellé du bouton).
+- **Double départ** : dans `enregistrerPointageAction`, relecture des pointages du jour, refus (`refusPointage`, libellés
+  inchangés) et création dans une seule transaction sous `pg_advisory_xact_lock(hashtext('pointage:<user>:<jour>'))`.
+- **Tests** : vitest `jourNonOuvrePointage.test.ts` (samedi, dimanche, jour férié, jour ouvré, acceptation de
+  l'arrivée, heure de départ possible). **Playwright conservé dans le dépôt** : `e2e/` (README, `base-jetable.sh`,
+  `arreter.sh`, `pointage-lot3bis.mjs` ; Playwright installé sans l'enregistrer, base PostgreSQL jetable uniquement).
+  Résultat 22/22, lancé un dimanche : présence exceptionnelle sans retard ni justification ; réouverture de la page
+  plus de 30 min après l'arrivée : aucun départ créé, bouton « Pointer mon départ » ; départ confirmé non anticipé, tâche
+  de relances sans justification, reporting (1 présence, 0 retard, 0 départ anticipé) ; message d'information, bouton
+  désactivé puis réactivé sans rechargement, aucun toast rouge ; deux confirmations simultanées → un seul départ, l'autre
+  « déjà pointé ». Le jour férié est testé par vitest, et par le script s'il est lancé en semaine (férié inséré).
+
+### 14. Pointage V2 — décision des justifications en trois niveaux (2026-10-12)
+
+Aucune migration, aucune permission nouvelle.
+- **Qui décide, par priorité** (`resoudreDecideurJustification`, `backend/src/justificationPointage.ts`) : (1) le
+  responsable actif du service, s'il n'est pas le collaborateur ; (2) sinon la RH, s'il existe un compte actif AUTRE que
+  le collaborateur dont le RÔLE porte `pointage.corriger_pointage` (`chargerComptesRH`, `frontend/src/lib/justificationsPointage.ts`,
+  même lecture que `notifyByPermission`) ; (3) sinon le DG, repéré par `PERMISSION_DG_JUSTIFICATION` = `treso.decider_dg`
+  (la permission de l'étape DG du circuit : seed et migration `20261006120000` la donnent au seul rôle DG, et elle n'est
+  pas délégable). Personne ne décide sa propre justification (`refusDecideur`), à aucun niveau ; ni la RH ni le DG ne
+  décident à la place d'un responsable présent ; le DG ne décide pas au niveau RH.
+- **Notifications** : `destinatairesDecideur` (pur) → responsable, sinon comptes RH, sinon DG, toujours sans le
+  collaborateur ; utilisé par la soumission et par la tâche de relances. Le DG n'est notifié que dans le repli.
+- **Écran** `/pointage/justifications` : `estDecideurJustifications` admet aussi le DG quand le repli est possible (au
+  plus un compte RH actif) ou s'il a déjà décidé ; carte « décision DG (aucun autre compte RH) ». Page du collaborateur :
+  « examinée par le DG ».
+- **Menu « Justifications »** (`compteurMenuJustifications`, pur ; `compteurMenuJustificationsSession`) : un compte RH
+  (par son rôle) le voit toujours ; le DG seulement si sa file de décision n'est pas vide ou s'il a déjà décidé une
+  justification — **même s'il est responsable d'un service** (dans le seed, dg@ est responsable de « Direction DG » :
+  une justification d'un membre de ce service remplit sa file) ; un autre responsable de service le voit toujours.
+- **Décider se lit sur le RÔLE, corriger accepte la délégation (2026-10-12)** : `refusDecideur`
+  (`ActeurJustification.rolePermissions`), la file (`chargerJustificationsDecideur`), l'accès à l'écran et le menu lisent
+  `session.rolePermissions`, jamais `session.permissions` (qui inclut les délégations) — un délégué de
+  `pointage.corriger_pointage` ne décide pas une justification et ne voit pas l'écran de décision à ce titre.
+  `PERMISSIONS_DECISION_NON_DELEGABLES` n'est PAS modifiée : `/delegations` permet toujours de déléguer cette
+  permission (donneur dont le rôle porte `treso.deleguer_acces` ET elle, ex. rôle combiné Finance/RH), et les actions RH
+  de correction, de pointage exceptionnel et d'absences gardent `hasPermission` (délégations comprises).
+- Vérifié : vitest (`decideurJustificationNiveaux.test.ts`, 24 tests dont délégué refusé à la décision mais autorisé à
+  corriger, et le menu ; 549 au total, seul échec connu `feedback.test.ts`), tsc, eslint, `next build` ; Playwright
+  `e2e/pointage-decision-dg.mjs` 18/18 sur base jetable (dont menu du DG absent file vide, présent file non vide et après
+  une décision) (rh@ seul RH en retard :
+  DG notifié, rh@ non notifié et sans sa justification dans sa file, assistant-finance@ refusé, DG accède à l'écran et
+  au menu, accepte ; collaborateur ordinaire : responsable notifié, ni DG ni RH) ; `e2e/pointage-lot3bis.mjs` 22/22.
 
 ## Module FeedbackApp — anonymat total
 
@@ -5534,6 +5755,7 @@ revérifie la permission **dans son propre code**, jamais seulement via un
 layout ou le masquage de l'UI.
 
 - Provider Credentials uniquement, sessions JWT (pas d'adapter Prisma).
+- **Retour après connexion (audit open redirect, 2026-10-10)** : UN SEUL point de validation, `cheminRetourConnexion` (`backend/src/cheminRetour.ts`), utilisé par la page de connexion ET le callback `redirect` d'Auth.js (`auth.config.ts`) — jamais de redirection après connexion sans passer par lui. Résultat toujours un chemin interne de la liste `PREFIXES_RETOUR_INTERNES` (sinon « / ») ; résolution `new URL(valeur, origine)` avec l'origine CONFIGURÉE (`AUTH_URL`, `origineSiteConfiguree`), jamais l'en-tête Host / x-forwarded-host ; refus des barres inverses, espaces, caractères de contrôle, identifiants, schémas et formes encodées (3 niveaux) ; `/login` admis seulement pour la déconnexion (option `autoriserConnexion`). `AUTH_URL` doit donc être l'URL publique réelle (sinon le lien absolu posé par le middleware retombe sur l'accueil).
 - Email de connexion : nettoyé (`trim()`) et recherché insensible à la
   casse (`mode: "insensitive"`) ; le mot de passe reste sensible à la
   casse.
@@ -6490,6 +6712,11 @@ etc.) ont déjà leur migration. **Toute nouvelle permission ajoutée au seed do
 **Pointage RH** (`pointage.*`) : `pointer`, `consulter_historique`,
 `consulter_tous`, `pointage_exceptionnel`, `corriger_pointage`,
 `gerer_horaires`, `voir_dashboard_rh`, `voir_reporting`.
+`corriger_pointage` est aussi la **permission de repli RH** du circuit de justification (Pointage V2) : ses détenteurs
+(autres que le collaborateur) décident quand le collaborateur est responsable de son service, est DG, ou que son service
+n'a pas de responsable actif ; s'il n'existe aucun autre compte RH actif, le DG (`treso.decider_dg`) décide (section 14).
+Le responsable de service décide sans permission (`Service.responsableId`). Routes : `/pointage/justifier/[pointageId]`,
+`/pointage/justifications`, `/api/cron/relances-justification` ; modèle `JustificationPointage`.
 
 **Champs de rôle transverses** (jamais un nom de rôle en dur) :
 `Role.estAdmin` (accès `/admin`, figé à la création),
