@@ -8,6 +8,8 @@ interface FondsARegulariserRow {
   id: string;
   demandeId: string;
   demandeReference: string;
+  /** Article payé par ce règlement (lot E) ; `null` pour un règlement non rattaché à un article. */
+  articleLibelle?: string | null;
   montantReglement: number;
   depensesDeclarees: number;
   retoursRecus: number;
@@ -30,6 +32,12 @@ export function FondsARegulariserTable({ reglements }: { reglements: FondsARegul
           header: "Demande",
           sortable: true,
           accessor: (r) => r.demandeReference,
+          render: (r) => (
+            <span>
+              {r.demandeReference}
+              {r.articleLibelle ? <span className="block text-xs text-muted-foreground">Article : {r.articleLibelle}</span> : null}
+            </span>
+          ),
         },
         {
           key: "montantReglement",

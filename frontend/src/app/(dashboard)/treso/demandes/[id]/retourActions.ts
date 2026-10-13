@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { suffixeArticle } from "@/lib/nomArticle";
 import { notifyByPermission } from "@/lib/notifications";
 import {
   calculerMontantARetournerNet,
@@ -258,7 +259,7 @@ export async function creerRetourCaisseAction(
 
   await notifyByPermission("treso.receptionner_retour", {
     titre: "Retour de caisse à réceptionner",
-    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}.`,
+    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}${await suffixeArticle(reglement.ligneDemandeId)}.`,
     lien: "/treso/finance/retours",
     priority: "IMPORTANT",
     category: "TRESORERIE",
@@ -279,7 +280,7 @@ export async function creerRetourCaisseAction(
  */
 async function completerFicheRegularisation(
   ficheId: string,
-  reglement: { id: string; demandeId: string; demande: { reference: string } },
+  reglement: { id: string; demandeId: string; ligneDemandeId: string | null; demande: { reference: string } },
   montantRetourne: number,
   dateRetour: string,
   userId: string
@@ -330,7 +331,7 @@ async function completerFicheRegularisation(
   publishDataChanged();
   await notifyByPermission("treso.receptionner_retour", {
     titre: "Retour de caisse à réceptionner",
-    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}.`,
+    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}${await suffixeArticle(reglement.ligneDemandeId)}.`,
     lien: "/treso/finance/retours",
     priority: "IMPORTANT",
     category: "TRESORERIE",
@@ -571,7 +572,7 @@ export async function signalerErreurRetourAction(
 
   await notifyByPermission("treso.receptionner_retour", {
     titre: "Erreur signalée sur un retour de caisse",
-    message: `Le collaborateur a signalé une erreur sur le détail d'un retour de caisse de la demande ${retour.reglement.demande.reference}.`,
+    message: `Le collaborateur a signalé une erreur sur le détail d'un retour de caisse de la demande ${retour.reglement.demande.reference}${await suffixeArticle(retour.reglement.ligneDemandeId)}.`,
     lien: `/treso/finance/retours/${retourId}`,
   });
 

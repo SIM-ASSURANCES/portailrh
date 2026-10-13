@@ -4,10 +4,13 @@
 // produit. Aucune attribution devinée : seuls les règlements RATTACHÉS à l'article comptent (`Reglement.ligneDemandeId`),
 // et les retours de caisse suivent leur règlement, donc l'article de ce règlement.
 //
-// Le retour de caisse et la régularisation PAR ARTICLE sont le lot E ; ici, simple lecture des données existantes.
+// Lot E (2026-10-17) : la régularisation est PAR ARTICLE. Le badge « Régularisé » s'affiche avec sa date et le solde final,
+// détail des dépenses et des retours compris ; un retour exceptionnel post-clôture est rattaché à son article, l'état
+// « indéterminé » ne subsiste que pour un retour ancien SANS article sur une demande à plusieurs articles réglés en Caisse.
 
 import type { EtatArticle, StatutArticle } from "./etatArticles";
 import { LIBELLE_ETAT_ARTICLE } from "./etatArticles";
+import { depensesDeclareesLigne, getEcartLigne, type AgregatsRegularisation } from "./regularisationArticle";
 
 export type BadgeParcours =
   | "EN_ATTENTE"
@@ -78,6 +81,8 @@ export interface EntreeParcours {
    * n'est alors jamais produit.
    */
   regularisationIndeterminee?: boolean;
+  /** Chiffres de régularisation de l'article (lot E) et date à laquelle son solde est devenu nul, si connue. */
+  regularisation?: { agregats: AgregatsRegularisation; regulariseAt: Date | null };
 }
 
 export interface EtapeParcours {
@@ -112,7 +117,7 @@ const eur = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`;
 const jour = (d: Date | null) => (d ? d.toLocaleDateString("fr-FR", { timeZone: "Africa/Abidjan" }) : null);
 
 export const NOTE_REGULARISATION_INDETERMINEE =
-  "Un retour exceptionnel post-clôture a été enregistré au niveau de la demande : la régularisation ne peut pas être attribuée à cet article.";
+  "Un retour exceptionnel post-clôture ancien, rattaché à aucun article, a été enregistré sur cette demande : la régularisation ne peut pas être attribuée à cet article.";
 
 export function parcoursArticle(e: EntreeParcours): ParcoursArticle {
   const confirmes = e.reglements.filter((r) => r.estConfirme && !r.estAnnule);
@@ -177,7 +182,23 @@ export function parcoursArticle(e: EntreeParcours): ParcoursArticle {
   const regularise = soldesConnus && caisse.every((r) => c(r.solde as number) === 0) && !e.regularisationIndeterminee;
   const note = e.regularisationIndeterminee && caisse.length > 0 ? NOTE_REGULARISATION_INDETERMINEE : null;
   if (regularise && reste === 0) {
-    etapes.push({ cle: "REGULARISE", libelle: "Régularisé", lignes: ["Solde à régulariser : 0 FCFA"] });
+    const lignes: string[] = [];
+    const g = e.regularisation;
+    lignes.push(g?.regulariseAt ? `Régularisé le ${jour(g.regulariseAt)}` : "Régularisé");
+    if (g) {
+      lignes.push(
+        `Fonds remis ${eur(g.agregats.fondsRemis)} − dépenses ${eur(depensesDeclareesLigne(g.agregats))} − retours reçus ${eur(g.agregats.retoursRecus)}`
+      );
+      if (g.agregats.depensesSansPieceFormelle > 0 || g.agregats.resteNonDetaille > 0) {
+        lignes.push(
+          `Dont dépenses sans pièce formelle : ${eur(g.agregats.depensesSansPieceFormelle)}${g.agregats.resteNonDetaille > 0 ? ` — reste non détaillé : ${eur(g.agregats.resteNonDetaille)}` : ""}`
+        );
+      }
+      lignes.push(`Solde final : ${eur(getEcartLigne(g.agregats))}`);
+    } else {
+      lignes.push("Solde à régulariser : 0 FCFA");
+    }
+    etapes.push({ cle: "REGULARISE", libelle: "Régularisé", lignes });
   }
 
   if (confirmes.length === 0) return habiller("VALIDE", null, etapes, note);

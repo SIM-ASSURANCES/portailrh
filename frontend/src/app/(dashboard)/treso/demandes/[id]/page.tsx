@@ -412,6 +412,7 @@ export default async function MaDemandeDetailPage({
             demandeId={demande.id}
             montantValide={Number(demande.montantValide ?? 0)}
             title="Situation finale"
+            audience="DEMANDEUR"
           />
           {demande.motifCloture ? (
             <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">

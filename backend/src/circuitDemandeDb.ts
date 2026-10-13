@@ -67,7 +67,7 @@ export function demandesEtapeDGWhere(dgId: string): Prisma.DemandeWhereInput {
 export async function refusConflitInteret(
   db: Db,
   cible:
-    | { demandeId: string }
+    | { demandeId: string; ligneDemandeId?: string | null }
     | { reglementId: string }
     | { retourCaisseId: string }
     | { depenseLigneId: string }
@@ -89,7 +89,15 @@ export async function refusConflitInteret(
   let demande: Demande | null | undefined = null;
   let reglement: Reglement | null | undefined = null;
   if ("demandeId" in cible) {
-    demande = await db.demande.findUnique({ where: { id: cible.demandeId }, select: champs });
+    // Lot E : une saisie rattachée à un article (retour exceptionnel) n'écarte que le créateur et le bénéficiaire de CET article.
+    if (cible.ligneDemandeId) {
+      const ligne = await db.ligneDemande.findFirst({
+        where: { id: cible.ligneDemandeId, demandeId: cible.demandeId },
+        select: { ...champsBenef, demande: { select: champs } },
+      });
+      if (ligne) reglement = { demande: ligne.demande, ligneDemande: ligne };
+    }
+    if (!reglement) demande = await db.demande.findUnique({ where: { id: cible.demandeId }, select: champs });
   } else if ("reglementId" in cible) {
     reglement = await db.reglement.findUnique({ where: { id: cible.reglementId }, select: champsReglement });
   } else if ("retourCaisseId" in cible) {
@@ -110,9 +118,13 @@ export async function refusConflitInteret(
       })
     )?.retourCaisse.reglement;
   } else {
-    demande = (
-      await db.retourExceptionnel.findUnique({ where: { id: cible.retourExceptionnelId }, select: { demande: { select: champs } } })
-    )?.demande;
+    const re = await db.retourExceptionnel.findUnique({
+      where: { id: cible.retourExceptionnelId },
+      select: { demande: { select: champs }, ligneDemande: { select: champsBenef } },
+    });
+    // Lot E : retour exceptionnel rattaché à un article = garde 8 de CET article ; sinon (ancien) celle de la demande.
+    if (re?.ligneDemande) reglement = { demande: re.demande, ligneDemande: re.ligneDemande };
+    else demande = re?.demande;
   }
   if (reglement) return refusExecutionPropreReglement(reglement.demande, reglement.ligneDemande, userId);
   return demande ? refusExecutionPropreDemande(demande, userId) : null;

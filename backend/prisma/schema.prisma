@@ -818,6 +818,9 @@ model LigneDemande {
   /// Règlements de CET article (autonomie des articles, lot D, 2026-10-16) : un règlement concerne un seul article.
   reglements Reglement[]
 
+  /// Retours exceptionnels post-clôture rattachés à CET article (lot E).
+  retoursExceptionnels RetourExceptionnel[]
+
   createdAt DateTime @default(now())
 
   @@index([beneficiaireUserId])
@@ -1473,6 +1476,10 @@ model RetourExceptionnel {
   id        String                   @id @default(cuid())
   demandeId String
   demande   Demande                  @relation(fields: [demandeId], references: [id])
+  /// Article concerné (lot E, 2026-10-17). Vide pour une demande sans article (dépense directe) et pour un retour
+  /// antérieur au lot E sur une demande à plusieurs articles validés (cas ambigu : jamais attribué au hasard).
+  ligneDemandeId String?
+  ligneDemande   LigneDemande?            @relation(fields: [ligneDemandeId], references: [id], onDelete: Restrict)
   montant   Decimal                  @db.Decimal(14, 2)
   motif     String
   statut    StatutRetourExceptionnel @default(EN_ATTENTE_VALIDATION)
@@ -1491,6 +1498,7 @@ model RetourExceptionnel {
 
   @@index([demandeId])
   @@index([statut])
+  @@index([ligneDemandeId])
 }
 
 /// Retour EXTERNE (voir CLAUDE.md "Retour externe") : argent revenu en caisse

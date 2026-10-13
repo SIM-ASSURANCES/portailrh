@@ -6,6 +6,7 @@ import type { Prisma } from "backend";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { suffixeArticle } from "@/lib/nomArticle";
 import { notifierParPermission, notify } from "@/lib/notifications";
 import { snapshotLigne, type CorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
 import {
@@ -207,7 +208,7 @@ export async function declarerRetourAssistantAction(
 
   await notifierParPermission("treso.receptionner_retour", {
     titre: "Retour de caisse à réceptionner",
-    message: `Un retour de caisse de ${restant.toLocaleString("fr-FR")} FCFA (déclaré par l'Assistant Finance) reste à détailler et réceptionner sur la demande ${reglement.demande.reference}.`,
+    message: `Un retour de caisse de ${restant.toLocaleString("fr-FR")} FCFA (déclaré par l'Assistant Finance) reste à détailler et réceptionner sur la demande ${reglement.demande.reference}${await suffixeArticle(reglement.ligneDemandeId)}.`,
     lien: "/treso/finance/retours",
   });
 
@@ -889,7 +890,7 @@ export async function ajusterTotalDeclareRetourAction(
 
   await notifierParPermission("treso.receptionner_retour", {
     titre: "Total déclaré ajusté sur un retour de caisse",
-    message: `Finance a ajusté le total déclaré (${ancienTotal.toLocaleString("fr-FR")} → ${nouveauTotal.toLocaleString("fr-FR")} FCFA) du retour de la demande ${retour.reglement.demande.reference} : vous pouvez maintenant corriger le détail.`,
+    message: `Finance a ajusté le total déclaré (${ancienTotal.toLocaleString("fr-FR")} → ${nouveauTotal.toLocaleString("fr-FR")} FCFA) du retour de la demande ${retour.reglement.demande.reference}${await suffixeArticle(retour.reglement.ligneDemandeId)} : vous pouvez maintenant corriger le détail.`,
     lien: `/treso/finance/retours/${retourId}`,
   });
 

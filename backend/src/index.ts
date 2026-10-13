@@ -31,6 +31,8 @@ export * from "./categorisationObligatoire";
 export * from "./retourNul";
 export * from "./reportingDemandeLigne";
 export * from "./regularisationDepenses";
+export * from "./regularisationArticle";
+export * from "./regularisationArticleDb";
 export * from "./feedback";
 export * from "./reinitialisation";
 

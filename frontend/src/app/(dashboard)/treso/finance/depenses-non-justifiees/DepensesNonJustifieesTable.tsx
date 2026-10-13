@@ -8,6 +8,8 @@ interface DepenseNonJustifieeRow {
   id: string;
   demandeId: string;
   demandeReference: string;
+  /** Article payé par le règlement d'origine (lot E) ; `null` si le règlement n'est rattaché à aucun article. */
+  articleLibelle?: string | null;
   objet: string;
   montant: number;
   date: Date;
@@ -33,7 +35,18 @@ export function DepensesNonJustifieesTable({ lignes }: { lignes: DepenseNonJusti
       rowKey={(l) => l.id}
       emptyMessage="Aucune dépense sans pièce formelle à suivre pour l'instant."
       columns={[
-        { key: "demandeReference", header: "Demande", sortable: true, accessor: (l) => l.demandeReference },
+        {
+          key: "demandeReference",
+          header: "Demande",
+          sortable: true,
+          accessor: (l) => l.demandeReference,
+          render: (l) => (
+            <span>
+              {l.demandeReference}
+              {l.articleLibelle ? <span className="block text-xs text-muted-foreground">Article : {l.articleLibelle}</span> : null}
+            </span>
+          ),
+        },
         { key: "objet", header: "Objet de la dépense", render: (l) => truncate(l.objet) },
         {
           key: "montant",

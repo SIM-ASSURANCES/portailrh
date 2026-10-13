@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { RETOUR_EN_ATTENTE_WHERE } from "backend";
+import { getResumeArticle, RETOUR_EN_ATTENTE_WHERE } from "backend";
 import { prisma } from "backend";
 
 import { RetoursEnAttenteTable } from "./RetoursEnAttenteTable";
@@ -60,7 +60,10 @@ export default async function RetoursEnAttentePage() {
   // REFONTE V1 / Phase D (voir CLAUDE.md "Refonte V1 en cours") : un retour
   // n'a plus de montant dépensé/justification/commentaire uniques — chaque
   // ligne de dépense (`depenses`) porte désormais sa propre justification.
-  const retours = rawRetours.map((r) => {
+  const resumes = await Promise.all(
+    rawRetours.map((r) => (r.reglement.ligneDemandeId ? getResumeArticle(r.reglement.ligneDemandeId) : null))
+  );
+  const retours = rawRetours.map((r, index) => {
     const totalDeclare = r.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
     const montantNonJustifie = r.depenses
       .filter((d) => d.justification === "SANS_PIECE")
@@ -69,6 +72,8 @@ export default async function RetoursEnAttentePage() {
       id: r.id,
       demandeReference: r.reglement.demande.reference,
       articleLibelle: r.reglement.ligneDemande?.libelle ?? null,
+      articleBeneficiaire: resumes[index]?.beneficiaire ?? null,
+      articleMontantValide: resumes[index]?.montantValide ?? null,
       declarantNom: r.declarant.fullName,
       reglementMontant: Number(r.reglement.montant),
       reglementMode: r.reglement.mode,

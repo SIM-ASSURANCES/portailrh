@@ -2901,6 +2901,53 @@ retour de caisse et la régularisation PAR ARTICLE sont le lot E (non codés) : 
   le script, retour déclaré puis reçu dans le parcours, PDF lus avec `pdftotext`) ; `articles-beneficiaire-pieces.mjs` 34/34 (section règlement réécrite),
   `soumission-dg-article.mjs` 37/37, `articles-decision-finance.mjs` 65/65.
 
+#### Lot E — retour de caisse et régularisation par article (2026-10-17)
+
+Applique les décisions 5 et 6 de la section « Autonomie des articles » : un article réglé (`Reglement.ligneDemandeId`, lot D) a SON retour de
+caisse, SES dépenses et SON solde à régulariser ; les autres articles restent en attente ou suivent leur cours. Aucune écriture de caisse
+existante n'est jamais modifiée ; un retour nul reste de l'historique seulement. Reporting, export et dashboard par article : lot F (non fait).
+
+- **`getEcartLigne`** (`backend/src/regularisationArticle.ts`, PUR, centimes exacts, jamais plafonné à 0) = fonds remis − dépenses (justifiées +
+  sans pièce formelle + reste non détaillé) − retours reçus. **Une seule formule** : `getEcart(demandeId)` (= `getEcartDemande`), l'écart de
+  `getMesDemandesDetail`, celui de chaque article et le total affiché la reprennent. Classement d'une dépense (`categorieDepense`) : justifiée ;
+  « sans pièce formelle » (sans pièce + motif Finance ou autre libellé) ; « reste non détaillé » (libellé « Dépenses non détaillées » sans motif).
+  Retours reçus = retours réceptionnés + retours exceptionnels validés − remboursements validés.
+- **`agregerRegularisation`** (pur) répartit règlements, retours, dépenses, remboursements et retours exceptionnels entre les articles et une part
+  **« non rattachée »** (règlements sans article, leurs retours/dépenses, retours exceptionnels sans article). **Invariant testé** : Σ articles + non
+  rattaché = solde de la demande (`getEcart`). `getRegularisationParArticle` (`regularisationArticleDb.ts`) charge le tout : par article libellé,
+  libellé du demandeur, bénéficiaire, montant validé, agrégats, solde, état (`etatRegularisationArticle` : non validé / en attente de règlement /
+  à régulariser / régularisé / anomalie), date de régularisation (`dateRegularisation` : la plus récente des dates qui ont fait évoluer l'article,
+  solde nul seulement), retours en attente. `getResumeArticle` + `ArticleTag` nomment un article (« Article : X · Bénéficiaire : Y · Montant validé : Z »).
+- **Retour exceptionnel post-clôture par article** : migration `20261017090000_retour_exceptionnel_par_article` (`RetourExceptionnel.ligneDemandeId`,
+  FK RESTRICT, index ; rattrape les retours des demandes à UN SEUL article validé, rejouée sans effet ; deux articles validés ou plus : laissé sans
+  article, jamais deviné). Saisie : article validé obligatoire sur une demande à articles, plafond = fonds remis de l'article − ses retours reçus,
+  un retour en attente par article, garde 8 de CET article (`refusConflitInteret` accepte `{ demandeId, ligneDemandeId }` et lit l'article d'un
+  `retourExceptionnelId`) ; **refusée tant qu'un règlement non annulé n'est rattaché à aucun article** (`MESSAGE_REGLEMENTS_NON_RATTACHES`).
+  Validation : la part qui couvre le solde de l'article ne réduit aucune dépense, l'excédent réduit d'abord ses dépenses sans pièce formelle puis
+  son « non détaillé », jamais ses justifiées, et jamais les dépenses d'un autre article. `getSoldesARegulariserParReglements` et
+  `getCouvertureRetoursPostCloture` n'imputent un retour exceptionnel rattaché que sur les règlements/retours de son article ; un ancien retour sans
+  article garde l'imputation par ancienneté sur la demande.
+- **État « indéterminé » du lot D** : ne subsiste que pour un retour exceptionnel SANS article sur une demande dont deux articles ou plus sont réglés
+  en Caisse (message mis à jour) ; les données rattachées sont précises. Le parcours de l'article affiche « Régularisé le <date> » avec le détail
+  (fonds remis − dépenses − retours reçus, dont sans pièce formelle / reste non détaillé) et le **solde final**.
+- **Écrans** : `RegularisationSummary` (Finance, Assistant, demandeur — prop `audience`) = un bloc PAR ARTICLE validé (en-tête « Article : … »,
+  bénéficiaire, montant validé, badge d'état/date, six chiffres, puis le détail de SES retours/dépenses avec leurs actions « Détailler »,
+  « Modifier », « Justifier »), un article validé sans règlement « en attente de règlement », une mention des articles rejetés/non décidés, un bloc
+  « Non rattaché à un article » (avertissement, jamais attribué), puis « Total de la demande » (« x article(s) régularisé(s) sur n ») ; une demande
+  sans article (dépense directe) garde un seul bloc. `DetailDepensesRetour` nomme l'article en tête et sur chaque carte de dépense ; détail du retour
+  Finance, « Retours en attente », « À régulariser » (solde de chaque article), « Fonds remis à régulariser », « Dépenses sans pièce formelle à
+  suivre », « Retours à déclarer », section de retours du demandeur (libellé d'origine) et notifications de retour (`lib/nomArticle.ts`) nomment l'article.
+- **Clôture (inchangée, à trancher)** : la clôture reste au niveau de la demande et exige toujours tous les articles décidés + au moins un validé +
+  approbation du DG (`peutEtreCloturee`) ; elle n'exige PAS que chaque article validé soit réglé ni à solde nul (le message « x article(s)
+  régularisé(s) sur n » est informatif, `articleTermine`). Décision ouverte : faut-il exiger le règlement/la régularisation de chaque article ?
+- **Reprise** : aucun script pour rattacher un ancien retour exceptionnel sans article (cas ambigu, signalé à l'écran) — à ajouter si le cas se présente.
+- **Vérifié** : vitest (16 tests `regularisationArticle`, 715 au total, seul échec connu `feedback.test.ts`), tsc, eslint, `next build` ; migration depuis
+  zéro, `migrate diff` vide, rattrapage contrôlé (1 article validé rattaché, 2 laissés sans article, rejeu sans effet) ; e2e `regularisation-par-article.mjs`
+  38/38 (A régularisé + retour + dépenses, B réglé avec dépenses sans retour, C en attente, Z avec reste non détaillé ; soldes indépendants ; clôture
+  seulement une fois tous les articles décidés ; retour exceptionnel d'un article avec refus sans article / au-delà du plafond, dépenses d'un autre
+  article intactes ; ancien retour sans article non rattaché ; règlements non rattachés bloquants ; invariant avec un calcul SQL indépendant) ;
+  régression `reglement-par-article` 55/55, `articles-decision-finance` 65/65, `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié

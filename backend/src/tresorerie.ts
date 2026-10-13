@@ -1,6 +1,8 @@
 import type { Prisma, StatutDemande } from "./generated/prisma/client";
 import { prisma } from "./prisma";
 import { montantValideDepuisLignes, statutDepuisLignes } from "./etatArticles";
+import { getEcartLigne } from "./regularisationArticle";
+import { getEcartDemande } from "./regularisationArticleDb";
 
 /**
  * Statuts d'une Demande dont le montant est ENTIÈREMENT validé (montantValide
@@ -719,7 +721,7 @@ export async function getSoldesARegulariserParReglements(
 
   const reglements = await prisma.reglement.findMany({
     where: { id: { in: reglementIds } },
-    select: { id: true, montant: true, demandeId: true },
+    select: { id: true, montant: true, demandeId: true, ligneDemandeId: true },
     orderBy: { createdAt: "asc" },
   });
 
@@ -756,14 +758,18 @@ export async function getSoldesARegulariserParReglements(
   // encore positifs ; le reliquat éventuel (dépenses déjà réduites à la validation) est déduit du
   // dernier règlement.
   const demandeIds = [...new Set(reglements.map((r) => r.demandeId))];
+  // Un retour exceptionnel rattaché à un article (lot E) n'est imputé que sur les règlements de CET article ; un retour
+  // sans article (dépense directe, ou antérieur au lot E sur une demande ambiguë) l'est sur ceux de la demande, comme avant.
   const exceptionnels = await prisma.retourExceptionnel.groupBy({
-    by: ["demandeId"],
+    by: ["demandeId", "ligneDemandeId"],
     where: { statut: "VALIDE", demandeId: { in: demandeIds } },
     _sum: { montant: true },
   });
   for (const e of exceptionnels) {
     let reste = Number(e._sum.montant ?? 0);
-    const deLaDemande = reglements.filter((r) => r.demandeId === e.demandeId);
+    const deLaDemande = reglements.filter(
+      (r) => r.demandeId === e.demandeId && (e.ligneDemandeId == null || r.ligneDemandeId === e.ligneDemandeId)
+    );
     for (const r of deLaDemande) {
       if (reste <= 0) break;
       const positif = Math.max(0, soldes.get(r.id) ?? 0);
@@ -821,12 +827,9 @@ export async function getRetoursRecus(demandeId: string): Promise<number> {
  * partielle sert justement à traiter ce cas, avec un motif obligatoire).
  */
 export async function getEcart(demandeId: string): Promise<number> {
-  const [totalRegle, depensesDeclarees, retoursRecus] = await Promise.all([
-    getTotalRegle(demandeId),
-    getDepensesDeclarees(demandeId),
-    getRetoursRecus(demandeId),
-  ]);
-  return totalRegle - depensesDeclarees - retoursRecus;
+  // Lot E : même formule que l'écart d'un article (`getEcartLigne`), appliquée à la demande entière — somme exacte des
+  // articles et de la part non rattachée.
+  return getEcartDemande(demandeId);
 }
 
 /**
@@ -1138,7 +1141,13 @@ export async function getMesDemandesDetail(userId: string): Promise<MaDemandeDet
       montant: Number(d.montant),
       montantValide: d.montantValide == null ? null : Number(d.montantValide),
       montantRecu,
-      soldeARegulariser: montantRecu - depensesDeclarees - retoursRecus,
+      soldeARegulariser: getEcartLigne({
+        fondsRemis: montantRecu,
+        depensesJustifiees: depensesDeclarees,
+        depensesSansPieceFormelle: 0,
+        resteNonDetaille: 0,
+        retoursRecus,
+      }),
       createdAt: d.createdAt,
     };
   });
@@ -1242,7 +1251,16 @@ export async function getMesDemandesParMois(
  * cette même requête — jamais deux implémentations de la même règle.
  */
 export async function getReglementsCaisseADeclarer(userId: string): Promise<
-  { reglementId: string; demandeId: string; reference: string; montant: number; confirmeAt: Date | null; mode: "CAISSE" | "BANQUE" }[]
+  {
+    reglementId: string;
+    demandeId: string;
+    reference: string;
+    /** Article payé par ce règlement (version d'origine du libellé, lot E), `null` s'il n'est rattaché à aucun article. */
+    articleLibelle: string | null;
+    montant: number;
+    confirmeAt: Date | null;
+    mode: "CAISSE" | "BANQUE";
+  }[]
 > {
   const reglements = await prisma.reglement.findMany({
     where: {
@@ -1259,11 +1277,13 @@ export async function getReglementsCaisseADeclarer(userId: string): Promise<
       mode: true,
       confirmeAt: true,
       demande: { select: { id: true, reference: true } },
+      ligneDemande: { select: { libelle: true, libelleOriginal: true, libelleDemandeur: true } },
     },
     orderBy: { confirmeAt: "asc" },
   });
 
   return reglements.map((r) => ({
+    articleLibelle: r.ligneDemande ? (r.ligneDemande.libelleDemandeur ?? r.ligneDemande.libelleOriginal ?? r.ligneDemande.libelle) : null,
     reglementId: r.id,
     demandeId: r.demande.id,
     reference: r.demande.reference,
@@ -1369,16 +1389,23 @@ export async function getCouvertureRetoursPostCloture(demandeId: string): Promis
       include: { retours: { orderBy: { createdAt: "asc" } } },
       orderBy: { createdAt: "asc" },
     }),
-    prisma.retourExceptionnel.aggregate({ where: { demandeId, statut: "VALIDE" }, _sum: { montant: true } }),
+    // Lot E : un retour exceptionnel rattaché à un article ne couvre que les retours de CET article ; sans article, tous.
+    prisma.retourExceptionnel.groupBy({ by: ["ligneDemandeId"], where: { demandeId, statut: "VALIDE" }, _sum: { montant: true } }),
   ]);
-  let restant = Number(exceptionnels._sum.montant ?? 0);
   const couvert = new Map<string, number>();
-  for (const reglement of reglements) {
-    for (const retour of reglement.retours) {
-      if (retour.estReceptionne || restant <= 0) continue;
-      const alloue = Math.min(restant, Number(retour.montantARetourner));
-      couvert.set(retour.id, alloue);
-      restant -= alloue;
+  for (const groupe of exceptionnels) {
+    let restant = Number(groupe._sum.montant ?? 0);
+    for (const reglement of reglements) {
+      if (groupe.ligneDemandeId != null && reglement.ligneDemandeId !== groupe.ligneDemandeId) continue;
+      for (const retour of reglement.retours) {
+        if (retour.estReceptionne || restant <= 0) continue;
+        const dejaCouvert = couvert.get(retour.id) ?? 0;
+        const disponible = Math.max(0, Number(retour.montantARetourner) - dejaCouvert);
+        const alloue = Math.min(restant, disponible);
+        if (alloue <= 0) continue;
+        couvert.set(retour.id, dejaCouvert + alloue);
+        restant -= alloue;
+      }
     }
   }
   return couvert;

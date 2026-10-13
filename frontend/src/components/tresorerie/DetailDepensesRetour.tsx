@@ -1,4 +1,13 @@
-import { estFicheRegularisation, estLigneReste, prisma, refusExecutionPropreSurReglement, totauxDetailRetour } from "backend";
+import {
+  estFicheRegularisation,
+  estLigneReste,
+  getResumeArticle,
+  prisma,
+  refusExecutionPropreSurReglement,
+  totauxDetailRetour,
+} from "backend";
+
+import { ArticleTag } from "./ArticleTag";
 
 import { DepenseLigneEdition } from "@/app/(dashboard)/treso/finance/retours/[id]/DepenseLigneEdition";
 import { DetaillerResteBouton } from "@/app/(dashboard)/treso/finance/retours/[id]/DetaillerResteBouton";
@@ -31,6 +40,7 @@ export async function DetailDepensesRetour({
     },
   });
   if (!retour) return null;
+  const article = retour.reglement.ligneDemandeId ? await getResumeArticle(retour.reglement.ligneDemandeId) : null;
   const demande = retour.reglement.demande;
   const fiche = estFicheRegularisation({ ...retour, mode: retour.reglement.mode });
   const clotureeSansException = demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle;
@@ -47,6 +57,7 @@ export async function DetailDepensesRetour({
 
   return (
     <div data-detail-depenses={retour.id} className="space-y-3">
+      <ArticleTag article={article} />
       <dl className="grid grid-cols-2 gap-3 rounded-lg bg-muted/60 p-3 text-sm sm:grid-cols-5">
         <Total libelle="Remis" valeur={totaux.remis} />
         <Total libelle="Détaillé" valeur={totaux.detaille} />
@@ -69,6 +80,7 @@ export async function DetailDepensesRetour({
                 {d.date.toLocaleDateString("fr-FR")} · {d.justification === "SANS_PIECE" ? "Dépense sans pièce formelle" : "Dépense justifiée"}
               </span>
             </div>
+            <ArticleTag article={article} />
             {d.pieceJointe ? (
               <a
                 href={`/api/treso/pieces-jointes/${d.pieceJointe.id}`}

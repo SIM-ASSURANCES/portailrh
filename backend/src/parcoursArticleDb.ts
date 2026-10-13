@@ -5,6 +5,7 @@ import { beneficiaireArticle } from "./beneficiaireArticles";
 import { etatLigneCircuit, totalArticle } from "./etatArticles";
 import { parcoursArticle, type ParcoursArticle } from "./parcoursArticle";
 import { prisma } from "./prisma";
+import { getRegularisationParArticle } from "./regularisationArticleDb";
 import { getSoldesARegulariserParReglements } from "./tresorerie";
 
 /** Parcours de chaque article de la demande, par identifiant d'article. Vide pour une demande sans article. */
@@ -47,10 +48,13 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
   const caisseConfirmes = reglements.filter((r) => r.mode === "CAISSE" && r.estConfirme && !r.estAnnule);
   const [soldes, exceptionnels] = await Promise.all([
     getSoldesARegulariserParReglements(caisseConfirmes.map((r) => r.id)),
-    prisma.retourExceptionnel.count({ where: { demandeId, statut: "VALIDE" } }),
+    // Seuls les retours exceptionnels SANS article (anciens, demande ambiguë) rendent l'attribution indéterminée.
+    prisma.retourExceptionnel.count({ where: { demandeId, statut: "VALIDE", ligneDemandeId: null } }),
   ]);
-  // Un retour exceptionnel post-clôture est au niveau de la demande : il est imputé sur les règlements par ancienneté,
-  // ce qui ne permet pas de l'attribuer à un article dès que plusieurs articles ont un règlement Caisse.
+  const regul = await getRegularisationParArticle(demandeId);
+  const regulParLigne = new Map(regul.articles.map((a) => [a.ligneId, a]));
+  // Un retour exceptionnel post-clôture SANS article (ancien) est imputé sur les règlements par ancienneté : on ne peut
+  // pas l'attribuer à un article dès que plusieurs articles ont un règlement Caisse. Rattaché à un article (lot E), il est précis.
   const articlesCaisse = new Set(caisseConfirmes.map((r) => r.ligneDemandeId));
   const regularisationIndeterminee = exceptionnels > 0 && articlesCaisse.size >= 2;
 
@@ -73,6 +77,9 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
         confirmeParFinance: finance && finance !== decideParNom ? finance : null,
         motifRejet: ligne.motifRejet,
         regularisationIndeterminee,
+        regularisation: regulParLigne.has(ligne.id)
+          ? { agregats: regulParLigne.get(ligne.id)!.agregats, regulariseAt: regulParLigne.get(ligne.id)!.regulariseAt }
+          : undefined,
         reglements: reglements
           .filter((r) => r.ligneDemandeId === ligne.id)
           .map((r) => ({

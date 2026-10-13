@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
+import { ArticleTag } from "@/components/tresorerie/ArticleTag";
 import { DetailDepensesRetour } from "@/components/tresorerie/DetailDepensesRetour";
 import { getSession, hasPermission } from "@/lib/auth";
 import { detailMontantDefinitif, etatRetourAffiche } from "@/lib/retourAffichage";
@@ -11,6 +12,7 @@ import {
   getCouvertureRetoursPostCloture,
   getMontantsDefinitifsRetours,
   getRecuNetSignalement,
+  getResumeArticle,
   prisma,
   refusExecutionPropreSurReglement,
 } from "backend";
@@ -68,6 +70,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     },
   });
 
+  const resumeArticle = retour?.reglement.ligneDemandeId ? await getResumeArticle(retour.reglement.ligneDemandeId) : null;
   if (!retour) {
     notFound();
   }
@@ -226,9 +229,12 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
 
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {retour.reglement.ligneDemande ? (
-            <div data-article-retour>
+            <div data-article-retour className="sm:col-span-3">
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Article</dt>
-              <dd className="text-sm font-semibold text-foreground">{retour.reglement.ligneDemande.libelle}</dd>
+              <dd className="space-y-0.5">
+                <span className="block text-sm font-semibold text-foreground">{retour.reglement.ligneDemande.libelle}</span>
+                <ArticleTag article={resumeArticle} />
+              </dd>
             </div>
           ) : null}
           <div>

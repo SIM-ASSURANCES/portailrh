@@ -31,6 +31,7 @@ export default async function FondsARegulariserPage() {
     where: { mode: "CAISSE", estConfirme: true, estAnnule: false },
     include: {
       demande: { select: { id: true, reference: true } },
+      ligneDemande: { select: { libelle: true } },
       retours: { select: { estReceptionne: true, montantARetourner: true, depenses: { select: { montant: true } } } },
     },
     orderBy: { confirmeAt: "asc" },
@@ -51,6 +52,7 @@ export default async function FondsARegulariserPage() {
         id: r.id,
         demandeId: r.demande.id,
         demandeReference: r.demande.reference,
+        articleLibelle: r.ligneDemande?.libelle ?? null,
         montantReglement: Number(r.montant),
         depensesDeclarees,
         retoursRecus,

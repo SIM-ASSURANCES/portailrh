@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { getEcart } from "backend";
+import { getRegularisationParArticle } from "backend";
 import { prisma } from "backend";
 
 import { ARegulariserTable } from "./ARegulariserTable";
@@ -72,22 +72,30 @@ export default async function ARegulariserPage() {
     })
     .filter((d) => d.reste === 0 && d.estEntierementValidee);
 
+  // Lot E : le solde est raisonné par article (`getEcartLigne`) ; la demande garde son total (somme exacte des articles).
   const rows = await Promise.all(
-    aRegulariser.map(async (d) => ({
-      id: d.id,
-      reference: d.reference,
-      createurNom: d.createurNom,
-      totalRegle: d.totalRegle,
-      valideeLe: d.valideeLe,
-      ecart: await getEcart(d.id),
-    }))
+    aRegulariser.map(async (d) => {
+      const regul = await getRegularisationParArticle(d.id);
+      return {
+        id: d.id,
+        reference: d.reference,
+        createurNom: d.createurNom,
+        totalRegle: d.totalRegle,
+        valideeLe: d.valideeLe,
+        ecart: regul.ecartTotal,
+        articles: regul.articles
+          .filter((a) => a.statut === "VALIDEE")
+          .map((a) => ({ id: a.ligneId, libelle: a.libelle, solde: a.ecart, regularise: a.etat === "REGULARISE" })),
+        nonRattacheSolde: regul.aDuNonRattache ? (regul.ecartTotal - regul.articles.reduce((s, a) => s + Math.round(a.ecart * 100), 0) / 100) : null,
+      };
+    })
   );
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title="Décaissements à régulariser"
-        description="Demandes entièrement réglées, en attente de clôture. Triées par ancienneté de validation."
+        description="Demandes entièrement réglées, en attente de clôture, avec le solde de chaque article. Triées par ancienneté de validation."
       />
       <ARegulariserTable demandes={rows} />
     </div>

@@ -4,6 +4,7 @@ import {
   getCouvertureRetoursPostCloture,
   getDateDernierReglementConfirme,
   getMontantsDefinitifsRetours,
+  getResumeArticle,
   rienARendre,
 } from "backend";
 import { prisma } from "backend";
@@ -82,6 +83,9 @@ export async function RetoursCaisseSection({
     reglements.map((r) => (r.retours.length > 0 ? calculerMontantARetournerNet({ reglementId: r.id, totalDepensesNouvelles: 0 }) : null))
   );
 
+  // Lot E : chaque règlement nomme son article (libellé d'origine, bénéficiaire, montant validé).
+  const resumes = await Promise.all(reglements.map((r) => (r.ligneDemandeId ? getResumeArticle(r.ligneDemandeId) : null)));
+
   const dateMin = dateDernierReglement ? dateDernierReglement.toISOString().slice(0, 10) : undefined;
 
   return (
@@ -134,7 +138,11 @@ export async function RetoursCaisseSection({
               reglements.length > 1 || r.ligneDemande
                 ? [
                     reglements.length > 1 ? `Règlement ${index + 1}/${reglements.length}${r.mode === "BANQUE" ? " (Banque)" : ""}` : null,
-                    r.ligneDemande ? `Article « ${(r.ligneDemande.libelleDemandeur ?? r.ligneDemande.libelleOriginal ?? r.ligneDemande.libelle)} »` : null,
+                    r.ligneDemande
+                      ? `Article « ${(r.ligneDemande.libelleDemandeur ?? r.ligneDemande.libelleOriginal ?? r.ligneDemande.libelle)} »${
+                          resumes[index] ? ` (bénéficiaire : ${resumes[index]!.beneficiaire}, montant validé : ${resumes[index]!.montantValide.toLocaleString("fr-FR")} FCFA)` : ""
+                        }`
+                      : null,
                     (r.confirmeAt ?? r.createdAt).toLocaleDateString("fr-FR"),
                   ]
                     .filter(Boolean)
