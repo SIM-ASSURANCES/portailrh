@@ -16,6 +16,7 @@ import {
   estExecutantFinance,
   MESSAGE_ATTENTE_VALIDATION_FINALE,
   raisonIndisponible,
+  raisonSoumissionDemande,
   refusExecutionPropreDemande,
   versDemandeCircuit,
   type TypeActionCircuit,
@@ -104,6 +105,15 @@ export default async function CategoriserDemandePage({
   const raisonCircuit = (type: TypeActionCircuit) =>
     acteurCircuit ? raisonIndisponible(demandeCircuit, acteurCircuit, type) : "Action non autorisée.";
   const raisonDecider = raisonCircuit("DECIDER_LIGNES");
+  // Soumission au DG : phrases lisibles (lot 2, 2026-10-13) — permission absente, demande décidée d'office par le DG…
+  // `raisonSoumissionLignes` : la demande se prête-t-elle à la soumission d'articles ? (les raisons propres à chaque
+  // article s'y ajoutent dans le tableau) ; `raisonSoumissionEntiere` : le bouton « Soumettre la demande entière ».
+  const raisonSoumissionLignes = acteurCircuit
+    ? raisonSoumissionDemande(demandeCircuit, acteurCircuit, "LIGNES")
+    : "Action non autorisée.";
+  const raisonSoumissionEntiere = acteurCircuit
+    ? raisonSoumissionDemande(demandeCircuit, acteurCircuit, "DEMANDE")
+    : "Action non autorisée.";
   // Assistant Finance (exécution sans décision) avant la décision finale : il voit la demande, tous ses boutons sont
   // grisés avec « En attente de la validation finale », jamais « Action non autorisée. » (commit 4, morceau 4).
   const attenteValidationFinale =
@@ -580,9 +590,10 @@ export default async function CategoriserDemandePage({
               budgetParCategorie={budgetParCategorie}
               soumissionDG={
                 soumissionParLignes
-                  ? { possible: canSoumettreDG && raisonCircuit("SOUMETTRE_LIGNES_DG") === null, raison: raisonCircuit("SOUMETTRE_LIGNES_DG") }
+                  ? { raisonDemande: raisonSoumissionLignes }
                   : null
               }
+              etapeCircuit={demande.etapeCircuit}
             />
           ) : (
             <ValidationActions
@@ -599,7 +610,7 @@ export default async function CategoriserDemandePage({
               demandeId={demande.id}
               apresRejetDG={demande.etapeCircuit === "REJET_DG"}
               afficherRejet={demandeAauMoinsUneLigne}
-              raisonSoumettre={raisonCircuit("SOUMETTRE_DG")}
+              raisonSoumettre={raisonSoumissionEntiere}
               raisonRejeter={raisonCircuit("REJETER")}
               raisonResoumettre={raisonCircuit("RESOUMETTRE_DG")}
               soumissionParLignes={soumissionParLignes}

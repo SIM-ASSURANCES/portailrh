@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
+import { RaisonVisible } from "@/components/tresorerie/RaisonVisible";
 import { Button, Textarea } from "@/components/ui";
 
 import { resoumettreAuDGAction, soumettreAuDGAction } from "../../../circuit/actions";
@@ -130,7 +131,7 @@ export function CircuitFinanceActions({
         </div>
       ) : null}
 
-      {raison ? <p className="text-xs text-muted-foreground">{raison}</p> : null}
+      {raison ? <RaisonVisible data-raison-circuit>{raison}</RaisonVisible> : null}
     </section>
   );
 }

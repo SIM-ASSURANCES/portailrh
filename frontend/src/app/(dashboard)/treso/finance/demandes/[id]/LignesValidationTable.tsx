@@ -5,15 +5,19 @@ import { toast } from "sonner";
 
 import { Icon } from "@/components/icons";
 import { STATUT_LIGNE_DEMANDE_BADGE_VARIANT, STATUT_LIGNE_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import { RaisonVisible } from "@/components/tresorerie/RaisonVisible";
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 
 import {
+  bandeauEtapeDG,
   etatLigneDG,
   LIBELLE_ETAT_LIGNE_DG,
   MESSAGE_LIGNE_SANS_CATEGORIE,
   MOTIF_LIGNE_MIN,
-  raisonLigneNonSoumettable,
+  raisonBoutonGlobalSoumission,
+  raisonSoumissionArticle,
   type EtatLigneDG,
+  type LigneCircuit,
 } from "backend/client";
 
 import { BudgetCategorieApercu, type BudgetCategorieInfo } from "./CategorisationForm";
@@ -76,17 +80,16 @@ const VARIANTE_ETAT_DG: Record<EtatLigneDG, "neutral" | "warning" | "success" | 
 const etatDG = (l: LigneValidation): EtatLigneDG =>
   etatLigneDG({ soumiseAuDG: l.soumiseAuDG ?? false, decisionDG: l.decisionDG ?? null });
 
-/** Pourquoi la ligne ne peut pas être soumise au DG maintenant (`null` : sélectionnable). */
-const raisonNonSoumettable = (l: LigneValidation) =>
-  raisonLigneNonSoumettable({
-    id: l.id,
-    libelle: l.libelle,
-    categorisee: !!l.categorieId,
-    statut: l.statutValidation,
-    soumiseAuDG: l.soumiseAuDG ?? false,
-    decisionDG: l.decisionDG ?? null,
-    decisionDGParId: null,
-  });
+/** La ligne telle que le circuit la lit (sélection des articles à soumettre au DG). */
+const versLigneCircuit = (l: LigneValidation): LigneCircuit => ({
+  id: l.id,
+  libelle: l.libelle,
+  categorisee: !!l.categorieId,
+  statut: l.statutValidation,
+  soumiseAuDG: l.soumiseAuDG ?? false,
+  decisionDG: l.decisionDG ?? null,
+  decisionDGParId: null,
+});
 
 type Decision = { statut: "VALIDEE" | "REJETEE"; motif: string };
 
@@ -164,12 +167,17 @@ export function LignesValidationTable({
   budgetParCategorie,
   raisonIndisponible = null,
   soumissionDG = null,
+  etapeCircuit = null,
 }: {
   demandeId: string;
   lignes: LigneValidation[];
   canValider: boolean;
-  /** Soumission au DG ligne par ligne (2026-10-10) : `null` si la demande ne s'y prête pas (sans étape DG optionnelle). */
-  soumissionDG?: { possible: boolean; raison: string | null } | null;
+  /** Soumission au DG ligne par ligne (2026-10-10) : `null` si la demande ne s'y prête pas (sans étape DG optionnelle).
+   *  `raisonDemande` : pourquoi la soumission est impossible pour la demande entière (permission, étape…), `null` si elle
+   *  est possible ; les raisons propres à chaque article s'y ajoutent (`raisonSoumissionArticle`). */
+  soumissionDG?: { raisonDemande: string | null } | null;
+  /** Étape du circuit (bandeau « à l'étape DG »). */
+  etapeCircuit?: string | null;
   /** Circuit de validation : pourquoi la décision est grisée à cette étape (phrase du moteur), à la place du message
    *  de rôle. */
   raisonIndisponible?: string | null;
@@ -198,18 +206,26 @@ export function LignesValidationTable({
       return [ligne.id, saisie];
     })
   );
-  const selectionValide = selectionDG.filter((id) => lignes.some((l) => l.id === id && raisonNonSoumettable(l) === null));
+  const raisonDemande = soumissionDG?.raisonDemande ?? null;
+  const raisonArticle = (l: LigneValidation) => raisonSoumissionArticle(versLigneCircuit(l), raisonDemande);
+  const selectionValide = selectionDG.filter((id) => lignes.some((l) => l.id === id && raisonArticle(l) === null));
+  const raisonBoutonGlobal = raisonBoutonGlobalSoumission(raisonDemande, lignes.map(versLigneCircuit), selectionValide.length);
+  const bandeau = soumissionDG && etapeCircuit ? bandeauEtapeDG(etapeCircuit, lignes.map(versLigneCircuit)) : null;
+  const [ligneEnSoumission, setLigneEnSoumission] = useState<string | null>(null);
 
   function basculerSelectionDG(ligneId: string) {
     setSelectionDG((prev) => (prev.includes(ligneId) ? prev.filter((id) => id !== ligneId) : [...prev, ligneId]));
   }
 
-  function handleSoumettreDG() {
+  /** Soumet au DG les articles `ids` : la sélection cochée (bouton global) ou un seul article (son propre bouton). */
+  function soumettreAuDG(ids: string[], ligneId: string | null) {
+    setLigneEnSoumission(ligneId);
     startTransition(async () => {
-      const result = await soumettreLignesAuDGAction(demandeId, selectionValide);
+      const result = await soumettreLignesAuDGAction(demandeId, ids);
+      setLigneEnSoumission(null);
       if (result.status === "success") {
         toast.success(result.message);
-        setSelectionDG([]);
+        setSelectionDG((prev) => prev.filter((id) => !ids.includes(id)));
       } else {
         toast.error(result.message);
       }
@@ -281,6 +297,16 @@ export function LignesValidationTable({
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
       <h2 className="text-sm font-semibold text-foreground">Lignes d&apos;articles</h2>
 
+      {bandeau ? (
+        <p
+          data-bandeau-etape-dg
+          role="status"
+          className="rounded-md border border-info bg-info-bg px-3 py-2 text-sm font-medium text-foreground"
+        >
+          {bandeau}
+        </p>
+      ) : null}
+
       <div className="space-y-3">
         {lignes.map((ligne) => (
           <LigneCard
@@ -300,8 +326,18 @@ export function LignesValidationTable({
             budgetParCategorie={budgetParCategorie}
             etatDG={soumissionDG || ligne.soumiseAuDG ? etatDG(ligne) : null}
             selectionDG={
-              soumissionDG?.possible && raisonNonSoumettable(ligne) === null
+              soumissionDG && raisonArticle(ligne) === null
                 ? { coche: selectionValide.includes(ligne.id), basculer: () => basculerSelectionDG(ligne.id) }
+                : null
+            }
+            soumission={
+              soumissionDG && !dejaDecidees
+                ? {
+                    raison: raisonArticle(ligne),
+                    enCours: ligneEnSoumission === ligne.id,
+                    occupe: isPending,
+                    soumettre: () => soumettreAuDG([ligne.id], ligne.id),
+                  }
                 : null
             }
           />
@@ -310,25 +346,24 @@ export function LignesValidationTable({
 
       {soumissionDG && !dejaDecidees ? (
         <div data-soumission-dg className="space-y-2 rounded-md border border-border bg-muted/40 p-3">
-          <p className="text-sm font-semibold text-foreground">Soumettre des lignes au DG</p>
+          <p className="text-sm font-semibold text-foreground">Soumettre plusieurs articles au DG</p>
           <p className="text-xs text-muted-foreground">
-            Cochez les lignes que le DG doit décider ; les autres restent sous la décision de la Finance. Une ligne refusée
-            par le DG peut lui être resoumise. Seule une ligne catégorisée peut être soumise.
+            Cochez les articles que le DG doit décider (ou utilisez le bouton « Soumettre au DG » de chaque article) ; les
+            autres restent sous la décision de la Finance. Un article refusé par le DG peut lui être resoumis. Seul un
+            article catégorisé peut être soumis.
           </p>
           <Button
             type="button"
             variant="secondary"
-            loading={isPending && selectionValide.length > 0}
-            disabled={!soumissionDG.possible || selectionValide.length === 0 || isPending}
-            onClick={handleSoumettreDG}
+            loading={isPending && ligneEnSoumission === null && selectionValide.length > 0}
+            disabled={raisonBoutonGlobal !== null || isPending}
+            onClick={() => soumettreAuDG(selectionValide, null)}
           >
             {selectionValide.length > 0
               ? `Soumettre au DG (${selectionValide.length} ligne${selectionValide.length > 1 ? "s" : ""})`
               : "Soumettre au DG"}
           </Button>
-          {!soumissionDG.possible && soumissionDG.raison ? (
-            <p className="text-xs text-muted-foreground">{soumissionDG.raison}</p>
-          ) : null}
+          {raisonBoutonGlobal ? <RaisonVisible data-raison-globale>{raisonBoutonGlobal}</RaisonVisible> : null}
         </div>
       ) : null}
 
@@ -339,7 +374,7 @@ export function LignesValidationTable({
             <span className="tabular-nums">{montantQuiSeraValide.toLocaleString("fr-FR")} FCFA</span>
           </p>
           {!canValider && raisonIndisponible ? (
-            <p className="text-xs text-muted-foreground">{raisonIndisponible}</p>
+            <RaisonVisible data-raison-decision>{raisonIndisponible}</RaisonVisible>
           ) : !canValider ? (
             <p className="text-xs text-muted-foreground">
               Votre rôle ne permet pas de valider ou rejeter les lignes de cette demande — réservé au
@@ -382,6 +417,7 @@ function LigneCard({
   budgetParCategorie,
   etatDG: etatLigne = null,
   selectionDG = null,
+  soumission = null,
 }: {
   ligne: LigneValidation;
   dejaDecidee: boolean;
@@ -399,6 +435,8 @@ function LigneCard({
   etatDG?: EtatLigneDG | null;
   /** Case « Soumettre au DG » quand la ligne est sélectionnable. */
   selectionDG?: { coche: boolean; basculer: () => void } | null;
+  /** Bouton « Soumettre au DG » propre à l'article : toujours affiché (grisé avec sa raison si impossible). */
+  soumission?: { raison: string | null; enCours: boolean; occupe: boolean; soumettre: () => void } | null;
 }) {
   const [ouvertLibelle, setOuvertLibelle] = useState(false);
   const [valeurLibelle, setValeurLibelle] = useState(ligne.libelle);
@@ -423,6 +461,23 @@ function LigneCard({
   }
 
   const total = ligne.quantite * ligne.prixUnitaire;
+
+  // Bouton « Soumettre au DG » de CET article : toujours visible, grisé avec sa raison (lisible) s'il est impossible.
+  const boutonSoumettre = soumission ? (
+    <Button
+      type="button"
+      variant="secondary"
+      data-soumettre-article={ligne.id}
+      loading={soumission.enCours}
+      disabled={soumission.raison !== null || soumission.occupe}
+      onClick={soumission.soumettre}
+    >
+      {etatLigne === "REFUSEE_DG" ? "Resoumettre au DG" : "Soumettre au DG"}
+    </Button>
+  ) : null;
+  const raisonSoumettre = soumission?.raison ? (
+    <RaisonVisible data-raison-article={ligne.id}>{soumission.raison}</RaisonVisible>
+  ) : null;
 
   return (
     <div className="card-shadow-hover relative rounded-2xl border border-border bg-surface p-4 shadow-elevated transition-transform duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 sm:p-5">
@@ -565,9 +620,17 @@ function LigneCard({
               ) : null}
             </div>
           ) : etatLigne === "EN_ATTENTE_DG" ? (
-            <p className="text-xs text-muted-foreground">En attente de la décision du DG.</p>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">En attente de la décision du DG.</p>
+              {boutonSoumettre}
+              {raisonSoumettre}
+            </div>
           ) : etatLigne === "VALIDEE_DG" ? (
-            <p className="text-xs text-muted-foreground">Validée par le DG : elle sera validée à la décision finale.</p>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">Validée par le DG : elle sera validée à la décision finale.</p>
+              {boutonSoumettre}
+              {raisonSoumettre}
+            </div>
           ) : (
             <div className="space-y-2">
               {etatLigne === "REFUSEE_DG" ? (
@@ -592,7 +655,9 @@ function LigneCard({
                 >
                   Rejeter
                 </Button>
+                {boutonSoumettre}
               </div>
+              {raisonSoumettre}
               {!ligne.categorieId && etatLigne !== "REFUSEE_DG" ? (
                 <p data-sans-categorie className="text-xs text-muted-foreground">
                   {MESSAGE_LIGNE_SANS_CATEGORIE}

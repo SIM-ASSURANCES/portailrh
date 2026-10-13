@@ -8,6 +8,7 @@ npm i --no-save playwright          # à la racine (Chromium déjà en cache ou 
 bash e2e/base-jetable.sh             # conteneur postgres:16, migrations, seed, `next start` sur le port 3100
 node e2e/pointage-lot3bis.mjs        # pointage : jour non ouvré, départ avant 30 min, double départ
 node e2e/pointage-decision-dg.mjs    # justifications : retardataire seul RH, décision du DG
+node e2e/soumission-dg-article.mjs   # Trésorerie : bouton « Soumettre au DG » par article, phrases de refus
 bash e2e/arreter.sh                  # arrête le serveur et le conteneur
 npm uninstall --no-save playwright
 ```
