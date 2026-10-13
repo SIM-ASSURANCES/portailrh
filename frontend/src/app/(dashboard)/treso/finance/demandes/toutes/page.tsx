@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { getBeneficiaireNom } from "backend";
+import { nomBeneficiaireDemande } from "backend";
 import { prisma } from "backend";
 import type { StatutDemande } from "backend";
 
@@ -77,7 +77,7 @@ export default async function ToutesLesDemandesPage({
         ...(createurId ? { createurId } : {}),
         ...(statut ? { statut } : {}),
       },
-      include: { createur: true, beneficiaireUser: true },
+      include: { createur: true, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } },
       orderBy: { createdAt: "desc" },
     }),
     prisma.user.findMany({ orderBy: { fullName: "asc" } }),
@@ -87,7 +87,7 @@ export default async function ToutesLesDemandesPage({
     id: d.id,
     reference: d.reference,
     createurNom: d.createur.fullName,
-    beneficiaireNom: getBeneficiaireNom(d),
+    beneficiaireNom: nomBeneficiaireDemande(d, d.lignes),
     montant: Number(d.montant),
     createdAt: d.createdAt,
     statut: d.statut,

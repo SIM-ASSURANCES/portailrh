@@ -19,6 +19,7 @@ import {
   prisma,
   soumettreLignesAuDG,
   type ActionCircuit,
+  type ChoixBeneficiaire,
   type CorrectionDemande,
 } from "backend";
 
@@ -185,6 +186,16 @@ export async function abandonnerDemandeAction(demandeId: string): Promise<Result
   return agir(demandeId, { type: "ABANDONNER" }, (ref) => `Demande ${ref} abandonnée.`);
 }
 
+/** Choix de bénéficiaire reçu du client, recopié champ par champ (jamais l'objet reçu tel quel). */
+function choixRecu(c: unknown): ChoixBeneficiaire | null | undefined {
+  if (c === undefined) return undefined;
+  if (c === null || typeof c !== "object") return null;
+  const v = c as { mode?: unknown; userId?: unknown; nom?: unknown };
+  if (v.mode === "COMPTE") return { mode: "COMPTE", userId: String(v.userId ?? "") };
+  if (v.mode === "NOM") return { mode: "NOM", nom: String(v.nom ?? "") };
+  return { mode: "MOI" };
+}
+
 /** « À corriger » : le demandeur corrige (lignes, montants, motif, pièce jointe) et resoumet. */
 export async function corrigerEtResoumettreDemandeAction(
   demandeId: string,
@@ -205,6 +216,9 @@ export async function corrigerEtResoumettreDemandeAction(
         motif: String(l.motif ?? ""),
         quantite: Number(l.quantite),
         prixUnitaire: Number(l.prixUnitaire),
+        // Autonomie des articles, lot A : bénéficiaire et pièces propres à l'article (revalidés par le moteur).
+        beneficiaire: choixRecu(l.beneficiaire),
+        pieceJointeUrls: Array.isArray(l.pieceJointeUrls) ? l.pieceJointeUrls.map(String) : undefined,
       })),
       pieceJointeUrl: correction?.pieceJointeUrl ? String(correction.pieceJointeUrl) : undefined,
     })

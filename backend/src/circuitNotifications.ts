@@ -42,6 +42,9 @@ export interface ContexteNotificationCircuit {
   createurId: string;
   createurNom: string;
   beneficiaireUserId: string | null;
+  /** Bénéficiaires (comptes) PROPRES aux articles (lot A « autonomie des articles ») : exclus comme le bénéficiaire de la
+   *  demande des notifications « à régler » (garde 8 étendue à tous les articles). */
+  beneficiairesArticlesUserIds?: string[];
   modeEtapeDG: ModeEtapeDG;
   decideurFinanceId: string | null;
   dgApprobateurId: string | null;
@@ -237,7 +240,7 @@ export function notificationsEtape(
         lien: lienFinance(ctx.demandeId),
         priority: "IMPORTANT",
       },
-      sans(avec(candidats, "treso.effectuer_reglement"), ctx.createurId, ctx.beneficiaireUserId)
+      sans(avec(candidats, "treso.effectuer_reglement"), ctx.createurId, ctx.beneficiaireUserId, ...(ctx.beneficiairesArticlesUserIds ?? []))
     );
     const cloture = notificationApprobationCloture(ctx, candidats);
     if (cloture) pousser(cloture, cloture.destinataires);

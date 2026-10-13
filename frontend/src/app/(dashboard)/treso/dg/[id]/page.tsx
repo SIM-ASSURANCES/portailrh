@@ -7,11 +7,14 @@ import {
   STATUT_LIGNE_DEMANDE_BADGE_VARIANT,
   STATUT_LIGNE_DEMANDE_LABEL,
 } from "@/components/tresorerie/demandeStatut";
+import { detailsArticleDe } from "@/components/tresorerie/DetailsArticle";
 import { getSession, hasPermission } from "@/lib/auth";
 import {
+  aPlusieursBeneficiaires,
   BENEFICIAIRE_TYPE_LABEL,
   chargerActeur,
-  getBeneficiaireNom,
+  detailsArticles,
+  nomBeneficiaireDemande,
   prisma,
   raisonIndisponible,
   refusDemandeSansCategorie,
@@ -46,6 +49,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
         orderBy: { createdAt: "asc" },
         include: {
           decidePar: true,
+          beneficiaireUser: true,
           categorie: true,
           objet: true,
           decisionDGPar: { select: { fullName: true } },
@@ -63,6 +67,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
   // Soumission au DG ligne par ligne (2026-10-10) : le DG ne voit et ne décide que les lignes soumises par la Finance.
   const soumissionParLignes = demande.lignes.length > 0 && demande.typeDemande === "STANDARD" && demande.modeEtapeDG === "OPTIONNELLE";
   const lignesSoumises = demande.lignes.filter((l) => l.soumiseAuDG);
+  const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
   const devise = demande.devise === "XOF" ? "FCFA" : demande.devise;
 
   return (
@@ -89,8 +94,10 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           <div>
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Bénéficiaire</dt>
             <dd className="mt-1 text-sm text-foreground">
-              {getBeneficiaireNom(demande)}{" "}
-              <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              {nomBeneficiaireDemande(demande, demande.lignes)}{" "}
+              {aPlusieursBeneficiaires(demande, demande.lignes) ? null : (
+                <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              )}
             </dd>
           </div>
           {demande.dateLivraisonSouhaitee ? (
@@ -109,16 +116,16 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           <div className="sm:col-span-2">
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pièces jointes</dt>
             <dd className="mt-1 space-x-3 text-sm text-foreground">
-              {demande.pieces.length === 0 ? (
+              {vueArticles.communes.length === 0 ? (
                 <span className="text-muted-foreground">Aucune pièce jointe.</span>
               ) : (
-                demande.pieces.map((piece, index) => (
+                vueArticles.communes.map((piece, index) => (
                   <a
                     key={piece.id}
                     href={`/api/treso/pieces-jointes/${piece.id}`}
                     className="text-info underline-offset-4 transition-colors hover:text-primary hover:underline"
                   >
-                    Télécharger{demande.pieces.length > 1 ? ` (${index + 1})` : ""}
+                    Télécharger{vueArticles.communes.length > 1 ? ` (${index + 1})` : ""}
                   </a>
                 ))
               )}
@@ -139,6 +146,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           demandeId={demande.id}
           lignes={demande.lignes.map((l) => ({
             id: l.id,
+            details: detailsArticleDe(vueArticles, l.id),
             libelle: l.libelle,
             libelleOriginal: l.libelleOriginal,
             motif: l.motif,
@@ -169,6 +177,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           raisonDecider={raisonIndisponible(demandeCircuit, acteur, "DECIDER_LIGNE_DG")}
           lignes={lignesSoumises.map((l) => ({
             id: l.id,
+            details: detailsArticleDe(vueArticles, l.id),
             libelle: l.libelle,
             motif: l.motif,
             quantite: l.quantite,
@@ -198,6 +207,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
                       Motif : {l.motif}
                     </span>
                   ) : null}
+                  {detailsArticleDe(vueArticles, l.id)}
                 </span>
                 <span className="flex items-center gap-2">
                   {l.statutValidation !== "EN_ATTENTE" ? (

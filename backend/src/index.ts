@@ -25,6 +25,7 @@ export * from "./geo-utils";
 export * from "./reference";
 export * from "./validation";
 export * from "./beneficiaire";
+export * from "./beneficiaireArticles";
 export * from "./motifLigne";
 export * from "./categorisationObligatoire";
 export * from "./retourNul";

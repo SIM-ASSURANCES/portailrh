@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 
-import { getBeneficiaireNom } from "backend";
+import { nomBeneficiaireDemande } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { ReceiptDocument, type ReceiptData } from "@/lib/pdf/ReceiptDocument";
@@ -57,7 +57,7 @@ export async function GET(
   const reglement = await prisma.reglement.findUnique({
     where: { id },
     include: {
-      demande: { include: { createur: true, categorie: true, objet: true, beneficiaireUser: true } },
+      demande: { include: { createur: true, categorie: true, objet: true, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } },
       auteur: true,
       allocations: { include: { categorie: true } },
     },
@@ -117,7 +117,7 @@ export async function GET(
     recuReference,
     demandeReference: reglement.demande.reference,
     demandeurNom: reglement.demande.createur.fullName,
-    beneficiaireNom: getBeneficiaireNom(reglement.demande),
+    beneficiaireNom: nomBeneficiaireDemande(reglement.demande, reglement.demande.lignes, { seulementValidees: true }),
     categorieLabel: repartitionCategories ? null : categorieLabelUnique,
     objetLabel: repartitionCategories ? null : reglement.demande.objet?.label ?? null,
     repartitionCategories,

@@ -26,7 +26,7 @@ export async function DetailDepensesRetour({
   const retour = await prisma.retourCaisse.findUnique({
     where: { id: retourId },
     include: {
-      reglement: { include: { demande: true } },
+      reglement: { include: { demande: { include: { lignes: true } } } },
       depenses: { include: { pieceJointe: true, motifNonJustifiePar: true }, orderBy: { createdAt: "asc" } },
     },
   });

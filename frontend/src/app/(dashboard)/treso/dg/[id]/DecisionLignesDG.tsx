@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Badge, Button, Textarea } from "@/components/ui";
@@ -22,6 +22,8 @@ export interface LigneSoumiseDG {
   decisionDGAt: Date | null;
   motifRefusDG: string | null;
   soumiseParNom: string | null;
+  /** Bénéficiaire et pièces de l'article (autonomie des articles, lot A). */
+  details?: ReactNode;
 }
 
 /**
@@ -90,6 +92,7 @@ function LigneDG({ ligne, devise, raisonDecider }: { ligne: LigneSoumiseDG; devi
         <div className="min-w-0">
           <p className="font-bold text-foreground">{ligne.libelle}</p>
           {ligne.motif ? <p className="text-xs text-muted-foreground">Motif : {ligne.motif}</p> : null}
+          {ligne.details}
           <p className="text-xs text-muted-foreground tabular-nums">
             {ligne.quantite} × {ligne.prixUnitaire.toLocaleString("fr-FR")} {devise}
             {ligne.categorieLabel ? ` · ${ligne.categorieLabel}${ligne.objetLabel ? ` / ${ligne.objetLabel}` : ""}` : ""}

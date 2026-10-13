@@ -58,7 +58,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     where: { id },
     include: {
       declarant: true,
-      reglement: { include: { demande: true } },
+      reglement: { include: { demande: { include: { lignes: true } } } },
       depenses: { include: { pieceJointe: true, motifNonJustifiePar: true }, orderBy: { date: "asc" } },
       signalements: { where: { estResolu: false }, include: { signalePar: true } },
       remboursements: {

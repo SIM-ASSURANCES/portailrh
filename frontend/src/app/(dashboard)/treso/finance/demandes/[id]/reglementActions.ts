@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { prisma, refusExecutionPropreDemande, type Prisma } from "backend";
+import { prisma, refusExecutionPropreDemande, refusReglementPlusieursBeneficiaires, type Prisma } from "backend";
 import {
   calculerStatutDemande,
   getCategoriesConcerneesDemande,
@@ -163,7 +163,7 @@ export async function creerReglementAction(
 
   const { demandeId, montant, mode } = parsed.data;
 
-  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId }, include: { lignes: true } });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
@@ -174,6 +174,12 @@ export async function creerReglementAction(
   }
   if (demande.validationCompleteRejeteeParDG) {
     return { status: "error", message: MESSAGE_GEL_REJET_DG };
+  }
+  // État intermédiaire sûr (autonomie des articles, lot A) : tant que le règlement n'est pas par article, une demande
+  // dont les articles n'ont pas tous le même bénéficiaire ne peut pas être réglée.
+  const refusBeneficiaires = refusReglementPlusieursBeneficiaires(demande, demande.lignes);
+  if (refusBeneficiaires) {
+    return { status: "error", message: refusBeneficiaires };
   }
 
   // `demande`/`totalRegle` déjà chargés ici : transmis à
@@ -264,10 +270,12 @@ export async function modifierReglementAction(
     return { status: "error", message: "Ce règlement n'est plus modifiable." };
   }
 
-  const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
+  const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId }, include: { lignes: true } });
   if (demande) {
     const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
     if (refusPropre) return { status: "error", message: refusPropre };
+    const refusBeneficiaires = refusReglementPlusieursBeneficiaires(demande, demande.lignes);
+    if (refusBeneficiaires) return { status: "error", message: refusBeneficiaires };
   }
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
@@ -370,10 +378,16 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   // lectures de la même `Demande` et 2 calculs identiques de
   // `getTotalRegle` pour un seul clic sur "Confirmer" (voir CLAUDE.md
   // "Diagnostic de latence — requêtes redondantes").
-  const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId } });
+  const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId }, include: { lignes: true } });
   const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
   if (refusPropre) {
     return { status: "error", message: refusPropre };
+  }
+  // État intermédiaire sûr (autonomie des articles, lot A) : tant que le règlement n'est pas par article, une demande
+  // dont les articles n'ont pas tous le même bénéficiaire ne peut pas être réglée.
+  const refusBeneficiaires = refusReglementPlusieursBeneficiaires(demande, demande.lignes);
+  if (refusBeneficiaires) {
+    return { status: "error", message: refusBeneficiaires };
   }
   if (demande.validationCompleteRejeteeParDG) {
     return { status: "error", message: MESSAGE_GEL_REJET_DG };
@@ -568,7 +582,7 @@ export async function annulerReglementAction(
     return { status: "error", message: parsedMotif.error.issues[0].message };
   }
 
-  const reglement = await prisma.reglement.findUnique({ where: { id: reglementId }, include: { demande: true } });
+  const reglement = await prisma.reglement.findUnique({ where: { id: reglementId }, include: { demande: { include: { lignes: true } } } });
   if (!reglement) {
     return { status: "error", message: "Règlement introuvable." };
   }

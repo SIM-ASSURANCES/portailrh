@@ -411,10 +411,10 @@ describe("raisons des boutons grisés (écran = serveur)", () => {
 
 describe("conflit d'intérêts : jamais l'exécution de sa propre demande", () => {
   it("refusé au demandeur et au bénéficiaire (garde 8), permis à tout autre compte", () => {
-    expect(refusExecutionPropreDemande({ createurId: "u-assist" }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
-    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist" }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
-    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist" }, "u-autre")).toBeNull();
-    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: null }, "u-autre")).toBeNull();
+    expect(refusExecutionPropreDemande({ createurId: "u-assist", lignes: [] }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
+    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist", lignes: [] }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
+    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist", lignes: [] }, "u-autre")).toBeNull();
+    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: null, lignes: [] }, "u-autre")).toBeNull();
   });
   it("garde 9 : dépense directe de la Finance pour elle-même → le DG décide (cas b)", () => {
     const p = determinerParcours(PROFIL.finance, "DEPENSE_DIRECTE", { beneficiaireEstLeCreateur: true });

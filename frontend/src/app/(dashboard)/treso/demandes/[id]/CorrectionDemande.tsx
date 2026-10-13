@@ -6,9 +6,10 @@ import { toast } from "sonner";
 
 import { Icon } from "@/components/icons";
 import { formatMontantDevise } from "@/components/tresorerie/devise";
+import { DetailsArticleEditeur, type DetailsArticleSaisie } from "@/components/tresorerie/DetailsArticleEditeur";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 import { Button, Input, Textarea } from "@/components/ui";
-import { MOTIF_LIGNE_MIN } from "backend/client";
+import { erreurSaisieBeneficiaire, MOTIF_LIGNE_MIN, saisieVersChoix, type SaisieBeneficiaire } from "backend/client";
 
 import { abandonnerDemandeAction, corrigerEtResoumettreDemandeAction } from "../../circuit/actions";
 
@@ -19,9 +20,20 @@ export interface LigneACorriger {
   motif: string;
   quantite: number;
   prixUnitaire: number;
+  /** Bénéficiaire propre de l'article ; `null` = hérite de celui de la demande. */
+  beneficiaire: SaisieBeneficiaire | null;
 }
 
-type LigneEdit = { key: string; id?: string; libelle: string; motif: string; quantite: number; prixUnitaire: string };
+type LigneEdit = {
+  key: string;
+  id?: string;
+  libelle: string;
+  motif: string;
+  quantite: number;
+  prixUnitaire: string;
+  /** Bénéficiaire propre et NOUVELLES pièces (les pièces déjà jointes sont conservées par le serveur). */
+  details: DetailsArticleSaisie;
+};
 
 let compteur = 0;
 const cle = () => `n${++compteur}`;
@@ -40,6 +52,9 @@ export function CorrectionDemande({
   descriptionInitiale,
   lignesInitiales,
   devise,
+  commun,
+  createurId,
+  comptes,
 }: {
   demandeId: string;
   avecLignes: boolean;
@@ -47,6 +62,10 @@ export function CorrectionDemande({
   descriptionInitiale: string | null;
   lignesInitiales: LigneACorriger[];
   devise: string;
+  /** Bénéficiaire par défaut de la demande (non modifiable à la correction) et comptes proposés pour un article. */
+  commun: SaisieBeneficiaire;
+  createurId: string;
+  comptes: { value: string; label: string }[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -54,10 +73,19 @@ export function CorrectionDemande({
   const [description, setDescription] = useState(descriptionInitiale ?? "");
   const [pieceJointeUrl, setPieceJointeUrl] = useState<string | null>(null);
   const [lignes, setLignes] = useState<LigneEdit[]>(() =>
-    lignesInitiales.map((l) => ({ key: l.id, id: l.id, libelle: l.libelle, motif: l.motif, quantite: l.quantite, prixUnitaire: String(l.prixUnitaire) }))
+    lignesInitiales.map((l) => ({
+      key: l.id,
+      id: l.id,
+      libelle: l.libelle,
+      motif: l.motif,
+      quantite: l.quantite,
+      prixUnitaire: String(l.prixUnitaire),
+      details: { beneficiaire: l.beneficiaire, pieces: [] },
+    }))
   );
   const motifsValides = lignes.every((l) => l.motif.trim().length >= MOTIF_LIGNE_MIN);
-  const peutResoumettre = avecLignes ? lignes.length > 0 && motifsValides : description.trim().length >= 3;
+  const beneficiairesValides = lignes.every((l) => !l.details.beneficiaire || erreurSaisieBeneficiaire(l.details.beneficiaire) === null);
+  const peutResoumettre = avecLignes ? lignes.length > 0 && motifsValides && beneficiairesValides : description.trim().length >= 3;
 
   const total = lignes.reduce((s, l) => s + (Number(l.quantite) || 0) * (Number(l.prixUnitaire) || 0), 0);
   const maj = (key: string, patch: Partial<LigneEdit>) => setLignes((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -72,6 +100,8 @@ export function CorrectionDemande({
           motif: l.motif,
           quantite: Number(l.quantite),
           prixUnitaire: Number(l.prixUnitaire) || 0,
+          beneficiaire: l.details.beneficiaire ? saisieVersChoix(l.details.beneficiaire) : null,
+          pieceJointeUrls: l.details.pieces.map((p) => p.url),
         })),
         pieceJointeUrl: pieceJointeUrl ?? undefined,
       });
@@ -131,7 +161,7 @@ export function CorrectionDemande({
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => setLignes((ls) => [...ls, { key: cle(), libelle: "", motif: "", quantite: 1, prixUnitaire: "" }])}
+                  onClick={() => setLignes((ls) => [...ls, { key: cle(), libelle: "", motif: "", quantite: 1, prixUnitaire: "", details: { beneficiaire: null, pieces: [] } }])}
                 >
                   <Icon name="plus-circle" className="size-4" />
                   Ajouter une ligne
@@ -183,6 +213,16 @@ export function CorrectionDemande({
                       value={l.motif}
                       onChange={(e) => maj(l.key, { motif: e.target.value })}
                       error={l.motif.trim().length < MOTIF_LIGNE_MIN ? `Motif obligatoire (${MOTIF_LIGNE_MIN} caractères minimum).` : undefined}
+                    />
+                    <DetailsArticleEditeur
+                      details={l.details}
+                      commun={commun}
+                      createurId={createurId}
+                      comptes={comptes}
+                      onChange={(patch) => maj(l.key, { details: { ...l.details, ...patch } })}
+                      erreur={
+                        l.details.beneficiaire ? (erreurSaisieBeneficiaire(l.details.beneficiaire) ?? undefined) : undefined
+                      }
                     />
                   </div>
                 </div>

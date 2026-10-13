@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
-import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom, getMontantConsommeCategorie } from "backend";
+import { aPlusieursBeneficiaires, BENEFICIAIRE_TYPE_LABEL, detailsArticles, getMontantConsommeCategorie, nomBeneficiaireDemande } from "backend";
+import { detailsArticleDe } from "@/components/tresorerie/DetailsArticle";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesIntervenantes";
@@ -77,7 +78,7 @@ export default async function CategoriserDemandePage({
       pieces: true,
       lignes: {
         orderBy: { createdAt: "asc" },
-        include: { decidePar: true, categorie: true, objet: true, decisionDGPar: { select: { fullName: true } } },
+        include: { decidePar: true, categorie: true, objet: true, beneficiaireUser: true, decisionDGPar: { select: { fullName: true } } },
       },
     },
   });
@@ -135,8 +136,10 @@ export default async function CategoriserDemandePage({
   // l'ancien modèle (qui garde sa formule `reliquatRejete` inchangée).
   const { montantEnAttente: montantLignesEnAttente, montantRejete: montantLignesRejete } =
     getMontantsLignesParStatut(demande.lignes);
+  const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
   const lignesPourTable = demande.lignes.map((ligne) => ({
     id: ligne.id,
+    details: detailsArticleDe(vueArticles, ligne.id),
     libelle: ligne.libelle,
     libelleOriginal: ligne.libelleOriginal,
     motif: ligne.motif,
@@ -295,8 +298,10 @@ export default async function CategoriserDemandePage({
               Bénéficiaire
             </dt>
             <dd className="mt-1 text-sm text-foreground">
-              {getBeneficiaireNom(demande)}{" "}
-              <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              {nomBeneficiaireDemande(demande, demande.lignes)}{" "}
+              {aPlusieursBeneficiaires(demande, demande.lignes) ? null : (
+                <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              )}
             </dd>
           </div>
           {/* Phase B (validation partielle) : montant validé/restant visible
@@ -387,19 +392,19 @@ export default async function CategoriserDemandePage({
               <dd className="text-sm text-foreground">{demande.commentaire}</dd>
             </div>
           ) : null}
-          {demande.pieces.length > 0 ? (
+          {vueArticles.communes.length > 0 ? (
             <div>
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Pièce jointe
               </dt>
               <dd className="space-x-3 text-sm text-foreground">
-                {demande.pieces.map((piece, index) => (
+                {vueArticles.communes.map((piece, index) => (
                   <a
                     key={piece.id}
                     href={`/api/treso/pieces-jointes/${piece.id}`}
                     className="text-info underline-offset-4 transition-colors hover:text-primary hover:underline"
                   >
-                    Télécharger{demande.pieces.length > 1 ? ` (${index + 1})` : ""}
+                    Télécharger{vueArticles.communes.length > 1 ? ` (${index + 1})` : ""}
                   </a>
                 ))}
               </dd>

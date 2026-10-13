@@ -2688,6 +2688,64 @@ Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permis
 - **Reste « Dépenses non détaillées »** : calculé (ligne réécrite à chaque correction, ni modifiable ni supprimable), affiché comme reste avec « Détailler » (`detaillerResteAction`, `planAjoutLignes`) qui le transforme en vraies lignes. **Un seul composant** `components/tresorerie/DetailDepensesRetour.tsx` (totaux `totauxDetailRetour` : remis, détaillé, reste, sans pièce formelle, retourné ; lignes « Modifier » ; reste « Détailler ») sur l'écran du retour et dans la Régularisation de la demande ; l'écran du retour affiche aussi l'historique de la demande. Le collaborateur voit les lignes à jour en lecture seule et l'historique.
 - **Historique** : `detaillage_retour` (« Dépenses détaillées par l'Assistant Finance » : saisie et « Détailler »), `modification_depense` (JSON avant/après dont le type, motif, phrase `resumeModificationDepense`), anciennes entrées `suppression_depense` toujours lisibles ; aucune migration ; la « catégorie » d'une dépense = son type (justifiée / sans pièce formelle), `DepenseLigne` n'ayant pas de catégorie.
 
+### Autonomie des articles (chantier en cours, lots A à F — décisions validées le 2026-10-13)
+
+Objectif : qu'un article d'une demande vive sa vie propre (bénéficiaire, pièces, décision, règlement, retour), sans casser le
+circuit. Chantier livré **par lots A à F, déployés en production seulement ensemble** : un état intermédiaire doit être sûr
+(jamais incohérent), pas forcément complet. Décisions validées, à appliquer telles quelles :
+
+1. **Étape Service** : le responsable valide la demande entière, avant la Finance. L'autonomie des articles commence à la Finance.
+2. **Un règlement concerne un seul article.**
+3. **Validation du DG** : comportement actuel conservé (règle des deux personnes), appliqué par article.
+4. **Article rejeté : définitif.** Si tous les articles sont rejetés, la demande repart en correction comme aujourd'hui.
+5. **Clôture** : au niveau de la demande, seulement quand tous les articles sont terminés. Retour de caisse et régularisation par article dès qu'il est réglé.
+6. **Garde 8** : bloquée si le compte est créateur ou bénéficiaire de l'article concerné.
+7. **Statut affiché** : les 11 valeurs sont conservées ; libellé « En cours » + compteur d'articles traités.
+8. **Budget** : consommé au règlement, jamais à la validation.
+9. **Devise** : unique par demande. **Date de livraison** : commune à la demande.
+10. **Reporting** : une ligne par demande pour l'instant.
+11. **Rappels 48 h** : un chronomètre par demande, remis à zéro à chaque événement d'un article.
+
+#### Lot A — bénéficiaire et pièces jointes par article, « Appliquer à tous » (2026-10-14)
+
+Ni le circuit, ni les étapes, ni les décisions, ni le règlement, ni les retours ne changent. Migration additive idempotente
+`20261014090000_articles_beneficiaire_pieces` : `LigneDemande.beneficiaireType`/`beneficiaireUserId`/`beneficiaireNom`
+(facultatifs, **vide = hérite**) et `PieceJointe.ligneDemandeId` (facultatif, clé `SET NULL`, plusieurs pièces par article,
+index). **Aucune colonne sur `Reglement`.**
+
+- **Héritage** (`backend/src/beneficiaireArticles.ts`, pur, partagé serveur/écran/PDF) : `Demande.beneficiaire*` reste le
+  bénéficiaire PAR DÉFAUT ; un article sans bénéficiaire propre en hérite. Les lignes existantes en base héritent toutes
+  (aucune reprise de données). Un article dont le bénéficiaire égale la valeur commune **n'enregistre rien** (règle appliquée
+  aussi côté serveur, `choixPropreArticle`, jamais seulement par le formulaire). Deux noms libres sont le même bénéficiaire à
+  la casse et aux accents près.
+- **Pièces** : une pièce d'article porte `demandeId` ET `ligneDemandeId` ; la **pièce commune** reste sur la demande
+  (`ligneDemandeId` vide), n'est jamais dupliquée, et s'affiche « Pièce commune » sous chaque article dès qu'au moins un
+  article a un bénéficiaire ou des pièces propres (`detailsArticles`, `VueDetailsArticles.detaille`). Une ligne retirée à la
+  correction laisse ses pièces sur la demande (clé `SET NULL`) : elles deviennent des pièces communes (limite assumée).
+- **Formulaire** (`DemandeForm`) : bloc « Détails communs » (bénéficiaire en 3 modes + pièce commune + bouton « Appliquer à
+  tous les articles ») ; sous chaque article « Détails de l'article » (`DetailsArticleEditeur`) avec le badge « Identique aux
+  autres » / « Personnalisé », plusieurs pièces (`PiecesJointesMultiples`) et le lien « Rétablir la valeur commune ».
+  « Appliquer à tous » remet le bénéficiaire de tous les articles sur la valeur commune (les pièces propres sont gardées) ;
+  **confirmation si au moins un article est personnalisé**. La date de livraison et la devise restent dans l'en-tête.
+- **Correction / resoumission** : `CorrectionDemande` et `corrigerEtResoumettre` portent le bénéficiaire (`undefined` =
+  inchangé, `null` = hérite) et les nouvelles pièces de chaque article ; les pièces déjà jointes sont conservées ; la version
+  recopiée dans l'historique mentionne le bénéficiaire propre d'un article. Le bénéficiaire par défaut de la demande n'est pas
+  modifiable à la correction.
+- **Affichage** : demandeur, responsable de service, DG et Finance montrent le bénéficiaire et les pièces de chaque article
+  (`DetailsArticle`/`detailsArticleDe`) ; l'en-tête, les listes, les reçus (règlement et retour), le bon de caisse et le
+  reporting disent **« Plusieurs bénéficiaires »** quand les articles diffèrent (`nomBeneficiaireDemande`), jamais un seul nom
+  à tort. Filtre et options du reporting : bénéficiaire de la demande **ou** d'un article.
+- **États intermédiaires sûrs** : (1) **garde 8** et **notifications** (« Demande à régler ») écartent le créateur et le
+  bénéficiaire de N'IMPORTE QUEL article (`comptesConcernesDemande`, `refusConflitInteret`, `beneficiairesArticlesUserIds`) ;
+  (2) **le règlement est refusé** (création, modification, confirmation) tant que les articles à payer n'ont pas tous le même
+  bénéficiaire : « Cette demande a plusieurs bénéficiaires : le règlement par article arrive prochainement. » — seuls les articles
+  VALIDÉS comptent quand il y en a (un article rejeté n'est jamais payé). L'annulation d'un règlement existant n'est pas bloquée.
+- **Téléchargement des pièces** : droits de la demande inchangés, étendus au bénéficiaire d'un article. Un compte qui est
+  bénéficiaire d'un article ne peut plus être supprimé définitivement (`supprimerUtilisateurAction`).
+- Vérifié : vitest (18 tests dans `beneficiaireArticles.test.ts`), tsc, eslint, `next build`, migration depuis zéro et rejouée
+  sans effet (`migrate diff` vide), `e2e/articles-beneficiaire-pieces.mjs` 34/34 (création par le vrai formulaire, base,
+  affichage demandeur/Finance, droits de téléchargement, règlement bloqué, correction) et `soumission-dg-article.mjs` 31/31.
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié

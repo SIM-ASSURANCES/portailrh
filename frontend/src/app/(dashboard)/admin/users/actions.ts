@@ -811,6 +811,7 @@ export async function supprimerUtilisateurAction(
     justificationsDecidees,
     lignesSoumisesAuDG,
     lignesDecideesParDG,
+    lignesBeneficiees,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -861,11 +862,14 @@ export async function supprimerUtilisateurAction(
     // Soumission au DG ligne par ligne (2026-10-10) : 2 relations vers User supplémentaires (SET NULL en base).
     prisma.ligneDemande.count({ where: { soumiseDGParId: userId } }),
     prisma.ligneDemande.count({ where: { decisionDGParId: userId } }),
+    // Autonomie des articles, lot A (2026-10-14) : bénéficiaire propre d'un article (SET NULL en base).
+    prisma.ligneDemande.count({ where: { beneficiaireUserId: userId } }),
   ]);
 
   const blocages: string[] = [];
   if (demandesCreees > 0) blocages.push(`créé ${demandesCreees} demande(s)`);
   if (demandesBeneficiees > 0) blocages.push(`été bénéficiaire de ${demandesBeneficiees} demande(s)`);
+  if (lignesBeneficiees > 0) blocages.push(`été bénéficiaire de ${lignesBeneficiees} article(s) d'une demande`);
   if (demandesApprouveesDG > 0)
     blocages.push(`approuvé ${demandesApprouveesDG} validation(s) complète(s) en tant que DG`);
   if (demandesDecideesFinance > 0) blocages.push(`pris la décision Finance de ${demandesDecideesFinance} demande(s)`);

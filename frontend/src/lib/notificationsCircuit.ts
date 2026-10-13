@@ -44,6 +44,11 @@ async function chargerContexte(demandeId: string): Promise<ContexteNotificationC
     },
   });
   if (!d) return null;
+  // Garde 8 étendue aux articles : comptes bénéficiaires PROPRES des articles (lot A, 2026-10-14).
+  const beneficiairesArticles = await prisma.ligneDemande.findMany({
+    where: { demandeId, beneficiaireUserId: { not: null } },
+    select: { beneficiaireUserId: true },
+  });
   const lignesDG =
     d.lignes.length > 0
       ? {
@@ -62,6 +67,7 @@ async function chargerContexte(demandeId: string): Promise<ContexteNotificationC
     createurId: d.createurId,
     createurNom: d.createur.fullName,
     beneficiaireUserId: d.beneficiaireUserId,
+    beneficiairesArticlesUserIds: beneficiairesArticles.map((l) => l.beneficiaireUserId as string),
     modeEtapeDG: d.modeEtapeDG,
     decideurFinanceId: d.decideurFinanceId,
     dgApprobateurId: d.dgApprobateurId,

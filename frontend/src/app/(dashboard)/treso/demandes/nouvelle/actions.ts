@@ -1,5 +1,7 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
+
 import { z } from "zod";
 
 import { Prisma } from "backend";
@@ -10,7 +12,7 @@ import { notifierEtapeCircuit } from "@/lib/notificationsCircuit";
 import { prisma } from "backend";
 import { generateDemandeReference } from "backend";
 import { chargerServiceDuDemandeur, initialiserCircuit, messageBlocageCreationDemande } from "backend";
-import { champsBeneficiaire, MOTIF_LIGNE_MIN, type ChoixBeneficiaire } from "backend";
+import { champsBeneficiaire, choixPropreArticle, MOTIF_LIGNE_MIN, type ChoixBeneficiaire } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
 const MAX_ATTEMPTS = 5;
@@ -21,6 +23,10 @@ export interface LigneDemandeInput {
   motif: string;
   quantite: number;
   prixUnitaire: number;
+  /** Bénéficiaire propre de l'article ; absent ou `null` = hérite du bénéficiaire de la demande (autonomie des articles, lot A). */
+  beneficiaire?: ChoixBeneficiaire | null;
+  /** Pièces propres à l'article (noms de fichiers renvoyés par la route d'envoi), plusieurs possibles. */
+  pieceJointeUrls?: string[];
 }
 
 export interface CreerDemandeInput {
@@ -33,23 +39,34 @@ export interface CreerDemandeInput {
   pieceJointeUrl?: string;
 }
 
+const choixBeneficiaireSchema = z.discriminatedUnion(
+  "mode",
+  [
+    z.object({ mode: z.literal("MOI") }),
+    z.object({ mode: z.literal("COMPTE"), userId: z.string().min(1, "Choisissez un compte.") }),
+    z.object({ mode: z.literal("NOM"), nom: z.string().trim().min(2, "Saisissez le nom du bénéficiaire.") }),
+  ],
+  { message: "Bénéficiaire requis" }
+);
+
+/** Nom généré par la route d'envoi : un UUID et l'extension du type autorisé (jamais un chemin saisi par le client). */
+const NOM_FICHIER_PIECE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(pdf|jpg|jpeg|png)$/;
+const PIECES_PAR_ARTICLE_MAX = 10;
+
 const ligneSchema = z.object({
   libelle: z.string().trim().min(1, "Libellé requis"),
   motif: z.string().trim().min(MOTIF_LIGNE_MIN, `Chaque ligne doit avoir un motif (${MOTIF_LIGNE_MIN} caractères minimum).`),
   quantite: z.coerce.number().int("Nombre entier attendu").positive("Le nombre doit être supérieur à 0"),
   prixUnitaire: z.coerce.number().nonnegative("Prix unitaire invalide"),
+  beneficiaire: choixBeneficiaireSchema.nullish(),
+  pieceJointeUrls: z
+    .array(z.string().regex(NOM_FICHIER_PIECE, "Pièce jointe invalide."))
+    .max(PIECES_PAR_ARTICLE_MAX, `${PIECES_PAR_ARTICLE_MAX} pièces au plus par article.`)
+    .optional(),
 });
 
 const demandeSchema = z.object({
-  beneficiaire: z.discriminatedUnion(
-    "mode",
-    [
-      z.object({ mode: z.literal("MOI") }),
-      z.object({ mode: z.literal("COMPTE"), userId: z.string().min(1, "Choisissez un compte.") }),
-      z.object({ mode: z.literal("NOM"), nom: z.string().trim().min(2, "Saisissez le nom du bénéficiaire.") }),
-    ],
-    { message: "Bénéficiaire requis" }
-  ),
+  beneficiaire: choixBeneficiaireSchema,
   // Tâche "Aucune date dans le passé" (voir CLAUDE.md) : la date du jour
   // reste autorisée, seule une date STRICTEMENT antérieure est refusée —
   // comparaison en granularité JOUR (chaînes `YYYY-MM-DD`), même
@@ -124,17 +141,38 @@ export async function creerDemandeAction(
   // Bénéficiaire (2026-10-09) : moi-même, un autre compte ACTIF du portail (revérifié ici), ou un nom libre. Les
   // trois champs existants sont remplis par `champsBeneficiaire` ; la garde 8 et les pièces jointes s'appliquent au
   // compte bénéficiaire, comme avant.
-  if (choixBeneficiaire.mode === "COMPTE" && choixBeneficiaire.userId !== session.user.id) {
-    const compte = await prisma.user.findFirst({ where: { id: choixBeneficiaire.userId, isActive: true }, select: { id: true } });
-    if (!compte) {
+  // Autonomie des articles (lot A) : un article dont le bénéficiaire égale la valeur commune n'enregistre rien (il
+  // hérite), même si le client en a envoyé un — règle appliquée ici aussi, jamais seulement par le formulaire.
+  const choixParArticle = lignes.map((l) => choixPropreArticle({ beneficiaire: l.beneficiaire }, choixBeneficiaire, session.user.id));
+  const comptesAVerifier = new Set<string>();
+  for (const c of [choixBeneficiaire, ...choixParArticle]) {
+    if (c?.mode === "COMPTE" && c.userId !== session.user.id) comptesAVerifier.add(c.userId);
+  }
+  if (comptesAVerifier.size > 0) {
+    const actifs = await prisma.user.findMany({
+      where: { id: { in: [...comptesAVerifier] }, isActive: true },
+      select: { id: true },
+    });
+    const actifsIds = new Set(actifs.map((u) => u.id));
+    if (choixBeneficiaire.mode === "COMPTE" && choixBeneficiaire.userId !== session.user.id && !actifsIds.has(choixBeneficiaire.userId)) {
       return {
         status: "error",
         message: "Le formulaire contient des erreurs.",
         fieldErrors: { beneficiaire: "Ce compte n'existe pas ou n'est plus actif." },
       };
     }
+    const fieldErrors: Record<string, string> = {};
+    choixParArticle.forEach((c, i) => {
+      if (c?.mode === "COMPTE" && c.userId !== session.user.id && !actifsIds.has(c.userId)) {
+        fieldErrors[`lignes.${i}.beneficiaire`] = "Ce compte n'existe pas ou n'est plus actif.";
+      }
+    });
+    if (Object.keys(fieldErrors).length > 0) {
+      return { status: "error", message: "Le formulaire contient des erreurs.", fieldErrors };
+    }
   }
   const beneficiaire = champsBeneficiaire(choixBeneficiaire, session.user.id);
+  const idsLignes = lignes.map(() => randomUUID());
 
   // Circuit de validation : parcours selon le demandeur (règles a à d) et première étape applicable.
   const circuit = await initialiserCircuit(prisma, session.user.id, "STANDARD");
@@ -143,36 +181,47 @@ export async function creerDemandeAction(
     const reference = await generateDemandeReference();
 
     try {
-      const demande = await prisma.demande.create({
-        data: {
-          ...circuit.data,
-          reference,
-          montant,
-          // Plus de motif d'en-tête : chaque ligne porte son motif.
-          description: null,
-          devise,
-          // Pas de categorieId ici : la catégorisation reste un travail de
-          // Finance après création (voir CategorisationForm), jamais choisie
-          // par le collaborateur à la création (`categorieId` est nullable).
-          dateLivraisonSouhaitee: dateLivraisonSouhaitee ? new Date(dateLivraisonSouhaitee) : null,
-          createurId: session.user.id,
-          ...beneficiaire,
-          lignes: {
-            create: lignes.map((l) => ({
-              libelle: l.libelle.trim(),
-              motif: l.motif.trim(),
-              quantite: l.quantite,
-              prixUnitaire: l.prixUnitaire,
-            })),
+      const demande = await prisma.$transaction(async (tx) => {
+        const creee = await tx.demande.create({
+          data: {
+            ...circuit.data,
+            reference,
+            montant,
+            // Plus de motif d'en-tête : chaque ligne porte son motif.
+            description: null,
+            devise,
+            // Pas de categorieId ici : la catégorisation reste un travail de
+            // Finance après création (voir CategorisationForm), jamais choisie
+            // par le collaborateur à la création (`categorieId` est nullable).
+            dateLivraisonSouhaitee: dateLivraisonSouhaitee ? new Date(dateLivraisonSouhaitee) : null,
+            createurId: session.user.id,
+            ...beneficiaire,
+            lignes: {
+              create: lignes.map((l, i) => ({
+                id: idsLignes[i],
+                libelle: l.libelle.trim(),
+                motif: l.motif.trim(),
+                quantite: l.quantite,
+                prixUnitaire: l.prixUnitaire,
+                // Bénéficiaire propre à l'article (vide = hérite de celui de la demande).
+                ...(choixParArticle[i] ? champsBeneficiaire(choixParArticle[i], session.user.id) : {}),
+              })),
+            },
+            // Pièce jointe (facultative) : le fichier est déjà sur disque
+            // (déposé par la route d'upload au moment de la sélection dans
+            // le formulaire) — cette écriture ne fait qu'associer son nom
+            // généré à la demande qui vient d'être créée.
+            ...(input.pieceJointeUrl
+              ? { pieces: { create: [{ url: input.pieceJointeUrl }] } }
+              : {}),
           },
-          // Pièce jointe (facultative) : le fichier est déjà sur disque
-          // (déposé par la route d'upload au moment de la sélection dans
-          // le formulaire) — cette écriture ne fait qu'associer son nom
-          // généré à la demande qui vient d'être créée.
-          ...(input.pieceJointeUrl
-            ? { pieces: { create: [{ url: input.pieceJointeUrl }] } }
-            : {}),
-        },
+        });
+        // Pièces propres à chaque article : rattachées à la demande ET à l'article (la pièce commune n'a pas d'article).
+        const piecesArticles = lignes.flatMap((l, i) =>
+          [...new Set(l.pieceJointeUrls ?? [])].map((url) => ({ url, demandeId: creee.id, ligneDemandeId: idsLignes[i] }))
+        );
+        if (piecesArticles.length > 0) await tx.pieceJointe.createMany({ data: piecesArticles });
+        return creee;
       });
 
       await prisma.historiqueEntry.create({

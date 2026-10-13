@@ -260,7 +260,7 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
 
   const retour = await prisma.retourCaisse.findUnique({
     where: { id: retourId },
-    include: { reglement: { include: { demande: true } }, depenses: { select: { montant: true } } },
+    include: { reglement: { include: { demande: { include: { lignes: true } } } }, depenses: { select: { montant: true } } },
   });
 
   if (!retour) {

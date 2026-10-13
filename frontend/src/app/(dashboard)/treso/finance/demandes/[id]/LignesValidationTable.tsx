@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Icon } from "@/components/icons";
@@ -57,6 +57,8 @@ export type LigneValidation = {
   motifRejet: string | null;
   decideParNom: string | null;
   decideAt: Date | null;
+  /** Bénéficiaire et pièces de l'article (autonomie des articles, lot A) : élément d'affichage prêt, posé par la page. */
+  details?: ReactNode;
   /** Catégorisation par ligne (voir CLAUDE.md "Catégorisation par ligne"). */
   categorieId: string | null;
   categorieLabel: string | null;
@@ -539,6 +541,7 @@ function LigneCard({
             </div>
           )}
           <MotifLigneEditor ligne={ligne} canModifier={canModifierLibelle} modifiable={libelleModifiable} />
+          {ligne.details}
           {etatLigne && (etatLigne !== "NON_SOUMISE" || selectionDG) ? (
             <div data-etat-dg className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               {etatLigne !== "NON_SOUMISE" ? (

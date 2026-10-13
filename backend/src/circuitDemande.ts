@@ -18,6 +18,7 @@
 // Types des enums Prisma (`EtapeCircuit`, `ModeEtapeDG`, `NiveauRejet`, voir schema.prisma) : import de TYPE seul,
 // le moteur reste pur et sûr pour un Client Component.
 import type { EtapeCircuit, ModeEtapeDG } from "./generated/prisma/enums";
+import { comptesConcernesDemande, type ArticleBeneficiaire, type BeneficiaireStocke } from "./beneficiaireArticles";
 
 /**
  * Une validation du DG à l'étape DG vaut son approbation de clôture (`validationCompleteParDG`). Règle posée À UN
@@ -765,16 +766,20 @@ export function lignesRetireesParCorrection(versions: VersionDemande[], idsLigne
  * ces permissions (Assistant Finance, Finance) : un AUTRE compte le fait. `null` si l'action est permise.
  */
 export const MESSAGE_EXECUTION_PROPRE_DEMANDE =
-  "Vous êtes le demandeur ou le bénéficiaire de cette demande : un autre compte s'en charge (règlement, décaissement, retours, description).";
+  "Vous êtes le demandeur ou le bénéficiaire de cette demande (ou de l'un de ses articles) : un autre compte s'en charge (règlement, décaissement, retours, description).";
 
 /**
  * Gardes 1 à 4, 6 et 8 (2026-10-07) : le demandeur ET le bénéficiaire (compte du portail) n'exécutent jamais l'argent
  * de la demande ni ne documentent ses retours — règlements, réception, déclaration et détail des dépenses par
  * l'Assistant, remboursements, retours exceptionnels, description et libellés. Un autre compte le fait.
+ *
+ * Autonomie des articles, lot A (2026-10-14) : tant que le circuit n'est pas par article, le compte est bloqué s'il est
+ * créateur ou bénéficiaire de N'IMPORTE QUEL article de la demande (`comptesConcernesDemande`). `lignes` est
+ * OBLIGATOIRE (peut être vide) : un appelant qui l'oublierait ne compilerait pas.
  */
 export function refusExecutionPropreDemande(
-  demande: { createurId: string; beneficiaireUserId?: string | null },
+  demande: { createurId: string; lignes: readonly ArticleBeneficiaire[] } & BeneficiaireStocke,
   userId: string
 ): string | null {
-  return demande.createurId === userId || demande.beneficiaireUserId === userId ? MESSAGE_EXECUTION_PROPRE_DEMANDE : null;
+  return comptesConcernesDemande(demande, demande.lignes).includes(userId) ? MESSAGE_EXECUTION_PROPRE_DEMANDE : null;
 }

@@ -1,7 +1,7 @@
 import { LIBELLE_ETAPE_CIRCUIT } from "./circuitDemande";
 import { construireLigneReporting, type HistoriqueReporting, type LigneReportingDemande } from "./reportingDemandeLigne";
-import { getBeneficiaireNom } from "./beneficiaire";
-import type { ModeReglement, Prisma, StatutDemande, TypeDemande } from "./generated/prisma/client";
+import { nomBeneficiaireDemande } from "./beneficiaireArticles";
+import type { BeneficiaireType, ModeReglement, Prisma, StatutDemande, TypeDemande } from "./generated/prisma/client";
 import {
   getDemandesEnAttenteValidation,
   getDepensesNonJustifiees,
@@ -150,8 +150,20 @@ function buildDemandeWhere(filters: ReportingFilters): Prisma.DemandeWhereInput 
   }
   if (filters.statut) clauses.push({ statut: filters.statut });
   if (filters.typeDemande) clauses.push({ typeDemande: filters.typeDemande });
-  if (filters.beneficiaireUserId) clauses.push({ beneficiaireUserId: filters.beneficiaireUserId });
-  if (filters.beneficiaireNom) clauses.push({ beneficiaireNom: filters.beneficiaireNom });
+  // Le bénéficiaire peut être celui de la demande OU celui d'un article (autonomie des articles, lot A).
+  if (filters.beneficiaireUserId) {
+    clauses.push({
+      OR: [
+        { beneficiaireUserId: filters.beneficiaireUserId },
+        { lignes: { some: { beneficiaireUserId: filters.beneficiaireUserId } } },
+      ],
+    });
+  }
+  if (filters.beneficiaireNom) {
+    clauses.push({
+      OR: [{ beneficiaireNom: filters.beneficiaireNom }, { lignes: { some: { beneficiaireNom: filters.beneficiaireNom } } }],
+    });
+  }
   return clauses.length > 0 ? { AND: clauses } : {};
 }
 
@@ -167,7 +179,7 @@ function buildDemandeWhere(filters: ReportingFilters): Prisma.DemandeWhereInput 
  * bénéficiaires distincts restant modeste pour une application interne.
  */
 export async function getBeneficiairesConnus(): Promise<{ value: string; label: string }[]> {
-  const [avecCompte, sansCompte] = await Promise.all([
+  const [avecCompteDemandes, sansCompteDemandes, avecCompteArticles, sansCompteArticles] = await Promise.all([
     prisma.demande.findMany({
       where: { beneficiaireUserId: { not: null } },
       distinct: ["beneficiaireUserId"],
@@ -178,7 +190,23 @@ export async function getBeneficiairesConnus(): Promise<{ value: string; label: 
       distinct: ["beneficiaireNom"],
       select: { beneficiaireNom: true },
     }),
+    prisma.ligneDemande.findMany({
+      where: { beneficiaireUserId: { not: null } },
+      distinct: ["beneficiaireUserId"],
+      select: { beneficiaireUserId: true, beneficiaireUser: { select: { fullName: true } } },
+    }),
+    prisma.ligneDemande.findMany({
+      where: { beneficiaireNom: { not: null } },
+      distinct: ["beneficiaireNom"],
+      select: { beneficiaireNom: true },
+    }),
   ]);
+  const avecCompte = [...avecCompteDemandes, ...avecCompteArticles].filter(
+    (d, i, tous) => tous.findIndex((x) => x.beneficiaireUserId === d.beneficiaireUserId) === i
+  );
+  const sansCompte = [...sansCompteDemandes, ...sansCompteArticles].filter(
+    (d, i, tous) => tous.findIndex((x) => x.beneficiaireNom === d.beneficiaireNom) === i
+  );
 
   const options = [
     ...avecCompte
@@ -268,6 +296,10 @@ interface DemandeAvecRelations {
     objetId: string | null;
     categorie: { label: string } | null;
     objet: { label: string } | null;
+    beneficiaireType: BeneficiaireType | null;
+    beneficiaireUserId: string | null;
+    beneficiaireNom: string | null;
+    beneficiaireUser: { fullName: string } | null;
   }[];
 }
 
@@ -351,7 +383,7 @@ async function getDemandesFiltrees(
       objet: true,
       createur: { include: { service: true } },
       beneficiaireUser: true,
-      lignes: { include: { categorie: true, objet: true } },
+      lignes: { include: { categorie: true, objet: true, beneficiaireUser: true } },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -1109,7 +1141,7 @@ export async function getReportingParDemande(
       etapeCircuit: det.etapeCircuit ? LIBELLE_ETAPE_CIRCUIT[det.etapeCircuit] : null,
       demandeur: d.createur.fullName,
       service: d.createur.service,
-      beneficiaire: getBeneficiaireNom(d),
+      beneficiaire: nomBeneficiaireDemande(d, d.lignes),
       description: d.description,
       categorie: d.categorie?.label ?? null,
       objet: d.objet?.label ?? null,

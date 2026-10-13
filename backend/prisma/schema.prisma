@@ -69,6 +69,8 @@ model User {
   lignesDemandeDecidees         LigneDemande[]    @relation("LigneDemandeDecideur")
   lignesSoumisesAuDG            LigneDemande[]    @relation("LigneDemandeSoumiseDGPar")
   lignesDecideesParDG           LigneDemande[]    @relation("LigneDemandeDecisionDGPar")
+  /// Articles dont il est le bénéficiaire PROPRE (autonomie des articles, lot A).
+  lignesBeneficiaire            LigneDemande[]    @relation("LigneDemandeBeneficiaire")
   /// Signalements d'erreur sur un retour de caisse — voir CLAUDE.md
   /// "Signalement d'erreur par le Collaborateur".
   signalementsRetourEmis        SignalementRetour[] @relation("SignalementRetourSignalePar")
@@ -693,7 +695,15 @@ model PieceJointe {
   remboursementRetour  RemboursementRetour?
   retourExceptionnelId String?             @unique
   retourExceptionnel   RetourExceptionnel? @relation(fields: [retourExceptionnelId], references: [id], onDelete: SetNull)
+  /// Pièce jointe PROPRE à un article de la demande (lot A « autonomie des articles »). `demandeId` reste renseigné
+  /// (droits d'accès calculés par demande). Vide : pièce de la demande entière, ou d'un autre objet (dépense…).
+  /// Pas `@unique` : plusieurs pièces par article. `SetNull` : si l'article est supprimé (correction avant toute
+  /// décision), la pièce redevient une pièce de la demande plutôt que de disparaître.
+  ligneDemandeId       String?
+  ligneDemande         LigneDemande?       @relation(fields: [ligneDemandeId], references: [id], onDelete: SetNull)
   createdAt       DateTime       @default(now())
+
+  @@index([ligneDemandeId])
 }
 
 /// Ligne d'article d'une Demande d'Achat ("Tableau des articles" du
@@ -786,7 +796,22 @@ model LigneDemande {
   objetId     String?
   objet       Objet?     @relation(fields: [objetId], references: [id])
 
+  /// Bénéficiaire PROPRE à l'article (autonomie des articles, lot A, 2026-10-14). `beneficiaireType` vide = l'article
+  /// HÉRITE du bénéficiaire par défaut de la demande (`Demande.beneficiaire*`) ; renseigné, les trois champs décrivent
+  /// le bénéficiaire de cet article (même règle que la demande : un compte OU un nom libre, jamais les deux). À la
+  /// création, un article dont le bénéficiaire égale la valeur commune n'a aucune valeur propre.
+  beneficiaireType   BeneficiaireType?
+  beneficiaireUserId String?
+  beneficiaireUser   User?            @relation("LigneDemandeBeneficiaire", fields: [beneficiaireUserId], references: [id])
+  beneficiaireNom    String?
+
+  /// Pièces jointes de CET article (plusieurs possibles). Une pièce de la demande entière (« pièce commune ») n'a
+  /// pas de `ligneDemandeId`.
+  pieces PieceJointe[]
+
   createdAt DateTime @default(now())
+
+  @@index([beneficiaireUserId])
 }
 
 model Reglement {

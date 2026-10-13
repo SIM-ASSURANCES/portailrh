@@ -20,6 +20,8 @@ import {
   type TypeDemandeCircuit,
 } from "./circuitDemande";
 import { refusMotifLigne } from "./motifLigne";
+import { champsBeneficiaire, type ChoixBeneficiaire } from "./beneficiaire";
+import { beneficiaireArticle, choixDepuisStocke, choixPropreArticle } from "./beneficiaireArticles";
 
 type Db = Prisma.TransactionClient;
 
@@ -56,8 +58,15 @@ export async function refusConflitInteret(
     | { retourExceptionnelId: string },
   userId: string
 ): Promise<string | null> {
-  const champs = { createurId: true, beneficiaireUserId: true } as const;
-  let demande: { createurId: string; beneficiaireUserId: string | null } | null | undefined = null;
+  // Garde 8 étendue aux articles (lot A, 2026-10-14) : on lit aussi le bénéficiaire propre de chaque article.
+  const champs = {
+    createurId: true,
+    beneficiaireType: true,
+    beneficiaireUserId: true,
+    beneficiaireNom: true,
+    lignes: { select: { beneficiaireType: true, beneficiaireUserId: true, beneficiaireNom: true } },
+  } as const;
+  let demande: Parameters<typeof refusExecutionPropreDemande>[0] | null | undefined = null;
   if ("demandeId" in cible) {
     demande = await db.demande.findUnique({ where: { id: cible.demandeId }, select: champs });
   } else if ("reglementId" in cible) {
@@ -460,6 +469,13 @@ export interface LigneCorrigee {
   motif: string;
   quantite: number;
   prixUnitaire: number;
+  /**
+   * Bénéficiaire propre de l'article (autonomie des articles, lot A) : absent = inchangé (ligne existante) ou hérite
+   * (nouvelle ligne) ; `null` = hérite de la demande ; un choix égal à celui de la demande n'enregistre rien.
+   */
+  beneficiaire?: ChoixBeneficiaire | null;
+  /** Nouvelles pièces de l'article ; celles déjà jointes sont conservées. */
+  pieceJointeUrls?: string[];
 }
 
 export interface CorrectionDemande {
@@ -485,7 +501,12 @@ export async function corrigerEtResoumettre(
 ): Promise<ResultatCircuit> {
   const d = await db.demande.findUnique({
     where: { id: demandeId },
-    include: { lignes: { orderBy: { createdAt: "asc" }, include: { decidePar: { select: { fullName: true } } } } },
+    include: {
+      lignes: {
+        orderBy: { createdAt: "asc" },
+        include: { decidePar: { select: { fullName: true } }, beneficiaireUser: { select: { fullName: true } } },
+      },
+    },
   });
   if (!d) return { ok: false, message: "Demande introuvable." };
 
@@ -518,6 +539,22 @@ export async function corrigerEtResoumettre(
     if (!Number.isInteger(l.quantite) || l.quantite < 1) return { ok: false, message: "Chaque ligne doit avoir un nombre entier supérieur à 0." };
     if (!(l.prixUnitaire >= 0)) return { ok: false, message: "Prix unitaire invalide." };
   }
+  // Bénéficiaire propre de chaque article après correction : le choix reçu, ramené à « hérite » (null) s'il égale celui
+  // de la demande ; absent pour une ligne existante = l'actuel est conservé.
+  const choixDemande = choixDepuisStocke(d, d.createurId);
+  const piecesValides = (urls: string[] | undefined) => (urls ?? []).every((u) => /^[0-9a-f-]{36}\.(pdf|jpe?g|png)$/.test(u));
+  if (correction.lignes.some((l) => !piecesValides(l.pieceJointeUrls))) return { ok: false, message: "Pièce jointe invalide." };
+  const comptesAVerifier = new Set<string>();
+  for (const l of correction.lignes) {
+    const c = l.beneficiaire;
+    if (c?.mode === "COMPTE" && c.userId !== d.createurId) comptesAVerifier.add(c.userId);
+    if (c?.mode === "COMPTE" && !c.userId) return { ok: false, message: "Choisissez un compte bénéficiaire pour chaque article concerné." };
+    if (c?.mode === "NOM" && c.nom.trim().length < 2) return { ok: false, message: "Saisissez le nom du bénéficiaire de chaque article concerné." };
+  }
+  if (comptesAVerifier.size > 0) {
+    const actifs = await db.user.findMany({ where: { id: { in: [...comptesAVerifier] }, isActive: true }, select: { id: true } });
+    if (actifs.length !== comptesAVerifier.size) return { ok: false, message: "Un compte bénéficiaire n'existe pas ou n'est plus actif." };
+  }
   const existantes = new Map(d.lignes.map((l) => [l.id, l]));
   if (correction.lignes.some((l) => l.id && !existantes.has(l.id))) {
     return { ok: false, message: "Une ligne ne fait pas partie de cette demande." };
@@ -545,6 +582,8 @@ export async function corrigerEtResoumettre(
       motif: l.motif,
       quantite: l.quantite,
       prixUnitaire: Number(l.prixUnitaire),
+      // Bénéficiaire propre de l'article, le cas échéant (absent = celui de la demande).
+      ...(l.beneficiaireType ? { beneficiaire: beneficiaireArticle(l, d).libelle } : {}),
       decision: l.statutValidation,
       motifRejet: l.motifRejet,
       // Auteur et date de la décision : l'historique affiche une ligne retirée avec sa décision (2026-10-07).
@@ -613,13 +652,25 @@ export async function corrigerEtResoumettre(
       decisionDGParId: null,
       motifRefusDG: null,
     };
+    // Bénéficiaire propre : `undefined` = ne rien changer (ligne existante), `null`/choix = écrire (ou effacer).
+    const choixPropre =
+      l.beneficiaire === undefined ? undefined : choixPropreArticle({ beneficiaire: l.beneficiaire }, choixDemande, d.createurId);
+    const champsBeneficiaireLigne =
+      choixPropre === undefined
+        ? {}
+        : choixPropre === null
+          ? { beneficiaireType: null, beneficiaireUserId: null, beneficiaireNom: null }
+          : champsBeneficiaire(choixPropre, d.createurId);
+    let ligneId: string;
     if (l.id) {
+      ligneId = l.id;
       const avant = existantes.get(l.id)!;
       await db.ligneDemande.update({
         where: { id: l.id },
         data: {
           quantite: l.quantite,
           prixUnitaire: l.prixUnitaire,
+          ...champsBeneficiaireLigne,
           ...decisionRemiseAZero,
           ...(libelle !== avant.libelle
             ? { libelle, libelleDemandeur: libelle, libelleOriginal: avant.libelleOriginal ?? avant.libelle }
@@ -631,7 +682,14 @@ export async function corrigerEtResoumettre(
         },
       });
     } else {
-      await db.ligneDemande.create({ data: { demandeId, libelle, motif, quantite: l.quantite, prixUnitaire: l.prixUnitaire } });
+      const creee = await db.ligneDemande.create({
+        data: { demandeId, libelle, motif, quantite: l.quantite, prixUnitaire: l.prixUnitaire, ...champsBeneficiaireLigne },
+      });
+      ligneId = creee.id;
+    }
+    const nouvellesPieces = [...new Set(l.pieceJointeUrls ?? [])];
+    if (nouvellesPieces.length > 0) {
+      await db.pieceJointe.createMany({ data: nouvellesPieces.map((url) => ({ url, demandeId, ligneDemandeId: ligneId })) });
     }
   }
   if (correction.pieceJointeUrl) {

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 
-import { estRetourNul, getBeneficiaireNom, prisma, referenceRecuRetour } from "backend";
+import { estRetourNul, nomBeneficiaireDemande, prisma, referenceRecuRetour } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { RetourReceiptDocument, type RetourReceiptData } from "@/lib/pdf/RetourReceiptDocument";
 
@@ -28,7 +28,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       declarant: { select: { fullName: true } },
       receptionnePar: { select: { fullName: true } },
       depenses: { orderBy: { date: "asc" } },
-      reglement: { include: { demande: { include: { createur: true, beneficiaireUser: true } } } },
+      reglement: { include: { demande: { include: { createur: true, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } } } },
     },
   });
   if (!retour || !retour.estReceptionne || !retour.receptionneAt) {
@@ -69,7 +69,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     recuReference,
     demandeReference: demande.reference,
     demandeurNom: demande.createur.fullName,
-    beneficiaireNom: getBeneficiaireNom(demande),
+    beneficiaireNom: nomBeneficiaireDemande(demande, demande.lignes, { seulementValidees: true }),
     montantRegle: Number(retour.reglement.montant),
     mode: retour.reglement.mode,
     regleLe: retour.reglement.confirmeAt ?? retour.reglement.createdAt,

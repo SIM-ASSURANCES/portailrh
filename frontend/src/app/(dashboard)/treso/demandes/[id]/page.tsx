@@ -8,11 +8,16 @@ import {
 } from "@/components/tresorerie/demandeStatut";
 import {
   BENEFICIAIRE_TYPE_LABEL,
-  getBeneficiaireNom,
+  aPlusieursBeneficiaires,
+  choixDepuisStocke,
+  detailsArticles,
+  nomBeneficiaireDemande,
+  saisieDepuisChoix,
   getMontantsLignesParStatut,
   LIBELLE_ETAPE_CIRCUIT,
   versDemandeCircuit,
 } from "backend";
+import { detailsArticleDe } from "@/components/tresorerie/DetailsArticle";
 import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
@@ -59,7 +64,7 @@ export default async function MaDemandeDetailPage({
     where: { id },
     include: {
       beneficiaireUser: true,
-      lignes: { orderBy: { createdAt: "asc" } },
+      lignes: { orderBy: { createdAt: "asc" }, include: { beneficiaireUser: true } },
       pieces: true,
     },
   });
@@ -91,8 +96,19 @@ export default async function MaDemandeDetailPage({
   // Circuit de validation (commit 4) : le demandeur voit TOUJOURS sa propre version (la dernière qu'il a écrite, sinon
   // celle d'origine) — jamais une modification de la Finance.
   const descriptionDemandeur = demande.descriptionDemandeur ?? demande.descriptionOriginale ?? demande.description;
+  const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
   const libelleDemandeur = (l: (typeof demande.lignes)[number]) => l.libelleDemandeur ?? l.libelleOriginal ?? l.libelle;
   const aCorriger = demande.etapeCircuit === "A_CORRIGER";
+  // Comptes proposables comme bénéficiaire d'un article lors de la correction (autres comptes actifs du portail).
+  const comptesCorrection = aCorriger
+    ? (
+        await prisma.user.findMany({
+          where: { isActive: true, id: { not: demande.createurId } },
+          select: { id: true, fullName: true, service: { select: { name: true } } },
+          orderBy: { fullName: "asc" },
+        })
+      ).map((c) => ({ value: c.id, label: c.service ? `${c.fullName} — ${c.service.name}` : c.fullName }))
+    : [];
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
@@ -135,8 +151,10 @@ export default async function MaDemandeDetailPage({
               Bénéficiaire
             </dt>
             <dd className="mt-1 text-sm text-foreground">
-              {getBeneficiaireNom(demande)}{" "}
-              <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              {nomBeneficiaireDemande(demande, demande.lignes)}{" "}
+              {aPlusieursBeneficiaires(demande, demande.lignes) ? null : (
+                <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              )}
             </dd>
           </div>
           {/* Phase B (validation partielle) : montant validé/restant visible
@@ -204,19 +222,19 @@ export default async function MaDemandeDetailPage({
               <dd className="text-sm text-foreground">{demande.commentaire}</dd>
             </div>
           ) : null}
-          {demande.pieces.length > 0 ? (
+          {vueArticles.communes.length > 0 ? (
             <div>
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Pièce jointe
               </dt>
               <dd className="space-x-3 text-sm text-foreground">
-                {demande.pieces.map((piece, index) => (
+                {vueArticles.communes.map((piece, index) => (
                   <a
                     key={piece.id}
                     href={`/api/treso/pieces-jointes/${piece.id}`}
                     className="text-info underline-offset-4 transition-colors hover:text-primary hover:underline"
                   >
-                    Télécharger{demande.pieces.length > 1 ? ` (${index + 1})` : ""}
+                    Télécharger{vueArticles.communes.length > 1 ? ` (${index + 1})` : ""}
                   </a>
                 ))}
               </dd>
@@ -272,6 +290,7 @@ export default async function MaDemandeDetailPage({
                         {motifLigneDemandeur(ligne) ? (
                           <p data-motif-ligne className="mt-0.5 text-xs text-muted-foreground">Motif : {motifLigneDemandeur(ligne)}</p>
                         ) : null}
+                        {detailsArticleDe(vueArticles, ligne.id)}
                       </td>
                       <td className="px-3 py-2 text-right text-foreground">{ligne.quantite}</td>
                       <td className="px-3 py-2 text-right text-foreground">
@@ -346,8 +365,12 @@ export default async function MaDemandeDetailPage({
               motif: motifLigneDemandeur(l) ?? "",
               quantite: l.quantite,
               prixUnitaire: Number(l.prixUnitaire),
+              beneficiaire: l.beneficiaireType ? saisieDepuisChoix(choixDepuisStocke(l, demande.createurId)) : null,
             }))}
             devise={demande.devise}
+            commun={saisieDepuisChoix(choixDepuisStocke(demande, demande.createurId))}
+            createurId={demande.createurId}
+            comptes={comptesCorrection}
           />
         </section>
       ) : demande.etapeCircuit === "ABANDONNEE" ? (

@@ -3,11 +3,14 @@ import { notFound, redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
+import { detailsArticleDe } from "@/components/tresorerie/DetailsArticle";
 import { getSession } from "@/lib/auth";
 import {
+  aPlusieursBeneficiaires,
   BENEFICIAIRE_TYPE_LABEL,
   chargerActeur,
-  getBeneficiaireNom,
+  detailsArticles,
+  nomBeneficiaireDemande,
   motifLigneDemandeur,
   prisma,
   raisonIndisponible,
@@ -34,11 +37,12 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
       createur: { select: { fullName: true, service: { select: { name: true, responsableId: true } } } },
       beneficiaireUser: true,
       pieces: true,
-      lignes: { orderBy: { createdAt: "asc" } },
+      lignes: { orderBy: { createdAt: "asc" }, include: { beneficiaireUser: true } },
     },
   });
   if (!demande || demande.createur.service?.responsableId !== session.user.id) notFound();
 
+  const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
   const demandeCircuit = versDemandeCircuit(demande);
   const acteur = await chargerActeur(prisma, session, demande.createurId);
   // La version du demandeur, jamais une description modifiée par la Finance.
@@ -63,8 +67,10 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
           <div>
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Bénéficiaire</dt>
             <dd className="mt-1 text-sm text-foreground">
-              {getBeneficiaireNom(demande)}{" "}
-              <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              {nomBeneficiaireDemande(demande, demande.lignes)}{" "}
+              {aPlusieursBeneficiaires(demande, demande.lignes) ? null : (
+                <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              )}
             </dd>
           </div>
           {demande.dateLivraisonSouhaitee ? (
@@ -83,16 +89,16 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
           <div className="sm:col-span-2">
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pièces jointes</dt>
             <dd className="mt-1 space-x-3 text-sm text-foreground">
-              {demande.pieces.length === 0 ? (
+              {vueArticles.communes.length === 0 ? (
                 <span className="text-muted-foreground">Aucune pièce jointe.</span>
               ) : (
-                demande.pieces.map((piece, index) => (
+                vueArticles.communes.map((piece, index) => (
                   <a
                     key={piece.id}
                     href={`/api/treso/pieces-jointes/${piece.id}`}
                     className="text-info underline-offset-4 transition-colors hover:text-primary hover:underline"
                   >
-                    Télécharger{demande.pieces.length > 1 ? ` (${index + 1})` : ""}
+                    Télécharger{vueArticles.communes.length > 1 ? ` (${index + 1})` : ""}
                   </a>
                 ))
               )}
@@ -117,6 +123,7 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
                       Motif : {motifLigneDemandeur(l)}
                     </span>
                   ) : null}
+                  {detailsArticleDe(vueArticles, l.id)}
                 </span>
                 <span className="text-sm font-bold text-foreground tabular-nums">
                   {(l.quantite * Number(l.prixUnitaire)).toLocaleString("fr-FR")} FCFA

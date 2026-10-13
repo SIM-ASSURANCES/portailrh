@@ -24,6 +24,7 @@
 export * from "./generated/prisma/enums";
 export * from "./validation";
 export * from "./beneficiaire";
+export * from "./beneficiaireArticles";
 export * from "./motifLigne";
 export * from "./cheminRetour";
 export * from "./categorisationObligatoire";
