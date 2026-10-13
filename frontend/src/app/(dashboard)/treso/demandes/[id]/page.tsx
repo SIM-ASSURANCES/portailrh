@@ -1,8 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import {
-  STATUT_DEMANDE_BADGE_VARIANT,
-  STATUT_DEMANDE_LABEL,
+  affichageStatutDemande,
   STATUT_LIGNE_DEMANDE_BADGE_VARIANT,
   STATUT_LIGNE_DEMANDE_LABEL,
 } from "@/components/tresorerie/demandeStatut";
@@ -140,9 +139,10 @@ export default async function MaDemandeDetailPage({
               {aCorriger ? (
                 <Badge variant="warning">À corriger</Badge>
               ) : (
-                <Badge variant={STATUT_DEMANDE_BADGE_VARIANT[demande.statut]}>
-                  {STATUT_DEMANDE_LABEL[demande.statut]}
-                </Badge>
+                (() => {
+                  const affichage = affichageStatutDemande(demande.statut, demande.lignes);
+                  return <Badge variant={affichage.variant}>{affichage.label}</Badge>;
+                })()
               )}
             </dd>
           </div>

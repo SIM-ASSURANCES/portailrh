@@ -1,7 +1,9 @@
 import { Icon } from "@/components/icons";
 import {
+  etapeDepuisArticles,
   friseProgression,
   messageAttente,
+  resumeArticles,
   type DemandeCircuit,
   type StatutEtapeFrise,
 } from "backend/client";
@@ -48,8 +50,11 @@ export function FriseCircuit({
           </li>
         ))}
       </ol>
-      <p className={`text-sm ${demande.etape === "A_CORRIGER" ? "text-warning" : "text-muted-foreground"}`}>
-        {phraseEtape(demande.etape, niveauRejet, motifRejet)}
+      <p
+        data-phrase-etape
+        className={`text-sm ${demande.etape === "A_CORRIGER" ? "text-warning" : "text-muted-foreground"}`}
+      >
+        {phraseDemande(demande, niveauRejet, motifRejet)}
       </p>
     </section>
   );
@@ -79,6 +84,23 @@ const ICONE = {
 } as const satisfies Record<StatutEtapeFrise, string>;
 
 const NIVEAU: Record<NiveauRejet, string> = { SERVICE: "le responsable de service", FINANCE: "la Finance", DG: "le DG" };
+
+/**
+ * Phrase sous la frise. Demande à articles (lot B) : l'étape est déduite des articles et la phrase dit ce qui attend
+ * la Finance ET le DG (les deux peuvent attendre ensemble), avec le compteur d'articles traités ; sinon la phrase de
+ * l'étape.
+ */
+function phraseDemande(demande: DemandeCircuit, niveauRejet?: NiveauRejet | null, motifRejet?: string | null): string {
+  const lignes = demande.lignes ?? [];
+  if (demande.typeDemande === "DEPENSE_DIRECTE" || lignes.length === 0) return phraseEtape(demande.etape, niveauRejet, motifRejet);
+  const etape = etapeDepuisArticles(demande.etape, demande.modeEtapeDG, lignes);
+  if (etape !== "FINANCE" && etape !== "DG") return phraseEtape(etape, niveauRejet, motifRejet);
+  const r = resumeArticles(lignes, demande.modeEtapeDG);
+  const attentes: string[] = [];
+  if (r.pourFinance > 0) attentes.push(`la Finance (${r.pourFinance} article${r.pourFinance > 1 ? "s" : ""})`);
+  if (r.chezDG > 0) attentes.push(`le DG (${r.chezDG} article${r.chezDG > 1 ? "s" : ""})`);
+  return `En cours : ${r.traites}/${r.total} article${r.traites > 1 ? "s" : ""} traité${r.traites > 1 ? "s" : ""} — en attente de ${attentes.join(" et de ")}.`;
+}
 
 function phraseEtape(etape: EtapeCircuit, niveauRejet?: NiveauRejet | null, motifRejet?: string | null): string {
   if (etape === "A_CORRIGER" && niveauRejet) {

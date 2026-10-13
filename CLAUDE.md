@@ -558,6 +558,9 @@ main) :
 | `montantValide === montant`, `0 < réglé < montantValide` | `PARTIELLEMENT_REGLEE` |
 | `montantValide === montant`, `réglé >= montantValide` | `REGLEE` |
 
+> **Demandes à articles (lot B, 2026-10-15)** : le statut se déduit des ARTICLES (`statutDepuisLignes`), voir « Lot B » plus bas — « En cours (x/n traités) »
+> tant qu'un article attend, puis suivi du règlement sur le seul montant validé. Le tableau ci-dessus reste exact pour une demande SANS article.
+
 `VALIDEE` n'est **plus jamais produit** par cette fonction (une validation
 totale transite directement vers `VALIDEE_NON_REGLEE`) ; il reste dans
 l'enum uniquement pour compatibilité historique. Comparaisons de montants
@@ -2628,6 +2631,10 @@ Aucune migration, aucun droit ni garde de conflit d'intérêts modifié, aucune 
 
 #### Soumission au DG ligne par ligne (2026-10-10, suite des retouches)
 
+> **⚠️ Partiellement REMPLACÉ par le lot B (2026-10-15, plus bas)** : la règle 4 « décision finale bloquée tant qu'une ligne attend le DG »
+> et l'étape « Décision finale » ne s'appliquent plus aux demandes à articles (la Finance décide article par article, sans attendre le DG ;
+> l'étape se déduit des articles). Le reste (soumission ligne par ligne, DG définitif, clôture règle 5, notifications) tient.
+
 Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permission créés) : `LigneDemande.soumiseAuDG`,
 `soumiseDGAt`/`soumiseDGParId`, `decisionDG` (enum `DecisionLigneDG` : VALIDEE/REFUSEE, `null` = en attente du DG),
 `decisionDGAt`/`decisionDGParId`, `motifRefusDG`. La décision finale de la ligne reste `statutValidation`.
@@ -2745,6 +2752,84 @@ index). **Aucune colonne sur `Reglement`.**
 - Vérifié : vitest (18 tests dans `beneficiaireArticles.test.ts`), tsc, eslint, `next build`, migration depuis zéro et rejouée
   sans effet (`migrate diff` vide), `e2e/articles-beneficiaire-pieces.mjs` 34/34 (création par le vrai formulaire, base,
   affichage demandeur/Finance, droits de téléchargement, règlement bloqué, correction) et `soumission-dg-article.mjs` 31/31.
+
+#### Lot B — décision Finance par article, statut et étape déduits des articles, files par article (2026-10-15)
+
+Applique les décisions 3, 4, 5, 6, 7, 8 et 11 de la section « Autonomie des articles ». Ni le règlement par article (lot D), ni les retours (lot E),
+ni le reporting (lot F) ne changent : le règlement reste au niveau de la demande (pot commun).
+
+**Modèle d'état d'un article** (module pur `backend/src/etatArticles.ts`, `etatLigneCircuit(ligne, mode)`) :
+
+| État | Quand | Qui l'attend |
+|---|---|---|
+| `A_DECIDER` | `EN_ATTENTE`, non soumis au DG | Finance |
+| `CHEZ_DG` | soumis, sans décision du DG (cas b `OBLIGATOIRE` : tout article en attente) | DG |
+| `VALIDEE_DG_A_CONFIRMER` | validé par le DG, `statutValidation` encore `EN_ATTENTE` | Finance (confirme, ne peut pas rejeter : DG définitif) |
+| `REFUSEE_DG_A_TRANCHER` | refusé par le DG | Finance (resoumet au DG ou rejette définitivement, jamais valide seule) |
+| `VALIDEE` / `REJETEE` | décision finale | personne — **définitif**, jamais de dévalidation |
+
+- **Décision par sous-ensemble** : `validerLignesAction(demandeId, decisions[])` accepte une décision (valider, ou rejeter avec motif ≥ 3) pour un
+  SOUS-ENSEMBLE d'articles, à des moments différents ; plus aucune obligation de couvrir toutes les lignes. La règle 4 (décision finale bloquée par le DG)
+  **disparaît** : la Finance décide les articles qu'elle ne soumet pas pendant que le DG examine les autres. Tout passe par `deciderArticles`
+  (`circuitDemandeDb.ts`) : verrou `FOR UPDATE`, `transition` du moteur, écriture des articles, **décideur Finance par article**
+  (`LigneDemande.decideurFinanceId`, posé à une VALIDATION par la Finance seulement — rejeter n'engage pas d'argent), recalcul du montant validé,
+  étape déduite, chronomètre remis à zéro, historique (une entrée par article + `decision_circuit`).
+- **Étape DÉDUITE des articles** (`etapeDepuisArticles`) : Service / À corriger / Abandonnée restent posées explicitement ; sinon **Finance** dès
+  qu'un article l'attend (prioritaire quand Finance et DG ont chacun des articles), **DG** s'il ne reste que des articles chez lui, **Terminée**
+  quand tous sont traités avec au moins un validé, **À corriger** quand tous sont rejetés (comme avant, niveau Finance ou DG). La colonne
+  `Demande.etapeCircuit` est CONSERVÉE et tenue à jour (rappels, file du Service, reporting la lisent) ; `REJET_DG` et `DECISION_FINALE` ne sont plus
+  produits pour une demande à articles (gardés pour la dépense directe et les anciennes demandes, déduits des articles à l'affichage).
+- **Statut déduit** (`statutDepuisLignes`, appelée par `calculerStatutDemande` qui reste le seul point d'écriture) : l'énumération garde ses 11
+  valeurs (aucune migration d'enum). Tant qu'un article n'a pas de décision finale : `EN_ATTENTE_VALIDATION` (aucun validé) ou `PARTIELLEMENT_VALIDEE`,
+  **affichés « En cours (x/n traités) »** (`affichageStatutDemande`, `libelleEnCours`). Tous traités avec au moins un validé : le statut suit le
+  règlement du SEUL montant validé → **« Réglée » est atteignable avec un article rejeté** (défaut de l'ancienne règle, qui comparait à la somme
+  demandée). Tous rejetés : `EN_ATTENTE_VALIDATION` + à corriger. Sans article (dépense directe) : règle d'origine inchangée.
+- **Montant validé = somme des articles validés**, recalculée après chaque décision (colonne `montantValide` conservée et resynchronisée par
+  `calculerStatutDemande` si elle dérive). **Règlement possible dès qu'un article est validé** (`peutEffectuerReglement` inchangée, sur `montantValide`) ;
+  l'Assistant Finance n'attend plus « la validation finale » : `executionOuverte` = au moins un article validé ; description/libellé/motif d'un article
+  par l'Assistant : seulement sur un article VALIDÉ.
+- **Rejet de la demande entière** (`REJETER`) : possible tant qu'AUCUN article n'est décidé ni examiné par le DG ; **interdit dès qu'un article est
+  validé** (ou validé par le DG), et — décision prise, plus stricte que la demande — dès qu'un article est rejeté ou chez le DG (un article rejeté est
+  définitif, or le renvoi en correction remet tous les articles à zéro : on rejette alors les articles restants un par un, et « tous rejetés » renvoie
+  en correction). `corrigerEtResoumettre` refuse aussi une demande dont un article est validé.
+- **Règle des deux personnes et garde 8** : le décideur Finance (colonne + chaque article, `decideursFinanceDemande`) et l'approbateur DG (colonne +
+  chaque décision d'article, `decideursDGDemande`) sont deux comptes distincts pour toute la demande ; `refusApprobationCloture` prend
+  `decideursFinanceIds` (« aucun des décideurs Finance de la demande »). Le **créateur** ne décide aucun article de sa demande ; le **bénéficiaire
+  d'un article** (le sien, sinon celui de la demande, `versLigneCircuit`) ne décide pas CET article (Finance et DG) : `MESSAGE_ARTICLE_BENEFICIAIRE`,
+  affichée sous l'article (`raisonDecision`). Il décide les autres. `supprimerUtilisateurAction` compte `decideurFinanceId`.
+- **Clôture** : comportement inchangé, mais `peutEtreCloturee` (seule lecture) exige tous les articles traités (aucun à décider ni chez le DG) et au
+  moins un validé ; l'approbation de clôture du DG (`approuverValidationCompleteAction`, file « Validations complètes en attente »
+  `VALIDATION_COMPLETE_EN_ATTENTE_WHERE`) n'est donnée/proposée que lorsque tous les articles sont traités. L'approbation acquise par les décisions du
+  DG (règle 5) est calculée par le moteur sur les articles finaux ; cas b : la décision du DG vaut approbation quand la demande se termine.
+- **Files et indicateurs = requêtes sur les ARTICLES** : `FILES_FINANCE_WHERE` (FINANCE = article non soumis à décider, REJET_DG = article refusé par le
+  DG, DECISION_FINALE = article validé par le DG ; dépense directe/anciennes demandes : par étape), `DEMANDES_A_TRAITER_FINANCE_WHERE` (indicateur
+  n° 1), `demandesEtapeDGWhere` (articles chez le DG, même quand la Finance en a d'autres ; cas b ; dépense directe à l'étape DG),
+  `DEMANDES_EN_ATTENTE_VALIDATION_WHERE`. La page « Demandes en attente de validation » classe une demande dans la première file où elle a quelque
+  chose à faire (jamais deux fois). « À régulariser » : tous les articles traités (comme la clôture).
+- **Écrans** : tableau des articles (`LignesValidationTable`) par article — décision d'un sous-ensemble, « Enregistrer (n articles) » dès une décision,
+  « Confirmer la validation » pour un article validé par le DG, « Rejeter définitivement » pour un article refusé par le DG, compteur « x/n articles
+  traités », « Déjà validé : X — montant qui sera ajouté : Y » ; page Finance unifiée pour une demande à articles vivante (tableau + circuit + règlement
+  + régularisation + clôture sur le même écran) ; frise Finance/DG « en cours » ensemble avec compteur, phrase « En cours : x/n articles traités — en
+  attente de la Finance (n) et du DG (m) » ; bandeau « Des articles attendent la décision du DG, les autres ne sont pas bloqués ».
+- **Notifications et rappels** : l'étape ne changeant plus à chaque décision, `notificationsEtape(ctx, candidats, acteur, evenement)` prend un événement
+  (`ETAPE`, `DECISION_ARTICLES`, `SOUMISSION_DG`, `DECISION_DG`) : décision de la Finance → le demandeur (articles décidés, montant validé) et les
+  Assistants (« Demande à régler ») ; soumission → le DG seul ; le DG a fini son examen (plus d'article chez lui) → la Finance (articles à confirmer /
+  à trancher) ; chaque refus d'un article → la Finance (inchangé). Rappels : `notificationsRappel` renvoie un rappel PAR audience (Finance et DG peuvent
+  attendre ensemble). **Un chronomètre par demande** (`etapeCircuitDepuis`) **remis à zéro à chaque événement d'un article** (décision, soumission,
+  décision du DG) — avant, une soumission complémentaire à l'étape DG ne le changeait pas.
+- **Migration** `20261015090000_decision_finance_par_article` : `LigneDemande.decideurFinanceId` (+ clé étrangère `SET NULL`, index), idempotente ;
+  rattrape les articles déjà VALIDÉS (décideur = `decideParId`, ou `Demande.decideurFinanceId` pour un article validé par le DG ; aucun pour le cas b).
+  Aucune donnée de statut recalculée dans la migration.
+- **Reprise des données — script MANUEL, jamais dans une migration** : `backend/prisma/recalculer-statuts-articles.ts` (logique pure testée :
+  `repriseArticles.ts`). Recalcule, pour chaque demande à articles non terminale, le montant validé, l'étape (déduite) et le statut. **Simulation par
+  défaut** (liste les changements, n'écrit rien) ; `--appliquer` écrit (une transaction par demande, entrée d'historique `reprise_statut_articles`).
+  Idempotent. À lancer UNE fois après le déploiement : `cd backend && npx tsx prisma/recalculer-statuts-articles.ts` puis `... --appliquer`.
+- **Tests réécrits** (anciens comportements) : `circuitDemande.test` (3 : signature de `refusApprobationCloture`), `circuitLignesDG.test` (soumission
+  partielle, cas b, décision du DG, refus/resoumission, règle 4 → « n'est plus bloquée », clôture règle 5, notifications), `circuitNotifications.test` (1 :
+  rappel par audience), `soumissionDGEcran.test` (2 : Assistant et bandeau) ; e2e `soumission-dg-article.mjs` (3 attentes). Ajoutés : `etatArticles.test`
+  (31), `decisionArticles.test` (33), `repriseArticles.test` (7), e2e `articles-decision-finance.mjs` (65 contrôles).
+- **Limite assumée / point ouvert** : pour une demande à articles dont la Finance et le DG ont chacun des articles, `Demande.etapeCircuit` vaut Finance (priorité) ;
+  seuls les écrans/files qui lisent les articles montrent les deux. Le règlement reste un pot commun (lot D : un règlement par article).
 
 ### Solde d'ouverture de caisse
 

@@ -57,8 +57,10 @@ describe("raisonSoumissionDemande", () => {
   it("cas D : l'Assistant Finance attend la validation finale", () => {
     expect(raisonSoumissionDemande(demande(), ASSISTANT, "LIGNES")).toBe(MESSAGE_ATTENTE_VALIDATION_FINALE);
   });
-  it("cas D : une fois la décision finale prise, l'Assistant n'est plus « en attente »", () => {
-    expect(raisonSoumissionDemande(demande({ etape: "TERMINEE" }), ASSISTANT, "LIGNES")).toBe(MESSAGE_PERMISSION_SOUMETTRE_DG);
+  // RÉÉCRIT (lot B) : l'Assistant n'attend plus la décision de TOUS les articles — dès qu'un article est validé, il agit.
+  it("cas D : dès qu'un article est validé, l'Assistant n'est plus « en attente »", () => {
+    const d = demande({ lignes: [ligne("A", { statut: "VALIDEE" }), ligne("B"), ligne("C", { categorisee: false })] });
+    expect(raisonSoumissionDemande(d, ASSISTANT, "LIGNES")).toBe(MESSAGE_PERMISSION_SOUMETTRE_DG);
   });
   it("cas C : demande émise par la Finance ou par le DG, phrase qui explique", () => {
     expect(raisonSoumissionDemande(demande({ modeEtapeDG: "OBLIGATOIRE", etape: "DG" }), FINANCE, "DEMANDE")).toBe(MESSAGE_DG_DECIDE_D_OFFICE);
@@ -124,13 +126,15 @@ describe("raisonBoutonGlobalSoumission", () => {
 });
 
 describe("bandeauEtapeDG", () => {
-  it("affiché à l'étape DG quand un article attend le DG", () => {
+  // RÉÉCRIT (lot B) : les autres articles ne sont plus bloqués ; le bandeau le dit, à l'étape Finance comme à l'étape DG.
+  it("affiché quand un article attend le DG, sans bloquer les autres articles", () => {
     expect(bandeauEtapeDG("DG", [ligne("A", { soumiseAuDG: true }), ligne("B")])).toBe(MESSAGE_BANDEAU_ETAPE_DG);
-    expect(MESSAGE_BANDEAU_ETAPE_DG).toMatch(/^Cette demande est à l'étape DG : les autres articles sont bloqués jusqu'à sa décision\./);
+    expect(bandeauEtapeDG("FINANCE", [ligne("A", { soumiseAuDG: true }), ligne("B")])).toBe(MESSAGE_BANDEAU_ETAPE_DG);
+    expect(MESSAGE_BANDEAU_ETAPE_DG).toMatch(/^Des articles de cette demande attendent la décision du DG\. Les autres articles ne sont pas bloqués/);
   });
-  it("absent hors étape DG ou sans article en attente", () => {
+  it("absent sans article chez le DG, ou à l'étape Service / correction", () => {
     expect(bandeauEtapeDG("FINANCE", [ligne("A")])).toBeNull();
-    expect(bandeauEtapeDG("DECISION_FINALE", [ligne("A", { soumiseAuDG: true, decisionDG: "VALIDEE" })])).toBeNull();
-    expect(bandeauEtapeDG("DG", [ligne("A")])).toBeNull();
+    expect(bandeauEtapeDG("FINANCE", [ligne("A", { soumiseAuDG: true, decisionDG: "VALIDEE" })])).toBeNull();
+    expect(bandeauEtapeDG("SERVICE", [ligne("A", { soumiseAuDG: true })])).toBeNull();
   });
 });

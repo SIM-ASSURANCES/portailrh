@@ -40,7 +40,7 @@ export default async function ARegulariserPage() {
 
   const demandes = await prisma.demande.findMany({
     where: { montantValide: { gt: 0 }, statut: { notIn: ["REJETEE", "CLOTUREE"] } },
-    include: { createur: true },
+    include: { createur: true, lignes: { select: { statutValidation: true } } },
     orderBy: { updatedAt: "asc" },
   });
 
@@ -57,7 +57,9 @@ export default async function ARegulariserPage() {
       const montantValide = Number(d.montantValide);
       const totalRegle = totalRegleParDemande.get(d.id) ?? 0;
       const reste = Math.max(0, montantValide - totalRegle);
-      const estEntierementValidee = montantValide >= Number(d.montant);
+      // Lot B : demande à articles = tous les articles traités (comme `getRepartitionDemandesValidees` et la clôture).
+      const estEntierementValidee =
+        d.lignes.length > 0 ? d.lignes.every((l) => l.statutValidation !== "EN_ATTENTE") : montantValide >= Number(d.montant);
       return {
         id: d.id,
         reference: d.reference,

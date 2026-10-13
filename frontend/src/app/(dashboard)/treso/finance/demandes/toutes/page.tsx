@@ -1,3 +1,4 @@
+import { affichageStatutDemande } from "@/components/tresorerie/demandeStatut";
 import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
@@ -91,6 +92,7 @@ export default async function ToutesLesDemandesPage({
     montant: Number(d.montant),
     createdAt: d.createdAt,
     statut: d.statut,
+    statutAffiche: affichageStatutDemande(d.statut, d.lignes),
   }));
 
   return (

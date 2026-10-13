@@ -52,6 +52,7 @@ export * from "./encSituation";
 // Services et responsables (circuit de validation des demandes, 2026-10-06).
 export * from "./services";
 // Circuit de validation des demandes (commit 3) : moteur pur et application en base.
+export * from "./etatArticles";
 export * from "./circuitDemande";
 export * from "./soumissionDGEcran";
 export * from "./circuitDemandeDb";

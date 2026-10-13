@@ -61,7 +61,7 @@ export interface CompteEtMontant {
 async function getRepartitionDemandesValidees() {
   const demandes = await prisma.demande.findMany({
     where: { montantValide: { gt: 0 }, statut: { notIn: ["REJETEE", "CLOTUREE"] } },
-    select: { id: true, montant: true, montantValide: true },
+    select: { id: true, montant: true, montantValide: true, lignes: { select: { statutValidation: true } } },
   });
 
   if (demandes.length === 0) {
@@ -93,7 +93,12 @@ async function getRepartitionDemandesValidees() {
     // volontairement dans AUCUN des trois buckets : rien à décaisser dans
     // l'immédiat, mais pas encore prête pour la clôture puisqu'un reliquat
     // reste à valider (et pourrait ensuite être réglé à son tour).
-    const estEntierementValidee = montantValide >= Number(d.montant);
+    // Lot B : une demande à articles est candidate à la clôture quand TOUS ses articles sont traités (un article rejeté ne
+    // l'en empêche plus) — `peutEtreCloturee`, même règle que la clôture elle-même ; sans article, règle d'origine.
+    const estEntierementValidee =
+      d.lignes.length > 0
+        ? d.lignes.every((l) => l.statutValidation !== "EN_ATTENTE")
+        : montantValide >= Number(d.montant);
     if (reste > 0) {
       if (totalRegle === 0) {
         nonRegles.push({ id: d.id, reste });

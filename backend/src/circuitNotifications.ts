@@ -9,6 +9,7 @@
 import type { Prisma } from "./generated/prisma/client";
 import type { EtapeCircuit, ModeEtapeDG, NiveauRejet } from "./generated/prisma/enums";
 import { LIBELLE_ETAPE_CIRCUIT, refusApprobationCloture, type TypeDemandeCircuit } from "./circuitDemande";
+import type { ResumeArticles } from "./etatArticles";
 
 /** Délai avant le premier rappel. */
 export const DELAI_RAPPEL_MS = 48 * 60 * 60 * 1000;
@@ -56,9 +57,15 @@ export interface ContexteNotificationCircuit {
   montantValide: number | null;
   approbationClotureNonRequise: boolean;
   validationCompleteParDG: boolean;
-  /** Soumission au DG ligne par ligne (2026-10-10) : décompte des lignes soumises, absent sans ligne soumise. */
-  lignesDG?: { soumises: number; enAttente: number; validees: number; refusees: number };
+  /** Comptes qui ont décidé comme Finance (colonne de la demande et chaque article, lot B) ; absent = `decideurFinanceId`. */
+  decideursFinanceIds?: string[];
+  /** Demande À ARTICLES (lot B) : état des articles, dont dépendent les destinataires (Finance et DG peuvent avoir chacun
+   *  des articles à traiter en même temps). Absent : demande sans article (dépense directe), règles d'origine. */
+  articles?: ResumeArticles;
 }
+
+/** Ce qui vient de se passer sur la demande (lot B) : détermine qui est prévenu quand l'étape ne change pas. */
+export type EvenementCircuit = "ETAPE" | "DECISION_ARTICLES" | "SOUMISSION_DG" | "DECISION_DG";
 
 export type PrioriteNotification = "INFO" | "IMPORTANT" | "CRITIQUE";
 
@@ -93,6 +100,40 @@ function sans(ids: string[], ...exclus: (string | null | undefined)[]): string[]
  * - À corriger : le demandeur. Terminée et abandonnée : personne ici (voir `notificationsEtape`).
  */
 export function destinatairesEtape(ctx: ContexteNotificationCircuit, candidats: readonly CandidatNotification[]): string[] {
+  return audiencesEtape(ctx, candidats).flatMap((x) => x.destinataires).filter((id, i, tous) => tous.indexOf(id) === i);
+}
+
+const decideursFinance = (ctx: ContexteNotificationCircuit) =>
+  ctx.decideursFinanceIds ?? (ctx.decideurFinanceId ? [ctx.decideurFinanceId] : []);
+
+/** Audience Finance d'une demande à articles : décision Finance ou soumission au DG, jamais le demandeur. */
+const destinatairesFinanceArticles = (ctx: ContexteNotificationCircuit, candidats: readonly CandidatNotification[]) =>
+  sans(avec(candidats, "treso.decider_finance", "treso.soumettre_dg"), ctx.createurId);
+
+/** Audience DG d'une demande à articles : `treso.decider_dg`, jamais le demandeur ni un décideur Finance (deux personnes). */
+const destinatairesDGArticles = (ctx: ContexteNotificationCircuit, candidats: readonly CandidatNotification[]) =>
+  sans(avec(candidats, "treso.decider_dg"), ctx.createurId, ...decideursFinance(ctx));
+
+export type AudienceEtape = { audience: "FINANCE" | "DG" | "AUTRE"; destinataires: string[] };
+
+/**
+ * Audiences à l'étape courante. Demande À ARTICLES à l'étape Finance ou DG (lot B) : la Finance si au moins un article
+ * l'attend, le DG si au moins un article est chez lui — les deux peuvent attendre en même temps. Sinon, une seule
+ * audience selon l'étape (règles d'origine).
+ */
+export function audiencesEtape(ctx: ContexteNotificationCircuit, candidats: readonly CandidatNotification[]): AudienceEtape[] {
+  if (ctx.articles && (ctx.etape === "FINANCE" || ctx.etape === "DG")) {
+    const resultat: AudienceEtape[] = [];
+    if (ctx.articles.pourFinance > 0) resultat.push({ audience: "FINANCE", destinataires: destinatairesFinanceArticles(ctx, candidats) });
+    if (ctx.articles.chezDG > 0) resultat.push({ audience: "DG", destinataires: destinatairesDGArticles(ctx, candidats) });
+    return resultat;
+  }
+  const dest = destinatairesEtapeSimple(ctx, candidats);
+  const audience = ctx.etape === "DG" ? "DG" : ctx.etape === "FINANCE" || ctx.etape === "REJET_DG" || ctx.etape === "DECISION_FINALE" ? "FINANCE" : "AUTRE";
+  return [{ audience, destinataires: dest }];
+}
+
+function destinatairesEtapeSimple(ctx: ContexteNotificationCircuit, candidats: readonly CandidatNotification[]): string[] {
   const auteurExclu = ctx.typeDemande === "DEPENSE_DIRECTE" ? null : ctx.createurId;
   switch (ctx.etape) {
     case "SERVICE":
@@ -105,7 +146,7 @@ export function destinatairesEtape(ctx: ContexteNotificationCircuit, candidats: 
     case "DECISION_FINALE":
       return sans(avec(candidats, "treso.decider_finance"), auteurExclu, ctx.dgApprobateurId);
     case "DG":
-      return sans(avec(candidats, "treso.decider_dg"), ctx.createurId, ctx.decideurFinanceId);
+      return sans(avec(candidats, "treso.decider_dg"), ctx.createurId, ...decideursFinance(ctx));
     case "A_CORRIGER":
       return [ctx.createurId];
     case "TERMINEE":
@@ -127,7 +168,7 @@ export function destinatairesApprobationCloture(
   return avec(candidats, "treso.approuver_validation_complete").filter(
     (id) =>
       refusApprobationCloture(
-        { createurId: ctx.createurId, decideurFinanceId: ctx.decideurFinanceId, approbationClotureNonRequise: false },
+        { createurId: ctx.createurId, decideursFinanceIds: decideursFinance(ctx), approbationClotureNonRequise: false },
         id
       ) === null
   );
@@ -137,8 +178,38 @@ const lienFinance = (id: string) => `/treso/finance/demandes/${id}`;
 const lienDemandeur = (id: string) => `/treso/demandes/${id}`;
 
 /** Ce qu'on demande à ceux qui doivent agir à l'étape courante (titre, message, lien). `null` : rien à demander. */
-function demandeAction(ctx: ContexteNotificationCircuit): Omit<NotificationCircuit, "destinataires"> | null {
+function demandeAction(
+  ctx: ContexteNotificationCircuit,
+  audience: AudienceEtape["audience"] = "AUTRE"
+): Omit<NotificationCircuit, "destinataires"> | null {
   const ref = ctx.reference;
+  // Demande À ARTICLES (lot B) : le message dit combien d'articles attendent CETTE audience.
+  if (ctx.articles && audience === "FINANCE" && (ctx.etape === "FINANCE" || ctx.etape === "DG")) {
+    const x = ctx.articles;
+    const aDecider = x.pourFinance - x.valideesDGAConfirmer - x.refuseesDGATrancher;
+    const morceaux: string[] = [];
+    if (aDecider > 0) morceaux.push(`${pluriel(aDecider, "article")} à décider`);
+    if (x.valideesDGAConfirmer > 0) morceaux.push(`${pluriel(x.valideesDGAConfirmer, "article")} validé${x.valideesDGAConfirmer > 1 ? "s" : ""} par le DG à confirmer`);
+    if (x.refuseesDGATrancher > 0) morceaux.push(`${pluriel(x.refuseesDGATrancher, "article")} refusé${x.refuseesDGATrancher > 1 ? "s" : ""} par le DG à resoumettre ou à rejeter`);
+    return {
+      titre: "Demande à décider (Finance)",
+      message: `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) attend la Finance : ${morceaux.join(", ")} (${x.traites}/${x.total} articles traités).`,
+      lien: lienFinance(ctx.demandeId),
+      priority: "IMPORTANT",
+    };
+  }
+  if (ctx.articles && audience === "DG" && (ctx.etape === "FINANCE" || ctx.etape === "DG")) {
+    const n = ctx.articles.chezDG;
+    return {
+      titre: "Demande à décider (étape DG)",
+      message:
+        ctx.modeEtapeDG === "OBLIGATOIRE"
+          ? `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) attend votre décision à l'étape DG, article par article (${ctx.articles.traites}/${ctx.articles.total} articles traités).`
+          : `${pluriel(n, "article")} de la demande ${ref} de ${ctx.createurNom} vous ${n > 1 ? "sont soumis" : "est soumis"} par la Finance : décidez-${n > 1 ? "les" : "le"} un par un à l'étape DG.`,
+      lien: `/treso/dg/${ctx.demandeId}`,
+      priority: "IMPORTANT",
+    };
+  }
   switch (ctx.etape) {
     case "SERVICE":
       return {
@@ -158,9 +229,7 @@ function demandeAction(ctx: ContexteNotificationCircuit): Omit<NotificationCircu
       return {
         titre: "Demande à décider (étape DG)",
         message:
-          ctx.lignesDG && ctx.lignesDG.soumises > 0 && ctx.modeEtapeDG === "OPTIONNELLE"
-            ? `${pluriel(ctx.lignesDG.enAttente, "ligne")} de la demande ${ref} de ${ctx.createurNom} vous ${ctx.lignesDG.enAttente > 1 ? "sont soumises" : "est soumise"} par la Finance : décidez-les une par une à l'étape DG.`
-            : ctx.modeEtapeDG === "OBLIGATOIRE"
+          ctx.modeEtapeDG === "OBLIGATOIRE"
             ? `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) attend votre décision à l'étape DG, ligne par ligne.`
             : `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) vous est soumise par la Finance : elle attend votre décision à l'étape DG.`,
         lien: `/treso/dg/${ctx.demandeId}`,
@@ -174,16 +243,6 @@ function demandeAction(ctx: ContexteNotificationCircuit): Omit<NotificationCircu
         priority: "IMPORTANT",
       };
     case "DECISION_FINALE":
-      if (ctx.lignesDG && ctx.lignesDG.soumises > 0) {
-        return {
-          titre: "Décisions du DG reçues : décision finale",
-          message:
-            `Le DG a décidé les lignes soumises de la demande ${ref} (${ctx.lignesDG.validees} validée(s), ${ctx.lignesDG.refusees} refusée(s)). ` +
-            (ctx.lignesDG.refusees > 0 ? "Resoumettez les lignes refusées ou refusez-les définitivement, puis prenez la décision finale." : "La décision finale revient à la Finance."),
-          lien: lienFinance(ctx.demandeId),
-          priority: "IMPORTANT",
-        };
-      }
       return {
         titre: "Demande validée par le DG : décision finale",
         message: `Le DG a validé la demande ${ref} : la décision finale revient à la Finance.`,
@@ -204,51 +263,86 @@ function demandeAction(ctx: ContexteNotificationCircuit): Omit<NotificationCircu
 }
 
 /**
- * Notifications à envoyer juste après un passage d'étape (création comprise). L'auteur de l'action n'est jamais
- * notifié de sa propre action. Décision finale : le demandeur (montant validé) et l'Assistant Finance (règlement, ni
- * demandeur ni bénéficiaire), plus l'approbation de clôture si elle reste due.
+ * Notifications à envoyer juste après un événement de la demande. L'auteur de l'action n'est jamais notifié de sa
+ * propre action. Étape terminée : le demandeur (montant validé) et l'Assistant Finance (règlement, ni demandeur ni
+ * bénéficiaire), plus l'approbation de clôture si elle reste due.
+ *
+ * Demande À ARTICLES (lot B, `ctx.articles`) : l'étape ne change plus à chaque décision, c'est donc l'`evenement` qui dit
+ * qui est prévenu. Décision de la Finance qui laisse la demande en cours : le demandeur (articles décidés, montant
+ * validé) et les Assistants (montant à régler) ; soumission au DG : le DG ; DG qui a terminé son examen : la Finance.
  */
 export function notificationsEtape(
   ctx: ContexteNotificationCircuit,
   candidats: readonly CandidatNotification[],
-  acteurId: string | null
+  acteurId: string | null,
+  evenement: EvenementCircuit = "ETAPE"
 ): NotificationCircuit[] {
   const resultat: NotificationCircuit[] = [];
   const pousser = (n: Omit<NotificationCircuit, "destinataires">, ids: string[]) => {
     const destinataires = sans(ids, acteurId);
     if (destinataires.length > 0) resultat.push({ ...n, destinataires });
   };
+  const enCours = ctx.articles !== undefined && (ctx.etape === "FINANCE" || ctx.etape === "DG");
 
-  if (ctx.etape === "TERMINEE") {
+  if (ctx.etape === "TERMINEE" || (enCours && evenement === "DECISION_ARTICLES")) {
     const valide = ctx.montantValide ?? 0;
     const totale = Math.round(valide * 100) >= Math.round(ctx.montant * 100);
-    pousser(
-      {
-        titre: totale ? "Demande validée" : "Demande validée partiellement",
-        message: totale
-          ? `Votre demande ${ctx.reference} a été validée (${fcfa(valide)}).`
-          : `Votre demande ${ctx.reference} a été validée partiellement (${fcfa(valide)} sur ${fcfa(ctx.montant)} demandés) — certaines lignes ont été rejetées.`,
-        lien: lienDemandeur(ctx.demandeId),
-        priority: "IMPORTANT",
-      },
-      [ctx.createurId]
-    );
-    pousser(
-      {
-        titre: "Demande à régler",
-        message: `La demande ${ctx.reference} de ${ctx.createurNom} est validée (${fcfa(valide)}) : le règlement peut être effectué.`,
-        lien: lienFinance(ctx.demandeId),
-        priority: "IMPORTANT",
-      },
-      sans(avec(candidats, "treso.effectuer_reglement"), ctx.createurId, ctx.beneficiaireUserId, ...(ctx.beneficiairesArticlesUserIds ?? []))
-    );
-    const cloture = notificationApprobationCloture(ctx, candidats);
-    if (cloture) pousser(cloture, cloture.destinataires);
-    return resultat;
+    if (ctx.etape === "TERMINEE") {
+      pousser(
+        {
+          titre: totale ? "Demande validée" : "Demande validée partiellement",
+          message: totale
+            ? `Votre demande ${ctx.reference} a été validée (${fcfa(valide)}).`
+            : `Votre demande ${ctx.reference} a été validée partiellement (${fcfa(valide)} sur ${fcfa(ctx.montant)} demandés) — certaines lignes ont été rejetées.`,
+          lien: lienDemandeur(ctx.demandeId),
+          priority: "IMPORTANT",
+        },
+        [ctx.createurId]
+      );
+    } else if (ctx.articles) {
+      pousser(
+        {
+          titre: "Articles de votre demande décidés",
+          message: `Votre demande ${ctx.reference} : ${ctx.articles.validees} article(s) validé(s), ${ctx.articles.rejetees} rejeté(s) sur ${ctx.articles.total} (${fcfa(valide)} validés pour l'instant). Les autres articles sont en cours de traitement.`,
+          lien: lienDemandeur(ctx.demandeId),
+          priority: "IMPORTANT",
+        },
+        [ctx.createurId]
+      );
+    }
+    if (valide > 0) {
+      pousser(
+        {
+          titre: "Demande à régler",
+          message: `La demande ${ctx.reference} de ${ctx.createurNom} est validée${ctx.etape === "TERMINEE" ? "" : " en partie"} (${fcfa(valide)}) : le règlement peut être effectué.`,
+          lien: lienFinance(ctx.demandeId),
+          priority: "IMPORTANT",
+        },
+        sans(avec(candidats, "treso.effectuer_reglement"), ctx.createurId, ctx.beneficiaireUserId, ...(ctx.beneficiairesArticlesUserIds ?? []))
+      );
+    }
+    if (ctx.etape === "TERMINEE") {
+      const cloture = notificationApprobationCloture(ctx, candidats);
+      if (cloture) pousser(cloture, cloture.destinataires);
+    }
+    // Articles restant à la Finance ou chez le DG : eux aussi sont à traiter (voir ci-dessous), sans doublon.
+    if (ctx.etape === "TERMINEE") return resultat;
   }
 
-  const action = demandeAction(ctx);
-  if (action) pousser(action, destinatairesEtape(ctx, candidats));
+  const audiences = audiencesEtape(ctx, candidats);
+  for (const x of audiences) {
+    // Demande à articles en cours : on ne relance que l'audience concernée par l'événement.
+    if (enCours) {
+      if (evenement === "SOUMISSION_DG" && x.audience !== "DG") continue;
+      // Le DG a fini son examen (plus aucun article chez lui) : la Finance reprend la main. Avant, seuls les refus notifient.
+      if (evenement === "DECISION_DG" && (x.audience !== "FINANCE" || (ctx.articles?.chezDG ?? 0) > 0)) continue;
+      // Décision de la Finance : la Finance n'a pas à être re-notifiée d'avoir décidé ; le DG l'est seulement s'il a ses articles
+      // depuis la dernière soumission (déjà notifié alors).
+      if (evenement === "DECISION_ARTICLES") continue;
+    }
+    const action = demandeAction(ctx, x.audience);
+    if (action) pousser(action, x.destinataires);
+  }
   return resultat;
 }
 
@@ -278,23 +372,26 @@ export function rappelDu(
   return d.dernierRappelAt === null || maintenant.getTime() - d.dernierRappelAt.getTime() >= INTERVALLE_RAPPEL_MS;
 }
 
-/** Rappel aux mêmes destinataires que la notification de l'étape, avec la durée d'attente. */
-export function notificationRappel(
+/** Rappels aux mêmes destinataires que les notifications de l'étape, avec la durée d'attente (un par audience). */
+export function notificationsRappel(
   ctx: ContexteNotificationCircuit,
   candidats: readonly CandidatNotification[],
   etapeCircuitDepuis: Date,
   maintenant: Date
-): NotificationCircuit | null {
-  const action = demandeAction(ctx);
-  const destinataires = destinatairesEtape(ctx, candidats);
-  if (!action || destinataires.length === 0) return null;
+): NotificationCircuit[] {
   const jours = Math.floor((maintenant.getTime() - etapeCircuitDepuis.getTime()) / (24 * 60 * 60 * 1000));
-  return {
-    ...action,
-    destinataires,
-    titre: `Rappel : ${action.titre.charAt(0).toLowerCase()}${action.titre.slice(1)}`,
-    message: `En attente depuis ${jours} jour${jours > 1 ? "s" : ""} à l'étape ${LIBELLE_ETAPE_CIRCUIT[ctx.etape]}. ${action.message}`,
-  };
+  const resultat: NotificationCircuit[] = [];
+  for (const x of audiencesEtape(ctx, candidats)) {
+    const action = demandeAction(ctx, x.audience);
+    if (!action || x.destinataires.length === 0) continue;
+    resultat.push({
+      ...action,
+      destinataires: x.destinataires,
+      titre: `Rappel : ${action.titre.charAt(0).toLowerCase()}${action.titre.slice(1)}`,
+      message: `En attente depuis ${jours} jour${jours > 1 ? "s" : ""} à l'étape ${LIBELLE_ETAPE_CIRCUIT[ctx.etape]}. ${action.message}`,
+    });
+  }
+  return resultat;
 }
 
 type DbRappels = Pick<Prisma.TransactionClient, "demande">;
@@ -357,7 +454,7 @@ export function notificationRefusLigneDG(
   return {
     destinataires,
     titre: "Ligne refusée par le DG",
-    message: `Le DG a refusé la ligne « ${refus.libelle} » de la demande ${ctx.reference}. Motif : ${refus.motif}. Resoumettez-la au DG ou refusez-la définitivement à la décision finale.`,
+    message: `Le DG a refusé la ligne « ${refus.libelle} » de la demande ${ctx.reference}. Motif : ${refus.motif}. Resoumettez-la au DG ou rejetez-la définitivement.`,
     lien: lienFinance(ctx.demandeId),
     priority: "IMPORTANT",
   };

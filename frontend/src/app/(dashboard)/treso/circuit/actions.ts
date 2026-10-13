@@ -119,7 +119,7 @@ export async function soumettreLignesAuDGAction(demandeId: string, ligneIds: str
     throw e;
   }
   rafraichir(demandeId);
-  await notifierEtapeCircuit(demandeId, session.user.id);
+  await notifierEtapeCircuit(demandeId, session.user.id, "SOUMISSION_DG");
   return {
     status: "success",
     message: `${nombre} ligne${nombre > 1 ? "s" : ""} de la demande ${demande.reference} soumise${nombre > 1 ? "s" : ""} au DG.`,
@@ -153,8 +153,12 @@ export async function deciderLigneDGAction(ligneId: string, valider: boolean, mo
     throw e;
   }
   rafraichir(ligne.demandeId);
-  if (resultat.etapeSuivante !== "DG") {
-    await notifierEtapeCircuit(ligne.demandeId, session.user.id);
+  // Lot B : l'étape ne dit plus si le DG a fini — on compte les articles qui l'attendent encore.
+  const resteChezLeDG = await prisma.ligneDemande.count({
+    where: { demandeId: ligne.demandeId, statutValidation: "EN_ATTENTE", soumiseAuDG: true, decisionDG: null },
+  });
+  if (resteChezLeDG === 0) {
+    await notifierEtapeCircuit(ligne.demandeId, session.user.id, "DECISION_DG");
   } else if (!decision.valider) {
     await notifierRefusLigneDG(ligne.demandeId, session.user.id, { libelle: resultat.libelle, motif: (decision.motif ?? "").trim() });
   }
@@ -162,7 +166,7 @@ export async function deciderLigneDGAction(ligneId: string, valider: boolean, mo
     status: "success",
     message:
       `Ligne « ${resultat.libelle} » ${decision.valider ? "validée" : "refusée"}.` +
-      (resultat.etapeSuivante !== "DG" ? " Toutes les lignes soumises sont décidées : la Finance reprend la main." : ""),
+      (resteChezLeDG === 0 ? " Toutes les lignes soumises sont décidées : la Finance reprend la main." : ""),
   };
 }
 

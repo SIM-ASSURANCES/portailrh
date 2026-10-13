@@ -67,6 +67,7 @@ model User {
   /// Finance — `validerLignesAction` (voir CLAUDE.md "Validation ligne par
   /// ligne").
   lignesDemandeDecidees         LigneDemande[]    @relation("LigneDemandeDecideur")
+  lignesDemandeDecideesFinance  LigneDemande[]    @relation("LigneDemandeDecideurFinance")
   lignesSoumisesAuDG            LigneDemande[]    @relation("LigneDemandeSoumiseDGPar")
   lignesDecideesParDG           LigneDemande[]    @relation("LigneDemandeDecisionDGPar")
   /// Articles dont il est le bénéficiaire PROPRE (autonomie des articles, lot A).
@@ -761,6 +762,11 @@ model LigneDemande {
   decideParId      String?
   decidePar        User?              @relation("LigneDemandeDecideur", fields: [decideParId], references: [id])
   decideAt         DateTime?
+  /// Compte qui a décidé l'article COMME FINANCE (lot B, 2026-10-15) : sert à la règle des deux personnes par
+  /// article. Distinct de `decideParId`, qui garde l'auteur DG pour un article validé par le DG. `null` tant que
+  /// l'article n'a pas été décidé par la Finance (ou décidé par le DG seul, cas où la Finance n'a rien décidé).
+  decideurFinanceId String?
+  decideurFinance   User?              @relation("LigneDemandeDecideurFinance", fields: [decideurFinanceId], references: [id])
 
   /// Soumission de la ligne au DG par la Finance (2026-10-10, `treso.soumettre_dg`) : seules les lignes soumises sont
   /// vues et décidées par le DG. Une ligne refusée par le DG revient à la Finance (resoumission ou refus définitif).
@@ -812,6 +818,7 @@ model LigneDemande {
   createdAt DateTime @default(now())
 
   @@index([beneficiaireUserId])
+  @@index([decideurFinanceId])
 }
 
 model Reglement {

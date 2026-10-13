@@ -10,15 +10,17 @@ import {
   etatLigneDG,
   LIBELLE_ETAPE_CIRCUIT,
   refusExecutionPropreDemande,
-  versLigneCircuit,
+  versDemandeCircuit,
   type OptionsParcours,
   transition,
   type ActeurCircuit,
   type ActionCircuit,
+  type DemandeCircuit,
   type Parcours,
   type ProfilDemandeur,
   type TypeDemandeCircuit,
 } from "./circuitDemande";
+import { montantValideDepuisLignes } from "./etatArticles";
 import { refusMotifLigne } from "./motifLigne";
 import { champsBeneficiaire, type ChoixBeneficiaire } from "./beneficiaire";
 import { beneficiaireArticle, choixDepuisStocke, choixPropreArticle } from "./beneficiaireArticles";
@@ -33,12 +35,26 @@ export function demandesServiceAValiderWhere(responsableId: string): Prisma.Dema
   return { etapeCircuit: "SERVICE", createur: { service: { responsableId } } };
 }
 
+/** Étapes posées explicitement par le circuit : une demande qui y est n'attend ni la Finance ni le DG sur ses articles. */
+const ETAPES_HORS_ARTICLES: EtapeCircuit[] = ["SERVICE", "A_CORRIGER", "ABANDONNEE"];
+
 /**
- * Demandes à l'étape DG pour ce compte DG : soumises par la Finance (décision sur la demande entière) ou émises par la
- * Finance (cas b, décision ligne par ligne). Jamais les siennes (une demande du DG ne passe jamais par l'étape DG).
+ * Demandes qui attendent la décision de CE compte DG (lot B : requête sur les ARTICLES, plus sur l'étape de la colonne) :
+ *  - articles soumis par la Finance et sans décision du DG (même quand la Finance a d'autres articles à traiter) ;
+ *  - demande émise par la Finance (cas b, DG obligatoire) dont des articles sont encore en attente ;
+ *  - demande sans article (dépense directe) à l'étape DG.
+ * Jamais les demandes du DG lui-même (une demande du DG ne passe jamais par l'étape DG).
  */
 export function demandesEtapeDGWhere(dgId: string): Prisma.DemandeWhereInput {
-  return { etapeCircuit: "DG", createurId: { not: dgId } };
+  const horsService = { etapeCircuit: { notIn: ETAPES_HORS_ARTICLES } };
+  return {
+    createurId: { not: dgId },
+    OR: [
+      { etapeCircuit: "DG", lignes: { none: {} } },
+      { ...horsService, lignes: { some: { statutValidation: "EN_ATTENTE", soumiseAuDG: true, decisionDG: null } } },
+      { ...horsService, modeEtapeDG: "OBLIGATOIRE", lignes: { some: { statutValidation: "EN_ATTENTE" } } },
+    ],
+  };
 }
 
 /**
@@ -207,6 +223,11 @@ export const SELECT_LIGNE_CIRCUIT = {
   decisionDG: true,
   decisionDGParId: true,
   decisionDGAt: true,
+  decideurFinanceId: true,
+  // Bénéficiaire propre de l'article (garde « le bénéficiaire ne décide pas son article »).
+  beneficiaireType: true,
+  beneficiaireUserId: true,
+  beneficiaireNom: true,
 } as const;
 
 /**
@@ -227,6 +248,9 @@ const SELECT_DEMANDE_CIRCUIT = {
   modeEtapeDG: true,
   dgApprobateurId: true,
   decideurFinanceId: true,
+  beneficiaireType: true,
+  beneficiaireUserId: true,
+  beneficiaireNom: true,
   lignes: { select: SELECT_LIGNE_CIRCUIT, orderBy: { createdAt: "asc" } },
 } as const;
 
@@ -246,21 +270,11 @@ export async function appliquerTransitionCircuit(
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
 
-  const r = transition(
-    {
-      etape: d.etapeCircuit,
-      createurId: d.createurId,
-      typeDemande: d.typeDemande,
-      etapeServiceRequise: d.etapeServiceRequise,
-      etapeFinanceRequise: d.etapeFinanceRequise,
-      modeEtapeDG: d.modeEtapeDG,
-      approbateurDGId: d.dgApprobateurId,
-      decideurFinanceId: d.decideurFinanceId,
-      lignes: d.lignes.map(versLigneCircuit),
-    },
-    acteur,
-    action
-  );
+  // Une demande à articles se décide article par article (`deciderArticles`) : jamais par cette voie.
+  if (action.type === "DECIDER_LIGNES" && d.lignes.length > 0) {
+    return { ok: false, message: "Cette demande contient des lignes d'article : utilisez la décision article par article." };
+  }
+  const r = transition(demandeCircuit(d), acteur, action);
   if (!r.ok) return r;
 
   const maintenant = new Date();
@@ -327,12 +341,9 @@ export async function soumettreLignesAuDG(
   await verrouillerDemande(db, demandeId);
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
-  const lignes = d.lignes.map(versLigneCircuit);
-  const r = transition(
-    { ...circuitDepuis(d), lignes },
-    acteur,
-    { type: "SOUMETTRE_LIGNES_DG", ligneIds }
-  );
+  const circuit = demandeCircuit(d);
+  const lignes = circuit.lignes!;
+  const r = transition(circuit, acteur, { type: "SOUMETTRE_LIGNES_DG", ligneIds });
   if (!r.ok) return r;
 
   const maintenant = new Date();
@@ -341,8 +352,8 @@ export async function soumettreLignesAuDG(
 
   const maj = await db.demande.updateMany({
     where: { id: demandeId, etapeCircuit: d.etapeCircuit },
-    // Déjà à l'étape DG (soumission complémentaire) : la date d'entrée dans l'étape ne change pas (rappels inchangés).
-    data: { etapeCircuit: "DG", soumiseAuDG: true, ...(d.etapeCircuit !== "DG" ? { etapeCircuitDepuis: maintenant } : {}) },
+    // Lot B : chaque événement d'un article remet à zéro le chronomètre de rappel de la demande (étape déduite des articles).
+    data: { etapeCircuit: r.etapeSuivante, soumiseAuDG: true, etapeCircuitDepuis: maintenant },
   });
   if (maj.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
   const majLignes = await db.ligneDemande.updateMany({
@@ -371,13 +382,13 @@ export async function soumettreLignesAuDG(
       entityId: demandeId,
       action: ACTION_HISTORIQUE.SOUMETTRE_LIGNES_DG,
       detail:
-        `${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → DG — ${libelles.length} ligne${libelles.length > 1 ? "s" : ""} sur ` +
+        `${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]} — ${libelles.length} ligne${libelles.length > 1 ? "s" : ""} sur ` +
         `${lignes.length} soumise${libelles.length > 1 ? "s" : ""} au DG : ${listeLibelles(libelles)}` +
         (resoumises.length > 0 ? ` (resoumise${resoumises.length > 1 ? "s" : ""} après refus : ${listeLibelles(resoumises.map((l) => l.libelle))})` : ""),
       userId: acteur.userId,
     },
   });
-  return { ok: true, etapeSuivante: "DG", libelles };
+  return { ok: true, etapeSuivante: r.etapeSuivante, libelles };
 }
 
 /**
@@ -396,13 +407,10 @@ export async function deciderLigneDG(
   await verrouillerDemande(db, demandeId);
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
-  const lignes = d.lignes.map(versLigneCircuit);
+  const circuit = demandeCircuit(d);
+  const lignes = circuit.lignes!;
   const motif = decision.motif?.trim() ?? "";
-  const r = transition(
-    { ...circuitDepuis(d), lignes },
-    acteur,
-    { type: "DECIDER_LIGNE_DG", ligneId, valider: decision.valider, motif }
-  );
+  const r = transition(circuit, acteur, { type: "DECIDER_LIGNE_DG", ligneId, valider: decision.valider, motif });
   if (!r.ok) return r;
 
   const maintenant = new Date();
@@ -416,13 +424,12 @@ export async function deciderLigneDG(
     },
   });
   if (majLigne.count !== 1) return { ok: false, message: "Cette ligne a déjà été décidée." };
-  if (r.etapeSuivante !== "DG") {
-    const maj = await db.demande.updateMany({
-      where: { id: demandeId, etapeCircuit: "DG" },
-      data: { etapeCircuit: r.etapeSuivante, etapeCircuitDepuis: maintenant },
-    });
-    if (maj.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
-  }
+  // Lot B : étape déduite des articles, chronomètre de rappel remis à zéro à chaque décision d'un article.
+  const maj = await db.demande.updateMany({
+    where: { id: demandeId, etapeCircuit: d.etapeCircuit },
+    data: { etapeCircuit: r.etapeSuivante, etapeCircuitDepuis: maintenant },
+  });
+  if (maj.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
 
   const libelle = lignes.find((l) => l.id === ligneId)!.libelle;
   await db.historiqueEntry.create({
@@ -432,33 +439,152 @@ export async function deciderLigneDG(
       action: decision.valider ? "validation_ligne_dg" : "refus_ligne_dg",
       detail:
         (decision.valider ? `DG — ligne « ${libelle} » validée` : `DG — ligne « ${libelle} » refusée — motif : ${motif}`) +
-        (r.etapeSuivante !== "DG" ? ` — DG → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}` : ""),
+        (r.etapeSuivante !== d.etapeCircuit ? ` — ${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}` : ""),
       userId: acteur.userId,
     },
   });
   return { ok: true, etapeSuivante: r.etapeSuivante, demandeId, libelle };
 }
 
-function circuitDepuis(d: {
-  etapeCircuit: EtapeCircuit;
-  createurId: string;
-  typeDemande: TypeDemandeCircuit;
-  etapeServiceRequise: boolean;
-  etapeFinanceRequise: boolean;
-  modeEtapeDG: Parcours["modeEtapeDG"];
-  dgApprobateurId: string | null;
-  decideurFinanceId: string | null;
-}) {
-  return {
-    etape: d.etapeCircuit,
-    createurId: d.createurId,
-    typeDemande: d.typeDemande,
-    etapeServiceRequise: d.etapeServiceRequise,
-    etapeFinanceRequise: d.etapeFinanceRequise,
-    modeEtapeDG: d.modeEtapeDG,
-    approbateurDGId: d.dgApprobateurId,
-    decideurFinanceId: d.decideurFinanceId,
+export interface DecisionArticle {
+  ligneId: string;
+  statut: "VALIDEE" | "REJETEE";
+  /** Motif du rejet (3 caractères minimum), ignoré pour une validation. */
+  motif?: string;
+}
+
+export interface ResultatDecisionArticles {
+  etapeSuivante: EtapeCircuit;
+  /** Somme des articles validés après ces décisions (colonne `Demande.montantValide`, tenue à jour). */
+  montantValide: number;
+  nbValidees: number;
+  nbRejetees: number;
+}
+
+const formaterMontant = (n: number) => n.toLocaleString("fr-FR");
+
+/**
+ * Décision article par article (lot B, 2026-10-15) : la Finance (ou le DG pour une demande émise par la Finance, cas b)
+ * valide ou rejette un SOUS-ENSEMBLE d'articles, à n'importe quel moment, sans attendre les autres ni le DG. Un article
+ * décidé est définitif. Dans la transaction de l'appelant : verrou de la demande, transition du moteur (qui contrôle
+ * permissions, états des articles, deux personnes, bénéficiaire), écriture des articles et du décideur Finance de
+ * chacun, recalcul du montant validé (somme des articles validés), étape déduite des articles, chronomètre de rappel
+ * remis à zéro, historique. La catégorie obligatoire est contrôlée par l'appelant (`refusLignesValideesSansCategorie`).
+ */
+export async function deciderArticles(
+  db: Db,
+  demandeId: string,
+  acteur: ActeurCircuit,
+  decisions: readonly DecisionArticle[]
+): Promise<(ResultatDecisionArticles & { ok: true }) | { ok: false; message: string }> {
+  await verrouillerDemande(db, demandeId);
+  const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
+  if (!d) return { ok: false, message: "Demande introuvable." };
+  if (d.lignes.length === 0) {
+    return { ok: false, message: "Cette demande n'a aucune ligne d'article — utilisez la validation par montant." };
+  }
+  for (const x of decisions) {
+    if (x.statut === "REJETEE" && (x.motif?.trim().length ?? 0) < 3) {
+      return { ok: false, message: "Un motif de rejet (3 caractères minimum) est obligatoire pour chaque ligne rejetée." };
+    }
+  }
+
+  const circuit = demandeCircuit(d);
+  const r = transition(circuit, acteur, {
+    type: "DECIDER_LIGNES",
+    decisions: decisions.map((x) => ({ ligneId: x.ligneId, statut: x.statut })),
+  });
+  if (!r.ok) return r;
+
+  const roleDG = d.modeEtapeDG === "OBLIGATOIRE";
+  const maintenant = new Date();
+  const detail = new Map(
+    (await db.ligneDemande.findMany({ where: { demandeId }, select: { id: true, quantite: true, prixUnitaire: true } })).map((l) => [l.id, l])
+  );
+  const parId = new Map(d.lignes.map((l) => [l.id, l]));
+
+  // Les articles d'abord : un article décidé entre-temps (`statutValidation` plus EN_ATTENTE) fait échouer l'ensemble.
+  for (const x of decisions) {
+    const l = parId.get(x.ligneId)!;
+    // Un article validé par le DG garde son auteur et sa date de décision (« DG définitif »).
+    const parDG = x.statut === "VALIDEE" && l.decisionDG === "VALIDEE";
+    const maj = await db.ligneDemande.updateMany({
+      where: { id: x.ligneId, demandeId, statutValidation: "EN_ATTENTE" },
+      data: {
+        statutValidation: x.statut,
+        motifRejet: x.statut === "REJETEE" ? x.motif!.trim() : null,
+        decideParId: parDG ? l.decisionDGParId : acteur.userId,
+        decideAt: parDG ? (l.decisionDGAt ?? maintenant) : maintenant,
+        // Le décideur Finance n'est enregistré que pour une VALIDATION par la Finance (rejeter n'engage pas d'argent).
+        ...(!roleDG && x.statut === "VALIDEE" ? { decideurFinanceId: acteur.userId } : {}),
+      },
+    });
+    if (maj.count !== 1) return { ok: false, message: "Un article a été décidé entre-temps : rechargez la page." };
+  }
+
+  const apres = await db.ligneDemande.findMany({
+    where: { demandeId },
+    select: { quantite: true, prixUnitaire: true, statutValidation: true },
+  });
+  const montantValide = montantValideDepuisLignes(
+    apres.map((l) => ({ quantite: l.quantite, prixUnitaire: l.prixUnitaire.toString(), statut: l.statutValidation }))
+  );
+
+  const nbValidees = decisions.filter((x) => x.statut === "VALIDEE").length;
+  const nbRejetees = decisions.length - nbValidees;
+  const data: Prisma.DemandeUncheckedUpdateManyInput = {
+    etapeCircuit: r.etapeSuivante,
+    etapeCircuitDepuis: maintenant,
+    montantValide,
   };
+  if (r.effets.niveauRejet) {
+    data.niveauRejet = r.effets.niveauRejet;
+    data.motifRejet =
+      decisions.length === 1 ? (decisions[0].motif?.trim() ?? "") : "Tous les articles ont été rejetés (voir le motif de chaque article).";
+  }
+  if (r.effets.approbationClotureParDG) {
+    data.validationCompleteParDG = true;
+    data.validationCompleteRejeteeParDG = false;
+    data.dgApprobateurId = r.effets.approbateurDGId ?? acteur.userId;
+    data.dgApprouveAt = maintenant;
+  }
+  if (r.effets.decideurFinance) data.decideurFinanceId = acteur.userId;
+  const majDemande = await db.demande.updateMany({ where: { id: demandeId, etapeCircuit: d.etapeCircuit }, data });
+  if (majDemande.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
+
+  for (const x of decisions) {
+    const l = parId.get(x.ligneId)!;
+    const montantLigne = detail.get(x.ligneId)!;
+    await db.historiqueEntry.create({
+      data: {
+        entity: "LigneDemande",
+        entityId: x.ligneId,
+        action: x.statut === "VALIDEE" ? "validation_ligne" : "rejet_ligne",
+        detail:
+          x.statut === "VALIDEE"
+            ? `Ligne « ${l.libelle} » validée${l.decisionDG === "VALIDEE" ? " par le DG" : ""} (${montantLigne.quantite} × ${formaterMontant(Number(montantLigne.prixUnitaire))} FCFA)`
+            : `Ligne « ${l.libelle} » rejetée${l.decisionDG === "REFUSEE" ? " définitivement après refus du DG" : ""} — motif : ${x.motif!.trim()}`,
+        userId: acteur.userId,
+      },
+    });
+  }
+  const morceaux = [
+    `${roleDG ? "DG" : "Finance"} — ${decisions.length} article${decisions.length > 1 ? "s" : ""} décidé${decisions.length > 1 ? "s" : ""} sur ${d.lignes.length}` +
+      ` (${nbValidees} validé${nbValidees > 1 ? "s" : ""}, ${nbRejetees} rejeté${nbRejetees > 1 ? "s" : ""})`,
+    `montant validé : ${formaterMontant(montantValide)} FCFA`,
+  ];
+  if (r.etapeSuivante !== d.etapeCircuit) morceaux.push(`${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}`);
+  if (r.effets.niveauRejet) morceaux.push(`niveau ${NIVEAU_LIBELLE[r.effets.niveauRejet]}`);
+  if (r.effets.approbationClotureParDG) morceaux.push("vaut approbation de clôture du DG");
+  await db.historiqueEntry.create({
+    data: { entity: "Demande", entityId: demandeId, action: ACTION_HISTORIQUE.DECIDER_LIGNES, detail: morceaux.join(" — "), userId: acteur.userId },
+  });
+  return { ok: true, etapeSuivante: r.etapeSuivante, montantValide, nbValidees, nbRejetees };
+}
+
+/** Ligne `Demande` (champs de `SELECT_DEMANDE_CIRCUIT`) → `DemandeCircuit`, articles et bénéficiaires effectifs compris. */
+function demandeCircuit(d: Parameters<typeof versDemandeCircuit>[0]): DemandeCircuit {
+  return versDemandeCircuit(d);
 }
 
 export interface LigneCorrigee {
@@ -524,6 +650,10 @@ export async function corrigerEtResoumettre(
   );
   if (!r.ok) return r;
 
+  // Lot B : un article validé est définitif — une demande avec un article validé ne repart jamais en correction.
+  if (d.lignes.some((l) => l.statutValidation === "VALIDEE")) {
+    return { ok: false, message: "Des articles de cette demande sont déjà validés : elle ne peut plus être corrigée en entier." };
+  }
   const estStandard = d.typeDemande === "STANDARD";
   const description = estStandard ? d.description : (correction.description ?? "").trim();
   if (!estStandard && (description ?? "").length < 3) {
@@ -644,6 +774,7 @@ export async function corrigerEtResoumettre(
       motifRejet: null,
       decideParId: null,
       decideAt: null,
+      decideurFinanceId: null,
       soumiseAuDG: false,
       soumiseDGAt: null,
       soumiseDGParId: null,

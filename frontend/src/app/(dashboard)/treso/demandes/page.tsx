@@ -1,3 +1,4 @@
+import { affichageStatutDemande } from "@/components/tresorerie/demandeStatut";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -65,6 +66,7 @@ export default async function MesDemandesPage({
     montant: Number(d.montant),
     devise: d.devise,
     statut: d.statut,
+    statutAffiche: affichageStatutDemande(d.statut, d.lignes),
     createdAt: d.createdAt,
     typeDemande: d.typeDemande,
     natureDepenseDirecte: d.natureDepenseDirecte,

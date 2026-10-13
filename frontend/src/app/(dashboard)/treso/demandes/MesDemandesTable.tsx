@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { Badge, Button, DataTable } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import type { BadgeVariant } from "@/components/ui";
 import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import type { NatureDepenseDirecte, StatutDemande, TypeDemande } from "backend";
@@ -15,6 +16,8 @@ interface DemandeRow {
   montant: number;
   devise: string;
   statut: StatutDemande;
+  /** Libellé affiché si différent du statut (lot B : « En cours (x/n traités) »), posé par la page. */
+  statutAffiche?: { label: string; variant: BadgeVariant };
   createdAt: Date;
   typeDemande: TypeDemande;
   natureDepenseDirecte: NatureDepenseDirecte | null;
@@ -65,8 +68,8 @@ export function MesDemandesTable({ demandes }: { demandes: DemandeRow[] }) {
           key: "statut",
           header: "Statut",
           render: (d) => (
-            <Badge variant={STATUT_DEMANDE_BADGE_VARIANT[d.statut]}>
-              {STATUT_DEMANDE_LABEL[d.statut]}
+            <Badge variant={d.statutAffiche?.variant ?? STATUT_DEMANDE_BADGE_VARIANT[d.statut]}>
+              {d.statutAffiche?.label ?? STATUT_DEMANDE_LABEL[d.statut]}
             </Badge>
           ),
         },

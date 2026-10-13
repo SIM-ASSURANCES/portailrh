@@ -25,7 +25,8 @@ const PHRASE_PERMISSION = "Votre rôle n'a pas la permission de soumettre au DG.
 const PHRASE_SANS_CATEGORIE = "Catégorisez cet article avant de le soumettre au DG.";
 const PHRASE_COCHER = "Cochez au moins un article.";
 const PHRASE_ATTENTE_FINALE = "En attente de la validation finale.";
-const PHRASE_BANDEAU = "Cette demande est à l'étape DG : les autres articles sont bloqués jusqu'à sa décision.";
+// Lot B : les autres articles ne sont plus bloqués pendant que le DG décide.
+const PHRASE_BANDEAU = "Des articles de cette demande attendent la décision du DG. Les autres articles ne sont pas bloqués";
 
 // --- Données de test (idempotentes : on repart de zéro à chaque lancement) --------------------------------------
 await q(`DELETE FROM "HistoriqueEntry" WHERE "entityId" LIKE 'e2e-soum-%' OR "entityId" IN (SELECT id FROM "LigneDemande" WHERE "demandeId" LIKE 'e2e-soum-%')`);
@@ -130,12 +131,13 @@ async function visible(loc) {
   verifier("finance@ : A soumis au DG par son bouton", lignes.find((l) => l.id === ligneId("d-finance", 1)).soumiseAuDG === true);
   verifier("finance@ : B et C non soumis", lignes.filter((l) => l.soumiseAuDG).length === 1);
   const etape = (await q(`SELECT "etapeCircuit" FROM "Demande" WHERE id = 'e2e-soum-d-finance'`))[0].etapeCircuit;
-  verifier("finance@ : la demande passe à l'étape DG", etape === "DG");
+  // Lot B : l'étape se déduit des articles — B et C attendent encore la Finance, la demande reste à l'étape Finance.
+  verifier("finance@ : la demande reste à l'étape Finance (B et C l'attendent encore)", etape === "FINANCE");
   await p.reload();
   const bandeau = p.locator("[data-bandeau-etape-dg]");
   verifier("finance@ : bandeau « étape DG » affiché", (await bandeau.count()) === 1 && (await bandeau.innerText()).startsWith(PHRASE_BANDEAU));
   verifier("finance@ : A grisé (attend déjà le DG)", await bouton(p, 1).isDisabled());
-  verifier("finance@ : Valider/Rejeter grisés après la soumission (règle actuelle)", await p.getByRole("button", { name: /^(Valider|Rejeter)$/ }).first().isDisabled());
+  verifier("finance@ : Valider/Rejeter restent actifs sur les articles non soumis (lot B)", !(await p.getByRole("button", { name: /^(Valider|Rejeter)$/ }).first().isDisabled()));
   await ctx.close();
 }
 

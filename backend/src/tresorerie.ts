@@ -1,5 +1,6 @@
 import type { Prisma, StatutDemande } from "./generated/prisma/client";
 import { prisma } from "./prisma";
+import { montantValideDepuisLignes, statutDepuisLignes } from "./etatArticles";
 
 /**
  * Statuts d'une Demande dont le montant est ENTIÈREMENT validé (montantValide
@@ -67,10 +68,8 @@ export const DEMANDES_EN_ATTENTE_VALIDATION_WHERE = {
   reliquatRejete: false,
   OR: [
     { lignes: { none: {} }, statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] } },
-    {
-      statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] },
-      lignes: { some: { statutValidation: "EN_ATTENTE" } },
-    },
+    // Lot B : une demande à articles est « en attente » tant qu'au moins un article n'a pas de décision finale.
+    { statut: { notIn: ["REJETEE", "CLOTUREE", "ABANDONNEE"] }, lignes: { some: { statutValidation: "EN_ATTENTE" } } },
   ],
 } satisfies Prisma.DemandeWhereInput;
 
@@ -103,19 +102,46 @@ export const VALIDATION_COMPLETE_EN_ATTENTE_WHERE = {
   montantValide: { gt: 0 },
   validationCompleteParDG: false,
   approbationClotureNonRequise: false,
+  // Lot B : on n'approuve la clôture que lorsque tous les articles sont traités (aucun encore à décider ou chez le DG).
+  lignes: { none: { statutValidation: "EN_ATTENTE" } },
 } satisfies Prisma.DemandeWhereInput;
 
 /**
- * Files de la Finance dans le circuit de validation (2026-10-06) : une file par étape où la Finance agit — à
- * décider (étape Finance), après un rejet du DG (resoumettre ou renvoyer au demandeur), décision finale après
- * l'approbation du DG. S'y ajoute le reliquat d'une dépense directe partiellement validée (validation
- * complémentaire, décision finale déjà prise). Les demandes aux étapes Service et DG, à corriger ou abandonnées n'y
- * sont jamais : la Finance n'y a rien à faire.
+ * Files de la Finance (lot B, 2026-10-15) : des requêtes sur les ARTICLES, plus sur l'étape de la colonne. Une demande y
+ * figure tant qu'au moins UN de ses articles attend la Finance :
+ *  - FINANCE : un article à décider (non soumis au DG) ;
+ *  - REJET_DG : un article refusé par le DG, à resoumettre ou à rejeter définitivement ;
+ *  - DECISION_FINALE : un article validé par le DG, à confirmer par la Finance.
+ * Une demande sans article (dépense directe) reste classée par son étape. S'y ajoute le reliquat d'une dépense directe
+ * partiellement validée (validation complémentaire, décision finale déjà prise). Les demandes au Service, à corriger,
+ * abandonnées, clôturées ou rejetées n'y sont jamais : la Finance n'y a rien à faire. Le cas (b) (demande émise par la
+ * Finance, le DG décide tout) n'est jamais une file de la Finance.
  */
+const DEMANDE_ACTIVE_POUR_FINANCE = {
+  statut: { notIn: ["REJETEE", "CLOTUREE", "ABANDONNEE"] },
+  etapeCircuit: { notIn: ["SERVICE", "A_CORRIGER", "ABANDONNEE"] },
+  modeEtapeDG: { not: "OBLIGATOIRE" },
+} satisfies Prisma.DemandeWhereInput;
+
 export const FILES_FINANCE_WHERE = {
-  FINANCE: { etapeCircuit: "FINANCE" },
-  REJET_DG: { etapeCircuit: "REJET_DG" },
-  DECISION_FINALE: { etapeCircuit: "DECISION_FINALE" },
+  FINANCE: {
+    OR: [
+      { ...DEMANDE_ACTIVE_POUR_FINANCE, lignes: { some: { statutValidation: "EN_ATTENTE", soumiseAuDG: false } } },
+      { etapeCircuit: "FINANCE", lignes: { none: {} } },
+    ],
+  },
+  REJET_DG: {
+    OR: [
+      { ...DEMANDE_ACTIVE_POUR_FINANCE, lignes: { some: { statutValidation: "EN_ATTENTE", soumiseAuDG: true, decisionDG: "REFUSEE" } } },
+      { etapeCircuit: "REJET_DG", lignes: { none: {} } },
+    ],
+  },
+  DECISION_FINALE: {
+    OR: [
+      { ...DEMANDE_ACTIVE_POUR_FINANCE, lignes: { some: { statutValidation: "EN_ATTENTE", soumiseAuDG: true, decisionDG: "VALIDEE" } } },
+      { etapeCircuit: "DECISION_FINALE", lignes: { none: {} } },
+    ],
+  },
   RELIQUAT: { etapeCircuit: "TERMINEE", statut: "PARTIELLEMENT_VALIDEE", reliquatRejete: false, lignes: { none: {} } },
 } satisfies Record<string, Prisma.DemandeWhereInput>;
 
@@ -126,6 +152,16 @@ export const DEMANDES_A_TRAITER_FINANCE_WHERE = {
 
 export function lignesToutesDecidees(lignes: { statutValidation: string }[]): boolean {
   return lignes.length > 0 && lignes.every((l) => l.statutValidation !== "EN_ATTENTE");
+}
+
+/**
+ * Éligibilité à la CLÔTURE (lot B, 2026-10-15) : impossible tant qu'un article est encore à décider ou chez le DG.
+ * Demande à articles : tous les articles sont traités (validés ou rejetés) ET au moins un est validé. Sans article
+ * (dépense directe) : règle d'origine (statut de validation complète). SEULE lecture de cette règle.
+ */
+export function peutEtreCloturee(d: { statut: StatutDemande; lignes: { statutValidation: string }[] }): boolean {
+  if (d.lignes.length > 0) return lignesToutesDecidees(d.lignes) && d.lignes.some((l) => l.statutValidation === "VALIDEE");
+  return STATUTS_VALIDATION_COMPLETE.includes(d.statut);
 }
 
 /**
@@ -1285,36 +1321,36 @@ function toCents(montant: number): number {
  *   ces trois statuts plus précis dès que `calculerStatutDemande` tourne.
  */
 export async function calculerStatutDemande(demandeId: string): Promise<StatutDemande> {
-  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  const demande = await prisma.demande.findUnique({
+    where: { id: demandeId },
+    include: { lignes: { select: { quantite: true, prixUnitaire: true, statutValidation: true } } },
+  });
   if (!demande) {
     throw new Error(`calculerStatutDemande : demande ${demandeId} introuvable.`);
   }
 
-  if (demande.statut === "REJETEE" || demande.statut === "CLOTUREE" || demande.statut === "ABANDONNEE") {
-    return demande.statut;
-  }
+  // Lot B : le statut se déduit des ARTICLES (`statutDepuisLignes`, module pur) ; le montant validé d'une demande à
+  // articles est la somme des articles validés — la colonne est resynchronisée si elle a dérivé.
+  const lignes = demande.lignes.map((l) => ({
+    quantite: l.quantite,
+    prixUnitaire: l.prixUnitaire.toString(),
+    statut: l.statutValidation,
+  }));
+  const montantValide = lignes.length > 0 ? montantValideDepuisLignes(lignes) : Number(demande.montantValide ?? 0);
+  const nouveauStatut = statutDepuisLignes({
+    statutActuel: demande.statut,
+    montant: Number(demande.montant),
+    montantValide,
+    totalRegle: montantValide > 0 ? await getTotalRegle(demandeId) : 0,
+    lignes,
+  });
 
-  const montantDemandeCents = toCents(Number(demande.montant));
-  const montantValideCents = toCents(Number(demande.montantValide ?? 0));
-
-  let nouveauStatut: StatutDemande;
-  if (montantValideCents <= 0) {
-    nouveauStatut = "EN_ATTENTE_VALIDATION";
-  } else if (montantValideCents < montantDemandeCents) {
-    nouveauStatut = "PARTIELLEMENT_VALIDEE";
-  } else {
-    const totalRegleCents = toCents(await getTotalRegle(demandeId));
-    if (totalRegleCents <= 0) {
-      nouveauStatut = "VALIDEE_NON_REGLEE";
-    } else if (totalRegleCents < montantValideCents) {
-      nouveauStatut = "PARTIELLEMENT_REGLEE";
-    } else {
-      nouveauStatut = "REGLEE";
-    }
-  }
-
-  if (nouveauStatut !== demande.statut) {
-    await prisma.demande.update({ where: { id: demandeId }, data: { statut: nouveauStatut } });
+  const colonneDerivee = lignes.length > 0 && toCents(Number(demande.montantValide ?? 0)) !== toCents(montantValide);
+  if (nouveauStatut !== demande.statut || colonneDerivee) {
+    await prisma.demande.update({
+      where: { id: demandeId },
+      data: { statut: nouveauStatut, ...(colonneDerivee ? { montantValide } : {}) },
+    });
   }
 
   return nouveauStatut;

@@ -10,6 +10,7 @@ node e2e/pointage-lot3bis.mjs        # pointage : jour non ouvré, départ avant
 node e2e/pointage-decision-dg.mjs    # justifications : retardataire seul RH, décision du DG
 node e2e/soumission-dg-article.mjs   # Trésorerie : bouton « Soumettre au DG » par article, phrases de refus
 node e2e/articles-beneficiaire-pieces.mjs  # Trésorerie : bénéficiaire et pièces par article, « Appliquer à tous », correction
+node e2e/articles-decision-finance.mjs     # Trésorerie (lot B) : décision par article, statut « En cours », files, frise, reprise
 bash e2e/arreter.sh                  # arrête le serveur et le conteneur
 npm uninstall --no-save playwright
 ```

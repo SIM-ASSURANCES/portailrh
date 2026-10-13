@@ -360,7 +360,7 @@ describe("deux personnes distinctes pour une validation complète (Finance ≠ D
     const d = demande("FINANCE");
     const r = ok(d, CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: true });
     expect(r.effets.decideurFinance).toBe(true);
-    const decidee = { createurId: d.createurId, decideurFinanceId: CUMUL.userId, approbationClotureNonRequise: false };
+    const decidee = { createurId: d.createurId, decideursFinanceIds: [CUMUL.userId], approbationClotureNonRequise: false };
     expect(refusApprobationCloture(decidee, CUMUL.userId)).toBe(MESSAGE_DEUX_PERSONNES);
     expect(refusApprobationCloture(decidee, DG.userId)).toBeNull();
   });
@@ -373,11 +373,11 @@ describe("deux personnes distinctes pour une validation complète (Finance ≠ D
   });
 
   it("le demandeur n'approuve jamais la clôture de sa propre demande", () => {
-    expect(refusApprobationCloture({ createurId: DG.userId, decideurFinanceId: FINANCE.userId, approbationClotureNonRequise: false }, DG.userId)).toContain("propre demande");
+    expect(refusApprobationCloture({ createurId: DG.userId, decideursFinanceIds: [FINANCE.userId], approbationClotureNonRequise: false }, DG.userId)).toContain("propre demande");
   });
 
   it("demande émise par le DG : approbation non requise", () => {
-    expect(refusApprobationCloture({ createurId: "x", decideurFinanceId: null, approbationClotureNonRequise: true }, DG.userId)).toContain("n'est pas requise");
+    expect(refusApprobationCloture({ createurId: "x", decideursFinanceIds: [], approbationClotureNonRequise: true }, DG.userId)).toContain("n'est pas requise");
   });
 
   it("un rejet n'est pas une décision Finance (n'enregistre pas de décideur)", () => {

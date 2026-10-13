@@ -3,7 +3,7 @@
 // reformulation lisible. Le contrôle serveur (`soumettreLignesAuDG`) reste la seule autorité.
 
 import {
-  attendDecisionFinale,
+  attendValidationPourExecution,
   estExecutantFinance,
   etatLigneDG,
   MESSAGE_ATTENTE_VALIDATION_FINALE,
@@ -30,8 +30,8 @@ export const MESSAGE_SOUMISSION_DG_NON_REQUISE =
   "Cette demande a été émise par le DG : la soumission au DG n'est pas requise, la Finance la décide.";
 
 export const MESSAGE_BANDEAU_ETAPE_DG =
-  "Cette demande est à l'étape DG : les autres articles sont bloqués jusqu'à sa décision. " +
-  "Vous pouvez encore soumettre d'autres articles au DG.";
+  "Des articles de cette demande attendent la décision du DG. Les autres articles ne sont pas bloqués : " +
+  "vous pouvez les décider, ou en soumettre d'autres au DG.";
 
 export const MESSAGE_COCHER_UN_ARTICLE = "Cochez au moins un article.";
 
@@ -51,7 +51,7 @@ export function raisonSoumissionDemande(
   portee: PorteeSoumissionDG
 ): string | null {
   const aLaPermission = acteur.permissions.includes(PERMISSION_SOUMETTRE_DG);
-  if (!aLaPermission && estExecutantFinance(acteur.permissions) && attendDecisionFinale(demande.etape)) {
+  if (!aLaPermission && estExecutantFinance(acteur.permissions) && attendValidationPourExecution(demande)) {
     return MESSAGE_ATTENTE_VALIDATION_FINALE;
   }
   if (demande.modeEtapeDG === "OBLIGATOIRE") return MESSAGE_DG_DECIDE_D_OFFICE;
@@ -104,7 +104,12 @@ export function raisonBoutonGlobalSoumission(
   return null;
 }
 
-/** Bandeau en tête de la liste quand des articles attendent le DG (la demande est à l'étape DG) ; sinon `null`. */
+/**
+ * Bandeau en tête de la liste quand des articles attendent le DG ; sinon `null`. Lot B : la demande n'est plus bloquée
+ * pendant ce temps (la Finance décide les autres articles) — l'étape n'entre plus dans la règle, seul compte l'état des
+ * articles ; `etape` est conservé pour les appelants, sauf Service / correction / abandon où rien ne se passe.
+ */
 export function bandeauEtapeDG(etape: string, lignes: readonly LigneCircuit[]): string | null {
-  return etape === "DG" && lignes.some((l) => etatLigneDG(l) === "EN_ATTENTE_DG") ? MESSAGE_BANDEAU_ETAPE_DG : null;
+  if (etape === "SERVICE" || etape === "A_CORRIGER" || etape === "ABANDONNEE") return null;
+  return lignes.some((l) => etatLigneDG(l) === "EN_ATTENTE_DG") ? MESSAGE_BANDEAU_ETAPE_DG : null;
 }

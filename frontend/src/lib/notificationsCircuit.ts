@@ -1,13 +1,16 @@
 import {
+  decideursFinanceDemande,
   notificationApprobationCloture,
-  notificationRappel,
+  notificationsRappel,
   notificationRefusLigneDG,
   notificationsEtape,
   PERMISSIONS_NOTIFICATION_CIRCUIT,
   prisma,
   reserverRappelsDus,
+  resumeArticles,
   type CandidatNotification,
   type ContexteNotificationCircuit,
+  type EvenementCircuit,
   type NotificationCircuit,
 } from "backend";
 
@@ -40,7 +43,7 @@ async function chargerContexte(demandeId: string): Promise<ContexteNotificationC
       approbationClotureNonRequise: true,
       validationCompleteParDG: true,
       createur: { select: { fullName: true, service: { select: { responsableId: true } } } },
-      lignes: { where: { soumiseAuDG: true }, select: { decisionDG: true } },
+      lignes: { select: { statutValidation: true, soumiseAuDG: true, decisionDG: true, decideurFinanceId: true } },
     },
   });
   if (!d) return null;
@@ -49,17 +52,17 @@ async function chargerContexte(demandeId: string): Promise<ContexteNotificationC
     where: { demandeId, beneficiaireUserId: { not: null } },
     select: { beneficiaireUserId: true },
   });
-  const lignesDG =
-    d.lignes.length > 0
-      ? {
-          soumises: d.lignes.length,
-          enAttente: d.lignes.filter((l) => l.decisionDG === null).length,
-          validees: d.lignes.filter((l) => l.decisionDG === "VALIDEE").length,
-          refusees: d.lignes.filter((l) => l.decisionDG === "REFUSEE").length,
-        }
+  // Demande à articles (lot B) : état des articles (Finance et DG peuvent en avoir chacun à traiter) et décideurs Finance.
+  const articles =
+    d.typeDemande !== "DEPENSE_DIRECTE" && d.lignes.length > 0
+      ? resumeArticles(
+          d.lignes.map((l) => ({ statut: l.statutValidation, soumiseAuDG: l.soumiseAuDG, decisionDG: l.decisionDG })),
+          d.modeEtapeDG
+        )
       : undefined;
   return {
-    lignesDG,
+    articles,
+    decideursFinanceIds: decideursFinanceDemande(d),
     demandeId: d.id,
     reference: d.reference,
     etape: d.etapeCircuit,
@@ -105,11 +108,11 @@ async function envoyer(notifications: NotificationCircuit[]) {
 }
 
 /** Après un passage d'étape (création, décision, rejet, soumission, resoumission) : notifie ceux qui doivent agir. */
-export async function notifierEtapeCircuit(demandeId: string, acteurId: string): Promise<void> {
+export async function notifierEtapeCircuit(demandeId: string, acteurId: string, evenement: EvenementCircuit = "ETAPE"): Promise<void> {
   try {
     const ctx = await chargerContexte(demandeId);
     if (!ctx) return;
-    await envoyer(notificationsEtape(ctx, await chargerCandidats(ctx.responsableServiceId), acteurId));
+    await envoyer(notificationsEtape(ctx, await chargerCandidats(ctx.responsableServiceId), acteurId, evenement));
   } catch (e) {
     console.error(`[Circuit] Notification de la demande ${demandeId} impossible :`, e);
   }
@@ -137,8 +140,7 @@ export async function envoyerRappelsCircuit(maintenant = new Date()): Promise<vo
     for (const r of reserves) {
       const ctx = await chargerContexte(r.id);
       if (!ctx) continue;
-      const n = notificationRappel(ctx, await chargerCandidats(ctx.responsableServiceId), r.etapeCircuitDepuis, maintenant);
-      if (n) await envoyer([n]);
+      await envoyer(notificationsRappel(ctx, await chargerCandidats(ctx.responsableServiceId), r.etapeCircuitDepuis, maintenant));
     }
   } catch (e) {
     console.error("[Circuit] Rappels impossibles :", e);

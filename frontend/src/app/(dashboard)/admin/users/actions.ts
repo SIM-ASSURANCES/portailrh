@@ -812,6 +812,7 @@ export async function supprimerUtilisateurAction(
     lignesSoumisesAuDG,
     lignesDecideesParDG,
     lignesBeneficiees,
+    lignesDecideesFinance,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -864,6 +865,8 @@ export async function supprimerUtilisateurAction(
     prisma.ligneDemande.count({ where: { decisionDGParId: userId } }),
     // Autonomie des articles, lot A (2026-10-14) : bénéficiaire propre d'un article (SET NULL en base).
     prisma.ligneDemande.count({ where: { beneficiaireUserId: userId } }),
+    // Autonomie des articles, lot B (2026-10-15) : décideur Finance d'un article (SET NULL en base).
+    prisma.ligneDemande.count({ where: { decideurFinanceId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -913,6 +916,7 @@ export async function supprimerUtilisateurAction(
     blocages.push(`décidé ${justificationsDecidees} justification(s) de retard ou de départ anticipé`);
   if (lignesSoumisesAuDG > 0) blocages.push(`soumis ${lignesSoumisesAuDG} ligne(s) d'article au DG`);
   if (lignesDecideesParDG > 0) blocages.push(`décidé ${lignesDecideesParDG} ligne(s) d'article en tant que DG`);
+  if (lignesDecideesFinance > 0) blocages.push(`validé ${lignesDecideesFinance} ligne(s) d'article en tant que Finance`);
 
   if (blocages.length > 0) {
     const liste =

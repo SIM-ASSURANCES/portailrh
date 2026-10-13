@@ -6,7 +6,7 @@ import {
   destinatairesEtape,
   DELAI_RAPPEL_MS,
   INTERVALLE_RAPPEL_MS,
-  notificationRappel,
+  notificationsRappel,
   notificationsEtape,
   rappelDu,
   reserverRappelsDus,
@@ -182,10 +182,12 @@ describe("rappels à 48 h", () => {
   });
 
   it("message de rappel : même destinataire que l'étape, avec la durée d'attente", () => {
-    const n = notificationRappel(ctx("SERVICE"), candidats, t0, apres(3 * 24 * 3600 * 1000));
-    expect(n?.destinataires).toEqual(["resp"]);
-    expect(n?.titre).toBe("Rappel : demande à valider (service)");
-    expect(n?.message).toMatch(/^En attente depuis 3 jours à l'étape Service\./);
+    // RÉÉCRIT (lot B) : `notificationsRappel` renvoie un rappel PAR audience (Finance et DG peuvent attendre ensemble).
+    const [n, ...autres] = notificationsRappel(ctx("SERVICE"), candidats, t0, apres(3 * 24 * 3600 * 1000));
+    expect(autres).toHaveLength(0);
+    expect(n.destinataires).toEqual(["resp"]);
+    expect(n.titre).toBe("Rappel : demande à valider (service)");
+    expect(n.message).toMatch(/^En attente depuis 3 jours à l'étape Service\./);
   });
 
   it("deux affichages simultanés : la demande n'est réservée qu'une fois (puis plus pendant 24 h)", async () => {
