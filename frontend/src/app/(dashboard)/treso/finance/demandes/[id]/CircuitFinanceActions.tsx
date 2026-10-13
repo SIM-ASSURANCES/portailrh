@@ -36,7 +36,9 @@ export function CircuitFinanceActions({
   raisonSoumettre: string | null;
   raisonRejeter: string | null;
   raisonResoumettre: string | null;
-  /** Soumission au DG ligne par ligne (2026-10-10) : elle se fait depuis le tableau des lignes, pas de bouton ici. */
+  /** Soumission au DG article par article : elle se fait depuis le bouton de chaque article, pas de bouton ici. Pour une
+   *  demande à lignes qui n'en relève pas (décidée d'office par le DG, ou émise par le DG), une seule phrase explicative
+   *  au niveau de la demande, jamais de bouton global (lot B bis). */
   soumissionParLignes?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
@@ -78,7 +80,7 @@ export function CircuitFinanceActions({
           >
             Resoumettre au DG
           </Button>
-        ) : soumissionParLignes ? null : (
+        ) : soumissionParLignes || afficherRejet ? null : (
           <Button
             type="button"
             variant="secondary"

@@ -33,12 +33,10 @@ export const MESSAGE_BANDEAU_ETAPE_DG =
   "Des articles de cette demande attendent la décision du DG. Les autres articles ne sont pas bloqués : " +
   "vous pouvez les décider, ou en soumettre d'autres au DG.";
 
-export const MESSAGE_COCHER_UN_ARTICLE = "Cochez au moins un article.";
+export const MESSAGE_INTRO_ARTICLES =
+  "Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG. Un article refusé par le DG peut lui être resoumis. Seul un article catégorisé peut être soumis.";
 
-export const MESSAGE_AUCUN_ARTICLE_SOUMETTABLE =
-  "Aucun article ne peut être soumis pour l'instant : catégorisez-les, ou ils sont déjà soumis ou décidés.";
-
-/** Portée du bouton : un ou plusieurs articles d'une demande à lignes, ou la demande entière. */
+/** Portée de la raison : un article d'une demande à lignes, ou la demande entière (dépense directe, demande décidée d'office). */
 export type PorteeSoumissionDG = "LIGNES" | "DEMANDE";
 
 /**
@@ -90,18 +88,6 @@ export function raisonSoumissionArticle(ligne: LigneCircuit, raisonDemande: stri
     return MESSAGE_ARTICLE_SANS_CATEGORIE_DG;
   }
   return raison;
-}
-
-/** Phrase sous le bouton global « Soumettre au DG » quand il est grisé ; `null` s'il est actif. */
-export function raisonBoutonGlobalSoumission(
-  raisonDemande: string | null,
-  lignes: readonly LigneCircuit[],
-  nombreCochees: number
-): string | null {
-  if (raisonDemande) return raisonDemande;
-  if (!lignes.some((l) => raisonLigneNonSoumettable(l) === null)) return MESSAGE_AUCUN_ARTICLE_SOUMETTABLE;
-  if (nombreCochees === 0) return MESSAGE_COCHER_UN_ARTICLE;
-  return null;
 }
 
 /**

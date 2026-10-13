@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
+import { EnteteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
 import {
   STATUT_LIGNE_DEMANDE_BADGE_VARIANT,
@@ -61,6 +62,13 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
   if (!demande) notFound();
 
   const demandeCircuit = versDemandeCircuit(demande);
+  const enteteDemande = {
+    reference: demande.reference,
+    demandeurNom: demande.createur.fullName,
+    serviceNom: demande.createur.service?.name ?? null,
+    creeeLe: demande.createdAt,
+    devise: demande.devise,
+  };
   const acteur = await chargerActeur(prisma, session, demande.createurId);
   const decisionParLigne = demande.modeEtapeDG === "OBLIGATOIRE";
   const raisonDecider = raisonIndisponible(demandeCircuit, acteur, "DECIDER_LIGNES");
@@ -162,6 +170,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
             objetId: l.objetId,
             objetLabel: l.objet?.label ?? null,
           }))}
+          enteteDemande={enteteDemande}
           canValider={raisonDecider === null}
           raisonIndisponible={raisonDecider}
           canModifierLibelle={false}
@@ -174,6 +183,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
       ) : soumissionParLignes ? (
         <DecisionLignesDG
           devise={devise}
+          enteteDemande={enteteDemande}
           raisonDecider={raisonIndisponible(demandeCircuit, acteur, "DECIDER_LIGNE_DG")}
           lignes={lignesSoumises.map((l) => ({
             id: l.id,
@@ -198,6 +208,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
             {demande.lignes.map((l) => (
               <li key={l.id} className="flex flex-wrap items-baseline justify-between gap-2 py-2">
                 <span className="text-sm font-medium text-foreground">
+                  <EnteteDemandeArticle contexte={enteteDemande} />
                   {l.libelle}
                   <span className="ml-2 text-xs font-normal text-muted-foreground tabular-nums">
                     {l.quantite} × {Number(l.prixUnitaire).toLocaleString("fr-FR")} {devise}

@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 
+import { EnteteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
 import {
   affichageStatutDemande,
   STATUT_LIGNE_DEMANDE_BADGE_VARIANT,
@@ -63,6 +64,7 @@ export default async function MaDemandeDetailPage({
     where: { id },
     include: {
       beneficiaireUser: true,
+      createur: { select: { fullName: true, service: { select: { name: true } } } },
       lignes: { orderBy: { createdAt: "asc" }, include: { beneficiaireUser: true } },
       pieces: true,
     },
@@ -96,6 +98,13 @@ export default async function MaDemandeDetailPage({
   // celle d'origine) — jamais une modification de la Finance.
   const descriptionDemandeur = demande.descriptionDemandeur ?? demande.descriptionOriginale ?? demande.description;
   const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
+  const enteteDemande = {
+    reference: demande.reference,
+    demandeurNom: demande.createur.fullName,
+    serviceNom: demande.createur.service?.name ?? null,
+    creeeLe: demande.createdAt,
+    devise: demande.devise,
+  };
   const libelleDemandeur = (l: (typeof demande.lignes)[number]) => l.libelleDemandeur ?? l.libelleOriginal ?? l.libelle;
   const aCorriger = demande.etapeCircuit === "A_CORRIGER";
   // Comptes proposables comme bénéficiaire d'un article lors de la correction (autres comptes actifs du portail).
@@ -286,6 +295,7 @@ export default async function MaDemandeDetailPage({
                           version modifiée par Finance — même principe que
                           `descriptionOriginale` pour la demande elle-même. */}
                       <td className="px-3 py-2 text-foreground">
+                        <EnteteDemandeArticle contexte={enteteDemande} />
                         {libelleDemandeur(ligne)}
                         {motifLigneDemandeur(ligne) ? (
                           <p data-motif-ligne className="mt-0.5 text-xs text-muted-foreground">Motif : {motifLigneDemandeur(ligne)}</p>

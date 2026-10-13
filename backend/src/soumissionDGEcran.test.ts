@@ -4,13 +4,11 @@ import { MESSAGE_ATTENTE_VALIDATION_FINALE, transition, type ActeurCircuit, type
 import {
   bandeauEtapeDG,
   MESSAGE_ARTICLE_SANS_CATEGORIE_DG,
-  MESSAGE_AUCUN_ARTICLE_SOUMETTABLE,
   MESSAGE_BANDEAU_ETAPE_DG,
-  MESSAGE_COCHER_UN_ARTICLE,
   MESSAGE_DG_DECIDE_D_OFFICE,
+  MESSAGE_INTRO_ARTICLES,
   MESSAGE_PERMISSION_SOUMETTRE_DG,
   MESSAGE_SOUMISSION_DG_NON_REQUISE,
-  raisonBoutonGlobalSoumission,
   raisonSoumissionArticle,
   raisonSoumissionDemande,
 } from "./soumissionDGEcran";
@@ -108,20 +106,13 @@ describe("raisonSoumissionArticle", () => {
   });
 });
 
-describe("raisonBoutonGlobalSoumission", () => {
-  const lignes = [ligne("A"), ligne("C", { categorisee: false })];
-  it("sans sélection : « Cochez au moins un article. »", () => {
-    expect(raisonBoutonGlobalSoumission(null, lignes, 0)).toBe(MESSAGE_COCHER_UN_ARTICLE);
-    expect(MESSAGE_COCHER_UN_ARTICLE).toBe("Cochez au moins un article.");
-  });
-  it("avec une sélection : bouton actif", () => {
-    expect(raisonBoutonGlobalSoumission(null, lignes, 1)).toBeNull();
-  });
-  it("aucun article soumettable : phrase dédiée", () => {
-    expect(raisonBoutonGlobalSoumission(null, [ligne("C", { categorisee: false })], 0)).toBe(MESSAGE_AUCUN_ARTICLE_SOUMETTABLE);
-  });
-  it("la raison de la demande prime", () => {
-    expect(raisonBoutonGlobalSoumission(MESSAGE_PERMISSION_SOUMETTRE_DG, lignes, 2)).toBe(MESSAGE_PERMISSION_SOUMETTRE_DG);
+// RÉÉCRIT (lot B bis) : plus de case à cocher ni de bouton global — chaque article a son seul bouton « Soumettre au DG ».
+describe("texte d'introduction du bloc des articles", () => {
+  it("une phrase simple, sans mention de cases à cocher", () => {
+    expect(MESSAGE_INTRO_ARTICLES).toBe(
+      "Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG. Un article refusé par le DG peut lui être resoumis. Seul un article catégorisé peut être soumis."
+    );
+    expect(MESSAGE_INTRO_ARTICLES.toLowerCase()).not.toContain("coch");
   });
 });
 

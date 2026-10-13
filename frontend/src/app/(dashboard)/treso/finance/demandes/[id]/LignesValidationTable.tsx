@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { Icon } from "@/components/icons";
 import { STATUT_LIGNE_DEMANDE_BADGE_VARIANT, STATUT_LIGNE_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import { EnteteDemandeArticle, type ContexteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
 import { RaisonVisible } from "@/components/tresorerie/RaisonVisible";
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 
@@ -14,7 +15,7 @@ import {
   LIBELLE_ETAT_LIGNE_DG,
   MESSAGE_LIGNE_SANS_CATEGORIE,
   MOTIF_LIGNE_MIN,
-  raisonBoutonGlobalSoumission,
+  MESSAGE_INTRO_ARTICLES,
   raisonSoumissionArticle,
   type EtatLigneDG,
   type LigneCircuit,
@@ -173,6 +174,7 @@ export function LignesValidationTable({
   raisonIndisponible = null,
   soumissionDG = null,
   etapeCircuit = null,
+  enteteDemande = null,
 }: {
   demandeId: string;
   lignes: LigneValidation[];
@@ -181,6 +183,8 @@ export function LignesValidationTable({
    *  `raisonDemande` : pourquoi la soumission est impossible pour la demande entière (permission, étape…), `null` si elle
    *  est possible ; les raisons propres à chaque article s'y ajoutent (`raisonSoumissionArticle`). */
   soumissionDG?: { raisonDemande: string | null } | null;
+  /** Rappel de la demande en tête de chaque article (numéro, demandeur, service, date, devise). */
+  enteteDemande?: ContexteDemandeArticle | null;
   /** Étape du circuit (bandeau « à l'étape DG »). */
   etapeCircuit?: string | null;
   /** Circuit de validation : pourquoi la décision est grisée à cette étape (phrase du moteur), à la place du message
@@ -200,7 +204,6 @@ export function LignesValidationTable({
 
   const [decisionsSaisies, setDecisions] = useState<Record<string, Decision | undefined>>({});
   const [isPending, startTransition] = useTransition();
-  const [selectionDG, setSelectionDG] = useState<string[]>([]);
 
   // « DG définitif » (2026-10-10) : une ligne validée par le DG reste validée (la Finance la CONFIRME) ; une ligne
   // refusée par le DG ne peut qu'être rejetée définitivement (motif du DG proposé) ; une ligne chez le DG n'a pas
@@ -218,24 +221,17 @@ export function LignesValidationTable({
   );
   const raisonDemande = soumissionDG?.raisonDemande ?? null;
   const raisonArticle = (l: LigneValidation) => raisonSoumissionArticle(versLigneCircuit(l), raisonDemande);
-  const selectionValide = selectionDG.filter((id) => lignes.some((l) => l.id === id && raisonArticle(l) === null));
-  const raisonBoutonGlobal = raisonBoutonGlobalSoumission(raisonDemande, lignes.map(versLigneCircuit), selectionValide.length);
   const bandeau = soumissionDG && etapeCircuit ? bandeauEtapeDG(etapeCircuit, lignes.map(versLigneCircuit)) : null;
   const [ligneEnSoumission, setLigneEnSoumission] = useState<string | null>(null);
 
-  function basculerSelectionDG(ligneId: string) {
-    setSelectionDG((prev) => (prev.includes(ligneId) ? prev.filter((id) => id !== ligneId) : [...prev, ligneId]));
-  }
-
-  /** Soumet au DG les articles `ids` : la sélection cochée (bouton global) ou un seul article (son propre bouton). */
-  function soumettreAuDG(ids: string[], ligneId: string | null) {
+  /** Soumet UN article au DG (son propre bouton : le seul moyen de soumettre). */
+  function soumettreAuDG(ligneId: string) {
     setLigneEnSoumission(ligneId);
     startTransition(async () => {
-      const result = await soumettreLignesAuDGAction(demandeId, ids);
+      const result = await soumettreLignesAuDGAction(demandeId, [ligneId]);
       setLigneEnSoumission(null);
       if (result.status === "success") {
         toast.success(result.message);
-        setSelectionDG((prev) => prev.filter((id) => !ids.includes(id)));
       } else {
         toast.error(result.message);
       }
@@ -333,6 +329,7 @@ export function LignesValidationTable({
           <LigneCard
             key={ligne.id}
             ligne={ligne}
+            enteteDemande={enteteDemande}
             dejaDecidee={ligne.statutValidation !== "EN_ATTENTE"}
             decision={decisions[ligne.id]}
             onChangeStatut={(statut) => setDecisionStatut(ligne.id, statut)}
@@ -346,18 +343,13 @@ export function LignesValidationTable({
             objets={objets}
             budgetParCategorie={budgetParCategorie}
             etatDG={soumissionDG || ligne.soumiseAuDG ? etatDG(ligne) : null}
-            selectionDG={
-              soumissionDG && raisonArticle(ligne) === null
-                ? { coche: selectionValide.includes(ligne.id), basculer: () => basculerSelectionDG(ligne.id) }
-                : null
-            }
             soumission={
               soumissionDG && ligne.statutValidation === "EN_ATTENTE"
                 ? {
                     raison: raisonArticle(ligne),
                     enCours: ligneEnSoumission === ligne.id,
                     occupe: isPending,
-                    soumettre: () => soumettreAuDG([ligne.id], ligne.id),
+                    soumettre: () => soumettreAuDG(ligne.id),
                   }
                 : null
             }
@@ -366,26 +358,9 @@ export function LignesValidationTable({
       </div>
 
       {soumissionDG && !toutesDecidees ? (
-        <div data-soumission-dg className="space-y-2 rounded-md border border-border bg-muted/40 p-3">
-          <p className="text-sm font-semibold text-foreground">Soumettre plusieurs articles au DG</p>
-          <p className="text-xs text-muted-foreground">
-            Cochez les articles que le DG doit décider (ou utilisez le bouton « Soumettre au DG » de chaque article) ; les
-            autres restent sous la décision de la Finance. Un article refusé par le DG peut lui être resoumis. Seul un
-            article catégorisé peut être soumis.
-          </p>
-          <Button
-            type="button"
-            variant="secondary"
-            loading={isPending && ligneEnSoumission === null && selectionValide.length > 0}
-            disabled={raisonBoutonGlobal !== null || isPending}
-            onClick={() => soumettreAuDG(selectionValide, null)}
-          >
-            {selectionValide.length > 0
-              ? `Soumettre au DG (${selectionValide.length} ligne${selectionValide.length > 1 ? "s" : ""})`
-              : "Soumettre au DG"}
-          </Button>
-          {raisonBoutonGlobal ? <RaisonVisible data-raison-globale>{raisonBoutonGlobal}</RaisonVisible> : null}
-        </div>
+        <p data-intro-articles className="text-xs text-muted-foreground">
+          {MESSAGE_INTRO_ARTICLES}
+        </p>
       ) : null}
 
       {!toutesDecidees ? (
@@ -433,6 +408,7 @@ export function LignesValidationTable({
  */
 function LigneCard({
   ligne,
+  enteteDemande = null,
   dejaDecidee,
   decision,
   onChangeStatut,
@@ -445,10 +421,10 @@ function LigneCard({
   objets,
   budgetParCategorie,
   etatDG: etatLigne = null,
-  selectionDG = null,
   soumission = null,
 }: {
   ligne: LigneValidation;
+  enteteDemande?: ContexteDemandeArticle | null;
   dejaDecidee: boolean;
   decision: Decision | undefined;
   onChangeStatut: (statut: "VALIDEE" | "REJETEE") => void;
@@ -462,8 +438,6 @@ function LigneCard({
   budgetParCategorie: Record<string, BudgetCategorieInfo>;
   /** État de la ligne vis-à-vis du DG (soumission ligne par ligne) ; `null` si sans objet. */
   etatDG?: EtatLigneDG | null;
-  /** Case « Soumettre au DG » quand la ligne est sélectionnable. */
-  selectionDG?: { coche: boolean; basculer: () => void } | null;
   /** Bouton « Soumettre au DG » propre à l'article : toujours affiché (grisé avec sa raison si impossible). */
   soumission?: { raison: string | null; enCours: boolean; occupe: boolean; soumettre: () => void } | null;
 }) {
@@ -510,6 +484,7 @@ function LigneCard({
 
   return (
     <div className="card-shadow-hover relative rounded-2xl border border-border bg-surface p-4 shadow-elevated transition-transform duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 sm:p-5">
+      {enteteDemande ? <EnteteDemandeArticle contexte={enteteDemande} /> : null}
       {/* En-tête de carte : libellé + action Modifier, montant Total en face */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
@@ -569,11 +544,9 @@ function LigneCard({
           )}
           <MotifLigneEditor ligne={ligne} canModifier={canModifierLibelle} modifiable={libelleModifiable} />
           {ligne.details}
-          {etatLigne && (etatLigne !== "NON_SOUMISE" || selectionDG) ? (
+          {etatLigne && etatLigne !== "NON_SOUMISE" ? (
             <div data-etat-dg className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              {etatLigne !== "NON_SOUMISE" ? (
-                <Badge variant={VARIANTE_ETAT_DG[etatLigne]}>{LIBELLE_ETAT_LIGNE_DG[etatLigne]}</Badge>
-              ) : null}
+              <Badge variant={VARIANTE_ETAT_DG[etatLigne]}>{LIBELLE_ETAT_LIGNE_DG[etatLigne]}</Badge>
               {ligne.decisionDGParNom && etatLigne !== "EN_ATTENTE_DG" ? (
                 <span className="text-muted-foreground">
                   par {ligne.decisionDGParNom}
@@ -582,18 +555,6 @@ function LigneCard({
               ) : null}
               {etatLigne === "REFUSEE_DG" && ligne.motifRefusDG ? (
                 <span className="text-muted-foreground">— motif du DG : {ligne.motifRefusDG}</span>
-              ) : null}
-              {selectionDG ? (
-                <label className="inline-flex cursor-pointer items-center gap-1.5 font-medium text-foreground">
-                  <input
-                    type="checkbox"
-                    className="size-4 accent-primary"
-                    checked={selectionDG.coche}
-                    onChange={selectionDG.basculer}
-                    aria-label={`Soumettre « ${ligne.libelle} » au DG`}
-                  />
-                  {etatLigne === "REFUSEE_DG" ? "Resoumettre au DG" : "Soumettre au DG"}
-                </label>
               ) : null}
             </div>
           ) : null}

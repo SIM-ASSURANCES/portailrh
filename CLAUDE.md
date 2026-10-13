@@ -2831,6 +2831,18 @@ ni le reporting (lot F) ne changent : le règlement reste au niveau de la demand
 - **Limite assumée / point ouvert** : pour une demande à articles dont la Finance et le DG ont chacun des articles, `Demande.etapeCircuit` vaut Finance (priorité) ;
   seuls les écrans/files qui lisent les articles montrent les deux. Le règlement reste un pot commun (lot D : un règlement par article).
 
+#### Lot B bis — un seul geste par article (2026-10-16)
+
+Retouche d'écran uniquement : aucune règle métier, permission ni migration ne change.
+- **Plus de cases à cocher ni de bouton global « Soumettre au DG »** sur le tableau des articles : le bouton « Soumettre au DG » (« Resoumettre » après
+  un refus du DG) de chaque article est le SEUL moyen de soumettre. L'interface n'envoie qu'un article ; `soumettreLignesAuDGAction` / `soumettreLignesAuDG`
+  gardent leur capacité à traiter une liste. Supprimés : `raisonBoutonGlobalSoumission`, `MESSAGE_COCHER_UN_ARTICLE`, `MESSAGE_AUCUN_ARTICLE_SOUMETTABLE`, la
+  sélection et son état. Introduction du bloc : `MESSAGE_INTRO_ARTICLES` (« Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG… »).
+- **Demande décidée d'office par le DG (émise par la Finance) ou émise par le DG** : une seule phrase au niveau de la demande (`CircuitFinanceActions`),
+  jamais de bouton « Soumettre au DG » pour une demande à articles ; le bouton de la demande entière ne subsiste que pour la dépense directe (sans article).
+- **Rappel de la demande en tête de chaque article** (`components/tresorerie/EnteteDemandeArticle.tsx`) : numéro, demandeur, service, date, devise
+  (interprétation minimale de « rattache en tête de la demande à chaque article »). Écrans Finance, DG (y compris cas b), Service et collaborateur.
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié

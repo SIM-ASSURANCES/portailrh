@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
+import { EnteteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
 import { detailsArticleDe } from "@/components/tresorerie/DetailsArticle";
 import { getSession } from "@/lib/auth";
@@ -44,6 +45,13 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
 
   const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
   const demandeCircuit = versDemandeCircuit(demande);
+  const enteteDemande = {
+    reference: demande.reference,
+    demandeurNom: demande.createur.fullName,
+    serviceNom: demande.createur.service?.name ?? null,
+    creeeLe: demande.createdAt,
+    devise: demande.devise,
+  };
   const acteur = await chargerActeur(prisma, session, demande.createurId);
   // La version du demandeur, jamais une description modifiée par la Finance.
   const motif = demande.descriptionDemandeur ?? demande.descriptionOriginale ?? demande.description;
@@ -114,6 +122,7 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
             {demande.lignes.map((l) => (
               <li key={l.id} className="flex flex-wrap items-baseline justify-between gap-2 py-2">
                 <span className="text-sm font-medium text-foreground">
+                  <EnteteDemandeArticle contexte={enteteDemande} />
                   {l.libelleDemandeur ?? l.libelleOriginal ?? l.libelle}
                   <span className="ml-2 text-xs font-normal text-muted-foreground tabular-nums">
                     {l.quantite} × {Number(l.prixUnitaire).toLocaleString("fr-FR")} FCFA

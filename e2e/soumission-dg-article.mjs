@@ -23,7 +23,7 @@ const erreursJs = [];
 
 const PHRASE_PERMISSION = "Votre rôle n'a pas la permission de soumettre au DG. Contactez un administrateur.";
 const PHRASE_SANS_CATEGORIE = "Catégorisez cet article avant de le soumettre au DG.";
-const PHRASE_COCHER = "Cochez au moins un article.";
+const PHRASE_INTRO = "Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG. Un article refusé par le DG peut lui être resoumis. Seul un article catégorisé peut être soumis.";
 const PHRASE_ATTENTE_FINALE = "En attente de la validation finale.";
 // Lot B : les autres articles ne sont plus bloqués pendant que le DG décide.
 const PHRASE_BANDEAU = "Des articles de cette demande attendent la décision du DG. Les autres articles ne sont pas bloqués";
@@ -115,16 +115,19 @@ async function visible(loc) {
   verifier("finance@ : phrase « Catégorisez cet article… » sous C", (await raison(p, 3).innerText()).trim() === PHRASE_SANS_CATEGORIE);
   verifier("finance@ : phrase de C lisible (≥ 14 px, foncée)", await visible(raison(p, 3)));
   verifier("finance@ : aucune phrase sous A", (await raison(p, 1).count()) === 0);
-  const global = p.locator("[data-soumission-dg] button");
-  verifier("finance@ : bouton global grisé sans sélection", await global.isDisabled());
-  verifier("finance@ : « Cochez au moins un article. »", (await p.locator("[data-raison-globale]").innerText()).trim() === PHRASE_COCHER);
+  // Lot B bis : plus de case à cocher, plus de bouton global, plus de « Cochez au moins un article ».
+  verifier("finance@ : aucune case à cocher « Soumettre au DG »", (await p.locator('main input[type="checkbox"]').count()) === 0);
+  verifier("finance@ : aucun bouton global « Soumettre au DG » (un seul par article : 3)", (await p.getByRole("button", { name: /^Soumettre au DG/ }).count()) === 3);
+  verifier("finance@ : phrase d'introduction du bloc", (await p.locator("[data-intro-articles]").innerText()).trim() === PHRASE_INTRO);
+  verifier("finance@ : plus de « Cochez au moins un article »", !(await p.locator("main").innerText()).includes("Cochez"));
   verifier("finance@ : pas de bandeau avant la soumission", (await p.locator("[data-bandeau-etape-dg]").count()) === 0);
 
-  await p.locator('input[aria-label="Soumettre « Article B » au DG"]').check();
-  verifier("finance@ : cocher B active le bouton global", !(await global.isDisabled()));
-  await p.locator('input[aria-label="Soumettre « Article B » au DG"]').uncheck();
+  // Chaque carte d'article rappelle la demande (numéro, demandeur, service, date, devise).
+  const entete = (await p.locator("[data-entete-demande]").first().innerText()).replace(/\s+/g, " ");
+  verifier("finance@ : en-tête de la demande sur chaque article (3)", (await p.locator("[data-entete-demande]").count()) === 3);
+  verifier("finance@ : en-tête = numéro, demandeur, service, date, devise", entete.includes("DEM-e2e-soum-d-finance") && entete.includes("Collaborateur Test") && /\d{2}\/\d{2}\/\d{4}/.test(entete) && entete.includes("FCFA"), entete);
 
-  // Soumission de A par SON bouton (B et C ne sont pas cochés : seul A part).
+  // Soumission de A par SON bouton (seul moyen de soumettre : seul A part).
   await bouton(p, 1).click();
   await p.locator('[data-sonner-toast][data-type="success"]').first().waitFor();
   const lignes = await q(`SELECT id, "soumiseAuDG" FROM "LigneDemande" WHERE "demandeId" = 'e2e-soum-d-finance' ORDER BY id`);
@@ -152,7 +155,6 @@ async function visible(loc) {
   verifier("fin-sans-dg@ : les 3 boutons grisés", tousGrises);
   verifier("fin-sans-dg@ : phrase de permission sous A", (await raison(p, 1).innerText()).trim() === PHRASE_PERMISSION);
   verifier("fin-sans-dg@ : phrase de permission lisible", await visible(raison(p, 1)));
-  verifier("fin-sans-dg@ : phrase aussi sous le bouton global", (await p.locator("[data-raison-globale]").innerText()).trim() === PHRASE_PERMISSION);
   verifier("fin-sans-dg@ : plus de « Action non autorisée. » à l'écran", !(await p.locator("main").innerText()).includes("Action non autorisée."));
   await ctx.close();
 }
@@ -173,16 +175,29 @@ async function visible(loc) {
 {
   const { ctx, p } = await connecter("finance@simassurances.test");
   await ouvrir(p, "e2e-soum-d-dg");
-  const bouton1 = p.getByRole("button", { name: "Soumettre au DG", exact: true });
-  verifier("demande du DG : bouton de la demande entière grisé", await bouton1.first().isDisabled());
+  verifier("demande du DG : aucun bouton « Soumettre au DG » (ni global, ni par article)", (await p.getByRole("button", { name: /^Soumettre au DG/ }).count()) === 0);
   const texte1 = (await p.locator("[data-raison-circuit]").first().innerText()).trim();
   verifier("demande du DG : phrase explicative", texte1.startsWith("Cette demande a été émise par le DG"), texte1);
   verifier("demande du DG : phrase lisible", await visible(p.locator("[data-raison-circuit]")));
   await ouvrir(p, "e2e-soum-d-fin");
   const texte2 = (await p.locator("[data-raison-circuit]").first().innerText()).trim();
   verifier("demande de la Finance : « le DG la décide d'office »", texte2.includes("le DG la décide d'office"), texte2);
+  verifier("demande de la Finance : une seule phrase, aucun bouton « Soumettre au DG »", (await p.locator("[data-raison-circuit]").count()) === 1 && (await p.getByRole("button", { name: /^Soumettre au DG/ }).count()) === 0);
   await ctx.close();
 }
+
+// --- Lot B bis : rappel de la demande en tête des articles, sur les écrans DG, Service et collaborateur ----------
+async function enteteSur(email, url, attendu) {
+  const { ctx, p } = await connecter(email);
+  await p.goto(`${B}${url}`);
+  const n = await p.locator("[data-entete-demande]").count();
+  const texte = n ? (await p.locator("[data-entete-demande]").first().innerText()).replace(/\s+/g, " ") : "";
+  verifier(`${attendu} : en-tête de la demande sur les articles`, n >= 1 && texte.includes("DEM-e2e-soum-d-finance") && texte.includes("Collaborateur Test") && texte.includes("Commercial") && texte.includes("FCFA"), `${n} en-tête(s) — ${texte}`);
+  await ctx.close();
+}
+await enteteSur("dg@simassurances.test", "/treso/dg/e2e-soum-d-finance", "DG");
+await enteteSur("responsable-commercial@simassurances.test", "/treso/service/e2e-soum-d-finance", "responsable de service");
+await enteteSur("collaborateur@simassurances.test", "/treso/demandes/e2e-soum-d-finance", "collaborateur");
 
 await db.end();
 await browser.close();

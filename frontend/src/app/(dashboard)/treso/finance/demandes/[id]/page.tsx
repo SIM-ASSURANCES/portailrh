@@ -72,7 +72,7 @@ export default async function CategoriserDemandePage({
   const demande = await prisma.demande.findUnique({
     where: { id },
     include: {
-      createur: true,
+      createur: { include: { service: { select: { name: true } } } },
       categorie: true,
       objet: true,
       beneficiaireUser: true,
@@ -156,6 +156,13 @@ export default async function CategoriserDemandePage({
       decisions: [{ ligneId, statut: statutProbe }],
     });
     return r.ok ? null : r.message;
+  };
+  const enteteDemande = {
+    reference: demande.reference,
+    demandeurNom: demande.createur.fullName,
+    serviceNom: demande.createur.service?.name ?? null,
+    creeeLe: demande.createdAt,
+    devise: demande.devise,
   };
   const lignesPourTable = demande.lignes.map((ligne) => ({
     id: ligne.id,
@@ -635,6 +642,7 @@ export default async function CategoriserDemandePage({
             budgetParCategorie={budgetParCategorie}
             soumissionDG={soumissionParLignes ? { raisonDemande: raisonSoumissionLignes } : null}
             etapeCircuit={etapeEffective}
+            enteteDemande={enteteDemande}
           />
           {etapeAvecDecisionFinance ? (
             <CircuitFinanceActions
