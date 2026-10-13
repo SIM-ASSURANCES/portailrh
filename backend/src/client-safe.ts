@@ -50,5 +50,7 @@ export { FEEDBACK_CONTENT_MIN, FEEDBACK_CONTENT_MAX } from "./feedback-constants
 export * from "./feedback-questions";
 // Circuit de validation des demandes : moteur PUR (import de types seulement), sûr pour un Client Component.
 export * from "./etatArticles";
+export * from "./reglementArticle";
+export * from "./parcoursArticle";
 export * from "./circuitDemande";
 export * from "./soumissionDGEcran";

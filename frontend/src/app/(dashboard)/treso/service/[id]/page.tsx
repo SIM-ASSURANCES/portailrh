@@ -16,6 +16,7 @@ import {
   prisma,
   raisonIndisponible,
   versDemandeCircuit,
+  getParcoursArticles,
 } from "backend";
 
 import { ServiceDecisionActions } from "./ServiceDecisionActions";
@@ -44,6 +45,8 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
   if (!demande || demande.createur.service?.responsableId !== session.user.id) notFound();
 
   const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
+  // Lot D : parcours de chaque article (validé, réglé, retour de caisse, régularisé), lecture seule.
+  const parcoursArticles = await getParcoursArticles(demande.id);
   const demandeCircuit = versDemandeCircuit(demande);
   const enteteDemande = {
     reference: demande.reference,
@@ -132,7 +135,7 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
                       Motif : {motifLigneDemandeur(l)}
                     </span>
                   ) : null}
-                  {detailsArticleDe(vueArticles, l.id)}
+                  {detailsArticleDe(vueArticles, l.id, parcoursArticles)}
                 </span>
                 <span className="text-sm font-bold text-foreground tabular-nums">
                   {(l.quantite * Number(l.prixUnitaire)).toLocaleString("fr-FR")} FCFA

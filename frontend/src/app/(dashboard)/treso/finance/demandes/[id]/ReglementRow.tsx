@@ -5,7 +5,6 @@ import { toast } from "sonner";
 
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 
-import { AllocationCategorieFields, type CategorieAllocationOption } from "./AllocationCategorieFields";
 import { annulerReglementAction, confirmerReglementAction, modifierReglementAction } from "./reglementActions";
 
 export interface ReglementAllocationData {
@@ -82,12 +81,10 @@ function ReglementStatutBadge({ reglement }: { reglement: ReglementRowData }) {
  */
 export function ReglementRow({
   reglement,
-  categoriesConcernees,
   canEffectuerReglement,
   canAnnulerReglementConfirme,
 }: {
   reglement: ReglementRowData;
-  categoriesConcernees: CategorieAllocationOption[];
   canEffectuerReglement: boolean;
   /** Tâche "Annulation d'un règlement après reçu réservée au Responsable"
    * (voir CLAUDE.md) — contrôle UNIQUEMENT le bouton "Annuler" d'un
@@ -99,20 +96,9 @@ export function ReglementRow({
   const [uiMode, setUiMode] = useState<"view" | "edit" | "annuler">("view");
   const [montantError, setMontantError] = useState<string | undefined>();
   const [montantEdit, setMontantEdit] = useState(String(reglement.montant));
-  const [allocValues, setAllocValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(reglement.allocations.map((a) => [a.categorieId, String(a.montant)]))
-  );
   const [motif, setMotif] = useState("");
   const [motifError, setMotifError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
-
-  const multiCategories = categoriesConcernees.length >= 2;
-  const sommeAllocations = categoriesConcernees.reduce(
-    (total, c) => total + (Number(allocValues[c.categorieId]) || 0),
-    0
-  );
-  const allocationValide =
-    !multiCategories || Math.round(sommeAllocations * 100) === Math.round((Number(montantEdit) || 0) * 100);
 
   function handleConfirmer() {
     startTransition(async () => {
@@ -135,7 +121,7 @@ export function ReglementRow({
     setMontantError(undefined);
 
     startTransition(async () => {
-      const result = await modifierReglementAction(reglement.id, montantValue, modeValue, formData);
+      const result = await modifierReglementAction(reglement.id, montantValue, modeValue);
       if (result.status === "success") {
         toast.success(result.message);
         setUiMode("view");
@@ -258,16 +244,8 @@ export function ReglementRow({
               { value: "BANQUE", label: "Banque" },
             ]}
           />
-          {multiCategories ? (
-            <AllocationCategorieFields
-              categories={categoriesConcernees}
-              montantTotal={Number(montantEdit) || 0}
-              values={allocValues}
-              onChange={(categorieId, valeur) => setAllocValues((prev) => ({ ...prev, [categorieId]: valeur }))}
-            />
-          ) : null}
           <div className="flex flex-wrap gap-3">
-            <Button type="submit" loading={isPending} disabled={!allocationValide}>
+            <Button type="submit" loading={isPending}>
               Enregistrer
             </Button>
             <Button type="button" variant="secondary" disabled={isPending} onClick={() => setUiMode("view")}>

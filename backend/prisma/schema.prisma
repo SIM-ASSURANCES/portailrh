@@ -815,6 +815,9 @@ model LigneDemande {
   /// pas de `ligneDemandeId`.
   pieces PieceJointe[]
 
+  /// Règlements de CET article (autonomie des articles, lot D, 2026-10-16) : un règlement concerne un seul article.
+  reglements Reglement[]
+
   createdAt DateTime @default(now())
 
   @@index([beneficiaireUserId])
@@ -831,6 +834,13 @@ model Reglement {
 
   demandeId String
   demande   Demande @relation(fields: [demandeId], references: [id])
+
+  /// Article réglé (lot D, 2026-10-16) : un règlement = un article. `null` pour une demande sans article (dépense
+  /// directe) et pour un règlement antérieur au lot D pas encore rattaché (cas ambigu : plusieurs articles validés,
+  /// rattachement à faire à la main — voir `recalculer-reglements-articles.ts`). Clé `RESTRICT` : un article réglé ne
+  /// peut pas disparaître sans emporter son règlement.
+  ligneDemandeId String?
+  ligneDemande   LigneDemande? @relation(fields: [ligneDemandeId], references: [id], onDelete: Restrict)
 
   auteurId String
   auteur   User   @relation("ReglementAuteur", fields: [auteurId], references: [id])
@@ -861,6 +871,7 @@ model Reglement {
   // générés sur chaque affichage Finance).
   @@index([demandeId])
   @@index([demandeId, estConfirme, estAnnule])
+  @@index([ligneDemandeId])
 }
 
 /// Une ligne = la part explicite de `Reglement.montant` que Finance a

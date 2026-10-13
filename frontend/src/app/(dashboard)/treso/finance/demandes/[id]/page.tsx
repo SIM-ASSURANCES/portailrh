@@ -2,7 +2,14 @@ import { notFound } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { affichageStatutDemande, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
-import { aPlusieursBeneficiaires, BENEFICIAIRE_TYPE_LABEL, detailsArticles, getMontantConsommeCategorie, nomBeneficiaireDemande } from "backend";
+import {
+  aPlusieursBeneficiaires,
+  BENEFICIAIRE_TYPE_LABEL,
+  detailsArticles,
+  getMontantConsommeCategorie,
+  getParcoursArticles,
+  nomBeneficiaireDemande,
+} from "backend";
 import { detailsArticleDe } from "@/components/tresorerie/DetailsArticle";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
@@ -144,6 +151,8 @@ export default async function CategoriserDemandePage({
   const { montantEnAttente: montantLignesEnAttente, montantRejete: montantLignesRejete } =
     getMontantsLignesParStatut(demande.lignes);
   const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
+  // Lot D : parcours de chaque article (validé, réglé, retour de caisse, régularisé), lecture seule.
+  const parcoursArticles = await getParcoursArticles(demande.id);
   // Pourquoi CE compte ne peut pas décider tel article (bénéficiaire de l'article, règle des deux personnes…) : la phrase
   // du moteur pour un rejet hypothétique de l'article — `null` s'il le peut ou si l'article n'attend pas la Finance.
   const raisonDecisionArticle = (ligneId: string): string | null => {
@@ -170,7 +179,7 @@ export default async function CategoriserDemandePage({
       ligne.statutValidation === "EN_ATTENTE" && !(ligne.soumiseAuDG && ligne.decisionDG === null) && raisonDecider === null
         ? raisonDecisionArticle(ligne.id)
         : null,
-    details: detailsArticleDe(vueArticles, ligne.id),
+    details: detailsArticleDe(vueArticles, ligne.id, parcoursArticles),
     libelle: ligne.libelle,
     libelleOriginal: ligne.libelleOriginal,
     motif: ligne.motif,
@@ -304,7 +313,7 @@ export default async function CategoriserDemandePage({
         // calculé plus haut pour la même identification "Responsable
         // Finance UNIQUEMENT".
         canAnnulerReglementConfirme={canAnnulerReglement}
-        raisonIndisponible={canEffectuerReglement || canAnnulerReglement ? conflitInteret : null}
+        userId={session?.user.id ?? null}
       />
       <RegularisationSummary
         demandeId={demande.id}
@@ -512,7 +521,7 @@ export default async function CategoriserDemandePage({
         demandeId={demande.id}
         demandeEstCloturee={demande.statut === "CLOTUREE"}
         canDeclarerAssistant={canGererJustification}
-        raisonIndisponible={conflitInteret}
+        userId={session?.user.id ?? null}
       />
 
       {/* Retour de caisse exceptionnel post-clôture (voir CLAUDE.md) — uniquement

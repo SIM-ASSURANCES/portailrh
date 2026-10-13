@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Badge, Button } from "@/components/ui";
-import { calculerMontantARetournerNet, prisma } from "backend";
+import { calculerMontantARetournerNet, prisma, refusExecutionPropreSurReglement } from "backend";
 
 import { DetaillerDepensesReglement } from "./DetaillerDepensesReglement";
 import { RetourAssistantTrigger } from "./RetourAssistantTrigger";
@@ -29,19 +29,34 @@ export async function RetoursCaisseFinanceSection({
   demandeId,
   demandeEstCloturee,
   canDeclarerAssistant,
-  raisonIndisponible = null,
+  userId = null,
 }: {
   demandeId: string;
   demandeEstCloturee: boolean;
   canDeclarerAssistant: boolean;
-  /** Conflit d'intérêts (demandeur ou bénéficiaire) : déclaration grisée avec la phrase du serveur. */
-  raisonIndisponible?: string | null;
+  /**
+   * Compte connecté : conflit d'intérêts PAR ARTICLE (lot D) — la déclaration d'un règlement est grisée, avec la
+   * phrase du serveur, seulement si le compte est le demandeur ou le bénéficiaire de l'article que ce règlement a payé.
+   */
+  userId?: string | null;
 }) {
-  const reglements = await prisma.reglement.findMany({
-    where: { demandeId, estConfirme: true, estAnnule: false },
-    include: { retours: { orderBy: { createdAt: "asc" } } },
-    orderBy: { createdAt: "asc" },
-  });
+  const [reglements, demande] = await Promise.all([
+    prisma.reglement.findMany({
+      where: { demandeId, estConfirme: true, estAnnule: false },
+      include: { retours: { orderBy: { createdAt: "asc" } } },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.demande.findUniqueOrThrow({
+      where: { id: demandeId },
+      select: {
+        createurId: true,
+        beneficiaireType: true,
+        beneficiaireUserId: true,
+        beneficiaireNom: true,
+        lignes: { select: { id: true, libelle: true, beneficiaireType: true, beneficiaireUserId: true, beneficiaireNom: true } },
+      },
+    }),
+  ]);
 
   if (reglements.length === 0) {
     return null;
@@ -58,10 +73,13 @@ export async function RetoursCaisseFinanceSection({
       <ul className="space-y-4">
         {reglements.map((r, index) => {
           const aUnRetourEnAttente = r.retours.some((retour) => !retour.estReceptionne);
+          const raisonIndisponible = userId ? refusExecutionPropreSurReglement({ ligneDemandeId: r.ligneDemandeId, demande }, userId) : null;
+          const article = r.ligneDemandeId ? demande.lignes.find((l) => l.id === r.ligneDemandeId) : null;
           return (
             <li key={r.id} className="space-y-3 rounded-md border border-border p-3">
               <p className="text-sm font-medium text-foreground">
                 {Number(r.montant).toLocaleString("fr-FR")} FCFA — {r.mode === "BANQUE" ? "Banque" : "Caisse"}
+                {article ? <span className="font-normal text-muted-foreground"> — article « {article.libelle} »</span> : null}
               </p>
               {r.retours.length > 0 ? (
                 <ul className="space-y-2">

@@ -22,6 +22,8 @@ interface DepenseLigneRow {
 interface RetourRow {
   id: string;
   demandeReference: string;
+  /** Article payé par le règlement d'origine (lot D) ; `null` si le règlement n'est rattaché à aucun article. */
+  articleLibelle?: string | null;
   declarantNom: string;
   reglementMontant: number;
   reglementMode: ModeReglement;
@@ -57,7 +59,18 @@ export function RetoursEnAttenteTable({ retours }: { retours: RetourRow[] }) {
       rowKey={(r) => r.id}
       emptyMessage="Aucun retour de caisse en attente de réception."
       columns={[
-        { key: "demandeReference", header: "Demande", sortable: true, accessor: (r) => r.demandeReference },
+        {
+          key: "demandeReference",
+          header: "Demande",
+          sortable: true,
+          accessor: (r) => r.demandeReference,
+          render: (r) => (
+            <span>
+              {r.demandeReference}
+              {r.articleLibelle ? <span className="block text-xs text-muted-foreground">Article : {r.articleLibelle}</span> : null}
+            </span>
+          ),
+        },
         { key: "declarantNom", header: "Collaborateur", sortable: true, accessor: (r) => r.declarantNom },
         {
           key: "reglement",

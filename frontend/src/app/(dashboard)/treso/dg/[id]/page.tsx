@@ -20,6 +20,7 @@ import {
   raisonIndisponible,
   refusDemandeSansCategorie,
   versDemandeCircuit,
+  getParcoursArticles,
 } from "backend";
 
 import { LignesValidationTable } from "../../finance/demandes/[id]/LignesValidationTable";
@@ -76,6 +77,8 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
   const soumissionParLignes = demande.lignes.length > 0 && demande.typeDemande === "STANDARD" && demande.modeEtapeDG === "OPTIONNELLE";
   const lignesSoumises = demande.lignes.filter((l) => l.soumiseAuDG);
   const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
+  // Lot D : parcours de chaque article (validé, réglé, retour de caisse, régularisé), lecture seule.
+  const parcoursArticles = await getParcoursArticles(demande.id);
   const devise = demande.devise === "XOF" ? "FCFA" : demande.devise;
 
   return (
@@ -154,7 +157,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           demandeId={demande.id}
           lignes={demande.lignes.map((l) => ({
             id: l.id,
-            details: detailsArticleDe(vueArticles, l.id),
+            details: detailsArticleDe(vueArticles, l.id, parcoursArticles),
             libelle: l.libelle,
             libelleOriginal: l.libelleOriginal,
             motif: l.motif,
@@ -187,7 +190,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           raisonDecider={raisonIndisponible(demandeCircuit, acteur, "DECIDER_LIGNE_DG")}
           lignes={lignesSoumises.map((l) => ({
             id: l.id,
-            details: detailsArticleDe(vueArticles, l.id),
+            details: detailsArticleDe(vueArticles, l.id, parcoursArticles),
             libelle: l.libelle,
             motif: l.motif,
             quantite: l.quantite,
@@ -218,7 +221,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
                       Motif : {l.motif}
                     </span>
                   ) : null}
-                  {detailsArticleDe(vueArticles, l.id)}
+                  {detailsArticleDe(vueArticles, l.id, parcoursArticles)}
                 </span>
                 <span className="flex items-center gap-2">
                   {l.statutValidation !== "EN_ATTENTE" ? (

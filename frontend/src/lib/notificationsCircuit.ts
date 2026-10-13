@@ -7,6 +7,7 @@ import {
   PERMISSIONS_NOTIFICATION_CIRCUIT,
   prisma,
   reserverRappelsDus,
+  beneficiairesBloquesReglement,
   resumeArticles,
   type CandidatNotification,
   type ContexteNotificationCircuit,
@@ -43,15 +44,25 @@ async function chargerContexte(demandeId: string): Promise<ContexteNotificationC
       approbationClotureNonRequise: true,
       validationCompleteParDG: true,
       createur: { select: { fullName: true, service: { select: { responsableId: true } } } },
-      lignes: { select: { statutValidation: true, soumiseAuDG: true, decisionDG: true, decideurFinanceId: true } },
+      lignes: {
+        select: {
+          statutValidation: true,
+          soumiseAuDG: true,
+          decisionDG: true,
+          decideurFinanceId: true,
+          beneficiaireType: true,
+          beneficiaireUserId: true,
+        },
+      },
     },
   });
   if (!d) return null;
-  // Garde 8 étendue aux articles : comptes bénéficiaires PROPRES des articles (lot A, 2026-10-14).
-  const beneficiairesArticles = await prisma.ligneDemande.findMany({
-    where: { demandeId, beneficiaireUserId: { not: null } },
-    select: { beneficiaireUserId: true },
-  });
+  // Garde 8 par article (lot D) : un compte n'est écarté de « Demande à régler » que s'il est bénéficiaire de TOUS les
+  // articles validés (il ne peut alors en régler aucun) ; bénéficiaire d'un seul, il peut régler les autres.
+  const beneficiairesBloques = beneficiairesBloquesReglement(
+    { beneficiaireUserId: d.beneficiaireUserId },
+    d.lignes.map((l) => ({ statutValidation: l.statutValidation, beneficiaireType: l.beneficiaireType, beneficiaireUserId: l.beneficiaireUserId }))
+  );
   // Demande à articles (lot B) : état des articles (Finance et DG peuvent en avoir chacun à traiter) et décideurs Finance.
   const articles =
     d.typeDemande !== "DEPENSE_DIRECTE" && d.lignes.length > 0
@@ -70,7 +81,7 @@ async function chargerContexte(demandeId: string): Promise<ContexteNotificationC
     createurId: d.createurId,
     createurNom: d.createur.fullName,
     beneficiaireUserId: d.beneficiaireUserId,
-    beneficiairesArticlesUserIds: beneficiairesArticles.map((l) => l.beneficiaireUserId as string),
+    beneficiairesBloquesReglement: beneficiairesBloques,
     modeEtapeDG: d.modeEtapeDG,
     decideurFinanceId: d.decideurFinanceId,
     dgApprobateurId: d.dgApprobateurId,

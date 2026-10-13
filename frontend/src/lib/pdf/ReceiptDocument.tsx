@@ -143,10 +143,80 @@ export const styles = StyleSheet.create({
   },
 });
 
+/** Article payé par le règlement (lot D) — imprimé sur les trois documents (reçu, bon de caisse, reçu de retour). */
+export interface ArticleImprime {
+  libelle: string;
+  beneficiaireNom: string;
+  montantValide: number;
+  regleADate?: number;
+  resteARegler?: number;
+}
+
+/**
+ * Bloc « Article concerné » : libellé, bénéficiaire et montant de l'article, puis — si fournis — réglé à ce jour et
+ * reste. Rappel de la demande (numéro, demandeur, service) dans `RappelDemande`.
+ */
+export function ArticleSection({ article, titre = "Article concerné" }: { article: ArticleImprime; titre?: string }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{titre}</Text>
+      <View style={styles.detailRow}>
+        <Text style={styles.detailLabel}>Article</Text>
+        <Text style={styles.detailValue}>{article.libelle}</Text>
+      </View>
+      <View style={styles.detailRow}>
+        <Text style={styles.detailLabel}>Bénéficiaire</Text>
+        <Text style={styles.detailValue}>{article.beneficiaireNom}</Text>
+      </View>
+      <View style={article.regleADate == null ? [styles.detailRow, { marginBottom: 0 }] : styles.detailRow}>
+        <Text style={styles.detailLabel}>Montant de l&apos;article</Text>
+        <Text style={styles.detailValue}>{formatMontant(article.montantValide)}</Text>
+      </View>
+      {article.regleADate != null ? (
+        <View style={styles.detailRow}>
+          <Text style={styles.detailLabel}>Réglé à ce jour sur l&apos;article</Text>
+          <Text style={styles.detailValue}>{formatMontant(article.regleADate)}</Text>
+        </View>
+      ) : null}
+      {article.resteARegler != null ? (
+        <View style={[styles.detailRow, { marginBottom: 0 }]}>
+          <Text style={styles.detailLabel}>Reste à régler sur l&apos;article</Text>
+          <Text style={styles.detailValue}>{formatMontant(article.resteARegler)}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** Rappel de la demande : numéro, demandeur et service. */
+export function RappelDemande({ reference, demandeurNom, serviceNom }: { reference: string; demandeurNom: string; serviceNom: string | null }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>Demande</Text>
+      <View style={styles.detailRow}>
+        <Text style={styles.detailLabel}>Numéro</Text>
+        <Text style={styles.detailValue}>{reference}</Text>
+      </View>
+      <View style={styles.detailRow}>
+        <Text style={styles.detailLabel}>Demandeur</Text>
+        <Text style={styles.detailValue}>{demandeurNom}</Text>
+      </View>
+      <View style={[styles.detailRow, { marginBottom: 0 }]}>
+        <Text style={styles.detailLabel}>Service</Text>
+        <Text style={styles.detailValue}>{serviceNom ?? "—"}</Text>
+      </View>
+    </View>
+  );
+}
+
 export interface ReceiptData {
   recuReference: string;
   demandeReference: string;
   demandeurNom: string;
+  /** Service du demandeur (rappel de la demande, lot D). */
+  serviceNom: string | null;
+  /** Article payé par ce règlement (lot D) ; `null` pour une demande sans article. */
+  article: ArticleImprime | null;
   /** Distinct du demandeur (Phase A) — voir `getBeneficiaireNom`. */
   beneficiaireNom: string;
   categorieLabel: string | null;
@@ -244,6 +314,8 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
             </View>
           </View>
 
+          {data.article ? <ArticleSection article={data.article} /> : null}
+
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Situation de la demande</Text>
             <View style={styles.statsRow}>
@@ -280,6 +352,10 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Demandeur</Text>
               <Text style={styles.detailValue}>{data.demandeurNom}</Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Service</Text>
+              <Text style={styles.detailValue}>{data.serviceNom ?? "—"}</Text>
             </View>
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Bénéficiaire</Text>

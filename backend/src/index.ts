@@ -53,6 +53,10 @@ export * from "./encSituation";
 export * from "./services";
 // Circuit de validation des demandes (commit 3) : moteur pur et application en base.
 export * from "./etatArticles";
+export * from "./reglementArticle";
+export * from "./repriseReglements";
+export * from "./parcoursArticle";
+export * from "./parcoursArticleDb";
 export * from "./circuitDemande";
 export * from "./soumissionDGEcran";
 export * from "./circuitDemandeDb";

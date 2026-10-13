@@ -10,6 +10,7 @@ import {
   etatLigneDG,
   LIBELLE_ETAPE_CIRCUIT,
   refusExecutionPropreDemande,
+  refusExecutionPropreReglement,
   versDemandeCircuit,
   type OptionsParcours,
   transition,
@@ -75,44 +76,45 @@ export async function refusConflitInteret(
   userId: string
 ): Promise<string | null> {
   // Garde 8 étendue aux articles (lot A, 2026-10-14) : on lit aussi le bénéficiaire propre de chaque article.
+  // Lot D (2026-10-16) : un règlement rattaché à un article n'écarte que le créateur et le bénéficiaire de CET article.
+  const champsBenef = { beneficiaireType: true, beneficiaireUserId: true, beneficiaireNom: true } as const;
   const champs = {
     createurId: true,
-    beneficiaireType: true,
-    beneficiaireUserId: true,
-    beneficiaireNom: true,
-    lignes: { select: { beneficiaireType: true, beneficiaireUserId: true, beneficiaireNom: true } },
+    ...champsBenef,
+    lignes: { select: champsBenef },
   } as const;
-  let demande: Parameters<typeof refusExecutionPropreDemande>[0] | null | undefined = null;
+  const champsReglement = { demande: { select: champs }, ligneDemande: { select: champsBenef } } as const;
+  type Demande = Parameters<typeof refusExecutionPropreDemande>[0];
+  type Reglement = { demande: Demande; ligneDemande: Parameters<typeof refusExecutionPropreReglement>[1] };
+  let demande: Demande | null | undefined = null;
+  let reglement: Reglement | null | undefined = null;
   if ("demandeId" in cible) {
     demande = await db.demande.findUnique({ where: { id: cible.demandeId }, select: champs });
   } else if ("reglementId" in cible) {
-    demande = (await db.reglement.findUnique({ where: { id: cible.reglementId }, select: { demande: { select: champs } } }))?.demande;
+    reglement = await db.reglement.findUnique({ where: { id: cible.reglementId }, select: champsReglement });
   } else if ("retourCaisseId" in cible) {
-    demande = (
-      await db.retourCaisse.findUnique({
-        where: { id: cible.retourCaisseId },
-        select: { reglement: { select: { demande: { select: champs } } } },
-      })
-    )?.reglement.demande;
+    reglement = (await db.retourCaisse.findUnique({ where: { id: cible.retourCaisseId }, select: { reglement: { select: champsReglement } } }))
+      ?.reglement;
   } else if ("depenseLigneId" in cible) {
-    demande = (
+    reglement = (
       await db.depenseLigne.findUnique({
         where: { id: cible.depenseLigneId },
-        select: { retourCaisse: { select: { reglement: { select: { demande: { select: champs } } } } } },
+        select: { retourCaisse: { select: { reglement: { select: champsReglement } } } },
       })
-    )?.retourCaisse.reglement.demande;
+    )?.retourCaisse.reglement;
   } else if ("remboursementId" in cible) {
-    demande = (
+    reglement = (
       await db.remboursementRetour.findUnique({
         where: { id: cible.remboursementId },
-        select: { retourCaisse: { select: { reglement: { select: { demande: { select: champs } } } } } },
+        select: { retourCaisse: { select: { reglement: { select: champsReglement } } } },
       })
-    )?.retourCaisse.reglement.demande;
+    )?.retourCaisse.reglement;
   } else {
     demande = (
       await db.retourExceptionnel.findUnique({ where: { id: cible.retourExceptionnelId }, select: { demande: { select: champs } } })
     )?.demande;
   }
+  if (reglement) return refusExecutionPropreReglement(reglement.demande, reglement.ligneDemande, userId);
   return demande ? refusExecutionPropreDemande(demande, userId) : null;
 }
 

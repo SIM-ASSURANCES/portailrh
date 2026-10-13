@@ -12,7 +12,7 @@ import {
   getMontantsDefinitifsRetours,
   getRecuNetSignalement,
   prisma,
-  refusExecutionPropreDemande,
+  refusExecutionPropreSurReglement,
 } from "backend";
 
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
@@ -58,7 +58,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     where: { id },
     include: {
       declarant: true,
-      reglement: { include: { demande: { include: { lignes: true } } } },
+      reglement: { include: { demande: { include: { lignes: true } }, ligneDemande: { select: { libelle: true } } } },
       depenses: { include: { pieceJointe: true, motifNonJustifiePar: true }, orderBy: { date: "asc" } },
       signalements: { where: { estResolu: false }, include: { signalePar: true } },
       remboursements: {
@@ -74,7 +74,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
 
   // Sa propre demande (demandeur ou bénéficiaire) : réception, détail, justification et remboursement grisés avec la
   // phrase que le serveur renvoie (`refusExecutionPropreDemande`, gardes 1 à 3 et 8).
-  const conflitInteret = session ? refusExecutionPropreDemande(retour.reglement.demande, session.user.id) : null;
+  const conflitInteret = session ? refusExecutionPropreSurReglement(retour.reglement, session.user.id) : null;
   const peutAgirRetour = canReceptionner && !conflitInteret;
 
   // Même imputation des retours post-clôture que l'écran Collaborateur (source unique).
@@ -225,6 +225,12 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
         </div>
 
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {retour.reglement.ligneDemande ? (
+            <div data-article-retour>
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Article</dt>
+              <dd className="text-sm font-semibold text-foreground">{retour.reglement.ligneDemande.libelle}</dd>
+            </div>
+          ) : null}
           <div>
             <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Règlement d&apos;origine</dt>
             <dd className="text-sm font-semibold text-foreground">

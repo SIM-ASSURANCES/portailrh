@@ -54,6 +54,7 @@ export async function RetoursCaisseSection({
     prisma.reglement.findMany({
       where: { demandeId, estConfirme: true, estAnnule: false },
       include: {
+        ligneDemande: { select: { libelle: true, libelleOriginal: true, libelleDemandeur: true } },
         retours: {
           include: {
             depenses: { include: { pieceJointe: true, motifNonJustifiePar: true } },
@@ -130,8 +131,14 @@ export async function RetoursCaisseSection({
             rienARendre={soldes[index] !== null && rienARendre(soldes[index]!)}
             dateMin={dateMin}
             repere={
-              reglements.length > 1
-                ? `Règlement ${index + 1}/${reglements.length}${r.mode === "BANQUE" ? " (Banque)" : ""} — ${(r.confirmeAt ?? r.createdAt).toLocaleDateString("fr-FR")}`
+              reglements.length > 1 || r.ligneDemande
+                ? [
+                    reglements.length > 1 ? `Règlement ${index + 1}/${reglements.length}${r.mode === "BANQUE" ? " (Banque)" : ""}` : null,
+                    r.ligneDemande ? `Article « ${(r.ligneDemande.libelleDemandeur ?? r.ligneDemande.libelleOriginal ?? r.ligneDemande.libelle)} »` : null,
+                    (r.confirmeAt ?? r.createdAt).toLocaleDateString("fr-FR"),
+                  ]
+                    .filter(Boolean)
+                    .join(" — ")
                 : undefined
             }
           />

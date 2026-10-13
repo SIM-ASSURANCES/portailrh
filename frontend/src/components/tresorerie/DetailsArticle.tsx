@@ -1,6 +1,8 @@
-import type { VueDetailsArticles } from "backend";
+import type { ParcoursArticle, VueDetailsArticles } from "backend";
 
 import { Badge } from "@/components/ui";
+
+import { ParcoursArticleView } from "./ParcoursArticle";
 
 export interface PieceLien {
   id: string;
@@ -60,17 +62,26 @@ export function DetailsArticle({
   );
 }
 
-/** Détails d'un article à partir de la vue calculée par `detailsArticles` (une seule fois par page). */
-export function detailsArticleDe(vue: VueDetailsArticles, ligneId: string) {
+/**
+ * Détails d'un article à partir de la vue calculée par `detailsArticles` (une seule fois par page), suivis — lot D —
+ * de son parcours (badge d'état, montants clés, étapes atteintes) quand les parcours de la demande sont fournis.
+ */
+export function detailsArticleDe(vue: VueDetailsArticles, ligneId: string, parcours?: ReadonlyMap<string, ParcoursArticle>) {
   const v = vue.parArticle.get(ligneId);
-  if (!v) return null;
+  const p = parcours?.get(ligneId);
+  if (!v && !p) return null;
   return (
-    <DetailsArticle
-      beneficiaireLibelle={v.beneficiaire.libelle}
-      beneficiairePropre={v.beneficiaire.propre}
-      afficherBeneficiaire={vue.afficherBeneficiaire}
-      pieces={v.pieces}
-      piecesCommunes={vue.detaille ? vue.communes : []}
-    />
+    <>
+      {v ? (
+        <DetailsArticle
+          beneficiaireLibelle={v.beneficiaire.libelle}
+          beneficiairePropre={v.beneficiaire.propre}
+          afficherBeneficiaire={vue.afficherBeneficiaire}
+          pieces={v.pieces}
+          piecesCommunes={vue.detaille ? vue.communes : []}
+        />
+      ) : null}
+      {p ? <ParcoursArticleView parcours={p} /> : null}
+    </>
   );
 }

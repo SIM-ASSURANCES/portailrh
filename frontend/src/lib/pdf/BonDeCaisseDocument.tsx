@@ -2,6 +2,7 @@ import { Document, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 
 import { COLORS } from "./colors";
 import { formatDate, formatMontant } from "./format";
+import { ArticleSection, RappelDemande, type ArticleImprime } from "./ReceiptDocument";
 import "./registerFonts";
 
 const styles = StyleSheet.create({
@@ -109,6 +110,11 @@ const styles = StyleSheet.create({
 
 export interface BonDeCaisseData {
   demandeReference: string;
+  /** Rappel de la demande (lot D). */
+  demandeurNom: string;
+  serviceNom: string | null;
+  /** Article payé (lot D) : libellé, bénéficiaire, montant de l'article ; `null` pour une demande sans article. */
+  article: ArticleImprime | null;
   beneficiaireNom: string;
   confirmeLe: Date;
   montant: number;
@@ -122,8 +128,10 @@ export interface BonDeCaisseData {
  * n'existe que pour les règlements en mode CAISSE, et se limite
  * volontairement au montant réglé lors de CETTE opération précise. Ne
  * comporte NI le montant demandé, NI le total réglé à ce jour, NI le reste
- * à régler — ces informations de contexte restent réservées au reçu
- * complet (voir CLAUDE.md "Refonte V1 en cours" / Phase E pour la
+ * à régler (de la demande) — ces informations de contexte restent réservées
+ * au reçu complet. Lot D : le bon rappelle la demande (numéro, demandeur,
+ * service) et nomme l'article payé (libellé, bénéficiaire, montant de
+ * l'article — sans réglé à ce jour ni reste) (voir CLAUDE.md "Refonte V1 en cours" / Phase E pour la
  * justification). Exemple du cahier des charges : montant validé
  * 250 000 FCFA, ce règlement précis 200 000 FCFA -> le bon de caisse
  * n'affiche que "200 000 FCFA".
@@ -148,6 +156,8 @@ export function BonDeCaisseDocument({ data }: { data: BonDeCaisseData }) {
         </View>
 
         <View style={styles.body}>
+          <RappelDemande reference={data.demandeReference} demandeurNom={data.demandeurNom} serviceNom={data.serviceNom} />
+          {data.article ? <ArticleSection article={data.article} /> : null}
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Bénéficiaire</Text>
             <Text style={styles.detailValue}>{data.beneficiaireNom}</Text>

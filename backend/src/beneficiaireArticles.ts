@@ -10,10 +10,6 @@ import { normaliserNom, type ChoixBeneficiaire } from "./beneficiaire";
 /** Libellé affiché quand les articles d'une demande n'ont pas tous le même bénéficiaire. */
 export const LIBELLE_PLUSIEURS_BENEFICIAIRES = "Plusieurs bénéficiaires";
 
-/** Refus du règlement (état intermédiaire sûr, jusqu'au règlement par article). */
-export const MESSAGE_PLUSIEURS_BENEFICIAIRES_REGLEMENT =
-  "Cette demande a plusieurs bénéficiaires : le règlement par article arrive prochainement.";
-
 /** Bénéficiaire tel que stocké (sur la demande, ou sur un article : tous les champs vides = hérite). */
 export interface BeneficiaireStocke {
   beneficiaireType?: BeneficiaireType | null;
@@ -113,19 +109,6 @@ export function nomBeneficiaireDemande(
 }
 
 /**
- * Refus du règlement d'une demande dont les articles n'ont pas tous le même bénéficiaire (état intermédiaire sûr tant
- * que le règlement n'est pas par article) ; `null` sinon.
- */
-export function refusReglementPlusieursBeneficiaires(
-  demande: BeneficiaireStocke,
-  articles: readonly ArticleBeneficiaire[]
-): string | null {
-  return aPlusieursBeneficiaires(demande, articles, { seulementValidees: true })
-    ? MESSAGE_PLUSIEURS_BENEFICIAIRES_REGLEMENT
-    : null;
-}
-
-/**
  * Comptes concernés par la demande au sens de la garde 8 (créateur + bénéficiaire de N'IMPORTE QUEL article), tant que
  * le circuit n'est pas par article. Sans article : le bénéficiaire par défaut de la demande.
  */
@@ -135,6 +118,21 @@ export function comptesConcernesDemande(
 ): string[] {
   const ids = new Set<string>([demande.createurId]);
   for (const b of beneficiairesEffectifs(demande, articles)) if (b.userId) ids.add(b.userId);
+  return [...ids];
+}
+
+/**
+ * Comptes concernés par UN article au sens de la garde 8 (lot D, 2026-10-16) : le créateur de la demande et le
+ * bénéficiaire effectif DE CET ARTICLE (le sien, sinon celui de la demande). Le bénéficiaire d'un autre article de la
+ * même demande n'est pas concerné : il peut exécuter le règlement et les retours de cet article.
+ */
+export function comptesConcernesArticle(
+  demande: { createurId: string } & BeneficiaireStocke,
+  article: BeneficiaireStocke
+): string[] {
+  const ids = new Set<string>([demande.createurId]);
+  const b = beneficiaireArticle(article, demande);
+  if (b.userId) ids.add(b.userId);
   return [...ids];
 }
 

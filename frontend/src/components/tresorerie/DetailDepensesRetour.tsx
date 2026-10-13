@@ -1,4 +1,4 @@
-import { estFicheRegularisation, estLigneReste, prisma, refusExecutionPropreDemande, totauxDetailRetour } from "backend";
+import { estFicheRegularisation, estLigneReste, prisma, refusExecutionPropreSurReglement, totauxDetailRetour } from "backend";
 
 import { DepenseLigneEdition } from "@/app/(dashboard)/treso/finance/retours/[id]/DepenseLigneEdition";
 import { DetaillerResteBouton } from "@/app/(dashboard)/treso/finance/retours/[id]/DetaillerResteBouton";
@@ -34,7 +34,7 @@ export async function DetailDepensesRetour({
   const demande = retour.reglement.demande;
   const fiche = estFicheRegularisation({ ...retour, mode: retour.reglement.mode });
   const clotureeSansException = demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle;
-  const conflit = userId ? refusExecutionPropreDemande(demande, userId) : null;
+  const conflit = userId ? refusExecutionPropreSurReglement(retour.reglement, userId) : null;
   const peutAgir = canReceptionner && !clotureeSansException && !conflit;
   const lignes = retour.depenses.filter((d) => !estLigneReste(d));
   const totaux = totauxDetailRetour({

@@ -43,9 +43,9 @@ export interface ContexteNotificationCircuit {
   createurId: string;
   createurNom: string;
   beneficiaireUserId: string | null;
-  /** Bénéficiaires (comptes) PROPRES aux articles (lot A « autonomie des articles ») : exclus comme le bénéficiaire de la
-   *  demande des notifications « à régler » (garde 8 étendue à tous les articles). */
-  beneficiairesArticlesUserIds?: string[];
+  /** Comptes qui ne peuvent régler AUCUN article validé (lot D : garde 8 par article) : bénéficiaires de TOUS les articles
+   *  validés. Un bénéficiaire d'un seul article peut régler les autres et reste notifié. Absent = bénéficiaire de la demande. */
+  beneficiairesBloquesReglement?: string[];
   modeEtapeDG: ModeEtapeDG;
   decideurFinanceId: string | null;
   dgApprobateurId: string | null;
@@ -318,7 +318,7 @@ export function notificationsEtape(
           lien: lienFinance(ctx.demandeId),
           priority: "IMPORTANT",
         },
-        sans(avec(candidats, "treso.effectuer_reglement"), ctx.createurId, ctx.beneficiaireUserId, ...(ctx.beneficiairesArticlesUserIds ?? []))
+        sans(avec(candidats, "treso.effectuer_reglement"), ctx.createurId, ...(ctx.beneficiairesBloquesReglement ?? [ctx.beneficiaireUserId]))
       );
     }
     if (ctx.etape === "TERMINEE") {

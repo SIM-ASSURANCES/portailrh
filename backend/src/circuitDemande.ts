@@ -20,6 +20,7 @@
 import type { EtapeCircuit, ModeEtapeDG } from "./generated/prisma/enums";
 import {
   beneficiaireArticle,
+  comptesConcernesArticle,
   comptesConcernesDemande,
   type ArticleBeneficiaire,
   type BeneficiaireStocke,
@@ -984,4 +985,31 @@ export function refusExecutionPropreDemande(
   userId: string
 ): string | null {
   return comptesConcernesDemande(demande, demande.lignes).includes(userId) ? MESSAGE_EXECUTION_PROPRE_DEMANDE : null;
+}
+
+/**
+ * Garde 8 PAR ARTICLE (lot D, 2026-10-16) : pour tout ce qui touche un règlement rattaché à un article (création,
+ * modification, confirmation, annulation, retours de CE règlement), seuls le créateur de la demande et le bénéficiaire
+ * de CET article sont écartés — le bénéficiaire d'un autre article de la même demande peut s'en charger. Sans article
+ * (dépense directe, règlement antérieur non rattaché) : la garde de la demande entière, inchangée.
+ */
+export function refusExecutionPropreReglement(
+  demande: { createurId: string; lignes: readonly ArticleBeneficiaire[] } & BeneficiaireStocke,
+  article: BeneficiaireStocke | null | undefined,
+  userId: string
+): string | null {
+  if (!article) return refusExecutionPropreDemande(demande, userId);
+  return comptesConcernesArticle(demande, article).includes(userId) ? MESSAGE_EXECUTION_PROPRE_DEMANDE : null;
+}
+
+/** Variante pour un règlement chargé avec sa demande et les articles de celle-ci : retrouve l'article du règlement. */
+export function refusExecutionPropreSurReglement(
+  reglement: {
+    ligneDemandeId: string | null;
+    demande: { createurId: string; lignes: readonly (ArticleBeneficiaire & { id: string })[] } & BeneficiaireStocke;
+  },
+  userId: string
+): string | null {
+  const ligne = reglement.ligneDemandeId ? (reglement.demande.lignes.find((l) => l.id === reglement.ligneDemandeId) ?? null) : null;
+  return refusExecutionPropreReglement(reglement.demande, ligne, userId);
 }

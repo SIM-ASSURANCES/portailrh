@@ -2,7 +2,7 @@ import { Document, Page, Text, View } from "@react-pdf/renderer";
 
 import { COLORS } from "./colors";
 import { formatDate, formatMontant } from "./format";
-import { styles } from "./ReceiptDocument";
+import { ArticleSection, RappelDemande, styles, type ArticleImprime } from "./ReceiptDocument";
 import "./registerFonts";
 
 export interface RetourReceiptData {
@@ -10,6 +10,9 @@ export interface RetourReceiptData {
   recuReference: string;
   demandeReference: string;
   demandeurNom: string;
+  serviceNom: string | null;
+  /** Article dont le règlement d'origine est rattaché (lot D) ; `null` sinon. */
+  article: ArticleImprime | null;
   beneficiaireNom: string;
   /** Règlement d'origine : montant remis, mode et date de confirmation. */
   montantRegle: number;
@@ -124,17 +127,18 @@ export function RetourReceiptDocument({ data }: { data: RetourReceiptData }) {
             </View>
           ) : null}
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Détails de la demande</Text>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Demandeur</Text>
-              <Text style={styles.detailValue}>{data.demandeurNom}</Text>
+          <RappelDemande reference={data.demandeReference} demandeurNom={data.demandeurNom} serviceNom={data.serviceNom} />
+          {data.article ? (
+            <ArticleSection article={data.article} />
+          ) : (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Bénéficiaire</Text>
+              <View style={[styles.detailRow, { marginBottom: 0 }]}>
+                <Text style={styles.detailLabel}>Bénéficiaire</Text>
+                <Text style={styles.detailValue}>{data.beneficiaireNom}</Text>
+              </View>
             </View>
-            <View style={[styles.detailRow, { marginBottom: 0 }]}>
-              <Text style={styles.detailLabel}>Bénéficiaire</Text>
-              <Text style={styles.detailValue}>{data.beneficiaireNom}</Text>
-            </View>
-          </View>
+          )}
 
           <Text style={styles.auteurLine}>
             Déclaré par <Text style={styles.auteurNom}>{data.declarantNom}</Text>

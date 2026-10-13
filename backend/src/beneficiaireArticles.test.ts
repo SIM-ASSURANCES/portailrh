@@ -6,20 +6,19 @@ import {
   beneficiaireArticle,
   choixDepuisStocke,
   choixPropreArticle,
+  comptesConcernesArticle,
   comptesConcernesDemande,
   detailsArticles,
   erreurSaisieBeneficiaire,
   estPersonnalise,
   ilYADesPersonnalisations,
   LIBELLE_PLUSIEURS_BENEFICIAIRES,
-  MESSAGE_PLUSIEURS_BENEFICIAIRES_REGLEMENT,
   nomBeneficiaireDemande,
-  refusReglementPlusieursBeneficiaires,
   repartirPieces,
   SAISIE_BENEFICIAIRE_MOI,
   type SaisieBeneficiaire,
 } from "./beneficiaireArticles";
-import { refusExecutionPropreDemande } from "./circuitDemande";
+import { refusExecutionPropreDemande, refusExecutionPropreReglement } from "./circuitDemande";
 
 const demandeMoi = {
   createurId: "u-createur",
@@ -81,27 +80,6 @@ describe("plusieurs bénéficiaires", () => {
     const b = { ...ligneFournisseur, id: "b", beneficiaireNom: "cafe zoe" };
     expect(aPlusieursBeneficiaires(demandeMoi, [a, b])).toBe(false);
   });
-
-  it("le règlement est refusé avec la phrase prévue, jamais quand le bénéficiaire est unique", () => {
-    expect(refusReglementPlusieursBeneficiaires(demandeMoi, [ligneHerite, ligneBob])).toBe(
-      MESSAGE_PLUSIEURS_BENEFICIAIRES_REGLEMENT
-    );
-    expect(refusReglementPlusieursBeneficiaires(demandeMoi, [ligneHerite])).toBeNull();
-  });
-
-  it("seuls les articles validés comptent pour le règlement quand il y en a (un article rejeté n'est jamais payé)", () => {
-    const articles = [
-      { ...ligneHerite, statutValidation: "VALIDEE" },
-      { ...ligneBob, statutValidation: "REJETEE" },
-    ];
-    expect(refusReglementPlusieursBeneficiaires(demandeMoi, articles)).toBeNull();
-    expect(
-      refusReglementPlusieursBeneficiaires(demandeMoi, [
-        { ...ligneHerite, statutValidation: "VALIDEE" },
-        { ...ligneBob, statutValidation: "VALIDEE" },
-      ])
-    ).toBe(MESSAGE_PLUSIEURS_BENEFICIAIRES_REGLEMENT);
-  });
 });
 
 describe("garde 8 — conflit d'intérêts sur les bénéficiaires d'articles", () => {
@@ -110,6 +88,20 @@ describe("garde 8 — conflit d'intérêts sur les bénéficiaires d'articles", 
     expect(refusExecutionPropreDemande(demande, "u-createur")).not.toBeNull();
     expect(refusExecutionPropreDemande(demande, "u-bob")).not.toBeNull();
     expect(refusExecutionPropreDemande(demande, "u-autre")).toBeNull();
+  });
+
+  it("lot D — par article : seuls le créateur et le bénéficiaire de CET article sont écartés", () => {
+    const demande = { ...demandeMoi, lignes: [ligneHerite, ligneBob] };
+    // L'article de Bob : Bob et le créateur sont bloqués, pas un tiers.
+    expect(refusExecutionPropreReglement(demande, ligneBob, "u-bob")).not.toBeNull();
+    expect(refusExecutionPropreReglement(demande, ligneBob, "u-createur")).not.toBeNull();
+    expect(refusExecutionPropreReglement(demande, ligneBob, "u-autre")).toBeNull();
+    // Bob peut en revanche exécuter l'article hérité (bénéficiaire = le créateur de la demande).
+    expect(refusExecutionPropreReglement(demande, ligneHerite, "u-bob")).toBeNull();
+    expect(refusExecutionPropreReglement(demande, ligneHerite, "u-createur")).not.toBeNull();
+    // Sans article visé : la garde de la demande entière, inchangée.
+    expect(refusExecutionPropreReglement(demande, null, "u-bob")).not.toBeNull();
+    expect(comptesConcernesArticle(demandeMoi, ligneBob).sort()).toEqual(["u-bob", "u-createur"].sort());
   });
 
   it("comptesConcernesDemande liste le créateur et chaque bénéficiaire de compte, sans doublon", () => {

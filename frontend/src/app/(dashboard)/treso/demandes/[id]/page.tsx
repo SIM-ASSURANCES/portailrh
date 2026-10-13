@@ -16,6 +16,7 @@ import {
   getMontantsLignesParStatut,
   LIBELLE_ETAPE_CIRCUIT,
   versDemandeCircuit,
+  getParcoursArticles,
 } from "backend";
 import { detailsArticleDe } from "@/components/tresorerie/DetailsArticle";
 import { formatMontantDevise } from "@/components/tresorerie/devise";
@@ -98,6 +99,8 @@ export default async function MaDemandeDetailPage({
   // celle d'origine) — jamais une modification de la Finance.
   const descriptionDemandeur = demande.descriptionDemandeur ?? demande.descriptionOriginale ?? demande.description;
   const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
+  // Lot D : parcours de chaque article (validé, réglé, retour de caisse, régularisé), lecture seule.
+  const parcoursArticles = await getParcoursArticles(demande.id);
   const enteteDemande = {
     reference: demande.reference,
     demandeurNom: demande.createur.fullName,
@@ -300,7 +303,7 @@ export default async function MaDemandeDetailPage({
                         {motifLigneDemandeur(ligne) ? (
                           <p data-motif-ligne className="mt-0.5 text-xs text-muted-foreground">Motif : {motifLigneDemandeur(ligne)}</p>
                         ) : null}
-                        {detailsArticleDe(vueArticles, ligne.id)}
+                        {detailsArticleDe(vueArticles, ligne.id, parcoursArticles)}
                       </td>
                       <td className="px-3 py-2 text-right text-foreground">{ligne.quantite}</td>
                       <td className="px-3 py-2 text-right text-foreground">

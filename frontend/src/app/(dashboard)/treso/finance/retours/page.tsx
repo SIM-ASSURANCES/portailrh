@@ -51,7 +51,7 @@ export default async function RetoursEnAttentePage() {
     where: RETOUR_EN_ATTENTE_WHERE,
     include: {
       declarant: true,
-      reglement: { include: { demande: true } },
+      reglement: { include: { demande: true, ligneDemande: { select: { libelle: true } } } },
       depenses: { include: { pieceJointe: true, motifNonJustifiePar: true } },
     },
     orderBy: { createdAt: "asc" },
@@ -68,6 +68,7 @@ export default async function RetoursEnAttentePage() {
     return {
       id: r.id,
       demandeReference: r.reglement.demande.reference,
+      articleLibelle: r.reglement.ligneDemande?.libelle ?? null,
       declarantNom: r.declarant.fullName,
       reglementMontant: Number(r.reglement.montant),
       reglementMode: r.reglement.mode,

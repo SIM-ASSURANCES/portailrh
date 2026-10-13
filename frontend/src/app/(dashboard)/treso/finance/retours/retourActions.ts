@@ -24,7 +24,7 @@ import {
   getSoldeCaisse,
   prisma,
   refusConflitInteret,
-  refusExecutionPropreDemande,
+  refusExecutionPropreSurReglement,
 } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
@@ -270,7 +270,7 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
     return { status: "error", message: "Ce retour de caisse est déjà réceptionné." };
   }
   // Conflit d'intérêts : jamais la réception du retour de sa propre demande.
-  const refusPropre = refusExecutionPropreDemande(retour.reglement.demande, session.user.id);
+  const refusPropre = refusExecutionPropreSurReglement(retour.reglement, session.user.id);
   if (refusPropre) {
     return { status: "error", message: refusPropre };
   }

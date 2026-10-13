@@ -3,6 +3,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 
 import { estRetourNul, nomBeneficiaireDemande, prisma, referenceRecuRetour } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
+import { chargerArticleDocument } from "@/lib/pdf/articleReglement";
 import { RetourReceiptDocument, type RetourReceiptData } from "@/lib/pdf/RetourReceiptDocument";
 
 /**
@@ -28,7 +29,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       declarant: { select: { fullName: true } },
       receptionnePar: { select: { fullName: true } },
       depenses: { orderBy: { date: "asc" } },
-      reglement: { include: { demande: { include: { createur: true, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } } } },
+      reglement: { include: { demande: { include: { createur: { include: { service: true } }, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } } } },
     },
   });
   if (!retour || !retour.estReceptionne || !retour.receptionneAt) {
@@ -65,10 +66,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const totalJustifie = depenses.filter((d) => d.etat === "justifiée").reduce((t, d) => t + d.montant, 0);
   const totalNonJustifie = depenses.filter((d) => d.etat !== "justifiée").reduce((t, d) => t + d.montant, 0);
 
+  const article = await chargerArticleDocument(retour.reglement, demande, accesFinance);
   const data: RetourReceiptData = {
     recuReference,
     demandeReference: demande.reference,
     demandeurNom: demande.createur.fullName,
+    serviceNom: demande.createur.service?.name ?? null,
+    article: article ? { libelle: article.libelle, beneficiaireNom: article.beneficiaireNom, montantValide: article.montantValide } : null,
     beneficiaireNom: nomBeneficiaireDemande(demande, demande.lignes, { seulementValidees: true }),
     montantRegle: Number(retour.reglement.montant),
     mode: retour.reglement.mode,

@@ -4,6 +4,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { nomBeneficiaireDemande } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
+import { chargerArticleDocument } from "@/lib/pdf/articleReglement";
 import { ReceiptDocument, type ReceiptData } from "@/lib/pdf/ReceiptDocument";
 import { getResteARegler, getTotalRegle } from "backend";
 
@@ -57,7 +58,7 @@ export async function GET(
   const reglement = await prisma.reglement.findUnique({
     where: { id },
     include: {
-      demande: { include: { createur: true, categorie: true, objet: true, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } },
+      demande: { include: { createur: { include: { service: true } }, categorie: true, objet: true, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } },
       auteur: true,
       allocations: { include: { categorie: true } },
     },
@@ -113,10 +114,13 @@ export async function GET(
   const categorieLabelUnique =
     reglement.allocations.length === 1 ? reglement.allocations[0].categorie.label : reglement.demande.categorie?.label ?? null;
 
+  const article = await chargerArticleDocument(reglement, reglement.demande, estFinanceOuDG);
   const data: ReceiptData = {
     recuReference,
     demandeReference: reglement.demande.reference,
     demandeurNom: reglement.demande.createur.fullName,
+    serviceNom: reglement.demande.createur.service?.name ?? null,
+    article,
     beneficiaireNom: nomBeneficiaireDemande(reglement.demande, reglement.demande.lignes, { seulementValidees: true }),
     categorieLabel: repartitionCategories ? null : categorieLabelUnique,
     objetLabel: repartitionCategories ? null : reglement.demande.objet?.label ?? null,

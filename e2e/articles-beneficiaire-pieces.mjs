@@ -165,19 +165,23 @@ let demandeId;
   await autre.ctx.close();
 }
 
-// --- 4. Règlement bloqué tant que les bénéficiaires diffèrent ---------------------------------------------------
+// --- 4. Règlement PAR ARTICLE (lot D) : le blocage « plusieurs bénéficiaires » du lot A est levé -----------------------
 {
   await q(`UPDATE "LigneDemande" SET "statutValidation" = 'VALIDEE', "categorieId" = (SELECT id FROM "Categorie" LIMIT 1) WHERE "demandeId" = $1`, [demandeId]);
   await q(`UPDATE "Demande" SET "montantValide" = montant, statut = 'VALIDEE_NON_REGLEE', "etapeCircuit" = 'TERMINEE' WHERE id = $1`, [demandeId]);
   const { ctx, p } = await connecter("assistant-finance@simassurances.test");
   await p.goto(`${B}/treso/finance/demandes/${demandeId}`);
-  await p.getByRole("button", { name: "Ajouter un règlement" }).click();
-  await p.locator('input[name="montant"]').fill("1000");
-  await p.locator("form").filter({ has: p.locator('input[name="montant"]') }).getByRole("button", { name: /Enregistrer|Créer|Ajouter/ }).first().click();
+  const blocA = p.locator("[data-article-reglement]").first();
+  await blocA.getByRole("button", { name: "Ajouter un règlement" }).click();
+  await blocA.locator('input[name="montant"]').fill("1000");
+  await blocA.locator('select[name="mode"]').selectOption("BANQUE");
+  await blocA.getByRole("button", { name: "Créer le règlement" }).click();
   await p.waitForTimeout(1500);
-  const reglements = (await q(`SELECT count(*)::int AS n FROM "Reglement" WHERE "demandeId" = $1`, [demandeId]))[0].n;
-  verifier("règlement : aucun règlement créé (plusieurs bénéficiaires)", reglements === 0);
-  verifier("règlement : phrase « plusieurs bénéficiaires » affichée", (await p.content()).includes("plusieurs bénéficiaires"));
+  const reglements = await q(`SELECT "ligneDemandeId" FROM "Reglement" WHERE "demandeId" = $1`, [demandeId]);
+  verifier("règlement : créé malgré plusieurs bénéficiaires, rattaché à son article", reglements.length === 1 && reglements[0].ligneDemandeId !== null);
+  verifier("règlement : plus aucune phrase « plusieurs bénéficiaires »", !(await p.content()).includes("le règlement par article arrive prochainement"));
+  await q(`DELETE FROM "ReglementCategorieAllocation" WHERE "reglementId" IN (SELECT id FROM "Reglement" WHERE "demandeId" = $1)`, [demandeId]);
+  await q(`DELETE FROM "Reglement" WHERE "demandeId" = $1`, [demandeId]);
   await ctx.close();
 }
 

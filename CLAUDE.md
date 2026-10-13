@@ -2745,7 +2745,7 @@ index). **Aucune colonne sur `Reglement`.**
 - **États intermédiaires sûrs** : (1) **garde 8** et **notifications** (« Demande à régler ») écartent le créateur et le
   bénéficiaire de N'IMPORTE QUEL article (`comptesConcernesDemande`, `refusConflitInteret`, `beneficiairesArticlesUserIds`) ;
   (2) **le règlement est refusé** (création, modification, confirmation) tant que les articles à payer n'ont pas tous le même
-  bénéficiaire : « Cette demande a plusieurs bénéficiaires : le règlement par article arrive prochainement. » — seuls les articles
+  bénéficiaire : « Cette demande a plusieurs bénéficiaires : le règlement par article arrive prochainement. » **(⚠️ blocage LEVÉ par le lot D : chaque article se règle avec SON bénéficiaire)** — seuls les articles
   VALIDÉS comptent quand il y en a (un article rejeté n'est jamais payé). L'annulation d'un règlement existant n'est pas bloquée.
 - **Téléchargement des pièces** : droits de la demande inchangés, étendus au bénéficiaire d'un article. Un compte qui est
   bénéficiaire d'un article ne peut plus être supprimé définitivement (`supprimerUtilisateurAction`).
@@ -2842,6 +2842,64 @@ Retouche d'écran uniquement : aucune règle métier, permission ni migration ne
   jamais de bouton « Soumettre au DG » pour une demande à articles ; le bouton de la demande entière ne subsiste que pour la dépense directe (sans article).
 - **Rappel de la demande en tête de chaque article** (`components/tresorerie/EnteteDemandeArticle.tsx`) : numéro, demandeur, service, date, devise
   (interprétation minimale de « rattache en tête de la demande à chaque article »). Écrans Finance, DG (y compris cas b), Service et collaborateur.
+
+#### Lot D — règlement par article, parcours de l'article, documents (2026-10-16)
+
+Applique les décisions 2, 6 et 8 de la section « Autonomie des articles » (un règlement concerne un seul article ; garde 8 par article ; budget consommé
+au règlement). Le statut de la demande reste dérivé des articles (`statutDepuisLignes`, « En cours (x/n traités) ») : l'énumération n'a pas bougé. Le
+retour de caisse et la régularisation PAR ARTICLE sont le lot E (non codés) : ici, seulement leur lecture dans le parcours.
+
+- **Modèle** : `Reglement.ligneDemandeId` (facultatif, clé `RESTRICT`, indexé). Vide pour une dépense directe (règlement au niveau de la demande,
+  inchangé) et pour un règlement antérieur non rattaché. Migration `20261016090000_reglement_par_article` (additive, idempotente) qui rattache, sans doute
+  possible, les règlements des demandes dont **un seul article est validé** (aucune écriture de caisse touchée). Vérifiée depuis zéro, rejouée sans effet.
+- **Règle** (`backend/src/reglementArticle.ts`, pur, 17 tests) : on règle un article VALIDÉ sans toucher aux autres ; plusieurs règlements partiels d'un même
+  article, dans la limite de SON montant validé (`resteAReglerArticle`, centimes exacts) — le plafond n'est plus le pot commun de la demande.
+  `verdictReglementArticle` / `verdictConfirmationReglementArticle` (article choisi, de la demande, validé ; aucun règlement non rattaché ; montant) sont
+  appelés par la création, la modification et la confirmation (`reglementActions.ts`). L'article d'un règlement ne change jamais. Devise et date restent
+  communes à la demande. Le blocage « plusieurs bénéficiaires » du lot A est **supprimé** (`refusReglementPlusieursBeneficiaires` retirée).
+- **Budget** : l'allocation est 100 % vers la catégorie de l'article (`allocationsReglementArticle`), aucune si l'article n'est pas catégorisé (ancien article) ;
+  consommé à la confirmation uniquement (`getMontantConsommeCategorie`, inchangée). La répartition multi-catégories à saisir (`AllocationCategorieFields`,
+  `construireAllocations`) disparaît : un article n'a qu'une catégorie. Les anciens règlements gardent leurs allocations ; `getCategoriesConcerneesDemande`
+  n'est plus appelée (conservée).
+- **Garde 8 par article** : `refusExecutionPropreReglement(demande, article, userId)` (`circuitDemande.ts`, `comptesConcernesArticle`) n'écarte que le créateur
+  et le bénéficiaire de CET article ; le bénéficiaire d'un autre article peut régler celui-ci. Appliquée à la création, modification, confirmation, annulation
+  d'un règlement et, via `refusConflitInteret` / `refusExecutionPropreSurReglement`, à tout ce qui touche les retours de CE règlement (réception, détail,
+  remboursement…). Sans article visé (dépense directe, règlement non rattaché) : la garde de la demande entière, inchangée. Retour exceptionnel
+  post-clôture, description, libellés : toujours au niveau de la demande. Notification « Demande à régler » : n'écarte que le créateur et ceux qui sont
+  bénéficiaires de TOUS les articles validés (`beneficiairesBloquesReglement`).
+- **État intermédiaire sûr — règlements non rattachés** : une demande à articles qui a un règlement non annulé sans article (deux articles validés ou plus
+  avant le lot D : on ne devine pas lequel il a payé) est signalée sur l'écran Finance (`data-reglements-non-rattaches`) et **plus aucun règlement n'y est créé,
+  modifié ni confirmé** (`MESSAGE_REGLEMENTS_NON_RATTACHES`, côté serveur ET boutons grisés) ; l'annulation reste possible. Les retours de caisse et les
+  dépenses restent attachés à leur règlement (`calculerMontantARetournerNet` est par règlement) : rien n'est attribué à un article au hasard, et le
+  parcours n'affiche que les règlements rattachés. Le retour exceptionnel post-clôture (niveau demande) rend la régularisation d'un article **indéterminée**
+  dès que deux articles ont un règlement Caisse : « Régularisé » n'est alors jamais affiché (note explicative).
+- **Reprise** : `backend/prisma/comptage-reglements-articles.sql` (lecture seule, à lancer en production AVANT le déploiement : nombre de demandes rattachées
+  par la migration / AMBIGUËS, et liste de ces dernières) ; `backend/prisma/recalculer-reglements-articles.ts` (logique pure `repriseReglements.ts`, simulation
+  par défaut) — liste les cas `[AMBIGU]` avec leurs règlements et articles validés, `--affecter ID_REGLEMENT:ID_ARTICLE --appliquer` rattache un règlement
+  (refus si l'article n'est pas validé, étranger à la demande, ou si le total réglé de l'article dépasserait son validé), `--automatique --appliquer` rattache
+  les cas à un seul article validé qui auraient échappé à la migration. Idempotent ; une entrée d'historique `rattachement_reglement_article` par demande ;
+  jamais une écriture de caisse.
+- **Parcours de l'article** (`backend/src/parcoursArticle.ts` pur, 12 tests ; chargé par `getParcoursArticles(demandeId)` ; composant
+  `components/tresorerie/ParcoursArticle.tsx`, branché dans `detailsArticleDe(vue, ligneId, parcours)` donc sur les cartes d'articles du demandeur, du
+  responsable de service, de la Finance/Assistant et du DG) : badge d'état (En attente, Rejeté, Validé, Partiellement réglé, Réglé, Retour en attente,
+  Régularisé), montants clés (validé, réglé, reste, retour attendu / reçu) et SEULES les étapes atteintes — Validé (par qui, quand, montant ; « confirmé par la
+  Finance » si le DG avait validé) → Réglé (date, montant, mode, bénéficiaire) → Retour de caisse (attendu / reçu, règlements Caisse rattachés) → Régularisé
+  (tous les règlements Caisse de l'article à solde nul, article soldé). Banque : jamais de retour ni de régularisation.
+- **Documents** (reçu de règlement, bon de caisse, reçu de retour) : bloc « Article concerné » (libellé, bénéficiaire, montant de l'article ; le reçu y ajoute le
+  réglé à ce jour et le reste de l'ARTICLE) et rappel de la demande (numéro, demandeur, service) (`lib/pdf/articleReglement.ts`, `ArticleSection`,
+  `RappelDemande`). Le libellé est celui de la Finance ; le demandeur sans droit Finance reçoit sa propre version (`libelleDemandeur ?? libelleOriginal`).
+  **Décision à confirmer** : le bon de caisse, jusque-là « volontairement minimaliste », affiche désormais le montant de l'ARTICLE (demandé par le lot) mais
+  toujours ni total réglé ni reste de la demande. Les écrans « Retours en attente » et le détail d'un retour nomment l'article ; la section « Retours de caisse »
+  du demandeur et sa liste de règlements aussi.
+- **Écran Finance** (`ReglementsSection`) : montants de la demande, puis un bloc PAR ARTICLE VALIDÉ (libellé, bénéficiaire, validé / réglé / reste, ses règlements,
+  son formulaire — champ caché `ligneDemandeId`). Boutons visibles mais grisés, avec la phrase, pour le conflit d'intérêts de CET article. `modifierReglementAction`
+  perd son 4ᵉ paramètre (répartition).
+- **Vérifié** : vitest (52 nouveaux tests dont `reglementArticle`, `parcoursArticle`, `repriseReglements` ; garde 8 par article), `tsc`, `eslint`, `next build` ;
+  migration depuis zéro, `migrate diff` vide, rattachement SQL testé (un article validé → rattaché ; deux → intact ; rejeu sans effet) ;
+  e2e `reglement-par-article.mjs` 55/55 sur base jetable (valider 2 articles sur 3, régler l'un en deux fois puis l'autre, C reste en attente, budget consommé
+  article par article, plafond de l'article refusé par le serveur, garde 8 par article contournée par un envoi direct, demande ambiguë bloquée puis débloquée par
+  le script, retour déclaré puis reçu dans le parcours, PDF lus avec `pdftotext`) ; `articles-beneficiaire-pieces.mjs` 34/34 (section règlement réécrite),
+  `soumission-dg-article.mjs` 37/37, `articles-decision-finance.mjs` 65/65.
 
 ### Solde d'ouverture de caisse
 
