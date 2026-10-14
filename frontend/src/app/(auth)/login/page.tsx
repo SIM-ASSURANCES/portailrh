@@ -82,21 +82,11 @@ export default async function LoginPage({
           <p className="mt-1 text-sm text-muted-foreground">Portail interne SIM Assurances</p>
         </div>
 
-        {/* Déconnexion automatique après inactivité (voir CLAUDE.md
-            "Déconnexion automatique après inactivité") — message distinct
-            de l'échec de connexion, `error` réutilisé avec une valeur
-            dédiée plutôt qu'un nouveau paramètre séparé (même convention
-            que `activated` ci-dessous, un paramètre par cas de figure).
-            Trois branches désormais : inactivité (orange, avertissement),
-            limite de tentatives dépassée (rouge, `error=2`, voir
-            `checkRateLimit` ci-dessus), puis le cas générique (identifiants
-            invalides). */}
-        {error === "inactivite" ? (
-          <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-warning-border bg-warning-bg px-3 py-2 text-sm text-warning">
-            <Icon name="alert-triangle" className="mt-0.5 size-4 shrink-0" />
-            Vous avez été déconnecté après une période d&apos;inactivité.
-          </p>
-        ) : error === "2" ? (
+        {/* Limite de tentatives dépassée (rouge, `error=2`, voir `checkRateLimit`
+            ci-dessus), puis le cas générique (identifiants invalides). Un
+            ancien lien `?error=inactivite` (déconnexion pour inactivité,
+            retirée le 2026-10-14) n'est plus une erreur : page normale. */}
+        {error === "inactivite" ? null : error === "2" ? (
           <p className="animate-fade-in-up flex items-start gap-2 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
             <Icon name="alert-triangle" className="mt-0.5 size-4 shrink-0" />
             Trop de tentatives. Veuillez réessayer dans une minute.

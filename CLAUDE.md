@@ -5765,12 +5765,13 @@ layout ou le masquage de l'UI.
   personnalisé (`jwt.encode` custom lisant `token.rememberMe`) : 30 jours
   si coché, 1 jour sinon (décoché par défaut). `rememberMe` n'est jamais
   exposé côté `Session`, uniquement interne au JWT.
-- **Déconnexion automatique après inactivité** — 60 minutes sans
-  interaction physique réelle (`mousemove`/`mousedown`/`keydown`/`wheel`/
-  `touchstart`/`scroll`, avec `event.isTrusted` revérifié), indépendant de
-  l'âge de la session. Fonctionne même sur un onglet en arrière-plan
-  (`setTimeout`, jamais `requestAnimationFrame`). Le rafraîchissement SSE
-  ne compte jamais comme une activité.
+- **Déconnexion automatique après inactivité — RETIRÉE le 2026-10-14** (demande du DG, fluidité du pointage ; plan
+  `PLAN_FIABILISATION_POINTAGE.md`, phase 1). `InactivityLogout`, `logoutForInactivityAction` et le message
+  `?error=inactivite` n'existent plus (un ancien lien qui le porte affiche la page de connexion normalement, sans
+  erreur). Il ne reste que les deux durées ci-dessus, **glissantes** (le middleware ré-encode le jeton à chaque page :
+  1 jour sans la case, 30 jours avec, comptés depuis la DERNIÈRE page visitée) — prouvé par `e2e/session-glissante.mjs`,
+  qui lit l'`exp` dans le jeton déchiffré. **Limite connue** : sur un poste partagé, l'utilisateur doit décocher la case
+  et se déconnecter lui-même.
 
 ### `estAdmin` — accès à la console `/admin`
 
