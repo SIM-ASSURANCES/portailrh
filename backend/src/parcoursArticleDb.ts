@@ -45,18 +45,19 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
       retours: { select: { estReceptionne: true, montantARetourner: true } },
     },
   });
-  const caisseConfirmes = reglements.filter((r) => r.mode === "CAISSE" && r.estConfirme && !r.estAnnule);
+  // Lot G : tous les règlements confirmés, Caisse comme Banque, entrent dans la régularisation de l'article.
+  const confirmes = reglements.filter((r) => r.estConfirme && !r.estAnnule);
   const [soldes, exceptionnels] = await Promise.all([
-    getSoldesARegulariserParReglements(caisseConfirmes.map((r) => r.id)),
+    getSoldesARegulariserParReglements(confirmes.map((r) => r.id)),
     // Seuls les retours exceptionnels SANS article (anciens, demande ambiguë) rendent l'attribution indéterminée.
     prisma.retourExceptionnel.count({ where: { demandeId, statut: "VALIDE", ligneDemandeId: null } }),
   ]);
   const regul = await getRegularisationParArticle(demandeId);
   const regulParLigne = new Map(regul.articles.map((a) => [a.ligneId, a]));
   // Un retour exceptionnel post-clôture SANS article (ancien) est imputé sur les règlements par ancienneté : on ne peut
-  // pas l'attribuer à un article dès que plusieurs articles ont un règlement Caisse. Rattaché à un article (lot E), il est précis.
-  const articlesCaisse = new Set(caisseConfirmes.map((r) => r.ligneDemandeId));
-  const regularisationIndeterminee = exceptionnels > 0 && articlesCaisse.size >= 2;
+  // pas l'attribuer à un article dès que plusieurs articles ont un règlement confirmé. Rattaché à un article (lot E), il est précis.
+  const articlesRegles = new Set(confirmes.map((r) => r.ligneDemandeId));
+  const regularisationIndeterminee = exceptionnels > 0 && articlesRegles.size >= 2;
 
   for (const ligne of demande.lignes) {
     const benef = beneficiaireArticle(ligne, demande);

@@ -7,6 +7,7 @@ import {
   getBeneficiairesConnus,
   getReportingFondsRemis,
   getReportingParDemande,
+  getReportingRetoursCaisse,
   getReportingRows,
   getReportingSuiviBudgetaire,
   parseReportingFilters,
@@ -16,6 +17,7 @@ import {
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 
 import { ReportingDemandesTable } from "./ReportingDemandesTable";
+import { ReportingRetoursTable } from "./ReportingRetoursTable";
 import { ReportingFiltersForm } from "./ReportingFiltersForm";
 
 function rawString(value: string | string[] | undefined): string | undefined {
@@ -51,9 +53,10 @@ export default async function ReportingPage({
   // (soft-delete) — les demandes historiques liées à une catégorie
   // désactivée depuis continuent d'apparaître normalement dans les
   // résultats, ce filtre ne porte que sur les OPTIONS du formulaire.
-  const [lignesDemandes, rows, fondsRemisRows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
+  const [lignesDemandes, lignesRetours, rows, fondsRemisRows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
     await Promise.all([
       getReportingParDemande(filters, (statut) => STATUT_DEMANDE_LABEL[statut]),
+      getReportingRetoursCaisse(filters),
       getReportingRows(filters),
       getReportingFondsRemis(filters),
       getReportingSuiviBudgetaire(),
@@ -128,6 +131,8 @@ export default async function ReportingPage({
       />
 
       <ReportingDemandesTable lignes={lignesDemandes} />
+
+      <ReportingRetoursTable lignes={lignesRetours} />
 
       <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Synthèse par catégorie / objet</h2>

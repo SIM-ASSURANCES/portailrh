@@ -32,6 +32,7 @@ export * from "./retourNul";
 export * from "./reportingDemandeLigne";
 export * from "./regularisationDepenses";
 export * from "./regularisationArticle";
+export * from "./dateLivraisonArticle";
 export * from "./regularisationArticleDb";
 export * from "./feedback";
 export * from "./reinitialisation";
@@ -72,3 +73,5 @@ export * from "./encSaisie";
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).
 export * from "./permissions";
+export * from "./recapRetourCaisseDb";
+export * from "./reportingRetourCaisse";

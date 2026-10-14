@@ -42,7 +42,7 @@ export async function DetailDepensesRetour({
   if (!retour) return null;
   const article = retour.reglement.ligneDemandeId ? await getResumeArticle(retour.reglement.ligneDemandeId) : null;
   const demande = retour.reglement.demande;
-  const fiche = estFicheRegularisation({ ...retour, mode: retour.reglement.mode });
+  const fiche = estFicheRegularisation(retour);
   const clotureeSansException = demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle;
   const conflit = userId ? refusExecutionPropreSurReglement(retour.reglement, userId) : null;
   const peutAgir = canReceptionner && !clotureeSansException && !conflit;

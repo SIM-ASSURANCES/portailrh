@@ -64,11 +64,46 @@ describe("parcours d'un article", () => {
     expect(p.montants).toMatchObject({ regle: 40000, reste: 60000 });
   });
 
-  it("réglé en Banque : « Réglé », jamais « Régularisé » (pas de régularisation de caisse en Banque)", () => {
+  it("réglé en Banque, solde non calculé : « Réglé », pas « Régularisé »", () => {
     const p = parcoursArticle(base({ reglements: [reglement({ mode: "BANQUE", solde: null })] }));
     expect(p.badge).toBe("REGLE");
-    expect(cles(p)).not.toContain("RETOUR");
     expect(cles(p)).not.toContain("REGULARISE");
+  });
+
+  it("lot G — réglé en Banque avec un solde à régulariser : « Réglé » ; solde nul après dépenses : « Régularisé »", () => {
+    expect(parcoursArticle(base({ reglements: [reglement({ mode: "BANQUE", solde: 100000 })] })).badge).toBe("REGLE");
+    const p = parcoursArticle(base({ reglements: [reglement({ mode: "BANQUE", solde: 0 })] }));
+    expect(p.badge).toBe("REGULARISE");
+    expect(cles(p)).toContain("REGULARISE");
+  });
+
+  it("lot G — 60 000 Caisse + 40 000 Banque : réglé = 100 000, retours des deux modes comptés, régularisé seulement si les deux soldes sont nuls", () => {
+    const mixte = (soldeBanque: number) =>
+      parcoursArticle(
+        base({
+          reglements: [
+            reglement({ id: "c", montant: 60000, mode: "CAISSE", solde: 0, retours: [{ estReceptionne: true, montantARetourner: 10000 }] }),
+            reglement({ id: "b", montant: 40000, mode: "BANQUE", solde: soldeBanque, retours: [{ estReceptionne: false, montantARetourner: 5000 }] }),
+          ],
+        })
+      );
+    const p = mixte(0);
+    expect(p.montants).toMatchObject({ regle: 100000, reste: 0, retourAttendu: 15000, retourRecu: 10000 });
+    expect(p.badge).toBe("RETOUR_EN_ATTENTE");
+    expect(mixte(0).etapes.find((x) => x.cle === "REGLE")!.lignes.join(" ")).toMatch(/Caisse/);
+    expect(mixte(0).etapes.find((x) => x.cle === "REGLE")!.lignes.join(" ")).toMatch(/Banque/);
+    // Sans retour en attente : le solde Banque non nul empêche « Régularisé ».
+    const sansAttente = (soldeBanque: number) =>
+      parcoursArticle(
+        base({
+          reglements: [
+            reglement({ id: "c", montant: 60000, solde: 0 }),
+            reglement({ id: "b", montant: 40000, mode: "BANQUE", solde: soldeBanque }),
+          ],
+        })
+      );
+    expect(sansAttente(40000).badge).toBe("REGLE");
+    expect(sansAttente(0).badge).toBe("REGULARISE");
   });
 
   it("un règlement brouillon ou annulé ne compte pas", () => {

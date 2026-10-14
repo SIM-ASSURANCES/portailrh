@@ -11,12 +11,13 @@ export const MESSAGE_RIEN_A_RENDRE =
 const centimes = (m: number) => Math.round(m * 100);
 
 /**
- * Un retour est « nul » quand le montant à rendre calculé vaut 0 sur un règlement Caisse : sa réception n'écrit aucun
- * mouvement dans le journal de caisse (un mouvement de 0 FCFA n'a pas de sens), seulement un constat dans l'historique.
- * Un retour Banque n'est jamais nul (montant reversé > 0, bordereau obligatoire).
+ * Un retour est « nul » quand le montant à rendre calculé vaut 0 : sa réception n'écrit aucun mouvement dans le journal de
+ * caisse (un mouvement de 0 FCFA n'a pas de sens), seulement un constat dans l'historique. Vaut pour un fonds versé en caisse
+ * comme par banque (lot G : le retour d'un fonds bancaire est rendu en espèces à la caisse, même circuit). Un ancien retour
+ * Banque (`versementBancaire`, bordereau, montant toujours > 0) n'est jamais nul.
  */
-export function estRetourNul(retour: { montantARetourner: number; mode: "CAISSE" | "BANQUE" }): boolean {
-  return retour.mode === "CAISSE" && centimes(retour.montantARetourner) === 0;
+export function estRetourNul(retour: { montantARetourner: number; versementBancaire?: boolean }): boolean {
+  return !retour.versementBancaire && centimes(retour.montantARetourner) === 0;
 }
 
 /** Plus rien à rendre sur ce règlement (solde calculé nul) : le collaborateur n'a rien à déclarer. */

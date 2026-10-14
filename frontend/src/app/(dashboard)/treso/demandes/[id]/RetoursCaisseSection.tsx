@@ -12,10 +12,9 @@ import { prisma } from "backend";
 import { RetourCaisseRow } from "./RetourCaisseRow";
 
 /**
- * Section "Retours de caisse" : un règlement CAISSE confirmé et non annulé
- * de la demande = une ligne éligible à un retour. Rien n'est affiché si la
- * demande n'a aucun règlement de ce type (les règlements BANQUE ne donnent
- * jamais lieu à un retour de caisse). Server Component autonome : ne prend
+ * Section "Retours de caisse" : un règlement confirmé et non annulé de la
+ * demande, Caisse OU Banque (lot G : un fonds versé par banque se retourne en espèces à la caisse), = une ligne éligible à
+ * un retour. Rien n'est affiché si la demande n'a aucun règlement confirmé. Server Component autonome : ne prend
  * que l'id de la demande.
  *
  * `peutDeclarer` (Ticket 7) : masque le bouton "Déclarer un retour de
@@ -108,13 +107,13 @@ export async function RetoursCaisseSection({
               dateRetour: retour.dateRetour,
               creeParAssistant: retour.creeParAssistant,
               // Fiche de régularisation de l'Assistant (détail sans retour) : la déclaration du collaborateur la complète.
-              estFiche: estFicheRegularisation({ ...retour, mode: r.mode }),
+              estFiche: estFicheRegularisation(retour),
               // Modification (avant réception) réservée au déclarant
               // original — cohérent avec la déclaration elle-même. Un
               // retour créé par l'Assistant Finance (declarantId = son
               // propre id) n'est donc jamais modifiable depuis cet écran
               // Collaborateur.
-              peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer && r.mode !== "BANQUE",
+              peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer && !retour.versementBancaire,
               depenses: retour.depenses.map((d) => ({
                 id: d.id,
                 montant: Number(d.montant),

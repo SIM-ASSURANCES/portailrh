@@ -3,6 +3,8 @@
 // l'export Excel. Les données multiples sont regroupées dans une cellule (un élément par ligne de la cellule), avec des
 // colonnes numériques de totaux à côté. Fonctions PURES (aucun accès base) : le chargement est dans `reporting.ts`.
 
+import { libelleDateLivraison } from "./dateLivraisonArticle";
+
 /** Une entrée d'historique utile au reporting (validations, clôture, ajustements). */
 export interface HistoriqueReporting {
   action: string;
@@ -37,6 +39,8 @@ export interface DemandeReportingSource {
     motifRejet: string | null;
     decidePar: string | null;
     decideLe: Date | null;
+    /** Date de livraison de l'article (lot G) ; absente de la source = non renseignée par l'appelant. */
+    dateLivraison?: Date | null;
   }[];
   reglements: {
     montant: number;
@@ -55,6 +59,8 @@ export interface DemandeReportingSource {
       declarant: string;
       declareLe: Date;
       creeParAssistant: boolean;
+      /** Ancien versement bancaire (avant le lot G) : jamais un retour nul. */
+      versementBancaire?: boolean;
       complementSignalement: boolean;
       reouvertureExceptionnelle: boolean;
       depenses: { libelle: string; montant: number; justifiee: boolean; motifNonJustifie: string | null }[];
@@ -206,6 +212,7 @@ export function construireLigneReporting(d: DemandeReportingSource): LigneReport
             l.libelle,
             l.motif ? `motif : ${l.motif}` : null,
             `${l.quantite} × ${fcfa(l.prixUnitaire)} = ${fcfa(l.quantite * l.prixUnitaire)}`,
+            l.dateLivraison === undefined ? null : `livraison : ${libelleDateLivraison(l.dateLivraison)}`,
             l.categorie ? `${l.categorie}${l.objet ? ` / ${l.objet}` : ""}` : "sans catégorie",
             [LIBELLE_STATUT_LIGNE[l.statut], l.statut === "REJETEE" && l.motifRejet ? `(${l.motifRejet})` : null, par(l.decidePar, l.decideLe)]
               .filter(Boolean)
@@ -270,7 +277,7 @@ export function construireLigneReporting(d: DemandeReportingSource): LigneReport
       const suffixe = origine.length > 0 ? ` (${origine.join(", ")})` : "";
       if (t.estReceptionne) {
         totalRetourne += t.montantARetourner;
-        const nul = r.mode === "CAISSE" && centimes(t.montantARetourner) === 0;
+        const nul = !t.versementBancaire && centimes(t.montantARetourner) === 0;
         retours.push(
           nul
             ? `Retour nul constaté ${par(t.receptionnePar, t.receptionneLe)}${suffixe}`

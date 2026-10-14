@@ -13,6 +13,7 @@ import { prisma } from "backend";
 import { generateDemandeReference } from "backend";
 import { chargerServiceDuDemandeur, initialiserCircuit, messageBlocageCreationDemande } from "backend";
 import { champsBeneficiaire, choixPropreArticle, MOTIF_LIGNE_MIN, type ChoixBeneficiaire } from "backend";
+import { dateLivraisonAEnregistrer, refusDateLivraison, versDateStockee } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
 const MAX_ATTEMPTS = 5;
@@ -27,6 +28,8 @@ export interface LigneDemandeInput {
   beneficiaire?: ChoixBeneficiaire | null;
   /** Pièces propres à l'article (noms de fichiers renvoyés par la route d'envoi), plusieurs possibles. */
   pieceJointeUrls?: string[];
+  /** Date de livraison de l'article (`YYYY-MM-DD`) ; vide = date commune de la demande (lot G). */
+  dateLivraison?: string;
 }
 
 export interface CreerDemandeInput {
@@ -59,6 +62,13 @@ const ligneSchema = z.object({
   quantite: z.coerce.number().int("Nombre entier attendu").positive("Le nombre doit être supérieur à 0"),
   prixUnitaire: z.coerce.number().nonnegative("Prix unitaire invalide"),
   beneficiaire: choixBeneficiaireSchema.nullish(),
+  dateLivraison: z
+    .string()
+    .optional()
+    .superRefine((v, ctx) => {
+      const refus = refusDateLivraison(v);
+      if (refus) ctx.addIssue({ code: "custom", message: refus });
+    }),
   pieceJointeUrls: z
     .array(z.string().regex(NOM_FICHIER_PIECE, "Pièce jointe invalide."))
     .max(PIECES_PAR_ARTICLE_MAX, `${PIECES_PAR_ARTICLE_MAX} pièces au plus par article.`)
@@ -203,6 +213,8 @@ export async function creerDemandeAction(
                 motif: l.motif.trim(),
                 quantite: l.quantite,
                 prixUnitaire: l.prixUnitaire,
+                // Lot G : date propre de l'article, sinon la date commune (copiée) ; vide si aucune des deux.
+                dateLivraison: versDateStockee(dateLivraisonAEnregistrer(l.dateLivraison, dateLivraisonSouhaitee)),
                 // Bénéficiaire propre à l'article (vide = hérite de celui de la demande).
                 ...(choixParArticle[i] ? champsBeneficiaire(choixParArticle[i], session.user.id) : {}),
               })),

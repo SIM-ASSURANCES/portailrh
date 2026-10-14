@@ -11,6 +11,7 @@ import {
   aPlusieursBeneficiaires,
   choixDepuisStocke,
   detailsArticles,
+  jourDepuisDate,
   nomBeneficiaireDemande,
   saisieDepuisChoix,
   getMontantsLignesParStatut,
@@ -23,6 +24,7 @@ import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
+import { RecapRetourCaisse } from "@/components/tresorerie/RecapRetourCaisse";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
@@ -379,7 +381,9 @@ export default async function MaDemandeDetailPage({
               quantite: l.quantite,
               prixUnitaire: Number(l.prixUnitaire),
               beneficiaire: l.beneficiaireType ? saisieDepuisChoix(choixDepuisStocke(l, demande.createurId)) : null,
+              dateLivraison: jourDepuisDate(l.dateLivraison),
             }))}
+            dateCommune={jourDepuisDate(demande.dateLivraisonSouhaitee)}
             devise={demande.devise}
             commun={saisieDepuisChoix(choixDepuisStocke(demande, demande.createurId))}
             createurId={demande.createurId}
@@ -426,6 +430,8 @@ export default async function MaDemandeDetailPage({
       ) : null}
 
       <ReglementsRecusSection demandeId={demande.id} />
+
+      <RecapRetourCaisse demandeId={demande.id} />
 
       <RetoursCaisseSection demandeId={demande.id} peutDeclarer={peutDeclarerRetour} userId={session.user.id} />
       <RetoursExceptionnelsCollaborateur demandeId={demande.id} />

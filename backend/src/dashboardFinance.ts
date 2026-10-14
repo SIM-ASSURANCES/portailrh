@@ -182,7 +182,7 @@ export async function getDecaissementsARegulariser(): Promise<CompteEtMontant> {
 
 /**
  * Indicateur "À traiter" #4 — fonds remis à régulariser : règlements
- * CAISSE confirmés et non annulés dont le solde à régulariser
+ * confirmés et non annulés (Caisse ET Banque, lot G) dont le solde à régulariser
  * (`getSoldesARegulariserParReglements`, Phase D/G) n'est pas nul —
  * dépenses déclarées + retours reçus ne couvrent pas encore (ou dépassent)
  * le montant réglé. `montant` = somme de ces soldes (peut inclure des
@@ -193,7 +193,7 @@ export async function getDecaissementsARegulariser(): Promise<CompteEtMontant> {
  */
 export async function getFondsRemisARegulariser(): Promise<CompteEtMontant> {
   const reglements = await prisma.reglement.findMany({
-    where: { mode: "CAISSE", estConfirme: true, estAnnule: false },
+    where: { estConfirme: true, estAnnule: false },
     select: { id: true },
   });
   const soldes = await getSoldesARegulariserParReglements(reglements.map((r) => r.id));

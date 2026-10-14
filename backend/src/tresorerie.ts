@@ -1264,8 +1264,7 @@ export async function getReglementsCaisseADeclarer(userId: string): Promise<
 > {
   const reglements = await prisma.reglement.findMany({
     where: {
-      // Inclut désormais les règlements BANQUE (voir CLAUDE.md "Retour sur
-      // règlement Banque") — le retour y est possible, avec bordereau.
+      // Inclut les règlements BANQUE (lot G : le retour d'un fonds versé par banque est rendu en espèces à la caisse).
       estConfirme: true,
       estAnnule: false,
       demande: { createurId: userId, statut: { not: "CLOTUREE" } },

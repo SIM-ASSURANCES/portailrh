@@ -9,7 +9,14 @@ import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DetailsArticleEditeur, type DetailsArticleSaisie } from "@/components/tresorerie/DetailsArticleEditeur";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 import { Button, Input, Textarea } from "@/components/ui";
-import { erreurSaisieBeneficiaire, MOTIF_LIGNE_MIN, saisieVersChoix, type SaisieBeneficiaire } from "backend/client";
+import {
+  erreurSaisieBeneficiaire,
+  jourCourant,
+  MOTIF_LIGNE_MIN,
+  refusDateLivraison,
+  saisieVersChoix,
+  type SaisieBeneficiaire,
+} from "backend/client";
 
 import { abandonnerDemandeAction, corrigerEtResoumettreDemandeAction } from "../../circuit/actions";
 
@@ -22,6 +29,8 @@ export interface LigneACorriger {
   prixUnitaire: number;
   /** Bénéficiaire propre de l'article ; `null` = hérite de celui de la demande. */
   beneficiaire: SaisieBeneficiaire | null;
+  /** Date de livraison de l'article (« AAAA-MM-JJ »), vide pour un ancien article. */
+  dateLivraison: string;
 }
 
 type LigneEdit = {
@@ -33,6 +42,10 @@ type LigneEdit = {
   prixUnitaire: string;
   /** Bénéficiaire propre et NOUVELLES pièces (les pièces déjà jointes sont conservées par le serveur). */
   details: DetailsArticleSaisie;
+  /** Date de livraison de l'article, « AAAA-MM-JJ » (vide = aucune). */
+  dateLivraison: string;
+  /** Valeur d'origine : une date inchangée n'est pas réexaminée (elle peut être passée). */
+  dateLivraisonInitiale: string;
 };
 
 let compteur = 0;
@@ -55,6 +68,7 @@ export function CorrectionDemande({
   commun,
   createurId,
   comptes,
+  dateCommune,
 }: {
   demandeId: string;
   avecLignes: boolean;
@@ -66,6 +80,8 @@ export function CorrectionDemande({
   commun: SaisieBeneficiaire;
   createurId: string;
   comptes: { value: string; label: string }[];
+  /** Date de livraison commune de la demande (« AAAA-MM-JJ »), vide si aucune. */
+  dateCommune: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -81,11 +97,25 @@ export function CorrectionDemande({
       quantite: l.quantite,
       prixUnitaire: String(l.prixUnitaire),
       details: { beneficiaire: l.beneficiaire, pieces: [] },
+      dateLivraison: l.dateLivraison,
+      dateLivraisonInitiale: l.dateLivraison,
     }))
   );
+  const aujourdHui = jourCourant();
+  const [dateAppliquee, setDateAppliquee] = useState(dateCommune);
+  const refusDate = (l: LigneEdit) => (l.dateLivraison === l.dateLivraisonInitiale ? null : refusDateLivraison(l.dateLivraison, aujourdHui));
+  const datesValides = lignes.every((l) => refusDate(l) === null);
+  const appliquerDateATous = () => {
+    const refus = refusDateLivraison(dateAppliquee, aujourdHui);
+    if (!dateAppliquee || refus) {
+      toast.error(refus ?? "Choisissez d'abord une date de livraison.");
+      return;
+    }
+    setLignes((ls) => ls.map((l) => ({ ...l, dateLivraison: dateAppliquee })));
+  };
   const motifsValides = lignes.every((l) => l.motif.trim().length >= MOTIF_LIGNE_MIN);
   const beneficiairesValides = lignes.every((l) => !l.details.beneficiaire || erreurSaisieBeneficiaire(l.details.beneficiaire) === null);
-  const peutResoumettre = avecLignes ? lignes.length > 0 && motifsValides && beneficiairesValides : description.trim().length >= 3;
+  const peutResoumettre = avecLignes ? lignes.length > 0 && motifsValides && beneficiairesValides && datesValides : description.trim().length >= 3;
 
   const total = lignes.reduce((s, l) => s + (Number(l.quantite) || 0) * (Number(l.prixUnitaire) || 0), 0);
   const maj = (key: string, patch: Partial<LigneEdit>) => setLignes((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -102,6 +132,7 @@ export function CorrectionDemande({
           prixUnitaire: Number(l.prixUnitaire) || 0,
           beneficiaire: l.details.beneficiaire ? saisieVersChoix(l.details.beneficiaire) : null,
           pieceJointeUrls: l.details.pieces.map((p) => p.url),
+          dateLivraison: l.dateLivraison,
         })),
         pieceJointeUrl: pieceJointeUrl ?? undefined,
       });
@@ -161,10 +192,23 @@ export function CorrectionDemande({
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => setLignes((ls) => [...ls, { key: cle(), libelle: "", motif: "", quantite: 1, prixUnitaire: "", details: { beneficiaire: null, pieces: [] } }])}
+                  onClick={() => setLignes((ls) => [...ls, { key: cle(), libelle: "", motif: "", quantite: 1, prixUnitaire: "", details: { beneficiaire: null, pieces: [] }, dateLivraison: dateAppliquee, dateLivraisonInitiale: "" }])}
                 >
                   <Icon name="plus-circle" className="size-4" />
                   Ajouter une ligne
+                </Button>
+              </div>
+              <div className="flex flex-wrap items-end gap-2 rounded-md bg-muted/40 p-3">
+                <Input
+                  label="Date de livraison commune"
+                  type="date"
+                  min={aujourdHui}
+                  value={dateAppliquee}
+                  onChange={(e) => setDateAppliquee(e.target.value)}
+                  data-date-livraison-commune
+                />
+                <Button type="button" variant="secondary" data-appliquer-date-a-tous onClick={appliquerDateATous}>
+                  Appliquer la date à tous les articles
                 </Button>
               </div>
               {lignes.map((l) => (
@@ -213,6 +257,15 @@ export function CorrectionDemande({
                       value={l.motif}
                       onChange={(e) => maj(l.key, { motif: e.target.value })}
                       error={l.motif.trim().length < MOTIF_LIGNE_MIN ? `Motif obligatoire (${MOTIF_LIGNE_MIN} caractères minimum).` : undefined}
+                    />
+                    <Input
+                      label="Date de livraison de l'article"
+                      type="date"
+                      min={aujourdHui}
+                      value={l.dateLivraison}
+                      onChange={(e) => maj(l.key, { dateLivraison: e.target.value })}
+                      error={refusDate(l) ?? undefined}
+                      data-date-livraison-article
                     />
                     <DetailsArticleEditeur
                       details={l.details}

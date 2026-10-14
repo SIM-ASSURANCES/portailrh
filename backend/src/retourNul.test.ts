@@ -4,16 +4,20 @@ import { detailRetourNulConstate, estRetourNul, referenceRecuRetour, rienARendre
 
 describe("estRetourNul", () => {
   it("Caisse à 0 : nul", () => {
-    expect(estRetourNul({ montantARetourner: 0, mode: "CAISSE" })).toBe(true);
+    expect(estRetourNul({ montantARetourner: 0 })).toBe(true);
   });
   it("Caisse avec un résidu de virgule flottante sous le centime : nul", () => {
-    expect(estRetourNul({ montantARetourner: 0.001, mode: "CAISSE" })).toBe(true);
+    expect(estRetourNul({ montantARetourner: 0.001 })).toBe(true);
   });
   it("Caisse avec un montant à rendre : non nul", () => {
-    expect(estRetourNul({ montantARetourner: 1500, mode: "CAISSE" })).toBe(false);
+    expect(estRetourNul({ montantARetourner: 1500 })).toBe(false);
   });
-  it("Banque : jamais nul", () => {
-    expect(estRetourNul({ montantARetourner: 0, mode: "BANQUE" })).toBe(false);
+  it("lot G — fonds versé par banque, rendu en espèces : nul à 0 comme pour la caisse", () => {
+    expect(estRetourNul({ montantARetourner: 0, versementBancaire: false })).toBe(true);
+    expect(estRetourNul({ montantARetourner: 2000, versementBancaire: false })).toBe(false);
+  });
+  it("ancien versement bancaire (bordereau) : jamais nul", () => {
+    expect(estRetourNul({ montantARetourner: 0, versementBancaire: true })).toBe(false);
   });
 });
 

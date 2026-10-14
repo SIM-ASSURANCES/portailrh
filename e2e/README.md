@@ -13,6 +13,7 @@ node e2e/articles-beneficiaire-pieces.mjs  # Trésorerie : bénéficiaire et pi�
 node e2e/articles-decision-finance.mjs     # Trésorerie (lot B) : décision par article, statut « En cours », files, frise, reprise
 node e2e/reglement-par-article.mjs     # Trésorerie (lot D) : règlement par article, parcours, garde 8 par article, reprise, PDF (pdftotext requis)
 node e2e/regularisation-par-article.mjs # Trésorerie (lot E) : retour de caisse et régularisation par article, retour exceptionnel par article
+node e2e/lot-g.mjs                  # Trésorerie (lot G) : date de livraison par article, règlements Caisse + Banque, retour d'un fonds bancaire, reçus détaillés, récapitulatif, reporting des retours (pdftotext et unzip requis)
 bash e2e/arreter.sh                  # arrête le serveur et le conteneur
 npm uninstall --no-save playwright
 ```

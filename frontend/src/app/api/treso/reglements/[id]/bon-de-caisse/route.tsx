@@ -74,7 +74,9 @@ export async function GET(
     demandeReference: reglement.demande.reference,
     demandeurNom: reglement.demande.createur.fullName,
     serviceNom: reglement.demande.createur.service?.name ?? null,
-    article: article ? { libelle: article.libelle, beneficiaireNom: article.beneficiaireNom, montantValide: article.montantValide } : null,
+    article: article
+      ? { libelle: article.libelle, beneficiaireNom: article.beneficiaireNom, montantValide: article.montantValide, dateLivraison: article.dateLivraison }
+      : null,
     beneficiaireNom: article?.beneficiaireNom ?? nomBeneficiaireDemande(reglement.demande, reglement.demande.lignes, { seulementValidees: true }),
     confirmeLe: reglement.confirmeAt ?? reglement.createdAt,
     montant: Number(reglement.montant),

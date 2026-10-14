@@ -4,6 +4,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { estRetourNul, nomBeneficiaireDemande, prisma, referenceRecuRetour } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { chargerArticleDocument } from "@/lib/pdf/articleReglement";
+import { chargerHistoriqueDocument } from "@/lib/pdf/historiqueDocument";
 import { RetourReceiptDocument, type RetourReceiptData } from "@/lib/pdf/RetourReceiptDocument";
 
 /**
@@ -72,13 +73,26 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     demandeReference: demande.reference,
     demandeurNom: demande.createur.fullName,
     serviceNom: demande.createur.service?.name ?? null,
-    article: article ? { libelle: article.libelle, beneficiaireNom: article.beneficiaireNom, montantValide: article.montantValide } : null,
+    article: article
+      ? {
+          libelle: article.libelle,
+          beneficiaireNom: article.beneficiaireNom,
+          montantValide: article.montantValide,
+          dateLivraison: article.dateLivraison,
+        }
+      : null,
+    historique: await chargerHistoriqueDocument({
+      demandeId: demande.id,
+      ligneDemandeId: retour.reglement.ligneDemandeId,
+      reglementCourantId: retour.reglement.id,
+    }),
+    versementBancaire: retour.versementBancaire,
     beneficiaireNom: nomBeneficiaireDemande(demande, demande.lignes, { seulementValidees: true }),
     montantRegle: Number(retour.reglement.montant),
     mode: retour.reglement.mode,
     regleLe: retour.reglement.confirmeAt ?? retour.reglement.createdAt,
     montantRetourne: Number(retour.montantARetourner),
-    retourNul: estRetourNul({ montantARetourner: Number(retour.montantARetourner), mode: retour.reglement.mode }),
+    retourNul: estRetourNul({ montantARetourner: Number(retour.montantARetourner), versementBancaire: retour.versementBancaire }),
     receptionneLe: retour.receptionneAt,
     declarantNom: retour.declarant.fullName,
     creeParAssistant: retour.creeParAssistant,

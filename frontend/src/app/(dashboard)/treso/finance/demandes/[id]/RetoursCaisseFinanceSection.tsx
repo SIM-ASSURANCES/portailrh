@@ -15,7 +15,7 @@ import { RetourAssistantTrigger } from "./RetourAssistantTrigger";
  * normalement plus aucune action) : rien à afficher si la demande n'a
  * aucun règlement Caisse confirmé, jamais un bloc vide.
  *
- * Pour chaque règlement Caisse confirmé : la liste de ses retours déjà
+ * Pour chaque règlement confirmé (Caisse ou Banque, lot G) : la liste de ses retours déjà
  * créés (lien "Voir le détail" vers `/treso/finance/retours/[id]`, où se
  * trouve désormais la seule action "Réceptionner" — voir CLAUDE.md "Écran
  * 'Voir' avant 'Réceptionner'"), puis, si `canDeclarerAssistant`
@@ -102,14 +102,13 @@ export async function RetoursCaisseFinanceSection({
               ) : (
                 <p className="text-xs text-muted-foreground">Aucun retour déclaré pour l&apos;instant.</p>
               )}
-              {!aUnRetourEnAttente && canDeclarerAssistant && r.mode === "CAISSE" && !demandeEstCloturee ? (
+              {!aUnRetourEnAttente && canDeclarerAssistant && !demandeEstCloturee ? (
                 <DetaillerDepensesReglement reglementId={r.id} disponible={disponibles[index]} raisonIndisponible={raisonIndisponible} />
               ) : !aUnRetourEnAttente && canDeclarerAssistant ? (
                 <RetourAssistantTrigger
                   reglementId={r.id}
                   montantReglement={Number(r.montant)}
                   motifReouvertureRequis={demandeEstCloturee}
-                  modeReglement={r.mode}
                   raisonIndisponible={raisonIndisponible}
                 />
               ) : null}

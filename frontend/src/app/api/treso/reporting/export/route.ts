@@ -10,6 +10,8 @@ import {
   getReportingJournalBanqueDetail,
   getReportingJournalDetail,
   getReportingParDemande,
+  getReportingRetoursCaisse,
+  COLONNES_REPORTING_RETOUR,
   getReportingRetoursExternesDetail,
   getReportingRows,
   getReportingSuiviBudgetaire,
@@ -47,9 +49,10 @@ export async function GET(request: NextRequest) {
   const searchParams = Object.fromEntries(request.nextUrl.searchParams.entries());
   const filters = parseReportingFilters(searchParams);
 
-  const [demandes, journal, rows, fondsRemis, suiviBudgetaire, dashboard, mouvementsBanque, retoursExternes] =
+  const [demandes, retoursCaisse, journal, rows, fondsRemis, suiviBudgetaire, dashboard, mouvementsBanque, retoursExternes] =
     await Promise.all([
       getReportingParDemande(filters, (statut) => STATUT_DEMANDE_LABEL[statut]),
+      getReportingRetoursCaisse(filters),
       getReportingJournalDetail(filters),
       getReportingRows(filters),
       getReportingFondsRemis(filters),
@@ -84,6 +87,25 @@ export async function GET(request: NextRequest) {
     ligne.alignment = { vertical: "top", wrapText: true };
   }
   styleHeaderRow(sheetDemandes);
+
+  // Retours de caisse (lot G.5) : une ligne par retour, avec le détail de l'article d'origine, la demande et les règlements
+  // de l'article (Caisse et Banque). Mêmes colonnes que l'écran (`COLONNES_REPORTING_RETOUR`).
+  const sheetRetours = workbook.addWorksheet("Retours de caisse", { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
+  sheetRetours.columns = COLONNES_REPORTING_RETOUR.map((c) => ({
+    header: c.montant ? `${c.titre} (FCFA)` : c.titre,
+    key: c.cle,
+    width: c.multi ? 50 : c.montant ? 18 : 22,
+    style: c.montant ? { numFmt: "#,##0" } : c.cle === "declareLe" ? { numFmt: "dd/mm/yyyy" } : undefined,
+  }));
+  for (const l of retoursCaisse) {
+    const valeurs: Record<string, string | number | Date | null> = {};
+    for (const c of COLONNES_REPORTING_RETOUR) {
+      const v = l[c.cle];
+      valeurs[c.cle] = Array.isArray(v) ? (v.length > 0 ? v.join("\n") : "—") : v;
+    }
+    sheetRetours.addRow(valeurs).alignment = { vertical: "top", wrapText: true };
+  }
+  styleHeaderRow(sheetRetours);
 
   // Mouvements banque (voir CLAUDE.md "Retour sur règlement Banque") : historique
   // de traçabilité, aucun solde.

@@ -1359,6 +1359,12 @@ qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionne
 
 #### Retour sur règlement Banque (`JournalBanque`)
 
+> **⚠️ REMPLACÉ pour tout NOUVEAU retour par le lot G (2026-10-14, plus bas)** : un retour sur un fonds versé par banque suit désormais le
+> même circuit qu'un fonds de caisse (date + montant, dépenses détaillées par l'Assistant) et est **rendu en espèces à la caisse** — sa
+> réception écrit une `ENTREE` dans `JournalCaisse`. Plus de bordereau ni d'écriture `JournalBanque` `RETOUR`. Les **anciens** retours Banque
+> (`RetourCaisse.versementBancaire = true`, posé par migration) gardent exactement le traitement ci-dessous (non modifiables, réception sans
+> écriture de caisse) : une écriture déjà passée n'est jamais modifiée. Les puces ci-dessous ne décrivent plus que ces anciens retours.
+
 - Un retour est possible sur un règlement `BANQUE` (avant : refusé). Modélisé comme un **versement
   bancaire justifié** : **bordereau de versement (pièce jointe) OBLIGATOIRE** et montant > 0, côté
   Collaborateur (`creerRetourCaisseAction(reglementId, montant, date, bordereauUrl)`) comme côté
@@ -2947,6 +2953,59 @@ existante n'est jamais modifiée ; un retour nul reste de l'historique seulement
   seulement une fois tous les articles décidés ; retour exceptionnel d'un article avec refus sans article / au-delà du plafond, dépenses d'un autre
   article intactes ; ancien retour sans article non rattaché ; règlements non rattachés bloquants ; invariant avec un calcul SQL indépendant) ;
   régression `reglement-par-article` 55/55, `articles-decision-finance` 65/65, `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
+
+#### Lot G — date de livraison par article, règlements Caisse + Banque partout, retour d'un fonds bancaire, reçus détaillés, récapitulatif, reporting des retours (2026-10-14)
+
+Ajustements après tests, au-dessus du lot E. Principe comptable inchangé : **on ne modifie jamais une écriture de caisse existante**.
+Migrations `20261018090000_date_livraison_article` et `20261018100000_retour_versement_bancaire` (additives, idempotentes, rejouées sans effet).
+
+**1. Date de livraison par article.** `LigneDemande.dateLivraison` (`DATE`, nullable). **La « date commune » du formulaire était DÉJÀ une date de
+livraison** (`Demande.dateLivraisonSouhaitee`, « Date de livraison souhaitée ») : aucun second champ « date commune » n'a été créé, elle reste la date
+commune de la demande (relibellée « Date de livraison commune », déplacée dans « Détails communs »). À l'enregistrement, un article sans date propre reçoit
+une **copie** de la date commune (`dateLivraisonAEnregistrer`, jamais un héritage dynamique) ; un ancien article reste vide, affiché « — », sans reprise.
+La date de création de la demande reste unique (`createdAt`). Module pur `backend/src/dateLivraisonArticle.ts` (refus d'une date passée, la date du jour
+admise ; à la correction, seule une date saisie ou modifiée est réexaminée). Formulaire de création **et** de correction : champ par article + bouton
+« Appliquer la date à tous les articles » (`corrigerEtResoumettre` : `LigneCorrigee.dateLivraison`, absent = inchangé, vide = effacée). Affichée « Livraison : … »
+sur chaque carte d'article (demandeur, Service, Finance/Assistant, DG : `detailsArticles` → `DetailsArticle`), dans les PDF (bloc « Article concerné ») et dans
+la colonne « Lignes d'articles » du reporting.
+
+**2. Règlements Caisse ET Banque dans tous les calculs.** Audit puis correction. Un règlement Banque **n'impacte jamais `JournalCaisse`** (inchangé) mais compte
+comme fonds remis pour l'article partout. Endroits qui ne lisaient que la Caisse, corrigés : parcours de l'article (`parcoursArticle(Db)` : soldes, retours et
+« Régularisé » sur tous les règlements confirmés), « Fonds remis à régulariser » (`getFondsRemisARegulariser`, page et libellé « Montant réglé (Caisse/Banque) »),
+reporting « Fonds remis » (`getFondsRemisParDemande`, allocations `total`), `estFicheRegularisation`, `estRetourNul`, bouton « Détailler » et déclaration de
+l'Assistant sur un règlement Banque, notification « Retour de caisse à déclarer » (aussi pour la Banque), reporting « Retours » (nul). Déjà corrects (vérifiés,
+mode ignoré) : montant réglé, reste à régler, plafond de l'article, badges Partiellement réglé/Réglé, budget consommé (allocations), `getEcartLigne`,
+`getSoldesARegulariserParReglements`. Un même article peut avoir plusieurs règlements mixtes (60 000 Caisse + 40 000 Banque = 100 000).
+- **Décision (réponses de l'utilisateur)** : un fonds versé par banque se justifie par les mêmes dépenses détaillées (même circuit que la Caisse, sans retour obligatoire) ;
+  **son retour est rendu en espèces à la caisse** : `receptionnerRetourAction` écrit une `ENTREE` `JournalCaisse` (comme un retour Caisse). Le formulaire du
+  collaborateur est identique (date + montant, plus de bordereau ni de `JournalBanque` `RETOUR`) ; `declarerRetourAssistantAction(reglementId, motifReouverture?)` perd ses
+  paramètres `bordereauUrl`/`montantRetourneBanque`.
+- **Anciens retours Banque conservés** : `RetourCaisse.versementBancaire` (posé par la migration pour les retours qui ont une ligne `JournalBanque` `RETOUR`). Pour eux :
+  non modifiables, réception **sans** écriture de caisse, jamais « nuls », ni fiche de régularisation, ni complément/remboursement. Tout nouveau retour : `false`.
+- **Conséquence assumée** : tout règlement Banque confirmé affiche désormais un solde à régulariser tant que ses dépenses ne sont pas détaillées (la production a été purgée le
+  26/09 : peu de données).
+
+**3. Reçus détaillés.** `lib/pdf/historiqueDocument.ts` (`chargerHistoriqueDocument`, mêmes agrégats que l'écran) + `HistoriqueSection` : reçu de règlement **et** reçu de
+retour listent chaque règlement de l'article (référence, date, mode, auteur, « ce reçu »), le total réglé, chaque retour de caisse (état, qui), chaque dépense déclarée (justifiée /
+sans pièce formelle / non détaillée), puis le solde final (fonds remis − dépenses − retours reçus). Sans article : toute la demande. Article nommé (version Finance pour la
+Finance, d'origine pour le demandeur), demande rappelée, date de livraison. **Le bon de caisse reste volontairement minimal** (document remis en main propre : pas d'historique), il gagne
+seulement la date de livraison. Aucun motif Finance ni catégorie n'est imprimé.
+
+**4. Récapitulatif du collaborateur.** `getRecapRetourCaisse` (`recapRetourCaisseDb.ts`) + `RecapRetourCaisse.tsx`, sur la page de détail de SA demande : un bloc par article
+(libellé d'origine) puis le total de la demande — fonds reçus (dont Caisse / Banque), retours de caisse (déclarés, reçus, en attente), dépenses justifiées, sans pièce formelle,
+reste non détaillé, solde, état. Aucune information de gestion interne. **Vue d'ensemble de toutes ses demandes** : déjà couverte par « Mon tableau de bord » (état de régularisation
+par demande) — non dupliquée.
+
+**5. Reporting des retours de caisse.** `getReportingRetoursCaisse` + `reportingRetourCaisse.ts` (pur) : une ligne par retour — article d'origine (libellé Finance **et** libellé du
+demandeur, bénéficiaire, montant validé, date de livraison), règlements de l'article (Caisse/Banque, dont Caisse, dont Banque), demande (numéro, demandeur, service), retour (état, déclaré,
+réception, nature, montants). Tableau sur `/treso/finance/reporting` (`ReportingRetoursTable`) et feuille Excel « Retours de caisse » (mêmes colonnes `COLONNES_REPORTING_RETOUR`). Le reste du
+reporting par article reste le lot F.
+
+**Vérifié** : vitest (16 nouveaux tests ; 731 au total, seul échec connu `feedback.test.ts`), tsc, eslint (backend + frontend), `next build` ; migrations depuis zéro, `migrate diff` vide, rejeu
+sans effet, rattrapage `versementBancaire` testé (retour avec `JournalBanque` RETOUR → `true`, autre → `false`) ; e2e `lot-g.mjs` 65/65 (formulaire de création et de correction, dates, « — » pour un ancien
+article, article de 100 000 réglé 60 000 Caisse + 40 000 Banque : solde de caisse inchangé par la Banque, budget 100 000, régularisation, retour d'un fonds bancaire rendu en espèces puis écrit en
+caisse, ancien retour bancaire inchangé, 3 PDF, récapitulatif, reporting et export) ; régressions `regularisation-par-article` 38/38, `reglement-par-article` 55/55, `articles-decision-finance` 65/65,
+`soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
 
 ### Solde d'ouverture de caisse
 

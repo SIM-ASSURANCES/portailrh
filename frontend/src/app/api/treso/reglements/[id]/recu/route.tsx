@@ -5,6 +5,7 @@ import { nomBeneficiaireDemande } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { chargerArticleDocument } from "@/lib/pdf/articleReglement";
+import { chargerHistoriqueDocument } from "@/lib/pdf/historiqueDocument";
 import { ReceiptDocument, type ReceiptData } from "@/lib/pdf/ReceiptDocument";
 import { getResteARegler, getTotalRegle } from "backend";
 
@@ -115,7 +116,13 @@ export async function GET(
     reglement.allocations.length === 1 ? reglement.allocations[0].categorie.label : reglement.demande.categorie?.label ?? null;
 
   const article = await chargerArticleDocument(reglement, reglement.demande, estFinanceOuDG);
+  const historique = await chargerHistoriqueDocument({
+    demandeId: reglement.demandeId,
+    ligneDemandeId: reglement.ligneDemandeId,
+    reglementCourantId: reglement.id,
+  });
   const data: ReceiptData = {
+    historique,
     recuReference,
     demandeReference: reglement.demande.reference,
     demandeurNom: reglement.demande.createur.fullName,

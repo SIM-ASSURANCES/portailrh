@@ -811,6 +811,11 @@ model LigneDemande {
   beneficiaireUser   User?            @relation("LigneDemandeBeneficiaire", fields: [beneficiaireUserId], references: [id])
   beneficiaireNom    String?
 
+  /// Date de livraison de CET article (lot G, 2026-10-14). Vide pour les articles antérieurs (affichée « — », aucune
+  /// reprise) ; à la création, un article sans date propre reçoit la date commune de la demande
+  /// (`Demande.dateLivraisonSouhaitee`), copiée telle quelle — jamais un héritage dynamique.
+  dateLivraison DateTime? @db.Date
+
   /// Pièces jointes de CET article (plusieurs possibles). Une pièce de la demande entière (« pièce commune ») n'a
   /// pas de `ligneDemandeId`.
   pieces PieceJointe[]
@@ -916,6 +921,11 @@ model RetourCaisse {
   /// (`getSoldeCaisse`) qu'aucun solde financier ne se saisit à la main.
   montantARetourner Decimal        @db.Decimal(14, 2)
   estReceptionne    Boolean        @default(false)
+  /// Ancien retour sur règlement Banque (avant le lot G, 2026-10-14) : versement à la banque justifié par un bordereau, écrit
+  /// dans `JournalBanque` (RETOUR), JAMAIS en caisse. Posé par la migration pour ces seuls retours ; tout nouveau retour (Caisse
+  /// ou Banque) est rendu en espèces à la caisse et écrit à la réception dans `JournalCaisse`. Une écriture déjà passée n'est
+  /// jamais modifiée : ces anciens retours gardent leur traitement (non modifiables, réception sans écriture de caisse).
+  versementBancaire Boolean        @default(false)
   depenses          DepenseLigne[]
 
   reglementId String

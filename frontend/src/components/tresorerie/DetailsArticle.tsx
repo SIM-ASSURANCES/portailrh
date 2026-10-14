@@ -1,4 +1,5 @@
 import type { ParcoursArticle, VueDetailsArticles } from "backend";
+import { libelleDateLivraison } from "backend/client";
 
 import { Badge } from "@/components/ui";
 
@@ -20,6 +21,7 @@ export function DetailsArticle({
   afficherBeneficiaire,
   pieces,
   piecesCommunes,
+  dateLivraison,
 }: {
   beneficiaireLibelle: string;
   beneficiairePropre: boolean;
@@ -27,11 +29,15 @@ export function DetailsArticle({
   afficherBeneficiaire: boolean;
   pieces: PieceLien[];
   piecesCommunes: PieceLien[];
+  /** Date de livraison de l'article (lot G) ; `null` pour un article antérieur, affiché « — ». */
+  dateLivraison: Date | null;
 }) {
-  if (!afficherBeneficiaire && pieces.length === 0 && piecesCommunes.length === 0) return null;
   const lien = "text-info underline-offset-4 transition-colors hover:text-primary hover:underline";
   return (
     <div data-details-article className="mt-1 space-y-0.5 text-xs font-normal text-muted-foreground">
+      <p data-date-livraison>
+        Livraison : <span className="text-foreground">{libelleDateLivraison(dateLivraison)}</span>
+      </p>
       {afficherBeneficiaire ? (
         <p data-beneficiaire-article>
           Bénéficiaire : <span className="text-foreground">{beneficiaireLibelle}</span>{" "}
@@ -79,6 +85,7 @@ export function detailsArticleDe(vue: VueDetailsArticles, ligneId: string, parco
           afficherBeneficiaire={vue.afficherBeneficiaire}
           pieces={v.pieces}
           piecesCommunes={vue.detaille ? vue.communes : []}
+          dateLivraison={v.dateLivraison}
         />
       ) : null}
       {p ? <ParcoursArticleView parcours={p} /> : null}

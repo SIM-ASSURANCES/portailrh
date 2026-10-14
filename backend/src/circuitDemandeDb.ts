@@ -23,6 +23,7 @@ import {
 } from "./circuitDemande";
 import { montantValideDepuisLignes } from "./etatArticles";
 import { refusMotifLigne } from "./motifLigne";
+import { dateLivraisonAEnregistrer, jourCourant, jourDepuisDate, refusDateLivraison, versDateStockee } from "./dateLivraisonArticle";
 import { champsBeneficiaire, type ChoixBeneficiaire } from "./beneficiaire";
 import { beneficiaireArticle, choixDepuisStocke, choixPropreArticle } from "./beneficiaireArticles";
 
@@ -616,6 +617,11 @@ export interface LigneCorrigee {
   beneficiaire?: ChoixBeneficiaire | null;
   /** Nouvelles pièces de l'article ; celles déjà jointes sont conservées. */
   pieceJointeUrls?: string[];
+  /**
+   * Date de livraison de l'article (lot G), « AAAA-MM-JJ » : absente = inchangée (ligne existante) ou copie de la date
+   * commune de la demande (nouvelle ligne) ; chaîne vide = effacée. Une date passée n'est refusée que si elle change.
+   */
+  dateLivraison?: string | null;
 }
 
 export interface CorrectionDemande {
@@ -682,6 +688,14 @@ export async function corrigerEtResoumettre(
     if (refusMotif) return { ok: false, message: refusMotif };
     if (!Number.isInteger(l.quantite) || l.quantite < 1) return { ok: false, message: "Chaque ligne doit avoir un nombre entier supérieur à 0." };
     if (!(l.prixUnitaire >= 0)) return { ok: false, message: "Prix unitaire invalide." };
+    if (l.dateLivraison) {
+      const avantDate = l.id ? d.lignes.find((x) => x.id === l.id)?.dateLivraison : null;
+      // Une date inchangée (même passée) n'est pas réexaminée ; seule une date saisie ou modifiée doit être valide.
+      if (!avantDate || jourDepuisDate(avantDate) !== l.dateLivraison) {
+        const refus = refusDateLivraison(l.dateLivraison, jourCourant());
+        if (refus) return { ok: false, message: refus };
+      }
+    }
   }
   // Bénéficiaire propre de chaque article après correction : le choix reçu, ramené à « hérite » (null) s'il égale celui
   // de la demande ; absent pour une ligne existante = l'actuel est conservé.
@@ -726,6 +740,7 @@ export async function corrigerEtResoumettre(
       motif: l.motif,
       quantite: l.quantite,
       prixUnitaire: Number(l.prixUnitaire),
+      ...(l.dateLivraison ? { dateLivraison: jourDepuisDate(l.dateLivraison) } : {}),
       // Bénéficiaire propre de l'article, le cas échéant (absent = celui de la demande).
       ...(l.beneficiaireType ? { beneficiaire: beneficiaireArticle(l, d).libelle } : {}),
       decision: l.statutValidation,
@@ -816,6 +831,7 @@ export async function corrigerEtResoumettre(
           quantite: l.quantite,
           prixUnitaire: l.prixUnitaire,
           ...champsBeneficiaireLigne,
+          ...(l.dateLivraison !== undefined ? { dateLivraison: versDateStockee(l.dateLivraison || null) } : {}),
           ...decisionRemiseAZero,
           ...(libelle !== avant.libelle
             ? { libelle, libelleDemandeur: libelle, libelleOriginal: avant.libelleOriginal ?? avant.libelle }
@@ -828,7 +844,15 @@ export async function corrigerEtResoumettre(
       });
     } else {
       const creee = await db.ligneDemande.create({
-        data: { demandeId, libelle, motif, quantite: l.quantite, prixUnitaire: l.prixUnitaire, ...champsBeneficiaireLigne },
+        data: {
+          demandeId,
+          libelle,
+          motif,
+          quantite: l.quantite,
+          prixUnitaire: l.prixUnitaire,
+          ...champsBeneficiaireLigne,
+          dateLivraison: versDateStockee(dateLivraisonAEnregistrer(l.dateLivraison || null, jourDepuisDate(d.dateLivraisonSouhaitee))),
+        },
       });
       ligneId = creee.id;
     }

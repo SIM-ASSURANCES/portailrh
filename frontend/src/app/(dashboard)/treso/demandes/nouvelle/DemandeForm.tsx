@@ -12,6 +12,7 @@ import {
   appliquerATous,
   erreurSaisieBeneficiaire,
   ilYADesPersonnalisations,
+  refusDateLivraison,
   MOTIF_LIGNE_MIN,
   SAISIE_BENEFICIAIRE_MOI,
   saisieVersChoix,
@@ -40,6 +41,8 @@ type LigneEdit = {
   prixUnitaire: string;
   /** Bénéficiaire et pièces propres à l'article (autonomie des articles, lot A). */
   details: DetailsArticleSaisie;
+  /** Date de livraison de l'article (`YYYY-MM-DD`, lot G) ; vide = reçoit la date commune à l'enregistrement. */
+  dateLivraison: string;
 };
 
 function nouvelleLigne(): LigneEdit {
@@ -50,6 +53,7 @@ function nouvelleLigne(): LigneEdit {
     quantite: 1,
     prixUnitaire: "",
     details: { beneficiaire: null, pieces: [] },
+    dateLivraison: "",
   };
 }
 
@@ -120,6 +124,14 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
     setConfirmerAppliquer(false);
     toast.success("Le bénéficiaire commun est appliqué à tous les articles.");
   }
+  function appliquerDateATous() {
+    if (!dateLivraison) {
+      toast.error("Saisissez d'abord la date de livraison commune.");
+      return;
+    }
+    setLignes((prev) => prev.map((l) => ({ ...l, dateLivraison })));
+    toast.success("La date de livraison commune est appliquée à tous les articles.");
+  }
   function demanderAppliquerATous() {
     if (ilYADesPersonnalisations(lignes.map((l) => l.details), commun, createurId)) setConfirmerAppliquer(true);
     else appliquerCommunATous();
@@ -132,6 +144,12 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
     lignes.forEach((l, i) => {
       const e = l.details.beneficiaire ? erreurSaisieBeneficiaire(l.details.beneficiaire) : null;
       if (e) errors[`lignes.${i}.beneficiaire`] = e;
+    });
+    const erreurDateCommune = refusDateLivraison(dateLivraison);
+    if (erreurDateCommune) errors.dateLivraisonSouhaitee = erreurDateCommune;
+    lignes.forEach((l, i) => {
+      const e = refusDateLivraison(l.dateLivraison);
+      if (e) errors[`lignes.${i}.dateLivraison`] = e;
     });
     setFieldErrors(errors);
 
@@ -163,6 +181,7 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
           prixUnitaire: Number(l.prixUnitaire) || 0,
           beneficiaire: l.details.beneficiaire ? saisieVersChoix(l.details.beneficiaire) : null,
           pieceJointeUrls: l.details.pieces.map((p) => p.url),
+          dateLivraison: l.dateLivraison || undefined,
         })),
         pieceJointeUrl: pieceJointeUrl ?? undefined,
       });
@@ -291,6 +310,18 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
                     value={ligne.motif}
                     onChange={(e) => updateLigne(ligne.key, { motif: e.target.value })}
                   />
+                  <div className="mt-2 max-w-xs">
+                    <Input
+                      label="Date de livraison de l'article"
+                      type="date"
+                      min={aujourdHui}
+                      data-date-livraison-article
+                      hint={ligne.dateLivraison ? undefined : dateLivraison ? "Vide : la date commune sera utilisée." : undefined}
+                      value={ligne.dateLivraison}
+                      onChange={(e) => updateLigne(ligne.key, { dateLivraison: e.target.value })}
+                      error={fieldErrors[`lignes.${lignes.indexOf(ligne)}.dateLivraison`]}
+                    />
+                  </div>
                   <DetailsArticleEditeur
                     details={ligne.details}
                     commun={commun}
@@ -330,6 +361,23 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
         <div className="mt-4 space-y-4">
           <BeneficiaireChamp value={commun} onChange={setCommun} comptes={comptes} error={fieldErrors.beneficiaire} />
           <PieceJointeUpload label="Pièce commune" onChange={(url) => setPieceJointeUrl(url)} />
+          <div className="max-w-xs">
+            <Input
+              label="Date de livraison commune"
+              type="date"
+              min={aujourdHui}
+              data-date-livraison-commune
+              hint="Ne peut pas être dans le passé."
+              value={dateLivraison}
+              onChange={(e) => setDateLivraison(e.target.value)}
+              error={fieldErrors.dateLivraisonSouhaitee}
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" variant="secondary" data-appliquer-date-a-tous onClick={appliquerDateATous}>
+              Appliquer la date à tous les articles
+            </Button>
+          </div>
           <div className="flex flex-wrap items-center gap-3">
             <Button type="button" variant="secondary" data-appliquer-a-tous onClick={demanderAppliquerATous}>
               Appliquer à tous les articles
@@ -355,15 +403,6 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
         </h2>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Input
-            label="Date de livraison souhaitée"
-            type="date"
-            min={aujourdHui}
-            hint="Ne peut pas être dans le passé."
-            value={dateLivraison}
-            onChange={(e) => setDateLivraison(e.target.value)}
-            error={fieldErrors.dateLivraisonSouhaitee}
-          />
           <Select
             label="Devise"
             options={[...DEVISE_OPTIONS]}

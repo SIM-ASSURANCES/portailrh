@@ -56,7 +56,7 @@ export interface ParcoursReglement {
   estAnnule: boolean;
   /** Date de confirmation (le règlement a réellement eu lieu). */
   confirmeAt: Date | null;
-  /** Solde à régulariser du règlement (Caisse seulement) ; `null` si non calculé (Banque). */
+  /** Solde à régulariser du règlement (Caisse comme Banque, lot G) ; `null` si non calculé. */
   solde: number | null;
   retours: ParcoursRetour[];
 }
@@ -121,8 +121,8 @@ export const NOTE_REGULARISATION_INDETERMINEE =
 
 export function parcoursArticle(e: EntreeParcours): ParcoursArticle {
   const confirmes = e.reglements.filter((r) => r.estConfirme && !r.estAnnule);
-  const caisse = confirmes.filter((r) => r.mode === "CAISSE");
-  const retours = caisse.flatMap((r) => r.retours);
+  // Lot G : un fonds versé par banque compte comme un fonds versé en caisse pour les retours et la régularisation.
+  const retours = confirmes.flatMap((r) => r.retours);
 
   const valide = e.statut === "VALIDEE" ? e.montant : 0;
   const regle = confirmes.reduce((s, r) => s + c(r.montant), 0) / 100;
@@ -178,9 +178,9 @@ export function parcoursArticle(e: EntreeParcours): ParcoursArticle {
     etapes.push({ cle: "RETOUR", libelle: "Retour de caisse", lignes });
   }
 
-  const soldesConnus = caisse.length > 0 && caisse.every((r) => r.solde != null);
-  const regularise = soldesConnus && caisse.every((r) => c(r.solde as number) === 0) && !e.regularisationIndeterminee;
-  const note = e.regularisationIndeterminee && caisse.length > 0 ? NOTE_REGULARISATION_INDETERMINEE : null;
+  const soldesConnus = confirmes.length > 0 && confirmes.every((r) => r.solde != null);
+  const regularise = soldesConnus && confirmes.every((r) => c(r.solde as number) === 0) && !e.regularisationIndeterminee;
+  const note = e.regularisationIndeterminee && confirmes.length > 0 ? NOTE_REGULARISATION_INDETERMINEE : null;
   if (regularise && reste === 0) {
     const lignes: string[] = [];
     const g = e.regularisation;

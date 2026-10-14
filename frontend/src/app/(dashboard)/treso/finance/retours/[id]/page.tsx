@@ -214,7 +214,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
               retourId={retour.id}
               disabled={!peutAgirRetour}
               raisonIndisponible={canReceptionner ? conflitInteret : null}
-              retourNul={estRetourNul({ montantARetourner: Number(retour.montantARetourner), mode: retour.reglement.mode })}
+              retourNul={estRetourNul({ montantARetourner: Number(retour.montantARetourner), versementBancaire: retour.versementBancaire })}
             />
           ) : (
             // Reçu du retour (nul ou non) dès que l'Assistant l'a réceptionné : mêmes accès que cet écran.

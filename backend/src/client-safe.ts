@@ -31,6 +31,7 @@ export * from "./categorisationObligatoire";
 export * from "./retourNul";
 export * from "./regularisationDepenses";
 export * from "./regularisationArticle";
+export * from "./dateLivraisonArticle";
 // Constantes/validations pures uniquement (compteur de caractères côté
 // client) — depuis `./feedback-constants`, JAMAIS depuis `./feedback` :
 // même un `export { X } from "./feedback"` nommé (pas `export *`)

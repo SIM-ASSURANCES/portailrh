@@ -258,25 +258,25 @@ export function repartirPieces<P extends { id: string; ligneDemandeId?: string |
  */
 export interface VueDetailsArticles {
   communes: Array<{ id: string }>;
-  parArticle: Map<string, { beneficiaire: BeneficiaireEffectif; pieces: Array<{ id: string }> }>;
+  parArticle: Map<string, { beneficiaire: BeneficiaireEffectif; pieces: Array<{ id: string }>; dateLivraison: Date | null }>;
   afficherBeneficiaire: boolean;
   /** Au moins un article a un bénéficiaire ou des pièces propres : la pièce commune est alors rappelée sous chaque article. */
   detaille: boolean;
 }
 
-export function detailsArticles<A extends BeneficiaireStocke & { id: string }>(
+export function detailsArticles<A extends BeneficiaireStocke & { id: string; dateLivraison?: Date | null }>(
   demande: BeneficiaireStocke,
   articles: readonly A[],
   pieces: ReadonlyArray<{ id: string; ligneDemandeId?: string | null }>
 ): VueDetailsArticles {
   const { communes, parArticle } = repartirPieces(pieces);
   const defaut = cleBeneficiaire(beneficiaireDemande(demande));
-  const vues = new Map<string, { beneficiaire: BeneficiaireEffectif; pieces: Array<{ id: string }> }>();
+  const vues = new Map<string, { beneficiaire: BeneficiaireEffectif; pieces: Array<{ id: string }>; dateLivraison: Date | null }>();
   let afficherBeneficiaire = false;
   for (const a of articles) {
     const b = beneficiaireArticle(a, demande);
     if (cleBeneficiaire(b) !== defaut) afficherBeneficiaire = true;
-    vues.set(a.id, { beneficiaire: b, pieces: parArticle.get(a.id) ?? [] });
+    vues.set(a.id, { beneficiaire: b, pieces: parArticle.get(a.id) ?? [], dateLivraison: a.dateLivraison ?? null });
   }
   const detaille = afficherBeneficiaire || [...vues.values()].some((v) => v.pieces.length > 0);
   return { communes, parArticle: vues, afficherBeneficiaire, detaille };

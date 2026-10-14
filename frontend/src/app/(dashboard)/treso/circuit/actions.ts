@@ -223,6 +223,8 @@ export async function corrigerEtResoumettreDemandeAction(
         // Autonomie des articles, lot A : bénéficiaire et pièces propres à l'article (revalidés par le moteur).
         beneficiaire: choixRecu(l.beneficiaire),
         pieceJointeUrls: Array.isArray(l.pieceJointeUrls) ? l.pieceJointeUrls.map(String) : undefined,
+        // Lot G : date de livraison de l'article (absente = inchangée ; chaîne vide = effacée).
+        dateLivraison: l.dateLivraison === undefined || l.dateLivraison === null ? undefined : String(l.dateLivraison),
       })),
       pieceJointeUrl: correction?.pieceJointeUrl ? String(correction.pieceJointeUrl) : undefined,
     })

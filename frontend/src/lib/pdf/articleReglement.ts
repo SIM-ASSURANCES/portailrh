@@ -1,6 +1,7 @@
 import {
   beneficiaireArticle,
   montantValideArticle,
+  libelleDateLivraison,
   prisma,
   resteAReglerArticle,
   totalRegleArticle,
@@ -13,6 +14,8 @@ export interface ArticleDocument {
   beneficiaireNom: string;
   /** Montant validé de l'article. */
   montantValide: number;
+  /** Date de livraison de l'article, formatée (« — » pour un ancien article). */
+  dateLivraison: string;
   /** Réglé à ce jour sur l'article / reste (état le plus à jour, comme le reste du reçu). */
   regleADate: number;
   resteARegler: number;
@@ -51,6 +54,7 @@ export async function chargerArticleDocument(
     libelle: vueFinance ? ligne.libelle : (ligne.libelleDemandeur ?? ligne.libelleOriginal ?? ligne.libelle),
     beneficiaireNom: beneficiaireArticle(ligne, demande).libelle,
     montantValide: montantValideArticle(article),
+    dateLivraison: libelleDateLivraison(ligne.dateLivraison),
     regleADate: totalRegleArticle(reglements, ligne.id),
     resteARegler: resteAReglerArticle(article, reglements),
   };

@@ -121,6 +121,34 @@ describe("agregerRegularisation : une demande à 3 articles", () => {
   });
 });
 
+describe("lot G — un article réglé par caisse ET par banque", () => {
+  // Article A de 100 000 : règlement 1 de 60 000 (caisse), règlement 2 de 40 000 (banque). Le mode ne figure pas dans l'entrée :
+  // la régularisation ne lit jamais le mode, tous les règlements confirmés comptent.
+  const reglements = [
+    { id: "caisse", ligneDemandeId: "A", montant: 60000, estConfirme: true, estAnnule: false },
+    { id: "banque", ligneDemandeId: "A", montant: 40000, estConfirme: true, estAnnule: false },
+  ];
+  it("fonds remis = somme des deux, solde à régulariser = 100 000 tant que rien n'est justifié", () => {
+    const r = agregerRegularisation({ reglements, retours: [], remboursements: [], exceptionnels: [] });
+    expect(r.parArticle.get("A")!.fondsRemis).toBe(100000);
+    expect(getEcartLigne(r.parArticle.get("A")!)).toBe(100000);
+    expect(etatRegularisationArticle({ valide: true, agregats: r.parArticle.get("A")! })).toBe("A_REGULARISER");
+  });
+  it("dépenses sur le règlement banque + retour reçu sur le règlement caisse : régularisé à 0", () => {
+    const r = agregerRegularisation({
+      reglements,
+      retours: [
+        { reglementId: "banque", estReceptionne: false, montantARetourner: 0, depenses: [{ montant: 40000, justification: "FACTURE", objet: "Achat", motifNonJustifie: null }] },
+        { reglementId: "caisse", estReceptionne: true, montantARetourner: 20000, depenses: [{ montant: 40000, justification: "FACTURE", objet: "Achat", motifNonJustifie: null }] },
+      ],
+      remboursements: [],
+      exceptionnels: [],
+    });
+    expect(getEcartLigne(r.parArticle.get("A")!)).toBe(0);
+    expect(etatRegularisationArticle({ valide: true, agregats: r.parArticle.get("A")! })).toBe("REGULARISE");
+  });
+});
+
 describe("état de régularisation et article terminé", () => {
   it("non validé, en attente de règlement, à régulariser, régularisé, anomalie", () => {
     expect(etatRegularisationArticle({ valide: false, agregats: ag() })).toBe("REJETE_OU_EN_ATTENTE");
