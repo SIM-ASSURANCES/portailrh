@@ -8,7 +8,11 @@ interface FondsARegulariserRow {
   id: string;
   demandeId: string;
   demandeReference: string;
+  /** Article payé par ce règlement (lot E) ; `null` pour un règlement non rattaché à un article. */
+  articleLibelle?: string | null;
   montantReglement: number;
+  /** Mode du règlement (lot G : Caisse ET Banque figurent ici). */
+  mode: "CAISSE" | "BANQUE";
   depensesDeclarees: number;
   retoursRecus: number;
   solde: number;
@@ -30,13 +34,19 @@ export function FondsARegulariserTable({ reglements }: { reglements: FondsARegul
           header: "Demande",
           sortable: true,
           accessor: (r) => r.demandeReference,
+          render: (r) => (
+            <span>
+              {r.demandeReference}
+              {r.articleLibelle ? <span className="block text-xs text-muted-foreground">Article : {r.articleLibelle}</span> : null}
+            </span>
+          ),
         },
         {
           key: "montantReglement",
-          header: "Montant réglé (Caisse)",
+          header: "Montant réglé",
           sortable: true,
           accessor: (r) => r.montantReglement,
-          render: (r) => `${r.montantReglement.toLocaleString("fr-FR")} FCFA`,
+          render: (r) => `${r.montantReglement.toLocaleString("fr-FR")} FCFA (${r.mode === "BANQUE" ? "Banque" : "Caisse"})`,
         },
         {
           key: "depensesDeclarees",

@@ -21,6 +21,7 @@ const MODE_LABEL: Record<"CAISSE" | "BANQUE", string> = { CAISSE: "Caisse", BANQ
 export async function ReglementsRecusSection({ demandeId }: { demandeId: string }) {
   const reglements = await prisma.reglement.findMany({
     where: { demandeId, estConfirme: true, estAnnule: false },
+    include: { ligneDemande: { select: { libelle: true, libelleOriginal: true, libelleDemandeur: true } } },
     orderBy: { createdAt: "asc" },
   });
 
@@ -38,6 +39,11 @@ export async function ReglementsRecusSection({ demandeId }: { demandeId: string 
               <p className="font-medium text-foreground">
                 {Number(r.montant).toLocaleString("fr-FR")} FCFA — {MODE_LABEL[r.mode]}
               </p>
+              {r.ligneDemande ? (
+                <p className="text-xs text-muted-foreground" data-article-reglement-recu>
+                  Article : {(r.ligneDemande.libelleDemandeur ?? r.ligneDemande.libelleOriginal ?? r.ligneDemande.libelle)}
+                </p>
+              ) : null}
               <p className="text-xs text-muted-foreground">
                 Réglé le {(r.confirmeAt ?? r.createdAt).toLocaleDateString("fr-FR")}
               </p>

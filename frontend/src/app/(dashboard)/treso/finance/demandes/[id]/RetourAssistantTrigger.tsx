@@ -16,13 +16,11 @@ export function RetourAssistantTrigger({
   reglementId,
   montantReglement,
   motifReouvertureRequis,
-  modeReglement,
   raisonIndisponible = null,
 }: {
   reglementId: string;
   montantReglement: number;
   motifReouvertureRequis: boolean;
-  modeReglement: "CAISSE" | "BANQUE";
   /** Conflit d'intérêts : bouton grisé avec la phrase du serveur. */
   raisonIndisponible?: string | null;
 }) {
@@ -44,7 +42,6 @@ export function RetourAssistantTrigger({
       reglementId={reglementId}
       montantReglement={montantReglement}
       motifReouvertureRequis={motifReouvertureRequis}
-      modeReglement={modeReglement}
       onCancel={() => setOpen(false)}
       onSuccess={() => setOpen(false)}
     />

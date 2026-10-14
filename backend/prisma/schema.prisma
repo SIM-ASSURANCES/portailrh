@@ -67,8 +67,11 @@ model User {
   /// Finance — `validerLignesAction` (voir CLAUDE.md "Validation ligne par
   /// ligne").
   lignesDemandeDecidees         LigneDemande[]    @relation("LigneDemandeDecideur")
+  lignesDemandeDecideesFinance  LigneDemande[]    @relation("LigneDemandeDecideurFinance")
   lignesSoumisesAuDG            LigneDemande[]    @relation("LigneDemandeSoumiseDGPar")
   lignesDecideesParDG           LigneDemande[]    @relation("LigneDemandeDecisionDGPar")
+  /// Articles dont il est le bénéficiaire PROPRE (autonomie des articles, lot A).
+  lignesBeneficiaire            LigneDemande[]    @relation("LigneDemandeBeneficiaire")
   /// Signalements d'erreur sur un retour de caisse — voir CLAUDE.md
   /// "Signalement d'erreur par le Collaborateur".
   signalementsRetourEmis        SignalementRetour[] @relation("SignalementRetourSignalePar")
@@ -636,6 +639,8 @@ model Demande {
   pieces        PieceJointe[]
   /// Retours exceptionnels post-clôture (voir CLAUDE.md), distincts de `RetourCaisse`.
   retoursExceptionnels RetourExceptionnel[]
+  /// Retours externes rattachés à cette demande (lot G bis).
+  retoursExternes RetourExterne[] @relation("RetourExterneDemande")
   reglements    Reglement[]
   journalCaisse JournalCaisse[]
 
@@ -695,7 +700,15 @@ model PieceJointe {
   remboursementRetour  RemboursementRetour?
   retourExceptionnelId String?             @unique
   retourExceptionnel   RetourExceptionnel? @relation(fields: [retourExceptionnelId], references: [id], onDelete: SetNull)
+  /// Pièce jointe PROPRE à un article de la demande (lot A « autonomie des articles »). `demandeId` reste renseigné
+  /// (droits d'accès calculés par demande). Vide : pièce de la demande entière, ou d'un autre objet (dépense…).
+  /// Pas `@unique` : plusieurs pièces par article. `SetNull` : si l'article est supprimé (correction avant toute
+  /// décision), la pièce redevient une pièce de la demande plutôt que de disparaître.
+  ligneDemandeId       String?
+  ligneDemande         LigneDemande?       @relation(fields: [ligneDemandeId], references: [id], onDelete: SetNull)
   createdAt       DateTime       @default(now())
+
+  @@index([ligneDemandeId])
 }
 
 /// Ligne d'article d'une Demande d'Achat ("Tableau des articles" du
@@ -753,6 +766,11 @@ model LigneDemande {
   decideParId      String?
   decidePar        User?              @relation("LigneDemandeDecideur", fields: [decideParId], references: [id])
   decideAt         DateTime?
+  /// Compte qui a décidé l'article COMME FINANCE (lot B, 2026-10-15) : sert à la règle des deux personnes par
+  /// article. Distinct de `decideParId`, qui garde l'auteur DG pour un article validé par le DG. `null` tant que
+  /// l'article n'a pas été décidé par la Finance (ou décidé par le DG seul, cas où la Finance n'a rien décidé).
+  decideurFinanceId String?
+  decideurFinance   User?              @relation("LigneDemandeDecideurFinance", fields: [decideurFinanceId], references: [id])
 
   /// Soumission de la ligne au DG par la Finance (2026-10-10, `treso.soumettre_dg`) : seules les lignes soumises sont
   /// vues et décidées par le DG. Une ligne refusée par le DG revient à la Finance (resoumission ou refus définitif).
@@ -788,7 +806,36 @@ model LigneDemande {
   objetId     String?
   objet       Objet?     @relation(fields: [objetId], references: [id])
 
+  /// Bénéficiaire PROPRE à l'article (autonomie des articles, lot A, 2026-10-14). `beneficiaireType` vide = l'article
+  /// HÉRITE du bénéficiaire par défaut de la demande (`Demande.beneficiaire*`) ; renseigné, les trois champs décrivent
+  /// le bénéficiaire de cet article (même règle que la demande : un compte OU un nom libre, jamais les deux). À la
+  /// création, un article dont le bénéficiaire égale la valeur commune n'a aucune valeur propre.
+  beneficiaireType   BeneficiaireType?
+  beneficiaireUserId String?
+  beneficiaireUser   User?            @relation("LigneDemandeBeneficiaire", fields: [beneficiaireUserId], references: [id])
+  beneficiaireNom    String?
+
+  /// Date de livraison de CET article (lot G, 2026-10-14). Vide pour les articles antérieurs (affichée « — », aucune
+  /// reprise) ; à la création, un article sans date propre reçoit la date commune de la demande
+  /// (`Demande.dateLivraisonSouhaitee`), copiée telle quelle — jamais un héritage dynamique.
+  dateLivraison DateTime? @db.Date
+
+  /// Pièces jointes de CET article (plusieurs possibles). Une pièce de la demande entière (« pièce commune ») n'a
+  /// pas de `ligneDemandeId`.
+  pieces PieceJointe[]
+
+  /// Règlements de CET article (autonomie des articles, lot D, 2026-10-16) : un règlement concerne un seul article.
+  reglements Reglement[]
+
+  /// Retours exceptionnels post-clôture rattachés à CET article (lot E).
+  retoursExceptionnels RetourExceptionnel[]
+  /// Retours externes (fonds versé par banque, rendu à la caisse) rattachés à CET article (lot G bis).
+  retoursExternes RetourExterne[] @relation("RetourExterneLigne")
+
   createdAt DateTime @default(now())
+
+  @@index([beneficiaireUserId])
+  @@index([decideurFinanceId])
 }
 
 model Reglement {
@@ -801,6 +848,13 @@ model Reglement {
 
   demandeId String
   demande   Demande @relation(fields: [demandeId], references: [id])
+
+  /// Article réglé (lot D, 2026-10-16) : un règlement = un article. `null` pour une demande sans article (dépense
+  /// directe) et pour un règlement antérieur au lot D pas encore rattaché (cas ambigu : plusieurs articles validés,
+  /// rattachement à faire à la main — voir `recalculer-reglements-articles.ts`). Clé `RESTRICT` : un article réglé ne
+  /// peut pas disparaître sans emporter son règlement.
+  ligneDemandeId String?
+  ligneDemande   LigneDemande? @relation(fields: [ligneDemandeId], references: [id], onDelete: Restrict)
 
   auteurId String
   auteur   User   @relation("ReglementAuteur", fields: [auteurId], references: [id])
@@ -831,6 +885,7 @@ model Reglement {
   // générés sur chaque affichage Finance).
   @@index([demandeId])
   @@index([demandeId, estConfirme, estAnnule])
+  @@index([ligneDemandeId])
 }
 
 /// Une ligne = la part explicite de `Reglement.montant` que Finance a
@@ -872,6 +927,11 @@ model RetourCaisse {
   /// (`getSoldeCaisse`) qu'aucun solde financier ne se saisit à la main.
   montantARetourner Decimal        @db.Decimal(14, 2)
   estReceptionne    Boolean        @default(false)
+  /// Ancien retour sur règlement Banque (avant le lot G, 2026-10-14) : versement à la banque justifié par un bordereau, écrit
+  /// dans `JournalBanque` (RETOUR), JAMAIS en caisse. Posé par la migration pour ces seuls retours ; tout nouveau retour (Caisse
+  /// ou Banque) est rendu en espèces à la caisse et écrit à la réception dans `JournalCaisse`. Une écriture déjà passée n'est
+  /// jamais modifiée : ces anciens retours gardent leur traitement (non modifiables, réception sans écriture de caisse).
+  versementBancaire Boolean        @default(false)
   depenses          DepenseLigne[]
 
   reglementId String
@@ -1432,6 +1492,10 @@ model RetourExceptionnel {
   id        String                   @id @default(cuid())
   demandeId String
   demande   Demande                  @relation(fields: [demandeId], references: [id])
+  /// Article concerné (lot E, 2026-10-17). Vide pour une demande sans article (dépense directe) et pour un retour
+  /// antérieur au lot E sur une demande à plusieurs articles validés (cas ambigu : jamais attribué au hasard).
+  ligneDemandeId String?
+  ligneDemande   LigneDemande?            @relation(fields: [ligneDemandeId], references: [id], onDelete: Restrict)
   montant   Decimal                  @db.Decimal(14, 2)
   motif     String
   statut    StatutRetourExceptionnel @default(EN_ATTENTE_VALIDATION)
@@ -1450,6 +1514,7 @@ model RetourExceptionnel {
 
   @@index([demandeId])
   @@index([statut])
+  @@index([ligneDemandeId])
 }
 
 /// Retour EXTERNE (voir CLAUDE.md "Retour externe") : argent revenu en caisse
@@ -1472,11 +1537,20 @@ model RetourExterne {
   /// côté applicatif ; nullable en base uniquement pour les lignes antérieures.
   pieceJointeChequeId  String?  @unique
   pieceJointeCheque    PieceJointe? @relation("RetourExternePieceCheque", fields: [pieceJointeChequeId], references: [id])
+  /// Rattachement FACULTATIF à une demande et à son article (lot G bis, 2026-10-19) : retour d'un fonds versé par
+  /// BANQUE, rendu en espèces à la caisse. Rattaché, il compte comme retour reçu de l'article (solde à régulariser) ;
+  /// non rattaché, il reste totalement autonome (cas du chèque hors système). Vide pour une demande sans article.
+  demandeId            String?
+  demande              Demande? @relation("RetourExterneDemande", fields: [demandeId], references: [id], onDelete: Restrict)
+  ligneDemandeId       String?
+  ligneDemande         LigneDemande? @relation("RetourExterneLigne", fields: [ligneDemandeId], references: [id], onDelete: Restrict)
   creeParId            String
   creePar              User     @relation("RetourExterneCreePar", fields: [creeParId], references: [id])
   creeAt               DateTime @default(now())
 
   @@index([creeAt])
+  @@index([demandeId])
+  @@index([ligneDemandeId])
 }
 
 /// Réinitialisation à USAGE UNIQUE avant mise en production (voir CLAUDE.md "Réinitialisation avant mise en

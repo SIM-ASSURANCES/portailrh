@@ -1,7 +1,8 @@
 import { LIBELLE_ETAPE_CIRCUIT } from "./circuitDemande";
 import { construireLigneReporting, type HistoriqueReporting, type LigneReportingDemande } from "./reportingDemandeLigne";
-import { getBeneficiaireNom } from "./beneficiaire";
-import type { ModeReglement, Prisma, StatutDemande, TypeDemande } from "./generated/prisma/client";
+import { beneficiaireArticle, nomBeneficiaireDemande } from "./beneficiaireArticles";
+import { construireLigneRetour, type LigneReportingRetour } from "./reportingRetourCaisse";
+import type { BeneficiaireType, ModeReglement, Prisma, StatutDemande, TypeDemande } from "./generated/prisma/client";
 import {
   getDemandesEnAttenteValidation,
   getDepensesNonJustifiees,
@@ -10,6 +11,7 @@ import {
   getReglementsPartielsACompleter,
   getRetoursEnAttenteReception,
 } from "./dashboardFinance";
+import { getDatesGestionDemandes } from "./dateGestionDemande";
 import { prisma } from "./prisma";
 import { getMontantConsommeCategorie, getSoldeCaisse } from "./tresorerie";
 
@@ -150,8 +152,20 @@ function buildDemandeWhere(filters: ReportingFilters): Prisma.DemandeWhereInput 
   }
   if (filters.statut) clauses.push({ statut: filters.statut });
   if (filters.typeDemande) clauses.push({ typeDemande: filters.typeDemande });
-  if (filters.beneficiaireUserId) clauses.push({ beneficiaireUserId: filters.beneficiaireUserId });
-  if (filters.beneficiaireNom) clauses.push({ beneficiaireNom: filters.beneficiaireNom });
+  // Le bénéficiaire peut être celui de la demande OU celui d'un article (autonomie des articles, lot A).
+  if (filters.beneficiaireUserId) {
+    clauses.push({
+      OR: [
+        { beneficiaireUserId: filters.beneficiaireUserId },
+        { lignes: { some: { beneficiaireUserId: filters.beneficiaireUserId } } },
+      ],
+    });
+  }
+  if (filters.beneficiaireNom) {
+    clauses.push({
+      OR: [{ beneficiaireNom: filters.beneficiaireNom }, { lignes: { some: { beneficiaireNom: filters.beneficiaireNom } } }],
+    });
+  }
   return clauses.length > 0 ? { AND: clauses } : {};
 }
 
@@ -167,7 +181,7 @@ function buildDemandeWhere(filters: ReportingFilters): Prisma.DemandeWhereInput 
  * bénéficiaires distincts restant modeste pour une application interne.
  */
 export async function getBeneficiairesConnus(): Promise<{ value: string; label: string }[]> {
-  const [avecCompte, sansCompte] = await Promise.all([
+  const [avecCompteDemandes, sansCompteDemandes, avecCompteArticles, sansCompteArticles] = await Promise.all([
     prisma.demande.findMany({
       where: { beneficiaireUserId: { not: null } },
       distinct: ["beneficiaireUserId"],
@@ -178,7 +192,23 @@ export async function getBeneficiairesConnus(): Promise<{ value: string; label: 
       distinct: ["beneficiaireNom"],
       select: { beneficiaireNom: true },
     }),
+    prisma.ligneDemande.findMany({
+      where: { beneficiaireUserId: { not: null } },
+      distinct: ["beneficiaireUserId"],
+      select: { beneficiaireUserId: true, beneficiaireUser: { select: { fullName: true } } },
+    }),
+    prisma.ligneDemande.findMany({
+      where: { beneficiaireNom: { not: null } },
+      distinct: ["beneficiaireNom"],
+      select: { beneficiaireNom: true },
+    }),
   ]);
+  const avecCompte = [...avecCompteDemandes, ...avecCompteArticles].filter(
+    (d, i, tous) => tous.findIndex((x) => x.beneficiaireUserId === d.beneficiaireUserId) === i
+  );
+  const sansCompte = [...sansCompteDemandes, ...sansCompteArticles].filter(
+    (d, i, tous) => tous.findIndex((x) => x.beneficiaireNom === d.beneficiaireNom) === i
+  );
 
   const options = [
     ...avecCompte
@@ -268,6 +298,10 @@ interface DemandeAvecRelations {
     objetId: string | null;
     categorie: { label: string } | null;
     objet: { label: string } | null;
+    beneficiaireType: BeneficiaireType | null;
+    beneficiaireUserId: string | null;
+    beneficiaireNom: string | null;
+    beneficiaireUser: { fullName: string } | null;
   }[];
 }
 
@@ -351,7 +385,7 @@ async function getDemandesFiltrees(
       objet: true,
       createur: { include: { service: true } },
       beneficiaireUser: true,
-      lignes: { include: { categorie: true, objet: true } },
+      lignes: { include: { categorie: true, objet: true, beneficiaireUser: true } },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -389,17 +423,18 @@ interface FondsRemis {
  * "Fonds remis" par demande — section 15 du cahier des charges (batché,
  * jamais une requête par demande, même principe que
  * `getMontantsRegleParDemande`) :
- * - `nombreOperations`/`montantRemis` : règlements CAISSE confirmés et non
- *   annulés (un "fonds remis" = une remise d'espèces à un collaborateur,
- *   donc un règlement Caisse précisément — jamais les règlements Banque,
- *   qui n'ont aucun cycle de fonds remis).
+ * - `nombreOperations`/`montantRemis` : règlements confirmés et non annulés,
+ *   Caisse ET Banque (lot G, 2026-10-14 : un fonds versé par banque se
+ *   justifie par des dépenses et un éventuel retour en espèces comme un fonds
+ *   de caisse — il compte dans tous les calculs de fonds remis ; il n'impacte
+ *   en revanche jamais le solde de caisse, qui vit dans `JournalCaisse`).
  * - `depensesDeclarees` : somme des `DepenseLigne` de tous les
  *   `RetourCaisse` liés à ces règlements (réceptionnés ou non — même
  *   convention que `getDepensesDeclarees`, `tresorerie.ts`).
  * - `retoursRecus` : somme des `montantARetourner` des retours
  *   **réceptionnés uniquement** (même convention que `getRetoursRecus`).
  *
- * Une demande absente de la Map n'a aucun règlement Caisse confirmé — donc
+ * Une demande absente de la Map n'a aucun règlement confirmé — donc
  * aucun fonds remis à régulariser, à exclure de `getReportingFondsRemis`.
  */
 async function getFondsRemisParDemande(demandeIds: string[]): Promise<Map<string, FondsRemis>> {
@@ -409,7 +444,8 @@ async function getFondsRemisParDemande(demandeIds: string[]): Promise<Map<string
 
   const reglementsCaisse = await prisma.reglement.groupBy({
     by: ["demandeId"],
-    where: { demandeId: { in: demandeIds }, mode: "CAISSE", estConfirme: true, estAnnule: false },
+    // Lot G : un règlement par banque est aussi un fonds remis (il se justifie par des dépenses comme un fonds de caisse).
+    where: { demandeId: { in: demandeIds }, estConfirme: true, estAnnule: false },
     _count: { _all: true },
     _sum: { montant: true },
   });
@@ -464,6 +500,15 @@ async function getFondsRemisParDemande(demandeIds: string[]): Promise<Map<string
     const entry = map.get(e.demandeId);
     if (entry) entry.retoursRecus += Number(e.montant);
   }
+  // Retours EXTERNES rattachés (lot G bis : fonds versé par banque rendu à la caisse) : comptés comme retours reçus.
+  const externes = await prisma.retourExterne.findMany({
+    where: { demandeId: { in: demandeIds } },
+    select: { montantRetourne: true, demandeId: true },
+  });
+  for (const e of externes) {
+    const entry = e.demandeId ? map.get(e.demandeId) : undefined;
+    if (entry) entry.retoursRecus += Number(e.montantRetourne);
+  }
 
   return map;
 }
@@ -472,7 +517,8 @@ interface AllocationsParCategorie {
   total: number;
   caisse: number;
   banque: number;
-  nombreOperationsCaisse: number;
+  /** Nombre d'allocations confirmées, Caisse ET Banque (lot G : un fonds versé par banque est aussi un fonds remis). */
+  nombreOperations: number;
 }
 
 /**
@@ -514,12 +560,12 @@ async function getMontantsAllocationsParCategorie(
   const map = new Map<string, AllocationsParCategorie>();
   for (const a of allocations) {
     const key = cle(a.reglement.demandeId, a.categorieId);
-    const entry = map.get(key) ?? { total: 0, caisse: 0, banque: 0, nombreOperationsCaisse: 0 };
+    const entry = map.get(key) ?? { total: 0, caisse: 0, banque: 0, nombreOperations: 0 };
     const montant = Number(a.montant);
     entry.total += montant;
+    entry.nombreOperations += 1;
     if (a.reglement.mode === "CAISSE") {
       entry.caisse += montant;
-      entry.nombreOperationsCaisse += 1;
     } else {
       entry.banque += montant;
     }
@@ -533,14 +579,14 @@ export interface ReportingFondsRemisRow {
   categorieLabel: string;
   objetId: string | null;
   objetLabel: string;
-  /** Nombre d'ALLOCATIONS Caisse confirmées (pas de règlements — un
+  /** Nombre d'ALLOCATIONS confirmées (Caisse et Banque) (pas de règlements — un
    * règlement réparti sur plusieurs catégories compte pour une opération
    * dans CHACUNE de ses catégories, chacune ayant réellement reçu une part
    * de cette remise d'espèces). */
   nombreOperations: number;
   montantDemande: number;
   montantValide: number;
-  /** Somme des règlements Caisse confirmés du groupe — les fonds effectivement remis en espèces. */
+  /** Somme des règlements confirmés du groupe, Caisse et Banque — les fonds effectivement remis (lot G). */
   montantRemis: number;
   depensesDeclarees: number;
   retoursRecus: number;
@@ -557,7 +603,7 @@ export interface ReportingFondsRemisRow {
 /**
  * Tableau "Fonds remis" dédié (section 15 du cahier des charges) — distinct
  * du tableau agrégé général (`getReportingRows`) : ne retient que les
- * demandes ayant au moins un règlement Caisse confirmé (les seules à avoir
+ * demandes ayant au moins un règlement confirmé (Caisse ou Banque, lot G ; les seules à avoir
  * un cycle de fonds remis), groupées par Catégorie/Objet comme le tableau
  * général, avec les colonnes exactes demandées : nombre d'opérations,
  * montant demandé, montant validé, montant remis, dépenses déclarées,
@@ -598,7 +644,7 @@ export async function getReportingFondsRemis(filters: ReportingFilters): Promise
 
   for (const d of demandes) {
     const fonds = fondsParDemande.get(d.id);
-    if (!fonds) continue; // Aucun règlement Caisse confirmé : hors périmètre "fonds remis".
+    if (!fonds) continue; // Aucun règlement confirmé : hors périmètre "fonds remis".
 
     const unites = getUnitesComptables([d]);
     // Total Caisse de CETTE demande, dérivé des allocations de ses propres
@@ -606,8 +652,8 @@ export async function getReportingFondsRemis(filters: ReportingFilters): Promise
     // qui, lui, vient directement des règlements — les deux DOIVENT
     // coïncider ; utilisé uniquement comme dénominateur du prorata).
     const categoriesDeLaDemande = [...new Set(unites.map((u) => u.categorieId).filter((id): id is string => id != null))];
-    const totalCaisseDemande = categoriesDeLaDemande.reduce(
-      (sum, catId) => sum + (allocationsParCategorie.get(`${d.id}|${catId}`)?.caisse ?? 0),
+    const totalRegleDemande = categoriesDeLaDemande.reduce(
+      (sum, catId) => sum + (allocationsParCategorie.get(`${d.id}|${catId}`)?.total ?? 0),
       0
     );
 
@@ -616,9 +662,9 @@ export async function getReportingFondsRemis(filters: ReportingFilters): Promise
       const dejaComptee = cleDemandeCategorie != null && demandeCategorieDejaComptee.has(cleDemandeCategorie);
 
       const montantRemisCategorie = unite.categorieId
-        ? (allocationsParCategorie.get(cleDemandeCategorie!)?.caisse ?? 0)
+        ? (allocationsParCategorie.get(cleDemandeCategorie!)?.total ?? 0)
         : fonds.montantRemis; // Non catégorisée : pas de ventilation possible, tout le montant remis de la demande.
-      const ratio = totalCaisseDemande > 0 ? montantRemisCategorie / totalCaisseDemande : 1;
+      const ratio = totalRegleDemande > 0 ? montantRemisCategorie / totalRegleDemande : 1;
 
       const key = `${unite.categorieId ?? "none"}|${unite.objetId ?? "none"}`;
       const existing = buckets.get(key);
@@ -628,7 +674,7 @@ export async function getReportingFondsRemis(filters: ReportingFilters): Promise
         nombreOperations: dejaComptee
           ? 0
           : unite.categorieId
-            ? (allocationsParCategorie.get(cleDemandeCategorie!)?.nombreOperationsCaisse ?? 0)
+            ? (allocationsParCategorie.get(cleDemandeCategorie!)?.nombreOperations ?? 0)
             : fonds.nombreOperations,
         montantDemande: unite.montant,
         montantValide: unite.montantValide,
@@ -877,6 +923,9 @@ export interface ReportingRetourExterneDetail {
   auteurNom: string;
   pieceChequeId: string | null;
   pieceRetourId: string;
+  /** Rattachement facultatif (lot G bis) : référence de la demande et libellé de l'article, sinon `null`. */
+  demandeReference: string | null;
+  articleLibelle: string | null;
 }
 
 /**
@@ -887,10 +936,17 @@ export interface ReportingRetourExterneDetail {
 export async function getReportingRetoursExternesDetail(filters: ReportingFilters): Promise<ReportingRetourExterneDetail[]> {
   const retours = await prisma.retourExterne.findMany({
     where: { creeAt: { gte: filters.du, lte: filters.au } },
-    include: { collaborateur: { select: { fullName: true } }, creePar: { select: { fullName: true } } },
+    include: {
+      collaborateur: { select: { fullName: true } },
+      creePar: { select: { fullName: true } },
+      demande: { select: { reference: true } },
+      ligneDemande: { select: { libelle: true } },
+    },
     orderBy: { creeAt: "asc" },
   });
   return retours.map((r) => ({
+    demandeReference: r.demande?.reference ?? null,
+    articleLibelle: r.ligneDemande?.libelle ?? null,
     personne: r.collaborateur?.fullName ?? r.nomExterne ?? "—",
     estExterne: r.collaborateurId == null,
     montantChequeInitial: Number(r.montantChequeInitial),
@@ -1082,6 +1138,10 @@ export async function getReportingParDemande(
           orderBy: { saisiAt: "asc" },
           include: { saisiPar: { select: { fullName: true } }, validePar: { select: { fullName: true } } },
         },
+        retoursExternes: {
+          orderBy: { creeAt: "asc" },
+          include: { creePar: { select: { fullName: true } }, ligneDemande: { select: { libelle: true } } },
+        },
       },
     }),
     prisma.historiqueEntry.findMany({
@@ -1099,17 +1159,19 @@ export async function getReportingParDemande(
     historiqueParId.set(h.entityId, liste);
   }
 
+  const gestions = await getDatesGestionDemandes(demandes.map((d) => d.id));
   return demandes.map((d) => {
     const det = detailParId.get(d.id)!;
     return construireLigneReporting({
       reference: d.reference,
       creeLe: d.createdAt,
+      gere: gestions.get(d.id) ?? null,
       typeDemande: d.typeDemande,
       statut: libelleStatut(d.statut),
       etapeCircuit: det.etapeCircuit ? LIBELLE_ETAPE_CIRCUIT[det.etapeCircuit] : null,
       demandeur: d.createur.fullName,
       service: d.createur.service,
-      beneficiaire: getBeneficiaireNom(d),
+      beneficiaire: nomBeneficiaireDemande(d, d.lignes),
       description: d.description,
       categorie: d.categorie?.label ?? null,
       objet: d.objet?.label ?? null,
@@ -1126,6 +1188,7 @@ export async function getReportingParDemande(
         motifRejet: l.motifRejet,
         decidePar: l.decidePar?.fullName ?? null,
         decideLe: l.decideAt,
+        dateLivraison: l.dateLivraison,
       })),
       reglements: det.reglements.map((r) => ({
         montant: Number(r.montant),
@@ -1144,6 +1207,7 @@ export async function getReportingParDemande(
           declarant: t.declarant.fullName,
           declareLe: t.createdAt,
           creeParAssistant: t.creeParAssistant,
+          versementBancaire: t.versementBancaire,
           complementSignalement: !!t.signalementOrigineId,
           reouvertureExceptionnelle: !!t.motifReouvertureExceptionnelle,
           depenses: t.depenses.map((dep) => ({
@@ -1172,7 +1236,82 @@ export async function getReportingParDemande(
         valideLe: e.valideAt,
         motifRejet: e.motifRejet,
       })),
+      retoursExternes: det.retoursExternes.map((x) => ({
+        montant: Number(x.montantRetourne),
+        article: x.ligneDemande?.libelle ?? null,
+        creePar: x.creePar.fullName,
+        creeLe: x.creeAt,
+      })),
       historique: historiqueParId.get(d.id) ?? [],
     });
   });
+}
+
+/**
+ * Reporting des retours de caisse (lot G.5) : une ligne par retour des demandes retenues par les filtres, avec le détail
+ * de l'article d'origine (voir `reportingRetourCaisse.ts`). Réglé sur l'article = tous les règlements confirmés non annulés,
+ * Caisse et Banque.
+ */
+export async function getReportingRetoursCaisse(filters: ReportingFilters): Promise<LigneReportingRetour[]> {
+  const { demandes } = await getDemandesFiltrees(filters);
+  const ids = demandes.map((d) => d.id);
+  if (ids.length === 0) return [];
+  const reglements = await prisma.reglement.findMany({
+    where: { demandeId: { in: ids } },
+    orderBy: { createdAt: "asc" },
+    include: {
+      retours: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          declarant: { select: { fullName: true } },
+          receptionnePar: { select: { fullName: true } },
+          depenses: { select: { montant: true } },
+        },
+      },
+    },
+  });
+  const demandeParId = new Map(demandes.map((d) => [d.id, d]));
+  const articles = await prisma.ligneDemande.findMany({
+    where: { id: { in: [...new Set(reglements.map((r) => r.ligneDemandeId).filter((x): x is string => !!x))] } },
+    include: { beneficiaireUser: { select: { fullName: true } } },
+  });
+  const articleParId = new Map(articles.map((l) => [l.id, l]));
+  const lignes: LigneReportingRetour[] = [];
+  for (const r of reglements) {
+    const d = demandeParId.get(r.demandeId);
+    if (!d || r.retours.length === 0) continue;
+    const ligne = r.ligneDemandeId ? articleParId.get(r.ligneDemandeId) : undefined;
+    const reglementsArticle = reglements
+      .filter((x) => x.demandeId === r.demandeId && x.estConfirme && !x.estAnnule && (r.ligneDemandeId ? x.ligneDemandeId === r.ligneDemandeId : true))
+      .map((x) => ({ mode: x.mode, montant: Number(x.montant), date: x.confirmeAt }));
+    for (const t of r.retours) {
+      lignes.push(
+        construireLigneRetour({
+          retourId: t.id,
+          declareLe: t.createdAt,
+          declarant: t.declarant.fullName,
+          creeParAssistant: t.creeParAssistant,
+          estReceptionne: t.estReceptionne,
+          receptionneLe: t.receptionneAt,
+          receptionnePar: t.receptionnePar?.fullName ?? null,
+          versementBancaire: t.versementBancaire,
+          montantARetourner: Number(t.montantARetourner),
+          totalDepenses: t.depenses.reduce((s, x) => s + Number(x.montant), 0),
+          reglement: { mode: r.mode, montant: Number(r.montant), confirmeLe: r.confirmeAt },
+          demande: { reference: d.reference, demandeur: d.createur.fullName, service: d.createur.service },
+          article: ligne
+            ? {
+                libelleFinance: ligne.libelle,
+                libelleDemandeur: ligne.libelleDemandeur ?? ligne.libelleOriginal ?? ligne.libelle,
+                beneficiaire: beneficiaireArticle(ligne, d).libelle,
+                montantValide: ligne.statutValidation === "VALIDEE" ? ligne.quantite * Number(ligne.prixUnitaire) : 0,
+                dateLivraison: ligne.dateLivraison,
+              }
+            : null,
+          reglementsArticle,
+        })
+      );
+    }
+  }
+  return lignes.sort((a, b) => a.declareLe.getTime() - b.declareLe.getTime());
 }

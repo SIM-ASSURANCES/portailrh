@@ -19,6 +19,7 @@ import {
   prisma,
   soumettreLignesAuDG,
   type ActionCircuit,
+  type ChoixBeneficiaire,
   type CorrectionDemande,
 } from "backend";
 
@@ -118,7 +119,7 @@ export async function soumettreLignesAuDGAction(demandeId: string, ligneIds: str
     throw e;
   }
   rafraichir(demandeId);
-  await notifierEtapeCircuit(demandeId, session.user.id);
+  await notifierEtapeCircuit(demandeId, session.user.id, "SOUMISSION_DG");
   return {
     status: "success",
     message: `${nombre} ligne${nombre > 1 ? "s" : ""} de la demande ${demande.reference} soumise${nombre > 1 ? "s" : ""} au DG.`,
@@ -152,8 +153,12 @@ export async function deciderLigneDGAction(ligneId: string, valider: boolean, mo
     throw e;
   }
   rafraichir(ligne.demandeId);
-  if (resultat.etapeSuivante !== "DG") {
-    await notifierEtapeCircuit(ligne.demandeId, session.user.id);
+  // Lot B : l'étape ne dit plus si le DG a fini — on compte les articles qui l'attendent encore.
+  const resteChezLeDG = await prisma.ligneDemande.count({
+    where: { demandeId: ligne.demandeId, statutValidation: "EN_ATTENTE", soumiseAuDG: true, decisionDG: null },
+  });
+  if (resteChezLeDG === 0) {
+    await notifierEtapeCircuit(ligne.demandeId, session.user.id, "DECISION_DG");
   } else if (!decision.valider) {
     await notifierRefusLigneDG(ligne.demandeId, session.user.id, { libelle: resultat.libelle, motif: (decision.motif ?? "").trim() });
   }
@@ -161,7 +166,7 @@ export async function deciderLigneDGAction(ligneId: string, valider: boolean, mo
     status: "success",
     message:
       `Ligne « ${resultat.libelle} » ${decision.valider ? "validée" : "refusée"}.` +
-      (resultat.etapeSuivante !== "DG" ? " Toutes les lignes soumises sont décidées : la Finance reprend la main." : ""),
+      (resteChezLeDG === 0 ? " Toutes les lignes soumises sont décidées : la Finance reprend la main." : ""),
   };
 }
 
@@ -185,6 +190,16 @@ export async function abandonnerDemandeAction(demandeId: string): Promise<Result
   return agir(demandeId, { type: "ABANDONNER" }, (ref) => `Demande ${ref} abandonnée.`);
 }
 
+/** Choix de bénéficiaire reçu du client, recopié champ par champ (jamais l'objet reçu tel quel). */
+function choixRecu(c: unknown): ChoixBeneficiaire | null | undefined {
+  if (c === undefined) return undefined;
+  if (c === null || typeof c !== "object") return null;
+  const v = c as { mode?: unknown; userId?: unknown; nom?: unknown };
+  if (v.mode === "COMPTE") return { mode: "COMPTE", userId: String(v.userId ?? "") };
+  if (v.mode === "NOM") return { mode: "NOM", nom: String(v.nom ?? "") };
+  return { mode: "MOI" };
+}
+
 /** « À corriger » : le demandeur corrige (lignes, montants, motif, pièce jointe) et resoumet. */
 export async function corrigerEtResoumettreDemandeAction(
   demandeId: string,
@@ -205,6 +220,11 @@ export async function corrigerEtResoumettreDemandeAction(
         motif: String(l.motif ?? ""),
         quantite: Number(l.quantite),
         prixUnitaire: Number(l.prixUnitaire),
+        // Autonomie des articles, lot A : bénéficiaire et pièces propres à l'article (revalidés par le moteur).
+        beneficiaire: choixRecu(l.beneficiaire),
+        pieceJointeUrls: Array.isArray(l.pieceJointeUrls) ? l.pieceJointeUrls.map(String) : undefined,
+        // Lot G : date de livraison de l'article (absente = inchangée ; chaîne vide = effacée).
+        dateLivraison: l.dateLivraison === undefined || l.dateLivraison === null ? undefined : String(l.dateLivraison),
       })),
       pieceJointeUrl: correction?.pieceJointeUrl ? String(correction.pieceJointeUrl) : undefined,
     })

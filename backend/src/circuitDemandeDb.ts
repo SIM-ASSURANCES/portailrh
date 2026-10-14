@@ -10,16 +10,22 @@ import {
   etatLigneDG,
   LIBELLE_ETAPE_CIRCUIT,
   refusExecutionPropreDemande,
-  versLigneCircuit,
+  refusExecutionPropreReglement,
+  versDemandeCircuit,
   type OptionsParcours,
   transition,
   type ActeurCircuit,
   type ActionCircuit,
+  type DemandeCircuit,
   type Parcours,
   type ProfilDemandeur,
   type TypeDemandeCircuit,
 } from "./circuitDemande";
+import { montantValideDepuisLignes } from "./etatArticles";
 import { refusMotifLigne } from "./motifLigne";
+import { dateLivraisonAEnregistrer, jourCourant, jourDepuisDate, refusDateLivraison, versDateStockee } from "./dateLivraisonArticle";
+import { champsBeneficiaire, type ChoixBeneficiaire } from "./beneficiaire";
+import { beneficiaireArticle, choixDepuisStocke, choixPropreArticle } from "./beneficiaireArticles";
 
 type Db = Prisma.TransactionClient;
 
@@ -31,12 +37,26 @@ export function demandesServiceAValiderWhere(responsableId: string): Prisma.Dema
   return { etapeCircuit: "SERVICE", createur: { service: { responsableId } } };
 }
 
+/** Étapes posées explicitement par le circuit : une demande qui y est n'attend ni la Finance ni le DG sur ses articles. */
+const ETAPES_HORS_ARTICLES: EtapeCircuit[] = ["SERVICE", "A_CORRIGER", "ABANDONNEE"];
+
 /**
- * Demandes à l'étape DG pour ce compte DG : soumises par la Finance (décision sur la demande entière) ou émises par la
- * Finance (cas b, décision ligne par ligne). Jamais les siennes (une demande du DG ne passe jamais par l'étape DG).
+ * Demandes qui attendent la décision de CE compte DG (lot B : requête sur les ARTICLES, plus sur l'étape de la colonne) :
+ *  - articles soumis par la Finance et sans décision du DG (même quand la Finance a d'autres articles à traiter) ;
+ *  - demande émise par la Finance (cas b, DG obligatoire) dont des articles sont encore en attente ;
+ *  - demande sans article (dépense directe) à l'étape DG.
+ * Jamais les demandes du DG lui-même (une demande du DG ne passe jamais par l'étape DG).
  */
 export function demandesEtapeDGWhere(dgId: string): Prisma.DemandeWhereInput {
-  return { etapeCircuit: "DG", createurId: { not: dgId } };
+  const horsService = { etapeCircuit: { notIn: ETAPES_HORS_ARTICLES } };
+  return {
+    createurId: { not: dgId },
+    OR: [
+      { etapeCircuit: "DG", lignes: { none: {} } },
+      { ...horsService, lignes: { some: { statutValidation: "EN_ATTENTE", soumiseAuDG: true, decisionDG: null } } },
+      { ...horsService, modeEtapeDG: "OBLIGATOIRE", lignes: { some: { statutValidation: "EN_ATTENTE" } } },
+    ],
+  };
 }
 
 /**
@@ -48,7 +68,7 @@ export function demandesEtapeDGWhere(dgId: string): Prisma.DemandeWhereInput {
 export async function refusConflitInteret(
   db: Db,
   cible:
-    | { demandeId: string }
+    | { demandeId: string; ligneDemandeId?: string | null }
     | { reglementId: string }
     | { retourCaisseId: string }
     | { depenseLigneId: string }
@@ -56,38 +76,58 @@ export async function refusConflitInteret(
     | { retourExceptionnelId: string },
   userId: string
 ): Promise<string | null> {
-  const champs = { createurId: true, beneficiaireUserId: true } as const;
-  let demande: { createurId: string; beneficiaireUserId: string | null } | null | undefined = null;
+  // Garde 8 étendue aux articles (lot A, 2026-10-14) : on lit aussi le bénéficiaire propre de chaque article.
+  // Lot D (2026-10-16) : un règlement rattaché à un article n'écarte que le créateur et le bénéficiaire de CET article.
+  const champsBenef = { beneficiaireType: true, beneficiaireUserId: true, beneficiaireNom: true } as const;
+  const champs = {
+    createurId: true,
+    ...champsBenef,
+    lignes: { select: champsBenef },
+  } as const;
+  const champsReglement = { demande: { select: champs }, ligneDemande: { select: champsBenef } } as const;
+  type Demande = Parameters<typeof refusExecutionPropreDemande>[0];
+  type Reglement = { demande: Demande; ligneDemande: Parameters<typeof refusExecutionPropreReglement>[1] };
+  let demande: Demande | null | undefined = null;
+  let reglement: Reglement | null | undefined = null;
   if ("demandeId" in cible) {
-    demande = await db.demande.findUnique({ where: { id: cible.demandeId }, select: champs });
+    // Lot E : une saisie rattachée à un article (retour exceptionnel) n'écarte que le créateur et le bénéficiaire de CET article.
+    if (cible.ligneDemandeId) {
+      const ligne = await db.ligneDemande.findFirst({
+        where: { id: cible.ligneDemandeId, demandeId: cible.demandeId },
+        select: { ...champsBenef, demande: { select: champs } },
+      });
+      if (ligne) reglement = { demande: ligne.demande, ligneDemande: ligne };
+    }
+    if (!reglement) demande = await db.demande.findUnique({ where: { id: cible.demandeId }, select: champs });
   } else if ("reglementId" in cible) {
-    demande = (await db.reglement.findUnique({ where: { id: cible.reglementId }, select: { demande: { select: champs } } }))?.demande;
+    reglement = await db.reglement.findUnique({ where: { id: cible.reglementId }, select: champsReglement });
   } else if ("retourCaisseId" in cible) {
-    demande = (
-      await db.retourCaisse.findUnique({
-        where: { id: cible.retourCaisseId },
-        select: { reglement: { select: { demande: { select: champs } } } },
-      })
-    )?.reglement.demande;
+    reglement = (await db.retourCaisse.findUnique({ where: { id: cible.retourCaisseId }, select: { reglement: { select: champsReglement } } }))
+      ?.reglement;
   } else if ("depenseLigneId" in cible) {
-    demande = (
+    reglement = (
       await db.depenseLigne.findUnique({
         where: { id: cible.depenseLigneId },
-        select: { retourCaisse: { select: { reglement: { select: { demande: { select: champs } } } } } },
+        select: { retourCaisse: { select: { reglement: { select: champsReglement } } } },
       })
-    )?.retourCaisse.reglement.demande;
+    )?.retourCaisse.reglement;
   } else if ("remboursementId" in cible) {
-    demande = (
+    reglement = (
       await db.remboursementRetour.findUnique({
         where: { id: cible.remboursementId },
-        select: { retourCaisse: { select: { reglement: { select: { demande: { select: champs } } } } } },
+        select: { retourCaisse: { select: { reglement: { select: champsReglement } } } },
       })
-    )?.retourCaisse.reglement.demande;
+    )?.retourCaisse.reglement;
   } else {
-    demande = (
-      await db.retourExceptionnel.findUnique({ where: { id: cible.retourExceptionnelId }, select: { demande: { select: champs } } })
-    )?.demande;
+    const re = await db.retourExceptionnel.findUnique({
+      where: { id: cible.retourExceptionnelId },
+      select: { demande: { select: champs }, ligneDemande: { select: champsBenef } },
+    });
+    // Lot E : retour exceptionnel rattaché à un article = garde 8 de CET article ; sinon (ancien) celle de la demande.
+    if (re?.ligneDemande) reglement = { demande: re.demande, ligneDemande: re.ligneDemande };
+    else demande = re?.demande;
   }
+  if (reglement) return refusExecutionPropreReglement(reglement.demande, reglement.ligneDemande, userId);
   return demande ? refusExecutionPropreDemande(demande, userId) : null;
 }
 
@@ -198,6 +238,11 @@ export const SELECT_LIGNE_CIRCUIT = {
   decisionDG: true,
   decisionDGParId: true,
   decisionDGAt: true,
+  decideurFinanceId: true,
+  // Bénéficiaire propre de l'article (garde « le bénéficiaire ne décide pas son article »).
+  beneficiaireType: true,
+  beneficiaireUserId: true,
+  beneficiaireNom: true,
 } as const;
 
 /**
@@ -218,6 +263,9 @@ const SELECT_DEMANDE_CIRCUIT = {
   modeEtapeDG: true,
   dgApprobateurId: true,
   decideurFinanceId: true,
+  beneficiaireType: true,
+  beneficiaireUserId: true,
+  beneficiaireNom: true,
   lignes: { select: SELECT_LIGNE_CIRCUIT, orderBy: { createdAt: "asc" } },
 } as const;
 
@@ -237,21 +285,11 @@ export async function appliquerTransitionCircuit(
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
 
-  const r = transition(
-    {
-      etape: d.etapeCircuit,
-      createurId: d.createurId,
-      typeDemande: d.typeDemande,
-      etapeServiceRequise: d.etapeServiceRequise,
-      etapeFinanceRequise: d.etapeFinanceRequise,
-      modeEtapeDG: d.modeEtapeDG,
-      approbateurDGId: d.dgApprobateurId,
-      decideurFinanceId: d.decideurFinanceId,
-      lignes: d.lignes.map(versLigneCircuit),
-    },
-    acteur,
-    action
-  );
+  // Une demande à articles se décide article par article (`deciderArticles`) : jamais par cette voie.
+  if (action.type === "DECIDER_LIGNES" && d.lignes.length > 0) {
+    return { ok: false, message: "Cette demande contient des lignes d'article : utilisez la décision article par article." };
+  }
+  const r = transition(demandeCircuit(d), acteur, action);
   if (!r.ok) return r;
 
   const maintenant = new Date();
@@ -318,12 +356,9 @@ export async function soumettreLignesAuDG(
   await verrouillerDemande(db, demandeId);
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
-  const lignes = d.lignes.map(versLigneCircuit);
-  const r = transition(
-    { ...circuitDepuis(d), lignes },
-    acteur,
-    { type: "SOUMETTRE_LIGNES_DG", ligneIds }
-  );
+  const circuit = demandeCircuit(d);
+  const lignes = circuit.lignes!;
+  const r = transition(circuit, acteur, { type: "SOUMETTRE_LIGNES_DG", ligneIds });
   if (!r.ok) return r;
 
   const maintenant = new Date();
@@ -332,8 +367,8 @@ export async function soumettreLignesAuDG(
 
   const maj = await db.demande.updateMany({
     where: { id: demandeId, etapeCircuit: d.etapeCircuit },
-    // Déjà à l'étape DG (soumission complémentaire) : la date d'entrée dans l'étape ne change pas (rappels inchangés).
-    data: { etapeCircuit: "DG", soumiseAuDG: true, ...(d.etapeCircuit !== "DG" ? { etapeCircuitDepuis: maintenant } : {}) },
+    // Lot B : chaque événement d'un article remet à zéro le chronomètre de rappel de la demande (étape déduite des articles).
+    data: { etapeCircuit: r.etapeSuivante, soumiseAuDG: true, etapeCircuitDepuis: maintenant },
   });
   if (maj.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
   const majLignes = await db.ligneDemande.updateMany({
@@ -362,13 +397,13 @@ export async function soumettreLignesAuDG(
       entityId: demandeId,
       action: ACTION_HISTORIQUE.SOUMETTRE_LIGNES_DG,
       detail:
-        `${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → DG — ${libelles.length} ligne${libelles.length > 1 ? "s" : ""} sur ` +
+        `${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]} — ${libelles.length} ligne${libelles.length > 1 ? "s" : ""} sur ` +
         `${lignes.length} soumise${libelles.length > 1 ? "s" : ""} au DG : ${listeLibelles(libelles)}` +
         (resoumises.length > 0 ? ` (resoumise${resoumises.length > 1 ? "s" : ""} après refus : ${listeLibelles(resoumises.map((l) => l.libelle))})` : ""),
       userId: acteur.userId,
     },
   });
-  return { ok: true, etapeSuivante: "DG", libelles };
+  return { ok: true, etapeSuivante: r.etapeSuivante, libelles };
 }
 
 /**
@@ -387,13 +422,10 @@ export async function deciderLigneDG(
   await verrouillerDemande(db, demandeId);
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
-  const lignes = d.lignes.map(versLigneCircuit);
+  const circuit = demandeCircuit(d);
+  const lignes = circuit.lignes!;
   const motif = decision.motif?.trim() ?? "";
-  const r = transition(
-    { ...circuitDepuis(d), lignes },
-    acteur,
-    { type: "DECIDER_LIGNE_DG", ligneId, valider: decision.valider, motif }
-  );
+  const r = transition(circuit, acteur, { type: "DECIDER_LIGNE_DG", ligneId, valider: decision.valider, motif });
   if (!r.ok) return r;
 
   const maintenant = new Date();
@@ -407,13 +439,12 @@ export async function deciderLigneDG(
     },
   });
   if (majLigne.count !== 1) return { ok: false, message: "Cette ligne a déjà été décidée." };
-  if (r.etapeSuivante !== "DG") {
-    const maj = await db.demande.updateMany({
-      where: { id: demandeId, etapeCircuit: "DG" },
-      data: { etapeCircuit: r.etapeSuivante, etapeCircuitDepuis: maintenant },
-    });
-    if (maj.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
-  }
+  // Lot B : étape déduite des articles, chronomètre de rappel remis à zéro à chaque décision d'un article.
+  const maj = await db.demande.updateMany({
+    where: { id: demandeId, etapeCircuit: d.etapeCircuit },
+    data: { etapeCircuit: r.etapeSuivante, etapeCircuitDepuis: maintenant },
+  });
+  if (maj.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
 
   const libelle = lignes.find((l) => l.id === ligneId)!.libelle;
   await db.historiqueEntry.create({
@@ -423,33 +454,152 @@ export async function deciderLigneDG(
       action: decision.valider ? "validation_ligne_dg" : "refus_ligne_dg",
       detail:
         (decision.valider ? `DG — ligne « ${libelle} » validée` : `DG — ligne « ${libelle} » refusée — motif : ${motif}`) +
-        (r.etapeSuivante !== "DG" ? ` — DG → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}` : ""),
+        (r.etapeSuivante !== d.etapeCircuit ? ` — ${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}` : ""),
       userId: acteur.userId,
     },
   });
   return { ok: true, etapeSuivante: r.etapeSuivante, demandeId, libelle };
 }
 
-function circuitDepuis(d: {
-  etapeCircuit: EtapeCircuit;
-  createurId: string;
-  typeDemande: TypeDemandeCircuit;
-  etapeServiceRequise: boolean;
-  etapeFinanceRequise: boolean;
-  modeEtapeDG: Parcours["modeEtapeDG"];
-  dgApprobateurId: string | null;
-  decideurFinanceId: string | null;
-}) {
-  return {
-    etape: d.etapeCircuit,
-    createurId: d.createurId,
-    typeDemande: d.typeDemande,
-    etapeServiceRequise: d.etapeServiceRequise,
-    etapeFinanceRequise: d.etapeFinanceRequise,
-    modeEtapeDG: d.modeEtapeDG,
-    approbateurDGId: d.dgApprobateurId,
-    decideurFinanceId: d.decideurFinanceId,
+export interface DecisionArticle {
+  ligneId: string;
+  statut: "VALIDEE" | "REJETEE";
+  /** Motif du rejet (3 caractères minimum), ignoré pour une validation. */
+  motif?: string;
+}
+
+export interface ResultatDecisionArticles {
+  etapeSuivante: EtapeCircuit;
+  /** Somme des articles validés après ces décisions (colonne `Demande.montantValide`, tenue à jour). */
+  montantValide: number;
+  nbValidees: number;
+  nbRejetees: number;
+}
+
+const formaterMontant = (n: number) => n.toLocaleString("fr-FR");
+
+/**
+ * Décision article par article (lot B, 2026-10-15) : la Finance (ou le DG pour une demande émise par la Finance, cas b)
+ * valide ou rejette un SOUS-ENSEMBLE d'articles, à n'importe quel moment, sans attendre les autres ni le DG. Un article
+ * décidé est définitif. Dans la transaction de l'appelant : verrou de la demande, transition du moteur (qui contrôle
+ * permissions, états des articles, deux personnes, bénéficiaire), écriture des articles et du décideur Finance de
+ * chacun, recalcul du montant validé (somme des articles validés), étape déduite des articles, chronomètre de rappel
+ * remis à zéro, historique. La catégorie obligatoire est contrôlée par l'appelant (`refusLignesValideesSansCategorie`).
+ */
+export async function deciderArticles(
+  db: Db,
+  demandeId: string,
+  acteur: ActeurCircuit,
+  decisions: readonly DecisionArticle[]
+): Promise<(ResultatDecisionArticles & { ok: true }) | { ok: false; message: string }> {
+  await verrouillerDemande(db, demandeId);
+  const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
+  if (!d) return { ok: false, message: "Demande introuvable." };
+  if (d.lignes.length === 0) {
+    return { ok: false, message: "Cette demande n'a aucune ligne d'article — utilisez la validation par montant." };
+  }
+  for (const x of decisions) {
+    if (x.statut === "REJETEE" && (x.motif?.trim().length ?? 0) < 3) {
+      return { ok: false, message: "Un motif de rejet (3 caractères minimum) est obligatoire pour chaque ligne rejetée." };
+    }
+  }
+
+  const circuit = demandeCircuit(d);
+  const r = transition(circuit, acteur, {
+    type: "DECIDER_LIGNES",
+    decisions: decisions.map((x) => ({ ligneId: x.ligneId, statut: x.statut })),
+  });
+  if (!r.ok) return r;
+
+  const roleDG = d.modeEtapeDG === "OBLIGATOIRE";
+  const maintenant = new Date();
+  const detail = new Map(
+    (await db.ligneDemande.findMany({ where: { demandeId }, select: { id: true, quantite: true, prixUnitaire: true } })).map((l) => [l.id, l])
+  );
+  const parId = new Map(d.lignes.map((l) => [l.id, l]));
+
+  // Les articles d'abord : un article décidé entre-temps (`statutValidation` plus EN_ATTENTE) fait échouer l'ensemble.
+  for (const x of decisions) {
+    const l = parId.get(x.ligneId)!;
+    // Un article validé par le DG garde son auteur et sa date de décision (« DG définitif »).
+    const parDG = x.statut === "VALIDEE" && l.decisionDG === "VALIDEE";
+    const maj = await db.ligneDemande.updateMany({
+      where: { id: x.ligneId, demandeId, statutValidation: "EN_ATTENTE" },
+      data: {
+        statutValidation: x.statut,
+        motifRejet: x.statut === "REJETEE" ? x.motif!.trim() : null,
+        decideParId: parDG ? l.decisionDGParId : acteur.userId,
+        decideAt: parDG ? (l.decisionDGAt ?? maintenant) : maintenant,
+        // Le décideur Finance n'est enregistré que pour une VALIDATION par la Finance (rejeter n'engage pas d'argent).
+        ...(!roleDG && x.statut === "VALIDEE" ? { decideurFinanceId: acteur.userId } : {}),
+      },
+    });
+    if (maj.count !== 1) return { ok: false, message: "Un article a été décidé entre-temps : rechargez la page." };
+  }
+
+  const apres = await db.ligneDemande.findMany({
+    where: { demandeId },
+    select: { quantite: true, prixUnitaire: true, statutValidation: true },
+  });
+  const montantValide = montantValideDepuisLignes(
+    apres.map((l) => ({ quantite: l.quantite, prixUnitaire: l.prixUnitaire.toString(), statut: l.statutValidation }))
+  );
+
+  const nbValidees = decisions.filter((x) => x.statut === "VALIDEE").length;
+  const nbRejetees = decisions.length - nbValidees;
+  const data: Prisma.DemandeUncheckedUpdateManyInput = {
+    etapeCircuit: r.etapeSuivante,
+    etapeCircuitDepuis: maintenant,
+    montantValide,
   };
+  if (r.effets.niveauRejet) {
+    data.niveauRejet = r.effets.niveauRejet;
+    data.motifRejet =
+      decisions.length === 1 ? (decisions[0].motif?.trim() ?? "") : "Tous les articles ont été rejetés (voir le motif de chaque article).";
+  }
+  if (r.effets.approbationClotureParDG) {
+    data.validationCompleteParDG = true;
+    data.validationCompleteRejeteeParDG = false;
+    data.dgApprobateurId = r.effets.approbateurDGId ?? acteur.userId;
+    data.dgApprouveAt = maintenant;
+  }
+  if (r.effets.decideurFinance) data.decideurFinanceId = acteur.userId;
+  const majDemande = await db.demande.updateMany({ where: { id: demandeId, etapeCircuit: d.etapeCircuit }, data });
+  if (majDemande.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
+
+  for (const x of decisions) {
+    const l = parId.get(x.ligneId)!;
+    const montantLigne = detail.get(x.ligneId)!;
+    await db.historiqueEntry.create({
+      data: {
+        entity: "LigneDemande",
+        entityId: x.ligneId,
+        action: x.statut === "VALIDEE" ? "validation_ligne" : "rejet_ligne",
+        detail:
+          x.statut === "VALIDEE"
+            ? `Ligne « ${l.libelle} » validée${l.decisionDG === "VALIDEE" ? " par le DG" : ""} (${montantLigne.quantite} × ${formaterMontant(Number(montantLigne.prixUnitaire))} FCFA)`
+            : `Ligne « ${l.libelle} » rejetée${l.decisionDG === "REFUSEE" ? " définitivement après refus du DG" : ""} — motif : ${x.motif!.trim()}`,
+        userId: acteur.userId,
+      },
+    });
+  }
+  const morceaux = [
+    `${roleDG ? "DG" : "Finance"} — ${decisions.length} article${decisions.length > 1 ? "s" : ""} décidé${decisions.length > 1 ? "s" : ""} sur ${d.lignes.length}` +
+      ` (${nbValidees} validé${nbValidees > 1 ? "s" : ""}, ${nbRejetees} rejeté${nbRejetees > 1 ? "s" : ""})`,
+    `montant validé : ${formaterMontant(montantValide)} FCFA`,
+  ];
+  if (r.etapeSuivante !== d.etapeCircuit) morceaux.push(`${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}`);
+  if (r.effets.niveauRejet) morceaux.push(`niveau ${NIVEAU_LIBELLE[r.effets.niveauRejet]}`);
+  if (r.effets.approbationClotureParDG) morceaux.push("vaut approbation de clôture du DG");
+  await db.historiqueEntry.create({
+    data: { entity: "Demande", entityId: demandeId, action: ACTION_HISTORIQUE.DECIDER_LIGNES, detail: morceaux.join(" — "), userId: acteur.userId },
+  });
+  return { ok: true, etapeSuivante: r.etapeSuivante, montantValide, nbValidees, nbRejetees };
+}
+
+/** Ligne `Demande` (champs de `SELECT_DEMANDE_CIRCUIT`) → `DemandeCircuit`, articles et bénéficiaires effectifs compris. */
+function demandeCircuit(d: Parameters<typeof versDemandeCircuit>[0]): DemandeCircuit {
+  return versDemandeCircuit(d);
 }
 
 export interface LigneCorrigee {
@@ -460,6 +610,18 @@ export interface LigneCorrigee {
   motif: string;
   quantite: number;
   prixUnitaire: number;
+  /**
+   * Bénéficiaire propre de l'article (autonomie des articles, lot A) : absent = inchangé (ligne existante) ou hérite
+   * (nouvelle ligne) ; `null` = hérite de la demande ; un choix égal à celui de la demande n'enregistre rien.
+   */
+  beneficiaire?: ChoixBeneficiaire | null;
+  /** Nouvelles pièces de l'article ; celles déjà jointes sont conservées. */
+  pieceJointeUrls?: string[];
+  /**
+   * Date de livraison de l'article (lot G), « AAAA-MM-JJ » : absente = inchangée (ligne existante) ou copie de la date
+   * commune de la demande (nouvelle ligne) ; chaîne vide = effacée. Une date passée n'est refusée que si elle change.
+   */
+  dateLivraison?: string | null;
 }
 
 export interface CorrectionDemande {
@@ -485,7 +647,12 @@ export async function corrigerEtResoumettre(
 ): Promise<ResultatCircuit> {
   const d = await db.demande.findUnique({
     where: { id: demandeId },
-    include: { lignes: { orderBy: { createdAt: "asc" }, include: { decidePar: { select: { fullName: true } } } } },
+    include: {
+      lignes: {
+        orderBy: { createdAt: "asc" },
+        include: { decidePar: { select: { fullName: true } }, beneficiaireUser: { select: { fullName: true } } },
+      },
+    },
   });
   if (!d) return { ok: false, message: "Demande introuvable." };
 
@@ -503,6 +670,10 @@ export async function corrigerEtResoumettre(
   );
   if (!r.ok) return r;
 
+  // Lot B : un article validé est définitif — une demande avec un article validé ne repart jamais en correction.
+  if (d.lignes.some((l) => l.statutValidation === "VALIDEE")) {
+    return { ok: false, message: "Des articles de cette demande sont déjà validés : elle ne peut plus être corrigée en entier." };
+  }
   const estStandard = d.typeDemande === "STANDARD";
   const description = estStandard ? d.description : (correction.description ?? "").trim();
   if (!estStandard && (description ?? "").length < 3) {
@@ -517,6 +688,30 @@ export async function corrigerEtResoumettre(
     if (refusMotif) return { ok: false, message: refusMotif };
     if (!Number.isInteger(l.quantite) || l.quantite < 1) return { ok: false, message: "Chaque ligne doit avoir un nombre entier supérieur à 0." };
     if (!(l.prixUnitaire >= 0)) return { ok: false, message: "Prix unitaire invalide." };
+    if (l.dateLivraison) {
+      const avantDate = l.id ? d.lignes.find((x) => x.id === l.id)?.dateLivraison : null;
+      // Une date inchangée (même passée) n'est pas réexaminée ; seule une date saisie ou modifiée doit être valide.
+      if (!avantDate || jourDepuisDate(avantDate) !== l.dateLivraison) {
+        const refus = refusDateLivraison(l.dateLivraison, jourCourant());
+        if (refus) return { ok: false, message: refus };
+      }
+    }
+  }
+  // Bénéficiaire propre de chaque article après correction : le choix reçu, ramené à « hérite » (null) s'il égale celui
+  // de la demande ; absent pour une ligne existante = l'actuel est conservé.
+  const choixDemande = choixDepuisStocke(d, d.createurId);
+  const piecesValides = (urls: string[] | undefined) => (urls ?? []).every((u) => /^[0-9a-f-]{36}\.(pdf|jpe?g|png)$/.test(u));
+  if (correction.lignes.some((l) => !piecesValides(l.pieceJointeUrls))) return { ok: false, message: "Pièce jointe invalide." };
+  const comptesAVerifier = new Set<string>();
+  for (const l of correction.lignes) {
+    const c = l.beneficiaire;
+    if (c?.mode === "COMPTE" && c.userId !== d.createurId) comptesAVerifier.add(c.userId);
+    if (c?.mode === "COMPTE" && !c.userId) return { ok: false, message: "Choisissez un compte bénéficiaire pour chaque article concerné." };
+    if (c?.mode === "NOM" && c.nom.trim().length < 2) return { ok: false, message: "Saisissez le nom du bénéficiaire de chaque article concerné." };
+  }
+  if (comptesAVerifier.size > 0) {
+    const actifs = await db.user.findMany({ where: { id: { in: [...comptesAVerifier] }, isActive: true }, select: { id: true } });
+    if (actifs.length !== comptesAVerifier.size) return { ok: false, message: "Un compte bénéficiaire n'existe pas ou n'est plus actif." };
   }
   const existantes = new Map(d.lignes.map((l) => [l.id, l]));
   if (correction.lignes.some((l) => l.id && !existantes.has(l.id))) {
@@ -545,6 +740,9 @@ export async function corrigerEtResoumettre(
       motif: l.motif,
       quantite: l.quantite,
       prixUnitaire: Number(l.prixUnitaire),
+      ...(l.dateLivraison ? { dateLivraison: jourDepuisDate(l.dateLivraison) } : {}),
+      // Bénéficiaire propre de l'article, le cas échéant (absent = celui de la demande).
+      ...(l.beneficiaireType ? { beneficiaire: beneficiaireArticle(l, d).libelle } : {}),
       decision: l.statutValidation,
       motifRejet: l.motifRejet,
       // Auteur et date de la décision : l'historique affiche une ligne retirée avec sa décision (2026-10-07).
@@ -605,6 +803,7 @@ export async function corrigerEtResoumettre(
       motifRejet: null,
       decideParId: null,
       decideAt: null,
+      decideurFinanceId: null,
       soumiseAuDG: false,
       soumiseDGAt: null,
       soumiseDGParId: null,
@@ -613,13 +812,26 @@ export async function corrigerEtResoumettre(
       decisionDGParId: null,
       motifRefusDG: null,
     };
+    // Bénéficiaire propre : `undefined` = ne rien changer (ligne existante), `null`/choix = écrire (ou effacer).
+    const choixPropre =
+      l.beneficiaire === undefined ? undefined : choixPropreArticle({ beneficiaire: l.beneficiaire }, choixDemande, d.createurId);
+    const champsBeneficiaireLigne =
+      choixPropre === undefined
+        ? {}
+        : choixPropre === null
+          ? { beneficiaireType: null, beneficiaireUserId: null, beneficiaireNom: null }
+          : champsBeneficiaire(choixPropre, d.createurId);
+    let ligneId: string;
     if (l.id) {
+      ligneId = l.id;
       const avant = existantes.get(l.id)!;
       await db.ligneDemande.update({
         where: { id: l.id },
         data: {
           quantite: l.quantite,
           prixUnitaire: l.prixUnitaire,
+          ...champsBeneficiaireLigne,
+          ...(l.dateLivraison !== undefined ? { dateLivraison: versDateStockee(l.dateLivraison || null) } : {}),
           ...decisionRemiseAZero,
           ...(libelle !== avant.libelle
             ? { libelle, libelleDemandeur: libelle, libelleOriginal: avant.libelleOriginal ?? avant.libelle }
@@ -631,7 +843,22 @@ export async function corrigerEtResoumettre(
         },
       });
     } else {
-      await db.ligneDemande.create({ data: { demandeId, libelle, motif, quantite: l.quantite, prixUnitaire: l.prixUnitaire } });
+      const creee = await db.ligneDemande.create({
+        data: {
+          demandeId,
+          libelle,
+          motif,
+          quantite: l.quantite,
+          prixUnitaire: l.prixUnitaire,
+          ...champsBeneficiaireLigne,
+          dateLivraison: versDateStockee(dateLivraisonAEnregistrer(l.dateLivraison || null, jourDepuisDate(d.dateLivraisonSouhaitee))),
+        },
+      });
+      ligneId = creee.id;
+    }
+    const nouvellesPieces = [...new Set(l.pieceJointeUrls ?? [])];
+    if (nouvellesPieces.length > 0) {
+      await db.pieceJointe.createMany({ data: nouvellesPieces.map((url) => ({ url, demandeId, ligneDemandeId: ligneId })) });
     }
   }
   if (correction.pieceJointeUrl) {

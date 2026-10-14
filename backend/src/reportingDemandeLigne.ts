@@ -3,6 +3,9 @@
 // l'export Excel. Les données multiples sont regroupées dans une cellule (un élément par ligne de la cellule), avec des
 // colonnes numériques de totaux à côté. Fonctions PURES (aucun accès base) : le chargement est dans `reporting.ts`.
 
+import { libelleDateLivraison } from "./dateLivraisonArticle";
+import { libelleGestionArticle, type GestionArticle } from "./parcoursArticle";
+
 /** Une entrée d'historique utile au reporting (validations, clôture, ajustements). */
 export interface HistoriqueReporting {
   action: string;
@@ -14,6 +17,8 @@ export interface HistoriqueReporting {
 export interface DemandeReportingSource {
   reference: string;
   creeLe: Date;
+  /** Lot H : dernier événement de la demande (« Géré le »), `null` ou absent si rien n'a été traité. */
+  gere?: GestionArticle | null;
   typeDemande: "STANDARD" | "DEPENSE_DIRECTE";
   statut: string;
   etapeCircuit: string | null;
@@ -37,6 +42,8 @@ export interface DemandeReportingSource {
     motifRejet: string | null;
     decidePar: string | null;
     decideLe: Date | null;
+    /** Date de livraison de l'article (lot G) ; absente de la source = non renseignée par l'appelant. */
+    dateLivraison?: Date | null;
   }[];
   reglements: {
     montant: number;
@@ -55,6 +62,8 @@ export interface DemandeReportingSource {
       declarant: string;
       declareLe: Date;
       creeParAssistant: boolean;
+      /** Ancien versement bancaire (avant le lot G) : jamais un retour nul. */
+      versementBancaire?: boolean;
       complementSignalement: boolean;
       reouvertureExceptionnelle: boolean;
       depenses: { libelle: string; montant: number; justifiee: boolean; motifNonJustifie: string | null }[];
@@ -78,12 +87,16 @@ export interface DemandeReportingSource {
     valideLe: Date | null;
     motifRejet: string | null;
   }[];
+  /** Retours externes rattachés à la demande (lot G bis) : fonds versé par banque rendu à la caisse = retour reçu. */
+  retoursExternes?: { montant: number; article: string | null; creePar: string; creeLe: Date }[];
   historique: HistoriqueReporting[];
 }
 
 export interface LigneReportingDemande {
   reference: string;
   creeLe: Date;
+  /** Lot H : « Géré le » — date du dernier événement de la demande et son étape (« 12/10/2026 (réglé) »), « — » si rien n'a été traité. */
+  gereLe: string;
   type: string;
   statut: string;
   etape: string;
@@ -111,9 +124,10 @@ export interface LigneReportingDemande {
 /** Colonnes du rapport, dans l'ordre — partagées par l'écran et l'export Excel (jamais deux listes divergentes). */
 export const COLONNES_REPORTING_DEMANDE: { cle: keyof LigneReportingDemande; titre: string; montant?: boolean; multi?: boolean }[] = [
   { cle: "reference", titre: "Référence" },
-  { cle: "creeLe", titre: "Créée le" },
+  { cle: "creeLe", titre: "Demande créée le" },
   { cle: "type", titre: "Type" },
   { cle: "statut", titre: "Statut" },
+  { cle: "gereLe", titre: "Géré le" },
   { cle: "etape", titre: "Étape du circuit" },
   { cle: "demandeur", titre: "Demandeur" },
   { cle: "service", titre: "Service" },
@@ -206,6 +220,7 @@ export function construireLigneReporting(d: DemandeReportingSource): LigneReport
             l.libelle,
             l.motif ? `motif : ${l.motif}` : null,
             `${l.quantite} × ${fcfa(l.prixUnitaire)} = ${fcfa(l.quantite * l.prixUnitaire)}`,
+            l.dateLivraison === undefined ? null : `livraison prévue le ${libelleDateLivraison(l.dateLivraison)}`,
             l.categorie ? `${l.categorie}${l.objet ? ` / ${l.objet}` : ""}` : "sans catégorie",
             [LIBELLE_STATUT_LIGNE[l.statut], l.statut === "REJETEE" && l.motifRejet ? `(${l.motifRejet})` : null, par(l.decidePar, l.decideLe)]
               .filter(Boolean)
@@ -270,7 +285,7 @@ export function construireLigneReporting(d: DemandeReportingSource): LigneReport
       const suffixe = origine.length > 0 ? ` (${origine.join(", ")})` : "";
       if (t.estReceptionne) {
         totalRetourne += t.montantARetourner;
-        const nul = r.mode === "CAISSE" && centimes(t.montantARetourner) === 0;
+        const nul = !t.versementBancaire && centimes(t.montantARetourner) === 0;
         retours.push(
           nul
             ? `Retour nul constaté ${par(t.receptionnePar, t.receptionneLe)}${suffixe}`
@@ -299,9 +314,17 @@ export function construireLigneReporting(d: DemandeReportingSource): LigneReport
     ajustements.push(`Retour exceptionnel post-clôture — ${fcfa(e.montant)} — saisi ${par(e.saisiPar, e.saisiLe)} — ${decision}`);
   }
 
+  for (const x of d.retoursExternes ?? []) {
+    totalRetourne += x.montant;
+    retours.push(
+      `Retour externe (fonds versé par banque, rendu à la caisse) — ${fcfa(x.montant)}${x.article ? ` — article « ${x.article} »` : ""} — enregistré ${par(x.creePar, x.creeLe)}`
+    );
+  }
+
   return {
     reference: d.reference,
     creeLe: d.creeLe,
+    gereLe: libelleGestionArticle(d.gere ?? null).replace(/^Géré le /, ""),
     type: d.typeDemande === "DEPENSE_DIRECTE" ? "Dépense directe" : "Standard",
     statut: d.statut,
     etape: d.etapeCircuit ?? "—",

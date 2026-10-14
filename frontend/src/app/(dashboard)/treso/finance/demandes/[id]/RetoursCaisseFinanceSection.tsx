@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { Badge, Button } from "@/components/ui";
-import { calculerMontantARetournerNet, prisma } from "backend";
+import { calculerMontantARetournerNet, prisma, refusExecutionPropreSurReglement } from "backend";
 
 import { DetaillerDepensesReglement } from "./DetaillerDepensesReglement";
 import { RetourAssistantTrigger } from "./RetourAssistantTrigger";
@@ -15,7 +15,7 @@ import { RetourAssistantTrigger } from "./RetourAssistantTrigger";
  * normalement plus aucune action) : rien à afficher si la demande n'a
  * aucun règlement Caisse confirmé, jamais un bloc vide.
  *
- * Pour chaque règlement Caisse confirmé : la liste de ses retours déjà
+ * Pour chaque règlement confirmé (Caisse ou Banque, lot G) : la liste de ses retours déjà
  * créés (lien "Voir le détail" vers `/treso/finance/retours/[id]`, où se
  * trouve désormais la seule action "Réceptionner" — voir CLAUDE.md "Écran
  * 'Voir' avant 'Réceptionner'"), puis, si `canDeclarerAssistant`
@@ -29,19 +29,34 @@ export async function RetoursCaisseFinanceSection({
   demandeId,
   demandeEstCloturee,
   canDeclarerAssistant,
-  raisonIndisponible = null,
+  userId = null,
 }: {
   demandeId: string;
   demandeEstCloturee: boolean;
   canDeclarerAssistant: boolean;
-  /** Conflit d'intérêts (demandeur ou bénéficiaire) : déclaration grisée avec la phrase du serveur. */
-  raisonIndisponible?: string | null;
+  /**
+   * Compte connecté : conflit d'intérêts PAR ARTICLE (lot D) — la déclaration d'un règlement est grisée, avec la
+   * phrase du serveur, seulement si le compte est le demandeur ou le bénéficiaire de l'article que ce règlement a payé.
+   */
+  userId?: string | null;
 }) {
-  const reglements = await prisma.reglement.findMany({
-    where: { demandeId, estConfirme: true, estAnnule: false },
-    include: { retours: { orderBy: { createdAt: "asc" } } },
-    orderBy: { createdAt: "asc" },
-  });
+  const [reglements, demande] = await Promise.all([
+    prisma.reglement.findMany({
+      where: { demandeId, estConfirme: true, estAnnule: false },
+      include: { retours: { orderBy: { createdAt: "asc" } } },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.demande.findUniqueOrThrow({
+      where: { id: demandeId },
+      select: {
+        createurId: true,
+        beneficiaireType: true,
+        beneficiaireUserId: true,
+        beneficiaireNom: true,
+        lignes: { select: { id: true, libelle: true, beneficiaireType: true, beneficiaireUserId: true, beneficiaireNom: true } },
+      },
+    }),
+  ]);
 
   if (reglements.length === 0) {
     return null;
@@ -58,19 +73,26 @@ export async function RetoursCaisseFinanceSection({
       <ul className="space-y-4">
         {reglements.map((r, index) => {
           const aUnRetourEnAttente = r.retours.some((retour) => !retour.estReceptionne);
+          const raisonIndisponible = userId ? refusExecutionPropreSurReglement({ ligneDemandeId: r.ligneDemandeId, demande }, userId) : null;
+          const article = r.ligneDemandeId ? demande.lignes.find((l) => l.id === r.ligneDemandeId) : null;
           return (
             <li key={r.id} className="space-y-3 rounded-md border border-border p-3">
               <p className="text-sm font-medium text-foreground">
                 {Number(r.montant).toLocaleString("fr-FR")} FCFA — {r.mode === "BANQUE" ? "Banque" : "Caisse"}
+                {article ? <span className="font-normal text-muted-foreground"> — article « {article.libelle} »</span> : null}
               </p>
               {r.retours.length > 0 ? (
                 <ul className="space-y-2">
                   {r.retours.map((retour) => (
                     <li key={retour.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted p-2 text-sm">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={retour.estReceptionne ? "success" : "warning"}>
-                          {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
-                        </Badge>
+                        {r.mode === "BANQUE" && !retour.versementBancaire && !retour.estReceptionne ? (
+                          <Badge variant="neutral">Détail des dépenses</Badge>
+                        ) : (
+                          <Badge variant={retour.estReceptionne ? "success" : "warning"}>
+                            {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
+                          </Badge>
+                        )}
                         {retour.creeParAssistant ? <Badge variant="info">Assistant Finance</Badge> : null}
                       </div>
                       <Link href={`/treso/finance/retours/${retour.id}`}>
@@ -84,14 +106,24 @@ export async function RetoursCaisseFinanceSection({
               ) : (
                 <p className="text-xs text-muted-foreground">Aucun retour déclaré pour l&apos;instant.</p>
               )}
-              {!aUnRetourEnAttente && canDeclarerAssistant && r.mode === "CAISSE" && !demandeEstCloturee ? (
+              {r.mode === "BANQUE" && !aUnRetourEnAttente && !demandeEstCloturee && canDeclarerAssistant ? (
+                <DetaillerDepensesReglement reglementId={r.id} disponible={disponibles[index]} raisonIndisponible={raisonIndisponible} />
+              ) : null}
+              {r.mode === "BANQUE" ? (
+                <p data-retour-banque-externe className="text-xs text-muted-foreground">
+                  Fonds versé par banque : son retour éventuel n&apos;est pas déclaré ici. Le Responsable Finance l&apos;enregistre en{" "}
+                  <Link className="underline" href="/treso/finance/retours-externes">
+                    Retour externe
+                  </Link>
+                  , rattaché à cette demande et à cet article.
+                </p>
+              ) : !aUnRetourEnAttente && canDeclarerAssistant && !demandeEstCloturee ? (
                 <DetaillerDepensesReglement reglementId={r.id} disponible={disponibles[index]} raisonIndisponible={raisonIndisponible} />
               ) : !aUnRetourEnAttente && canDeclarerAssistant ? (
                 <RetourAssistantTrigger
                   reglementId={r.id}
                   montantReglement={Number(r.montant)}
                   motifReouvertureRequis={demandeEstCloturee}
-                  modeReglement={r.mode}
                   raisonIndisponible={raisonIndisponible}
                 />
               ) : null}

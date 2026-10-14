@@ -1,8 +1,9 @@
+import { affichageStatutDemande } from "@/components/tresorerie/demandeStatut";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Button, PageHeader, ToastOnMount } from "@/components/ui";
-import { getBeneficiaireNom, resumeMotifDemande } from "backend";
+import { getDatesGestionDemandes, nomBeneficiaireDemande, resumeMotifDemande } from "backend";
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
@@ -54,10 +55,11 @@ export default async function MesDemandesPage({
       createurId: session.user.id,
       ...(statutsFiltre.length > 0 ? { statut: { in: statutsFiltre } } : {}),
     },
-    include: { beneficiaireUser: true, lignes: { select: { libelle: true, motif: true }, orderBy: { createdAt: "asc" } } },
+    include: { beneficiaireUser: true, lignes: { select: { libelle: true, motif: true, statutValidation: true, beneficiaireType: true, beneficiaireUserId: true, beneficiaireNom: true, beneficiaireUser: { select: { fullName: true } } }, orderBy: { createdAt: "asc" } } },
     orderBy: { createdAt: "desc" },
   });
 
+  const gestions = await getDatesGestionDemandes(rawDemandes.map((d) => d.id));
   const demandes = rawDemandes.map((d) => ({
     id: d.id,
     reference: d.reference,
@@ -65,10 +67,12 @@ export default async function MesDemandesPage({
     montant: Number(d.montant),
     devise: d.devise,
     statut: d.statut,
+    statutAffiche: affichageStatutDemande(d.statut, d.lignes),
     createdAt: d.createdAt,
+    gere: gestions.get(d.id) ?? null,
     typeDemande: d.typeDemande,
     natureDepenseDirecte: d.natureDepenseDirecte,
-    beneficiaireNom: getBeneficiaireNom(d),
+    beneficiaireNom: nomBeneficiaireDemande(d, d.lignes),
   }));
 
   const canCreate = hasPermission(session, "treso.creer_demande");

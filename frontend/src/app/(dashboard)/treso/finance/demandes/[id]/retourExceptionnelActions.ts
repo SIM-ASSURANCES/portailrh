@@ -6,7 +6,17 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { getDepensesDeclarees, getRetoursRecus, getTotalRegle, prisma, refusConflitInteret } from "backend";
+import {
+  getAgregatsRegularisation,
+  getEcartLigne,
+  MESSAGE_ARTICLE_A_CHOISIR,
+  MESSAGE_ARTICLE_INTROUVABLE,
+  MESSAGE_ARTICLE_NON_VALIDE,
+  MESSAGE_REGLEMENTS_NON_RATTACHES,
+  prisma,
+  refusConflitInteret,
+  AGREGATS_VIDES,
+} from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -48,14 +58,15 @@ export async function creerRetourExceptionnelAction(
   demandeId: string,
   montant: number,
   motif: string,
-  pieceJointeUrl?: string
+  pieceJointeUrl?: string,
+  ligneDemandeId?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !estAssistantFinance(session)) {
     return { status: "error", message: "Action non autorisée." };
   }
-  // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le demandeur ni le bénéficiaire de la demande.
-  const refusConflit = await refusConflitInteret(prisma, { demandeId }, session.user.id);
+  // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le créateur ni le bénéficiaire de l'article concerné.
+  const refusConflit = await refusConflitInteret(prisma, { demandeId, ligneDemandeId: ligneDemandeId || null }, session.user.id);
   if (refusConflit) {
     return { status: "error", message: refusConflit };
   }
@@ -65,33 +76,64 @@ export async function creerRetourExceptionnelAction(
     return { status: "error", message: parsed.error.issues[0].message };
   }
 
-  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  const demande = await prisma.demande.findUnique({
+    where: { id: demandeId },
+    select: { statut: true, lignes: { select: { id: true, libelle: true, statutValidation: true } } },
+  });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
   if (demande.statut !== "CLOTUREE") {
     return { status: "error", message: "Un retour exceptionnel ne peut être enregistré que sur une demande clôturée." };
   }
-  // Plafond : montant réglé (tous modes) − retours déjà reçus (normaux réceptionnés + exceptionnels validés).
-  const [totalRegle, dejaRecu] = await Promise.all([getTotalRegle(demandeId), getRetoursRecus(demandeId)]);
+  // Lot E : sur une demande à articles, le retour concerne UN article validé (jamais « la demande en général »), et il
+  // reste bloqué tant que des règlements anciens ne sont rattachés à aucun article (on ne devine pas lequel est concerné).
+  let article: { id: string; libelle: string } | null = null;
+  if (demande.lignes.length > 0) {
+    if (!ligneDemandeId) return { status: "error", message: MESSAGE_ARTICLE_A_CHOISIR };
+    const ligne = demande.lignes.find((l) => l.id === ligneDemandeId);
+    if (!ligne) return { status: "error", message: MESSAGE_ARTICLE_INTROUVABLE };
+    if (ligne.statutValidation !== "VALIDEE") return { status: "error", message: MESSAGE_ARTICLE_NON_VALIDE };
+    const sansArticle = await prisma.reglement.count({ where: { demandeId, ligneDemandeId: null, estAnnule: false } });
+    if (sansArticle > 0) return { status: "error", message: MESSAGE_REGLEMENTS_NON_RATTACHES };
+    article = ligne;
+  } else if (ligneDemandeId) {
+    return { status: "error", message: MESSAGE_ARTICLE_INTROUVABLE };
+  }
+  // Plafond : montant réglé (tous modes) − retours déjà reçus (normaux réceptionnés + exceptionnels validés − remboursements),
+  // pour l'article concerné seulement.
+  const regul = await getAgregatsRegularisation(demandeId);
+  const perimetre = article ? (regul.parArticle.get(article.id) ?? { ...AGREGATS_VIDES }) : regul.total;
+  const totalRegle = perimetre.fondsRemis;
+  const dejaRecu = perimetre.retoursRecus;
   const plafond = Math.max(0, totalRegle - dejaRecu);
   if (Math.round(parsed.data.montant * 100) > Math.round(plafond * 100)) {
     return {
       status: "error",
-      message: `Le montant dépasse le maximum autorisé (${plafond.toLocaleString("fr-FR")} FCFA = total réglé ${totalRegle.toLocaleString("fr-FR")} FCFA − retours déjà reçus ${dejaRecu.toLocaleString("fr-FR")} FCFA).`,
+      message: `Le montant dépasse le maximum autorisé${article ? ` pour l'article « ${article.libelle} »` : ""} (${plafond.toLocaleString("fr-FR")} FCFA = total réglé ${totalRegle.toLocaleString("fr-FR")} FCFA − retours déjà reçus ${dejaRecu.toLocaleString("fr-FR")} FCFA).`,
     };
   }
-  const enAttente = await prisma.retourExceptionnel.count({ where: { demandeId, statut: "EN_ATTENTE_VALIDATION" } });
+  const enAttente = await prisma.retourExceptionnel.count({
+    where: { demandeId, statut: "EN_ATTENTE_VALIDATION", ligneDemandeId: article?.id ?? null },
+  });
   if (enAttente > 0) {
     return {
       status: "error",
-      message: "Un retour exceptionnel est déjà en attente de validation pour cette demande.",
+      message: article
+        ? `Un retour exceptionnel est déjà en attente de validation pour l'article « ${article.libelle} ».`
+        : "Un retour exceptionnel est déjà en attente de validation pour cette demande.",
     };
   }
 
   await prisma.$transaction(async (tx) => {
     const retour = await tx.retourExceptionnel.create({
-      data: { demandeId, montant: parsed.data.montant, motif: parsed.data.motif, saisiParId: session.user.id },
+      data: {
+        demandeId,
+        ligneDemandeId: article?.id ?? null,
+        montant: parsed.data.montant,
+        motif: parsed.data.motif,
+        saisiParId: session.user.id,
+      },
     });
     if (parsed.data.pieceJointeUrl) {
       await tx.pieceJointe.create({ data: { url: parsed.data.pieceJointeUrl, demandeId, retourExceptionnelId: retour.id } });
@@ -101,7 +143,7 @@ export async function creerRetourExceptionnelAction(
         entity: "Demande",
         entityId: demandeId,
         action: "retour_exceptionnel_saisie",
-        detail: `Retour exceptionnel post-clôture saisi : ${parsed.data.montant.toLocaleString("fr-FR")} FCFA — motif : ${parsed.data.motif} (en attente de validation de Finance).`,
+        detail: `Retour exceptionnel post-clôture saisi${article ? ` pour l'article « ${article.libelle} »` : ""} : ${parsed.data.montant.toLocaleString("fr-FR")} FCFA — motif : ${parsed.data.motif} (en attente de validation de Finance).`,
         userId: session.user.id,
       },
     });
@@ -127,7 +169,7 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
 
   const retour = await prisma.retourExceptionnel.findUnique({
     where: { id: retourId },
-    include: { demande: true, saisiPar: true },
+    include: { demande: true, saisiPar: true, ligneDemande: { select: { libelle: true } } },
   });
   if (!retour) {
     return { status: "error", message: "Retour exceptionnel introuvable." };
@@ -144,12 +186,10 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
 
   // Part du montant qui COUVRE le solde à régulariser encore ouvert (ex. retour non réceptionné) : elle
   // ne réduit aucune dépense. Seul l'excédent réduit les dépenses non justifiées (solde ramené à 0, jamais négatif).
-  const [totalRegle, depensesDeclarees, retoursRecus] = await Promise.all([
-    getTotalRegle(retour.demandeId),
-    getDepensesDeclarees(retour.demandeId),
-    getRetoursRecus(retour.demandeId),
-  ]);
-  const ecartAvant = Math.round((totalRegle - depensesDeclarees - retoursRecus) * 100);
+  // Lot E : le solde est celui de l'ARTICLE du retour (celui de la demande pour un retour sans article).
+  const regul = await getAgregatsRegularisation(retour.demandeId);
+  const perimetre = retour.ligneDemandeId ? (regul.parArticle.get(retour.ligneDemandeId) ?? { ...AGREGATS_VIDES }) : regul.total;
+  const ecartAvant = Math.round(getEcartLigne(perimetre) * 100);
   const couvertureCentimes = Math.min(Math.round(Number(retour.montant) * 100), Math.max(0, ecartAvant));
 
   const maintenant = new Date();
@@ -175,7 +215,10 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
     // puis déborde sur le "non détaillé" — jamais sur les dépenses justifiées — pour que le Solde à
     // régulariser revienne à 0 au lieu de passer négatif.
     const lignes = await tx.depenseLigne.findMany({
-      where: { retourCaisse: { reglement: { demandeId: retour.demandeId } }, justification: "SANS_PIECE" },
+      where: {
+        retourCaisse: { reglement: { demandeId: retour.demandeId, ...(retour.ligneDemandeId ? { ligneDemandeId: retour.ligneDemandeId } : {}) } },
+        justification: "SANS_PIECE",
+      },
       orderBy: { createdAt: "asc" },
     });
     const sansPiece = lignes.filter((l) => l.motifNonJustifie != null);
@@ -209,7 +252,7 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
         entity: "Demande",
         entityId: retour.demandeId,
         action: "retour_exceptionnel_post_cloture",
-        detail: `Retour exceptionnel post-clôture validé : ${Number(retour.montant).toLocaleString("fr-FR")} FCFA — motif : ${retour.motif}.${resumeReduction} Saisi par ${retour.saisiPar.fullName} le ${retour.saisiAt.toLocaleDateString("fr-FR")}, validé par ${session.user.fullName} le ${maintenant.toLocaleDateString("fr-FR")}.`,
+        detail: `Retour exceptionnel post-clôture validé${retour.ligneDemande ? ` pour l'article « ${retour.ligneDemande.libelle} »` : ""} : ${Number(retour.montant).toLocaleString("fr-FR")} FCFA — motif : ${retour.motif}.${resumeReduction} Saisi par ${retour.saisiPar.fullName} le ${retour.saisiAt.toLocaleDateString("fr-FR")}, validé par ${session.user.fullName} le ${maintenant.toLocaleDateString("fr-FR")}.`,
         userId: session.user.id,
       },
     });
@@ -220,7 +263,7 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
   await notify({
     userId: retour.demande.createurId,
     titre: "Retour de caisse enregistré après clôture",
-    message: `Un retour de ${Number(retour.montant).toLocaleString("fr-FR")} FCFA a été enregistré le ${maintenant.toLocaleDateString("fr-FR")} sur votre demande ${retour.demande.reference}.`,
+    message: `Un retour de ${Number(retour.montant).toLocaleString("fr-FR")} FCFA${retour.ligneDemande ? ` pour l'article « ${retour.ligneDemande.libelle} »` : ""} a été enregistré le ${maintenant.toLocaleDateString("fr-FR")} sur votre demande ${retour.demande.reference}.`,
     lien: `/treso/demandes/${retour.demandeId}`,
     priority: "IMPORTANT",
     category: "TRESORERIE",

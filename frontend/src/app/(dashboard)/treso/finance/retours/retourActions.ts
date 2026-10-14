@@ -6,6 +6,7 @@ import type { Prisma } from "backend";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { suffixeArticle } from "@/lib/nomArticle";
 import { notifierParPermission, notify } from "@/lib/notifications";
 import { snapshotLigne, type CorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
 import {
@@ -22,9 +23,10 @@ import {
   resumeModificationDepense,
   getRecuNetSignalement,
   getSoldeCaisse,
+  MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE,
   prisma,
   refusConflitInteret,
-  refusExecutionPropreDemande,
+  refusExecutionPropreSurReglement,
 } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
@@ -73,11 +75,7 @@ const motifReouvertureSchema = z
  */
 export async function declarerRetourAssistantAction(
   reglementId: string,
-  motifReouverture?: string,
-  /** Règlement BANQUE uniquement (voir CLAUDE.md "Retour sur règlement Banque") : bordereau de versement OBLIGATOIRE. */
-  bordereauUrl?: string,
-  /** Règlement BANQUE uniquement : montant réellement reversé (> 0) ; le reste est la dépense à détailler. */
-  montantRetourneBanque?: number
+  motifReouverture?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.receptionner_retour")) {
@@ -99,16 +97,10 @@ export async function declarerRetourAssistantAction(
   if (!reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est pas éligible à un retour de caisse." };
   }
-  // Branche selon le mode : Caisse = flux existant, Banque = bordereau
-  // obligatoire + écriture JournalBanque, AUCUN contrôle de solde.
-  const estBanque = reglement.mode === "BANQUE";
-  if (estBanque) {
-    if (!bordereauUrl || !bordereauUrl.trim()) {
-      return { status: "error", message: "Un bordereau de versement est obligatoire pour un retour sur un règlement Banque." };
-    }
-    if (!montantRetourneBanque || !(montantRetourneBanque > 0)) {
-      return { status: "error", message: "Le montant retourné doit être supérieur à 0 pour un retour Banque." };
-    }
+  // Lot G bis : pas de retour à déclarer sur un fonds versé par banque — son retour est un retour externe rattaché à la
+  // demande et à l'article (les dépenses, elles, se détaillent comme pour la Caisse).
+  if (reglement.mode === "BANQUE") {
+    return { status: "error", message: MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE };
   }
   if (reglement.retours.some((r) => !r.estReceptionne)) {
     return {
@@ -132,15 +124,8 @@ export async function declarerRetourAssistantAction(
   // l'intégralité de ce restant, rien retourné, tout dépensé, à détailler
   // ensuite.
   const restantTotal = await calculerMontantARetournerNet({ reglementId, totalDepensesNouvelles: 0 });
-  if (estBanque && montantRetourneBanque! > restantTotal) {
-    return {
-      status: "error",
-      message: `Le montant retourné ne peut pas dépasser le montant restant sur ce règlement (${restantTotal.toLocaleString("fr-FR")} FCFA).`,
-    };
-  }
-  // Caisse : tout le restant est "dépensé, à détailler" (montantARetourner = 0).
-  // Banque : la part reversée est déduite, seule la différence est à détailler.
-  const restant = estBanque ? Math.round((restantTotal - montantRetourneBanque!) * 100) / 100 : restantTotal;
+  // Tout le restant est "dépensé, à détailler" (montantARetourner = 0), que le fonds ait été versé en caisse ou par banque.
+  const restant = restantTotal;
   const montantARetourner = await calculerMontantARetournerNet({ reglementId, totalDepensesNouvelles: restant });
 
   await prisma.$transaction(async (tx) => {
@@ -153,20 +138,6 @@ export async function declarerRetourAssistantAction(
         motifReouvertureExceptionnelle: motifValide,
       },
     });
-
-    if (estBanque) {
-      const piece = await tx.pieceJointe.create({ data: { url: bordereauUrl!.trim(), demandeId: reglement.demandeId } });
-      await tx.journalBanque.create({
-        data: {
-          type: "RETOUR",
-          montant: montantARetourner,
-          reglementId,
-          retourCaisseId: retour.id,
-          pieceJointeId: piece.id,
-          creeParId: session.user.id,
-        },
-      });
-    }
 
     if (restant > 0) {
       await tx.depenseLigne.create({
@@ -207,7 +178,7 @@ export async function declarerRetourAssistantAction(
 
   await notifierParPermission("treso.receptionner_retour", {
     titre: "Retour de caisse à réceptionner",
-    message: `Un retour de caisse de ${restant.toLocaleString("fr-FR")} FCFA (déclaré par l'Assistant Finance) reste à détailler et réceptionner sur la demande ${reglement.demande.reference}.`,
+    message: `Un retour de caisse de ${restant.toLocaleString("fr-FR")} FCFA (déclaré par l'Assistant Finance) reste à détailler et réceptionner sur la demande ${reglement.demande.reference}${await suffixeArticle(reglement.ligneDemandeId)}.`,
     lien: "/treso/finance/retours",
   });
 
@@ -260,7 +231,7 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
 
   const retour = await prisma.retourCaisse.findUnique({
     where: { id: retourId },
-    include: { reglement: { include: { demande: true } }, depenses: { select: { montant: true } } },
+    include: { reglement: { include: { demande: { include: { lignes: true } } } }, depenses: { select: { montant: true } } },
   });
 
   if (!retour) {
@@ -269,8 +240,13 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   if (retour.estReceptionne) {
     return { status: "error", message: "Ce retour de caisse est déjà réceptionné." };
   }
+  // Lot G bis : un fonds versé par banque ne se réceptionne pas (sa fiche de détail des dépenses n'est qu'un support) ;
+  // seul un ancien retour Banque (bordereau, `versementBancaire`) reste réceptionnable, sans écriture de caisse.
+  if (retour.reglement.mode === "BANQUE" && !retour.versementBancaire) {
+    return { status: "error", message: MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE };
+  }
   // Conflit d'intérêts : jamais la réception du retour de sa propre demande.
-  const refusPropre = refusExecutionPropreDemande(retour.reglement.demande, session.user.id);
+  const refusPropre = refusExecutionPropreSurReglement(retour.reglement, session.user.id);
   if (refusPropre) {
     return { status: "error", message: refusPropre };
   }
@@ -290,13 +266,13 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   const demandeId = retour.reglement.demandeId;
   const montant = retour.montantARetourner;
 
-  // Retour sur règlement BANQUE : la réception ne touche JAMAIS `JournalCaisse`
-  // (règle impérative n°3 — la Banque n'impacte pas la caisse) ; le mouvement
-  // `JournalBanque` RETOUR a déjà été écrit à la déclaration, avec son bordereau.
-  const estBanque = retour.reglement.mode === "BANQUE";
+  // Ancien retour sur règlement BANQUE (avant le lot G) : versement à la banque avec bordereau, mouvement `JournalBanque`
+  // RETOUR déjà écrit à la déclaration — sa réception n'écrit jamais en caisse (écriture existante jamais modifiée).
+  // Lot G : tout NOUVEAU retour, même sur un fonds versé par banque, est rendu en espèces et entre en caisse à la réception.
+  const estVersementBancaire = retour.versementBancaire;
   // Retour nul (2026-10-08) : rien à rendre sur un règlement Caisse — aucun mouvement de 0 FCFA dans le journal de
   // caisse, seulement le constat (qui, quand) dans l'historique de la demande. Mêmes gardes que toute réception.
-  const nul = estRetourNul({ montantARetourner: Number(montant), mode: retour.reglement.mode });
+  const nul = estRetourNul({ montantARetourner: Number(montant), versementBancaire: retour.versementBancaire });
   const receptionneAt = new Date();
   const totalDepenses = retour.depenses.reduce((t, d) => t + Number(d.montant), 0);
   const ecrit = await prisma.$transaction(async (tx) => {
@@ -310,7 +286,7 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
       },
     });
     if (count === 0) return false;
-    if (!estBanque && !nul) {
+    if (!estVersementBancaire && !nul) {
       await tx.journalCaisse.create({
         data: {
           type: "ENTREE",
@@ -499,7 +475,7 @@ export async function detaillerDepensesRetourAction(
   // Fiche de régularisation (2026-10-10) : détail renseigné sans retour du collaborateur — total libre, le montant à
   // rendre en découle (même calcul qu'une déclaration : `calculerMontantARetournerNet`). Tout autre retour garde son
   // total fixé (montant déclaré par le collaborateur, ou déjà réceptionné).
-  const fiche = estFicheRegularisation({ ...retour, mode: retour.reglement.mode });
+  const fiche = estFicheRegularisation(retour);
   const disponibleFiche = fiche
     ? await calculerMontantARetournerNet({ reglementId: retour.reglementId, totalDepensesNouvelles: 0, excludeRetourId: retourId })
     : 0;
@@ -889,7 +865,7 @@ export async function ajusterTotalDeclareRetourAction(
 
   await notifierParPermission("treso.receptionner_retour", {
     titre: "Total déclaré ajusté sur un retour de caisse",
-    message: `Finance a ajusté le total déclaré (${ancienTotal.toLocaleString("fr-FR")} → ${nouveauTotal.toLocaleString("fr-FR")} FCFA) du retour de la demande ${retour.reglement.demande.reference} : vous pouvez maintenant corriger le détail.`,
+    message: `Finance a ajusté le total déclaré (${ancienTotal.toLocaleString("fr-FR")} → ${nouveauTotal.toLocaleString("fr-FR")} FCFA) du retour de la demande ${retour.reglement.demande.reference}${await suffixeArticle(retour.reglement.ligneDemandeId)} : vous pouvez maintenant corriger le détail.`,
     lien: `/treso/finance/retours/${retourId}`,
   });
 
@@ -980,8 +956,8 @@ export async function declarerRetourComplementaireAction(retourId: string): Prom
   if (!retour.estReceptionne) {
     return { status: "error", message: "Ce retour n'est pas encore réceptionné : corrigez-le directement." };
   }
-  if (retour.reglement.mode !== "CAISSE") {
-    return { status: "error", message: "Le retour complémentaire ne s'applique qu'à un règlement Caisse." };
+  if (retour.versementBancaire) {
+    return { status: "error", message: "Le retour complémentaire ne s'applique pas à un ancien versement bancaire : contactez l'administrateur." };
   }
   if (retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle) {
     return { status: "error", message: "Cette demande est clôturée : aucune correction n'est possible." };
@@ -1075,8 +1051,8 @@ export async function proposerRemboursementRetourAction(
   if (!signalement || signalement.montantPropose == null) {
     return { status: "error", message: "Aucun signalement actif avec un montant proposé sur ce retour." };
   }
-  if (!retour.estReceptionne || retour.reglement.mode !== "CAISSE") {
-    return { status: "error", message: "Un remboursement ne s'applique qu'à un retour Caisse déjà réceptionné." };
+  if (!retour.estReceptionne || retour.versementBancaire) {
+    return { status: "error", message: "Un remboursement ne s'applique qu'à un retour déjà réceptionné en caisse (pas à un ancien versement bancaire)." };
   }
   if (retour.reglement.demande.statut === "CLOTUREE" && !retour.motifReouvertureExceptionnelle) {
     return { status: "error", message: "Cette demande est clôturée : aucune correction n'est possible." };
@@ -1338,9 +1314,6 @@ export async function detaillerDepensesReglementAction(
   if (!reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est pas éligible au détail des dépenses." };
   }
-  if (reglement.mode !== "CAISSE") {
-    return { status: "error", message: "Règlement Banque : le retour se déclare avec son bordereau de versement." };
-  }
   if (reglement.demande.statut === "CLOTUREE") {
     return { status: "error", message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).` };
   }
@@ -1528,7 +1501,7 @@ export async function modifierDepenseDetailleeAction(
     return { status: "error", message: "Le motif est obligatoire (3 caractères minimum) pour une dépense non justifiée." };
   }
 
-  const fiche = estFicheRegularisation({ ...retour, mode: retour.reglement.mode });
+  const fiche = estFicheRegularisation(retour);
   const disponibleFiche = fiche
     ? await calculerMontantARetournerNet({ reglementId: retour.reglementId, totalDepensesNouvelles: 0, excludeRetourId: retour.id })
     : 0;
@@ -1610,7 +1583,7 @@ export async function detaillerResteAction(retourId: string, lignes: LigneDetail
     return { status: "error", message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).` };
   }
 
-  const fiche = estFicheRegularisation({ ...retour, mode: retour.reglement.mode });
+  const fiche = estFicheRegularisation(retour);
   const disponibleFiche = fiche
     ? await calculerMontantARetournerNet({ reglementId: retour.reglementId, totalDepensesNouvelles: 0, excludeRetourId: retour.id })
     : 0;

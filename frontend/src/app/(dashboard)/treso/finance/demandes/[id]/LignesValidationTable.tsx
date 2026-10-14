@@ -1,19 +1,24 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Icon } from "@/components/icons";
 import { STATUT_LIGNE_DEMANDE_BADGE_VARIANT, STATUT_LIGNE_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import { EnteteDemandeArticle, type ContexteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
+import { RaisonVisible } from "@/components/tresorerie/RaisonVisible";
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 
 import {
+  bandeauEtapeDG,
   etatLigneDG,
   LIBELLE_ETAT_LIGNE_DG,
   MESSAGE_LIGNE_SANS_CATEGORIE,
   MOTIF_LIGNE_MIN,
-  raisonLigneNonSoumettable,
+  MESSAGE_INTRO_ARTICLES,
+  raisonSoumissionArticle,
   type EtatLigneDG,
+  type LigneCircuit,
 } from "backend/client";
 
 import { BudgetCategorieApercu, type BudgetCategorieInfo } from "./CategorisationForm";
@@ -53,6 +58,8 @@ export type LigneValidation = {
   motifRejet: string | null;
   decideParNom: string | null;
   decideAt: Date | null;
+  /** Bénéficiaire et pièces de l'article (autonomie des articles, lot A) : élément d'affichage prêt, posé par la page. */
+  details?: ReactNode;
   /** Catégorisation par ligne (voir CLAUDE.md "Catégorisation par ligne"). */
   categorieId: string | null;
   categorieLabel: string | null;
@@ -64,6 +71,9 @@ export type LigneValidation = {
   decisionDGParNom?: string | null;
   decisionDGAt?: Date | null;
   motifRefusDG?: string | null;
+  /** Lot B : pourquoi CE compte ne peut pas décider cet article (bénéficiaire, deux personnes…), `null` s'il le peut.
+   *  Phrase du moteur du circuit (`transition`), posée par la page. */
+  raisonDecision?: string | null;
 };
 
 const VARIANTE_ETAT_DG: Record<EtatLigneDG, "neutral" | "warning" | "success" | "danger"> = {
@@ -76,17 +86,16 @@ const VARIANTE_ETAT_DG: Record<EtatLigneDG, "neutral" | "warning" | "success" | 
 const etatDG = (l: LigneValidation): EtatLigneDG =>
   etatLigneDG({ soumiseAuDG: l.soumiseAuDG ?? false, decisionDG: l.decisionDG ?? null });
 
-/** Pourquoi la ligne ne peut pas être soumise au DG maintenant (`null` : sélectionnable). */
-const raisonNonSoumettable = (l: LigneValidation) =>
-  raisonLigneNonSoumettable({
-    id: l.id,
-    libelle: l.libelle,
-    categorisee: !!l.categorieId,
-    statut: l.statutValidation,
-    soumiseAuDG: l.soumiseAuDG ?? false,
-    decisionDG: l.decisionDG ?? null,
-    decisionDGParId: null,
-  });
+/** La ligne telle que le circuit la lit (sélection des articles à soumettre au DG). */
+const versLigneCircuit = (l: LigneValidation): LigneCircuit => ({
+  id: l.id,
+  libelle: l.libelle,
+  categorisee: !!l.categorieId,
+  statut: l.statutValidation,
+  soumiseAuDG: l.soumiseAuDG ?? false,
+  decisionDG: l.decisionDG ?? null,
+  decisionDGParId: null,
+});
 
 type Decision = { statut: "VALIDEE" | "REJETEE"; motif: string };
 
@@ -164,12 +173,20 @@ export function LignesValidationTable({
   budgetParCategorie,
   raisonIndisponible = null,
   soumissionDG = null,
+  etapeCircuit = null,
+  enteteDemande = null,
 }: {
   demandeId: string;
   lignes: LigneValidation[];
   canValider: boolean;
-  /** Soumission au DG ligne par ligne (2026-10-10) : `null` si la demande ne s'y prête pas (sans étape DG optionnelle). */
-  soumissionDG?: { possible: boolean; raison: string | null } | null;
+  /** Soumission au DG ligne par ligne (2026-10-10) : `null` si la demande ne s'y prête pas (sans étape DG optionnelle).
+   *  `raisonDemande` : pourquoi la soumission est impossible pour la demande entière (permission, étape…), `null` si elle
+   *  est possible ; les raisons propres à chaque article s'y ajoutent (`raisonSoumissionArticle`). */
+  soumissionDG?: { raisonDemande: string | null } | null;
+  /** Rappel de la demande en tête de chaque article (numéro, demandeur, service, date, devise). */
+  enteteDemande?: ContexteDemandeArticle | null;
+  /** Étape du circuit (bandeau « à l'étape DG »). */
+  etapeCircuit?: string | null;
   /** Circuit de validation : pourquoi la décision est grisée à cette étape (phrase du moteur), à la place du message
    *  de rôle. */
   raisonIndisponible?: string | null;
@@ -180,36 +197,41 @@ export function LignesValidationTable({
   objets: ObjetOption[];
   budgetParCategorie: Record<string, BudgetCategorieInfo>;
 }) {
-  const dejaDecidees = lignes.every((ligne) => ligne.statutValidation !== "EN_ATTENTE");
+  // Lot B : chaque article a son propre état — la Finance décide un sous-ensemble, à des moments différents.
+  const enAttente = lignes.filter((ligne) => ligne.statutValidation === "EN_ATTENTE");
+  const toutesDecidees = enAttente.length === 0;
+  const traites = lignes.length - enAttente.length;
 
   const [decisionsSaisies, setDecisions] = useState<Record<string, Decision | undefined>>({});
   const [isPending, startTransition] = useTransition();
-  const [selectionDG, setSelectionDG] = useState<string[]>([]);
 
-  // « DG définitif » (2026-10-10) : une ligne validée par le DG reste validée ; une ligne refusée par le DG ne peut
-  // qu'être refusée définitivement (motif du DG proposé) ; une ligne en attente du DG n'a pas encore de décision.
+  // « DG définitif » (2026-10-10) : une ligne validée par le DG reste validée (la Finance la CONFIRME) ; une ligne
+  // refusée par le DG ne peut qu'être rejetée définitivement (motif du DG proposé) ; une ligne chez le DG n'a pas
+  // encore de décision. Un article déjà décidé n'a plus de décision à saisir (définitif).
   const decisions: Record<string, Decision | undefined> = Object.fromEntries(
     lignes.map((ligne) => {
+      if (ligne.statutValidation !== "EN_ATTENTE") return [ligne.id, undefined];
       const etat = etatDG(ligne);
       const saisie = decisionsSaisies[ligne.id];
-      if (etat === "VALIDEE_DG") return [ligne.id, { statut: "VALIDEE", motif: "" }];
-      if (etat === "REFUSEE_DG") return [ligne.id, { statut: "REJETEE", motif: saisie?.motif ?? ligne.motifRefusDG ?? "" }];
+      if (etat === "VALIDEE_DG") return [ligne.id, saisie?.statut === "VALIDEE" ? saisie : undefined];
+      if (etat === "REFUSEE_DG") return [ligne.id, saisie?.statut === "REJETEE" ? { statut: "REJETEE", motif: saisie.motif ?? ligne.motifRefusDG ?? "" } : undefined];
       if (etat === "EN_ATTENTE_DG") return [ligne.id, undefined];
       return [ligne.id, saisie];
     })
   );
-  const selectionValide = selectionDG.filter((id) => lignes.some((l) => l.id === id && raisonNonSoumettable(l) === null));
+  const raisonDemande = soumissionDG?.raisonDemande ?? null;
+  const raisonArticle = (l: LigneValidation) => raisonSoumissionArticle(versLigneCircuit(l), raisonDemande);
+  const bandeau = soumissionDG && etapeCircuit ? bandeauEtapeDG(etapeCircuit, lignes.map(versLigneCircuit)) : null;
+  const [ligneEnSoumission, setLigneEnSoumission] = useState<string | null>(null);
 
-  function basculerSelectionDG(ligneId: string) {
-    setSelectionDG((prev) => (prev.includes(ligneId) ? prev.filter((id) => id !== ligneId) : [...prev, ligneId]));
-  }
-
-  function handleSoumettreDG() {
+  /** Soumet UN article au DG (son propre bouton : le seul moyen de soumettre). */
+  function soumettreAuDG(ligneId: string) {
+    setLigneEnSoumission(ligneId);
     startTransition(async () => {
-      const result = await soumettreLignesAuDGAction(demandeId, selectionValide);
+      const result = await soumettreLignesAuDGAction(demandeId, [ligneId]);
+      setLigneEnSoumission(null);
       if (result.status === "success") {
         toast.success(result.message);
-        setSelectionDG([]);
       } else {
         toast.error(result.message);
       }
@@ -224,6 +246,10 @@ export function LignesValidationTable({
     setDecisions((prev) => ({ ...prev, [ligneId]: { statut: prev[ligneId]?.statut ?? "REJETEE", motif } }));
   }
 
+  const montantDejaValide = lignes.reduce(
+    (total, ligne) => (ligne.statutValidation === "VALIDEE" ? total + ligne.quantite * ligne.prixUnitaire : total),
+    0
+  );
   const montantQuiSeraValide = useMemo(
     () =>
       lignes.reduce((total, ligne) => {
@@ -233,16 +259,15 @@ export function LignesValidationTable({
     [lignes, decisions]
   );
 
-  const toutesDecidees = lignes.every((ligne) => decisions[ligne.id] != null);
-  const motifsValides = lignes.every((ligne) => {
-    const decision = decisions[ligne.id];
-    return !decision || decision.statut !== "REJETEE" || decision.motif.trim().length >= 3;
+  // Lot B : « Enregistrer » dès qu'UN article a une décision ; les autres restent à décider plus tard.
+  const lignesDecidees = lignes.filter((ligne) => decisions[ligne.id] != null);
+  const motifsValides = lignesDecidees.every((ligne) => {
+    const decision = decisions[ligne.id]!;
+    return decision.statut !== "REJETEE" || decision.motif.trim().length >= 3;
   });
   // Catégorisation obligatoire : une ligne validée doit porter une catégorie (revérifié par le serveur).
-  const valideesSansCategorie = lignes.some(
-    (ligne) => decisions[ligne.id]?.statut === "VALIDEE" && !ligne.categorieId
-  );
-  const peutEnregistrer = canValider && toutesDecidees && motifsValides && !valideesSansCategorie && !isPending;
+  const valideesSansCategorie = lignesDecidees.some((ligne) => decisions[ligne.id]!.statut === "VALIDEE" && !ligne.categorieId);
+  const peutEnregistrer = canValider && lignesDecidees.length > 0 && motifsValides && !valideesSansCategorie && !isPending;
 
   // Bug signalé "l'interaction se bloque après avoir cliqué Rejeter" (voir
   // CLAUDE.md) : le bouton restait CORRECTEMENT désactivé tant qu'un motif
@@ -250,8 +275,8 @@ export function LignesValidationTable({
   // n'expliquait pourquoi — perçu à tort comme un blocage. Message explicite
   // ci-dessous, même principe que le message "Votre rôle ne permet pas..."
   // déjà présent juste en dessous pour le cas de permission.
-  const raisonBlocage = !toutesDecidees
-    ? "Chaque ligne doit avoir une décision (Valider ou Rejeter) avant de pouvoir enregistrer."
+  const raisonBlocage = lignesDecidees.length === 0
+    ? "Choisissez Valider (ou Rejeter) pour au moins un article : les autres peuvent être décidés plus tard."
     : !motifsValides
       ? "Un motif de rejet d'au moins 3 caractères est requis pour chaque ligne rejetée."
       : valideesSansCategorie
@@ -259,7 +284,7 @@ export function LignesValidationTable({
         : null;
 
   function handleEnregistrer() {
-    const payload = lignes.map((ligne) => {
+    const payload = lignesDecidees.map((ligne) => {
       const decision = decisions[ligne.id]!;
       return {
         ligneId: ligne.id,
@@ -271,6 +296,7 @@ export function LignesValidationTable({
       const result = await validerLignesAction(demandeId, payload);
       if (result.status === "success") {
         toast.success(result.message);
+        setDecisions({});
       } else {
         toast.error(result.message);
       }
@@ -279,14 +305,32 @@ export function LignesValidationTable({
 
   return (
     <div className="space-y-4 rounded-lg border border-border bg-surface p-4 sm:p-6">
-      <h2 className="text-sm font-semibold text-foreground">Lignes d&apos;articles</h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-foreground">Lignes d&apos;articles</h2>
+        {lignes.length > 1 ? (
+          <span data-compteur-articles className="text-xs font-semibold tabular-nums text-muted-foreground">
+            {traites}/{lignes.length} article{traites > 1 ? "s" : ""} traité{traites > 1 ? "s" : ""}
+          </span>
+        ) : null}
+      </div>
+
+      {bandeau ? (
+        <p
+          data-bandeau-etape-dg
+          role="status"
+          className="rounded-md border border-info bg-info-bg px-3 py-2 text-sm font-medium text-foreground"
+        >
+          {bandeau}
+        </p>
+      ) : null}
 
       <div className="space-y-3">
         {lignes.map((ligne) => (
           <LigneCard
             key={ligne.id}
             ligne={ligne}
-            dejaDecidee={dejaDecidees}
+            enteteDemande={enteteDemande}
+            dejaDecidee={ligne.statutValidation !== "EN_ATTENTE"}
             decision={decisions[ligne.id]}
             onChangeStatut={(statut) => setDecisionStatut(ligne.id, statut)}
             onChangeMotif={(motif) => setDecisionMotif(ligne.id, motif)}
@@ -299,47 +343,41 @@ export function LignesValidationTable({
             objets={objets}
             budgetParCategorie={budgetParCategorie}
             etatDG={soumissionDG || ligne.soumiseAuDG ? etatDG(ligne) : null}
-            selectionDG={
-              soumissionDG?.possible && raisonNonSoumettable(ligne) === null
-                ? { coche: selectionValide.includes(ligne.id), basculer: () => basculerSelectionDG(ligne.id) }
+            soumission={
+              soumissionDG && ligne.statutValidation === "EN_ATTENTE"
+                ? {
+                    raison: raisonArticle(ligne),
+                    enCours: ligneEnSoumission === ligne.id,
+                    occupe: isPending,
+                    soumettre: () => soumettreAuDG(ligne.id),
+                  }
                 : null
             }
           />
         ))}
       </div>
 
-      {soumissionDG && !dejaDecidees ? (
-        <div data-soumission-dg className="space-y-2 rounded-md border border-border bg-muted/40 p-3">
-          <p className="text-sm font-semibold text-foreground">Soumettre des lignes au DG</p>
-          <p className="text-xs text-muted-foreground">
-            Cochez les lignes que le DG doit décider ; les autres restent sous la décision de la Finance. Une ligne refusée
-            par le DG peut lui être resoumise. Seule une ligne catégorisée peut être soumise.
-          </p>
-          <Button
-            type="button"
-            variant="secondary"
-            loading={isPending && selectionValide.length > 0}
-            disabled={!soumissionDG.possible || selectionValide.length === 0 || isPending}
-            onClick={handleSoumettreDG}
-          >
-            {selectionValide.length > 0
-              ? `Soumettre au DG (${selectionValide.length} ligne${selectionValide.length > 1 ? "s" : ""})`
-              : "Soumettre au DG"}
-          </Button>
-          {!soumissionDG.possible && soumissionDG.raison ? (
-            <p className="text-xs text-muted-foreground">{soumissionDG.raison}</p>
-          ) : null}
-        </div>
+      {soumissionDG && !toutesDecidees ? (
+        <p data-intro-articles className="text-xs text-muted-foreground">
+          {MESSAGE_INTRO_ARTICLES}
+        </p>
       ) : null}
 
-      {!dejaDecidees ? (
+      {!toutesDecidees ? (
         <>
           <p className="text-sm font-semibold text-foreground">
-            Montant qui sera validé :{" "}
+            {montantDejaValide > 0 ? (
+              <>
+                Déjà validé : <span className="tabular-nums">{montantDejaValide.toLocaleString("fr-FR")} FCFA</span> — montant
+                qui sera ajouté :{" "}
+              </>
+            ) : (
+              "Montant qui sera validé : "
+            )}
             <span className="tabular-nums">{montantQuiSeraValide.toLocaleString("fr-FR")} FCFA</span>
           </p>
           {!canValider && raisonIndisponible ? (
-            <p className="text-xs text-muted-foreground">{raisonIndisponible}</p>
+            <RaisonVisible data-raison-decision>{raisonIndisponible}</RaisonVisible>
           ) : !canValider ? (
             <p className="text-xs text-muted-foreground">
               Votre rôle ne permet pas de valider ou rejeter les lignes de cette demande — réservé au
@@ -350,6 +388,7 @@ export function LignesValidationTable({
           ) : null}
           <Button type="button" loading={isPending} disabled={!peutEnregistrer} onClick={handleEnregistrer}>
             Enregistrer les décisions
+            {lignesDecidees.length > 0 ? ` (${lignesDecidees.length} article${lignesDecidees.length > 1 ? "s" : ""})` : ""}
           </Button>
         </>
       ) : null}
@@ -369,6 +408,7 @@ export function LignesValidationTable({
  */
 function LigneCard({
   ligne,
+  enteteDemande = null,
   dejaDecidee,
   decision,
   onChangeStatut,
@@ -381,9 +421,10 @@ function LigneCard({
   objets,
   budgetParCategorie,
   etatDG: etatLigne = null,
-  selectionDG = null,
+  soumission = null,
 }: {
   ligne: LigneValidation;
+  enteteDemande?: ContexteDemandeArticle | null;
   dejaDecidee: boolean;
   decision: Decision | undefined;
   onChangeStatut: (statut: "VALIDEE" | "REJETEE") => void;
@@ -397,8 +438,8 @@ function LigneCard({
   budgetParCategorie: Record<string, BudgetCategorieInfo>;
   /** État de la ligne vis-à-vis du DG (soumission ligne par ligne) ; `null` si sans objet. */
   etatDG?: EtatLigneDG | null;
-  /** Case « Soumettre au DG » quand la ligne est sélectionnable. */
-  selectionDG?: { coche: boolean; basculer: () => void } | null;
+  /** Bouton « Soumettre au DG » propre à l'article : toujours affiché (grisé avec sa raison si impossible). */
+  soumission?: { raison: string | null; enCours: boolean; occupe: boolean; soumettre: () => void } | null;
 }) {
   const [ouvertLibelle, setOuvertLibelle] = useState(false);
   const [valeurLibelle, setValeurLibelle] = useState(ligne.libelle);
@@ -424,8 +465,26 @@ function LigneCard({
 
   const total = ligne.quantite * ligne.prixUnitaire;
 
+  // Bouton « Soumettre au DG » de CET article : toujours visible, grisé avec sa raison (lisible) s'il est impossible.
+  const boutonSoumettre = soumission ? (
+    <Button
+      type="button"
+      variant="secondary"
+      data-soumettre-article={ligne.id}
+      loading={soumission.enCours}
+      disabled={soumission.raison !== null || soumission.occupe}
+      onClick={soumission.soumettre}
+    >
+      {etatLigne === "REFUSEE_DG" ? "Resoumettre au DG" : "Soumettre au DG"}
+    </Button>
+  ) : null;
+  const raisonSoumettre = soumission?.raison ? (
+    <RaisonVisible data-raison-article={ligne.id}>{soumission.raison}</RaisonVisible>
+  ) : null;
+
   return (
     <div className="card-shadow-hover relative rounded-2xl border border-border bg-surface p-4 shadow-elevated transition-transform duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 sm:p-5">
+      {enteteDemande ? <EnteteDemandeArticle contexte={enteteDemande} /> : null}
       {/* En-tête de carte : libellé + action Modifier, montant Total en face */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
@@ -484,11 +543,10 @@ function LigneCard({
             </div>
           )}
           <MotifLigneEditor ligne={ligne} canModifier={canModifierLibelle} modifiable={libelleModifiable} />
-          {etatLigne && (etatLigne !== "NON_SOUMISE" || selectionDG) ? (
+          {ligne.details}
+          {etatLigne && etatLigne !== "NON_SOUMISE" ? (
             <div data-etat-dg className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              {etatLigne !== "NON_SOUMISE" ? (
-                <Badge variant={VARIANTE_ETAT_DG[etatLigne]}>{LIBELLE_ETAT_LIGNE_DG[etatLigne]}</Badge>
-              ) : null}
+              <Badge variant={VARIANTE_ETAT_DG[etatLigne]}>{LIBELLE_ETAT_LIGNE_DG[etatLigne]}</Badge>
               {ligne.decisionDGParNom && etatLigne !== "EN_ATTENTE_DG" ? (
                 <span className="text-muted-foreground">
                   par {ligne.decisionDGParNom}
@@ -497,18 +555,6 @@ function LigneCard({
               ) : null}
               {etatLigne === "REFUSEE_DG" && ligne.motifRefusDG ? (
                 <span className="text-muted-foreground">— motif du DG : {ligne.motifRefusDG}</span>
-              ) : null}
-              {selectionDG ? (
-                <label className="inline-flex cursor-pointer items-center gap-1.5 font-medium text-foreground">
-                  <input
-                    type="checkbox"
-                    className="size-4 accent-primary"
-                    checked={selectionDG.coche}
-                    onChange={selectionDG.basculer}
-                    aria-label={`Soumettre « ${ligne.libelle} » au DG`}
-                  />
-                  {etatLigne === "REFUSEE_DG" ? "Resoumettre au DG" : "Soumettre au DG"}
-                </label>
               ) : null}
             </div>
           ) : null}
@@ -560,14 +606,34 @@ function LigneCard({
               {ligne.decideParNom ? (
                 <p className="mt-1 text-xs text-muted-foreground">
                   Par {ligne.decideParNom}
-                  {ligne.decideAt ? ` — ${ligne.decideAt.toLocaleDateString("fr-FR")}` : ""}
+                  {ligne.decideAt ? ` le ${ligne.decideAt.toLocaleDateString("fr-FR")}` : ""}
                 </p>
               ) : null}
             </div>
           ) : etatLigne === "EN_ATTENTE_DG" ? (
-            <p className="text-xs text-muted-foreground">En attente de la décision du DG.</p>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">En attente de la décision du DG.</p>
+              {boutonSoumettre}
+              {raisonSoumettre}
+            </div>
           ) : etatLigne === "VALIDEE_DG" ? (
-            <p className="text-xs text-muted-foreground">Validée par le DG : elle sera validée à la décision finale.</p>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Validée par le DG : la Finance la confirme (elle reste validée, le DG est définitif).
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  data-confirmer-article={ligne.id}
+                  variant={decision?.statut === "VALIDEE" ? "primary" : "secondary"}
+                  disabled={decisionsPending || !!ligne.raisonDecision}
+                  onClick={() => onChangeStatut("VALIDEE")}
+                >
+                  {decision?.statut === "VALIDEE" ? "Validation confirmée" : "Confirmer la validation"}
+                </Button>
+              </div>
+              {ligne.raisonDecision ? <RaisonVisible data-raison-decision-article={ligne.id}>{ligne.raisonDecision}</RaisonVisible> : null}
+            </div>
           ) : (
             <div className="space-y-2">
               {etatLigne === "REFUSEE_DG" ? (
@@ -579,7 +645,7 @@ function LigneCard({
                 <Button
                   type="button"
                   variant={decision?.statut === "VALIDEE" ? "primary" : "secondary"}
-                  disabled={decisionsPending || !ligne.categorieId || etatLigne === "REFUSEE_DG"}
+                  disabled={decisionsPending || !ligne.categorieId || etatLigne === "REFUSEE_DG" || !!ligne.raisonDecision}
                   onClick={() => onChangeStatut("VALIDEE")}
                 >
                   Valider
@@ -587,12 +653,15 @@ function LigneCard({
                 <Button
                   type="button"
                   variant={decision?.statut === "REJETEE" ? "danger" : "secondary"}
-                  disabled={decisionsPending}
+                  disabled={decisionsPending || !!ligne.raisonDecision}
                   onClick={() => onChangeStatut("REJETEE")}
                 >
-                  Rejeter
+                  {etatLigne === "REFUSEE_DG" ? "Rejeter définitivement" : "Rejeter"}
                 </Button>
+                {boutonSoumettre}
               </div>
+              {ligne.raisonDecision ? <RaisonVisible data-raison-decision-article={ligne.id}>{ligne.raisonDecision}</RaisonVisible> : null}
+              {raisonSoumettre}
               {!ligne.categorieId && etatLigne !== "REFUSEE_DG" ? (
                 <p data-sans-categorie className="text-xs text-muted-foreground">
                   {MESSAGE_LIGNE_SANS_CATEGORIE}

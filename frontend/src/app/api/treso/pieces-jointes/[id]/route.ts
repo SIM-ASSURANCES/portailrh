@@ -51,7 +51,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     where: { id },
     include: {
       demande: {
-        select: { createurId: true, beneficiaireUserId: true, createur: { select: { service: { select: { responsableId: true } } } } },
+        select: {
+          createurId: true,
+          beneficiaireUserId: true,
+          createur: { select: { service: { select: { responsableId: true } } } },
+          // Autonomie des articles, lot A : le bénéficiaire propre d'un article a les droits du bénéficiaire de la demande.
+          lignes: { select: { beneficiaireUserId: true } },
+        },
       },
       retourExterne: { select: { id: true } },
       retourExterneCheque: { select: { id: true } },
@@ -73,7 +79,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       // Circuit de validation : le DG décide à l'étape DG (sans dépendre de treso.valider_demande).
       hasPermission(session, "treso.decider_dg");
     const estCreateurOuBeneficiaire =
-      piece.demande.createurId === session.user.id || piece.demande.beneficiaireUserId === session.user.id;
+      piece.demande.createurId === session.user.id ||
+      piece.demande.beneficiaireUserId === session.user.id ||
+      piece.demande.lignes.some((l) => l.beneficiaireUserId === session.user.id);
     // Circuit de validation : le responsable ACTUEL du service du demandeur, qui décide l'étape Service.
     const estResponsableService = piece.demande.createur.service?.responsableId === session.user.id;
     accesAutorise = estFinanceOuDG || estCreateurOuBeneficiaire || estResponsableService;

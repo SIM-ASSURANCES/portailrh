@@ -2,20 +2,25 @@ import { notFound, redirect } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
+import { EnteteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
 import {
   STATUT_LIGNE_DEMANDE_BADGE_VARIANT,
   STATUT_LIGNE_DEMANDE_LABEL,
 } from "@/components/tresorerie/demandeStatut";
+import { detailsArticleDe } from "@/components/tresorerie/DetailsArticle";
 import { getSession, hasPermission } from "@/lib/auth";
 import {
+  aPlusieursBeneficiaires,
   BENEFICIAIRE_TYPE_LABEL,
   chargerActeur,
-  getBeneficiaireNom,
+  detailsArticles,
+  nomBeneficiaireDemande,
   prisma,
   raisonIndisponible,
   refusDemandeSansCategorie,
   versDemandeCircuit,
+  getParcoursArticles,
 } from "backend";
 
 import { LignesValidationTable } from "../../finance/demandes/[id]/LignesValidationTable";
@@ -46,6 +51,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
         orderBy: { createdAt: "asc" },
         include: {
           decidePar: true,
+          beneficiaireUser: true,
           categorie: true,
           objet: true,
           decisionDGPar: { select: { fullName: true } },
@@ -57,19 +63,29 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
   if (!demande) notFound();
 
   const demandeCircuit = versDemandeCircuit(demande);
+  const enteteDemande = {
+    reference: demande.reference,
+    demandeurNom: demande.createur.fullName,
+    serviceNom: demande.createur.service?.name ?? null,
+    creeeLe: demande.createdAt,
+    devise: demande.devise,
+  };
   const acteur = await chargerActeur(prisma, session, demande.createurId);
   const decisionParLigne = demande.modeEtapeDG === "OBLIGATOIRE";
   const raisonDecider = raisonIndisponible(demandeCircuit, acteur, "DECIDER_LIGNES");
   // Soumission au DG ligne par ligne (2026-10-10) : le DG ne voit et ne décide que les lignes soumises par la Finance.
   const soumissionParLignes = demande.lignes.length > 0 && demande.typeDemande === "STANDARD" && demande.modeEtapeDG === "OPTIONNELLE";
   const lignesSoumises = demande.lignes.filter((l) => l.soumiseAuDG);
+  const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
+  // Lot D : parcours de chaque article (validé, réglé, retour de caisse, régularisé), lecture seule.
+  const parcoursArticles = await getParcoursArticles(demande.id);
   const devise = demande.devise === "XOF" ? "FCFA" : demande.devise;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title={`Demande ${demande.reference}`}
-        description={`Créée par ${demande.createur.fullName} (${demande.createur.service?.name ?? "—"}) le ${demande.createdAt.toLocaleDateString("fr-FR")}`}
+        description={`Demande créée le ${demande.createdAt.toLocaleDateString("fr-FR")} par ${demande.createur.fullName} (${demande.createur.service?.name ?? "—"})`}
       />
 
       <div className="space-y-4 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
@@ -89,8 +105,10 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           <div>
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Bénéficiaire</dt>
             <dd className="mt-1 text-sm text-foreground">
-              {getBeneficiaireNom(demande)}{" "}
-              <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              {nomBeneficiaireDemande(demande, demande.lignes)}{" "}
+              {aPlusieursBeneficiaires(demande, demande.lignes) ? null : (
+                <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              )}
             </dd>
           </div>
           {demande.dateLivraisonSouhaitee ? (
@@ -109,16 +127,16 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           <div className="sm:col-span-2">
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pièces jointes</dt>
             <dd className="mt-1 space-x-3 text-sm text-foreground">
-              {demande.pieces.length === 0 ? (
+              {vueArticles.communes.length === 0 ? (
                 <span className="text-muted-foreground">Aucune pièce jointe.</span>
               ) : (
-                demande.pieces.map((piece, index) => (
+                vueArticles.communes.map((piece, index) => (
                   <a
                     key={piece.id}
                     href={`/api/treso/pieces-jointes/${piece.id}`}
                     className="text-info underline-offset-4 transition-colors hover:text-primary hover:underline"
                   >
-                    Télécharger{demande.pieces.length > 1 ? ` (${index + 1})` : ""}
+                    Télécharger{vueArticles.communes.length > 1 ? ` (${index + 1})` : ""}
                   </a>
                 ))
               )}
@@ -139,6 +157,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           demandeId={demande.id}
           lignes={demande.lignes.map((l) => ({
             id: l.id,
+            details: detailsArticleDe(vueArticles, l.id, parcoursArticles),
             libelle: l.libelle,
             libelleOriginal: l.libelleOriginal,
             motif: l.motif,
@@ -154,6 +173,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
             objetId: l.objetId,
             objetLabel: l.objet?.label ?? null,
           }))}
+          enteteDemande={enteteDemande}
           canValider={raisonDecider === null}
           raisonIndisponible={raisonDecider}
           canModifierLibelle={false}
@@ -166,9 +186,11 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
       ) : soumissionParLignes ? (
         <DecisionLignesDG
           devise={devise}
+          enteteDemande={enteteDemande}
           raisonDecider={raisonIndisponible(demandeCircuit, acteur, "DECIDER_LIGNE_DG")}
           lignes={lignesSoumises.map((l) => ({
             id: l.id,
+            details: detailsArticleDe(vueArticles, l.id, parcoursArticles),
             libelle: l.libelle,
             motif: l.motif,
             quantite: l.quantite,
@@ -189,6 +211,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
             {demande.lignes.map((l) => (
               <li key={l.id} className="flex flex-wrap items-baseline justify-between gap-2 py-2">
                 <span className="text-sm font-medium text-foreground">
+                  <EnteteDemandeArticle contexte={enteteDemande} />
                   {l.libelle}
                   <span className="ml-2 text-xs font-normal text-muted-foreground tabular-nums">
                     {l.quantite} × {Number(l.prixUnitaire).toLocaleString("fr-FR")} {devise}
@@ -198,6 +221,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
                       Motif : {l.motif}
                     </span>
                   ) : null}
+                  {detailsArticleDe(vueArticles, l.id, parcoursArticles)}
                 </span>
                 <span className="flex items-center gap-2">
                   {l.statutValidation !== "EN_ATTENTE" ? (

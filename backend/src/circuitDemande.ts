@@ -18,6 +18,20 @@
 // Types des enums Prisma (`EtapeCircuit`, `ModeEtapeDG`, `NiveauRejet`, voir schema.prisma) : import de TYPE seul,
 // le moteur reste pur et sûr pour un Client Component.
 import type { EtapeCircuit, ModeEtapeDG } from "./generated/prisma/enums";
+import {
+  beneficiaireArticle,
+  comptesConcernesArticle,
+  comptesConcernesDemande,
+  type ArticleBeneficiaire,
+  type BeneficiaireStocke,
+} from "./beneficiaireArticles";
+import {
+  appliquerDecisionsSimulees,
+  etapeDepuisArticles,
+  etatLigneCircuit,
+  resumeArticles,
+  type EtatArticle,
+} from "./etatArticles";
 
 /**
  * Une validation du DG à l'étape DG vaut son approbation de clôture (`validationCompleteParDG`). Règle posée À UN
@@ -135,6 +149,10 @@ export interface LigneCircuit {
   decisionDG: "VALIDEE" | "REFUSEE" | null;
   decisionDGParId: string | null;
   decisionDGAt?: Date | null;
+  /** Compte qui a validé l'article comme Finance (règle des deux personnes, lot B). */
+  decideurFinanceId?: string | null;
+  /** Compte bénéficiaire EFFECTIF de l'article (le sien, sinon celui de la demande) : il ne décide pas cet article. */
+  beneficiaireUserId?: string | null;
 }
 
 export function etatLigneDG(l: Pick<LigneCircuit, "soumiseAuDG" | "decisionDG">): EtatLigneDG {
@@ -150,10 +168,6 @@ export const LIBELLE_ETAT_LIGNE_DG: Record<EtatLigneDG, string> = {
   VALIDEE_DG: "Validée par le DG",
   REFUSEE_DG: "Refusée par le DG",
 };
-
-/** Phrase du blocage de la décision finale (règle 4). */
-export const MESSAGE_LIGNES_EN_ATTENTE_DG =
-  "Des lignes soumises attendent la décision du DG : la décision finale est bloquée jusqu'à sa décision.";
 
 /** Pourquoi une ligne ne peut pas être soumise au DG maintenant (case grisée à l'écran) ; `null` si elle le peut. */
 export function raisonLigneNonSoumettable(l: LigneCircuit): string | null {
@@ -178,30 +192,6 @@ export function refusSoumissionLignes(lignes: readonly LigneCircuit[], ligneIds:
     if (!l) return "Une ligne ne fait pas partie de cette demande.";
     const raison = raisonLigneNonSoumettable(l);
     if (raison) return raison;
-  }
-  return null;
-}
-
-/**
- * Décisions de la décision finale de la Finance face aux décisions du DG (« DG définitif », 2026-10-10) : une ligne
- * validée par le DG reste validée ; une ligne refusée par le DG ne peut qu'être refusée définitivement (ou resoumise au
- * DG avant la décision finale) ; aucune ligne ne peut attendre le DG. `null` si les décisions sont cohérentes.
- */
-export function refusDecisionsFinales(
-  lignes: readonly LigneCircuit[],
-  decisions: readonly { ligneId: string; statut: "VALIDEE" | "REJETEE" }[]
-): string | null {
-  const decisionParId = new Map(decisions.map((d) => [d.ligneId, d.statut]));
-  for (const l of lignes) {
-    const etat = etatLigneDG(l);
-    const decision = decisionParId.get(l.id);
-    if (etat === "EN_ATTENTE_DG") return MESSAGE_LIGNES_EN_ATTENTE_DG;
-    if (etat === "VALIDEE_DG" && decision !== "VALIDEE") {
-      return `La ligne « ${l.libelle} » a été validée par le DG : elle reste validée.`;
-    }
-    if (etat === "REFUSEE_DG" && decision !== "REJETEE") {
-      return `La ligne « ${l.libelle} » a été refusée par le DG : resoumettez-la au DG ou refusez-la définitivement.`;
-    }
   }
   return null;
 }
@@ -257,13 +247,40 @@ export const MESSAGE_DEUX_PERSONNES =
  * refus. Seule règle de cette approbation, avec la permission elle-même.
  */
 export function refusApprobationCloture(
-  d: { createurId: string; decideurFinanceId: string | null; approbationClotureNonRequise: boolean },
+  d: {
+    createurId: string;
+    /** Tous les comptes qui ont décidé comme Finance (colonne de la demande ET décideurs par article, lot B). */
+    decideursFinanceIds: readonly string[];
+    approbationClotureNonRequise: boolean;
+  },
   userId: string
 ): string | null {
   if (d.approbationClotureNonRequise) return "Demande émise par le DG : son approbation de clôture n'est pas requise.";
   if (userId === d.createurId) return "Vous ne pouvez pas approuver votre propre demande.";
-  if (d.decideurFinanceId && userId === d.decideurFinanceId) return MESSAGE_DEUX_PERSONNES;
+  if (d.decideursFinanceIds.includes(userId)) return MESSAGE_DEUX_PERSONNES;
   return null;
+}
+
+/** Comptes qui ont décidé comme Finance sur la demande : la colonne `decideurFinanceId` et chaque article. */
+export function decideursFinanceDemande(d: {
+  decideurFinanceId?: string | null;
+  lignes?: readonly { decideurFinanceId?: string | null }[];
+}): string[] {
+  const ids = new Set<string>();
+  if (d.decideurFinanceId) ids.add(d.decideurFinanceId);
+  for (const l of d.lignes ?? []) if (l.decideurFinanceId) ids.add(l.decideurFinanceId);
+  return [...ids];
+}
+
+/** Comptes qui ont décidé comme DG sur la demande : l'approbateur de la demande et chaque décision d'article. */
+export function decideursDGDemande(d: {
+  approbateurDGId?: string | null;
+  lignes?: readonly { decisionDGParId: string | null }[];
+}): string[] {
+  const ids = new Set<string>();
+  if (d.approbateurDGId) ids.add(d.approbateurDGId);
+  for (const l of d.lignes ?? []) if (l.decisionDGParId) ids.add(l.decisionDGParId);
+  return [...ids];
 }
 
 export interface ActeurCircuit {
@@ -283,9 +300,16 @@ export type ActionCircuit =
   | { type: "RESOUMETTRE_DG" }
   | { type: "VALIDER_DG" }
   | { type: "REJETER_DG"; motif: string }
-  /** Décision ligne par ligne (Finance à l'étape Finance ou de décision finale, DG en cas b). `approbateurClotureId` :
-   *  DG dont les validations de lignes valent approbation de clôture (`approbateurClotureParLignesDG`). */
-  | { type: "DECIDER_LIGNES"; auMoinsUneValidee: boolean; approbateurClotureId?: string | null }
+  /** Décision article par article (Finance, DG en cas b). Pour une demande à articles : un sous-ensemble d'articles,
+   *  à des moments différents (lot B). `approbateurClotureId` : DG dont les validations valent approbation de clôture. */
+  | {
+      type: "DECIDER_LIGNES";
+      /** Demande SANS article (dépense directe) : au moins un montant validé. */
+      auMoinsUneValidee?: boolean;
+      approbateurClotureId?: string | null;
+      /** Demande À ARTICLES (lot B) : décisions pour un SOUS-ENSEMBLE d'articles ; absentes = contrôle seulement. */
+      decisions?: readonly { ligneId: string; statut: "VALIDEE" | "REJETEE" }[];
+    }
   /** La Finance soumet des lignes au DG (ou les lui resoumet après un refus). Sans `ligneIds` : contrôle de la demande
    *  seulement (bouton). */
   | { type: "SOUMETTRE_LIGNES_DG"; ligneIds?: readonly string[] }
@@ -361,6 +385,23 @@ export function decisionFinalePrise(etape: EtapeCircuit): boolean {
   return etape === "TERMINEE";
 }
 
+/**
+ * Exécution ouverte à l'Assistant Finance (règlement, description, libellés) : demande à articles = dès qu'UN article est
+ * validé (lot B : le règlement ne attend plus la décision de tous les articles) ; sans article = décision finale prise.
+ */
+export function executionOuverte(d: { etape: EtapeCircuit; lignes?: readonly { statut: "EN_ATTENTE" | "VALIDEE" | "REJETEE" }[] }): boolean {
+  if (d.lignes && d.lignes.length > 0) return d.lignes.some((l) => l.statut === "VALIDEE");
+  return decisionFinalePrise(d.etape);
+}
+
+/** Demande dont l'exécution n'est pas encore ouverte et qui n'est pas abandonnée : l'Assistant y attend. */
+export function attendValidationPourExecution(d: {
+  etape: EtapeCircuit;
+  lignes?: readonly { statut: "EN_ATTENTE" | "VALIDEE" | "REJETEE" }[];
+}): boolean {
+  return !executionOuverte(d) && d.etape !== "ABANDONNEE";
+}
+
 /** Demande encore en route vers la décision finale (ni terminée ni abandonnée) : l'Assistant y attend. */
 export function attendDecisionFinale(etape: EtapeCircuit): boolean {
   return !decisionFinalePrise(etape) && etape !== "ABANDONNEE";
@@ -372,22 +413,53 @@ function refus(message: string): ResultatTransition {
   return { ok: false, message };
 }
 
+export const MESSAGE_ARTICLE_BENEFICIAIRE = (libelle: string) =>
+  `Vous êtes le bénéficiaire de l'article « ${libelle} » : un autre compte le décide.`;
+
+/** Raison pour laquelle une décision (Finance ou DG) ne peut pas porter sur cet article ; `null` si elle le peut. */
+function raisonArticleNonDecidable(
+  l: LigneCircuit,
+  etat: EtatArticle,
+  decision: "VALIDEE" | "REJETEE" | null,
+  roleDG: boolean
+): string | null {
+  if (etat === "VALIDEE" || etat === "REJETEE") return `La ligne « ${l.libelle} » est déjà décidée.`;
+  if (roleDG) return etat === "CHEZ_DG" ? null : `La ligne « ${l.libelle} » n'attend pas votre décision.`;
+  if (etat === "CHEZ_DG") return `La ligne « ${l.libelle} » attend la décision du DG.`;
+  // « DG définitif » : validé par le DG, l'article reste validé ; refusé par le DG, il n'est jamais validé par la Finance.
+  if (etat === "VALIDEE_DG_A_CONFIRMER" && decision !== null && decision !== "VALIDEE") {
+    return `La ligne « ${l.libelle} » a été validée par le DG : elle reste validée.`;
+  }
+  if (etat === "REFUSEE_DG_A_TRANCHER" && decision !== null && decision !== "REJETEE") {
+    return `La ligne « ${l.libelle} » a été refusée par le DG : resoumettez-la au DG ou refusez-la définitivement.`;
+  }
+  return null;
+}
+
 /**
  * Décide si `acteur` peut effectuer `action` sur `demande`, et vers quelle étape elle mène. Aucune écriture :
  * l'appelant applique `etapeSuivante` et `effets`, puis trace l'historique.
+ *
+ * Demande À ARTICLES (lot B, 2026-10-15) : l'étape est DÉDUITE des articles (`etapeDepuisArticles`) ; la Finance décide
+ * un sous-ensemble d'articles quand elle veut, sans attendre le DG ; un article validé ou rejeté est définitif.
  */
 export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, action: ActionCircuit): ResultatTransition {
   const estAuteur = acteur.userId === demande.createurId;
   const depenseDirecte = demande.typeDemande === "DEPENSE_DIRECTE";
   // Personne ne décide sa propre demande (sauf dépense directe, décision 4).
   const auteurInterdit = estAuteur && !depenseDirecte;
-  const etape = demande.etape;
+  const lignes = demande.lignes ?? [];
+  const parArticles = !depenseDirecte && lignes.length > 0;
+  // Étape effective : déduite des articles pour une demande à articles, sinon celle de la colonne.
+  const etape = parArticles ? etapeDepuisArticles(demande.etape, demande.modeEtapeDG, lignes) : demande.etape;
 
   const motifInvalide = (motif: string) => motif.trim().length < MOTIF_MIN;
-  // Soumission ligne par ligne : demande standard avec lignes, étape DG optionnelle.
-  const lignes = demande.lignes ?? [];
-  const parLignes = !depenseDirecte && lignes.length > 0 && demande.modeEtapeDG === "OPTIONNELLE";
-  const enAttenteDG = lignes.filter((l) => etatLigneDG(l) === "EN_ATTENTE_DG");
+  // Soumission article par article : demande standard avec articles, étape DG optionnelle.
+  const parLignes = parArticles && demande.modeEtapeDG === "OPTIONNELLE";
+  const etats = new Map(lignes.map((l) => [l.id, etatLigneCircuit(l, demande.modeEtapeDG)]));
+  const enAttenteDG = lignes.filter((l) => etats.get(l.id) === "CHEZ_DG");
+  const decideursFinance = decideursFinanceDemande({ decideurFinanceId: demande.decideurFinanceId, lignes });
+  const decideursDG = decideursDGDemande({ approbateurDGId: demande.approbateurDGId, lignes });
 
   switch (action.type) {
     case "VALIDER_SERVICE":
@@ -406,28 +478,49 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
         return { ok: true, etapeSuivante: "A_CORRIGER", effets: { niveauRejet: "SERVICE" } };
       }
       if (action.type === "VALIDER_SERVICE") return refus(messageAttente(etape));
-      // REJETER à une autre étape.
-      if (etape === "FINANCE" || etape === "REJET_DG" || etape === "DECISION_FINALE") {
-        if (!a(acteur, "treso.decider_finance")) return refus("Action non autorisée.");
-        if (auteurInterdit) return refus("Vous ne pouvez pas décider votre propre demande.");
-        // « DG définitif » : des lignes validées par le DG ne se rejettent plus, la demande entière non plus.
-        if (lignes.some((l) => etatLigneDG(l) === "VALIDEE_DG")) {
-          return refus(
-            "Le DG a validé des lignes de cette demande : refusez définitivement les autres lignes une par une à la décision finale."
-          );
-        }
-        return {
-          ok: true,
-          etapeSuivante: "A_CORRIGER",
-          effets: { niveauRejet: "FINANCE", decisionParAuteurDepenseDirecte: estAuteur && depenseDirecte },
-        };
-      }
-      if (etape === "DG" && demande.modeEtapeDG === "OBLIGATOIRE") {
+      // REJETER (demande entière) à une autre étape.
+      const roleDG = demande.modeEtapeDG === "OBLIGATOIRE";
+      const peutRejeter = parArticles
+        ? roleDG
+          ? etape === "DG"
+          : etape === "FINANCE"
+        : etape === "FINANCE" || etape === "REJET_DG" || etape === "DECISION_FINALE" || (etape === "DG" && roleDG);
+      if (!peutRejeter) return refus(messageAttente(etape));
+      if (roleDG) {
         if (!a(acteur, "treso.decider_dg")) return refus("Action non autorisée.");
         if (estAuteur) return refus("Vous ne pouvez pas décider votre propre demande.");
-        return { ok: true, etapeSuivante: "A_CORRIGER", effets: { niveauRejet: "DG" } };
+      } else {
+        if (!a(acteur, "treso.decider_finance")) return refus("Action non autorisée.");
+        if (auteurInterdit) return refus("Vous ne pouvez pas décider votre propre demande.");
       }
-      return refus(messageAttente(etape));
+      if (parArticles) {
+        // Rejet de la demande entière : seulement tant qu'AUCUN article n'a été décidé ni examiné par le DG. Dès qu'un
+        // article est validé (ou réglé), rejeté, ou chez le DG, on rejette les articles restants un par un : tous
+        // rejetés, la demande repart en correction.
+        if (lignes.some((l) => etats.get(l.id) === "VALIDEE" || etats.get(l.id) === "VALIDEE_DG_A_CONFIRMER")) {
+          return refus(
+            "Des articles de cette demande sont déjà validés : la demande ne peut plus être rejetée en entier. Rejetez les autres articles un par un."
+          );
+        }
+        if (lignes.some((l) => etats.get(l.id) === "CHEZ_DG" || etats.get(l.id) === "REFUSEE_DG_A_TRANCHER") && !roleDG) {
+          return refus(
+            "Des articles ont été soumis au DG : la demande ne peut plus être rejetée en entier. Rejetez les articles restants un par un."
+          );
+        }
+        if (lignes.some((l) => etats.get(l.id) === "REJETEE")) {
+          return refus(
+            "Des articles de cette demande sont déjà rejetés (définitif) : rejetez les articles restants un par un."
+          );
+        }
+      }
+      return {
+        ok: true,
+        etapeSuivante: "A_CORRIGER",
+        effets: {
+          niveauRejet: roleDG ? "DG" : "FINANCE",
+          decisionParAuteurDepenseDirecte: !roleDG && estAuteur && depenseDirecte,
+        },
+      };
     }
 
     case "SOUMETTRE_DG": {
@@ -455,7 +548,7 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
       if (etape !== "DG") return refus(messageAttente(etape));
       if (parLignes) return refus("Le DG décide une par une les lignes que la Finance lui a soumises.");
       if (estAuteur) return refus("Vous ne pouvez pas décider votre propre demande.");
-      if (demande.decideurFinanceId && acteur.userId === demande.decideurFinanceId) return refus(MESSAGE_DEUX_PERSONNES);
+      if (decideursFinance.includes(acteur.userId)) return refus(MESSAGE_DEUX_PERSONNES);
       if (demande.modeEtapeDG === "OBLIGATOIRE") {
         return refus("Pour cette demande, le DG décide ligne par ligne (sa décision est finale).");
       }
@@ -471,39 +564,88 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
     }
 
     case "DECIDER_LIGNES": {
-      const suivante: EtapeCircuit = action.auMoinsUneValidee ? "TERMINEE" : "A_CORRIGER";
-      // Règle 4 : décision finale bloquée tant qu'une ligne soumise attend le DG.
-      if (parLignes && enAttenteDG.length > 0 && a(acteur, "treso.decider_finance")) return refus(MESSAGE_LIGNES_EN_ATTENTE_DG);
-      if (etape === "FINANCE" || etape === "DECISION_FINALE") {
-        if (!a(acteur, "treso.decider_finance")) return refus("Action non autorisée.");
-        if (auteurInterdit) return refus("Vous ne pouvez pas décider votre propre demande.");
-        if (demande.approbateurDGId && acteur.userId === demande.approbateurDGId) return refus(MESSAGE_DEUX_PERSONNES);
-        // Deux personnes : le DG qui a décidé des lignes ne prend pas la décision Finance.
-        if (lignes.some((l) => l.decisionDGParId === acteur.userId)) return refus(MESSAGE_DEUX_PERSONNES);
-        const approbateur = action.auMoinsUneValidee ? (action.approbateurClotureId ?? null) : null;
-        return {
-          ok: true,
-          etapeSuivante: suivante,
-          effets: {
-            ...(action.auMoinsUneValidee ? { decideurFinance: true } : { niveauRejet: "FINANCE" as const }),
-            decisionParAuteurDepenseDirecte: estAuteur && depenseDirecte,
-            ...(approbateur ? { approbationClotureParDG: true, approbateurDGId: approbateur } : {}),
-          },
-        };
+      if (!parArticles) {
+        // Demande SANS article (dépense directe) : décision de la demande entière, comportement d'origine.
+        const suivante: EtapeCircuit = action.auMoinsUneValidee ? "TERMINEE" : "A_CORRIGER";
+        if (etape === "FINANCE" || etape === "DECISION_FINALE") {
+          if (!a(acteur, "treso.decider_finance")) return refus("Action non autorisée.");
+          if (auteurInterdit) return refus("Vous ne pouvez pas décider votre propre demande.");
+          if (decideursDG.includes(acteur.userId)) return refus(MESSAGE_DEUX_PERSONNES);
+          const approbateur = action.auMoinsUneValidee ? (action.approbateurClotureId ?? null) : null;
+          return {
+            ok: true,
+            etapeSuivante: suivante,
+            effets: {
+              ...(action.auMoinsUneValidee ? { decideurFinance: true } : { niveauRejet: "FINANCE" as const }),
+              decisionParAuteurDepenseDirecte: estAuteur && depenseDirecte,
+              ...(approbateur ? { approbationClotureParDG: true, approbateurDGId: approbateur } : {}),
+            },
+          };
+        }
+        if (etape === "DG" && demande.modeEtapeDG === "OBLIGATOIRE") {
+          if (!a(acteur, "treso.decider_dg")) return refus("Action non autorisée.");
+          if (estAuteur) return refus("Vous ne pouvez pas décider votre propre demande.");
+          if (decideursFinance.includes(acteur.userId)) return refus(MESSAGE_DEUX_PERSONNES);
+          return {
+            ok: true,
+            etapeSuivante: suivante,
+            effets: action.auMoinsUneValidee
+              ? { approbationClotureParDG: DECISION_DG_VAUT_APPROBATION_CLOTURE }
+              : { niveauRejet: "DG" },
+          };
+        }
+        return refus(messageAttente(etape));
       }
-      if (etape === "DG" && demande.modeEtapeDG === "OBLIGATOIRE") {
-        if (!a(acteur, "treso.decider_dg")) return refus("Action non autorisée.");
-        if (estAuteur) return refus("Vous ne pouvez pas décider votre propre demande.");
-        if (demande.decideurFinanceId && acteur.userId === demande.decideurFinanceId) return refus(MESSAGE_DEUX_PERSONNES);
-        return {
-          ok: true,
-          etapeSuivante: suivante,
-          effets: action.auMoinsUneValidee
-            ? { approbationClotureParDG: DECISION_DG_VAUT_APPROBATION_CLOTURE }
-            : { niveauRejet: "DG" },
-        };
+
+      // Demande À ARTICLES : la Finance (ou le DG pour une demande de la Finance, cas b) décide un sous-ensemble.
+      const roleDG = demande.modeEtapeDG === "OBLIGATOIRE";
+      if (roleDG ? etape !== "DG" : etape !== "FINANCE") return refus(messageAttente(etape));
+      if (!a(acteur, roleDG ? "treso.decider_dg" : "treso.decider_finance")) return refus("Action non autorisée.");
+      if (roleDG ? estAuteur : auteurInterdit) return refus("Vous ne pouvez pas décider votre propre demande.");
+      // Deux personnes : le DG qui a décidé des articles ne prend pas de décision Finance, et inversement.
+      if ((roleDG ? decideursFinance : decideursDG).includes(acteur.userId)) return refus(MESSAGE_DEUX_PERSONNES);
+
+      if (action.decisions === undefined) {
+        // Contrôle seulement (bouton) : au moins un article que ce compte peut décider.
+        const decidable = lignes.filter(
+          (l) => raisonArticleNonDecidable(l, etats.get(l.id)!, null, roleDG) === null && l.beneficiaireUserId !== acteur.userId
+        );
+        if (decidable.length === 0) {
+          return refus(
+            lignes.some((l) => l.beneficiaireUserId === acteur.userId)
+              ? "Vous êtes le bénéficiaire des articles restants : un autre compte les décide."
+              : "Aucun article n'attend votre décision."
+          );
+        }
+        return { ok: true, etapeSuivante: etape, effets: {} };
       }
-      return refus(messageAttente(etape));
+      if (action.decisions.length === 0) return refus("Aucune décision à enregistrer.");
+      const ids = new Set<string>();
+      for (const d of action.decisions) {
+        if (ids.has(d.ligneId)) return refus("Une ligne est décidée deux fois.");
+        ids.add(d.ligneId);
+        const l = lignes.find((x) => x.id === d.ligneId);
+        if (!l) return refus("Une ligne ne fait pas partie de cette demande.");
+        const raison = raisonArticleNonDecidable(l, etats.get(l.id)!, d.statut, roleDG);
+        if (raison) return refus(raison);
+        if (l.beneficiaireUserId === acteur.userId) return refus(MESSAGE_ARTICLE_BENEFICIAIRE(l.libelle));
+      }
+      const apres = appliquerDecisionsSimulees(lignes, action.decisions);
+      const suivante = etapeDepuisArticles(demande.etape, demande.modeEtapeDG, apres);
+      const aValide = action.decisions.some((d) => d.statut === "VALIDEE");
+      const approbateur =
+        suivante === "TERMINEE" && !roleDG ? approbateurClotureParLignesDG(apres) : null;
+      return {
+        ok: true,
+        etapeSuivante: suivante,
+        effets: {
+          ...(!roleDG && aValide ? { decideurFinance: true } : {}),
+          ...(suivante === "A_CORRIGER" ? { niveauRejet: roleDG ? ("DG" as const) : ("FINANCE" as const) } : {}),
+          // Cas (b) : la décision du DG vaut son approbation de clôture quand la demande se termine.
+          ...(suivante === "TERMINEE" && roleDG ? { approbationClotureParDG: DECISION_DG_VAUT_APPROBATION_CLOTURE } : {}),
+          ...(approbateur ? { approbationClotureParDG: true, approbateurDGId: approbateur } : {}),
+        },
+      };
     }
 
     case "SOUMETTRE_LIGNES_DG": {
@@ -517,7 +659,7 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
               : "Cette demande n'a pas de ligne d'article : soumettez-la entière au DG."
         );
       }
-      if (etape !== "FINANCE" && etape !== "DG" && etape !== "DECISION_FINALE") return refus(messageAttente(etape));
+      if (etape !== "FINANCE" && etape !== "DG") return refus(messageAttente(etape));
       if (auteurInterdit) return refus("Vous ne pouvez pas soumettre votre propre demande.");
       if (action.ligneIds) {
         const raison = refusSoumissionLignes(lignes, action.ligneIds);
@@ -525,25 +667,36 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
       } else if (!lignes.some((l) => raisonLigneNonSoumettable(l) === null)) {
         return refus("Aucune ligne à soumettre au DG (lignes à catégoriser, déjà soumises ou déjà validées).");
       }
-      return { ok: true, etapeSuivante: "DG", effets: { soumiseAuDG: true } };
+      const choisies = new Set(action.ligneIds ?? []);
+      const apres = lignes.map((l) => (choisies.has(l.id) ? { ...l, soumiseAuDG: true, decisionDG: null } : l));
+      return { ok: true, etapeSuivante: etapeDepuisArticles(demande.etape, demande.modeEtapeDG, apres), effets: { soumiseAuDG: true } };
     }
 
     case "DECIDER_LIGNE_DG": {
       if (!a(acteur, "treso.decider_dg")) return refus("Action non autorisée.");
       if (!parLignes) return refus("Pour cette demande, le DG décide la demande entière.");
-      if (etape !== "DG") return refus(messageAttente(etape));
-      if (enAttenteDG.length === 0) return refus("Aucune ligne n'attend votre décision.");
+      // Le DG décide ses articles même quand la Finance en a d'autres à traiter (étape effective Finance).
+      if (enAttenteDG.length === 0) return refus(messageAttente(etape));
       if (estAuteur) return refus("Vous ne pouvez pas décider votre propre demande.");
-      if (demande.decideurFinanceId && acteur.userId === demande.decideurFinanceId) return refus(MESSAGE_DEUX_PERSONNES);
-      if (action.ligneId === undefined) return { ok: true, etapeSuivante: "DG", effets: {} };
+      if (decideursFinance.includes(acteur.userId)) return refus(MESSAGE_DEUX_PERSONNES);
+      if (action.ligneId === undefined) {
+        if (!enAttenteDG.some((l) => l.beneficiaireUserId !== acteur.userId)) {
+          return refus("Vous êtes le bénéficiaire des articles restants : un autre compte les décide.");
+        }
+        return { ok: true, etapeSuivante: etape, effets: {} };
+      }
       const ligne = lignes.find((l) => l.id === action.ligneId);
       if (!ligne) return refus("Une ligne ne fait pas partie de cette demande.");
-      if (etatLigneDG(ligne) !== "EN_ATTENTE_DG") return refus(`La ligne « ${ligne.libelle} » n'attend pas votre décision.`);
+      if (etats.get(ligne.id) !== "CHEZ_DG") return refus(`La ligne « ${ligne.libelle} » n'attend pas votre décision.`);
+      if (ligne.beneficiaireUserId === acteur.userId) return refus(MESSAGE_ARTICLE_BENEFICIAIRE(ligne.libelle));
       if (!action.valider && motifInvalide(action.motif ?? "")) {
         return refus(`Le motif du refus est obligatoire (${MOTIF_MIN} caractères minimum).`);
       }
-      // La dernière ligne en attente décidée : la Finance reprend la main (décision finale ou nouvelle soumission).
-      return { ok: true, etapeSuivante: enAttenteDG.length === 1 ? "DECISION_FINALE" : "DG", effets: {} };
+      // L'article validé par le DG attend la confirmation de la Finance ; refusé, il revient à la Finance.
+      const apres = lignes.map((l) =>
+        l.id === ligne.id ? { ...l, decisionDG: action.valider ? ("VALIDEE" as const) : ("REFUSEE" as const) } : l
+      );
+      return { ok: true, etapeSuivante: etapeDepuisArticles(demande.etape, demande.modeEtapeDG, apres), effets: {} };
     }
 
     case "RESOUMETTRE_CORRECTION":
@@ -577,10 +730,18 @@ export function actionsPossibles(demande: DemandeCircuit, acteur: ActeurCircuit)
 
 export type StatutEtapeFrise = "FAITE" | "EN_COURS" | "A_VENIR" | "NON_REQUISE";
 
-/** Frise de progression : Service, Finance, DG (si soumise ou imposée), Assistant (exécution). */
+/**
+ * Frise de progression : Service, Finance, DG (si soumise ou imposée), Assistant (exécution).
+ * Demande À ARTICLES (lot B) : Finance « en cours » tant qu'un article l'attend, DG « en cours » tant qu'un article est
+ * chez lui (les deux peuvent l'être ensemble), Assistant « en cours » dès qu'un article est validé (le règlement est
+ * possible) ; Finance et DG sont « faites » une fois qu'aucun article ne les attend. Détail : compteur d'articles traités.
+ */
 export function friseProgression(
   demande: DemandeCircuit & { soumiseAuDG: boolean }
 ): { etape: "SERVICE" | "FINANCE" | "DG" | "ASSISTANT"; statut: StatutEtapeFrise; detail?: string }[] {
+  const lignes = demande.lignes ?? [];
+  if (demande.typeDemande !== "DEPENSE_DIRECTE" && lignes.length > 0) return friseParArticles(demande);
+
   const ordre: Record<EtapeCircuit, number> = {
     SERVICE: 0,
     FINANCE: 1,
@@ -614,6 +775,38 @@ export function friseProgression(
   ];
 }
 
+function friseParArticles(
+  demande: DemandeCircuit & { soumiseAuDG: boolean }
+): { etape: "SERVICE" | "FINANCE" | "DG" | "ASSISTANT"; statut: StatutEtapeFrise; detail?: string }[] {
+  const lignes = demande.lignes ?? [];
+  const etape = etapeDepuisArticles(demande.etape, demande.modeEtapeDG, lignes);
+  const r = resumeArticles(lignes, demande.modeEtapeDG);
+  // Demande renvoyée au demandeur, abandonnée ou encore au Service : les étapes suivantes sont « à venir ».
+  const enAmont = etape === "SERVICE" || etape === "A_CORRIGER" || etape === "ABANDONNEE";
+  const dgRequise =
+    demande.modeEtapeDG === "OBLIGATOIRE" ||
+    (demande.modeEtapeDG === "OPTIONNELLE" && (demande.soumiseAuDG || lignes.some((l) => l.soumiseAuDG)));
+  const compteur = `${r.traites} article${r.traites > 1 ? "s" : ""} traité${r.traites > 1 ? "s" : ""} sur ${r.total}`;
+  const apres = (enCours: boolean): StatutEtapeFrise => (enCours ? "EN_COURS" : enAmont ? "A_VENIR" : "FAITE");
+  return [
+    {
+      etape: "SERVICE",
+      statut: !demande.etapeServiceRequise ? "NON_REQUISE" : etape === "SERVICE" ? "EN_COURS" : etape === "ABANDONNEE" || etape === "A_CORRIGER" ? "A_VENIR" : "FAITE",
+    },
+    {
+      etape: "FINANCE",
+      statut: !demande.etapeFinanceRequise ? "NON_REQUISE" : apres(r.pourFinance > 0 && !enAmont),
+      detail: demande.etapeFinanceRequise && !enAmont && r.total > 1 ? compteur : undefined,
+    },
+    {
+      etape: "DG",
+      statut: !dgRequise ? "NON_REQUISE" : apres(r.chezDG > 0 && !enAmont),
+      detail: detailLignesDG(demande),
+    },
+    { etape: "ASSISTANT", statut: r.validees > 0 ? "EN_COURS" : "A_VENIR" },
+  ];
+}
+
 /** État partiel de l'étape DG (soumission ligne par ligne) : « 2 lignes sur 5 soumises · 1 en attente ». */
 export function detailLignesDG(demande: Pick<DemandeCircuit, "lignes" | "modeEtapeDG" | "typeDemande">): string | undefined {
   const lignes = demande.lignes ?? [];
@@ -629,17 +822,24 @@ export function detailLignesDG(demande: Pick<DemandeCircuit, "lignes" | "modeEta
   return morceaux.join(" · ");
 }
 
-/** Ligne Prisma (catégorie et décision DG) → `LigneCircuit`. */
-export function versLigneCircuit(l: {
-  id: string;
-  libelle: string;
-  categorieId: string | null;
-  statutValidation: "EN_ATTENTE" | "VALIDEE" | "REJETEE";
-  soumiseAuDG: boolean;
-  decisionDG: "VALIDEE" | "REFUSEE" | null;
-  decisionDGParId: string | null;
-  decisionDGAt?: Date | null;
-}): LigneCircuit {
+/**
+ * Ligne Prisma (catégorie, décision DG, décideur Finance, bénéficiaire) → `LigneCircuit`. `demande` : bénéficiaire par
+ * défaut de la demande, pour le bénéficiaire EFFECTIF de l'article (le sien, sinon celui de la demande).
+ */
+export function versLigneCircuit(
+  l: {
+    id: string;
+    libelle: string;
+    categorieId: string | null;
+    statutValidation: "EN_ATTENTE" | "VALIDEE" | "REJETEE";
+    soumiseAuDG: boolean;
+    decisionDG: "VALIDEE" | "REFUSEE" | null;
+    decisionDGParId: string | null;
+    decisionDGAt?: Date | null;
+    decideurFinanceId?: string | null;
+  } & BeneficiaireStocke,
+  demande?: BeneficiaireStocke
+): LigneCircuit {
   return {
     id: l.id,
     libelle: l.libelle,
@@ -649,23 +849,27 @@ export function versLigneCircuit(l: {
     decisionDG: l.decisionDG,
     decisionDGParId: l.decisionDGParId,
     decisionDGAt: l.decisionDGAt ?? null,
+    decideurFinanceId: l.decideurFinanceId ?? null,
+    beneficiaireUserId: demande ? beneficiaireArticle(l, demande).userId : (l.beneficiaireUserId ?? null),
   };
 }
 
 /** Champs `Demande` lus par le circuit (ligne Prisma) → `DemandeCircuit`. */
-export function versDemandeCircuit(d: {
-  etapeCircuit: EtapeCircuit;
-  createurId: string;
-  typeDemande: TypeDemandeCircuit;
-  etapeServiceRequise: boolean;
-  etapeFinanceRequise: boolean;
-  modeEtapeDG: ModeEtapeDG;
-  dgApprobateurId: string | null;
-  decideurFinanceId: string | null;
-  lignes?: Parameters<typeof versLigneCircuit>[0][];
-}): DemandeCircuit {
+export function versDemandeCircuit(
+  d: {
+    etapeCircuit: EtapeCircuit;
+    createurId: string;
+    typeDemande: TypeDemandeCircuit;
+    etapeServiceRequise: boolean;
+    etapeFinanceRequise: boolean;
+    modeEtapeDG: ModeEtapeDG;
+    dgApprobateurId: string | null;
+    decideurFinanceId: string | null;
+    lignes?: Parameters<typeof versLigneCircuit>[0][];
+  } & BeneficiaireStocke
+): DemandeCircuit {
   return {
-    lignes: d.lignes?.map(versLigneCircuit),
+    lignes: d.lignes?.map((l) => versLigneCircuit(l, d)),
     etape: d.etapeCircuit,
     createurId: d.createurId,
     typeDemande: d.typeDemande,
@@ -767,16 +971,47 @@ export function lignesRetireesParCorrection(versions: VersionDemande[], idsLigne
  * ces permissions (Assistant Finance, Finance) : un AUTRE compte le fait. `null` si l'action est permise.
  */
 export const MESSAGE_EXECUTION_PROPRE_DEMANDE =
-  "Vous êtes le demandeur ou le bénéficiaire de cette demande : un autre compte s'en charge (règlement, décaissement, retours, description).";
+  "Vous êtes le demandeur ou le bénéficiaire de cette demande (ou de l'un de ses articles) : un autre compte s'en charge (règlement, décaissement, retours, description).";
 
 /**
  * Gardes 1 à 4, 6 et 8 (2026-10-07) : le demandeur ET le bénéficiaire (compte du portail) n'exécutent jamais l'argent
  * de la demande ni ne documentent ses retours — règlements, réception, déclaration et détail des dépenses par
  * l'Assistant, remboursements, retours exceptionnels, description et libellés. Un autre compte le fait.
+ *
+ * Autonomie des articles, lot A (2026-10-14) : tant que le circuit n'est pas par article, le compte est bloqué s'il est
+ * créateur ou bénéficiaire de N'IMPORTE QUEL article de la demande (`comptesConcernesDemande`). `lignes` est
+ * OBLIGATOIRE (peut être vide) : un appelant qui l'oublierait ne compilerait pas.
  */
 export function refusExecutionPropreDemande(
-  demande: { createurId: string; beneficiaireUserId?: string | null },
+  demande: { createurId: string; lignes: readonly ArticleBeneficiaire[] } & BeneficiaireStocke,
   userId: string
 ): string | null {
-  return demande.createurId === userId || demande.beneficiaireUserId === userId ? MESSAGE_EXECUTION_PROPRE_DEMANDE : null;
+  return comptesConcernesDemande(demande, demande.lignes).includes(userId) ? MESSAGE_EXECUTION_PROPRE_DEMANDE : null;
+}
+
+/**
+ * Garde 8 PAR ARTICLE (lot D, 2026-10-16) : pour tout ce qui touche un règlement rattaché à un article (création,
+ * modification, confirmation, annulation, retours de CE règlement), seuls le créateur de la demande et le bénéficiaire
+ * de CET article sont écartés — le bénéficiaire d'un autre article de la même demande peut s'en charger. Sans article
+ * (dépense directe, règlement antérieur non rattaché) : la garde de la demande entière, inchangée.
+ */
+export function refusExecutionPropreReglement(
+  demande: { createurId: string; lignes: readonly ArticleBeneficiaire[] } & BeneficiaireStocke,
+  article: BeneficiaireStocke | null | undefined,
+  userId: string
+): string | null {
+  if (!article) return refusExecutionPropreDemande(demande, userId);
+  return comptesConcernesArticle(demande, article).includes(userId) ? MESSAGE_EXECUTION_PROPRE_DEMANDE : null;
+}
+
+/** Variante pour un règlement chargé avec sa demande et les articles de celle-ci : retrouve l'article du règlement. */
+export function refusExecutionPropreSurReglement(
+  reglement: {
+    ligneDemandeId: string | null;
+    demande: { createurId: string; lignes: readonly (ArticleBeneficiaire & { id: string })[] } & BeneficiaireStocke;
+  },
+  userId: string
+): string | null {
+  const ligne = reglement.ligneDemandeId ? (reglement.demande.lignes.find((l) => l.id === reglement.ligneDemandeId) ?? null) : null;
+  return refusExecutionPropreReglement(reglement.demande, ligne, userId);
 }

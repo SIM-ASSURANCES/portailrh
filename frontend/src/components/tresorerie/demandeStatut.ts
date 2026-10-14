@@ -1,5 +1,6 @@
 import type { BadgeVariant } from "@/components/ui";
 import type { StatutDemande, StatutLigneDemande } from "backend";
+import { libelleEnCours } from "backend/client";
 
 /**
  * Mapping partagé StatutDemande -> Badge/libellé, pour rester cohérent sur
@@ -69,3 +70,18 @@ export const STATUT_LIGNE_DEMANDE_LABEL: Record<StatutLigneDemande, string> = {
   VALIDEE: "Validée",
   REJETEE: "Rejetée",
 };
+
+/**
+ * Statut affiché d'une demande (lot B) : tant qu'au moins un article n'a pas de décision finale, la demande est
+ * « En cours (x/n traités) » — l'énumération reste à 11 valeurs, seul l'affichage change. Sans article (dépense directe)
+ * ou une fois tous les articles traités : le libellé du statut.
+ */
+export function affichageStatutDemande(
+  statut: StatutDemande,
+  lignes?: readonly { statutValidation: StatutLigneDemande }[]
+): { label: string; variant: BadgeVariant } {
+  const terminal = statut === "REJETEE" || statut === "CLOTUREE" || statut === "ABANDONNEE";
+  const enCours = !terminal && lignes ? libelleEnCours(lignes.map((l) => ({ statut: l.statutValidation }))) : null;
+  if (enCours) return { label: enCours, variant: "warning" };
+  return { label: STATUT_DEMANDE_LABEL[statut], variant: STATUT_DEMANDE_BADGE_VARIANT[statut] };
+}

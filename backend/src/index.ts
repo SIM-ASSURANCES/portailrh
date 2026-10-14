@@ -31,11 +31,17 @@ export * from "./geo-utils";
 export * from "./reference";
 export * from "./validation";
 export * from "./beneficiaire";
+export * from "./beneficiaireArticles";
 export * from "./motifLigne";
 export * from "./categorisationObligatoire";
 export * from "./retourNul";
+export * from "./retourExterneRattache";
 export * from "./reportingDemandeLigne";
 export * from "./regularisationDepenses";
+export * from "./regularisationArticle";
+export * from "./dateLivraisonArticle";
+export * from "./regularisationArticleDb";
+export * from "./retourExterneRattacheDb";
 export * from "./feedback";
 export * from "./reinitialisation";
 
@@ -57,7 +63,14 @@ export * from "./encSituation";
 // Services et responsables (circuit de validation des demandes, 2026-10-06).
 export * from "./services";
 // Circuit de validation des demandes (commit 3) : moteur pur et application en base.
+export * from "./etatArticles";
+export * from "./reglementArticle";
+export * from "./repriseReglements";
+export * from "./parcoursArticle";
+export * from "./parcoursArticleDb";
+export * from "./dateGestionDemande";
 export * from "./circuitDemande";
+export * from "./soumissionDGEcran";
 export * from "./circuitDemandeDb";
 export * from "./circuitNotifications";
 // Onglet « À vérifier » (traitement des signalements) — commit 5b.
@@ -69,3 +82,5 @@ export * from "./encSaisie";
 // Règles de permissions (extraites de `frontend/src/lib/auth.ts`, voir
 // `permissions.ts` pour le détail du raisonnement).
 export * from "./permissions";
+export * from "./recapRetourCaisseDb";
+export * from "./reportingRetourCaisse";

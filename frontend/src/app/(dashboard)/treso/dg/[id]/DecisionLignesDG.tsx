@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import { EnteteDemandeArticle, type ContexteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
 import { Badge, Button, Textarea } from "@/components/ui";
 
 import { deciderLigneDGAction } from "../../circuit/actions";
@@ -22,6 +23,8 @@ export interface LigneSoumiseDG {
   decisionDGAt: Date | null;
   motifRefusDG: string | null;
   soumiseParNom: string | null;
+  /** Bénéficiaire et pièces de l'article (autonomie des articles, lot A). */
+  details?: ReactNode;
 }
 
 /**
@@ -33,7 +36,9 @@ export function DecisionLignesDG({
   lignes,
   devise,
   raisonDecider,
+  enteteDemande,
 }: {
+  enteteDemande?: ContexteDemandeArticle;
   lignes: LigneSoumiseDG[];
   devise: string;
   raisonDecider: string | null;
@@ -56,7 +61,7 @@ export function DecisionLignesDG({
       ) : (
         <ul className="space-y-3">
           {lignes.map((l) => (
-            <LigneDG key={l.id} ligne={l} devise={devise} raisonDecider={raisonDecider} />
+            <LigneDG key={l.id} ligne={l} devise={devise} raisonDecider={raisonDecider} enteteDemande={enteteDemande} />
           ))}
         </ul>
       )}
@@ -65,7 +70,17 @@ export function DecisionLignesDG({
   );
 }
 
-function LigneDG({ ligne, devise, raisonDecider }: { ligne: LigneSoumiseDG; devise: string; raisonDecider: string | null }) {
+function LigneDG({
+  ligne,
+  devise,
+  raisonDecider,
+  enteteDemande,
+}: {
+  ligne: LigneSoumiseDG;
+  devise: string;
+  raisonDecider: string | null;
+  enteteDemande?: ContexteDemandeArticle;
+}) {
   const [refusOuvert, setRefusOuvert] = useState(false);
   const [motif, setMotif] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -88,8 +103,10 @@ function LigneDG({ ligne, devise, raisonDecider }: { ligne: LigneSoumiseDG; devi
     <li data-ligne-dg={ligne.libelle} className="space-y-2 rounded-xl border border-border p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
+          {enteteDemande ? <EnteteDemandeArticle contexte={enteteDemande} /> : null}
           <p className="font-bold text-foreground">{ligne.libelle}</p>
           {ligne.motif ? <p className="text-xs text-muted-foreground">Motif : {ligne.motif}</p> : null}
+          {ligne.details}
           <p className="text-xs text-muted-foreground tabular-nums">
             {ligne.quantite} × {ligne.prixUnitaire.toLocaleString("fr-FR")} {devise}
             {ligne.categorieLabel ? ` · ${ligne.categorieLabel}${ligne.objetLabel ? ` / ${ligne.objetLabel}` : ""}` : ""}

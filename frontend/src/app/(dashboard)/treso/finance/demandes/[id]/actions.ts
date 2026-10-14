@@ -8,11 +8,13 @@ import { publishDataChanged } from "@/lib/eventBus";
 import { notify, notifyByPermission } from "@/lib/notifications";
 import { notifierApprobationCloture, notifierEtapeCircuit } from "@/lib/notificationsCircuit";
 import { prisma, refusConflitInteret } from "backend";
-import { calculerStatutDemande, getEcart, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
+import { calculerStatutDemande, getEcart, peutEtreCloturee } from "backend";
 import {
   appliquerTransitionCircuit,
   approbationClotureObtenue,
   chargerActeur,
+  deciderArticles,
+  decideursFinanceDemande,
   decisionFinalePrise,
   MESSAGE_ATTENTE_VALIDATION_FINALE,
   MESSAGE_DEUX_PERSONNES,
@@ -24,7 +26,6 @@ import {
 class RefusCircuit extends Error {}
 import { fieldErrorsFromZod, MOTIF_LIGNE_MIN, type ActionState } from "backend";
 import { refusDemandeSansCategorie, refusLignesValideesSansCategorie } from "backend";
-import { approbateurClotureParLignesDG, refusDecisionsFinales, versLigneCircuit } from "backend";
 
 /**
  * Validation complémentaire qui comble le reliquat d'une dépense directe (hors circuit : la décision finale est déjà
@@ -533,7 +534,8 @@ export async function modifierLibelleLigneAction(
   if (ligne.demande.statut === "CLOTUREE") {
     return { status: "error", message: "Cette demande est clôturée : le libellé ne peut plus être modifié." };
   }
-  if (!hasPermission(session, "treso.decider_finance") && !decisionFinalePrise(ligne.demande.etapeCircuit)) {
+  // Lot B : l'Assistant n'agit sur un article qu'une fois cet article validé (la décision finale est par article).
+  if (!hasPermission(session, "treso.decider_finance") && ligne.statutValidation !== "VALIDEE") {
     return { status: "error", message: MESSAGE_ATTENTE_VALIDATION_FINALE };
   }
   if (parsed.data.libelle === ligne.libelle) {
@@ -594,7 +596,8 @@ export async function modifierMotifLigneAction(ligneId: string, nouveauMotif: st
   if (ligne.demande.statut === "CLOTUREE") {
     return { status: "error", message: "Cette demande est clôturée : le motif ne peut plus être modifié." };
   }
-  if (!hasPermission(session, "treso.decider_finance") && !decisionFinalePrise(ligne.demande.etapeCircuit)) {
+  // Lot B : l'Assistant n'agit sur un article qu'une fois cet article validé (la décision finale est par article).
+  if (!hasPermission(session, "treso.decider_finance") && ligne.statutValidation !== "VALIDEE") {
     return { status: "error", message: MESSAGE_ATTENTE_VALIDATION_FINALE };
   }
   if (parsed.data.motif === ligne.motif) return { status: "success", message: "Aucun changement à enregistrer." };
@@ -707,56 +710,26 @@ const decisionLigneSchema = z.object({
 const validerLignesSchema = z.array(decisionLigneSchema).min(1);
 
 /**
- * Validation ligne par ligne — Tâche "Validation ligne par ligne" (voir
- * CLAUDE.md). Pour toute demande ayant AU MOINS une ligne, cette action
- * devient l'UNIQUE mécanisme de décision : elle remplace entièrement
- * `validerTotalementAction`/`validerPartiellementAction`/
- * `validerComplementaireAction`/`rejeterReliquatAction` pour ce cas (ces
- * quatre actions se refusent désormais explicitement dès qu'une demande a
- * des lignes — voir leur garde ajoutée plus bas). Décision UNIQUE ET
- * COMPLÈTE en un seul geste : jamais de notion de "reliquat" à traiter plus
- * tard une fois les lignes tranchées, jamais de dévalidation.
+ * Décision article par article (lot B, 2026-10-15). Pour toute demande ayant AU MOINS une ligne, cette action est
+ * l'UNIQUE mécanisme de décision (les actions par montant servent aux demandes sans ligne : dépense directe). Elle
+ * accepte une décision pour un SOUS-ENSEMBLE d'articles — valider ou rejeter avec motif —, à des moments différents :
+ * la Finance n'a plus à tout décider en un geste, ni à attendre le DG pour les articles qu'elle ne lui soumet pas. Un
+ * article validé ou rejeté est définitif (jamais de dévalidation).
  *
- * **Permission : réservée au Responsable Finance UNIQUEMENT**
- * (`treso.valider_demande` ET PAS `treso.approuver_validation_complete`),
- * PAS à l'Assistant Finance (`treso.effectuer_reglement` seul ne suffit
- * jamais ici, contrairement à `modifierLibelleLigneAction`) — c'est une
- * décision de VALIDATION, cohérent avec le fait que l'Assistant Finance
- * n'a, dans tout le reste du module, jamais aucun pouvoir de décision
- * (seulement `effectuer_reglement`/`receptionner_retour`, des actions
- * d'EXÉCUTION une fois la décision déjà prise par le Responsable) — voir
- * CLAUDE.md "Séparation stricte Responsable Finance / Assistant Finance".
+ * Permission : `treso.decider_finance` (Finance), ou `treso.decider_dg` pour une demande émise par la Finance (cas b).
+ * Le moteur du circuit (`transition`) décide du reste : états des articles (un article chez le DG n'est pas décidable
+ * par la Finance ; validé par le DG il reste validé, refusé par le DG il ne se valide pas), règle des deux personnes,
+ * créateur et bénéficiaire de l'article exclus. La catégorie est obligatoire pour valider (2026-10-08).
  *
- * Une seule transaction Prisma :
- * 1. Vérifie que la demande a au moins une ligne et est
- *    `EN_ATTENTE_VALIDATION`.
- * 2. Vérifie qu'AUCUNE ligne n'est déjà décidée — nécessaire en plus du
- *    contrôle de statut : si TOUTES les lignes sont rejetées,
- *    `montantValide` retombe à 0 et `calculerStatutDemande` (jamais
- *    modifiée ici) repasse la demande en `EN_ATTENTE_VALIDATION` alors que
- *    ses lignes sont pourtant déjà toutes décidées — sans ce second
- *    contrôle, ce cas précis permettrait à tort une seconde exécution
- *    (une forme de dévalidation par la bande, contraire au principe
- *    "décision unique et complète").
- * 3. Vérifie que TOUTES les lignes de la demande sont couvertes par les
- *    décisions reçues, ni plus ni moins (rejette si une ligne manque ou si
- *    un id étranger à la demande est reçu).
- * 4. Motif obligatoire (3 caractères minimum) pour chaque ligne `REJETEE`.
- * 5. Met à jour `statutValidation`/`motifRejet`/`decideParId`/`decideAt`
- *    sur chaque ligne, recalcule `Demande.montantValide` = Σ
- *    (quantite × prixUnitaire) des seules lignes `VALIDEE`, puis appelle
- *    `calculerStatutDemande()` exactement comme les autres actions de
- *    validation.
- * 6. Une `HistoriqueEntry` par ligne décidée (`entity: "LigneDemande"`,
- *    action `validation_ligne`/`rejet_ligne`).
+ * Tout dans une transaction (`deciderArticles`) : articles, décideur Finance de chacun, montant validé (somme des
+ * articles validés), étape déduite des articles, chronomètre de rappel remis à zéro, historique. Puis le statut est
+ * recalculé (`calculerStatutDemande`).
  */
 export async function validerLignesAction(
   demandeId: string,
   decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE"; motif?: string }[]
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  // Finance à l'étape Finance ou de décision finale, DG pour une demande de la Finance (cas b) : c'est le moteur du
-  // circuit qui tranche selon l'étape (`appliquerTransitionCircuit` ci-dessous).
   const peutValider =
     !!session && (hasPermission(session, "treso.decider_finance") || hasPermission(session, "treso.decider_dg"));
   if (!peutValider) {
@@ -781,27 +754,10 @@ export async function validerLignesAction(
       message: "Cette demande n'a aucune ligne d'article — utilisez la validation par montant.",
     };
   }
-  if (demande.lignes.some((ligne) => ligne.statutValidation !== "EN_ATTENTE")) {
-    return { status: "error", message: "Les lignes de cette demande ont déjà été décidées." };
-  }
-  if (demande.statut !== "EN_ATTENTE_VALIDATION") {
+  if (["REJETEE", "CLOTUREE", "ABANDONNEE"].includes(demande.statut)) {
     return {
       status: "error",
       message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).`,
-    };
-  }
-
-  const ligneParId = new Map(demande.lignes.map((ligne) => [ligne.id, ligne]));
-  const decisionIds = new Set(parsedDecisions.data.map((d) => d.ligneId));
-
-  if (
-    decisionIds.size !== parsedDecisions.data.length ||
-    parsedDecisions.data.some((d) => !ligneParId.has(d.ligneId)) ||
-    demande.lignes.some((ligne) => !decisionIds.has(ligne.id))
-  ) {
-    return {
-      status: "error",
-      message: "Toutes les lignes de la demande doivent être décidées, une seule fois chacune.",
     };
   }
 
@@ -814,90 +770,33 @@ export async function validerLignesAction(
     }
   }
 
-  // Catégorisation obligatoire (2026-10-08) : une ligne validée doit porter une catégorie ; une ligne rejetée, non.
+  // Catégorisation obligatoire (2026-10-08) : un article validé doit porter une catégorie ; un article rejeté, non.
   const refusCategorie = refusLignesValideesSansCategorie(parsedDecisions.data, demande.lignes);
   if (refusCategorie) return { status: "error", message: refusCategorie };
 
-  // Soumission au DG ligne par ligne (2026-10-10) : aucune ligne n'attend le DG, une ligne validée par le DG reste
-  // validée, une ligne refusée par le DG ne peut qu'être refusée définitivement (« DG définitif »).
-  const refusDG = refusDecisionsFinales(demande.lignes.map(versLigneCircuit), parsedDecisions.data);
-  if (refusDG) return { status: "error", message: refusDG };
-  const statutParLigne = new Map(parsedDecisions.data.map((d) => [d.ligneId, d.statut]));
-  // Règle 5 : l'approbation de clôture est acquise si toutes les lignes validées l'ont été par le DG.
-  const approbateurClotureId = approbateurClotureParLignesDG(
-    demande.lignes.map((l) => ({ ...l, statut: statutParLigne.get(l.id) ?? "EN_ATTENTE" }))
-  );
-
-  const decideAt = new Date();
-  let montantValide = 0;
-
-  for (const d of parsedDecisions.data) {
-    if (d.statut === "VALIDEE") {
-      const ligne = ligneParId.get(d.ligneId)!;
-      montantValide += ligne.quantite * Number(ligne.prixUnitaire);
-    }
-  }
-
-  const ligneUpdates = (tx: Pick<typeof prisma, "ligneDemande">) => parsedDecisions.data.map((d) => {
-    const motif = d.statut === "REJETEE" ? d.motif!.trim() : null;
-    const ligne = ligneParId.get(d.ligneId)!;
-    // Une ligne validée par le DG garde son auteur et sa date de décision.
-    const parDG = d.statut === "VALIDEE" && ligne.decisionDG === "VALIDEE";
-    return tx.ligneDemande.update({
-      where: { id: d.ligneId },
-      data: {
-        statutValidation: d.statut,
-        motifRejet: motif,
-        decideParId: parDG ? ligne.decisionDGParId : session.user.id,
-        decideAt: parDG ? (ligne.decisionDGAt ?? decideAt) : decideAt,
-      },
-    });
-  });
-
-  const historiqueEntries = (tx: Pick<typeof prisma, "historiqueEntry">) => parsedDecisions.data.map((d) => {
-    const ligne = ligneParId.get(d.ligneId)!;
-    return tx.historiqueEntry.create({
-      data: {
-        entity: "LigneDemande",
-        entityId: d.ligneId,
-        action: d.statut === "VALIDEE" ? "validation_ligne" : "rejet_ligne",
-        detail:
-          d.statut === "VALIDEE"
-            ? `Ligne « ${ligne.libelle} » validée${ligne.decisionDG === "VALIDEE" ? " par le DG" : ""} (${ligne.quantite} × ${Number(ligne.prixUnitaire).toLocaleString("fr-FR")} FCFA)`
-            : `Ligne « ${ligne.libelle} » rejetée${ligne.decisionDG === "REFUSEE" ? " définitivement après refus du DG" : ""} — motif : ${d.motif!.trim()}`,
-        userId: session.user.id,
-      },
-    });
-  });
-
   const acteurCircuit = await chargerActeur(prisma, session, demande.createurId);
+  let resultat: Extract<Awaited<ReturnType<typeof deciderArticles>>, { ok: true }>;
   try {
-    await prisma.$transaction(async (tx) => {
-      // Toutes rejetées : la demande part en correction (décision 1), jamais un état sans issue.
-      const r = await appliquerTransitionCircuit(tx, demandeId, acteurCircuit, {
-        type: "DECIDER_LIGNES",
-        auMoinsUneValidee: montantValide > 0,
-        approbateurClotureId,
-      });
+    resultat = await prisma.$transaction(async (tx) => {
+      const r = await deciderArticles(tx, demandeId, acteurCircuit, parsedDecisions.data);
       if (!r.ok) throw new RefusCircuit(r.message);
-      for (const op of ligneUpdates(tx)) await op;
-      await tx.demande.update({ where: { id: demandeId }, data: { montantValide } });
-      for (const op of historiqueEntries(tx)) await op;
+      return r;
     });
   } catch (e) {
     if (e instanceof RefusCircuit) return { status: "error", message: e.message };
     throw e;
   }
-
   await calculerStatutDemande(demandeId);
   revalidateDemandePaths(demandeId);
 
-  // Décision finale (demandeur, Assistant Finance, approbation de clôture si due) ou renvoi en correction.
-  await notifierEtapeCircuit(demandeId, session.user.id);
+  // Demandeur (articles décidés), Assistants (montant à régler), ou renvoi en correction / demande terminée.
+  await notifierEtapeCircuit(demandeId, session.user.id, "DECISION_ARTICLES");
 
   return {
     status: "success",
-    message: `Décisions enregistrées pour la demande ${demande.reference} (${montantValide.toLocaleString("fr-FR")} FCFA validés).`,
+    message:
+      `Décisions enregistrées pour la demande ${demande.reference} : ${resultat.nbValidees} article(s) validé(s), ` +
+      `${resultat.nbRejetees} rejeté(s) (${resultat.montantValide.toLocaleString("fr-FR")} FCFA validés au total).`,
   };
 }
 
@@ -1354,10 +1253,14 @@ export async function cloturerDemandeAction(
   // `lignesToutesDecidees`, une telle demande ne pouvait plus jamais être
   // clôturée, alors même que son montant validé était intégralement réglé
   // et régularisé.
-  if (!STATUTS_VALIDATION_COMPLETE.includes(demande.statut) && !lignesToutesDecidees(demande.lignes)) {
+  // Lot B : impossible tant qu'un article est encore à décider ou chez le DG (`peutEtreCloturee`, seule lecture).
+  if (!peutEtreCloturee(demande)) {
     return {
       status: "error",
-      message: `Cette demande ne peut pas être clôturée (statut actuel : ${demande.statut}).`,
+      message:
+        demande.lignes.some((l) => l.statutValidation === "EN_ATTENTE")
+          ? "Cette demande ne peut pas être clôturée : des articles sont encore à décider ou chez le DG."
+          : `Cette demande ne peut pas être clôturée (statut actuel : ${demande.statut}).`,
     };
   }
 
@@ -1424,7 +1327,10 @@ export async function approuverValidationCompleteAction(demandeId: string): Prom
     return { status: "error", message: "Action non autorisée." };
   }
 
-  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  const demande = await prisma.demande.findUnique({
+    where: { id: demandeId },
+    include: { lignes: { select: { statutValidation: true, decideurFinanceId: true } } },
+  });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
@@ -1434,11 +1340,22 @@ export async function approuverValidationCompleteAction(demandeId: string): Prom
       message: "Cette demande n'a encore aucun montant validé — rien à approuver.",
     };
   }
+  // Lot B : l'approbation de clôture se donne quand tous les articles sont traités.
+  if (demande.lignes.some((l) => l.statutValidation === "EN_ATTENTE")) {
+    return { status: "error", message: "Des articles de cette demande sont encore à décider : approuvez la clôture quand ils sont tous traités." };
+  }
   if (demande.validationCompleteParDG) {
     return { status: "error", message: "La validation complète a déjà été approuvée pour cette demande." };
   }
   // Deux personnes distinctes (jamais le décideur Finance), jamais le demandeur, non requise si émise par le DG.
-  const refusApprobation = refusApprobationCloture(demande, session.user.id);
+  const refusApprobation = refusApprobationCloture(
+    {
+      createurId: demande.createurId,
+      decideursFinanceIds: decideursFinanceDemande(demande),
+      approbationClotureNonRequise: demande.approbationClotureNonRequise,
+    },
+    session.user.id
+  );
   if (refusApprobation) {
     return { status: "error", message: refusApprobation };
   }

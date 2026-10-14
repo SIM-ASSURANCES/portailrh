@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Button, PageHeader, StatCard, type StatTone } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import {
+  getDatesGestionDemandes,
   getMesDemandesDetail,
   getMesDemandesEnAttente,
   getMesDemandesParMois,
@@ -51,13 +52,17 @@ export default async function MonTableauDeBordPage() {
   }
 
   const userId = session.user.id;
-  const [indicateurs, enAttente, retoursADeclarer, demandesDetail, demandesParMois] = await Promise.all([
+  const [indicateurs, enAttente, retoursADeclarer, demandesDetailBrut, demandesParMois] = await Promise.all([
     getMesIndicateurs(userId),
     getMesDemandesEnAttente(userId),
     getReglementsCaisseADeclarer(userId),
     getMesDemandesDetail(userId),
     getMesDemandesParMois(userId, 6),
   ]);
+
+  // Lot H : « Géré le » de chaque demande (dernier événement), sans rien changer aux calculs du tableau.
+  const gestions = await getDatesGestionDemandes(demandesDetailBrut.map((d) => d.id));
+  const demandesDetail = demandesDetailBrut.map((d) => ({ ...d, gere: gestions.get(d.id) ?? null }));
 
   const canCreate = hasPermission(session, "treso.creer_demande");
 
@@ -95,7 +100,7 @@ export default async function MonTableauDeBordPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
-        title="Mon tableau de bord"
+        title="Accueil"
         description="Où en sont vos demandes, du dépôt à la clôture."
         actions={
           <div className="flex flex-wrap gap-3">

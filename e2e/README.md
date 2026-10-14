@@ -8,6 +8,15 @@ npm i --no-save playwright          # à la racine (Chromium déjà en cache ou 
 bash e2e/base-jetable.sh             # conteneur postgres:16, migrations, seed, `next start` sur le port 3100
 node e2e/pointage-lot3bis.mjs        # pointage : jour non ouvré, départ avant 30 min, double départ
 node e2e/pointage-decision-dg.mjs    # justifications : retardataire seul RH, décision du DG
+node e2e/soumission-dg-article.mjs   # Trésorerie : bouton « Soumettre au DG » par article, phrases de refus
+node e2e/articles-beneficiaire-pieces.mjs  # Trésorerie : bénéficiaire et pièces par article, « Appliquer à tous », correction
+node e2e/articles-decision-finance.mjs     # Trésorerie (lot B) : décision par article, statut « En cours », files, frise, reprise
+node e2e/reglement-par-article.mjs     # Trésorerie (lot D) : règlement par article, parcours, garde 8 par article, reprise, PDF (pdftotext requis)
+node e2e/regularisation-par-article.mjs # Trésorerie (lot E) : retour de caisse et régularisation par article, retour exceptionnel par article
+node e2e/lot-g.mjs                  # Trésorerie (lot G) : date de livraison par article, règlements Caisse + Banque, retour d'un fonds bancaire, reçus détaillés, récapitulatif, reporting des retours (pdftotext et unzip requis)
+node e2e/lot-g-bis.mjs              # Trésorerie (lot G bis) : retour d'un fonds bancaire = retour externe rattaché à la demande et à l'article (Finance), compte comme retour reçu (pdftotext et unzip requis)
+node e2e/lot-g-ter.mjs              # Trésorerie (lot G ter) : article réglé Caisse + Banque (471 000 + 100 000) — reste non détaillé incluant le fonds banque, sous-bloc par règlement, « Détailler » du fonds banque, solde 0 et « Régularisé », bande « Total de l'article » (lot G quater) (pdftotext requis)
+node e2e/lot-h.mjs                  # Trésorerie (lot H) : libellés de dates (Demande créée le / Livraison prévue le / Géré le) sur écrans, listes, PDF, Excel ; libellés du menu par rôle (Accueil, Accueil Finance), infobulles (pdftotext et unzip requis)
 bash e2e/arreter.sh                  # arrête le serveur et le conteneur
 npm uninstall --no-save playwright
 ```

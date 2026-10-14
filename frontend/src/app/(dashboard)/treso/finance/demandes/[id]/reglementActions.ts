@@ -6,16 +6,22 @@ import { z } from "zod";
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { prisma, refusExecutionPropreDemande, type Prisma } from "backend";
 import {
+  prisma,
+  refusExecutionPropreReglement,
+  refusExecutionPropreSurReglement,
+  type ArticleReglable,
+  type Prisma,
+} from "backend";
+import {
+  allocationsReglementArticle,
   calculerStatutDemande,
-  getCategoriesConcerneesDemande,
   getMontantConsommeCategorie,
   getResteARegler,
   getSoldeCaisse,
   getTotalRegle,
   peutEffectuerReglement,
-  type CategorieConcerneeInfo,
+  verdictReglementArticle,
 } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
 
@@ -30,74 +36,18 @@ const MESSAGE_GEL_REJET_DG =
 
 const montantSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
 const modeSchema = z.enum(["CAISSE", "BANQUE"]);
-const allocationMontantSchema = z.coerce.number().min(0, "Montant invalide");
-
-/** Préfixe des champs `FormData` de répartition par catégorie (voir
- * CLAUDE.md "Allocation budgétaire explicite par règlement") — un champ
- * `alloc_<categorieId>` par catégorie concernée, uniquement rendu par
- * `ReglementForm`/`ReglementRow` quand `categoriesConcernees.length >= 2`. */
-const PREFIXE_CHAMP_ALLOCATION = "alloc_";
-
-export type AllocationInput = { categorieId: string; montant: number };
-
-/**
- * Construit et valide la répartition par catégorie d'un règlement — Option
- * 2 du diagnostic (allocation EXPLICITE choisie par Finance, jamais un
- * apportionnement proportionnel calculé). Partagée par
- * `creerReglementAction`/`modifierReglementAction` : même règle exacte aux
- * deux endroits, jamais une deuxième définition.
- *
- * - 0 catégorie concernée (demande pas encore catégorisée) : aucune
- *   allocation créée — `Reglement.allocations` reste vide, même
- *   comportement qu'avant "Catégorisation par ligne" (aucune limite
- *   appliquée à une portion non catégorisée).
- * - 1 catégorie concernée (cas le plus fréquent, DEPENSE_DIRECTE incluse) :
- *   **aucun champ visible pour Finance** — une seule allocation à 100% du
- *   montant du règlement, créée automatiquement en arrière-plan.
- * - ≥ 2 catégories concernées : la répartition DOIT être fournie
- *   explicitement (un champ par catégorie), et sa somme doit égaler
- *   EXACTEMENT le montant total du règlement (comparaison en centimes
- *   entiers, jamais une égalité flottante directe) — refusée sinon.
- */
-function construireAllocations(
-  categoriesConcernees: CategorieConcerneeInfo[],
-  montantTotal: number,
-  formData: FormData
-): { status: "success"; allocations: AllocationInput[] } | { status: "error"; message: string; fieldErrors?: Record<string, string> } {
-  if (categoriesConcernees.length <= 1) {
-    return {
-      status: "success",
-      allocations: categoriesConcernees.map((c) => ({ categorieId: c.categorieId, montant: montantTotal })),
-    };
-  }
-
-  const fieldErrors: Record<string, string> = {};
-  const allocations: AllocationInput[] = [];
-  let somme = 0;
-
-  for (const categorie of categoriesConcernees) {
-    const champ = `${PREFIXE_CHAMP_ALLOCATION}${categorie.categorieId}`;
-    const parsed = allocationMontantSchema.safeParse(formData.get(champ));
-    if (!parsed.success) {
-      fieldErrors[champ] = parsed.error.issues[0]?.message ?? "Montant invalide.";
-      continue;
-    }
-    allocations.push({ categorieId: categorie.categorieId, montant: parsed.data });
-    somme += parsed.data;
-  }
-
-  if (Object.keys(fieldErrors).length > 0) {
-    return { status: "error", message: "La répartition par catégorie contient des erreurs.", fieldErrors };
-  }
-
-  if (Math.round(somme * 100) !== Math.round(montantTotal * 100)) {
-    return {
-      status: "error",
-      message: `La somme de la répartition par catégorie (${somme.toLocaleString("fr-FR")} FCFA) doit égaler exactement le montant du règlement (${montantTotal.toLocaleString("fr-FR")} FCFA).`,
-    };
-  }
-
-  return { status: "success", allocations };
+/** Articles d'une demande, vus sous l'angle du règlement (lot D : un règlement = un article). */
+function articlesReglables(
+  lignes: { id: string; libelle: string; quantite: number; prixUnitaire: Prisma.Decimal; statutValidation: "EN_ATTENTE" | "VALIDEE" | "REJETEE"; categorieId: string | null }[]
+): ArticleReglable[] {
+  return lignes.map((l) => ({
+    id: l.id,
+    libelle: l.libelle,
+    quantite: l.quantite,
+    prixUnitaire: Number(l.prixUnitaire),
+    statutValidation: l.statutValidation,
+    categorieId: l.categorieId,
+  }));
 }
 
 function revalidateDemande(demandeId: string) {
@@ -114,6 +64,8 @@ function revalidateDemande(demandeId: string) {
 
 const creerReglementSchema = z.object({
   demandeId: z.string().min(1),
+  /** Article réglé (lot D : un règlement = un article). Absent pour une demande sans article (dépense directe). */
+  ligneDemandeId: z.string().min(1).optional(),
   montant: montantSchema,
   mode: modeSchema,
 });
@@ -150,6 +102,7 @@ export async function creerReglementAction(
 
   const parsed = creerReglementSchema.safeParse({
     demandeId: formData.get("demandeId"),
+    ligneDemandeId: formData.get("ligneDemandeId") || undefined,
     montant: formData.get("montant"),
     mode: formData.get("mode"),
   });
@@ -161,25 +114,39 @@ export async function creerReglementAction(
     };
   }
 
-  const { demandeId, montant, mode } = parsed.data;
+  const { demandeId, ligneDemandeId, montant, mode } = parsed.data;
 
-  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  const demande = await prisma.demande.findUnique({ where: { id: demandeId }, include: { lignes: true, reglements: true } });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
-  }
-  // Conflit d'intérêts : jamais l'exécution de sa propre demande.
-  const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
-  if (refusPropre) {
-    return { status: "error", message: refusPropre };
   }
   if (demande.validationCompleteRejeteeParDG) {
     return { status: "error", message: MESSAGE_GEL_REJET_DG };
   }
+  // Un règlement = un article (lot D) : l'article doit être validé, la demande sans règlement non rattaché, et le
+  // montant tenir dans le reste à régler de CET article.
+  const verdict = verdictReglementArticle({
+    articles: articlesReglables(demande.lignes),
+    reglements: demande.reglements,
+    ligneDemandeId,
+    montant,
+  });
+  if (!verdict.ok) {
+    return {
+      status: "error",
+      message: verdict.champ === "montant" ? "Le formulaire contient des erreurs." : verdict.message,
+      fieldErrors: verdict.champ === "montant" ? { montant: verdict.message } : undefined,
+    };
+  }
+  const ligne = verdict.ligne ? demande.lignes.find((l) => l.id === verdict.ligne!.id)! : null;
+  // Conflit d'intérêts, par article : jamais l'exécution de l'argent de sa propre demande ou de son propre article.
+  const refusPropre = refusExecutionPropreReglement(demande, ligne, session.user.id);
+  if (refusPropre) {
+    return { status: "error", message: refusPropre };
+  }
 
-  // `demande`/`totalRegle` déjà chargés ici : transmis à
-  // `peutEffectuerReglement`/`getResteARegler` pour leur éviter de
-  // refaire le même `findUnique`/`aggregate` (voir CLAUDE.md "Diagnostic
-  // de latence — requêtes redondantes").
+  // `demande`/`totalRegle` déjà chargés ici : transmis à `peutEffectuerReglement`/`getResteARegler` pour leur éviter de
+  // refaire le même `findUnique`/`aggregate` (voir CLAUDE.md "Diagnostic de latence — requêtes redondantes").
   const totalRegle = await getTotalRegle(demandeId);
   if (!(await peutEffectuerReglement(demandeId, demande, totalRegle))) {
     return {
@@ -187,35 +154,26 @@ export async function creerReglementAction(
       message: "Cette demande n'est pas éligible au règlement (aucun montant validé restant à régler).",
     };
   }
-
-  const reste = await getResteARegler(demandeId, demande.montantValide, totalRegle);
-  if (montant > reste) {
-    return {
-      status: "error",
-      message: "Le formulaire contient des erreurs.",
-      fieldErrors: {
-        montant: `Le montant dépasse le reste à régler (${reste.toLocaleString("fr-FR")} FCFA).`,
-      },
-    };
-  }
-
-  const categoriesConcernees = await getCategoriesConcerneesDemande(demandeId);
-  const allocationsResult = construireAllocations(categoriesConcernees, montant, formData);
-  if (allocationsResult.status === "error") {
-    return {
-      status: "error",
-      message: allocationsResult.message,
-      fieldErrors: allocationsResult.fieldErrors,
-    };
+  // Demande sans article (dépense directe) : le plafond reste celui de la demande.
+  if (!ligne) {
+    const reste = await getResteARegler(demandeId, demande.montantValide, totalRegle);
+    if (montant > reste) {
+      return {
+        status: "error",
+        message: "Le formulaire contient des erreurs.",
+        fieldErrors: { montant: `Le montant dépasse le reste à régler (${reste.toLocaleString("fr-FR")} FCFA).` },
+      };
+    }
   }
 
   await prisma.reglement.create({
     data: {
       demandeId,
+      ligneDemandeId: ligne?.id ?? null,
       montant,
       mode,
       auteurId: session.user.id,
-      allocations: { create: allocationsResult.allocations },
+      allocations: { create: allocationsReglementArticle(ligne, demande.categorieId, montant) },
     },
   });
 
@@ -225,25 +183,18 @@ export async function creerReglementAction(
 }
 
 /**
- * Modifie le montant/mode/répartition par catégorie d'un règlement NON
- * confirmé et NON annulé. Mêmes validations que la création. Appelée
- * directement depuis un composant client (pas via `<form action={...}>`),
- * comme les actions valider/rejeter du Ticket 3 — `allocationsFormData` est
- * un `FormData` construit côté client à partir du formulaire d'édition
- * (mêmes champs `alloc_<categorieId>` que `ReglementForm`, voir
- * `construireAllocations`), `undefined` si la demande n'a qu'une seule
- * catégorie concernée (ou aucune) et qu'aucun champ de répartition n'est
- * donc rendu.
+ * Modifie le montant/mode d'un règlement NON confirmé et NON annulé. Mêmes validations que la création (l'article d'un
+ * règlement ne change jamais). Appelée directement depuis un composant client (pas via `<form action={...}>`), comme
+ * les actions valider/rejeter du Ticket 3.
  *
- * **Les allocations existantes sont entièrement remplacées** (jamais
- * fusionnées) : le montant total ayant pu changer, l'ancienne répartition
- * n'a plus de sens à conserver telle quelle.
+ * **Les allocations existantes sont entièrement remplacées** (jamais fusionnées) : le montant total ayant pu changer,
+ * l'ancienne répartition n'a plus de sens à conserver telle quelle ; elle est recalculée (100 % vers la catégorie de
+ * l'article, lot D).
  */
 export async function modifierReglementAction(
   reglementId: string,
   montant: number,
-  mode: "CAISSE" | "BANQUE",
-  allocationsFormData?: FormData
+  mode: "CAISSE" | "BANQUE"
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.effectuer_reglement")) {
@@ -264,40 +215,42 @@ export async function modifierReglementAction(
     return { status: "error", message: "Ce règlement n'est plus modifiable." };
   }
 
-  const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId } });
-  if (demande) {
-    const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
-    if (refusPropre) return { status: "error", message: refusPropre };
-  }
+  const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId }, include: { lignes: true, reglements: true } });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
   }
   if (demande.validationCompleteRejeteeParDG) {
     return { status: "error", message: MESSAGE_GEL_REJET_DG };
   }
+  // L'article d'un règlement ne change jamais : seuls le montant et le mode sont modifiables.
+  const verdict = verdictReglementArticle({
+    articles: articlesReglables(demande.lignes),
+    reglements: demande.reglements,
+    ligneDemandeId: reglement.ligneDemandeId,
+    montant: parsedMontant.data,
+  });
+  if (!verdict.ok) {
+    return { status: "error", message: verdict.message };
+  }
+  const ligne = verdict.ligne ? demande.lignes.find((l) => l.id === verdict.ligne!.id)! : null;
+  const refusPropre = refusExecutionPropreReglement(demande, ligne, session.user.id);
+  if (refusPropre) return { status: "error", message: refusPropre };
+
   const totalRegle = await getTotalRegle(reglement.demandeId);
   if (!(await peutEffectuerReglement(reglement.demandeId, demande, totalRegle))) {
     return { status: "error", message: "Cette demande n'est plus éligible au règlement : modification impossible." };
   }
-
-  const reste = await getResteARegler(reglement.demandeId, demande.montantValide, totalRegle);
-  if (parsedMontant.data > reste) {
-    return {
-      status: "error",
-      message: `Le montant dépasse le reste à régler (${reste.toLocaleString("fr-FR")} FCFA).`,
-    };
+  if (!ligne) {
+    const reste = await getResteARegler(reglement.demandeId, demande.montantValide, totalRegle);
+    if (parsedMontant.data > reste) {
+      return {
+        status: "error",
+        message: `Le montant dépasse le reste à régler (${reste.toLocaleString("fr-FR")} FCFA).`,
+      };
+    }
   }
 
-  const categoriesConcernees = await getCategoriesConcerneesDemande(reglement.demandeId);
-  const allocationsResult = construireAllocations(
-    categoriesConcernees,
-    parsedMontant.data,
-    allocationsFormData ?? new FormData()
-  );
-  if (allocationsResult.status === "error") {
-    return { status: "error", message: allocationsResult.message };
-  }
-
+  // Le montant total a pu changer : l'allocation budgétaire (100 % vers la catégorie de l'article) est recalculée.
   await prisma.$transaction([
     prisma.reglement.update({
       where: { id: reglementId },
@@ -305,7 +258,7 @@ export async function modifierReglementAction(
     }),
     prisma.reglementCategorieAllocation.deleteMany({ where: { reglementId } }),
     prisma.reglementCategorieAllocation.createMany({
-      data: allocationsResult.allocations.map((a) => ({ ...a, reglementId })),
+      data: allocationsReglementArticle(ligne, demande.categorieId, parsedMontant.data).map((a) => ({ ...a, reglementId })),
     }),
   ]);
 
@@ -364,19 +317,28 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
     return { status: "error", message: "Ce règlement est annulé, il ne peut pas être confirmé." };
   }
 
-  // Demande + total réglé chargés UNE SEULE FOIS ici, puis transmis à
-  // `peutEffectuerReglement` (au lieu de la laisser les refetcher elle-même
-  // en interne) — avant ce correctif, cette action déclenchait jusqu'à 3
-  // lectures de la même `Demande` et 2 calculs identiques de
-  // `getTotalRegle` pour un seul clic sur "Confirmer" (voir CLAUDE.md
-  // "Diagnostic de latence — requêtes redondantes").
-  const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId } });
-  const refusPropre = refusExecutionPropreDemande(demande, session.user.id);
-  if (refusPropre) {
-    return { status: "error", message: refusPropre };
-  }
+  // Demande + total réglé chargés UNE SEULE FOIS ici, puis transmis à `peutEffectuerReglement` (au lieu de la laisser les
+  // refetcher elle-même en interne, voir CLAUDE.md "Diagnostic de latence — requêtes redondantes").
+  const demande = await prisma.demande.findUniqueOrThrow({ where: { id: reglement.demandeId }, include: { lignes: true, reglements: true } });
   if (demande.validationCompleteRejeteeParDG) {
     return { status: "error", message: MESSAGE_GEL_REJET_DG };
+  }
+  // Un règlement = un article (lot D) : l'article reste validé, aucun règlement non rattaché sur la demande, et le total
+  // confirmé de l'article + ce règlement ne dépasse pas son montant validé.
+  const verdict = verdictReglementArticle({
+    articles: articlesReglables(demande.lignes),
+    reglements: demande.reglements,
+    ligneDemandeId: reglement.ligneDemandeId,
+    montant: Number(reglement.montant),
+  });
+  if (!verdict.ok) {
+    return { status: "error", message: verdict.message };
+  }
+  const ligne = verdict.ligne ? demande.lignes.find((l) => l.id === verdict.ligne!.id)! : null;
+  // Conflit d'intérêts, par article : jamais l'exécution de l'argent de sa propre demande ou de son propre article.
+  const refusPropre = refusExecutionPropreReglement(demande, ligne, session.user.id);
+  if (refusPropre) {
+    return { status: "error", message: refusPropre };
   }
   const totalConfirme = await getTotalRegle(reglement.demandeId);
 
@@ -486,7 +448,7 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
         entity: "Demande",
         entityId: reglement.demandeId,
         action: "reglement",
-        detail: `Règlement confirmé : ${montantReglement.toLocaleString("fr-FR")} FCFA (${reglement.mode})`,
+        detail: `Règlement confirmé : ${montantReglement.toLocaleString("fr-FR")} FCFA (${reglement.mode})${ligne ? ` — article « ${ligne.libelle} »` : ""}`,
         userId: session.user.id,
       },
     }),
@@ -496,14 +458,13 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   await calculerStatutDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);
 
-  // Un règlement Caisse confirmé ouvre le droit à déclarer un retour de
-  // caisse (Ticket 5) — un règlement Banque n'a jamais de retour associé,
-  // aucune notification dans ce cas.
+  // Un règlement Caisse confirmé ouvre le droit à déclarer un retour de caisse (Ticket 5) — un règlement Banque n'a pas de
+  // déclaration de retour (lot G bis : la Finance enregistre son retour en retour externe), donc aucune notification.
   if (reglement.mode === "CAISSE") {
     await notify({
       userId: demande.createurId,
       titre: "Retour de caisse à déclarer",
-      message: `Le règlement de ${montantReglement.toLocaleString("fr-FR")} FCFA (Caisse) sur votre demande ${demande.reference} est confirmé — vous pouvez déclarer le retour de caisse correspondant.`,
+      message: `Le règlement de ${montantReglement.toLocaleString("fr-FR")} FCFA (Caisse)${ligne ? ` pour l'article « ${ligne.libelle} »` : ""} sur votre demande ${demande.reference} est confirmé — vous pouvez déclarer le retour de caisse correspondant.`,
       lien: `/treso/demandes/${reglement.demandeId}`,
       priority: "IMPORTANT",
       category: "TRESORERIE",
@@ -568,7 +529,7 @@ export async function annulerReglementAction(
     return { status: "error", message: parsedMotif.error.issues[0].message };
   }
 
-  const reglement = await prisma.reglement.findUnique({ where: { id: reglementId }, include: { demande: true } });
+  const reglement = await prisma.reglement.findUnique({ where: { id: reglementId }, include: { demande: { include: { lignes: true } } } });
   if (!reglement) {
     return { status: "error", message: "Règlement introuvable." };
   }
@@ -584,7 +545,7 @@ export async function annulerReglementAction(
       message: `Cette demande n'est plus modifiable (statut actuel : ${reglement.demande.statut}).`,
     };
   }
-  const refusPropre = refusExecutionPropreDemande(reglement.demande, session.user.id);
+  const refusPropre = refusExecutionPropreSurReglement(reglement, session.user.id);
   if (refusPropre) {
     return { status: "error", message: refusPropre };
   }

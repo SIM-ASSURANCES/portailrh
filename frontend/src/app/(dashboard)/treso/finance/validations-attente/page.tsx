@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
-import { getBeneficiaireNom, VALIDATION_COMPLETE_EN_ATTENTE_WHERE } from "backend";
+import { nomBeneficiaireDemande, VALIDATION_COMPLETE_EN_ATTENTE_WHERE } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 
@@ -41,6 +41,7 @@ export default async function ValidationsAttentePage() {
       statut: true,
       beneficiaireNom: true,
       beneficiaireUser: { select: { fullName: true } },
+      lignes: { select: { statutValidation: true, beneficiaireType: true, beneficiaireUserId: true, beneficiaireNom: true, beneficiaireUser: { select: { fullName: true } } } },
     },
   });
 
@@ -68,10 +69,7 @@ export default async function ValidationsAttentePage() {
     .map((d) => ({
       id: d.id,
       reference: d.reference,
-      beneficiaire: getBeneficiaireNom({
-        beneficiaireUser: d.beneficiaireUser,
-        beneficiaireNom: d.beneficiaireNom,
-      }),
+      beneficiaire: nomBeneficiaireDemande(d, d.lignes, { seulementValidees: true }),
       montantValide: Number(d.montantValide),
       statut: d.statut,
       derniereValidation: derniereValidationParDemande.get(d.id) ?? null,

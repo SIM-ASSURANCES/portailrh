@@ -813,6 +813,8 @@ export async function supprimerUtilisateurAction(
     lignesDecideesParDG,
     reinitialisationsPointageEffectuees,
     pointageMisEnServiceParCompte,
+    lignesBeneficiees,
+    lignesDecideesFinance,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -866,11 +868,16 @@ export async function supprimerUtilisateurAction(
     // Journal permanent des purges du Pointage seul et marqueur de mise en service (RESTRICT).
     prisma.reinitialisationPointage.count({ where: { effectueeParId: userId } }),
     prisma.pointageMiseEnService.count({ where: { parId: userId } }),
+    // Autonomie des articles, lot A (2026-10-14) : bénéficiaire propre d'un article (SET NULL en base).
+    prisma.ligneDemande.count({ where: { beneficiaireUserId: userId } }),
+    // Autonomie des articles, lot B (2026-10-15) : décideur Finance d'un article (SET NULL en base).
+    prisma.ligneDemande.count({ where: { decideurFinanceId: userId } }),
   ]);
 
   const blocages: string[] = [];
   if (demandesCreees > 0) blocages.push(`créé ${demandesCreees} demande(s)`);
   if (demandesBeneficiees > 0) blocages.push(`été bénéficiaire de ${demandesBeneficiees} demande(s)`);
+  if (lignesBeneficiees > 0) blocages.push(`été bénéficiaire de ${lignesBeneficiees} article(s) d'une demande`);
   if (demandesApprouveesDG > 0)
     blocages.push(`approuvé ${demandesApprouveesDG} validation(s) complète(s) en tant que DG`);
   if (demandesDecideesFinance > 0) blocages.push(`pris la décision Finance de ${demandesDecideesFinance} demande(s)`);
@@ -917,6 +924,7 @@ export async function supprimerUtilisateurAction(
   if (reinitialisationsPointageEffectuees > 0)
     blocages.push(`purgé le Pointage ${reinitialisationsPointageEffectuees} fois (journal d'audit permanent)`);
   if (pointageMisEnServiceParCompte > 0) blocages.push("mis le Pointage en service");
+  if (lignesDecideesFinance > 0) blocages.push(`validé ${lignesDecideesFinance} ligne(s) d'article en tant que Finance`);
 
   if (blocages.length > 0) {
     const liste =

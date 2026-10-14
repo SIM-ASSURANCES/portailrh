@@ -32,7 +32,8 @@ export function PieceJointeUpload({
 }: {
   label?: string;
   hint?: string;
-  onChange: (url: string | null) => void;
+  /** `nom` : nom d'origine du fichier envoyé (absent quand le fichier est retiré). */
+  onChange: (url: string | null, nom?: string) => void;
   error?: string;
 }) {
   const [uploading, setUploading] = useState(false);
@@ -65,7 +66,7 @@ export function PieceJointeUpload({
         return;
       }
       setFileName(file.name);
-      onChange(data.url as string);
+      onChange(data.url as string, file.name);
     } catch {
       setLocalError("Échec de l'envoi du fichier.");
       setFileName(null);

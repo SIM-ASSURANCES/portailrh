@@ -2,7 +2,8 @@ import { Document, Page, Text, View } from "@react-pdf/renderer";
 
 import { COLORS } from "./colors";
 import { formatDate, formatMontant } from "./format";
-import { styles } from "./ReceiptDocument";
+import type { HistoriqueImprime } from "./historiqueDocument";
+import { ArticleSection, HistoriqueSection, RappelDemande, styles, type ArticleImprime } from "./ReceiptDocument";
 import "./registerFonts";
 
 export interface RetourReceiptData {
@@ -10,6 +11,11 @@ export interface RetourReceiptData {
   recuReference: string;
   demandeReference: string;
   demandeurNom: string;
+  serviceNom: string | null;
+  /** Date de création de la demande (lot H, « Demande créée le »). */
+  demandeCreeeLe: Date;
+  /** Article dont le règlement d'origine est rattaché (lot D) ; `null` sinon. */
+  article: ArticleImprime | null;
   beneficiaireNom: string;
   /** Règlement d'origine : montant remis, mode et date de confirmation. */
   montantRegle: number;
@@ -18,6 +24,10 @@ export interface RetourReceiptData {
   /** Montant rendu (0 pour un retour nul). */
   montantRetourne: number;
   retourNul: boolean;
+  /** Ancien versement à la banque (avant le lot G) ; sinon le retour est rendu en espèces à la caisse. */
+  versementBancaire: boolean;
+  /** Historique détaillé (lot G) : règlements, retours, dépenses, solde final. */
+  historique: HistoriqueImprime;
   receptionneLe: Date;
   declarantNom: string;
   creeParAssistant: boolean;
@@ -78,7 +88,7 @@ export function RetourReceiptDocument({ data }: { data: RetourReceiptData }) {
                   },
                 ]}
               >
-                {data.retourNul ? "Retour nul — rien à rendre" : data.mode === "CAISSE" ? "Retour en caisse" : "Versement bancaire"}
+                {data.retourNul ? "Retour nul — rien à rendre" : data.versementBancaire ? "Versement bancaire" : "Retour en espèces à la caisse"}
               </Text>
             </View>
           </View>
@@ -124,17 +134,20 @@ export function RetourReceiptDocument({ data }: { data: RetourReceiptData }) {
             </View>
           ) : null}
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Détails de la demande</Text>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Demandeur</Text>
-              <Text style={styles.detailValue}>{data.demandeurNom}</Text>
+          <HistoriqueSection historique={data.historique} />
+
+          <RappelDemande reference={data.demandeReference} demandeurNom={data.demandeurNom} serviceNom={data.serviceNom} creeeLe={data.demandeCreeeLe} />
+          {data.article ? (
+            <ArticleSection article={data.article} />
+          ) : (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Bénéficiaire</Text>
+              <View style={[styles.detailRow, { marginBottom: 0 }]}>
+                <Text style={styles.detailLabel}>Bénéficiaire</Text>
+                <Text style={styles.detailValue}>{data.beneficiaireNom}</Text>
+              </View>
             </View>
-            <View style={[styles.detailRow, { marginBottom: 0 }]}>
-              <Text style={styles.detailLabel}>Bénéficiaire</Text>
-              <Text style={styles.detailValue}>{data.beneficiaireNom}</Text>
-            </View>
-          </View>
+          )}
 
           <Text style={styles.auteurLine}>
             Déclaré par <Text style={styles.auteurNom}>{data.declarantNom}</Text>

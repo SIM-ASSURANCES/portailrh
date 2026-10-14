@@ -558,6 +558,9 @@ main) :
 | `montantValide === montant`, `0 < réglé < montantValide` | `PARTIELLEMENT_REGLEE` |
 | `montantValide === montant`, `réglé >= montantValide` | `REGLEE` |
 
+> **Demandes à articles (lot B, 2026-10-15)** : le statut se déduit des ARTICLES (`statutDepuisLignes`), voir « Lot B » plus bas — « En cours (x/n traités) »
+> tant qu'un article attend, puis suivi du règlement sur le seul montant validé. Le tableau ci-dessus reste exact pour une demande SANS article.
+
 `VALIDEE` n'est **plus jamais produit** par cette fonction (une validation
 totale transite directement vers `VALIDEE_NON_REGLEE`) ; il reste dans
 l'enum uniquement pour compatibilité historique. Comparaisons de montants
@@ -1356,6 +1359,15 @@ qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionne
 
 #### Retour sur règlement Banque (`JournalBanque`)
 
+> **⚠️ REMPLACÉ une seconde fois par le lot G bis (2026-10-19, plus bas)** : un fonds versé par banque n'a plus de déclaration ni de réception de retour ;
+> son retour est un **retour externe rattaché** (Responsable Finance). Le paragraphe suivant (lot G) est lui aussi superseded sur ce point.
+>
+> **⚠️ REMPLACÉ pour tout NOUVEAU retour par le lot G (2026-10-14, plus bas)** : un retour sur un fonds versé par banque suit désormais le
+> même circuit qu'un fonds de caisse (date + montant, dépenses détaillées par l'Assistant) et est **rendu en espèces à la caisse** — sa
+> réception écrit une `ENTREE` dans `JournalCaisse`. Plus de bordereau ni d'écriture `JournalBanque` `RETOUR`. Les **anciens** retours Banque
+> (`RetourCaisse.versementBancaire = true`, posé par migration) gardent exactement le traitement ci-dessous (non modifiables, réception sans
+> écriture de caisse) : une écriture déjà passée n'est jamais modifiée. Les puces ci-dessous ne décrivent plus que ces anciens retours.
+
 - Un retour est possible sur un règlement `BANQUE` (avant : refusé). Modélisé comme un **versement
   bancaire justifié** : **bordereau de versement (pièce jointe) OBLIGATOIRE** et montant > 0, côté
   Collaborateur (`creerRetourCaisseAction(reglementId, montant, date, bordereauUrl)`) comme côté
@@ -1372,9 +1384,10 @@ qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionne
 
 #### Retour externe (hors demande) — `RetourExterne`
 
-- Argent revenu en caisse suite à un règlement fait hors système (ex. chèque). **Totalement
-  autonome** : aucun lien avec `Demande`/`Reglement`/`RetourCaisse`/`RetourExceptionnel` — ne jamais
-  le rattacher ni le compter dans les calculs de ces objets.
+- Argent revenu en caisse suite à un règlement fait hors système (ex. chèque). **Autonome par défaut** :
+  aucun lien avec `Demande`/`Reglement`/`RetourCaisse`/`RetourExceptionnel` — non rattaché, ne jamais
+  le compter dans les calculs de ces objets. **Depuis le lot G bis (2026-10-19)** il peut en plus être
+  **rattaché** à une demande + un article (`demandeId`/`ligneDemandeId`, facultatifs) : voir « Lot G bis ».
 - `creerRetourExterneAction` : **Responsable Finance seul**, effet immédiat et définitif (pas de
   double validation). Personne = `collaborateurId` **XOR** `nomExterne` (jamais les deux ni aucun,
   contrainte applicative). Montant du chèque initial = **information déclarative non vérifiée**.
@@ -2628,6 +2641,10 @@ Aucune migration, aucun droit ni garde de conflit d'intérêts modifié, aucune 
 
 #### Soumission au DG ligne par ligne (2026-10-10, suite des retouches)
 
+> **⚠️ Partiellement REMPLACÉ par le lot B (2026-10-15, plus bas)** : la règle 4 « décision finale bloquée tant qu'une ligne attend le DG »
+> et l'étape « Décision finale » ne s'appliquent plus aux demandes à articles (la Finance décide article par article, sans attendre le DG ;
+> l'étape se déduit des articles). Le reste (soumission ligne par ligne, DG définitif, clôture règle 5, notifications) tient.
+
 Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permission créés) : `LigneDemande.soumiseAuDG`,
 `soumiseDGAt`/`soumiseDGParId`, `decisionDG` (enum `DecisionLigneDG` : VALIDEE/REFUSEE, `null` = en attente du DG),
 `decisionDGAt`/`decisionDGParId`, `motifRefusDG`. La décision finale de la ligne reste `statutValidation`.
@@ -2669,10 +2686,442 @@ Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permis
   (soumission partielle, refus puis resoumission, blocage et refus serveur de la décision finale, DG définitif côté
   serveur, clôture mixte et tout-DG, notifications, historique, mobile 390 px).
 
+- **« Soumettre au DG » par article, raisons visibles (lot 2, 2026-10-13)** : diagnostic d'un clic « sans effet » en production — le
+  serveur ne se tait jamais (chaque refus de `soumettreLignesAuDG` renvoie sa phrase), c'est l'écran qui ne montrait ni bouton ni
+  raison (aucune case sans `treso.soumettre_dg`, raison de l'article calculée mais jamais affichée, bouton global grisé sans
+  phrase). Aucune règle ni contrôle serveur changé. Chaque carte d'article porte un bouton « Soumettre au DG » (« Resoumettre »
+  après un refus du DG), **toujours visible**, grisé avec sa raison en dessous (`RaisonVisible`, texte foncé ≥ 14 px, jamais le
+  gris pâle). Cases à cocher et bouton global conservés (« Cochez au moins un article. »). Phrases dans
+  `backend/src/soumissionDGEcran.ts` (pur, testé) : `raisonSoumissionDemande` (assistant en attente de la validation finale →
+  demande émise par la Finance « le DG la décide d'office » / par le DG « non requise » → permission absente « Votre rôle n'a pas la
+  permission de soumettre au DG. Contactez un administrateur. » → phrase du moteur, via `transition` avec un article fictif
+  soumettable), `raisonSoumissionArticle` (article non catégorisé : « Catégorisez cet article avant de le soumettre au DG. »),
+  `raisonBoutonGlobalSoumission`, `bandeauEtapeDG`. Bandeau en tête de liste à l'étape DG quand un article attend le DG (le texte
+  ajoute que la soumission d'autres articles reste possible, règle du moteur). Test e2e : `e2e/soumission-dg-article.mjs` (31 contrôles).
+  **À vérifier en production** : le rôle Finance porte-t-il `treso.soumettre_dg` ? La migration `20261006100000` ne l'a donnée qu'aux
+  rôles ayant `valider_demande` SANS `approuver_validation_complete`.
 - **Détail des dépenses sans retour (2026-10-10)** : l'Assistant Finance détaille directement depuis la demande (`detaillerDepensesReglementAction`, règlement Caisse, demande non clôturée) ; le détail est rangé dans une fiche de régularisation (`RetourCaisse` créé d'office, `estFicheRegularisation`), montant à rendre = remis − détaillé (`calculerMontantARetournerNet`, inchangée) ; une déclaration ultérieure du collaborateur complète cette fiche (`completerFicheRegularisation`), la réception écrit seule en caisse ; retour nul possible, plus préalable.
 - **Correction du détail par l'Assistant (2026-10-10, suite du constat)** : tant que la demande n'est pas clôturée (réouverture exceptionnelle : règle existante), ni la réception du retour (retour nul compris) ni un signalement ne conditionnent plus la correction (`detaillerDepensesRetourAction`, `modifierDepenseDetailleeAction`, `detaillerResteAction`) ; un signalement actif reste résolu par la correction. **Pas de suppression** : une ligne se corrige par modification (libellé, montant, type avec ou sans pièce formelle, pièce jointe), motif obligatoire. Aucune dépense n'a d'écriture de caisse : correction sur l'enregistrement ; retour à total fixé (déclaré, ou réceptionné : remis − retourné, lié à l'écriture de la réception) → l'écart va dans la ligne de reste, une hausse au-delà est refusée (`planModificationDepense`) et un changement du montant rendu passe par complément / remboursement ; fiche de régularisation → total libre, montant à rendre recalculé.
 - **Reste « Dépenses non détaillées »** : calculé (ligne réécrite à chaque correction, ni modifiable ni supprimable), affiché comme reste avec « Détailler » (`detaillerResteAction`, `planAjoutLignes`) qui le transforme en vraies lignes. **Un seul composant** `components/tresorerie/DetailDepensesRetour.tsx` (totaux `totauxDetailRetour` : remis, détaillé, reste, sans pièce formelle, retourné ; lignes « Modifier » ; reste « Détailler ») sur l'écran du retour et dans la Régularisation de la demande ; l'écran du retour affiche aussi l'historique de la demande. Le collaborateur voit les lignes à jour en lecture seule et l'historique.
 - **Historique** : `detaillage_retour` (« Dépenses détaillées par l'Assistant Finance » : saisie et « Détailler »), `modification_depense` (JSON avant/après dont le type, motif, phrase `resumeModificationDepense`), anciennes entrées `suppression_depense` toujours lisibles ; aucune migration ; la « catégorie » d'une dépense = son type (justifiée / sans pièce formelle), `DepenseLigne` n'ayant pas de catégorie.
+
+### Autonomie des articles (chantier en cours, lots A à F — décisions validées le 2026-10-13)
+
+Objectif : qu'un article d'une demande vive sa vie propre (bénéficiaire, pièces, décision, règlement, retour), sans casser le
+circuit. Chantier livré **par lots A à F, déployés en production seulement ensemble** : un état intermédiaire doit être sûr
+(jamais incohérent), pas forcément complet. Décisions validées, à appliquer telles quelles :
+
+1. **Étape Service** : le responsable valide la demande entière, avant la Finance. L'autonomie des articles commence à la Finance.
+2. **Un règlement concerne un seul article.**
+3. **Validation du DG** : comportement actuel conservé (règle des deux personnes), appliqué par article.
+4. **Article rejeté : définitif.** Si tous les articles sont rejetés, la demande repart en correction comme aujourd'hui.
+5. **Clôture** : au niveau de la demande, seulement quand tous les articles sont terminés. Retour de caisse et régularisation par article dès qu'il est réglé.
+6. **Garde 8** : bloquée si le compte est créateur ou bénéficiaire de l'article concerné.
+7. **Statut affiché** : les 11 valeurs sont conservées ; libellé « En cours » + compteur d'articles traités.
+8. **Budget** : consommé au règlement, jamais à la validation.
+9. **Devise** : unique par demande. **Date de livraison** : commune à la demande.
+10. **Reporting** : une ligne par demande pour l'instant.
+11. **Rappels 48 h** : un chronomètre par demande, remis à zéro à chaque événement d'un article.
+
+#### Lot A — bénéficiaire et pièces jointes par article, « Appliquer à tous » (2026-10-14)
+
+Ni le circuit, ni les étapes, ni les décisions, ni le règlement, ni les retours ne changent. Migration additive idempotente
+`20261014090000_articles_beneficiaire_pieces` : `LigneDemande.beneficiaireType`/`beneficiaireUserId`/`beneficiaireNom`
+(facultatifs, **vide = hérite**) et `PieceJointe.ligneDemandeId` (facultatif, clé `SET NULL`, plusieurs pièces par article,
+index). **Aucune colonne sur `Reglement`.**
+
+- **Héritage** (`backend/src/beneficiaireArticles.ts`, pur, partagé serveur/écran/PDF) : `Demande.beneficiaire*` reste le
+  bénéficiaire PAR DÉFAUT ; un article sans bénéficiaire propre en hérite. Les lignes existantes en base héritent toutes
+  (aucune reprise de données). Un article dont le bénéficiaire égale la valeur commune **n'enregistre rien** (règle appliquée
+  aussi côté serveur, `choixPropreArticle`, jamais seulement par le formulaire). Deux noms libres sont le même bénéficiaire à
+  la casse et aux accents près.
+- **Pièces** : une pièce d'article porte `demandeId` ET `ligneDemandeId` ; la **pièce commune** reste sur la demande
+  (`ligneDemandeId` vide), n'est jamais dupliquée, et s'affiche « Pièce commune » sous chaque article dès qu'au moins un
+  article a un bénéficiaire ou des pièces propres (`detailsArticles`, `VueDetailsArticles.detaille`). Une ligne retirée à la
+  correction laisse ses pièces sur la demande (clé `SET NULL`) : elles deviennent des pièces communes (limite assumée).
+- **Formulaire** (`DemandeForm`) : bloc « Détails communs » (bénéficiaire en 3 modes + pièce commune + bouton « Appliquer à
+  tous les articles ») ; sous chaque article « Détails de l'article » (`DetailsArticleEditeur`) avec le badge « Identique aux
+  autres » / « Personnalisé », plusieurs pièces (`PiecesJointesMultiples`) et le lien « Rétablir la valeur commune ».
+  « Appliquer à tous » remet le bénéficiaire de tous les articles sur la valeur commune (les pièces propres sont gardées) ;
+  **confirmation si au moins un article est personnalisé**. La date de livraison et la devise restent dans l'en-tête.
+- **Correction / resoumission** : `CorrectionDemande` et `corrigerEtResoumettre` portent le bénéficiaire (`undefined` =
+  inchangé, `null` = hérite) et les nouvelles pièces de chaque article ; les pièces déjà jointes sont conservées ; la version
+  recopiée dans l'historique mentionne le bénéficiaire propre d'un article. Le bénéficiaire par défaut de la demande n'est pas
+  modifiable à la correction.
+- **Affichage** : demandeur, responsable de service, DG et Finance montrent le bénéficiaire et les pièces de chaque article
+  (`DetailsArticle`/`detailsArticleDe`) ; l'en-tête, les listes, les reçus (règlement et retour), le bon de caisse et le
+  reporting disent **« Plusieurs bénéficiaires »** quand les articles diffèrent (`nomBeneficiaireDemande`), jamais un seul nom
+  à tort. Filtre et options du reporting : bénéficiaire de la demande **ou** d'un article.
+- **États intermédiaires sûrs** : (1) **garde 8** et **notifications** (« Demande à régler ») écartent le créateur et le
+  bénéficiaire de N'IMPORTE QUEL article (`comptesConcernesDemande`, `refusConflitInteret`, `beneficiairesArticlesUserIds`) ;
+  (2) **le règlement est refusé** (création, modification, confirmation) tant que les articles à payer n'ont pas tous le même
+  bénéficiaire : « Cette demande a plusieurs bénéficiaires : le règlement par article arrive prochainement. » **(⚠️ blocage LEVÉ par le lot D : chaque article se règle avec SON bénéficiaire)** — seuls les articles
+  VALIDÉS comptent quand il y en a (un article rejeté n'est jamais payé). L'annulation d'un règlement existant n'est pas bloquée.
+- **Téléchargement des pièces** : droits de la demande inchangés, étendus au bénéficiaire d'un article. Un compte qui est
+  bénéficiaire d'un article ne peut plus être supprimé définitivement (`supprimerUtilisateurAction`).
+- Vérifié : vitest (18 tests dans `beneficiaireArticles.test.ts`), tsc, eslint, `next build`, migration depuis zéro et rejouée
+  sans effet (`migrate diff` vide), `e2e/articles-beneficiaire-pieces.mjs` 34/34 (création par le vrai formulaire, base,
+  affichage demandeur/Finance, droits de téléchargement, règlement bloqué, correction) et `soumission-dg-article.mjs` 31/31.
+
+#### Lot B — décision Finance par article, statut et étape déduits des articles, files par article (2026-10-15)
+
+Applique les décisions 3, 4, 5, 6, 7, 8 et 11 de la section « Autonomie des articles ». Ni le règlement par article (lot D), ni les retours (lot E),
+ni le reporting (lot F) ne changent : le règlement reste au niveau de la demande (pot commun).
+
+**Modèle d'état d'un article** (module pur `backend/src/etatArticles.ts`, `etatLigneCircuit(ligne, mode)`) :
+
+| État | Quand | Qui l'attend |
+|---|---|---|
+| `A_DECIDER` | `EN_ATTENTE`, non soumis au DG | Finance |
+| `CHEZ_DG` | soumis, sans décision du DG (cas b `OBLIGATOIRE` : tout article en attente) | DG |
+| `VALIDEE_DG_A_CONFIRMER` | validé par le DG, `statutValidation` encore `EN_ATTENTE` | Finance (confirme, ne peut pas rejeter : DG définitif) |
+| `REFUSEE_DG_A_TRANCHER` | refusé par le DG | Finance (resoumet au DG ou rejette définitivement, jamais valide seule) |
+| `VALIDEE` / `REJETEE` | décision finale | personne — **définitif**, jamais de dévalidation |
+
+- **Décision par sous-ensemble** : `validerLignesAction(demandeId, decisions[])` accepte une décision (valider, ou rejeter avec motif ≥ 3) pour un
+  SOUS-ENSEMBLE d'articles, à des moments différents ; plus aucune obligation de couvrir toutes les lignes. La règle 4 (décision finale bloquée par le DG)
+  **disparaît** : la Finance décide les articles qu'elle ne soumet pas pendant que le DG examine les autres. Tout passe par `deciderArticles`
+  (`circuitDemandeDb.ts`) : verrou `FOR UPDATE`, `transition` du moteur, écriture des articles, **décideur Finance par article**
+  (`LigneDemande.decideurFinanceId`, posé à une VALIDATION par la Finance seulement — rejeter n'engage pas d'argent), recalcul du montant validé,
+  étape déduite, chronomètre remis à zéro, historique (une entrée par article + `decision_circuit`).
+- **Étape DÉDUITE des articles** (`etapeDepuisArticles`) : Service / À corriger / Abandonnée restent posées explicitement ; sinon **Finance** dès
+  qu'un article l'attend (prioritaire quand Finance et DG ont chacun des articles), **DG** s'il ne reste que des articles chez lui, **Terminée**
+  quand tous sont traités avec au moins un validé, **À corriger** quand tous sont rejetés (comme avant, niveau Finance ou DG). La colonne
+  `Demande.etapeCircuit` est CONSERVÉE et tenue à jour (rappels, file du Service, reporting la lisent) ; `REJET_DG` et `DECISION_FINALE` ne sont plus
+  produits pour une demande à articles (gardés pour la dépense directe et les anciennes demandes, déduits des articles à l'affichage).
+- **Statut déduit** (`statutDepuisLignes`, appelée par `calculerStatutDemande` qui reste le seul point d'écriture) : l'énumération garde ses 11
+  valeurs (aucune migration d'enum). Tant qu'un article n'a pas de décision finale : `EN_ATTENTE_VALIDATION` (aucun validé) ou `PARTIELLEMENT_VALIDEE`,
+  **affichés « En cours (x/n traités) »** (`affichageStatutDemande`, `libelleEnCours`). Tous traités avec au moins un validé : le statut suit le
+  règlement du SEUL montant validé → **« Réglée » est atteignable avec un article rejeté** (défaut de l'ancienne règle, qui comparait à la somme
+  demandée). Tous rejetés : `EN_ATTENTE_VALIDATION` + à corriger. Sans article (dépense directe) : règle d'origine inchangée.
+- **Montant validé = somme des articles validés**, recalculée après chaque décision (colonne `montantValide` conservée et resynchronisée par
+  `calculerStatutDemande` si elle dérive). **Règlement possible dès qu'un article est validé** (`peutEffectuerReglement` inchangée, sur `montantValide`) ;
+  l'Assistant Finance n'attend plus « la validation finale » : `executionOuverte` = au moins un article validé ; description/libellé/motif d'un article
+  par l'Assistant : seulement sur un article VALIDÉ.
+- **Rejet de la demande entière** (`REJETER`) : possible tant qu'AUCUN article n'est décidé ni examiné par le DG ; **interdit dès qu'un article est
+  validé** (ou validé par le DG), et — décision prise, plus stricte que la demande — dès qu'un article est rejeté ou chez le DG (un article rejeté est
+  définitif, or le renvoi en correction remet tous les articles à zéro : on rejette alors les articles restants un par un, et « tous rejetés » renvoie
+  en correction). `corrigerEtResoumettre` refuse aussi une demande dont un article est validé.
+- **Règle des deux personnes et garde 8** : le décideur Finance (colonne + chaque article, `decideursFinanceDemande`) et l'approbateur DG (colonne +
+  chaque décision d'article, `decideursDGDemande`) sont deux comptes distincts pour toute la demande ; `refusApprobationCloture` prend
+  `decideursFinanceIds` (« aucun des décideurs Finance de la demande »). Le **créateur** ne décide aucun article de sa demande ; le **bénéficiaire
+  d'un article** (le sien, sinon celui de la demande, `versLigneCircuit`) ne décide pas CET article (Finance et DG) : `MESSAGE_ARTICLE_BENEFICIAIRE`,
+  affichée sous l'article (`raisonDecision`). Il décide les autres. `supprimerUtilisateurAction` compte `decideurFinanceId`.
+- **Clôture** : comportement inchangé, mais `peutEtreCloturee` (seule lecture) exige tous les articles traités (aucun à décider ni chez le DG) et au
+  moins un validé ; l'approbation de clôture du DG (`approuverValidationCompleteAction`, file « Validations complètes en attente »
+  `VALIDATION_COMPLETE_EN_ATTENTE_WHERE`) n'est donnée/proposée que lorsque tous les articles sont traités. L'approbation acquise par les décisions du
+  DG (règle 5) est calculée par le moteur sur les articles finaux ; cas b : la décision du DG vaut approbation quand la demande se termine.
+- **Files et indicateurs = requêtes sur les ARTICLES** : `FILES_FINANCE_WHERE` (FINANCE = article non soumis à décider, REJET_DG = article refusé par le
+  DG, DECISION_FINALE = article validé par le DG ; dépense directe/anciennes demandes : par étape), `DEMANDES_A_TRAITER_FINANCE_WHERE` (indicateur
+  n° 1), `demandesEtapeDGWhere` (articles chez le DG, même quand la Finance en a d'autres ; cas b ; dépense directe à l'étape DG),
+  `DEMANDES_EN_ATTENTE_VALIDATION_WHERE`. La page « Demandes en attente de validation » classe une demande dans la première file où elle a quelque
+  chose à faire (jamais deux fois). « À régulariser » : tous les articles traités (comme la clôture).
+- **Écrans** : tableau des articles (`LignesValidationTable`) par article — décision d'un sous-ensemble, « Enregistrer (n articles) » dès une décision,
+  « Confirmer la validation » pour un article validé par le DG, « Rejeter définitivement » pour un article refusé par le DG, compteur « x/n articles
+  traités », « Déjà validé : X — montant qui sera ajouté : Y » ; page Finance unifiée pour une demande à articles vivante (tableau + circuit + règlement
+  + régularisation + clôture sur le même écran) ; frise Finance/DG « en cours » ensemble avec compteur, phrase « En cours : x/n articles traités — en
+  attente de la Finance (n) et du DG (m) » ; bandeau « Des articles attendent la décision du DG, les autres ne sont pas bloqués ».
+- **Notifications et rappels** : l'étape ne changeant plus à chaque décision, `notificationsEtape(ctx, candidats, acteur, evenement)` prend un événement
+  (`ETAPE`, `DECISION_ARTICLES`, `SOUMISSION_DG`, `DECISION_DG`) : décision de la Finance → le demandeur (articles décidés, montant validé) et les
+  Assistants (« Demande à régler ») ; soumission → le DG seul ; le DG a fini son examen (plus d'article chez lui) → la Finance (articles à confirmer /
+  à trancher) ; chaque refus d'un article → la Finance (inchangé). Rappels : `notificationsRappel` renvoie un rappel PAR audience (Finance et DG peuvent
+  attendre ensemble). **Un chronomètre par demande** (`etapeCircuitDepuis`) **remis à zéro à chaque événement d'un article** (décision, soumission,
+  décision du DG) — avant, une soumission complémentaire à l'étape DG ne le changeait pas.
+- **Migration** `20261015090000_decision_finance_par_article` : `LigneDemande.decideurFinanceId` (+ clé étrangère `SET NULL`, index), idempotente ;
+  rattrape les articles déjà VALIDÉS (décideur = `decideParId`, ou `Demande.decideurFinanceId` pour un article validé par le DG ; aucun pour le cas b).
+  Aucune donnée de statut recalculée dans la migration.
+- **Reprise des données — script MANUEL, jamais dans une migration** : `backend/prisma/recalculer-statuts-articles.ts` (logique pure testée :
+  `repriseArticles.ts`). Recalcule, pour chaque demande à articles non terminale, le montant validé, l'étape (déduite) et le statut. **Simulation par
+  défaut** (liste les changements, n'écrit rien) ; `--appliquer` écrit (une transaction par demande, entrée d'historique `reprise_statut_articles`).
+  Idempotent. À lancer UNE fois après le déploiement : `cd backend && npx tsx prisma/recalculer-statuts-articles.ts` puis `... --appliquer`.
+- **Tests réécrits** (anciens comportements) : `circuitDemande.test` (3 : signature de `refusApprobationCloture`), `circuitLignesDG.test` (soumission
+  partielle, cas b, décision du DG, refus/resoumission, règle 4 → « n'est plus bloquée », clôture règle 5, notifications), `circuitNotifications.test` (1 :
+  rappel par audience), `soumissionDGEcran.test` (2 : Assistant et bandeau) ; e2e `soumission-dg-article.mjs` (3 attentes). Ajoutés : `etatArticles.test`
+  (31), `decisionArticles.test` (33), `repriseArticles.test` (7), e2e `articles-decision-finance.mjs` (65 contrôles).
+- **Limite assumée / point ouvert** : pour une demande à articles dont la Finance et le DG ont chacun des articles, `Demande.etapeCircuit` vaut Finance (priorité) ;
+  seuls les écrans/files qui lisent les articles montrent les deux. Le règlement reste un pot commun (lot D : un règlement par article).
+
+#### Lot B bis — un seul geste par article (2026-10-16)
+
+Retouche d'écran uniquement : aucune règle métier, permission ni migration ne change.
+- **Plus de cases à cocher ni de bouton global « Soumettre au DG »** sur le tableau des articles : le bouton « Soumettre au DG » (« Resoumettre » après
+  un refus du DG) de chaque article est le SEUL moyen de soumettre. L'interface n'envoie qu'un article ; `soumettreLignesAuDGAction` / `soumettreLignesAuDG`
+  gardent leur capacité à traiter une liste. Supprimés : `raisonBoutonGlobalSoumission`, `MESSAGE_COCHER_UN_ARTICLE`, `MESSAGE_AUCUN_ARTICLE_SOUMETTABLE`, la
+  sélection et son état. Introduction du bloc : `MESSAGE_INTRO_ARTICLES` (« Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG… »).
+- **Demande décidée d'office par le DG (émise par la Finance) ou émise par le DG** : une seule phrase au niveau de la demande (`CircuitFinanceActions`),
+  jamais de bouton « Soumettre au DG » pour une demande à articles ; le bouton de la demande entière ne subsiste que pour la dépense directe (sans article).
+- **Rappel de la demande en tête de chaque article** (`components/tresorerie/EnteteDemandeArticle.tsx`) : numéro, demandeur, service, date, devise
+  (interprétation minimale de « rattache en tête de la demande à chaque article »). Écrans Finance, DG (y compris cas b), Service et collaborateur.
+
+#### Lot D — règlement par article, parcours de l'article, documents (2026-10-16)
+
+Applique les décisions 2, 6 et 8 de la section « Autonomie des articles » (un règlement concerne un seul article ; garde 8 par article ; budget consommé
+au règlement). Le statut de la demande reste dérivé des articles (`statutDepuisLignes`, « En cours (x/n traités) ») : l'énumération n'a pas bougé. Le
+retour de caisse et la régularisation PAR ARTICLE sont le lot E (non codés) : ici, seulement leur lecture dans le parcours.
+
+- **Modèle** : `Reglement.ligneDemandeId` (facultatif, clé `RESTRICT`, indexé). Vide pour une dépense directe (règlement au niveau de la demande,
+  inchangé) et pour un règlement antérieur non rattaché. Migration `20261016090000_reglement_par_article` (additive, idempotente) qui rattache, sans doute
+  possible, les règlements des demandes dont **un seul article est validé** (aucune écriture de caisse touchée). Vérifiée depuis zéro, rejouée sans effet.
+- **Règle** (`backend/src/reglementArticle.ts`, pur, 17 tests) : on règle un article VALIDÉ sans toucher aux autres ; plusieurs règlements partiels d'un même
+  article, dans la limite de SON montant validé (`resteAReglerArticle`, centimes exacts) — le plafond n'est plus le pot commun de la demande.
+  `verdictReglementArticle` / `verdictConfirmationReglementArticle` (article choisi, de la demande, validé ; aucun règlement non rattaché ; montant) sont
+  appelés par la création, la modification et la confirmation (`reglementActions.ts`). L'article d'un règlement ne change jamais. Devise et date restent
+  communes à la demande. Le blocage « plusieurs bénéficiaires » du lot A est **supprimé** (`refusReglementPlusieursBeneficiaires` retirée).
+- **Budget** : l'allocation est 100 % vers la catégorie de l'article (`allocationsReglementArticle`), aucune si l'article n'est pas catégorisé (ancien article) ;
+  consommé à la confirmation uniquement (`getMontantConsommeCategorie`, inchangée). La répartition multi-catégories à saisir (`AllocationCategorieFields`,
+  `construireAllocations`) disparaît : un article n'a qu'une catégorie. Les anciens règlements gardent leurs allocations ; `getCategoriesConcerneesDemande`
+  n'est plus appelée (conservée).
+- **Garde 8 par article** : `refusExecutionPropreReglement(demande, article, userId)` (`circuitDemande.ts`, `comptesConcernesArticle`) n'écarte que le créateur
+  et le bénéficiaire de CET article ; le bénéficiaire d'un autre article peut régler celui-ci. Appliquée à la création, modification, confirmation, annulation
+  d'un règlement et, via `refusConflitInteret` / `refusExecutionPropreSurReglement`, à tout ce qui touche les retours de CE règlement (réception, détail,
+  remboursement…). Sans article visé (dépense directe, règlement non rattaché) : la garde de la demande entière, inchangée. Retour exceptionnel
+  post-clôture, description, libellés : toujours au niveau de la demande. Notification « Demande à régler » : n'écarte que le créateur et ceux qui sont
+  bénéficiaires de TOUS les articles validés (`beneficiairesBloquesReglement`).
+- **État intermédiaire sûr — règlements non rattachés** : une demande à articles qui a un règlement non annulé sans article (deux articles validés ou plus
+  avant le lot D : on ne devine pas lequel il a payé) est signalée sur l'écran Finance (`data-reglements-non-rattaches`) et **plus aucun règlement n'y est créé,
+  modifié ni confirmé** (`MESSAGE_REGLEMENTS_NON_RATTACHES`, côté serveur ET boutons grisés) ; l'annulation reste possible. Les retours de caisse et les
+  dépenses restent attachés à leur règlement (`calculerMontantARetournerNet` est par règlement) : rien n'est attribué à un article au hasard, et le
+  parcours n'affiche que les règlements rattachés. Le retour exceptionnel post-clôture (niveau demande) rend la régularisation d'un article **indéterminée**
+  dès que deux articles ont un règlement Caisse : « Régularisé » n'est alors jamais affiché (note explicative).
+- **Reprise** : `backend/prisma/comptage-reglements-articles.sql` (lecture seule, à lancer en production AVANT le déploiement : nombre de demandes rattachées
+  par la migration / AMBIGUËS, et liste de ces dernières) ; `backend/prisma/recalculer-reglements-articles.ts` (logique pure `repriseReglements.ts`, simulation
+  par défaut) — liste les cas `[AMBIGU]` avec leurs règlements et articles validés, `--affecter ID_REGLEMENT:ID_ARTICLE --appliquer` rattache un règlement
+  (refus si l'article n'est pas validé, étranger à la demande, ou si le total réglé de l'article dépasserait son validé), `--automatique --appliquer` rattache
+  les cas à un seul article validé qui auraient échappé à la migration. Idempotent ; une entrée d'historique `rattachement_reglement_article` par demande ;
+  jamais une écriture de caisse.
+- **Parcours de l'article** (`backend/src/parcoursArticle.ts` pur, 12 tests ; chargé par `getParcoursArticles(demandeId)` ; composant
+  `components/tresorerie/ParcoursArticle.tsx`, branché dans `detailsArticleDe(vue, ligneId, parcours)` donc sur les cartes d'articles du demandeur, du
+  responsable de service, de la Finance/Assistant et du DG) : badge d'état (En attente, Rejeté, Validé, Partiellement réglé, Réglé, Retour en attente,
+  Régularisé), montants clés (validé, réglé, reste, retour attendu / reçu) et SEULES les étapes atteintes — Validé (par qui, quand, montant ; « confirmé par la
+  Finance » si le DG avait validé) → Réglé (date, montant, mode, bénéficiaire) → Retour de caisse (attendu / reçu, règlements Caisse rattachés) → Régularisé
+  (tous les règlements Caisse de l'article à solde nul, article soldé). Banque : jamais de retour ni de régularisation.
+- **Documents** (reçu de règlement, bon de caisse, reçu de retour) : bloc « Article concerné » (libellé, bénéficiaire, montant de l'article ; le reçu y ajoute le
+  réglé à ce jour et le reste de l'ARTICLE) et rappel de la demande (numéro, demandeur, service) (`lib/pdf/articleReglement.ts`, `ArticleSection`,
+  `RappelDemande`). Le libellé est celui de la Finance ; le demandeur sans droit Finance reçoit sa propre version (`libelleDemandeur ?? libelleOriginal`).
+  **Décision à confirmer** : le bon de caisse, jusque-là « volontairement minimaliste », affiche désormais le montant de l'ARTICLE (demandé par le lot) mais
+  toujours ni total réglé ni reste de la demande. Les écrans « Retours en attente » et le détail d'un retour nomment l'article ; la section « Retours de caisse »
+  du demandeur et sa liste de règlements aussi.
+- **Écran Finance** (`ReglementsSection`) : montants de la demande, puis un bloc PAR ARTICLE VALIDÉ (libellé, bénéficiaire, validé / réglé / reste, ses règlements,
+  son formulaire — champ caché `ligneDemandeId`). Boutons visibles mais grisés, avec la phrase, pour le conflit d'intérêts de CET article. `modifierReglementAction`
+  perd son 4ᵉ paramètre (répartition).
+- **Vérifié** : vitest (52 nouveaux tests dont `reglementArticle`, `parcoursArticle`, `repriseReglements` ; garde 8 par article), `tsc`, `eslint`, `next build` ;
+  migration depuis zéro, `migrate diff` vide, rattachement SQL testé (un article validé → rattaché ; deux → intact ; rejeu sans effet) ;
+  e2e `reglement-par-article.mjs` 55/55 sur base jetable (valider 2 articles sur 3, régler l'un en deux fois puis l'autre, C reste en attente, budget consommé
+  article par article, plafond de l'article refusé par le serveur, garde 8 par article contournée par un envoi direct, demande ambiguë bloquée puis débloquée par
+  le script, retour déclaré puis reçu dans le parcours, PDF lus avec `pdftotext`) ; `articles-beneficiaire-pieces.mjs` 34/34 (section règlement réécrite),
+  `soumission-dg-article.mjs` 37/37, `articles-decision-finance.mjs` 65/65.
+
+#### Lot E — retour de caisse et régularisation par article (2026-10-17)
+
+Applique les décisions 5 et 6 de la section « Autonomie des articles » : un article réglé (`Reglement.ligneDemandeId`, lot D) a SON retour de
+caisse, SES dépenses et SON solde à régulariser ; les autres articles restent en attente ou suivent leur cours. Aucune écriture de caisse
+existante n'est jamais modifiée ; un retour nul reste de l'historique seulement. Reporting, export et dashboard par article : lot F (non fait).
+
+- **`getEcartLigne`** (`backend/src/regularisationArticle.ts`, PUR, centimes exacts, jamais plafonné à 0) = fonds remis − dépenses (justifiées +
+  sans pièce formelle + reste non détaillé) − retours reçus. **Une seule formule** : `getEcart(demandeId)` (= `getEcartDemande`), l'écart de
+  `getMesDemandesDetail`, celui de chaque article et le total affiché la reprennent. Classement d'une dépense (`categorieDepense`) : justifiée ;
+  « sans pièce formelle » (sans pièce + motif Finance ou autre libellé) ; « reste non détaillé » (libellé « Dépenses non détaillées » sans motif).
+  Retours reçus = retours réceptionnés + retours exceptionnels validés − remboursements validés.
+- **`agregerRegularisation`** (pur) répartit règlements, retours, dépenses, remboursements et retours exceptionnels entre les articles et une part
+  **« non rattachée »** (règlements sans article, leurs retours/dépenses, retours exceptionnels sans article). **Invariant testé** : Σ articles + non
+  rattaché = solde de la demande (`getEcart`). `getRegularisationParArticle` (`regularisationArticleDb.ts`) charge le tout : par article libellé,
+  libellé du demandeur, bénéficiaire, montant validé, agrégats, solde, état (`etatRegularisationArticle` : non validé / en attente de règlement /
+  à régulariser / régularisé / anomalie), date de régularisation (`dateRegularisation` : la plus récente des dates qui ont fait évoluer l'article,
+  solde nul seulement), retours en attente. `getResumeArticle` + `ArticleTag` nomment un article (« Article : X · Bénéficiaire : Y · Montant validé : Z »).
+- **Retour exceptionnel post-clôture par article** : migration `20261017090000_retour_exceptionnel_par_article` (`RetourExceptionnel.ligneDemandeId`,
+  FK RESTRICT, index ; rattrape les retours des demandes à UN SEUL article validé, rejouée sans effet ; deux articles validés ou plus : laissé sans
+  article, jamais deviné). Saisie : article validé obligatoire sur une demande à articles, plafond = fonds remis de l'article − ses retours reçus,
+  un retour en attente par article, garde 8 de CET article (`refusConflitInteret` accepte `{ demandeId, ligneDemandeId }` et lit l'article d'un
+  `retourExceptionnelId`) ; **refusée tant qu'un règlement non annulé n'est rattaché à aucun article** (`MESSAGE_REGLEMENTS_NON_RATTACHES`).
+  Validation : la part qui couvre le solde de l'article ne réduit aucune dépense, l'excédent réduit d'abord ses dépenses sans pièce formelle puis
+  son « non détaillé », jamais ses justifiées, et jamais les dépenses d'un autre article. `getSoldesARegulariserParReglements` et
+  `getCouvertureRetoursPostCloture` n'imputent un retour exceptionnel rattaché que sur les règlements/retours de son article ; un ancien retour sans
+  article garde l'imputation par ancienneté sur la demande.
+- **État « indéterminé » du lot D** : ne subsiste que pour un retour exceptionnel SANS article sur une demande dont deux articles ou plus sont réglés
+  en Caisse (message mis à jour) ; les données rattachées sont précises. Le parcours de l'article affiche « Régularisé le <date> » avec le détail
+  (fonds remis − dépenses − retours reçus, dont sans pièce formelle / reste non détaillé) et le **solde final**.
+- **Écrans** : `RegularisationSummary` (Finance, Assistant, demandeur — prop `audience`) = un bloc PAR ARTICLE validé (en-tête « Article : … »,
+  bénéficiaire, montant validé, badge d'état/date, six chiffres, puis le détail de SES retours/dépenses avec leurs actions « Détailler »,
+  « Modifier », « Justifier »), un article validé sans règlement « en attente de règlement », une mention des articles rejetés/non décidés, un bloc
+  « Non rattaché à un article » (avertissement, jamais attribué), puis « Total de la demande » (« x article(s) régularisé(s) sur n ») ; une demande
+  sans article (dépense directe) garde un seul bloc. `DetailDepensesRetour` nomme l'article en tête et sur chaque carte de dépense ; détail du retour
+  Finance, « Retours en attente », « À régulariser » (solde de chaque article), « Fonds remis à régulariser », « Dépenses sans pièce formelle à
+  suivre », « Retours à déclarer », section de retours du demandeur (libellé d'origine) et notifications de retour (`lib/nomArticle.ts`) nomment l'article.
+- **Clôture (inchangée, à trancher)** : la clôture reste au niveau de la demande et exige toujours tous les articles décidés + au moins un validé +
+  approbation du DG (`peutEtreCloturee`) ; elle n'exige PAS que chaque article validé soit réglé ni à solde nul (le message « x article(s)
+  régularisé(s) sur n » est informatif, `articleTermine`). Décision ouverte : faut-il exiger le règlement/la régularisation de chaque article ?
+- **Reprise** : aucun script pour rattacher un ancien retour exceptionnel sans article (cas ambigu, signalé à l'écran) — à ajouter si le cas se présente.
+- **Vérifié** : vitest (16 tests `regularisationArticle`, 715 au total, seul échec connu `feedback.test.ts`), tsc, eslint, `next build` ; migration depuis
+  zéro, `migrate diff` vide, rattrapage contrôlé (1 article validé rattaché, 2 laissés sans article, rejeu sans effet) ; e2e `regularisation-par-article.mjs`
+  38/38 (A régularisé + retour + dépenses, B réglé avec dépenses sans retour, C en attente, Z avec reste non détaillé ; soldes indépendants ; clôture
+  seulement une fois tous les articles décidés ; retour exceptionnel d'un article avec refus sans article / au-delà du plafond, dépenses d'un autre
+  article intactes ; ancien retour sans article non rattaché ; règlements non rattachés bloquants ; invariant avec un calcul SQL indépendant) ;
+  régression `reglement-par-article` 55/55, `articles-decision-finance` 65/65, `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
+
+#### Lot G — date de livraison par article, règlements Caisse + Banque partout, retour d'un fonds bancaire, reçus détaillés, récapitulatif, reporting des retours (2026-10-14)
+
+Ajustements après tests, au-dessus du lot E. Principe comptable inchangé : **on ne modifie jamais une écriture de caisse existante**.
+Migrations `20261018090000_date_livraison_article` et `20261018100000_retour_versement_bancaire` (additives, idempotentes, rejouées sans effet).
+
+**1. Date de livraison par article.** `LigneDemande.dateLivraison` (`DATE`, nullable). **La « date commune » du formulaire était DÉJÀ une date de
+livraison** (`Demande.dateLivraisonSouhaitee`, « Date de livraison souhaitée ») : aucun second champ « date commune » n'a été créé, elle reste la date
+commune de la demande (relibellée « Date de livraison commune », déplacée dans « Détails communs »). À l'enregistrement, un article sans date propre reçoit
+une **copie** de la date commune (`dateLivraisonAEnregistrer`, jamais un héritage dynamique) ; un ancien article reste vide, affiché « — », sans reprise.
+La date de création de la demande reste unique (`createdAt`). Module pur `backend/src/dateLivraisonArticle.ts` (refus d'une date passée, la date du jour
+admise ; à la correction, seule une date saisie ou modifiée est réexaminée). Formulaire de création **et** de correction : champ par article + bouton
+« Appliquer la date à tous les articles » (`corrigerEtResoumettre` : `LigneCorrigee.dateLivraison`, absent = inchangé, vide = effacée). Affichée « Livraison : … »
+sur chaque carte d'article (demandeur, Service, Finance/Assistant, DG : `detailsArticles` → `DetailsArticle`), dans les PDF (bloc « Article concerné ») et dans
+la colonne « Lignes d'articles » du reporting.
+
+**2. Règlements Caisse ET Banque dans tous les calculs.** Audit puis correction. Un règlement Banque **n'impacte jamais `JournalCaisse`** (inchangé) mais compte
+comme fonds remis pour l'article partout. Endroits qui ne lisaient que la Caisse, corrigés : parcours de l'article (`parcoursArticle(Db)` : soldes, retours et
+« Régularisé » sur tous les règlements confirmés), « Fonds remis à régulariser » (`getFondsRemisARegulariser`, page et libellé « Montant réglé (Caisse/Banque) »),
+reporting « Fonds remis » (`getFondsRemisParDemande`, allocations `total`), `estFicheRegularisation`, `estRetourNul`, bouton « Détailler » et déclaration de
+l'Assistant sur un règlement Banque, notification « Retour de caisse à déclarer » (aussi pour la Banque), reporting « Retours » (nul). Déjà corrects (vérifiés,
+mode ignoré) : montant réglé, reste à régler, plafond de l'article, badges Partiellement réglé/Réglé, budget consommé (allocations), `getEcartLigne`,
+`getSoldesARegulariserParReglements`. Un même article peut avoir plusieurs règlements mixtes (60 000 Caisse + 40 000 Banque = 100 000).
+- **⚠️ Le retour en espèces via déclaration/réception décrit ci-dessous est REMPLACÉ par le lot G bis** (retour externe rattaché) ; la justification par dépenses détaillées reste.
+- **Décision (réponses de l'utilisateur)** : un fonds versé par banque se justifie par les mêmes dépenses détaillées (même circuit que la Caisse, sans retour obligatoire) ;
+  **son retour est rendu en espèces à la caisse** : `receptionnerRetourAction` écrit une `ENTREE` `JournalCaisse` (comme un retour Caisse). Le formulaire du
+  collaborateur est identique (date + montant, plus de bordereau ni de `JournalBanque` `RETOUR`) ; `declarerRetourAssistantAction(reglementId, motifReouverture?)` perd ses
+  paramètres `bordereauUrl`/`montantRetourneBanque`.
+- **Anciens retours Banque conservés** : `RetourCaisse.versementBancaire` (posé par la migration pour les retours qui ont une ligne `JournalBanque` `RETOUR`). Pour eux :
+  non modifiables, réception **sans** écriture de caisse, jamais « nuls », ni fiche de régularisation, ni complément/remboursement. Tout nouveau retour : `false`.
+- **Conséquence assumée** : tout règlement Banque confirmé affiche désormais un solde à régulariser tant que ses dépenses ne sont pas détaillées (la production a été purgée le
+  26/09 : peu de données).
+
+**3. Reçus détaillés.** `lib/pdf/historiqueDocument.ts` (`chargerHistoriqueDocument`, mêmes agrégats que l'écran) + `HistoriqueSection` : reçu de règlement **et** reçu de
+retour listent chaque règlement de l'article (référence, date, mode, auteur, « ce reçu »), le total réglé, chaque retour de caisse (état, qui), chaque dépense déclarée (justifiée /
+sans pièce formelle / non détaillée), puis le solde final (fonds remis − dépenses − retours reçus). Sans article : toute la demande. Article nommé (version Finance pour la
+Finance, d'origine pour le demandeur), demande rappelée, date de livraison. **Le bon de caisse reste volontairement minimal** (document remis en main propre : pas d'historique), il gagne
+seulement la date de livraison. Aucun motif Finance ni catégorie n'est imprimé.
+
+**4. Récapitulatif du collaborateur.** `getRecapRetourCaisse` (`recapRetourCaisseDb.ts`) + `RecapRetourCaisse.tsx`, sur la page de détail de SA demande : un bloc par article
+(libellé d'origine) puis le total de la demande — fonds reçus (dont Caisse / Banque), retours de caisse (déclarés, reçus, en attente), dépenses justifiées, sans pièce formelle,
+reste non détaillé, solde, état. Aucune information de gestion interne. **Vue d'ensemble de toutes ses demandes** : déjà couverte par « Mon tableau de bord » (état de régularisation
+par demande) — non dupliquée.
+
+**5. Reporting des retours de caisse.** `getReportingRetoursCaisse` + `reportingRetourCaisse.ts` (pur) : une ligne par retour — article d'origine (libellé Finance **et** libellé du
+demandeur, bénéficiaire, montant validé, date de livraison), règlements de l'article (Caisse/Banque, dont Caisse, dont Banque), demande (numéro, demandeur, service), retour (état, déclaré,
+réception, nature, montants). Tableau sur `/treso/finance/reporting` (`ReportingRetoursTable`) et feuille Excel « Retours de caisse » (mêmes colonnes `COLONNES_REPORTING_RETOUR`). Le reste du
+reporting par article reste le lot F.
+
+**Vérifié** : vitest (16 nouveaux tests ; 731 au total, seul échec connu `feedback.test.ts`), tsc, eslint (backend + frontend), `next build` ; migrations depuis zéro, `migrate diff` vide, rejeu
+sans effet, rattrapage `versementBancaire` testé (retour avec `JournalBanque` RETOUR → `true`, autre → `false`) ; e2e `lot-g.mjs` 65/65 (formulaire de création et de correction, dates, « — » pour un ancien
+article, article de 100 000 réglé 60 000 Caisse + 40 000 Banque : solde de caisse inchangé par la Banque, budget 100 000, régularisation, retour d'un fonds bancaire rendu en espèces puis écrit en
+caisse, ancien retour bancaire inchangé, 3 PDF, récapitulatif, reporting et export) ; régressions `regularisation-par-article` 38/38, `reglement-par-article` 55/55, `articles-decision-finance` 65/65,
+`soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
+
+#### Lot G bis — le retour d'un fonds versé par banque passe par le retour externe rattaché (2026-10-19)
+
+Décision de l'utilisateur, qui remplace le circuit du lot G pour la Banque : « les retours de banque sont gérés par le retour externe, que seule la Finance peut faire,
+qui peut se rattacher en indiquant les références de la demande et de l'article ; c'est alors que ce retour entre dans le solde de la caisse ». Réponses aux trois questions
+posées : le retour rattaché **compte comme retour reçu** (il réduit le solde à régulariser) ; le circuit collaborateur/Assistant est **supprimé pour la Banque** ;
+le rattachement est **facultatif** (un retour externe sans demande reste possible, cas du chèque).
+
+- **Modèle** : `RetourExterne.demandeId` / `ligneDemandeId` (facultatifs, clés `RESTRICT`, index) — migration additive idempotente `20261019090000_retour_externe_rattache`,
+  rejouée sans effet. Les retours externes existants restent non rattachés. Rattaché → ET `ENTREE` `JournalCaisse` (`retour_externe`, inchangée), ET retour reçu de l'article.
+- **Règles pures** (`backend/src/retourExterneRattache.ts`, 6 tests) : article **obligatoire** pour une demande à articles, **interdit** pour une dépense directe, article de la
+  demande ; au moins un règlement **Banque** confirmé non annulé sur le périmètre ; **plafond** = min(fonds Banque du périmètre − retours externes déjà rattachés,
+  solde à régulariser du périmètre), jamais négatif. Chargement : `retourExterneRattacheDb.ts` (`chargerContexteRattachement`, `chercherDemandeRattachable`).
+- **Action** `creerRetourExterneAction(..., demandeId?, ligneDemandeId?)` : même garde (`treso.creer_retour_externe`, Responsable Finance seul), plus **garde de conflit d'intérêts**
+  (`refusConflitInteret` sur `{ demandeId, ligneDemandeId }` : jamais le demandeur/bénéficiaire de l'article), verrou `pg_advisory_xact_lock` par (demande, article) pour que deux
+  retours simultanés ne dépassent pas le plafond. Historique `retour_externe_rattache` sur la demande (visible du collaborateur) ; **notification du demandeur** (référence de la
+  demande + libellé de l'article). `chercherDemandeRattachableAction(reference)` retrouve la demande (insensible à la casse) et liste les articles ayant des fonds Banque.
+- **Écran** `/treso/finance/retours-externes` : case « Rattacher à une demande », référence → « Rechercher » → choix de l'article (fonds banque, déjà retourné, solde à régulariser
+  rappelés) ; la liste indique « Rattaché à la demande DEM-… · article … ». Excel « Retours externes » : colonnes « Demande rattachée » et « Article rattaché ».
+- **Compte comme retour reçu** (jamais pour un retour non rattaché) : `getRetoursRecus`, `getAgregatsRegularisation` (donc `getEcartLigne` de l'article, `RegularisationSummary`,
+  parcours, `getRecapRetourCaisse`), `getSoldesARegulariserParReglements` (imputé comme un retour exceptionnel : sur les règlements de l'article, du plus ancien au plus récent,
+  après la soustraction des dépenses et retours de chaque règlement), « Mon tableau de bord », reporting « Fonds remis » et « une ligne par demande » (colonne Retours),
+  `calculerMontantARetournerNet` (un fonds Banque n'a plus à expliquer ce qui est déjà revenu). Parcours : étape « Retour enregistré par la Finance » ; récapitulatif du collaborateur :
+  « dont X enregistrés par la Finance » ; reçus PDF : section « Retours enregistrés par la Finance (fonds versé par banque) ».
+- **Circuit supprimé pour la Banque** (serveur ET écran) : `creerRetourCaisseAction`, `declarerRetourAssistantAction` et `receptionnerRetourAction` refusent un règlement `BANQUE`
+  (`MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE`) ; `getReglementsCaisseADeclarer` et la notification « Retour de caisse à déclarer » redeviennent **Caisse seulement** ;
+  `RETOUR_EN_ATTENTE_WHERE` exclut les retours Banque non anciens. Le collaborateur voit « c'est la Finance qui enregistre le retour » ; la Finance voit un renvoi vers « Retour externe ».
+  **L'Assistant détaille toujours les dépenses d'un fonds bancaire** (`detaillerDepensesReglementAction`) : la fiche créée n'est qu'un support (badge « Détail des dépenses », jamais « en attente
+  de réception », absente de « Retours en attente », du parcours et du récapitulatif) ; son « montant à rendre » n'est plus que calculé, jamais réceptionné. **Anciens retours Banque**
+  (`versementBancaire = true`) : traitement d'origine inchangé (réception sans écriture de caisse).
+- **Limites / décisions ouvertes** : (1) article avec plusieurs règlements Banque : le plafond et `calculerMontantARetournerNet` raisonnent au niveau de l'article (retour externe imputé
+  sur les règlements dans l'ordre d'ancienneté) ; (2) pas de garde `CLOTUREE` sur le rattachement (Finance, effet immédiat, comme le retour externe) ; (3) « Mon tableau de bord » du
+  collaborateur ne compte toujours pas les retours exceptionnels validés (écart préexistant, non corrigé) mais compte les retours externes rattachés ; (4) un retour externe rattaché ne se
+  corrige pas (comme tout retour externe : écriture définitive).
+- **Vérifié** : vitest (7 nouveaux tests, 737 pass + échec connu `feedback.test.ts`), tsc, eslint, `next build` ; migration depuis zéro, `migrate diff` vide, rejeu sans effet ; e2e
+  `lot-g-bis.mjs` 35/35 (article 100 000 = 60 000 Caisse + 40 000 Banque ; plus de déclaration pour la Banque ; rattachement par référence, refus hors plafond, caisse +15 000, solde 0,
+  second retour refusé, retour non rattaché autonome) ; `lot-g.mjs` adapté 60/60 ; régressions `regularisation-par-article` 38/38, `reglement-par-article` 55/55,
+  `articles-decision-finance` 65/65, `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
+
+#### Lot G ter — reste non détaillé et bouton « Détailler » du fonds banque dans le bloc de l'article (2026-10-20)
+
+Correctif d'affichage et de calcul, **aucune migration, aucune écriture de caisse touchée**. Cas de référence : article de 571 000 = 471 000 Caisse + 100 000 Banque,
+100 000 retournés, dépenses 300 000 justifiées + 71 000 sans pièce → solde 100 000. Avant : « Reste non détaillé » = 0, bande « REMIS 471 000 » (Caisse seule), aucun
+« Détailler » pour le fonds banque dans le bloc de l'article (le bouton n'existait que dans la section « Retours de caisse »).
+
+- **Une seule source du reste non détaillé** (`regularisationArticle.ts`, pur) : `resteNonDetailleTotal(a) = resteNonDetaille (lignes de reste stockées) +
+  max(0, solde − retoursEnAttente)` — les fonds remis (Caisse ET Banque) ni retournés, ni détaillés, ni annoncés en retour. Le **solde** (`getEcartLigne`) est inchangé.
+  Nouveau champ d'agrégat `retoursEnAttente` : retours déclarés non réceptionnés « attendus » (hors fiches de détail et hors fiche d'un fonds bancaire non ancien,
+  `EntreeRetour.attendu`, posé par `getAgregatsRegularisation`). Utilisée par `RegularisationSummary` (article et total), `RecapRetourCaisse`, le parcours de l'article
+  (`parcoursArticle`) et les reçus PDF (ligne « Dont reste non détaillé », seulement si > 0).
+- **Bloc de l'article = un sous-bloc par règlement confirmé** (`DetailReglements`, `data-regularisation-reglement`) : titre « Règlement Caisse/Banque — X FCFA » et
+  bande Remis / Détaillé / Reste non détaillé / Sans pièce formelle / Retourné **propre à ce règlement** (la Caisse et la Banque ne sont plus mélangées). Un règlement sans
+  retour ni fiche affiche `DetailReglementSansRetour` (reste = `calculerMontantARetournerNet`, retours externes rattachés déduits) et **« Détailler les dépenses »** pour
+  l'Assistant Finance (garde 8 par article, demande non clôturée) ; la fiche d'un fonds bancaire (`DetailDepensesRetour`) dit « Reste non détaillé » (et non « Reste à rendre »),
+  calculé sur ce qui reste à expliquer sur le règlement. Le doublon avec le bouton de la section « Retours de caisse » est accepté.
+- **Décisions ouvertes** : (1) un retour déclaré mais pas encore réceptionné n'est pas du « non détaillé » (il est annoncé) — nuance par rapport à « remis − retours − détaillé » ;
+  (2) pour un article à plusieurs règlements banque, les retours externes sont imputés au niveau de l'article ; (3) le Responsable Finance (sans `receptionner_retour`) voit les chiffres de
+  l'article mais pas les sous-blocs ni le bouton, comme avant.
+- **Vérifié** : vitest (5 tests du cas exact dans `regularisationArticle.test.ts`, 742 pass + échec connu `feedback.test.ts`), tsc, eslint, `next build` ; e2e `lot-g-ter.mjs` 22/22
+  (571 000 → reste 100 000, sous-blocs Caisse/Banque, bouton visible, détail par l'écran → reste 0, solde 0, « Régularisé », caisse inchangée, reçu PDF et récapitulatif collaborateur) ;
+  régressions `lot-g-bis` 35, `lot-g` 60, `regularisation-par-article` 38, `reglement-par-article` 55, `articles-decision-finance` 65, `soumission-dg-article` 37, `articles-beneficiaire-pieces` 34.
+
+#### Lot G quater — bande « Total de l'article » au-dessus des sous-blocs par règlement (2026-10-21)
+
+Affichage seulement : **aucune migration, aucune écriture de caisse créée ni modifiée**. Constat : dans le bloc « Régularisation » d'un article à plusieurs règlements, la bande
+Remis / Détaillé / Reste non détaillé / Sans pièce formelle / Retourné du sous-bloc Caisse ne reflétait que la caisse (« Remis 471 000 » pour un article de 571 000).
+- **`totauxBandeArticle(agregats)`** (`regularisationArticle.ts`, pur) : Remis = fonds remis (Caisse + Banque), Détaillé = justifiées + sans pièce formelle, Sans pièce = sans pièce formelle,
+  Retourné = retours reçus, **Reste = `resteNonDetailleTotal`** (aucun second calcul). Composant `BandeTotauxArticle` (`data-bande-total-article`), placé par `DetailReglements`
+  (`RegularisationSummary`) **au-dessus** des sous-blocs, **seulement si l'article a plus d'un règlement confirmé** (un seul règlement : pas de bande, la bande du règlement fait foi).
+  Même bande « Total de la demande » pour une demande sans article à plusieurs règlements, « Total non rattaché » pour la part non rattachée.
+- Sous-blocs rebaptisés **« Détail du règlement Caisse/Banque — X FCFA »**, avec leur bande propre inchangée.
+- Récapitulatif du collaborateur et reçus PDF : **aucune modification** — ils affichent déjà des totaux d'article (fonds reçus Caisse + Banque, reste non détaillé via `resteNonDetailleTotal`, solde),
+  jamais de bande par règlement.
+- **Vérifié** : vitest (3 tests `totauxBandeArticle`, dont 471 000 + 100 000 / 400 000 + 71 000 / 100 000 retournés → 571 000, 471 000, 0, 71 000, 100 000), tsc, eslint, `next build` ;
+  e2e `lot-g-ter.mjs` 31/31 (bande avant/après détail, position au-dessus des sous-blocs, cas 400 000 + 71 000, article à un seul règlement sans bande, caisse inchangée) ;
+  régressions `lot-g-bis` 35, `lot-g` 60, `regularisation-par-article` 38, `reglement-par-article` 55, `articles-decision-finance` 65, `soumission-dg-article` 37, `articles-beneficiaire-pieces` 34.
+
+#### Lot H — libellés de dates et du menu (2026-10-22)
+
+Affichage seulement : **aucune migration, aucune nouvelle colonne, aucun calcul modifié, aucune route ni URL changée**.
+
+**1. Trois dates distinctes, libellées partout.**
+- **« Demande créée le … »** (`Demande.createdAt`, une seule date pour toute la demande) : en-têtes « Créée le » de toutes les listes (Mes demandes, Accueil du collaborateur, Toutes les demandes, Demandes à catégoriser,
+  Mon service, Étape DG), descriptions des pages de détail (collaborateur, Finance, Service, DG : « Demande créée le … par … »), rappel en tête de chaque article (`EnteteDemandeArticle`), les trois PDF (reçu de règlement, bon de caisse, reçu de retour :
+  `RappelDemande`/« Détails de la demande »), colonne du reporting par demande et de l'export Excel.
+- **« Livraison prévue le … »** (`LigneDemande.dateLivraison`, lot G, « — » si absente) : carte d'article (remplace « Livraison : »), bloc « Article concerné » des PDF (remplace « Date de livraison »), « lignes d'articles » du reporting (« livraison prévue le … »),
+  colonne « Livraison prévue le » du reporting des retours de caisse.
+- **« Géré le … »** — **déduit des événements du parcours, sans colonne** : `parcoursArticle(...).gere` (module pur `parcoursArticle.ts`, `derniereGestion`) = date du **dernier événement daté** de l'article parmi : décision (Validé / Rejeté : `decideAt`), règlement confirmé non annulé (`Reglement.confirmeAt`),
+  retour de caisse (réception `receptionneAt`, sinon déclaration `createdAt`), retour externe rattaché (`creeAt`), régularisation (`regulariseAt`, étape « Régularisé » seulement quand l'article l'est). À date égale, l'étape la plus avancée du parcours l'emporte. Affiché « Géré le 05/10/2026 (réglé) » (`libelleGestionArticle`),
+  « Géré le — » tant que l'article n'a pas été traité. Cartes d'articles (via `ParcoursArticleView`, `data-gere-le`) et reçus PDF de règlement et de retour (« Géré le » du bloc « Article concerné », `ArticleDocument.gereLe`).
+  **Le bon de caisse reste minimal** (il gagne « Demande créée le » et « Livraison prévue le », pas « Géré le »).
+- **Au niveau de la demande** (`backend/src/dateGestionDemande.ts`, `getDatesGestionDemandes(ids)`, 5 requêtes groupées pour toute une liste) : même règle sur tous les événements de la demande + **clôture** (`HistoriqueEntry` `cloture_totale`/`cloture_partielle`) ; le nom « Régularisé » n'y est pas produit (il demanderait le solde de chaque règlement ; la date, elle, est identique).
+  Colonne « Géré le » : Mes demandes, Accueil du collaborateur, Toutes les demandes, reporting écran et Excel (feuille « Demandes », colonne `gereLe`), description des pages de détail collaborateur et Finance. Pas de colonne « Géré le » dans les files de tâches en cours (Service, DG, à catégoriser) : rien n'y est encore géré.
+- Autres libellés précisés : date d'une dépense (« Dépense du … »), saisie d'un règlement (« règlement saisi le … »), décision d'un article (« Par X le … »), feuilles annexes de l'export (« Date du mouvement » pour les mouvements banque, « Date du retour externe », « Date de l'écriture » pour le journal de caisse).
+  Les horodatages du journal d'historique restent « auteur — date » (événement de l'historique).
+
+**2. Menu.** Seuls les libellés changent (routes inchangées), mêmes tests de visibilité :
+| Rôle (seed) | Avant | Après |
+|---|---|---|
+| Collaborateur, Responsable de service | Tableau de bord · Mon tableau de bord | Tableau de bord · **Accueil** |
+| Finance (Responsable) | Tableau de bord · Tableau de bord Finance · Mon tableau de bord | Tableau de bord · **Accueil Finance** · **Accueil** |
+| Assistant Finance | Tableau de bord · Mon tableau de bord | Tableau de bord · **Accueil** (pas de tableau Finance : `treso.voir_dashboard_finance` absente) |
+| DG | Tableau de bord · Tableau de bord Finance · Mon tableau de bord | Tableau de bord · **Accueil Finance** · **Accueil** |
+| RH, Admin, Encaissements | Tableau de bord | Tableau de bord (inchangé) |
+Titres de page (h1) alignés : `/treso/finance` « Accueil Finance », `/treso/tableau-de-bord` « Accueil », `/` « Tableau de bord ». Il n'existe pas de fil d'Ariane dans le portail. **Infobulle** : chaque entrée du menu porte `title` = libellé complet (avant : seulement en mode réduit), y compris l'intitulé des branches ; la largeur du menu (256 px) ne change pas.
+**À arbitrer (non tranché)** : (a) l'Assistant Finance n'a pas d'« Accueil Finance » (décision de permission, pas de libellé) ; (b) Finance et DG ont deux entrées voisines « Accueil Finance » et « Accueil » (l'accueil personnel sur leurs propres demandes) ; (c) le collaborateur voit « Tableau de bord » (page des modules) à côté de « Accueil » — libellé alternatif possible pour la page « / » : « Portail ».
+
+**3. Formulaire « Nouvelle demande d'achat » (précision du lot H).** Dans la carte « En-tête de la demande », à côté de « Devise » : **« Demande créée le <date du jour> »**, automatique et non modifiable (`data-demande-creee-le`, texte seul, la vraie date est posée par le serveur dans `Demande.createdAt`) — la seule date de la demande ; les dates de livraison restent par article et dans « Détails communs ».
+Dans « Détails communs », **un seul bouton « Appliquer à tous les articles »** (`data-appliquer-a-tous`) remplace les deux anciens : il applique le bénéficiaire commun, la pièce commune (portée par la demande et héritée par chaque article, les pièces propres sont gardées : rien à copier) et la date de livraison commune. Une date vide n'efface jamais les dates des articles ; la confirmation « Remplacer » s'affiche si un article a un bénéficiaire OU une date de livraison personnalisés (message adapté). Le bouton « Appliquer la date à tous les articles » reste dans le formulaire de **correction** (`CorrectionDemande`), non concerné.
+
+**Vérifié** : vitest (`parcoursArticle` : « Géré le » rejeté/validé/réglé/retour/régularisé/retour externe ; `reportingDemandeLigne` : colonnes et valeurs), tsc, eslint, `next build` ; e2e `lot-h.mjs` (menu par rôle, infobulles, h1, dates sur écrans, listes, PDF, Excel) ; régressions `lot-g-ter`, `lot-g-bis`, `lot-g`, `regularisation-par-article`, `reglement-par-article`, `articles-decision-finance`, `soumission-dg-article`, `articles-beneficiaire-pieces` (tests mis à jour pour « Livraison prévue le » et « Accueil »).
 
 ### Solde d'ouverture de caisse
 
