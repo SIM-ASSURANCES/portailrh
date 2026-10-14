@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { prisma } from "backend";
+import { journaliserIncident } from "@/lib/journalTechnique";
 
 export interface SendEmailOptions {
   to: string;
@@ -52,6 +53,16 @@ export async function sendEmail({
   // A. Si aucun serveur SMTP n'est configuré -> Mode Simulation Développement
   // ─────────────────────────────────────────────────────────────────────────
   if (!host || !user || !pass) {
+    // En production, un envoi simulé signifie que le SMTP n'est pas configuré : aucun e-mail ne part (journal technique).
+    if (process.env.NODE_ENV === "production") {
+      void journaliserIncident({
+        niveau: "AVERTISSEMENT",
+        source: "EMAIL",
+        code: "SMTP_NON_CONFIGURE",
+        message: "E-mail non envoyé : SMTP non configuré (variables SMTP_HOST, SMTP_USER, SMTP_PASS).",
+        contexte: userId ? { userId } : undefined,
+      });
+    }
     console.log("\n" + "=".repeat(78));
     console.log("📨 [SIMULATION EMAIL SIM ASSURANCES — AUCUN SERVEUR SMTP CONFIGURÉ]");
     console.log("=".repeat(78));
@@ -163,6 +174,13 @@ export async function sendEmail({
     };
   } catch (error) {
     console.error("❌ Erreur lors de l'envoi de l'email via SMTP:", error);
+    void journaliserIncident({
+      niveau: "ERREUR",
+      source: "EMAIL",
+      code: "SMTP_ECHEC",
+      message: error instanceof Error ? `${error.name}: ${error.message}` : "Erreur inconnue lors de l'envoi.",
+      contexte: userId ? { userId } : undefined,
+    });
     return {
       success: false,
       simulated: false,

@@ -2,6 +2,7 @@ import { prisma, type NotificationPriority, type NotificationCategory } from "ba
 import { publishUserNotification, publishDataChanged } from "@/lib/eventBus";
 import { fcmAdmin } from "@/lib/firebase/firebaseAdmin";
 import { sendEmail, generateCriticalNotificationEmail } from "@/lib/email";
+import { journaliserIncident } from "@/lib/journalTechnique";
 
 export interface NotifyParams {
   userId: string;
@@ -63,6 +64,13 @@ export async function notify(params: NotifyParams) {
     if (priority !== "INFO") {
       sendFcmPush(params.userId, notification).catch((err) => {
         console.error(`[FCM] Échec envoi push pour user ${params.userId}:`, err);
+        void journaliserIncident({
+          niveau: "ERREUR",
+          source: "PUSH",
+          code: "FCM_ECHEC",
+          message: err instanceof Error ? `${err.name}: ${err.message}` : "Échec de l'envoi du push",
+          contexte: { userId: params.userId, notificationId: notification.id },
+        });
       });
     }
 
@@ -70,6 +78,13 @@ export async function notify(params: NotifyParams) {
     if (priority === "CRITIQUE") {
       sendCriticalEmail(params.userId, notification).catch((err) => {
         console.error(`[Email] Échec envoi email critique pour user ${params.userId}:`, err);
+        void journaliserIncident({
+          niveau: "ERREUR",
+          source: "EMAIL",
+          code: "SMTP_ECHEC",
+          message: err instanceof Error ? `${err.name}: ${err.message}` : "Échec de l'envoi de l'e-mail",
+          contexte: { userId: params.userId, notificationId: notification.id },
+        });
       });
     }
 
@@ -184,6 +199,30 @@ async function sendFcmPush(
     await prisma.fcmToken.deleteMany({
       where: { id: { in: tokensToDelete } },
     });
+    await journaliserIncident({
+      niveau: "AVERTISSEMENT",
+      source: "PUSH",
+      code: "FCM_JETON_INVALIDE",
+      message: "Jetons FCM invalides ou désenregistrés supprimés.",
+      contexte: { userId, notificationId: notification.id, jetonsSupprimes: tokensToDelete.length },
+    });
+  }
+
+  // Échecs autres que des jetons périmés (clé de projet erronée, service indisponible…) : visibles au journal.
+  const echecsReels = response.responses.filter(
+    (r: { success: boolean; error?: { code?: string } }) =>
+      !r.success &&
+      r.error?.code !== "messaging/registration-token-not-registered" &&
+      r.error?.code !== "messaging/invalid-registration-token"
+  );
+  if (echecsReels.length > 0) {
+    await journaliserIncident({
+      niveau: "ERREUR",
+      source: "PUSH",
+      code: "FCM_ECHEC",
+      message: "Le service FCM a refusé l'envoi de notifications push.",
+      contexte: { userId, notificationId: notification.id, fcmCode: echecsReels[0].error?.code ?? "inconnu", echecs: echecsReels.length },
+    });
   }
 
   if (successCount > 0) {
@@ -231,11 +270,16 @@ async function sendCriticalEmail(
   });
 
   if (result.success) {
-    await prisma.notification.update({
-      where: { id: notification.id },
-      data: { emailSent: true },
-    });
+    // Un e-mail simulé (SMTP absent) n'est pas un e-mail envoyé : `emailSent` reste faux, la santé de la configuration
+    // le signale (`/admin/journal-technique`).
+    if (!result.simulated) {
+      await prisma.notification.update({
+        where: { id: notification.id },
+        data: { emailSent: true },
+      });
+    }
   }
+  // Un échec d'envoi (`result.success` faux) est déjà journalisé (SMTP_ECHEC) par `sendEmail` lui-même.
 }
 
 // ============================================================

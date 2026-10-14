@@ -147,6 +147,8 @@ export interface NavFlags {
    * `null` si le compte n'est ni responsable d'un service ni RH du pointage (entrée absente), sinon le nombre.
    */
   justificationsADecider?: number | null;
+  /** Pointage (phase 5 de la fiabilisation) : responsable actuel d'au moins un service → entrée « Mon équipe ». */
+  canVoirMonEquipe?: boolean;
 }
 
 /**
@@ -237,6 +239,7 @@ export function getNavBranches({
   demandesServiceAValider = null,
   demandesDGADecider = null,
   justificationsADecider = null,
+  canVoirMonEquipe = false,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -402,6 +405,9 @@ export function getNavBranches({
                   } satisfies NavItem,
                 ]
               : []),
+            ...(canVoirMonEquipe
+              ? [{ label: "Mon équipe", href: "/pointage/mon-equipe", icon: "users" } satisfies NavItem]
+              : []),
           ],
         },
         ...(canAccessPointageRH
@@ -502,6 +508,7 @@ export const ADMIN_GROUP: NavGroup = {
     { label: "Modules", href: "/admin/modules", icon: "package" },
     { label: "Catégories", href: "/admin/categories", icon: "folder-tree" },
     { label: "Logs Système", href: "/admin/logs", icon: "scroll-text" },
+    { label: "Journal technique", href: "/admin/journal-technique", icon: "alert-triangle" },
   ],
 };
 

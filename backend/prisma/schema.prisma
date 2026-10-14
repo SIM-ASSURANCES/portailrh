@@ -2011,3 +2011,36 @@ model ExecutionTache {
 
   @@index([tache, debut])
 }
+
+// ---------------------------------------------------------------------------
+// Journal technique (fiabilisation du pointage, phase 3, 2026-10-14)
+// ---------------------------------------------------------------------------
+
+enum NiveauJournal {
+  ERREUR
+  AVERTISSEMENT
+}
+
+enum SourceJournal {
+  EMAIL
+  PUSH
+  TACHE
+  IMPORT
+  AUTRE
+}
+
+/// Incidents techniques (envoi d'e-mail ou de push en échec, tâche en échec, configuration absente) visibles dans
+/// `/admin/journal-technique`. `contexte` : identifiants seulement (jamais de contenu d'e-mail, mot de passe ni jeton).
+model JournalTechnique {
+  id        String        @id @default(cuid())
+  niveau    NiveauJournal
+  source    SourceJournal
+  /// Code court et stable (SMTP_ECHEC, FCM_ECHEC, TACHE_ECHEC…).
+  code      String
+  message   String
+  contexte  Json?
+  createdAt DateTime      @default(now())
+
+  @@index([createdAt])
+  @@index([source, createdAt])
+}

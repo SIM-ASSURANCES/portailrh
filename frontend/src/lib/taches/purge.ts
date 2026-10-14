@@ -6,11 +6,12 @@ export interface BilanPurge {
 }
 
 /**
- * Purge quotidienne (03:00) : supprime les exécutions de tâches de plus de `JOURS_CONSERVATION_JOURNAUX` jours (90).
- * Les incidents du journal technique y seront ajoutés avec la phase 3.
+ * Purge quotidienne (03:00) : supprime les exécutions de tâches (`ExecutionTache`) et les incidents du journal technique
+ * (`JournalTechnique`) de plus de `JOURS_CONSERVATION_JOURNAUX` jours (90).
  */
 export async function executerPurge(): Promise<BilanPurge> {
   const limite = new Date(Date.now() - JOURS_CONSERVATION_JOURNAUX * 24 * 60 * 60 * 1000);
   const executions = await prisma.executionTache.deleteMany({ where: { debut: { lt: limite } } });
-  return { executionsSupprimees: executions.count, incidentsSupprimes: 0 };
+  const incidents = await prisma.journalTechnique.deleteMany({ where: { createdAt: { lt: limite } } });
+  return { executionsSupprimees: executions.count, incidentsSupprimes: incidents.count };
 }

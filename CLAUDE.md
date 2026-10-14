@@ -4561,6 +4561,31 @@ Plan : `PLAN_FIABILISATION_POINTAGE.md`. Les tâches planifiées vivent **dans l
 - **Limite connue** : l'écriture de la ligne d'exécution se fait à la FIN ; une exécution qui plante le processus entier n'en
   laisse pas.
 
+### 16. Fiabilisation du pointage — phase 3 : journal technique et moniteur des tâches (2026-10-14)
+
+Objectif : voir dans l'admin ce qui échoue sans faire tomber l'application (les erreurs d'e-mail, de push et de tâches ne finissaient
+que dans les logs du serveur).
+- **Modèle** `JournalTechnique` (migration `20261014100000_journal_technique`, rejouable) : `niveau` (ERREUR, AVERTISSEMENT), `source`
+  (EMAIL, PUSH, TACHE, IMPORT, AUTRE), `code` stable, `message`, `contexte` JSON, `createdAt`.
+- **Logique pure** `backend/src/journalTechnique.ts` (6 tests) : codes (`SMTP_ECHEC`, `SMTP_NON_CONFIGURE`, `FCM_ECHEC`, `FCM_JETON_INVALIDE`,
+  `FIREBASE_NON_CONFIGURE`, `TACHE_ECHEC`, `TACHE_ERREURS_PARTIELLES`) ; `contexteAssaini` ne garde que des clés d'une LISTE BLANCHE
+  (identifiants, nom de tâche, code FCM, compteurs : jamais mot de passe, contenu d'e-mail ni jeton entier) ; `messageAssaini` masque les
+  adresses e-mail.
+- **Une seule fonction d'écriture** `journaliserIncident()` (`frontend/src/lib/journalTechnique.ts`) : ne lève jamais (échec ⇒ `console.error`
+  seulement) ; anti-inondation : au plus une ligne par `code` et par minute dans un processus, les répétitions sont comptées dans
+  `contexte.repetitions`. Branchée sur : `sendEmail` (échec SMTP ; envoi simulé en production ⇒ `SMTP_NON_CONFIGURE`), `sendFcmPush` (échec,
+  jetons supprimés), `firebaseAdmin.ts` (JSON absent ou invalide en production), `executerTache` (tâche en échec ou terminée avec des erreurs).
+- **`Notification.emailSent`** ne passe plus à `true` pour un e-mail SIMULÉ (SMTP absent) : l'indicateur « critiques sans e-mail envoyé » est honnête.
+- **Écran `/admin/journal-technique`** (`isAdmin`, 3 onglets en GET) : *Moniteur des tâches* (dernière exécution avec bilan lisible, dernière réussie,
+  prochaine attendue, badge « En retard » = `tacheEnRetard`, historique de 50, bouton « Lancer maintenant » = `lancerTacheAction` → même
+  `executerTache` en déclenchement MANUEL, `isAdmin` revérifié) ; *Incidents* (filtres niveau/source/période, 50 par page, plus récents d'abord) ;
+  *Santé de la configuration* (oui/non, JAMAIS une valeur : SMTP, Firebase serveur, Firebase navigateur — clés `NEXT_PUBLIC_FIREBASE_*` figées dans
+  l'image —, `AUTH_URL`, planificateur ; sur 7 jours : notifications critiques sans e-mail, importantes ou critiques sans push). Carte « Journal
+  technique » sur `/admin` (erreurs 24 h, tâches en retard, rouge si anomalie) et entrée de menu.
+- **Purge** : les incidents de plus de 90 jours sont supprimés avec les exécutions (tâche `PURGE`).
+- **Invariant à préserver** : le retard va au supérieur, pas à la RH — prouvé par `e2e/planificateur-journal.mjs` (un membre de Commercial en
+  retard : 1 notification pour `responsable-commercial@`, aucune pour `rh@` ni le DG).
+
 ## Module FeedbackApp — anonymat total
 
 Troisième module : permet à QUICONQUE (employé connecté ou visiteur sans

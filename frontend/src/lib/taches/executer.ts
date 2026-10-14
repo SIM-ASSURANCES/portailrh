@@ -1,4 +1,5 @@
 import { cleVerrouTache, erreurCourte, prisma, type DeclenchementTache, type NomTache, type StatutExecutionTache } from "backend";
+import { journaliserIncident } from "@/lib/journalTechnique";
 import { executerAbsences } from "./absences";
 import { executerPurge } from "./purge";
 import { executerRelancesJustification } from "./relancesJustification";
@@ -64,6 +65,26 @@ export async function executerTache(tache: NomTache, declenchement: Declenchemen
     });
   } catch (e) {
     console.error(`[Tâche ${tache}] Impossible d'enregistrer l'exécution :`, erreurCourte(e));
+  }
+
+  // Incidents visibles dans le journal technique : tâche en échec, ou terminée avec des erreurs partielles.
+  const contexte = { tache, declenchement };
+  if (resultat.statut === "ECHEC") {
+    await journaliserIncident({
+      niveau: "ERREUR",
+      source: "TACHE",
+      code: "TACHE_ECHEC",
+      message: `La tâche ${tache} a échoué : ${resultat.erreur ?? "erreur inconnue"}`,
+      contexte,
+    });
+  } else if (resultat.statut === "SUCCES" && ((resultat.bilan as { erreurs?: number } | null)?.erreurs ?? 0) > 0) {
+    await journaliserIncident({
+      niveau: "AVERTISSEMENT",
+      source: "TACHE",
+      code: "TACHE_ERREURS_PARTIELLES",
+      message: `La tâche ${tache} s'est terminée avec ${(resultat.bilan as { erreurs: number }).erreurs} erreur(s).`,
+      contexte,
+    });
   }
   return resultat;
 }
