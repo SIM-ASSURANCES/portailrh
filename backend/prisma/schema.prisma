@@ -78,6 +78,8 @@ model User {
   retoursExternesCollaborateur  RetourExterne[]      @relation("RetourExterneCollaborateur")
   retoursExternesCrees          RetourExterne[]      @relation("RetourExterneCreePar")
   reinitialisationsSysteme      ReinitialisationSysteme[]
+  reinitialisationsPointage     ReinitialisationPointage[]
+  pointageMisEnService          PointageMiseEnService[]
   remboursementsRetourProposes  RemboursementRetour[] @relation("RemboursementRetourProposePar")
   remboursementsRetourValides   RemboursementRetour[] @relation("RemboursementRetourValidePar")
   retoursExceptionnelsValides   RetourExceptionnel[] @relation("RetourExceptionnelValidePar")
@@ -2046,7 +2048,7 @@ model JournalTechnique {
 }
 
 // ---------------------------------------------------------------------------
-// Clôture initiale (2026-10-14)
+// Clôture initiale et réinitialisation du Pointage seul (2026-10-14)
 // ---------------------------------------------------------------------------
 
 /// Marqueurs « une seule fois » (ex : clôture initiale des justifications et absences en attente au premier passage du
@@ -2055,4 +2057,25 @@ model MarqueurUnique {
   cle   String   @id
   creeAt DateTime @default(now())
   bilan Json?
+}
+
+/// Journal d'audit PERMANENT des purges du Pointage seul (jamais purgé) : une ligne par purge.
+model ReinitialisationPointage {
+  id               String   @id @default(cuid())
+  effectueeAt      DateTime @default(now())
+  effectueeParId   String
+  effectueePar     User     @relation(fields: [effectueeParId], references: [id])
+  /// Nombre de lignes supprimées par table.
+  decompte         Json
+  /// Empreinte SHA-256 de la sauvegarde JSON téléchargée juste avant la purge.
+  sauvegardeSha256 String
+}
+
+/// Marqueur DÉFINITIF « le Pointage est en service » : posé une fois (`verrou` unique), il interdit toute nouvelle purge.
+model PointageMiseEnService {
+  id           String   @id @default(cuid())
+  verrou       String   @unique @default("MISE_EN_SERVICE")
+  misEnServiceAt DateTime @default(now())
+  parId        String
+  par          User     @relation(fields: [parId], references: [id])
 }

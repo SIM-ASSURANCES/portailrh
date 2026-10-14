@@ -284,6 +284,9 @@ export default async function DashboardHomePage({
       {error === "acces_refuse_service" ? (
         <ToastOnMount variant="error" message="Cette page est réservée aux responsables de service." />
       ) : null}
+      {error === "acces_refuse_reinitialisation_pointage" ? (
+        <ToastOnMount variant="error" message="Accès refusé : la purge du Pointage exige la permission dédiée." />
+      ) : null}
       {error === "acces_refuse_admin" ? (
         <ToastOnMount variant="error" message="Accès réservé aux administrateurs." />
       ) : null}

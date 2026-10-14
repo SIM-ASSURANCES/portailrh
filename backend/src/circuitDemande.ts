@@ -40,6 +40,8 @@ export const APPROBATION_CLOTURE_SI_TOUTES_LIGNES_VALIDEES_PAR_DG = true;
  * pour un responsable absent : l'Admin change le responsable du service.
  */
 export const PERMISSIONS_DECISION_NON_DELEGABLES: readonly string[] = [
+  // 2026-10-14 : purge du Pointage seul — destructrice, jamais déléguée à un autre compte.
+  "pointage.reinitialiser",
   "treso.decider_finance",
   "treso.soumettre_dg",
   "treso.decider_dg",

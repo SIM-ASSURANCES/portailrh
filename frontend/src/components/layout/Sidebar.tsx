@@ -12,6 +12,7 @@ import {
   DASHBOARD_ITEM,
   DELEGATIONS_ITEM,
   REINITIALISATION_ITEM,
+  REINITIALISATION_POINTAGE_ITEM,
   getNavBranches,
   type NavBranch,
   type NavItem,
@@ -54,6 +55,8 @@ interface SidebarProps {
   canDelegerAcces?: boolean;
   /** `systeme.reinitialiser` (DG) ET réinitialisation pas encore effectuée. */
   canReinitialiser?: boolean;
+  /** `pointage.reinitialiser` et Pointage pas encore en service. */
+  canReinitialiserPointage?: boolean;
   /** `pointage.pointer` : ajoute "Pointer" au groupe "Mon espace". */
   canPointer?: boolean;
   /** `pointage.consulter_historique` : ajoute "Mon historique" au groupe "Mon espace". */
@@ -124,6 +127,7 @@ export function Sidebar({
   canAccessPointageRH = false,
   canDelegerAcces = false,
   canReinitialiser = false,
+  canReinitialiserPointage = false,
   canPointer = false,
   canConsulterHistorique = false,
   canModererFeedback = false,
@@ -300,6 +304,17 @@ export function Sidebar({
               <ItemLink
                 item={REINITIALISATION_ITEM}
                 active={isActive(pathname, REINITIALISATION_ITEM)}
+                collapsed={collapsed}
+                onNavigate={onCloseMobile}
+              />
+            </div>
+          ) : null}
+
+          {canReinitialiserPointage ? (
+            <div className="mt-2 border-t border-sidebar-border pt-2">
+              <ItemLink
+                item={REINITIALISATION_POINTAGE_ITEM}
+                active={isActive(pathname, REINITIALISATION_POINTAGE_ITEM)}
                 collapsed={collapsed}
                 onNavigate={onCloseMobile}
               />

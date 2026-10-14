@@ -43,6 +43,7 @@ interface AppShellProps {
   /** Affiche "Déléguer des accès" (au moins une permission treso.x ou pointage.x via son propre rôle). */
   canDelegerAcces?: boolean;
   canReinitialiser?: boolean;
+  canReinitialiserPointage?: boolean;
   /** `pointage.pointer` : ajoute "Pointer" au groupe "Mon espace". */
   canPointer?: boolean;
   /** `pointage.consulter_historique` : ajoute "Mon historique" au groupe "Mon espace". */
@@ -90,6 +91,7 @@ export function AppShell({
   canAccessPointageRH = false,
   canDelegerAcces = false,
   canReinitialiser = false,
+  canReinitialiserPointage = false,
   canPointer = false,
   canConsulterHistorique = false,
   canModererFeedback = false,
@@ -196,6 +198,7 @@ export function AppShell({
         canAccessPointageRH={canAccessPointageRH}
         canDelegerAcces={canDelegerAcces}
         canReinitialiser={canReinitialiser}
+        canReinitialiserPointage={canReinitialiserPointage}
         canPointer={canPointer}
         canConsulterHistorique={canConsulterHistorique}
         canModererFeedback={canModererFeedback}

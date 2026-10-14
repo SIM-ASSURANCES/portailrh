@@ -247,6 +247,11 @@ async function main() {
     { key: "pointage.voir_dashboard_rh", label: "Voir le dashboard RH", moduleId: modulePointage.id },
     { key: "pointage.voir_reporting", label: "Voir le reporting RH", moduleId: modulePointage.id },
     {
+      key: "pointage.reinitialiser",
+      label: "Réinitialiser les données du Pointage avant sa mise en service",
+      moduleId: modulePointage.id,
+    },
+    {
       key: "feedback.moderer",
       label: "Modérer les messages FeedbackApp",
       moduleId: moduleFeedback.id,
@@ -350,7 +355,9 @@ async function main() {
     // réattribuait ceci automatiquement à chaque process (corrigé). Seule
     // exception à ce jour — ne pas y ajouter d'autres permissions
     // `treso.*`/`pointage.*` sans une décision tout aussi explicite.
-    [roleAdmin.id]: ["feedback.moderer"],
+    // 2026-10-14 : `pointage.reinitialiser` (purge du Pointage seul avant sa mise en service) — autre exception délibérée,
+    // attribuée explicitement (jamais via le contournement estAdmin), retirable dans /admin/roles, jamais délégable.
+    [roleAdmin.id]: ["feedback.moderer", "pointage.reinitialiser"],
     [roleRH.id]: [
       "pointage.pointer",
       "pointage.consulter_historique",

@@ -166,6 +166,13 @@ export const REINITIALISATION_ITEM: NavItem = {
   icon: "rotate-ccw",
 };
 
+/** Purge du Pointage seul (`pointage.reinitialiser`), tant que le Pointage n'est pas en service. */
+export const REINITIALISATION_POINTAGE_ITEM: NavItem = {
+  label: "Purge du Pointage",
+  href: "/admin/reinitialisation-pointage",
+  icon: "rotate-ccw",
+};
+
 export const DELEGATIONS_ITEM: NavItem = {
   label: "Déléguer des accès",
   href: "/delegations",

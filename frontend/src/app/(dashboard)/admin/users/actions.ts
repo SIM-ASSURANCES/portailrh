@@ -811,6 +811,8 @@ export async function supprimerUtilisateurAction(
     justificationsDecidees,
     lignesSoumisesAuDG,
     lignesDecideesParDG,
+    reinitialisationsPointageEffectuees,
+    pointageMisEnServiceParCompte,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -861,6 +863,9 @@ export async function supprimerUtilisateurAction(
     // Soumission au DG ligne par ligne (2026-10-10) : 2 relations vers User supplémentaires (SET NULL en base).
     prisma.ligneDemande.count({ where: { soumiseDGParId: userId } }),
     prisma.ligneDemande.count({ where: { decisionDGParId: userId } }),
+    // Journal permanent des purges du Pointage seul et marqueur de mise en service (RESTRICT).
+    prisma.reinitialisationPointage.count({ where: { effectueeParId: userId } }),
+    prisma.pointageMiseEnService.count({ where: { parId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -909,6 +914,9 @@ export async function supprimerUtilisateurAction(
     blocages.push(`décidé ${justificationsDecidees} justification(s) de retard ou de départ anticipé`);
   if (lignesSoumisesAuDG > 0) blocages.push(`soumis ${lignesSoumisesAuDG} ligne(s) d'article au DG`);
   if (lignesDecideesParDG > 0) blocages.push(`décidé ${lignesDecideesParDG} ligne(s) d'article en tant que DG`);
+  if (reinitialisationsPointageEffectuees > 0)
+    blocages.push(`purgé le Pointage ${reinitialisationsPointageEffectuees} fois (journal d'audit permanent)`);
+  if (pointageMisEnServiceParCompte > 0) blocages.push("mis le Pointage en service");
 
   if (blocages.length > 0) {
     const liste =

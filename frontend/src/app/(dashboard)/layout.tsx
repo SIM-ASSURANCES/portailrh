@@ -7,6 +7,8 @@ import {
   demandesEtapeDGWhere,
   demandesServiceAValiderWhere,
   prisma,
+  PERMISSION_REINITIALISER_POINTAGE,
+  pointageEnService,
   reinitialisationEffectuee,
 } from "backend";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
@@ -127,6 +129,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       // `accorderDelegationAction`.
       canDelegerAcces={session.rolePermissions.includes("treso.deleguer_acces")}
       canReinitialiser={hasPermission(session, "systeme.reinitialiser") && !(await reinitialisationEffectuee())}
+      canReinitialiserPointage={hasPermission(session, PERMISSION_REINITIALISER_POINTAGE) && !(await pointageEnService())}
       canPointer={hasPermission(session, "pointage.pointer")}
       canConsulterHistorique={hasPermission(session, "pointage.consulter_historique")}
       canModererFeedback={hasPermission(session, "feedback.moderer")}

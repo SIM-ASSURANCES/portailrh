@@ -23,6 +23,7 @@ export * from "./cheminRetour";
 export * from "./planificateur";
 export * from "./journalTechnique";
 export * from "./clotureInitiale";
+export * from "./reinitialisationPointage";
 export * from "./equipe";
 export * from "./cronAuth";
 export * from "./geo-utils";
