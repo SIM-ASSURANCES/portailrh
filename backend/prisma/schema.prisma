@@ -2044,3 +2044,15 @@ model JournalTechnique {
   @@index([createdAt])
   @@index([source, createdAt])
 }
+
+// ---------------------------------------------------------------------------
+// Clôture initiale (2026-10-14)
+// ---------------------------------------------------------------------------
+
+/// Marqueurs « une seule fois » (ex : clôture initiale des justifications et absences en attente au premier passage du
+/// planificateur en production). Jamais purgé : la clé est unique, l'insertion fait office de verrou.
+model MarqueurUnique {
+  cle   String   @id
+  creeAt DateTime @default(now())
+  bilan Json?
+}

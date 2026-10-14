@@ -15,6 +15,7 @@ export const CODES_JOURNAL = {
   FIREBASE_NON_CONFIGURE: "FIREBASE_NON_CONFIGURE",
   TACHE_ECHEC: "TACHE_ECHEC",
   TACHE_ERREURS_PARTIELLES: "TACHE_ERREURS_PARTIELLES",
+  CLOTURE_INITIALE: "CLOTURE_INITIALE",
 } as const;
 
 export type CodeJournal = (typeof CODES_JOURNAL)[keyof typeof CODES_JOURNAL];
@@ -30,6 +31,8 @@ export const CLES_CONTEXTE_AUTORISEES = [
   "echecs",
   "repetitions",
   "statut",
+  "justificationsCloturees",
+  "absencesConfirmees",
 ] as const;
 
 const LONGUEUR_MAX_TEXTE = 200;

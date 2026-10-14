@@ -1,4 +1,5 @@
-import { prisma, TOUTES_LES_TACHES, erreurCourte, tachesDues, type DernieresExecutions, type NomTache } from "backend";
+import { cloturerEnAttenteInitiale, prisma, TOUTES_LES_TACHES, erreurCourte, tachesDues, type DernieresExecutions, type NomTache } from "backend";
+import { journaliserIncident } from "@/lib/journalTechnique";
 import { executerTache } from "./executer";
 
 /** Un passage par minute ; `tachesDues` (pure) décide ce qui est dû. */
@@ -17,8 +18,40 @@ async function lireDernieresExecutions(): Promise<DernieresExecutions> {
   return dernieres;
 }
 
+/** Vrai une fois la clôture initiale faite (ou inutile) par ce processus : plus aucune vérification ensuite. */
+let clotureInitialeTraitee = false;
+
+/**
+ * Premier passage en PRODUCTION seulement (décision du 2026-10-14) : clôture sans aucun envoi les justifications et absences
+ * en attente d'avant le jour courant (`cloturerEnAttenteInitiale`, marqueur unique en base). Doit précéder TOUTE tâche :
+ * en cas d'échec, le passage s'arrête (les relances n'envoient rien sur l'arriéré) et le suivant réessaie.
+ */
+async function assurerClotureInitiale(): Promise<boolean> {
+  if (clotureInitialeTraitee) return true;
+  if (process.env.NODE_ENV !== "production") {
+    clotureInitialeTraitee = true;
+    return true;
+  }
+  try {
+    await cloturerEnAttenteInitiale(prisma);
+    clotureInitialeTraitee = true;
+    return true;
+  } catch (e) {
+    console.error("[Planificateur] Clôture initiale en échec :", erreurCourte(e));
+    await journaliserIncident({
+      niveau: "ERREUR",
+      source: "TACHE",
+      code: "TACHE_ECHEC",
+      message: `La clôture initiale a échoué : ${erreurCourte(e)}`,
+      contexte: { tache: "CLOTURE_INITIALE" },
+    });
+    return false;
+  }
+}
+
 async function passage(): Promise<void> {
   try {
+    if (!(await assurerClotureInitiale())) return;
     const dues = tachesDues(new Date(), await lireDernieresExecutions());
     for (const tache of dues) {
       // Une tâche encore en cours dans ce processus (envois lents) n'est pas relancée par le passage suivant.
