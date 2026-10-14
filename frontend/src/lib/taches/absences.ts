@@ -1,4 +1,4 @@
-import { prisma, journeeCouverteParAbsence, PERMISSION_RH_POINTAGE } from "backend";
+import { prisma, journeeCouverteParAbsence, dateDebutAbsences, PERMISSION_RH_POINTAGE } from "backend";
 import type { Prisma, PlageHoraire } from "backend";
 import { notify, notifyByPermission } from "@/lib/notifications";
 
@@ -19,10 +19,17 @@ export async function executerAbsences(): Promise<BilanAbsences> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // 1. Date de lancement du système
-    const systemStartDateStr = process.env.SYSTEM_START_DATE || "2026-09-07";
-    const systemStartDate = new Date(systemStartDateStr);
-    systemStartDate.setHours(0, 0, 0, 0);
+    // 1. Date de départ : la plus récente entre SYSTEM_START_DATE, le lendemain de la dernière purge du Pointage et le jour de sa
+    //    mise en service (`dateDebutAbsences`) — jamais d'absence recréée avant une purge, sans dépendre d'un réglage du superviseur.
+    const [dernierePurge, miseEnService] = await Promise.all([
+      prisma.reinitialisationPointage.findFirst({ orderBy: { effectueeAt: "desc" }, select: { effectueeAt: true } }),
+      prisma.pointageMiseEnService.findFirst({ select: { misEnServiceAt: true } }),
+    ]);
+    const systemStartDate = dateDebutAbsences({
+      systemStartDate: new Date(process.env.SYSTEM_START_DATE || "2026-09-07"),
+      dernierePurge: dernierePurge?.effectueeAt,
+      miseEnService: miseEnService?.misEnServiceAt,
+    });
 
     // Fetch ParametrageHoraire to get end of day
     const parametrage = await prisma.parametrageHoraire.findFirst({

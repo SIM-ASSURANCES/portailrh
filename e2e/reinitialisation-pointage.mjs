@@ -157,15 +157,40 @@ verifier("Sauvegarde : 200, empreinte SHA-256, contenu JSON des tables purgées"
   await bouton.click();
   await p.locator('[data-resultat="purge"]').waitFor({ timeout: 20_000 });
   const message = await p.locator('[data-resultat="purge"]').innerText();
-  verifier("Écran : message de succès avec le rappel SYSTEM_START_DATE", /SYSTEM_START_DATE/.test(message), message.slice(0, 80));
+  verifier("Écran : message de succès indiquant que la date de purge est enregistrée (aucun réglage de SYSTEM_START_DATE demandé)", /date de cette purge est enregistr/.test(message) && !/Réglez SYSTEM_START_DATE/.test(message), message.slice(0, 120));
   verifier("Première purge : tables du Pointage, journal technique et notifications POINTAGE/RH vides", await pointageVide());
   verifier("Première purge : Trésorerie, FeedbackApp, comptes, rôles, permissions, services, horaires, jours fériés intacts", JSON.stringify(await garde()) === JSON.stringify(gardeAvant), JSON.stringify(await garde()));
   const audit = await q(`SELECT decompte, "sauvegardeSha256" FROM "ReinitialisationPointage"`);
   verifier("Audit permanent : une ligne avec décompte et empreinte", audit.length === 1 && audit[0].decompte.pointage === 2 && /^[0-9a-f]{64}$/.test(audit[0].sauvegardeSha256), JSON.stringify(audit[0]?.decompte));
+  await p.locator("[data-purge]").first().waitFor({ timeout: 15_000 }).catch(() => {}); // le rafraîchissement de la page suit la purge
   verifier("Audit affiché sur l'écran", (await p.locator('[data-section="audit"]').innerText()).includes("ligne(s) supprimée(s)"));
 }
 
-// ── Deuxième purge successive (répétable) ───────────────────────────────────────────────────────────────────────────────
+// ── La tâche des absences ne recrée rien avant la date de purge (plus de dépendance à SYSTEM_START_DATE) ───────────────────
+{
+  // Comptes « anciens » : sinon la règle d'ancienneté (aucune absence le jour de la création du compte) masquerait le contrôle.
+  await q(`UPDATE "User" SET "createdAt" = now() - interval '60 days'`);
+  const lancer = async () => (await fetch(`${B}/api/cron/absences`, { headers: { authorization: "Bearer secret-e2e" } })).status;
+
+  verifier("Tâche des absences relancée juste après la purge : HTTP 200", (await lancer()) === 200);
+  const apresPurge = (await un(`SELECT count(*)::int n FROM "Absence"`)).n;
+  verifier("Après la purge : aucune absence recréée (rien avant la date de purge, SYSTEM_START_DATE inchangé)", apresPurge === 0, `${apresPurge} absence(s)`);
+
+  // Contre-épreuve : la purge « vieillie » de 5 jours (audit antidaté) ne bloque plus la veille → les absences réapparaissent.
+  const hier = new Date();
+  hier.setDate(hier.getDate() - 1);
+  const hierOuvre = hier.getDay() !== 0 && hier.getDay() !== 6;
+  await q(`UPDATE "ReinitialisationPointage" SET "effectueeAt" = "effectueeAt" - interval '5 days'`);
+  verifier("Contre-épreuve : relance après antidatation de la purge, HTTP 200", (await lancer()) === 200);
+  const apresAntidatation = (await un(`SELECT count(*)::int n FROM "Absence"`)).n;
+  verifier(
+    "Contre-épreuve : la date de purge est bien ce qui bloquait (absences de la veille recréées une fois la purge ancienne)",
+    hierOuvre ? apresAntidatation > 0 : true,
+    hierOuvre ? `${apresAntidatation} absence(s) recréée(s)` : "non applicable ce jour (la veille est un week-end)"
+  );
+}
+
+// ── Deuxième purge successive (répétable)───────────────────────────────────────────────────────────────────────────────
 {
   await donneesPointage();
   s = await sauvegarde(ctx);

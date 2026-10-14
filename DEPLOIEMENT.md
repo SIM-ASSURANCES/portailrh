@@ -192,7 +192,8 @@ Penser aussi à vérifier sur `/admin/notifications` que les responsables de ser
    `CLOTURE_INITIALE`). Pour que l'arriéré de test soit traité à ce moment-là, ne démarrer le planificateur qu'après avoir décidé de la purge du Pointage (point suivant).
 4. **Purge du Pointage seul** (`/admin/reinitialisation-pointage`, permission `pointage.reinitialiser`) : sauvegarde JSON téléchargée (empreinte SHA-256), mot `REINITIALISER-POINTAGE`,
    une transaction. Répétable jusqu'à **« Mettre le Pointage en service »** (mot `METTRE-EN-SERVICE-POINTAGE`, définitif : plus aucune purge ensuite). Les fichiers de `uploads/` ne
-   sont pas concernés. **Régler `SYSTEM_START_DATE` sur la date de mise en service et redéployer AVANT la purge** : le planificateur ignore alors tout ce qui est antérieur.
+   sont pas concernés. **Aucun réglage de `SYSTEM_START_DATE` n'est nécessaire** : la date de chaque purge est enregistrée à l'audit et la tâche des absences ne crée jamais d'absence antérieure
+   au lendemain de la dernière purge (ni à la mise en service du Pointage) ; `SYSTEM_START_DATE` reste seulement un plancher de configuration.
 5. La réinitialisation **globale** (`/systeme/reinitialisation`) a déjà été exécutée en production (26/09/2026) et est verrouillée : elle n'est pas concernée.
 
 ## Récapitulatif des choix techniques

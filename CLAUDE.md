@@ -4648,9 +4648,11 @@ Distincte de la réinitialisation globale (« Réinitialisation avant mise en pr
   y figurent ne sont plus supprimables. **Répétable** tant que le Pointage n'est pas en service.
 - **« Mettre le Pointage en service »** (même permission, mot `METTRE-EN-SERVICE-POINTAGE`) : marqueur définitif `PointageMiseEnService` (`verrou` unique). Ensuite la purge est
   refusée (action, et sauvegarde en 409), le lien de menu disparaît et l'écran n'affiche plus que l'audit.
-- **Après une purge** : l'écran rappelle de régler `SYSTEM_START_DATE` (et de redéployer). Le régler AVANT la purge : une fois `ExecutionTache` purgée, la tâche des absences est
-  de nouveau due et, sinon, recrée les absences des 2 derniers jours.
-- Vérifié par `e2e/reinitialisation-pointage.mjs` (39 contrôles, serveur lancé avec `PLANIFICATEUR_ACTIF=false`) : refus sans permission (écran, sauvegarde, actions), mot faux,
+- **Après une purge — plus aucune dépendance au superviseur** : la tâche des absences part de la date la plus RÉCENTE entre `SYSTEM_START_DATE` (plancher), le **lendemain du jour de la
+  dernière purge** (`ReinitialisationPointage.effectueeAt`, la date enregistrée à l'audit : la purge a supprimé les pointages de ce jour-là, la tâche y verrait à tort des absents) et le **jour de la
+  mise en service** (`PointageMiseEnService.misEnServiceAt`, inclus). Fonction pure `dateDebutAbsences` (`backend/src/absencesDebut.ts`, 8 tests), lue par `lib/taches/absences.ts` à chaque exécution.
+  Plus aucun rappel « régler SYSTEM_START_DATE » à l'écran : le message de succès et le formulaire indiquent que la date de purge est enregistrée.
+- Vérifié par `e2e/reinitialisation-pointage.mjs` (43 contrôles dont la tâche des absences relancée après la purge : aucune absence recréée avant la date de purge, contre-épreuve avec la purge antidatée ; serveur lancé avec `PLANIFICATEUR_ACTIF=false`) : refus sans permission (écran, sauvegarde, actions), mot faux,
   empreinte invalide et périmée, deux purges successives, deux simultanées, mise en service puis refus, Trésorerie/FeedbackApp/comptes/configuration intacts.
 
 ## Module FeedbackApp — anonymat total

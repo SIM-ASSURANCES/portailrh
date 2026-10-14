@@ -91,8 +91,8 @@ export function ReinitialisationPointageForm() {
           FeedbackApp.
         </p>
         <p>
-          <strong>Avant la purge</strong>, réglez <code>SYSTEM_START_DATE</code> sur la date de mise en service et redéployez : sinon le
-          planificateur recrée les absences des derniers jours.
+          La date de chaque purge est enregistrée : le planificateur ne recrée ensuite aucune absence antérieure au lendemain de la purge
+          (<code>SYSTEM_START_DATE</code> reste un plancher, aucun réglage à faire).
         </p>
       </div>
 

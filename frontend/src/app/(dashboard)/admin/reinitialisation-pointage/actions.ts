@@ -16,8 +16,8 @@ import {
 
 type Resultat = { status: "success" | "error"; message: string; decompte?: Record<string, number> };
 
-const RAPPEL_SYSTEM_START_DATE_POINTAGE =
-  "Réglez SYSTEM_START_DATE sur la date de mise en service du Pointage (.env en local ; variable de l'onglet Environment de Dokploy en production) et redéployez : sans cela, le planificateur recrée dès sa prochaine exécution les absences des derniers jours que cette purge vient de supprimer.";
+const INFO_ABSENCES_APRES_PURGE =
+  "La date de cette purge est enregistrée : le planificateur ne recrée aucune absence antérieure au lendemain de la purge (SYSTEM_START_DATE reste un plancher, sans réglage à faire).";
 
 /**
  * Purge du Pointage SEUL (voir CLAUDE.md « Réinitialisation du Pointage ») : `pointage.reinitialiser` (jamais le
@@ -45,7 +45,7 @@ export async function reinitialiserPointageAction(confirmation: string, sauvegar
     const total = Object.values(r.decompte).reduce((a, b) => a + b, 0);
     return {
       status: "success",
-      message: `Purge du Pointage effectuée : ${total} ligne(s) supprimée(s). ${RAPPEL_SYSTEM_START_DATE_POINTAGE}`,
+      message: `Purge du Pointage effectuée : ${total} ligne(s) supprimée(s). ${INFO_ABSENCES_APRES_PURGE}`,
       decompte: r.decompte,
     };
   } catch (e) {
