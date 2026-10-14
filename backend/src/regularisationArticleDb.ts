@@ -4,6 +4,7 @@
 import { beneficiaireArticle } from "./beneficiaireArticles";
 import { totalArticle, type StatutArticle } from "./etatArticles";
 import { prisma } from "./prisma";
+import { estFicheRegularisation } from "./regularisationDepenses";
 import {
   agregerRegularisation,
   articleTermine,
@@ -61,6 +62,12 @@ export async function getAgregatsRegularisation(demandeId: string): Promise<Regu
         reglementId: true,
         estReceptionne: true,
         montantARetourner: true,
+        creeParAssistant: true,
+        dateRetour: true,
+        versementBancaire: true,
+        motifReouvertureExceptionnelle: true,
+        signalementOrigineId: true,
+        reglement: { select: { mode: true } },
         depenses: { select: { montant: true, justification: true, objet: true, motifNonJustifie: true } },
       },
     }),
@@ -87,6 +94,9 @@ export async function getAgregatsRegularisation(demandeId: string): Promise<Regu
     retours: retours.map((r) => ({
       reglementId: r.reglementId,
       estReceptionne: r.estReceptionne,
+      // Un retour « attendu » est un vrai retour déclaré : ni la fiche de détail des dépenses (montant à rendre calculé), ni la
+      // fiche d'un fonds versé par banque (jamais réceptionnée, son retour passe par un retour externe).
+      attendu: !estFicheRegularisation(r) && !(r.reglement.mode === "BANQUE" && !r.versementBancaire),
       montantARetourner: Number(r.montantARetourner),
       depenses: r.depenses.map((d) => ({ ...d, montant: Number(d.montant) })),
     })),

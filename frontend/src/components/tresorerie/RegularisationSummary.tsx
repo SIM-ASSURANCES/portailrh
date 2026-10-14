@@ -3,6 +3,7 @@ import {
   getRegularisationParArticle,
   LIBELLE_ETAT_REGULARISATION,
   prisma,
+  resteNonDetailleTotal,
   resumeArticlesTermines,
   type AgregatsRegularisation,
   type ArticleRegularisation,
@@ -11,6 +12,7 @@ import {
 import { Badge } from "@/components/ui";
 
 import { DetailDepensesRetour } from "./DetailDepensesRetour";
+import { DetailReglementSansRetour } from "./DetailReglementSansRetour";
 
 /**
  * Chiffres de régularisation d'une demande ("Fonds remis (Caisse + Banque)",
@@ -89,19 +91,26 @@ export async function RegularisationSummary({
   userId?: string | null;
   audience?: "FINANCE" | "DEMANDEUR";
 }) {
-  const [regul, retours] = await Promise.all([
+  const [regul, reglements] = await Promise.all([
     getRegularisationParArticle(demandeId),
-    // Détail des dépenses : un bloc par retour de caisse, même composant que l'écran du retour (2026-10-10).
+    // Détail des dépenses : un sous-bloc par règlement confirmé (Caisse ET Banque), jamais seulement ceux qui ont un retour
+    // (lot G ter) — un fonds versé par banque sans retour doit rester détaillable depuis le bloc de son article.
     showDetail
-      ? prisma.retourCaisse.findMany({
-          where: { reglement: { demandeId } },
-          select: { id: true, reglement: { select: { montant: true, mode: true, ligneDemandeId: true } } },
+      ? prisma.reglement.findMany({
+          where: { demandeId, estConfirme: true, estAnnule: false },
+          select: {
+            id: true,
+            montant: true,
+            mode: true,
+            ligneDemandeId: true,
+            retours: { select: { id: true }, orderBy: { createdAt: "asc" } },
+          },
           orderBy: { createdAt: "asc" },
         })
       : Promise.resolve([]),
   ]);
   const aDesArticles = regul.articles.length > 0;
-  const retoursDe = (ligneId: string | null) => retours.filter((r) => r.reglement.ligneDemandeId === ligneId);
+  const reglementsDe = (ligneId: string | null) => reglements.filter((r) => r.ligneDemandeId === ligneId);
   const articlesValides = regul.articles.filter((a) => a.statut === "VALIDEE");
   const articlesNonValides = regul.articles.length - articlesValides.length;
   const nonRattacheAffiche =
@@ -122,8 +131,8 @@ export async function RegularisationSummary({
           {articlesValides.map((a) => (
             <BlocArticle key={a.ligneId} article={a} audience={audience}>
               {showDetail && a.agregats.fondsRemis > 0 ? (
-                <DetailRetours
-                  retours={retoursDe(a.ligneId)}
+                <DetailReglements
+                  reglements={reglementsDe(a.ligneId)}
                   canGererJustification={canGererJustification}
                   userId={userId}
                 />
@@ -145,7 +154,7 @@ export async function RegularisationSummary({
               </p>
               <Chiffres agregats={regul.nonRattache} />
               {showDetail ? (
-                <DetailRetours retours={retoursDe(null)} canGererJustification={canGererJustification} userId={userId} />
+                <DetailReglements reglements={reglementsDe(null)} canGererJustification={canGererJustification} userId={userId} />
               ) : null}
             </section>
           ) : null}
@@ -163,11 +172,7 @@ export async function RegularisationSummary({
           {showDetail ? (
             <div className="space-y-3 border-t border-border pt-4">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Détail des dépenses déclarées</h3>
-              {retours.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Aucune dépense déclarée pour l&apos;instant.</p>
-              ) : (
-                <DetailRetours retours={retours} canGererJustification={canGererJustification} userId={userId} />
-              )}
+              <DetailReglements reglements={reglements} canGererJustification={canGererJustification} userId={userId} sansTitre />
             </div>
           ) : null}
         </>
@@ -180,29 +185,48 @@ export async function RegularisationSummary({
   );
 }
 
-type RetourLigne = { id: string; reglement: { montant: unknown; mode: string; ligneDemandeId: string | null } };
+type ReglementLigne = {
+  id: string;
+  montant: unknown;
+  mode: string;
+  ligneDemandeId: string | null;
+  retours: { id: string }[];
+};
 
-function DetailRetours({
-  retours,
+/**
+ * Un sous-bloc PAR RÈGLEMENT (Caisse ou Banque) : titre « Règlement Caisse/Banque — X FCFA », puis ses retours (bande
+ * Remis / Détaillé / Reste non détaillé / Sans pièce formelle / Retourné, lignes, « Détailler »), ou, s'il n'a aucun retour,
+ * l'invitation à détailler ses dépenses (fonds versé par banque compris).
+ */
+function DetailReglements({
+  reglements,
   canGererJustification,
   userId,
+  sansTitre = false,
 }: {
-  retours: RetourLigne[];
+  reglements: ReglementLigne[];
   canGererJustification: boolean;
   userId: string | null;
+  sansTitre?: boolean;
 }) {
-  if (retours.length === 0) return <p className="text-sm text-muted-foreground">Aucune dépense déclarée pour l&apos;instant.</p>;
+  if (reglements.length === 0) return <p className="text-sm text-muted-foreground">Aucune dépense déclarée pour l&apos;instant.</p>;
   return (
     <div className="space-y-3">
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Détail des dépenses déclarées</h4>
-      {retours.map((retour) => (
-        <div key={retour.id} className="space-y-2">
-          {retours.length > 1 ? (
-            <p className="text-xs font-medium text-muted-foreground">
-              Règlement {retour.reglement.mode === "CAISSE" ? "Caisse" : "Banque"} de {Number(retour.reglement.montant).toLocaleString("fr-FR")} FCFA
-            </p>
-          ) : null}
-          <DetailDepensesRetour retourId={retour.id} canReceptionner={canGererJustification} userId={userId} />
+      {sansTitre ? null : (
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Détail des dépenses déclarées</h4>
+      )}
+      {reglements.map((reglement) => (
+        <div key={reglement.id} data-regularisation-reglement={reglement.id} className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">
+            Règlement {reglement.mode === "CAISSE" ? "Caisse" : "Banque"} — {Number(reglement.montant).toLocaleString("fr-FR")} FCFA
+          </p>
+          {reglement.retours.length === 0 ? (
+            <DetailReglementSansRetour reglementId={reglement.id} canGerer={canGererJustification} userId={userId} />
+          ) : (
+            reglement.retours.map((retour) => (
+              <DetailDepensesRetour key={retour.id} retourId={retour.id} canReceptionner={canGererJustification} userId={userId} />
+            ))
+          )}
         </div>
       ))}
     </div>
@@ -244,13 +268,15 @@ function BlocArticle({
 
 function Chiffres({ agregats }: { agregats: AgregatsRegularisation }) {
   const ecart = getEcartLigne(agregats);
+  // Lot G ter : reste non détaillé = lignes de reste stockées + fonds remis (Caisse ET Banque) ni retournés ni détaillés.
+  const reste = resteNonDetailleTotal(agregats);
   return (
     <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <Chiffre libelle="Fonds remis (Caisse + Banque)" valeur={agregats.fondsRemis} />
       <Chiffre libelle="Retours reçus" valeur={agregats.retoursRecus} />
       <Chiffre libelle="Dépenses justifiées" valeur={agregats.depensesJustifiees} />
       <Chiffre libelle="Dépenses sans pièce formelle" valeur={agregats.depensesSansPieceFormelle} attention={agregats.depensesSansPieceFormelle > 0} />
-      <Chiffre libelle="Reste non détaillé" valeur={agregats.resteNonDetaille} attention={agregats.resteNonDetaille > 0} />
+      <Chiffre libelle="Reste non détaillé" valeur={reste} attention={reste > 0} />
       <Chiffre libelle="Solde à régulariser" valeur={ecart} ton={ecart === 0 ? "success" : "warning"} />
     </dl>
   );

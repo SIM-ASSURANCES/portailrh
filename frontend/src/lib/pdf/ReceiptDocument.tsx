@@ -262,7 +262,8 @@ export function HistoriqueSection({ historique: h }: { historique: HistoriqueImp
         {ligne("f1", "Fonds remis (Caisse + Banque)", formatMontant(h.fondsRemis))}
         {ligne("f2", "− Dépenses déclarées", formatMontant(h.totalDepenses))}
         {ligne("f3", "− Retours reçus", formatMontant(h.retoursRecus))}
-        {ligne("f4", "= Solde à régulariser", formatMontant(h.solde), true)}
+        {ligne("f4", "= Solde à régulariser", formatMontant(h.solde), h.resteNonDetaille <= 0)}
+        {h.resteNonDetaille > 0 ? ligne("f5", "Dont reste non détaillé (ni retourné, ni justifié)", formatMontant(h.resteNonDetaille), true) : null}
       </View>
     </>
   );

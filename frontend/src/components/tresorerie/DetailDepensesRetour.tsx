@@ -1,4 +1,5 @@
 import {
+  calculerMontantARetournerNet,
   estFicheRegularisation,
   estLigneReste,
   getResumeArticle,
@@ -55,13 +56,22 @@ export async function DetailDepensesRetour({
     lignes: retour.depenses.map((d) => ({ montant: Number(d.montant), reste: estLigneReste(d), sansPiece: d.justification === "SANS_PIECE" })),
   });
 
+  // Lot G ter : la fiche d'un fonds versé par banque n'est qu'un support de détail (jamais réceptionnée) ; son reste est ce
+  // qui reste à expliquer sur le règlement, retours externes rattachés déduits — « Reste non détaillé », pas « à rendre ».
+  const ficheBanque = fiche && retour.reglement.mode === "BANQUE" && !retour.versementBancaire;
+  if (ficheBanque) {
+    const disponible = await calculerMontantARetournerNet({ reglementId: retour.reglementId, totalDepensesNouvelles: 0, excludeRetourId: retour.id });
+    totaux.reste = Math.max(0, Math.round((disponible - totaux.detaille) * 100) / 100);
+  }
+  const resteAReleguer = fiche && !ficheBanque;
+
   return (
     <div data-detail-depenses={retour.id} className="space-y-3">
       <ArticleTag article={article} />
       <dl className="grid grid-cols-2 gap-3 rounded-lg bg-muted/60 p-3 text-sm sm:grid-cols-5">
         <Total libelle="Remis" valeur={totaux.remis} />
         <Total libelle="Détaillé" valeur={totaux.detaille} />
-        <Total libelle={fiche ? "Reste à rendre" : "Reste non détaillé"} valeur={totaux.reste} attention={totaux.reste > 0} />
+        <Total libelle={resteAReleguer ? "Reste à rendre" : "Reste non détaillé"} valeur={totaux.reste} attention={totaux.reste > 0} />
         <Total libelle="Sans pièce formelle" valeur={totaux.nonJustifie} attention={totaux.nonJustifie > 0} />
         <Total libelle="Retourné" valeur={totaux.retourne} />
       </dl>
@@ -117,7 +127,7 @@ export async function DetailDepensesRetour({
           <li data-reste className="space-y-2 rounded-lg border border-dashed border-border p-3 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-medium text-foreground">
-                {fiche ? "Reste à rendre par le collaborateur" : "Dépenses non détaillées"} — {fcfa(totaux.reste)}
+                {resteAReleguer ? "Reste à rendre par le collaborateur" : "Dépenses non détaillées"} — {fcfa(totaux.reste)}
               </span>
               <span className="text-xs text-muted-foreground">Reste calculé : se met à jour à chaque correction</span>
             </div>

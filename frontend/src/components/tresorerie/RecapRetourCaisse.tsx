@@ -1,4 +1,4 @@
-import { getRecapRetourCaisse, type RecapArticle, type RecapRetourCaisse as Recap } from "backend";
+import { getRecapRetourCaisse, resteNonDetailleTotal, type RecapArticle, type RecapRetourCaisse as Recap } from "backend";
 
 import { Badge } from "@/components/ui";
 
@@ -67,7 +67,7 @@ function Bloc({ titre, sousTitre, bloc, total = false }: { titre: string; sousTi
         />
         <Ligne libelle="Dépenses justifiées" valeur={fcfa(agregats.depensesJustifiees)} />
         <Ligne libelle="Dépenses sans pièce formelle" valeur={fcfa(agregats.depensesSansPieceFormelle)} attention={agregats.depensesSansPieceFormelle > 0} />
-        <Ligne libelle="Reste non détaillé" valeur={fcfa(agregats.resteNonDetaille)} attention={agregats.resteNonDetaille > 0} />
+        <Ligne libelle="Reste non détaillé" valeur={fcfa(resteNonDetailleTotal(agregats))} attention={resteNonDetailleTotal(agregats) > 0} />
         <Ligne libelle="Solde à régulariser" valeur={fcfa(solde)} ton={solde === 0 ? "success" : "warning"} />
       </dl>
     </div>

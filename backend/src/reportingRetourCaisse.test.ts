@@ -73,6 +73,7 @@ describe("état du total du récapitulatif collaborateur", () => {
     depensesSansPieceFormelle: 0,
     resteNonDetaille: 0,
     retoursRecus: 0,
+    retoursEnAttente: 0,
     ...p,
   });
   it("aucun fonds, à régulariser, régularisé, anomalie", () => {

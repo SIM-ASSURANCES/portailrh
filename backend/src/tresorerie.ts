@@ -1188,6 +1188,7 @@ export async function getMesDemandesDetail(userId: string): Promise<MaDemandeDet
         depensesSansPieceFormelle: 0,
         resteNonDetaille: 0,
         retoursRecus,
+        retoursEnAttente: 0,
       }),
       createdAt: d.createdAt,
     };

@@ -10,7 +10,7 @@
 
 import type { EtatArticle, StatutArticle } from "./etatArticles";
 import { LIBELLE_ETAT_ARTICLE } from "./etatArticles";
-import { depensesDeclareesLigne, getEcartLigne, type AgregatsRegularisation } from "./regularisationArticle";
+import { depensesDeclareesLigne, getEcartLigne, resteNonDetailleTotal, type AgregatsRegularisation } from "./regularisationArticle";
 
 export type BadgeParcours =
   | "EN_ATTENTE"
@@ -208,9 +208,9 @@ export function parcoursArticle(e: EntreeParcours): ParcoursArticle {
       lignes.push(
         `Fonds remis ${eur(g.agregats.fondsRemis)} − dépenses ${eur(depensesDeclareesLigne(g.agregats))} − retours reçus ${eur(g.agregats.retoursRecus)}`
       );
-      if (g.agregats.depensesSansPieceFormelle > 0 || g.agregats.resteNonDetaille > 0) {
+      if (g.agregats.depensesSansPieceFormelle > 0 || resteNonDetailleTotal(g.agregats) > 0) {
         lignes.push(
-          `Dont dépenses sans pièce formelle : ${eur(g.agregats.depensesSansPieceFormelle)}${g.agregats.resteNonDetaille > 0 ? ` — reste non détaillé : ${eur(g.agregats.resteNonDetaille)}` : ""}`
+          `Dont dépenses sans pièce formelle : ${eur(g.agregats.depensesSansPieceFormelle)}${resteNonDetailleTotal(g.agregats) > 0 ? ` — reste non détaillé : ${eur(resteNonDetailleTotal(g.agregats))}` : ""}`
         );
       }
       lignes.push(`Solde final : ${eur(getEcartLigne(g.agregats))}`);

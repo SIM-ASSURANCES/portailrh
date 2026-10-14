@@ -24,6 +24,11 @@ export interface AgregatsRegularisation {
   resteNonDetaille: number;
   /** Retours réceptionnés + retours exceptionnels validés − remboursements validés. */
   retoursRecus: number;
+  /**
+   * Retours déclarés par le collaborateur et pas encore réceptionnés (argent annoncé, en route vers la caisse). Sert
+   * uniquement à ne pas compter cet argent dans le « reste non détaillé » (`resteNonDetailleTotal`) ; jamais dans le solde.
+   */
+  retoursEnAttente: number;
 }
 
 export const AGREGATS_VIDES: Readonly<AgregatsRegularisation> = Object.freeze({
@@ -32,6 +37,7 @@ export const AGREGATS_VIDES: Readonly<AgregatsRegularisation> = Object.freeze({
   depensesSansPieceFormelle: 0,
   resteNonDetaille: 0,
   retoursRecus: 0,
+  retoursEnAttente: 0,
 });
 
 const c = (n: number) => Math.round(n * 100);
@@ -50,6 +56,20 @@ export function getEcartLigne(a: AgregatsRegularisation): number {
   return (c(a.fondsRemis) - c(a.depensesJustifiees) - c(a.depensesSansPieceFormelle) - c(a.resteNonDetaille) - c(a.retoursRecus)) / 100;
 }
 
+/**
+ * « Reste non détaillé » d'un périmètre, SOURCE UNIQUE de tous les affichages (régularisation, récapitulatif du collaborateur,
+ * parcours, reçus) : ce qui n'est ni justifié, ni sans pièce formelle, ni retourné, ni annoncé en retour en attente de
+ * réception = fonds remis (Caisse + Banque) − retours − dépenses détaillées. Il se compose de la ligne « Dépenses non
+ * détaillées » déjà enregistrée (`resteNonDetaille`, déclaration simplifiée du collaborateur) et de l'argent remis dont rien
+ * n'a encore été déclaré (fonds par banque jamais détaillés ni retournés, règlement sans retour) : `max(0, solde − retours en
+ * attente)`. Il ne change jamais le solde à régulariser (`getEcartLigne`), qui garde sa formule ; il retombe à 0 dès que
+ * l'argent est détaillé ou retourné. Centimes exacts, jamais négatif.
+ */
+export function resteNonDetailleTotal(a: AgregatsRegularisation): number {
+  const nonDeclare = Math.max(0, c(getEcartLigne(a)) - c(a.retoursEnAttente));
+  return (c(a.resteNonDetaille) + nonDeclare) / 100;
+}
+
 /** Somme de plusieurs périmètres (centimes exacts). */
 export function additionnerAgregats(liste: readonly AgregatsRegularisation[]): AgregatsRegularisation {
   const somme = (cle: keyof AgregatsRegularisation) => liste.reduce((s, a) => s + c(a[cle]), 0) / 100;
@@ -59,6 +79,7 @@ export function additionnerAgregats(liste: readonly AgregatsRegularisation[]): A
     depensesSansPieceFormelle: somme("depensesSansPieceFormelle"),
     resteNonDetaille: somme("resteNonDetaille"),
     retoursRecus: somme("retoursRecus"),
+    retoursEnAttente: somme("retoursEnAttente"),
   };
 }
 
@@ -135,6 +156,12 @@ export interface EntreeDepense {
 export interface EntreeRetour {
   reglementId: string;
   estReceptionne: boolean;
+  /**
+   * Retour réellement attendu en caisse (déclaré, pas encore réceptionné) : faux pour une fiche de détail des dépenses
+   * (son montant « à rendre » n'est que calculé) et pour la fiche d'un fonds versé par banque (jamais réceptionnée).
+   * Absent = vrai si le retour n'est pas réceptionné.
+   */
+  attendu?: boolean;
   montantARetourner: number;
   depenses: EntreeDepense[];
 }
@@ -177,7 +204,7 @@ export function agregerRegularisation(p: {
   const de = (ligneId: string | null) => {
     let a = cumuls.get(ligneId);
     if (!a) {
-      a = { fondsRemis: 0, depensesJustifiees: 0, depensesSansPieceFormelle: 0, resteNonDetaille: 0, retoursRecus: 0 };
+      a = { fondsRemis: 0, depensesJustifiees: 0, depensesSansPieceFormelle: 0, resteNonDetaille: 0, retoursRecus: 0, retoursEnAttente: 0 };
       cumuls.set(ligneId, a);
     }
     return a;
@@ -190,6 +217,7 @@ export function agregerRegularisation(p: {
     const ligneId = ligneDuReglement.get(retour.reglementId) ?? null;
     const a = de(ligneId);
     if (retour.estReceptionne) a.retoursRecus += c(retour.montantARetourner);
+    else if (retour.attendu !== false) a.retoursEnAttente += c(retour.montantARetourner);
     for (const d of retour.depenses) {
       const cat = categorieDepense(d);
       if (cat === "JUSTIFIEE") a.depensesJustifiees += c(d.montant);
@@ -206,6 +234,7 @@ export function agregerRegularisation(p: {
     depensesSansPieceFormelle: a.depensesSansPieceFormelle / 100,
     resteNonDetaille: a.resteNonDetaille / 100,
     retoursRecus: a.retoursRecus / 100,
+    retoursEnAttente: a.retoursEnAttente / 100,
   });
   const parArticle = new Map<string, AgregatsRegularisation>();
   let nonRattache: AgregatsRegularisation = { ...AGREGATS_VIDES };

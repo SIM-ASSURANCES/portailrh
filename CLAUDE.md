@@ -3050,6 +3050,29 @@ le rattachement est **facultatif** (un retour externe sans demande reste possibl
   second retour refusé, retour non rattaché autonome) ; `lot-g.mjs` adapté 60/60 ; régressions `regularisation-par-article` 38/38, `reglement-par-article` 55/55,
   `articles-decision-finance` 65/65, `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
 
+#### Lot G ter — reste non détaillé et bouton « Détailler » du fonds banque dans le bloc de l'article (2026-10-20)
+
+Correctif d'affichage et de calcul, **aucune migration, aucune écriture de caisse touchée**. Cas de référence : article de 571 000 = 471 000 Caisse + 100 000 Banque,
+100 000 retournés, dépenses 300 000 justifiées + 71 000 sans pièce → solde 100 000. Avant : « Reste non détaillé » = 0, bande « REMIS 471 000 » (Caisse seule), aucun
+« Détailler » pour le fonds banque dans le bloc de l'article (le bouton n'existait que dans la section « Retours de caisse »).
+
+- **Une seule source du reste non détaillé** (`regularisationArticle.ts`, pur) : `resteNonDetailleTotal(a) = resteNonDetaille (lignes de reste stockées) +
+  max(0, solde − retoursEnAttente)` — les fonds remis (Caisse ET Banque) ni retournés, ni détaillés, ni annoncés en retour. Le **solde** (`getEcartLigne`) est inchangé.
+  Nouveau champ d'agrégat `retoursEnAttente` : retours déclarés non réceptionnés « attendus » (hors fiches de détail et hors fiche d'un fonds bancaire non ancien,
+  `EntreeRetour.attendu`, posé par `getAgregatsRegularisation`). Utilisée par `RegularisationSummary` (article et total), `RecapRetourCaisse`, le parcours de l'article
+  (`parcoursArticle`) et les reçus PDF (ligne « Dont reste non détaillé », seulement si > 0).
+- **Bloc de l'article = un sous-bloc par règlement confirmé** (`DetailReglements`, `data-regularisation-reglement`) : titre « Règlement Caisse/Banque — X FCFA » et
+  bande Remis / Détaillé / Reste non détaillé / Sans pièce formelle / Retourné **propre à ce règlement** (la Caisse et la Banque ne sont plus mélangées). Un règlement sans
+  retour ni fiche affiche `DetailReglementSansRetour` (reste = `calculerMontantARetournerNet`, retours externes rattachés déduits) et **« Détailler les dépenses »** pour
+  l'Assistant Finance (garde 8 par article, demande non clôturée) ; la fiche d'un fonds bancaire (`DetailDepensesRetour`) dit « Reste non détaillé » (et non « Reste à rendre »),
+  calculé sur ce qui reste à expliquer sur le règlement. Le doublon avec le bouton de la section « Retours de caisse » est accepté.
+- **Décisions ouvertes** : (1) un retour déclaré mais pas encore réceptionné n'est pas du « non détaillé » (il est annoncé) — nuance par rapport à « remis − retours − détaillé » ;
+  (2) pour un article à plusieurs règlements banque, les retours externes sont imputés au niveau de l'article ; (3) le Responsable Finance (sans `receptionner_retour`) voit les chiffres de
+  l'article mais pas les sous-blocs ni le bouton, comme avant.
+- **Vérifié** : vitest (5 tests du cas exact dans `regularisationArticle.test.ts`, 742 pass + échec connu `feedback.test.ts`), tsc, eslint, `next build` ; e2e `lot-g-ter.mjs` 22/22
+  (571 000 → reste 100 000, sous-blocs Caisse/Banque, bouton visible, détail par l'écran → reste 0, solde 0, « Régularisé », caisse inchangée, reçu PDF et récapitulatif collaborateur) ;
+  régressions `lot-g-bis` 35, `lot-g` 60, `regularisation-par-article` 38, `reglement-par-article` 55, `articles-decision-finance` 65, `soumission-dg-article` 37, `articles-beneficiaire-pieces` 34.
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié

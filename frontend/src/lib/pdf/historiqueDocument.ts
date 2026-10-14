@@ -1,4 +1,4 @@
-import { getAgregatsRegularisation, getEcartLigne, prisma } from "backend";
+import { getAgregatsRegularisation, getEcartLigne, prisma, resteNonDetailleTotal } from "backend";
 
 /**
  * Historique détaillé imprimé sur les reçus (lot G, 2026-10-14) : TOUT ce qui a été fait pour l'article (ou, sans article,
@@ -37,6 +37,8 @@ export interface HistoriqueImprime {
   totalDepenses: number;
   retoursRecus: number;
   solde: number;
+  /** Fonds remis ni retournés ni détaillés (lot G ter). */
+  resteNonDetaille: number;
 }
 
 /** Historique de l'article d'un règlement (ou de la demande entière si ce règlement n'est rattaché à aucun article). */
@@ -126,5 +128,7 @@ export async function chargerHistoriqueDocument(p: {
     totalDepenses: Math.round((chiffres.depensesJustifiees + chiffres.depensesSansPieceFormelle + chiffres.resteNonDetaille) * 100) / 100,
     retoursRecus: chiffres.retoursRecus,
     solde: getEcartLigne(chiffres),
+    // Lot G ter : même calcul que l'écran (lignes de reste + fonds remis, Caisse ET Banque, ni retournés ni détaillés).
+    resteNonDetaille: resteNonDetailleTotal(chiffres),
   };
 }

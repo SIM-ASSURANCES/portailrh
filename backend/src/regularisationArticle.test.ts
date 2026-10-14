@@ -10,6 +10,7 @@ import {
   depensesDeclareesLigne,
   etatRegularisationArticle,
   getEcartLigne,
+  resteNonDetailleTotal,
   resumeArticlesTermines,
   type AgregatsRegularisation,
 } from "./regularisationArticle";
@@ -20,6 +21,7 @@ const ag = (p: Partial<AgregatsRegularisation> = {}): AgregatsRegularisation => 
   depensesSansPieceFormelle: 0,
   resteNonDetaille: 0,
   retoursRecus: 0,
+  retoursEnAttente: 0,
   ...p,
 });
 
@@ -189,5 +191,34 @@ describe("parcours : Régularisé avec date et solde final", () => {
     const p = parcoursArticle({ ...base, regularisationIndeterminee: true });
     expect(p.badge).not.toBe("REGULARISE");
     expect(p.note).toMatch(/aucun article/);
+  });
+});
+
+describe("reste non détaillé d'un article avec fonds Caisse + Banque (lot G ter)", () => {
+  // 471 000 Caisse + 100 000 Banque, 100 000 retournés, 300 000 justifiées + 71 000 sans pièce.
+  const cas = { fondsRemis: 571000, retoursRecus: 100000, depensesJustifiees: 300000, depensesSansPieceFormelle: 71000 };
+  it("les 100 000 du fonds banque ni retournés ni détaillés forment le reste non détaillé", () => {
+    const a = ag(cas);
+    expect(getEcartLigne(a)).toBe(100000);
+    expect(resteNonDetailleTotal(a)).toBe(100000);
+    expect(etatRegularisationArticle({ valide: true, agregats: a })).toBe("A_REGULARISER");
+  });
+  it("une fois détaillé (ligne de reste ou dépenses réelles), le solde et le reste tombent à 0", () => {
+    const a = ag({ ...cas, depensesJustifiees: 400000 });
+    expect(getEcartLigne(a)).toBe(0);
+    expect(resteNonDetailleTotal(a)).toBe(0);
+    expect(etatRegularisationArticle({ valide: true, agregats: a })).toBe("REGULARISE");
+  });
+  it("une ligne de reste stockée n'est pas comptée deux fois", () => {
+    const a = ag({ ...cas, resteNonDetaille: 100000 });
+    expect(getEcartLigne(a)).toBe(0);
+    expect(resteNonDetailleTotal(a)).toBe(100000);
+  });
+  it("un retour déclaré en attente de réception n'est pas du « non détaillé »", () => {
+    const a = ag({ ...cas, retoursEnAttente: 100000 });
+    expect(resteNonDetailleTotal(a)).toBe(0);
+  });
+  it("jamais négatif en cas d'anomalie", () => {
+    expect(resteNonDetailleTotal(ag({ fondsRemis: 1000, depensesJustifiees: 5000 }))).toBe(0);
   });
 });
