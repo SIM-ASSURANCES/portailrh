@@ -4,6 +4,7 @@
 // colonnes numériques de totaux à côté. Fonctions PURES (aucun accès base) : le chargement est dans `reporting.ts`.
 
 import { libelleDateLivraison } from "./dateLivraisonArticle";
+import { libelleGestionArticle, type GestionArticle } from "./parcoursArticle";
 
 /** Une entrée d'historique utile au reporting (validations, clôture, ajustements). */
 export interface HistoriqueReporting {
@@ -16,6 +17,8 @@ export interface HistoriqueReporting {
 export interface DemandeReportingSource {
   reference: string;
   creeLe: Date;
+  /** Lot H : dernier événement de la demande (« Géré le »), `null` ou absent si rien n'a été traité. */
+  gere?: GestionArticle | null;
   typeDemande: "STANDARD" | "DEPENSE_DIRECTE";
   statut: string;
   etapeCircuit: string | null;
@@ -92,6 +95,8 @@ export interface DemandeReportingSource {
 export interface LigneReportingDemande {
   reference: string;
   creeLe: Date;
+  /** Lot H : « Géré le » — date du dernier événement de la demande et son étape (« 12/10/2026 (réglé) »), « — » si rien n'a été traité. */
+  gereLe: string;
   type: string;
   statut: string;
   etape: string;
@@ -119,9 +124,10 @@ export interface LigneReportingDemande {
 /** Colonnes du rapport, dans l'ordre — partagées par l'écran et l'export Excel (jamais deux listes divergentes). */
 export const COLONNES_REPORTING_DEMANDE: { cle: keyof LigneReportingDemande; titre: string; montant?: boolean; multi?: boolean }[] = [
   { cle: "reference", titre: "Référence" },
-  { cle: "creeLe", titre: "Créée le" },
+  { cle: "creeLe", titre: "Demande créée le" },
   { cle: "type", titre: "Type" },
   { cle: "statut", titre: "Statut" },
+  { cle: "gereLe", titre: "Géré le" },
   { cle: "etape", titre: "Étape du circuit" },
   { cle: "demandeur", titre: "Demandeur" },
   { cle: "service", titre: "Service" },
@@ -214,7 +220,7 @@ export function construireLigneReporting(d: DemandeReportingSource): LigneReport
             l.libelle,
             l.motif ? `motif : ${l.motif}` : null,
             `${l.quantite} × ${fcfa(l.prixUnitaire)} = ${fcfa(l.quantite * l.prixUnitaire)}`,
-            l.dateLivraison === undefined ? null : `livraison : ${libelleDateLivraison(l.dateLivraison)}`,
+            l.dateLivraison === undefined ? null : `livraison prévue le ${libelleDateLivraison(l.dateLivraison)}`,
             l.categorie ? `${l.categorie}${l.objet ? ` / ${l.objet}` : ""}` : "sans catégorie",
             [LIBELLE_STATUT_LIGNE[l.statut], l.statut === "REJETEE" && l.motifRejet ? `(${l.motifRejet})` : null, par(l.decidePar, l.decideLe)]
               .filter(Boolean)
@@ -318,6 +324,7 @@ export function construireLigneReporting(d: DemandeReportingSource): LigneReport
   return {
     reference: d.reference,
     creeLe: d.creeLe,
+    gereLe: libelleGestionArticle(d.gere ?? null).replace(/^Géré le /, ""),
     type: d.typeDemande === "DEPENSE_DIRECTE" ? "Dépense directe" : "Standard",
     statut: d.statut,
     etape: d.etapeCircuit ?? "—",

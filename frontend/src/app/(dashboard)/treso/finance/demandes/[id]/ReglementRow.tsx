@@ -157,7 +157,7 @@ export function ReglementRow({
             {reglement.montant.toLocaleString("fr-FR")} FCFA — {MODE_LABEL[reglement.mode]}
           </p>
           <p className="text-xs text-muted-foreground">
-            {reglement.auteurNom} — {reglement.createdAt.toLocaleString("fr-FR")}
+            {reglement.auteurNom} — règlement saisi le {reglement.createdAt.toLocaleString("fr-FR")}
           </p>
           {/* Répartition par catégorie (voir CLAUDE.md "Allocation
               budgétaire explicite par règlement") — affichée seulement si

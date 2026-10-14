@@ -113,6 +113,8 @@ export interface BonDeCaisseData {
   /** Rappel de la demande (lot D). */
   demandeurNom: string;
   serviceNom: string | null;
+  /** Date de création de la demande (lot H, « Demande créée le »). */
+  demandeCreeeLe: Date;
   /** Article payé (lot D) : libellé, bénéficiaire, montant de l'article ; `null` pour une demande sans article. */
   article: ArticleImprime | null;
   beneficiaireNom: string;
@@ -156,7 +158,7 @@ export function BonDeCaisseDocument({ data }: { data: BonDeCaisseData }) {
         </View>
 
         <View style={styles.body}>
-          <RappelDemande reference={data.demandeReference} demandeurNom={data.demandeurNom} serviceNom={data.serviceNom} />
+          <RappelDemande reference={data.demandeReference} demandeurNom={data.demandeurNom} serviceNom={data.serviceNom} creeeLe={data.demandeCreeeLe} />
           {data.article ? <ArticleSection article={data.article} /> : null}
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Bénéficiaire</Text>

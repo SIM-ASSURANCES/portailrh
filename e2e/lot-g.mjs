@@ -144,9 +144,9 @@ await q(`INSERT INTO "LigneDemande"(id, libelle, quantite, "prixUnitaire", "dema
   const p = await connecter("collaborateur@simassurances.test");
   await p.goto(`${B}/treso/demandes/${demandeForm}`);
   const dates = (await p.locator("[data-date-livraison]").allInnerTexts()).map(net);
-  verifier("1. collaborateur : chaque carte d'article affiche « Livraison : … »", dates.length === 3 && dates.some((t) => t.includes(fr(J1))) && dates.some((t) => t.includes(fr(J2))), dates.join(" | "));
+  verifier("1. collaborateur : chaque carte d'article affiche « Livraison prévue le … »", dates.length === 3 && dates.some((t) => t.includes(fr(J1))) && dates.some((t) => t.includes(fr(J2))), dates.join(" | "));
   await p.goto(`${B}/treso/demandes/${ANCIEN}`);
-  verifier("1. ancien article : « Livraison : — »", /Livraison : —/.test(net(await p.locator("[data-date-livraison]").first().innerText())));
+  verifier("1. ancien article : « Livraison prévue le — »", /Livraison prévue le —/.test(net(await p.locator("[data-date-livraison]").first().innerText())));
   await p.close();
 }
 {

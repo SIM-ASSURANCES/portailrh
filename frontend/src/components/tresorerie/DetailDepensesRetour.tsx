@@ -87,7 +87,7 @@ export async function DetailDepensesRetour({
                 {d.objet} — {fcfa(Number(d.montant))}
               </span>
               <span className="text-xs text-muted-foreground">
-                {d.date.toLocaleDateString("fr-FR")} · {d.justification === "SANS_PIECE" ? "Dépense sans pièce formelle" : "Dépense justifiée"}
+                Dépense du {d.date.toLocaleDateString("fr-FR")} · {d.justification === "SANS_PIECE" ? "Dépense sans pièce formelle" : "Dépense justifiée"}
               </span>
             </div>
             <ArticleTag article={article} />

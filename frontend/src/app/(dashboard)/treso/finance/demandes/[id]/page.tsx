@@ -16,7 +16,8 @@ import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge
 import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesIntervenantes";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma, refusDemandeSansCategorie } from "backend";
+import { getDatesGestionDemandes, prisma, refusDemandeSansCategorie } from "backend";
+import { libelleGestionArticle } from "backend/client";
 import { getMontantsLignesParStatut, peutEtreCloturee } from "backend";
 import {
   chargerActeur,
@@ -337,11 +338,13 @@ export default async function CategoriserDemandePage({
     </>
   );
 
+  // Lot H : « Géré le » = date du dernier événement de la demande (décision, règlement, retour, clôture).
+  const gestionDemande = (await getDatesGestionDemandes([demande.id])).get(demande.id) ?? null;
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title={`Demande ${demande.reference}`}
-        description={`Créée par ${demande.createur.fullName} le ${demande.createdAt.toLocaleDateString("fr-FR")}`}
+        description={`Demande créée le ${demande.createdAt.toLocaleDateString("fr-FR")} par ${demande.createur.fullName} · ${libelleGestionArticle(gestionDemande)}`}
         actions={
           demande.typeDemande === "DEPENSE_DIRECTE" && demande.natureDepenseDirecte ? (
             <DepenseDirecteBadge nature={demande.natureDepenseDirecte} />

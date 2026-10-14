@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parcoursArticle, type EntreeParcours, type ParcoursReglement } from "./parcoursArticle";
+import { libelleGestionArticle, parcoursArticle, type EntreeParcours, type ParcoursReglement } from "./parcoursArticle";
 
 const reglement = (o: Partial<ParcoursReglement> = {}): ParcoursReglement => ({
   id: "r1",
@@ -154,5 +154,66 @@ describe("parcours d'un article", () => {
     expect(etape.lignes.join(" ")).toMatch(/15.000 FCFA — fonds versé par banque, rendu à la caisse/);
     // Sans retour externe : pas d'étape.
     expect(cles(parcoursArticle(base({ reglements: [reglement({ mode: "BANQUE", montant: 40000 })] })))).not.toContain("RETOUR_EXTERNE");
+  });
+
+  describe("« Géré le » (lot H) : dernier événement du parcours, sans colonne ajoutée", () => {
+    it("article en attente : rien n'est géré", () => {
+      const p = parcoursArticle(base({ statut: "EN_ATTENTE", etat: "A_DECIDER", decideAt: null }));
+      expect(p.gere).toBeNull();
+      expect(libelleGestionArticle(p.gere)).toBe("Géré le —");
+    });
+    it("rejeté : date du rejet", () => {
+      const p = parcoursArticle(base({ statut: "REJETEE", etat: "REJETEE", motifRejet: "Trop cher" }));
+      expect(p.gere).toEqual({ etape: "Rejeté", date: new Date("2026-10-15T09:00:00Z") });
+      expect(libelleGestionArticle(p.gere)).toBe("Géré le 15/10/2026 (rejeté)");
+    });
+    it("validé seulement : date de la validation", () => {
+      expect(parcoursArticle(base()).gere?.etape).toBe("Validé");
+    });
+    it("réglé : la date du règlement confirmé l'emporte sur la validation ; un règlement annulé ou non confirmé ne compte pas", () => {
+      const p = parcoursArticle(
+        base({
+          reglements: [
+            reglement(),
+            reglement({ id: "r2", confirmeAt: new Date("2026-10-30T10:00:00Z"), estAnnule: true }),
+            reglement({ id: "r3", confirmeAt: null, estConfirme: false }),
+          ],
+        })
+      );
+      expect(p.gere).toEqual({ etape: "Réglé", date: new Date("2026-10-16T10:00:00Z") });
+      expect(libelleGestionArticle(p.gere)).toBe("Géré le 16/10/2026 (réglé)");
+    });
+    it("retour de caisse réceptionné : date du retour ; puis régularisé : la dernière étape prend le nom « Régularisé »", () => {
+      const retour = { estReceptionne: true, montantARetourner: 0, date: new Date("2026-10-18T10:00:00Z") };
+      const avecRetour = parcoursArticle(base({ reglements: [reglement({ solde: 5, retours: [retour] })] }));
+      expect(avecRetour.gere).toEqual({ etape: "Retour de caisse", date: new Date("2026-10-18T10:00:00Z") });
+      const regularise = parcoursArticle(
+        base({
+          reglements: [reglement({ solde: 0, retours: [retour] })],
+          regularisation: {
+            agregats: {
+              fondsRemis: 100000,
+              depensesJustifiees: 100000,
+              depensesSansPieceFormelle: 0,
+              resteNonDetaille: 0,
+              retoursRecus: 0,
+              retoursEnAttente: 0,
+            },
+            regulariseAt: new Date("2026-10-18T10:00:00Z"),
+          },
+        })
+      );
+      expect(regularise.badge).toBe("REGULARISE");
+      expect(regularise.gere?.etape).toBe("Régularisé");
+    });
+    it("retour externe rattaché : compte comme un événement du parcours", () => {
+      const p = parcoursArticle(
+        base({
+          reglements: [reglement({ mode: "BANQUE", montant: 40000, solde: 5 })],
+          retoursExternes: [{ montant: 15000, creeAt: new Date("2026-10-19T08:00:00Z") }],
+        })
+      );
+      expect(p.gere).toEqual({ etape: "Retour enregistré par la Finance", date: new Date("2026-10-19T08:00:00Z") });
+    });
   });
 });

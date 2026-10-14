@@ -62,6 +62,7 @@ export * from "./reglementArticle";
 export * from "./repriseReglements";
 export * from "./parcoursArticle";
 export * from "./parcoursArticleDb";
+export * from "./dateGestionDemande";
 export * from "./circuitDemande";
 export * from "./soumissionDGEcran";
 export * from "./circuitDemandeDb";

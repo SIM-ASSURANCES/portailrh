@@ -606,7 +606,7 @@ function LigneCard({
               {ligne.decideParNom ? (
                 <p className="mt-1 text-xs text-muted-foreground">
                   Par {ligne.decideParNom}
-                  {ligne.decideAt ? ` — ${ligne.decideAt.toLocaleDateString("fr-FR")}` : ""}
+                  {ligne.decideAt ? ` le ${ligne.decideAt.toLocaleDateString("fr-FR")}` : ""}
                 </p>
               ) : null}
             </div>

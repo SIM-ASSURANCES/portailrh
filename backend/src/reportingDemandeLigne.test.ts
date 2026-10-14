@@ -230,4 +230,12 @@ describe("COLONNES_REPORTING_DEMANDE", () => {
     expect(cles.indexOf("creeLe")).toBe(cles.indexOf("reference") + 1);
     expect(cles).toContain("beneficiaire");
   });
+
+  it("lot H : trois dates libellées — « Demande créée le », « Géré le » (dernier événement), livraison prévue dans les articles", () => {
+    const titres = Object.fromEntries(COLONNES_REPORTING_DEMANDE.map((c) => [c.cle, c.titre]));
+    expect(titres.creeLe).toBe("Demande créée le");
+    expect(titres.gereLe).toBe("Géré le");
+    expect(construireLigneReporting(demande({ gere: { etape: "Réglé", date: d(12) } })).gereLe).toBe("12/10/2026 (réglé)");
+    expect(construireLigneReporting(demande()).gereLe).toBe("—");
+  });
 });

@@ -11,6 +11,7 @@ import {
   getReglementsPartielsACompleter,
   getRetoursEnAttenteReception,
 } from "./dashboardFinance";
+import { getDatesGestionDemandes } from "./dateGestionDemande";
 import { prisma } from "./prisma";
 import { getMontantConsommeCategorie, getSoldeCaisse } from "./tresorerie";
 
@@ -1158,11 +1159,13 @@ export async function getReportingParDemande(
     historiqueParId.set(h.entityId, liste);
   }
 
+  const gestions = await getDatesGestionDemandes(demandes.map((d) => d.id));
   return demandes.map((d) => {
     const det = detailParId.get(d.id)!;
     return construireLigneReporting({
       reference: d.reference,
       creeLe: d.createdAt,
+      gere: gestions.get(d.id) ?? null,
       typeDemande: d.typeDemande,
       statut: libelleStatut(d.statut),
       etapeCircuit: det.etapeCircuit ? LIBELLE_ETAPE_CIRCUIT[det.etapeCircuit] : null,

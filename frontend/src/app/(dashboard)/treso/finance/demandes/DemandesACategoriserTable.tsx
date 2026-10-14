@@ -66,7 +66,7 @@ export function DemandesACategoriserTable({
         },
         {
           key: "createdAt",
-          header: "Créée le",
+          header: "Demande créée le",
           sortable: true,
           accessor: (d) => d.createdAt,
           render: (d) => d.createdAt.toLocaleDateString("fr-FR"),

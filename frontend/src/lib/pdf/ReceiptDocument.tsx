@@ -151,6 +151,8 @@ export interface ArticleImprime {
   montantValide: number;
   /** Date de livraison de l'article (lot G), déjà formatée (« 12/10/2026 » ou « — »). */
   dateLivraison?: string;
+  /** Lot H : « Géré le » de l'article, déjà formaté (« 12/10/2026 (réglé) » ou « — »). */
+  gereLe?: string;
   regleADate?: number;
   resteARegler?: number;
 }
@@ -173,8 +175,14 @@ export function ArticleSection({ article, titre = "Article concerné" }: { artic
       </View>
       {article.dateLivraison != null ? (
         <View style={styles.detailRow}>
-          <Text style={styles.detailLabel}>Date de livraison</Text>
+          <Text style={styles.detailLabel}>Livraison prévue le</Text>
           <Text style={styles.detailValue}>{article.dateLivraison}</Text>
+        </View>
+      ) : null}
+      {article.gereLe != null ? (
+        <View style={styles.detailRow}>
+          <Text style={styles.detailLabel}>Géré le</Text>
+          <Text style={styles.detailValue}>{article.gereLe}</Text>
         </View>
       ) : null}
       <View style={article.regleADate == null ? [styles.detailRow, { marginBottom: 0 }] : styles.detailRow}>
@@ -270,7 +278,18 @@ export function HistoriqueSection({ historique: h }: { historique: HistoriqueImp
 }
 
 /** Rappel de la demande : numéro, demandeur et service. */
-export function RappelDemande({ reference, demandeurNom, serviceNom }: { reference: string; demandeurNom: string; serviceNom: string | null }) {
+export function RappelDemande({
+  reference,
+  demandeurNom,
+  serviceNom,
+  creeeLe,
+}: {
+  reference: string;
+  demandeurNom: string;
+  serviceNom: string | null;
+  /** Lot H : date de création de la demande (« Demande créée le »), une seule pour toute la demande. */
+  creeeLe?: Date;
+}) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>Demande</Text>
@@ -282,10 +301,16 @@ export function RappelDemande({ reference, demandeurNom, serviceNom }: { referen
         <Text style={styles.detailLabel}>Demandeur</Text>
         <Text style={styles.detailValue}>{demandeurNom}</Text>
       </View>
-      <View style={[styles.detailRow, { marginBottom: 0 }]}>
+      <View style={creeeLe ? styles.detailRow : [styles.detailRow, { marginBottom: 0 }]}>
         <Text style={styles.detailLabel}>Service</Text>
         <Text style={styles.detailValue}>{serviceNom ?? "—"}</Text>
       </View>
+      {creeeLe ? (
+        <View style={[styles.detailRow, { marginBottom: 0 }]}>
+          <Text style={styles.detailLabel}>Demande créée le</Text>
+          <Text style={styles.detailValue}>{formatDate(creeeLe)}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -298,6 +323,8 @@ export interface ReceiptData {
   demandeurNom: string;
   /** Service du demandeur (rappel de la demande, lot D). */
   serviceNom: string | null;
+  /** Date de création de la demande (lot H, « Demande créée le »). */
+  demandeCreeeLe: Date;
   /** Article payé par ce règlement (lot D) ; `null` pour une demande sans article. */
   article: ArticleImprime | null;
   /** Distinct du demandeur (Phase A) — voir `getBeneficiaireNom`. */
@@ -441,6 +468,10 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Service</Text>
               <Text style={styles.detailValue}>{data.serviceNom ?? "—"}</Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Demande créée le</Text>
+              <Text style={styles.detailValue}>{formatDate(data.demandeCreeeLe)}</Text>
             </View>
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Bénéficiaire</Text>

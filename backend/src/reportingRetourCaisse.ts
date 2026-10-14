@@ -66,7 +66,7 @@ export const COLONNES_REPORTING_RETOUR: { cle: keyof LigneReportingRetour; titre
   { cle: "articleDemandeur", titre: "Article (libellé d'origine du demandeur)" },
   { cle: "beneficiaire", titre: "Bénéficiaire de l'article" },
   { cle: "montantValideArticle", titre: "Montant validé de l'article", montant: true },
-  { cle: "dateLivraison", titre: "Date de livraison" },
+  { cle: "dateLivraison", titre: "Livraison prévue le" },
   { cle: "reglementsArticle", titre: "Règlements de l'article", multi: true },
   { cle: "totalRegleArticle", titre: "Réglé sur l'article", montant: true },
   { cle: "dontCaisse", titre: "Dont Caisse", montant: true },

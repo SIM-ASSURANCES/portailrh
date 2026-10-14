@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Button, PageHeader, ToastOnMount } from "@/components/ui";
-import { nomBeneficiaireDemande, resumeMotifDemande } from "backend";
+import { getDatesGestionDemandes, nomBeneficiaireDemande, resumeMotifDemande } from "backend";
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
@@ -59,6 +59,7 @@ export default async function MesDemandesPage({
     orderBy: { createdAt: "desc" },
   });
 
+  const gestions = await getDatesGestionDemandes(rawDemandes.map((d) => d.id));
   const demandes = rawDemandes.map((d) => ({
     id: d.id,
     reference: d.reference,
@@ -68,6 +69,7 @@ export default async function MesDemandesPage({
     statut: d.statut,
     statutAffiche: affichageStatutDemande(d.statut, d.lignes),
     createdAt: d.createdAt,
+    gere: gestions.get(d.id) ?? null,
     typeDemande: d.typeDemande,
     natureDepenseDirecte: d.natureDepenseDirecte,
     beneficiaireNom: nomBeneficiaireDemande(d, d.lignes),

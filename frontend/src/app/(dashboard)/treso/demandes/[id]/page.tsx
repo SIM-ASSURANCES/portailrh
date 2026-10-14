@@ -28,7 +28,8 @@ import { RecapRetourCaisse } from "@/components/tresorerie/RecapRetourCaisse";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { motifLigneDemandeur, prisma } from "backend";
+import { getDatesGestionDemandes, motifLigneDemandeur, prisma } from "backend";
+import { libelleGestionArticle } from "backend/client";
 
 import { CorrectionDemande } from "./CorrectionDemande";
 import { ReglementsRecusSection } from "./ReglementsRecusSection";
@@ -123,11 +124,13 @@ export default async function MaDemandeDetailPage({
       ).map((c) => ({ value: c.id, label: c.service ? `${c.fullName} — ${c.service.name}` : c.fullName }))
     : [];
 
+  // Lot H : « Géré le » = date du dernier événement de la demande (décision, règlement, retour, clôture).
+  const gestionDemande = (await getDatesGestionDemandes([demande.id])).get(demande.id) ?? null;
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title={`Demande ${demande.reference}`}
-        description={`Créée le ${demande.createdAt.toLocaleDateString("fr-FR")}`}
+        description={`Demande créée le ${demande.createdAt.toLocaleDateString("fr-FR")} · ${libelleGestionArticle(gestionDemande)}`}
         actions={
           demande.typeDemande === "DEPENSE_DIRECTE" && demande.natureDepenseDirecte ? (
             <DepenseDirecteBadge nature={demande.natureDepenseDirecte} />

@@ -63,7 +63,7 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title={`Demande ${demande.reference}`}
-        description={`Créée par ${demande.createur.fullName} (${demande.createur.service?.name ?? "—"}) le ${demande.createdAt.toLocaleDateString("fr-FR")}`}
+        description={`Demande créée le ${demande.createdAt.toLocaleDateString("fr-FR")} par ${demande.createur.fullName} (${demande.createur.service?.name ?? "—"})`}
       />
 
       <div className="space-y-4 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">

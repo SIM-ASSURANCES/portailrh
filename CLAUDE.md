@@ -3088,6 +3088,38 @@ Remis / Détaillé / Reste non détaillé / Sans pièce formelle / Retourné du 
   e2e `lot-g-ter.mjs` 31/31 (bande avant/après détail, position au-dessus des sous-blocs, cas 400 000 + 71 000, article à un seul règlement sans bande, caisse inchangée) ;
   régressions `lot-g-bis` 35, `lot-g` 60, `regularisation-par-article` 38, `reglement-par-article` 55, `articles-decision-finance` 65, `soumission-dg-article` 37, `articles-beneficiaire-pieces` 34.
 
+#### Lot H — libellés de dates et du menu (2026-10-22)
+
+Affichage seulement : **aucune migration, aucune nouvelle colonne, aucun calcul modifié, aucune route ni URL changée**.
+
+**1. Trois dates distinctes, libellées partout.**
+- **« Demande créée le … »** (`Demande.createdAt`, une seule date pour toute la demande) : en-têtes « Créée le » de toutes les listes (Mes demandes, Accueil du collaborateur, Toutes les demandes, Demandes à catégoriser,
+  Mon service, Étape DG), descriptions des pages de détail (collaborateur, Finance, Service, DG : « Demande créée le … par … »), rappel en tête de chaque article (`EnteteDemandeArticle`), les trois PDF (reçu de règlement, bon de caisse, reçu de retour :
+  `RappelDemande`/« Détails de la demande »), colonne du reporting par demande et de l'export Excel.
+- **« Livraison prévue le … »** (`LigneDemande.dateLivraison`, lot G, « — » si absente) : carte d'article (remplace « Livraison : »), bloc « Article concerné » des PDF (remplace « Date de livraison »), « lignes d'articles » du reporting (« livraison prévue le … »),
+  colonne « Livraison prévue le » du reporting des retours de caisse.
+- **« Géré le … »** — **déduit des événements du parcours, sans colonne** : `parcoursArticle(...).gere` (module pur `parcoursArticle.ts`, `derniereGestion`) = date du **dernier événement daté** de l'article parmi : décision (Validé / Rejeté : `decideAt`), règlement confirmé non annulé (`Reglement.confirmeAt`),
+  retour de caisse (réception `receptionneAt`, sinon déclaration `createdAt`), retour externe rattaché (`creeAt`), régularisation (`regulariseAt`, étape « Régularisé » seulement quand l'article l'est). À date égale, l'étape la plus avancée du parcours l'emporte. Affiché « Géré le 05/10/2026 (réglé) » (`libelleGestionArticle`),
+  « Géré le — » tant que l'article n'a pas été traité. Cartes d'articles (via `ParcoursArticleView`, `data-gere-le`) et reçus PDF de règlement et de retour (« Géré le » du bloc « Article concerné », `ArticleDocument.gereLe`).
+  **Le bon de caisse reste minimal** (il gagne « Demande créée le » et « Livraison prévue le », pas « Géré le »).
+- **Au niveau de la demande** (`backend/src/dateGestionDemande.ts`, `getDatesGestionDemandes(ids)`, 5 requêtes groupées pour toute une liste) : même règle sur tous les événements de la demande + **clôture** (`HistoriqueEntry` `cloture_totale`/`cloture_partielle`) ; le nom « Régularisé » n'y est pas produit (il demanderait le solde de chaque règlement ; la date, elle, est identique).
+  Colonne « Géré le » : Mes demandes, Accueil du collaborateur, Toutes les demandes, reporting écran et Excel (feuille « Demandes », colonne `gereLe`), description des pages de détail collaborateur et Finance. Pas de colonne « Géré le » dans les files de tâches en cours (Service, DG, à catégoriser) : rien n'y est encore géré.
+- Autres libellés précisés : date d'une dépense (« Dépense du … »), saisie d'un règlement (« règlement saisi le … »), décision d'un article (« Par X le … »), feuilles annexes de l'export (« Date du mouvement » pour les mouvements banque, « Date du retour externe », « Date de l'écriture » pour le journal de caisse).
+  Les horodatages du journal d'historique restent « auteur — date » (événement de l'historique).
+
+**2. Menu.** Seuls les libellés changent (routes inchangées), mêmes tests de visibilité :
+| Rôle (seed) | Avant | Après |
+|---|---|---|
+| Collaborateur, Responsable de service | Tableau de bord · Mon tableau de bord | Tableau de bord · **Accueil** |
+| Finance (Responsable) | Tableau de bord · Tableau de bord Finance · Mon tableau de bord | Tableau de bord · **Accueil Finance** · **Accueil** |
+| Assistant Finance | Tableau de bord · Mon tableau de bord | Tableau de bord · **Accueil** (pas de tableau Finance : `treso.voir_dashboard_finance` absente) |
+| DG | Tableau de bord · Tableau de bord Finance · Mon tableau de bord | Tableau de bord · **Accueil Finance** · **Accueil** |
+| RH, Admin, Encaissements | Tableau de bord | Tableau de bord (inchangé) |
+Titres de page (h1) alignés : `/treso/finance` « Accueil Finance », `/treso/tableau-de-bord` « Accueil », `/` « Tableau de bord ». Il n'existe pas de fil d'Ariane dans le portail. **Infobulle** : chaque entrée du menu porte `title` = libellé complet (avant : seulement en mode réduit), y compris l'intitulé des branches ; la largeur du menu (256 px) ne change pas.
+**À arbitrer (non tranché)** : (a) l'Assistant Finance n'a pas d'« Accueil Finance » (décision de permission, pas de libellé) ; (b) Finance et DG ont deux entrées voisines « Accueil Finance » et « Accueil » (l'accueil personnel sur leurs propres demandes) ; (c) le collaborateur voit « Tableau de bord » (page des modules) à côté de « Accueil » — libellé alternatif possible pour la page « / » : « Portail ».
+
+**Vérifié** : vitest (`parcoursArticle` : « Géré le » rejeté/validé/réglé/retour/régularisé/retour externe ; `reportingDemandeLigne` : colonnes et valeurs), tsc, eslint, `next build` ; e2e `lot-h.mjs` (menu par rôle, infobulles, h1, dates sur écrans, listes, PDF, Excel) ; régressions `lot-g-ter`, `lot-g-bis`, `lot-g`, `regularisation-par-article`, `reglement-par-article`, `articles-decision-finance`, `soumission-dg-article`, `articles-beneficiaire-pieces` (tests mis à jour pour « Livraison prévue le » et « Accueil »).
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié

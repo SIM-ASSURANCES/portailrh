@@ -25,7 +25,7 @@ interface SidebarProps {
   canAdmin?: boolean;
   /** treso.creer_demande OU treso.declarer_retour : ajoute "Demandes". */
   canAccesDemandes?: boolean;
-  /** treso.creer_demande seule : ajoute "Mon tableau de bord". */
+  /** treso.creer_demande seule : ajoute « Accueil » (ex-« Mon tableau de bord »). */
   canAccesMonTableauDeBord?: boolean;
   /** categoriser_demande OU valider_demande : ajoute "Demandes à traiter (Finance)". */
   canAccesFinanceDemandes?: boolean;
@@ -34,7 +34,7 @@ interface SidebarProps {
   canRetourExterne?: boolean;
   /** treso.receptionner_retour : ajoute "Retours en attente". */
   canReceptionnerRetour?: boolean;
-  /** treso.voir_dashboard_finance : ajoute "Tableau de bord Finance". */
+  /** treso.voir_dashboard_finance : ajoute « Accueil Finance » (ex-« Tableau de bord Finance »). */
   canVoirDashboardFinance?: boolean;
   /** treso.voir_reporting : ajoute "Reporting". */
   canVoirReporting?: boolean;
@@ -242,7 +242,9 @@ export function Sidebar({
                   } hover:bg-muted`}
                 >
                   <Icon name={branch.icon} className="size-[18px] shrink-0" />
-                  <span className="flex-1 truncate text-left">{branch.label}</span>
+                  <span className="flex-1 truncate text-left" title={branch.label}>
+                    {branch.label}
+                  </span>
                   <Icon
                     name="chevron-down"
                     className={`size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out-strong motion-reduce:transition-none ${open ? "" : "-rotate-90"}`}
@@ -400,7 +402,7 @@ function ItemLink({
   return (
     <Link
       href={item.href}
-      title={collapsed ? item.label : undefined}
+      title={item.label}
       aria-current={active ? "page" : undefined}
       onClick={onNavigate}
       className={`flex items-center rounded-lg text-sm font-medium transition-[background-color,color,transform] duration-150 ease-out-strong motion-safe:active:scale-[0.98] ${

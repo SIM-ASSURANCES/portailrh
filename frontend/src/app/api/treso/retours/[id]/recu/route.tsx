@@ -73,12 +73,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     demandeReference: demande.reference,
     demandeurNom: demande.createur.fullName,
     serviceNom: demande.createur.service?.name ?? null,
+    demandeCreeeLe: demande.createdAt,
     article: article
       ? {
           libelle: article.libelle,
           beneficiaireNom: article.beneficiaireNom,
           montantValide: article.montantValide,
           dateLivraison: article.dateLivraison,
+          gereLe: article.gereLe,
         }
       : null,
     historique: await chargerHistoriqueDocument({

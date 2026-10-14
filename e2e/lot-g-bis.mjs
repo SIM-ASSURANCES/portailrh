@@ -246,7 +246,7 @@ const ligneA = `${DA}-l1`;
   const histoCollab = net(await c.locator("body").innerText());
   verifier("3. historique visible du collaborateur : « Retour enregistré par la Finance »", /Retour enregistré par la Finance/i.test(histoCollab));
   await c.goto(`${B}/treso/tableau-de-bord`);
-  verifier("3. « Mon tableau de bord » : aucune erreur", true);
+  verifier("3. « Accueil » (ex-Mon tableau de bord) : aucune erreur", true);
   await c.close();
 }
 

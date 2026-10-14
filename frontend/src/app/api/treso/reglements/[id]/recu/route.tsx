@@ -127,6 +127,7 @@ export async function GET(
     demandeReference: reglement.demande.reference,
     demandeurNom: reglement.demande.createur.fullName,
     serviceNom: reglement.demande.createur.service?.name ?? null,
+    demandeCreeeLe: reglement.demande.createdAt,
     article,
     beneficiaireNom: nomBeneficiaireDemande(reglement.demande, reglement.demande.lignes, { seulementValidees: true }),
     categorieLabel: repartitionCategories ? null : categorieLabelUnique,

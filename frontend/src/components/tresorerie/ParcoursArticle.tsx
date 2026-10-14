@@ -1,4 +1,5 @@
 import type { ParcoursArticle } from "backend";
+import { libelleGestionArticle } from "backend/client";
 
 import { Badge } from "@/components/ui";
 
@@ -31,6 +32,9 @@ export function ParcoursArticleView({ parcours }: { parcours: ParcoursArticle })
           </span>
         ))}
       </div>
+      <p data-gere-le className="text-muted-foreground">
+        {libelleGestionArticle(parcours.gere)}
+      </p>
       {parcours.etapes.length > 0 ? (
         <ol className="space-y-0.5 border-l-2 border-border pl-3 text-muted-foreground">
           {parcours.etapes.map((e) => (

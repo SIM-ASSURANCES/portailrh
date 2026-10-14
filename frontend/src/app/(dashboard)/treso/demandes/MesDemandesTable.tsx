@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 
+import { libelleGestionArticle } from "backend/client";
+import type { GestionArticle } from "backend";
+
 import { Badge, Button, DataTable } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import type { BadgeVariant } from "@/components/ui";
@@ -19,6 +22,8 @@ interface DemandeRow {
   /** Libellé affiché si différent du statut (lot B : « En cours (x/n traités) »), posé par la page. */
   statutAffiche?: { label: string; variant: BadgeVariant };
   createdAt: Date;
+  /** Lot H : dernier événement de la demande (« Géré le »), `null` si rien n'a encore été traité. */
+  gere: GestionArticle | null;
   typeDemande: TypeDemande;
   natureDepenseDirecte: NatureDepenseDirecte | null;
   beneficiaireNom: string;
@@ -75,10 +80,17 @@ export function MesDemandesTable({ demandes }: { demandes: DemandeRow[] }) {
         },
         {
           key: "createdAt",
-          header: "Créée le",
+          header: "Demande créée le",
           sortable: true,
           accessor: (d) => d.createdAt,
           render: (d) => d.createdAt.toLocaleDateString("fr-FR"),
+        },
+        {
+          key: "gereLe",
+          header: "Géré le",
+          sortable: true,
+          accessor: (d) => d.gere?.date ?? null,
+          render: (d) => <span data-gere-le>{libelleGestionArticle(d.gere).replace(/^Géré le /, "")}</span>,
         },
         {
           key: "actions",

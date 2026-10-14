@@ -46,6 +46,8 @@ export const VARIANTE_BADGE_PARCOURS: Record<BadgeParcours, VarianteBadgeParcour
 export interface ParcoursRetour {
   estReceptionne: boolean;
   montantARetourner: number;
+  /** Lot H : date de réception du retour s'il est réceptionné, sinon de sa déclaration ; absente = non connue. */
+  date?: Date | null;
 }
 
 export interface ParcoursReglement {
@@ -109,7 +111,19 @@ export interface MontantsParcours {
   retourRecu: number | null;
 }
 
+/**
+ * Lot H — « Géré le » : date du DERNIER événement du parcours de l'article (validé, rejeté, réglé, retour de caisse,
+ * retour enregistré par la Finance, régularisé), avec le nom de l'étape. Déduite des dates déjà enregistrées : aucune colonne
+ * ajoutée. `null` tant que l'article n'a connu aucune décision.
+ */
+export interface GestionArticle {
+  etape: "Validé" | "Rejeté" | "Réglé" | "Retour de caisse" | "Retour enregistré par la Finance" | "Régularisé" | "Clôturée";
+  date: Date;
+}
+
 export interface ParcoursArticle {
+  /** Lot H : dernière étape gérée et sa date (« Géré le … »), `null` si l'article n'a pas encore été traité. */
+  gere: GestionArticle | null;
   badge: BadgeParcours;
   libelleBadge: string;
   variante: VarianteBadgeParcours;
@@ -123,6 +137,22 @@ export interface ParcoursArticle {
 const c = (n: number) => Math.round(n * 100);
 const eur = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`;
 const jour = (d: Date | null) => (d ? d.toLocaleDateString("fr-FR", { timeZone: "Africa/Abidjan" }) : null);
+
+/** Libellé de la date de gestion : « Géré le 12/10/2026 (réglé) » ; « Géré le — » quand l'article n'a pas été traité. */
+export function libelleGestionArticle(g: GestionArticle | null): string {
+  if (!g) return "Géré le —";
+  return `Géré le ${jour(g.date)} (${g.etape.charAt(0).toLowerCase()}${g.etape.slice(1)})`;
+}
+
+/** Dernier événement daté parmi ceux fournis (à date égale, le plus tardif de la liste : la suite logique du parcours). */
+export function derniereGestion(evenements: { etape: GestionArticle["etape"]; date: Date | null | undefined }[]): GestionArticle | null {
+  let retenu: GestionArticle | null = null;
+  for (const ev of evenements) {
+    if (!(ev.date instanceof Date)) continue;
+    if (!retenu || ev.date.getTime() >= retenu.date.getTime()) retenu = { etape: ev.etape, date: ev.date };
+  }
+  return retenu;
+}
 
 export const NOTE_REGULARISATION_INDETERMINEE =
   "Un retour exceptionnel post-clôture ancien, rattaché à aucun article, a été enregistré sur cette demande : la régularisation ne peut pas être attribuée à cet article.";
@@ -141,6 +171,13 @@ export function parcoursArticle(e: EntreeParcours): ParcoursArticle {
   const montants: MontantsParcours = { valide, regle, reste, retourAttendu, retourRecu };
 
   const habiller = (badge: BadgeParcours, precision: string | null, etapes: EtapeParcours[], note: string | null = null): ParcoursArticle => ({
+    gere: derniereGestion([
+      { etape: e.statut === "REJETEE" ? "Rejeté" : "Validé", date: e.statut === "EN_ATTENTE" ? null : e.decideAt },
+      ...confirmes.map((r) => ({ etape: "Réglé" as const, date: r.confirmeAt })),
+      ...retours.map((r) => ({ etape: "Retour de caisse" as const, date: r.date })),
+      ...(e.retoursExternes ?? []).map((x) => ({ etape: "Retour enregistré par la Finance" as const, date: x.creeAt })),
+      { etape: "Régularisé", date: badge === "REGULARISE" ? (e.regularisation?.regulariseAt ?? null) : null },
+    ]),
     badge,
     libelleBadge: LIBELLE_BADGE_PARCOURS[badge],
     variante: VARIANTE_BADGE_PARCOURS[badge],

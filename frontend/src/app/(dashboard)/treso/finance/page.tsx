@@ -148,7 +148,7 @@ export default async function DashboardFinancePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
-        title="Tableau de bord Finance"
+        title="Accueil Finance"
         description="Vue d'ensemble de la trésorerie, recalculée en temps réel."
       />
 

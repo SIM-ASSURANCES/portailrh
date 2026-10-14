@@ -23,7 +23,7 @@ export function EnteteDemandeArticle({ contexte }: { contexte: ContexteDemandeAr
       <span aria-hidden="true">·</span>
       <span>{contexte.serviceNom ?? "Sans service"}</span>
       <span aria-hidden="true">·</span>
-      <span>{contexte.creeeLe.toLocaleDateString("fr-FR")}</span>
+      <span>Demande créée le {contexte.creeeLe.toLocaleDateString("fr-FR")}</span>
       <span aria-hidden="true">·</span>
       <span>{nomDevise(contexte.devise)}</span>
     </span>

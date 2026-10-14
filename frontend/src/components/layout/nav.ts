@@ -55,12 +55,12 @@ export interface NavFlags {
   canAccesDemandes: boolean;
   /**
    * `treso.creer_demande` seule (pas de OR avec `declarer_retour`) : ajoute
-   * "Mon tableau de bord". Distincte de `canAccesDemandes` — un rôle combiné
+   * « Accueil » (ex-« Mon tableau de bord », lot H). Distincte de `canAccesDemandes` — un rôle combiné
    * (ex: Finance + RH) peut avoir `declarer_retour` sans jamais créer ses
-   * propres demandes ; "Mon tableau de bord" (indicateurs Demandé/Validé/
+   * propres demandes ; « Accueil » (indicateurs Demandé/Validé/
    * Réglé sur SES demandes) n'a alors aucun sens et ne doit pas s'ajouter
-   * comme un 3ᵉ "dashboard" redondant à côté de "Tableau de bord" (général)
-   * et "Tableau de bord Finance" — voir CLAUDE.md.
+   * comme un 3ᵉ "dashboard" redondant à côté de « Tableau de bord » (général)
+   * et « Accueil Finance » — voir CLAUDE.md.
    */
   canAccesMonTableauDeBord: boolean;
   canAccesFinanceDemandes: boolean;
@@ -78,7 +78,7 @@ export interface NavFlags {
   canRetourExterne?: boolean;
   /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
   canReceptionnerRetour: boolean;
-  /** `treso.voir_dashboard_finance` : ajoute "Tableau de bord Finance" (en tête de branche). */
+  /** `treso.voir_dashboard_finance` : ajoute « Accueil Finance » (en tête de branche). */
   canVoirDashboardFinance: boolean;
   /** `treso.voir_reporting` : ajoute "Reporting". */
   canVoirReporting: boolean;
@@ -249,7 +249,7 @@ export function getNavBranches({
             ...(canVoirDashboardFinance
               ? [
                   {
-                    label: "Tableau de bord Finance",
+                    label: "Accueil Finance",
                     href: "/treso/finance",
                     icon: "layout-grid",
                     exact: true,
@@ -277,7 +277,7 @@ export function getNavBranches({
             ...(canAccesMonTableauDeBord
               ? [
                   {
-                    label: "Mon tableau de bord",
+                    label: "Accueil",
                     href: "/treso/tableau-de-bord",
                     icon: "layout-grid",
                     exact: true,

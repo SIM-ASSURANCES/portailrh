@@ -12,6 +12,8 @@ export interface RetourReceiptData {
   demandeReference: string;
   demandeurNom: string;
   serviceNom: string | null;
+  /** Date de création de la demande (lot H, « Demande créée le »). */
+  demandeCreeeLe: Date;
   /** Article dont le règlement d'origine est rattaché (lot D) ; `null` sinon. */
   article: ArticleImprime | null;
   beneficiaireNom: string;
@@ -134,7 +136,7 @@ export function RetourReceiptDocument({ data }: { data: RetourReceiptData }) {
 
           <HistoriqueSection historique={data.historique} />
 
-          <RappelDemande reference={data.demandeReference} demandeurNom={data.demandeurNom} serviceNom={data.serviceNom} />
+          <RappelDemande reference={data.demandeReference} demandeurNom={data.demandeurNom} serviceNom={data.serviceNom} creeeLe={data.demandeCreeeLe} />
           {data.article ? (
             <ArticleSection article={data.article} />
           ) : (

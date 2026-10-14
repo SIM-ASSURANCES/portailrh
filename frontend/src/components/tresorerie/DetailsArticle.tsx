@@ -36,7 +36,7 @@ export function DetailsArticle({
   return (
     <div data-details-article className="mt-1 space-y-0.5 text-xs font-normal text-muted-foreground">
       <p data-date-livraison>
-        Livraison : <span className="text-foreground">{libelleDateLivraison(dateLivraison)}</span>
+        Livraison prévue le <span className="text-foreground">{libelleDateLivraison(dateLivraison)}</span>
       </p>
       {afficherBeneficiaire ? (
         <p data-beneficiaire-article>

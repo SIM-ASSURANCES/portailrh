@@ -1,7 +1,9 @@
 import {
   beneficiaireArticle,
   montantValideArticle,
+  getParcoursArticles,
   libelleDateLivraison,
+  libelleGestionArticle,
   prisma,
   resteAReglerArticle,
   totalRegleArticle,
@@ -16,6 +18,8 @@ export interface ArticleDocument {
   montantValide: number;
   /** Date de livraison de l'article, formatée (« — » pour un ancien article). */
   dateLivraison: string;
+  /** Lot H : « Géré le » de l'article (dernier événement du parcours), déjà formaté ; « — » si rien n'a été traité. */
+  gereLe: string;
   /** Réglé à ce jour sur l'article / reste (état le plus à jour, comme le reste du reçu). */
   regleADate: number;
   resteARegler: number;
@@ -32,7 +36,8 @@ export async function chargerArticleDocument(
   vueFinance: boolean
 ): Promise<ArticleDocument | null> {
   if (!reglement.ligneDemandeId) return null;
-  const [ligne, reglements] = await Promise.all([
+  const [parcours, ligne, reglements] = await Promise.all([
+    getParcoursArticles(reglement.demandeId),
     prisma.ligneDemande.findUnique({
       where: { id: reglement.ligneDemandeId },
       include: { beneficiaireUser: { select: { fullName: true } } },
@@ -55,6 +60,7 @@ export async function chargerArticleDocument(
     beneficiaireNom: beneficiaireArticle(ligne, demande).libelle,
     montantValide: montantValideArticle(article),
     dateLivraison: libelleDateLivraison(ligne.dateLivraison),
+    gereLe: libelleGestionArticle(parcours.get(ligne.id)?.gere ?? null).replace(/^Géré le /, ""),
     regleADate: totalRegleArticle(reglements, ligne.id),
     resteARegler: resteAReglerArticle(article, reglements),
   };

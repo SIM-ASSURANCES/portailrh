@@ -136,7 +136,7 @@ function DetailDepenses({
               <span className="font-medium text-foreground">
                 {d.objet} — {d.montant.toLocaleString("fr-FR")} FCFA
               </span>
-              <span className="text-xs text-muted-foreground">{d.date.toLocaleDateString("fr-FR")}</span>
+              <span className="text-xs text-muted-foreground">Dépense du {d.date.toLocaleDateString("fr-FR")}</span>
             </div>
             {d.nature ? <p className="mt-1 text-xs text-muted-foreground">{d.nature}</p> : null}
             {d.commentaire ? <p className="mt-1 text-xs text-foreground">{d.commentaire}</p> : null}

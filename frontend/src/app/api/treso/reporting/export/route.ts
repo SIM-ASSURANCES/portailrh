@@ -114,7 +114,7 @@ export async function GET(request: NextRequest) {
     { header: "Référence demande", key: "reference", width: 20 },
     { header: "Type", key: "type", width: 14 },
     { header: "Montant (FCFA)", key: "montant", width: 16 },
-    { header: "Date", key: "date", width: 14 },
+    { header: "Date du mouvement", key: "date", width: 14 },
     { header: "Auteur", key: "auteur", width: 22 },
     { header: "Bordereau joint", key: "bordereau", width: 16 },
   ];
@@ -139,7 +139,7 @@ export async function GET(request: NextRequest) {
     { header: "Chèque initial déclaré (FCFA)", key: "cheque", width: 26 },
     { header: "Montant retourné (FCFA)", key: "retourne", width: 22 },
     { header: "Motif", key: "motif", width: 40 },
-    { header: "Date", key: "date", width: 14 },
+    { header: "Date du retour externe", key: "date", width: 14 },
     { header: "Enregistré par", key: "auteur", width: 22 },
     { header: "Demande rattachée", key: "demande", width: 20 },
     { header: "Article rattaché", key: "article", width: 28 },
@@ -203,7 +203,7 @@ export async function GET(request: NextRequest) {
     { header: "Source", key: "source", width: 28 },
     { header: "Référence demande", key: "reference", width: 20 },
     { header: "Utilisateur", key: "utilisateur", width: 22 },
-    { header: "Date", key: "date", width: 14 },
+    { header: "Date de l'écriture", key: "date", width: 14 },
   ];
   journal.forEach((j) =>
     sheetJournal.addRow({
