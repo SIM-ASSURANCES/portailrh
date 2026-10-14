@@ -28,6 +28,8 @@ export interface PresenceData {
   justification?: JustificationAffichee;
   /** Justification d'un départ anticipé, le cas échéant. */
   justificationDepart?: JustificationAffichee;
+  /** Le départ pointé est un départ anticipé. */
+  departAnticipe?: boolean;
   /** Absence autorisée couvrant la journée (« Congé 00:00–23:59 »). */
   absenceAutorisee?: string;
 }

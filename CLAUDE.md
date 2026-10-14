@@ -4586,6 +4586,27 @@ que dans les logs du serveur).
 - **Invariant à préserver** : le retard va au supérieur, pas à la RH — prouvé par `e2e/planificateur-journal.mjs` (un membre de Commercial en
   retard : 1 notification pour `responsable-commercial@`, aucune pour `rh@` ni le DG).
 
+### 17. Fiabilisation du pointage — phase 5 : « Mon équipe » du responsable (2026-10-14)
+
+- **Accès** : être **responsable ACTUEL d'au moins un service** (`Service.responsableId`, désignation dans Admin > Services) — **aucune permission**.
+  Revérifié côté serveur sur chaque page (`chargerEquipeResponsable`, `frontend/src/lib/equipe.ts`, relu à chaque requête : un changement de
+  responsable ou de service prend effet immédiatement) ; sinon `notFound()` (404). Entrée de menu « Mon équipe » (`NavFlags.canVoirMonEquipe`,
+  branche Pointage) visible à cette seule condition.
+- **Périmètre** : les membres ACTIFS des services dont il est responsable, **sans lui-même**, parmi les comptes qui pointent (`USER_CAN_POINT_WHERE`,
+  le périmètre du reporting RH). La RH garde sa vue globale ; le DG voit son service (Direction DG) comme tout responsable.
+- **`/pointage/mon-equipe`** : *Aujourd'hui* (état de chaque membre — `etatJourMembre`, `backend/src/equipe.ts`, 7 tests : à l'heure, en retard + minutes,
+  parti en avance, absence autorisée, absent, jour non ouvré, pas encore pointé —, arrivée, départ, état de la justification) ; *À décider* (compteur
+  `compteurMenuJustificationsSession`, lien vers `/pointage/justifications`) ; *Sur la période* (GET `du`/`au`, mois en cours par défaut, `periodeEquipe`) :
+  retards, minutes, départs anticipés, absences, justifications refusées ou non justifiées, lien « Historique ».
+  **`/pointage/mon-equipe/[userId]`** : historique d'un membre en LECTURE SEULE (404 pour tout compte qui n'en est pas le responsable, lui-même compris).
+- **Aucun second calcul** : la lecture de la page « Présence du jour » de la RH a été EXTRAITE dans `frontend/src/lib/presenceJour.ts`
+  (`chargerPresenceJour(date, userIds?)`) et la page de la RH l'utilise désormais elle aussi ; la période passe par `getReportingAgrégé` (le reporting
+  RH) et le nouveau `getSyntheseEquipe` (`pointageReporting.ts`) ; `PointageReportingFilters` gagne `userIds` (`filtreIdentifiants` : intersection avec
+  `userId`). Retard, minutes et départ anticipé sont ceux stockés au pointage (règles du lot 3), jamais recalculés. `PresenceData.departAnticipe` ajouté.
+- **Pas d'export** dans cette version.
+- Vérifié par `e2e/mon-equipe.mjs` : chiffres identiques à ceux du reporting RH (même période, même service), 404 hors responsabilité, accès qui suit
+  un changement de responsable, 390 px.
+
 ## Module FeedbackApp — anonymat total
 
 Troisième module : permet à QUICONQUE (employé connecté ou visiteur sans

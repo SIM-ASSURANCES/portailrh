@@ -53,6 +53,8 @@ interface AppShellProps {
   demandesServiceAValider?: number | null;
   demandesDGADecider?: number | null;
   justificationsADecider?: number | null;
+  /** Voir `NavFlags.canVoirMonEquipe`. */
+  canVoirMonEquipe?: boolean;
   /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
   canRecevoirFeedback?: boolean;
   unreadNotificationsCount?: number;
@@ -95,6 +97,7 @@ export function AppShell({
   demandesServiceAValider = null,
   demandesDGADecider = null,
   justificationsADecider = null,
+  canVoirMonEquipe = false,
   canRecevoirFeedback = false,
   unreadNotificationsCount = 0,
   topbarAlert = null,
@@ -200,6 +203,7 @@ export function AppShell({
         demandesServiceAValider={demandesServiceAValider}
         demandesDGADecider={demandesDGADecider}
         justificationsADecider={justificationsADecider}
+        canVoirMonEquipe={canVoirMonEquipe}
         canRecevoirFeedback={canRecevoirFeedback}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}

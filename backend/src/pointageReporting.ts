@@ -10,7 +10,22 @@ export const pointageReportingSchema = z.object({
   service: z.string().optional(),
 });
 
-export type PointageReportingFilters = z.infer<typeof pointageReportingSchema>;
+export type PointageReportingFilters = z.infer<typeof pointageReportingSchema> & {
+  /** Restreint aux comptes listés (« Mon équipe », phase 5 de la fiabilisation) ; absent = tous. */
+  userIds?: string[];
+};
+
+/**
+ * Filtre d'identifiants de comptes d'un reporting : `userId` (un seul compte) et `userIds` (une liste) se combinent
+ * par intersection ; `undefined` = aucun filtre.
+ */
+export function filtreIdentifiants(filters: Pick<PointageReportingFilters, "userId" | "userIds">): string | { in: string[] } | undefined {
+  if (filters.userIds) {
+    if (filters.userId) return { in: filters.userIds.includes(filters.userId) ? [filters.userId] : [] };
+    return { in: filters.userIds };
+  }
+  return filters.userId;
+}
 
 export function getReportingPeriodConstraints(dateDebut?: string, dateFin?: string) {
   if (!dateDebut || !dateFin) return { error: null };
@@ -82,7 +97,8 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
   const whereUser: Prisma.UserWhereInput = {
     ...USER_CAN_POINT_WHERE,
   };
-  if (filters.userId) whereUser.id = filters.userId;
+  const idFiltre = filtreIdentifiants(filters);
+  if (idFiltre !== undefined) whereUser.id = idFiltre;
   if (filters.service) whereUser.service = { name: filters.service };
 
   const wherePointage: Prisma.PointageWhereInput = {};
@@ -178,7 +194,8 @@ export function construireRequeteDetails(
     ...USER_CAN_POINT_WHERE,
     ...(filters.service ? { service: { name: filters.service } } : {}),
   };
-  if (filters.userId) where.userId = filters.userId;
+  const idFiltre = filtreIdentifiants(filters);
+  if (idFiltre !== undefined) where.userId = idFiltre;
   if (filters.dateDebut || filters.dateFin) {
     where.heure = {};
     if (filters.dateDebut) where.heure.gte = new Date(filters.dateDebut);
@@ -249,4 +266,43 @@ export function getDetailsRetards(filters: PointageReportingFilters, pagination?
 /** Détail des départs anticipés ; sans pagination, toutes les lignes (export). */
 export function getDetailsDepartsAnticipes(filters: PointageReportingFilters, pagination?: PaginationDetails) {
   return getDetails("DEPART_ANTICIPE", filters, pagination);
+}
+
+export interface SyntheseEquipeMembre {
+  userId: string;
+  departsAnticipes: number;
+  /** Justifications refusées ou clôturées sans justification (statuts REFUSEE et NON_JUSTIFIEE) sur la période. */
+  justificationsRefuseesOuNonJustifiees: number;
+}
+
+/**
+ * Compléments du reporting pour « Mon équipe » : départs anticipés et justifications refusées ou non justifiées par
+ * membre sur la période. Même périmètre de pointages que le reporting (`construireRequeteDetails`) : retards, absences et
+ * minutes viennent de `getReportingAgrégé`, jamais recalculés ailleurs.
+ */
+export async function getSyntheseEquipe(filters: PointageReportingFilters): Promise<Map<string, SyntheseEquipeMembre>> {
+  const departs = construireRequeteDetails("DEPART_ANTICIPE", filters);
+  const [departsPar, justifications] = await Promise.all([
+    prisma.pointage.groupBy({ by: ["userId"], where: departs.where, _count: { id: true } }),
+    prisma.justificationPointage.findMany({
+      where: {
+        statut: { in: ["REFUSEE", "NON_JUSTIFIEE"] },
+        pointage: {
+          ...(departs.where.heure ? { heure: departs.where.heure } : {}),
+          userId: filtreIdentifiants(filters),
+          user: { ...USER_CAN_POINT_WHERE, ...(filters.service ? { service: { name: filters.service } } : {}) },
+        },
+      },
+      select: { pointage: { select: { userId: true } } },
+    }),
+  ]);
+  const synthese = new Map<string, SyntheseEquipeMembre>();
+  const ligne = (userId: string) => {
+    let l = synthese.get(userId);
+    if (!l) synthese.set(userId, (l = { userId, departsAnticipes: 0, justificationsRefuseesOuNonJustifiees: 0 }));
+    return l;
+  };
+  for (const d of departsPar) ligne(d.userId).departsAnticipes = d._count.id;
+  for (const j of justifications) ligne(j.pointage.userId).justificationsRefuseesOuNonJustifiees += 1;
+  return synthese;
 }

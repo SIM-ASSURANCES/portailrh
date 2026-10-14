@@ -67,6 +67,8 @@ interface SidebarProps {
   demandesDGADecider?: number | null;
   /** Voir `NavFlags.justificationsADecider`. */
   justificationsADecider?: number | null;
+  /** Voir `NavFlags.canVoirMonEquipe`. */
+  canVoirMonEquipe?: boolean;
   /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
   canRecevoirFeedback?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
@@ -129,6 +131,7 @@ export function Sidebar({
   demandesServiceAValider = null,
   demandesDGADecider = null,
   justificationsADecider = null,
+  canVoirMonEquipe = false,
   canRecevoirFeedback = false,
   mobileOpen,
   onCloseMobile,
@@ -157,6 +160,7 @@ export function Sidebar({
     demandesServiceAValider,
     demandesDGADecider,
     justificationsADecider,
+    canVoirMonEquipe,
   });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0]?.key ?? null

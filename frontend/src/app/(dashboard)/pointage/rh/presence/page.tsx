@@ -1,9 +1,10 @@
 import { getSession } from "@/lib/auth";
 import { PageHeader } from "@/components/ui";
 import { StatCard } from "@/components/ui/StatCard";
-import { horairesPointage, justificationAffichee, prisma, utilisateursCouvertsParAbsence } from "backend";
-import { startOfDay, endOfDay, startOfMonth, endOfMonth, format } from "date-fns";
-import { PresenceTabs, PresenceData } from "./PresenceTabs";
+import { prisma } from "backend";
+import { chargerPresenceJour } from "@/lib/presenceJour";
+import { startOfDay, startOfMonth, endOfMonth, format } from "date-fns";
+import { PresenceTabs } from "./PresenceTabs";
 import { Card } from "@/components/ui/Card";
 import { MonthFilter } from "./MonthFilter";
 import { RecoverAbsencesButton } from "./RecoverAbsencesButton";
@@ -24,51 +25,13 @@ export default async function PresenceDuJourPage({
   const moisParam = resolvedParams.mois as string;
   const now = dateParam ? new Date(dateParam) : new Date();
   
-  const todayStart = startOfDay(now);
-  const todayEnd = endOfDay(now);
-
   const palmaresDate = moisParam ? new Date(`${moisParam}-01`) : now;
   const monthStart = startOfMonth(palmaresDate);
   const monthEnd = endOfMonth(palmaresDate);
 
-  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
-
-  const [pointagesDb, absentsDb, retardsDuMois, parametrage, jourFerie, plagesDuJour] = await Promise.all([
-    prisma.pointage.findMany({
-      where: {
-        heure: {
-          gte: todayStart,
-          lte: todayEnd,
-        },
-        user: { isActive: true },
-      },
-      orderBy: { heure: 'asc' },
-      select: {
-        id: true,
-        userId: true,
-        type: true,
-        heure: true,
-        heurePrevue: true,
-        estRetard: true,
-        minutesRetard: true,
-        motif: true,
-        source: true,
-        geoDistance: true,
-        user: { select: { fullName: true, email: true } },
-        // Pointage V2, lot 7 : statut réel de la justification (retard ou départ anticipé) et son motif.
-        justification: { select: { statut: true, motif: true, decideur: { select: { fullName: true } } } },
-      },
-    }),
-    prisma.absence.findMany({
-      where: {
-        date: {
-          gte: todayStart,
-          lte: todayEnd,
-        },
-        user: { isActive: true },
-      },
-      include: { user: { select: { fullName: true, email: true } } },
-    }),
+  // Présence de la journée : lecture partagée avec « Mon équipe » (`chargerPresenceJour`, tous les comptes ici).
+  const [{ presents, retards, absents, autorises, manquants, isJourNonOuvre, jourFerie, parametrage }, retardsDuMois] = await Promise.all([
+    chargerPresenceJour(now),
     prisma.pointage.groupBy({
       by: ["userId"],
       where: {
@@ -86,145 +49,16 @@ export default async function PresenceDuJourPage({
         id: true,
       },
     }),
-    prisma.parametrageHoraire.findFirst({
-      where: { isActive: true },
-    }),
-    prisma.jourFerie.findFirst({
-      where: {
-        date: {
-          gte: todayStart,
-          lte: todayEnd,
-        },
-      },
-    }),
-    // Pointage V2, lot 7 : absences autorisées du jour (congés, permissions).
-    prisma.plageAbsenceAutorisee.findMany({
-      where: { date: { gte: todayStart, lte: todayEnd }, user: { isActive: true } },
-      select: { userId: true, heureDebut: true, heureFin: true, source: true, user: { select: { fullName: true, email: true } } },
-      orderBy: { heureDebut: "asc" },
-    }),
   ]);
-
-  const isJourNonOuvre = isWeekend || !!jourFerie;
-
-  const userPointagesMap = new Map<string, PresenceData>();
-  
-  pointagesDb.forEach((p) => {
-    let u = userPointagesMap.get(p.userId);
-    if (!u) {
-      u = {
-        userId: p.userId,
-        fullName: p.user.fullName,
-        email: p.user.email,
-        estRetard: false,
-        minutesRetard: 0,
-      };
-      userPointagesMap.set(p.userId, u);
-    }
-
-    if (p.type === "ARRIVEE" && !u.arrivee) {
-      u.arriveeId = p.id;
-      u.arrivee = p.heure.toISOString();
-      u.arriveePrevue = p.heurePrevue;
-      u.sourceArrivee = p.source;
-      u.geoDistance = p.geoDistance;
-      if (p.estRetard) {
-        u.estRetard = true;
-        u.minutesRetard = (u.minutesRetard || 0) + (p.minutesRetard || 0);
-        // Statut réel et motif de la justification, repli sur l'ancien motif du pointage (`justificationAffichee`).
-        u.justification = justificationAffichee(p);
-        u.motif = u.justification.motif;
-      }
-    } else if (p.type === "DEPART" && !u.depart) {
-      u.depart = p.heure.toISOString();
-      u.departPrevu = p.heurePrevue;
-      // Départ anticipé : justification lue de la même façon (aucune pour un départ à l'heure).
-      if (p.justification) u.justificationDepart = justificationAffichee(p);
-    }
-  });
-
-  const presents: PresenceData[] = Array.from(userPointagesMap.values());
   const presentsCount = presents.length;
-  const retardsCount = presents.filter(p => p.estRetard).length;
-  const retards = presents.filter(p => p.estRetard);
+  const retardsCount = retards.length;
+  const absentsCount = absents.length;
+  const manquantsCount = manquants.length;
 
-  // Absence autorisée (lot 7) : journée entièrement couverte par un congé ou une permission, même règle que le cron des
-  // absences (`journeeCouverteParAbsence`) — apparaît comme telle, jamais comme absent ni manquant.
-  const presentsIds = presents.map((p) => p.userId);
-  const couvertsIds = utilisateursCouvertsParAbsence(plagesDuJour, horairesPointage(parametrage));
-  presentsIds.forEach((id) => couvertsIds.delete(id));
-  const absentsReels = absentsDb.filter((a) => !couvertsIds.has(a.userId));
-  const absentsCount = absentsReels.length;
-
-  // Calcul des manquants (ni présents, ni déclarés absents, ni en absence autorisée)
-  const absentsIds = absentsDb.map((a) => a.userId);
-  const exclusIds = [...presentsIds, ...absentsIds, ...couvertsIds];
-
-  const retardsUserIds = retardsDuMois.map((r) => r.userId);
-
-  const [manquantsDb, users, activationsRecentes] = await Promise.all([
-    prisma.user.findMany({
-      where: {
-        isActive: true,
-        id: { notIn: exclusIds },
-        // Option B : Le collaborateur n'est attendu que s'il a été créé avant ce jour
-        createdAt: { lt: todayStart },
-        role: {
-          permissions: {
-            some: {
-              permission: {
-                key: "pointage.pointer"
-              }
-            }
-          }
-        }
-      },
-      select: { id: true, fullName: true, email: true },
-    }),
-    prisma.user.findMany({
-      where: { id: { in: retardsUserIds } },
-      select: { id: true, fullName: true, email: true },
-    }),
-    prisma.historiqueEntry.findMany({
-      where: {
-        entity: "User",
-        action: { in: ["ACTIVATE", "INVITATION_ACTIVATED"] },
-        createdAt: { gte: todayStart },
-      },
-      select: { entityId: true },
-    }),
-  ]);
-
-  const activationsApresDateIds = new Set(activationsRecentes.map((a) => a.entityId).filter(Boolean));
-  const manquantsEffectifs = isJourNonOuvre
-    ? []
-    : manquantsDb.filter((m) => !activationsApresDateIds.has(m.id));
-
-  const manquantsCount = manquantsEffectifs.length;
-
-  const absents: PresenceData[] = absentsReels.map(a => ({
-    userId: a.userId,
-    fullName: a.user.fullName,
-    email: a.user.email
-  }));
-
-  const autorises: PresenceData[] = [...couvertsIds].map((id) => {
-    const plages = plagesDuJour.filter((pl) => pl.userId === id);
-    return {
-      userId: id,
-      fullName: plages[0].user.fullName,
-      email: plages[0].user.email,
-      absenceAutorisee: plages
-        .map((pl) => `${pl.source === "CONGE" ? "Congé" : "Permission"} ${pl.heureDebut}–${pl.heureFin}`)
-        .join(", "),
-    };
+  const users = await prisma.user.findMany({
+    where: { id: { in: retardsDuMois.map((r) => r.userId) } },
+    select: { id: true, fullName: true, email: true },
   });
-
-  const manquants: PresenceData[] = manquantsEffectifs.map(m => ({
-    userId: m.id,
-    fullName: m.fullName,
-    email: m.email
-  }));
 
   const retardsAvecUsers = retardsDuMois
     .map((r) => ({

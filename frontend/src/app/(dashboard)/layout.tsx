@@ -134,6 +134,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       demandesServiceAValider={demandesServiceAValider}
       demandesDGADecider={demandesDGADecider}
       justificationsADecider={justificationsADecider}
+      canVoirMonEquipe={servicesResponsable > 0}
       canRecevoirFeedback={session.peutRecevoirFeedback}
       unreadNotificationsCount={unreadCount}
     >
