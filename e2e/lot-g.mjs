@@ -110,10 +110,10 @@ let demandeForm;
   verifier("1. un champ « Date de livraison de l'article » sous chaque article (3)", (await p.locator("[data-date-livraison-article]").count()) === 3);
   verifier("1. une seule date commune, qui est déjà la date de livraison (aucun doublon)", (await p.locator("[data-date-livraison-commune]").count()) === 1);
   // « Appliquer à tous » sans date : refusé.
-  await p.locator("[data-appliquer-date-a-tous]").click();
+  await p.locator("[data-appliquer-a-tous]").click();
   verifier("1. « Appliquer à tous » sans date commune : aucune date posée", (await p.locator("[data-date-livraison-article]").nth(0).inputValue()) === "");
   await p.locator("[data-date-livraison-commune]").fill(J1);
-  await p.locator("[data-appliquer-date-a-tous]").click();
+  await p.locator("[data-appliquer-a-tous]").click();
   const apresApplique = [];
   for (let i = 0; i < 3; i++) apresApplique.push(await p.locator("[data-date-livraison-article]").nth(i).inputValue());
   verifier("1. « Appliquer à tous » : les 3 articles reçoivent la date commune", apresApplique.every((v) => v === J1), apresApplique.join(","));

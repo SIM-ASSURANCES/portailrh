@@ -171,6 +171,19 @@ verifier("1. infobulle (title) = libellé complet sur chaque entrée du menu", O
   const gere = (await c.locator("[data-gere-le]").allInnerTexts()).map(net);
   verifier("2. cartes d'articles : A « Géré le 05/10/2026 (réglé) », B « Géré le — »", gere.some((t) => /Géré le 05\/10\/2026 \(réglé\)/.test(t)) && gere.some((t) => /^Géré le —$/.test(t)), gere.join(" | "));
 
+  // Formulaire « Nouvelle demande d'achat » : date de création automatique, un seul bouton « Appliquer à tous les articles ».
+  await c.goto(`${B}/treso/demandes/nouvelle`);
+  const aujourdhui = new Date().toLocaleDateString("fr-FR", { timeZone: "Africa/Abidjan" });
+  const bloc = net(await c.locator("[data-demande-creee-le]").innerText());
+  verifier("2. formulaire : « Demande créée le <date du jour> » dans l'en-tête, non modifiable", bloc.includes("Demande créée le") && bloc.includes(aujourdhui) && (await c.locator("[data-demande-creee-le] input, [data-demande-creee-le] select").count()) === 0, bloc);
+  verifier("2. formulaire : un seul bouton « Appliquer à tous les articles » (plus de bouton « Appliquer la date »)", (await c.locator("[data-appliquer-a-tous]").count()) === 1 && (await c.locator("[data-appliquer-date-a-tous]").count()) === 0 && (await c.getByRole("button", { name: /Appliquer la date/ }).count()) === 0);
+  const futur = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  await c.locator("[data-date-livraison-commune]").fill(futur(10));
+  await c.locator("[data-date-livraison-article]").first().fill(futur(20));
+  await c.locator("[data-appliquer-a-tous]").click();
+  verifier("2. formulaire : une date d'article personnalisée demande confirmation avant remplacement", (await c.locator("[data-confirmation-appliquer]").count()) === 1 && (await c.locator("[data-date-livraison-article]").first().inputValue()) === futur(20));
+  await c.getByRole("button", { name: "Remplacer" }).click();
+  verifier("2. formulaire : « Appliquer à tous les articles » applique aussi la date commune", (await c.locator("[data-date-livraison-article]").first().inputValue()) === futur(10));
   await c.goto(`${B}/treso/demandes`);
   const entetes = (await c.locator("table th, [role=columnheader]").allInnerTexts()).map(net).join(" | ");
   verifier("2. « Mes demandes » : colonnes « Demande créée le » et « Géré le »", /Demande créée le/i.test(entetes) && /Géré le/i.test(entetes), entetes);

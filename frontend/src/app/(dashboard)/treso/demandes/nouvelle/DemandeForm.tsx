@@ -116,24 +116,31 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
     setLignes((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
   }
 
+  // UN SEUL bouton « Appliquer à tous les articles » : bénéficiaire commun, pièce commune et date de livraison commune.
+  // La pièce commune est portée par la demande et héritée par chaque article (les pièces propres d'un article sont
+  // gardées) : rien à copier. La date n'est appliquée que si elle est saisie (une date vide n'efface jamais les dates
+  // des articles).
+  const datesPersonnalisees = Boolean(dateLivraison) && lignes.some((l) => l.dateLivraison && l.dateLivraison !== dateLivraison);
+  const beneficiairesPersonnalises = ilYADesPersonnalisations(lignes.map((l) => l.details), commun, createurId);
+
   function appliquerCommunATous() {
     setLignes((prev) => {
       const maj = appliquerATous(prev.map((l) => l.details));
-      return prev.map((l, i) => ({ ...l, details: { ...l.details, beneficiaire: maj[i].beneficiaire } }));
+      return prev.map((l, i) => ({
+        ...l,
+        details: { ...l.details, beneficiaire: maj[i].beneficiaire },
+        ...(dateLivraison ? { dateLivraison } : {}),
+      }));
     });
     setConfirmerAppliquer(false);
-    toast.success("Le bénéficiaire commun est appliqué à tous les articles.");
-  }
-  function appliquerDateATous() {
-    if (!dateLivraison) {
-      toast.error("Saisissez d'abord la date de livraison commune.");
-      return;
-    }
-    setLignes((prev) => prev.map((l) => ({ ...l, dateLivraison })));
-    toast.success("La date de livraison commune est appliquée à tous les articles.");
+    toast.success(
+      dateLivraison
+        ? "Le bénéficiaire, la pièce et la date de livraison communs sont appliqués à tous les articles."
+        : "Le bénéficiaire et la pièce communs sont appliqués à tous les articles."
+    );
   }
   function demanderAppliquerATous() {
-    if (ilYADesPersonnalisations(lignes.map((l) => l.details), commun, createurId)) setConfirmerAppliquer(true);
+    if (beneficiairesPersonnalises || datesPersonnalisees) setConfirmerAppliquer(true);
     else appliquerCommunATous();
   }
 
@@ -349,7 +356,7 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
       {erreurLignes ? <p className="text-sm text-danger">{erreurLignes}</p> : null}
 
       {/* Détails communs (autonomie des articles, lot A) : bénéficiaire par défaut et pièce commune, hérités par chaque
-          article qui n'a pas ses propres détails. « Appliquer à tous » remet tous les articles sur cette valeur. */}
+          article qui n'a pas ses propres détails. « Appliquer à tous les articles » remet tous les articles sur ces valeurs. */}
       <Card>
         <h2 className="flex items-center gap-2 text-base font-bold text-foreground">
           <span className="h-4 w-1 rounded-full bg-primary" aria-hidden="true" />
@@ -374,17 +381,18 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
             />
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" variant="secondary" data-appliquer-date-a-tous onClick={appliquerDateATous}>
-              Appliquer la date à tous les articles
-            </Button>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
             <Button type="button" variant="secondary" data-appliquer-a-tous onClick={demanderAppliquerATous}>
               Appliquer à tous les articles
             </Button>
             {confirmerAppliquer ? (
               <div role="alert" data-confirmation-appliquer className="flex flex-wrap items-center gap-2 text-sm text-foreground">
-                <span>Certains articles ont un bénéficiaire personnalisé : il sera remplacé par la valeur commune.</span>
+                <span>
+                  {beneficiairesPersonnalises && datesPersonnalisees
+                    ? "Certains articles ont un bénéficiaire ou une date de livraison personnalisés : ils seront remplacés par les valeurs communes."
+                    : datesPersonnalisees
+                      ? "Certains articles ont une date de livraison personnalisée : elle sera remplacée par la date commune."
+                      : "Certains articles ont un bénéficiaire personnalisé : il sera remplacé par la valeur commune."}
+                </span>
                 <Button type="button" onClick={appliquerCommunATous}>Remplacer</Button>
                 <Button type="button" variant="secondary" onClick={() => setConfirmerAppliquer(false)}>Annuler</Button>
               </div>
@@ -410,6 +418,14 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
             onChange={(e) => setDevise(e.target.value)}
             error={fieldErrors.devise}
           />
+          {/* Date de création : posée par le serveur à l'enregistrement (`Demande.createdAt`), jamais saisie. */}
+          <div data-demande-creee-le>
+            <span className="block text-sm font-medium text-foreground">Demande créée le</span>
+            <p className="mt-1.5 rounded-lg border border-border bg-muted/60 px-3 py-2 text-sm font-semibold text-foreground" suppressHydrationWarning>
+              {new Date().toLocaleDateString("fr-FR", { timeZone: "Africa/Abidjan" })}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">Automatique, non modifiable.</p>
+          </div>
         </div>
       </Card>
 
