@@ -61,7 +61,15 @@ export interface ParcoursReglement {
   retours: ParcoursRetour[];
 }
 
+/** Retour externe rattaché à l'article (lot G bis) : fonds versé par banque, rendu à la caisse par la Finance. */
+export interface ParcoursRetourExterne {
+  montant: number;
+  creeAt: Date | null;
+}
+
 export interface EntreeParcours {
+  /** Retours externes rattachés à l'article ; comptent comme retours reçus dans la régularisation. */
+  retoursExternes?: ParcoursRetourExterne[];
   statut: StatutArticle;
   etat: EtatArticle;
   /** Total de l'article (quantité × prix unitaire). */
@@ -86,7 +94,7 @@ export interface EntreeParcours {
 }
 
 export interface EtapeParcours {
-  cle: "VALIDE" | "REGLE" | "RETOUR" | "REGULARISE" | "REJETE";
+  cle: "VALIDE" | "REGLE" | "RETOUR" | "RETOUR_EXTERNE" | "REGULARISE" | "REJETE";
   libelle: string;
   /** Une ligne de texte par information (les informations absentes ne sont pas produites). */
   lignes: string[];
@@ -176,6 +184,17 @@ export function parcoursArticle(e: EntreeParcours): ParcoursArticle {
     const lignes = [`Attendu : ${eur(retourAttendu ?? 0)} — reçu : ${eur(retourRecu ?? 0)}`];
     if (enAttente > 0) lignes.push(`${enAttente} retour${enAttente > 1 ? "s" : ""} en attente de réception`);
     etapes.push({ cle: "RETOUR", libelle: "Retour de caisse", lignes });
+  }
+
+  const externes = e.retoursExternes ?? [];
+  if (externes.length > 0) {
+    etapes.push({
+      cle: "RETOUR_EXTERNE",
+      libelle: "Retour enregistré par la Finance",
+      lignes: externes.map(
+        (x) => `${eur(x.montant)} — fonds versé par banque, rendu à la caisse${jour(x.creeAt) ? ` le ${jour(x.creeAt)}` : ""}`
+      ),
+    });
   }
 
   const soldesConnus = confirmes.length > 0 && confirmes.every((r) => r.solde != null);

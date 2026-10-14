@@ -25,6 +25,8 @@ export interface RecapRetours {
   recus: number;
   /** Montant déclaré mais pas encore réceptionné. */
   enAttente: number;
+  /** Part de `recus` rendue à la caisse par la Finance pour un fonds versé par banque (retour externe rattaché, lot G bis). */
+  parLaFinance: number;
 }
 
 export interface RecapArticle {
@@ -60,16 +62,18 @@ export function etatTotalRecap(a: AgregatsRegularisation): EtatRegularisationArt
 }
 
 export async function getRecapRetourCaisse(demandeId: string): Promise<RecapRetourCaisse> {
-  const [regul, reglements, retours] = await Promise.all([
+  const [regul, reglements, retours, externes] = await Promise.all([
     getRegularisationParArticle(demandeId),
     prisma.reglement.findMany({
       where: { demandeId, estConfirme: true, estAnnule: false },
       select: { ligneDemandeId: true, mode: true, montant: true },
     }),
     prisma.retourCaisse.findMany({
-      where: { reglement: { demandeId } },
+      // Lot G bis : la fiche de détail des dépenses d'un fonds versé par banque n'est pas un retour à réceptionner.
+      where: { reglement: { demandeId }, NOT: { reglement: { mode: "BANQUE" }, versementBancaire: false } },
       select: { estReceptionne: true, montantARetourner: true, reglement: { select: { ligneDemandeId: true } } },
     }),
+    prisma.retourExterne.findMany({ where: { demandeId }, select: { ligneDemandeId: true, montantRetourne: true } }),
   ]);
 
   const fondsDe = (ligneId: string | null | undefined): RecapFonds => {
@@ -85,6 +89,9 @@ export async function getRecapRetourCaisse(demandeId: string): Promise<RecapReto
       declares: lots.length,
       recus,
       enAttente: somme(lots.filter((r) => !r.estReceptionne).map((r) => Number(r.montantARetourner))),
+      parLaFinance: somme(
+        externes.filter((x) => ligneId === undefined || x.ligneDemandeId === ligneId).map((x) => Number(x.montantRetourne))
+      ),
     };
   };
 

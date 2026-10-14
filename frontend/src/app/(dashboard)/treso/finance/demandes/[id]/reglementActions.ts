@@ -458,13 +458,13 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   await calculerStatutDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);
 
-  // Un règlement confirmé ouvre le droit à déclarer un retour de caisse (Ticket 5) — Caisse comme Banque depuis le lot G
-  // (le retour d'un fonds versé par banque est rendu en espèces à la caisse).
-  {
+  // Un règlement Caisse confirmé ouvre le droit à déclarer un retour de caisse (Ticket 5) — un règlement Banque n'a pas de
+  // déclaration de retour (lot G bis : la Finance enregistre son retour en retour externe), donc aucune notification.
+  if (reglement.mode === "CAISSE") {
     await notify({
       userId: demande.createurId,
       titre: "Retour de caisse à déclarer",
-      message: `Le règlement de ${montantReglement.toLocaleString("fr-FR")} FCFA (${reglement.mode === "BANQUE" ? "Banque" : "Caisse"})${ligne ? ` pour l'article « ${ligne.libelle} »` : ""} sur votre demande ${demande.reference} est confirmé — vous pouvez déclarer le retour de caisse correspondant.`,
+      message: `Le règlement de ${montantReglement.toLocaleString("fr-FR")} FCFA (Caisse)${ligne ? ` pour l'article « ${ligne.libelle} »` : ""} sur votre demande ${demande.reference} est confirmé — vous pouvez déclarer le retour de caisse correspondant.`,
       lien: `/treso/demandes/${reglement.demandeId}`,
       priority: "IMPORTANT",
       category: "TRESORERIE",

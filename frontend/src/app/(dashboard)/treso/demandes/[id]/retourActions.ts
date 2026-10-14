@@ -11,6 +11,7 @@ import {
   calculerMontantARetournerNet,
   estFicheRegularisation,
   getDateDernierReglementConfirme,
+  MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE,
   MESSAGE_RIEN_A_RENDRE,
   prisma,
   rienARendre,
@@ -132,8 +133,11 @@ export async function creerRetourCaisseAction(
   if (!reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est pas éligible à un retour de caisse." };
   }
-  // Lot G : un fonds versé par banque se retourne comme un fonds de caisse — en espèces, écrit en caisse à la réception.
-  // Plus de bordereau ni d'écriture `JournalBanque` pour un nouveau retour (les anciens gardent leur traitement).
+  // Lot G bis : un fonds versé par banque n'a plus de déclaration de retour par le collaborateur — la Finance enregistre
+  // son retour en retour externe rattaché à la demande et à l'article (les anciens retours Banque gardent leur traitement).
+  if (reglement.mode === "BANQUE") {
+    return { status: "error", message: MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE };
+  }
   if (reglement.demande.statut === "CLOTUREE") {
     return {
       status: "error",

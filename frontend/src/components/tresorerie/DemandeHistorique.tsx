@@ -27,6 +27,8 @@ const ACTION_LABELS: Record<string, string> = {
   declaration_retour: "Retour de caisse déclaré",
   modification_retour: "Retour de caisse modifié",
   reception_retour: "Retour de caisse réceptionné",
+  // Lot G bis : retour d'un fonds versé par banque, enregistré par la Finance (retour externe) et rattaché à la demande.
+  retour_externe_rattache: "Retour enregistré par la Finance (fonds versé par banque)",
   retour_nul_constate: "Retour nul constaté (rien à rendre)",
   // Correction d'une dépense détaillée par l'Assistant Finance (2026-10-10) : avant/après et motif dans le détail.
   modification_depense: "Dépense modifiée",

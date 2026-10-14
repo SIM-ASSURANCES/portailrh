@@ -42,7 +42,11 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
       estConfirme: true,
       estAnnule: true,
       confirmeAt: true,
-      retours: { select: { estReceptionne: true, montantARetourner: true } },
+      // Lot G bis : la fiche de détail des dépenses d'un fonds versé par banque n'est pas un retour de caisse à réceptionner.
+      retours: {
+        where: { NOT: { reglement: { mode: "BANQUE" }, versementBancaire: false } },
+        select: { estReceptionne: true, montantARetourner: true },
+      },
     },
   });
   // Lot G : tous les règlements confirmés, Caisse comme Banque, entrent dans la régularisation de l'article.
@@ -52,6 +56,11 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
     // Seuls les retours exceptionnels SANS article (anciens, demande ambiguë) rendent l'attribution indéterminée.
     prisma.retourExceptionnel.count({ where: { demandeId, statut: "VALIDE", ligneDemandeId: null } }),
   ]);
+  const externes = await prisma.retourExterne.findMany({
+    where: { demandeId, ligneDemandeId: { not: null } },
+    orderBy: { creeAt: "asc" },
+    select: { ligneDemandeId: true, montantRetourne: true, creeAt: true },
+  });
   const regul = await getRegularisationParArticle(demandeId);
   const regulParLigne = new Map(regul.articles.map((a) => [a.ligneId, a]));
   // Un retour exceptionnel post-clôture SANS article (ancien) est imputé sur les règlements par ancienneté : on ne peut
@@ -78,6 +87,9 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
         confirmeParFinance: finance && finance !== decideParNom ? finance : null,
         motifRejet: ligne.motifRejet,
         regularisationIndeterminee,
+        retoursExternes: externes
+          .filter((x) => x.ligneDemandeId === ligne.id)
+          .map((x) => ({ montant: Number(x.montantRetourne), creeAt: x.creeAt })),
         regularisation: regulParLigne.has(ligne.id)
           ? { agregats: regulParLigne.get(ligne.id)!.agregats, regulariseAt: regulParLigne.get(ligne.id)!.regulariseAt }
           : undefined,

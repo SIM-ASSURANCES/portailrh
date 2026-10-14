@@ -239,6 +239,15 @@ export function HistoriqueSection({ historique: h }: { historique: HistoriqueImp
         </View>
       ) : null}
 
+      {h.retoursExternes.length > 0 ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Retours enregistrés par la Finance (fonds versé par banque)</Text>
+          {h.retoursExternes.map((x, i) =>
+            ligne(`x${i}`, `${formatDate(x.date)} — rendu à la caisse, enregistré par ${x.par}`, formatMontant(x.montant), i === h.retoursExternes.length - 1)
+          )}
+        </View>
+      ) : null}
+
       {h.depenses.length > 0 ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Dépenses déclarées</Text>

@@ -63,7 +63,7 @@ function Bloc({ titre, sousTitre, bloc, total = false }: { titre: string; sousTi
         <Ligne
           libelle="Retours de caisse"
           valeur={`${fcfa(retours.recus)} reçus`}
-          detail={`${retours.declares} déclaré${retours.declares > 1 ? "s" : ""}${retours.enAttente > 0 ? ` · ${fcfa(retours.enAttente)} en attente de réception` : ""}`}
+          detail={`${retours.declares} déclaré${retours.declares > 1 ? "s" : ""}${retours.enAttente > 0 ? ` · ${fcfa(retours.enAttente)} en attente de réception` : ""}${retours.parLaFinance > 0 ? ` · dont ${fcfa(retours.parLaFinance)} enregistrés par la Finance (fonds versé par banque)` : ""}`}
         />
         <Ligne libelle="Dépenses justifiées" valeur={fcfa(agregats.depensesJustifiees)} />
         <Ligne libelle="Dépenses sans pièce formelle" valeur={fcfa(agregats.depensesSansPieceFormelle)} attention={agregats.depensesSansPieceFormelle > 0} />

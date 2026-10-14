@@ -499,6 +499,15 @@ async function getFondsRemisParDemande(demandeIds: string[]): Promise<Map<string
     const entry = map.get(e.demandeId);
     if (entry) entry.retoursRecus += Number(e.montant);
   }
+  // Retours EXTERNES rattachés (lot G bis : fonds versé par banque rendu à la caisse) : comptés comme retours reçus.
+  const externes = await prisma.retourExterne.findMany({
+    where: { demandeId: { in: demandeIds } },
+    select: { montantRetourne: true, demandeId: true },
+  });
+  for (const e of externes) {
+    const entry = e.demandeId ? map.get(e.demandeId) : undefined;
+    if (entry) entry.retoursRecus += Number(e.montantRetourne);
+  }
 
   return map;
 }
@@ -913,6 +922,9 @@ export interface ReportingRetourExterneDetail {
   auteurNom: string;
   pieceChequeId: string | null;
   pieceRetourId: string;
+  /** Rattachement facultatif (lot G bis) : référence de la demande et libellé de l'article, sinon `null`. */
+  demandeReference: string | null;
+  articleLibelle: string | null;
 }
 
 /**
@@ -923,10 +935,17 @@ export interface ReportingRetourExterneDetail {
 export async function getReportingRetoursExternesDetail(filters: ReportingFilters): Promise<ReportingRetourExterneDetail[]> {
   const retours = await prisma.retourExterne.findMany({
     where: { creeAt: { gte: filters.du, lte: filters.au } },
-    include: { collaborateur: { select: { fullName: true } }, creePar: { select: { fullName: true } } },
+    include: {
+      collaborateur: { select: { fullName: true } },
+      creePar: { select: { fullName: true } },
+      demande: { select: { reference: true } },
+      ligneDemande: { select: { libelle: true } },
+    },
     orderBy: { creeAt: "asc" },
   });
   return retours.map((r) => ({
+    demandeReference: r.demande?.reference ?? null,
+    articleLibelle: r.ligneDemande?.libelle ?? null,
     personne: r.collaborateur?.fullName ?? r.nomExterne ?? "—",
     estExterne: r.collaborateurId == null,
     montantChequeInitial: Number(r.montantChequeInitial),
@@ -1118,6 +1137,10 @@ export async function getReportingParDemande(
           orderBy: { saisiAt: "asc" },
           include: { saisiPar: { select: { fullName: true } }, validePar: { select: { fullName: true } } },
         },
+        retoursExternes: {
+          orderBy: { creeAt: "asc" },
+          include: { creePar: { select: { fullName: true } }, ligneDemande: { select: { libelle: true } } },
+        },
       },
     }),
     prisma.historiqueEntry.findMany({
@@ -1209,6 +1232,12 @@ export async function getReportingParDemande(
         validePar: e.validePar?.fullName ?? null,
         valideLe: e.valideAt,
         motifRejet: e.motifRejet,
+      })),
+      retoursExternes: det.retoursExternes.map((x) => ({
+        montant: Number(x.montantRetourne),
+        article: x.ligneDemande?.libelle ?? null,
+        creePar: x.creePar.fullName,
+        creeLe: x.creeAt,
       })),
       historique: historiqueParId.get(d.id) ?? [],
     });

@@ -84,6 +84,8 @@ export interface DemandeReportingSource {
     valideLe: Date | null;
     motifRejet: string | null;
   }[];
+  /** Retours externes rattachés à la demande (lot G bis) : fonds versé par banque rendu à la caisse = retour reçu. */
+  retoursExternes?: { montant: number; article: string | null; creePar: string; creeLe: Date }[];
   historique: HistoriqueReporting[];
 }
 
@@ -304,6 +306,13 @@ export function construireLigneReporting(d: DemandeReportingSource): LigneReport
         ? "en attente de validation"
         : `${LIBELLE_STATUT_DECISION[e.statut].toLowerCase()} ${par(e.validePar, e.valideLe)}${e.motifRejet ? ` (${e.motifRejet})` : ""}`;
     ajustements.push(`Retour exceptionnel post-clôture — ${fcfa(e.montant)} — saisi ${par(e.saisiPar, e.saisiLe)} — ${decision}`);
+  }
+
+  for (const x of d.retoursExternes ?? []) {
+    totalRetourne += x.montant;
+    retours.push(
+      `Retour externe (fonds versé par banque, rendu à la caisse) — ${fcfa(x.montant)}${x.article ? ` — article « ${x.article} »` : ""} — enregistré ${par(x.creePar, x.creeLe)}`
+    );
   }
 
   return {

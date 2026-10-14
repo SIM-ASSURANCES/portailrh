@@ -40,7 +40,6 @@ import { creerRetourCaisseAction, modifierRetourCaisseAction } from "./retourAct
 export function RetourCaisseForm({
   mode = "create",
   reglementId,
-  modeReglement = "CAISSE",
   retourId,
   montantReglement,
   montantRetourneInitial,
@@ -51,8 +50,6 @@ export function RetourCaisseForm({
 }: {
   mode?: "create" | "edit";
   reglementId: string;
-  /** Lot G : un fonds versé par banque se retourne, comme un fonds de caisse, en espèces à la caisse (simple rappel affiché). */
-  modeReglement?: "CAISSE" | "BANQUE";
   /** Requis si `mode === "edit"`. */
   retourId?: string;
   montantReglement: number;
@@ -80,7 +77,6 @@ export function RetourCaisseForm({
   const [montantRetourne, setMontantRetourne] = useState(
     montantRetourneInitial != null ? String(montantRetourneInitial) : ""
   );
-  const estBanque = modeReglement === "BANQUE";
   const [erreur, setErreur] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
@@ -159,11 +155,6 @@ export function RetourCaisseForm({
           onChange={(e) => setMontantRetourne(e.target.value)}
         />
       </div>
-      {estBanque ? (
-        <p data-retour-banque-especes className="text-xs text-muted-foreground">
-          Ce règlement a été fait par banque : l&apos;argent à retourner est rendu en espèces à la caisse.
-        </p>
-      ) : null}
       <p className="text-xs text-muted-foreground">
         Le solde éventuellement dépensé (
         {Math.max(0, montantReglement - (Number(montantRetourne) || 0)).toLocaleString("fr-FR")} FCFA) sera transmis

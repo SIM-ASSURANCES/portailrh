@@ -142,4 +142,17 @@ describe("parcours d'un article", () => {
     expect(deux(0).badge).toBe("REGULARISE");
     expect(deux(10).badge).toBe("REGLE");
   });
+  it("retour externe rattaché (fonds versé par banque) : étape dédiée, fonds rendus à la caisse", () => {
+    const p = parcoursArticle(
+      base({
+        reglements: [reglement({ mode: "BANQUE", montant: 40000, solde: 0 })],
+        retoursExternes: [{ montant: 15000, creeAt: new Date("2026-10-19T08:00:00Z") }],
+      })
+    );
+    expect(cles(p)).toContain("RETOUR_EXTERNE");
+    const etape = p.etapes.find((e) => e.cle === "RETOUR_EXTERNE")!;
+    expect(etape.lignes.join(" ")).toMatch(/15.000 FCFA — fonds versé par banque, rendu à la caisse/);
+    // Sans retour externe : pas d'étape.
+    expect(cles(parcoursArticle(base({ reglements: [reglement({ mode: "BANQUE", montant: 40000 })] })))).not.toContain("RETOUR_EXTERNE");
+  });
 });

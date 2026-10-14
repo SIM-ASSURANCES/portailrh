@@ -37,6 +37,8 @@ const SOUS_REGLEMENTS = `(SELECT id FROM "Reglement" WHERE "demandeId" LIKE '${P
 const nettoyer = async () => {
   await q(`DELETE FROM "HistoriqueEntry" WHERE "entityId" LIKE '${PREFIXE}%'`);
   await q(`DELETE FROM "JournalBanque" WHERE "reglementId" IN ${SOUS_REGLEMENTS}`);
+  await q(`DELETE FROM "RetourExterne" WHERE id LIKE '${PREFIXE}%'`);
+  await q(`DELETE FROM "PieceJointe" WHERE id LIKE '${PREFIXE}%'`);
   await q(`DELETE FROM "DepenseLigne" WHERE "retourCaisseId" IN (SELECT id FROM "RetourCaisse" WHERE "reglementId" IN ${SOUS_REGLEMENTS})`);
   await q(`DELETE FROM "JournalCaisse" WHERE id LIKE '${PREFIXE}%' OR "demandeId" LIKE '${PREFIXE}%'`);
   await q(`DELETE FROM "RetourCaisse" WHERE "reglementId" IN ${SOUS_REGLEMENTS}`);
@@ -235,8 +237,7 @@ let rCaisse, rBanque;
   verifier("2. « Fonds remis à régulariser » liste le règlement Banque ET le règlement Caisse", /40 000 FCFA \(Banque\)/i.test(fonds) && /60 000 FCFA \(Caisse\)/i.test(fonds) && fonds.includes("DEM-LOTG-MIXTE"), fonds.slice(0, 300));
   await p.close();
 }
-// --- Retour du collaborateur sur le règlement BANQUE : date + montant, plus de bordereau, rendu en espèces ---
-let retourBanqueId;
+// --- Fonds versé par banque (lot G bis) : plus de déclaration de retour par le collaborateur ---
 {
   const p = await connecter("collaborateur@simassurances.test");
   await p.goto(`${B}/treso/demandes/${D2}`);
@@ -244,42 +245,28 @@ let retourBanqueId;
   verifier("4. récapitulatif du collaborateur : fonds reçus 100 000 dont Caisse 60 000 · Banque 40 000", /Fonds reçus \(Caisse \+ Banque\) 100 000 FCFA/i.test(recapAvant) && /dont Caisse 60 000 FCFA · Banque 40 000 FCFA/i.test(recapAvant), recapAvant);
   verifier("4. récapitulatif : retours 0 déclaré, solde 100 000, état « À régulariser »", /0 déclaré/i.test(recapAvant) && /Solde à régulariser 100 000 FCFA/i.test(recapAvant) && /À régulariser/i.test(recapAvant));
   verifier("4. récapitulatif : libellé d'origine du demandeur, jamais celui de la Finance", /Ordinateur/.test(recapAvant) && !/Ordinateur \(Finance\)/.test(recapAvant));
-  verifier("3. le règlement Banque propose lui aussi « Déclarer un retour de caisse »", (await p.getByText(/\(Banque\)/).count()) >= 1 && (await p.getByRole("button", { name: /Déclarer un retour de caisse/ }).count()) === 2);
-  await p.getByRole("button", { name: /Déclarer un retour de caisse/ }).nth(1).click();
-  verifier("3. retour d'un fonds bancaire : aucun champ bordereau / fichier à joindre", (await p.locator('input[type="file"]').count()) === 0);
-  verifier("3. rappel : l'argent est rendu en espèces à la caisse", (await p.locator("[data-retour-banque-especes]").count()) === 1);
-  await p.getByLabel("Montant à retourner").fill("5000");
-  await p.getByRole("button", { name: "Déclarer le retour" }).click();
-  await attendre(async () => (await q(`SELECT 1 FROM "RetourCaisse" WHERE "reglementId" = $1`, [rBanque])).length === 1);
-  const r = (await q(`SELECT id, "montantARetourner"::float AS m, "versementBancaire" AS vb FROM "RetourCaisse" WHERE "reglementId" = $1`, [rBanque]))[0];
-  retourBanqueId = r.id;
-  verifier("3. retour créé : 35 000 non détaillés, montant à retourner 5 000", r.m === 5000, String(r.m));
-  verifier("3. nouveau retour : pas un versement bancaire, aucune écriture banque RETOUR", r.vb === false && (await q(`SELECT 1 FROM "JournalBanque" WHERE type = 'RETOUR' AND "reglementId" = $1`, [rBanque])).length === 0);
+  verifier("3. le règlement Banque ne propose PLUS « Déclarer un retour de caisse » (seul le règlement Caisse le propose)", (await p.getByRole("button", { name: /Déclarer un retour de caisse/ }).count()) === 1 && (await p.locator("[data-retour-par-la-finance]").count()) === 1);
   await p.close();
 }
+// Le serveur refuse aussi une déclaration directe sur le fonds bancaire (rejeu) : aucune fiche créée.
 {
-  // Réception par l'Assistant : écriture ENTREE en caisse (jamais en banque).
-  const p = await connecter("assistant-finance@simassurances.test");
-  const avant = await soldeCaisse();
-  const montant = (await q(`SELECT "montantARetourner"::float AS m FROM "RetourCaisse" WHERE id = $1`, [retourBanqueId]))[0].m;
-  await p.goto(`${B}/treso/finance/retours/${retourBanqueId}`);
-  await p.getByRole("button", { name: /Réceptionner|Constater/ }).first().click();
-  await attendre(async () => (await q(`SELECT "estReceptionne" AS e FROM "RetourCaisse" WHERE id = $1`, [retourBanqueId]))[0].e === true);
-  const apres = await soldeCaisse();
-  const jc = await q(`SELECT type, montant::float AS m, source FROM "JournalCaisse" WHERE "refId" = $1`, [retourBanqueId]);
-  verifier("3. réception d'un retour sur fonds bancaire : ENTREE en caisse du montant rendu", jc.length === 1 && jc[0].type === "ENTREE" && jc[0].m === montant && jc[0].source === "retour_caisse_receptionne", JSON.stringify(jc));
-  verifier("3. le solde de caisse augmente exactement du montant rendu", apres === avant + montant, `${avant} → ${apres} (+${montant})`);
-  await p.close();
+  const refus = await q(`SELECT count(*)::int AS n FROM "RetourCaisse" WHERE "reglementId" = $1`, [rBanque]);
+  verifier("3. aucun retour de caisse n'existe sur le règlement Banque", refus[0].n === 0);
 }
-// --- Dépenses sur le règlement CAISSE (fiche) : tout est justifié → régularisé ---
+// Dépenses de l'article : 25 000 sur le fonds bancaire (fiche de détail de l'Assistant) et 60 000 sur la Caisse, tout justifié.
+// Le retour des 15 000 restants du fonds bancaire est un RETOUR EXTERNE rattaché (Finance), qui entre en caisse.
+let retourExterneId;
 {
-  const lignes = await q(`SELECT id, montant::float AS m FROM "DepenseLigne" WHERE "retourCaisseId" = $1`, [retourBanqueId]);
-  const rendu = (await q(`SELECT "montantARetourner"::float AS m FROM "RetourCaisse" WHERE id = $1`, [retourBanqueId]))[0].m;
-  const totalBanque = lignes.reduce((s, l) => s + l.m, 0);
-  // Retour (nul, déjà couvert) sur le règlement Caisse portant 60 000 de dépenses justifiées.
+  await q(`INSERT INTO "RetourCaisse"(id, "montantARetourner", "estReceptionne", "reglementId", "declarantId", "creeParAssistant") VALUES ($1, 15000, false, $2, $3, true)`, [`${PREFIXE}ficheBanque`, rBanque, idAssistant]);
+  await q(`INSERT INTO "DepenseLigne"(id, montant, objet, date, justification, "retourCaisseId") VALUES ($1, 25000, 'Achat banque', now(), 'FACTURE', $2)`, [`${PREFIXE}depB`, `${PREFIXE}ficheBanque`]);
   await q(`INSERT INTO "RetourCaisse"(id, "montantARetourner", "estReceptionne", "reglementId", "declarantId", "creeParAssistant", "receptionneParId", "receptionneAt") VALUES ($1, 0, true, $2, $3, true, $3, now())`, [`${PREFIXE}retCaisse`, rCaisse, idAssistant]);
   await q(`INSERT INTO "DepenseLigne"(id, montant, objet, date, justification, "retourCaisseId") VALUES ($1, 60000, 'Achat caisse', now(), 'FACTURE', $2)`, [`${PREFIXE}dep1`, `${PREFIXE}retCaisse`]);
-  verifier("2. fixtures : dépenses banque + caisse + retour rendu = 100 000", Math.round(totalBanque + 60000 + rendu) === 100000, `${totalBanque}+60000+${rendu}`);
+  const pjA = `${PREFIXE}pj-a`;
+  const pjB = `${PREFIXE}pj-b`;
+  await q(`INSERT INTO "PieceJointe"(id, url) VALUES ($1, 'x.pdf'), ($2, 'y.pdf')`, [pjA, pjB]);
+  retourExterneId = `${PREFIXE}externe`;
+  await q(`INSERT INTO "RetourExterne"(id, "nomExterne", "montantChequeInitial", "montantRetourne", motif, "pieceJointeId", "pieceJointeChequeId", "demandeId", "ligneDemandeId", "creeParId") VALUES ($1, 'Fournisseur test', 40000, 15000, 'Retour du fonds bancaire non utilisé', $2, $3, $4, $5, $6)`, [retourExterneId, pjA, pjB, D2, L2, idFinance]);
+  await q(`INSERT INTO "JournalCaisse"(id, type, montant, source, "refId", "userId", "demandeId") VALUES ($1, 'ENTREE', 15000, 'retour_externe', $2, $3, $4)`, [`${PREFIXE}jc-externe`, retourExterneId, idFinance, D2]);
 }
 {
   const p = await connecter("assistant-finance@simassurances.test");
@@ -332,8 +319,10 @@ await q(`INSERT INTO "JournalBanque"(id, type, montant, "reglementId", "retourCa
     verifier(`3. reçu ${libelle} : article nommé (version Finance), date de livraison 15/12/2026, demande rappelée`, /Ordinateur \(Finance\)/.test(t) && /15\/12\/2026/.test(t) && /DEM-LOTG-MIXTE/.test(t));
     void mode;
   }
-  const retourRecu = await telecharger(p, `/api/treso/retours/${retourBanqueId}/recu`, "recu-retour.pdf");
-  verifier("3. reçu de retour (fonds bancaire) : « Retour en espèces à la caisse », historique complet", retourRecu.statut === 200 && /retour en espèces à la caisse/i.test(retourRecu.texte) && /règlements de l.article/i.test(retourRecu.texte) && /solde final/i.test(retourRecu.texte), retourRecu.texte.slice(0, 200));
+  const recuBanque = await telecharger(p, `/api/treso/reglements/${rBanque}/recu`, "recu-banque-externe.pdf");
+  verifier("3. reçu du règlement Banque : section « Retours enregistrés par la Finance (fonds versé par banque) » avec le retour externe de 15 000", /retours enregistrés par la finance/i.test(recuBanque.texte) && /15 000/.test(recuBanque.texte), recuBanque.texte.slice(0, 200));
+  const retourBanqueRecu = await telecharger(p, `/api/treso/retours/${PREFIXE}ficheBanque/recu`, "recu-fiche-banque.pdf");
+  verifier("3. la fiche de détail d'un fonds bancaire n'a pas de reçu de retour (non réceptionnée)", retourBanqueRecu.statut === 404 || retourBanqueRecu.statut === 403, String(retourBanqueRecu.statut));
   const bon = await telecharger(p, `/api/treso/reglements/${rCaisse}/bon-de-caisse`, "bon.pdf");
   verifier("3. bon de caisse : reste minimal (pas d'historique), date de livraison de l'article", bon.statut === 200 && !/règlements de l.article/i.test(bon.texte) && /15\/12\/2026/.test(bon.texte));
   await p.close();
@@ -351,7 +340,7 @@ await q(`INSERT INTO "JournalBanque"(id, type, montant, "reglementId", "retourCa
   await c.goto(`${B}/treso/demandes/${D2}`);
   const recap = net(await c.locator("[data-recap-retour-caisse]").innerText());
   verifier("4. récapitulatif final : solde 0 et état « Régularisé »", /Solde à régulariser 0 FCFA/i.test(recap) && /Régularisé/i.test(recap), recap);
-  verifier("4. récapitulatif : 2 retours déclarés, 5 000 FCFA reçus, dépenses justifiées 60 000", /2 déclarés/i.test(recap) && /Dépenses justifiées 60 000 FCFA/i.test(recap), recap);
+  verifier("4. récapitulatif : 15 000 FCFA reçus dont 15 000 enregistrés par la Finance, dépenses justifiées 85 000", /15 000 FCFA reçus/i.test(recap) && /dont 15 000 FCFA enregistrés par la Finance/i.test(recap) && /Dépenses justifiées 85 000 FCFA/i.test(recap), recap);
   verifier("4. récapitulatif : aucune information de gestion interne (catégorie, motif Finance)", !/E2E-G-CAT/.test(recap) && !/motif/i.test(recap));
   await c.close();
 }

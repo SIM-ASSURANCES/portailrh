@@ -26,6 +26,9 @@ import {
 export const RETOUR_EN_ATTENTE_WHERE = {
   estReceptionne: false,
   reglement: { demande: { statut: { not: "CLOTUREE" } } },
+  // Lot G bis : un fonds versé par banque ne se réceptionne plus (son retour est un retour externe rattaché) ; seuls les
+  // anciens retours Banque (bordereau, `versementBancaire`) restent à réceptionner.
+  OR: [{ reglement: { mode: "CAISSE" } }, { versementBancaire: true }],
 } satisfies Prisma.RetourCaisseWhereInput;
 
 export interface CompteEtMontant {

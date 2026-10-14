@@ -86,9 +86,13 @@ export async function RetoursCaisseFinanceSection({
                   {r.retours.map((retour) => (
                     <li key={retour.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted p-2 text-sm">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={retour.estReceptionne ? "success" : "warning"}>
-                          {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
-                        </Badge>
+                        {r.mode === "BANQUE" && !retour.versementBancaire && !retour.estReceptionne ? (
+                          <Badge variant="neutral">Détail des dépenses</Badge>
+                        ) : (
+                          <Badge variant={retour.estReceptionne ? "success" : "warning"}>
+                            {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
+                          </Badge>
+                        )}
                         {retour.creeParAssistant ? <Badge variant="info">Assistant Finance</Badge> : null}
                       </div>
                       <Link href={`/treso/finance/retours/${retour.id}`}>
@@ -102,7 +106,18 @@ export async function RetoursCaisseFinanceSection({
               ) : (
                 <p className="text-xs text-muted-foreground">Aucun retour déclaré pour l&apos;instant.</p>
               )}
-              {!aUnRetourEnAttente && canDeclarerAssistant && !demandeEstCloturee ? (
+              {r.mode === "BANQUE" && !aUnRetourEnAttente && !demandeEstCloturee && canDeclarerAssistant ? (
+                <DetaillerDepensesReglement reglementId={r.id} disponible={disponibles[index]} raisonIndisponible={raisonIndisponible} />
+              ) : null}
+              {r.mode === "BANQUE" ? (
+                <p data-retour-banque-externe className="text-xs text-muted-foreground">
+                  Fonds versé par banque : son retour éventuel n&apos;est pas déclaré ici. Le Responsable Finance l&apos;enregistre en{" "}
+                  <Link className="underline" href="/treso/finance/retours-externes">
+                    Retour externe
+                  </Link>
+                  , rattaché à cette demande et à cet article.
+                </p>
+              ) : !aUnRetourEnAttente && canDeclarerAssistant && !demandeEstCloturee ? (
                 <DetaillerDepensesReglement reglementId={r.id} disponible={disponibles[index]} raisonIndisponible={raisonIndisponible} />
               ) : !aUnRetourEnAttente && canDeclarerAssistant ? (
                 <RetourAssistantTrigger

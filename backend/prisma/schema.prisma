@@ -637,6 +637,8 @@ model Demande {
   pieces        PieceJointe[]
   /// Retours exceptionnels post-clôture (voir CLAUDE.md), distincts de `RetourCaisse`.
   retoursExceptionnels RetourExceptionnel[]
+  /// Retours externes rattachés à cette demande (lot G bis).
+  retoursExternes RetourExterne[] @relation("RetourExterneDemande")
   reglements    Reglement[]
   journalCaisse JournalCaisse[]
 
@@ -825,6 +827,8 @@ model LigneDemande {
 
   /// Retours exceptionnels post-clôture rattachés à CET article (lot E).
   retoursExceptionnels RetourExceptionnel[]
+  /// Retours externes (fonds versé par banque, rendu à la caisse) rattachés à CET article (lot G bis).
+  retoursExternes RetourExterne[] @relation("RetourExterneLigne")
 
   createdAt DateTime @default(now())
 
@@ -1531,11 +1535,20 @@ model RetourExterne {
   /// côté applicatif ; nullable en base uniquement pour les lignes antérieures.
   pieceJointeChequeId  String?  @unique
   pieceJointeCheque    PieceJointe? @relation("RetourExternePieceCheque", fields: [pieceJointeChequeId], references: [id])
+  /// Rattachement FACULTATIF à une demande et à son article (lot G bis, 2026-10-19) : retour d'un fonds versé par
+  /// BANQUE, rendu en espèces à la caisse. Rattaché, il compte comme retour reçu de l'article (solde à régulariser) ;
+  /// non rattaché, il reste totalement autonome (cas du chèque hors système). Vide pour une demande sans article.
+  demandeId            String?
+  demande              Demande? @relation("RetourExterneDemande", fields: [demandeId], references: [id], onDelete: Restrict)
+  ligneDemandeId       String?
+  ligneDemande         LigneDemande? @relation("RetourExterneLigne", fields: [ligneDemandeId], references: [id], onDelete: Restrict)
   creeParId            String
   creePar              User     @relation("RetourExterneCreePar", fields: [creeParId], references: [id])
   creeAt               DateTime @default(now())
 
   @@index([creeAt])
+  @@index([demandeId])
+  @@index([ligneDemandeId])
 }
 
 /// Réinitialisation à USAGE UNIQUE avant mise en production (voir CLAUDE.md "Réinitialisation avant mise en

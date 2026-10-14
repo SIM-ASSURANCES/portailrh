@@ -23,6 +23,7 @@ import {
   resumeModificationDepense,
   getRecuNetSignalement,
   getSoldeCaisse,
+  MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE,
   prisma,
   refusConflitInteret,
   refusExecutionPropreSurReglement,
@@ -96,8 +97,11 @@ export async function declarerRetourAssistantAction(
   if (!reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est pas éligible à un retour de caisse." };
   }
-  // Lot G : un règlement Banque suit le même circuit qu'un règlement Caisse (dépenses détaillées, retour éventuel rendu en
-  // espèces à la caisse) — plus de bordereau ni d'écriture `JournalBanque` pour un nouveau retour.
+  // Lot G bis : pas de retour à déclarer sur un fonds versé par banque — son retour est un retour externe rattaché à la
+  // demande et à l'article (les dépenses, elles, se détaillent comme pour la Caisse).
+  if (reglement.mode === "BANQUE") {
+    return { status: "error", message: MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE };
+  }
   if (reglement.retours.some((r) => !r.estReceptionne)) {
     return {
       status: "error",
@@ -235,6 +239,11 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   }
   if (retour.estReceptionne) {
     return { status: "error", message: "Ce retour de caisse est déjà réceptionné." };
+  }
+  // Lot G bis : un fonds versé par banque ne se réceptionne pas (sa fiche de détail des dépenses n'est qu'un support) ;
+  // seul un ancien retour Banque (bordereau, `versementBancaire`) reste réceptionnable, sans écriture de caisse.
+  if (retour.reglement.mode === "BANQUE" && !retour.versementBancaire) {
+    return { status: "error", message: MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE };
   }
   // Conflit d'intérêts : jamais la réception du retour de sa propre demande.
   const refusPropre = refusExecutionPropreSurReglement(retour.reglement, session.user.id);

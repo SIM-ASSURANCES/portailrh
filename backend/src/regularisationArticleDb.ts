@@ -50,7 +50,7 @@ export interface RegularisationDemandeVue {
 
 /** Agrégats de régularisation (pur + une série de requêtes) d'une demande, sans le détail des articles. */
 export async function getAgregatsRegularisation(demandeId: string): Promise<RegularisationDemande> {
-  const [reglements, retours, remboursements, exceptionnels] = await Promise.all([
+  const [reglements, retours, remboursements, exceptionnelsValides, externes] = await Promise.all([
     prisma.reglement.findMany({
       where: { demandeId },
       select: { id: true, ligneDemandeId: true, montant: true, estConfirme: true, estAnnule: true },
@@ -72,7 +72,16 @@ export async function getAgregatsRegularisation(demandeId: string): Promise<Regu
       where: { demandeId, statut: "VALIDE" },
       select: { ligneDemandeId: true, montant: true },
     }),
+    // Retours EXTERNES rattachés (lot G bis) : retour d'un fonds versé par banque, rendu à la caisse = retour reçu.
+    prisma.retourExterne.findMany({
+      where: { demandeId },
+      select: { ligneDemandeId: true, montantRetourne: true },
+    }),
   ]);
+  const exceptionnels = [
+    ...exceptionnelsValides,
+    ...externes.map((e) => ({ ligneDemandeId: e.ligneDemandeId, montant: e.montantRetourne })),
+  ];
   return agregerRegularisation({
     reglements: reglements.map((r) => ({ ...r, montant: Number(r.montant) })),
     retours: retours.map((r) => ({
@@ -93,7 +102,7 @@ export async function getEcartDemande(demandeId: string): Promise<number> {
 
 /** Régularisation de chaque article validé ou non de la demande, plus la part non rattachée et le total. */
 export async function getRegularisationParArticle(demandeId: string): Promise<RegularisationDemandeVue> {
-  const [demande, brut, datesReglements, datesRetours, datesDepenses, datesExceptionnels, enAttente] = await Promise.all([
+  const [demande, brut, datesReglements, datesRetours, datesDepenses, datesExceptionnels, datesExternes, enAttente] = await Promise.all([
     prisma.demande.findUnique({
       where: { id: demandeId },
       select: {
@@ -136,8 +145,17 @@ export async function getRegularisationParArticle(demandeId: string): Promise<Re
       where: { demandeId, statut: "VALIDE", ligneDemandeId: { not: null } },
       select: { ligneDemandeId: true, valideAt: true },
     }),
+    prisma.retourExterne.findMany({
+      where: { demandeId, ligneDemandeId: { not: null } },
+      select: { ligneDemandeId: true, creeAt: true },
+    }),
     prisma.retourCaisse.findMany({
-      where: { reglement: { demandeId, ligneDemandeId: { not: null } }, estReceptionne: false },
+      // Lot G bis : la fiche de détail d'un fonds versé par banque n'est pas un retour à réceptionner.
+      where: {
+        reglement: { demandeId, ligneDemandeId: { not: null } },
+        estReceptionne: false,
+        NOT: { reglement: { mode: "BANQUE" }, versementBancaire: false },
+      },
       select: { reglement: { select: { ligneDemandeId: true } } },
     }),
   ]);
@@ -151,6 +169,7 @@ export async function getRegularisationParArticle(demandeId: string): Promise<Re
   datesRetours.forEach((r) => noter(r.reglement.ligneDemandeId, r.receptionneAt));
   datesDepenses.forEach((d) => noter(d.retourCaisse.reglement.ligneDemandeId, d.createdAt));
   datesExceptionnels.forEach((e) => noter(e.ligneDemandeId, e.valideAt));
+  datesExternes.forEach((e) => noter(e.ligneDemandeId, e.creeAt));
   const retoursEnAttenteParLigne = new Map<string, number>();
   for (const r of enAttente) {
     const id = r.reglement.ligneDemandeId as string;

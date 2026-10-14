@@ -660,11 +660,24 @@ export async function calculerMontantARetournerNet({
 }): Promise<number> {
   const reglement = await prisma.reglement.findUnique({
     where: { id: reglementId },
-    select: { montant: true },
+    select: { montant: true, mode: true, demandeId: true, ligneDemandeId: true },
   });
   if (!reglement) {
     return 0;
   }
+  // Lot G bis : un fonds versé par banque se retourne par un retour EXTERNE rattaché à l'article ; ce qui est déjà revenu
+  // ainsi n'est plus à expliquer (sinon le détail des dépenses pourrait dépasser ce qui reste et rendre le solde négatif).
+  const retoursExternesRattaches =
+    reglement.mode === "BANQUE"
+      ? Number(
+          (
+            await prisma.retourExterne.aggregate({
+              where: { demandeId: reglement.demandeId, ligneDemandeId: reglement.ligneDemandeId },
+              _sum: { montantRetourne: true },
+            })
+          )._sum.montantRetourne ?? 0
+        )
+      : 0;
 
   const autresRetours = await prisma.retourCaisse.findMany({
     where: { reglementId, ...(excludeRetourId ? { id: { not: excludeRetourId } } : {}) },
@@ -680,7 +693,7 @@ export async function calculerMontantARetournerNet({
     }
   }
 
-  const restant = Math.max(0, Number(reglement.montant) - depensesAutres - retoursRecusAutres);
+  const restant = Math.max(0, Number(reglement.montant) - depensesAutres - retoursRecusAutres - retoursExternesRattaches);
   return Math.max(0, restant - totalDepensesNouvelles);
 }
 
@@ -760,11 +773,26 @@ export async function getSoldesARegulariserParReglements(
   const demandeIds = [...new Set(reglements.map((r) => r.demandeId))];
   // Un retour exceptionnel rattaché à un article (lot E) n'est imputé que sur les règlements de CET article ; un retour
   // sans article (dépense directe, ou antérieur au lot E sur une demande ambiguë) l'est sur ceux de la demande, comme avant.
-  const exceptionnels = await prisma.retourExceptionnel.groupBy({
-    by: ["demandeId", "ligneDemandeId"],
-    where: { statut: "VALIDE", demandeId: { in: demandeIds } },
-    _sum: { montant: true },
-  });
+  const [exceptionnelsValides, externesRattaches] = await Promise.all([
+    prisma.retourExceptionnel.groupBy({
+      by: ["demandeId", "ligneDemandeId"],
+      where: { statut: "VALIDE", demandeId: { in: demandeIds } },
+      _sum: { montant: true },
+    }),
+    // Lot G bis : un retour EXTERNE rattaché (fonds versé par banque, rendu à la caisse) compte comme retour reçu de son
+    // article, imputé de la même façon ; non rattaché, il n'apparaît jamais ici.
+    prisma.retourExterne.groupBy({
+      by: ["demandeId", "ligneDemandeId"],
+      where: { demandeId: { in: demandeIds } },
+      _sum: { montantRetourne: true },
+    }),
+  ]);
+  const exceptionnels = [
+    ...exceptionnelsValides.map((e) => ({ demandeId: e.demandeId, ligneDemandeId: e.ligneDemandeId, _sum: { montant: e._sum.montant } })),
+    ...externesRattaches
+      .filter((e): e is typeof e & { demandeId: string } => e.demandeId !== null)
+      .map((e) => ({ demandeId: e.demandeId, ligneDemandeId: e.ligneDemandeId, _sum: { montant: e._sum.montantRetourne } })),
+  ];
   for (const e of exceptionnels) {
     let reste = Number(e._sum.montant ?? 0);
     const deLaDemande = reglements.filter(
@@ -792,7 +820,7 @@ export async function getSoldesARegulariserParReglements(
  * déclaré mais pas encore traité par Finance.
  */
 export async function getRetoursRecus(demandeId: string): Promise<number> {
-  const [result, exceptionnels, rembourses] = await Promise.all([
+  const [result, exceptionnels, rembourses, externes] = await Promise.all([
     prisma.retourCaisse.aggregate({
       where: { reglement: { demandeId }, estReceptionne: true },
       _sum: { montantARetourner: true },
@@ -810,10 +838,13 @@ export async function getRetoursRecus(demandeId: string): Promise<number> {
       where: { statut: "VALIDE", retourCaisse: { reglement: { demandeId } } },
       _sum: { montant: true },
     }),
+    // Retours EXTERNES rattachés à la demande (lot G bis) : fonds versé par banque rendu à la caisse.
+    prisma.retourExterne.aggregate({ where: { demandeId }, _sum: { montantRetourne: true } }),
   ]);
   return (
     Number(result._sum.montantARetourner ?? 0) +
-    Number(exceptionnels._sum.montant ?? 0) -
+    Number(exceptionnels._sum.montant ?? 0) +
+    Number(externes._sum.montantRetourne ?? 0) -
     Number(rembourses._sum.montant ?? 0)
   );
 }
@@ -1124,6 +1155,16 @@ export async function getMesDemandesDetail(userId: string): Promise<MaDemandeDet
     retoursParDemande.set(dId, (retoursParDemande.get(dId) ?? 0) - Number(rb.montant));
   }
 
+  // Retours EXTERNES rattachés (lot G bis) : comptent comme retours reçus de leur demande.
+  const externesRattaches = await prisma.retourExterne.groupBy({
+    by: ["demandeId"],
+    where: { demandeId: { in: ids } },
+    _sum: { montantRetourne: true },
+  });
+  for (const ex of externesRattaches) {
+    if (ex.demandeId) retoursParDemande.set(ex.demandeId, (retoursParDemande.get(ex.demandeId) ?? 0) + Number(ex._sum.montantRetourne ?? 0));
+  }
+
   const depensesParDemande = new Map<string, number>();
   for (const dep of depenses) {
     const dId = dep.retourCaisse.reglement.demandeId;
@@ -1264,7 +1305,8 @@ export async function getReglementsCaisseADeclarer(userId: string): Promise<
 > {
   const reglements = await prisma.reglement.findMany({
     where: {
-      // Inclut les règlements BANQUE (lot G : le retour d'un fonds versé par banque est rendu en espèces à la caisse).
+      // Caisse seulement (lot G bis) : le retour d'un fonds versé par banque est un retour externe enregistré par la Finance.
+      mode: "CAISSE",
       estConfirme: true,
       estAnnule: false,
       demande: { createurId: userId, statut: { not: "CLOTUREE" } },

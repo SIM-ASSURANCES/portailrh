@@ -79,6 +79,8 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
   // phrase que le serveur renvoie (`refusExecutionPropreDemande`, gardes 1 à 3 et 8).
   const conflitInteret = session ? refusExecutionPropreSurReglement(retour.reglement, session.user.id) : null;
   const peutAgirRetour = canReceptionner && !conflitInteret;
+  // Lot G bis : la fiche de détail d'un fonds versé par banque ne se réceptionne pas (ancien retour Banque : inchangé).
+  const fondsBanque = retour.reglement.mode === "BANQUE" && !retour.versementBancaire;
 
   // Même imputation des retours post-clôture que l'écran Collaborateur (source unique).
   const couverture = await getCouvertureRetoursPostCloture(retour.reglement.demandeId);
@@ -201,15 +203,24 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             {retour.signalementOrigineId ? <Badge variant="info">Retour complémentaire (suite à un signalement)</Badge> : null}
-            <Badge variant={retour.estReceptionne ? "success" : "warning"}>
-              {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
-            </Badge>
+            {fondsBanque && !retour.estReceptionne ? (
+              <Badge variant="neutral">Détail des dépenses (fonds versé par banque)</Badge>
+            ) : (
+              <Badge variant={retour.estReceptionne ? "success" : "warning"}>
+                {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
+              </Badge>
+            )}
             {retour.creeParAssistant ? <Badge variant="info">Déclaré par l&apos;Assistant Finance</Badge> : null}
             {retour.motifReouvertureExceptionnelle ? (
               <Badge variant="danger">Réouverture exceptionnelle (demande clôturée)</Badge>
             ) : null}
           </div>
-          {!retour.estReceptionne ? (
+          {fondsBanque && !retour.estReceptionne ? (
+            <p data-retour-banque-externe className="max-w-md text-xs text-muted-foreground">
+              Fonds versé par banque : ce détail ne se réceptionne pas. Le retour éventuel s&apos;enregistre en « Retour externe »,
+              rattaché à la demande et à l&apos;article.
+            </p>
+          ) : !retour.estReceptionne ? (
             <ReceptionnerAction
               retourId={retour.id}
               disabled={!peutAgirRetour}

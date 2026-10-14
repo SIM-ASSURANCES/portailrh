@@ -30,6 +30,8 @@ export interface HistoriqueImprime {
     reglementReference: string;
     nul: boolean;
   }[];
+  /** Retours externes rattachés (lot G bis) : fonds versé par banque, rendu à la caisse par la Finance. */
+  retoursExternes: { date: Date; montant: number; par: string }[];
   depenses: { libelle: string; montant: number; etat: "Justifiée" | "Sans pièce formelle" | "Non détaillée"; date: Date }[];
   fondsRemis: number;
   totalDepenses: number;
@@ -44,7 +46,7 @@ export async function chargerHistoriqueDocument(p: {
   /** Règlement mis en avant (celui du reçu), le cas échéant. */
   reglementCourantId?: string;
 }): Promise<HistoriqueImprime> {
-  const [tous, agregats] = await Promise.all([
+  const [tous, agregats, externes] = await Promise.all([
     prisma.reglement.findMany({
       where: { demandeId: p.demandeId, estConfirme: true, estAnnule: false },
       orderBy: { createdAt: "asc" },
@@ -62,6 +64,11 @@ export async function chargerHistoriqueDocument(p: {
       },
     }),
     getAgregatsRegularisation(p.demandeId),
+    prisma.retourExterne.findMany({
+      where: { demandeId: p.demandeId, ...(p.ligneDemandeId ? { ligneDemandeId: p.ligneDemandeId } : {}) },
+      orderBy: { creeAt: "asc" },
+      select: { creeAt: true, montantRetourne: true, creePar: { select: { fullName: true } } },
+    }),
   ]);
   // Même numérotation que le reçu de règlement : `<demande>-R<rang>` parmi les règlements confirmés de la demande.
   const confirmesRang = await prisma.reglement.findMany({
@@ -113,6 +120,7 @@ export async function chargerHistoriqueDocument(p: {
     reglements,
     totalRegle: reglements.reduce((s, r) => s + Math.round(r.montant * 100), 0) / 100,
     retours,
+    retoursExternes: externes.map((x) => ({ date: x.creeAt, montant: Number(x.montantRetourne), par: x.creePar.fullName })),
     depenses,
     fondsRemis: chiffres.fondsRemis,
     totalDepenses: Math.round((chiffres.depensesJustifiees + chiffres.depensesSansPieceFormelle + chiffres.resteNonDetaille) * 100) / 100,

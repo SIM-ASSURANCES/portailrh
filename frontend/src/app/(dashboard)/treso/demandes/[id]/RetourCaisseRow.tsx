@@ -204,10 +204,13 @@ function RetourExistant({
   retour,
   reglementId,
   montant,
+  banque = false,
 }: {
   retour: RetourData;
   reglementId: string;
   montant: number;
+  /** Fonds versé par banque (lot G bis) : cette fiche ne sert qu'à détailler les dépenses, elle ne se réceptionne pas. */
+  banque?: boolean;
 }) {
   const [editOpen, setEditOpen] = useState(false);
 
@@ -215,10 +218,14 @@ function RetourExistant({
     <li className="space-y-3 rounded-md border border-border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={retour.estReceptionne ? "success" : "warning"}>
-            {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
-          </Badge>
-          {retour.creeParAssistant ? <Badge variant="info">Déclaré par l&apos;Assistant Finance</Badge> : null}
+          {banque && !retour.estReceptionne ? (
+            <Badge variant="neutral">Détail des dépenses</Badge>
+          ) : (
+            <Badge variant={retour.estReceptionne ? "success" : "warning"}>
+              {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
+            </Badge>
+          )}
+          {retour.creeParAssistant && !banque ? <Badge variant="info">Déclaré par l&apos;Assistant Finance</Badge> : null}
           {retour.estReceptionne ? (
             <a
               href={`/api/treso/retours/${retour.id}/recu`}
@@ -294,6 +301,10 @@ export function RetourCaisseRow({
   const [formOpen, setFormOpen] = useState(false);
 
   const aUnRetourEnAttente = retours.some((r) => !r.estReceptionne && !r.estFiche);
+  // Lot G bis : un fonds versé par banque ne se retourne pas par une déclaration du collaborateur — la Finance enregistre
+  // le retour (retour externe rattaché à la demande et à l'article). Les anciens retours Banque restent affichés.
+  const banque = modeReglement === "BANQUE";
+  const declarationPossible = peutDeclarer && !banque;
 
   return (
     <li className="space-y-3 rounded-md border border-border p-4">
@@ -302,12 +313,16 @@ export function RetourCaisseRow({
             Caisse (voir `RetoursCaisseSection`) : la date, jamais le montant
             (déjà affiché dans la section Règlements). */}
         {repere ? <p className="font-medium text-foreground">{repere}</p> : null}
-        {formOpen || aUnRetourEnAttente ? null : peutDeclarer && rienARendre ? (
+        {banque ? (
+          <p data-retour-par-la-finance className="text-sm text-muted-foreground">
+            Fonds versés par banque : si de l&apos;argent doit revenir, c&apos;est la Finance qui enregistre le retour sur votre demande.
+          </p>
+        ) : formOpen || aUnRetourEnAttente ? null : declarationPossible && rienARendre ? (
           // Retour nul (2026-10-08) : rien à rendre, aucune déclaration n'est attendue du collaborateur.
           <p data-rien-a-rendre className="text-sm text-muted-foreground">
             {MESSAGE_RIEN_A_RENDRE}
           </p>
-        ) : peutDeclarer ? (
+        ) : declarationPossible ? (
           <Button type="button" onClick={() => setFormOpen(true)}>
             {retours.every((r) => r.estFiche) ? "Déclarer un retour de caisse" : "Déclarer un nouveau retour de caisse"}
           </Button>
@@ -319,7 +334,7 @@ export function RetourCaisseRow({
       {retours.length > 0 ? (
         <ul className="space-y-3">
           {retours.map((retour) => (
-            <RetourExistant key={retour.id} retour={retour} reglementId={reglementId} montant={montant} />
+            <RetourExistant key={retour.id} retour={retour} reglementId={reglementId} montant={montant} banque={banque} />
           ))}
         </ul>
       ) : null}
@@ -327,7 +342,6 @@ export function RetourCaisseRow({
       {formOpen ? (
         <RetourCaisseForm
           reglementId={reglementId}
-          modeReglement={modeReglement}
           montantReglement={montant}
           dateMin={dateMin}
           onCancel={() => setFormOpen(false)}

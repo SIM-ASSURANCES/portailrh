@@ -1359,6 +1359,9 @@ qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionne
 
 #### Retour sur règlement Banque (`JournalBanque`)
 
+> **⚠️ REMPLACÉ une seconde fois par le lot G bis (2026-10-19, plus bas)** : un fonds versé par banque n'a plus de déclaration ni de réception de retour ;
+> son retour est un **retour externe rattaché** (Responsable Finance). Le paragraphe suivant (lot G) est lui aussi superseded sur ce point.
+>
 > **⚠️ REMPLACÉ pour tout NOUVEAU retour par le lot G (2026-10-14, plus bas)** : un retour sur un fonds versé par banque suit désormais le
 > même circuit qu'un fonds de caisse (date + montant, dépenses détaillées par l'Assistant) et est **rendu en espèces à la caisse** — sa
 > réception écrit une `ENTREE` dans `JournalCaisse`. Plus de bordereau ni d'écriture `JournalBanque` `RETOUR`. Les **anciens** retours Banque
@@ -1381,9 +1384,10 @@ qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionne
 
 #### Retour externe (hors demande) — `RetourExterne`
 
-- Argent revenu en caisse suite à un règlement fait hors système (ex. chèque). **Totalement
-  autonome** : aucun lien avec `Demande`/`Reglement`/`RetourCaisse`/`RetourExceptionnel` — ne jamais
-  le rattacher ni le compter dans les calculs de ces objets.
+- Argent revenu en caisse suite à un règlement fait hors système (ex. chèque). **Autonome par défaut** :
+  aucun lien avec `Demande`/`Reglement`/`RetourCaisse`/`RetourExceptionnel` — non rattaché, ne jamais
+  le compter dans les calculs de ces objets. **Depuis le lot G bis (2026-10-19)** il peut en plus être
+  **rattaché** à une demande + un article (`demandeId`/`ligneDemandeId`, facultatifs) : voir « Lot G bis ».
 - `creerRetourExterneAction` : **Responsable Finance seul**, effet immédiat et définitif (pas de
   double validation). Personne = `collaborateurId` **XOR** `nomExterne` (jamais les deux ni aucun,
   contrainte applicative). Montant du chèque initial = **information déclarative non vérifiée**.
@@ -2976,6 +2980,7 @@ reporting « Fonds remis » (`getFondsRemisParDemande`, allocations `total`), `e
 l'Assistant sur un règlement Banque, notification « Retour de caisse à déclarer » (aussi pour la Banque), reporting « Retours » (nul). Déjà corrects (vérifiés,
 mode ignoré) : montant réglé, reste à régler, plafond de l'article, badges Partiellement réglé/Réglé, budget consommé (allocations), `getEcartLigne`,
 `getSoldesARegulariserParReglements`. Un même article peut avoir plusieurs règlements mixtes (60 000 Caisse + 40 000 Banque = 100 000).
+- **⚠️ Le retour en espèces via déclaration/réception décrit ci-dessous est REMPLACÉ par le lot G bis** (retour externe rattaché) ; la justification par dépenses détaillées reste.
 - **Décision (réponses de l'utilisateur)** : un fonds versé par banque se justifie par les mêmes dépenses détaillées (même circuit que la Caisse, sans retour obligatoire) ;
   **son retour est rendu en espèces à la caisse** : `receptionnerRetourAction` écrit une `ENTREE` `JournalCaisse` (comme un retour Caisse). Le formulaire du
   collaborateur est identique (date + montant, plus de bordereau ni de `JournalBanque` `RETOUR`) ; `declarerRetourAssistantAction(reglementId, motifReouverture?)` perd ses
@@ -3006,6 +3011,44 @@ sans effet, rattrapage `versementBancaire` testé (retour avec `JournalBanque` R
 article, article de 100 000 réglé 60 000 Caisse + 40 000 Banque : solde de caisse inchangé par la Banque, budget 100 000, régularisation, retour d'un fonds bancaire rendu en espèces puis écrit en
 caisse, ancien retour bancaire inchangé, 3 PDF, récapitulatif, reporting et export) ; régressions `regularisation-par-article` 38/38, `reglement-par-article` 55/55, `articles-decision-finance` 65/65,
 `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
+
+#### Lot G bis — le retour d'un fonds versé par banque passe par le retour externe rattaché (2026-10-19)
+
+Décision de l'utilisateur, qui remplace le circuit du lot G pour la Banque : « les retours de banque sont gérés par le retour externe, que seule la Finance peut faire,
+qui peut se rattacher en indiquant les références de la demande et de l'article ; c'est alors que ce retour entre dans le solde de la caisse ». Réponses aux trois questions
+posées : le retour rattaché **compte comme retour reçu** (il réduit le solde à régulariser) ; le circuit collaborateur/Assistant est **supprimé pour la Banque** ;
+le rattachement est **facultatif** (un retour externe sans demande reste possible, cas du chèque).
+
+- **Modèle** : `RetourExterne.demandeId` / `ligneDemandeId` (facultatifs, clés `RESTRICT`, index) — migration additive idempotente `20261019090000_retour_externe_rattache`,
+  rejouée sans effet. Les retours externes existants restent non rattachés. Rattaché → ET `ENTREE` `JournalCaisse` (`retour_externe`, inchangée), ET retour reçu de l'article.
+- **Règles pures** (`backend/src/retourExterneRattache.ts`, 6 tests) : article **obligatoire** pour une demande à articles, **interdit** pour une dépense directe, article de la
+  demande ; au moins un règlement **Banque** confirmé non annulé sur le périmètre ; **plafond** = min(fonds Banque du périmètre − retours externes déjà rattachés,
+  solde à régulariser du périmètre), jamais négatif. Chargement : `retourExterneRattacheDb.ts` (`chargerContexteRattachement`, `chercherDemandeRattachable`).
+- **Action** `creerRetourExterneAction(..., demandeId?, ligneDemandeId?)` : même garde (`treso.creer_retour_externe`, Responsable Finance seul), plus **garde de conflit d'intérêts**
+  (`refusConflitInteret` sur `{ demandeId, ligneDemandeId }` : jamais le demandeur/bénéficiaire de l'article), verrou `pg_advisory_xact_lock` par (demande, article) pour que deux
+  retours simultanés ne dépassent pas le plafond. Historique `retour_externe_rattache` sur la demande (visible du collaborateur) ; **notification du demandeur** (référence de la
+  demande + libellé de l'article). `chercherDemandeRattachableAction(reference)` retrouve la demande (insensible à la casse) et liste les articles ayant des fonds Banque.
+- **Écran** `/treso/finance/retours-externes` : case « Rattacher à une demande », référence → « Rechercher » → choix de l'article (fonds banque, déjà retourné, solde à régulariser
+  rappelés) ; la liste indique « Rattaché à la demande DEM-… · article … ». Excel « Retours externes » : colonnes « Demande rattachée » et « Article rattaché ».
+- **Compte comme retour reçu** (jamais pour un retour non rattaché) : `getRetoursRecus`, `getAgregatsRegularisation` (donc `getEcartLigne` de l'article, `RegularisationSummary`,
+  parcours, `getRecapRetourCaisse`), `getSoldesARegulariserParReglements` (imputé comme un retour exceptionnel : sur les règlements de l'article, du plus ancien au plus récent,
+  après la soustraction des dépenses et retours de chaque règlement), « Mon tableau de bord », reporting « Fonds remis » et « une ligne par demande » (colonne Retours),
+  `calculerMontantARetournerNet` (un fonds Banque n'a plus à expliquer ce qui est déjà revenu). Parcours : étape « Retour enregistré par la Finance » ; récapitulatif du collaborateur :
+  « dont X enregistrés par la Finance » ; reçus PDF : section « Retours enregistrés par la Finance (fonds versé par banque) ».
+- **Circuit supprimé pour la Banque** (serveur ET écran) : `creerRetourCaisseAction`, `declarerRetourAssistantAction` et `receptionnerRetourAction` refusent un règlement `BANQUE`
+  (`MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE`) ; `getReglementsCaisseADeclarer` et la notification « Retour de caisse à déclarer » redeviennent **Caisse seulement** ;
+  `RETOUR_EN_ATTENTE_WHERE` exclut les retours Banque non anciens. Le collaborateur voit « c'est la Finance qui enregistre le retour » ; la Finance voit un renvoi vers « Retour externe ».
+  **L'Assistant détaille toujours les dépenses d'un fonds bancaire** (`detaillerDepensesReglementAction`) : la fiche créée n'est qu'un support (badge « Détail des dépenses », jamais « en attente
+  de réception », absente de « Retours en attente », du parcours et du récapitulatif) ; son « montant à rendre » n'est plus que calculé, jamais réceptionné. **Anciens retours Banque**
+  (`versementBancaire = true`) : traitement d'origine inchangé (réception sans écriture de caisse).
+- **Limites / décisions ouvertes** : (1) article avec plusieurs règlements Banque : le plafond et `calculerMontantARetournerNet` raisonnent au niveau de l'article (retour externe imputé
+  sur les règlements dans l'ordre d'ancienneté) ; (2) pas de garde `CLOTUREE` sur le rattachement (Finance, effet immédiat, comme le retour externe) ; (3) « Mon tableau de bord » du
+  collaborateur ne compte toujours pas les retours exceptionnels validés (écart préexistant, non corrigé) mais compte les retours externes rattachés ; (4) un retour externe rattaché ne se
+  corrige pas (comme tout retour externe : écriture définitive).
+- **Vérifié** : vitest (7 nouveaux tests, 737 pass + échec connu `feedback.test.ts`), tsc, eslint, `next build` ; migration depuis zéro, `migrate diff` vide, rejeu sans effet ; e2e
+  `lot-g-bis.mjs` 35/35 (article 100 000 = 60 000 Caisse + 40 000 Banque ; plus de déclaration pour la Banque ; rattachement par référence, refus hors plafond, caisse +15 000, solde 0,
+  second retour refusé, retour non rattaché autonome) ; `lot-g.mjs` adapté 60/60 ; régressions `regularisation-par-article` 38/38, `reglement-par-article` 55/55,
+  `articles-decision-finance` 65/65, `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
 
 ### Solde d'ouverture de caisse
 

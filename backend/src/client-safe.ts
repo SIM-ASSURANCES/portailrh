@@ -29,6 +29,7 @@ export * from "./motifLigne";
 export * from "./cheminRetour";
 export * from "./categorisationObligatoire";
 export * from "./retourNul";
+export * from "./retourExterneRattache";
 export * from "./regularisationDepenses";
 export * from "./regularisationArticle";
 export * from "./dateLivraisonArticle";

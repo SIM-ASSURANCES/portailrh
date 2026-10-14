@@ -141,6 +141,8 @@ export async function GET(request: NextRequest) {
     { header: "Motif", key: "motif", width: 40 },
     { header: "Date", key: "date", width: 14 },
     { header: "Enregistré par", key: "auteur", width: 22 },
+    { header: "Demande rattachée", key: "demande", width: 20 },
+    { header: "Article rattaché", key: "article", width: 28 },
     { header: "Justificatif du chèque initial", key: "pjCheque", width: 30 },
     { header: "Justificatif du retour", key: "pjRetour", width: 26 },
   ];
@@ -153,6 +155,8 @@ export async function GET(request: NextRequest) {
       motif: r.motif,
       date: r.date.toLocaleDateString("fr-FR"),
       auteur: r.auteurNom,
+      demande: r.demandeReference ?? "—",
+      article: r.articleLibelle ?? "—",
       pjCheque: r.pieceChequeId
         ? { text: "Télécharger", hyperlink: `${request.nextUrl.origin}/api/treso/pieces-jointes/${r.pieceChequeId}` }
         : "—",

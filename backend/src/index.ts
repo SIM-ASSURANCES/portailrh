@@ -29,11 +29,13 @@ export * from "./beneficiaireArticles";
 export * from "./motifLigne";
 export * from "./categorisationObligatoire";
 export * from "./retourNul";
+export * from "./retourExterneRattache";
 export * from "./reportingDemandeLigne";
 export * from "./regularisationDepenses";
 export * from "./regularisationArticle";
 export * from "./dateLivraisonArticle";
 export * from "./regularisationArticleDb";
+export * from "./retourExterneRattacheDb";
 export * from "./feedback";
 export * from "./reinitialisation";
 
