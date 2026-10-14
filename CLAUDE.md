@@ -4540,7 +4540,7 @@ Aucune migration, aucune permission nouvelle.
 
 ### 15. Fiabilisation du pointage — phase 2 : planificateur intégré (2026-10-14)
 
-Plan : `PLAN_FIABILISATION_POINTAGE.md`. Les tâches planifiées vivent **dans l'application** (plus de cron-job.org).
+Plan : `docs/PLAN_FIABILISATION_POINTAGE.md`. Les tâches planifiées vivent **dans l'application** (plus de cron-job.org).
 - **Logique pure** `backend/src/planificateur.ts` (14 tests, horloge simulée) : `tachesDues(now, dernieres)`, `dernierCreneau`,
   `prochaineExecution`, `tacheEnRetard`, `libelleBilan`, `erreurCourte`. Cadence (heure locale du serveur = Abidjan) :
   relances toutes les 5 minutes (créneaux alignés sur les multiples de 5), absences lundi-vendredi 17:30 et 20:00, purge
@@ -4557,7 +4557,7 @@ Plan : `PLAN_FIABILISATION_POINTAGE.md`. Les tâches planifiées vivent **dans l
   `CRON_SECRET`) et passent par `executerTache` (déclenchement `MANUEL`).
 - **Modèle** `ExecutionTache` (migration `20261014090000_execution_tache`, rejouable) : `tache` (RELANCES_JUSTIFICATION,
   ABSENCES, PURGE), `declenchement`, `debut`, `fin`, `statut` (SUCCES, ECHEC, IGNOREE), `bilan` (JSON), `erreur` (texte
-  court sans donnée personnelle). La purge supprime les exécutions de plus de 90 jours.
+  court sans donnée personnelle). La purge supprime les exécutions de plus de 90 jours (jamais le marqueur de clôture initiale, § 18, qui vit dans `MarqueurUnique`).
 - **Limite connue** : l'écriture de la ligne d'exécution se fait à la FIN ; une exécution qui plante le processus entier n'en
   laisse pas.
 
@@ -4606,6 +4606,52 @@ que dans les logs du serveur).
 - **Pas d'export** dans cette version.
 - Vérifié par `e2e/mon-equipe.mjs` : chiffres identiques à ceux du reporting RH (même période, même service), 404 hors responsabilité, accès qui suit
   un changement de responsable, 390 px.
+
+### 18. Fiabilisation du pointage — clôture initiale au premier passage en production (2026-10-14)
+
+Décision de Thierry : au tout premier passage du planificateur **en production** (`NODE_ENV === "production"`), clôture SANS AUCUN ENVOI de
+l'arriéré, pour ne pas inonder les collaborateurs au démarrage. `backend/src/clotureInitiale.ts` (`cloturerEnAttenteInitiale`, 5 tests) ;
+appelée par `assurerClotureInitiale()` (`frontend/src/lib/taches/planificateur.ts`) AVANT toute tâche : en cas d'échec le passage s'arrête (les
+relances n'envoient rien sur l'arriéré) et le suivant réessaie.
+- **Justifications** `EN_ATTENTE` dont le pointage est d'avant le jour courant (00:00 heure locale) → `NON_JUSTIFIEE` + `clotureeAt`, aucune notification.
+  Les justifications SOUMISE/ACCEPTEE/REFUSEE et celles du jour courant ne sont pas touchées.
+- **Absences** `A_CONTROLER` d'avant le jour courant → **`CONFIRMEE`**, sans notification (`controleParId` vide ; motif « Clôture automatique à la mise en
+  production… » seulement si l'absence n'en avait pas). **Statut vérifié** : `CONFIRMEE` est l'« Absence injustifiée (confirmée) » de l'écran RH, le SEUL
+  statut qui garde l'absence comptée sans prétendre qu'elle est excusée ; `JUSTIFIEE` effacerait la sanction sans motif, et laisser `A_CONTROLER` ne clôturerait
+  rien. Les compteurs et exports comptent les absences quel que soit leur statut. Aucun autre statut ne convenait mieux.
+- **Une seule fois** : table `MarqueurUnique` (migration `20261014110000_marqueur_unique`, jamais purgée), clé `pointage.cloture_initiale`. L'insertion
+  (`ON CONFLICT DO NOTHING`) fait office de verrou, dans la MÊME transaction que les clôtures et que la ligne de journal : un échec annule tout (le marqueur
+  aussi) ; si deux instances démarrent ensemble, la seconde attend la première, puis constate le marqueur (ou exécute si la première a annulé).
+- **Journal technique** : une ligne `TACHE` / `CLOTURE_INITIALE` (niveau AVERTISSEMENT) avec `justificationsCloturees` et `absencesConfirmees`, même à 0.
+- Hors production (`NODE_ENV` ≠ `production`), rien n'est exécuté. `PLANIFICATEUR_ACTIF=false` empêche aussi cette clôture.
+- Vérifié par `e2e/cloture-initiale.mjs` (18 contrôles : statuts, aucune notification, journal, marqueur, redémarrage sans rejeu, concurrence avec marqueur
+  validé puis annulé par l'autre instance).
+
+### 19. Réinitialisation du Pointage seul, avant sa mise en service (2026-10-14)
+
+Distincte de la réinitialisation globale (« Réinitialisation avant mise en production », déjà exécutée et verrouillée, `systeme.reinitialiser`, jamais touchée).
+- **Permission** `pointage.reinitialiser` (migration `20261014120000_pointage_reinitialisation`, module Pointage) : attribuée **explicitement** (une
+  `RolePermission`, jamais le contournement `estAdmin`) aux rôles portant `estAdmin` — **autre exception délibérée** à l'invariant « le rôle Admin n'a aucune
+  RolePermission » (avec `feedback.moderer`) ; retirable dans `/admin/roles` ; **jamais délégable** (`PERMISSIONS_DECISION_NON_DELEGABLES`). Le DG ne l'a pas.
+  **Conséquence** : tout compte du rôle Admin peut purger le Pointage → neutraliser les comptes de test en production AVANT de déployer (`DEPLOIEMENT.md` § 8).
+- **Écran** `/admin/reinitialisation-pointage` (gardé par la permission EN PLUS du layout `/admin` ; redirection et toast sinon) ; **sauvegarde**
+  `GET /api/admin/reinitialisation-pointage/sauvegarde` (JSON, `X-Backup-Sha256`, 401/403/409). Lien de menu « Purge du Pointage » tant que le Pointage n'est pas en service.
+- **Mécanique** (`backend/src/reinitialisationPointage.ts`, 5 tests) — celle de `reinitialisation.ts` : sauvegarde JSON + SHA-256 ; la purge relit les données dans sa
+  transaction et refuse si l'empreinte diffère ; mot exact `REINITIALISER-POINTAGE` revérifié côté serveur ; UNE transaction sérialisable, enfants avant parents ;
+  verrou consultatif `pg_try_advisory_xact_lock` : de deux exécutions simultanées une seule réussit.
+- **Purgé** : `CorrectionPointage`, `JustificationPointage`, `Pointage`, `Absence`, `PlageAbsenceAutorisee`, notifications `POINTAGE` et `RH`, historique des entités
+  `Pointage`/`PointageQR`/`PointageGeo`/`JustificationPointage`, `ExecutionTache`, `JournalTechnique`. **Gardé** : comptes, rôles, permissions, services et responsables,
+  `ParametrageHoraire`, `JourFerie`, `FcmToken`, Trésorerie, Encaissements, FeedbackApp, et les tables d'audit ci-dessous.
+- **Écart assumé** : `ExecutionTache` et `JournalTechnique` sont sauvegardées et purgées mais **hors empreinte** — le planificateur y écrit toutes les 5 minutes, l'empreinte
+  ne tiendrait sinon jamais le temps de télécharger la sauvegarde et de confirmer.
+- **Audit permanent** : `ReinitialisationPointage` (date, auteur, décompte par table, empreinte ; jamais purgée, une ligne par purge, aussi dans `HistoriqueEntry`) ; les comptes qui
+  y figurent ne sont plus supprimables. **Répétable** tant que le Pointage n'est pas en service.
+- **« Mettre le Pointage en service »** (même permission, mot `METTRE-EN-SERVICE-POINTAGE`) : marqueur définitif `PointageMiseEnService` (`verrou` unique). Ensuite la purge est
+  refusée (action, et sauvegarde en 409), le lien de menu disparaît et l'écran n'affiche plus que l'audit.
+- **Après une purge** : l'écran rappelle de régler `SYSTEM_START_DATE` (et de redéployer). Le régler AVANT la purge : une fois `ExecutionTache` purgée, la tâche des absences est
+  de nouveau due et, sinon, recrée les absences des 2 derniers jours.
+- Vérifié par `e2e/reinitialisation-pointage.mjs` (39 contrôles, serveur lancé avec `PLANIFICATEUR_ACTIF=false`) : refus sans permission (écran, sauvegarde, actions), mot faux,
+  empreinte invalide et périmée, deux purges successives, deux simultanées, mise en service puis refus, Trésorerie/FeedbackApp/comptes/configuration intacts.
 
 ## Module FeedbackApp — anonymat total
 
@@ -5835,7 +5881,7 @@ layout ou le masquage de l'UI.
   si coché, 1 jour sinon (décoché par défaut). `rememberMe` n'est jamais
   exposé côté `Session`, uniquement interne au JWT.
 - **Déconnexion automatique après inactivité — RETIRÉE le 2026-10-14** (demande du DG, fluidité du pointage ; plan
-  `PLAN_FIABILISATION_POINTAGE.md`, phase 1). `InactivityLogout`, `logoutForInactivityAction` et le message
+  `docs/PLAN_FIABILISATION_POINTAGE.md`, phase 1). `InactivityLogout`, `logoutForInactivityAction` et le message
   `?error=inactivite` n'existent plus (un ancien lien qui le porte affiche la page de connexion normalement, sans
   erreur). Il ne reste que les deux durées ci-dessus, **glissantes** (le middleware ré-encode le jeton à chaque page :
   1 jour sans la case, 30 jours avec, comptés depuis la DERNIÈRE page visitée) — prouvé par `e2e/session-glissante.mjs`,
@@ -6781,7 +6827,7 @@ etc.) ont déjà leur migration. **Toute nouvelle permission ajoutée au seed do
 
 **Pointage RH** (`pointage.*`) : `pointer`, `consulter_historique`,
 `consulter_tous`, `pointage_exceptionnel`, `corriger_pointage`,
-`gerer_horaires`, `voir_dashboard_rh`, `voir_reporting`.
+`gerer_horaires`, `voir_dashboard_rh`, `voir_reporting`, `reinitialiser` (purge du Pointage seul, § 19 : Admin, jamais déléguée).
 `corriger_pointage` est aussi la **permission de repli RH** du circuit de justification (Pointage V2) : ses détenteurs
 (autres que le collaborateur) décident quand le collaborateur est responsable de son service, est DG, ou que son service
 n'a pas de responsable actif ; s'il n'existe aucun autre compte RH actif, le DG (`treso.decider_dg`) décide (section 14).

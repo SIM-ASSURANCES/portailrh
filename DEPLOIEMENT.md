@@ -177,6 +177,24 @@ en plus du planificateur : sans conséquence sur les données (tâches idempoten
 
 Penser aussi à vérifier sur `/admin/notifications` que les responsables de service ont activé les notifications push.
 
+## 8. Activation du planificateur et purge du Pointage (comptes de test)
+
+**À faire AVANT de déployer cette version en production.**
+
+1. **Neutraliser les comptes de test** (`admin@simassurances.test`, `dg@`, `finance@`, `rh@`, `collaborateur@`, `assistant-finance@`, `responsable-*@`, `enc-*@`…, tous les
+   `*@simassurances.test`) : **les DÉSACTIVER** dans `/admin/users` (connexion refusée, sessions en cours coupées, historique intact, réversible) — **jamais les supprimer**.
+   Raison : le rôle Admin reçoit la permission `pointage.reinitialiser` (migration `20261014120000`) ; un compte Admin au mot de passe de test connu pourrait **purger le
+   Pointage**. Le rôle DG reçoit déjà `systeme.reinitialiser` et `enc.mettre_en_service` : même consigne.
+2. **Ou démarrer avec `PLANIFICATEUR_ACTIF=false`** (variable de l'onglet Environment de Dokploy) tant que ces comptes ne sont pas neutralisés, puis supprimer la variable (ou la
+   passer à `true`) et redéployer. Sans planificateur, aucune relance ni absence automatique ne part, et la clôture initiale n'a pas lieu.
+3. **Premier passage du planificateur en production** : clôture initiale, une seule fois (marqueur `MarqueurUnique`), sans aucun envoi — justifications `EN_ATTENTE` d'avant le jour
+   courant → `NON_JUSTIFIEE`, absences `A_CONTROLER` d'avant le jour courant → `CONFIRMEE`. Le nombre de clôtures est écrit au journal technique (`/admin/journal-technique`, code
+   `CLOTURE_INITIALE`). Pour que l'arriéré de test soit traité à ce moment-là, ne démarrer le planificateur qu'après avoir décidé de la purge du Pointage (point suivant).
+4. **Purge du Pointage seul** (`/admin/reinitialisation-pointage`, permission `pointage.reinitialiser`) : sauvegarde JSON téléchargée (empreinte SHA-256), mot `REINITIALISER-POINTAGE`,
+   une transaction. Répétable jusqu'à **« Mettre le Pointage en service »** (mot `METTRE-EN-SERVICE-POINTAGE`, définitif : plus aucune purge ensuite). Les fichiers de `uploads/` ne
+   sont pas concernés. **Régler `SYSTEM_START_DATE` sur la date de mise en service et redéployer AVANT la purge** : le planificateur ignore alors tout ce qui est antérieur.
+5. La réinitialisation **globale** (`/systeme/reinitialisation`) a déjà été exécutée en production (26/09/2026) et est verrouillée : elle n'est pas concernée.
+
 ## Récapitulatif des choix techniques
 
 - **Image de base Debian** (`node:20-bookworm-slim`), pas Alpine — voir

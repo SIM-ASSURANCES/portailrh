@@ -28,3 +28,14 @@ PLANIFICATEUR_ACTIF=false bash e2e/base-jetable.sh && node e2e/planificateur-ret
 ```
 
 `E2E_ATTENDRE_CRENEAU=1 node e2e/planificateur-journal.mjs` attend en plus le prochain créneau de 5 minutes du planificateur.
+
+### Clôture initiale, purge du Pointage, page « Présence du jour »
+
+```bash
+# Base neuve, planificateur actif :
+node e2e/cloture-initiale.mjs          # clôture initiale (relance le serveur via e2e/redemarrer-serveur.sh)
+# Base neuve, planificateur COUPÉ (sinon la tâche des absences recrée des lignes après chaque purge) :
+PLANIFICATEUR_ACTIF=false bash e2e/base-jetable.sh && node e2e/reinitialisation-pointage.mjs
+# Après une base peuplée par les autres scripts :
+E2E_CAPTURES=./e2e-captures node e2e/presence-rh.mjs   # page « Présence du jour » de la RH (capture dans e2e-captures/, non versionné)
+```
