@@ -256,3 +256,27 @@ export function dateRegularisation(p: { agregats: AgregatsRegularisation; dates:
   if (connues.length === 0) return null;
   return new Date(Math.max(...connues.map((d) => d.getTime())));
 }
+
+export interface TotauxBandeArticle {
+  remis: number;
+  detaille: number;
+  reste: number;
+  sansPiece: number;
+  retourne: number;
+}
+
+/**
+ * Bande « Total de l'article » (lot G quater) : additionne TOUS les règlements de l'article (Caisse + Banque) avec les mêmes
+ * définitions que la bande de chaque règlement (`totauxDetailRetour`) — Remis = fonds remis, Détaillé = dépenses justifiées +
+ * sans pièce formelle, Sans pièce = dépenses sans pièce formelle, Retourné = retours reçus ; le reste est CELUI de
+ * `resteNonDetailleTotal` (jamais un second calcul). Aucun accès base, aucune écriture.
+ */
+export function totauxBandeArticle(a: AgregatsRegularisation): TotauxBandeArticle {
+  return {
+    remis: a.fondsRemis,
+    detaille: (c(a.depensesJustifiees) + c(a.depensesSansPieceFormelle)) / 100,
+    reste: resteNonDetailleTotal(a),
+    sansPiece: a.depensesSansPieceFormelle,
+    retourne: a.retoursRecus,
+  };
+}

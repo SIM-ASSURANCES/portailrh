@@ -3073,6 +3073,21 @@ Correctif d'affichage et de calcul, **aucune migration, aucune écriture de cais
   (571 000 → reste 100 000, sous-blocs Caisse/Banque, bouton visible, détail par l'écran → reste 0, solde 0, « Régularisé », caisse inchangée, reçu PDF et récapitulatif collaborateur) ;
   régressions `lot-g-bis` 35, `lot-g` 60, `regularisation-par-article` 38, `reglement-par-article` 55, `articles-decision-finance` 65, `soumission-dg-article` 37, `articles-beneficiaire-pieces` 34.
 
+#### Lot G quater — bande « Total de l'article » au-dessus des sous-blocs par règlement (2026-10-21)
+
+Affichage seulement : **aucune migration, aucune écriture de caisse créée ni modifiée**. Constat : dans le bloc « Régularisation » d'un article à plusieurs règlements, la bande
+Remis / Détaillé / Reste non détaillé / Sans pièce formelle / Retourné du sous-bloc Caisse ne reflétait que la caisse (« Remis 471 000 » pour un article de 571 000).
+- **`totauxBandeArticle(agregats)`** (`regularisationArticle.ts`, pur) : Remis = fonds remis (Caisse + Banque), Détaillé = justifiées + sans pièce formelle, Sans pièce = sans pièce formelle,
+  Retourné = retours reçus, **Reste = `resteNonDetailleTotal`** (aucun second calcul). Composant `BandeTotauxArticle` (`data-bande-total-article`), placé par `DetailReglements`
+  (`RegularisationSummary`) **au-dessus** des sous-blocs, **seulement si l'article a plus d'un règlement confirmé** (un seul règlement : pas de bande, la bande du règlement fait foi).
+  Même bande « Total de la demande » pour une demande sans article à plusieurs règlements, « Total non rattaché » pour la part non rattachée.
+- Sous-blocs rebaptisés **« Détail du règlement Caisse/Banque — X FCFA »**, avec leur bande propre inchangée.
+- Récapitulatif du collaborateur et reçus PDF : **aucune modification** — ils affichent déjà des totaux d'article (fonds reçus Caisse + Banque, reste non détaillé via `resteNonDetailleTotal`, solde),
+  jamais de bande par règlement.
+- **Vérifié** : vitest (3 tests `totauxBandeArticle`, dont 471 000 + 100 000 / 400 000 + 71 000 / 100 000 retournés → 571 000, 471 000, 0, 71 000, 100 000), tsc, eslint, `next build` ;
+  e2e `lot-g-ter.mjs` 31/31 (bande avant/après détail, position au-dessus des sous-blocs, cas 400 000 + 71 000, article à un seul règlement sans bande, caisse inchangée) ;
+  régressions `lot-g-bis` 35, `lot-g` 60, `regularisation-par-article` 38, `reglement-par-article` 55, `articles-decision-finance` 65, `soumission-dg-article` 37, `articles-beneficiaire-pieces` 34.
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié

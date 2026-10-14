@@ -114,6 +114,11 @@ const caisseAvant = await soldeCaisse();
   const banque = net(await a.locator(`[data-regularisation-reglement="${PREFIXE}rBanque"]`).innerText());
   verifier("1. sous-bloc « Règlement Caisse — 471 000 FCFA » : REMIS 471 000, DÉTAILLÉ 371 000, SANS PIÈCE 71 000, RETOURNÉ 100 000", /Règlement Caisse — 471 000 FCFA/i.test(caisse) && /Remis 471 000/i.test(caisse) && /Détaillé 371 000/i.test(caisse) && /Sans pièce formelle 71 000/i.test(caisse) && /Retourné 100 000/i.test(caisse), caisse.slice(0, 300));
   verifier("1. sous-bloc « Règlement Banque — 100 000 FCFA » : REMIS 100 000, RESTE NON DÉTAILLÉ 100 000, RETOURNÉ 0", /Règlement Banque — 100 000 FCFA/i.test(banque) && /Remis 100 000/i.test(banque) && /Reste non détaillé 100 000/i.test(banque) && /Retourné 0/i.test(banque), banque.slice(0, 300));
+  const bandeTotal = net(await a.locator(`[data-regularisation-article="${LIGNE}"] [data-bande-total-article]`).innerText().catch(() => ""));
+  verifier("1. bande « Total de l'article » : Remis 571 000, Détaillé 371 000, Reste 100 000, Sans pièce 71 000, Retourné 100 000", /Total de l'article/i.test(bandeTotal) && /Remis \(Caisse \+ Banque\) 571 000/i.test(bandeTotal) && /Détaillé 371 000/i.test(bandeTotal) && /Reste non détaillé 100 000/i.test(bandeTotal) && /Sans pièce formelle 71 000/i.test(bandeTotal) && /Retourné 100 000/i.test(bandeTotal), bandeTotal);
+  const ordre = await a.evaluate((l) => { const art = document.querySelector(`[data-regularisation-article="${l}"]`); const b = art.querySelector("[data-bande-total-article]"); const r = art.querySelector("[data-regularisation-reglement]"); return !!b && !!r && !!(b.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_FOLLOWING); }, LIGNE);
+  verifier("1. la bande « Total de l'article » est AU-DESSUS des sous-blocs par règlement", ordre);
+  verifier("1. sous-blocs rebaptisés « Détail du règlement Caisse / Banque »", /Détail du règlement Caisse — 471 000 FCFA/i.test(caisse) && /Détail du règlement Banque — 100 000 FCFA/i.test(banque));
   verifier("1. bouton « Détailler les dépenses » dans le bloc de l'article, sur le fonds banque", (await a.locator(`[data-regularisation-article="${LIGNE}"] [data-regularisation-reglement="${PREFIXE}rBanque"]`).getByRole("button", { name: "Détailler les dépenses" }).count()) === 1);
   await a.close();
 
@@ -154,6 +159,8 @@ const caisseAvant = await soldeCaisse();
   const bloc = net(await a.locator(`[data-regularisation-article="${LIGNE}"]`).innerText());
   verifier("2. article : reste non détaillé 0, solde à régulariser 0, badge « Régularisé »", /Reste non détaillé 0 FCFA/i.test(bloc) && /Solde à régulariser 0 FCFA/i.test(bloc) && /Régularisé/i.test(bloc), bloc.slice(0, 400));
   verifier("2. dépenses sans pièce formelle de l'article : 71 000 + 100 000 = 171 000", /Dépenses sans pièce formelle 171 000 FCFA/i.test(bloc), bloc.slice(0, 400));
+  const bandeApres = net(await a.locator(`[data-regularisation-article="${LIGNE}"] [data-bande-total-article]`).innerText().catch(() => ""));
+  verifier("2. bande « Total de l'article » après détail : Détaillé 571 000... Reste 0, Sans pièce 171 000", /Détaillé 471 000|Détaillé 571 000/i.test(bandeApres) && /Reste non détaillé 0 FCFA/i.test(bandeApres) && /Sans pièce formelle 171 000/i.test(bandeApres), bandeApres);
   verifier("2. parcours : badge « Régularisé »", (await a.locator('[data-parcours-badge="REGULARISE"]').count()) === 1);
   const banque = net(await a.locator(`[data-regularisation-reglement="${PREFIXE}rBanque"]`).innerText());
   verifier("2. fonds banque : reste non détaillé 0, plus de bouton « Détailler »", /Reste non détaillé 0 FCFA/i.test(banque) && (await a.locator(`[data-regularisation-reglement="${PREFIXE}rBanque"]`).getByRole("button", { name: /Détailler/ }).count()) === 0, banque.slice(0, 300));
@@ -179,6 +186,64 @@ const caisseAvant = await soldeCaisse();
   verifier("2. récapitulatif du collaborateur : reste non détaillé 0, solde 0", /Reste non détaillé[^]{0,20}0 FCFA/i.test(recap) && /Solde à régulariser[^]{0,20}0 FCFA/i.test(recap), recap.slice(0, 400));
   await c.close();
 }
+
+// ======================================================================================================================
+// 3. Cas du lot G quater : 471 000 Caisse + 100 000 Banque, 100 000 retournés, 400 000 justifiées + 71 000 sans pièce
+// ======================================================================================================================
+const D2 = `${PREFIXE}D2`;
+const L2 = `${D2}-l1`;
+await q(
+  `INSERT INTO "Demande"(id, reference, montant, "montantValide", statut, "createurId", "updatedAt", "beneficiaireType", "beneficiaireUserId", "etapeCircuit", "etapeFinanceRequise", "etapeServiceRequise", "modeEtapeDG", description)
+   VALUES ($1, 'DEM-LOTGT-2', 571000, 571000, 'REGLEE', $2, now(), 'COLLABORATEUR', $2, 'TERMINEE', true, false, 'OPTIONNELLE', 'test e2e lot G quater')`,
+  [D2, idCollab]
+);
+await q(
+  `INSERT INTO "LigneDemande"(id, libelle, "libelleOriginal", quantite, "prixUnitaire", "demandeId", "categorieId", motif, "statutValidation", "decideParId", "decideAt", "decideurFinanceId")
+   VALUES ($1, 'FORMATION 2', 'FORMATION 2', 1, 571000, $2, 'e2e-lotgt-cat', 'motif', 'VALIDEE', $3, now(), $3)`,
+  [L2, D2, idFinance]
+);
+const reglement2 = (id, montant, mode, demandeId, ligne) =>
+  q(`INSERT INTO "Reglement"(id, montant, mode, "estConfirme", "demandeId", "ligneDemandeId", "auteurId", "confirmeAt") VALUES ($1, $2, $3, true, $4, $5, $6, now())`, [id, montant, mode, demandeId, ligne, idAssistant]);
+await reglement2(`${PREFIXE}r2Caisse`, 471000, "CAISSE", D2, L2);
+await reglement2(`${PREFIXE}r2Banque`, 100000, "BANQUE", D2, L2);
+await q(`INSERT INTO "RetourCaisse"(id, "montantARetourner", "estReceptionne", "reglementId", "declarantId", "receptionneParId", "receptionneAt") VALUES ($1, 100000, true, $2, $3, $4, now())`, [`${PREFIXE}ret2`, `${PREFIXE}r2Caisse`, idCollab, idAssistant]);
+await q(`INSERT INTO "DepenseLigne"(id, montant, objet, date, justification, "retourCaisseId") VALUES ($1, 400000, 'Formation justifiée', now(), 'FACTURE', $2)`, [`${PREFIXE}dep21`, `${PREFIXE}ret2`]);
+await q(`INSERT INTO "DepenseLigne"(id, montant, objet, date, justification, "motifNonJustifie", "motifNonJustifieParId", "motifNonJustifieAt", "retourCaisseId") VALUES ($1, 71000, 'Frais sans pièce', now(), 'SANS_PIECE', 'pas de reçu', $3, now(), $2)`, [`${PREFIXE}dep22`, `${PREFIXE}ret2`, idAssistant]);
+// 400 000 + 71 000 = 471 000 détaillés, 100 000 retournés : 571 000 expliqués, reste 0.
+{
+  const a = await connecter("assistant-finance@simassurances.test");
+  await a.goto(`${B}/treso/finance/demandes/${D2}`);
+  const bande = net(await a.locator(`[data-regularisation-article="${L2}"] [data-bande-total-article]`).innerText().catch(() => ""));
+  verifier("3. Total de l'article : Remis 571 000, Détaillé 471 000, Sans pièce 71 000, Retourné 100 000", /Remis \(Caisse \+ Banque\) 571 000/i.test(bande) && /Détaillé 471 000/i.test(bande) && /Sans pièce formelle 71 000/i.test(bande) && /Retourné 100 000/i.test(bande), bande);
+  verifier("3. Total de l'article : reste non détaillé 0, identique au « Reste non détaillé » de l'article", /Reste non détaillé 0 FCFA/i.test(bande) && /Reste non détaillé 0 FCFA SOLDE À RÉGULARISER 0 FCFA/i.test(net(await a.locator(`[data-regularisation-article="${L2}"]`).first().innerText())), bande);
+  const caisse = net(await a.locator(`[data-regularisation-reglement="${PREFIXE}r2Caisse"]`).innerText());
+  verifier("3. le sous-bloc « Détail du règlement Caisse » garde SA bande (Remis 471 000, Retourné 100 000)", /Détail du règlement Caisse — 471 000/i.test(caisse) && /Remis 471 000/i.test(caisse) && /Retourné 100 000/i.test(caisse), caisse.slice(0, 250));
+  await a.close();
+}
+
+// ======================================================================================================================
+// 4. Article à UN SEUL règlement : pas de bande « Total de l'article »
+// ======================================================================================================================
+const D3 = `${PREFIXE}D3`;
+const L3 = `${D3}-l1`;
+await q(
+  `INSERT INTO "Demande"(id, reference, montant, "montantValide", statut, "createurId", "updatedAt", "beneficiaireType", "beneficiaireUserId", "etapeCircuit", "etapeFinanceRequise", "etapeServiceRequise", "modeEtapeDG", description)
+   VALUES ($1, 'DEM-LOTGT-3', 50000, 50000, 'REGLEE', $2, now(), 'COLLABORATEUR', $2, 'TERMINEE', true, false, 'OPTIONNELLE', 'test e2e lot G quater')`,
+  [D3, idCollab]
+);
+await q(
+  `INSERT INTO "LigneDemande"(id, libelle, "libelleOriginal", quantite, "prixUnitaire", "demandeId", "categorieId", motif, "statutValidation", "decideParId", "decideAt", "decideurFinanceId")
+   VALUES ($1, 'ARTICLE UNIQUE', 'ARTICLE UNIQUE', 1, 50000, $2, 'e2e-lotgt-cat', 'motif', 'VALIDEE', $3, now(), $3)`,
+  [L3, D3, idFinance]
+);
+await reglement2(`${PREFIXE}r3Caisse`, 50000, "CAISSE", D3, L3);
+{
+  const a = await connecter("assistant-finance@simassurances.test");
+  await a.goto(`${B}/treso/finance/demandes/${D3}`);
+  verifier("4. un seul règlement : aucune bande « Total de l'article »", (await a.locator(`[data-regularisation-article="${L3}"] [data-bande-total-article]`).count()) === 0 && (await a.locator(`[data-regularisation-article="${L3}"] [data-regularisation-reglement]`).count()) === 1);
+  await a.close();
+}
+verifier("aucune écriture de caisse créée par ces affichages (solde inchangé)", (await soldeCaisse()) === caisseAvant);
 
 await nettoyer();
 verifier("aucune erreur JavaScript en console", erreursJs.length === 0, erreursJs.slice(0, 3).join(" | "));

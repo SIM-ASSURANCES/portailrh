@@ -11,6 +11,7 @@ import {
 
 import { Badge } from "@/components/ui";
 
+import { BandeTotauxArticle } from "./BandeTotauxArticle";
 import { DetailDepensesRetour } from "./DetailDepensesRetour";
 import { DetailReglementSansRetour } from "./DetailReglementSansRetour";
 
@@ -135,6 +136,7 @@ export async function RegularisationSummary({
                   reglements={reglementsDe(a.ligneId)}
                   canGererJustification={canGererJustification}
                   userId={userId}
+                  agregats={a.agregats}
                 />
               ) : null}
             </BlocArticle>
@@ -154,7 +156,7 @@ export async function RegularisationSummary({
               </p>
               <Chiffres agregats={regul.nonRattache} />
               {showDetail ? (
-                <DetailReglements reglements={reglementsDe(null)} canGererJustification={canGererJustification} userId={userId} />
+                <DetailReglements reglements={reglementsDe(null)} canGererJustification={canGererJustification} userId={userId} agregats={regul.nonRattache} titreTotal="Total non rattaché" />
               ) : null}
             </section>
           ) : null}
@@ -172,7 +174,7 @@ export async function RegularisationSummary({
           {showDetail ? (
             <div className="space-y-3 border-t border-border pt-4">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Détail des dépenses déclarées</h3>
-              <DetailReglements reglements={reglements} canGererJustification={canGererJustification} userId={userId} sansTitre />
+              <DetailReglements reglements={reglements} canGererJustification={canGererJustification} userId={userId} agregats={regul.total} titreTotal="Total de la demande" sansTitre />
             </div>
           ) : null}
         </>
@@ -202,11 +204,16 @@ function DetailReglements({
   reglements,
   canGererJustification,
   userId,
+  agregats,
+  titreTotal = "Total de l'article",
   sansTitre = false,
 }: {
   reglements: ReglementLigne[];
   canGererJustification: boolean;
   userId: string | null;
+  /** Totaux de l'article (ou de la demande sans article) : sert à la bande « Total de l'article » si plusieurs règlements. */
+  agregats: AgregatsRegularisation;
+  titreTotal?: string;
   sansTitre?: boolean;
 }) {
   if (reglements.length === 0) return <p className="text-sm text-muted-foreground">Aucune dépense déclarée pour l&apos;instant.</p>;
@@ -215,10 +222,11 @@ function DetailReglements({
       {sansTitre ? null : (
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Détail des dépenses déclarées</h4>
       )}
+      {reglements.length > 1 ? <BandeTotauxArticle agregats={agregats} titre={titreTotal} /> : null}
       {reglements.map((reglement) => (
         <div key={reglement.id} data-regularisation-reglement={reglement.id} className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground">
-            Règlement {reglement.mode === "CAISSE" ? "Caisse" : "Banque"} — {Number(reglement.montant).toLocaleString("fr-FR")} FCFA
+            Détail du règlement {reglement.mode === "CAISSE" ? "Caisse" : "Banque"} — {Number(reglement.montant).toLocaleString("fr-FR")} FCFA
           </p>
           {reglement.retours.length === 0 ? (
             <DetailReglementSansRetour reglementId={reglement.id} canGerer={canGererJustification} userId={userId} />

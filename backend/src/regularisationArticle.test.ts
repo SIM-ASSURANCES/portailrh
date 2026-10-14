@@ -11,6 +11,7 @@ import {
   etatRegularisationArticle,
   getEcartLigne,
   resteNonDetailleTotal,
+  totauxBandeArticle,
   resumeArticlesTermines,
   type AgregatsRegularisation,
 } from "./regularisationArticle";
@@ -220,5 +221,24 @@ describe("reste non détaillé d'un article avec fonds Caisse + Banque (lot G te
   });
   it("jamais négatif en cas d'anomalie", () => {
     expect(resteNonDetailleTotal(ag({ fondsRemis: 1000, depensesJustifiees: 5000 }))).toBe(0);
+  });
+});
+
+describe("bande « Total de l'article » (lot G quater)", () => {
+  it("471 000 Caisse + 100 000 Banque, 100 000 retournés, 400 000 + 71 000 de dépenses", () => {
+    const t = totauxBandeArticle(ag({ fondsRemis: 571000, retoursRecus: 100000, depensesJustifiees: 400000, depensesSansPieceFormelle: 71000 }));
+    expect(t).toEqual({ remis: 571000, detaille: 471000, reste: 0, sansPiece: 71000, retourne: 100000 });
+  });
+  it("le fonds banque non détaillé apparaît dans le reste (même calcul que resteNonDetailleTotal)", () => {
+    const a = ag({ fondsRemis: 571000, retoursRecus: 100000, depensesJustifiees: 300000, depensesSansPieceFormelle: 71000 });
+    const t = totauxBandeArticle(a);
+    expect(t.detaille).toBe(371000);
+    expect(t.reste).toBe(resteNonDetailleTotal(a));
+    expect(t.reste).toBe(100000);
+  });
+  it("une ligne de reste stockée n'est pas comptée dans « Détaillé »", () => {
+    const t = totauxBandeArticle(ag({ fondsRemis: 100000, depensesJustifiees: 60000, resteNonDetaille: 40000 }));
+    expect(t.detaille).toBe(60000);
+    expect(t.reste).toBe(40000);
   });
 });
