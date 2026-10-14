@@ -31,6 +31,11 @@ const sections = [
     title: "Modules",
     description: "Activer ou désactiver les modules du portail.",
   },
+  {
+    href: "/admin/logs",
+    title: "Logs Système",
+    description: "Traçabilité complète des actions effectuées sur le portail.",
+  },
 ];
 
 export default async function AdminHomePage() {
