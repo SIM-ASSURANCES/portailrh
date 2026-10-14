@@ -1975,3 +1975,39 @@ model EncSignalement {
   /// Fiche police : signalements d'une ligne rejetée, retrouvés par n° de police (commit 6-0).
   @@index([numPolice])
 }
+
+// ---------------------------------------------------------------------------
+// Planificateur intégré (fiabilisation du pointage, phase 2, 2026-10-14)
+// ---------------------------------------------------------------------------
+
+enum TacheNom {
+  RELANCES_JUSTIFICATION
+  ABSENCES
+  PURGE
+}
+
+enum DeclenchementTache {
+  PLANIFICATEUR
+  MANUEL
+}
+
+enum StatutExecutionTache {
+  SUCCES
+  ECHEC
+  IGNOREE
+}
+
+/// Une ligne par exécution d'une tâche planifiée, planifiée ou manuelle (moniteur de `/admin/journal-technique`).
+/// `erreur` : texte court, sans donnée personnelle. `bilan` : chiffres de l'exécution (JSON).
+model ExecutionTache {
+  id            String               @id @default(cuid())
+  tache         TacheNom
+  declenchement DeclenchementTache
+  debut         DateTime
+  fin           DateTime
+  statut        StatutExecutionTache
+  bilan         Json?
+  erreur        String?
+
+  @@index([tache, debut])
+}

@@ -46,7 +46,7 @@ cp .env.example .env
   (schéma et domaine exacts, ex. `https://portail.example.ci`) : elle sert de référence au retour après connexion (un
   lien reçu par e-mail ramène sur la bonne page) et préfixe les liens des e-mails. Mal renseignée, l'utilisateur
   retombe sur l'accueil après connexion au lieu de la page demandée.
-- `CRON_SECRET` — secret des tâches planifiées (voir « 7. Tâches planifiées »). Sans lui, les routes `/api/cron/*`
+- `CRON_SECRET` — secret du déclenchement manuel des tâches (voir « 7. Tâches planifiées »). Sans lui, les routes `/api/cron/*`
   refusent tout appel (401). Générez-le avec `openssl rand -hex 24`.
 
 `POSTGRES_USER` et `POSTGRES_DB` ont des valeurs par défaut raisonnables
@@ -149,30 +149,33 @@ possédé par l'utilisateur applicatif non-root — aucun changement de
 configuration Docker ne sera nécessaire le jour où cette fonctionnalité
 sera développée.
 
-## 7. Tâches planifiées (cron-job.org)
+## 7. Tâches planifiées (planificateur intégré)
 
-Les tâches planifiées sont des routes HTTP appelées par [cron-job.org](https://cron-job.org). Chaque appel doit porter
-l'en-tête `Authorization: Bearer <CRON_SECRET>` (comparé à temps constant ; sans `CRON_SECRET` configuré, tout appel est
-refusé avec 401).
+Depuis le 2026-10-14, les tâches planifiées tournent **dans l'application** (`frontend/src/instrumentation.ts` démarre un
+planificateur au lancement du serveur) : plus de dépendance à cron-job.org ni à un conteneur `cron`.
 
-| Tâche | URL | Fréquence |
-|---|---|---|
-| Relances de justification du pointage (retard, départ anticipé) | `https://<domaine>/api/cron/relances-justification` | **toutes les 5 minutes** |
-| Absences et oublis de départ | `https://<domaine>/api/cron/absences` | selon le réglage existant |
+| Tâche | Cadence (heure du serveur, UTC = heure d'Abidjan) |
+|---|---|
+| Relances de justification du pointage (retard, départ anticipé) | toutes les 5 minutes |
+| Absences et oublis de départ | du lundi au vendredi, à 17:30 et 20:00 |
+| Purge des journaux (exécutions de plus de 90 jours) | chaque jour à 03:00 |
 
-Réglage sur cron-job.org (« Create cronjob ») :
-1. **URL** : `https://<domaine>/api/cron/relances-justification`, méthode `GET`.
-2. **Schedule** : toutes les 5 minutes (« Every 5 minutes »).
-3. **Advanced → Headers** : ajouter `Authorization` avec la valeur `Bearer <CRON_SECRET>` (le même secret que la
-   variable d'environnement de l'application).
-4. Enregistrer, puis lancer « Test run » : la réponse attendue est un JSON `{"success":true, "envois": …, "clotures": …}`.
-   Une réponse 401 signifie un en-tête absent ou un secret différent.
+- **Une seule exécution à la fois**, même avec deux instances : verrou consultatif PostgreSQL par tâche ; une exécution qui
+  trouve le verrou pris est enregistrée « ignorée ».
+- **Rattrapage** : une exécution manquée parce que le serveur était arrêté est lancée au redémarrage (premier passage
+  15 secondes après le démarrage, puis une vérification par minute).
+- **Suivi** : chaque exécution (planifiée ou manuelle) laisse une ligne dans la table `ExecutionTache`, affichée par le
+  moniteur de `/admin/journal-technique` (dernière exécution, prochaine attendue, badge « En retard », bouton « Lancer
+  maintenant »).
+- `PLANIFICATEUR_ACTIF=false` désactive le planificateur d'une instance (à réserver aux tests ou à une instance secondaire).
+- Les routes `/api/cron/relances-justification` et `/api/cron/absences` **restent** : déclenchement manuel ou de secours,
+  protégé par `Authorization: Bearer <CRON_SECRET>` (401 sans en-tête valide ou sans `CRON_SECRET` configuré). Elles passent
+  par le même verrou et écrivent la même ligne d'exécution (déclenchement « manuel »).
 
-Sans cette tâche, **aucune demande de justification ne part** (le collaborateur n'est ni prévenu ni relancé, son
-responsable non plus). Chaque exécution laisse une ligne `[Cron relances-justification]` dans les logs de l'application
-(nombre de justifications examinées, envois, clôtures, erreurs). Deux appels rapprochés ou simultanés n'envoient jamais
-deux fois la même relance. Penser aussi à vérifier sur `/admin/notifications` que les responsables de service ont
-activé les notifications push.
+**Le jour du déploiement : supprimer les tâches cron-job.org** (relances et absences). Sinon les routes seraient appelées
+en plus du planificateur : sans conséquence sur les données (tâches idempotentes, verrou), mais inutile.
+
+Penser aussi à vérifier sur `/admin/notifications` que les responsables de service ont activé les notifications push.
 
 ## Récapitulatif des choix techniques
 

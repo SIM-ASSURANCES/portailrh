@@ -4395,7 +4395,7 @@ collaborateur trouve sa justification à faire dans « Mon historique ».
   rattrapage automatique si la tâche était en panne). Heure locale du serveur, comme le module. Messages :
   `messageDemandeJustification`, `messageAlerteDecideurJustification`, `messageClotureJustification`. Tests :
   `relancesJustification.test.ts` (retard 08:10, départ 16:40, statut déjà soumis, maximum atteint, panne la veille).
-- **Route** `GET /api/cron/relances-justification`, toutes les 5 minutes (cron-job.org, `DEPLOIEMENT.md` §7). Protégée
+- **Route** `GET /api/cron/relances-justification`, toutes les 5 minutes (planificateur intégré depuis le 2026-10-14, section 15 ; la route sert au déclenchement manuel). Protégée
   par `refusCron` (`frontend/src/lib/cronAuth.ts` → `secretCronValide`, `backend/src/cronAuth.ts` : `Authorization:
   Bearer <CRON_SECRET>`, temps constant, refus si `CRON_SECRET` absent) — aussi utilisée par `/api/cron/absences`.
   Idempotence : chaque envoi est réservé par `updateMany` sur le `nombreEnvois` attendu, la clôture par `updateMany`
@@ -4537,6 +4537,29 @@ Aucune migration, aucune permission nouvelle.
   une décision) (rh@ seul RH en retard :
   DG notifié, rh@ non notifié et sans sa justification dans sa file, assistant-finance@ refusé, DG accède à l'écran et
   au menu, accepte ; collaborateur ordinaire : responsable notifié, ni DG ni RH) ; `e2e/pointage-lot3bis.mjs` 22/22.
+
+### 15. Fiabilisation du pointage — phase 2 : planificateur intégré (2026-10-14)
+
+Plan : `PLAN_FIABILISATION_POINTAGE.md`. Les tâches planifiées vivent **dans l'application** (plus de cron-job.org).
+- **Logique pure** `backend/src/planificateur.ts` (14 tests, horloge simulée) : `tachesDues(now, dernieres)`, `dernierCreneau`,
+  `prochaineExecution`, `tacheEnRetard`, `libelleBilan`, `erreurCourte`. Cadence (heure locale du serveur = Abidjan) :
+  relances toutes les 5 minutes (créneaux alignés sur les multiples de 5), absences lundi-vendredi 17:30 et 20:00, purge
+  quotidienne 03:00. Une tâche est due quand le créneau le plus récent passé n'est couvert par aucune exécution
+  (`debut` ≥ créneau, tous statuts) : rattrapage automatique après arrêt, pas de doublon avec un déclenchement manuel.
+- **Exécution** `frontend/src/lib/taches/` : `relancesJustification.ts`, `absences.ts`, `purge.ts` (logique des anciennes
+  routes, sans duplication) ; `executer.ts` (`executerTache(tache, declenchement)`, SEUL point d'exécution : verrou
+  `pg_try_advisory_xact_lock(hashtext('tache:<nom>'))` tenu par une transaction ouverte pendant toute l'exécution — verrou
+  pris ⇒ ligne `IGNOREE`, rien n'est lancé ; ne lève jamais ; écrit une ligne `ExecutionTache`) ; `planificateur.ts`
+  (minuterie de 60 s, premier passage 15 s après le démarrage, une seule minuterie par processus via `globalThis`, tâche
+  déjà en cours dans le processus non relancée, aucune exception ne sort).
+- **Démarrage** `frontend/src/instrumentation.ts` (`register()`, runtime `nodejs` seulement). `PLANIFICATEUR_ACTIF=false`
+  le désactive. Les routes `/api/cron/relances-justification` et `/api/cron/absences` restent (déclenchement manuel,
+  `CRON_SECRET`) et passent par `executerTache` (déclenchement `MANUEL`).
+- **Modèle** `ExecutionTache` (migration `20261014090000_execution_tache`, rejouable) : `tache` (RELANCES_JUSTIFICATION,
+  ABSENCES, PURGE), `declenchement`, `debut`, `fin`, `statut` (SUCCES, ECHEC, IGNOREE), `bilan` (JSON), `erreur` (texte
+  court sans donnée personnelle). La purge supprime les exécutions de plus de 90 jours.
+- **Limite connue** : l'écriture de la ligne d'exécution se fait à la FIN ; une exécution qui plante le processus entier n'en
+  laisse pas.
 
 ## Module FeedbackApp — anonymat total
 
