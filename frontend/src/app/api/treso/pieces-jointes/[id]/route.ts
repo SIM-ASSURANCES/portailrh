@@ -4,6 +4,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
+import { peutTelechargerJustificatifsRetourExterne } from "@/lib/droitsPiecesJointes";
 import { prisma } from "backend";
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
@@ -87,7 +88,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     accesAutorise = estFinanceOuDG || estCreateurOuBeneficiaire || estResponsableService;
   } else if (piece.retourExterne || piece.retourExterneCheque) {
     // Retour externe : même permission que l'action (`treso.creer_retour_externe`), ou Admin.
-    accesAutorise = isAdmin(session) || hasPermission(session, "treso.creer_retour_externe");
+    accesAutorise = peutTelechargerJustificatifsRetourExterne(session);
   } else {
     // Pièce du solde d'ouverture (`journalCaisseId`, pas de demande
     // d'origine) et des alimentations de caisse — mêmes permissions que la garde de

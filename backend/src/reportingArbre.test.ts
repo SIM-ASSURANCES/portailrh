@@ -5,7 +5,7 @@ import {
   COLONNES_ARBRE,
   COLONNES_TOTAUX,
   ligneRetourExterneHorsDemande,
-  totauxGeneraux,
+  totauxParDevise,
   type ArticleArbreSource,
   type DemandeArbreSource,
   type LigneArbre,
@@ -20,6 +20,7 @@ function article(id: string, libelle: string, extra: Partial<ArticleArbreSource>
     id,
     libelle,
     motif: "besoin",
+    libelleOrigine: `${libelle} (version du demandeur)`,
     quantite: 1,
     prixUnitaire: 100_000,
     categorie: "Fournitures",
@@ -128,7 +129,7 @@ function demandeTrois(extra: Partial<DemandeArbreSource> = {}): DemandeArbreSour
     ],
     mouvementsBanque: [{ reglementId: "RB", type: "SORTIE", montant: 100_000, creeLe: d("2026-10-04"), auteur: "Assistant Test", bordereau: false }],
     retoursExceptionnels: [],
-    retoursExternes: [{ ligneDemandeId: "B", personne: "Awa Koné", montant: 15_000, motif: "chèque rendu", creePar: "Finance Test", creeLe: d("2026-10-08") }],
+    retoursExternes: [{ ligneDemandeId: "B", personne: "Awa Koné", montant: 15_000, motif: "chèque rendu", creePar: "Finance Test", creeLe: d("2026-10-08"), pieceRetourId: "pj-retour", pieceChequeId: "pj-cheque" }],
     clotureForcee: null,
     ...extra,
   };
@@ -205,14 +206,17 @@ describe("reportingArbre — chiffres et absence de double comptage", () => {
   });
 
   it("le total général = la ligne DEMANDE, jamais recompté par les articles ni les événements", () => {
-    const t = totauxGeneraux(lignes);
+    const parDevise = totauxParDevise(lignes);
+    expect(parDevise).toHaveLength(1);
+    expect(parDevise[0].devise).toBe("XOF");
+    const t = parDevise[0].totaux;
     for (const cle of COLONNES_TOTAUX) expect(t[cle]).toBe((demande[cle] as number) ?? 0);
     expect(t.montantRegle).toBe(200_000);
   });
 
   it("deux demandes : le total est la somme des deux lignes DEMANDE", () => {
     const autre = construireArbreDemande(demandeTrois({ reference: "DEM-2026-000002" }));
-    const t = totauxGeneraux(aplatirArbres([arbre, autre]));
+    const [{ totaux: t }] = totauxParDevise(aplatirArbres([arbre, autre]));
     expect(t.montantRegle).toBe(400_000);
     expect(t.solde).toBe(0);
   });
@@ -341,13 +345,15 @@ describe("reportingArbre — cas particuliers", () => {
   });
 
   it("retour externe sans demande : ligne de niveau 0, hors des totaux", () => {
-    const ligne = ligneRetourExterneHorsDemande({ personne: "Client X", montant: 25_000, motif: "chèque rendu", creePar: "Finance Test", creeLe: d("2026-10-09"), estExterne: true });
+    const ligne = ligneRetourExterneHorsDemande({ personne: "Client X", montant: 25_000, motif: "chèque rendu", creePar: "Finance Test", creeLe: d("2026-10-09"), estExterne: true, pieceRetourId: "pj-r", pieceChequeId: null });
     expect(ligne.niveau).toBe(0);
     expect(ligne.compte).toBe("Non");
     expect(ligne.article).toBe("Hors demande");
     expect(ligne.montantOperation).toBe(25_000);
-    const t = totauxGeneraux([...aplatirArbres([construireArbreDemande(demandeTrois())]), ligne]);
+    const [{ totaux: t }] = totauxParDevise([...aplatirArbres([construireArbreDemande(demandeTrois())]), ligne]);
     expect(t.montantRegle).toBe(200_000);
+    expect(ligne.lienJustificatifRetour).toBe("/api/treso/pieces-jointes/pj-r");
+    expect(ligne.lienJustificatifCheque).toBe("");
   });
 
   it("retour exceptionnel validé : comptabilisé comme retour reçu de son article, ligne d'événement", () => {
@@ -369,3 +375,75 @@ describe("reportingArbre — cas particuliers", () => {
     expect(l.find((x) => x.type === "ARTICLE" && x.article === "Article A")!.retourne).toBe(25_000);
   });
 });
+
+describe("reportingArbre — totaux par devise (lot F bis)", () => {
+  const xof = aplatirArbres([construireArbreDemande(demandeTrois())]);
+  const eur = aplatirArbres([construireArbreDemande(demandeTrois({ reference: "DEM-2026-000002", devise: "EUR" }))]);
+
+  it("une seule devise : un seul total", () => {
+    expect(totauxParDevise(xof).map((x) => x.devise)).toEqual(["XOF"]);
+  });
+
+  it("deux devises : un total par devise, jamais additionnées", () => {
+    const res = totauxParDevise([...xof, ...eur]);
+    expect(res.map((x) => x.devise)).toEqual(["EUR", "XOF"]);
+    for (const r of res) {
+      expect(r.totaux.montantRegle).toBe(200_000);
+      expect(r.totaux.montantDemande).toBe(300_000);
+      expect(r.totaux.nbArticles).toBe(3);
+    }
+  });
+
+  it("les montants d'une devise ne contaminent jamais l'autre", () => {
+    const petit = demandeTrois({ reference: "DEM-2026-000003", devise: "EUR" });
+    petit.reglements = [];
+    petit.mouvementsBanque = [];
+    petit.retoursExternes = [];
+    const res = totauxParDevise([...xof, ...aplatirArbres([construireArbreDemande(petit)])]);
+    const parDev = Object.fromEntries(res.map((r) => [r.devise, r.totaux]));
+    expect(parDev.XOF.montantRegle).toBe(200_000);
+    expect(parDev.EUR.montantRegle).toBe(0);
+    expect(parDev.EUR.montantDemande).toBe(300_000);
+  });
+
+  it("un retour externe hors demande (sans devise) n'entre dans aucun total", () => {
+    const ligne = ligneRetourExterneHorsDemande({ personne: "X", montant: 5_000, motif: "m", creePar: "F", creeLe: d("2026-10-09"), estExterne: true, pieceRetourId: null, pieceChequeId: null });
+    expect(totauxParDevise([...xof, ligne])).toHaveLength(1);
+  });
+});
+
+describe("reportingArbre — justificatifs et libellé d'origine (lot F bis)", () => {
+  const lignes = aplatirArbres([construireArbreDemande(demandeTrois())]);
+
+  it("retour externe rattaché : liens vers la route de téléchargement existante, retour et chèque", () => {
+    const x = lignes.find((l) => l.type === "RETOUR_EXTERNE")!;
+    expect(x.lienJustificatifRetour).toBe("/api/treso/pieces-jointes/pj-retour");
+    expect(x.lienJustificatifCheque).toBe("/api/treso/pieces-jointes/pj-cheque");
+  });
+
+  it("sans droit de téléchargement (identifiants non fournis) : aucun lien", () => {
+    const src = demandeTrois();
+    src.retoursExternes = src.retoursExternes.map((x) => ({ ...x, pieceRetourId: null, pieceChequeId: null }));
+    const x = aplatirArbres([construireArbreDemande(src)]).find((l) => l.type === "RETOUR_EXTERNE")!;
+    expect(x.lienJustificatifRetour).toBe("");
+    expect(x.lienJustificatifCheque).toBe("");
+  });
+
+  it("aucune autre ligne ne porte de lien", () => {
+    expect(lignes.filter((l) => l.type !== "RETOUR_EXTERNE").every((l) => l.lienJustificatifRetour === "" && l.lienJustificatifCheque === "")).toBe(true);
+  });
+
+  it("libellé d'origine du demandeur : sur les seules lignes ARTICLE", () => {
+    const a = lignes.find((l) => l.type === "ARTICLE" && l.article === "Article A")!;
+    expect(a.libelleOrigine).toBe("Article A (version du demandeur)");
+    expect(lignes.filter((l) => l.type !== "ARTICLE").every((l) => l.libelleOrigine === "")).toBe(true);
+  });
+
+  it("les colonnes existent, de genre lien / texte", () => {
+    const col = (cle: string) => COLONNES_ARBRE.find((c) => c.cle === cle);
+    expect(col("lienJustificatifRetour")?.genre).toBe("lien");
+    expect(col("lienJustificatifCheque")?.genre).toBe("lien");
+    expect(col("libelleOrigine")?.genre).toBe("texte");
+  });
+});
+

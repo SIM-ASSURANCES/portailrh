@@ -8,7 +8,7 @@
 // déjà calculé : il reste exact même dans un lecteur qui ne recalcule pas.
 
 import type ExcelJS from "exceljs";
-import { COLONNES_ARBRE, COLONNES_TOTAUX, totauxGeneraux, type LigneArbre } from "backend";
+import { COLONNES_ARBRE, COLONNES_TOTAUX, totauxParDevise, type LigneArbre } from "backend";
 
 const HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF004B9C" } };
 const FILL_DEMANDE: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD6E6F7" } };
@@ -31,7 +31,8 @@ function lettreColonne(index: number): string {
   return s;
 }
 
-export function ajouterFeuilleReporting(workbook: ExcelJS.Workbook, lignes: readonly LigneArbre[]): ExcelJS.Worksheet {
+/** `origine` : origine du site (`https://hôte`), pour des liens de téléchargement absolus utilisables depuis Excel. */
+export function ajouterFeuilleReporting(workbook: ExcelJS.Workbook, lignes: readonly LigneArbre[], origine: string): ExcelJS.Worksheet {
   const sheet = workbook.addWorksheet("Reporting", { views: [{ state: "frozen", xSplit: 2, ySplit: 1 }] });
   // Les lignes de détail sont SOUS leur ligne de synthèse (la demande, l'article) : le bouton de repli est sur celle-ci.
   sheet.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
@@ -59,6 +60,7 @@ export function ajouterFeuilleReporting(workbook: ExcelJS.Workbook, lignes: read
     for (const c of COLONNES_ARBRE) {
       const v = l[c.cle];
       if (v == null || v === "") valeurs[String(c.cle)] = null;
+      else if (c.genre === "lien") valeurs[String(c.cle)] = { text: "Télécharger", hyperlink: `${origine}${v}` } as unknown as string;
       else if (v instanceof Date) valeurs[String(c.cle)] = jourSansHeure(v);
       else if (typeof v === "number") valeurs[String(c.cle)] = Math.round(v * 100) / 100;
       else valeurs[String(c.cle)] = v;
@@ -79,6 +81,9 @@ export function ajouterFeuilleReporting(workbook: ExcelJS.Workbook, lignes: read
     } else {
       row.font = { color: { argb: "FF475569" } };
     }
+    for (const c of COLONNES_ARBRE) {
+      if (c.genre === "lien" && l[c.cle]) row.getCell(String(c.cle)).font = { underline: true, color: { argb: "FF0563C1" } };
+    }
     for (const nom of ["typeLibelle", "article"]) {
       const cell = row.getCell(nom);
       cell.alignment = { ...cell.alignment, indent: l.niveau, vertical: "top", wrapText: false };
@@ -88,25 +93,27 @@ export function ajouterFeuilleReporting(workbook: ExcelJS.Workbook, lignes: read
   const derniereLigneDonnees = sheet.rowCount;
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: COLONNES_ARBRE.length } };
 
-  // Ligne vide de séparation (le filtre automatique ne doit jamais absorber le total), puis le total général.
+  // Ligne vide de séparation (le filtre automatique ne doit jamais absorber les totaux), puis un total par devise.
   if (derniereLigneDonnees > 1) {
     sheet.addRow({});
-    const totaux = totauxGeneraux(lignes);
-    const row = sheet.addRow({ typeLibelle: "Total général", compte: "Oui = lignes Demande" });
+    const parDevise = totauxParDevise(lignes);
     const colCompte = lettreColonne(COLONNES_ARBRE.findIndex((c) => c.cle === "compte"));
-    for (const cle of COLONNES_TOTAUX) {
-      const idx = COLONNES_ARBRE.findIndex((c) => c.cle === cle);
-      const lettre = lettreColonne(idx);
-      row.getCell(idx + 1).value = {
-        formula: `SUMIF($${colCompte}$2:$${colCompte}$${derniereLigneDonnees},"Oui",${lettre}$2:${lettre}$${derniereLigneDonnees})`,
-        result: totaux[cle],
-      };
+    const colDevise = lettreColonne(COLONNES_ARBRE.findIndex((c) => c.cle === "devise"));
+    for (const { devise, totaux } of parDevise) {
+      const row = sheet.addRow({ typeLibelle: parDevise.length === 1 ? "Total général" : `Total ${devise}`, compte: "Oui = lignes Demande", devise });
+      for (const cle of COLONNES_TOTAUX) {
+        const idx = COLONNES_ARBRE.findIndex((c) => c.cle === cle);
+        const lettre = lettreColonne(idx);
+        row.getCell(idx + 1).value = {
+          formula: `SUMIFS(${lettre}$2:${lettre}$${derniereLigneDonnees},$${colCompte}$2:$${colCompte}$${derniereLigneDonnees},"Oui",$${colDevise}$2:$${colDevise}$${derniereLigneDonnees},"${devise}")`,
+          result: totaux[cle],
+        };
+      }
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.fill = HEADER_FILL;
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      });
     }
-    row.font = { bold: true };
-    row.eachCell({ includeEmpty: true }, (cell) => {
-      cell.fill = HEADER_FILL;
-      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    });
   }
   return sheet;
 }

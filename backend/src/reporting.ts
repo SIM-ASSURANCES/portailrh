@@ -789,8 +789,12 @@ function filtresVisantDesDemandes(f: ReportingFilters): boolean {
  */
 export async function getReportingArbre(
   filters: ReportingFilters,
-  libelleStatut: (statut: StatutDemande) => string = (s) => s
+  libelleStatut: (statut: StatutDemande) => string = (s) => s,
+  options: { justificatifsRetoursExternes?: boolean } = {}
 ): Promise<ReportingArbre> {
+  // Les liens vers les justificatifs d'un retour externe ne sont produits que pour qui a le droit de les télécharger
+  // (l'appelant applique la règle de la route de téléchargement) : jamais un lien mort, jamais un identifiant de plus exposé.
+  const avecJustificatifs = options.justificatifsRetoursExternes === true;
   const { demandes } = await getDemandesFiltrees(filters);
   const ids = demandes.map((d) => d.id);
 
@@ -810,6 +814,8 @@ export async function getReportingArbre(
           motif: x.motif,
           creePar: x.creePar.fullName,
           creeLe: x.creeAt,
+          pieceRetourId: avecJustificatifs ? x.pieceJointeId : null,
+          pieceChequeId: avecJustificatifs ? x.pieceJointeChequeId : null,
         })
       );
     }
@@ -910,6 +916,7 @@ export async function getReportingArbre(
       articles: det.lignes.map((l) => ({
         id: l.id,
         libelle: l.libelle,
+        libelleOrigine: l.libelleDemandeur ?? l.libelleOriginal ?? l.libelle,
         motif: l.motif,
         quantite: l.quantite,
         prixUnitaire: Number(l.prixUnitaire),
@@ -988,6 +995,8 @@ export async function getReportingArbre(
         motif: x.motif,
         creePar: x.creePar.fullName,
         creeLe: x.creeAt,
+        pieceRetourId: avecJustificatifs ? x.pieceJointeId : null,
+        pieceChequeId: avecJustificatifs ? x.pieceJointeChequeId : null,
       })),
       clotureForcee: det.clotureForcee
         ? {

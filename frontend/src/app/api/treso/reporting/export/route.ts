@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { getSession, hasPermission } from "@/lib/auth";
+import { peutTelechargerJustificatifsRetourExterne } from "@/lib/droitsPiecesJointes";
 import { ajouterFeuilleReporting } from "@/lib/reportingArbreExcel";
 import {
   getReportingArbre,
@@ -46,7 +47,9 @@ export async function GET(request: NextRequest) {
   const filters = parseReportingFilters(searchParams);
 
   const [arbre, journal, rows, suiviBudgetaire, dashboard] = await Promise.all([
-    getReportingArbre(filters, (statut) => STATUT_DEMANDE_LABEL[statut]),
+    getReportingArbre(filters, (statut) => STATUT_DEMANDE_LABEL[statut], {
+      justificatifsRetoursExternes: peutTelechargerJustificatifsRetourExterne(session),
+    }),
     getReportingJournalDetail(filters),
     getReportingRows(filters),
     getReportingSuiviBudgetaire(),
@@ -60,7 +63,7 @@ export async function GET(request: NextRequest) {
   // Lot F : UN seul tableau, de la demande jusqu'au détail de chaque article (règlements / fonds remis, mouvements banque,
   // retours de caisse, dépenses, retours externes…) — les anciennes feuilles Demandes, Retours de caisse, Mouvements banque,
   // Retours externes et Fonds remis n'existent plus. Mêmes lignes et mêmes colonnes que l'écran (`COLONNES_ARBRE`).
-  ajouterFeuilleReporting(workbook, arbre.lignes);
+  ajouterFeuilleReporting(workbook, arbre.lignes, request.nextUrl.origin);
 
   const sheetJournal = workbook.addWorksheet("Journal de caisse");
   sheetJournal.columns = [

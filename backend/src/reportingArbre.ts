@@ -57,6 +57,8 @@ export interface LigneArbre {
   compte: "Oui" | "Non";
   reference: string;
   article: string;
+  /** Libellé d'ORIGINE de l'article, tel qu'écrit par le demandeur (lignes ARTICLE seulement ; `article` porte le libellé Finance). */
+  libelleOrigine: string;
   demandeur: string;
   service: string;
   beneficiaire: string;
@@ -85,9 +87,12 @@ export interface LigneArbre {
   retourne: number | null;
   solde: number | null;
   montantOperation: number | null;
+  /** Chemins de téléchargement (`/api/treso/pieces-jointes/<id>`) des justificatifs d'un retour externe ; vides si le lecteur n'y a pas droit. */
+  lienJustificatifRetour: string;
+  lienJustificatifCheque: string;
 }
 
-export type GenreColonne = "texte" | "date" | "montant" | "entier";
+export type GenreColonne = "texte" | "date" | "montant" | "entier" | "lien";
 export interface ColonneArbre {
   cle: keyof LigneArbre;
   titre: string;
@@ -104,6 +109,7 @@ export const COLONNES_ARBRE: readonly ColonneArbre[] = [
   { cle: "compte", titre: "Compte dans les totaux", genre: "texte", largeur: 12 },
   { cle: "reference", titre: "Référence demande", genre: "texte", largeur: 20 },
   { cle: "article", titre: "Article", genre: "texte", largeur: 34 },
+  { cle: "libelleOrigine", titre: "Libellé d'origine (demandeur)", genre: "texte", largeur: 34 },
   { cle: "demandeur", titre: "Demandeur", genre: "texte", largeur: 22 },
   { cle: "service", titre: "Service", genre: "texte", largeur: 16 },
   { cle: "beneficiaire", titre: "Bénéficiaire", genre: "texte", largeur: 24 },
@@ -132,6 +138,8 @@ export const COLONNES_ARBRE: readonly ColonneArbre[] = [
   { cle: "retourne", titre: "Retourné", genre: "montant", largeur: 15 },
   { cle: "solde", titre: "Solde à régulariser", genre: "montant", largeur: 15 },
   { cle: "montantOperation", titre: "Montant de l'opération", genre: "montant", largeur: 17 },
+  { cle: "lienJustificatifRetour", titre: "Justificatif du retour", genre: "lien", largeur: 18 },
+  { cle: "lienJustificatifCheque", titre: "Justificatif du chèque initial", genre: "lien", largeur: 22 },
 ];
 
 /** Colonnes de montants sommées dans le total général (jamais « Montant de l'opération », hétérogène). */
@@ -153,6 +161,8 @@ export interface ArticleArbreSource {
   id: string;
   libelle: string;
   motif: string | null;
+  /** Libellé écrit par le demandeur (`libelleDemandeur ?? libelleOriginal ?? libelle`). */
+  libelleOrigine: string;
   quantite: number;
   prixUnitaire: number;
   categorie: string | null;
@@ -249,6 +259,9 @@ export interface RetourExterneArbreSource {
   motif: string;
   creePar: string;
   creeLe: Date;
+  /** Identifiants des pièces jointes ; `null` quand le lecteur n'a pas le droit de les télécharger (aucun lien n'est alors produit). */
+  pieceRetourId: string | null;
+  pieceChequeId: string | null;
 }
 
 export interface DemandeArbreSource {
@@ -304,6 +317,7 @@ function ligneVide(niveau: 0 | 1 | 2, type: TypeLigneArbre, contexte: { referenc
     compte: type === "DEMANDE" ? "Oui" : "Non",
     reference: contexte.reference,
     article: contexte.article,
+    libelleOrigine: "",
     demandeur: contexte.demandeur,
     service: contexte.service,
     beneficiaire: "",
@@ -332,8 +346,13 @@ function ligneVide(niveau: 0 | 1 | 2, type: TypeLigneArbre, contexte: { referenc
     retourne: null,
     solde: null,
     montantOperation: null,
+    lienJustificatifRetour: "",
+    lienJustificatifCheque: "",
   };
 }
+
+/** Chemin de la route de téléchargement existante (qui applique elle-même les droits d'accès). */
+export const cheminPieceJointe = (id: string) => `/api/treso/pieces-jointes/${id}`;
 
 /** Texte de la clôture forcée d'une demande (même phrase que l'ancien reporting par demande). */
 export function texteClotureForcee(cf: NonNullable<DemandeArbreSource["clotureForcee"]>): string {
@@ -530,6 +549,8 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
     l.auteur = x.creePar;
     l.motif = [x.personne, x.motif].filter(Boolean).join(" — ");
     l.montantOperation = x.montant;
+    l.lienJustificatifRetour = x.pieceRetourId ? cheminPieceJointe(x.pieceRetourId) : "";
+    l.lienJustificatifCheque = x.pieceChequeId ? cheminPieceJointe(x.pieceChequeId) : "";
     ajouter(cle, l);
   }
   for (const e of [...d.retoursExceptionnels].sort((a, b) => a.saisiLe.getTime() - b.saisiLe.getTime())) {
@@ -555,6 +576,7 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
     const solde = getEcartLigne(agregats);
     const l = ligneVide(1, "ARTICLE", { ...contexteDemande, article: a.libelle });
     l.beneficiaire = a.beneficiaire;
+    l.libelleOrigine = a.libelleOrigine;
     l.statut = statutArticle(a, etat);
     l.decisionFinance = decisionFinanceArticle(a);
     l.decisionDG = decisionDGArticle(a);
@@ -647,7 +669,16 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
 }
 
 /** Retour externe sans demande (chèque…) : une ligne de niveau 0, hors des totaux (il n'appartient à aucune demande). */
-export function ligneRetourExterneHorsDemande(x: { personne: string; montant: number; motif: string; creePar: string; creeLe: Date; estExterne: boolean }): LigneArbre {
+export function ligneRetourExterneHorsDemande(x: {
+  personne: string;
+  montant: number;
+  motif: string;
+  creePar: string;
+  creeLe: Date;
+  estExterne: boolean;
+  pieceRetourId: string | null;
+  pieceChequeId: string | null;
+}): LigneArbre {
   const l = ligneVide(0, "RETOUR_EXTERNE", { reference: "", article: LIBELLE_ARTICLE_HORS_DEMANDE, demandeur: "", service: "", devise: "", creeLe: null });
   l.statut = "Enregistré";
   l.beneficiaire = x.personne;
@@ -656,6 +687,8 @@ export function ligneRetourExterneHorsDemande(x: { personne: string; montant: nu
   l.auteur = x.creePar;
   l.motif = [x.estExterne ? "personne externe" : "collaborateur", x.motif].filter(Boolean).join(" — ");
   l.montantOperation = x.montant;
+  l.lienJustificatifRetour = x.pieceRetourId ? cheminPieceJointe(x.pieceRetourId) : "";
+  l.lienJustificatifCheque = x.pieceChequeId ? cheminPieceJointe(x.pieceChequeId) : "";
   return l;
 }
 
@@ -664,11 +697,20 @@ export function aplatirArbres(arbres: readonly ArbreDemande[]): LigneArbre[] {
   return arbres.flatMap((a) => [a.demande, ...a.articles.flatMap((x) => [x.article, ...x.evenements])]);
 }
 
-/** Totaux généraux : somme des seules lignes qui comptent (DEMANDE), centimes exacts — les articles et événements n'y entrent jamais. */
-export function totauxGeneraux(lignes: readonly LigneArbre[]): Record<(typeof COLONNES_TOTAUX)[number], number> {
-  const totaux = {} as Record<(typeof COLONNES_TOTAUX)[number], number>;
-  for (const cle of COLONNES_TOTAUX) {
-    totaux[cle] = somme(lignes.filter((l) => l.compte === "Oui").map((l) => (l[cle] as number | null) ?? 0));
-  }
-  return totaux;
+export type TotauxArbre = Record<(typeof COLONNES_TOTAUX)[number], number>;
+
+/**
+ * Totaux PAR DEVISE : somme des seules lignes qui comptent (DEMANDE), centimes exacts — les articles et événements n'y entrent jamais.
+ * Une devise par demande : on n'additionne JAMAIS des devises différentes. Une seule devise présente = un seul total. Triées
+ * alphabétiquement (déterministe) ; une ligne sans devise (retour externe hors demande) ne compte pas.
+ */
+export function totauxParDevise(lignes: readonly LigneArbre[]): { devise: string; totaux: TotauxArbre }[] {
+  const comptees = lignes.filter((l) => l.compte === "Oui" && l.devise !== "");
+  const devises = [...new Set(comptees.map((l) => l.devise))].sort();
+  return devises.map((devise) => {
+    const deLaDevise = comptees.filter((l) => l.devise === devise);
+    const totaux = {} as TotauxArbre;
+    for (const cle of COLONNES_TOTAUX) totaux[cle] = somme(deLaDevise.map((l) => (l[cle] as number | null) ?? 0));
+    return { devise, totaux };
+  });
 }

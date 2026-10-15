@@ -8,6 +8,8 @@
 //   DEM-LOTF-3 : clôturée de force, 1 article validé 40 000 jamais réglé ;
 //   DEM-LOTF-4 : « En cours » (un article validé, un en attente) ;
 //   un retour externe sans demande (25 000).
+// Lot F bis : totaux PAR DEVISE (jamais deux devises additionnées), liens vers les justificatifs des retours externes (seulement pour qui
+// peut les télécharger), libellé d'origine du demandeur.
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,6 +93,7 @@ await demande(`${P}1`, "DEM-LOTF-1", { montant: 300000, valide: 200000, statut: 
 await article(`${P}1A`, `${P}1`, "Article A caisse", 100000, "VALIDEE");
 await article(`${P}1B`, `${P}1`, "Article B banque", 100000, "VALIDEE");
 await article(`${P}1C`, `${P}1`, "Article C rejeté", 100000, "REJETEE", "hors budget");
+await q(`UPDATE "LigneDemande" SET "libelleDemandeur" = 'Ordinateur portable (version demandeur)' WHERE id = $1`, [`${P}1A`]);
 await reglement(`${P}rA`, `${P}1`, `${P}1A`, 100000, "CAISSE");
 await reglement(`${P}rB`, `${P}1`, `${P}1B`, 100000, "BANQUE");
 await q(`INSERT INTO "JournalBanque"(id, type, montant, "reglementId", "creeParId") VALUES ($1, 'SORTIE', 100000, $2, $3)`, [`${P}jb`, `${P}rB`, idAssistant]);
@@ -152,8 +155,7 @@ ws.eachRow((row, n) => {
   if (type == null) return;
   lignes.push({ n, row, type: String(type), ref: row.getCell(col("Référence demande")).value, article: row.getCell(col("Article")).value, niveau: row.outlineLevel ?? 0 });
 });
-const donnees = lignes.filter((l) => l.type !== "Total général");
-const total = lignes.find((l) => l.type === "Total général");
+const donnees = lignes.filter((l) => !l.type.startsWith("Total"));
 const typeNiveau = { Demande: 0, Article: 1 };
 verifier("1. niveaux : Demande = 0, Article = 1, tous les événements = 2", donnees.every((l) => l.niveau === (typeNiveau[l.type] ?? (l.ref ? 2 : 0))), donnees.filter((l) => l.niveau !== (typeNiveau[l.type] ?? (l.ref ? 2 : 0))).map((l) => `${l.type}:${l.niveau}`).join(","));
 verifier("1. référence demande et article répétés sur chaque ligne (hors retour externe sans demande)", donnees.filter((l) => l.ref).every((l) => String(l.article ?? "") !== ""));
@@ -192,12 +194,30 @@ verifier("1. clôture forcée : article jamais réglé = « reste à régler 40 
 const d4 = dem("DEM-LOTF-4");
 verifier("1. demande en cours : « En cours (1/2 traité) »", !!d4 && /^En cours \(1\/2 traité\)$/.test(String(val(d4, "Statut"))), d4 ? String(val(d4, "Statut")) : "");
 
-// Totaux
-const sommeDemandes = (t) => Math.round(donnees.filter((l) => l.type === "Demande").reduce((s, l) => s + num(l, t), 0) * 100) / 100;
-const cellTotal = total.row.getCell(col(R)).value;
-verifier("1. total général : formule SUMIF sur « Compte dans les totaux »", !!cellTotal && typeof cellTotal === "object" && /SUMIF/.test(cellTotal.formula) && Number(cellTotal.result) === sommeDemandes(R), JSON.stringify(cellTotal));
-verifier("1. total général = somme des seules lignes Demande (réglé, dépensé, retourné, solde, demandé)", [R, "Dépensé", "Retourné", "Solde à régulariser", "Demandé"].every((t) => Number(total.row.getCell(col(t)).value?.result ?? total.row.getCell(col(t)).value) === sommeDemandes(t)));
+// Totaux PAR DEVISE (lot F bis)
+const lignesTotal = lignes.filter((l) => l.type.startsWith("Total"));
+const devisesDonnees = [...new Set(donnees.filter((l) => l.type === "Demande").map((l) => String(val(l, "Devise"))))].sort();
+verifier("1. une ligne de total par devise présente (EUR et XOF), libellées « Total EUR » / « Total XOF »", devisesDonnees.includes("EUR") && devisesDonnees.includes("XOF") && lignesTotal.map((l) => l.type).join("|") === devisesDonnees.map((d) => `Total ${d}`).join("|"), lignesTotal.map((l) => l.type).join("|"));
+const sommeDemandes = (t, devise) => Math.round(donnees.filter((l) => l.type === "Demande" && String(val(l, "Devise")) === devise).reduce((s, l) => s + num(l, t), 0) * 100) / 100;
+// ExcelJS ne relit pas un résultat en cache égal à 0 (le XML contient bien <v>0</v>) : absent = 0.
+const resultat = (c) => (c && typeof c === "object" ? Number(c.result ?? 0) : Number(c ?? 0));
+const cellTotal = (devise, t) => lignesTotal.find((l) => l.type === `Total ${devise}`).row.getCell(col(t)).value;
+const formuleOk = devisesDonnees.every((dv) => { const c = cellTotal(dv, R); return c && typeof c === "object" && /SUMIFS/.test(c.formula) && c.formula.includes(`"${dv}"`) && c.formula.includes('"Oui"') && resultat(c) === sommeDemandes(R, dv); });
+verifier("1. chaque total : formule SUMIFS sur « Compte dans les totaux = Oui » ET sur la devise, résultat exact", formuleOk, JSON.stringify(cellTotal("EUR", R)));
+const ecartsTotaux = devisesDonnees.flatMap((dv) => [R, "Dépensé", "Retourné", "Solde à régulariser", "Demandé"].filter((t) => resultat(cellTotal(dv, t)) !== sommeDemandes(t, dv)).map((t) => `${dv}/${t}: ${JSON.stringify(cellTotal(dv, t))} vs ${sommeDemandes(t, dv)}`));
+verifier("1. totaux par devise = somme des seules lignes Demande de CETTE devise (réglé, dépensé, retourné, solde, demandé)", ecartsTotaux.length === 0, ecartsTotaux.join(" ; "));
+verifier("1. les devises ne sont JAMAIS additionnées : total EUR ≠ total toutes devises, DEM-LOTF-2 (EUR, 20 000 réglés) n'entre pas dans le total XOF", sommeDemandes(R, "EUR") >= 20000 && Number(cellTotal("XOF", R).result) === sommeDemandes(R, "XOF") && Number(cellTotal("XOF", R).result) !== sommeDemandes(R, "XOF") + sommeDemandes(R, "EUR"));
 verifier("1. un seul « Oui » par demande : aucune ligne Article/événement ne compte dans les totaux", donnees.every((l) => (val(l, "Compte dans les totaux") === "Oui") === (l.type === "Demande")));
+
+// Libellé d'origine et justificatifs (lot F bis)
+const articleA = donnees.find((l) => l.type === "Article" && l.article === "Article A caisse");
+verifier("1. libellé d'origine du demandeur sur la ligne Article (« Ordinateur portable (version demandeur) »), vide sur les autres types", String(val(articleA, "Libellé d'origine (demandeur)")) === "Ordinateur portable (version demandeur)" && donnees.filter((l) => l.type !== "Article" && l.type !== "Total général").every((l) => !val(l, "Libellé d'origine (demandeur)")));
+const exLiens = donnees.find((l) => l.type === "Retour externe" && l.ref === "DEM-LOTF-1");
+const lien = (l, titre) => { const v = val(l, titre); return v && typeof v === "object" ? v.hyperlink : null; };
+verifier("1. retour externe rattaché : liens « Télécharger » vers le justificatif du retour et du chèque (route de téléchargement existante)", lien(exLiens, "Justificatif du retour") === `${B}/api/treso/pieces-jointes/${P}pj1` && lien(exLiens, "Justificatif du chèque initial") === `${B}/api/treso/pieces-jointes/${P}pj2`, JSON.stringify(val(exLiens, "Justificatif du retour")));
+verifier("1. retour externe sans demande : lien du justificatif du retour (pas de chèque), aucun autre type de ligne n'a de lien", !!lien(sans, "Justificatif du retour") && donnees.filter((l) => l.type !== "Retour externe").every((l) => !val(l, "Justificatif du retour") && !val(l, "Justificatif du chèque initial")));
+const dlFinance = await f.request.get(lien(exLiens, "Justificatif du retour"));
+verifier("1. le lien est ouvrable par Finance (droit creer_retour_externe) : la route ne refuse pas", ![401, 403].includes(dlFinance.status()), String(dlFinance.status()));
 
 // Formats
 const montants = [R, "Dépensé", "Retourné", "Solde à régulariser", "Demandé", "Montant de l'opération"];
@@ -228,7 +248,33 @@ cf.getWorksheet("Reporting").eachRow((r, n) => { const ref = r.getCell(col("Réf
 verifier("1. filtre statut=CLOTUREE : seulement les demandes clôturées (DEM-LOTF-3), pas de retour externe sans demande", refsFiltrees.has("DEM-LOTF-3") && !refsFiltrees.has("DEM-LOTF-1") && !refsFiltrees.has("DEM-LOTF-2"));
 const colPrefiltre = await f.request.get(`${B}/api/treso/reporting/export?statut=CLOTUREE`);
 const nbSansDemande = (() => { let n = 0; cf.getWorksheet("Reporting").eachRow((r, i) => { if (i > 1 && r.getCell(col("Article")).value === "Hors demande") n += 1; }); return n; })();
+const totauxFiltre = [];
+cf.getWorksheet("Reporting").eachRow((r, n) => { const t = r.getCell(col("Type de ligne")).value; if (n > 1 && typeof t === "string" && t.startsWith("Total")) totauxFiltre.push(t); });
+verifier("1. une seule devise dans l'export (filtre) : une seule ligne « Total général »", totauxFiltre.length === 1 && totauxFiltre[0] === "Total général", totauxFiltre.join("|"));
 verifier("1. filtre statut : le retour externe sans demande n'apparaît pas", nbSansDemande === 0 && colPrefiltre.status() === 200);
+// DG : voit le reporting (treso.voir_reporting) mais n'a PAS le droit de télécharger les justificatifs d'un retour externe → aucun lien.
+{
+  const dg = await connecter("dg@simassurances.test");
+  const exDg = await dg.request.get(`${B}/api/treso/reporting/export`);
+  const cdg = new ExcelJS.Workbook();
+  await cdg.xlsx.load(await exDg.body());
+  const wdg = cdg.getWorksheet("Reporting");
+  let externes = 0;
+  let avecLien = 0;
+  wdg.eachRow((r, n) => {
+    if (n > 1 && r.getCell(col("Type de ligne")).value === "Retour externe") {
+      externes += 1;
+      if (r.getCell(col("Justificatif du retour")).value || r.getCell(col("Justificatif du chèque initial")).value) avecLien += 1;
+    }
+  });
+  verifier("1. DG (sans droit sur les justificatifs) : mêmes lignes de retour externe, mais AUCUN lien dans l'export", exDg.status() === 200 && externes >= 2 && avecLien === 0, `${externes}/${avecLien}`);
+  const dlDg = await dg.request.get(`${B}/api/treso/pieces-jointes/${P}pj1`);
+  verifier("1. droits inchangés : la route refuse toujours le DG (403)", dlDg.status() === 403, String(dlDg.status()));
+  await dg.goto(`${B}/treso/finance/reporting`);
+  await dg.locator("[data-deplier-tout]").click();
+  verifier("2. page du DG : lignes de retour externe visibles, aucun lien « Télécharger »", (await dg.locator('table[data-reporting-arbre] tr[data-type="RETOUR_EXTERNE"]').count()) >= 2 && (await dg.locator("a[data-justificatif]").count()) === 0);
+  await dg.close();
+}
 const collab = await connecter("collaborateur@simassurances.test");
 const refus = await collab.request.get(`${B}/api/treso/reporting/export`);
 verifier("1. permissions inchangées : export refusé au collaborateur", refus.status() === 403);
@@ -254,9 +300,11 @@ verifier("2. replier la demande masque articles et événements", (await article
 await f.locator("[data-deplier-tout]").click();
 const nbPage = await tableau.locator("tbody tr").count();
 verifier("2. « Tout déplier » : autant de lignes que l'export Excel (mêmes filtres, mêmes lignes)", nbPage === lignesTotalDonnees, `${nbPage} vs ${lignesTotalDonnees}`);
-const texteTotal = net(await tableau.locator("tfoot [data-total-general]").innerText());
-const fmt = (n) => Math.round(n).toLocaleString("fr-FR").replace(/[  ]/g, " ");
-verifier("2. total général de la page = total de l'export (réglé)", texteTotal.includes(fmt(Number(total.row.getCell(col(R)).value.result))), texteTotal);
+const fmt = (n) => Math.round(n).toLocaleString("fr-FR").replace(/[\u202f\u00a0]/g, " ");
+const totauxPage = {};
+for (const dv of devisesDonnees) totauxPage[dv] = net(await tableau.locator(`tfoot tr[data-total-devise="${dv}"]`).innerText());
+verifier("2. page : une ligne de total par devise, égale à celle de l'export (réglé)", devisesDonnees.every((dv) => totauxPage[dv].includes(`Total ${dv}`) && totauxPage[dv].includes(fmt(Number(cellTotal(dv, R).result)))), JSON.stringify(totauxPage));
+verifier("2. page : libellé d'origine visible sur l'article, liens « Télécharger » des justificatifs du retour externe (Finance)", (await tableau.locator('tbody tr[data-niveau="1"]', { hasText: "Ordinateur portable (version demandeur)" }).count()) === 1 && (await tableau.locator("tbody a[data-justificatif]").count()) >= 2);
 const texteDemandes = net(await tableau.locator('tbody tr[data-niveau="0"][data-ref="DEM-LOTF-3"]').innerText());
 verifier("2. clôture forcée visible sur la ligne de la demande", /Clôturée de force/.test(texteDemandes) && /fournisseur disparu/.test(texteDemandes));
 await f.locator("[data-replier-tout]").click();

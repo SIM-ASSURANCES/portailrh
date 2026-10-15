@@ -3213,6 +3213,7 @@ Aucune migration, aucune permission, **lecture seule** : aucune écriture de cai
 - **Correctifs inclus** : les scripts `prisma/simuler-cloture-articles.ts`, `recalculer-statuts-articles.ts`, `recalculer-reglements-articles.ts` chargent `.env` AVANT tout import (`prisma/chargerEnv.ts`, premier import : esbuild remonte
   les `import` au-dessus de `dotenv.config`, d'où l'erreur « Database `Arist` does not exist ») — vérifié sans `DATABASE_URL` dans l'environnement. Affichage : un article **jamais réglé** d'une clôture forcée dit
   « reste à régler X FCFA » (script de simulation, historique, bandeau, notification, badge), plus « solde restant 0 FCFA » (`detailClotureForcee`, `libelleArticleClotureForcee`).
+- **⚠️ Précisé par le lot F bis (plus bas)** : le total général est désormais UN TOTAL PAR DEVISE (formule `SUMIFS`, plus `SUMIF`), et le libellé d'origine du demandeur ainsi que les liens vers les justificatifs des retours externes sont revenus (points (3) et (4) ci-dessous résolus).
 - **Décisions / points ouverts** : (1) UNE colonne « Réglé = fonds remis (Caisse + Banque) » (les colonnes « Réglé » et « Fonds remis » étaient identiques) + « Dont Caisse / Dont Banque » ; (2) types d'événements ajoutés au-delà
   de la demande : remboursement de retour, retour exceptionnel post-clôture ; (3) le libellé d'origine du demandeur et les justificatifs téléchargeables (liens vers les pièces jointes des retours externes) ne sont plus dans
   l'export — à rétablir si besoin ; (4) le total général additionne les montants nominaux de toutes les devises (une devise par demande) ; (5) le reporting « par Catégorie × Objet » (synthèse) reste distinct du tableau
@@ -3221,6 +3222,25 @@ Aucune migration, aucune permission, **lecture seule** : aucune écriture de cai
   directe, non rattaché, retour externe hors demande, retour exceptionnel, remboursement ; 20 tests `clotureDemande` dont 2 pour l'article jamais réglé), tsc, eslint, `next build` ; e2e `lot-f.mjs` (demande à 3 articles : A réglé en caisse + retour,
   B réglé par banque + retour externe rattaché, C rejeté ; DEM EUR, clôture forcée, « En cours », retour externe hors demande ; classeur relu avec exceljs : une feuille de données + Journal, niveaux, volets, filtre, formats,
   total SUMIF, filtres communs page/export, cohérence avec l'écran de la demande) ; régressions des lots précédents (tests `lot-c`, `lot-g`, `lot-g-bis`, `lot-h` adaptés au tableau unique).
+
+#### Lot F bis — totaux par devise, justificatifs des retours externes, libellé d'origine (2026-10-21)
+
+Aucune migration, aucune permission nouvelle, lecture seule. Deux corrections du tableau unique du lot F.
+
+- **Totaux PAR DEVISE** (`totauxParDevise`, `backend/src/reportingArbre.ts`, remplace `totauxGeneraux`) : on n'additionne **jamais** des devises différentes. Une ligne de total par devise présente
+  (triées), formée des seules lignes DEMANDE de cette devise (centimes exacts) ; une seule devise = une seule ligne « Total général » ; plusieurs = « Total EUR », « Total XOF »… Un retour externe hors demande
+  (pas de devise) n'entre dans aucun total. **Excel** : formule `SUMIFS(colonne, « Compte dans les totaux », "Oui", Devise, "<devise>")` avec résultat pré-calculé, la devise reportée dans la colonne Devise de la
+  ligne de total. **Page** : `tfoot` avec une ligne par devise (`data-total-devise`), mêmes chiffres. (Détail technique : ExcelJS ne relit pas un résultat en cache égal à 0 — le XML contient bien `<v>0</v>`.)
+- **Libellé d'origine du demandeur** : colonne « Libellé d'origine (demandeur) » (`libelleOrigine` = `libelleDemandeur ?? libelleOriginal ?? libelle`), renseignée sur les seules lignes ARTICLE (la colonne « Article »
+  garde le libellé Finance).
+- **Justificatifs des retours externes** : colonnes « Justificatif du retour » et « Justificatif du chèque initial » (genre `lien`), sur les lignes RETOUR EXTERNE (rattachées et hors demande) — Excel : lien
+  hypertexte « Télécharger » absolu (origine de la requête) ; page : lien relatif. Le lien pointe vers la route **existante** `GET /api/treso/pieces-jointes/[id]`, qui applique elle-même ses droits.
+  **Aucune permission élargie** : la règle de cette route (`isAdmin` ou `treso.creer_retour_externe`) est extraite dans `peutTelechargerJustificatifsRetourExterne` (`frontend/src/lib/droitsPiecesJointes.ts`),
+  utilisée par la route ET par le reporting, qui **ne produit le lien que pour qui peut l'ouvrir** (option `justificatifsRetoursExternes` de `getReportingArbre` ; sinon les identifiants de pièces ne sont même
+  pas chargés dans les lignes). Un DG (`voir_reporting` sans `creer_retour_externe`) voit donc la ligne du retour externe mais aucun lien, et la route le refuse toujours (403).
+- **Vérifié** : vitest (30 tests `reportingArbre`, dont totaux par devise : une devise, deux devises, pas de contamination, hors demande ; liens avec/sans droit ; libellé d'origine), tsc, eslint, `next build` ;
+  e2e `lot-f.mjs` 60/60 (totaux EUR et XOF séparés avec leurs formules SUMIFS, une seule ligne « Total général » sur un export filtré à une devise, libellé d'origine, liens vérifiés par Finance et ouvrables,
+  DG sans lien et refusé par la route, page identique) ; régressions des lots précédents.
 
 ### Solde d'ouverture de caisse
 

@@ -5,6 +5,10 @@ import { useMemo, useState } from "react";
 import type { ColonneArbre, LigneArbre } from "backend";
 
 type Totaux = Record<string, number>;
+interface TotalDevise {
+  devise: string;
+  totaux: Totaux;
+}
 
 const nombre = (m: number) => Math.round(m).toLocaleString("fr-FR");
 const jour = (d: Date) => d.toLocaleDateString("fr-FR", { timeZone: "Africa/Abidjan" });
@@ -43,7 +47,7 @@ function preparer(lignes: readonly LigneArbre[]): LigneAffichee[] {
  * mouvements banque, retours de caisse, dépenses et retours externes. Mêmes lignes et mêmes colonnes que la feuille « Reporting » de
  * l'export Excel (`COLONNES_ARBRE`) ; le total général ne compte que les lignes « Demande » (aucun double comptage).
  */
-export function ReportingArbreTable({ colonnes, lignes, totaux, nbDemandes }: { colonnes: readonly ColonneArbre[]; lignes: LigneArbre[]; totaux: Totaux; nbDemandes: number }) {
+export function ReportingArbreTable({ colonnes, lignes, totauxParDevise, nbDemandes }: { colonnes: readonly ColonneArbre[]; lignes: LigneArbre[]; totauxParDevise: TotalDevise[]; nbDemandes: number }) {
   const affichees = useMemo(() => preparer(lignes), [lignes]);
   const [demandesOuvertes, setDemandesOuvertes] = useState<ReadonlySet<string>>(new Set());
   const [articlesOuverts, setArticlesOuverts] = useState<ReadonlySet<string>>(new Set());
@@ -87,7 +91,7 @@ export function ReportingArbreTable({ colonnes, lignes, totaux, nbDemandes }: { 
       </div>
       <p className="text-xs text-muted-foreground">
         Dépliez une demande pour voir ses articles, puis un article pour voir ses règlements, retours de caisse, mouvements banque et retours
-        externes. Les totaux ne comptent que les lignes « Demande ». Faites glisser pour voir toutes les colonnes →
+        externes. Les totaux, un par devise (jamais deux devises additionnées), ne comptent que les lignes « Demande ». Faites glisser pour voir toutes les colonnes →
       </p>
       <div className="max-h-[70vh] overflow-auto rounded-md border border-border">
         <table data-reporting-arbre className="min-w-max divide-y divide-border text-sm">
@@ -126,6 +130,15 @@ export function ReportingArbreTable({ colonnes, lignes, totaux, nbDemandes }: { 
                         contenu = m == null ? "" : nombre(m);
                       } else if (c.genre === "entier") {
                         contenu = v == null ? "" : String(v);
+                      } else if (c.genre === "lien") {
+                        contenu =
+                          typeof v === "string" && v !== "" ? (
+                            <a href={v} data-justificatif className="font-medium text-info underline-offset-4 hover:underline">
+                              Télécharger
+                            </a>
+                          ) : (
+                            ""
+                          );
                       } else if (c.genre === "date") {
                         contenu = v instanceof Date ? jour(v) : "";
                       } else {
@@ -170,13 +183,24 @@ export function ReportingArbreTable({ colonnes, lignes, totaux, nbDemandes }: { 
           </tbody>
           {affichees.length > 0 ? (
             <tfoot className="bg-muted font-semibold">
-              <tr data-total-general>
-                {colonnes.map((c, i) => (
-                  <td key={String(c.cle)} className={`whitespace-nowrap px-3 py-2 ${c.genre === "montant" || c.genre === "entier" ? "text-right tabular-nums" : ""}`}>
-                    {totaux[String(c.cle)] !== undefined ? nombre(totaux[String(c.cle)]) : i === 0 ? "Total général" : ""}
-                  </td>
-                ))}
-              </tr>
+              {/* Un total PAR DEVISE : on n'additionne jamais deux devises. Une seule devise : « Total général ». */}
+              {totauxParDevise.map(({ devise, totaux }) => (
+                <tr key={devise} data-total-devise={devise}>
+                  {colonnes.map((c, i) => (
+                    <td key={String(c.cle)} className={`whitespace-nowrap px-3 py-2 ${c.genre === "montant" || c.genre === "entier" ? "text-right tabular-nums" : ""}`}>
+                      {totaux[String(c.cle)] !== undefined
+                        ? nombre(totaux[String(c.cle)])
+                        : i === 0
+                          ? totauxParDevise.length === 1
+                            ? "Total général"
+                            : `Total ${devise}`
+                          : c.cle === "devise"
+                            ? devise
+                            : ""}
+                    </td>
+                  ))}
+                </tr>
+              ))}
             </tfoot>
           ) : null}
         </table>

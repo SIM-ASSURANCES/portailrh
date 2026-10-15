@@ -2,12 +2,13 @@ import { redirect } from "next/navigation";
 
 import { Button, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
+import { peutTelechargerJustificatifsRetourExterne } from "@/lib/droitsPiecesJointes";
 import { prisma } from "backend";
 import {
   getBeneficiairesConnus,
   COLONNES_ARBRE,
   getReportingArbre,
-  totauxGeneraux,
+  totauxParDevise,
   getReportingRows,
   getReportingSuiviBudgetaire,
   parseReportingFilters,
@@ -54,7 +55,9 @@ export default async function ReportingPage({
   // résultats, ce filtre ne porte que sur les OPTIONS du formulaire.
   const [arbre, rows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
     await Promise.all([
-      getReportingArbre(filters, (statut) => STATUT_DEMANDE_LABEL[statut]),
+      getReportingArbre(filters, (statut) => STATUT_DEMANDE_LABEL[statut], {
+        justificatifsRetoursExternes: peutTelechargerJustificatifsRetourExterne(session),
+      }),
       getReportingRows(filters),
       getReportingSuiviBudgetaire(),
       prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
@@ -65,7 +68,7 @@ export default async function ReportingPage({
     ]);
 
   const services = servicesRaw.map((s) => s.name);
-  const totauxArbre = totauxGeneraux(arbre.lignes);
+  const totauxArbre = totauxParDevise(arbre.lignes);
 
 
   const total = rows.reduce(
@@ -128,7 +131,7 @@ export default async function ReportingPage({
         }}
       />
 
-      <ReportingArbreTable colonnes={COLONNES_ARBRE} lignes={arbre.lignes} totaux={totauxArbre} nbDemandes={arbre.arbres.length} />
+      <ReportingArbreTable colonnes={COLONNES_ARBRE} lignes={arbre.lignes} totauxParDevise={totauxArbre} nbDemandes={arbre.arbres.length} />
 
       <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Synthèse par catégorie / objet</h2>
