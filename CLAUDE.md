@@ -2566,6 +2566,11 @@ discrète).
 
 ### Reporting et export
 
+> **⚠️ REMPLACÉ par le lot F (2026-10-21, plus bas) pour tout le tableau « par demande » et ses feuilles annexes** : un SEUL tableau (demande → articles →
+> événements) sur la page et sur une SEULE feuille Excel « Reporting ». Les feuilles Demandes, Retours de caisse, Mouvements banque, Retours externes et Fonds remis n'existent
+> plus (ni `reportingDemandeLigne.ts`, `reportingRetourCaisse.ts`, `getReportingParDemande`, `getReportingRetoursCaisse`, `getReportingFondsRemis`). Restent : la synthèse par catégorie
+> (feuille renommée « Synthèse par catégorie »), le suivi budgétaire, le Dashboard et le Journal de caisse. La suite de cette section décrit l'état d'AVANT le lot F.
+
 `backend/src/reporting.ts` / `treso/finance/reporting/page.tsx` / export
 Excel. **Depuis le 2026-10-08 : une seule ligne par demande** (voir « Retouches Trésorerie du 2026-10-08 » plus bas) —
 feuilles : Demandes (une ligne par demande), Mouvements banque, Retours externes, Fonds remis, Journal de caisse,
@@ -3178,6 +3183,44 @@ partielle ne remplace pas la clôture forcée ; (2) la clôture forcée garde l'
 **Vérifié** : vitest (`clotureDemande` 18, `notificationsArticles` 14, `circuitNotifications` 22 ; 829 réussis + échec connu `feedback.test.ts`), tsc, eslint, `next build`, migration depuis zéro, `migrate diff` vide ;
 e2e `lot-c.mjs` 55/55 (A validé par le DG et confirmé, B refusé puis resoumis puis validé, C rejeté ; clôture bloquée avec message, A régularisé disparaît, B bloque ; garde 8 ; motif de 9 caractères refusé ; clôture forcée,
 historique, notifications demandeur et DG, caisse intacte, bandeau, reporting, export ; clôture ordinaire ; rappel unique nommant les articles, remis à zéro) ; script de reprise testé (simulation, application, rejeu sans effet).
+
+#### Lot F — reporting et export : un seul tableau, de la demande jusqu'au détail de chaque article (2026-10-21)
+
+Aucune migration, aucune permission, **lecture seule** : aucune écriture de caisse créée ni modifiée, aucun nouveau calcul comptable. Les chiffres d'un article et de la demande sont ceux des écrans
+(`agregerRegularisation`, `getEcartLigne`, `depensesDeclareesLigne`, `resteNonDetailleTotal` : le test de cohérence compare le tableau à l'écran « Total de la demande »).
+
+- **Module pur** `backend/src/reportingArbre.ts` (21 tests) : `construireArbreDemande` → lignes sur 3 niveaux dans UN jeu de colonnes (`COLONNES_ARBRE`, partagé page/export) :
+  niveau 0 **DEMANDE** (panier global : statut dérivé « En cours (x/n traités) » tant qu'un article attend, étape, validation Service, nb articles, demandé, validé, réglé = fonds remis, dont Caisse / Banque,
+  dépensé, retourné, solde, mention de clôture forcée) ; niveau 1 **ARTICLE** (libellé, bénéficiaire, « Livraison prévue le », « Géré le », décision Finance, décision DG, statut — « Validé — à régulariser »,
+  « Chez le DG », « Rejeté »… —, mêmes montants, « Clôturé sans régularisation — solde restant / reste à régler X FCFA ») ; niveau 2 **événements** de l'article : règlement / fonds remis (référence
+  `<demande>-R<rang>`), mouvement banque (chacun sous son règlement), retour de caisse (chacun suivi de ses dépenses et remboursements), retour externe rattaché, retour exceptionnel. Une ligne
+  « Dépense directe » (demande sans article) ou « Non rattaché à un article » (anciens règlements ambigus) porte ce qui n'a pas d'article, jamais attribué au hasard.
+- **Référence demande, article, demandeur, service et devise sont répétés sur CHAQUE ligne** (la ligne DEMANDE a l'article « (Demande entière) ») : filtres, tris, tableaux croisés dynamiques.
+- **Pas de double comptage** : seule la ligne DEMANDE a « Compte dans les totaux = Oui » ; les articles détaillent la demande, les événements l'article (Σ articles = demande, testé). Le total général est la
+  somme des seules lignes « Oui » (`totauxGeneraux`). Le **retour nul** reste de l'historique (statut « Retour nul constaté », montant 0). Un règlement Banque compte comme fonds remis (« Dont Banque »),
+  jamais en « Dont Caisse » ni dans le journal de caisse. Annulé / brouillon : lignes visibles, hors du réglé. Devise : colonne sur chaque ligne (une devise par demande).
+- **Chargement** `getReportingArbre(filters, libelleStatut)` (`reporting.ts`) : mêmes filtres que le reste du reporting (`getDemandesFiltrees` : période, demandeur, service, catégorie/objet, mode, statut, type,
+  bénéficiaire), puis quelques requêtes groupées (jamais une par demande). Un **retour externe sans demande** (chèque…) est une ligne de niveau 0 « Hors demande », **hors totaux**, affichée seulement quand aucun
+  filtre ne vise des demandes (la période s'applique).
+- **Export** (`reportingArbreExcel.ts`, route inchangée, `treso.voir_reporting`) : feuille « Reporting » avec **regroupement Excel** (ARTICLE = sous-lignes de DEMANDE, événements = sous-lignes de l'ARTICLE, repliables,
+  bouton de repli sur la ligne de synthèse), style par niveau (demande en gras sur fond bleu, article sur fond léger, événements en retrait), filtre automatique, volets figés (en-tête + 2 premières colonnes), montants
+  **numériques** au format `#,##0.##`, vraies dates `jj/mm/aaaa`, aucun retour à la ligne sauf la colonne « Motif / justification / détail », total général en **formule `SUMIF`** (résultat pré-calculé) après une
+  ligne vide. Autres feuilles : « Journal de caisse » (audit, inchangé), « Synthèse par catégorie », « Suivi budgétaire », « Dashboard ».
+- **Page** `/treso/finance/reporting` (`ReportingArbreTable`, Client Component) : demande dépliable en ses articles, chaque article en ses événements, « Tout déplier / Tout replier », mêmes colonnes, total général ; les
+  filtres sont ceux du formulaire existant et s'appliquent à l'export (même chaîne de requête). Synthèse par catégorie et `#suivi-budgetaire` conservés.
+- **Supprimés** : `reportingDemandeLigne.ts`/`.test.ts`, `reportingRetourCaisse.ts`/`.test.ts`, `ReportingDemandesTable`, `ReportingRetoursTable`, `getReportingParDemande`, `getReportingRetoursCaisse`, `getReportingFondsRemis`,
+  `getFondsRemisParDemande`, `getReportingJournalBanqueDetail`, `getReportingRetoursExternesDetail`.
+- **Correctifs inclus** : les scripts `prisma/simuler-cloture-articles.ts`, `recalculer-statuts-articles.ts`, `recalculer-reglements-articles.ts` chargent `.env` AVANT tout import (`prisma/chargerEnv.ts`, premier import : esbuild remonte
+  les `import` au-dessus de `dotenv.config`, d'où l'erreur « Database `Arist` does not exist ») — vérifié sans `DATABASE_URL` dans l'environnement. Affichage : un article **jamais réglé** d'une clôture forcée dit
+  « reste à régler X FCFA » (script de simulation, historique, bandeau, notification, badge), plus « solde restant 0 FCFA » (`detailClotureForcee`, `libelleArticleClotureForcee`).
+- **Décisions / points ouverts** : (1) UNE colonne « Réglé = fonds remis (Caisse + Banque) » (les colonnes « Réglé » et « Fonds remis » étaient identiques) + « Dont Caisse / Dont Banque » ; (2) types d'événements ajoutés au-delà
+  de la demande : remboursement de retour, retour exceptionnel post-clôture ; (3) le libellé d'origine du demandeur et les justificatifs téléchargeables (liens vers les pièces jointes des retours externes) ne sont plus dans
+  l'export — à rétablir si besoin ; (4) le total général additionne les montants nominaux de toutes les devises (une devise par demande) ; (5) le reporting « par Catégorie × Objet » (synthèse) reste distinct du tableau
+  unique et ne détaille pas les articles.
+- **Vérifié** : vitest (21 tests `reportingArbre` : niveaux, ordre, sous-totaux, Σ articles = demande, pas de double comptage, Banque vs Caisse, annulé/brouillon, retour nul, clôture forcée, article jamais réglé, devise, dépense
+  directe, non rattaché, retour externe hors demande, retour exceptionnel, remboursement ; 20 tests `clotureDemande` dont 2 pour l'article jamais réglé), tsc, eslint, `next build` ; e2e `lot-f.mjs` (demande à 3 articles : A réglé en caisse + retour,
+  B réglé par banque + retour externe rattaché, C rejeté ; DEM EUR, clôture forcée, « En cours », retour externe hors demande ; classeur relu avec exceljs : une feuille de données + Journal, niveaux, volets, filtre, formats,
+  total SUMIF, filtres communs page/export, cohérence avec l'écran de la demande) ; régressions des lots précédents (tests `lot-c`, `lot-g`, `lot-g-bis`, `lot-h` adaptés au tableau unique).
 
 ### Solde d'ouverture de caisse
 

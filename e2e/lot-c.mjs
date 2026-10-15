@@ -271,13 +271,13 @@ await reglerArticle(D, LB, { depenses: false });
   verifier("6. plus aucun bouton de clôture", (await p.getByRole("button", { name: "Clôturer totalement" }).count()) === 0 && (await p.locator("[data-forcer-cloture]").count()) === 0);
   // Reporting et export.
   await p.goto(`${B}/treso/finance/reporting`);
-  verifier("6. reporting : colonne « Clôture forcée (sans régularisation) » et la demande", (await p.locator("main").innerText()).includes("Clôture forcée (sans régularisation)"));
+  verifier("6. reporting : colonne « Clôture sans régularisation » et la mention sur la demande", (await p.locator("main").innerText()).includes("Clôture sans régularisation") && (await p.locator('table[data-reporting-arbre] tr[data-niveau="0"]', { hasText: "Clôturée de force" }).count()) >= 1);
   const x = await p.request.get(`${B}/api/treso/reporting/export`);
   const dossier = mkdtempSync(join(tmpdir(), "lotc-"));
   const xlsx = join(dossier, "export.xlsx");
   writeFileSync(xlsx, await x.body());
   const partages = norm(execFileSync("unzip", ["-p", xlsx, "xl/sharedStrings.xml"], { maxBuffer: 64 * 1024 * 1024 }).toString());
-  verifier("6. export Excel : en-tête et ligne « Clôturée de force … motif … articles non régularisés »", x.status() === 200 && partages.includes("Clôture forcée (sans régularisation)") && partages.includes("Clôturée de force") && partages.includes("fournisseur de B"));
+  verifier("6. export Excel : en-tête et ligne « Clôturée de force … motif … articles non régularisés »", x.status() === 200 && partages.includes("Clôture sans régularisation") && partages.includes("Clôturée de force") && partages.includes("fournisseur de B"));
   await ctx.close();
 }
 {

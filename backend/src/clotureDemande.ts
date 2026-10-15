@@ -237,10 +237,18 @@ export function lireInstantaneClotureForcee(json: unknown): ArticleCloturePartie
   return resultat;
 }
 
-/** Détail lisible d'une clôture forcée : « « Formation » solde 5 000 FCFA (reste à régler …) ; … ». */
+/**
+ * Détail lisible d'une clôture forcée : « « Formation » (solde restant 5 000 FCFA — dépenses à détailler 5 000 FCFA) ; … ».
+ * Un article JAMAIS réglé (solde nul puisque rien n'a été remis, mais montant validé encore dû) n'affiche pas « solde restant
+ * 0 FCFA » : seulement ce qui lui manque (« reste à régler 20 000 FCFA »).
+ */
 export function detailClotureForcee(articles: readonly ArticleCloturePartiel[]): string {
   return articles
-    .map((a) => `« ${a.libelle} » (solde restant ${fcfa(a.solde)}${a.manques.length > 0 ? ` — ${a.manques.join(", ")}` : ""})`)
+    .map((a) => {
+      const jamaisRegle = c(a.resteARegler) > 0 && c(a.solde) === 0;
+      if (jamaisRegle) return `« ${a.libelle} » (reste à régler ${fcfa(a.resteARegler)})`;
+      return `« ${a.libelle} » (solde restant ${fcfa(a.solde)}${a.manques.length > 0 ? ` — ${a.manques.join(", ")}` : ""})`;
+    })
     .join(" ; ");
 }
 
@@ -257,6 +265,11 @@ export function libelleArticleClotureForcee(
   soldeActuel: number
 ): string | null {
   if (!demande.clotureForcee || termineMaintenant) return null;
-  if (!instantane.some((a) => a.ligneId === ligneId)) return null;
+  const entree = instantane.find((a) => a.ligneId === ligneId);
+  if (!entree) return null;
+  // Article jamais réglé : rien à régulariser (solde nul) mais encore dû — on dit « reste à régler », pas « solde restant 0 ».
+  if (c(entree.resteARegler) > 0 && c(soldeActuel) === 0) {
+    return `${LIBELLE_CLOTURE_SANS_REGULARISATION} — reste à régler ${fcfa(entree.resteARegler)}`;
+  }
   return `${LIBELLE_CLOTURE_SANS_REGULARISATION} — solde restant ${fcfa(soldeActuel)}`;
 }

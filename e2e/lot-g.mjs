@@ -351,22 +351,23 @@ await q(`INSERT INTO "JournalBanque"(id, type, montant, "reglementId", "retourCa
 {
   const p = await connecter("finance@simassurances.test");
   await p.goto(`${B}/treso/finance/reporting`);
-  const tableau = p.locator("[data-reporting-retours]");
-  verifier("5. reporting : tableau « Retours de caisse » présent", (await tableau.count()) === 1);
+  const tableau = p.locator("table[data-reporting-arbre]");
+  verifier("5. reporting : tableau unique présent", (await tableau.count()) === 1);
+  await p.locator("[data-deplier-tout]").click();
   const lignes = (await tableau.locator("tbody tr").allInnerTexts()).map(net);
-  const ligne = lignes.find((t) => t.includes("DEM-LOTG-MIXTE"));
-  verifier("5. reporting : la ligne du retour détaille l'article (Finance + demandeur), bénéficiaire, validé 100 000, livraison 15/12/2026", !!ligne && /Ordinateur \(Finance\)/.test(ligne) && /Ordinateur/.test(ligne) && /100 000 FCFA/.test(ligne) && /15\/12\/2026/.test(ligne), ligne ?? "absente");
-  verifier("5. reporting : règlements de l'article Caisse 60 000 et Banque 40 000 (total 100 000)", !!ligne && /Caisse — 60 000 FCFA/.test(ligne) && /Banque — 40 000 FCFA/.test(ligne), "");
-  verifier("5. reporting : demande, demandeur, service présents", !!ligne && /Collaborateur/.test(ligne));
+  const ligneArticle = (await tableau.locator('tbody tr[data-niveau="1"][data-ref="DEM-LOTG-MIXTE"]').allInnerTexts()).map(net)[0];
+  const ligneRetour = lignes.find((t) => /Retour de caisse/.test(t) && t.includes("DEM-LOTG-MIXTE"));
+  verifier("5. reporting : la ligne de l'article détaille libellé Finance, validé 100 000, livraison prévue 15/12/2026", !!ligneArticle && /Ordinateur \(Finance\)/.test(ligneArticle) && /100 000/.test(ligneArticle) && /15\/12\/2026/.test(ligneArticle), ligneArticle ?? "absente");
+  verifier("5. reporting : règlements de l'article Caisse 60 000 et Banque 40 000 (total 100 000)", !!ligneArticle && /60 000/.test(ligneArticle) && /40 000/.test(ligneArticle) && /100 000/.test(ligneArticle), "");
+  verifier("5. reporting : le retour de caisse est une ligne sous l'article, avec demande et demandeur", !!ligneRetour && /Collaborateur/.test(ligneRetour), ligneRetour ?? "absente");
   const r = await p.request.get(`${B}/api/treso/reporting/export`);
   verifier("5. export Excel : 200", r.status() === 200, String(r.status()));
   const xlsx = join(dossier, "export.xlsx");
   writeFileSync(xlsx, await r.body());
   const classeur = execFileSync("unzip", ["-p", xlsx, "xl/workbook.xml"]).toString();
-  verifier("5. export : feuille « Retours de caisse »", classeur.includes('name="Retours de caisse"'));
+  verifier("5. export : feuille unique « Reporting » (plus de feuille « Retours de caisse »)", classeur.includes('name="Reporting"') && !classeur.includes('name="Retours de caisse"'));
   const partages = execFileSync("unzip", ["-p", xlsx, "xl/sharedStrings.xml"], { maxBuffer: 64 * 1024 * 1024 }).toString();
-  verifier("5. export : colonnes d'article d'origine et de règlements", partages.includes("Article (libellé Finance)") && partages.includes("Article (libellé d&apos;origine du demandeur)") || partages.includes("Article (libellé d'origine du demandeur)"));
-  verifier("5. export : valeurs de l'article (Ordinateur (Finance), règlement Banque)", partages.includes("Ordinateur (Finance)") && partages.includes("Banque — 40 000 FCFA"));
+  verifier("5. export : valeurs de l'article (Ordinateur (Finance)) et mention Banque/Caisse", partages.includes("Ordinateur (Finance)") && partages.includes("Banque") && partages.includes("Retour de caisse"));
   await p.close();
 }
 

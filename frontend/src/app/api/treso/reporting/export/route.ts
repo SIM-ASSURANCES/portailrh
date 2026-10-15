@@ -3,16 +3,11 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { getSession, hasPermission } from "@/lib/auth";
+import { ajouterFeuilleReporting } from "@/lib/reportingArbreExcel";
 import {
-  COLONNES_REPORTING_DEMANDE,
+  getReportingArbre,
   getReportingDashboardSnapshot,
-  getReportingFondsRemis,
-  getReportingJournalBanqueDetail,
   getReportingJournalDetail,
-  getReportingParDemande,
-  getReportingRetoursCaisse,
-  COLONNES_REPORTING_RETOUR,
-  getReportingRetoursExternesDetail,
   getReportingRows,
   getReportingSuiviBudgetaire,
   parseReportingFilters,
@@ -29,7 +24,8 @@ function styleHeaderRow(sheet: ExcelJS.Worksheet) {
 }
 
 /**
- * Export Excel multi-feuilles du reporting Trésorerie (Ticket 10).
+ * Export Excel du reporting Trésorerie : « Reporting » (tableau unique, lot F), « Journal de caisse » (audit), « Synthèse par
+ * catégorie », « Suivi budgétaire » et « Dashboard ».
  * Mêmes query params de filtres et mêmes fonctions de requête
  * (`src/lib/reporting.ts`) que l'écran `treso/finance/reporting` : le
  * classeur téléchargé désigne toujours exactement les mêmes données que ce
@@ -49,152 +45,22 @@ export async function GET(request: NextRequest) {
   const searchParams = Object.fromEntries(request.nextUrl.searchParams.entries());
   const filters = parseReportingFilters(searchParams);
 
-  const [demandes, retoursCaisse, journal, rows, fondsRemis, suiviBudgetaire, dashboard, mouvementsBanque, retoursExternes] =
-    await Promise.all([
-      getReportingParDemande(filters, (statut) => STATUT_DEMANDE_LABEL[statut]),
-      getReportingRetoursCaisse(filters),
-      getReportingJournalDetail(filters),
-      getReportingRows(filters),
-      getReportingFondsRemis(filters),
-      getReportingSuiviBudgetaire(),
-      getReportingDashboardSnapshot(),
-      getReportingJournalBanqueDetail(filters),
-      getReportingRetoursExternesDetail(filters),
-    ]);
+  const [arbre, journal, rows, suiviBudgetaire, dashboard] = await Promise.all([
+    getReportingArbre(filters, (statut) => STATUT_DEMANDE_LABEL[statut]),
+    getReportingJournalDetail(filters),
+    getReportingRows(filters),
+    getReportingSuiviBudgetaire(),
+    getReportingDashboardSnapshot(),
+  ]);
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Portail SIM Assurances";
   workbook.created = new Date();
 
-  // Une seule ligne par demande (2026-10-08) : tout ce qui est rattaché à une demande (lignes d'articles, validations,
-  // règlements, dépenses, retours, remboursements, ajustements) est regroupé ici, une cellule par nature avec un
-  // élément par ligne de la cellule, et les totaux numériques à côté — plus de feuilles séparées par nature. Mêmes
-  // colonnes que l'écran (`COLONNES_REPORTING_DEMANDE`).
-  const sheetDemandes = workbook.addWorksheet("Demandes", { views: [{ state: "frozen", xSplit: 2, ySplit: 1 }] });
-  sheetDemandes.columns = COLONNES_REPORTING_DEMANDE.map((c) => ({
-    header: c.montant ? `${c.titre} (FCFA)` : c.titre,
-    key: c.cle,
-    width: c.multi ? 60 : c.montant ? 16 : c.cle === "reference" ? 20 : 18,
-    style: c.montant ? { numFmt: "#,##0" } : c.cle === "creeLe" ? { numFmt: "dd/mm/yyyy" } : undefined,
-  }));
-  for (const d of demandes) {
-    const valeurs: Record<string, string | number | Date> = {};
-    for (const c of COLONNES_REPORTING_DEMANDE) {
-      const v = d[c.cle];
-      valeurs[c.cle] = Array.isArray(v) ? (v.length > 0 ? v.join("\n") : "—") : v;
-    }
-    const ligne = sheetDemandes.addRow(valeurs);
-    ligne.alignment = { vertical: "top", wrapText: true };
-  }
-  styleHeaderRow(sheetDemandes);
-
-  // Retours de caisse (lot G.5) : une ligne par retour, avec le détail de l'article d'origine, la demande et les règlements
-  // de l'article (Caisse et Banque). Mêmes colonnes que l'écran (`COLONNES_REPORTING_RETOUR`).
-  const sheetRetours = workbook.addWorksheet("Retours de caisse", { views: [{ state: "frozen", xSplit: 1, ySplit: 1 }] });
-  sheetRetours.columns = COLONNES_REPORTING_RETOUR.map((c) => ({
-    header: c.montant ? `${c.titre} (FCFA)` : c.titre,
-    key: c.cle,
-    width: c.multi ? 50 : c.montant ? 18 : 22,
-    style: c.montant ? { numFmt: "#,##0" } : c.cle === "declareLe" ? { numFmt: "dd/mm/yyyy" } : undefined,
-  }));
-  for (const l of retoursCaisse) {
-    const valeurs: Record<string, string | number | Date | null> = {};
-    for (const c of COLONNES_REPORTING_RETOUR) {
-      const v = l[c.cle];
-      valeurs[c.cle] = Array.isArray(v) ? (v.length > 0 ? v.join("\n") : "—") : v;
-    }
-    sheetRetours.addRow(valeurs).alignment = { vertical: "top", wrapText: true };
-  }
-  styleHeaderRow(sheetRetours);
-
-  // Mouvements banque (voir CLAUDE.md "Retour sur règlement Banque") : historique
-  // de traçabilité, aucun solde.
-  const sheetBanque = workbook.addWorksheet("Mouvements banque");
-  sheetBanque.columns = [
-    { header: "Référence demande", key: "reference", width: 20 },
-    { header: "Type", key: "type", width: 14 },
-    { header: "Montant (FCFA)", key: "montant", width: 16 },
-    { header: "Date du mouvement", key: "date", width: 14 },
-    { header: "Auteur", key: "auteur", width: 22 },
-    { header: "Bordereau joint", key: "bordereau", width: 16 },
-  ];
-  mouvementsBanque.forEach((m) =>
-    sheetBanque.addRow({
-      reference: m.demandeReference,
-      type: m.type === "SORTIE" ? "Sortie" : m.type === "RETOUR" ? "Retour" : "Annulation",
-      montant: m.montant,
-      date: m.date.toLocaleDateString("fr-FR"),
-      auteur: m.auteurNom,
-      bordereau: m.bordereau ? "Oui" : "—",
-    })
-  );
-  styleHeaderRow(sheetBanque);
-
-  // Retours externes (voir CLAUDE.md "Retour externe") : feuille distincte,
-  // jamais mélangée aux retours de caisse liés à une demande.
-  const sheetExternes = workbook.addWorksheet("Retours externes");
-  sheetExternes.columns = [
-    { header: "Personne", key: "personne", width: 28 },
-    { header: "Type", key: "type", width: 16 },
-    { header: "Chèque initial déclaré (FCFA)", key: "cheque", width: 26 },
-    { header: "Montant retourné (FCFA)", key: "retourne", width: 22 },
-    { header: "Motif", key: "motif", width: 40 },
-    { header: "Date du retour externe", key: "date", width: 14 },
-    { header: "Enregistré par", key: "auteur", width: 22 },
-    { header: "Demande rattachée", key: "demande", width: 20 },
-    { header: "Article rattaché", key: "article", width: 28 },
-    { header: "Justificatif du chèque initial", key: "pjCheque", width: 30 },
-    { header: "Justificatif du retour", key: "pjRetour", width: 26 },
-  ];
-  retoursExternes.forEach((r) =>
-    sheetExternes.addRow({
-      personne: r.personne,
-      type: r.estExterne ? "Personne externe" : "Collaborateur",
-      cheque: r.montantChequeInitial,
-      retourne: r.montantRetourne,
-      motif: r.motif,
-      date: r.date.toLocaleDateString("fr-FR"),
-      auteur: r.auteurNom,
-      demande: r.demandeReference ?? "—",
-      article: r.articleLibelle ?? "—",
-      pjCheque: r.pieceChequeId
-        ? { text: "Télécharger", hyperlink: `${request.nextUrl.origin}/api/treso/pieces-jointes/${r.pieceChequeId}` }
-        : "—",
-      pjRetour: { text: "Télécharger", hyperlink: `${request.nextUrl.origin}/api/treso/pieces-jointes/${r.pieceRetourId}` },
-    })
-  );
-  styleHeaderRow(sheetExternes);
-
-  // Section 15 du cahier des charges : tableau "Fonds remis" dédié, groupé
-  // par Catégorie/Objet comme la feuille "Reporting" mais restreint aux
-  // demandes ayant au moins un règlement Caisse confirmé (voir
-  // `getReportingFondsRemis`, reporting.ts).
-  const sheetFondsRemis = workbook.addWorksheet("Fonds remis");
-  sheetFondsRemis.columns = [
-    { header: "Catégorie", key: "categorie", width: 18 },
-    { header: "Objet", key: "objet", width: 26 },
-    { header: "Nb. opérations", key: "nombre", width: 16 },
-    { header: "Montant demandé (FCFA)", key: "montantDemande", width: 20 },
-    { header: "Montant validé (FCFA)", key: "montantValide", width: 20 },
-    { header: "Montant remis (FCFA)", key: "montantRemis", width: 20 },
-    { header: "Dépenses effectuées (FCFA)", key: "depensesDeclarees", width: 22 },
-    { header: "Retours reçus (FCFA)", key: "retoursRecus", width: 20 },
-    { header: "Restant à régulariser (FCFA)", key: "restant", width: 24 },
-  ];
-  fondsRemis.forEach((f) =>
-    sheetFondsRemis.addRow({
-      categorie: f.categorieLabel,
-      objet: f.objetLabel,
-      nombre: f.nombreOperations,
-      montantDemande: f.montantDemande,
-      montantValide: f.montantValide,
-      montantRemis: f.montantRemis,
-      depensesDeclarees: f.depensesDeclarees,
-      retoursRecus: f.retoursRecus,
-      restant: f.montantRestantARegulariser,
-    })
-  );
-  styleHeaderRow(sheetFondsRemis);
+  // Lot F : UN seul tableau, de la demande jusqu'au détail de chaque article (règlements / fonds remis, mouvements banque,
+  // retours de caisse, dépenses, retours externes…) — les anciennes feuilles Demandes, Retours de caisse, Mouvements banque,
+  // Retours externes et Fonds remis n'existent plus. Mêmes lignes et mêmes colonnes que l'écran (`COLONNES_ARBRE`).
+  ajouterFeuilleReporting(workbook, arbre.lignes);
 
   const sheetJournal = workbook.addWorksheet("Journal de caisse");
   sheetJournal.columns = [
@@ -222,7 +88,7 @@ export async function GET(request: NextRequest) {
   // "Validé restant à régler" et nouvelle colonne "Restant à valider" —
   // voir ReportingRow dans reporting.ts, les deux notions ne se confondent
   // jamais.
-  const sheetReporting = workbook.addWorksheet("Reporting");
+  const sheetReporting = workbook.addWorksheet("Synthèse par catégorie");
   sheetReporting.columns = [
     { header: "Catégorie", key: "categorie", width: 18 },
     { header: "Objet", key: "objet", width: 26 },

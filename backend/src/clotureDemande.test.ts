@@ -168,3 +168,22 @@ describe("instantané d'une clôture forcée et libellé « Clôturé sans régu
     expect(libelleArticleClotureForcee({ clotureForcee: false }, inst, "B", false, 30000)).toBeNull();
   });
 });
+
+describe("article jamais réglé (lot F : « reste à régler », jamais « solde restant 0 »)", () => {
+  const N = article("N", "VALIDEE", 20000);
+  const inst = instantaneClotureForcee(evaluerCloture([A, N]).bloquants);
+
+  it("le détail d'une clôture forcée dit « reste à régler 20 000 FCFA » sans « solde restant 0 »", () => {
+    const detail = detailClotureForcee(inst);
+    expect(detail).toBe("« Article N » (reste à régler 20 000 FCFA)");
+    expect(detail).not.toContain("solde restant");
+  });
+
+  it("le badge de l'article jamais réglé dit « reste à régler », celui d'un article réglé garde « solde restant »", () => {
+    expect(libelleArticleClotureForcee({ clotureForcee: true }, inst, "N", false, 0)).toBe(
+      "Clôturé sans régularisation — reste à régler 20 000 FCFA"
+    );
+    const instB = instantaneClotureForcee(evaluerCloture([A, B]).bloquants);
+    expect(libelleArticleClotureForcee({ clotureForcee: true }, instB, "B", false, 30000)).toContain("solde restant 30 000 FCFA");
+  });
+});

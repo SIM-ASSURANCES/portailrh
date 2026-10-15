@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import ExcelJS from "exceljs";
 import { chromium } from "playwright";
 import pg from "pg";
 
@@ -227,8 +228,18 @@ verifier("1. infobulle (title) = libellé complet sur chaque entrée du menu", O
   writeFileSync(xlsx, await x.body());
   const partages = execFileSync("unzip", ["-p", xlsx, "xl/sharedStrings.xml"], { maxBuffer: 64 * 1024 * 1024 }).toString();
   verifier("3. export Excel : en-têtes « Demande créée le » et « Géré le »", x.status() === 200 && partages.includes("Demande créée le") && partages.includes("Géré le"));
-  verifier("3. export Excel : « livraison prévue le 15/12/2026 » dans les lignes d'articles, « 05/10/2026 (réglé) » en Géré le", partages.includes("livraison prévue le 15/12/2026") && partages.includes("05/10/2026 (réglé)"));
-  verifier("3. export Excel : feuilles annexes — « Date du mouvement », « Date de l'écriture »", partages.includes("Date du mouvement") && (partages.includes("Date de l&apos;écriture") || partages.includes("Date de l'écriture")));
+  const cl = new ExcelJS.Workbook();
+  await cl.xlsx.readFile(xlsx);
+  const feuille = cl.getWorksheet("Reporting");
+  const entetes = feuille.getRow(1).values;
+  const colLivraison = entetes.indexOf("Livraison prévue le");
+  let livraisonOk = false;
+  feuille.eachRow((row, n) => {
+    const v = n > 1 ? row.getCell(colLivraison).value : null;
+    if (v instanceof Date && v.toISOString().startsWith("2026-12-15")) livraisonOk = true;
+  });
+  verifier("3. export Excel : colonne « Livraison prévue le » (15/12/2026) sur la ligne de l'article, « 05/10/2026 (réglé) » en Géré le", livraisonOk && partages.includes("05/10/2026 (réglé)"));
+  verifier("3. export Excel : feuille annexe « Journal de caisse » — « Date de l'écriture »", partages.includes("Date de l&apos;écriture") || partages.includes("Date de l'écriture"));
   await f.close();
 }
 verifier("aucune écriture de caisse créée par ces affichages (solde inchangé)", (await soldeCaisse()) === caisseAvant);

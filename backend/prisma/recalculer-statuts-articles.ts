@@ -1,7 +1,5 @@
-// ".env" chargé depuis la racine du monorepo (voir CLAUDE.md "Monorepo backend/frontend").
-import path from "node:path";
-import dotenv from "dotenv";
-dotenv.config({ path: path.resolve(__dirname, "../../.env") });
+// ".env" de la racine du monorepo chargé AVANT tout autre import (voir `chargerEnv.ts`) : toujours la première ligne.
+import "./chargerEnv";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { corrigerDemande, type DemandeARecalculer } from "../src/repriseArticles";

@@ -5,9 +5,9 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import {
   getBeneficiairesConnus,
-  getReportingFondsRemis,
-  getReportingParDemande,
-  getReportingRetoursCaisse,
+  COLONNES_ARBRE,
+  getReportingArbre,
+  totauxGeneraux,
   getReportingRows,
   getReportingSuiviBudgetaire,
   parseReportingFilters,
@@ -16,8 +16,7 @@ import {
 
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 
-import { ReportingDemandesTable } from "./ReportingDemandesTable";
-import { ReportingRetoursTable } from "./ReportingRetoursTable";
+import { ReportingArbreTable } from "./ReportingArbreTable";
 import { ReportingFiltersForm } from "./ReportingFiltersForm";
 
 function rawString(value: string | string[] | undefined): string | undefined {
@@ -53,12 +52,10 @@ export default async function ReportingPage({
   // (soft-delete) — les demandes historiques liées à une catégorie
   // désactivée depuis continuent d'apparaître normalement dans les
   // résultats, ce filtre ne porte que sur les OPTIONS du formulaire.
-  const [lignesDemandes, lignesRetours, rows, fondsRemisRows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
+  const [arbre, rows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
     await Promise.all([
-      getReportingParDemande(filters, (statut) => STATUT_DEMANDE_LABEL[statut]),
-      getReportingRetoursCaisse(filters),
+      getReportingArbre(filters, (statut) => STATUT_DEMANDE_LABEL[statut]),
       getReportingRows(filters),
-      getReportingFondsRemis(filters),
       getReportingSuiviBudgetaire(),
       prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
       prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
@@ -68,6 +65,7 @@ export default async function ReportingPage({
     ]);
 
   const services = servicesRaw.map((s) => s.name);
+  const totauxArbre = totauxGeneraux(arbre.lignes);
 
 
   const total = rows.reduce(
@@ -102,7 +100,7 @@ export default async function ReportingPage({
     <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title="Reporting"
-        description="Une ligne par demande (articles, validations, règlements, dépenses, retours), puis la synthèse par catégorie et objet."
+        description="Un seul tableau : la demande, ses articles et, sous chaque article, ses règlements, retours de caisse, mouvements banque et retours externes ; puis la synthèse par catégorie et objet."
         actions={
           <a href={exportHref}>
             <Button type="button">Exporter en Excel</Button>
@@ -130,9 +128,7 @@ export default async function ReportingPage({
         }}
       />
 
-      <ReportingDemandesTable lignes={lignesDemandes} />
-
-      <ReportingRetoursTable lignes={lignesRetours} />
+      <ReportingArbreTable colonnes={COLONNES_ARBRE} lignes={arbre.lignes} totaux={totauxArbre} nbDemandes={arbre.arbres.length} />
 
       <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Synthèse par catégorie / objet</h2>
@@ -226,70 +222,6 @@ export default async function ReportingPage({
             ) : null}
           </table>
         </div>
-      </div>
-
-      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
-        <h2 className="text-sm font-semibold text-foreground">Fonds remis</h2>
-        {/* Section 15 du cahier des charges : distinct du tableau général
-            ci-dessus — restreint aux demandes ayant au moins un règlement
-            Caisse confirmé (voir `getReportingFondsRemis`, reporting.ts). */}
-        {fondsRemisRows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Aucun règlement Caisse confirmé pour ces filtres.
-          </p>
-        ) : (
-          <>
-            <p className="text-xs text-muted-foreground md:hidden">Faites glisser pour voir plus de colonnes →</p>
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full min-w-full divide-y divide-border text-sm">
-                <thead className="bg-muted">
-                  <tr>
-                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Catégorie</th>
-                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Objet</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Nb. opérations</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Demandé</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Validé</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Remis</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Dépenses effectuées</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Retours reçus</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Restant à régulariser</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border bg-surface">
-                  {fondsRemisRows.map((f) => (
-                    <tr key={`${f.categorieId ?? "none"}|${f.objetId ?? "none"}`} className="hover:bg-muted/50">
-                      <td className="px-4 py-2 text-foreground">{f.categorieLabel}</td>
-                      <td className="px-4 py-2 text-foreground">{f.objetLabel}</td>
-                      <td className="px-4 py-2 text-right text-foreground">{f.nombreOperations}</td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {f.montantDemande.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {f.montantValide.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {f.montantRemis.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {f.depensesDeclarees.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {f.retoursRecus.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td
-                        className={`px-4 py-2 text-right font-semibold ${
-                          f.montantRestantARegulariser !== 0 ? "text-warning" : "text-success"
-                        }`}
-                      >
-                        {f.montantRestantARegulariser.toLocaleString("fr-FR")} FCFA
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
       </div>
 
       <div id="suivi-budgetaire" className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">

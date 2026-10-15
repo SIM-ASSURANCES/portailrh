@@ -15,6 +15,7 @@ export * from "./prisma";
 // Logique métier pure (calculs, règles, reporting, validation...).
 export * from "./tresorerie";
 export * from "./reporting";
+export * from "./reportingArbre";
 export * from "./dashboardFinance";
 export * from "./pointageReporting";
 export * from "./pointage-utils";
@@ -38,7 +39,6 @@ export * from "./motifLigne";
 export * from "./categorisationObligatoire";
 export * from "./retourNul";
 export * from "./retourExterneRattache";
-export * from "./reportingDemandeLigne";
 export * from "./regularisationDepenses";
 export * from "./regularisationArticle";
 export * from "./dateLivraisonArticle";
@@ -88,4 +88,3 @@ export * from "./encSaisie";
 // `permissions.ts` pour le détail du raisonnement).
 export * from "./permissions";
 export * from "./recapRetourCaisseDb";
-export * from "./reportingRetourCaisse";
