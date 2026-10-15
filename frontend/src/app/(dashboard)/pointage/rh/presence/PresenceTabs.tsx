@@ -63,7 +63,7 @@ function PresenceListeMobile({ data, tab }: { data: PresenceData[]; tab: TabType
   }
   const heure = (iso?: string) => (iso ? format(new Date(iso), "HH:mm") : null);
   return (
-    <ul className="divide-y divide-border border-y border-border">
+    <ul className="divide-y divide-border">
       {data.map((item) => {
         const arrivee = heure(item.arrivee);
         const depart = heure(item.depart);
@@ -155,7 +155,7 @@ export function PresenceTabs({ presents, retards, absents, autorises, manquants 
 
     return (
       <>
-      <div className="md:hidden">
+      <div className="rounded-2xl border border-border bg-surface px-4 shadow-xs md:hidden">
         <PresenceListeMobile data={data} tab={activeTab} />
       </div>
       <Card className="hidden overflow-hidden md:block">

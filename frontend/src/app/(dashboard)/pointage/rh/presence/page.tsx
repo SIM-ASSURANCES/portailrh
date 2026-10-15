@@ -182,18 +182,7 @@ export default async function PresenceDuJourPage({
             </div>
             
             {retardsAvecUsers.length > 0 ? (
-              <>
-              <ul className="divide-y divide-border border-y border-border md:hidden">
-                {retardsAvecUsers.map((retard) => (
-                  <li key={retard.userId} className="flex items-center justify-between gap-3 py-2.5">
-                    <span className="min-w-0 truncate text-sm font-medium text-foreground">{retard.user?.fullName}</span>
-                    <span className="shrink-0 text-xs font-semibold text-primary">
-                      {retard._count.id} retards ({retard._sum.minutesRetard} min)
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <Card className="hidden overflow-hidden p-0 md:block">
+              <Card className="overflow-hidden p-0">
                 <table className="w-full text-xs text-left">
                   <tbody className="divide-y divide-border">
                     {retardsAvecUsers.map((retard) => (
@@ -209,7 +198,6 @@ export default async function PresenceDuJourPage({
                   </tbody>
                 </table>
               </Card>
-              </>
             ) : (
               <Card className="p-4 text-center text-sm text-muted-foreground">
                 Aucun retard ce mois-ci.
