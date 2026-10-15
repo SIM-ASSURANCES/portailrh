@@ -4322,8 +4322,8 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 Plan et règles : [docs/PLAN_POINTAGE_V2.md](docs/PLAN_POINTAGE_V2.md) (§2 validé, lot 3 au §4). Aucune migration.
 
 - **Une seule règle** (`backend/src/pointage-utils.ts`) : `checkLateStatus(now, horaires, plages)` — à l'heure jusqu'à
-  la référence + `toleranceRetardMinutes` INCLUSE, retard compté depuis la référence (07:45 + 15 : 08:00 à l'heure,
-  08:10 = 25 min) ; référence repoussée par une permission du matin. `heureReferenceDepartMinutes` /
+  la référence + `toleranceRetardMinutes` INCLUSE, retard compté depuis la FIN de la tolérance (07:45 + 15 : 08:00 à l'heure,
+  08:10 = 10 min ; **modifié le 2026-10-15** : avant, 25 min, compté depuis la référence ; les retards déjà enregistrés gardent leur valeur) ; référence repoussée par une permission du matin. `heureReferenceDepartMinutes` /
   `estDepartAnticipe` (fin de journée avancée au début d'une permission qui la couvre), `departTropTot`
   (`DELAI_MINIMUM_DEPART_MINUTES = 30`), `horairesPointage(parametrage)` + `HORAIRES_PAR_DEFAUT` (07:45, 16:45, 15).
   Utilisée par l'écran (`pointer/page.tsx`), `enregistrerPointageAction`, la correction RH et le pointage exceptionnel

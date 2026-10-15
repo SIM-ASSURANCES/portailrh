@@ -74,8 +74,8 @@ export function HorairesForm({ config }: { config: ParametrageHoraire | null }) 
         <h3 className="text-lg font-medium border-b pb-2">Tolérance de retard</h3>
         <p className="text-xs text-muted-foreground">
           Une arrivée jusqu&apos;à l&apos;heure de début du matin plus cette tolérance n&apos;est pas un retard. Au-delà,
-          le retard est compté depuis l&apos;heure de début du matin (exemple : début 07:45, tolérance 15 min, arrivée à
-          08:10 = 25 min de retard ; arrivée à 07:58 = à l&apos;heure).
+          le retard est compté depuis la fin de la tolérance (exemple : début 07:45, tolérance 15 min, arrivée à 08:10 =
+          10 min de retard ; arrivée à 07:58 ou 08:00 = à l&apos;heure).
         </p>
         <div className="max-w-xs">
           <Input

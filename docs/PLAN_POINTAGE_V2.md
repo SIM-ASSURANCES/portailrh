@@ -51,7 +51,7 @@ Pour réintégrer dans `aristide` ensuite : `git checkout aristide && git merge 
 
 | Sujet | Règle |
 |---|---|
-| Tolérance | Arrivée jusqu'à `heureDebutMatin` + `toleranceRetardMinutes` **incluse** = à l'heure. Au-delà, retard compté **depuis `heureDebutMatin`** (07:45 + 15 : arrivée 07:58 à l'heure, 08:10 = 25 min de retard). La tolérance est réglée par la RH. |
+| Tolérance | Arrivée jusqu'à `heureDebutMatin` + `toleranceRetardMinutes` **incluse** = à l'heure. Au-delà, retard compté **depuis la fin de la tolérance** (07:45 + 15 : arrivée 07:58 ou 08:00 à l'heure, 08:10 = 10 min de retard ; règle modifiée le 2026-10-15, elle comptait avant depuis `heureDebutMatin`, soit 25 min). La tolérance est réglée par la RH. |
 | Pointage | Le scan enregistre l'arrivée immédiatement, sans motif, même en retard. |
 | Départ anticipé | Jamais automatique : bouton puis **confirmation explicite** (sinon un collaborateur qui ouvre juste l'écran serait dépointé). Refusé moins de 30 min après l'arrivée. Ensuite, même circuit de justification que le retard. Pas de motif au moment du départ. |
 | Qui décide | Le **responsable du service** du collaborateur accepte ou refuse le motif (refus avec motif obligatoire). |
