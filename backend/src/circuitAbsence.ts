@@ -34,6 +34,13 @@ export const PERMISSION_ETAPE_RH_ABSENCE: Record<NatureAbsence, string> = {
 /** Dernier recours : le DG, désigné par la même permission que l'étape DG de la Trésorerie et des justifications. */
 export const PERMISSION_DG_ABSENCE = "treso.decider_dg";
 
+/**
+ * Une permission d'absence se décide ou se rejette : le statut « modification demandée » n'existe pas pour elle
+ * (décision du Lot 4). Le collaborateur dépose une nouvelle demande, ce qui garde la base inchangée.
+ */
+export const MESSAGE_PERMISSION_SANS_MODIFICATION =
+  "Une permission d'absence ne peut pas être renvoyée pour modification : rejetez-la, le collaborateur déposera une nouvelle demande.";
+
 export const MOTIF_ABSENCE_MIN = 3;
 export const MOTIF_ABSENCE_MAX = 500;
 
@@ -292,6 +299,10 @@ export function transitionAbsence(p: ParamsTransitionAbsence): ResultatTransitio
     return { ok: true, statut: "ANNULEE", motif: motif.motif, effet: accordee ? "DEFAIRE_ACCORD" : "AUCUN" };
   }
 
+  if (action.type === "DEMANDER_MODIFICATION" && nature === "PERMISSION") {
+    return { ok: false, erreur: MESSAGE_PERMISSION_SANS_MODIFICATION };
+  }
+
   // Approuver / rejeter / demander une modification : le décideur de l'étape en cours, et lui seul.
   if (!STATUTS_ABSENCE_EN_ATTENTE.includes(statut)) {
     return { ok: false, erreur: MESSAGE_STATUT[statut] ?? "Cette demande n'attend plus de décision." };
@@ -393,6 +404,8 @@ export const ACTION_HISTORIQUE_ABSENCE = {
   ANNULER: "annulation",
   /** Congé accordé d'office par la RH (aucune demande du collaborateur, aucun circuit). */
   CONGE_OFFICE: "conge_office",
+  /** Permission d'absence : retour marqué (la permission devient consommée). */
+  RETOUR_MARQUE: "retour_marque",
   AJUSTER_SOLDE: "ajustement_solde",
   RAPPEL: "rappel",
 } as const;

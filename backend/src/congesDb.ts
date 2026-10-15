@@ -798,3 +798,7 @@ export async function modifierDateEmbauche(db: Db, p: { userId: string; date: Jo
 }
 
 export type { ParcoursAbsence };
+
+// Réutilisés par la couche des permissions d'absence (`permissionsDb.ts`) : même verrou consultatif, même historique.
+export const verrouillerAbsence = verrouiller;
+export const noterHistoriqueAbsence = noterHistorique;
