@@ -391,6 +391,10 @@ export const ACTION_HISTORIQUE_ABSENCE = {
   DEMANDER_MODIFICATION: "demande_modification",
   RESOUMETTRE: "resoumission",
   ANNULER: "annulation",
+  /** Congé accordé d'office par la RH (aucune demande du collaborateur, aucun circuit). */
+  CONGE_OFFICE: "conge_office",
+  AJUSTER_SOLDE: "ajustement_solde",
+  RAPPEL: "rappel",
 } as const;
 
 export type EtatEtapeFrise = "faite" | "en_cours" | "a_venir" | "non_requise" | "interrompue";
@@ -425,4 +429,30 @@ export function friseAbsence(params: { nature: NatureAbsence; statut: StatutCirc
     { cle: "RH", libelle: "RH", etat: etat(2) },
     { cle: "DECISION", libelle: nature === "CONGE" ? "Congé validé" : "Permission approuvée", etat: accordee ? "faite" : interrompue ? "interrompue" : "a_venir" },
   ];
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Qui peut consulter une demande (page de détail, pièces jointes)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Permissions de consultation de toutes les demandes d'une nature (RH, DG en lecture). */
+export const PERMISSIONS_CONSULTATION_ABSENCE: Record<NatureAbsence, readonly string[]> = {
+  CONGE: ["conges.valider_rh", "conges.consulter_tous"],
+  PERMISSION: ["absences.valider_rh", "absences.consulter_tous"],
+};
+
+/**
+ * Le demandeur, le responsable ACTUEL de son service, les comptes RH de la nature et ceux qui consultent tout.
+ * `permissions` : celles du compte (rôle et délégations : consulter n'engage pas d'argent).
+ */
+export function peutConsulterAbsence(p: {
+  nature: NatureAbsence;
+  acteurId: string;
+  demandeurId: string;
+  responsableDuServiceId: string | null;
+  permissions: readonly string[];
+}): boolean {
+  if (p.acteurId === p.demandeurId) return true;
+  if (p.responsableDuServiceId !== null && p.responsableDuServiceId === p.acteurId) return true;
+  return PERMISSIONS_CONSULTATION_ABSENCE[p.nature].some((k) => p.permissions.includes(k));
 }
