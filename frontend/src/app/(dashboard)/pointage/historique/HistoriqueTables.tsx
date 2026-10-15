@@ -77,7 +77,7 @@ function PointagesListeMobile({ pointages }: { pointages: PointageRow[] }) {
     return <p className="py-6 text-center text-sm text-muted-foreground">Aucun pointage trouvé pour la période sélectionnée.</p>;
   }
   return (
-    <ul className="divide-y divide-border border-y border-border">
+    <ul className="divide-y divide-border">
       {pointages.map((row) => {
         const statut = row.isOriginal ? null : row.type === "DEPART" ? (
           row.estDepartAnticipe ? <Badge variant="primary">Anticipé</Badge> : null
@@ -132,7 +132,7 @@ function AbsencesListeMobile({ absences }: { absences: AbsenceRow[] }) {
     return <p className="py-6 text-center text-sm text-muted-foreground">Aucune absence enregistrée sur cette période.</p>;
   }
   return (
-    <ul className="divide-y divide-border border-y border-border">
+    <ul className="divide-y divide-border">
       {absences.map((row) => {
         const variant = row.statut === "JUSTIFIEE" ? "info" : row.statut === "CONFIRMEE" ? "primary" : "neutral";
         return (

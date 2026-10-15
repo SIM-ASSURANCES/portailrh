@@ -271,7 +271,7 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
 
       {/* Tableau des Pointages */}
       {showPointages ? (
-        <div className="space-y-2 md:space-y-3 md:rounded-2xl md:border md:border-border md:bg-surface md:p-6 md:shadow-xs">
+        <div className="space-y-2 rounded-2xl border border-border bg-surface p-3 shadow-xs md:space-y-3 md:p-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Icon name="clock" className="size-4 text-primary md:size-5" />
@@ -292,7 +292,7 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
 
       {/* Tableau des Absences */}
       {showAbsences ? (
-        <div className="space-y-2 md:space-y-3 md:rounded-2xl md:border md:border-border md:bg-surface md:p-6 md:shadow-xs">
+        <div className="space-y-2 rounded-2xl border border-border bg-surface p-3 shadow-xs md:space-y-3 md:p-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Icon name="alert-triangle" className="size-4 text-primary md:size-5" />

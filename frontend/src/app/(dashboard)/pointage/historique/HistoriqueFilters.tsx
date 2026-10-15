@@ -14,6 +14,9 @@ export interface HistoriqueFiltersInitial {
 export function HistoriqueFilters({ initial }: { initial: HistoriqueFiltersInitial }) {
   const [du, setDu] = useState(initial.du ?? "");
   const [au, setAu] = useState(initial.au ?? "");
+  // Mobile : panneau replié par défaut (la liste prime), ouvert si des filtres sont déjà appliqués.
+  const nbFiltresActifs = [initial.du, initial.au, initial.type && initial.type !== "ALL" ? initial.type : ""].filter(Boolean).length;
+  const [ouvert, setOuvert] = useState(nbFiltresActifs > 0);
 
   const setPreset = (preset: "today" | "week" | "month" | "all") => {
     const today = new Date();
@@ -40,7 +43,24 @@ export function HistoriqueFilters({ initial }: { initial: HistoriqueFiltersIniti
   };
 
   return (
-    <div className="space-y-3 md:space-y-4 md:rounded-xl md:border md:border-border md:bg-surface md:p-5 md:shadow-xs">
+    <div className="space-y-3 md:space-y-0 md:rounded-xl md:border md:border-border md:bg-surface md:p-5 md:shadow-xs">
+      <button
+        type="button"
+        onClick={() => setOuvert((o) => !o)}
+        aria-expanded={ouvert}
+        className="flex w-full items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-foreground md:hidden"
+      >
+        <span className="inline-flex items-center gap-2">
+          <Icon name="calendar" className="size-4 text-primary" />
+          Filtres
+          {nbFiltresActifs > 0 ? (
+            <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-primary-foreground">{nbFiltresActifs}</span>
+          ) : null}
+        </span>
+        <Icon name="chevron-down" className={`size-4 text-muted-foreground transition-transform ${ouvert ? "rotate-180" : ""}`} />
+      </button>
+
+      <div className={`${ouvert ? "block" : "hidden"} space-y-3 md:block md:space-y-4`}>
       {/* Raccourcis rapides de période */}
       <div className="flex flex-wrap items-center justify-between gap-2 md:border-b md:border-border md:pb-3">
         <div className="hidden items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide md:flex">
@@ -122,6 +142,7 @@ export function HistoriqueFilters({ initial }: { initial: HistoriqueFiltersIniti
           </a>
         </div>
       </form>
+      </div>
     </div>
   );
 }
