@@ -25,6 +25,7 @@ export * from "./journalTechnique";
 export * from "./clotureInitiale";
 export * from "./reinitialisationPointage";
 export * from "./absencesDebut";
+export * from "./reseauLocal";
 export * from "./equipe";
 export * from "./cronAuth";
 export * from "./geo-utils";
