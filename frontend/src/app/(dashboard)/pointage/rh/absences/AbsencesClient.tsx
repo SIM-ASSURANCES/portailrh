@@ -30,14 +30,17 @@ type AbsenceWithUser = {
   } | null;
 };
 
-export function AbsencesClient({ 
-  initialAbsences, 
-  defaultDebut, 
-  defaultFin 
-}: { 
+export function AbsencesClient({
+  initialAbsences,
+  defaultDebut,
+  defaultFin,
+  nbFiltresActifs,
+}: {
   initialAbsences: AbsenceWithUser[];
   defaultDebut: string;
   defaultFin: string;
+  /** Nombre de bornes de période posées dans l'URL (0 = période par défaut, le mois en cours). */
+  nbFiltresActifs: number;
 }) {
   const router = useRouter();
   const [debut, setDebut] = useState(defaultDebut);
@@ -47,6 +50,8 @@ export function AbsencesClient({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [nouveauStatut, setNouveauStatut] = useState<StatutAbsence>("JUSTIFIEE");
   const [motif, setMotif] = useState("");
+  // Mobile : panneau de filtres replié par défaut (la liste prime), ouvert si une période est déjà appliquée.
+  const [filtresOuverts, setFiltresOuverts] = useState(nbFiltresActifs > 0);
 
   const handleSearch = () => {
     startTransition(() => {
@@ -86,8 +91,29 @@ export function AbsencesClient({
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap gap-4 items-end bg-surface p-4 rounded-xl border border-border">
+    <div className="space-y-3 md:space-y-6">
+      <div className="md:hidden">
+        <button
+          type="button"
+          onClick={() => setFiltresOuverts((o) => !o)}
+          aria-expanded={filtresOuverts}
+          className="flex w-full items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-foreground"
+        >
+          <span className="inline-flex items-center gap-2">
+            <Icon name="calendar" className="size-4 text-primary" />
+            Filtres
+            {nbFiltresActifs > 0 ? (
+              <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-primary-foreground">{nbFiltresActifs}</span>
+            ) : null}
+          </span>
+          <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+            {format(new Date(defaultDebut), "dd/MM", { locale: fr })} – {format(new Date(defaultFin), "dd/MM", { locale: fr })}
+            <Icon name="chevron-down" className={`size-4 transition-transform ${filtresOuverts ? "rotate-180" : ""}`} />
+          </span>
+        </button>
+      </div>
+
+      <div className={`${filtresOuverts ? "grid" : "hidden"} grid-cols-2 items-end gap-3 md:flex md:flex-wrap md:gap-4 md:rounded-xl md:border md:border-border md:bg-surface md:p-4`}>
         <div className="space-y-1">
           <label className="text-sm font-medium text-slate-700">Date de début</label>
           <input
@@ -106,12 +132,51 @@ export function AbsencesClient({
             className="block w-full rounded-md border-slate-300 shadow-sm focus:border-primary focus:ring-primary sm:text-sm px-3 py-2 border"
           />
         </div>
-        <Button onClick={handleSearch} disabled={isPending}>
+        <Button onClick={handleSearch} disabled={isPending} className="col-span-2 md:col-span-1">
           {isPending ? "Recherche..." : "Rechercher"}
         </Button>
       </div>
 
-      <Card className="overflow-hidden">
+      <div className="rounded-2xl border border-border bg-surface p-3 shadow-xs md:hidden">
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-bold text-foreground">
+          <Icon name="alert-triangle" className="size-4 text-primary" />
+          Absences ({initialAbsences.length})
+        </h2>
+        {initialAbsences.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">Aucune absence enregistrée.</p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {initialAbsences.map((absence) => (
+              <li key={absence.id} className="py-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">{absence.user.fullName}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{format(new Date(absence.date), "EEE dd MMM yyyy", { locale: fr })}</p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    {absence.statut === "A_CONTROLER" && <Badge variant="neutral">À contrôler</Badge>}
+                    {absence.statut === "JUSTIFIEE" && <Badge variant="info">Justifiée</Badge>}
+                    {absence.statut === "CONFIRMEE" && <Badge variant="primary">Confirmée</Badge>}
+                    {absence.statut === "A_CONTROLER" && (
+                      <Button variant="secondary" onClick={() => openTraitementModal(absence)} className="px-3! py-1.5! text-xs!">
+                        Traiter
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {absence.motif ? (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    <span className="italic">{absence.motif}</span>
+                    {absence.controlePar ? <span> · par {absence.controlePar.fullName}</span> : null}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <Card className="hidden overflow-hidden md:block">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-muted/50 text-muted-foreground">
@@ -184,7 +249,7 @@ export function AbsencesClient({
       {/* Modal Overlay */}
       {isModalOpen && selectedAbsence && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-md p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200">
+          <Card className="w-full max-w-md p-4 shadow-xl animate-in fade-in zoom-in-95 duration-200 sm:p-6">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-bold">Traiter l&apos;absence</h3>
               <button

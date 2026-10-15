@@ -51,14 +51,19 @@ export default async function AbsencesPage({
   });
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 font-sans">
-      <PageHeader
-        title="Absences"
-        description="Consultez et validez les anomalies de pointage (absences non justifiées)."
-        backHref="/pointage/rh"
-        backLabel="Retour à la Boîte à Outils"
-      />
-      <AbsencesClient 
+    <div className="mx-auto max-w-5xl space-y-3 px-4 py-2 font-sans sm:px-6 md:space-y-6 md:py-8">
+      <div className="hidden md:block">
+        <PageHeader
+          title="Absences"
+          description="Consultez et validez les anomalies de pointage (absences non justifiées)."
+          backHref="/pointage/rh"
+          backLabel="Retour à la Boîte à Outils"
+        />
+      </div>
+      {/* Mobile : titre compact en gras, sans description. */}
+      <h1 className="text-xl font-black tracking-tight text-foreground md:hidden">Absences</h1>
+      <AbsencesClient
+        nbFiltresActifs={[debut, fin].filter(Boolean).length}
         initialAbsences={absences} 
         defaultDebut={debut || dateDebut.toISOString().split("T")[0]} 
         defaultFin={fin || dateFin.toISOString().split("T")[0]} 
