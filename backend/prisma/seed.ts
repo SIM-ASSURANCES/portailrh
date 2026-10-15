@@ -10,12 +10,24 @@ import bcrypt from "bcryptjs";
 import { ENC_MODULE_KEY, ENC_PERMISSIONS, ENC_PERMISSION_MISE_EN_SERVICE, ENC_ROLES_DEPART } from "../src/encPermissions";
 import { ENC_PARAMETRES } from "../src/encParametres";
 import { ENC_BENEFICIAIRE_HONORAIRES_INITIAL } from "../src/encReferentiels";
+import {
+  MODULE_ABSENCES_KEY,
+  MODULE_ABSENCES_LABEL,
+  MODULE_CONGES_KEY,
+  MODULE_CONGES_LABEL,
+  PERMISSIONS_CONGES_ET_ABSENCES,
+  TYPES_CONGE_DEFAUT,
+  TYPES_PERMISSION_DEFAUT,
+  permissionsAbsencePourCles,
+} from "../src/congesDefauts";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
 const SALT_ROUNDS = 10;
 const TEST_PASSWORD = "password123";
+// Date d'embauche des comptes de test (Congés : exercice et ancienneté). Jamais déduite de `createdAt`.
+const DATE_EMBAUCHE_TEST = new Date("2024-01-15T00:00:00.000Z");
 
 async function main() {
   // Module Encaissements : une base mise en service ne se reseede JAMAIS (audit et séquences verrouillés par trigger).
@@ -35,6 +47,14 @@ async function main() {
   await prisma.notification.deleteMany();
   await prisma.feedback.deleteMany();
   await prisma.plageAbsenceAutorisee.deleteMany();
+  // Congés et permissions d'absence : enfants avant parents (les comptes sont supprimés plus bas).
+  await prisma.ajustementSolde.deleteMany();
+  await prisma.soldeConge.deleteMany();
+  await prisma.pieceJointeConge.deleteMany();
+  await prisma.demandeConge.deleteMany();
+  await prisma.demandePermission.deleteMany();
+  await prisma.typeConge.deleteMany();
+  await prisma.typePermission.deleteMany();
   await prisma.depenseLigne.deleteMany();
   await prisma.pieceJointe.deleteMany();
   await prisma.journalCaisse.deleteMany();
@@ -187,6 +207,19 @@ async function main() {
     create: { key: ENC_MODULE_KEY, label: "Encaissements, taxes et commissions" },
   });
 
+  const [moduleConges, moduleAbsences] = await Promise.all([
+    prisma.module.upsert({
+      where: { key: MODULE_CONGES_KEY },
+      update: { label: MODULE_CONGES_LABEL },
+      create: { key: MODULE_CONGES_KEY, label: MODULE_CONGES_LABEL },
+    }),
+    prisma.module.upsert({
+      where: { key: MODULE_ABSENCES_KEY },
+      update: { label: MODULE_ABSENCES_LABEL },
+      create: { key: MODULE_ABSENCES_KEY, label: MODULE_ABSENCES_LABEL },
+    }),
+  ]);
+
   console.log("Création des permissions...");
 
   const permissionKeys = [
@@ -264,6 +297,12 @@ async function main() {
     // Module Encaissements (source unique : src/encPermissions.ts). La mise en service va au module technique « systeme ».
     ...ENC_PERMISSIONS.map((p) => ({ key: p.key, label: p.label, moduleId: moduleEncaissements.id })),
     { ...ENC_PERMISSION_MISE_EN_SERVICE, moduleId: moduleSysteme.id },
+    // Congés et permissions d'absence (source unique : src/congesDefauts.ts, aussi posées par la migration).
+    ...PERMISSIONS_CONGES_ET_ABSENCES.map((p) => ({
+      key: p.key,
+      label: p.label,
+      moduleId: p.module === MODULE_CONGES_KEY ? moduleConges.id : moduleAbsences.id,
+    })),
   ];
 
   const createdPermissions = await Promise.all(
@@ -388,6 +427,11 @@ async function main() {
     ...Object.fromEntries(rolesEncaissements.map((role, i) => [role.id, ENC_ROLES_DEPART[i].permissions])),
   };
 
+  // Congés et permissions d'absence : même règle que la migration (permission sœur), jamais un nom de rôle.
+  for (const [roleId, keys] of Object.entries(rolePermissionMap)) {
+    rolePermissionMap[roleId] = [...keys, ...permissionsAbsencePourCles(keys)];
+  }
+
   let rolePermissionCount = 0;
   for (const [roleId, keys] of Object.entries(rolePermissionMap)) {
     for (const key of keys) {
@@ -491,6 +535,7 @@ async function main() {
           roleId: u.roleId,
           serviceId: u.serviceId,
           isActive: true,
+          dateEmbauche: DATE_EMBAUCHE_TEST,
         },
         create: {
           fullName: u.fullName,
@@ -499,6 +544,7 @@ async function main() {
           roleId: u.roleId,
           serviceId: u.serviceId,
           isActive: true,
+          dateEmbauche: DATE_EMBAUCHE_TEST,
         },
       })
     )
@@ -599,6 +645,11 @@ async function main() {
   console.log(
     `Paramétrage horaire créé : ${parametrageHoraire.heureDebutMatin}-${parametrageHoraire.heureFinMatin} / ${parametrageHoraire.heureDebutApresMidi}-${parametrageHoraire.heureFinApresMidi}`
   );
+
+  // Congés et permissions d'absence : types de départ (source unique : src/congesDefauts.ts, aussi posés par la migration).
+  await prisma.typeConge.createMany({ data: TYPES_CONGE_DEFAUT.map((t) => ({ ...t })) });
+  await prisma.typePermission.createMany({ data: TYPES_PERMISSION_DEFAUT.map((t) => ({ ...t })) });
+  console.log(`Types de congé : ${TYPES_CONGE_DEFAUT.length}, types de permission d'absence : ${TYPES_PERMISSION_DEFAUT.length}`);
 
   // Module Encaissements : paramètres par défaut (source unique : src/encParametres.ts, aussi posés par la migration).
   await prisma.encParametre.createMany({ data: ENC_PARAMETRES.map((p) => ({ cle: p.cle, valeur: p.defaut })) });
