@@ -4,9 +4,8 @@ import { useState, useRef, useTransition } from "react";
 import Image from "next/image";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/icons";
-import { updateProfilePhoto, updatePassword, updateMyServiceAction } from "./actions";
+import { updateProfilePhoto, updatePassword } from "./actions";
 import { Badge, PageHeader, DataTable, type DataTableColumn } from "@/components/ui";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -18,11 +17,6 @@ interface ConnexionEntry {
   detail: string;
 }
 
-interface ServiceOption {
-  id: string;
-  name: string;
-}
-
 interface ProfileClientProps {
   user: {
     id: string;
@@ -31,8 +25,8 @@ interface ProfileClientProps {
     photoUrl: string | null;
   };
   role: string;
-  serviceId: string | null;
-  services: ServiceOption[];
+  /** Service lu en base : jamais modifiable depuis le profil (il pilote le circuit de validation des demandes). */
+  serviceNom: string | null;
   membreDepuis: string | null;
   selectedMonth: string;
   showPointageStats: boolean;
@@ -152,8 +146,7 @@ type Tab = "overview" | "security";
 export function ProfileClient({
   user,
   role,
-  serviceId,
-  services,
+  serviceNom,
   membreDepuis,
   selectedMonth,
   showPointageStats,
@@ -167,25 +160,6 @@ export function ProfileClient({
   const [isUploading, setIsUploading] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // ── Service (modifiable librement par l'utilisateur lui-même) ──────────────
-  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(serviceId);
-  const [isSavingService, startServiceTransition] = useTransition();
-
-  const handleServiceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const nouveauServiceId = e.target.value === "" ? null : e.target.value;
-    const precedent = selectedServiceId;
-    setSelectedServiceId(nouveauServiceId); // optimiste, revenu en arrière si refus serveur
-    startServiceTransition(async () => {
-      const res = await updateMyServiceAction(nouveauServiceId);
-      if (res.status === "error") {
-        setSelectedServiceId(precedent);
-        toast.error(res.message);
-      } else {
-        toast.success(res.message);
-      }
-    });
-  };
 
   const router = useRouter();
   const pathname = usePathname();
@@ -270,23 +244,190 @@ export function ProfileClient({
     });
   };
 
-  // Nom du service actuellement sélectionné, dérivé de l'état local (jamais
-  // du prop `serviceId` directement) — reflète immédiatement le choix de
-  // l'utilisateur, y compris pendant la sauvegarde optimiste.
-  const serviceNomActuel = services.find((s) => s.id === selectedServiceId)?.name ?? null;
+  // Indicateur principal de la fiche mobile (même source que les cartes d'activité desktop, jamais recalculé).
+  const statPrincipal = showPointageStats
+    ? { valeur: nbRetardsMois, libelle: "Retards ce mois" }
+    : showTresoStats
+      ? { valeur: nbDemandesEnCours, libelle: "Demandes en cours" }
+      : null;
+  const cellulesActivite: { libelle: string; valeur: number; href: string }[] = [
+    ...(showPointageStats
+      ? [
+          { libelle: "Retards", valeur: nbRetardsMois, href: "/pointage/historique" },
+          { libelle: "Absences", valeur: nbAbsencesMois, href: "/pointage/historique" },
+        ]
+      : []),
+    ...(showTresoStats ? [{ libelle: "Demandes en cours", valeur: nbDemandesEnCours, href: "/treso/demandes" }] : []),
+  ];
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Mon Profil"
-        description="Gérez vos informations et vos paramètres de sécurité."
-      />
+      <div className="hidden md:block">
+        <PageHeader
+          title="Mon Profil"
+          description="Gérez vos informations et vos paramètres de sécurité."
+        />
+      </div>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+      {/* Sélecteur de fichier unique, déclenché par la photo des deux dispositions (mobile et desktop). */}
+      <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
+
+      {/* ── Disposition MOBILE (< md) : fiche éditoriale. Le desktop garde sa disposition en colonnes. ── */}
+      {activeTab === "overview" && (
+        <div className="md:hidden">
+          {/* Bandeau */}
+          <div className="flex items-center justify-between border-b border-border pb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <span>Profil</span>
+            <span>{role}</span>
+          </div>
+
+          {/* Photo + indicateur principal */}
+          <div className="flex items-start justify-between gap-4 pt-5">
+            <button
+              type="button"
+              onClick={handlePhotoClick}
+              disabled={isUploading}
+              aria-label="Modifier la photo de profil"
+              className="relative size-28 shrink-0 overflow-hidden rounded-md bg-muted"
+            >
+              <Image
+                src={photoUrl || "/default-avatar.svg"}
+                alt={`Photo de profil de ${user.fullName}`}
+                fill
+                sizes="112px"
+                className="object-cover"
+              />
+              <span className="absolute bottom-1.5 right-1.5 flex size-7 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm">
+                <Icon name={isUploading ? "loader" : "camera"} className={`size-3.5 ${isUploading ? "animate-spin" : ""}`} />
+              </span>
+            </button>
+
+            <div className="min-w-0 text-right">
+              {statPrincipal ? (
+                <p className="text-7xl font-normal leading-none tracking-tighter tabular-nums text-foreground">
+                  {String(statPrincipal.valeur).padStart(2, "0")}
+                </p>
+              ) : null}
+              <p className="mt-3 inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">
+                <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+                Compte actif
+              </p>
+              {statPrincipal ? <p className="mt-1 text-xs text-muted-foreground">{statPrincipal.libelle}</p> : null}
+            </div>
+          </div>
+
+          {/* Identité */}
+          <h2 className="mt-5 break-words text-3xl font-normal leading-tight tracking-tight text-foreground">{user.fullName}</h2>
+          <p className="mt-4 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Service</p>
+          <p className="mt-1 text-sm text-foreground">{serviceNom ?? "Non renseigné"}</p>
+          {membreDepuis ? (
+            <p className="mt-1 text-xs text-muted-foreground">Membre depuis {formatMembreDepuis(membreDepuis)}</p>
+          ) : null}
+
+          {/* Informations */}
+          <section className="mt-6 border-t border-border pt-5">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Informations</p>
+            <dl className="mt-4 space-y-4 text-sm">
+              <div>
+                <dt className="text-xs text-muted-foreground">Email</dt>
+                <dd className="mt-0.5 break-all text-foreground">{user.email}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">Service</dt>
+                <dd className="mt-0.5 text-foreground">{serviceNom ?? "Non renseigné"}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">Rôle applicatif</dt>
+                <dd className="mt-0.5 text-foreground">{role}</dd>
+              </div>
+            </dl>
+          </section>
+
+          {/* Carte sécurité */}
+          <button
+            type="button"
+            onClick={() => setActiveTab("security")}
+            className="relative mt-6 block w-full overflow-hidden rounded-md bg-muted p-5 text-left"
+          >
+            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Sécurité</span>
+            <span className="mt-4 block max-w-[55%] text-sm leading-snug text-foreground">Protégez votre compte avec un mot de passe fort.</span>
+            <span className="mt-6 inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">
+              Changer le mot de passe
+              <Icon name="arrow-right" className="size-3" />
+            </span>
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute bottom-4 right-4 size-24 bg-[radial-gradient(currentColor_1px,transparent_1px)] bg-[length:8px_8px] text-foreground/30"
+            />
+          </button>
+
+          {/* Activité du mois */}
+          {cellulesActivite.length > 0 && (
+            <section className="mt-6 border-t border-border pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Mon activité</p>
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={handleMonthChange}
+                  aria-label="Mois affiché"
+                  className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-2 border-t border-border">
+                {cellulesActivite.map((c, i) => (
+                  <Link
+                    key={c.libelle}
+                    href={c.href}
+                    className={`block py-4 ${i % 2 === 1 ? "border-l border-border pl-4" : "pr-4"} ${i >= 2 ? "border-t border-border" : ""} ${i === cellulesActivite.length - 1 && i % 2 === 0 ? "col-span-2" : ""}`}
+                  >
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{c.libelle}</span>
+                    <span className="mt-2 flex items-end gap-1.5 text-3xl font-normal leading-none tracking-tight tabular-nums text-foreground">
+                      {String(c.valeur).padStart(2, "0")}
+                      <Icon name="arrow-up-right" className="mb-1 size-3.5 text-muted-foreground" />
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Dernières connexions */}
+          <section className="mt-6 border-t border-border pt-5">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Dernières connexions</p>
+            {dernieresConnexions.length === 0 ? (
+              <p className="mt-3 text-sm text-muted-foreground">Aucun historique disponible.</p>
+            ) : (
+              <ul className="mt-3 divide-y divide-border">
+                {dernieresConnexions.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-3 py-2.5">
+                    <span className="font-mono text-xs text-foreground">{c.ipAddress}</span>
+                    <span className="text-xs text-muted-foreground">{formatDate(c.createdAt)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
+
+      {/* Mobile, vue Sécurité : retour à la fiche. */}
+      {activeTab === "security" && (
+        <button
+          type="button"
+          onClick={() => setActiveTab("overview")}
+          className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground md:hidden"
+        >
+          <Icon name="arrow-left" className="size-3.5" />
+          Retour au profil
+        </button>
+      )}
+
+      <div className={`${activeTab === "security" ? "grid" : "hidden md:grid"} grid-cols-1 gap-6 md:grid-cols-3`}>
         {/* ── Colonne gauche : Identité ─────────────────────────────────────── */}
-        <div className="md:col-span-1">
+        <div className="hidden md:col-span-1 md:block">
           <div className="relative overflow-hidden rounded-2xl border border-border bg-surface p-6 shadow-elevated flex flex-col items-center text-center gap-4">
             {/* Filet de tête coloré */}
             <span className="absolute inset-x-0 top-0 h-[3px] bg-primary" aria-hidden="true" />
@@ -317,21 +458,14 @@ export function ProfileClient({
                   <Icon name="loader" className="size-6 animate-spin text-primary" />
                 </div>
               )}
-              <input
-                type="file"
-                ref={fileInputRef}
-                className="hidden"
-                accept="image/*"
-                onChange={handleFileChange}
-              />
             </div>
 
             {/* Nom & Rôle */}
             <div className="space-y-1.5">
               <h2 className="text-xl font-bold text-foreground leading-tight">{user.fullName}</h2>
               <Badge variant={getBadgeVariant(role)}>{role}</Badge>
-              {serviceNomActuel && (
-                <p className="text-sm text-muted-foreground mt-1">{serviceNomActuel}</p>
+              {serviceNom && (
+                <p className="text-sm text-muted-foreground mt-1">{serviceNom}</p>
               )}
               {membreDepuis && (
                 <p className="text-xs text-muted-foreground">
@@ -369,7 +503,7 @@ export function ProfileClient({
         {/* ── Colonne droite : Onglets ─────────────────────────────────────── */}
         <div className="md:col-span-2 space-y-4">
           {/* Onglets */}
-          <div className="flex gap-1 rounded-xl border border-border bg-muted/40 p-1">
+          <div className="hidden gap-1 rounded-xl border border-border bg-muted/40 p-1 md:flex">
             {(["overview", "security"] as Tab[]).map((tab) => (
               <button
                 key={tab}
@@ -393,7 +527,7 @@ export function ProfileClient({
 
           {/* ── Onglet Vue d'ensemble ────────────────────────────────────────── */}
           {activeTab === "overview" && (
-            <div className="space-y-5">
+            <div className="hidden space-y-5 md:block">
               {/* Informations professionnelles */}
               <section className="rounded-2xl border border-border bg-surface p-6 shadow-elevated space-y-4">
                 <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
@@ -411,39 +545,13 @@ export function ProfileClient({
                     </div>
                   </div>
 
-                  {/* Service — modifiable librement par l'utilisateur lui-même,
-                      sans validation d'un tiers (voir CLAUDE.md "Modification
-                      du service par l'utilisateur lui-même depuis son profil").
-                      Distinct de la gestion Admin (/admin/users), qui reste le
-                      seul autre chemin possible — les deux appellent des
-                      Server Actions séparées mais écrivent le même champ. */}
+                  {/* Service — lu en base, jamais modifiable par l'utilisateur (c'est l'Admin qui l'affecte, `/admin/users`). */}
                   <div>
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Service</p>
-                    {services.length === 0 ? (
-                      <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground italic">
-                        <Icon name="building" className="size-4 shrink-0" />
-                        <span>Aucun service n&apos;a encore été créé (voir un administrateur).</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus-within:ring-2 focus-within:ring-primary">
-                        <Icon name="building" className="size-4 text-muted-foreground shrink-0" />
-                        <select
-                          value={selectedServiceId ?? ""}
-                          onChange={handleServiceChange}
-                          disabled={isSavingService}
-                          aria-label="Mon service"
-                          className="w-full bg-transparent text-sm text-foreground focus:outline-none disabled:opacity-50"
-                        >
-                          <option value="">Non renseigné</option>
-                          {services.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name}
-                            </option>
-                          ))}
-                        </select>
-                        {isSavingService ? <Icon name="loader" className="size-4 shrink-0 animate-spin text-muted-foreground" /> : null}
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground">
+                      <Icon name="building" className="size-4 text-muted-foreground shrink-0" />
+                      <span className="truncate">{serviceNom ?? "Non renseigné"}</span>
+                    </div>
                   </div>
 
                   {/* Rôle */}

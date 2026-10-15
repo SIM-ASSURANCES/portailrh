@@ -108,29 +108,33 @@ export default async function PointagesRHPage({ searchParams }: PointagesRHPageP
   }));
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 font-sans">
-      <PageHeader
-        title="Consultation des pointages"
-        description="Vue globale de tous les pointages (arrivées, départs) de l'ensemble des collaborateurs."
-        backHref="/pointage/rh"
-        backLabel="Retour à la Boîte à Outils"
-      />
+    <div className="mx-auto max-w-6xl space-y-3 px-4 py-2 font-sans sm:px-6 md:space-y-6 md:py-8">
+      <div className="hidden md:block">
+        <PageHeader
+          title="Consultation des pointages"
+          description="Vue globale de tous les pointages (arrivées, départs) de l'ensemble des collaborateurs."
+          backHref="/pointage/rh"
+          backLabel="Retour à la Boîte à Outils"
+        />
+      </div>
+      {/* Mobile : titre compact en gras, sans description. */}
+      <h1 className="text-xl font-black tracking-tight text-foreground md:hidden">Tous les pointages</h1>
 
       <PointagesRHFilters
         initial={{ du, au, type, userId }}
         users={usersDb}
       />
 
-      <div className="space-y-3 rounded-2xl border border-border bg-surface p-4 sm:p-6 shadow-xs">
+      <div className="space-y-2 rounded-2xl border border-border bg-surface p-3 shadow-xs md:space-y-3 md:p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Icon name="file-text" className="size-5 text-primary" />
-            <h2 className="text-base font-bold text-foreground">
+            <Icon name="file-text" className="size-4 text-primary md:size-5" />
+            <h2 className="text-sm font-bold text-foreground md:text-base">
               Pointages ({pointages.length})
             </h2>
           </div>
           {pointages.length > 0 ? (
-            <span className="text-xs text-muted-foreground">
+            <span className="hidden text-xs text-muted-foreground md:inline">
               Trié par date décroissante
             </span>
           ) : null}

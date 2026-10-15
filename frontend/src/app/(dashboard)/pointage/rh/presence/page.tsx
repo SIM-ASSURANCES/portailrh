@@ -91,8 +91,8 @@ export default async function PresenceDuJourPage({
     : "Suivi en temps réel des arrivées, retards et absences de la journée.";
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-8 font-sans">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="mx-auto max-w-6xl space-y-4 px-4 py-2 font-sans sm:px-6 md:space-y-8 md:py-8">
+      <div className="hidden flex-col justify-between gap-4 md:flex md:flex-row md:items-center">
         <PageHeader
           title={dateParam ? `Présence du ${format(now, "dd/MM/yyyy")}` : "Présence du jour"}
           description={pageDescription}
@@ -102,7 +102,34 @@ export default async function PresenceDuJourPage({
         <RecoverAbsencesButton dateStr={format(now, "yyyy-MM-dd")} isEndOfDayPassed={isEndOfDayPassed} />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      {/* Mobile : titre compact en gras + action, la description n'est gardée que pour un jour sans pointage attendu. */}
+      <div className="md:hidden">
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="truncate text-xl font-black tracking-tight text-foreground">
+            {dateParam ? `Présence du ${format(now, "dd/MM")}` : "Présence du jour"}
+          </h1>
+          <RecoverAbsencesButton dateStr={format(now, "yyyy-MM-dd")} isEndOfDayPassed={isEndOfDayPassed} />
+        </div>
+        {isJourNonOuvre ? <p className="mt-1 text-xs text-muted-foreground">{pageDescription}</p> : null}
+      </div>
+
+      {/* Mobile : les 5 chiffres sur une ligne, sans cartes (même traitement que l'historique de pointage). */}
+      <div className="grid grid-cols-5 divide-x divide-border md:hidden">
+        {[
+          { libelle: "Présents", valeur: presentsCount },
+          { libelle: "Retards", valeur: retardsCount },
+          { libelle: "Absents", valeur: absentsCount },
+          { libelle: "Autorisés", valeur: autorises.length },
+          { libelle: "Manquants", valeur: manquantsCount },
+        ].map((k, i) => (
+          <div key={k.libelle} className={i === 0 ? "pr-1" : "px-1"}>
+            <p className="text-2xl font-black leading-none tabular-nums text-foreground">{k.valeur}</p>
+            <p className="mt-1 whitespace-nowrap text-[9px] font-semibold uppercase tracking-normal text-muted-foreground">{k.libelle}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden grid-cols-5 gap-4 md:grid">
         <StatCard
           icon="check-circle"
           tone="info"
@@ -135,9 +162,9 @@ export default async function PresenceDuJourPage({
         />
       </div>
 
-      <div className="space-y-8">
+      <div className="space-y-6 md:space-y-8">
         <div>
-          <h2 className="text-lg font-semibold text-foreground mb-4">Détails de la présence</h2>
+          <h2 className="mb-2 text-sm font-semibold text-foreground md:mb-4 md:text-lg">Détails de la présence</h2>
           <PresenceTabs 
             presents={presents} 
             retards={retards} 
@@ -150,7 +177,7 @@ export default async function PresenceDuJourPage({
         <div>
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-foreground">Palmarès des retards</h2>
+              <h2 className="text-sm font-semibold text-foreground md:text-lg">Palmarès des retards</h2>
               <MonthFilter dateParam={dateParam} defaultValue={moisParam || format(now, "yyyy-MM")} />
             </div>
             

@@ -52,6 +52,107 @@ const STATUT_ABSENCE_LABELS: Record<StatutAbsence, string> = {
   JUSTIFIEE: "Justifiée",
 };
 
+const SOURCE_LABELS_COURTS: Record<SourcePointage, string> = {
+  QR_CODE: "QR Code",
+  ORDINATEUR: "Ordinateur",
+  RH_EXCEPTIONNEL: "Saisie RH",
+  GEOLOCALISATION: "GPS",
+};
+
+function dateCourte(iso: string) {
+  return new Date(iso).toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "short" });
+}
+
+function heureCourte(iso: string) {
+  return new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * Liste compacte (mobile, < md) : UN pointage par ligne — date · heure à gauche, type et statut à droite — et une
+ * seconde ligne discrète (source, correction, justification) seulement quand elle apporte une information. Les
+ * mêmes données que le tableau desktop, sans carte empilée ni conteneur.
+ */
+function PointagesListeMobile({ pointages }: { pointages: PointageRow[] }) {
+  if (pointages.length === 0) {
+    return <p className="py-6 text-center text-sm text-muted-foreground">Aucun pointage trouvé pour la période sélectionnée.</p>;
+  }
+  return (
+    <ul className="divide-y divide-border">
+      {pointages.map((row) => {
+        const statut = row.isOriginal ? null : row.type === "DEPART" ? (
+          row.estDepartAnticipe ? <Badge variant="primary">Anticipé</Badge> : null
+        ) : row.estRetard ? (
+          <Badge variant="primary">+{row.minutesRetard ?? 0} min</Badge>
+        ) : (
+          <Badge variant="info">À l&apos;heure</Badge>
+        );
+        const barre = row.isOriginal ? "text-muted-foreground line-through" : "text-foreground";
+        return (
+          <li key={row.id} className={`py-2.5 ${row.isOriginal ? "bg-muted/30" : ""}`}>
+            <div className="flex items-center justify-between gap-2">
+              <p className={`min-w-0 truncate text-sm ${barre}`}>
+                <span className="font-medium">{dateCourte(row.heure)}</span>
+                <span className="mx-1.5 text-muted-foreground">·</span>
+                <span className="font-bold tabular-nums">{heureCourte(row.heure)}</span>
+              </p>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Badge variant={row.type === "ARRIVEE" ? "primary" : "info"}>{row.type === "ARRIVEE" ? "Arrivée" : "Départ"}</Badge>
+                {statut}
+              </div>
+            </div>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
+              <span>{row.isOriginal ? "Valeur d'origine (pointage modifié)" : SOURCE_LABELS_COURTS[row.source] ?? row.source}</span>
+              {row.heurePrevue ? <span>Prévu {row.heurePrevue}</span> : null}
+              {row.source === "RH_EXCEPTIONNEL" && row.effectueParNom ? <span>Par {row.effectueParNom}</span> : null}
+              {row.correctionsCount > 0 && !row.isOriginal ? (
+                <span className="inline-flex items-center gap-1 font-semibold text-primary">
+                  <Icon name="pencil" className="size-3" />
+                  Corrigé par RH
+                </span>
+              ) : null}
+              {!row.isOriginal && row.justification ? (
+                <span>
+                  {row.justification.libelle} ·{" "}
+                  <Link href={`/pointage/justifier/${row.groupId ?? row.id}`} className="font-semibold text-primary">
+                    {row.justification.peutJustifier ? "Justifier" : "Voir"}
+                  </Link>
+                </span>
+              ) : null}
+              {!row.isOriginal && row.motif ? <span className="max-w-full truncate italic">Motif : {row.motif}</span> : null}
+            </p>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function AbsencesListeMobile({ absences }: { absences: AbsenceRow[] }) {
+  if (absences.length === 0) {
+    return <p className="py-6 text-center text-sm text-muted-foreground">Aucune absence enregistrée sur cette période.</p>;
+  }
+  return (
+    <ul className="divide-y divide-border">
+      {absences.map((row) => {
+        const variant = row.statut === "JUSTIFIEE" ? "info" : row.statut === "CONFIRMEE" ? "primary" : "neutral";
+        return (
+          <li key={row.id} className="py-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="min-w-0 truncate text-sm font-medium text-foreground">
+                {new Date(row.date).toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "short" })}
+              </p>
+              <Badge variant={variant}>{STATUT_ABSENCE_LABELS[row.statut]}</Badge>
+            </div>
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+              {row.motif ? row.motif : "Motif non renseigné"} · {row.controleParNom ?? "En attente RH"}
+            </p>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
   const columns: DataTableColumn<PointageRow>[] = [
     {
@@ -200,6 +301,11 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
   ];
 
   return (
+    <>
+      <div className="md:hidden">
+        <PointagesListeMobile pointages={pointages} />
+      </div>
+      <div className="hidden md:block">
     <DataTable
       rowKey={(r) => r.id}
       columns={columns}
@@ -217,6 +323,8 @@ export function PointagesTable({ pointages }: { pointages: PointageRow[] }) {
       }}
       emptyMessage="Aucun pointage trouvé pour la période sélectionnée."
     />
+      </div>
+    </>
   );
 }
 
@@ -274,11 +382,18 @@ export function AbsencesTable({ absences }: { absences: AbsenceRow[] }) {
   ];
 
   return (
-    <DataTable
-      rowKey={(r) => r.id}
-      columns={columns}
-      data={absences}
-      emptyMessage="Aucune absence enregistrée sur cette période."
-    />
+    <>
+      <div className="md:hidden">
+        <AbsencesListeMobile absences={absences} />
+      </div>
+      <div className="hidden md:block">
+        <DataTable
+          rowKey={(r) => r.id}
+          columns={columns}
+          data={absences}
+          emptyMessage="Aucune absence enregistrée sur cette période."
+        />
+      </div>
+    </>
   );
 }
