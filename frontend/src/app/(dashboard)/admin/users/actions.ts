@@ -1,10 +1,10 @@
 "use server";
 
+import { urlPublique } from "@/lib/urlPublique";
 import { randomBytes } from "node:crypto";
 
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
 import { z } from "zod";
 
 import { getSession, isAdmin } from "@/lib/auth";
@@ -25,20 +25,11 @@ const SALT_ROUNDS = 10;
 const INVITATION_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * URL publique de base pour construire un lien d'invitation. Préfère
- * `AUTH_URL` quand elle est explicitement définie (comportement documenté
- * pour Docker/production, voir .env.example) ; sinon la déduit de la
- * requête entrante (`host`/`x-forwarded-proto`) — fonctionne sans
- * configuration en dev local, comme le reste d'Auth.js.
+ * URL publique de base pour construire un lien d'invitation : règle unique `urlPublique()` (`AUTH_URL` en
+ * production ; en dev, adresse réseau local quand `AUTH_URL` est absente ou en localhost).
  */
 async function getBaseUrl(): Promise<string> {
-  if (process.env.AUTH_URL) {
-    return process.env.AUTH_URL.replace(/\/$/, "");
-  }
-  const headersList = await headers();
-  const host = headersList.get("host") ?? "localhost:3000";
-  const proto = headersList.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  return `${proto}://${host}`;
+  return urlPublique();
 }
 
 const createUserSchema = z.object({

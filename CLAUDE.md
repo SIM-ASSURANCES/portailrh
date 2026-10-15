@@ -4771,8 +4771,8 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 Plan et règles : [docs/PLAN_POINTAGE_V2.md](docs/PLAN_POINTAGE_V2.md) (§2 validé, lot 3 au §4). Aucune migration.
 
 - **Une seule règle** (`backend/src/pointage-utils.ts`) : `checkLateStatus(now, horaires, plages)` — à l'heure jusqu'à
-  la référence + `toleranceRetardMinutes` INCLUSE, retard compté depuis la référence (07:45 + 15 : 08:00 à l'heure,
-  08:10 = 25 min) ; référence repoussée par une permission du matin. `heureReferenceDepartMinutes` /
+  la référence + `toleranceRetardMinutes` INCLUSE, retard compté depuis la FIN de la tolérance (07:45 + 15 : 08:00 à l'heure,
+  08:10 = 10 min ; **modifié le 2026-10-15** : avant, 25 min, compté depuis la référence ; les retards déjà enregistrés gardent leur valeur) ; référence repoussée par une permission du matin. `heureReferenceDepartMinutes` /
   `estDepartAnticipe` (fin de journée avancée au début d'une permission qui la couvre), `departTropTot`
   (`DELAI_MINIMUM_DEPART_MINUTES = 30`), `horairesPointage(parametrage)` + `HORAIRES_PAR_DEFAUT` (07:45, 16:45, 15).
   Utilisée par l'écran (`pointer/page.tsx`), `enregistrerPointageAction`, la correction RH et le pointage exceptionnel
@@ -5103,6 +5103,16 @@ Distincte de la réinitialisation globale (« Réinitialisation avant mise en pr
   Plus aucun rappel « régler SYSTEM_START_DATE » à l'écran : le message de succès et le formulaire indiquent que la date de purge est enregistrée.
 - Vérifié par `e2e/reinitialisation-pointage.mjs` (43 contrôles dont la tâche des absences relancée après la purge : aucune absence recréée avant la date de purge, contre-épreuve avec la purge antidatée ; serveur lancé avec `PLANIFICATEUR_ACTIF=false`) : refus sans permission (écran, sauvegarde, actions), mot faux,
   empreinte invalide et périmée, deux purges successives, deux simultanées, mise en service puis refus, Trésorerie/FeedbackApp/comptes/configuration intacts.
+
+### 20. Adresse du portail dans les liens et le QR code en développement (2026-10-15)
+
+- **QR code de pointage** (`/api/network-config`, dev seulement, 404 en production) : `backend/src/reseauLocal.ts` choisit l'adresse réseau local en ignorant les
+  cartes virtuelles (vEthernet/WSL/Hyper-V/Docker/VirtualBox/VMware…) puis en préférant 192.168.x.x, 10.x.x.x, 172.16-31.x.x ; port repris de l'hôte ; `DEV_NETWORK_IP` force l'adresse.
+- **Liens absolus des e-mails** : UNE règle, `urlPublique()` (`frontend/src/lib/urlPublique.ts` → `backend/src/urlPublique.ts`), à utiliser pour tout lien hors application.
+  Production : l'origine de `AUTH_URL` (puis `NEXTAUTH_URL`), jamais remplacée. Développement : si `AUTH_URL` est absente ou en localhost, l'adresse réseau local (ouvrable depuis un téléphone).
+- **Bug de production corrigé** : le lien du mail « mot de passe oublié » lisait `NEXTAUTH_URL` seule, absente du compose de production (qui ne définit que `AUTH_URL`) → il pointait sur `http://localhost:3000`.
+  Les autres fichiers (réinitialisation, profil, gabarits, invitation) utilisent maintenant la même règle ; ne plus écrire `process.env.… || "http://localhost:3000"` dans un fichier.
+- **Limite en dev** : le retour après connexion reste validé contre l'origine `AUTH_URL` (open redirect) ; pour tester le lien d'un e-mail depuis un téléphone jusqu'à la page demandée, mettre `AUTH_URL` à l'adresse réseau (ex. `http://192.168.1.49:3000`), sinon le téléphone retombe sur l'accueil après connexion.
 
 ## Module FeedbackApp — anonymat total
 

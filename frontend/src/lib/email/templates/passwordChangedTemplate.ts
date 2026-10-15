@@ -1,3 +1,4 @@
+import { urlPublique } from "@/lib/urlPublique";
 import { baseEmailLayout } from "./baseEmailLayout";
 
 interface PasswordChangedEmailParams {
@@ -20,8 +21,8 @@ export function generatePasswordChangedEmail({
   resetUrl,
 }: PasswordChangedEmailParams): { subject: string; html: string; text: string } {
   const subject = "Sécurité — Votre mot de passe a bien été modifié";
-  const loginUrl = actionUrl || "http://localhost:3000/login";
-  const recoveryUrl = resetUrl || "http://localhost:3000/forgot-password";
+  const loginUrl = actionUrl || `${urlPublique()}/login`;
+  const recoveryUrl = resetUrl || `${urlPublique()}/forgot-password`;
 
   const dateFormatted = new Intl.DateTimeFormat("fr-FR", {
     dateStyle: "full",

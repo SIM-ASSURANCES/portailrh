@@ -1,5 +1,6 @@
 "use server";
 
+import { urlPublique } from "@/lib/urlPublique";
 import { getSession } from "@/lib/auth";
 import { prisma } from "backend";
 import bcrypt from "bcryptjs";
@@ -139,7 +140,7 @@ export async function updatePassword(currentPass: string, newPass: string) {
 
   // Notification de sécurité par courriel
   try {
-    const baseUrl = process.env.AUTH_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
+    const baseUrl = urlPublique();
     const emailPayload = generatePasswordChangedEmail({
       fullName: user.fullName,
       email: user.email,

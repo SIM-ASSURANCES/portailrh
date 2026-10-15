@@ -1,5 +1,6 @@
 "use server";
 
+import { urlPublique } from "@/lib/urlPublique";
 import crypto from "crypto";
 import { headers } from "next/headers";
 import { z } from "zod";
@@ -81,7 +82,7 @@ export async function requestPasswordResetAction(
         },
       });
 
-      const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+      const baseUrl = urlPublique();
       const resetUrl = `${baseUrl}/reset-password/${token}`;
 
       const emailPayload = generateResetPasswordEmail({

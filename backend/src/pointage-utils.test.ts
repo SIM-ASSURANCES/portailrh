@@ -86,9 +86,9 @@ describe("checkLateStatus (lot 3 : une seule règle de retard)", () => {
     expect(checkLateStatus(a("08:00"), CONFIG)).toEqual({ estRetard: false, minutesRetard: 0 });
   });
 
-  it("au-delà de la tolérance, le retard se compte depuis l'heure de début", () => {
-    expect(checkLateStatus(a("08:01"), CONFIG)).toEqual({ estRetard: true, minutesRetard: 16 });
-    expect(checkLateStatus(a("08:10"), CONFIG)).toEqual({ estRetard: true, minutesRetard: 25 });
+  it("au-delà de la tolérance, le retard se compte depuis la fin de la tolérance (heure de début + marge)", () => {
+    expect(checkLateStatus(a("08:01"), CONFIG)).toEqual({ estRetard: true, minutesRetard: 1 });
+    expect(checkLateStatus(a("08:10"), CONFIG)).toEqual({ estRetard: true, minutesRetard: 10 });
   });
 
   it("tolérance 0 : en retard dès 07:46", () => {
@@ -100,7 +100,7 @@ describe("checkLateStatus (lot 3 : une seule règle de retard)", () => {
   it("permission 07:45-10:00 : référence repoussée à 10:00", () => {
     const plages = [{ heureDebut: "07:45", heureFin: "10:00" }];
     expect(checkLateStatus(a("10:10"), CONFIG, plages).estRetard).toBe(false);
-    expect(checkLateStatus(a("10:20"), CONFIG, plages)).toEqual({ estRetard: true, minutesRetard: 20 });
+    expect(checkLateStatus(a("10:20"), CONFIG, plages)).toEqual({ estRetard: true, minutesRetard: 5 });
   });
 });
 

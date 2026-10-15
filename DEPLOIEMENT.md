@@ -46,6 +46,7 @@ cp .env.example .env
   (schéma et domaine exacts, ex. `https://portail.example.ci`) : elle sert de référence au retour après connexion (un
   lien reçu par e-mail ramène sur la bonne page) et préfixe les liens des e-mails. Mal renseignée, l'utilisateur
   retombe sur l'accueil après connexion au lieu de la page demandée.
+  (Depuis le 2026-10-15, tous les liens d'e-mails passent par `urlPublique()` : `AUTH_URL` seule suffit, `NEXTAUTH_URL` n'est pas nécessaire.)
 - `CRON_SECRET` — secret du déclenchement manuel des tâches (voir « 7. Tâches planifiées »). Sans lui, les routes `/api/cron/*`
   refusent tout appel (401). Générez-le avec `openssl rand -hex 24`.
 

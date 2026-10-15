@@ -15,7 +15,7 @@
 | **Quels sont les horaires de référence ?** | **Matin** : 07h45 – 12h15 \| **Après-midi** : 13h15 – 16h45. |
 | **Combien de fois par jour ?** | **2 fois** : une fois à l'arrivée (le matin) et une fois au départ (le soir). |
 | **Comment pointer ?** | Soit depuis votre **ordinateur au bureau**, soit en scannant le **QR Code officiel** avec votre smartphone, soit via **géolocalisation GPS** en secours. |
-| **Que se passe-t-il après 07h45 ?** | Une tolérance réglée par les RH s'applique (15 min par défaut : arrivée jusqu'à 08h00 incluse = à l'heure). Au-delà, l'arrivée est enregistrée immédiatement, sans motif, et le retard est compté depuis 07h45. Un lien pour justifier votre retard vous est envoyé ensuite ; votre responsable de service accepte ou refuse la justification. |
+| **Que se passe-t-il après 07h45 ?** | Une tolérance réglée par les RH s'applique (15 min par défaut : arrivée jusqu'à 08h00 incluse = à l'heure). Au-delà, l'arrivée est enregistrée immédiatement, sans motif, et le retard est compté depuis 08h00 (fin de la tolérance : arrivée à 08h10 = 10 min de retard). Un lien pour justifier votre retard vous est envoyé ensuite ; votre responsable de service accepte ou refuse la justification. |
 | **Que se passe-t-il si je n'ai pas pointé de la journée ?** | À la fin de la journée (après 16h45), une absence automatique `À contrôler` est créée pour que les RH puissent vérifier votre situation. |
 
 ---
@@ -141,7 +141,7 @@ Une erreur de manipulation (ex. départ pointé par inadvertance à midi au lieu
 - Si l'heure d'arrivée est modifiée, le calcul du retard est automatiquement recalculé.
 
 ### 4 bis. Paramètres du circuit de justification (`/pointage/rh/horaires`)
-- **Tolérance de retard** (15 min par défaut) : arrivée jusqu'à l'heure de début + tolérance incluse = à l'heure ; au-delà, le retard est compté depuis l'heure de début.
+- **Tolérance de retard** (15 min par défaut) : arrivée jusqu'à l'heure de début + tolérance incluse = à l'heure ; au-delà, le retard est compté depuis la fin de la tolérance (début 07h45 + 15 min : arrivée à 08h10 = 10 min de retard).
 - **Délai avant la première demande de justification** (15 min par défaut), **intervalle entre deux rappels** (30 min par défaut) et **nombre maximal d'envois** (3 par défaut, premier compris).
 - Le premier envoi part par email, push et notification interne ; les rappels par push et notification interne. Le décideur est prévenu au premier envoi et à la clôture « Non justifié » (pas à chaque rappel).
 

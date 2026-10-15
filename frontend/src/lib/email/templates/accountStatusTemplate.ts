@@ -1,3 +1,4 @@
+import { urlPublique } from "@/lib/urlPublique";
 import { baseEmailLayout } from "./baseEmailLayout";
 
 interface AccountStatusEmailParams {
@@ -19,7 +20,7 @@ export function generateAccountStatusEmail({
   actionUrl,
   motif,
 }: AccountStatusEmailParams): { subject: string; html: string; text: string } {
-  const loginUrl = actionUrl || "http://localhost:3000/login";
+  const loginUrl = actionUrl || `${urlPublique()}/login`;
 
   if (isActive) {
     const subject = "Votre compte Portail SIM Assurances a été réactivé";

@@ -50,10 +50,10 @@ describe("reglesPointage", () => {
     expect(reglesPointage("DEPART", h(VENDREDI, "12:00"), HORAIRES_PAR_DEFAUT, [], jourNonOuvre)).toEqual(AUCUN);
   });
 
-  it("jour ouvré : retard de 25 min à 08:10, à l'heure à 08:00, départ anticipé à 16:00", () => {
+  it("jour ouvré : retard de 10 min à 08:10, à l'heure à 08:00, départ anticipé à 16:00", () => {
     expect(reglesPointage("ARRIVEE", h(VENDREDI, "08:10"), HORAIRES_PAR_DEFAUT, [], false)).toEqual({
       estRetard: true,
-      minutesRetard: 25,
+      minutesRetard: 10,
       estDepartAnticipe: false,
     });
     expect(reglesPointage("ARRIVEE", h(VENDREDI, "08:00"), HORAIRES_PAR_DEFAUT, [], false)).toEqual(AUCUN);

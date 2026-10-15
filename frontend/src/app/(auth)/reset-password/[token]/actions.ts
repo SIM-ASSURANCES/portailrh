@@ -1,5 +1,6 @@
 "use server";
 
+import { urlPublique } from "@/lib/urlPublique";
 import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -102,7 +103,7 @@ export async function resetPasswordAction(
 
   // Notification de sécurité par email après réinitialisation réussie
   try {
-    const baseUrl = process.env.AUTH_URL || process.env.NEXTAUTH_URL || "http://localhost:3000";
+    const baseUrl = urlPublique();
     const emailPayload = generatePasswordChangedEmail({
       fullName: user.fullName,
       email: user.email,

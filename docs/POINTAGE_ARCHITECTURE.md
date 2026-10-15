@@ -201,7 +201,7 @@ Singleton de configuration actif (`isActive: true`).
 - `geolocalisationActive` (booléen) : Interrupteur général du secours GPS.
 - `bureauLatitude` (`5.3628189`) / `bureauLongitude` (`-3.9374753`) : Coordonnées GPS du siège SIM Assurances.
 - `rayonAutorise` (défaut : `50` mètres, borné entre 30m et 200m).
-- `toleranceRetardMinutes` (défaut : `15`) : arrivée jusqu'à `heureDebutMatin` + tolérance **incluse** = à l'heure ; au-delà, retard compté depuis `heureDebutMatin` (`checkLateStatus`, `backend/src/pointage-utils.ts`, seule règle de retard).
+- `toleranceRetardMinutes` (défaut : `15`) : arrivée jusqu'à `heureDebutMatin` + tolérance **incluse** = à l'heure ; au-delà, retard compté depuis `heureDebutMatin` + tolérance (08:10 = 10 min avec 07:45 + 15, depuis le 2026-10-15) (`checkLateStatus`, `backend/src/pointage-utils.ts`, seule règle de retard).
 - `delaiDemandeJustificationMinutes` (`15`), `intervalleRelanceJustificationMinutes` (`30`), `nombreMaxRelancesJustification` (`3`, premier envoi compris) : pilotent les envois de la tâche planifiée (§6.5). Réglables par la RH (`/pointage/rh/horaires`).
 
 #### 2 bis. `JustificationPointage`
