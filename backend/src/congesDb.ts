@@ -500,6 +500,8 @@ export interface DecisionConge {
   /** Comptes à prévenir de l'étape suivante (vide si la demande n'attend plus rien). */
   destinatairesSuivants: string[];
   nbJours: number;
+  dateDebut: JourCivil;
+  dateFin: JourCivil;
 }
 
 /** Debit du solde et plages, à l'accord d'un congé (dans la transaction de la décision). */
@@ -640,6 +642,8 @@ export async function deciderConge(
     motif: r.motif,
     destinatairesSuivants: destinatairesEtapeAbsence(r.statut, ctx),
     nbJours: demande.nbJours,
+    dateDebut: jourCivilDepuisColonneDate(demande.dateDebut),
+    dateFin: jourCivilDepuisColonneDate(demande.dateFin),
   };
 }
 
