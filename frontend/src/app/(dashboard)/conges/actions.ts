@@ -5,15 +5,25 @@ import { revalidatePath } from "next/cache";
 import {
   accorderCongeOffice,
   ajusterSolde,
+  ajouterJours,
+  calculerNbJours,
+  dateFinPourJours,
   deciderConge,
+  exerciceDuDebit,
   fieldErrorsFromZod,
   formatJourCivil,
   initialiserSoldesExercice,
+  jourCivilDepuisColonneDate,
+  listerJours,
+  lireJoursFeries,
+  MAX_JOURS_PERIODE,
+  MESSAGE_DATE_EMBAUCHE_MANQUANTE,
   modifierDateEmbauche,
   prisma,
   resoumettreConge,
   soumettreConge,
   transactionAbsence,
+  verifierAnciennete,
   type ActionState,
   type ActionCircuitAbsence,
   type DemandeCongeEntree,
@@ -302,4 +312,90 @@ export async function toggleTypeCongeAction(id: string): Promise<ActionState> {
   revalidatePath("/conges/parametrage");
   publishDataChanged();
   return { status: "success", message: type.isActive ? "Type désactivé." : "Type activé." };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Aperçu (lecture seule) : jours décomptés, solde et ancienneté pour le formulaire — AUCUN second calcul côté écran
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface ApercuConge {
+  /** Date de fin retenue : calculée pour un type à durée fixée (permission exceptionnelle), sinon celle saisie. */
+  dateFin: string;
+  nbJours: number;
+  joursCalendaires: number;
+  joursFeriesInclus: number;
+  deductible: boolean;
+  /** Solde de l'exercice concerné (`null` : non déductible, date d'embauche absente ou période sur deux exercices). */
+  soldeRestant: number | null;
+  exercice: number | null;
+  avertissement: string | null;
+}
+
+export async function apercuCongeAction(input: { typeCongeId: string; dateDebut: string; dateFin: string; userId?: string }): Promise<ActionState<ApercuConge>> {
+  const session = await getSession();
+  if (!session) return { status: "error", message: "Non authentifié." };
+  const peutPourAutrui = session.rolePermissions.includes("conges.valider_rh");
+  if (!hasPermission(session, "conges.soumettre") && !peutPourAutrui) return { status: "error", message: "Action non autorisée." };
+  // Pour un congé d'office, l'aperçu porte sur le collaborateur choisi (RH seulement) ; sinon sur soi-même.
+  const userId = input.userId && peutPourAutrui ? String(input.userId) : session.user.id;
+
+  const debut = JOUR.safeParse(input.dateDebut);
+  const fin = JOUR.safeParse(input.dateFin);
+  if (!debut.success || !fin.success) return { status: "error", message: "Période invalide." };
+  const type = await prisma.typeConge.findUnique({ where: { id: String(input.typeCongeId) } });
+  if (!type) return { status: "error", message: "Type de congé introuvable." };
+
+  // Même règle que la soumission (`preparerConge`) : la durée d'une permission exceptionnelle est fixée par le type.
+  const feriesLarges = await lireJoursFeries(prisma, input.dateDebut, ajouterJours(input.dateDebut, MAX_JOURS_PERIODE * 2));
+  const dateFin =
+    type.categorie === "PERMISSION_EXCEPTIONNELLE"
+      ? dateFinPourJours({ debut: input.dateDebut, nbJours: type.nbJoursDefaut, decompte: type.decompteType, joursFeries: feriesLarges })
+      : input.dateFin;
+  if (dateFin < input.dateDebut) return { status: "error", message: "Période invalide." };
+  if (listerJours(input.dateDebut, dateFin).length > MAX_JOURS_PERIODE) return { status: "error", message: "Période trop longue." };
+
+  const d = calculerNbJours({ debut: input.dateDebut, fin: dateFin, decompte: type.decompteType, joursFeries: feriesLarges });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { dateEmbauche: true } });
+  const dateEmbauche = user?.dateEmbauche ? jourCivilDepuisColonneDate(user.dateEmbauche) : null;
+
+  const deductible = !type.nonDeductibleSolde && type.nbJoursDefaut > 0;
+  let soldeRestant: number | null = null;
+  let exercice: number | null = null;
+  let avertissement: string | null = null;
+
+  const anc = verifierAnciennete({ dateEmbauche, moisRequis: type.ancienneteMinimumMois, reference: input.dateDebut });
+  if (!anc.eligible) avertissement = anc.erreur;
+
+  if (deductible) {
+    if (!dateEmbauche) {
+      avertissement = avertissement ?? MESSAGE_DATE_EMBAUCHE_MANQUANTE;
+    } else if (d.joursDecomptes.length > 0) {
+      const ex = exerciceDuDebit(d.joursDecomptes, dateEmbauche);
+      if (!ex.ok) {
+        avertissement = avertissement ?? ex.erreur;
+      } else {
+        exercice = ex.exercice.exercice;
+        const solde = await prisma.soldeConge.findUnique({
+          where: { userId_typeCongeId_exercice: { userId, typeCongeId: type.id, exercice } },
+        });
+        // Pas encore de ligne : la dotation complète du type sera créée à la validation.
+        soldeRestant = solde ? solde.soldeRestant : type.nbJoursDefaut;
+        if (soldeRestant < d.nbJours) avertissement = avertissement ?? `Solde insuffisant : ${soldeRestant} jour(s) restant(s) pour ${d.nbJours} demandé(s).`;
+      }
+    }
+  }
+
+  return {
+    status: "success",
+    data: {
+      dateFin,
+      nbJours: d.nbJours,
+      joursCalendaires: d.joursCalendaires,
+      joursFeriesInclus: d.joursFeriesInclus.length,
+      deductible,
+      soldeRestant,
+      exercice,
+      avertissement,
+    },
+  };
 }
