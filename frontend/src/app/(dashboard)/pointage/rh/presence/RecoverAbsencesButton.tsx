@@ -37,12 +37,13 @@ export function RecoverAbsencesButton({ dateStr, isEndOfDayPassed }: RecoverAbse
     <div title={!isEndOfDayPassed ? "L'heure de fin de journée n'est pas encore passée" : "Récupérer les absences pour cette journée"}>
       <Button
         variant="secondary"
+        aria-label="Récupérer les absences"
         onClick={handleRecover}
         disabled={!isEndOfDayPassed || isLoading}
         className="flex items-center gap-2"
       >
         <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
-        <span>Récupérer les absences</span>
+        <span className="hidden md:inline">Récupérer les absences</span>
       </Button>
     </div>
   );

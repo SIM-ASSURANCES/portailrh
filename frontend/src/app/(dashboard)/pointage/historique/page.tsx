@@ -211,14 +211,32 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
   const totalAbsences = allUserAbsencesForStats.length;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 font-sans">
-      <PageHeader
-        title="Mon Historique de Pointage"
-        description="Consultez l'ensemble de vos pointages d'arrivée, de départ, vos retards et vos absences."
-      />
+    <div className="mx-auto max-w-6xl space-y-4 px-4 py-2 font-sans sm:px-6 md:space-y-6 md:py-8">
+      <div className="hidden md:block">
+        <PageHeader
+          title="Mon Historique de Pointage"
+          description="Consultez l'ensemble de vos pointages d'arrivée, de départ, vos retards et vos absences."
+        />
+      </div>
+      {/* Mobile : titre compact, sans description. */}
+      <h1 className="text-xl font-black tracking-tight text-foreground md:hidden">Mon historique</h1>
 
-      {/* Cartes d'indicateurs / KPI */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      {/* Mobile : trois chiffres sur une ligne, sans cartes ni commentaires. */}
+      <div className="grid grid-cols-3 divide-x divide-border md:hidden">
+        {[
+          { libelle: "Jours de retard", valeur: nombreJoursRetard },
+          { libelle: "Min. de retard", valeur: totalMinutesRetard },
+          { libelle: "Absences", valeur: totalAbsences },
+        ].map((k, i) => (
+          <div key={k.libelle} className={i === 0 ? "pr-3" : "px-3"}>
+            <p className="text-2xl font-black leading-none tabular-nums text-foreground">{k.valeur}</p>
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{k.libelle}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Cartes d'indicateurs / KPI (desktop) */}
+      <div className="hidden grid-cols-1 gap-4 md:grid md:grid-cols-3">
         <StatCard
           icon="alert-triangle"
           tone={nombreJoursRetard > 0 ? "primary" : "info"}
@@ -253,16 +271,16 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
 
       {/* Tableau des Pointages */}
       {showPointages ? (
-        <div className="space-y-3 rounded-2xl border border-border bg-surface p-4 sm:p-6 shadow-xs">
+        <div className="space-y-2 rounded-2xl border border-border bg-surface p-3 shadow-xs md:space-y-3 md:p-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Icon name="clock" className="size-5 text-primary" />
-              <h2 className="text-base font-bold text-foreground">
+              <Icon name="clock" className="size-4 text-primary md:size-5" />
+              <h2 className="text-sm font-bold text-foreground md:text-base">
                 Pointages ({pointages.length})
               </h2>
             </div>
             {pointages.length > 0 ? (
-              <span className="text-xs text-muted-foreground">
+              <span className="hidden text-xs text-muted-foreground md:inline">
                 Trié par date décroissante
               </span>
             ) : null}
@@ -274,16 +292,16 @@ export default async function PointageHistoriquePage({ searchParams }: Historiqu
 
       {/* Tableau des Absences */}
       {showAbsences ? (
-        <div className="space-y-3 rounded-2xl border border-border bg-surface p-4 sm:p-6 shadow-xs">
+        <div className="space-y-2 rounded-2xl border border-border bg-surface p-3 shadow-xs md:space-y-3 md:p-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Icon name="alert-triangle" className="size-5 text-primary" />
-              <h2 className="text-base font-bold text-foreground">
+              <Icon name="alert-triangle" className="size-4 text-primary md:size-5" />
+              <h2 className="text-sm font-bold text-foreground md:text-base">
                 Absences ({absences.length})
               </h2>
             </div>
             {absences.length > 0 ? (
-              <span className="text-xs text-muted-foreground">
+              <span className="hidden text-xs text-muted-foreground md:inline">
                 Signalements d&apos;absence
               </span>
             ) : null}

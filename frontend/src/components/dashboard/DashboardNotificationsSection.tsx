@@ -86,7 +86,7 @@ export function DashboardNotificationsSection({
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+        <h2 className="flex items-center gap-2.5 text-base font-black sm:text-xl tracking-tight text-foreground">
           <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
           Notifications et alertes
         </h2>

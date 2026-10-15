@@ -115,7 +115,7 @@ function ModuleCardWatermark() {
   return (
     <svg
       viewBox={BRAND_ICON_VIEWBOX}
-      className="pointer-events-none absolute -right-6 -top-6 size-24 opacity-[0.14] sm:size-32"
+      className="pointer-events-none absolute -right-4 -top-4 size-16 opacity-[0.14] sm:-right-6 sm:-top-6 sm:size-32"
       aria-hidden="true"
     >
       {BRAND_ICON_PATHS.map((d) => (
@@ -277,7 +277,7 @@ export default async function DashboardHomePage({
 
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
+    <div className="mx-auto max-w-7xl space-y-4 sm:space-y-6">
       {error === "acces_refuse_dg" ? (
         <ToastOnMount variant="error" message="Cette page est réservée à la décision du DG." />
       ) : null}
@@ -342,13 +342,24 @@ export default async function DashboardHomePage({
         />
       ) : null}
 
-      <PageHeader
-        title="Tableau de bord"
-        description={session ? `Bonjour, ${session.user.fullName} — ${session.role}` : undefined}
-      />
+      <div className="hidden sm:block">
+        <PageHeader
+          title="Tableau de bord"
+          description={session ? `Bonjour, ${session.user.fullName} — ${session.role}` : undefined}
+        />
+      </div>
+      {/* Mobile : titre compact (l'ancien en-tête occupait un tiers de l'écran avant le premier contenu). */}
+      <div className="flex items-baseline justify-between gap-3 sm:hidden">
+        <h1 className="truncate text-xl font-black tracking-tight text-foreground">
+          {session ? `Bonjour, ${session.user.fullName.split(" ")[0]}` : "Tableau de bord"}
+        </h1>
+        {session ? (
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{session.role}</span>
+        ) : null}
+      </div>
 
-      <section className="space-y-4">
-        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
+      <section className="space-y-3 sm:space-y-4">
+        <h2 className="flex items-center gap-2.5 text-base font-black tracking-tight text-foreground sm:text-xl">
           <span className="h-5 w-1 rounded-full bg-primary" aria-hidden="true" />
           Vos accès
         </h2>
@@ -358,17 +369,17 @@ export default async function DashboardHomePage({
             message="Aucun module ne vous est accessible pour le moment. Contactez un administrateur si vous pensez qu'il s'agit d'une erreur."
           />
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
             {moduleCards.map((module_) =>
               module_.href ? (
                 <Link
                   key={module_.id}
                   href={module_.href}
-                  className="brand-gradient-bg card-shadow-hover group relative flex flex-col overflow-hidden rounded-2xl p-5 shadow-elevated transition-[box-shadow,transform,filter] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:brightness-110"
+                  className="brand-gradient-bg card-shadow-hover group relative flex flex-col overflow-hidden rounded-2xl p-3 shadow-elevated sm:p-5 transition-[box-shadow,transform,filter] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:brightness-110"
                 >
                   <ModuleCardWatermark />
-                  <h3 className="relative mt-4 text-lg font-bold text-white">{module_.label}</h3>
-                  <p className="relative mt-1 flex items-center gap-1 text-sm font-semibold text-white/80 transition-colors duration-200 group-hover:text-white">
+                  <h3 className="relative mt-2 text-sm font-bold leading-tight text-white sm:mt-4 sm:text-lg">{module_.label}</h3>
+                  <p className="relative mt-1 flex items-center gap-1 text-[11px] font-semibold text-white/80 transition-colors duration-200 group-hover:text-white sm:text-sm">
                     Accéder au module
                     <Icon
                       name="arrow-up-right"
@@ -379,16 +390,16 @@ export default async function DashboardHomePage({
               ) : (
                 <div
                   key={module_.id}
-                  className="brand-gradient-bg relative flex flex-col overflow-hidden rounded-2xl p-5 opacity-60"
+                  className="brand-gradient-bg relative flex flex-col overflow-hidden rounded-2xl p-3 opacity-60 sm:p-5"
                 >
                   <ModuleCardWatermark />
-                  <div className="relative flex justify-end">
+                  <div className="relative flex justify-start sm:justify-end">
                     <span className="inline-flex items-center rounded-full border border-white/40 bg-white/15 px-2.5 py-0.5 text-xs font-medium text-white">
                       {module_.reason === "coming_soon" ? "Bientôt disponible" : "Aucun accès"}
                     </span>
                   </div>
-                  <h3 className="relative mt-4 text-lg font-bold text-white">{module_.label}</h3>
-                  <p className="relative mt-1 text-sm text-white/80">
+                  <h3 className="relative mt-2 text-sm font-bold leading-tight text-white sm:mt-4 sm:text-lg">{module_.label}</h3>
+                  <p className="relative mt-1 hidden text-sm text-white/80 sm:block">
                     {module_.reason === "coming_soon"
                       ? "Les écrans de ce module sont en cours de construction."
                       : "Votre rôle n'a aucune permission opérationnelle sur ce module."}
@@ -399,12 +410,13 @@ export default async function DashboardHomePage({
             {isAdmin(session) ? (
               <Link
                 href="/admin"
-                className="brand-gradient-bg card-shadow-hover group relative flex flex-col overflow-hidden rounded-2xl p-5 shadow-elevated transition-[box-shadow,transform,filter] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:brightness-110"
+                className="brand-gradient-bg card-shadow-hover group relative flex flex-col overflow-hidden rounded-2xl p-3 shadow-elevated sm:p-5 transition-[box-shadow,transform,filter] duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 motion-safe:active:scale-[0.99] hover:brightness-110"
               >
                 <ModuleCardWatermark />
-                <h3 className="relative mt-4 text-lg font-bold text-white">Administration</h3>
-                <p className="relative mt-1 flex items-center gap-1 text-sm font-semibold text-white/80 transition-colors duration-200 group-hover:text-white">
-                  Utilisateurs, rôles et modules du portail
+                <h3 className="relative mt-2 text-sm font-bold leading-tight text-white sm:mt-4 sm:text-lg">Administration</h3>
+                <p className="relative mt-1 flex items-center gap-1 text-[11px] font-semibold text-white/80 transition-colors duration-200 group-hover:text-white sm:text-sm">
+                  <span className="sm:hidden">Gérer le portail</span>
+                  <span className="hidden sm:inline">Utilisateurs, rôles et modules du portail</span>
                   <Icon
                     name="arrow-up-right"
                     className="size-3 transition-transform duration-200 ease-out-strong motion-safe:group-hover:translate-x-0.5 motion-safe:group-hover:-translate-y-0.5"

@@ -93,39 +93,43 @@ export default async function RHToolsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-8 font-sans">
-      <PageHeader
-        title="Boîte à Outils RH"
-        description="Accédez à l'ensemble des modules d'administration pour la gestion des pointages."
-      />
+    <div className="mx-auto max-w-6xl space-y-4 px-4 py-2 font-sans sm:px-6 md:space-y-8 md:py-8">
+      <div className="hidden md:block">
+        <PageHeader
+          title="Boîte à Outils RH"
+          description="Accédez à l'ensemble des modules d'administration pour la gestion des pointages."
+        />
+      </div>
+      {/* Mobile : titre compact en gras, sans description (même traitement que le tableau de bord). */}
+      <h1 className="text-xl font-black tracking-tight text-foreground md:hidden">Boîte à outils RH</h1>
 
       <div className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-3">
           {tools.map((tool) => {
             if (tool.available) {
               return (
                 <Link key={tool.href} href={tool.href} className="group">
-                  <Card className="h-full flex flex-col items-start p-4 hover:border-primary/50 hover:bg-primary/5 transition-colors border-border/80">
-                    <div className="p-2 bg-primary/10 rounded-lg text-primary mb-3 group-hover:scale-105 transition-transform">
-                      <Icon name={tool.icon} className="size-5" />
+                  <Card className="h-full flex flex-col items-start p-3 hover:border-primary/50 hover:bg-primary/5 transition-colors border-border/80 md:p-4">
+                    <div className="p-1.5 bg-primary/10 rounded-lg text-primary mb-2 group-hover:scale-105 transition-transform md:p-2 md:mb-3">
+                      <Icon name={tool.icon} className="size-4 md:size-5" />
                     </div>
-                    <h3 className="font-bold text-sm text-foreground mb-1">{tool.title}</h3>
-                    <p className="text-xs text-muted-foreground">{tool.description}</p>
+                    <h3 className="font-bold text-sm leading-tight text-foreground md:mb-1">{tool.title}</h3>
+                    <p className="hidden text-xs text-muted-foreground md:block">{tool.description}</p>
                   </Card>
                 </Link>
               );
             }
 
             return (
-              <Card key={tool.href} className="h-full flex flex-col items-start p-4 border-dashed border-border/50 bg-surface/50 opacity-70">
-                <div className="p-2 bg-muted rounded-lg text-muted-foreground mb-3">
-                  <Icon name={tool.icon} className="size-5" />
+              <Card key={tool.href} className="h-full flex flex-col items-start p-3 border-dashed border-border/50 bg-surface/50 opacity-70 md:p-4">
+                <div className="p-1.5 bg-muted rounded-lg text-muted-foreground mb-2 md:p-2 md:mb-3">
+                  <Icon name={tool.icon} className="size-4 md:size-5" />
                 </div>
                 <div className="flex items-center gap-2 mb-1">
                   <h3 className="font-bold text-sm text-muted-foreground">{tool.title}</h3>
                   <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground bg-muted px-2 py-0.5 rounded-full">Bientôt</span>
                 </div>
-                <p className="text-xs text-muted-foreground/80">{tool.description}</p>
+                <p className="hidden text-xs text-muted-foreground/80 md:block">{tool.description}</p>
               </Card>
             );
           })}
