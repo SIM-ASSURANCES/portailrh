@@ -57,6 +57,8 @@ model User {
   /// Demandes dont ce DG a approuvé la "validation complète" (verrou de clôture, Ticket 7).
   demandesApprouveesDG          Demande[]         @relation("DgApprobateurValidationComplete")
   demandesDecideesFinance       Demande[]         @relation("DemandeDecideurFinance")
+  /// Demandes clôturées de force par ce compte (lot C).
+  demandesClotureesDeForce      Demande[]         @relation("DemandeClotureForceePar")
   reglementsFaits               Reglement[]       @relation("ReglementAuteur")
   retoursDeclares               RetourCaisse[]    @relation("RetourDeclarant")
   retoursReceptionnes           RetourCaisse[]    @relation("RetourReceptionnaire")
@@ -575,6 +577,14 @@ model Demande {
   /// `niveauRejet`).
   motifRejet   String?
   motifCloture String?
+  /// Lot C : demande clôturée de force (articles non régularisés), avec motif (`motifCloture`, 10 caractères minimum).
+  /// Aucune écriture de caisse n'est touchée. `clotureForceeArticles` : instantané des articles non terminés (libellé,
+  /// bénéficiaire, montants, solde restant) au moment de la clôture, relu par le reporting et l'affichage.
+  clotureForcee         Boolean   @default(false)
+  clotureForceeAt       DateTime?
+  clotureForceeParId    String?
+  clotureForceePar      User?     @relation("DemandeClotureForceePar", fields: [clotureForceeParId], references: [id])
+  clotureForceeArticles Json?
 
   /// Circuit de validation (2026-10-06, voir backend/src/circuitDemande.ts). Pas de valeur par défaut pour
   /// `etapeCircuit` : toute création de demande choisit sa première étape.

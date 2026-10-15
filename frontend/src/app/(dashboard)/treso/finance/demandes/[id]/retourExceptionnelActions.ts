@@ -1,5 +1,6 @@
 "use server";
 
+import { remettreChronoDemande } from "backend";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -45,7 +46,9 @@ const saisieSchema = z.object({
   pieceJointeUrl: z.string().trim().min(1).optional(),
 });
 
-function revalider(demandeId: string) {
+async function revalider(demandeId: string) {
+  // Lot C : saisie, validation ou rejet d'un retour exceptionnel = événement d'article, le chronomètre de rappel repart.
+  await remettreChronoDemande(demandeId);
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath(`/treso/demandes/${demandeId}`);
   revalidatePath("/treso/finance/retours-exceptionnels");
@@ -149,7 +152,7 @@ export async function creerRetourExceptionnelAction(
     });
   });
 
-  revalider(demandeId);
+  await revalider(demandeId);
   // Aucune notification au collaborateur à ce stade (évite une fausse alerte
   // si le Responsable rejette) — voir la spec.
   return { status: "success", message: "Retour exceptionnel enregistré — en attente de validation de Finance." };
@@ -258,7 +261,7 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
     });
   });
 
-  revalider(retour.demandeId);
+  await revalider(retour.demandeId);
 
   await notify({
     userId: retour.demande.createurId,
@@ -323,6 +326,6 @@ export async function rejeterRetourExceptionnelAction(retourId: string, motifRej
     }),
   ]);
 
-  revalider(retour.demandeId);
+  await revalider(retour.demandeId);
   return { status: "success", message: "Retour exceptionnel rejeté — l'Assistant Finance peut resaisir." };
 }

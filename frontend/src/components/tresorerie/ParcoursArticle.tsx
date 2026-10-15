@@ -24,6 +24,11 @@ export function ParcoursArticleView({ parcours }: { parcours: ParcoursArticle })
     <div data-parcours-article data-parcours-badge={parcours.badge} className="mt-2 space-y-1.5 text-xs font-normal">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Badge variant={parcours.variante}>{parcours.libelleBadge}</Badge>
+        {parcours.clotureSansRegularisation ? (
+          <Badge variant="danger" data-cloture-sans-regularisation>
+            {parcours.clotureSansRegularisation}
+          </Badge>
+        ) : null}
         {parcours.precision ? <span className="text-muted-foreground">{parcours.precision}</span> : null}
         {cles.map((c) => (
           <span key={c.cle} className="text-muted-foreground" data-parcours-montant={c.cle}>

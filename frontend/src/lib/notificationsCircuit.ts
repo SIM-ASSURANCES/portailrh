@@ -1,5 +1,10 @@
 import {
+  beneficiaireArticle,
+  chargerEvaluationCloture,
   decideursFinanceDemande,
+  etatLigneCircuit,
+  manqueArticle,
+  totalArticle,
   notificationApprobationCloture,
   notificationsRappel,
   notificationRefusLigneDG,
@@ -10,6 +15,7 @@ import {
   beneficiairesBloquesReglement,
   resumeArticles,
   type CandidatNotification,
+  type ArticleNotification,
   type ContexteNotificationCircuit,
   type EvenementCircuit,
   type NotificationCircuit,
@@ -24,7 +30,13 @@ import { notify } from "@/lib/notifications";
  * (la décision est déjà enregistrée).
  */
 
-async function chargerContexte(demandeId: string): Promise<ContexteNotificationCircuit | null> {
+/** Ce que l'événement qui vient d'avoir lieu a touché : articles décidés ou soumis, et parmi eux ceux que le DG avait refusés. */
+export interface DetailEvenementCircuit {
+  ligneIds?: string[];
+  resoumisIds?: string[];
+}
+
+async function chargerContexte(demandeId: string, detail: DetailEvenementCircuit = {}): Promise<ContexteNotificationCircuit | null> {
   const d = await prisma.demande.findUnique({
     where: { id: demandeId },
     select: {
@@ -41,17 +53,30 @@ async function chargerContexte(demandeId: string): Promise<ContexteNotificationC
       motifRejet: true,
       montant: true,
       montantValide: true,
+      statut: true,
       approbationClotureNonRequise: true,
       validationCompleteParDG: true,
-      createur: { select: { fullName: true, service: { select: { responsableId: true } } } },
+      beneficiaireType: true,
+      beneficiaireNom: true,
+      beneficiaireUser: { select: { fullName: true } },
+      createur: { select: { fullName: true, service: { select: { responsableId: true, name: true } } } },
       lignes: {
+        orderBy: { createdAt: "asc" },
         select: {
+          id: true,
+          libelle: true,
+          quantite: true,
+          prixUnitaire: true,
+          motifRejet: true,
+          motifRefusDG: true,
           statutValidation: true,
           soumiseAuDG: true,
           decisionDG: true,
           decideurFinanceId: true,
           beneficiaireType: true,
           beneficiaireUserId: true,
+          beneficiaireNom: true,
+          beneficiaireUser: { select: { fullName: true } },
         },
       },
     },
@@ -71,8 +96,37 @@ async function chargerContexte(demandeId: string): Promise<ContexteNotificationC
           d.modeEtapeDG
         )
       : undefined;
+  // Lot C : chaque article est NOMMÉ dans les messages (libellé, bénéficiaire, montant) ; pour un article validé, on lit aussi
+  // ce qui lui manque pour être terminé (règlement, retour, dépenses) — une seule lecture de la régularisation par événement.
+  let manques = new Map<string, ReturnType<typeof manqueArticle>>();
+  if (articles && d.lignes.some((l) => l.statutValidation === "VALIDEE")) {
+    const { articles: evalArticles } = await chargerEvaluationCloture(d.id);
+    manques = new Map(evalArticles.filter((a) => a.statut === "VALIDEE").map((a) => [a.ligneId, manqueArticle(a)]));
+  }
+  const articlesDetail: ArticleNotification[] | undefined = articles
+    ? d.lignes.map((l) => {
+        const benef = beneficiaireArticle(l, d);
+        const etat = etatLigneCircuit({ statut: l.statutValidation, soumiseAuDG: l.soumiseAuDG, decisionDG: l.decisionDG }, d.modeEtapeDG);
+        return {
+          id: l.id,
+          libelle: l.libelle,
+          beneficiaire: benef.libelle,
+          beneficiaireUserId: benef.userId,
+          montant: totalArticle({ quantite: l.quantite, prixUnitaire: Number(l.prixUnitaire) }),
+          statut: l.statutValidation,
+          etat,
+          motif: l.statutValidation === "REJETEE" ? l.motifRejet : l.decisionDG === "REFUSEE" ? l.motifRefusDG : null,
+          manque: l.statutValidation === "VALIDEE" ? (manques.get(l.id) ?? null) : null,
+        };
+      })
+    : undefined;
   return {
     articles,
+    articlesDetail,
+    articlesConcernes: detail.ligneIds,
+    articlesResoumis: detail.resoumisIds,
+    serviceNom: d.createur.service?.name ?? null,
+    statutDemande: d.statut,
     decideursFinanceIds: decideursFinanceDemande(d),
     demandeId: d.id,
     reference: d.reference,
@@ -119,9 +173,14 @@ async function envoyer(notifications: NotificationCircuit[]) {
 }
 
 /** Après un passage d'étape (création, décision, rejet, soumission, resoumission) : notifie ceux qui doivent agir. */
-export async function notifierEtapeCircuit(demandeId: string, acteurId: string, evenement: EvenementCircuit = "ETAPE"): Promise<void> {
+export async function notifierEtapeCircuit(
+  demandeId: string,
+  acteurId: string,
+  evenement: EvenementCircuit = "ETAPE",
+  detail: DetailEvenementCircuit = {}
+): Promise<void> {
   try {
-    const ctx = await chargerContexte(demandeId);
+    const ctx = await chargerContexte(demandeId, detail);
     if (!ctx) return;
     await envoyer(notificationsEtape(ctx, await chargerCandidats(ctx.responsableServiceId), acteurId, evenement));
   } catch (e) {
@@ -159,7 +218,11 @@ export async function envoyerRappelsCircuit(maintenant = new Date()): Promise<vo
 }
 
 /** Refus d'une ligne par le DG qui ne termine pas son examen : la Finance qui peut agir est prévenue. */
-export async function notifierRefusLigneDG(demandeId: string, acteurId: string, refus: { libelle: string; motif: string }): Promise<void> {
+export async function notifierRefusLigneDG(
+  demandeId: string,
+  acteurId: string,
+  refus: { libelle: string; motif: string; ligneId?: string }
+): Promise<void> {
   try {
     const ctx = await chargerContexte(demandeId);
     if (!ctx) return;

@@ -13,6 +13,7 @@ import {
   type ArticleReglable,
   type Prisma,
 } from "backend";
+import { remettreChronoDemande } from "backend";
 import {
   allocationsReglementArticle,
   calculerStatutDemande,
@@ -456,6 +457,7 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   await prisma.$transaction(operations);
 
   await calculerStatutDemande(reglement.demandeId);
+  await remettreChronoDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);
 
   // Un règlement Caisse confirmé ouvre le droit à déclarer un retour de caisse (Ticket 5) — un règlement Banque n'a pas de
@@ -589,6 +591,7 @@ export async function annulerReglementAction(
   await prisma.$transaction(operations);
 
   await calculerStatutDemande(reglement.demandeId);
+  await remettreChronoDemande(reglement.demandeId);
   revalidateDemande(reglement.demandeId);
 
   return { status: "success", message: "Règlement annulé." };

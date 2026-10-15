@@ -16,6 +16,7 @@ import {
   prisma,
   rienARendre,
 } from "backend";
+import { remettreChronoDemande } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -228,6 +229,8 @@ export async function creerRetourCaisseAction(
     });
   });
 
+  await remettreChronoDemande(reglement.demandeId);
+
   revalidatePath(`/treso/demandes/${reglement.demandeId}`);
   revalidatePath("/treso/demandes");
   // Ticket 8 : un nouveau retour déclaré augmente aussitôt l'indicateur
@@ -303,6 +306,7 @@ async function completerFicheRegularisation(
   });
   if (!maj) return { status: "error", message: "Ce retour a changé entre-temps : rechargez la page." };
 
+  await remettreChronoDemande(reglement.demandeId);
   revalidatePath(`/treso/demandes/${reglement.demandeId}`);
   revalidatePath("/treso/demandes");
   revalidatePath("/treso/finance", "layout");
@@ -438,6 +442,8 @@ export async function modifierRetourCaisseAction(
       },
     });
   });
+
+  await remettreChronoDemande(retour.reglement.demandeId);
 
   revalidatePath(`/treso/demandes/${retour.reglement.demandeId}`);
   revalidatePath("/treso/demandes");

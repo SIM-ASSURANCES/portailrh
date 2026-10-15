@@ -17,6 +17,7 @@ node e2e/lot-g.mjs                  # Trésorerie (lot G) : date de livraison pa
 node e2e/lot-g-bis.mjs              # Trésorerie (lot G bis) : retour d'un fonds bancaire = retour externe rattaché à la demande et à l'article (Finance), compte comme retour reçu (pdftotext et unzip requis)
 node e2e/lot-g-ter.mjs              # Trésorerie (lot G ter) : article réglé Caisse + Banque (471 000 + 100 000) — reste non détaillé incluant le fonds banque, sous-bloc par règlement, « Détailler » du fonds banque, solde 0 et « Régularisé », bande « Total de l'article » (lot G quater) (pdftotext requis)
 node e2e/lot-h.mjs                  # Trésorerie (lot H) : libellés de dates (Demande créée le / Livraison prévue le / Géré le) sur écrans, listes, PDF, Excel ; libellés du menu par rôle (Accueil, Accueil Finance), infobulles (pdftotext et unzip requis)
+node e2e/lot-c.mjs                  # Trésorerie (lot C) : décision du DG par article, notifications nommant l'article, clôture « tous les articles terminés » (message de blocage), clôture forcée (motif, garde 8, historique, notifications, reporting/export), rappel unique (unzip requis)
 bash e2e/arreter.sh                  # arrête le serveur et le conteneur
 npm uninstall --no-save playwright
 ```

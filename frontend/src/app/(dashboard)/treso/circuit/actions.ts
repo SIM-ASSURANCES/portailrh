@@ -108,18 +108,20 @@ export async function soumettreLignesAuDGAction(demandeId: string, ligneIds: str
 
   const acteur = await chargerActeur(prisma, session, demande.createurId);
   let nombre = 0;
+  let resoumisIds: string[] = [];
   try {
     await prisma.$transaction(async (tx) => {
       const r = await soumettreLignesAuDG(tx, demandeId, acteur, ids);
       if (!r.ok) throw new RefusTransaction(r.message);
       nombre = r.libelles?.length ?? 0;
+      resoumisIds = r.resoumisIds ?? [];
     });
   } catch (e) {
     if (e instanceof RefusTransaction) return { status: "error", message: e.message };
     throw e;
   }
   rafraichir(demandeId);
-  await notifierEtapeCircuit(demandeId, session.user.id, "SOUMISSION_DG");
+  await notifierEtapeCircuit(demandeId, session.user.id, "SOUMISSION_DG", { ligneIds: ids, resoumisIds });
   return {
     status: "success",
     message: `${nombre} ligne${nombre > 1 ? "s" : ""} de la demande ${demande.reference} soumise${nombre > 1 ? "s" : ""} au DG.`,
@@ -158,9 +160,13 @@ export async function deciderLigneDGAction(ligneId: string, valider: boolean, mo
     where: { demandeId: ligne.demandeId, statutValidation: "EN_ATTENTE", soumiseAuDG: true, decisionDG: null },
   });
   if (resteChezLeDG === 0) {
-    await notifierEtapeCircuit(ligne.demandeId, session.user.id, "DECISION_DG");
+    await notifierEtapeCircuit(ligne.demandeId, session.user.id, "DECISION_DG", { ligneIds: [String(ligneId)] });
   } else if (!decision.valider) {
-    await notifierRefusLigneDG(ligne.demandeId, session.user.id, { libelle: resultat.libelle, motif: (decision.motif ?? "").trim() });
+    await notifierRefusLigneDG(ligne.demandeId, session.user.id, {
+      libelle: resultat.libelle,
+      motif: (decision.motif ?? "").trim(),
+      ligneId: String(ligneId),
+    });
   }
   return {
     status: "success",

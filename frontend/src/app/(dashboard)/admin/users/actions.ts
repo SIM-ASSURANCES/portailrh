@@ -806,6 +806,7 @@ export async function supprimerUtilisateurAction(
     pointageMisEnServiceParCompte,
     lignesBeneficiees,
     lignesDecideesFinance,
+    demandesClotureesDeForce,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -863,6 +864,8 @@ export async function supprimerUtilisateurAction(
     prisma.ligneDemande.count({ where: { beneficiaireUserId: userId } }),
     // Autonomie des articles, lot B (2026-10-15) : décideur Finance d'un article (SET NULL en base).
     prisma.ligneDemande.count({ where: { decideurFinanceId: userId } }),
+    // Lot C (2026-10-20) : clôture forcée d'une demande (SET NULL en base).
+    prisma.demande.count({ where: { clotureForceeParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -916,6 +919,7 @@ export async function supprimerUtilisateurAction(
     blocages.push(`purgé le Pointage ${reinitialisationsPointageEffectuees} fois (journal d'audit permanent)`);
   if (pointageMisEnServiceParCompte > 0) blocages.push("mis le Pointage en service");
   if (lignesDecideesFinance > 0) blocages.push(`validé ${lignesDecideesFinance} ligne(s) d'article en tant que Finance`);
+  if (demandesClotureesDeForce > 0) blocages.push(`forcé la clôture de ${demandesClotureesDeForce} demande(s)`);
 
   if (blocages.length > 0) {
     const liste =

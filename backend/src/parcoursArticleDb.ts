@@ -6,6 +6,7 @@ import { etatLigneCircuit, totalArticle } from "./etatArticles";
 import { parcoursArticle, type ParcoursArticle } from "./parcoursArticle";
 import { prisma } from "./prisma";
 import { getRegularisationParArticle } from "./regularisationArticleDb";
+import { libelleArticleClotureForcee, lireInstantaneClotureForcee } from "./clotureDemande";
 import { getSoldesARegulariserParReglements } from "./tresorerie";
 
 /** Parcours de chaque article de la demande, par identifiant d'article. Vide pour une demande sans article. */
@@ -14,6 +15,8 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
     where: { id: demandeId },
     select: {
       modeEtapeDG: true,
+      clotureForcee: true,
+      clotureForceeArticles: true,
       beneficiaireType: true,
       beneficiaireUserId: true,
       beneficiaireNom: true,
@@ -68,13 +71,13 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
   const articlesRegles = new Set(confirmes.map((r) => r.ligneDemandeId));
   const regularisationIndeterminee = exceptionnels > 0 && articlesRegles.size >= 2;
 
+  const instantaneForce = lireInstantaneClotureForcee(demande.clotureForceeArticles);
   for (const ligne of demande.lignes) {
     const benef = beneficiaireArticle(ligne, demande);
     const decideParNom = ligne.decidePar?.fullName ?? null;
     const finance = ligne.decideurFinance?.fullName ?? null;
-    resultat.set(
-      ligne.id,
-      parcoursArticle({
+    const regulLigne = regulParLigne.get(ligne.id);
+    const parcours = parcoursArticle({
         statut: ligne.statutValidation,
         etat: etatLigneCircuit(
           { statut: ligne.statutValidation, soumiseAuDG: ligne.soumiseAuDG, decisionDG: ligne.decisionDG },
@@ -109,8 +112,16 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
               date: x.estReceptionne ? (x.receptionneAt ?? x.createdAt) : x.createdAt,
             })),
           })),
-      })
+      });
+    // Lot C : demande clôturée de force — l'article encore non régularisé le dit, avec son solde restant.
+    parcours.clotureSansRegularisation = libelleArticleClotureForcee(
+      demande,
+      instantaneForce,
+      ligne.id,
+      regulLigne?.termine ?? true,
+      regulLigne?.ecart ?? 0
     );
+    resultat.set(ligne.id, parcours);
   }
   return resultat;
 }

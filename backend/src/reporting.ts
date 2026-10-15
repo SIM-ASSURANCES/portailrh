@@ -1,5 +1,6 @@
 import { LIBELLE_ETAPE_CIRCUIT } from "./circuitDemande";
 import { construireLigneReporting, type HistoriqueReporting, type LigneReportingDemande } from "./reportingDemandeLigne";
+import { lireInstantaneClotureForcee } from "./clotureDemande";
 import { beneficiaireArticle, nomBeneficiaireDemande } from "./beneficiaireArticles";
 import { construireLigneRetour, type LigneReportingRetour } from "./reportingRetourCaisse";
 import type { BeneficiaireType, ModeReglement, Prisma, StatutDemande, TypeDemande } from "./generated/prisma/client";
@@ -1112,6 +1113,11 @@ export async function getReportingParDemande(
       select: {
         id: true,
         etapeCircuit: true,
+        clotureForcee: true,
+        clotureForceeAt: true,
+        clotureForceeArticles: true,
+        motifCloture: true,
+        clotureForceePar: { select: { fullName: true } },
         lignes: {
           orderBy: { createdAt: "asc" },
           include: { categorie: true, objet: true, decidePar: { select: { fullName: true } } },
@@ -1243,6 +1249,14 @@ export async function getReportingParDemande(
         creeLe: x.creeAt,
       })),
       historique: historiqueParId.get(d.id) ?? [],
+      clotureForcee: det.clotureForcee
+        ? {
+            motif: det.motifCloture,
+            par: det.clotureForceePar?.fullName ?? null,
+            le: det.clotureForceeAt,
+            articles: lireInstantaneClotureForcee(det.clotureForceeArticles),
+          }
+        : null,
     });
   });
 }

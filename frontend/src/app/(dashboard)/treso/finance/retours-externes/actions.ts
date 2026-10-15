@@ -1,5 +1,6 @@
 "use server";
 
+import { remettreChronoDemande } from "backend";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -180,6 +181,7 @@ export async function creerRetourExterneAction(
     });
   }
 
+  if (rattache) await remettreChronoDemande(rattache.demandeId);
   revalidatePath("/treso/finance", "layout");
   if (rattache) revalidatePath("/treso/demandes", "layout");
   publishDataChanged();

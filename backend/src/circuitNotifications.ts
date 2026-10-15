@@ -7,9 +7,10 @@
 // relance ceux qui doivent agir, au plus une fois par 24 h et par demande (`Demande.dernierRappelAt`).
 
 import type { Prisma } from "./generated/prisma/client";
-import type { EtapeCircuit, ModeEtapeDG, NiveauRejet } from "./generated/prisma/enums";
+import type { EtapeCircuit, ModeEtapeDG, NiveauRejet, StatutDemande } from "./generated/prisma/enums";
 import { LIBELLE_ETAPE_CIRCUIT, refusApprobationCloture, type TypeDemandeCircuit } from "./circuitDemande";
-import type { ResumeArticles } from "./etatArticles";
+import { phrasesManque, type ManqueArticle } from "./clotureDemande";
+import type { EtatArticle, ResumeArticles, StatutArticle } from "./etatArticles";
 
 /** Délai avant le premier rappel. */
 export const DELAI_RAPPEL_MS = 48 * 60 * 60 * 1000;
@@ -19,12 +20,21 @@ export const INTERVALLE_RAPPEL_MS = 24 * 60 * 60 * 1000;
 /** Étapes où quelqu'un doit agir pour que la demande avance (rappels). */
 export const ETAPES_EN_ATTENTE: readonly EtapeCircuit[] = ["SERVICE", "FINANCE", "DG", "REJET_DG", "DECISION_FINALE", "A_CORRIGER"];
 
+/**
+ * Lot C : une demande à articles TERMINÉE (tous les articles décidés) et pas encore clôturée attend encore des actions par
+ * article — règlement, retour de caisse, dépenses à détailler, clôture. Elle est relancée comme les autres, avec UN SEUL
+ * chronomètre par demande (`Demande.etapeCircuitDepuis`, remis à zéro à chaque événement d'un article).
+ */
+export const STATUTS_DEMANDE_CLOS: readonly StatutDemande[] = ["CLOTUREE", "REJETEE", "ABANDONNEE"];
+
 /** Permissions du RÔLE lues pour choisir les destinataires (les permissions de décision ne sont jamais déléguées). */
 export const PERMISSIONS_NOTIFICATION_CIRCUIT: readonly string[] = [
   "treso.decider_finance",
   "treso.soumettre_dg",
   "treso.decider_dg",
   "treso.effectuer_reglement",
+  "treso.receptionner_retour",
+  "treso.cloturer_demande",
   "treso.approuver_validation_complete",
 ];
 
@@ -62,6 +72,33 @@ export interface ContexteNotificationCircuit {
   /** Demande À ARTICLES (lot B) : état des articles, dont dépendent les destinataires (Finance et DG peuvent avoir chacun
    *  des articles à traiter en même temps). Absent : demande sans article (dépense directe), règles d'origine. */
   articles?: ResumeArticles;
+  /** Lot C : service du demandeur (rappel de la demande dans chaque notification). */
+  serviceNom?: string | null;
+  /** Lot C : statut de la demande (une demande clôturée, rejetée ou abandonnée n'est plus relancée). */
+  statutDemande?: string;
+  /** Lot C : chaque article (libellé, bénéficiaire, montant, état, ce qui lui manque), pour les NOMMER dans les messages. */
+  articlesDetail?: ArticleNotification[];
+  /** Lot C : articles concernés par l'événement qui vient d'avoir lieu (décidés, soumis au DG…) ; absent = tous les articles pertinents. */
+  articlesConcernes?: string[];
+  /** Lot C : parmi les articles soumis au DG par cet événement, ceux qu'il avait refusés avant (resoumission). */
+  articlesResoumis?: string[];
+}
+
+/** Un article tel que les notifications le nomment : « Formation » (bénéficiaire X, 571 000 FCFA). */
+export interface ArticleNotification {
+  id: string;
+  libelle: string;
+  beneficiaire: string;
+  /** Compte du portail bénéficiaire de l'article (garde 8 : jamais notifié d'une action sur son propre article). */
+  beneficiaireUserId: string | null;
+  /** Total de l'article (quantité × prix). */
+  montant: number;
+  statut: StatutArticle;
+  etat: EtatArticle;
+  /** Motif du rejet, ou du refus du DG pour un article à trancher. */
+  motif: string | null;
+  /** Article VALIDÉ : ce qui lui manque pour être terminé (règlement, retour, dépenses, solde) ; `null` = terminé. */
+  manque: ManqueArticle | null;
 }
 
 /** Ce qui vient de se passer sur la demande (lot B) : détermine qui est prévenu quand l'étape ne change pas. */
@@ -81,6 +118,32 @@ const NIVEAU: Record<NiveauRejet, string> = { SERVICE: "Service", FINANCE: "Fina
 
 const fcfa = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`;
 const pluriel = (n: number, mot: string) => `${n} ${mot}${n > 1 ? "s" : ""}`;
+
+/** « Demande DEM-2026-000012 de Aïcha K. (service Commercial) » — rappel de la demande dans chaque notification d'article. */
+export function rappelDemande(ctx: Pick<ContexteNotificationCircuit, "reference" | "createurNom" | "serviceNom">): string {
+  return `Demande ${ctx.reference} de ${ctx.createurNom}${ctx.serviceNom ? ` (service ${ctx.serviceNom})` : ""}`;
+}
+
+/** « Formation » (bénéficiaire X, 571 000 FCFA). */
+export function nommerArticle(a: Pick<ArticleNotification, "libelle" | "beneficiaire" | "montant">): string {
+  return `« ${a.libelle} » (bénéficiaire ${a.beneficiaire}, ${fcfa(a.montant)})`;
+}
+
+const articlesDe = (ctx: ContexteNotificationCircuit, ids?: readonly string[]): ArticleNotification[] =>
+  (ctx.articlesDetail ?? []).filter((a) => !ids || ids.includes(a.id));
+
+/** Liste d'articles pour un message : « Articles : A ; B. » (rien si la liste est vide). */
+function listeArticles(intro: string, articles: readonly ArticleNotification[], precision: (a: ArticleNotification) => string = () => ""): string {
+  if (articles.length === 0) return "";
+  return ` ${intro} : ${articles.map((a) => `${nommerArticle(a)}${precision(a)}`).join(" ; ")}.`;
+}
+
+/** Précision d'un article pour la Finance : ce qui est attendu d'elle. */
+function precisionFinance(a: ArticleNotification): string {
+  if (a.etat === "VALIDEE_DG_A_CONFIRMER") return " — validé par le DG, à confirmer";
+  if (a.etat === "REFUSEE_DG_A_TRANCHER") return ` — refusé par le DG${a.motif ? ` (motif : ${a.motif})` : ""}, à resoumettre ou à rejeter`;
+  return " — à décider";
+}
 
 function avec(candidats: readonly CandidatNotification[], ...cles: string[]): string[] {
   return candidats.filter((c) => cles.some((k) => c.permissions.includes(k))).map((c) => c.id);
@@ -191,21 +254,28 @@ function demandeAction(
     if (aDecider > 0) morceaux.push(`${pluriel(aDecider, "article")} à décider`);
     if (x.valideesDGAConfirmer > 0) morceaux.push(`${pluriel(x.valideesDGAConfirmer, "article")} validé${x.valideesDGAConfirmer > 1 ? "s" : ""} par le DG à confirmer`);
     if (x.refuseesDGATrancher > 0) morceaux.push(`${pluriel(x.refuseesDGATrancher, "article")} refusé${x.refuseesDGATrancher > 1 ? "s" : ""} par le DG à resoumettre ou à rejeter`);
+    const enAttente = articlesDe(ctx).filter((a) => a.etat === "A_DECIDER" || a.etat === "VALIDEE_DG_A_CONFIRMER" || a.etat === "REFUSEE_DG_A_TRANCHER");
     return {
       titre: "Demande à décider (Finance)",
-      message: `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) attend la Finance : ${morceaux.join(", ")} (${x.traites}/${x.total} articles traités).`,
+      message:
+        `La demande ${ref} de ${ctx.createurNom}${ctx.serviceNom ? ` (service ${ctx.serviceNom})` : ""} — ${fcfa(ctx.montant)} — attend la Finance : ${morceaux.join(", ")} (${x.traites}/${x.total} articles traités).` +
+        listeArticles("Articles en attente", enAttente, precisionFinance),
       lien: lienFinance(ctx.demandeId),
       priority: "IMPORTANT",
     };
   }
   if (ctx.articles && audience === "DG" && (ctx.etape === "FINANCE" || ctx.etape === "DG")) {
     const n = ctx.articles.chezDG;
+    const chezDG = articlesDe(ctx).filter((a) => a.etat === "CHEZ_DG");
+    const resoumis = (ctx.articlesResoumis ?? []).length;
+    const service = ctx.serviceNom ? ` (service ${ctx.serviceNom})` : "";
     return {
       titre: "Demande à décider (étape DG)",
       message:
-        ctx.modeEtapeDG === "OBLIGATOIRE"
-          ? `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) attend votre décision à l'étape DG, article par article (${ctx.articles.traites}/${ctx.articles.total} articles traités).`
-          : `${pluriel(n, "article")} de la demande ${ref} de ${ctx.createurNom} vous ${n > 1 ? "sont soumis" : "est soumis"} par la Finance : décidez-${n > 1 ? "les" : "le"} un par un à l'étape DG.`,
+        (ctx.modeEtapeDG === "OBLIGATOIRE"
+          ? `La demande ${ref} de ${ctx.createurNom}${service} — ${fcfa(ctx.montant)} — attend votre décision à l'étape DG, article par article (${ctx.articles.traites}/${ctx.articles.total} articles traités).`
+          : `${pluriel(n, "article")} de la demande ${ref} de ${ctx.createurNom}${service} vous ${n > 1 ? "sont soumis" : "est soumis"}${resoumis > 0 ? ` (dont ${resoumis} resoumis après refus)` : ""} par la Finance : décidez-${n > 1 ? "les" : "le"} un par un à l'étape DG.`) +
+        listeArticles("Articles à décider", chezDG),
       lien: `/treso/dg/${ctx.demandeId}`,
       priority: "IMPORTANT",
     };
@@ -287,13 +357,19 @@ export function notificationsEtape(
   if (ctx.etape === "TERMINEE" || (enCours && evenement === "DECISION_ARTICLES")) {
     const valide = ctx.montantValide ?? 0;
     const totale = Math.round(valide * 100) >= Math.round(ctx.montant * 100);
+    // Lot C : les articles décidés par CET événement sont nommés (libellé, bénéficiaire, montant), une seule notification par audience.
+    const decides = articlesDe(ctx, ctx.articlesConcernes).filter((a) => a.statut !== "EN_ATTENTE");
+    const detailDecisions = listeArticles("Détail", decides, (a) =>
+      a.statut === "VALIDEE" ? " : validé" : ` : rejeté${a.motif ? ` (motif : ${a.motif})` : ""}`
+    );
+    const validesConcernes = decides.filter((a) => a.statut === "VALIDEE");
     if (ctx.etape === "TERMINEE") {
       pousser(
         {
           titre: totale ? "Demande validée" : "Demande validée partiellement",
-          message: totale
+          message: (totale
             ? `Votre demande ${ctx.reference} a été validée (${fcfa(valide)}).`
-            : `Votre demande ${ctx.reference} a été validée partiellement (${fcfa(valide)} sur ${fcfa(ctx.montant)} demandés) — certaines lignes ont été rejetées.`,
+            : `Votre demande ${ctx.reference} a été validée partiellement (${fcfa(valide)} sur ${fcfa(ctx.montant)} demandés) — certaines lignes ont été rejetées.`) + detailDecisions,
           lien: lienDemandeur(ctx.demandeId),
           priority: "IMPORTANT",
         },
@@ -303,7 +379,7 @@ export function notificationsEtape(
       pousser(
         {
           titre: "Articles de votre demande décidés",
-          message: `Votre demande ${ctx.reference} : ${ctx.articles.validees} article(s) validé(s), ${ctx.articles.rejetees} rejeté(s) sur ${ctx.articles.total} (${fcfa(valide)} validés pour l'instant). Les autres articles sont en cours de traitement.`,
+          message: `Votre demande ${ctx.reference} : ${ctx.articles.validees} article(s) validé(s), ${ctx.articles.rejetees} rejeté(s) sur ${ctx.articles.total} (${fcfa(valide)} validés pour l'instant). Les autres articles sont en cours de traitement.` + detailDecisions,
           lien: lienDemandeur(ctx.demandeId),
           priority: "IMPORTANT",
         },
@@ -314,7 +390,9 @@ export function notificationsEtape(
       pousser(
         {
           titre: "Demande à régler",
-          message: `La demande ${ctx.reference} de ${ctx.createurNom} est validée${ctx.etape === "TERMINEE" ? "" : " en partie"} (${fcfa(valide)}) : le règlement peut être effectué.`,
+          message:
+            `${rappelDemande(ctx)} est validée${ctx.etape === "TERMINEE" ? "" : " en partie"} (${fcfa(valide)}) : le règlement peut être effectué.` +
+            listeArticles("Articles à régler", validesConcernes.length > 0 ? validesConcernes : articlesDe(ctx).filter((a) => a.statut === "VALIDEE" && a.manque?.resteARegler)),
           lien: lienFinance(ctx.demandeId),
           priority: "IMPORTANT",
         },
@@ -362,12 +440,83 @@ export function notificationApprobationCloture(
   };
 }
 
+/**
+ * Lot C — ce qui attend encore une action sur une demande TERMINÉE (tous les articles décidés) et pas clôturée, article par
+ * article et par audience :
+ *  - règlement (`treso.effectuer_reglement`) : articles validés avec un reste à régler ;
+ *  - retours et dépenses (`treso.receptionner_retour`) : retours de caisse à réceptionner, dépenses à détailler ;
+ *  - clôture (`treso.cloturer_demande`) : tous les articles sont terminés, la demande est prête à être clôturée ;
+ *  - approbation du DG (`treso.approuver_validation_complete`) si elle reste due.
+ * Garde 8 PAR ARTICLE : un compte n'est jamais prévenu d'une action sur un article dont il est le demandeur ou le bénéficiaire.
+ * Aucun doublon : une notification par compte et par audience, qui liste TOUS ses articles en attente.
+ */
+export function notificationsAttenteArticles(
+  ctx: ContexteNotificationCircuit,
+  candidats: readonly CandidatNotification[]
+): NotificationCircuit[] {
+  if (ctx.etape !== "TERMINEE" || STATUTS_DEMANDE_CLOS.includes((ctx.statutDemande ?? "") as StatutDemande)) return [];
+  const validees = articlesDe(ctx).filter((a) => a.statut === "VALIDEE");
+  if (validees.length === 0) return [];
+  const resultat: NotificationCircuit[] = [];
+  const concerne = (a: ArticleNotification, id: string) => id === ctx.createurId || a.beneficiaireUserId === id;
+
+  const parCompte = (
+    permission: string,
+    selection: (a: ArticleNotification) => boolean,
+    construire: (liste: ArticleNotification[]) => Omit<NotificationCircuit, "destinataires">
+  ) => {
+    for (const id of avec(candidats, permission)) {
+      const liste = validees.filter((a) => selection(a) && !concerne(a, id));
+      if (liste.length > 0) resultat.push({ ...construire(liste), destinataires: [id] });
+    }
+  };
+
+  parCompte(
+    "treso.effectuer_reglement",
+    (a) => (a.manque?.resteARegler ?? 0) > 0,
+    (liste) => ({
+      titre: "Articles à régler",
+      message: `${rappelDemande(ctx)} — validée (${fcfa(ctx.montantValide ?? 0)}) : ${pluriel(liste.length, "article")} à régler.${listeArticles("Articles", liste, (a) => ` — reste à régler ${fcfa(a.manque?.resteARegler ?? 0)}`)}`,
+      lien: lienFinance(ctx.demandeId),
+      priority: "IMPORTANT",
+    })
+  );
+  parCompte(
+    "treso.receptionner_retour",
+    (a) => (a.manque ? a.manque.retoursEnAttente > 0 || a.manque.resteNonDetaille > 0 : false),
+    (liste) => ({
+      titre: "Retours de caisse et dépenses à traiter",
+      message: `${rappelDemande(ctx)} : ${pluriel(liste.length, "article")} à régulariser.${listeArticles("Articles", liste, (a) => ` — ${phrasesManque({ ...(a.manque as ManqueArticle), resteARegler: 0 }).join(", ")}`)}`,
+      lien: lienFinance(ctx.demandeId),
+      priority: "IMPORTANT",
+    })
+  );
+  // Prête à clôturer : tous les articles validés sont terminés. La Finance peut clôturer (le DG a-t-il approuvé ? sinon il est relancé).
+  if (validees.every((a) => a.manque === null)) {
+    for (const id of avec(candidats, "treso.cloturer_demande")) {
+      if (id === ctx.createurId || validees.some((a) => a.beneficiaireUserId === id)) continue;
+      resultat.push({
+        destinataires: [id],
+        titre: "Demande prête à être clôturée",
+        message: `${rappelDemande(ctx)} : tous les articles sont réglés et régularisés (ou rejetés) — la demande peut être clôturée.`,
+        lien: lienFinance(ctx.demandeId),
+        priority: "IMPORTANT",
+      });
+    }
+  }
+  const approbation = notificationApprobationCloture(ctx, candidats);
+  if (approbation) resultat.push(approbation);
+  return resultat;
+}
+
 /** Une demande appelle un rappel : à une étape d'attente depuis 48 h au moins, sans rappel depuis 24 h. */
 export function rappelDu(
-  d: { etape: EtapeCircuit; etapeCircuitDepuis: Date; dernierRappelAt: Date | null },
+  d: { etape: EtapeCircuit; etapeCircuitDepuis: Date; dernierRappelAt: Date | null; suiviArticles?: boolean },
   maintenant: Date
 ): boolean {
-  if (!ETAPES_EN_ATTENTE.includes(d.etape)) return false;
+  // Lot C : une demande TERMINÉE n'est relancée que si elle a un suivi par article en cours (articles validés, pas clôturée).
+  const relancable = ETAPES_EN_ATTENTE.includes(d.etape) || (d.etape === "TERMINEE" && d.suiviArticles === true);
+  if (!relancable) return false;
   if (maintenant.getTime() - d.etapeCircuitDepuis.getTime() < DELAI_RAPPEL_MS) return false;
   return d.dernierRappelAt === null || maintenant.getTime() - d.dernierRappelAt.getTime() >= INTERVALLE_RAPPEL_MS;
 }
@@ -381,6 +530,15 @@ export function notificationsRappel(
 ): NotificationCircuit[] {
   const jours = Math.floor((maintenant.getTime() - etapeCircuitDepuis.getTime()) / (24 * 60 * 60 * 1000));
   const resultat: NotificationCircuit[] = [];
+  const attente = `En attente depuis ${jours} jour${jours > 1 ? "s" : ""}`;
+  // Lot C : demande terminée mais pas clôturée — les articles qui attendent encore une action sont nommés, par audience.
+  if (ctx.etape === "TERMINEE") {
+    return notificationsAttenteArticles(ctx, candidats).map((n) => ({
+      ...n,
+      titre: `Rappel : ${n.titre.charAt(0).toLowerCase()}${n.titre.slice(1)}`,
+      message: `${attente} sans événement sur la demande. ${n.message}`,
+    }));
+  }
   for (const x of audiencesEtape(ctx, candidats)) {
     const action = demandeAction(ctx, x.audience);
     if (!action || x.destinataires.length === 0) continue;
@@ -410,9 +568,17 @@ export async function reserverRappelsDus(
   const seuilRappel = new Date(maintenant.getTime() - INTERVALLE_RAPPEL_MS);
   const dus = await db.demande.findMany({
     where: {
-      etapeCircuit: { in: [...ETAPES_EN_ATTENTE] },
       etapeCircuitDepuis: { lte: seuilEtape },
-      OR: [{ dernierRappelAt: null }, { dernierRappelAt: { lte: seuilRappel } }],
+      AND: [
+        {
+          OR: [
+            { etapeCircuit: { in: [...ETAPES_EN_ATTENTE] } },
+            // Lot C : demande terminée avec des articles validés, pas encore clôturée (suivi par article).
+            { etapeCircuit: "TERMINEE", statut: { notIn: [...STATUTS_DEMANDE_CLOS] }, lignes: { some: { statutValidation: "VALIDEE" } } },
+          ],
+        },
+        { OR: [{ dernierRappelAt: null }, { dernierRappelAt: { lte: seuilRappel } }] },
+      ],
     },
     select: { id: true, etapeCircuit: true, etapeCircuitDepuis: true, dernierRappelAt: true },
     orderBy: { etapeCircuitDepuis: "asc" },
@@ -420,7 +586,12 @@ export async function reserverRappelsDus(
   });
   const reserves: { id: string; etapeCircuitDepuis: Date }[] = [];
   for (const d of dus) {
-    if (!rappelDu({ etape: d.etapeCircuit, etapeCircuitDepuis: d.etapeCircuitDepuis, dernierRappelAt: d.dernierRappelAt }, maintenant)) {
+    if (
+      !rappelDu(
+        { etape: d.etapeCircuit, etapeCircuitDepuis: d.etapeCircuitDepuis, dernierRappelAt: d.dernierRappelAt, suiviArticles: true },
+        maintenant
+      )
+    ) {
       continue;
     }
     const maj = await db.demande.updateMany({
@@ -446,15 +617,17 @@ export async function reserverRappelsDus(
 export function notificationRefusLigneDG(
   ctx: ContexteNotificationCircuit,
   candidats: readonly CandidatNotification[],
-  refus: { libelle: string; motif: string },
+  refus: { libelle: string; motif: string; ligneId?: string },
   acteurId: string
 ): NotificationCircuit | null {
   const destinataires = sans(avec(candidats, "treso.decider_finance", "treso.soumettre_dg"), ctx.createurId, acteurId);
   if (destinataires.length === 0) return null;
+  // Lot C : l'article refusé est nommé avec son bénéficiaire et son montant, et la demande rappelée.
+  const article = refus.ligneId ? articlesDe(ctx, [refus.ligneId])[0] : undefined;
   return {
     destinataires,
     titre: "Ligne refusée par le DG",
-    message: `Le DG a refusé la ligne « ${refus.libelle} » de la demande ${ctx.reference}. Motif : ${refus.motif}. Resoumettez-la au DG ou rejetez-la définitivement.`,
+    message: `${rappelDemande(ctx)} — le DG a refusé la ligne ${article ? nommerArticle(article) : `« ${refus.libelle} »`}. Motif : ${refus.motif}. Resoumettez-la au DG ou rejetez-la définitivement.`,
     lien: lienFinance(ctx.demandeId),
     priority: "IMPORTANT",
   };

@@ -123,11 +123,17 @@ export function etatRegularisationArticle(p: { valide: boolean; agregats: Agrega
 
 /**
  * Un article est « terminé » pour le suivi (décision 5) quand il est rejeté (jamais d'argent), ou validé, réglé, et à solde
- * nul. Information d'affichage : la clôture elle-même (`peutEtreCloturee`) n'est pas modifiée par le lot E.
+ * nul. Depuis le lot C, c'est AUSSI la condition de la clôture (`clotureDemande.ts`, `articleEstTermine`).
  */
-export function articleTermine(p: { statut: "EN_ATTENTE" | "VALIDEE" | "REJETEE"; agregats: AgregatsRegularisation }): boolean {
+export function articleTermine(p: {
+  statut: "EN_ATTENTE" | "VALIDEE" | "REJETEE";
+  agregats: AgregatsRegularisation;
+  /** Lot C : montant validé de l'article. Fourni, l'article n'est terminé que s'il est réglé EN ENTIER (fonds remis ≥ montant validé). */
+  montantValide?: number;
+}): boolean {
   if (p.statut === "REJETEE") return true;
   if (p.statut === "EN_ATTENTE") return false;
+  if (p.montantValide !== undefined && c(p.agregats.fondsRemis) < c(p.montantValide)) return false;
   return etatRegularisationArticle({ valide: true, agregats: p.agregats }) === "REGULARISE";
 }
 

@@ -352,7 +352,7 @@ export async function soumettreLignesAuDG(
   demandeId: string,
   acteur: ActeurCircuit,
   ligneIds: readonly string[]
-): Promise<ResultatCircuit & { libelles?: string[] }> {
+): Promise<ResultatCircuit & { libelles?: string[]; resoumisIds?: string[] }> {
   await verrouillerDemande(db, demandeId);
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
@@ -403,7 +403,7 @@ export async function soumettreLignesAuDG(
       userId: acteur.userId,
     },
   });
-  return { ok: true, etapeSuivante: r.etapeSuivante, libelles };
+  return { ok: true, etapeSuivante: r.etapeSuivante, libelles, resoumisIds: resoumises.map((l) => l.id) };
 }
 
 /**

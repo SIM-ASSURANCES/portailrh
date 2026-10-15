@@ -83,6 +83,8 @@ const ACTION_LABELS: Record<string, string> = {
   remboursement_retour_rejete: "Remboursement rejeté",
   cloture_totale: "Clôture totale",
   cloture_partielle: "Clôture partielle",
+  cloture_forcee: "Clôture forcée (sans régularisation)",
+  reprise_cloture_articles: "Reprise : clôture sans régularisation (script manuel)",
   validation_complete_dg: "Validation complète approuvée par le DG",
   rejet_validation_complete: "Validation complète rejetée par le DG (examen)",
   annulation_validation_complete: "Approbation du DG annulée",

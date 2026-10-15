@@ -26,6 +26,7 @@ import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
 import { RecapRetourCaisse } from "@/components/tresorerie/RecapRetourCaisse";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
+import { ClotureForceeBandeau } from "@/components/tresorerie/ClotureForceeBandeau";
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { getDatesGestionDemandes, motifLigneDemandeur, prisma } from "backend";
@@ -69,6 +70,7 @@ export default async function MaDemandeDetailPage({
     include: {
       beneficiaireUser: true,
       createur: { select: { fullName: true, service: { select: { name: true } } } },
+      clotureForceePar: { select: { fullName: true } },
       lignes: { orderBy: { createdAt: "asc" }, include: { beneficiaireUser: true } },
       pieces: true,
     },
@@ -421,7 +423,8 @@ export default async function MaDemandeDetailPage({
             title="Situation finale"
             audience="DEMANDEUR"
           />
-          {demande.motifCloture ? (
+          <ClotureForceeBandeau demande={{ ...demande, clotureForceePar: demande.clotureForceePar }} />
+          {demande.motifCloture && !demande.clotureForcee ? (
             <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Motif de la clôture

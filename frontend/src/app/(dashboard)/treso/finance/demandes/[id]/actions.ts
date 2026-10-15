@@ -10,6 +10,14 @@ import { notifierApprobationCloture, notifierEtapeCircuit } from "@/lib/notifica
 import { prisma, refusConflitInteret } from "backend";
 import { calculerStatutDemande, getEcart, peutEtreCloturee } from "backend";
 import {
+  chargerEvaluationCloture,
+  detailClotureForcee,
+  instantaneClotureForcee,
+  messageBlocageCloture,
+  refusClotureForcee,
+} from "backend";
+import type { Prisma } from "backend";
+import {
   appliquerTransitionCircuit,
   approbationClotureObtenue,
   chargerActeur,
@@ -790,7 +798,7 @@ export async function validerLignesAction(
   revalidateDemandePaths(demandeId);
 
   // Demandeur (articles décidés), Assistants (montant à régler), ou renvoi en correction / demande terminée.
-  await notifierEtapeCircuit(demandeId, session.user.id, "DECISION_ARTICLES");
+  await notifierEtapeCircuit(demandeId, session.user.id, "DECISION_ARTICLES", { ligneIds: parsedDecisions.data.map((d) => d.ligneId) });
 
   return {
     status: "success",
@@ -1201,7 +1209,7 @@ const motifClotureSchema = z
  */
 export async function cloturerDemandeAction(
   demandeId: string,
-  type: "TOTALE" | "PARTIELLE",
+  type: "TOTALE" | "PARTIELLE" | "FORCEE",
   motif?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -1210,7 +1218,10 @@ export async function cloturerDemandeAction(
   }
 
   let motifValide: string | null = null;
-  if (type === "PARTIELLE") {
+  if (type === "FORCEE") {
+    // Lot C : motif obligatoire, 10 caractères minimum (revérifié par `refusClotureForcee` avec la garde 8).
+    motifValide = (motif ?? "").trim() || null;
+  } else if (type === "PARTIELLE") {
     const parsedMotif = motifClotureSchema.safeParse(motif);
     if (!parsedMotif.success) {
       return { status: "error", message: parsedMotif.error.issues[0].message };
@@ -1222,17 +1233,20 @@ export async function cloturerDemandeAction(
 
   const demande = await prisma.demande.findUnique({
     where: { id: demandeId },
-    include: { lignes: { select: { statutValidation: true } } },
+    include: { lignes: true },
   });
   if (!demande) {
     return { status: "error", message: "Demande introuvable." };
+  }
+  if (["CLOTUREE", "REJETEE", "ABANDONNEE"].includes(demande.statut)) {
+    return { status: "error", message: `Cette demande n'est plus modifiable (statut actuel : ${demande.statut}).` };
   }
 
   // Verrou de clôture (indépendant du circuit de validation/règlement des
   // Phases B/C, qui reste inchangé — voir `validationCompleteParDG` sur
   // `Demande`) : avant tout le reste, une demande ne peut être clôturée
-  // (totale ou partielle) que si le DG a donné son approbation complète,
-  // même si Finance a déjà intégralement réglé.
+  // (totale, partielle ou forcée) que si le DG a donné son approbation
+  // complète, même si Finance a déjà intégralement réglé.
   if (!approbationClotureObtenue(demande)) {
     return {
       status: "error",
@@ -1240,19 +1254,6 @@ export async function cloturerDemandeAction(
     };
   }
 
-  // REFONTE V1 (Phase B) : `VALIDEE` seul ne suffit plus — la validation
-  // totale produit désormais VALIDEE_NON_REGLEE/PARTIELLEMENT_REGLEE/REGLEE
-  // selon l'avancement du règlement (voir `calculerStatutDemande`). Voir
-  // `STATUTS_VALIDATION_COMPLETE` dans src/lib/tresorerie.ts.
-  //
-  // Tâche "Diagnostic DEM-2026-000009 bloquée" (voir CLAUDE.md) : pour une
-  // demande AVEC lignes, `PARTIELLEMENT_VALIDEE` (une ligne validée, une
-  // autre rejetée) n'a plus jamais vocation à évoluer vers un statut de
-  // `STATUTS_VALIDATION_COMPLETE` — `validerLignesAction` décide toutes les
-  // lignes en un seul geste, jamais de reliquat par ligne. Sans
-  // `lignesToutesDecidees`, une telle demande ne pouvait plus jamais être
-  // clôturée, alors même que son montant validé était intégralement réglé
-  // et régularisé.
   // Lot B : impossible tant qu'un article est encore à décider ou chez le DG (`peutEtreCloturee`, seule lecture).
   if (!peutEtreCloturee(demande)) {
     return {
@@ -1264,13 +1265,31 @@ export async function cloturerDemandeAction(
     };
   }
 
+  // Lot C : demande À ARTICLES — tous les articles doivent être TERMINÉS (rejeté, ou validé, réglé en entier et à solde nul).
+  // Sans article (dépense directe) : règle d'origine, rien de plus.
+  const parArticles = demande.typeDemande !== "DEPENSE_DIRECTE" && demande.lignes.length > 0;
+  const chargee = parArticles ? await chargerEvaluationCloture(demandeId) : null;
+  if (type === "FORCEE") {
+    if (!chargee) {
+      return { status: "error", message: "La clôture forcée ne concerne que les demandes à articles." };
+    }
+    const refus = refusClotureForcee({ motif: motifValide, demande, evaluation: chargee.evaluation }, session.user.id);
+    if (refus) return { status: "error", message: refus };
+  } else if (chargee && chargee.evaluation.bloquants.length > 0) {
+    return { status: "error", message: messageBlocageCloture(chargee.evaluation.bloquants) };
+  }
+
   const ecart = await getEcart(demandeId);
+  const instantane = chargee && type === "FORCEE" ? instantaneClotureForcee(chargee.evaluation.bloquants) : null;
+  const maintenant = new Date();
   const detail =
-    type === "PARTIELLE"
-      ? motifValide!
-      : `Clôture totale — écart au moment de la clôture : ${ecart.toLocaleString("fr-FR")} FCFA${
-          motifValide ? ` (${motifValide})` : ""
-        }`;
+    type === "FORCEE"
+      ? `Clôture forcée — motif : ${motifValide} — articles non régularisés : ${detailClotureForcee(instantane!)}`
+      : type === "PARTIELLE"
+        ? motifValide!
+        : `Clôture totale — écart au moment de la clôture : ${ecart.toLocaleString("fr-FR")} FCFA${
+            motifValide ? ` (${motifValide})` : ""
+          }`;
 
   await prisma.$transaction([
     prisma.demande.update({
@@ -1284,13 +1303,23 @@ export async function cloturerDemandeAction(
         // régularisation (EN_ATTENTE_REGULARISATION/REGULARISEE).
         statut: "CLOTUREE",
         motifCloture: motifValide,
+        // Lot C : clôture forcée — qui, quand, et l'instantané des articles non régularisés (soldes restants). Aucune
+        // écriture de caisse n'est touchée.
+        ...(type === "FORCEE"
+          ? {
+              clotureForcee: true,
+              clotureForceeAt: maintenant,
+              clotureForceeParId: session.user.id,
+              clotureForceeArticles: instantane as unknown as Prisma.InputJsonValue,
+            }
+          : {}),
       },
     }),
     prisma.historiqueEntry.create({
       data: {
         entity: "Demande",
         entityId: demandeId,
-        action: type === "TOTALE" ? "cloture_totale" : "cloture_partielle",
+        action: type === "FORCEE" ? "cloture_forcee" : type === "TOTALE" ? "cloture_totale" : "cloture_partielle",
         detail,
         userId: session.user.id,
       },
@@ -1299,9 +1328,35 @@ export async function cloturerDemandeAction(
 
   revalidateDemandePaths(demandeId);
 
+  if (type === "FORCEE") {
+    // Le demandeur et le DG sont prévenus (jamais celui qui force la clôture).
+    const message =
+      `La demande ${demande.reference} a été clôturée de force par ${session.user.fullName} sans régularisation complète. ` +
+      `Motif : ${motifValide}. Articles non régularisés : ${detailClotureForcee(instantane!)}.`;
+    await notify({
+      userId: demande.createurId,
+      titre: "Demande clôturée sans régularisation",
+      message,
+      lien: `/treso/demandes/${demandeId}`,
+      priority: "IMPORTANT",
+      category: "TRESORERIE",
+    });
+    await notifyByPermission("treso.decider_dg", {
+      titre: "Demande clôturée de force",
+      message,
+      lien: `/treso/finance/demandes/${demandeId}`,
+      priority: "IMPORTANT",
+      category: "TRESORERIE",
+      excludeUserId: session.user.id,
+    });
+  }
+
   return {
     status: "success",
-    message: `Demande ${demande.reference} clôturée${type === "PARTIELLE" ? " (partielle)" : ""}.`,
+    message:
+      type === "FORCEE"
+        ? `Demande ${demande.reference} clôturée de force (articles non régularisés tracés).`
+        : `Demande ${demande.reference} clôturée${type === "PARTIELLE" ? " (partielle)" : ""}.`,
   };
 }
 

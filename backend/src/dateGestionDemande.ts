@@ -31,7 +31,7 @@ export async function getDatesGestionDemandes(demandeIds: readonly string[]): Pr
       select: { demandeId: true, creeAt: true },
     }),
     prisma.historiqueEntry.findMany({
-      where: { entity: "Demande", entityId: { in: ids }, action: { in: ["cloture_totale", "cloture_partielle"] } },
+      where: { entity: "Demande", entityId: { in: ids }, action: { in: ["cloture_totale", "cloture_partielle", "cloture_forcee"] } },
       select: { entityId: true, createdAt: true },
     }),
   ]);

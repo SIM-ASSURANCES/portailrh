@@ -2947,7 +2947,7 @@ existante n'est jamais modifiée ; un retour nul reste de l'historique seulement
   sans article (dépense directe) garde un seul bloc. `DetailDepensesRetour` nomme l'article en tête et sur chaque carte de dépense ; détail du retour
   Finance, « Retours en attente », « À régulariser » (solde de chaque article), « Fonds remis à régulariser », « Dépenses sans pièce formelle à
   suivre », « Retours à déclarer », section de retours du demandeur (libellé d'origine) et notifications de retour (`lib/nomArticle.ts`) nomment l'article.
-- **Clôture (inchangée, à trancher)** : la clôture reste au niveau de la demande et exige toujours tous les articles décidés + au moins un validé +
+- **Clôture (⚠️ remplacé par le lot C : voir plus bas — tous les articles doivent être terminés ou la clôture forcée)** : la clôture reste au niveau de la demande et exigeait tous les articles décidés + au moins un validé +
   approbation du DG (`peutEtreCloturee`) ; elle n'exige PAS que chaque article validé soit réglé ni à solde nul (le message « x article(s)
   régularisé(s) sur n » est informatif, `articleTermine`). Décision ouverte : faut-il exiger le règlement/la régularisation de chaque article ?
 - **Reprise** : aucun script pour rattacher un ancien retour exceptionnel sans article (cas ambigu, signalé à l'écran) — à ajouter si le cas se présente.
@@ -3122,6 +3122,62 @@ Titres de page (h1) alignés : `/treso/finance` « Accueil Finance », `/treso/t
 Dans « Détails communs », **un seul bouton « Appliquer à tous les articles »** (`data-appliquer-a-tous`) remplace les deux anciens : il applique le bénéficiaire commun, la pièce commune (portée par la demande et héritée par chaque article, les pièces propres sont gardées : rien à copier) et la date de livraison commune. Une date vide n'efface jamais les dates des articles ; la confirmation « Remplacer » s'affiche si un article a un bénéficiaire OU une date de livraison personnalisés (message adapté). Le bouton « Appliquer la date à tous les articles » reste dans le formulaire de **correction** (`CorrectionDemande`), non concerné.
 
 **Vérifié** : vitest (`parcoursArticle` : « Géré le » rejeté/validé/réglé/retour/régularisé/retour externe ; `reportingDemandeLigne` : colonnes et valeurs), tsc, eslint, `next build` ; e2e `lot-h.mjs` (menu par rôle, infobulles, h1, dates sur écrans, listes, PDF, Excel) ; régressions `lot-g-ter`, `lot-g-bis`, `lot-g`, `regularisation-par-article`, `reglement-par-article`, `articles-decision-finance`, `soumission-dg-article`, `articles-beneficiaire-pieces` (tests mis à jour pour « Livraison prévue le » et « Accueil »).
+
+#### Lot C — décision du DG par article, notifications, rappels et clôture (2026-10-20)
+
+Applique les décisions 3, 4, 5, 6 et 11 de la section « Autonomie des articles ». Migration additive idempotente `20261020090000_cloture_forcee`
+(`Demande.clotureForcee`, `clotureForceeAt`, `clotureForceeParId` — clé `SET NULL` —, `clotureForceeArticles` JSON), drift Prisma vide.
+
+**Déjà fait avant ce lot (vérifié, rien refait)** : soumission au DG article par article (lot 2/B bis), décision du DG par article indépendante
+des autres, « DG définitif » (la Finance confirme un article validé par le DG et ne peut pas le rejeter), resoumission d'un article refusé par le DG
+(`soumettreLignesAuDG`), rejet définitif, tous rejetés → « À corriger », garde 8 par article, règle des deux personnes (niveau demande), chronomètre
+unique par demande (`etapeCircuitDepuis`) remis à zéro par une décision/soumission, rappels à 48 h puis 24 h (`dernierRappelAt`). Le lot ajoute :
+
+**1. Clôture « tous les articles terminés »** (`backend/src/clotureDemande.ts`, pur, 18 tests ; chargement `clotureDemandeDb.ts` =
+`chargerEvaluationCloture`, sur `getRegularisationParArticle`, aucune formule propre). Un article est **terminé** s'il est rejeté, ou validé ET réglé en
+entier (fonds remis ≥ montant validé) ET à solde nul (`getEcartLigne`, centimes exacts). `evaluerCloture` : la demande est « décidée » quand aucun article n'est à
+décider et qu'au moins un est validé ; `bloquants` = articles validés non terminés (+ la part non rattachée si son solde ≠ 0) avec ce qui leur manque
+(`manqueArticle` : reste à régler, retours à réceptionner, dépenses à détailler, solde à régulariser/anomalie négative). `cloturerDemandeAction` refuse la
+clôture totale ET partielle tant qu'il y a un bloquant, avec `messageBlocageCloture` (liste des articles et de ce qui manque) ; l'écran (`ClotureActions`,
+`data-cloture-bloquee` / `data-article-bloquant`) affiche la même liste et grise « Clôturer totalement/partiellement ». L'approbation du DG
+(`treso.approuver_validation_complete`, non délégable) reste exigée comme avant. Le compteur « x article(s) régularisé(s) sur n » reste informatif.
+La dépense directe (sans article) garde la règle d'origine (`peutEtreCloturee`).
+
+**2. Clôture forcée** — `cloturerDemandeAction(demandeId, "FORCEE", motif)` : possible seulement quand la demande est décidée et qu'au moins un article bloque
+(sinon « rien à forcer »). **Permission : `treso.cloturer_demande` réutilisée** (Finance), aucune permission nouvelle, `PERMISSIONS_DECISION_NON_DELEGABLES`
+inchangée. Exige l'approbation du DG comme toute clôture, un **motif d'au moins 10 caractères** (`MOTIF_CLOTURE_FORCEE_MIN`, revérifié côté serveur) et la
+**garde 8** (`refusClotureForcee` → `refusExecutionPropreDemande` : ni le demandeur ni un bénéficiaire de la demande/d'un article). Effets : statut `CLOTUREE`,
+`motifCloture` = le motif, `clotureForcee`/`At`/`ParId`, instantané des articles non régularisés (`instantaneClotureForcee` : libellé, bénéficiaire, montant validé,
+reste à régler, solde restant, manques) ; historique `cloture_forcee` (qui, quand, motif, articles avec soldes) ; notifications au demandeur (« Demande
+clôturée sans régularisation ») et au DG (`treso.decider_dg`, « Demande clôturée de force »), jamais à l'auteur ; **aucune écriture de caisse créée ni modifiée**.
+Affichage : bandeau `ClotureForceeBandeau` (écrans Finance et demandeur), badge **« Clôturé sans régularisation — solde restant X FCFA »** sur l'article du parcours
+(`libelleArticleClotureForcee`, seulement tant que l'article n'est pas terminé : un retour exceptionnel post-clôture peut le régulariser ensuite), colonne
+« Clôture forcée (sans régularisation) » du reporting par demande et de l'export Excel, date de gestion (`cloture_forcee`). `supprimerUtilisateurAction` compte la
+nouvelle relation vers `User`.
+
+**3. Notifications par article** (`circuitNotifications.ts`, `frontend/src/lib/notificationsCircuit.ts`) : chaque message nomme l'article (`nommerArticle` :
+« libellé » (bénéficiaire X, montant) ) et rappelle la demande (`rappelDemande` : numéro, demandeur, service). Soumission/resoumission au DG : une notification qui
+liste les articles (dont « n resoumis après refus ») ; examen du DG terminé : une notification à la Finance (articles à confirmer, articles refusés avec motif) —
+le refus de la dernière ligne en attente n'envoie que celle-ci ; décision de la Finance : une notification au demandeur détaillant les articles décidés, une par
+Assistant avec les articles à régler ; **pas de doublon** quand plusieurs articles sont traités ensemble (les identifiants d'articles de l'événement sont transmis :
+`DetailEvenementCircuit`). Demande terminée : `notificationsAttenteArticles` (articles à régler, retours/dépenses à traiter, garde 8 par article, « prête à être clôturée »).
+
+**4. Rappels** : toujours **un seul chronomètre par demande** (`etapeCircuitDepuis`), désormais remis à zéro à chaque événement d'un article — décision, soumission, décision
+du DG (déjà), plus règlement (confirmation/annulation), retour déclaré/réceptionné/détaillé/ajusté, complément, remboursement, justification après réception, retour externe
+rattaché, retour exceptionnel (`remettreChronoDemande`, `backend/src/chronoDemande.ts`, appelée par chaque action). Le rappel nomme les articles qui attendent encore une action
+(`rappelDu` avec `suiviArticles`, branche `TERMINEE` de `notificationsRappel` ; une demande `CLOTUREE`/`REJETEE`/`ABANDONNEE` n'est plus relancée, `STATUTS_DEMANDE_CLOS`).
+
+**Anciennes demandes** : jamais rouvertes. `backend/prisma/simuler-cloture-articles.ts` (LANCÉ À LA MAIN) liste les demandes déjà `CLOTUREE` dont un article validé n'est pas
+terminé ; simulation par défaut, `--appliquer` les marque « clôturée sans régularisation » (instantané, historique `reprise_cloture_articles`, statut et caisse intacts) ; idempotent.
+`npx tsx prisma/simuler-cloture-articles.ts` puis `... --appliquer`.
+
+**Décisions ouvertes** : (1) la clôture « partielle » existante reste, mais exige désormais elle aussi que tous les articles soient terminés ; le motif d'une clôture
+partielle ne remplace pas la clôture forcée ; (2) la clôture forcée garde l'approbation du DG comme condition ; (3) la règle des deux personnes reste au niveau de la demande ; (4) la garde 7
+(clôturer sa propre demande) n'est codée que pour la clôture forcée.
+
+**Vérifié** : vitest (`clotureDemande` 18, `notificationsArticles` 14, `circuitNotifications` 22 ; 829 réussis + échec connu `feedback.test.ts`), tsc, eslint, `next build`, migration depuis zéro, `migrate diff` vide ;
+e2e `lot-c.mjs` 55/55 (A validé par le DG et confirmé, B refusé puis resoumis puis validé, C rejeté ; clôture bloquée avec message, A régularisé disparaît, B bloque ; garde 8 ; motif de 9 caractères refusé ; clôture forcée,
+historique, notifications demandeur et DG, caisse intacte, bandeau, reporting, export ; clôture ordinaire ; rappel unique nommant les articles, remis à zéro) ; script de reprise testé (simulation, application, rejeu sans effet).
 
 ### Solde d'ouverture de caisse
 

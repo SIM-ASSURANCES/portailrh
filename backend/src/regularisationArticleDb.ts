@@ -202,7 +202,7 @@ export async function getRegularisationParArticle(demandeId: string): Promise<Re
         agregats,
         ecart: getEcartLigne(agregats),
         etat: etatRegularisationArticle({ valide: statut === "VALIDEE", agregats }),
-        termine: articleTermine({ statut, agregats }),
+        termine: articleTermine({ statut, agregats, montantValide: total }),
         regulariseAt: dateRegularisation({ agregats, dates: datesParLigne.get(ligne.id) ?? [] }),
         retoursEnAttente: retoursEnAttenteParLigne.get(ligne.id) ?? 0,
       });

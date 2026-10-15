@@ -18,7 +18,7 @@ import { RegularisationSummary } from "@/components/tresorerie/RegularisationSum
 import { getSession, hasPermission } from "@/lib/auth";
 import { getDatesGestionDemandes, prisma, refusDemandeSansCategorie } from "backend";
 import { libelleGestionArticle } from "backend/client";
-import { getMontantsLignesParStatut, peutEtreCloturee } from "backend";
+import { chargerEvaluationCloture, getMontantsLignesParStatut, peutEtreCloturee } from "backend";
 import {
   chargerActeur,
   attendValidationPourExecution,
@@ -36,6 +36,7 @@ import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
 
 import { CategorisationForm } from "./CategorisationForm";
 import { CircuitFinanceActions } from "./CircuitFinanceActions";
+import { ClotureForceeBandeau } from "@/components/tresorerie/ClotureForceeBandeau";
 import { ClotureActions } from "./ClotureActions";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { LignesValidationTable } from "./LignesValidationTable";
@@ -85,6 +86,7 @@ export default async function CategoriserDemandePage({
       objet: true,
       beneficiaireUser: true,
       dgApprobateur: true,
+      clotureForceePar: { select: { fullName: true } },
       pieces: true,
       lignes: {
         orderBy: { createdAt: "asc" },
@@ -299,6 +301,12 @@ export default async function CategoriserDemandePage({
     });
   }
 
+  // Lot C : clôture d'une demande à articles = tous les articles terminés ; sinon la liste de ce qui manque à chacun.
+  const evaluationCloture =
+    demande.typeDemande !== "DEPENSE_DIRECTE" && demandeAauMoinsUneLigne && peutEtreCloturee(demande) && demande.statut !== "CLOTUREE"
+      ? (await chargerEvaluationCloture(demande.id)).evaluation
+      : null;
+
   // Règlement, régularisation et clôture : même bloc pour une demande à articles vivante (dès qu'un article est validé) et
   // pour une demande sans article déjà validée.
   const blocExecution = (
@@ -324,7 +332,16 @@ export default async function CategoriserDemandePage({
       />
       {peutEtreCloturee(demande) && canCloturerDemande ? (
         demande.validationCompleteParDG ? (
-          <ClotureActions demandeId={demande.id} />
+          <ClotureActions
+            demandeId={demande.id}
+            bloquants={(evaluationCloture?.bloquants ?? []).map((b) => ({
+              libelle: b.libelle,
+              beneficiaire: b.beneficiaire,
+              manques: b.manques,
+              solde: b.manque.solde,
+            }))}
+            refusForcee={conflitInteret}
+          />
         ) : (
           // Ticket 7 + verrou de clôture : jamais un simple masquage
           // silencieux des boutons — le message explique explicitement
@@ -818,7 +835,8 @@ export default async function CategoriserDemandePage({
             userId={session?.user.id ?? null}
           />
           <PersonnesIntervenantes demandeId={demande.id} demandeurNom={demande.createur.fullName} />
-          {demande.motifCloture ? (
+          <ClotureForceeBandeau demande={demande} />
+          {demande.motifCloture && !demande.clotureForcee ? (
             <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Motif de la clôture

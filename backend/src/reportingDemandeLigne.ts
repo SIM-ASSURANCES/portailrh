@@ -5,6 +5,7 @@
 
 import { libelleDateLivraison } from "./dateLivraisonArticle";
 import { libelleGestionArticle, type GestionArticle } from "./parcoursArticle";
+import { detailClotureForcee, type ArticleCloturePartiel } from "./clotureDemande";
 
 /** Une entrée d'historique utile au reporting (validations, clôture, ajustements). */
 export interface HistoriqueReporting {
@@ -90,6 +91,8 @@ export interface DemandeReportingSource {
   /** Retours externes rattachés à la demande (lot G bis) : fonds versé par banque rendu à la caisse = retour reçu. */
   retoursExternes?: { montant: number; article: string | null; creePar: string; creeLe: Date }[];
   historique: HistoriqueReporting[];
+  /** Lot C : clôture forcée (articles non régularisés), `null`/absent pour une clôture ordinaire ou une demande non clôturée. */
+  clotureForcee?: { motif: string | null; par: string | null; le: Date | null; articles: ArticleCloturePartiel[] } | null;
 }
 
 export interface LigneReportingDemande {
@@ -97,6 +100,8 @@ export interface LigneReportingDemande {
   creeLe: Date;
   /** Lot H : « Géré le » — date du dernier événement de la demande et son étape (« 12/10/2026 (réglé) »), « — » si rien n'a été traité. */
   gereLe: string;
+  /** Lot C : « Clôturée de force le … par … — motif … — articles non régularisés : … (solde restant) » ; « — » sinon. */
+  clotureForcee: string;
   type: string;
   statut: string;
   etape: string;
@@ -128,6 +133,7 @@ export const COLONNES_REPORTING_DEMANDE: { cle: keyof LigneReportingDemande; tit
   { cle: "type", titre: "Type" },
   { cle: "statut", titre: "Statut" },
   { cle: "gereLe", titre: "Géré le" },
+  { cle: "clotureForcee", titre: "Clôture forcée (sans régularisation)" },
   { cle: "etape", titre: "Étape du circuit" },
   { cle: "demandeur", titre: "Demandeur" },
   { cle: "service", titre: "Service" },
@@ -206,6 +212,8 @@ export function libelleValidation(action: string, detail: string | null): { nive
       return { niveau: "Finance", libelle: "clôture totale" };
     case "cloture_partielle":
       return { niveau: "Finance", libelle: "clôture partielle" };
+    case "cloture_forcee":
+      return { niveau: "Finance", libelle: "clôture forcée" };
     default:
       return null;
   }
@@ -325,6 +333,9 @@ export function construireLigneReporting(d: DemandeReportingSource): LigneReport
     reference: d.reference,
     creeLe: d.creeLe,
     gereLe: libelleGestionArticle(d.gere ?? null).replace(/^Géré le /, ""),
+    clotureForcee: d.clotureForcee
+      ? `Clôturée de force ${par(d.clotureForcee.par, d.clotureForcee.le)}${d.clotureForcee.motif ? ` — motif : ${d.clotureForcee.motif}` : ""} — articles non régularisés : ${detailClotureForcee(d.clotureForcee.articles)}`
+      : "—",
     type: d.typeDemande === "DEPENSE_DIRECTE" ? "Dépense directe" : "Standard",
     statut: d.statut,
     etape: d.etapeCircuit ?? "—",

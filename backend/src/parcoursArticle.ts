@@ -132,6 +132,8 @@ export interface ParcoursArticle {
   montants: MontantsParcours;
   etapes: EtapeParcours[];
   note: string | null;
+  /** Lot C : « Clôturé sans régularisation — solde restant X » si la demande a été clôturée de force avec cet article non régularisé. */
+  clotureSansRegularisation?: string | null;
 }
 
 const c = (n: number) => Math.round(n * 100);

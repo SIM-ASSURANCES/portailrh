@@ -32,6 +32,7 @@ export * from "./retourNul";
 export * from "./retourExterneRattache";
 export * from "./regularisationDepenses";
 export * from "./regularisationArticle";
+export * from "./clotureDemande";
 export * from "./dateLivraisonArticle";
 // Constantes/validations pures uniquement (compteur de caractères côté
 // client) — depuis `./feedback-constants`, JAMAIS depuis `./feedback` :

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import type { Prisma } from "backend";
+import { remettreChronoDemande } from "backend";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
@@ -170,6 +171,8 @@ export async function declarerRetourAssistantAction(
     });
   });
 
+  await remettreChronoDemande(reglement.demandeId);
+
   revalidatePath(`/treso/demandes/${reglement.demandeId}`);
   revalidatePath(`/treso/finance/demandes/${reglement.demandeId}`);
   revalidatePath("/treso/finance/retours");
@@ -323,6 +326,7 @@ export async function receptionnerRetourAction(retourId: string): Promise<Simple
   }
 
   revalidatePath("/treso/finance/retours");
+  await remettreChronoDemande(demandeId);
   revalidatePath(`/treso/demandes/${demandeId}`);
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   // Ticket 8 : la réception impacte le solde de caisse ET fait baisser le
@@ -599,6 +603,7 @@ export async function detaillerDepensesRetourAction(
 
   revalidatePath("/treso/finance/retours");
   revalidatePath(`/treso/finance/retours/${retourId}`);
+  await remettreChronoDemande(demandeId);
   revalidatePath(`/treso/demandes/${demandeId}`);
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath("/treso/finance", "layout");
@@ -711,6 +716,7 @@ export async function marquerDepenseNonJustifieeAction(
 
   revalidatePath("/treso/finance/retours");
   revalidatePath("/treso/finance/depenses-non-justifiees");
+  await remettreChronoDemande(demandeId);
   revalidatePath(`/treso/demandes/${demandeId}`);
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath("/treso/finance", "layout");
@@ -858,6 +864,7 @@ export async function ajusterTotalDeclareRetourAction(
 
   revalidatePath("/treso/finance/retours");
   revalidatePath(`/treso/finance/retours/${retourId}`);
+  await remettreChronoDemande(demandeId);
   revalidatePath(`/treso/demandes/${demandeId}`);
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath("/treso/finance", "layout");
@@ -1005,6 +1012,7 @@ export async function declarerRetourComplementaireAction(retourId: string): Prom
       message: `Le détail déjà saisi couvre trop du total dépensé : il faut libérer au moins ${ecart.toLocaleString("fr-FR")} FCFA en "non détaillé" (corrigez d'abord le détail) avant de déclarer le retour complémentaire.`,
     };
   }
+  await remettreChronoDemande(demandeId);
   revaliderCorrection(demandeId, retourId);
   return { status: "success", message: `Retour complémentaire de ${ecart.toLocaleString("fr-FR")} FCFA déclaré — à réceptionner.` };
 }
@@ -1171,6 +1179,7 @@ export async function validerRemboursementRetourAction(remboursementId: string):
       },
     });
   });
+  await remettreChronoDemande(demande.id);
   revaliderCorrection(demande.id, rb.retourCaisseId);
   await notify({
     userId: demande.createurId,
@@ -1279,6 +1288,7 @@ export async function justifierDepenseApresReceptionAction(
       },
     });
   });
+  await remettreChronoDemande(demande.id);
   revaliderCorrection(demande.id, retour.id);
   return { status: "success", message: "Dépense justifiée : pièce jointe ajoutée." };
 }
@@ -1370,6 +1380,8 @@ export async function detaillerDepensesReglementAction(
     });
     return fiche.id;
   });
+
+  await remettreChronoDemande(demandeId);
 
   revalidatePath(`/treso/finance/demandes/${demandeId}`);
   revalidatePath(`/treso/finance/retours/${retourId}`);
@@ -1557,6 +1569,8 @@ export async function modifierDepenseDetailleeAction(
     });
   });
 
+  await remettreChronoDemande(demandeId);
+
   revaliderDetail(retour.id, demandeId);
   return { status: "success", message: "Dépense modifiée." };
 }
@@ -1637,6 +1651,8 @@ export async function detaillerResteAction(retourId: string, lignes: LigneDetail
       data: { entity: "Demande", entityId: demandeId, action: "detaillage_retour", detail: JSON.stringify(detail), userId: session.user.id },
     });
   });
+
+  await remettreChronoDemande(demandeId);
 
   revaliderDetail(retour.id, demandeId);
   return { status: "success", message: "Dépenses détaillées." };
