@@ -4,9 +4,8 @@ import { useState, useRef, useTransition } from "react";
 import Image from "next/image";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/icons";
-import { updateProfilePhoto, updatePassword, updateMyServiceAction } from "./actions";
+import { updateProfilePhoto, updatePassword } from "./actions";
 import { Badge, PageHeader, DataTable, type DataTableColumn } from "@/components/ui";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -18,11 +17,6 @@ interface ConnexionEntry {
   detail: string;
 }
 
-interface ServiceOption {
-  id: string;
-  name: string;
-}
-
 interface ProfileClientProps {
   user: {
     id: string;
@@ -31,8 +25,8 @@ interface ProfileClientProps {
     photoUrl: string | null;
   };
   role: string;
-  serviceId: string | null;
-  services: ServiceOption[];
+  /** Service lu en base : jamais modifiable depuis le profil (il pilote le circuit de validation des demandes). */
+  serviceNom: string | null;
   membreDepuis: string | null;
   selectedMonth: string;
   showPointageStats: boolean;
@@ -152,8 +146,7 @@ type Tab = "overview" | "security";
 export function ProfileClient({
   user,
   role,
-  serviceId,
-  services,
+  serviceNom,
   membreDepuis,
   selectedMonth,
   showPointageStats,
@@ -167,25 +160,6 @@ export function ProfileClient({
   const [isUploading, setIsUploading] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // ── Service (modifiable librement par l'utilisateur lui-même) ──────────────
-  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(serviceId);
-  const [isSavingService, startServiceTransition] = useTransition();
-
-  const handleServiceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const nouveauServiceId = e.target.value === "" ? null : e.target.value;
-    const precedent = selectedServiceId;
-    setSelectedServiceId(nouveauServiceId); // optimiste, revenu en arrière si refus serveur
-    startServiceTransition(async () => {
-      const res = await updateMyServiceAction(nouveauServiceId);
-      if (res.status === "error") {
-        setSelectedServiceId(precedent);
-        toast.error(res.message);
-      } else {
-        toast.success(res.message);
-      }
-    });
-  };
 
   const router = useRouter();
   const pathname = usePathname();
@@ -270,11 +244,6 @@ export function ProfileClient({
     });
   };
 
-  // Nom du service actuellement sélectionné, dérivé de l'état local (jamais
-  // du prop `serviceId` directement) — reflète immédiatement le choix de
-  // l'utilisateur, y compris pendant la sauvegarde optimiste.
-  const serviceNomActuel = services.find((s) => s.id === selectedServiceId)?.name ?? null;
-
   // Indicateur principal de la fiche mobile (même source que les cartes d'activité desktop, jamais recalculé).
   const statPrincipal = showPointageStats
     ? { valeur: nbRetardsMois, libelle: "Retards ce mois" }
@@ -352,7 +321,7 @@ export function ProfileClient({
           {/* Identité */}
           <h2 className="mt-5 break-words text-3xl font-normal leading-tight tracking-tight text-foreground">{user.fullName}</h2>
           <p className="mt-4 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Service</p>
-          <p className="mt-1 text-sm text-foreground">{serviceNomActuel ?? "Non renseigné"}</p>
+          <p className="mt-1 text-sm text-foreground">{serviceNom ?? "Non renseigné"}</p>
           {membreDepuis ? (
             <p className="mt-1 text-xs text-muted-foreground">Membre depuis {formatMembreDepuis(membreDepuis)}</p>
           ) : null}
@@ -366,30 +335,8 @@ export function ProfileClient({
                 <dd className="mt-0.5 break-all text-foreground">{user.email}</dd>
               </div>
               <div>
-                <dt className="text-xs text-muted-foreground">Mon service</dt>
-                <dd className="mt-0.5">
-                  {services.length === 0 ? (
-                    <span className="italic text-muted-foreground">Aucun service n&apos;a encore été créé (voir un administrateur).</span>
-                  ) : (
-                    <span className="flex items-center gap-2 border-b border-border pb-1 focus-within:border-primary">
-                      <select
-                        value={selectedServiceId ?? ""}
-                        onChange={handleServiceChange}
-                        disabled={isSavingService}
-                        aria-label="Mon service"
-                        className="w-full bg-transparent text-sm text-foreground focus:outline-none disabled:opacity-50"
-                      >
-                        <option value="">Non renseigné</option>
-                        {services.map((sv) => (
-                          <option key={sv.id} value={sv.id}>
-                            {sv.name}
-                          </option>
-                        ))}
-                      </select>
-                      {isSavingService ? <Icon name="loader" className="size-4 shrink-0 animate-spin text-muted-foreground" /> : null}
-                    </span>
-                  )}
-                </dd>
+                <dt className="text-xs text-muted-foreground">Service</dt>
+                <dd className="mt-0.5 text-foreground">{serviceNom ?? "Non renseigné"}</dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">Rôle applicatif</dt>
@@ -517,8 +464,8 @@ export function ProfileClient({
             <div className="space-y-1.5">
               <h2 className="text-xl font-bold text-foreground leading-tight">{user.fullName}</h2>
               <Badge variant={getBadgeVariant(role)}>{role}</Badge>
-              {serviceNomActuel && (
-                <p className="text-sm text-muted-foreground mt-1">{serviceNomActuel}</p>
+              {serviceNom && (
+                <p className="text-sm text-muted-foreground mt-1">{serviceNom}</p>
               )}
               {membreDepuis && (
                 <p className="text-xs text-muted-foreground">
@@ -598,39 +545,13 @@ export function ProfileClient({
                     </div>
                   </div>
 
-                  {/* Service — modifiable librement par l'utilisateur lui-même,
-                      sans validation d'un tiers (voir CLAUDE.md "Modification
-                      du service par l'utilisateur lui-même depuis son profil").
-                      Distinct de la gestion Admin (/admin/users), qui reste le
-                      seul autre chemin possible — les deux appellent des
-                      Server Actions séparées mais écrivent le même champ. */}
+                  {/* Service — lu en base, jamais modifiable par l'utilisateur (c'est l'Admin qui l'affecte, `/admin/users`). */}
                   <div>
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Service</p>
-                    {services.length === 0 ? (
-                      <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground italic">
-                        <Icon name="building" className="size-4 shrink-0" />
-                        <span>Aucun service n&apos;a encore été créé (voir un administrateur).</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus-within:ring-2 focus-within:ring-primary">
-                        <Icon name="building" className="size-4 text-muted-foreground shrink-0" />
-                        <select
-                          value={selectedServiceId ?? ""}
-                          onChange={handleServiceChange}
-                          disabled={isSavingService}
-                          aria-label="Mon service"
-                          className="w-full bg-transparent text-sm text-foreground focus:outline-none disabled:opacity-50"
-                        >
-                          <option value="">Non renseigné</option>
-                          {services.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name}
-                            </option>
-                          ))}
-                        </select>
-                        {isSavingService ? <Icon name="loader" className="size-4 shrink-0 animate-spin text-muted-foreground" /> : null}
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground">
+                      <Icon name="building" className="size-4 text-muted-foreground shrink-0" />
+                      <span className="truncate">{serviceNom ?? "Non renseigné"}</span>
+                    </div>
                   </div>
 
                   {/* Rôle */}
