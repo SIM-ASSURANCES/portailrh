@@ -297,10 +297,11 @@ JOIN "Module" m ON m."key" = v.module
 ON CONFLICT ("key") DO NOTHING;
 
 -- 5) Attribution PAR PERMISSION SŒUR (jamais par nom de rôle) : un rôle qui porte la sœur reçoit la nouvelle.
---    Les rôles `estAdmin` sont EXCLUS (relecture du 2026-10-16) : en base de dev, l'Admin porte les permissions sœurs
---    (anomalie des 23 permissions) et serait devenu décideur RH — il compterait dans les comptes RH et supprimerait le
---    repli DG. Un rôle `estAdmin` n'a donc aucun droit congés/absences par cette migration ; à cocher à la main dans
---    /admin/roles si voulu. Aucun nom de rôle : la seule condition est le champ `estAdmin`.
+--    Les rôles `estAdmin` sont exclus des droits de DÉCISION et de GESTION (relecture du 2026-10-16) : en base de dev, l'Admin
+--    porte les permissions sœurs (anomalie des 23 permissions) et serait devenu décideur RH — il compterait dans les comptes RH
+--    et supprimerait le repli DG. Ils gardent `conges.soumettre` / `absences.soumettre` : c'est le pouvoir de décider qui posait
+--    problème, pas le droit de demander (un rôle combiné « Admin / Collaborateur » porte un vrai employé). Droits RH à cocher à la
+--    main dans /admin/roles si voulu. Aucun nom de rôle : seule condition, le champ `estAdmin`.
 INSERT INTO "RolePermission" ("roleId", "permissionId")
 SELECT DISTINCT rp."roleId", np."id"
 FROM (VALUES
@@ -323,7 +324,7 @@ FROM (VALUES
 JOIN "Permission" np ON np."key" = m.nouvelle
 JOIN "Permission" sp ON sp."key" = m.soeur
 JOIN "RolePermission" rp ON rp."permissionId" = sp."id"
-JOIN "Role" r ON r."id" = rp."roleId" AND r."estAdmin" = false
+JOIN "Role" r ON r."id" = rp."roleId" AND (r."estAdmin" = false OR m.nouvelle IN ('conges.soumettre', 'absences.soumettre'))
 ON CONFLICT ("roleId", "permissionId") DO NOTHING;
 
 -- 6) Types de congé de départ (identifiants aléatoires, comme les services de la migration 20261006110000).

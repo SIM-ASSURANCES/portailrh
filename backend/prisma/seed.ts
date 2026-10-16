@@ -428,10 +428,12 @@ async function main() {
   };
 
   // Congés et permissions d'absence : même règle que la migration (permission sœur), jamais un nom de rôle.
-  // Le rôle Admin (`estAdmin`) n'en reçoit aucune : comme la migration, il ne devient pas décideur RH (relecture du 2026-10-16).
+  // Le rôle Admin (`estAdmin`) ne reçoit que les droits de DEMANDE (soumettre), comme la migration : jamais l'étape RH, les soldes
+  // ni le paramétrage (relecture du 2026-10-16). Dans ce seed il ne porte aucune permission sœur, donc n'en reçoit aucune.
+  const DROITS_DEMANDE = new Set(["conges.soumettre", "absences.soumettre"]);
   for (const [roleId, keys] of Object.entries(rolePermissionMap)) {
-    if (roleId === roleAdmin.id) continue;
-    rolePermissionMap[roleId] = [...keys, ...permissionsAbsencePourCles(keys)];
+    const derivees = permissionsAbsencePourCles(keys);
+    rolePermissionMap[roleId] = [...keys, ...(roleId === roleAdmin.id ? derivees.filter((k) => DROITS_DEMANDE.has(k)) : derivees)];
   }
 
   let rolePermissionCount = 0;

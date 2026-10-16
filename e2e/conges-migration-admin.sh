@@ -56,7 +56,7 @@ cles() { $PSQL -d $DBN -c "SELECT coalesce(string_agg(p.key, ',' ORDER BY p.key)
 RES=0
 verifier() { if [ "$2" = "$3" ]; then echo "OK  $1"; else echo "KO  $1 — attendu « $3 », obtenu « $2 »"; RES=1; fi; }
 
-verifier "Admin (estAdmin) : aucune permission congés ni absences" "$(cles Admin)" ""
+verifier "Admin (estAdmin) : soumettre seulement, aucun droit RH ni de gestion" "$(cles Admin)" "absences.soumettre,conges.soumettre"
 verifier "RH : toutes les permissions RH" "$(cles RH)" "absences.annuler,absences.consulter_tous,absences.parametrer,absences.soumettre,absences.valider_rh,conges.annuler,conges.consulter_tous,conges.gerer_soldes,conges.parametrer_types,conges.soumettre,conges.valider_rh"
 verifier "DG : soumettre seulement" "$(cles DG)" "absences.soumettre,conges.soumettre"
 verifier "Collaborateur : soumettre seulement" "$(cles Collaborateur)" "absences.soumettre,conges.soumettre"
@@ -67,7 +67,7 @@ AVANT=$($PSQL -d $DBN -c 'SELECT count(*) FROM "RolePermission"')
 $PSQL -d $DBN < "$MIGS/$CIBLE/migration.sql" >/dev/null
 APRES=$($PSQL -d $DBN -c 'SELECT count(*) FROM "RolePermission"')
 verifier "Second passage de la migration : aucun effet" "$APRES" "$AVANT"
-verifier "Après le second passage, l'Admin n'a toujours aucun droit congés" "$(cles Admin)" ""
+verifier "Après le second passage, l'Admin n'a toujours que soumettre" "$(cles Admin)" "absences.soumettre,conges.soumettre"
 
 docker exec pg-e2e psql -U postgres -q -c "DROP DATABASE $DBN" >/dev/null
 exit $RES
