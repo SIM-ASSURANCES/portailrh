@@ -31,7 +31,7 @@ export function InitialiserSoldesBouton() {
 }
 
 /** Saisie de la date d'embauche d'un compte (point de départ de son exercice de congé). */
-export function DateEmbaucheForm({ userId, valeur }: { userId: string; valeur: string }) {
+export function DateEmbaucheForm({ userId, valeur, refus }: { userId: string; valeur: string; /** Phrase du serveur quand l'acteur est le propriétaire : le formulaire est alors grisé. */ refus?: string }) {
   const [date, setDate] = useState(valeur);
   const [erreur, setErreur] = useState<string | undefined>();
   const [enCours, demarrer] = useTransition();
@@ -54,8 +54,8 @@ export function DateEmbaucheForm({ userId, valeur }: { userId: string; valeur: s
         });
       }}
     >
-      <Input label="Date d'embauche" type="date" value={date} onChange={(e) => setDate(e.target.value)} error={erreur} />
-      <Button type="submit" variant="primary" loading={enCours} disabled={date === valeur}>
+      <Input label="Date d'embauche" type="date" value={date} onChange={(e) => setDate(e.target.value)} error={erreur} disabled={Boolean(refus)} hint={refus} />
+      <Button type="submit" variant="primary" loading={enCours} disabled={date === valeur || Boolean(refus)}>
         Enregistrer
       </Button>
     </form>
@@ -63,7 +63,7 @@ export function DateEmbaucheForm({ userId, valeur }: { userId: string; valeur: s
 }
 
 /** Ajustement manuel d'un solde (positif = ajout, négatif = retrait), motif obligatoire et tracé. */
-export function AjustementSoldeForm({ soldeCongeId }: { soldeCongeId: string }) {
+export function AjustementSoldeForm({ soldeCongeId, refus }: { soldeCongeId: string; /** Phrase du serveur quand le solde est celui de l'acteur : « Ajuster » est alors grisé. */ refus?: string }) {
   const [ouvert, setOuvert] = useState(false);
   const [montant, setMontant] = useState("");
   const [motif, setMotif] = useState("");
@@ -73,9 +73,12 @@ export function AjustementSoldeForm({ soldeCongeId }: { soldeCongeId: string }) 
 
   if (!ouvert) {
     return (
-      <Button variant="secondary" onClick={() => setOuvert(true)}>
-        Ajuster le solde
-      </Button>
+      <div className="space-y-1">
+        <Button variant="secondary" onClick={() => setOuvert(true)} disabled={Boolean(refus)}>
+          Ajuster le solde
+        </Button>
+        {refus ? <p className="text-xs text-muted-foreground">{refus}</p> : null}
+      </div>
     );
   }
 

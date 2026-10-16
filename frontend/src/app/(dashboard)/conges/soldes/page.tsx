@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { Card, EmptyState, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { aujourdhui, frDateColonne } from "@/lib/conges/format";
-import { colonneDateDepuisJourCivil, prisma } from "backend";
+import { MESSAGE_AJUSTEMENT_PROPRE_SOLDE, MESSAGE_DATE_EMBAUCHE_PROPRE, colonneDateDepuisJourCivil, prisma } from "backend";
 
 import { DemandeCongeForm } from "../DemandeCongeForm";
 import { AjustementSoldeForm, DateEmbaucheForm, InitialiserSoldesBouton } from "./SoldesActions";
@@ -56,7 +56,7 @@ export default async function SoldesCongesPage({ searchParams }: { searchParams:
               <li key={u.id}>
                 <Card className="space-y-2 p-4">
                   <p className="font-semibold text-foreground">{u.fullName}</p>
-                  <DateEmbaucheForm userId={u.id} valeur="" />
+                  <DateEmbaucheForm userId={u.id} valeur="" refus={u.id === session.user.id ? MESSAGE_DATE_EMBAUCHE_PROPRE : undefined} />
                 </Card>
               </li>
             ))}
@@ -102,7 +102,7 @@ export default async function SoldesCongesPage({ searchParams }: { searchParams:
                   <p className="text-xs text-muted-foreground">
                     Exercice du {frDateColonne(s.dateDebutExercice)} au {frDateColonne(s.dateFinExercice)}
                   </p>
-                  {peutGerer ? <AjustementSoldeForm soldeCongeId={s.id} /> : null}
+                  {peutGerer ? <AjustementSoldeForm soldeCongeId={s.id} refus={s.userId === session.user.id ? MESSAGE_AJUSTEMENT_PROPRE_SOLDE : undefined} /> : null}
                 </Card>
               </li>
             ))}

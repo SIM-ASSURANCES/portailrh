@@ -704,6 +704,9 @@ export async function accorderCongeOffice(
 // ---------------------------------------------------------------------------------------------------------------------
 
 export const MOTIF_AJUSTEMENT_MIN = 5;
+/** Conflit d'intérêts : même phrase côté serveur et côté écran (`/conges/soldes`). */
+export const MESSAGE_AJUSTEMENT_PROPRE_SOLDE = "Vous ne pouvez pas ajuster votre propre solde : un autre compte RH ou le DG doit le faire.";
+export const MESSAGE_DATE_EMBAUCHE_PROPRE = "Vous ne pouvez pas modifier votre propre date d'embauche.";
 
 /** Ajustement manuel d'un solde (RH) : positif ajoute, négatif retire sans jamais passer sous zéro. Tracé. */
 export async function ajusterSolde(
@@ -714,6 +717,11 @@ export async function ajusterSolde(
   if (Math.abs(p.montant) > 365) throw new RefusAbsence("Ajustement excessif (365 jours au plus).", "montant");
   const motif = nettoyerMotifAbsence(p.motif);
   if (motif.length < MOTIF_AJUSTEMENT_MIN) throw new RefusAbsence(`Le motif doit comporter au moins ${MOTIF_AJUSTEMENT_MIN} caractères.`, "motif");
+
+  // Personne n'ajuste son propre solde : le propriétaire est lu AVANT toute écriture.
+  const cible = await db.soldeConge.findUnique({ where: { id: p.soldeCongeId }, select: { userId: true } });
+  if (!cible) throw new RefusAbsence("Solde introuvable ou insuffisant pour ce retrait.", "montant");
+  if (cible.userId === p.acteurId) throw new RefusAbsence(MESSAGE_AJUSTEMENT_PROPRE_SOLDE);
 
   const { count } = await db.soldeConge.updateMany({
     where: { id: p.soldeCongeId, ...(p.montant < 0 ? { soldeRestant: { gte: -p.montant } } : {}) },
@@ -738,6 +746,8 @@ export async function ajusterSolde(
  * Crée la ligne de solde de l'exercice en cours pour chaque compte actif ayant une date d'embauche et chaque type
  * déductible. Sans effet sur les lignes qui existent (jamais de remise à zéro). Retourne le nombre de lignes créées.
  */
+// Volontairement SANS garde « pas pour soi-même » : la dotation suit le type de congé (`nbJoursDefaut`), l'acteur ne la
+// choisit pas, et elle est créée à l'identique pour tous les comptes.
 export async function initialiserSoldesExercice(db: Db, p: { reference: JourCivil; acteurId: string }): Promise<{ utilisateurs: number; soldesCrees: number }> {
   const [types, users] = await Promise.all([
     db.typeConge.findMany({ where: { isActive: true, nonDeductibleSolde: false, nbJoursDefaut: { gt: 0 } } }),
@@ -778,6 +788,8 @@ export async function initialiserSoldesExercice(db: Db, p: { reference: JourCivi
 
 /** Date d'embauche d'un compte (RH). Les soldes déjà créés ne sont pas touchés ; les congés suivants suivent la nouvelle date. */
 export async function modifierDateEmbauche(db: Db, p: { userId: string; date: JourCivil | null; acteurId: string }): Promise<void> {
+  // La date d'embauche fixe l'exercice et l'ancienneté : personne ne la modifie pour soi-même.
+  if (p.userId === p.acteurId) throw new RefusAbsence(MESSAGE_DATE_EMBAUCHE_PROPRE, "date");
   if (p.date !== null) {
     if (!parseJourCivil(p.date)) throw new RefusAbsence("Date d'embauche invalide.", "date");
     if (comparerJours(p.date, formatJourCivil(new Date())) > 0) throw new RefusAbsence("La date d'embauche ne peut pas être dans le futur.", "date");

@@ -61,3 +61,10 @@ Le script réinitialise les tables des permissions d'absence de la base indiqué
 Le Chromium de Playwright peut manquer : `E2E_CHROMIUM=/chemin/vers/chrome`. Les formulaires sont remplis après `networkidle`
 (remplir avant l'hydratation fait revenir les champs à leur valeur initiale) et les statuts sont attendus en base, pas par
 un mot du texte de la page (« Approuvée » apparaît aussi dans « Approuvée par le responsable »).
+
+### Congés — droits propres de la RH (2026-10-16)
+
+```bash
+# Le port 55497 peut être réservé par Windows (Hyper-V) : E2E_PG_PORT=45497 bash e2e/base-jetable.sh
+E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-droits-propres.mjs   # personne n'ajuste son solde ni sa date d'embauche
+```
