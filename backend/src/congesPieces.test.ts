@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   MAX_PIECES_PAR_DEMANDE,
@@ -42,7 +43,7 @@ describe("nom de pièce (B1)", () => {
 
 describe("chemin résolu", () => {
   it("reste dans le dossier", () => {
-    expect(cheminPieceConge("/app/uploads/conges", `${UUID}.pdf`)).toBe(`/app/uploads/conges/${UUID}.pdf`);
+    expect(cheminPieceConge("/app/uploads/conges", `${UUID}.pdf`)).toBe(path.resolve("/app/uploads/conges", `${UUID}.pdf`));
   });
   it("renvoie null pour un nom piégé", () => {
     expect(cheminPieceConge("/app/uploads/conges", "../../etc/passwd")).toBeNull();

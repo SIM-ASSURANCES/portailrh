@@ -5,7 +5,7 @@
 // Un congé et une permission soumis au même instant pour le même compte, le même jour : un seul doit passer, l'autre
 // reçoit le message de chevauchement. Plusieurs tours pour que la course ait réellement lieu. Base jetable seulement.
 
-import { prisma, soumettreConge, soumettrePermission, accorderCongeOffice, transactionAbsence } from "../backend/src/index";
+import { prisma, soumettreConge, resoumettreConge, deciderConge, soumettrePermission, accorderCongeOffice, transactionAbsence } from "../backend/src/index";
 
 const url = process.env.DATABASE_URL ?? "";
 if (!/(jetable|e2e|conges)/i.test(url.split("/").pop()?.split("?")[0] ?? "")) {
@@ -85,6 +85,37 @@ async function main() {
     const gagnants = [o.ok, p.ok].filter(Boolean).length;
     verifier(`tour ${i} (congé d'office + permission) : un seul passe`, gagnants === 1, { office: o.ok ? "ok" : o.erreur, permission: p.ok ? "ok" : p.erreur });
   }
+
+  // Ordre des verrous (verrou de ligne PUIS verrou du collaborateur, partout) : resoumission et annulation de la même demande,
+  // lancées ensemble, ne doivent jamais produire d'interblocage (une transaction tuée = erreur 500 pour l'utilisateur).
+  // Les deux sont faites par le demandeur ; une erreur NON métier (interblocage) fait échouer Promise.all.
+  let interblocages = 0;
+  for (let i = 0; i < TOURS; i++) {
+    const jour = mercredi(3 + (i % 3));
+    await nettoyer();
+    const c = await conge(jour);
+    if (!c.ok) throw new Error(`préparation : ${c.erreur}`);
+    await prisma.demandeConge.update({ where: { id: c.valeur.id }, data: { statut: "MODIFICATION_DEMANDEE", motifModification: "À préciser" } });
+    const resoumettre = transactionAbsence((tx) =>
+      resoumettreConge(tx, { demandeId: c.valeur.id, acteurId: collab.id, entree: { typeCongeId: typeConge.id, dateDebut: jour, dateFin: jour, motif: "Motif précisé" }, maintenant })
+    );
+    const annuler = transactionAbsence((tx) =>
+      deciderConge(tx, { demandeId: c.valeur.id, acteur: { id: collab.id, rolePermissions: [] }, action: { type: "ANNULER", motif: "Je renonce" }, peutAnnulerApresDebut: false, maintenant })
+    );
+    // Une troisième transaction du même collaborateur, en même temps (verrou du collaborateur seul).
+    const autre = conge(mercredi(8));
+    try {
+      const [r, a] = await Promise.all([resoumettre, annuler, autre]);
+      verifier(`tour ${i} (resoumission + annulation) : l'annulation aboutit toujours`, a.ok, a);
+      const final = await prisma.demandeConge.findUniqueOrThrow({ where: { id: c.valeur.id } });
+      verifier(`tour ${i} : état final ANNULEE`, final.statut === "ANNULEE", final.statut);
+      void r;
+    } catch (e) {
+      interblocages++;
+      verifier(`tour ${i} : aucune erreur technique (interblocage)`, false, String(e).slice(0, 200));
+    }
+  }
+  console.log(`Resoumission + annulation : ${TOURS} tours, ${interblocages} interblocage(s).`);
 
   await nettoyer();
   console.log(`Congé gagnant ${victoiresConge} fois, permission gagnante ${victoiresPermission} fois sur ${TOURS} tours.`);
