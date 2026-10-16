@@ -25,7 +25,7 @@ import {
   chargerContexteCircuit,
   genererReferenceAbsence,
   noterHistoriqueAbsence,
-  verrouillerAbsence,
+  verrouillerAbsenceUtilisateur,
   type Db,
 } from "./congesDb";
 import {
@@ -106,7 +106,7 @@ export async function soumettrePermission(
   db: Db,
   p: { userId: string; entree: DemandePermissionEntree; maintenant: Date }
 ): Promise<SoumissionPermission> {
-  await verrouillerAbsence(db, `permission-utilisateur:${p.userId}`);
+  await verrouillerAbsenceUtilisateur(db, p.userId);
   const user = await db.user.findUnique({ where: { id: p.userId }, select: { isActive: true } });
   if (!user || !user.isActive) throw new RefusAbsence("Compte introuvable ou désactivé.");
 
@@ -232,7 +232,7 @@ export async function deciderPermission(
   await db.$executeRaw`SELECT id FROM "DemandePermission" WHERE id = ${p.demandeId} FOR UPDATE`;
   const demande = await db.demandePermission.findUnique({ where: { id: p.demandeId }, include: { typePermission: true } });
   if (!demande) throw new RefusAbsence("Demande introuvable.");
-  await verrouillerAbsence(db, `permission-utilisateur:${demande.userId}`);
+  await verrouillerAbsenceUtilisateur(db, demande.userId);
 
   const jour = jourCivilDepuisColonneDate(demande.date);
   const ctx = await chargerContexteCircuit(db, demande.userId, "PERMISSION");

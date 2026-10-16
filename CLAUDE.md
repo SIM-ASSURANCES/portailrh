@@ -5879,6 +5879,10 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
 - **Personne n'agit sur son propre dossier de congé** : `ajusterSolde` refuse le solde de l'acteur, `modifierDateEmbauche` refuse sa
   propre date d'embauche (`MESSAGE_AJUSTEMENT_PROPRE_SOLDE`, `MESSAGE_DATE_EMBAUCHE_PROPRE`, mêmes phrases à l'écran, qui grise).
   `initialiserSoldesExercice` n'a pas cette garde, volontairement : la dotation suit le type, l'acteur ne la choisit pas.
+- **Un seul verrou par collaborateur** pour les congés ET les permissions d'absence (`verrouillerAbsenceUtilisateur`, clé
+  `absence-utilisateur:<id>`) : pris par `soumettreConge`, `resoumettreConge`, `accorderCongeOffice`, `soumettrePermission` et par les
+  décisions (`deciderConge`, `deciderPermission`, dont l'accord change ce que lit le contrôle de chevauchement de l'autre nature).
+  Avant : deux clés distinctes, donc un congé et une permission soumis ensemble passaient chacun le contrôle de l'autre.
 
 ## Socle Portail — Authentification et permissions
 

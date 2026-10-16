@@ -82,6 +82,16 @@ async function verrouiller(db: Db, cle: string): Promise<void> {
   await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${cle})::bigint)`;
 }
 
+/**
+ * Verrou UNIQUE par collaborateur pour les congés ET les permissions d'absence (relecture du 2026-10-16) : le contrôle de
+ * chevauchement d'un congé lit les permissions, celui d'une permission lit les congés — deux verrous distincts laissaient
+ * un congé et une permission soumis ensemble passer chacun le contrôle de l'autre. À prendre AVANT tout contrôle de
+ * chevauchement et avant toute écriture qui change ce que ce contrôle lit (soumission, accord).
+ */
+export async function verrouillerAbsenceUtilisateur(db: Db, userId: string): Promise<void> {
+  await verrouiller(db, `absence-utilisateur:${userId}`);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Références (I1)
 // ---------------------------------------------------------------------------------------------------------------------
@@ -367,7 +377,7 @@ export interface SoumissionConge {
 }
 
 export async function soumettreConge(db: Db, p: { userId: string; entree: DemandeCongeEntree; maintenant: Date }): Promise<SoumissionConge> {
-  await verrouiller(db, `conge-utilisateur:${p.userId}`);
+  await verrouillerAbsenceUtilisateur(db, p.userId);
   const prepare = await preparerConge(db, { userId: p.userId, entree: p.entree, maintenant: p.maintenant });
   await controlerChevauchement(db, { userId: p.userId, debut: prepare.dateDebut, fin: prepare.dateFin });
   await controlerSolde(db, { userId: p.userId, prepare });
@@ -422,7 +432,7 @@ export async function resoumettreConge(
   await db.$executeRaw`SELECT id FROM "DemandeConge" WHERE id = ${p.demandeId} FOR UPDATE`;
   const demande = await db.demandeConge.findUnique({ where: { id: p.demandeId } });
   if (!demande) throw new RefusAbsence("Demande introuvable.");
-  await verrouiller(db, `conge-utilisateur:${demande.userId}`);
+  await verrouillerAbsenceUtilisateur(db, demande.userId);
 
   const ctx = await chargerContexteCircuit(db, demande.userId, "CONGE");
   const parcours = resoudreParcoursAbsence(ctx);
@@ -567,6 +577,9 @@ export async function deciderConge(
   await db.$executeRaw`SELECT id FROM "DemandeConge" WHERE id = ${p.demandeId} FOR UPDATE`;
   const demande = await db.demandeConge.findUnique({ where: { id: p.demandeId }, include: { typeConge: true } });
   if (!demande) throw new RefusAbsence("Demande introuvable.");
+  // Même verrou que les soumissions : un accord (statut VALIDEE) change ce que lit le contrôle « congé validé » d'une
+  // permission en cours d'accord (`congeCouvre`). Ordre constant : verrou de ligne, puis verrou du collaborateur.
+  await verrouillerAbsenceUtilisateur(db, demande.userId);
 
   const ctx = await chargerContexteCircuit(db, demande.userId, "CONGE");
   const decideur = decideurPourStatutAbsence(demande.statut, ctx);
@@ -660,7 +673,7 @@ export async function accorderCongeOffice(
   p: { acteurId: string; userId: string; entree: DemandeCongeEntree; maintenant: Date }
 ): Promise<{ id: string; reference: string; nbJours: number; libelleType: string }> {
   if (p.acteurId === p.userId) throw new RefusAbsence("Vous ne pouvez pas vous accorder un congé d'office.");
-  await verrouiller(db, `conge-utilisateur:${p.userId}`);
+  await verrouillerAbsenceUtilisateur(db, p.userId);
   const prepare = await preparerConge(db, { userId: p.userId, entree: p.entree, ignorerAnciennete: true, maintenant: p.maintenant });
   await controlerChevauchement(db, { userId: p.userId, debut: prepare.dateDebut, fin: prepare.dateFin });
   await controlerSolde(db, { userId: p.userId, prepare });
@@ -811,6 +824,5 @@ export async function modifierDateEmbauche(db: Db, p: { userId: string; date: Jo
 
 export type { ParcoursAbsence };
 
-// Réutilisés par la couche des permissions d'absence (`permissionsDb.ts`) : même verrou consultatif, même historique.
-export const verrouillerAbsence = verrouiller;
+// Réutilisé par la couche des permissions d'absence (`permissionsDb.ts`) : même historique (le verrou par collaborateur est `verrouillerAbsenceUtilisateur`).
 export const noterHistoriqueAbsence = noterHistorique;
