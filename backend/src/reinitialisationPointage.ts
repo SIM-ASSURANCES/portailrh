@@ -37,7 +37,7 @@ export class ReinitialisationPointageError extends Error {}
  * d'absence existe, la purge ET sa sauvegarde sont refusées.
  */
 export const MESSAGE_PURGE_REFUSEE_ABSENCES =
-  "La purge du Pointage est refusée : des demandes de congé ou de permission d'absence existent, et la purge supprimerait leurs plages d'absence autorisée. Traitez ces demandes d'abord (ou purgez avant leur mise en service).";
+  "La purge n'est plus possible dès qu'une demande de congé ou de permission d'absence existe (même rejetée ou annulée) : mettez le Pointage en service avant d'ouvrir les congés.";
 
 /** `null` si la purge est possible, sinon le message du refus (voir `MESSAGE_PURGE_REFUSEE_ABSENCES`). */
 export async function refusPurgePointageAbsences(db: Db | typeof prisma): Promise<string | null> {
