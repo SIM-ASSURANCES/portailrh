@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { MESSAGE_NB_JOURS_SOLDES_FUTURS } from "backend/client";
+import { LIBELLE_DECOMPTE_CONGE, MESSAGE_NB_JOURS_SOLDES_FUTURS } from "backend/client";
 
 import { Badge, Button, Card, Input, Select } from "@/components/ui";
 import { creerTypeCongeAction, modifierTypeCongeAction, toggleTypeCongeAction } from "../actions";
@@ -75,7 +75,7 @@ function FormulaireType({ id, valeurs, onTermine }: { id: string | null; valeurs
         <Select
           label="Décompte"
           options={[
-            { value: "OUVRABLE", label: "Jours ouvrés" },
+            { value: "OUVRABLE", label: "Jours ouvrables (lundi à vendredi)" },
             { value: "CALENDAIRE", label: "Jours calendaires" },
           ]}
           value={v.decompteType}
@@ -140,7 +140,7 @@ function CarteType({ type }: { type: TypeCongeGestion }) {
         <Badge variant={type.isActive ? "success" : "neutral"}>{type.isActive ? "Actif" : "Inactif"}</Badge>
       </div>
       <p className="text-sm text-foreground">
-        {type.nbJoursDefaut} jour(s) · {type.decompteType === "OUVRABLE" ? "jours ouvrés" : "jours calendaires"}
+        {type.nbJoursDefaut} jour(s) · {LIBELLE_DECOMPTE_CONGE[type.decompteType]}
         {type.nonDeductibleSolde ? " · non déduit du solde" : ""}
         {type.ancienneteMinimumMois > 0 ? ` · ancienneté ${type.ancienneteMinimumMois} mois` : ""}
         {type.justificatifObligatoire ? " · pièce obligatoire" : ""}

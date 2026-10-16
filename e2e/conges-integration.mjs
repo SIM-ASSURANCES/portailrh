@@ -84,9 +84,11 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
   await p.getByLabel("Date de début").fill(debut);
   await p.getByLabel("Date de fin").fill(debut);
   await p.getByLabel("Motif").fill("Congé du test d'intégration");
+  verifier("Formulaire : « Jours ouvrables (lundi à vendredi) » près du type", (await texte(p)).includes("Jours ouvrables (lundi à vendredi)"));
   await p.getByText(/jour.* décompté/).waitFor({ timeout: 15000 });
   await Promise.all([p.waitForURL(/\/conges\/(?!nouvelle)[^/]+$/, { timeout: 20000 }), p.getByRole("button", { name: "Envoyer la demande" }).click()]);
   idConge = new URL(p.url()).pathname.split("/").pop();
+  verifier("Détail du congé : le décompte est nommé « jours ouvrables (lundi à vendredi) »", (await texte(p)).includes("jours ouvrables (lundi à vendredi)"));
 
   // B2 : pas de congé dans le passé — la phrase est la même à l'écran et côté serveur (action rejouée).
   const PHRASE_PASSE = "La date de début ne peut pas être dans le passé : un congé exige une autorisation préalable (art. 12 du règlement).";

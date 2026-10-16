@@ -8,7 +8,7 @@ import { DecisionAbsence } from "@/components/conges/DecisionAbsence";
 import { getSession } from "@/lib/auth";
 import { frDateColonne, frDateHeure, libelleJours } from "@/lib/conges/format";
 import { chargerDemandeConge } from "@/lib/conges/lecture";
-import { LIBELLE_STATUT_ABSENCE } from "backend";
+import { LIBELLE_DECOMPTE_CONGE, LIBELLE_STATUT_ABSENCE } from "backend";
 
 import { annulerCongeAction, approuverCongeAction, demanderModificationCongeAction, rejeterCongeAction } from "../actions";
 
@@ -71,7 +71,7 @@ export default async function DetailCongePage({ params }: { params: Promise<{ id
             du {frDateColonne(d.dateDebut)} au {frDateColonne(d.dateFin)}
           </Info>
           <Info label="Jours décomptés">
-            {libelleJours(d.nbJours)} ({d.typeConge.decompteType === "OUVRABLE" ? "jours ouvrés" : "jours calendaires"})
+            {libelleJours(d.nbJours)} ({LIBELLE_DECOMPTE_CONGE[d.typeConge.decompteType]})
           </Info>
           <Info label="Impact sur le solde">
             {d.typeConge.nonDeductibleSolde ? "Non déduit du solde annuel" : d.joursDebites > 0 ? `${libelleJours(d.joursDebites)} débité(s)` : "Sera débité à la validation"}

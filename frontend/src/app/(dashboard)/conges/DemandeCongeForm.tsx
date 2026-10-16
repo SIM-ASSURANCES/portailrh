@@ -165,7 +165,7 @@ export function DemandeCongeForm({
             ? [
                 type.nonDeductibleSolde ? "Non déduit de votre solde annuel." : null,
                 type.ancienneteMinimumMois > 0 ? `Ancienneté minimale : ${type.ancienneteMinimumMois} mois.` : null,
-                type.decompteType === "OUVRABLE" ? "Jours ouvrés (week-ends et jours fériés exclus)." : "Jours calendaires.",
+                type.decompteType === "OUVRABLE" ? "Jours ouvrables (lundi à vendredi), jours fériés exclus." : "Jours calendaires.",
               ]
                 .filter(Boolean)
                 .join(" ")

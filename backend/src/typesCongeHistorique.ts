@@ -16,10 +16,12 @@ export interface TypeCongeDecrit {
 export const MESSAGE_NB_JOURS_SOLDES_FUTURS =
   "La nouvelle valeur s'applique aux soldes créés ensuite (nouvel exercice) ; les soldes existants se corrigent par « Ajuster » dans « Soldes ».";
 
-const LIBELLE_DECOMPTE: Record<string, string> = {
+/** Libellé de chaque décompte, partout à l'écran (C2) : les jours ouvrables vont du lundi au vendredi, jours fériés exclus. */
+export const LIBELLE_DECOMPTE_CONGE: Record<"OUVRABLE" | "CALENDAIRE", string> = {
   OUVRABLE: "jours ouvrables (lundi à vendredi)",
   CALENDAIRE: "jours calendaires",
 };
+const LIBELLE_DECOMPTE: Record<string, string> = LIBELLE_DECOMPTE_CONGE;
 const LIBELLE_CATEGORIE: Record<string, string> = {
   CONGE_STANDARD: "congé standard",
   PERMISSION_EXCEPTIONNELLE: "permission exceptionnelle",
