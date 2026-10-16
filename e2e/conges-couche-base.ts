@@ -5,7 +5,7 @@
 // La base doit être migrée et seedée (comptes de test). Le script y ÉCRIT (demandes, soldes, plages) : jamais la base de
 // développement. Garde : le nom de la base doit contenir « jetable », « e2e » ou « conges ».
 
-import { prisma, soumettreConge, resoumettreConge, deciderConge, accorderCongeOffice, ajusterSolde, transactionAbsence, MESSAGE_CONGE_DANS_LE_PASSE } from "../backend/src/index";
+import { prisma, initialiserSoldesExercice, soumettreConge, resoumettreConge, deciderConge, accorderCongeOffice, ajusterSolde, transactionAbsence, MESSAGE_CONGE_DANS_LE_PASSE } from "../backend/src/index";
 
 const url = process.env.DATABASE_URL ?? "";
 if (!/(jetable|e2e|conges)/i.test(url.split("/").pop() ?? "")) {
@@ -205,6 +205,24 @@ async function main() {
     verifier("12 mois révolus : demande acceptée", accepte.ok, accepte);
   } finally {
     await prisma.user.update({ where: { id: collab.id }, data: { dateEmbauche: embaucheInitiale } });
+  }
+
+  console.log("Nombre de jours par an paramétrable (C1) : soldes créés ensuite seulement");
+  const avantJours = (await prisma.typeConge.findUniqueOrThrow({ where: { id: annuel.id } })).nbJoursDefaut;
+  const existant = await prisma.soldeConge.findFirstOrThrow({ where: { userId: collab.id, typeCongeId: annuel.id }, orderBy: { exercice: "desc" } });
+  const dansUnAn = (() => { const d = new Date(); return `${d.getFullYear() + 1}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+  try {
+    await prisma.typeConge.update({ where: { id: annuel.id }, data: { nbJoursDefaut: 28 } });
+    const init = await transactionAbsence((tx) => initialiserSoldesExercice(tx, { reference: dansUnAn, acteurId: rh.id }));
+    verifier("initialisation du nouvel exercice réussie", init.ok, init);
+    const nouveau = await prisma.soldeConge.findFirst({ where: { userId: collab.id, typeCongeId: annuel.id, exercice: { gt: existant.exercice } } });
+    verifier("le solde du NOUVEL exercice reçoit la nouvelle valeur (28)", nouveau?.soldeInitial === 28 && nouveau?.soldeRestant === 28, nouveau);
+    const inchange = await prisma.soldeConge.findUniqueOrThrow({ where: { id: existant.id } });
+    verifier("le solde EXISTANT n'est pas touché", inchange.soldeInitial === existant.soldeInitial && inchange.soldeRestant === existant.soldeRestant, inchange);
+  } finally {
+    await prisma.soldeConge.deleteMany({ where: { userId: collab.id, typeCongeId: annuel.id, exercice: { gt: existant.exercice } } });
+    await prisma.soldeConge.deleteMany({ where: { typeCongeId: annuel.id, exercice: { gt: existant.exercice } } });
+    await prisma.typeConge.update({ where: { id: annuel.id }, data: { nbJoursDefaut: avantJours } });
   }
 
   const hist = await prisma.historiqueEntry.count({ where: { entity: "DemandeConge" } });

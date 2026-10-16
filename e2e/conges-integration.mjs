@@ -155,6 +155,28 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
   await p.goto(`${B}/conges`);
   const menu = await nav(p).innerText();
   verifier("Menu de la RH : « À décider » et « Soldes »", menu.includes("À décider") && menu.includes("Soldes"));
+  // C1 : nombre de jours paramétrable ; l'historique garde l'ancienne ET la nouvelle valeur.
+  await p.goto(`${B}/conges/parametrage`);
+  await p.waitForLoadState("networkidle");
+  const carteAnnuel = p.locator("div", { hasText: "ANNUEL" }).filter({ has: p.getByRole("button", { name: "Modifier" }) }).last();
+  await carteAnnuel.getByRole("button", { name: "Modifier" }).click();
+  const champJours = p.getByLabel("Jours accordés par défaut");
+  verifier("Paramétrage : le texte « soldes créés ensuite » est affiché près du nombre de jours", (await texte(p)).includes("s'applique aux soldes créés ensuite"));
+  await champJours.fill("28");
+  await p.getByRole("button", { name: "Enregistrer", exact: true }).click();
+  await p.getByText("Type modifié.").first().waitFor({ timeout: 15000 });
+  const h1 = await q(`SELECT detail FROM "HistoriqueEntry" WHERE entity = 'TypeConge' AND action = 'modification_type' ORDER BY "createdAt" DESC LIMIT 1`);
+  verifier("Historique : « jours accordés : 30 → 28 »", (h1[0]?.detail ?? "").includes("jours accordés : 30 → 28"), h1[0]?.detail);
+  await p.reload();
+  await p.waitForLoadState("networkidle");
+  const carteAnnuel2 = p.locator("div", { hasText: "ANNUEL" }).filter({ has: p.getByRole("button", { name: "Modifier" }) }).last();
+  await carteAnnuel2.getByRole("button", { name: "Modifier" }).click();
+  await p.getByLabel("Jours accordés par défaut").fill("30");
+  await p.getByRole("button", { name: "Enregistrer", exact: true }).click();
+  await p.waitForFunction(() => document.body.innerText.includes("30 jour(s)"), null, { timeout: 15000 });
+  const h2 = await q(`SELECT detail FROM "HistoriqueEntry" WHERE entity = 'TypeConge' AND action = 'modification_type' ORDER BY "createdAt" DESC LIMIT 1`);
+  verifier("Historique : la remise à 30 garde « 28 → 30 »", (h2[0]?.detail ?? "").includes("jours accordés : 28 → 30"), h2[0]?.detail);
+
   await p.goto(`${B}/pointage/mon-equipe`);
   verifier("Mon équipe (responsable du service RH) : les deux cartes « à décider » sont présentes", (await p.locator('[data-section="absences-a-decider"]').count()) === 1);
   await ctx.close();

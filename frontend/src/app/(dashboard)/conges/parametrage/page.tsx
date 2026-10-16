@@ -15,7 +15,7 @@ export default async function ParametrageCongesPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Types de congé" description="Durées, décompte, ancienneté et pièces exigées. Un type désactivé n'est plus proposé, les demandes existantes sont conservées." />
+      <PageHeader title="Types de congé" description="Durées, décompte, ancienneté et pièces exigées. Le nombre de jours du congé annuel (30 au départ, valeur provisoire) est fixé par la RH. Un type désactivé n'est plus proposé, les demandes existantes sont conservées." />
       <TypesCongeGestion types={types.map(({ id, code, label, categorie, nbJoursDefaut, decompteType, justificatifObligatoire, nonDeductibleSolde, ancienneteMinimumMois, isActive }) => ({ id, code, label, categorie, nbJoursDefaut, decompteType, justificatifObligatoire, nonDeductibleSolde, ancienneteMinimumMois, isActive }))} />
     </div>
   );

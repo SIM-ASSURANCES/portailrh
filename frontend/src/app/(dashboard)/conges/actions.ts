@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import {
   accorderCongeOffice,
   ajusterSolde,
+  decrireModificationType,
+  MESSAGE_NB_JOURS_SOLDES_FUTURS,
   ajouterJours,
   calculerNbJours,
   dateFinPourJours,
@@ -260,6 +262,7 @@ const typeSchema = z.object({
 });
 
 async function ecrireType(id: string | null, input: z.infer<typeof typeSchema>): Promise<ActionState> {
+  let nbJoursModifie = false;
   const session = await getSession();
   if (!session) return { status: "error", message: "Non authentifié." };
   if (!hasPermission(session, "conges.parametrer_types")) return { status: "error", message: "Action non autorisée." };
@@ -267,22 +270,28 @@ async function ecrireType(id: string | null, input: z.infer<typeof typeSchema>):
   if (!parsed.success) return { status: "error", message: "Formulaire invalide.", fieldErrors: fieldErrorsFromZod(parsed.error) };
 
   try {
+    // Ancienne valeur lue avant l'écriture : l'historique garde l'ancienne ET la nouvelle (C1).
+    const avant = id ? await prisma.typeConge.findUnique({ where: { id } }) : null;
+    if (id && !avant) return { status: "error", message: "Type introuvable." };
     const type = id ? await prisma.typeConge.update({ where: { id }, data: parsed.data }) : await prisma.typeConge.create({ data: parsed.data });
     await prisma.historiqueEntry.create({
       data: {
         entity: "TypeConge",
         entityId: type.id,
         action: id ? "modification_type" : "creation_type",
-        detail: `Type « ${type.label} » (${type.code}) : ${type.nbJoursDefaut} jour(s), ${type.decompteType}, ${type.nonDeductibleSolde ? "non déductible" : "déductible"}.`,
+        detail: avant
+          ? decrireModificationType(avant, type)
+          : `Type « ${type.label} » (${type.code}) créé : ${type.nbJoursDefaut} jour(s), ${type.decompteType}, ${type.nonDeductibleSolde ? "non déductible" : "déductible"}.`,
         userId: session.user.id,
       },
     });
+    nbJoursModifie = Boolean(avant && avant.nbJoursDefaut !== type.nbJoursDefaut);
   } catch {
     return { status: "error", message: "Ce code ou ce libellé existe déjà." };
   }
   revalidatePath("/conges/parametrage");
   publishDataChanged();
-  return { status: "success", message: id ? "Type modifié." : "Type créé." };
+  return { status: "success", message: id ? (nbJoursModifie ? `Type modifié. ${MESSAGE_NB_JOURS_SOLDES_FUTURS}` : "Type modifié.") : "Type créé." };
 }
 
 export async function creerTypeCongeAction(input: z.infer<typeof typeSchema>): Promise<ActionState> {

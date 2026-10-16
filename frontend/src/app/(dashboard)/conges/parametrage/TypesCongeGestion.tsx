@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { MESSAGE_NB_JOURS_SOLDES_FUTURS } from "backend/client";
 
 import { Badge, Button, Card, Input, Select } from "@/components/ui";
 import { creerTypeCongeAction, modifierTypeCongeAction, toggleTypeCongeAction } from "../actions";
@@ -80,7 +81,16 @@ function FormulaireType({ id, valeurs, onTermine }: { id: string | null; valeurs
           value={v.decompteType}
           onChange={(e) => setV({ ...v, decompteType: e.target.value as typeof v.decompteType })}
         />
-        <Input label="Jours accordés par défaut" type="number" min={0} max={366} value={v.nbJoursDefaut} onChange={(e) => setV({ ...v, nbJoursDefaut: Number(e.target.value) })} error={erreurs.nbJoursDefaut} />
+        <Input
+          label="Jours accordés par défaut"
+          type="number"
+          min={0}
+          max={366}
+          value={v.nbJoursDefaut}
+          onChange={(e) => setV({ ...v, nbJoursDefaut: Number(e.target.value) })}
+          hint={MESSAGE_NB_JOURS_SOLDES_FUTURS}
+          error={erreurs.nbJoursDefaut}
+        />
         <Input label="Ancienneté minimale (mois)" type="number" min={0} max={120} value={v.ancienneteMinimumMois} onChange={(e) => setV({ ...v, ancienneteMinimumMois: Number(e.target.value) })} error={erreurs.ancienneteMinimumMois} />
       </div>
       <label className="flex items-center gap-2 text-sm text-foreground">

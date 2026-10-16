@@ -52,6 +52,7 @@ export * from "./congesCalcul";
 export * from "./circuitAbsence";
 export * from "./congesPieces";
 export * from "./congesPasse";
+export * from "./typesCongeHistorique";
 export * from "./congesDb";
 export * from "./permissionsAbsence";
 export * from "./permissionsDb";
