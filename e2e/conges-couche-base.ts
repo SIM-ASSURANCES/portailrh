@@ -5,6 +5,7 @@
 // La base doit être migrée et seedée (comptes de test). Le script y ÉCRIT (demandes, soldes, plages) : jamais la base de
 // développement. Garde : le nom de la base doit contenir « jetable », « e2e » ou « conges ».
 
+import { randomUUID } from "node:crypto";
 import { prisma, ajouterObservationDG, initialiserSoldesExercice, soumettreConge, resoumettreConge, deciderConge, accorderCongeOffice, ajusterSolde, transactionAbsence, MESSAGE_CONGE_DANS_LE_PASSE } from "../backend/src/index";
 
 const url = process.env.DATABASE_URL ?? "";
@@ -159,6 +160,97 @@ async function main() {
   verifier("ajustement qui passerait sous zéro refusé", !aj.ok);
   const aj2 = await transactionAbsence((tx) => ajusterSolde(tx, { soldeCongeId: solde.id, montant: 2, motif: "Régularisation 2025", acteurId: rh.id }));
   verifier("ajustement +2 → 30", aj2.ok && aj2.valeur.soldeRestant === 30, aj2);
+
+  console.log("Permission exceptionnelle (C4) : une seule décision, destinataire choisi");
+  const mariage = await prisma.typeConge.findUniqueOrThrow({ where: { code: "MARIAGE_SALARIE" } });
+  const piece = () => [{ url: randomUUID() + ".pdf", nomFichier: "livret.pdf" }];
+  const exc = (semaine: number, destinataire?: "RESPONSABLE" | "RH" | null) =>
+    transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: mariage.id, dateDebut: lundi(semaine), dateFin: lundi(semaine), motif: "Mariage du salarié", piecesJointes: piece(), destinataire }, maintenant }));
+  const decE = (id: string, acteur: { id: string; rolePermissions: string[] }, action: Parameters<typeof deciderConge>[1]["action"]) =>
+    transactionAbsence((tx) => deciderConge(tx, { demandeId: id, acteur, action, peutAnnulerApresDebut: false, maintenant: new Date() }));
+  const effacer = async (id: string) => {
+    await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: id } });
+    await prisma.demandeConge.delete({ where: { id } });
+  };
+
+  const sansChoix = await exc(41);
+  verifier("permission exceptionnelle sans destinataire : refusée", !sansChoix.ok && /Choisissez qui valide/.test(sansChoix.erreur) && sansChoix.champ === "destinataire", sansChoix);
+  const ordinaireAvecChoix = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(41), dateFin: lundi(41), motif: "Congé ordinaire", destinataire: "RH" }, maintenant }));
+  verifier("congé ordinaire avec un destinataire : refusé", !ordinaireAvecChoix.ok, ordinaireAvecChoix);
+  const inconnu = await exc(41, "DG" as unknown as "RH");
+  verifier("destinataire inconnu (DG) : refusé", !inconnu.ok, inconnu);
+
+  // Choix responsable : une seule décision, définitive (VALIDEE avec les plages, sans débit).
+  const eR = await exc(42, "RESPONSABLE");
+  verifier("choix responsable : en attente du responsable seul", eR.ok && eR.valeur.statut === "EN_ATTENTE_RESPONSABLE" && eR.valeur.destinataires.length === 1 && eR.valeur.destinataires[0] === resp.id, eR);
+  if (eR.ok) {
+    const rhNon = await decE(eR.valeur.id, rh, { type: "APPROUVER" });
+    verifier("la RH ne décide pas à la place d'un responsable utilisable", !rhNon.ok, rhNon);
+    const accordE = await decE(eR.valeur.id, resp, { type: "APPROUVER" });
+    verifier("le responsable accorde : VALIDEE tout de suite (aucune étape RH)", accordE.ok && accordE.valeur.statut === "VALIDEE" && accordE.valeur.effet === "ACCORDER", accordE);
+    const ligneE = await prisma.demandeConge.findUniqueOrThrow({ where: { id: eR.valeur.id } });
+    verifier("approuvé par et validé par = le responsable ; destinataire conservé", ligneE.approuveParId === resp.id && ligneE.valideParId === resp.id && ligneE.destinataire === "RESPONSABLE");
+    verifier("plages d'absence créées, aucun débit (non déductible)", (await prisma.plageAbsenceAutorisee.count({ where: { demandeCongeId: eR.valeur.id } })) === 4 && ligneE.joursDebites === 0);
+    verifier("historique : accord_responsable", (await prisma.historiqueEntry.count({ where: { entity: "DemandeConge", entityId: eR.valeur.id, action: "accord_responsable" } })) === 1);
+    const encore = await decE(eR.valeur.id, resp, { type: "REJETER", motif: "Trop tard" });
+    verifier("décision définitive : plus rien à décider", !encore.ok, encore);
+    await effacer(eR.valeur.id);
+  }
+
+  // Choix RH : la RH décide seule ; un rejet est définitif aussi.
+  const eH = await exc(43, "RH");
+  verifier("choix RH : en attente de la RH, étape responsable non requise", eH.ok && eH.valeur.statut === "EN_ATTENTE_RH" && eH.valeur.destinataires.includes(rh.id) && !eH.valeur.destinataires.includes(resp.id), eH);
+  if (eH.ok) {
+    const respNon = await decE(eH.valeur.id, resp, { type: "APPROUVER" });
+    verifier("le responsable ne décide pas quand la RH est choisie", !respNon.ok, respNon);
+    const rejet = await decE(eH.valeur.id, rh, { type: "REJETER", motif: "Pièce non conforme" });
+    verifier("la RH rejette : REJETEE définitive", rejet.ok && rejet.valeur.statut === "REJETEE", rejet);
+    const apres = await decE(eH.valeur.id, rh, { type: "APPROUVER" });
+    verifier("après un rejet, aucune seconde décision", !apres.ok, apres);
+    await effacer(eH.valeur.id);
+  }
+
+  // Repli : le responsable choisi est désactivé après la soumission -> la RH ; plus de RH -> le DG ; jamais le demandeur.
+  const eRep = await exc(44, "RESPONSABLE");
+  if (eRep.ok) {
+    try {
+      await prisma.user.update({ where: { id: resp.id }, data: { isActive: false } });
+      const parRH = await decE(eRep.valeur.id, rh, { type: "APPROUVER" });
+      verifier("responsable désactivé : la RH décide à sa place (repli), VALIDEE", parRH.ok && parRH.valeur.statut === "VALIDEE" && parRH.valeur.viaRepli, parRH);
+      if (parRH.ok) await effacer(eRep.valeur.id);
+      const eRep2 = await exc(45, "RH");
+      if (eRep2.ok) {
+        await prisma.user.update({ where: { id: rh.id }, data: { isActive: false } });
+        const parDG = await decE(eRep2.valeur.id, dg, { type: "APPROUVER" });
+        verifier("plus aucun compte RH actif : le DG décide, VALIDEE", parDG.ok && parDG.valeur.statut === "VALIDEE", parDG);
+        await effacer(eRep2.valeur.id);
+        const eRep3 = await exc(45, "RH");
+        if (eRep3.ok) {
+          const parDemandeur = await decE(eRep3.valeur.id, collab, { type: "APPROUVER" });
+          verifier("jamais le demandeur", !parDemandeur.ok, parDemandeur);
+          await effacer(eRep3.valeur.id);
+        }
+      }
+      await prisma.user.update({ where: { id: rh.id }, data: { isActive: true } });
+      // Le choix responsable n'est plus proposé tant qu'il est désactivé.
+      const refus = await exc(46, "RESPONSABLE");
+      verifier("responsable désactivé : le choix responsable est refusé par le serveur", !refus.ok && /pas disponible/.test(refus.erreur), refus);
+    } finally {
+      await prisma.user.updateMany({ where: { id: { in: [resp.id, rh.id] } }, data: { isActive: true } });
+    }
+  }
+
+  // Resoumission : le destinataire déjà choisi est conservé, et peut être changé.
+  const eMod = await exc(47, "RESPONSABLE");
+  if (eMod.ok) {
+    await prisma.demandeConge.update({ where: { id: eMod.valeur.id }, data: { statut: "MODIFICATION_DEMANDEE", motifModification: "Précisez" } });
+    const reso = await transactionAbsence((tx) => resoumettreConge(tx, { demandeId: eMod.valeur.id, acteurId: collab.id, entree: { typeCongeId: mariage.id, dateDebut: lundi(47), dateFin: lundi(47), motif: "Mariage corrigé", piecesJointes: piece() }, maintenant }));
+    verifier("resoumission sans nouveau choix : le destinataire est conservé (responsable)", reso.ok && reso.valeur.statut === "EN_ATTENTE_RESPONSABLE", reso);
+    await prisma.demandeConge.update({ where: { id: eMod.valeur.id }, data: { statut: "MODIFICATION_DEMANDEE", motifModification: "Encore" } });
+    const reso2 = await transactionAbsence((tx) => resoumettreConge(tx, { demandeId: eMod.valeur.id, acteurId: collab.id, entree: { typeCongeId: mariage.id, dateDebut: lundi(47), dateFin: lundi(47), motif: "Mariage re-corrigé", piecesJointes: piece(), destinataire: "RH" }, maintenant }));
+    verifier("resoumission avec un autre choix (RH) : la demande part à la RH", reso2.ok && reso2.valeur.statut === "EN_ATTENTE_RH", reso2);
+    await effacer(eMod.valeur.id);
+  }
 
   console.log("Observations (C3) : RH à sa décision, DG à tout moment, ajout seul");
   const debutO = lundi(26);

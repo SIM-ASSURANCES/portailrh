@@ -1462,6 +1462,9 @@ model DemandeConge {
 
   /// Étape du responsable de service requise, fixée à la soumission (affichage « non requise » dans la frise).
   etapeResponsableRequise Boolean @default(true)
+  /// Permission exceptionnelle (C4) : celui que le demandeur a choisi pour la décision UNIQUE. `null` pour un congé ordinaire
+  /// (circuit responsable puis RH).
+  destinataire DestinataireDecisionConge?
   /// Solde débité à la validation (0 pour un type non déductible) : sert à recréditer exactement à l'annulation.
   joursDebites            Int     @default(0)
   /// Solde (exercice) réellement débité à la validation : recrédité à l'annulation, même si la date d'embauche change ensuite.
@@ -2371,4 +2374,10 @@ model ObservationAbsence {
 
   @@index([demandeCongeId, createdAt])
   @@index([demandePermissionId, createdAt])
+}
+
+/// Qui valide une permission exceptionnelle (mariage, décès, naissance…) : une seule décision, définitive.
+enum DestinataireDecisionConge {
+  RESPONSABLE
+  RH
 }

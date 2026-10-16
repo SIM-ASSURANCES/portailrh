@@ -64,7 +64,9 @@ export type RaisonEtapeResponsableNonRequise =
   | "SANS_RESPONSABLE"
   | "EST_RESPONSABLE"
   | "RESPONSABLE_INACTIF"
-  | "DEMANDEUR_DG";
+  | "DEMANDEUR_DG"
+  /** Permission exceptionnelle : le demandeur a choisi la RH, l'étape responsable n'existe pas pour cette demande. */
+  | "CHOIX_RH";
 
 export type EtapeResponsable =
   | { requise: true; responsableId: string }
@@ -103,22 +105,72 @@ export const MESSAGE_AUCUN_DECIDEUR =
   "Aucun compte ne peut décider de cette demande (aucun autre compte RH, ni DG) : contactez l'administrateur.";
 
 export type ParcoursAbsence =
-  | { ok: true; etapeResponsable: EtapeResponsable; etapeRH: EtapeRH; premierStatut: "EN_ATTENTE_RESPONSABLE" | "EN_ATTENTE_RH" }
+  | {
+      ok: true;
+      etapeResponsable: EtapeResponsable;
+      etapeRH: EtapeRH;
+      premierStatut: "EN_ATTENTE_RESPONSABLE" | "EN_ATTENTE_RH";
+      /** Permission exceptionnelle : UNE seule décision, celle du destinataire choisi (définitive). */
+      etapeUnique: boolean;
+    }
   | { ok: false; erreur: string };
+
+/**
+ * Qui valide une permission EXCEPTIONNELLE (mariage, décès, naissance…) : le responsable du service du demandeur ou la RH,
+ * au choix du demandeur (C4, consignes du 2026-10-16). Une seule décision, définitive.
+ */
+export type DestinataireDecision = "RESPONSABLE" | "RH";
+
+export const MESSAGE_DESTINATAIRE_OBLIGATOIRE = "Choisissez qui valide votre demande : votre responsable ou la RH.";
+export const MESSAGE_DESTINATAIRE_NON_PROPOSE = "Ce destinataire n'est pas disponible pour votre demande : choisissez l'une des propositions.";
+export const MESSAGE_DESTINATAIRE_HORS_PERMISSION_EXCEPTIONNELLE = "Le choix du destinataire ne concerne que les permissions exceptionnelles.";
+
+/**
+ * Destinataires proposés au demandeur : « Mon responsable » seulement si son responsable est utilisable (service, responsable
+ * actif, qui n'est pas lui-même, et lui-même n'est pas le DG) ; « La RH » est toujours proposée.
+ */
+export function destinatairesProposes(ctx: ContexteCircuitAbsence): DestinataireDecision[] {
+  return resoudreEtapeResponsable(ctx).requise ? ["RESPONSABLE", "RH"] : ["RH"];
+}
+
+/**
+ * Valide le choix du destinataire d'une demande. Permission exceptionnelle : obligatoire, parmi `destinatairesProposes`.
+ * Autre type : aucun choix n'existe, un choix fourni est refusé. Le serveur refuse ce que l'écran ne propose pas.
+ */
+export function controlerDestinataire(p: {
+  choix: unknown;
+  exceptionnelle: boolean;
+  ctx: ContexteCircuitAbsence;
+}): { ok: true; destinataire: DestinataireDecision | null } | { ok: false; erreur: string } {
+  const absent = p.choix === undefined || p.choix === null || p.choix === "";
+  if (!p.exceptionnelle) {
+    return absent ? { ok: true, destinataire: null } : { ok: false, erreur: MESSAGE_DESTINATAIRE_HORS_PERMISSION_EXCEPTIONNELLE };
+  }
+  if (absent) return { ok: false, erreur: MESSAGE_DESTINATAIRE_OBLIGATOIRE };
+  if (p.choix !== "RESPONSABLE" && p.choix !== "RH") return { ok: false, erreur: MESSAGE_DESTINATAIRE_NON_PROPOSE };
+  if (!destinatairesProposes(p.ctx).includes(p.choix)) return { ok: false, erreur: MESSAGE_DESTINATAIRE_NON_PROPOSE };
+  return { ok: true, destinataire: p.choix };
+}
 
 /**
  * Parcours d'une demande à la soumission (ou à la resoumission après une demande de modification). Une demande qui
  * n'aurait aucun décideur à l'étape RH est refusée d'emblée : elle resterait bloquée.
  */
-export function resoudreParcoursAbsence(ctx: ContexteCircuitAbsence): ParcoursAbsence {
+export function resoudreParcoursAbsence(ctx: ContexteCircuitAbsence, destinataire: DestinataireDecision | null = null): ParcoursAbsence {
   const etapeResponsable = resoudreEtapeResponsable(ctx);
   const etapeRH = resoudreEtapeRH(ctx);
   if (etapeRH.type === "AUCUN") return { ok: false, erreur: MESSAGE_AUCUN_DECIDEUR };
+  // Permission exceptionnelle, choix « RH » : pas d'étape responsable, une seule décision.
+  if (destinataire === "RH") {
+    return { ok: true, etapeResponsable: { requise: false, raison: "CHOIX_RH" }, etapeRH, premierStatut: "EN_ATTENTE_RH", etapeUnique: true };
+  }
   return {
     ok: true,
     etapeResponsable,
     etapeRH,
+    // Choix « responsable » devenu inutilisable (repli) : la demande part directement chez celui qui le remplace.
     premierStatut: etapeResponsable.requise ? "EN_ATTENTE_RESPONSABLE" : "EN_ATTENTE_RH",
+    etapeUnique: destinataire === "RESPONSABLE",
   };
 }
 
@@ -211,6 +263,8 @@ export interface ParamsTransitionAbsence {
   adebute?: boolean;
   /** L'acteur porte `conges.annuler` / `absences.annuler` (ou l'étape RH) : il annule même après le début. */
   peutAnnulerApresDebut?: boolean;
+  /** Permission exceptionnelle : une seule décision (celle du destinataire choisi), définitive. */
+  etapeUnique?: boolean;
 }
 
 export type EffetTransitionAbsence =
@@ -313,7 +367,8 @@ export function transitionAbsence(p: ParamsTransitionAbsence): ResultatTransitio
   const etape: "RESPONSABLE" | "RH" = decideur?.type === "RESPONSABLE" ? "RESPONSABLE" : "RH";
 
   if (action.type === "APPROUVER") {
-    if (decideur?.type === "RESPONSABLE") {
+    // Circuit ordinaire : le responsable envoie à la RH. Décision unique : celui qui reçoit la demande l'accorde, c'est final.
+    if (decideur?.type === "RESPONSABLE" && !p.etapeUnique) {
       return { ok: true, statut: "EN_ATTENTE_RH", effet: "AUCUN", etape };
     }
     return { ok: true, statut: statutFinalAbsence(nature), effet: "ACCORDER", etape, ...(viaRepli ? { viaRepli: true } : {}) };
@@ -398,6 +453,8 @@ export const ACTION_HISTORIQUE_ABSENCE = {
   APPROUVER_RESPONSABLE: "approbation_responsable",
   ACCORDER: "accord_rh",
   ACCORDER_PAR_REPLI: "accord_par_repli",
+  /** Permission exceptionnelle : accordée par le responsable choisi (décision unique, sans étape RH). */
+  ACCORDER_PAR_RESPONSABLE: "accord_responsable",
   REJETER: "rejet",
   DEMANDER_MODIFICATION: "demande_modification",
   RESOUMETTRE: "resoumission",
@@ -424,8 +481,14 @@ export interface EtapeFrise {
  * Frise d'avancement : Dépôt → Responsable (ou « non requise ») → RH → Décision. Une demande rejetée, annulée ou en
  * attente de modification interrompt l'étape où elle se trouvait.
  */
-export function friseAbsence(params: { nature: NatureAbsence; statut: StatutCircuitAbsence; etapeResponsableRequise: boolean }): EtapeFrise[] {
-  const { nature, statut, etapeResponsableRequise } = params;
+export function friseAbsence(params: {
+  nature: NatureAbsence;
+  statut: StatutCircuitAbsence;
+  etapeResponsableRequise: boolean;
+  /** Faux pour une permission exceptionnelle dont le destinataire est le responsable (la RH n'est pas une étape). */
+  etapeRHRequise?: boolean;
+}): EtapeFrise[] {
+  const { nature, statut, etapeResponsableRequise, etapeRHRequise = true } = params;
   const accordee = estStatutFinalAccorde(nature, statut);
   const interrompue = statut === "REJETEE" || statut === "ANNULEE" || statut === "MODIFICATION_DEMANDEE";
   // Étape où la demande s'est arrêtée : sans trace d'approbation du responsable, on l'a arrêtée à la première étape applicable.
@@ -441,7 +504,7 @@ export function friseAbsence(params: { nature: NatureAbsence; statut: StatutCirc
   return [
     { cle: "DEPOT", libelle: "Dépôt", etat: "faite" },
     { cle: "RESPONSABLE", libelle: "Responsable du service", etat: etat(1, etapeResponsableRequise) },
-    { cle: "RH", libelle: "RH", etat: etat(2) },
+    { cle: "RH", libelle: "RH", etat: etat(2, etapeRHRequise) },
     { cle: "DECISION", libelle: nature === "CONGE" ? "Congé validé" : "Permission approuvée", etat: accordee ? "faite" : interrompue ? "interrompue" : "a_venir" },
   ];
 }

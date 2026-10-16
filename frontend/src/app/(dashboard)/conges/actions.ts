@@ -46,6 +46,9 @@ const demandeSchema = z.object({
   dateFin: JOUR,
   motif: z.string().min(5, "Le motif doit comporter au moins 5 caractères").max(500, "Le motif ne doit pas dépasser 500 caractères"),
   interimaire: z.string().max(120).optional(),
+  // Permission exceptionnelle seulement (C4) : « RESPONSABLE » ou « RH ». Contrôlé par le moteur (`controlerDestinataire`) : une
+  // valeur inconnue ou non proposée reçoit sa phrase de refus, jamais un message de schéma.
+  destinataire: z.string().max(20).nullish(),
   // Les noms sont contrôlés plus finement (forme, existence) par le moteur et `piecesExistent` : jamais une valeur libre.
   piecesJointes: z.array(z.object({ url: z.string().max(100), nomFichier: z.string().max(200).optional() })).max(10).optional(),
 });
@@ -63,7 +66,7 @@ function revalider(demandeId?: string) {
 }
 
 function versEntree(d: DemandeCongeInput): DemandeCongeEntree {
-  return { ...d, interimaire: d.interimaire ?? null };
+  return { ...d, interimaire: d.interimaire ?? null, destinataire: (d.destinataire ?? null) as DemandeCongeEntree["destinataire"] };
 }
 
 function frDate(jour: string): string {

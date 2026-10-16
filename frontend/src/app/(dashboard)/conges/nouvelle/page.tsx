@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { aujourdhui } from "@/lib/conges/format";
-import { prisma } from "backend";
+import { chargerChoixDestinataire, prisma } from "backend";
 
 import { DemandeCongeForm } from "../DemandeCongeForm";
 
@@ -13,6 +13,8 @@ export default async function NouvelleDemandeCongePage() {
   if (!hasPermission(session, "conges.soumettre")) redirect("/?error=acces_refuse_conges");
 
   const types = await prisma.typeConge.findMany({ where: { isActive: true }, orderBy: [{ categorie: "asc" }, { label: "asc" }] });
+  // Permission exceptionnelle (C4) : à qui le demandeur peut adresser sa demande (même règle que le contrôle serveur).
+  const choixDestinataire = await chargerChoixDestinataire(prisma, session.user.id);
 
   return (
     <div className="space-y-6">
@@ -20,6 +22,7 @@ export default async function NouvelleDemandeCongePage() {
       <DemandeCongeForm
         mode="nouvelle"
         aujourdhui={aujourdhui()}
+        choixDestinataire={choixDestinataire}
         types={types.map((t) => ({
           id: t.id,
           label: t.label,

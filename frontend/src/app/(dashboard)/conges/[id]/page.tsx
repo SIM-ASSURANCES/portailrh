@@ -26,6 +26,7 @@ const LIBELLE_ACTION: Record<string, string> = {
   annulation: "Annulée",
   conge_office: "Congé accordé d'office par la RH",
   rappel: "Rappel envoyé",
+  accord_responsable: "Accordée par le responsable du service (décision unique)",
   observation: "Observation ajoutée",
 };
 
@@ -81,6 +82,11 @@ export default async function DetailCongePage({ params }: { params: Promise<{ id
             {d.typeConge.nonDeductibleSolde ? "Non déduit du solde annuel" : d.joursDebites > 0 ? `${libelleJours(d.joursDebites)} débité(s)` : "Sera débité à la validation"}
           </Info>
           <Info label="Intérimaire">{d.interimaire ?? "—"}</Info>
+          {d.destinataire ? (
+            <Info label="Validation">
+              {d.destinataire === "RESPONSABLE" ? "Par le responsable du service (choix du demandeur)" : "Par la RH (choix du demandeur)"} · une seule décision, définitive
+            </Info>
+          ) : null}
           <div className="sm:col-span-2">
             <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Motif</dt>
             <dd className="mt-1 whitespace-pre-wrap text-foreground">{d.motif}</dd>

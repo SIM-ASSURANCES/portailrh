@@ -21,10 +21,13 @@ import {
   destinatairesEtapeAbsence,
   nettoyerMotifAbsence,
   resoudreParcoursAbsence,
+  controlerDestinataire,
+  destinatairesProposes,
   transitionAbsence,
   type ActeurAbsence,
   type ActionCircuitAbsence,
   type ContexteCircuitAbsence,
+  type DestinataireDecision,
   type EffetTransitionAbsence,
   type NatureAbsence,
   type ParcoursAbsence,
@@ -236,6 +239,11 @@ export interface DemandeCongeEntree {
   motif: string;
   interimaire?: string | null;
   piecesJointes?: readonly PieceEntree[];
+  /**
+   * Permission exceptionnelle seulement (C4) : qui valide, parmi `destinatairesProposes`. Obligatoire pour ce type, refusé pour
+   * tout autre ; le serveur refuse un choix que l'écran ne propose pas.
+   */
+  destinataire?: DestinataireDecision | null;
 }
 
 interface CongePrepare {
@@ -469,6 +477,24 @@ export interface SoumissionConge {
   libelleType: string;
 }
 
+export interface ChoixDestinataire {
+  /** Destinataires proposés au demandeur pour une permission exceptionnelle (au moins « RH »). */
+  proposes: DestinataireDecision[];
+  /** Nom du responsable à afficher (« Mon responsable (nom) »), `null` s'il n'est pas proposé. */
+  responsableNom: string | null;
+}
+
+/** Ce que l'écran propose au demandeur (C4) : calculé avec la même règle que le contrôle serveur de la soumission. */
+export async function chargerChoixDestinataire(db: Db, userId: string): Promise<ChoixDestinataire> {
+  const ctx = await chargerContexteCircuit(db, userId, "CONGE");
+  const proposes = destinatairesProposes(ctx);
+  const responsable =
+    proposes.includes("RESPONSABLE") && ctx.service?.responsableId
+      ? await db.user.findUnique({ where: { id: ctx.service.responsableId }, select: { fullName: true } })
+      : null;
+  return { proposes, responsableNom: responsable?.fullName ?? null };
+}
+
 export async function soumettreConge(db: Db, p: { userId: string; entree: DemandeCongeEntree; maintenant: Date }): Promise<SoumissionConge> {
   await verrouillerAbsenceUtilisateur(db, p.userId);
   const prepare = await preparerConge(db, { userId: p.userId, entree: p.entree, maintenant: p.maintenant });
@@ -476,7 +502,9 @@ export async function soumettreConge(db: Db, p: { userId: string; entree: Demand
   await controlerSolde(db, { userId: p.userId, prepare });
 
   const ctx = await chargerContexteCircuit(db, p.userId, "CONGE");
-  const parcours = resoudreParcoursAbsence(ctx);
+  const choix = controlerDestinataire({ choix: p.entree.destinataire, exceptionnelle: prepare.type.categorie === "PERMISSION_EXCEPTIONNELLE", ctx });
+  if (!choix.ok) throw new RefusAbsence(choix.erreur, "destinataire");
+  const parcours = resoudreParcoursAbsence(ctx, choix.destinataire);
   if (!parcours.ok) throw new RefusAbsence(parcours.erreur);
 
   const reference = await genererReferenceAbsence(db, "CONGE", p.maintenant);
@@ -490,6 +518,7 @@ export async function soumettreConge(db: Db, p: { userId: string; entree: Demand
       interimaire: prepare.interimaire,
       statut: parcours.premierStatut,
       etapeResponsableRequise: parcours.etapeResponsable.requise,
+      destinataire: choix.destinataire,
       etapeDepuis: p.maintenant,
       userId: p.userId,
       typeCongeId: prepare.type.id,
@@ -527,8 +556,14 @@ export async function resoumettreConge(
   if (!demande) throw new RefusAbsence("Demande introuvable.");
   await verrouillerAbsenceUtilisateur(db, demande.userId);
 
+  // Le type (donc son éventuelle décision unique) se lit sur la demande renvoyée : on la prépare d'abord.
+  const prepare = await preparerConge(db, { userId: demande.userId, entree: p.entree, exclureDemandeId: demande.id, maintenant: p.maintenant });
   const ctx = await chargerContexteCircuit(db, demande.userId, "CONGE");
-  const parcours = resoudreParcoursAbsence(ctx);
+  // Renvoi sans nouveau choix : le destinataire déjà choisi est conservé s'il est toujours proposé.
+  const exceptionnelle = prepare.type.categorie === "PERMISSION_EXCEPTIONNELLE";
+  const choix = controlerDestinataire({ choix: p.entree.destinataire ?? (exceptionnelle ? demande.destinataire : null), exceptionnelle, ctx });
+  if (!choix.ok) throw new RefusAbsence(choix.erreur, "destinataire");
+  const parcours = resoudreParcoursAbsence(ctx, choix.destinataire);
   if (!parcours.ok) throw new RefusAbsence(parcours.erreur);
   const r = transitionAbsence({
     nature: "CONGE",
@@ -540,7 +575,6 @@ export async function resoumettreConge(
   });
   if (!r.ok) throw new RefusAbsence(r.erreur);
 
-  const prepare = await preparerConge(db, { userId: demande.userId, entree: p.entree, exclureDemandeId: demande.id, maintenant: p.maintenant });
   await controlerChevauchement(db, { userId: demande.userId, debut: prepare.dateDebut, fin: prepare.dateFin, exclureDemandeId: demande.id });
   await controlerSolde(db, { userId: demande.userId, prepare });
 
@@ -549,6 +583,7 @@ export async function resoumettreConge(
     data: {
       statut: parcours.premierStatut,
       etapeResponsableRequise: parcours.etapeResponsable.requise,
+      destinataire: choix.destinataire,
       etapeDepuis: p.maintenant,
       dernierRappelAt: null,
       dateDebut: colonneDateDepuisJourCivil(prepare.dateDebut),
@@ -689,6 +724,8 @@ export async function deciderConge(
     decideur,
     adebute: comparerJours(aujourdhui, jourCivilDepuisColonneDate(demande.dateDebut)) >= 0,
     peutAnnulerApresDebut: p.peutAnnulerApresDebut,
+    // Permission exceptionnelle : une seule décision, celle du destinataire choisi (C4).
+    etapeUnique: demande.destinataire !== null,
   });
   if (!r.ok) throw new RefusAbsence(r.erreur);
 
@@ -702,6 +739,11 @@ export async function deciderConge(
     data.approuveParId = p.acteur.id;
     data.approuveAt = p.maintenant;
   } else if (r.etape === "RH") {
+    data.valideParId = p.acteur.id;
+    data.valideAt = p.maintenant;
+  }
+  // Décision unique accordée par le responsable : la demande est validée, « Validée par » est lui aussi renseigné.
+  if (r.etape === "RESPONSABLE" && r.effet === "ACCORDER") {
     data.valideParId = p.acteur.id;
     data.valideAt = p.maintenant;
   }
@@ -725,7 +767,9 @@ export async function deciderConge(
         ? ACTION_HISTORIQUE_ABSENCE.APPROUVER_RESPONSABLE
         : r.viaRepli
           ? ACTION_HISTORIQUE_ABSENCE.ACCORDER_PAR_REPLI
-          : ACTION_HISTORIQUE_ABSENCE.ACCORDER
+          : r.etape === "RESPONSABLE"
+            ? ACTION_HISTORIQUE_ABSENCE.ACCORDER_PAR_RESPONSABLE
+            : ACTION_HISTORIQUE_ABSENCE.ACCORDER
       : p.action.type === "REJETER"
         ? ACTION_HISTORIQUE_ABSENCE.REJETER
         : p.action.type === "DEMANDER_MODIFICATION"

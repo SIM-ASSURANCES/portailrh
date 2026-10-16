@@ -26,7 +26,14 @@ export interface TypeCongeOption {
   ancienneteMinimumMois: number;
 }
 
+/** Ce que l'écran propose pour une permission exceptionnelle (C4) : voir `chargerChoixDestinataire`. */
+export interface ChoixDestinataireEcran {
+  proposes: ("RESPONSABLE" | "RH")[];
+  responsableNom: string | null;
+}
+
 export interface ValeursInitiales {
+  destinataire?: "RESPONSABLE" | "RH" | null;
   typeCongeId: string;
   dateDebut: string;
   dateFin: string;
@@ -51,8 +58,10 @@ export function DemandeCongeForm({
   demandeId,
   initial,
   aujourdhui,
+  choixDestinataire,
 }: {
   mode: Mode;
+  choixDestinataire?: ChoixDestinataireEcran;
   types: TypeCongeOption[];
   collaborateurs?: { id: string; label: string }[];
   demandeId?: string;
@@ -68,6 +77,10 @@ export function DemandeCongeForm({
   const [motif, setMotif] = useState(initial?.motif ?? "");
   const [interimaire, setInterimaire] = useState(initial?.interimaire ?? "");
   const [pieces, setPieces] = useState<PieceDeposee[]>(initial?.pieces ?? []);
+  // Permission exceptionnelle : celui qui valide (seule « La RH » quand le responsable n'est pas utilisable).
+  const [destinataire, setDestinataire] = useState<string>(
+    initial?.destinataire && choixDestinataire?.proposes.includes(initial.destinataire) ? initial.destinataire : choixDestinataire?.proposes.length === 1 ? choixDestinataire.proposes[0] : ""
+  );
   const [erreurs, setErreurs] = useState<Partial<Record<string, string>>>({});
   // L'aperçu est rangé avec la clé de la saisie qui l'a produit : jamais affiché pour une saisie différente.
   const [apercu, setApercu] = useState<{ cle: string; valeur: ApercuConge | null; erreur: string | null } | null>(null);
@@ -106,6 +119,7 @@ export function DemandeCongeForm({
       dateFin: dureeFixee ? (apercuCourant?.valeur?.dateFin ?? dateDebut) : dateFin,
       motif,
       interimaire: interimaire.trim() === "" ? undefined : interimaire,
+      destinataire: mode !== "office" && dureeFixee && destinataire ? destinataire : undefined,
       piecesJointes: pieces.map((p) => ({ url: p.url, nomFichier: p.nomFichier })),
     };
     demarrer(async () => {
@@ -131,7 +145,7 @@ export function DemandeCongeForm({
   const minDebut = mode === "office" ? undefined : aujourdhui;
   // Art. 12 : autorisation préalable. Même règle et même phrase que le serveur ; seul le congé d'office (RH) y échappe.
   const erreurPasse = mode !== "office" && dateDebut ? refusDateDebutPassee(dateDebut, aujourdhui) : null;
-  const incomplet = !typeCongeId || !dateDebut || (!dureeFixee && !dateFin) || motif.trim().length < 5 || (mode === "office" && !userId) || erreurPasse !== null;
+  const incomplet = !typeCongeId || !dateDebut || (!dureeFixee && !dateFin) || motif.trim().length < 5 || (mode === "office" && !userId) || erreurPasse !== null || (mode !== "office" && dureeFixee && !destinataire);
 
   return (
     <form
@@ -225,6 +239,28 @@ export function DemandeCongeForm({
             <p className="text-warning">{apercuCourant.erreur ?? "Aperçu indisponible."}</p>
           )}
         </div>
+      ) : null}
+
+      {mode !== "office" && dureeFixee && choixDestinataire ? (
+        <Select
+          label="Qui valide votre demande ?"
+          required
+          placeholder="Choisir…"
+          options={[
+            ...(choixDestinataire.proposes.includes("RESPONSABLE")
+              ? [{ value: "RESPONSABLE", label: `Mon responsable${choixDestinataire.responsableNom ? ` (${choixDestinataire.responsableNom})` : ""}` }]
+              : []),
+            { value: "RH", label: "La RH" },
+          ]}
+          value={destinataire}
+          onChange={(e) => setDestinataire(e.target.value)}
+          hint={
+            choixDestinataire.proposes.length === 1
+              ? "Votre responsable ne peut pas valider cette demande : la RH la valide."
+              : "Une seule validation suffit : celui que vous choisissez accorde ou rejette, et sa décision est définitive."
+          }
+          error={erreurs.destinataire}
+        />
       ) : null}
 
       <Textarea

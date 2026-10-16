@@ -271,6 +271,13 @@ DO $$ BEGIN
     CHECK (NOT ("demandeCongeId" IS NOT NULL AND "demandePermissionId" IS NOT NULL));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+-- 2 ter) Permission exceptionnelle (C4) : une seule décision, au choix du demandeur (responsable ou RH).
+DO $$ BEGIN
+  CREATE TYPE "DestinataireDecisionConge" AS ENUM ('RESPONSABLE', 'RH');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+ALTER TABLE "DemandeConge" ADD COLUMN IF NOT EXISTS "destinataire" "DestinataireDecisionConge";
+
 -- 2 bis) Observations sur les demandes (C3, consignes du 2026-10-16) : AJOUT SEUL.
 DO $$ BEGIN
   CREATE TYPE "EtapeObservationAbsence" AS ENUM ('RESPONSABLE', 'RH', 'DG');

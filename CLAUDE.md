@@ -5919,6 +5919,15 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
   (priorité INFO, aucun rappel). Visibilité : toute personne qui voit la demande, demandeur compris, avec le nom de l'auteur ; le demandeur n'en ajoute
   pas. Le DG voit **toutes** les demandes sans `consulter_tous` (`PERMISSIONS_CONSULTATION_ABSENCE`, layouts, menu) via les listes
   « Toutes les demandes » (`/conges/toutes`, `/permissions-absence/toutes`, aussi pour la RH et `consulter_tous`).
+- **Permission exceptionnelle en une seule décision (C4)** — types `PERMISSION_EXCEPTIONNELLE` du module Congés (mariage, décès, naissance…), pas les
+  permissions de quelques heures. À la soumission le demandeur choisit **« Mon responsable (nom) » ou « La RH »** (`DemandeConge.destinataire`,
+  `DestinataireDecisionConge`) ; seule « La RH » est proposée si son responsable est inutilisable (pas de service, pas de responsable, désactivé, ou lui-même)
+  et le serveur refuse un choix non proposé, ou fourni pour un autre type (`controlerDestinataire`, `destinatairesProposes`). **Une seule décision, définitive** :
+  celui qui reçoit la demande l'accorde (VALIDEE avec plages et débit éventuel) ou la rejette (REJETEE) — plus de seconde étape (`etapeUnique` du moteur,
+  `approuveParId` et `valideParId` renseignés pour le responsable, action d'historique `accord_responsable`). Repli si le destinataire devient indisponible :
+  responsable désactivé → la RH ; aucune RH → le DG ; jamais le demandeur. La resoumission conserve le choix (ou le change). Frise : l'étape non choisie est
+  « non requise ». Toujours valables : 6 mois d'ancienneté, pièce justificative obligatoire, durée fixée par le type, non déductible. Le bouton « Demander une
+  modification » reste disponible (ce n'est pas une décision).
 
 ## Socle Portail — Authentification et permissions
 

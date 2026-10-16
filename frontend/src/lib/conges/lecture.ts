@@ -54,8 +54,16 @@ export async function chargerDemandeConge(id: string, session: SessionPortail) {
     decideur,
     adebute: jourCivilDepuisColonneDate(demande.dateDebut) <= aujourdhui(),
     peutAnnulerApresDebut: hasPermission(session, "conges.annuler"),
+    // Permission exceptionnelle : une seule décision (C4).
+    etapeUnique: demande.destinataire !== null,
   });
-  const frise = friseAbsence({ nature: "CONGE", statut, etapeResponsableRequise: demande.etapeResponsableRequise });
+  // Choix « responsable » : la RH n'est pas une étape — sauf si le responsable a été remplacé à la soumission (repli vers la RH).
+  const frise = friseAbsence({
+    nature: "CONGE",
+    statut,
+    etapeResponsableRequise: demande.etapeResponsableRequise,
+    etapeRHRequise: !(demande.destinataire === "RESPONSABLE" && demande.etapeResponsableRequise),
+  });
 
   const historique = await prisma.historiqueEntry.findMany({
     where: { entity: "DemandeConge", entityId: demande.id },

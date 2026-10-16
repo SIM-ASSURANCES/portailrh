@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { aujourdhui } from "@/lib/conges/format";
-import { jourCivilDepuisColonneDate, prisma } from "backend";
+import { chargerChoixDestinataire, jourCivilDepuisColonneDate, prisma } from "backend";
 
 import { DemandeCongeForm } from "../../DemandeCongeForm";
 
@@ -19,6 +19,7 @@ export default async function ModifierDemandeCongePage({ params }: { params: Pro
   if (demande.statut !== "MODIFICATION_DEMANDEE") redirect(`/conges/${id}`);
 
   const types = await prisma.typeConge.findMany({ where: { isActive: true }, orderBy: [{ categorie: "asc" }, { label: "asc" }] });
+  const choixDestinataire = await chargerChoixDestinataire(prisma, session.user.id);
 
   return (
     <div className="space-y-6">
@@ -26,6 +27,7 @@ export default async function ModifierDemandeCongePage({ params }: { params: Pro
       <DemandeCongeForm
         mode="modifier"
         demandeId={demande.id}
+        choixDestinataire={choixDestinataire}
         aujourdhui={aujourdhui()}
         types={types.map((t) => ({
           id: t.id,
@@ -39,6 +41,7 @@ export default async function ModifierDemandeCongePage({ params }: { params: Pro
         }))}
         initial={{
           typeCongeId: demande.typeCongeId,
+          destinataire: demande.destinataire,
           dateDebut: jourCivilDepuisColonneDate(demande.dateDebut),
           dateFin: jourCivilDepuisColonneDate(demande.dateFin),
           motif: demande.motif,
