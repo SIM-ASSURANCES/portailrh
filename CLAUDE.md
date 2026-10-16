@@ -5872,10 +5872,17 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
 
 > Section complète prévue au Lot 6 (règles, permissions, circuit, limites, décisions provisoires). Règles déjà arrêtées :
 
-- **Droits `conges.*` / `absences.*` attribués par la migration `20261021090000`** par permission sœur (jamais par nom de rôle),
-  **hors rôles `estAdmin`** : un rôle `estAdmin` ne reçoit AUCUN droit congés/absences (relecture du 2026-10-16). En base de dev,
-  l'Admin porte les permissions sœurs (anomalie des 23 permissions) et serait devenu décideur RH (il compterait dans les comptes
-  RH et supprimerait le repli DG). À cocher à la main dans `/admin/roles` si voulu. Le seed applique la même règle.
+- **Droits `conges.*` / `absences.*` attribués par la migration `20261021090000`** par permission sœur (jamais par nom de rôle). Les rôles
+  `estAdmin` en sont exclus pour tout ce qui DÉCIDE ou GÈRE (valider_rh, annuler, parametrer, gerer_soldes, consulter_tous) mais gardent
+  `conges.soumettre` / `absences.soumettre` (relecture du 2026-10-16, option b) : c'est le pouvoir de décider qui posait problème —
+  en base de dev l'Admin porte les permissions sœurs (anomalie des 23 permissions) et serait devenu décideur RH, comptant dans les
+  comptes RH et supprimant le repli DG —, pas le droit de demander (un rôle combiné « Admin / Collaborateur » porte un vrai employé).
+  Droits RH d'un rôle `estAdmin` à cocher à la main dans `/admin/roles` si voulu. Le seed applique la même règle. **À vérifier en
+  production avant déploiement** : quels comptes portent un rôle `estAdmin` (ils pourront demander un congé).
+- **Responsable de service sans permission** : le responsable ACTUEL d'au moins un service accède à « À décider » (congés et permissions),
+  au détail des demandes de son service et les approuve, rejette ou renvoie, sans aucune permission — comme « Mon service » en
+  Trésorerie. Il ne voit jamais « Mes congés » / « Nouvelle demande » : `/conges` et `/permissions-absence` le redirigent vers « À décider »,
+  et la demande pour lui-même reste refusée (page ET Server Action). Layouts, `chargerNavAbsences` et cartes d'accueil suivent la même règle.
 - **Personne n'agit sur son propre dossier de congé** : `ajusterSolde` refuse le solde de l'acteur, `modifierDateEmbauche` refuse sa
   propre date d'embauche (`MESSAGE_AJUSTEMENT_PROPRE_SOLDE`, `MESSAGE_DATE_EMBAUCHE_PROPRE`, mêmes phrases à l'écran, qui grise).
   `initialiserSoldesExercice` n'a pas cette garde, volontairement : la dotation suit le type, l'acteur ne la choisit pas.
@@ -5896,7 +5903,7 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
   congés demandés / approuvés / validés / annulés, permissions demandées / approuvées / validées / annulées) et affiche le message
   habituel au lieu d'échouer sur une clé étrangère.
 - **Purge du Pointage (D5)** : refusée — exécution ET sauvegarde — dès qu'une `DemandeConge` ou une `DemandePermission` existe
-  (`refusPurgePointageAbsences`, `MESSAGE_PURGE_REFUSEE_ABSENCES`) : elle supprimerait toutes les `PlageAbsenceAutorisee`, y compris celles
+  (`refusPurgePointageAbsences`, `MESSAGE_PURGE_REFUSEE_ABSENCES`), même rejetée ou annulée — traiter une demande ne débloque rien, il faut mettre le Pointage en service avant d'ouvrir les congés : elle supprimerait toutes les `PlageAbsenceAutorisee`, y compris celles
   d'un congé validé. L'écran affiche le message à la place du formulaire ; la sauvegarde répond 409.
 
 ## Socle Portail — Authentification et permissions

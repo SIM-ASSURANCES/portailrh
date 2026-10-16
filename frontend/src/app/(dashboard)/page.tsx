@@ -74,7 +74,7 @@ interface ModuleCardState {
  * uniquement dans la sidebar (`comingSoon`, voir nav.ts), jamais sur cette
  * carte générale qui n'a qu'un seul point d'entrée par module.
  */
-function getModuleCardState(moduleKey: string, session: { permissions: string[] } | null): ModuleCardState {
+function getModuleCardState(moduleKey: string, session: { permissions: string[] } | null, estResponsableDeService = false): ModuleCardState {
   if (moduleKey === "tresorerie") {
     const href = getTresorerieHref(session);
     return href ? { href, reason: "no_access" } : { href: null, reason: "no_access" };
@@ -103,11 +103,13 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
     if (hasPermission(session, "conges.soumettre")) return { href: "/conges", reason: "no_access" };
     if (hasPermission(session, "conges.valider_rh")) return { href: "/conges/a-decider", reason: "no_access" };
     if (hasPermission(session, "conges.consulter_tous")) return { href: "/conges/soldes", reason: "no_access" };
+    if (estResponsableDeService) return { href: "/conges/a-decider", reason: "no_access" };
     return { href: null, reason: "no_access" };
   }
   if (moduleKey === "absences") {
     if (hasPermission(session, "absences.soumettre")) return { href: "/permissions-absence", reason: "no_access" };
     if (hasPermission(session, "absences.valider_rh")) return { href: "/permissions-absence/a-decider", reason: "no_access" };
+    if (estResponsableDeService) return { href: "/permissions-absence/a-decider", reason: "no_access" };
     return { href: null, reason: "no_access" };
   }
   return { href: null, reason: "coming_soon" };
@@ -145,9 +147,11 @@ export default async function DashboardHomePage({
   const { error } = await searchParams;
   const session = await getSession();
   const modules = await getAccessibleModules(session);
+  // Responsable d'au moins un service : « À décider » des congés et permissions sans permission de module.
+  const estResponsableDeService = session ? (await prisma.service.count({ where: { responsableId: session.user.id } })) > 0 : false;
   const moduleCards = modules.map((module_) => ({
     ...module_,
-    ...getModuleCardState(module_.key, session),
+    ...getModuleCardState(module_.key, session, estResponsableDeService),
   }));
 
   // PERF-03 : Toutes les queries indépendantes après la session sont

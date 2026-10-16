@@ -18,7 +18,10 @@ import {
 export default async function MesCongesPage() {
   const session = await getSession();
   if (!session) redirect("/login");
-  if (!hasPermission(session, "conges.soumettre")) redirect(session.rolePermissions.includes("conges.valider_rh") ? "/conges/a-decider" : "/");
+  if (!hasPermission(session, "conges.soumettre")) {
+    const estResponsable = (await prisma.service.count({ where: { responsableId: session.user.id } })) > 0;
+    redirect(session.rolePermissions.includes("conges.valider_rh") || estResponsable ? "/conges/a-decider" : "/");
+  }
 
   const [user, demandes, soldes] = await Promise.all([
     prisma.user.findUnique({ where: { id: session.user.id }, select: { dateEmbauche: true } }),

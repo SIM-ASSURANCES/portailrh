@@ -11,7 +11,10 @@ import { formatMinutesEnHeures, LIBELLE_STATUT_ABSENCE, prisma, type StatutCircu
 export default async function MesPermissionsPage() {
   const session = await getSession();
   if (!session) redirect("/login");
-  if (!hasPermission(session, "absences.soumettre")) redirect(session.rolePermissions.includes("absences.valider_rh") ? "/permissions-absence/a-decider" : "/");
+  if (!hasPermission(session, "absences.soumettre")) {
+    const estResponsable = (await prisma.service.count({ where: { responsableId: session.user.id } })) > 0;
+    redirect(session.rolePermissions.includes("absences.valider_rh") || estResponsable ? "/permissions-absence/a-decider" : "/");
+  }
 
   const maintenant = new Date();
   const debutMois = new Date(Date.UTC(maintenant.getFullYear(), maintenant.getMonth(), 1));

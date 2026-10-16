@@ -152,10 +152,25 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
   const { ctx, p } = await connecter("admin@simassurances.test");
   await p.goto(`${B}/`);
   const carte = async (titre) => (await p.locator(`h3:text-is("${titre}")`).first().locator("xpath=..").innerText()).replace(/\s+/g, " ");
-  verifier("Accueil de l'Admin : carte « Congés » = « Aucun accès »", (await carte("Congés")).includes("Aucun accès"), await carte("Congés"));
-  verifier("Accueil de l'Admin : carte « Permissions d'absence » = « Aucun accès »", (await carte("Permissions d'absence")).includes("Aucun accès"));
-  verifier("Accueil de l'Admin : aucun lien vers /conges ni /permissions-absence", (await p.locator('a[href="/conges"], a[href="/permissions-absence"]').count()) === 0);
-  verifier("Menu de l'Admin : pas de branche « Congés »", (await p.locator('button[aria-expanded]', { hasText: /^Congés$/ }).count()) === 0);
+  // L'Admin du seed est responsable d'Informatique : sans permission, il accède à « À décider » seulement (jamais « Mes … »).
+  verifier("Accueil de l'Admin (responsable d'Informatique) : cartes vers « À décider »", (await p.locator('a[href="/conges/a-decider"]').count()) >= 1 && (await p.locator('a[href="/permissions-absence/a-decider"]').count()) >= 1);
+  verifier("Accueil de l'Admin : aucun lien vers /conges ni /permissions-absence (Mes …)", (await p.locator('a[href="/conges"], a[href="/permissions-absence"]').count()) === 0);
+  await p.goto(`${B}/conges/a-decider`);
+  const menuAdmin = (await nav(p).innerText()).replace(/\s+/g, " ");
+  verifier("Menu de l'Admin : « À décider » sans « Mes congés »", menuAdmin.includes("À décider") && !menuAdmin.includes("Mes congés"), menuAdmin.slice(0, 200));
+  // Plus responsable d'aucun service : « Aucun accès » sur l'accueil, jamais « Bientôt disponible ».
+  const informatique = (await q(`SELECT id, "responsableId" FROM "Service" WHERE name = 'Informatique'`))[0];
+  const rhId = (await q(`SELECT id FROM "User" WHERE email = 'rh@simassurances.test'`))[0].id;
+  await q(`UPDATE "Service" SET "responsableId" = $2 WHERE id = $1`, [informatique.id, rhId]);
+  try {
+    await p.goto(`${B}/`);
+    const carte = async (titre) => (await p.locator(`h3:text-is("${titre}")`).first().locator("xpath=..").innerText()).replace(/\s+/g, " ");
+    verifier("Accueil d'un Admin sans permission ni service dirigé : carte « Congés » = « Aucun accès »", (await carte("Congés")).includes("Aucun accès"), await carte("Congés"));
+    verifier("Accueil d'un Admin sans permission ni service dirigé : carte « Permissions d'absence » = « Aucun accès »", (await carte("Permissions d'absence")).includes("Aucun accès"));
+    verifier("Menu de cet Admin : pas de branche « Congés »", (await p.locator('button[aria-expanded]', { hasText: /^Congés$/ }).count()) === 0);
+  } finally {
+    await q(`UPDATE "Service" SET "responsableId" = $2 WHERE id = $1`, [informatique.id, informatique.responsableId]);
+  }
 
   // Suppression d'un compte lié à un congé : message précis (et non une erreur de clé étrangère).
   const reponse = await rejouer(p, "supprimerUtilisateurAction", [collab]);

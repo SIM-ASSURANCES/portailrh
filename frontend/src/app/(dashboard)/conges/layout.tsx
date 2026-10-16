@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { getSession, hasPermission } from "@/lib/auth";
+import { prisma } from "backend";
 import { chargerFileDecisionConges } from "@/lib/conges/lecture";
 import { SousNavConges, type LienSousNav } from "./SousNavConges";
 
@@ -15,7 +16,10 @@ export default async function CongesLayout({ children }: { children: React.React
   const estRH = session.rolePermissions.includes("conges.valider_rh");
   const peutSoumettre = hasPermission(session, "conges.soumettre");
   const consulteTous = hasPermission(session, "conges.consulter_tous");
-  if (!peutSoumettre && !estRH && !consulteTous) redirect("/?error=acces_refuse_conges");
+  // Le responsable ACTUEL d'au moins un service décide les demandes de son service sans aucune permission (comme « Mon service »
+  // en Trésorerie) : il n'accède qu'à « À décider » et au détail des demandes de son service, jamais à « Mes congés ».
+  const estResponsable = (await prisma.service.count({ where: { responsableId: session.user.id } })) > 0;
+  if (!peutSoumettre && !estRH && !consulteTous && !estResponsable) redirect("/?error=acces_refuse_conges");
 
   // La file n'est chargée que pour qui peut décider quelque chose (responsable de service, RH, DG).
   const file = await chargerFileDecisionConges(session);
@@ -25,7 +29,7 @@ export default async function CongesLayout({ children }: { children: React.React
     liens.push({ href: "/conges", label: "Mes congés" });
     liens.push({ href: "/conges/nouvelle", label: "Nouvelle demande" });
   }
-  if (file.length > 0 || estRH) liens.push({ href: "/conges/a-decider", label: "À décider", compteur: file.length });
+  if (file.length > 0 || estRH || estResponsable) liens.push({ href: "/conges/a-decider", label: "À décider", compteur: file.length });
   if (hasPermission(session, "conges.gerer_soldes") || consulteTous || estRH) liens.push({ href: "/conges/soldes", label: "Soldes" });
   if (hasPermission(session, "conges.parametrer_types")) liens.push({ href: "/conges/parametrage", label: "Types de congé" });
 

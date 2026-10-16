@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { getSession, hasPermission } from "@/lib/auth";
+import { prisma } from "backend";
 import { chargerFileDecisionPermissions } from "@/lib/absences/lecture";
 import { SousNavConges, type LienSousNav } from "../conges/SousNavConges";
 
@@ -15,7 +16,9 @@ export default async function PermissionsAbsenceLayout({ children }: { children:
   const estRH = session.rolePermissions.includes("absences.valider_rh");
   const peutSoumettre = hasPermission(session, "absences.soumettre");
   const consulteTous = hasPermission(session, "absences.consulter_tous");
-  if (!peutSoumettre && !estRH && !consulteTous) redirect("/?error=acces_refuse_absences");
+  // Responsable actuel d'au moins un service : accès à « À décider » seulement (voir le layout des congés).
+  const estResponsable = (await prisma.service.count({ where: { responsableId: session.user.id } })) > 0;
+  if (!peutSoumettre && !estRH && !consulteTous && !estResponsable) redirect("/?error=acces_refuse_absences");
 
   const file = await chargerFileDecisionPermissions(session);
 
@@ -24,7 +27,7 @@ export default async function PermissionsAbsenceLayout({ children }: { children:
     liens.push({ href: "/permissions-absence", label: "Mes permissions" });
     liens.push({ href: "/permissions-absence/nouvelle", label: "Nouvelle demande" });
   }
-  if (file.length > 0 || estRH) liens.push({ href: "/permissions-absence/a-decider", label: "À décider", compteur: file.length });
+  if (file.length > 0 || estRH || estResponsable) liens.push({ href: "/permissions-absence/a-decider", label: "À décider", compteur: file.length });
   if (hasPermission(session, "absences.parametrer")) liens.push({ href: "/permissions-absence/parametrage", label: "Types de permission" });
 
   return (
