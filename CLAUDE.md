@@ -5868,6 +5868,18 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
   paiements de la fiche police (colonnes figées ajoutées en 6b), visible à 768 px. Le formulaire de saisie (6c), lui,
   tient à 768 px. À traiter dans un commit dédié (cartes empilées ou colonnes réduites sous la largeur d'une tablette).
 
+## Module Congés et Permissions d'absence (en cours — branche `conges-permissions`)
+
+> Section complète prévue au Lot 6 (règles, permissions, circuit, limites, décisions provisoires). Règles déjà arrêtées :
+
+- **Droits `conges.*` / `absences.*` attribués par la migration `20261021090000`** par permission sœur (jamais par nom de rôle),
+  **hors rôles `estAdmin`** : un rôle `estAdmin` ne reçoit AUCUN droit congés/absences (relecture du 2026-10-16). En base de dev,
+  l'Admin porte les permissions sœurs (anomalie des 23 permissions) et serait devenu décideur RH (il compterait dans les comptes
+  RH et supprimerait le repli DG). À cocher à la main dans `/admin/roles` si voulu. Le seed applique la même règle.
+- **Personne n'agit sur son propre dossier de congé** : `ajusterSolde` refuse le solde de l'acteur, `modifierDateEmbauche` refuse sa
+  propre date d'embauche (`MESSAGE_AJUSTEMENT_PROPRE_SOLDE`, `MESSAGE_DATE_EMBAUCHE_PROPRE`, mêmes phrases à l'écran, qui grise).
+  `initialiserSoldesExercice` n'a pas cette garde, volontairement : la dotation suit le type, l'acteur ne la choisit pas.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif

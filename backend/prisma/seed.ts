@@ -428,7 +428,9 @@ async function main() {
   };
 
   // Congés et permissions d'absence : même règle que la migration (permission sœur), jamais un nom de rôle.
+  // Le rôle Admin (`estAdmin`) n'en reçoit aucune : comme la migration, il ne devient pas décideur RH (relecture du 2026-10-16).
   for (const [roleId, keys] of Object.entries(rolePermissionMap)) {
+    if (roleId === roleAdmin.id) continue;
     rolePermissionMap[roleId] = [...keys, ...permissionsAbsencePourCles(keys)];
   }
 
