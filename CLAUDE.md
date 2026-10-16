@@ -5903,7 +5903,7 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
   congés demandés / approuvés / validés / annulés, permissions demandées / approuvées / validées / annulées) et affiche le message
   habituel au lieu d'échouer sur une clé étrangère.
 - **Purge du Pointage (D5)** : refusée — exécution ET sauvegarde — dès qu'une `DemandeConge` ou une `DemandePermission` existe
-  (`refusPurgePointageAbsences`, `MESSAGE_PURGE_REFUSEE_ABSENCES`), même rejetée ou annulée — traiter une demande ne débloque rien, il faut mettre le Pointage en service avant d'ouvrir les congés : elle supprimerait toutes les `PlageAbsenceAutorisee`, y compris celles
+  (`refusPurgePointageAbsences`, `MESSAGE_PURGE_REFUSEE_ABSENCES`) (même une demande rejetée ou annulée) : traiter une demande ne débloque rien, il faut mettre le Pointage en service avant d'ouvrir les congés. Elle supprimerait toutes les `PlageAbsenceAutorisee`, y compris celles
   d'un congé validé. L'écran affiche le message à la place du formulaire ; la sauvegarde répond 409.
 
 ## Socle Portail — Authentification et permissions
