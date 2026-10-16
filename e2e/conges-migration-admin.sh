@@ -57,8 +57,8 @@ RES=0
 verifier() { if [ "$2" = "$3" ]; then echo "OK  $1"; else echo "KO  $1 — attendu « $3 », obtenu « $2 »"; RES=1; fi; }
 
 verifier "Admin (estAdmin) : aucune permission congés ni absences" "$(cles Admin)" ""
-verifier "RH : toutes les permissions RH" "$(cles RH)" "absences.annuler,absences.consulter_tous,absences.parametrer,absences.soumettre,absences.valider_rh,absences.voir_dashboard,absences.voir_reporting,conges.annuler,conges.consulter_tous,conges.gerer_soldes,conges.parametrer_types,conges.soumettre,conges.valider_rh,conges.voir_dashboard,conges.voir_reporting"
-verifier "DG : soumettre, voir_dashboard et voir_reporting" "$(cles DG)" "absences.soumettre,absences.voir_dashboard,absences.voir_reporting,conges.soumettre,conges.voir_dashboard,conges.voir_reporting"
+verifier "RH : toutes les permissions RH" "$(cles RH)" "absences.annuler,absences.consulter_tous,absences.parametrer,absences.soumettre,absences.valider_rh,conges.annuler,conges.consulter_tous,conges.gerer_soldes,conges.parametrer_types,conges.soumettre,conges.valider_rh"
+verifier "DG : soumettre seulement" "$(cles DG)" "absences.soumettre,conges.soumettre"
 verifier "Collaborateur : soumettre seulement" "$(cles Collaborateur)" "absences.soumettre,conges.soumettre"
 verifier "Finance : soumettre seulement" "$(cles Finance)" "absences.soumettre,conges.soumettre"
 verifier "Assistant Finance : soumettre seulement" "$(cles "Assistant Finance")" "absences.soumettre,conges.soumettre"

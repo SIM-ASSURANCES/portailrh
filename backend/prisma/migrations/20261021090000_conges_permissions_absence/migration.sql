@@ -287,15 +287,11 @@ FROM (VALUES
   ('perm-conges-parametrer-types', 'conges.parametrer_types', 'Paramétrer les types de congé', 'conges'),
   ('perm-conges-gerer-soldes', 'conges.gerer_soldes', 'Gérer les soldes de congé et les dates d''embauche', 'conges'),
   ('perm-conges-consulter-tous', 'conges.consulter_tous', 'Consulter les congés de tous les employés', 'conges'),
-  ('perm-conges-voir-dashboard', 'conges.voir_dashboard', 'Voir le tableau de bord des congés', 'conges'),
-  ('perm-conges-voir-reporting', 'conges.voir_reporting', 'Voir le reporting des congés', 'conges'),
   ('perm-absences-soumettre', 'absences.soumettre', 'Demander une permission d''absence, consulter les siennes', 'absences'),
   ('perm-absences-valider-rh', 'absences.valider_rh', 'Valider une permission d''absence (étape RH)', 'absences'),
   ('perm-absences-annuler', 'absences.annuler', 'Annuler une permission d''absence approuvée', 'absences'),
   ('perm-absences-parametrer', 'absences.parametrer', 'Paramétrer les types et plafonds de permission', 'absences'),
-  ('perm-absences-consulter-tous', 'absences.consulter_tous', 'Consulter les permissions d''absence de tous les employés', 'absences'),
-  ('perm-absences-voir-dashboard', 'absences.voir_dashboard', 'Voir le tableau de bord des permissions d''absence', 'absences'),
-  ('perm-absences-voir-reporting', 'absences.voir_reporting', 'Voir le reporting des permissions d''absence', 'absences')
+  ('perm-absences-consulter-tous', 'absences.consulter_tous', 'Consulter les permissions d''absence de tous les employés', 'absences')
 ) AS v(id, key, label, module)
 JOIN "Module" m ON m."key" = v.module
 ON CONFLICT ("key") DO NOTHING;
@@ -316,21 +312,13 @@ FROM (VALUES
   ('conges.parametrer_types', 'pointage.corriger_pointage'),
   ('conges.gerer_soldes', 'pointage.corriger_pointage'),
   ('conges.consulter_tous', 'pointage.consulter_tous'),
-  ('conges.voir_dashboard', 'pointage.voir_dashboard_rh'),
-  ('conges.voir_dashboard', 'treso.decider_dg'),
-  ('conges.voir_reporting', 'pointage.voir_reporting'),
-  ('conges.voir_reporting', 'treso.decider_dg'),
   ('absences.soumettre', 'pointage.pointer'),
   ('absences.soumettre', 'treso.creer_demande'),
   ('absences.soumettre', 'treso.decider_dg'),
   ('absences.valider_rh', 'pointage.corriger_pointage'),
   ('absences.annuler', 'pointage.corriger_pointage'),
   ('absences.parametrer', 'pointage.corriger_pointage'),
-  ('absences.consulter_tous', 'pointage.consulter_tous'),
-  ('absences.voir_dashboard', 'pointage.voir_dashboard_rh'),
-  ('absences.voir_dashboard', 'treso.decider_dg'),
-  ('absences.voir_reporting', 'pointage.voir_reporting'),
-  ('absences.voir_reporting', 'treso.decider_dg')
+  ('absences.consulter_tous', 'pointage.consulter_tous')
 ) AS m(nouvelle, soeur)
 JOIN "Permission" np ON np."key" = m.nouvelle
 JOIN "Permission" sp ON sp."key" = m.soeur

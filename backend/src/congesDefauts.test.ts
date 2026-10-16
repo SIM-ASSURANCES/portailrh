@@ -93,7 +93,8 @@ describe("permissionsAbsencePourCles — la règle de la permission sœur", () =
 
   it("le DG (decider_dg) demande et consulte, mais ne reçoit jamais l'étape RH", () => {
     const cles = permissionsAbsencePourCles(["treso.decider_dg"]);
-    expect(cles).toEqual(expect.arrayContaining(["conges.soumettre", "conges.voir_dashboard", "absences.voir_reporting"]));
+    expect(cles).toEqual(expect.arrayContaining(["conges.soumettre", "absences.soumettre"]));
+    expect(cles.some((c) => c.endsWith(".voir_dashboard") || c.endsWith(".voir_reporting"))).toBe(false);
     expect(cles).not.toContain("conges.valider_rh");
     expect(cles).not.toContain("absences.valider_rh");
   });

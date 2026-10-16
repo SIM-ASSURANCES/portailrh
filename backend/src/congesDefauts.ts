@@ -22,8 +22,6 @@ export interface PermissionAbsence {
 const TOUT_LE_PERSONNEL = ["pointage.pointer", "treso.creer_demande", "treso.decider_dg"] as const;
 const RH = ["pointage.corriger_pointage"] as const;
 const RH_ET_DG_LECTURE = ["pointage.consulter_tous"] as const;
-const TABLEAUX_DE_BORD = ["pointage.voir_dashboard_rh", "treso.decider_dg"] as const;
-const REPORTING = ["pointage.voir_reporting", "treso.decider_dg"] as const;
 
 export const PERMISSIONS_CONGES: readonly PermissionAbsence[] = [
   { key: "conges.soumettre", label: "Demander un congé, consulter ses congés et son solde", module: "conges", soeurs: TOUT_LE_PERSONNEL },
@@ -32,8 +30,6 @@ export const PERMISSIONS_CONGES: readonly PermissionAbsence[] = [
   { key: "conges.parametrer_types", label: "Paramétrer les types de congé", module: "conges", soeurs: RH },
   { key: "conges.gerer_soldes", label: "Gérer les soldes de congé et les dates d'embauche", module: "conges", soeurs: RH },
   { key: "conges.consulter_tous", label: "Consulter les congés de tous les employés", module: "conges", soeurs: RH_ET_DG_LECTURE },
-  { key: "conges.voir_dashboard", label: "Voir le tableau de bord des congés", module: "conges", soeurs: TABLEAUX_DE_BORD },
-  { key: "conges.voir_reporting", label: "Voir le reporting des congés", module: "conges", soeurs: REPORTING },
 ];
 
 export const PERMISSIONS_ABSENCES: readonly PermissionAbsence[] = [
@@ -42,8 +38,6 @@ export const PERMISSIONS_ABSENCES: readonly PermissionAbsence[] = [
   { key: "absences.annuler", label: "Annuler une permission d'absence approuvée", module: "absences", soeurs: RH },
   { key: "absences.parametrer", label: "Paramétrer les types et plafonds de permission", module: "absences", soeurs: RH },
   { key: "absences.consulter_tous", label: "Consulter les permissions d'absence de tous les employés", module: "absences", soeurs: RH_ET_DG_LECTURE },
-  { key: "absences.voir_dashboard", label: "Voir le tableau de bord des permissions d'absence", module: "absences", soeurs: TABLEAUX_DE_BORD },
-  { key: "absences.voir_reporting", label: "Voir le reporting des permissions d'absence", module: "absences", soeurs: REPORTING },
 ];
 
 export const PERMISSIONS_CONGES_ET_ABSENCES: readonly PermissionAbsence[] = [...PERMISSIONS_CONGES, ...PERMISSIONS_ABSENCES];
