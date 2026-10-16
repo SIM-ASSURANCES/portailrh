@@ -331,7 +331,7 @@ ON CONFLICT ("roleId", "permissionId") DO NOTHING;
 INSERT INTO "TypeConge" ("id", "code", "label", "categorie", "nbJoursDefaut", "decompteType", "justificatifObligatoire", "nonDeductibleSolde", "ancienneteMinimumMois", "updatedAt")
 SELECT gen_random_uuid()::text, v.code, v.label, v.categorie, v.nb, v.decompte, v.justif, v.nondeduct, v.anciennete, CURRENT_TIMESTAMP
 FROM (VALUES
-  ('ANNUEL', 'Congé annuel', 'CONGE_STANDARD'::"CategorieConge", 30, 'OUVRABLE'::"DecompteType", false, false, 0),
+  ('ANNUEL', 'Congé annuel', 'CONGE_STANDARD'::"CategorieConge", 30, 'OUVRABLE'::"DecompteType", false, false, 12),
   ('MALADIE', 'Congé maladie', 'CONGE_STANDARD'::"CategorieConge", 0, 'CALENDAIRE'::"DecompteType", true, true, 0),
   ('MATERNITE', 'Congé maternité', 'CONGE_STANDARD'::"CategorieConge", 98, 'CALENDAIRE'::"DecompteType", true, false, 0),
   ('SANS_SOLDE', 'Congé sans solde', 'CONGE_STANDARD'::"CategorieConge", 0, 'CALENDAIRE'::"DecompteType", false, true, 0),

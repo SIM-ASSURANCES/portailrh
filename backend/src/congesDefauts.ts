@@ -68,7 +68,9 @@ const ARTICLE_13 = {
 } as const;
 
 export const TYPES_CONGE_DEFAUT: readonly TypeCongeDefaut[] = [
-  { code: "ANNUEL", label: "Congé annuel", categorie: "CONGE_STANDARD", nbJoursDefaut: 30, decompteType: "OUVRABLE", justificatifObligatoire: false, nonDeductibleSolde: false, ancienneteMinimumMois: 0 },
+  // Art. 12 du règlement : le congé annuel s'ouvre après 12 mois de service (consignes du 2026-10-16). 30 jours = valeur de départ
+  // PROVISOIRE, paramétrable par la RH (C1).
+  { code: "ANNUEL", label: "Congé annuel", categorie: "CONGE_STANDARD", nbJoursDefaut: 30, decompteType: "OUVRABLE", justificatifObligatoire: false, nonDeductibleSolde: false, ancienneteMinimumMois: 12 },
   // Maladie : non déductible (la v2 la déclarait déductible avec une dotation de 0 jour, donc impossible à demander).
   // Réglage PROVISOIRE à confirmer avec la RH (D6).
   { code: "MALADIE", label: "Congé maladie", categorie: "CONGE_STANDARD", nbJoursDefaut: 0, decompteType: "CALENDAIRE", justificatifObligatoire: true, nonDeductibleSolde: true, ancienneteMinimumMois: 0 },

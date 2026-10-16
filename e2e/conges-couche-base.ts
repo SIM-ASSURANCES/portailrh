@@ -160,6 +160,33 @@ async function main() {
   const aj2 = await transactionAbsence((tx) => ajusterSolde(tx, { soldeCongeId: solde.id, montant: 2, motif: "Régularisation 2025", acteurId: rh.id }));
   verifier("ajustement +2 → 30", aj2.ok && aj2.valeur.soldeRestant === 30, aj2);
 
+  console.log("Congé annuel : 12 mois de service (art. 12)");
+  const embaucheInitiale = (await prisma.user.findUniqueOrThrow({ where: { id: collab.id }, select: { dateEmbauche: true } })).dateEmbauche;
+  const debutA = lundi(20);
+  /** Date d'embauche située `mois` mois avant `jour`, décalée de `jours` jours (colonne DATE : minuit UTC). */
+  const embauche = (jour: string, mois: number, jours: number) => {
+    const [an, m, j] = jour.split("-").map(Number);
+    return new Date(Date.UTC(an, m - 1 - mois, j + jours));
+  };
+  try {
+    // Il manque exactement un jour pour 12 mois révolus au début du congé.
+    await prisma.user.update({ where: { id: collab.id }, data: { dateEmbauche: embauche(debutA, 12, 1) } });
+    const refuse = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: debutA, dateFin: debutA, motif: "Trop tôt" }, maintenant }));
+    verifier("11 mois et 30 jours : demande refusée", !refuse.ok && /12 mois d'ancienneté/.test(refuse.erreur), refuse);
+    const officeOk = await transactionAbsence((tx) => accorderCongeOffice(tx, { acteurId: rh.id, userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: debutA, dateFin: debutA, motif: "Régularisation" }, maintenant }));
+    verifier("même salarié : congé d'office (RH) accordé", officeOk.ok, officeOk);
+    if (officeOk.ok) {
+      await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: officeOk.valeur.id } });
+      await prisma.demandeConge.delete({ where: { id: officeOk.valeur.id } });
+    }
+    // Douze mois révolus exactement : accepté.
+    await prisma.user.update({ where: { id: collab.id }, data: { dateEmbauche: embauche(debutA, 12, 0) } });
+    const accepte = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: debutA, dateFin: debutA, motif: "Douze mois révolus" }, maintenant }));
+    verifier("12 mois révolus : demande acceptée", accepte.ok, accepte);
+  } finally {
+    await prisma.user.update({ where: { id: collab.id }, data: { dateEmbauche: embaucheInitiale } });
+  }
+
   const hist = await prisma.historiqueEntry.count({ where: { entity: "DemandeConge" } });
   verifier("historique écrit à chaque transition", hist >= 10, hist);
 
