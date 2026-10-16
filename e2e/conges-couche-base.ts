@@ -5,7 +5,7 @@
 // La base doit être migrée et seedée (comptes de test). Le script y ÉCRIT (demandes, soldes, plages) : jamais la base de
 // développement. Garde : le nom de la base doit contenir « jetable », « e2e » ou « conges ».
 
-import { prisma, soumettreConge, deciderConge, accorderCongeOffice, ajusterSolde, transactionAbsence } from "../backend/src/index";
+import { prisma, soumettreConge, resoumettreConge, deciderConge, accorderCongeOffice, ajusterSolde, transactionAbsence, MESSAGE_CONGE_DANS_LE_PASSE } from "../backend/src/index";
 
 const url = process.env.DATABASE_URL ?? "";
 if (!/(jetable|e2e|conges)/i.test(url.split("/").pop() ?? "")) {
@@ -159,6 +159,26 @@ async function main() {
   verifier("ajustement qui passerait sous zéro refusé", !aj.ok);
   const aj2 = await transactionAbsence((tx) => ajusterSolde(tx, { soldeCongeId: solde.id, montant: 2, motif: "Régularisation 2025", acteurId: rh.id }));
   verifier("ajustement +2 → 30", aj2.ok && aj2.valeur.soldeRestant === 30, aj2);
+
+  console.log("Pas de congé dans le passé (art. 12)");
+  const hier = plus(new Date().getFullYear() + "-" + String(new Date().getMonth() + 1).padStart(2, "0") + "-" + String(new Date().getDate()).padStart(2, "0"), -1);
+  const passe = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: hier, dateFin: hier, motif: "Déjà pris" }, maintenant }));
+  verifier("soumission avec une date de début passée refusée", !passe.ok && passe.erreur === MESSAGE_CONGE_DANS_LE_PASSE && passe.champ === "dateDebut", passe);
+  // Resoumission : la date corrigée ne peut pas non plus être dans le passé.
+  const futur = lundi(30);
+  const dem = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: futur, dateFin: futur, motif: "À corriger" }, maintenant }));
+  if (dem.ok) {
+    await prisma.demandeConge.update({ where: { id: dem.valeur.id }, data: { statut: "MODIFICATION_DEMANDEE", motifModification: "Précisez" } });
+    const reso = await transactionAbsence((tx) => resoumettreConge(tx, { demandeId: dem.valeur.id, acteurId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: hier, dateFin: hier, motif: "Corrigé" }, maintenant }));
+    verifier("resoumission avec une date passée refusée", !reso.ok && reso.erreur === MESSAGE_CONGE_DANS_LE_PASSE, reso);
+    await prisma.demandeConge.delete({ where: { id: dem.valeur.id } });
+  } else verifier("préparation de la resoumission", false, dem);
+  const officePasse = await transactionAbsence((tx) => accorderCongeOffice(tx, { acteurId: rh.id, userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: hier, dateFin: hier, motif: "Régularisation du passé" }, maintenant }));
+  verifier("congé d'office avec une date passée accordé (régularisation)", officePasse.ok, officePasse);
+  if (officePasse.ok) {
+    await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: officePasse.valeur.id } });
+    await prisma.demandeConge.delete({ where: { id: officePasse.valeur.id } });
+  }
 
   console.log("Congé annuel : 12 mois de service (art. 12)");
   const embaucheInitiale = (await prisma.user.findUniqueOrThrow({ where: { id: collab.id }, select: { dateEmbauche: true } })).dateEmbauche;

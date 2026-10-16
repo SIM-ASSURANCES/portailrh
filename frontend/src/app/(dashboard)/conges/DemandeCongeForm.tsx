@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { refusDateDebutPassee } from "backend/client";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { PiecesUpload, type PieceDeposee } from "@/components/conges/PiecesUpload";
@@ -128,7 +129,9 @@ export function DemandeCongeForm({
 
   const titreBouton = mode === "office" ? "Accorder le congé" : mode === "modifier" ? "Renvoyer la demande" : "Envoyer la demande";
   const minDebut = mode === "office" ? undefined : aujourdhui;
-  const incomplet = !typeCongeId || !dateDebut || (!dureeFixee && !dateFin) || motif.trim().length < 5 || (mode === "office" && !userId);
+  // Art. 12 : autorisation préalable. Même règle et même phrase que le serveur ; seul le congé d'office (RH) y échappe.
+  const erreurPasse = mode !== "office" && dateDebut ? refusDateDebutPassee(dateDebut, aujourdhui) : null;
+  const incomplet = !typeCongeId || !dateDebut || (!dureeFixee && !dateFin) || motif.trim().length < 5 || (mode === "office" && !userId) || erreurPasse !== null;
 
   return (
     <form
@@ -178,7 +181,7 @@ export function DemandeCongeForm({
           min={minDebut}
           value={dateDebut}
           onChange={(e) => setDateDebut(e.target.value)}
-          error={erreurs.dateDebut}
+          error={erreurs.dateDebut ?? erreurPasse ?? undefined}
         />
         {dureeFixee ? (
           <Input

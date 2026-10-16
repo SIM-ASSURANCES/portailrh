@@ -88,6 +88,19 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
   await Promise.all([p.waitForURL(/\/conges\/(?!nouvelle)[^/]+$/, { timeout: 20000 }), p.getByRole("button", { name: "Envoyer la demande" }).click()]);
   idConge = new URL(p.url()).pathname.split("/").pop();
 
+  // B2 : pas de congé dans le passé — la phrase est la même à l'écran et côté serveur (action rejouée).
+  const PHRASE_PASSE = "La date de début ne peut pas être dans le passé : un congé exige une autorisation préalable (art. 12 du règlement).";
+  await p.goto(`${B}/conges/nouvelle`);
+  await p.waitForLoadState("networkidle");
+  await p.getByLabel("Type de congé").selectOption({ label: "Congé annuel" });
+  const hierJour = iso(new Date(Date.now() - 86400000));
+  await p.getByLabel("Date de début").fill(hierJour);
+  verifier("Date passée : la phrase s'affiche sous le champ", (await texte(p)).includes(PHRASE_PASSE));
+  verifier("Date passée : « Envoyer la demande » est grisé", await p.getByRole("button", { name: "Envoyer la demande" }).isDisabled());
+  const typeAnnuel = (await q(`SELECT id FROM "TypeConge" WHERE code = 'ANNUEL'`))[0].id;
+  const repPasse = await rejouer(p, "soumettreCongeAction", [{ typeCongeId: typeAnnuel, dateDebut: hierJour, dateFin: hierJour, motif: "Déjà pris hier" }], "/conges");
+  verifier("Action rejouée avec une date passée : refusée avec la même phrase", repPasse.includes(PHRASE_PASSE), repPasse.slice(-200));
+
   await p.goto(`${B}/permissions-absence/nouvelle`);
   await p.waitForLoadState("networkidle");
   await p.getByLabel("Type de permission").selectOption({ label: "Démarche administrative" });

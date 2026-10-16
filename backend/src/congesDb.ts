@@ -51,6 +51,7 @@ import {
   type JourCivil,
 } from "./congesCalcul";
 import { validerPieces, type PieceEntree } from "./congesPieces";
+import { refusDateDebutPassee } from "./congesPasse";
 
 export type Db = Prisma.TransactionClient;
 
@@ -252,7 +253,15 @@ export const MOTIF_CONGE_MAX = 500;
 
 async function preparerConge(
   db: Db,
-  p: { userId: string; entree: DemandeCongeEntree; exclureDemandeId?: string; ignorerAnciennete?: boolean; maintenant: Date }
+  p: {
+    userId: string;
+    entree: DemandeCongeEntree;
+    exclureDemandeId?: string;
+    ignorerAnciennete?: boolean;
+    /** Congé d'office (RH, régularisation) : la date de début peut être passée. */
+    autoriserDatePassee?: boolean;
+    maintenant: Date;
+  }
 ): Promise<CongePrepare> {
   const { entree } = p;
   const user = await db.user.findUnique({ where: { id: p.userId }, select: { isActive: true, dateEmbauche: true } });
@@ -263,6 +272,12 @@ async function preparerConge(
   if (!parseJourCivil(entree.dateFin)) throw new RefusAbsence("Date de fin invalide.", "dateFin");
   if (comparerJours(entree.dateFin, entree.dateDebut) < 0) {
     throw new RefusAbsence("La date de fin ne peut pas être antérieure à la date de début.", "dateFin");
+  }
+
+  // Art. 12 : autorisation PRÉALABLE. Même phrase qu'à l'écran ; seul le congé d'office (régularisation) y échappe.
+  if (!p.autoriserDatePassee) {
+    const passe = refusDateDebutPassee(entree.dateDebut, formatJourCivil(p.maintenant));
+    if (passe) throw new RefusAbsence(passe, "dateDebut");
   }
 
   const motif = nettoyerMotifAbsence(entree.motif ?? "");
@@ -674,7 +689,7 @@ export async function accorderCongeOffice(
 ): Promise<{ id: string; reference: string; nbJours: number; libelleType: string }> {
   if (p.acteurId === p.userId) throw new RefusAbsence("Vous ne pouvez pas vous accorder un congé d'office.");
   await verrouillerAbsenceUtilisateur(db, p.userId);
-  const prepare = await preparerConge(db, { userId: p.userId, entree: p.entree, ignorerAnciennete: true, maintenant: p.maintenant });
+  const prepare = await preparerConge(db, { userId: p.userId, entree: p.entree, ignorerAnciennete: true, autoriserDatePassee: true, maintenant: p.maintenant });
   await controlerChevauchement(db, { userId: p.userId, debut: prepare.dateDebut, fin: prepare.dateFin });
   await controlerSolde(db, { userId: p.userId, prepare });
 

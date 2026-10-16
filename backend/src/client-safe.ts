@@ -29,6 +29,8 @@ export * from "./cheminRetour";
 export * from "./categorisationObligatoire";
 export * from "./retourNul";
 export * from "./regularisationDepenses";
+// Pas de congé dans le passé : phrase et règle partagées avec le formulaire (pure, importe seulement congesCalcul).
+export * from "./congesPasse";
 // Constantes/validations pures uniquement (compteur de caractères côté
 // client) — depuis `./feedback-constants`, JAMAIS depuis `./feedback` :
 // même un `export { X } from "./feedback"` nommé (pas `export *`)
