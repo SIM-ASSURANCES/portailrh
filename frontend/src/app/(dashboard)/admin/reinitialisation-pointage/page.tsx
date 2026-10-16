@@ -19,7 +19,7 @@ export default async function ReinitialisationPointagePage() {
     redirect("/?error=acces_refuse_reinitialisation_pointage");
   }
 
-  const { miseEnService, purges } = await getEtatReinitialisationPointage();
+  const { miseEnService, purges, refusAbsences } = await getEtatReinitialisationPointage();
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
@@ -38,6 +38,10 @@ export default async function ReinitialisationPointagePage() {
       {miseEnService ? (
         <p data-etat="en-service" className="rounded-md bg-success-bg px-3 py-3 text-sm text-success">
           Mis en service le <strong>{formatDate(miseEnService.misEnServiceAt)}</strong> par <strong>{miseEnService.par.fullName}</strong>.
+        </p>
+      ) : refusAbsences ? (
+        <p data-etat="purge-refusee-absences" role="alert" className="rounded-md bg-warning-bg px-3 py-3 text-sm text-warning">
+          {refusAbsences}
         </p>
       ) : (
         <ReinitialisationPointageForm />

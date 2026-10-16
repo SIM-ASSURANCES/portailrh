@@ -5883,6 +5883,21 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
   `absence-utilisateur:<id>`) : pris par `soumettreConge`, `resoumettreConge`, `accorderCongeOffice`, `soumettrePermission` et par les
   décisions (`deciderConge`, `deciderPermission`, dont l'accord change ce que lit le contrôle de chevauchement de l'autre nature).
   Avant : deux clés distinctes, donc un congé et une permission soumis ensemble passaient chacun le contrôle de l'autre.
+- **Permissions retirées (Lot 5)** : `conges.voir_dashboard`, `conges.voir_reporting`, `absences.voir_dashboard`, `absences.voir_reporting`
+  n'avaient aucun écran et aucun lot prévu ne les utilise : retirées de la migration, du seed et des tests. Restent 6 permissions
+  `conges.*` (soumettre, valider_rh, annuler, parametrer_types, gerer_soldes, consulter_tous) et 5 `absences.*` (soumettre,
+  valider_rh, annuler, parametrer, consulter_tous). Le DG reçoit `soumettre` (par `treso.decider_dg`) et `consulter_tous` (par `pointage.consulter_tous`), plus la décision de repli.
+- **Intégration au socle (Lot 5)** : branches « Congés » et « Permissions d'absence » dans le menu (`ModuleAbsenceNav`, calculées par
+  `lib/absences/navigation.ts` avec les mêmes conditions que les layouts des modules, qui restent la garde) ; compteur « À décider »
+  (la file n'est chargée que pour un responsable de service, la RH ou le DG : aucune requête de plus pour un collaborateur ordinaire) ;
+  cartes de l'accueil (« Aucun accès » — jamais « Bientôt disponible » — pour un compte sans permission, Admin compris) ; date d'embauche
+  en lecture seule au profil ; cartes « Congés à décider » / « Permissions à décider » dans « Mon équipe » (mêmes files que les modules).
+- **Suppression d'un compte** (`supprimerUtilisateurAction`) : compte les 10 relations vers `User` du module (soldes, ajustements,
+  congés demandés / approuvés / validés / annulés, permissions demandées / approuvées / validées / annulées) et affiche le message
+  habituel au lieu d'échouer sur une clé étrangère.
+- **Purge du Pointage (D5)** : refusée — exécution ET sauvegarde — dès qu'une `DemandeConge` ou une `DemandePermission` existe
+  (`refusPurgePointageAbsences`, `MESSAGE_PURGE_REFUSEE_ABSENCES`) : elle supprimerait toutes les `PlageAbsenceAutorisee`, y compris celles
+  d'un congé validé. L'écran affiche le message à la place du formulaire ; la sauvegarde répond 409.
 
 ## Socle Portail — Authentification et permissions
 

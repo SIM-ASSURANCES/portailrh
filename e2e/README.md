@@ -68,5 +68,7 @@ un mot du texte de la page (« Approuvée » apparaît aussi dans « Approuvée 
 # Le port 55497 peut être réservé par Windows (Hyper-V) : E2E_PG_PORT=45497 bash e2e/base-jetable.sh
 E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-droits-propres.mjs   # personne n'ajuste son solde ni sa date d'embauche
 DATABASE_URL="postgresql://postgres:pw@localhost:45497/e2e?schema=public" npx tsx e2e/absence-verrou-commun.ts   # congé + permission simultanés : un seul passe
+E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-integration.mjs      # Lot 5 : menu, accueil, profil, Mon équipe, suppression de compte, purge refusée, 390 px
+DATABASE_URL="postgresql://postgres:pw@localhost:45497/e2e?schema=public" npx tsx e2e/purge-pointage-absences.ts   # à lancer APRÈS conges-integration.mjs
 bash e2e/conges-migration-admin.sh                                                                              # migration : aucun droit congés pour un rôle estAdmin (conteneur pg-e2e)
 ```

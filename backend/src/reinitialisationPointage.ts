@@ -31,6 +31,20 @@ export const TABLES_HORS_EMPREINTE = ["executionTache", "journalTechnique"] as c
 
 export class ReinitialisationPointageError extends Error {}
 
+/**
+ * D5 (Congés, Lot 5) : la purge supprime TOUTES les `PlageAbsenceAutorisee`, y compris celles d'un congé validé ou d'une
+ * permission approuvée (le Pointage s'en sert pour ne pas compter d'absence). Dès qu'une demande de congé ou de permission
+ * d'absence existe, la purge ET sa sauvegarde sont refusées.
+ */
+export const MESSAGE_PURGE_REFUSEE_ABSENCES =
+  "La purge du Pointage est refusée : des demandes de congé ou de permission d'absence existent, et la purge supprimerait leurs plages d'absence autorisée. Traitez ces demandes d'abord (ou purgez avant leur mise en service).";
+
+/** `null` si la purge est possible, sinon le message du refus (voir `MESSAGE_PURGE_REFUSEE_ABSENCES`). */
+export async function refusPurgePointageAbsences(db: Db | typeof prisma): Promise<string | null> {
+  const [conges, permissions] = await Promise.all([db.demandeConge.count(), db.demandePermission.count()]);
+  return conges + permissions > 0 ? MESSAGE_PURGE_REFUSEE_ABSENCES : null;
+}
+
 const parId = { orderBy: { id: "asc" as const } };
 
 /** Lit EXACTEMENT les lignes qui seront supprimées (sauvegarde et purge). */
@@ -90,10 +104,12 @@ export async function getEtatReinitialisationPointage() {
       include: { effectueePar: { select: { fullName: true } } },
     }),
   ]);
-  return { miseEnService, purges };
+  return { miseEnService, purges, refusAbsences: await refusPurgePointageAbsences(prisma) };
 }
 
 export async function genererSauvegardePointage(userId: string) {
+  const refus = await refusPurgePointageAbsences(prisma);
+  if (refus) throw new ReinitialisationPointageError(refus);
   const jeux = await chargerJeuxPointage(prisma);
   const empreinte = calculerEmpreintePointage(jeux);
   const contenu = JSON.stringify(
@@ -135,6 +151,8 @@ export async function executerReinitialisationPointage({
       if ((await tx.pointageMiseEnService.count()) > 0) {
         throw new ReinitialisationPointageError("Le Pointage est en service : sa purge est définitivement refusée.");
       }
+      const refusAbsences = await refusPurgePointageAbsences(tx);
+      if (refusAbsences) throw new ReinitialisationPointageError(refusAbsences);
       const jeux = await chargerJeuxPointage(tx);
       if (calculerEmpreintePointage(jeux) !== sauvegardeSha256) {
         throw new ReinitialisationPointageError(

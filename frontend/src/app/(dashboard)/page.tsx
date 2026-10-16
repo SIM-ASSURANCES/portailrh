@@ -98,6 +98,18 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
   if (moduleKey === "encaissements") {
     return { href: hasPermission(session, "enc.consulter") ? "/encaissements" : null, reason: "no_access" };
   }
+  // Congés et permissions d'absence (Lot 5) : « Aucun accès » (jamais « Bientôt disponible ») sans permission, y compris pour l'Admin.
+  if (moduleKey === "conges") {
+    if (hasPermission(session, "conges.soumettre")) return { href: "/conges", reason: "no_access" };
+    if (hasPermission(session, "conges.valider_rh")) return { href: "/conges/a-decider", reason: "no_access" };
+    if (hasPermission(session, "conges.consulter_tous")) return { href: "/conges/soldes", reason: "no_access" };
+    return { href: null, reason: "no_access" };
+  }
+  if (moduleKey === "absences") {
+    if (hasPermission(session, "absences.soumettre")) return { href: "/permissions-absence", reason: "no_access" };
+    if (hasPermission(session, "absences.valider_rh")) return { href: "/permissions-absence/a-decider", reason: "no_access" };
+    return { href: null, reason: "no_access" };
+  }
   return { href: null, reason: "coming_soon" };
 }
 

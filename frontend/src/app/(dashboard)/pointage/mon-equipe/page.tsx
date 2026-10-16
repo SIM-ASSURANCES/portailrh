@@ -6,6 +6,7 @@ import { Badge, Card, EmptyState, PageHeader, StatCard } from "@/components/ui";
 import type { BadgeVariant } from "@/components/ui";
 import { VARIANTE_STATUT_JUSTIFICATION } from "@/components/pointage/justificationStatut";
 import { getSession } from "@/lib/auth";
+import { chargerNavAbsences } from "@/lib/absences/navigation";
 import { chargerEquipeResponsable } from "@/lib/equipe";
 import { compteurMenuJustificationsSession } from "@/lib/justificationsPointage";
 import { chargerPresenceJour } from "@/lib/presenceJour";
@@ -40,12 +41,16 @@ export default async function MonEquipePage({ searchParams }: { searchParams: Pr
   const filtres = { dateDebut: periode.du, dateFin: periode.au, userIds: ids };
 
   // Mêmes lectures que la page « Présence » de la RH et que le reporting RH, restreintes à l'équipe (aucun second calcul).
-  const [jour, aggregats, synthese, aDecider] = await Promise.all([
+  const [jour, aggregats, synthese, aDecider, navAbsences] = await Promise.all([
     chargerPresenceJour(new Date(), ids),
     ids.length > 0 ? getReportingAgrégé(filtres) : Promise.resolve([]),
     ids.length > 0 ? getSyntheseEquipe(filtres) : Promise.resolve(new Map()),
     compteurMenuJustificationsSession(session),
+    // Congés et permissions d'absence à décider (Lot 5) : mêmes files que les modules, aucun second calcul.
+    chargerNavAbsences(session, true),
   ]);
+  const congesADecider = navAbsences.conges?.aDecider ?? null;
+  const permissionsADecider = navAbsences.permissions?.aDecider ?? null;
 
   const presentParId = new Map(jour.presents.map((p) => [p.userId, p]));
   const absentsIds = new Set(jour.absents.map((a) => a.userId));
@@ -88,6 +93,17 @@ export default async function MonEquipePage({ searchParams }: { searchParams: Pr
           href="/pointage/justifications"
         />
       </div>
+
+      {congesADecider !== null || permissionsADecider !== null ? (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4" data-section="absences-a-decider">
+          {congesADecider !== null ? (
+            <StatCard icon="calendar" tone="info" label="Congés à décider" value={congesADecider} href="/conges/a-decider" />
+          ) : null}
+          {permissionsADecider !== null ? (
+            <StatCard icon="calendar-x" tone="info" label="Permissions à décider" value={permissionsADecider} href="/permissions-absence/a-decider" />
+          ) : null}
+        </div>
+      ) : null}
 
       {equipe.membres.length === 0 ? (
         <EmptyState icon="users" message="Aucun membre à suivre dans vos services." />
