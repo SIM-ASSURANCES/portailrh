@@ -15,6 +15,7 @@ import {
   peutConsulterAbsence,
   prisma,
   refusDecideurAbsence,
+  refusObservationDG,
   type ContexteCircuitAbsence,
   type StatutCircuitAbsence,
 } from "backend";
@@ -100,6 +101,13 @@ export async function chargerDemandePermission(id: string, session: SessionPorta
             ? "Le DG (aucun autre compte RH)"
             : "Personne";
 
+  // Observations (C3) : visibles de tous ceux qui voient la demande, demandeur compris ; ajout seul.
+  const observations = await prisma.observationAbsence.findMany({
+    where: { demandePermissionId: demande.id },
+    orderBy: { createdAt: "asc" },
+    include: { auteur: { select: { fullName: true } } },
+  });
+
   const estDemandeur = demande.userId === session.user.id;
   const estRH = session.rolePermissions.includes("absences.valider_rh");
   const peutMarquerRetour = statut === "APPROUVEE" && jour <= aujourdhui() && (estDemandeur || estRH);
@@ -116,6 +124,9 @@ export async function chargerDemandePermission(id: string, session: SessionPorta
     /** Plafond atteint à l'étape RH et l'acteur peut décider : l'accord passe par la dérogation. */
     derogation: derogation && decideur !== null && refusDecideurAbsence(decideur, { id: session.user.id, rolePermissions: session.rolePermissions }, demande.userId, "PERMISSION") === null ? derogation : null,
     peutMarquerRetour,
+    observations: observations.map((o) => ({ id: o.id, etape: o.etape, texte: o.texte, createdAt: o.createdAt, auteurNom: o.auteur.fullName })),
+    /** Le DG (permission du RÔLE) peut ajouter une observation, jamais sur sa propre demande. */
+    peutObserverDG: refusObservationDG({ acteur: { id: session.user.id, rolePermissions: session.rolePermissions }, demandeurId: demande.userId }) === null,
   };
 }
 

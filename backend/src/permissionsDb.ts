@@ -26,6 +26,8 @@ import {
   genererReferenceAbsence,
   noterHistoriqueAbsence,
   verrouillerAbsenceUtilisateur,
+  ajouterObservation,
+  observationDeDecision,
   type Db,
 } from "./congesDb";
 import {
@@ -226,9 +228,12 @@ export async function deciderPermission(
     action: ActionPermission;
     /** L'acteur porte `absences.annuler` : il annule même après le jour de la permission. */
     peutAnnulerApresDebut: boolean;
+    /** Observation facultative (500 caractères) de celui qui décide, écrite avec la décision (étape responsable ou RH). */
+    observation?: string | null;
     maintenant: Date;
   }
 ): Promise<DecisionPermission> {
+  const observation = observationDeDecision(p.observation);
   await db.$executeRaw`SELECT id FROM "DemandePermission" WHERE id = ${p.demandeId} FOR UPDATE`;
   const demande = await db.demandePermission.findUnique({ where: { id: p.demandeId }, include: { typePermission: true } });
   if (!demande) throw new RefusAbsence("Demande introuvable.");
@@ -334,6 +339,11 @@ export async function deciderPermission(
       `${r.viaRepli ? " (étape responsable remplacée : responsable indisponible)." : ""}`,
     userId: p.acteur.id,
   });
+
+  if (observation) {
+    if (!r.etape) throw new RefusAbsence("Une observation accompagne une décision du responsable ou de la RH, pas une annulation.", "observation");
+    await ajouterObservation(db, { nature: "PERMISSION", demandeId: demande.id, reference: demande.reference, auteurId: p.acteur.id, etape: r.etape, texte: observation });
+  }
 
   return {
     id: demande.id,

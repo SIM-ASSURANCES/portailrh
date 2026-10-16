@@ -52,6 +52,7 @@ import {
 } from "./congesCalcul";
 import { validerPieces, type PieceEntree } from "./congesPieces";
 import { refusDateDebutPassee } from "./congesPasse";
+import { LIBELLE_ETAPE_OBSERVATION, controlerObservation, refusObservationDG, type EtapeObservation } from "./observationsAbsence";
 
 export type Db = Prisma.TransactionClient;
 
@@ -378,6 +379,83 @@ async function noterHistorique(
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Observations (C3) : AJOUT SEUL, jamais de changement de statut
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Écrit une observation et sa ligne d'historique (une par observation). Le texte est DÉJÀ validé par `controlerObservation`. */
+export async function ajouterObservation(
+  db: Db,
+  p: { nature: NatureAbsence; demandeId: string; reference: string; auteurId: string; etape: EtapeObservation; texte: string }
+): Promise<string> {
+  const o = await db.observationAbsence.create({
+    data: {
+      ...(p.nature === "CONGE" ? { demandeCongeId: p.demandeId } : { demandePermissionId: p.demandeId }),
+      auteurId: p.auteurId,
+      etape: p.etape,
+      texte: p.texte,
+    },
+    select: { id: true },
+  });
+  await noterHistorique(db, {
+    nature: p.nature,
+    demandeId: p.demandeId,
+    action: ACTION_HISTORIQUE_ABSENCE.OBSERVATION,
+    detail: `${p.reference} : observation (${LIBELLE_ETAPE_OBSERVATION[p.etape]}) — ${p.texte}`,
+    userId: p.auteurId,
+  });
+  return o.id;
+}
+
+/** Valide l'observation facultative d'une décision AVANT toute écriture : une erreur annule la transaction entière. */
+export function observationDeDecision(brut: unknown): string | null {
+  const o = controlerObservation(brut, true);
+  if (!o.ok) throw new RefusAbsence(o.erreur, "observation");
+  return o.texte;
+}
+
+export interface ObservationDG {
+  observationId: string;
+  demandeId: string;
+  reference: string;
+  demandeurId: string;
+  libelleType: string;
+  /** Comptes à prévenir (information, sans rappel) : le demandeur et la RH de la nature, jamais l'auteur. */
+  destinataires: string[];
+}
+
+/**
+ * Observation du DG sur une demande, À TOUT MOMENT (en attente, validée, rejetée, annulée…) : le statut et le circuit ne
+ * bougent pas. Le DG se lit sur le RÔLE (`treso.decider_dg`) et n'observe jamais sa propre demande.
+ */
+export async function ajouterObservationDG(
+  db: Db,
+  p: { nature: NatureAbsence; demandeId: string; acteur: ActeurAbsence; texte: unknown }
+): Promise<ObservationDG> {
+  const o = controlerObservation(p.texte, false);
+  if (!o.ok) throw new RefusAbsence(o.erreur, "observation");
+  const base =
+    p.nature === "CONGE"
+      ? await db.demandeConge.findUnique({ where: { id: p.demandeId }, select: { id: true, reference: true, userId: true, typeConge: { select: { label: true } } } })
+      : await db.demandePermission.findUnique({ where: { id: p.demandeId }, select: { id: true, reference: true, userId: true, typePermission: { select: { label: true } } } });
+  if (!base) throw new RefusAbsence("Demande introuvable.");
+  const refus = refusObservationDG({ acteur: p.acteur, demandeurId: base.userId });
+  if (refus) throw new RefusAbsence(refus);
+
+  const observationId = await ajouterObservation(db, {
+    nature: p.nature,
+    demandeId: base.id,
+    reference: base.reference,
+    auteurId: p.acteur.id,
+    etape: "DG",
+    texte: o.texte!,
+  });
+  const rh = await comptesActifsAvecPermission(db, PERMISSION_ETAPE_RH_ABSENCE[p.nature]);
+  const destinataires = [...new Set([base.userId, ...rh])].filter((id) => id !== p.acteur.id);
+  const libelleType = "typeConge" in base ? base.typeConge.label : base.typePermission.label;
+  return { observationId, demandeId: base.id, reference: base.reference, demandeurId: base.userId, libelleType, destinataires };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Soumission
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -585,9 +663,12 @@ export async function deciderConge(
     action: Exclude<ActionCircuitAbsence, { type: "RESOUMETTRE" }>;
     /** L'acteur porte `conges.annuler` (annule même après le début). */
     peutAnnulerApresDebut: boolean;
+    /** Observation facultative (500 caractères) de celui qui décide, écrite avec la décision (étape responsable ou RH). */
+    observation?: string | null;
     maintenant: Date;
   }
 ): Promise<DecisionConge> {
+  const observation = observationDeDecision(p.observation);
   // Verrou de ligne : deux décisions simultanées sur la même demande s'enchaînent, la seconde voit le nouveau statut.
   await db.$executeRaw`SELECT id FROM "DemandeConge" WHERE id = ${p.demandeId} FOR UPDATE`;
   const demande = await db.demandeConge.findUnique({ where: { id: p.demandeId }, include: { typeConge: true } });
@@ -657,6 +738,11 @@ export async function deciderConge(
     detail: `${demande.reference} : ${demande.statut} → ${r.statut}${r.motif ? `. Motif : ${r.motif}` : ""}${r.viaRepli ? " (étape responsable remplacée : responsable indisponible)." : ""}`,
     userId: p.acteur.id,
   });
+
+  if (observation) {
+    if (!r.etape) throw new RefusAbsence("Une observation accompagne une décision du responsable ou de la RH, pas une annulation.", "observation");
+    await ajouterObservation(db, { nature: "CONGE", demandeId: demande.id, reference: demande.reference, auteurId: p.acteur.id, etape: r.etape, texte: observation });
+  }
 
   return {
     id: demande.id,

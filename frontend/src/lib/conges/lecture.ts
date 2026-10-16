@@ -11,6 +11,7 @@ import {
   peutConsulterAbsence,
   prisma,
   refusDecideurAbsence,
+  refusObservationDG,
   type ContexteCircuitAbsence,
   type StatutCircuitAbsence,
 } from "backend";
@@ -62,6 +63,14 @@ export async function chargerDemandeConge(id: string, session: SessionPortail) {
     include: { user: { select: { fullName: true } } },
   });
 
+  // Observations (C3) : visibles de tous ceux qui voient la demande, demandeur compris ; ajout seul.
+  const observations = await prisma.observationAbsence.findMany({
+    where: { demandeCongeId: demande.id },
+    orderBy: { createdAt: "asc" },
+    include: { auteur: { select: { fullName: true } } },
+  });
+  const acteurObs = { id: session.user.id, rolePermissions: session.rolePermissions };
+
   const lignesDecideur =
     decideur === null
       ? null
@@ -73,7 +82,18 @@ export async function chargerDemandeConge(id: string, session: SessionPortail) {
             ? "Le DG (aucun autre compte RH)"
             : "Personne";
 
-  return { demande, statut, actions, frise, historique, decideurLibelle: lignesDecideur, estDemandeur: demande.userId === session.user.id };
+  return {
+    demande,
+    statut,
+    actions,
+    frise,
+    historique,
+    decideurLibelle: lignesDecideur,
+    estDemandeur: demande.userId === session.user.id,
+    observations: observations.map((o) => ({ id: o.id, etape: o.etape, texte: o.texte, createdAt: o.createdAt, auteurNom: o.auteur.fullName })),
+    /** Le DG (permission du RÔLE) peut ajouter une observation, jamais sur sa propre demande. */
+    peutObserverDG: refusObservationDG({ acteur: acteurObs, demandeurId: demande.userId }) === null,
+  };
 }
 
 export interface DemandeFile {

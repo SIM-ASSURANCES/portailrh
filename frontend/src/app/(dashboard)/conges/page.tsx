@@ -10,6 +10,7 @@ import {
   jourCivilDepuisColonneDate,
   LIBELLE_STATUT_ABSENCE,
   MESSAGE_DATE_EMBAUCHE_MANQUANTE,
+  PERMISSION_DG_ABSENCE,
   prisma,
   type StatutCircuitAbsence,
 } from "backend";
@@ -20,7 +21,13 @@ export default async function MesCongesPage() {
   if (!session) redirect("/login");
   if (!hasPermission(session, "conges.soumettre")) {
     const estResponsable = (await prisma.service.count({ where: { responsableId: session.user.id } })) > 0;
-    redirect(session.rolePermissions.includes("conges.valider_rh") || estResponsable ? "/conges/a-decider" : "/");
+    redirect(
+      session.rolePermissions.includes("conges.valider_rh") || estResponsable
+        ? "/conges/a-decider"
+        : session.rolePermissions.includes(PERMISSION_DG_ABSENCE)
+          ? "/conges/toutes"
+          : "/"
+    );
   }
 
   const [user, demandes, soldes] = await Promise.all([

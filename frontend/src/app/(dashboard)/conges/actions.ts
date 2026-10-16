@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import {
   accorderCongeOffice,
+  ajouterObservationDG,
   ajusterSolde,
   decrireModificationType,
   MESSAGE_NB_JOURS_SOLDES_FUTURS,
@@ -21,6 +22,7 @@ import {
   MAX_JOURS_PERIODE,
   MESSAGE_DATE_EMBAUCHE_MANQUANTE,
   modifierDateEmbauche,
+  nettoyerMotifAbsence,
   prisma,
   resoumettreConge,
   soumettreConge,
@@ -33,7 +35,7 @@ import {
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
-import { notifierDecisionConge, notifierSoumissionConge } from "@/lib/conges/notifier";
+import { notifierDecisionConge, notifierObservationDG, notifierSoumissionConge } from "@/lib/conges/notifier";
 import { piecesExistent } from "@/lib/conges/pieces";
 
 const JOUR = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Format de date invalide (AAAA-MM-JJ)");
@@ -133,7 +135,8 @@ export async function resoumettreCongeAction(demandeId: string, input: DemandeCo
 async function decider(
   demandeId: string,
   action: Exclude<ActionCircuitAbsence, { type: "RESOUMETTRE" }>,
-  message: string
+  message: string,
+  observation?: string
 ): Promise<ActionState> {
   const session = await getSession();
   if (!session) return { status: "error", message: "Non authentifié." };
@@ -145,6 +148,7 @@ async function decider(
       acteur: { id: session.user.id, rolePermissions: session.rolePermissions },
       action,
       peutAnnulerApresDebut: hasPermission(session, "conges.annuler"),
+      observation,
       maintenant: new Date(),
     })
   );
@@ -155,16 +159,29 @@ async function decider(
   return { status: "success", message };
 }
 
-export async function approuverCongeAction(demandeId: string): Promise<ActionState> {
-  return decider(demandeId, { type: "APPROUVER" }, "Décision enregistrée : demande approuvée.");
+/** `observation` : facultative (500 caractères), écrite avec la décision (C3). */
+export async function approuverCongeAction(demandeId: string, observation?: string): Promise<ActionState> {
+  return decider(demandeId, { type: "APPROUVER" }, "Décision enregistrée : demande approuvée.", observation);
 }
 
-export async function rejeterCongeAction(demandeId: string, motif: string): Promise<ActionState> {
-  return decider(demandeId, { type: "REJETER", motif: String(motif ?? "") }, "Demande rejetée.");
+export async function rejeterCongeAction(demandeId: string, motif: string, observation?: string): Promise<ActionState> {
+  return decider(demandeId, { type: "REJETER", motif: String(motif ?? "") }, "Demande rejetée.", observation);
 }
 
-export async function demanderModificationCongeAction(demandeId: string, motif: string): Promise<ActionState> {
-  return decider(demandeId, { type: "DEMANDER_MODIFICATION", motif: String(motif ?? "") }, "Modification demandée au collaborateur.");
+export async function demanderModificationCongeAction(demandeId: string, motif: string, observation?: string): Promise<ActionState> {
+  return decider(demandeId, { type: "DEMANDER_MODIFICATION", motif: String(motif ?? "") }, "Modification demandée au collaborateur.", observation);
+}
+
+/** Observation du DG (C3) : à tout moment, sans changer le statut ; informe le demandeur et la RH. */
+export async function ajouterObservationCongeAction(demandeId: string, texte: string): Promise<ActionState> {
+  const session = await getSession();
+  if (!session) return { status: "error", message: "Non authentifié." };
+  const acteur = { id: session.user.id, rolePermissions: session.rolePermissions };
+  const r = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: String(demandeId), acteur, texte }));
+  if (!r.ok) return { status: "error", message: r.erreur, fieldErrors: r.champ ? { [r.champ]: r.erreur } : undefined };
+  await notifierObservationDG({ nature: "CONGE", observation: r.valeur, acteurNom: session.user.fullName, texte: nettoyerMotifAbsence(String(texte)) });
+  revalider(r.valeur.demandeId);
+  return { status: "success", message: "Observation ajoutée." };
 }
 
 export async function annulerCongeAction(demandeId: string, motif: string): Promise<ActionState> {

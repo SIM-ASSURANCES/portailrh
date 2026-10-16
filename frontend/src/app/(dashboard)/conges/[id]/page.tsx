@@ -10,7 +10,10 @@ import { frDateColonne, frDateHeure, libelleJours } from "@/lib/conges/format";
 import { chargerDemandeConge } from "@/lib/conges/lecture";
 import { LIBELLE_DECOMPTE_CONGE, LIBELLE_STATUT_ABSENCE } from "backend";
 
-import { annulerCongeAction, approuverCongeAction, demanderModificationCongeAction, rejeterCongeAction } from "../actions";
+import { ObservationsAbsence } from "@/components/conges/ObservationsAbsence";
+import { ObservationDGForm } from "@/components/conges/ObservationDGForm";
+
+import { ajouterObservationCongeAction, annulerCongeAction, approuverCongeAction, demanderModificationCongeAction, rejeterCongeAction } from "../actions";
 
 const LIBELLE_ACTION: Record<string, string> = {
   soumission: "Demande déposée",
@@ -23,6 +26,7 @@ const LIBELLE_ACTION: Record<string, string> = {
   annulation: "Annulée",
   conge_office: "Congé accordé d'office par la RH",
   rappel: "Rappel envoyé",
+  observation: "Observation ajoutée",
 };
 
 export default async function DetailCongePage({ params }: { params: Promise<{ id: string }> }) {
@@ -32,7 +36,7 @@ export default async function DetailCongePage({ params }: { params: Promise<{ id
 
   const data = await chargerDemandeConge(id, session);
   if (!data) notFound();
-  const { demande: d, statut, actions, frise, historique, decideurLibelle, estDemandeur } = data;
+  const { demande: d, statut, actions, frise, historique, decideurLibelle, estDemandeur, observations, peutObserverDG } = data;
 
   // Le demandeur ne voit que l'annulation de SA demande (jamais des boutons de décision grisés) ; les autres comptes voient
   // les boutons tant qu'une décision est attendue, ou l'annulation d'une absence validée si leur rôle le permet.
@@ -127,6 +131,11 @@ export default async function DetailCongePage({ params }: { params: Promise<{ id
           />
         </Card>
       ) : null}
+
+      <ObservationsAbsence
+        observations={observations}
+        formulaire={peutObserverDG ? <ObservationDGForm demandeId={d.id} ajouter={ajouterObservationCongeAction} /> : undefined}
+      />
 
       <section aria-label="Historique" className="space-y-2">
         <h2 className="text-base font-bold text-foreground">Historique</h2>

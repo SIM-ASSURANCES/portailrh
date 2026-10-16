@@ -20,9 +20,11 @@ export async function chargerNavAbsences(
     const soumettre = hasPermission(session, `${nature}.soumettre`);
     const estRH = session.rolePermissions.includes(`${nature}.valider_rh`);
     const consulteTous = hasPermission(session, `${nature}.consulter_tous`);
-    const peutDecider = estResponsableDeService || estRH || session.rolePermissions.includes(PERMISSION_DG_ABSENCE);
-    // Le responsable d'un service accède à « À décider » même sans permission (voir les layouts des modules).
-    return { soumettre, estRH, consulteTous, peutDecider, acces: soumettre || estRH || consulteTous || estResponsableDeService };
+    const estDG = session.rolePermissions.includes(PERMISSION_DG_ABSENCE);
+    const peutDecider = estResponsableDeService || estRH || estDG;
+    // Le responsable d'un service accède à « À décider » même sans permission ; le DG voit tout sans `consulter_tous`
+    // (voir les layouts des modules).
+    return { soumettre, estRH, consulteTous, estDG, peutDecider, acces: soumettre || estRH || consulteTous || estResponsableDeService || estDG };
   };
   const c = portee("conges");
   const p = portee("absences");
@@ -38,6 +40,7 @@ export async function chargerNavAbsences(
           soumettre: c.soumettre,
           aDecider: fileConges && (fileConges.length > 0 || c.estRH || estResponsableDeService) ? fileConges.length : null,
           soldes: hasPermission(session, "conges.gerer_soldes") || c.consulteTous || c.estRH,
+          toutes: c.consulteTous || c.estRH || c.estDG,
         }
       : null,
     permissions: p.acces
@@ -45,6 +48,7 @@ export async function chargerNavAbsences(
           soumettre: p.soumettre,
           aDecider: filePermissions && (filePermissions.length > 0 || p.estRH || estResponsableDeService) ? filePermissions.length : null,
           soldes: false,
+          toutes: p.consulteTous || p.estRH || p.estDG,
         }
       : null,
   };

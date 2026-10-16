@@ -5,16 +5,18 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { Button, Textarea } from "@/components/ui";
+import { OBSERVATION_MAX } from "backend/client";
 import type { ActionState, ActionsPossiblesAbsence } from "backend";
 
 const MOTIF_MIN = 3;
 
 type Motif = "rejet" | "modification" | "annulation";
 
+/** `observation` : facultative, écrite avec la décision (étape responsable ou RH). */
 export interface ActionsDecision {
-  approuver: (id: string) => Promise<ActionState>;
-  rejeter: (id: string, motif: string) => Promise<ActionState>;
-  demanderModification?: (id: string, motif: string) => Promise<ActionState>;
+  approuver: (id: string, observation?: string) => Promise<ActionState>;
+  rejeter: (id: string, motif: string, observation?: string) => Promise<ActionState>;
+  demanderModification?: (id: string, motif: string, observation?: string) => Promise<ActionState>;
   annuler: (id: string, motif: string) => Promise<ActionState>;
 }
 
@@ -48,10 +50,25 @@ export function DecisionAbsence({
 }) {
   const [motifOuvert, setMotifOuvert] = useState<Motif | null>(null);
   const [motif, setMotif] = useState("");
+  const [observation, setObservation] = useState("");
   const [enCours, demarrer] = useTransition();
   const router = useRouter();
 
   const longueur = motif.trim().length;
+  // Celui qui peut décider ajoute, s'il le souhaite, une observation à sa décision (jamais le demandeur ni une annulation).
+  const peutObserver = !seulementAnnuler && (possibles.approuver === null || possibles.rejeter === null);
+  const obs = observation.trim() === "" ? undefined : observation;
+  const champObservation = peutObserver ? (
+    <Textarea
+      id={`observation-decision-${demandeId}`}
+      label="Observations (facultatif)"
+      rows={2}
+      maxLength={OBSERVATION_MAX}
+      value={observation}
+      onChange={(e) => setObservation(e.target.value)}
+      hint={`Jointe à votre décision ; visible du demandeur, du responsable, de la RH et du DG. ${OBSERVATION_MAX} caractères au plus.`}
+    />
+  ) : null;
 
   const executer = (appel: () => Promise<ActionState>) => {
     demarrer(async () => {
@@ -60,6 +77,7 @@ export function DecisionAbsence({
         toast.success(r.message ?? "Décision enregistrée.");
         setMotifOuvert(null);
         setMotif("");
+        setObservation("");
         router.refresh();
       } else if (r.status === "error") {
         toast.error(r.message);
@@ -75,12 +93,13 @@ export function DecisionAbsence({
   if (motifOuvert) {
     const c = CONFIG[motifOuvert];
     const lancer = () => {
-      if (motifOuvert === "rejet") return actions.rejeter(demandeId, motif);
+      if (motifOuvert === "rejet") return actions.rejeter(demandeId, motif, obs);
       if (motifOuvert === "annulation") return actions.annuler(demandeId, motif);
-      return actions.demanderModification ? actions.demanderModification(demandeId, motif) : Promise.resolve<ActionState>({ status: "error", message: "Non disponible." });
+      return actions.demanderModification ? actions.demanderModification(demandeId, motif, obs) : Promise.resolve<ActionState>({ status: "error", message: "Non disponible." });
     };
     return (
       <div className="space-y-3">
+        {champObservation}
         <Textarea
           label={c.titre}
           required
@@ -105,10 +124,11 @@ export function DecisionAbsence({
 
   return (
     <div className="space-y-2">
+      {champObservation}
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         {seulementAnnuler ? null : (
           <>
-            <Button variant="primary" loading={enCours} disabled={possibles.approuver !== null} title={possibles.approuver ?? undefined} onClick={() => executer(() => actions.approuver(demandeId))}>
+            <Button variant="primary" loading={enCours} disabled={possibles.approuver !== null} title={possibles.approuver ?? undefined} onClick={() => executer(() => actions.approuver(demandeId, obs))}>
               Approuver
             </Button>
             <Button variant="danger" disabled={enCours || possibles.rejeter !== null} title={possibles.rejeter ?? undefined} onClick={() => setMotifOuvert("rejet")}>

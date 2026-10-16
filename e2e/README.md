@@ -71,5 +71,6 @@ DATABASE_URL="postgresql://postgres:pw@localhost:45497/e2e?schema=public" npx ts
 E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-integration.mjs      # Lot 5 : menu, accueil, profil, Mon équipe, suppression de compte, purge refusée, 390 px
 E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-responsable-sans-permission.mjs   # responsable de service sans permission : « À décider » seulement
 DATABASE_URL="postgresql://postgres:pw@localhost:45497/e2e?schema=public" npx tsx e2e/purge-pointage-absences.ts   # à lancer APRÈS conges-integration.mjs
+E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-observations.mjs   # C3 : observations de la RH et du DG, ajout seul, DG sans consulter_tous
 bash e2e/conges-migration-admin.sh                                                                              # migration : aucun droit congés pour un rôle estAdmin (conteneur pg-e2e)
 ```

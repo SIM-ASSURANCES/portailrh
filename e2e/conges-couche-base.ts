@@ -5,7 +5,7 @@
 // La base doit être migrée et seedée (comptes de test). Le script y ÉCRIT (demandes, soldes, plages) : jamais la base de
 // développement. Garde : le nom de la base doit contenir « jetable », « e2e » ou « conges ».
 
-import { prisma, initialiserSoldesExercice, soumettreConge, resoumettreConge, deciderConge, accorderCongeOffice, ajusterSolde, transactionAbsence, MESSAGE_CONGE_DANS_LE_PASSE } from "../backend/src/index";
+import { prisma, ajouterObservationDG, initialiserSoldesExercice, soumettreConge, resoumettreConge, deciderConge, accorderCongeOffice, ajusterSolde, transactionAbsence, MESSAGE_CONGE_DANS_LE_PASSE } from "../backend/src/index";
 
 const url = process.env.DATABASE_URL ?? "";
 if (!/(jetable|e2e|conges)/i.test(url.split("/").pop() ?? "")) {
@@ -160,6 +160,74 @@ async function main() {
   const aj2 = await transactionAbsence((tx) => ajusterSolde(tx, { soldeCongeId: solde.id, montant: 2, motif: "Régularisation 2025", acteurId: rh.id }));
   verifier("ajustement +2 → 30", aj2.ok && aj2.valeur.soldeRestant === 30, aj2);
 
+  console.log("Observations (C3) : RH à sa décision, DG à tout moment, ajout seul");
+  const debutO = lundi(26);
+  const sO = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: debutO, dateFin: debutO, motif: "Pour les observations" }, maintenant }));
+  if (!sO.ok) throw new Error("préparation C3 : " + JSON.stringify(sO));
+  const idO = sO.valeur.id;
+  const decider = (acteur: { id: string; rolePermissions: string[] }, action: Parameters<typeof deciderConge>[1]["action"], observation?: string | null) =>
+    transactionAbsence((tx) => deciderConge(tx, { demandeId: idO, acteur, action, peutAnnulerApresDebut: false, observation, maintenant: new Date() }));
+  const tropLong = await decider(resp, { type: "APPROUVER" }, "x".repeat(501));
+  verifier("observation de 501 caractères refusée, rien d'écrit", !tropLong.ok && (await prisma.demandeConge.findUniqueOrThrow({ where: { id: idO } })).statut === "EN_ATTENTE_RESPONSABLE", tropLong);
+  const apRESP = await decider(resp, { type: "APPROUVER" }, "  Bon dossier,   à valider. ");
+  verifier("le responsable approuve avec une observation", apRESP.ok, apRESP);
+  const apRH = await decider(rh, { type: "APPROUVER" }, "RAS côté RH, solde suffisant.");
+  verifier("la RH valide avec ses observations", apRH.ok && apRH.valeur.statut === "VALIDEE", apRH);
+  const obs = await prisma.observationAbsence.findMany({ where: { demandeCongeId: idO }, orderBy: { createdAt: "asc" } });
+  verifier("deux observations, étapes RESPONSABLE puis RH, auteurs exacts", obs.length === 2 && obs[0].etape === "RESPONSABLE" && obs[0].auteurId === resp.id && obs[1].etape === "RH" && obs[1].auteurId === rh.id, obs);
+  verifier("espaces nettoyés", obs[0].texte === "Bon dossier, à valider.", obs[0]?.texte);
+  const sansObs = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(27), dateFin: lundi(27), motif: "Sans observation" }, maintenant }));
+  if (sansObs.ok) {
+    await decider2(sansObs.valeur.id, resp, undefined);
+    verifier("observation facultative : décision sans observation, aucune ligne créée", (await prisma.observationAbsence.count({ where: { demandeCongeId: sansObs.valeur.id } })) === 0);
+    await prisma.demandeConge.delete({ where: { id: sansObs.valeur.id } });
+  }
+  async function decider2(id: string, acteur: { id: string; rolePermissions: string[] }, observation?: string | null) {
+    return transactionAbsence((tx) => deciderConge(tx, { demandeId: id, acteur, action: { type: "APPROUVER" }, peutAnnulerApresDebut: false, observation, maintenant: new Date() }));
+  }
+
+  // DG : à tout moment, statut inchangé, destinataires = demandeur + RH, jamais lui-même.
+  const avantDG = await prisma.demandeConge.findUniqueOrThrow({ where: { id: idO } });
+  const obsDG = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: idO, acteur: dg, texte: "  À suivre   de près.  " }));
+  verifier("le DG ajoute une observation sur une demande déjà validée", obsDG.ok, obsDG);
+  const apresDG = await prisma.demandeConge.findUniqueOrThrow({ where: { id: idO } });
+  verifier("statut, étapes et décideurs inchangés après l'observation du DG", apresDG.statut === avantDG.statut && apresDG.valideParId === avantDG.valideParId && apresDG.approuveParId === avantDG.approuveParId && apresDG.etapeDepuis.getTime() === avantDG.etapeDepuis.getTime());
+  if (obsDG.ok) {
+    verifier("destinataires : le demandeur et la RH, pas le DG", obsDG.valeur.destinataires.includes(collab.id) && obsDG.valeur.destinataires.includes(rh.id) && !obsDG.valeur.destinataires.includes(dg.id), obsDG.valeur.destinataires);
+    const ligneDG = await prisma.observationAbsence.findUniqueOrThrow({ where: { id: obsDG.valeur.observationId } });
+    verifier("observation du DG : étape DG, texte nettoyé", ligneDG.etape === "DG" && ligneDG.texte === "À suivre de près.", ligneDG);
+  }
+  verifier("une entrée d'historique par observation (3)", (await prisma.historiqueEntry.count({ where: { entity: "DemandeConge", entityId: idO, action: "observation" } })) === 3);
+  const obsRH = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: idO, acteur: rh, texte: "Je ne suis pas le DG" }));
+  verifier("un compte RH (non DG) ne peut pas observer hors décision", !obsRH.ok, obsRH);
+  const obsDemandeur = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: idO, acteur: collab, texte: "Je réponds" }));
+  verifier("le demandeur ne peut pas ajouter d'observation", !obsDemandeur.ok, obsDemandeur);
+  const obsVide = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: idO, acteur: dg, texte: "   " }));
+  verifier("observation vide du DG refusée", !obsVide.ok, obsVide);
+  // DG sur sa propre demande : le DG du seed dépose une demande, puis tente d'y observer.
+  const sDG = await transactionAbsence((tx) => soumettreConge(tx, { userId: dg.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(28), dateFin: lundi(28), motif: "Congé du DG" }, maintenant }));
+  if (sDG.ok) {
+    const propre = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: sDG.valeur.id, acteur: dg, texte: "Mon propre congé" }));
+    verifier("le DG n'observe jamais sa propre demande", !propre.ok, propre);
+    await prisma.demandeConge.delete({ where: { id: sDG.valeur.id } });
+  }
+  // Annulation avec une observation : refusée (une observation accompagne une décision responsable/RH).
+  const annulObs = await decider(rh, { type: "ANNULER", motif: "Annulation de test" }, "Observation interdite ici");
+  verifier("une observation n'accompagne pas une annulation", !annulObs.ok && (await prisma.demandeConge.findUniqueOrThrow({ where: { id: idO } })).statut === "VALIDEE", annulObs);
+
+  // Ajout seul : le déclencheur refuse la modification et la suppression directe, mais pas la cascade de la demande.
+  const uneObs = obs[0].id;
+  let erreurUpdate = "";
+  try { await prisma.$executeRaw`UPDATE "ObservationAbsence" SET "texte" = 'modifiée' WHERE id = ${uneObs}`; } catch (e) { erreurUpdate = String(e); }
+  verifier("modification d'une observation refusée par la base", /OBSERVATION_IMMUABLE/.test(erreurUpdate), erreurUpdate.slice(0, 120));
+  let erreurDelete = "";
+  try { await prisma.observationAbsence.delete({ where: { id: uneObs } }); } catch (e) { erreurDelete = String(e); }
+  verifier("suppression directe d'une observation refusée par la base", /OBSERVATION_IMMUABLE/.test(erreurDelete), erreurDelete.slice(0, 120));
+  verifier("les observations sont toujours là", (await prisma.observationAbsence.count({ where: { demandeCongeId: idO } })) === 3);
+  await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: idO } });
+  await prisma.demandeConge.delete({ where: { id: idO } });
+  verifier("la suppression de la demande emporte ses observations (cascade admise)", (await prisma.observationAbsence.count({ where: { demandeCongeId: idO } })) === 0);
+
   console.log("Pas de congé dans le passé (art. 12)");
   const hier = plus(new Date().getFullYear() + "-" + String(new Date().getMonth() + 1).padStart(2, "0") + "-" + String(new Date().getDate()).padStart(2, "0"), -1);
   const passe = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: hier, dateFin: hier, motif: "Déjà pris" }, maintenant }));
@@ -210,7 +278,8 @@ async function main() {
   console.log("Nombre de jours par an paramétrable (C1) : soldes créés ensuite seulement");
   const avantJours = (await prisma.typeConge.findUniqueOrThrow({ where: { id: annuel.id } })).nbJoursDefaut;
   const existant = await prisma.soldeConge.findFirstOrThrow({ where: { userId: collab.id, typeCongeId: annuel.id }, orderBy: { exercice: "desc" } });
-  const dansUnAn = (() => { const d = new Date(); return `${d.getFullYear() + 1}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+  // Le lendemain de la fin du dernier exercice existant : l'initialisation crée forcément l'exercice SUIVANT.
+  const dansUnAn = plus(existant.dateFinExercice.toISOString().slice(0, 10), 1);
   try {
     await prisma.typeConge.update({ where: { id: annuel.id }, data: { nbJoursDefaut: 28 } });
     const init = await transactionAbsence((tx) => initialiserSoldesExercice(tx, { reference: dansUnAn, acteurId: rh.id }));

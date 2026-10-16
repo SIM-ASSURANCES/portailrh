@@ -5905,6 +5905,20 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
 - **Purge du Pointage (D5)** : refusée — exécution ET sauvegarde — dès qu'une `DemandeConge` ou une `DemandePermission` existe
   (`refusPurgePointageAbsences`, `MESSAGE_PURGE_REFUSEE_ABSENCES`) (même une demande rejetée ou annulée) : traiter une demande ne débloque rien, il faut mettre le Pointage en service avant d'ouvrir les congés. Elle supprimerait toutes les `PlageAbsenceAutorisee`, y compris celles
   d'un congé validé. L'écran affiche le message à la place du formulaire ; la sauvegarde répond 409.
+- **Règles du règlement intérieur (consignes du 2026-10-16)** : le congé annuel exige **12 mois de service** (art. 12 ; `ANNUEL.ancienneteMinimumMois = 12`,
+  référence = date de début du congé, congé d'office exempté) ; **pas de congé dans le passé** (`preparerConge` refuse une date de début
+  antérieure à aujourd'hui, soumission et resoumission, avec `MESSAGE_CONGE_DANS_LE_PASSE` partagé avec le formulaire ; seul le congé d'office y
+  échappe) ; **jours ouvrables = lundi à vendredi, hors jours fériés** (calcul inchangé, libellé unique `LIBELLE_DECOMPTE_CONGE`) ; le **nombre de
+  jours par an** est `TypeConge.nbJoursDefaut` (30 au départ, provisoire), modifiable par la RH, historisé « ancienne → nouvelle valeur »
+  (`decrireModificationType`) et appliqué aux soldes créés ENSUITE seulement (les soldes existants se corrigent par « Ajuster »).
+- **Observations (C3)** : table `ObservationAbsence` (une demande de congé OU de permission, auteur, étape RESPONSABLE / RH / DG, 1 à 500 caractères),
+  **ajout seul** — déclencheur en base : modification et suppression directe refusées (`OBSERVATION_IMMUABLE`), seule la cascade de la suppression de la
+  demande est admise. Celui qui décide (responsable, RH) ajoute une observation **facultative avec sa décision** (`observation` de `deciderConge` /
+  `deciderPermission`, refusée avec une annulation). Le **DG** (`treso.decider_dg` lu sur le RÔLE, jamais sur sa propre demande) en ajoute une **à tout
+  moment** (`ajouterObservationDG`) : le statut et le circuit ne bougent pas, le demandeur et la RH reçoivent une notification d'information
+  (priorité INFO, aucun rappel). Visibilité : toute personne qui voit la demande, demandeur compris, avec le nom de l'auteur ; le demandeur n'en ajoute
+  pas. Le DG voit **toutes** les demandes sans `consulter_tous` (`PERMISSIONS_CONSULTATION_ABSENCE`, layouts, menu) via les listes
+  « Toutes les demandes » (`/conges/toutes`, `/permissions-absence/toutes`, aussi pour la RH et `consulter_tous`).
 
 ## Socle Portail — Authentification et permissions
 

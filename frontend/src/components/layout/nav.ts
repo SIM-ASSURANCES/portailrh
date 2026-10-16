@@ -32,6 +32,8 @@ export interface ModuleAbsenceNav {
   aDecider: number | null;
   /** Congés seulement : « Soldes » (gestion des soldes, consultation de tous, ou étape RH). */
   soldes: boolean;
+  /** « Toutes les demandes » : DG (permission du rôle), RH ou consultation de tous. */
+  toutes: boolean;
 }
 
 export interface NavGroup {
@@ -468,6 +470,7 @@ export function getNavBranches({
                 ...(congesNav.aDecider !== null
                   ? [{ label: "À décider", href: "/conges/a-decider", icon: "check-circle", compteur: congesNav.aDecider } satisfies NavItem]
                   : []),
+                ...(congesNav.toutes ? [{ label: "Toutes les demandes", href: "/conges/toutes", icon: "file-text" } satisfies NavItem] : []),
                 ...(congesNav.soldes ? [{ label: "Soldes", href: "/conges/soldes", icon: "wallet" } satisfies NavItem] : []),
               ]
             : [],
@@ -497,6 +500,9 @@ export function getNavBranches({
                         compteur: permissionsNav.aDecider,
                       } satisfies NavItem,
                     ]
+                  : []),
+                ...(permissionsNav.toutes
+                  ? [{ label: "Toutes les demandes", href: "/permissions-absence/toutes", icon: "file-text" } satisfies NavItem]
                   : []),
               ]
             : [],

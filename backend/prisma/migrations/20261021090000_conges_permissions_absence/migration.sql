@@ -271,6 +271,67 @@ DO $$ BEGIN
     CHECK (NOT ("demandeCongeId" IS NOT NULL AND "demandePermissionId" IS NOT NULL));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+-- 2 bis) Observations sur les demandes (C3, consignes du 2026-10-16) : AJOUT SEUL.
+DO $$ BEGIN
+  CREATE TYPE "EtapeObservationAbsence" AS ENUM ('RESPONSABLE', 'RH', 'DG');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS "ObservationAbsence" (
+    "id" TEXT NOT NULL,
+    "demandeCongeId" TEXT,
+    "demandePermissionId" TEXT,
+    "auteurId" TEXT NOT NULL,
+    "etape" "EtapeObservationAbsence" NOT NULL,
+    "texte" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "ObservationAbsence_pkey" PRIMARY KEY ("id")
+);
+
+CREATE INDEX IF NOT EXISTS "ObservationAbsence_demandeCongeId_createdAt_idx" ON "ObservationAbsence"("demandeCongeId", "createdAt");
+
+CREATE INDEX IF NOT EXISTS "ObservationAbsence_demandePermissionId_createdAt_idx" ON "ObservationAbsence"("demandePermissionId", "createdAt");
+
+DO $$ BEGIN
+  ALTER TABLE "ObservationAbsence" ADD CONSTRAINT "ObservationAbsence_demandeCongeId_fkey" FOREIGN KEY ("demandeCongeId") REFERENCES "DemandeConge"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE "ObservationAbsence" ADD CONSTRAINT "ObservationAbsence_demandePermissionId_fkey" FOREIGN KEY ("demandePermissionId") REFERENCES "DemandePermission"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE "ObservationAbsence" ADD CONSTRAINT "ObservationAbsence_auteurId_fkey" FOREIGN KEY ("auteurId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Une observation porte sur UNE demande (congé ou permission, jamais les deux ni aucune) et tient en 1 à 500 caractères.
+DO $$ BEGIN
+  ALTER TABLE "ObservationAbsence" ADD CONSTRAINT "ObservationAbsence_une_seule_demande"
+    CHECK (("demandeCongeId" IS NOT NULL AND "demandePermissionId" IS NULL) OR ("demandeCongeId" IS NULL AND "demandePermissionId" IS NOT NULL));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN
+  ALTER TABLE "ObservationAbsence" ADD CONSTRAINT "ObservationAbsence_texte_longueur" CHECK (char_length("texte") BETWEEN 1 AND 500);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Ajout seul : jamais de modification ; suppression directe refusée tant que la demande existe (la suppression en cascade
+-- de la demande elle-même, où la demande n'existe déjà plus, reste admise).
+CREATE OR REPLACE FUNCTION "observation_absence_ajout_seul"() RETURNS trigger AS $fn$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    RAISE EXCEPTION 'OBSERVATION_IMMUABLE : une observation ne se modifie pas.' USING ERRCODE = 'P0001';
+  END IF;
+  IF (OLD."demandeCongeId" IS NOT NULL AND EXISTS (SELECT 1 FROM "DemandeConge" WHERE "id" = OLD."demandeCongeId"))
+     OR (OLD."demandePermissionId" IS NOT NULL AND EXISTS (SELECT 1 FROM "DemandePermission" WHERE "id" = OLD."demandePermissionId")) THEN
+    RAISE EXCEPTION 'OBSERVATION_IMMUABLE : une observation ne se supprime pas.' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN OLD;
+END;
+$fn$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "observation_absence_ajout_seul_trg" ON "ObservationAbsence";
+CREATE TRIGGER "observation_absence_ajout_seul_trg" BEFORE UPDATE OR DELETE ON "ObservationAbsence"
+  FOR EACH ROW EXECUTE FUNCTION "observation_absence_ajout_seul"();
+
 -- 3) Modules (sur une base neuve, le seed les crée aussi : ON CONFLICT sur la clé).
 INSERT INTO "Module" ("id", "key", "label") VALUES
   ('module-conges', 'conges', 'Congés'),

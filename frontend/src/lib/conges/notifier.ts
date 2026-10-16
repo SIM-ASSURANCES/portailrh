@@ -3,7 +3,7 @@
 // demande. Jamais tous les porteurs d'une permission, jamais l'auteur de l'action. Les liens sont relatifs : les
 // gabarits d'e-mail les préfixent avec `urlPublique()`.
 
-import type { DecisionConge, SoumissionConge } from "backend";
+import type { DecisionConge, NatureAbsence, ObservationDG, SoumissionConge } from "backend";
 import { notify } from "@/lib/notifications";
 
 function frDate(jour: string): string {
@@ -71,4 +71,26 @@ export async function notifierDecisionConge(p: { decision: DecisionConge; acteur
     if (msg) envois.push(notify({ userId: d.demandeurId, titre: msg.titre, message: msg.message, lien, priority: msg.priority, category: "RH" }));
   }
   await Promise.all(envois);
+}
+
+/**
+ * Observation du DG (C3) : une INFORMATION pour le demandeur et la RH, jamais une demande d'action. Priorité INFO, aucun rappel
+ * (les rappels ne portent que sur les demandes en attente de décision). Le texte complet est lisible sur la demande.
+ */
+export async function notifierObservationDG(p: { nature: NatureAbsence; observation: ObservationDG; acteurNom: string; texte: string }) {
+  const o = p.observation;
+  const lien = p.nature === "CONGE" ? `/conges/${o.demandeId}` : `/permissions-absence/${o.demandeId}`;
+  const objet = p.nature === "CONGE" ? "congé" : "permission d'absence";
+  await Promise.all(
+    o.destinataires.map((userId) =>
+      notify({
+        userId,
+        titre: "Observation du DG",
+        message: `${p.acteurNom} a ajouté une observation sur ${userId === o.demandeurId ? "votre" : "la"} ${objet} ${o.reference} (${o.libelleType}) : ${p.texte}`,
+        lien,
+        priority: "INFO",
+        category: "RH",
+      })
+    )
+  );
 }

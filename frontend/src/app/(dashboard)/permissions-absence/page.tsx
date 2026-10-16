@@ -5,7 +5,7 @@ import { Badge, Button, Card, EmptyState, PageHeader } from "@/components/ui";
 import { VARIANTE_STATUT_ABSENCE } from "@/components/conges/statutAbsence";
 import { getSession, hasPermission } from "@/lib/auth";
 import { frDateColonne } from "@/lib/conges/format";
-import { formatMinutesEnHeures, LIBELLE_STATUT_ABSENCE, prisma, type StatutCircuitAbsence } from "backend";
+import { formatMinutesEnHeures, LIBELLE_STATUT_ABSENCE, PERMISSION_DG_ABSENCE, prisma, type StatutCircuitAbsence } from "backend";
 
 /** Mes permissions d'absence : compteurs du mois par type, puis mes demandes (cartes, jamais de tableau qui déborde). */
 export default async function MesPermissionsPage() {
@@ -13,7 +13,13 @@ export default async function MesPermissionsPage() {
   if (!session) redirect("/login");
   if (!hasPermission(session, "absences.soumettre")) {
     const estResponsable = (await prisma.service.count({ where: { responsableId: session.user.id } })) > 0;
-    redirect(session.rolePermissions.includes("absences.valider_rh") || estResponsable ? "/permissions-absence/a-decider" : "/");
+    redirect(
+      session.rolePermissions.includes("absences.valider_rh") || estResponsable
+        ? "/permissions-absence/a-decider"
+        : session.rolePermissions.includes(PERMISSION_DG_ABSENCE)
+          ? "/permissions-absence/toutes"
+          : "/"
+    );
   }
 
   const maintenant = new Date();

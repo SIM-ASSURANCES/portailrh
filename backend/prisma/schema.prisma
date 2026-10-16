@@ -154,6 +154,7 @@ model User {
   congesAnnules                 DemandeConge[]      @relation("CongeAnnulateur")
   congesSoldes                  SoldeConge[]        @relation("CongeSolde")
   congesAjustements             AjustementSolde[]   @relation("CongeAjustement")
+  observationsAbsence           ObservationAbsence[] @relation("ObservationAbsenceAuteur")
   absencesPermissionsDemandees  DemandePermission[] @relation("PermissionAbsenceDemandeur")
   absencesPermissionsApprouvees DemandePermission[] @relation("PermissionAbsenceApprobateur")
   absencesPermissionsValidees   DemandePermission[] @relation("PermissionAbsenceValidateur")
@@ -1485,6 +1486,7 @@ model DemandeConge {
 
   piecesJointes PieceJointeConge[]
   plages        PlageAbsenceAutorisee[]
+  observations  ObservationAbsence[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1564,6 +1566,7 @@ model DemandePermission {
   dernierRappelAt DateTime?
 
   plages PlageAbsenceAutorisee[]
+  observations ObservationAbsence[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2336,4 +2339,36 @@ model PointageMiseEnService {
   misEnServiceAt DateTime @default(now())
   parId        String
   par          User     @relation(fields: [parId], references: [id])
+}
+
+/// Étape où une observation a été faite sur une demande de congé ou de permission d'absence.
+enum EtapeObservationAbsence {
+  RESPONSABLE
+  RH
+  DG
+}
+
+/// Observation sur une demande de congé OU de permission d'absence (jamais les deux). AJOUT SEUL : aucune modification,
+/// aucune suppression directe (déclencheur en base ; seule la suppression en cascade de la demande est admise).
+/// La RH (et le responsable) l'ajoute au moment de sa décision ; le DG à tout moment, sans changer le statut.
+model ObservationAbsence {
+  id String @id @default(cuid())
+
+  demandeCongeId String?
+  demandeConge   DemandeConge? @relation(fields: [demandeCongeId], references: [id], onDelete: Cascade)
+
+  demandePermissionId String?
+  demandePermission   DemandePermission? @relation(fields: [demandePermissionId], references: [id], onDelete: Cascade)
+
+  auteurId String
+  auteur   User   @relation("ObservationAbsenceAuteur", fields: [auteurId], references: [id])
+
+  etape EtapeObservationAbsence
+  /// 1 à 500 caractères (contrainte en base).
+  texte String
+
+  createdAt DateTime @default(now())
+
+  @@index([demandeCongeId, createdAt])
+  @@index([demandePermissionId, createdAt])
 }

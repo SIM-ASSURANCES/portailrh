@@ -9,7 +9,10 @@ import { frDateColonne, frDateHeure } from "@/lib/conges/format";
 import { chargerDemandePermission } from "@/lib/absences/lecture";
 import { LIBELLE_STATUT_ABSENCE, calculerEcartRetour, formatMinutesEnHeures } from "backend";
 
-import { annulerPermissionAction, approuverPermissionAction, rejeterPermissionAction } from "../actions";
+import { ObservationsAbsence } from "@/components/conges/ObservationsAbsence";
+import { ObservationDGForm } from "@/components/conges/ObservationDGForm";
+
+import { ajouterObservationPermissionAction, annulerPermissionAction, approuverPermissionAvecObservationAction, rejeterPermissionAction } from "../actions";
 import { DerogationPlafond, RetourReel } from "./ActionsPermission";
 
 const LIBELLE_ACTION: Record<string, string> = {
@@ -21,6 +24,7 @@ const LIBELLE_ACTION: Record<string, string> = {
   annulation: "Annulée",
   retour_marque: "Retour enregistré",
   rappel: "Rappel envoyé",
+  observation: "Observation ajoutée",
 };
 
 export default async function DetailPermissionPage({ params }: { params: Promise<{ id: string }> }) {
@@ -30,7 +34,7 @@ export default async function DetailPermissionPage({ params }: { params: Promise
 
   const data = await chargerDemandePermission(id, session);
   if (!data) notFound();
-  const { demande: d, statut, actions, frise, historique, decideurLibelle, estDemandeur, derogation, peutMarquerRetour } = data;
+  const { demande: d, statut, actions, frise, historique, decideurLibelle, estDemandeur, derogation, peutMarquerRetour, observations, peutObserverDG } = data;
 
   // Le demandeur ne voit que l'annulation de SA demande ; les autres comptes voient les boutons tant qu'une décision
   // est attendue, ou l'annulation d'une permission accordée si leur rôle le permet.
@@ -107,10 +111,15 @@ export default async function DetailPermissionPage({ params }: { params: Promise
             demandeId={d.id}
             possibles={actions}
             seulementAnnuler={estDemandeur}
-            actions={{ approuver: approuverPermissionAction, rejeter: rejeterPermissionAction, annuler: annulerPermissionAction }}
+            actions={{ approuver: approuverPermissionAvecObservationAction, rejeter: rejeterPermissionAction, annuler: annulerPermissionAction }}
           />
         </Card>
       ) : null}
+
+      <ObservationsAbsence
+        observations={observations}
+        formulaire={peutObserverDG ? <ObservationDGForm demandeId={d.id} ajouter={ajouterObservationPermissionAction} /> : undefined}
+      />
 
       <section aria-label="Historique" className="space-y-2">
         <h2 className="text-base font-bold text-foreground">Historique</h2>

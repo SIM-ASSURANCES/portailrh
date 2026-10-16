@@ -408,6 +408,8 @@ export const ACTION_HISTORIQUE_ABSENCE = {
   RETOUR_MARQUE: "retour_marque",
   AJUSTER_SOLDE: "ajustement_solde",
   RAPPEL: "rappel",
+  /** Observation de la RH / du responsable (à sa décision) ou du DG (à tout moment) : AJOUT SEUL, statut inchangé. */
+  OBSERVATION: "observation",
 } as const;
 
 export type EtatEtapeFrise = "faite" | "en_cours" | "a_venir" | "non_requise" | "interrompue";
@@ -450,8 +452,9 @@ export function friseAbsence(params: { nature: NatureAbsence; statut: StatutCirc
 
 /** Permissions de consultation de toutes les demandes d'une nature (RH, DG en lecture). */
 export const PERMISSIONS_CONSULTATION_ABSENCE: Record<NatureAbsence, readonly string[]> = {
-  CONGE: ["conges.valider_rh", "conges.consulter_tous"],
-  PERMISSION: ["absences.valider_rh", "absences.consulter_tous"],
+  // Le DG voit toutes les demandes sans `consulter_tous` (C3) : sa permission d'étape, non délégable, donc lue sur le rôle.
+  CONGE: ["conges.valider_rh", "conges.consulter_tous", PERMISSION_DG_ABSENCE],
+  PERMISSION: ["absences.valider_rh", "absences.consulter_tous", PERMISSION_DG_ABSENCE],
 };
 
 /**

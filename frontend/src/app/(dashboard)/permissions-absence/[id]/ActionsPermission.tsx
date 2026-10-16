@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { Button, Input, Textarea } from "@/components/ui";
+import { OBSERVATION_MAX } from "backend/client";
 import type { ActionState } from "backend";
 
 import { approuverPermissionAction, marquerRetourPermissionAction } from "../actions";
@@ -35,6 +36,7 @@ function useExecuter() {
  */
 export function DerogationPlafond({ demandeId, utilise, plafond }: { demandeId: string; utilise: number; plafond: number }) {
   const [motif, setMotif] = useState("");
+  const [observation, setObservation] = useState("");
   const { enCours, executer } = useExecuter();
   const longueur = motif.trim().length;
 
@@ -53,7 +55,29 @@ export function DerogationPlafond({ demandeId, utilise, plafond }: { demandeId: 
         onChange={(e) => setMotif(e.target.value)}
         error={longueur > 0 && longueur < MOTIF_DEROGATION_MIN ? `${MOTIF_DEROGATION_MIN} caractères minimum.` : undefined}
       />
-      <Button variant="primary" loading={enCours} disabled={longueur < MOTIF_DEROGATION_MIN} onClick={() => executer(() => approuverPermissionAction(demandeId, motif), () => setMotif(""))}>
+      <Textarea
+        id={`observation-derogation-${demandeId}`}
+        label="Observations (facultatif)"
+        rows={2}
+        maxLength={OBSERVATION_MAX}
+        value={observation}
+        onChange={(e) => setObservation(e.target.value)}
+        hint={`Jointe à votre décision ; visible du demandeur, du responsable, de la RH et du DG. ${OBSERVATION_MAX} caractères au plus.`}
+      />
+      <Button
+        variant="primary"
+        loading={enCours}
+        disabled={longueur < MOTIF_DEROGATION_MIN}
+        onClick={() =>
+          executer(
+            () => approuverPermissionAction(demandeId, motif, observation.trim() === "" ? undefined : observation),
+            () => {
+              setMotif("");
+              setObservation("");
+            }
+          )
+        }
+      >
         Accorder avec dérogation
       </Button>
     </div>

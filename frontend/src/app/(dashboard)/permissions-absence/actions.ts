@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import {
+  ajouterObservationDG,
   bornesMois,
   controlerSaisiePermission,
   deciderPermission,
@@ -10,6 +11,7 @@ import {
   fieldErrorsFromZod,
   formatJourCivil,
   marquerRetourPermission,
+  nettoyerMotifAbsence,
   prisma,
   soumettrePermission,
   transactionAbsence,
@@ -21,6 +23,7 @@ import {
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notifierDecisionPermission, notifierSoumissionPermission } from "@/lib/absences/notifier";
+import { notifierObservationDG } from "@/lib/conges/notifier";
 
 const JOUR = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Format de date invalide (AAAA-MM-JJ)");
 const HEURE = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Format d'heure invalide (HH:MM)");
@@ -110,7 +113,7 @@ export async function marquerRetourPermissionAction(demandeId: string, heureReto
 // Décision (responsable, RH, DG selon l'étape : le moteur décide qui, jamais cette action)
 // ---------------------------------------------------------------------------------------------------------------------
 
-async function decider(demandeId: string, action: ActionPermission, message: string): Promise<ActionState> {
+async function decider(demandeId: string, action: ActionPermission, message: string, observation?: string): Promise<ActionState> {
   const session = await getSession();
   if (!session) return { status: "error", message: "Non authentifié." };
 
@@ -121,6 +124,7 @@ async function decider(demandeId: string, action: ActionPermission, message: str
       acteur: { id: session.user.id, rolePermissions: session.rolePermissions },
       action,
       peutAnnulerApresDebut: hasPermission(session, "absences.annuler"),
+      observation,
       maintenant: new Date(),
     })
   );
@@ -132,16 +136,34 @@ async function decider(demandeId: string, action: ActionPermission, message: str
 }
 
 /** `exceptionPlafond` : motif de la dérogation, seulement à l'étape RH quand le plafond mensuel est atteint. */
-export async function approuverPermissionAction(demandeId: string, exceptionPlafond?: string): Promise<ActionState> {
+export async function approuverPermissionAction(demandeId: string, exceptionPlafond?: string, observation?: string): Promise<ActionState> {
   return decider(
     demandeId,
     { type: "APPROUVER", ...(exceptionPlafond ? { exceptionPlafond: String(exceptionPlafond) } : {}) },
-    "Décision enregistrée : permission approuvée."
+    "Décision enregistrée : permission approuvée.",
+    observation
   );
 }
 
-export async function rejeterPermissionAction(demandeId: string, motif: string): Promise<ActionState> {
-  return decider(demandeId, { type: "REJETER", motif: String(motif ?? "") }, "Permission rejetée.");
+/** Approbation sans dérogation, avec l'observation facultative de celui qui décide (500 caractères, C3). */
+export async function approuverPermissionAvecObservationAction(demandeId: string, observation?: string): Promise<ActionState> {
+  return approuverPermissionAction(demandeId, undefined, observation);
+}
+
+export async function rejeterPermissionAction(demandeId: string, motif: string, observation?: string): Promise<ActionState> {
+  return decider(demandeId, { type: "REJETER", motif: String(motif ?? "") }, "Permission rejetée.", observation);
+}
+
+/** Observation du DG (C3) : à tout moment, sans changer le statut ; informe le demandeur et la RH. */
+export async function ajouterObservationPermissionAction(demandeId: string, texte: string): Promise<ActionState> {
+  const session = await getSession();
+  if (!session) return { status: "error", message: "Non authentifié." };
+  const acteur = { id: session.user.id, rolePermissions: session.rolePermissions };
+  const r = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "PERMISSION", demandeId: String(demandeId), acteur, texte }));
+  if (!r.ok) return { status: "error", message: r.erreur, fieldErrors: r.champ ? { [r.champ]: r.erreur } : undefined };
+  await notifierObservationDG({ nature: "PERMISSION", observation: r.valeur, acteurNom: session.user.fullName, texte: nettoyerMotifAbsence(String(texte)) });
+  revalider(r.valeur.demandeId);
+  return { status: "success", message: "Observation ajoutée." };
 }
 
 export async function annulerPermissionAction(demandeId: string, motif: string): Promise<ActionState> {
