@@ -48,3 +48,16 @@ E2E_DATABASE_URL=postgresql://postgres:pw@localhost:55497/e2e node e2e/conges-ec
 npx tsx e2e/conges-couche-base.ts                                                            # couche base (verrous, concurrence, pièces, soldes)
 # Sans le Chromium de Playwright : E2E_CHROMIUM=/chemin/vers/chrome ; captures : E2E_CAPTURES=./e2e-captures
 ```
+
+### Permissions d'absence (2026-10-16)
+
+```bash
+# Base jetable migrée et seedée, serveur lancé sur E2E_BASE_URL (défaut http://localhost:3100) :
+E2E_DATABASE_URL=postgresql://postgres:pw@localhost:55497/e2e node e2e/permissions-ecrans.mjs   # écrans : circuit responsable → RH, aperçu, dérogation au plafond, retour, rejet, annulation, droits, 390 px
+npx tsx e2e/permissions-couche-base.ts                                                           # couche base (verrous, plafond, chevauchement, retour, concurrence)
+```
+
+Le script réinitialise les tables des permissions d'absence de la base indiquée : ne jamais le pointer vers une base de dev.
+Le Chromium de Playwright peut manquer : `E2E_CHROMIUM=/chemin/vers/chrome`. Les formulaires sont remplis après `networkidle`
+(remplir avant l'hydratation fait revenir les champs à leur valeur initiale) et les statuts sont attendus en base, pas par
+un mot du texte de la page (« Approuvée » apparaît aussi dans « Approuvée par le responsable »).
