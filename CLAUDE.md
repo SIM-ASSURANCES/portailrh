@@ -1421,7 +1421,7 @@ qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionne
   date de création de la demande.
 - **Affichage « À retourner »** (Collaborateur ET Finance, source unique) : `getCouvertureRetoursPostCloture`
   impute les retours exceptionnels validés sur les retours **non réceptionnés** (plus ancien d'abord) ;
-  `etatRetourAffiche` (`lib/retourAffichage.ts`) en déduit « Retourné à la compta » (réceptionné),
+  `etatRetourAffiche` (`lib/retourAffichage.ts`) en déduit « Montant retourné » (réceptionné ; ex-« Retourné à la compta », lots I et I bis),
   « Retourné » (couvert par un retour post-clôture — autre sens, ne pas confondre) ou le solde restant.
   Ne jamais dupliquer cette logique dans un écran.
 
@@ -1452,7 +1452,7 @@ nouvelle écriture qui référence le retour d'origine et le signalement.
 - **« Montant à retourner définitif »** (écrans Finance ET Collaborateur, `getMontantsDefinitifsRetours` + `detailMontantDefinitif`) :
   net = réceptionné + compléments liés à un signalement (réceptionnés ou non) − remboursements **validés** (pas ceux en attente),
   affiché **seulement** s'il existe au moins un complément ou un remboursement validé, avec le détail « (50 000 reçus − 5 000
-  remboursés) ». Ne modifie jamais « Retourné à la compta » (montant brut réceptionné). Visible du Collaborateur : c'est son argent.
+  remboursés) ». Ne modifie jamais « Montant retourné » (montant brut réceptionné ; ex-« Retourné à la compta »). Visible du Collaborateur : c'est son argent.
 - Les remboursements **validés** viennent en déduction des retours reçus (`getRetoursRecus`,
   `getSoldesARegulariserParReglements`, `getMesDemandesDetail`, reporting « Fonds remis »).
 - Traçabilité : historique de la demande (`retour_complementaire_signalement`, `remboursement_retour_*`,
@@ -3242,14 +3242,16 @@ Aucune migration, aucune permission nouvelle, lecture seule. Deux corrections du
   e2e `lot-f.mjs` 60/60 (totaux EUR et XOF séparés avec leurs formules SUMIFS, une seule ligne « Total général » sur un export filtré à une devise, libellé d'origine, liens vérifiés par Finance et ouvrables,
   DG sans lien et refusé par la route, page identique) ; régressions des lots précédents.
 
-#### Lot I — changements demandés par le DG : « Montant rendu », motif du règlement, catégorisation à partir d'une date (2026-10-19)
+#### Lot I — changements demandés par le DG : « Montant retourné », motif du règlement, catégorisation à partir d'une date (2026-10-19)
 
 Aucune écriture de caisse créée ni modifiée, `PERMISSIONS_DECISION_NON_DELEGABLES` intacte, devise unique, retour nul = historique seulement. Deux migrations manuelles, additives et idempotentes
 (`20261022090000_reglement_motif`, `20261022100000_parametre_categorisation`), horodatées après `20261020090000` ; `migrate diff` vide, rejouées sans effet.
 
-**1. « Montant rendu » (libellé seulement, aucun calcul).** Le reçu PDF du retour disait déjà « Montant rendu » (et « Total dépensé + rendu ») : inchangé. Le libellé « Retourné à la compta », qui
-désignait ce même montant (retour réceptionné) sur l'écran du retour Finance et sur l'écran du collaborateur, devient « Montant rendu » (`retourAffichage.ts`, source unique `etatRetourAffiche` ; les
-deux autres états, « Retourné » — couvert par un retour post-clôture — et « À retourner », restent). **Laissés tels quels, volontairement** : le récapitulatif du collaborateur et la bande de
+**1. « Montant retourné » (libellé seulement, aucun calcul).** ⚠️ **Corrigé par le lot I bis (consigne initiale erronée : « Montant rendu »)** : le libellé voulu par le DG est « Montant retourné ». Le libellé
+« Retourné à la compta », qui désignait ce même montant (retour réceptionné) sur l'écran du retour Finance et sur l'écran du collaborateur, devient « Montant retourné » (`retourAffichage.ts`, source unique
+`etatRetourAffiche` ; les deux autres états, « Retourné » — couvert par un retour post-clôture — et « À retourner », restent). Le **reçu PDF du retour** (`RetourReceiptDocument`, qui disait « Montant rendu »
+avant le lot I) affiche aussi « Montant retourné », et « Total dépensé + retourné » (ex-« + rendu »). **Laissés tels quels (lot I bis)** : « Montant rendu (FCFA) » du formulaire de retour exceptionnel
+post-clôture (autre écran, autre notion) et « Retour nul — rien à rendre » du reçu. **Laissés tels quels, volontairement** : le récapitulatif du collaborateur et la bande de
 régularisation (« Retours de caisse … reçus », « Retourné » = total cumulé des retours reçus d'un article/d'une demande, pas le reçu d'un retour), la colonne « Retourné » du reporting et de
 l'export (total agrégé), la ligne « Retours de caisse » du reçu de règlement (« Réceptionné » + montant), « Montant à retourner définitif », et les messages d'erreur/historique « montant retourné ».
 
@@ -3279,7 +3281,13 @@ motif ; (d) la colonne « Retourné » des écrans/exports (total cumulé) garde
 
 **Vérifié** : vitest (881+ tests : `motifReglement`, `categorisationObligatoire` avant/jour même/après/nul/invalide, `categorisationSoumission`, parcours et reporting avec motif), tsc, eslint, `next build` ; migrations depuis zéro
 sur base jetable, `migrate diff` vide, rejouées sans effet ; e2e `lot-i.mjs` (date nulle / demain / aujourd'hui / remise à nul, refus serveur par appel direct de `validerLignesAction`, motif de 4 caractères et d'espaces refusés,
-Caisse et Banque, modification, anciens règlements « Non renseigné » jamais modifiés, reçu PDF, parcours, historique, reporting page et Excel, « Montant rendu » écran Finance / collaborateur / PDF, grand livre de caisse identique).
+Caisse et Banque, modification, anciens règlements « Non renseigné » jamais modifiés, reçu PDF, parcours, historique, reporting page et Excel, « Montant retourné » écran Finance / collaborateur / PDF, grand livre de caisse identique).
+
+#### Lot I bis — libellé du reçu du retour : « Montant retourné », pas « Montant rendu » (2026-10-23)
+
+Correction d'une erreur de consigne du lot I. Libellé seulement : aucun calcul, aucune écriture de caisse, aucune migration. `etatRetourAffiche` (source unique : écran Finance du retour, page du collaborateur)
+et le reçu PDF du retour affichent « Montant retourné » ; « Retourné à la compta » ne s'affiche plus nulle part. Tests : `e2e/lot-i.mjs` (écran Finance, collaborateur, PDF : « Montant retourné », ni « Montant rendu » ni
+« Retourné à la compta »). Points laissés : voir la section « Lot I » ci-dessus.
 
 ### Solde d'ouverture de caisse
 

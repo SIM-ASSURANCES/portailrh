@@ -21,7 +21,7 @@ export interface RetourReceiptData {
   montantRegle: number;
   mode: "CAISSE" | "BANQUE";
   regleLe: Date;
-  /** Montant rendu (0 pour un retour nul). */
+  /** Montant retourné (0 pour un retour nul). */
   montantRetourne: number;
   retourNul: boolean;
   /** Ancien versement à la banque (avant le lot G) ; sinon le retour est rendu en espèces à la caisse. */
@@ -73,7 +73,7 @@ export function RetourReceiptDocument({ data }: { data: RetourReceiptData }) {
 
           <View style={styles.statsRow}>
             <View style={styles.statCell}>
-              <Text style={styles.statLabel}>Montant rendu</Text>
+              <Text style={styles.statLabel}>Montant retourné</Text>
               <Text style={styles.amountValue}>{formatMontant(data.montantRetourne)}</Text>
             </View>
             <View style={styles.statCell}>
@@ -112,7 +112,7 @@ export function RetourReceiptDocument({ data }: { data: RetourReceiptData }) {
               <Text style={styles.detailValue}>{formatMontant(data.totalNonJustifie)}</Text>
             </View>
             <View style={[styles.detailRow, { marginBottom: 0 }]}>
-              <Text style={styles.detailLabel}>Total dépensé + rendu</Text>
+              <Text style={styles.detailLabel}>Total dépensé + retourné</Text>
               <Text style={styles.detailValue}>{formatMontant(totalDepenses + data.montantRetourne)}</Text>
             </View>
           </View>

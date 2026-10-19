@@ -89,7 +89,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     estReceptionne: retour.estReceptionne,
     dejaCouvertPostCloture: couverture.get(retour.id) ?? 0,
   });
-  // "Montant à retourner définitif" : net après compléments/remboursements liés à un signalement (n'altère pas « Montant rendu »).
+  // "Montant à retourner définitif" : net après compléments/remboursements liés à un signalement (n'altère pas « Montant retourné »).
   const montantDefinitif = (await getMontantsDefinitifsRetours([retour.id])).get(retour.id);
   const totalDeclare = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
   const montantNonJustifie = retour.depenses

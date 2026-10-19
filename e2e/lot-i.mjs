@@ -1,5 +1,5 @@
 // Lot I (changements demandés par le DG) — sur base JETABLE (voir e2e/README.md). Nécessite `pdftotext` et exceljs.
-//   1. Libellé « Montant rendu » du retour de caisse (écran Finance, écran du collaborateur, reçu PDF).
+//   1. Libellé « Montant retourné » du retour de caisse (écran Finance, écran du collaborateur, reçu PDF).
 //   2. Motif / nature du règlement obligatoire (5 caractères), caisse comme banque : serveur ET écran ; affiché dans le parcours
 //      de l'article, le reçu, l'historique et le reporting ; anciens règlements « Non renseigné », jamais bloqués ni modifiés.
 //   3. Catégorisation obligatoire À PARTIR D'UNE DATE (paramètre de la Finance, historisé, nul = jamais) : avant / après / nul.
@@ -387,16 +387,16 @@ await q(`INSERT INTO "DepenseLigne"(id, montant, objet, date, justification, "re
   const a = await connecter("assistant-finance@simassurances.test");
   await a.goto(`${B}/treso/finance/retours/${P}ret6`);
   const tFin = net(await a.locator("body").innerText());
-  verifier("1. écran Finance du retour : « Montant rendu » 20 000 FCFA", /Montant rendu\s*20 000 FCFA/i.test(tFin), tFin.slice(0, 200));
+  verifier("1. écran Finance du retour : « Montant retourné » 20 000 FCFA", /Montant retourné\s*20 000 FCFA/i.test(tFin), tFin.slice(0, 200));
   verifier("1. écran Finance : plus de « Retourné à la compta »", !/Retourné à la compta/i.test(tFin));
   const recu = await a.request.get(`${B}/api/treso/retours/${P}ret6/recu`);
   const tPdf = await pdfTexte(recu, "recu-retour.pdf");
-  verifier("1. reçu PDF du retour : « Montant rendu »", recu.status() === 200 && /Montant rendu/i.test(tPdf) && !/Montant retourné/i.test(tPdf));
+  verifier("1. reçu PDF du retour : « Montant retourné » (plus de « Montant rendu » ni de « Retourné à la compta »)", recu.status() === 200 && /Montant retourné/i.test(tPdf) && !/Montant rendu/i.test(tPdf) && !/Retourné à la compta/i.test(tPdf));
   await a.close();
   const c = await connecter("collaborateur@simassurances.test");
   await c.goto(`${B}/treso/demandes/${D6}`);
   const tCollab = net(await c.locator("body").innerText());
-  verifier("1. écran du collaborateur : « Montant rendu » 20 000 FCFA, plus de « Retourné à la compta »", /Montant rendu\s*20 000 FCFA/i.test(tCollab) && !/Retourné à la compta/i.test(tCollab));
+  verifier("1. écran du collaborateur : « Montant retourné » 20 000 FCFA, plus de « Retourné à la compta » ni de « Montant rendu »", /Montant retourné\s*20 000 FCFA/i.test(tCollab) && !/Montant rendu/i.test(tCollab) && !/Retourné à la compta/i.test(tCollab));
   await c.close();
   const caisseApres = await journalEmpreinte();
   verifier("1. aucun calcul ni écriture de caisse modifiés (grand livre identique)", caisseApres.h === caisseAvant.h);
