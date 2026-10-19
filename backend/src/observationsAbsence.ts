@@ -1,4 +1,4 @@
-// Observations sur les demandes de congé et de permission d'absence (C3, consignes du 2026-10-16). Fonctions PURES.
+// Observations sur les demandes de congé (C3, consignes du 2026-10-16). Fonctions PURES.
 //
 // - La RH (comme le responsable) ajoute une observation, facultative, AU MOMENT de sa décision.
 // - Le DG (permission `treso.decider_dg` lue sur le RÔLE) peut en ajouter une À TOUT MOMENT, sans bloquer ni changer le

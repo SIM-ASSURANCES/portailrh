@@ -14,7 +14,7 @@ import {
   REINITIALISATION_ITEM,
   REINITIALISATION_POINTAGE_ITEM,
   getNavBranches,
-  type ModuleAbsenceNav,
+  type ModuleCongeNav,
   type NavBranch,
   type NavItem,
 } from "./nav";
@@ -74,9 +74,7 @@ interface SidebarProps {
   /** Voir `NavFlags.canVoirMonEquipe`. */
   canVoirMonEquipe?: boolean;
   /** Voir `NavFlags.congesNav`. */
-  congesNav?: ModuleAbsenceNav | null;
-  /** Voir `NavFlags.permissionsNav`. */
-  permissionsNav?: ModuleAbsenceNav | null;
+  congesNav?: ModuleCongeNav | null;
   /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
   canRecevoirFeedback?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
@@ -142,7 +140,6 @@ export function Sidebar({
   justificationsADecider = null,
   canVoirMonEquipe = false,
   congesNav = null,
-  permissionsNav = null,
   canRecevoirFeedback = false,
   mobileOpen,
   onCloseMobile,
@@ -173,7 +170,6 @@ export function Sidebar({
     justificationsADecider,
     canVoirMonEquipe,
     congesNav,
-    permissionsNav,
   });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0]?.key ?? null

@@ -88,10 +88,8 @@ async function verrouiller(db: Db, cle: string): Promise<void> {
 }
 
 /**
- * Verrou UNIQUE par collaborateur pour les congés ET les permissions d'absence (relecture du 2026-10-16) : le contrôle de
- * chevauchement d'un congé lit les permissions, celui d'une permission lit les congés — deux verrous distincts laissaient
- * un congé et une permission soumis ensemble passer chacun le contrôle de l'autre. À prendre AVANT tout contrôle de
- * chevauchement et avant toute écriture qui change ce que ce contrôle lit (soumission, accord).
+ * Verrou UNIQUE par collaborateur : protège le contrôle de chevauchement des congés contre deux soumissions simultanées.
+ * À prendre AVANT tout contrôle de chevauchement et toute écriture qui change ce que ce contrôle lit.
  */
 export async function verrouillerAbsenceUtilisateur(db: Db, userId: string): Promise<void> {
   await verrouiller(db, `absence-utilisateur:${userId}`);
@@ -101,16 +99,13 @@ export async function verrouillerAbsenceUtilisateur(db: Db, userId: string): Pro
 // Références (I1)
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** `CNG-AAAAMM-NNNN` / `PRM-AAAAMM-NNNN`, calculée SOUS VERROU dans la transaction de création. */
-export async function genererReferenceAbsence(db: Db, nature: NatureAbsence, maintenant: Date): Promise<string> {
-  const prefixe = nature === "CONGE" ? "CNG" : "PRM";
+/** `CNG-AAAAMM-NNNN`, calculée SOUS VERROU dans la transaction de création. */
+export async function genererReferenceAbsence(db: Db, _nature: NatureAbsence, maintenant: Date): Promise<string> {
+  const prefixe = "CNG";
   const mois = `${maintenant.getFullYear()}${String(maintenant.getMonth() + 1).padStart(2, "0")}`;
   const debut = `${prefixe}-${mois}-`;
   await verrouiller(db, `reference:${prefixe}-${mois}`);
-  const existantes =
-    nature === "CONGE"
-      ? await db.demandeConge.findMany({ where: { reference: { startsWith: debut } }, select: { reference: true } })
-      : await db.demandePermission.findMany({ where: { reference: { startsWith: debut } }, select: { reference: true } });
+  const existantes = await db.demandeConge.findMany({ where: { reference: { startsWith: debut } }, select: { reference: true } });
   let max = 0;
   for (const { reference } of existantes) {
     const n = Number(reference.slice(debut.length));
@@ -132,13 +127,13 @@ export async function comptesActifsAvecPermission(db: Db, cle: string): Promise<
   return comptes.map((c) => c.id);
 }
 
-export async function chargerContexteCircuit(db: Db, demandeurId: string, nature: NatureAbsence): Promise<ContexteCircuitAbsence> {
+export async function chargerContexteCircuit(db: Db, demandeurId: string, _nature: NatureAbsence): Promise<ContexteCircuitAbsence> {
   const [demandeur, comptesRH, comptesDG] = await Promise.all([
     db.user.findUnique({
       where: { id: demandeurId },
       select: { service: { select: { name: true, responsableId: true, responsable: { select: { isActive: true } } } } },
     }),
-    comptesActifsAvecPermission(db, PERMISSION_ETAPE_RH_ABSENCE[nature]),
+    comptesActifsAvecPermission(db, PERMISSION_ETAPE_RH_ABSENCE),
     comptesActifsAvecPermission(db, PERMISSION_DG_ABSENCE),
   ]);
   const s = demandeur?.service ?? null;
@@ -333,7 +328,7 @@ async function preparerConge(
   return { type, dateEmbauche, dateDebut: entree.dateDebut, dateFin, decompte, motif, interimaire, pieces: piecesOk.pieces };
 }
 
-/** Chevauchement avec un autre congé en cours ou validé, ou une permission approuvée / en cours. */
+/** Chevauchement avec un autre congé en cours ou validé. */
 async function controlerChevauchement(db: Db, p: { userId: string; debut: JourCivil; fin: JourCivil; exclureDemandeId?: string }) {
   const existants = await db.demandeConge.findMany({
     where: {
@@ -350,16 +345,6 @@ async function controlerChevauchement(db: Db, p: { userId: string; debut: JourCi
   if (conflit) {
     const ref = existants.find((e) => e.id === conflit.id)?.reference ?? "";
     throw new RefusAbsence(`Une demande de congé en cours ou validée couvre déjà cette période (${ref}).`, "dateDebut");
-  }
-  const permissions = await db.demandePermission.count({
-    where: {
-      userId: p.userId,
-      statut: { in: ["EN_ATTENTE_RESPONSABLE", "EN_ATTENTE_RH", "APPROUVEE"] },
-      date: { gte: colonneDateDepuisJourCivil(p.debut), lte: colonneDateDepuisJourCivil(p.fin) },
-    },
-  });
-  if (permissions > 0) {
-    throw new RefusAbsence("Une permission d'absence existe déjà sur cette période : annulez-la d'abord.", "dateDebut");
   }
 }
 
@@ -382,7 +367,7 @@ async function noterHistorique(
   p: { nature: NatureAbsence; demandeId: string; action: string; detail: string; userId: string }
 ) {
   await db.historiqueEntry.create({
-    data: { entity: p.nature === "CONGE" ? "DemandeConge" : "DemandePermission", entityId: p.demandeId, action: p.action, detail: p.detail, userId: p.userId },
+    data: { entity: "DemandeConge", entityId: p.demandeId, action: p.action, detail: p.detail, userId: p.userId },
   });
 }
 
@@ -397,7 +382,7 @@ export async function ajouterObservation(
 ): Promise<string> {
   const o = await db.observationAbsence.create({
     data: {
-      ...(p.nature === "CONGE" ? { demandeCongeId: p.demandeId } : { demandePermissionId: p.demandeId }),
+      demandeCongeId: p.demandeId,
       auteurId: p.auteurId,
       etape: p.etape,
       texte: p.texte,
@@ -441,10 +426,10 @@ export async function ajouterObservationDG(
 ): Promise<ObservationDG> {
   const o = controlerObservation(p.texte, false);
   if (!o.ok) throw new RefusAbsence(o.erreur, "observation");
-  const base =
-    p.nature === "CONGE"
-      ? await db.demandeConge.findUnique({ where: { id: p.demandeId }, select: { id: true, reference: true, userId: true, typeConge: { select: { label: true } } } })
-      : await db.demandePermission.findUnique({ where: { id: p.demandeId }, select: { id: true, reference: true, userId: true, typePermission: { select: { label: true } } } });
+  const base = await db.demandeConge.findUnique({
+    where: { id: p.demandeId },
+    select: { id: true, reference: true, userId: true, typeConge: { select: { label: true } } },
+  });
   if (!base) throw new RefusAbsence("Demande introuvable.");
   const refus = refusObservationDG({ acteur: p.acteur, demandeurId: base.userId });
   if (refus) throw new RefusAbsence(refus);
@@ -457,9 +442,9 @@ export async function ajouterObservationDG(
     etape: "DG",
     texte: o.texte!,
   });
-  const rh = await comptesActifsAvecPermission(db, PERMISSION_ETAPE_RH_ABSENCE[p.nature]);
+  const rh = await comptesActifsAvecPermission(db, PERMISSION_ETAPE_RH_ABSENCE);
   const destinataires = [...new Set([base.userId, ...rh])].filter((id) => id !== p.acteur.id);
-  const libelleType = "typeConge" in base ? base.typeConge.label : base.typePermission.label;
+  const libelleType = base.typeConge.label;
   return { observationId, demandeId: base.id, reference: base.reference, demandeurId: base.userId, libelleType, destinataires };
 }
 
@@ -968,6 +953,3 @@ export async function modifierDateEmbauche(db: Db, p: { userId: string; date: Jo
 }
 
 export type { ParcoursAbsence };
-
-// Réutilisé par la couche des permissions d'absence (`permissionsDb.ts`) : même historique (le verrou par collaborateur est `verrouillerAbsenceUtilisateur`).
-export const noterHistoriqueAbsence = noterHistorique;

@@ -1,4 +1,4 @@
-// Congés et permissions d'absence — Lot 5 (2026-10-16) : intégration au socle, sur base JETABLE (voir e2e/README.md).
+// Congés — intégration au socle, sur base JETABLE (voir e2e/README.md).
 // Menu et compteurs « à décider », cartes de l'accueil (« Aucun accès » pour l'Admin), date d'embauche au profil,
 // « Mon équipe », suppression d'un compte lié (message au lieu d'une clé étrangère), purge du Pointage refusée dès qu'une
 // demande existe, 390 px sans défilement horizontal sur toutes les pages des deux modules.
@@ -25,10 +25,9 @@ const lundi = (semaines) => {
 const resultats = [];
 const verifier = (nom, ok, detail = "") => resultats.push(`${ok ? "OK " : "KO "} ${nom}${detail ? ` — ${detail}` : ""}`);
 
-await q(`DELETE FROM "PlageAbsenceAutorisee" WHERE "demandeCongeId" IS NOT NULL OR "demandePermissionId" IS NOT NULL`);
+await q(`DELETE FROM "PlageAbsenceAutorisee" WHERE "demandeCongeId" IS NOT NULL`);
 await q(`DELETE FROM "PieceJointeConge"`);
 await q(`DELETE FROM "DemandeConge"`);
-await q(`DELETE FROM "DemandePermission"`);
 await q(`DELETE FROM "AjustementSolde"`);
 await q(`DELETE FROM "SoldeConge"`);
 
@@ -66,16 +65,14 @@ const rejouer = (p, nomAction, args, page = "/admin/users") =>
   await ctx.close();
 }
 
-// ── Le collaborateur dépose un congé et une permission ─────────────────────────────────────────────────────────────────
+// ── Le collaborateur dépose un congé ──────────────────────────────────────────────────────────────────────────────────
 let idConge;
-let idPermission;
 const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@simassurances.test'`))[0].id;
 {
   const { ctx, p } = await connecter("collaborateur@simassurances.test");
 
   await p.goto(`${B}/`);
   verifier("Accueil : carte « Congés » vers /conges", (await p.locator('a[href="/conges"]').count()) >= 1);
-  verifier("Accueil : carte « Permissions d'absence » vers /permissions-absence", (await p.locator('a[href="/permissions-absence"]').count()) >= 1);
 
   await p.goto(`${B}/conges/nouvelle`);
   await p.waitForLoadState("networkidle");
@@ -103,29 +100,10 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
   const repPasse = await rejouer(p, "soumettreCongeAction", [{ typeCongeId: typeAnnuel, dateDebut: hierJour, dateFin: hierJour, motif: "Déjà pris hier" }], "/conges");
   verifier("Action rejouée avec une date passée : refusée avec la même phrase", repPasse.includes(PHRASE_PASSE), repPasse.slice(-200));
 
-  await p.goto(`${B}/permissions-absence/nouvelle`);
-  await p.waitForLoadState("networkidle");
-  await p.getByLabel("Type de permission").selectOption({ label: "Démarche administrative" });
-  await p.getByLabel(/^Date\b/).fill(iso(new Date(lundi(3).getTime() + 2 * 86400000))); // mercredi : jamais le jour du congé
-  await p.getByLabel("Heure de départ").fill("14:00");
-  await p.getByLabel("Retour prévu").fill("15:00");
-  await p.getByLabel(/^Motif\b/).fill("Démarche du test d'intégration");
-  try {
-    await Promise.all([p.waitForURL(/\/permissions-absence\/(?!nouvelle)[^/]+$/, { timeout: 20000 }), p.getByRole("button", { name: "Envoyer la demande" }).click()]);
-  } catch (e) {
-    console.log("DEBUG permission:", (await texte(p)).replace(/\s+/g, " ").slice(0, 1200));
-    throw e;
-  }
-  idPermission = new URL(p.url()).pathname.split("/").pop();
-
   await p.goto(`${B}/conges`);
   const menu = await nav(p).innerText();
   verifier("Menu du collaborateur : branche « Congés » avec « Mes congés » et « Nouvelle demande »", menu.includes("Congés") && menu.includes("Mes congés") && menu.includes("Nouvelle demande"));
   verifier("Menu du collaborateur : ni « À décider » ni « Soldes »", !menu.includes("À décider") && !menu.includes("Soldes"));
-  await p.goto(`${B}/permissions-absence`);
-  const menuP = await nav(p).innerText();
-  verifier("Menu du collaborateur : branche « Permissions d'absence » avec « Mes permissions »", menuP.includes("Permissions d'absence") && menuP.includes("Mes permissions"));
-
   await p.goto(`${B}/profil`);
   const profil = await texte(p);
   verifier("Profil : la date d'embauche (15/01/2024) est affichée", /date d'embauche/i.test(profil) && profil.includes("15/01/2024"));
@@ -138,16 +116,11 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
   const { ctx, p } = await connecter("responsable-commercial@simassurances.test");
   await p.goto(`${B}/conges`);
   verifier("Responsable : « À décider » avec 1 congé dans le menu", /À décider\s*1\b/.test(await nav(p).innerText()), (await nav(p).innerText()).replace(/\s+/g, " ").slice(0, 300));
-  await p.goto(`${B}/permissions-absence`);
-  verifier("Responsable : « À décider » avec 1 permission dans le menu", /À décider\s*1\b/.test(await nav(p).innerText()));
   await p.goto(`${B}/pointage/mon-equipe`);
   const section = p.locator('[data-section="absences-a-decider"]');
   const t = await section.innerText();
-  verifier("Mon équipe : « Congés à décider » (1) et « Permissions à décider » (1)", /Congés à décider\s*1/.test(t.replace(/\n+/g, " ")) && /Permissions à décider\s*1/.test(t.replace(/\n+/g, " ")), t.replace(/\s+/g, " "));
-  verifier(
-    "Mon équipe : liens vers les deux files",
-    (await section.locator('a[href="/conges/a-decider"]').count()) === 1 && (await section.locator('a[href="/permissions-absence/a-decider"]').count()) === 1
-  );
+  verifier("Mon équipe : « Congés à décider » (1)", /Congés à décider\s*1/.test(t.replace(/\n+/g, " ")), t.replace(/\s+/g, " "));
+  verifier("Mon équipe : lien vers la file des congés", (await section.locator('a[href="/conges/a-decider"]').count()) === 1);
   await ctx.close();
 }
 
@@ -180,7 +153,7 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
   verifier("Historique : la remise à 30 garde « 28 → 30 »", (h2[0]?.detail ?? "").includes("jours accordés : 28 → 30"), h2[0]?.detail);
 
   await p.goto(`${B}/pointage/mon-equipe`);
-  verifier("Mon équipe (responsable du service RH) : les deux cartes « à décider » sont présentes", (await p.locator('[data-section="absences-a-decider"]').count()) === 1);
+  verifier("Mon équipe (responsable du service RH) : la carte congés « à décider » est présente", (await p.locator('[data-section="absences-a-decider"]').count()) === 1);
   await ctx.close();
 }
 
@@ -190,8 +163,8 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
   await p.goto(`${B}/`);
   const carte = async (titre) => (await p.locator(`h3:text-is("${titre}")`).first().locator("xpath=..").innerText()).replace(/\s+/g, " ");
   // L'Admin du seed est responsable d'Informatique : sans permission, il accède à « À décider » seulement (jamais « Mes … »).
-  verifier("Accueil de l'Admin (responsable d'Informatique) : cartes vers « À décider »", (await p.locator('a[href="/conges/a-decider"]').count()) >= 1 && (await p.locator('a[href="/permissions-absence/a-decider"]').count()) >= 1);
-  verifier("Accueil de l'Admin : aucun lien vers /conges ni /permissions-absence (Mes …)", (await p.locator('a[href="/conges"], a[href="/permissions-absence"]').count()) === 0);
+  verifier("Accueil de l'Admin (responsable d'Informatique) : carte vers « À décider »", (await p.locator('a[href="/conges/a-decider"]').count()) >= 1);
+  verifier("Accueil de l'Admin : aucun lien vers /conges (Mes congés)", (await p.locator('a[href="/conges"]').count()) === 0);
   await p.goto(`${B}/conges/a-decider`);
   const menuAdmin = (await nav(p).innerText()).replace(/\s+/g, " ");
   verifier("Menu de l'Admin : « À décider » sans « Mes congés »", menuAdmin.includes("À décider") && !menuAdmin.includes("Mes congés"), menuAdmin.slice(0, 200));
@@ -203,7 +176,6 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
     await p.goto(`${B}/`);
     const carte = async (titre) => (await p.locator(`h3:text-is("${titre}")`).first().locator("xpath=..").innerText()).replace(/\s+/g, " ");
     verifier("Accueil d'un Admin sans permission ni service dirigé : carte « Congés » = « Aucun accès »", (await carte("Congés")).includes("Aucun accès"), await carte("Congés"));
-    verifier("Accueil d'un Admin sans permission ni service dirigé : carte « Permissions d'absence » = « Aucun accès »", (await carte("Permissions d'absence")).includes("Aucun accès"));
     verifier("Menu de cet Admin : pas de branche « Congés »", (await p.locator('button[aria-expanded]', { hasText: /^Congés$/ }).count()) === 0);
   } finally {
     await q(`UPDATE "Service" SET "responsableId" = $2 WHERE id = $1`, [informatique.id, informatique.responsableId]);
@@ -211,7 +183,7 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
 
   // Suppression d'un compte lié à un congé : message précis (et non une erreur de clé étrangère).
   const reponse = await rejouer(p, "supprimerUtilisateurAction", [collab]);
-  verifier("Suppression d'un compte avec congé et permission : refusée avec un message précis", /demandé 1 congé\(s\)/.test(reponse) && /demandé 1 permission\(s\) d'absence/.test(reponse), reponse.slice(0, 300));
+  verifier("Suppression d'un compte avec congé : refusée avec un message précis", /demandé 1 congé\(s\)/.test(reponse), reponse.slice(0, 300));
   verifier("Le compte existe toujours", (await q(`SELECT count(*)::int AS n FROM "User" WHERE id = $1`, [collab]))[0].n === 1);
 
   // Purge du Pointage : refusée dès qu'une demande existe.
@@ -226,9 +198,9 @@ const collab = (await q(`SELECT id FROM "User" WHERE email = 'collaborateur@sima
 {
   const mobile = { width: 390, height: 844 };
   const parRole = [
-    ["collaborateur@simassurances.test", ["/", "/profil", "/conges", "/conges/nouvelle", `/conges/${idConge}`, "/permissions-absence", "/permissions-absence/nouvelle", `/permissions-absence/${idPermission}`]],
-    ["responsable-commercial@simassurances.test", ["/conges/a-decider", "/permissions-absence/a-decider", "/pointage/mon-equipe"]],
-    ["rh@simassurances.test", ["/conges/a-decider", "/conges/soldes", "/conges/parametrage", "/permissions-absence/a-decider", "/permissions-absence/parametrage"]],
+    ["collaborateur@simassurances.test", ["/", "/profil", "/conges", "/conges/nouvelle", `/conges/${idConge}`]],
+    ["responsable-commercial@simassurances.test", ["/conges/a-decider", "/pointage/mon-equipe"]],
+    ["rh@simassurances.test", ["/conges/a-decider", "/conges/soldes", "/conges/parametrage"]],
   ];
   for (const [email, chemins] of parRole) {
     const { ctx, p } = await connecter(email, mobile);

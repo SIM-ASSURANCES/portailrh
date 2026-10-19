@@ -14,7 +14,7 @@ export interface PieceDeposee {
 }
 
 /**
- * Dépôt de pièces justificatives d'une demande d'absence (congé ou permission). Chaque fichier est envoyé dès son
+ * Dépôt de pièces justificatives d'une demande de congé. Chaque fichier est envoyé dès son
  * choix à la route `endpoint` (qui génère le nom : UUID + extension) ; la liste des noms est remontée au parent, qui
  * l'envoie avec la demande. La route ne crée rien en base. Contrôles client redondants avec le serveur (retour rapide).
  */

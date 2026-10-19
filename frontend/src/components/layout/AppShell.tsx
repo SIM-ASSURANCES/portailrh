@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import { BrandBackdrop } from "@/components/ui";
 
-import type { ModuleAbsenceNav } from "./nav";
+import type { ModuleCongeNav } from "./nav";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 
@@ -58,9 +58,7 @@ interface AppShellProps {
   /** Voir `NavFlags.canVoirMonEquipe`. */
   canVoirMonEquipe?: boolean;
   /** Voir `NavFlags.congesNav`. */
-  congesNav?: ModuleAbsenceNav | null;
-  /** Voir `NavFlags.permissionsNav`. */
-  permissionsNav?: ModuleAbsenceNav | null;
+  congesNav?: ModuleCongeNav | null;
   /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
   canRecevoirFeedback?: boolean;
   unreadNotificationsCount?: number;
@@ -106,7 +104,6 @@ export function AppShell({
   justificationsADecider = null,
   canVoirMonEquipe = false,
   congesNav = null,
-  permissionsNav = null,
   canRecevoirFeedback = false,
   unreadNotificationsCount = 0,
   topbarAlert = null,
@@ -215,7 +212,6 @@ export function AppShell({
         justificationsADecider={justificationsADecider}
         canVoirMonEquipe={canVoirMonEquipe}
         congesNav={congesNav}
-        permissionsNav={permissionsNav}
         canRecevoirFeedback={canRecevoirFeedback}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}

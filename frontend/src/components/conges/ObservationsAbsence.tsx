@@ -19,7 +19,7 @@ const VARIANTE_ETAPE: Record<EtapeObservation, "neutral" | "info" | "warning"> =
 };
 
 /**
- * Observations d'une demande (congé ou permission d'absence), de la plus ancienne à la plus récente, avec le nom de
+ * Observations d'une demande de congé, de la plus ancienne à la plus récente, avec le nom de
  * l'auteur et l'étape. Visibles de tous ceux qui voient la demande, demandeur compris. AJOUT SEUL : aucun bouton de
  * modification ni de suppression n'existe. `formulaire` : le formulaire du DG, seulement pour qui peut observer.
  */

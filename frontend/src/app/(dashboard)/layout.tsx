@@ -15,7 +15,7 @@ import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
 import { envoyerRappelsCircuit } from "@/lib/notificationsCircuit";
 import { compteurMenuJustificationsSession } from "@/lib/justificationsPointage";
-import { chargerNavAbsences } from "@/lib/absences/navigation";
+import { chargerNavConges } from "@/lib/conges/navigation";
 
 import { PushPermissionPrompt } from "@/components/notifications/PushPermissionPrompt";
 
@@ -51,8 +51,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // « Justifications à traiter » (Pointage V2) : responsable d'au moins un service ou RH (par le rôle) ; le DG seulement
   // si sa file n'est pas vide ou s'il a déjà décidé (`compteurMenuJustifications`, 2026-10-12).
   const justificationsADecider = await compteurMenuJustificationsSession(session);
-  // Congés et permissions d'absence (Lot 5) : entrées de menu et compteurs « à décider ».
-  const navAbsences = await chargerNavAbsences(session, servicesResponsable > 0);
+  // Congés : entrées de menu et compteur « à décider ».
+  const congesNav = await chargerNavConges(session, servicesResponsable > 0);
 
   return (
     <AppShell
@@ -141,8 +141,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       demandesDGADecider={demandesDGADecider}
       justificationsADecider={justificationsADecider}
       canVoirMonEquipe={servicesResponsable > 0}
-      congesNav={navAbsences.conges}
-      permissionsNav={navAbsences.permissions}
+      congesNav={congesNav}
       canRecevoirFeedback={session.peutRecevoirFeedback}
       unreadNotificationsCount={unreadCount}
     >
@@ -151,4 +150,3 @@ export default async function DashboardLayout({ children }: { children: React.Re
     </AppShell>
   );
 }
-

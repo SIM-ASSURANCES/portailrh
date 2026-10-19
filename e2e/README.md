@@ -49,15 +49,6 @@ npx tsx e2e/conges-couche-base.ts                                               
 # Sans le Chromium de Playwright : E2E_CHROMIUM=/chemin/vers/chrome ; captures : E2E_CAPTURES=./e2e-captures
 ```
 
-### Permissions d'absence (2026-10-16)
-
-```bash
-# Base jetable migrée et seedée, serveur lancé sur E2E_BASE_URL (défaut http://localhost:3100) :
-E2E_DATABASE_URL=postgresql://postgres:pw@localhost:55497/e2e node e2e/permissions-ecrans.mjs   # écrans : circuit responsable → RH, aperçu, dérogation au plafond, retour, rejet, annulation, droits, 390 px
-npx tsx e2e/permissions-couche-base.ts                                                           # couche base (verrous, plafond, chevauchement, retour, concurrence)
-```
-
-Le script réinitialise les tables des permissions d'absence de la base indiquée : ne jamais le pointer vers une base de dev.
 Le Chromium de Playwright peut manquer : `E2E_CHROMIUM=/chemin/vers/chrome`. Les formulaires sont remplis après `networkidle`
 (remplir avant l'hydratation fait revenir les champs à leur valeur initiale) et les statuts sont attendus en base, pas par
 un mot du texte de la page (« Approuvée » apparaît aussi dans « Approuvée par le responsable »).
@@ -67,11 +58,9 @@ un mot du texte de la page (« Approuvée » apparaît aussi dans « Approuvée 
 ```bash
 # Le port 55497 peut être réservé par Windows (Hyper-V) : E2E_PG_PORT=45497 bash e2e/base-jetable.sh
 E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-droits-propres.mjs   # personne n'ajuste son solde ni sa date d'embauche
-DATABASE_URL="postgresql://postgres:pw@localhost:45497/e2e?schema=public" npx tsx e2e/absence-verrou-commun.ts   # congé + permission simultanés : un seul passe
 E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-integration.mjs      # Lot 5 : menu, accueil, profil, Mon équipe, suppression de compte, purge refusée, 390 px
 E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-responsable-sans-permission.mjs   # responsable de service sans permission : « À décider » seulement
 DATABASE_URL="postgresql://postgres:pw@localhost:45497/e2e?schema=public" npx tsx e2e/purge-pointage-absences.ts   # à lancer APRÈS conges-integration.mjs
 E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-observations.mjs   # C3 : observations de la RH et du DG, ajout seul, DG sans consulter_tous
 E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-exceptionnelle.mjs   # C4 : permission exceptionnelle, une seule décision, choix du destinataire, replis
-bash e2e/conges-migration-admin.sh                                                                              # migration : aucun droit congés pour un rôle estAdmin (conteneur pg-e2e)
 ```

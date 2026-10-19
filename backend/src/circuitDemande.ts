@@ -18,8 +18,6 @@
 // Types des enums Prisma (`EtapeCircuit`, `ModeEtapeDG`, `NiveauRejet`, voir schema.prisma) : import de TYPE seul,
 // le moteur reste pur et sûr pour un Client Component.
 import type { EtapeCircuit, ModeEtapeDG } from "./generated/prisma/enums";
-import { PERMISSIONS_ETAPE_RH_ABSENCE } from "./congesDefauts";
-
 /**
  * Une validation du DG à l'étape DG vaut son approbation de clôture (`validationCompleteParDG`). Règle posée À UN
  * SEUL ENDROIT pour pouvoir l'inverser : passer à `false` et l'étape DG ne débloque plus la clôture (le DG passe
@@ -47,8 +45,8 @@ export const PERMISSIONS_DECISION_NON_DELEGABLES: readonly string[] = [
   "treso.soumettre_dg",
   "treso.decider_dg",
   "treso.approuver_validation_complete",
-  // 2026-10-15 : étape RH des congés et des permissions d'absence (le droit de décider se lit sur le RÔLE).
-  ...PERMISSIONS_ETAPE_RH_ABSENCE,
+  // Étape RH des congés (le droit de décider se lit sur le RÔLE).
+  "conges.valider_rh",
 ];
 
 /** Permissions du RÔLE du demandeur (jamais celles reçues par délégation) et son rattachement. */

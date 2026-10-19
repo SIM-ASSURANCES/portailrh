@@ -182,7 +182,7 @@ export async function ajouterObservationCongeAction(demandeId: string, texte: st
   const acteur = { id: session.user.id, rolePermissions: session.rolePermissions };
   const r = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: String(demandeId), acteur, texte }));
   if (!r.ok) return { status: "error", message: r.erreur, fieldErrors: r.champ ? { [r.champ]: r.erreur } : undefined };
-  await notifierObservationDG({ nature: "CONGE", observation: r.valeur, acteurNom: session.user.fullName, texte: nettoyerMotifAbsence(String(texte)) });
+  await notifierObservationDG({ observation: r.valeur, acteurNom: session.user.fullName, texte: nettoyerMotifAbsence(String(texte)) });
   revalider(r.valeur.demandeId);
   return { status: "success", message: "Observation ajoutée." };
 }

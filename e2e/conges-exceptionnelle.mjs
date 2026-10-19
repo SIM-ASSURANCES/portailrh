@@ -25,7 +25,7 @@ const lundi = (semaines) => {
 const resultats = [];
 const verifier = (nom, ok, detail = "") => resultats.push(`${ok ? "OK " : "KO "} ${nom}${detail ? ` — ${detail}` : ""}`);
 
-await q(`DELETE FROM "PlageAbsenceAutorisee" WHERE "demandeCongeId" IS NOT NULL OR "demandePermissionId" IS NOT NULL`);
+await q(`DELETE FROM "PlageAbsenceAutorisee" WHERE "demandeCongeId" IS NOT NULL`);
 await q(`DELETE FROM "PieceJointeConge"`);
 await q(`DELETE FROM "DemandeConge"`);
 

@@ -1,5 +1,5 @@
-// Congés et permissions d'absence — C3 (consignes du 2026-10-16) : observations de la RH (à sa décision) et du DG (à tout moment).
-// Base JETABLE seulement (voir e2e/README.md). Parcours : le collaborateur dépose un congé et une permission ; le responsable
+// Congés — C3 (consignes du 2026-10-16) : observations de la RH (à sa décision) et du DG (à tout moment).
+// Base JETABLE seulement (voir e2e/README.md). Parcours : le collaborateur dépose un congé ; le responsable
 // approuve avec une observation ; la RH valide avec ses observations ; le DG (sans `consulter_tous`) voit tout, ajoute une
 // observation sans changer le statut ; le demandeur la voit avec le nom de l'auteur, sans pouvoir en ajouter ; les actions
 // rejouées par un compte non DG ou avec 501 caractères sont refusées ; l'observation du DG prévient le demandeur et la RH.
@@ -25,10 +25,9 @@ const lundi = (semaines) => {
 const resultats = [];
 const verifier = (nom, ok, detail = "") => resultats.push(`${ok ? "OK " : "KO "} ${nom}${detail ? ` — ${detail}` : ""}`);
 
-await q(`DELETE FROM "PlageAbsenceAutorisee" WHERE "demandeCongeId" IS NOT NULL OR "demandePermissionId" IS NOT NULL`);
+await q(`DELETE FROM "PlageAbsenceAutorisee" WHERE "demandeCongeId" IS NOT NULL`);
 await q(`DELETE FROM "PieceJointeConge"`);
 await q(`DELETE FROM "DemandeConge"`);
-await q(`DELETE FROM "DemandePermission"`);
 await q(`DELETE FROM "Notification" WHERE titre = 'Observation du DG'`);
 
 const nom = async (email) => (await q(`SELECT "fullName" FROM "User" WHERE email = $1`, [email]))[0].fullName;
@@ -42,7 +41,7 @@ const nomRH = await nom("rh@simassurances.test");
 // Le DG ne porte AUCUNE permission « consulter_tous » pendant le parcours : son accès vient de sa permission d'étape.
 const retirees = await q(
   `DELETE FROM "RolePermission" rp USING "Permission" p, "User" u
-   WHERE rp."permissionId" = p.id AND rp."roleId" = u."roleId" AND u.id = $1 AND p.key IN ('conges.consulter_tous', 'absences.consulter_tous')
+   WHERE rp."permissionId" = p.id AND rp."roleId" = u."roleId" AND u.id = $1 AND p.key = 'conges.consulter_tous'
    RETURNING rp."roleId", rp."permissionId"`,
   [dg]
 );
@@ -72,9 +71,8 @@ const rejouer = (p, nomAction, args, page) =>
   );
 
 try {
-  // ── Le collaborateur dépose un congé et une permission ──────────────────────────────────────────────────────────────
+  // ── Le collaborateur dépose un congé ───────────────────────────────────────────────────────────────────────────────
   let idConge;
-  let idPermission;
   {
     const { ctx, p } = await connecter("collaborateur@simassurances.test");
     await p.goto(`${B}/conges/nouvelle`);
@@ -88,16 +86,6 @@ try {
     await Promise.all([p.waitForURL(/\/conges\/(?!nouvelle)[^/]+$/, { timeout: 20000 }), p.getByRole("button", { name: "Envoyer la demande" }).click()]);
     idConge = chemin(p).split("/").pop();
 
-    await p.goto(`${B}/permissions-absence/nouvelle`);
-    await p.waitForLoadState("networkidle");
-    await p.getByLabel("Type de permission").selectOption({ label: "Démarche administrative" });
-    await p.getByLabel(/^Date\b/).fill(iso(new Date(lundi(3).getTime() + 2 * 86400000)));
-    await p.getByLabel("Heure de départ").fill("14:00");
-    await p.getByLabel("Retour prévu").fill("15:00");
-    await p.getByLabel(/^Motif\b/).fill("Démarche pour les observations");
-    await Promise.all([p.waitForURL(/\/permissions-absence\/(?!nouvelle)[^/]+$/, { timeout: 20000 }), p.getByRole("button", { name: "Envoyer la demande" }).click()]);
-    idPermission = chemin(p).split("/").pop();
-    verifier("Le demandeur n'a aucun champ d'observation sur sa propre demande", (await p.getByLabel(/Observations \(facultatif\)/).count()) === 0);
     await ctx.close();
   }
 
@@ -112,12 +100,6 @@ try {
     await p.getByText("En attente de la RH", { exact: true }).first().waitFor({ timeout: 15000 });
     verifier("Congé approuvé par le responsable avec une observation", (await q(`SELECT count(*)::int AS n FROM "ObservationAbsence" WHERE "demandeCongeId" = $1 AND etape = 'RESPONSABLE'`, [idConge]))[0].n === 1);
 
-    await p.goto(`${B}/permissions-absence/${idPermission}`);
-    await p.waitForLoadState("networkidle");
-    await p.getByLabel(/Observations \(facultatif\)/).fill("Démarche légitime.");
-    await p.getByRole("button", { name: "Approuver", exact: true }).click();
-    await p.getByText("En attente de la RH", { exact: true }).first().waitFor({ timeout: 15000 });
-    verifier("Permission approuvée par le responsable avec une observation", (await q(`SELECT count(*)::int AS n FROM "ObservationAbsence" WHERE "demandePermissionId" = $1 AND etape = 'RESPONSABLE'`, [idPermission]))[0].n === 1);
     await ctx.close();
   }
 
@@ -133,13 +115,6 @@ try {
     await p.getByText("Validée", { exact: true }).first().waitFor({ timeout: 15000 });
     verifier("Congé validé par la RH avec ses observations", (await q(`SELECT count(*)::int AS n FROM "ObservationAbsence" WHERE "demandeCongeId" = $1 AND etape = 'RH'`, [idConge]))[0].n === 1);
 
-    // Permission : sans observation. Aucune ligne créée (facultative).
-    await p.goto(`${B}/permissions-absence/${idPermission}`);
-    await p.waitForLoadState("networkidle");
-    await p.getByRole("button", { name: "Approuver", exact: true }).click();
-    await p.getByText("Approuvée", { exact: true }).first().waitFor({ timeout: 15000 });
-    verifier("Permission approuvée sans observation : aucune ligne RH créée", (await q(`SELECT count(*)::int AS n FROM "ObservationAbsence" WHERE "demandePermissionId" = $1 AND etape = 'RH'`, [idPermission]))[0].n === 0);
-
     // Un compte RH (non DG) rejoue l'observation du DG : refusée.
     const rep = await rejouer(p, "ajouterObservationCongeAction", [idConge, "Je ne suis pas le DG"], `/conges/${idConge}`);
     verifier("Action du DG rejouée par la RH : refusée", rep.includes("Seul le DG peut ajouter une observation"), rep.slice(-150));
@@ -154,8 +129,6 @@ try {
     verifier("DG : « Toutes les demandes » dans le menu, sans permission consulter_tous", menu.includes("Toutes les demandes"), menu.slice(0, 200));
     await p.goto(`${B}/conges/toutes`);
     verifier("DG : /conges/toutes liste le congé du collaborateur", chemin(p) === "/conges/toutes" && (await p.locator(`a[href="/conges/${idConge}"]`).count()) === 1);
-    await p.goto(`${B}/permissions-absence/toutes`);
-    verifier("DG : /permissions-absence/toutes liste la permission", chemin(p) === "/permissions-absence/toutes" && (await p.locator(`a[href="/permissions-absence/${idPermission}"]`).count()) === 1);
 
     const avant = (await q(`SELECT statut, "valideParId", "approuveParId" FROM "DemandeConge" WHERE id = $1`, [idConge]))[0];
     await p.goto(`${B}/conges/${idConge}`);
@@ -168,13 +141,6 @@ try {
     const apres = (await q(`SELECT statut, "valideParId", "approuveParId" FROM "DemandeConge" WHERE id = $1`, [idConge]))[0];
     verifier("DG : l'observation ne change ni le statut ni les décideurs", apres.statut === avant.statut && apres.statut === "VALIDEE" && apres.valideParId === avant.valideParId && apres.approuveParId === avant.approuveParId);
     verifier("Une entrée d'historique par observation (3)", (await q(`SELECT count(*)::int AS n FROM "HistoriqueEntry" WHERE entity = 'DemandeConge' AND "entityId" = $1 AND action = 'observation'`, [idConge]))[0].n === 3);
-
-    await p.goto(`${B}/permissions-absence/${idPermission}`);
-    await p.waitForLoadState("networkidle");
-    await p.getByLabel("Ajouter une observation (DG)").fill("Permission notée.");
-    await p.getByRole("button", { name: "Ajouter l'observation" }).click();
-    await p.locator('[data-observation="DG"]', { hasText: "Permission notée." }).waitFor({ timeout: 15000 });
-    verifier("DG : observation sur une permission, statut inchangé (APPROUVEE)", (await q(`SELECT statut FROM "DemandePermission" WHERE id = $1`, [idPermission]))[0].statut === "APPROUVEE");
 
     // Texte de 501 caractères rejoué : refusé, rien d'écrit.
     const avantN = (await q(`SELECT count(*)::int AS n FROM "ObservationAbsence"`))[0].n;
@@ -216,7 +182,7 @@ try {
   // ── 390 px ─────────────────────────────────────────────────────────────────────────────────────────────────────────
   {
     const { ctx, p } = await connecter("dg@simassurances.test", { width: 390, height: 844 });
-    for (const c of ["/conges/toutes", "/permissions-absence/toutes", `/conges/${idConge}`, `/permissions-absence/${idPermission}`]) {
+    for (const c of ["/conges/toutes", `/conges/${idConge}`]) {
       await p.goto(`${B}${c}`);
       await p.waitForLoadState("networkidle");
       const largeur = await p.evaluate(() => document.documentElement.scrollWidth);

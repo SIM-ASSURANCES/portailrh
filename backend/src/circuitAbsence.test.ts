@@ -17,7 +17,6 @@ import {
   transitionAbsence,
   type ActeurAbsence,
   type ContexteCircuitAbsence,
-  type NatureAbsence,
   type StatutCircuitAbsence,
 } from "./circuitAbsence";
 
@@ -38,11 +37,10 @@ function ctx(over: Partial<ContexteCircuitAbsence> = {}): ContexteCircuitAbsence
 }
 
 const acteur = (id: string, ...rolePermissions: string[]): ActeurAbsence => ({ id, rolePermissions });
-const rh = (id = RH1, nature: NatureAbsence = "CONGE") =>
-  acteur(id, nature === "CONGE" ? "conges.valider_rh" : "absences.valider_rh");
+const rh = (id = RH1) => acteur(id, "conges.valider_rh");
 
-function param(statut: StatutCircuitAbsence, c: ContexteCircuitAbsence, nature: NatureAbsence = "CONGE") {
-  return { nature, statut, demandeurId: c.demandeurId, decideur: decideurPourStatutAbsence(statut, c) };
+function param(statut: StatutCircuitAbsence, c: ContexteCircuitAbsence) {
+  return { nature: "CONGE" as const, statut, demandeurId: c.demandeurId, decideur: decideurPourStatutAbsence(statut, c) };
 }
 
 describe("résolution du parcours", () => {
@@ -101,7 +99,7 @@ describe("résolution du parcours", () => {
 
 describe("décideur recalculé", () => {
   it("rien à décider hors statuts en attente", () => {
-    for (const s of ["VALIDEE", "APPROUVEE", "CONSOMMEE", "REJETEE", "ANNULEE", "MODIFICATION_DEMANDEE"] as const) {
+    for (const s of ["VALIDEE", "REJETEE", "ANNULEE", "MODIFICATION_DEMANDEE"] as const) {
       expect(decideurPourStatutAbsence(s, ctx())).toBeNull();
     }
   });
@@ -144,11 +142,10 @@ describe("refus de décider", () => {
     expect(refusDecideurAbsence(d, acteur("u-autre"), DEMANDEUR, "CONGE")).toBe(MESSAGE_RESERVE_RESPONSABLE_ABSENCE);
   });
 
-  it("à l'étape RH, la permission de la BONNE nature est exigée", () => {
+  it("à l'étape RH, la permission de décision des congés est exigée", () => {
     const d = decideurPourStatutAbsence("EN_ATTENTE_RH", ctx());
-    expect(refusDecideurAbsence(d, rh(RH1, "CONGE"), DEMANDEUR, "CONGE")).toBeNull();
-    expect(refusDecideurAbsence(d, rh(RH1, "PERMISSION"), DEMANDEUR, "CONGE")).toBe(MESSAGE_RESERVE_RH_ABSENCE);
-    expect(refusDecideurAbsence(d, rh(RH1, "PERMISSION"), DEMANDEUR, "PERMISSION")).toBeNull();
+    expect(refusDecideurAbsence(d, rh(), DEMANDEUR, "CONGE")).toBeNull();
+    expect(refusDecideurAbsence(d, acteur(RH1), DEMANDEUR, "CONGE")).toBe(MESSAGE_RESERVE_RH_ABSENCE);
   });
 
   it("le DG ne décide pas au niveau RH, et le responsable non plus", () => {
@@ -180,16 +177,6 @@ describe("transitions", () => {
     const c = ctx();
     const r = transitionAbsence({ ...param("EN_ATTENTE_RH", c), action: { type: "APPROUVER" }, acteur: rh() });
     expect(r).toEqual({ ok: true, statut: "VALIDEE", effet: "ACCORDER", etape: "RH" });
-  });
-
-  it("la RH approuve une permission : APPROUVEE + effet ACCORDER", () => {
-    const c = ctx();
-    const r = transitionAbsence({
-      ...param("EN_ATTENTE_RH", c, "PERMISSION"),
-      action: { type: "APPROUVER" },
-      acteur: rh(RH1, "PERMISSION"),
-    });
-    expect(r).toMatchObject({ ok: true, statut: "APPROUVEE", effet: "ACCORDER" });
   });
 
   it("la RH ne valide pas depuis EN_ATTENTE_RESPONSABLE tant que le responsable peut décider", () => {
@@ -233,7 +220,7 @@ describe("transitions", () => {
 
   it("aucune décision depuis un statut final, rejeté, annulé ou à modifier", () => {
     const c = ctx();
-    for (const s of ["VALIDEE", "REJETEE", "ANNULEE", "MODIFICATION_DEMANDEE", "CONSOMMEE"] as const) {
+    for (const s of ["VALIDEE", "REJETEE", "ANNULEE", "MODIFICATION_DEMANDEE"] as const) {
       const r = transitionAbsence({ ...param(s, c), action: { type: "APPROUVER" }, acteur: rh() });
       expect(r.ok).toBe(false);
     }
@@ -256,8 +243,8 @@ describe("transitions", () => {
 
 describe("annulation", () => {
   const c = ctx();
-  const annuler = (statut: StatutCircuitAbsence, a: ActeurAbsence, extra: { adebute?: boolean; peutAnnulerApresDebut?: boolean } = {}, nature: NatureAbsence = "CONGE") =>
-    transitionAbsence({ ...param(statut, c, nature), action: { type: "ANNULER", motif: "Plus nécessaire" }, acteur: a, ...extra });
+  const annuler = (statut: StatutCircuitAbsence, a: ActeurAbsence, extra: { adebute?: boolean; peutAnnulerApresDebut?: boolean } = {}) =>
+    transitionAbsence({ ...param(statut, c), action: { type: "ANNULER", motif: "Plus nécessaire" }, acteur: a, ...extra });
 
   it("le demandeur annule une demande en cours : aucun effet comptable", () => {
     expect(annuler("EN_ATTENTE_RESPONSABLE", acteur(DEMANDEUR))).toEqual({ ok: true, statut: "ANNULEE", motif: "Plus nécessaire", effet: "AUCUN" });
@@ -280,11 +267,6 @@ describe("annulation", () => {
 
   it("un tiers sans autorisation ne peut pas annuler", () => {
     expect(annuler("EN_ATTENTE_RH", acteur("u-autre"))).toMatchObject({ ok: false });
-  });
-
-  it("permission approuvée : annulable avant le jour ; consommée : jamais", () => {
-    expect(annuler("APPROUVEE", acteur(DEMANDEUR), { adebute: false }, "PERMISSION")).toMatchObject({ ok: true, effet: "DEFAIRE_ACCORD" });
-    expect(annuler("CONSOMMEE", rh(RH1, "PERMISSION"), { peutAnnulerApresDebut: true }, "PERMISSION")).toMatchObject({ ok: false });
   });
 
   it("une demande rejetée ou déjà annulée ne s'annule pas", () => {
@@ -343,8 +325,8 @@ describe("destinataires ciblés", () => {
 });
 
 describe("frise", () => {
-  const etats = (statut: StatutCircuitAbsence, requise = true, nature: NatureAbsence = "CONGE") =>
-    friseAbsence({ nature, statut, etapeResponsableRequise: requise }).map((e) => e.etat);
+  const etats = (statut: StatutCircuitAbsence, requise = true) =>
+    friseAbsence({ nature: "CONGE", statut, etapeResponsableRequise: requise }).map((e) => e.etat);
 
   it("en attente du responsable", () => {
     expect(etats("EN_ATTENTE_RESPONSABLE")).toEqual(["faite", "en_cours", "a_venir", "a_venir"]);
@@ -360,7 +342,6 @@ describe("frise", () => {
 
   it("accordée", () => {
     expect(etats("VALIDEE")).toEqual(["faite", "faite", "faite", "faite"]);
-    expect(etats("APPROUVEE", true, "PERMISSION")).toEqual(["faite", "faite", "faite", "faite"]);
   });
 
   it("rejetée : la décision est interrompue", () => {
@@ -371,9 +352,7 @@ describe("frise", () => {
 describe("divers", () => {
   it("états finals accordés", () => {
     expect(estStatutFinalAccorde("CONGE", "VALIDEE")).toBe(true);
-    expect(estStatutFinalAccorde("CONGE", "APPROUVEE")).toBe(false);
-    expect(estStatutFinalAccorde("PERMISSION", "CONSOMMEE")).toBe(true);
-    expect(estStatutFinalAccorde("PERMISSION", "REJETEE")).toBe(false);
+    expect(estStatutFinalAccorde("CONGE", "REJETEE")).toBe(false);
   });
 
   it("nettoyage de motif", () => {

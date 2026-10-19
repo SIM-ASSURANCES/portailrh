@@ -32,17 +32,16 @@ export const TABLES_HORS_EMPREINTE = ["executionTache", "journalTechnique"] as c
 export class ReinitialisationPointageError extends Error {}
 
 /**
- * D5 (Congés, Lot 5) : la purge supprime TOUTES les `PlageAbsenceAutorisee`, y compris celles d'un congé validé ou d'une
- * permission approuvée (le Pointage s'en sert pour ne pas compter d'absence). Dès qu'une demande de congé ou de permission
- * d'absence existe, la purge ET sa sauvegarde sont refusées.
+ * D5 (Congés, Lot 5) : la purge supprime TOUTES les `PlageAbsenceAutorisee`, y compris celles d'un congé validé.
+ * Dès qu'une demande de congé existe, la purge ET sa sauvegarde sont refusées.
  */
 export const MESSAGE_PURGE_REFUSEE_ABSENCES =
   "La purge du Pointage n'est plus possible dès qu'une demande de congé ou de permission existe : mettez le Pointage en service avant d'ouvrir les congés.";
 
 /** `null` si la purge est possible, sinon le message du refus (voir `MESSAGE_PURGE_REFUSEE_ABSENCES`). */
 export async function refusPurgePointageAbsences(db: Db | typeof prisma): Promise<string | null> {
-  const [conges, permissions] = await Promise.all([db.demandeConge.count(), db.demandePermission.count()]);
-  return conges + permissions > 0 ? MESSAGE_PURGE_REFUSEE_ABSENCES : null;
+  const conges = await db.demandeConge.count();
+  return conges > 0 ? MESSAGE_PURGE_REFUSEE_ABSENCES : null;
 }
 
 const parId = { orderBy: { id: "asc" as const } };

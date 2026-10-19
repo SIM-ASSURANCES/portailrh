@@ -32,7 +32,7 @@ const CONFIG: Record<Motif, { titre: string; bouton: string; variante: "danger" 
 };
 
 /**
- * Boutons de décision d'une demande d'absence (congé ou permission). Les boutons sont TOUJOURS visibles : un bouton
+ * Boutons de décision d'une demande de congé. Les boutons sont TOUJOURS visibles : un bouton
  * indisponible est grisé avec la phrase que renverrait le serveur (`actionsPossiblesAbsence`, même moteur) — le
  * serveur, lui, revérifie tout. Le motif est obligatoire (3 caractères) pour rejeter, demander une modification, annuler.
  */

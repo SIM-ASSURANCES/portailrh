@@ -270,7 +270,7 @@ export function timeToMinutes(timeStr: string): number {
 }
 
 /**
- * Plage d'absence autorisée (congé ou permission, modèle `PlageAbsenceAutorisee`) d'UNE journée, réduite à ses
+ * Plage d'absence autorisée pour un congé (modèle `PlageAbsenceAutorisee`) d'UNE journée, réduite à ses
  * horaires "HH:MM". L'appelant filtre lui-même les plages de l'utilisateur et du jour concernés.
  */
 export interface PlageHoraire {

@@ -55,8 +55,7 @@ async function main() {
   const maintenant = new Date();
 
   // Nettoyage des essais précédents de ce script.
-  await prisma.plageAbsenceAutorisee.deleteMany({ where: { OR: [{ demandeCongeId: { not: null } }, { demandePermissionId: { not: null } }] } });
-  await prisma.demandePermission.deleteMany({});
+  await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: { not: null } } });
   await prisma.demandeConge.deleteMany({});
   await prisma.ajustementSolde.deleteMany({});
   await prisma.soldeConge.deleteMany({});

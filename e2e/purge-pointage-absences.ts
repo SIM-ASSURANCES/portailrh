@@ -1,8 +1,8 @@
-// Lot 5 (D5) : la purge du Pointage supprimerait les plages d'absence autorisée des congés validés et des permissions
-// approuvées : elle est refusée (exécution ET sauvegarde) dès qu'une demande de congé ou de permission existe.
+// Lot 5 (D5) : la purge du Pointage supprimerait les plages d'absence autorisée des congés validés :
+// elle est refusée (exécution ET sauvegarde) dès qu'une demande de congé existe.
 //
 //   DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e?schema=public npx tsx e2e/purge-pointage-absences.ts
-// Base JETABLE seulement ; lancer APRÈS e2e/conges-integration.mjs (qui laisse une demande de congé et une permission).
+// Base JETABLE seulement ; lancer APRÈS e2e/conges-integration.mjs (qui laisse une demande de congé).
 
 import {
   MESSAGE_PURGE_REFUSEE_ABSENCES,
@@ -33,7 +33,7 @@ const message = async (fn: () => Promise<unknown>) => {
 
 async function main() {
   const user = await prisma.user.findUniqueOrThrow({ where: { email: "admin@simassurances.test" } });
-  const nb = (await prisma.demandeConge.count()) + (await prisma.demandePermission.count());
+  const nb = await prisma.demandeConge.count();
   if (nb === 0) throw new Error("Préparation : aucune demande (lancer e2e/conges-integration.mjs d'abord).");
 
   // Une vraie plage d'absence autorisée (celle d'un congé validé) : la purge refusée doit la laisser intacte.
@@ -50,9 +50,8 @@ async function main() {
   verifier("Les plages d'absence autorisée sont intactes après les refus", (await prisma.plageAbsenceAutorisee.count()) === plagesAvant && plagesAvant >= 1, plagesAvant);
 
   // Sans demande, la purge n'est plus refusée pour ce motif (elle l'est pour l'empreinte factice).
-  await prisma.plageAbsenceAutorisee.deleteMany({ where: { OR: [{ demandeCongeId: { not: null } }, { demandePermissionId: { not: null } }] } });
+  await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: { not: null } } });
   await prisma.pieceJointeConge.deleteMany();
-  await prisma.demandePermission.deleteMany();
   await prisma.demandeConge.deleteMany();
   const apres = await message(() => executerReinitialisationPointage({ userId: user.id, sauvegardeSha256: "0".repeat(64) }));
   verifier("Sans demande : le refus change de motif (empreinte invalide)", apres !== null && apres !== MESSAGE_PURGE_REFUSEE_ABSENCES && /sauvegarde/i.test(apres), apres);

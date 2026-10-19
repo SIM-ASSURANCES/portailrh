@@ -23,10 +23,10 @@ export interface NavItem {
 }
 
 /**
- * Entrées de menu d'un module d'absence (Congés, Permissions d'absence). `null` côté `NavFlags` = aucun accès (branche
- * absente). `aDecider` : `null` = pas de décision possible pour ce compte (entrée absente), sinon le nombre en pastille.
+ * Entrées de menu du module Congés. `null` côté `NavFlags` = aucun accès (branche absente).
+ * `aDecider` : `null` = pas de décision possible pour ce compte (entrée absente), sinon le nombre en pastille.
  */
-export interface ModuleAbsenceNav {
+export interface ModuleCongeNav {
   /** `<module>.soumettre` : « Mes … » et « Nouvelle demande ». */
   soumettre: boolean;
   aDecider: number | null;
@@ -163,10 +163,8 @@ export interface NavFlags {
   justificationsADecider?: number | null;
   /** Pointage (phase 5 de la fiabilisation) : responsable actuel d'au moins un service → entrée « Mon équipe ». */
   canVoirMonEquipe?: boolean;
-  /** Congés (Lot 5) : `null` sans accès au module (branche absente). */
-  congesNav?: ModuleAbsenceNav | null;
-  /** Permissions d'absence (Lot 5) : `null` sans accès au module (branche absente). */
-  permissionsNav?: ModuleAbsenceNav | null;
+  /** Congés : `null` sans accès au module (branche absente). */
+  congesNav?: ModuleCongeNav | null;
 }
 
 /**
@@ -266,7 +264,6 @@ export function getNavBranches({
   justificationsADecider = null,
   canVoirMonEquipe = false,
   congesNav = null,
-  permissionsNav = null,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -452,7 +449,7 @@ export function getNavBranches({
           : []),
       ],
     },
-    // Congés et permissions d'absence (Lot 5) : branches masquées sans accès (mêmes conditions que les layouts des modules).
+    // Congés : branche masquée sans accès (mêmes conditions que le layout du module).
     {
       key: "conges",
       label: "Congés",
@@ -472,38 +469,6 @@ export function getNavBranches({
                   : []),
                 ...(congesNav.toutes ? [{ label: "Toutes les demandes", href: "/conges/toutes", icon: "file-text" } satisfies NavItem] : []),
                 ...(congesNav.soldes ? [{ label: "Soldes", href: "/conges/soldes", icon: "wallet" } satisfies NavItem] : []),
-              ]
-            : [],
-        },
-      ],
-    },
-    {
-      key: "absences",
-      label: "Permissions d'absence",
-      icon: "calendar-x",
-      groups: [
-        {
-          items: permissionsNav
-            ? [
-                ...(permissionsNav.soumettre
-                  ? [
-                      { label: "Mes permissions", href: "/permissions-absence", icon: "calendar-x", exact: true } satisfies NavItem,
-                      { label: "Nouvelle demande", href: "/permissions-absence/nouvelle", icon: "plus-circle" } satisfies NavItem,
-                    ]
-                  : []),
-                ...(permissionsNav.aDecider !== null
-                  ? [
-                      {
-                        label: "À décider",
-                        href: "/permissions-absence/a-decider",
-                        icon: "check-circle",
-                        compteur: permissionsNav.aDecider,
-                      } satisfies NavItem,
-                    ]
-                  : []),
-                ...(permissionsNav.toutes
-                  ? [{ label: "Toutes les demandes", href: "/permissions-absence/toutes", icon: "file-text" } satisfies NavItem]
-                  : []),
               ]
             : [],
         },
@@ -592,4 +557,3 @@ export const ADMIN_GROUP: NavGroup = {
     { label: "Catégories", href: "/admin/categories", icon: "folder-tree" },
   ],
 };
-

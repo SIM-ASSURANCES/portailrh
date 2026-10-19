@@ -2,7 +2,7 @@ import { Icon } from "@/components/icons";
 import type { EtapeFrise, EtatEtapeFrise } from "backend";
 
 /**
- * Frise d'avancement d'une demande d'absence (congé ou permission) : Dépôt → Responsable → RH → Décision.
+ * Frise d'avancement d'une demande de congé : Dépôt → Responsable → RH → Décision.
  * Lecture seule, calcul unique par `friseAbsence` (moteur du circuit).
  */
 export function FriseAbsence({ etapes }: { etapes: readonly EtapeFrise[] }) {

@@ -1,4 +1,4 @@
-// Congés et permissions d'absence : modules, permissions et données de départ (source unique).
+// Congés : permissions et données de départ (source unique).
 //
 // Repris à l'identique par le seed ET par la migration 20261021090000_conges_permissions_absence (un test de
 // synchronisation, congesDefauts.test.ts, lit le SQL de la migration). La production n'est jamais re-seedée : tout ce
@@ -7,14 +7,12 @@
 
 export const MODULE_CONGES_KEY = "conges";
 export const MODULE_CONGES_LABEL = "Congés";
-export const MODULE_ABSENCES_KEY = "absences";
-export const MODULE_ABSENCES_LABEL = "Permissions d'absence";
 
 /** Permission sœur : la nouvelle permission est donnée aux rôles qui portent AU MOINS UNE des sœurs. */
-export interface PermissionAbsence {
+export interface PermissionConge {
   key: string;
   label: string;
-  module: typeof MODULE_CONGES_KEY | typeof MODULE_ABSENCES_KEY;
+  module: typeof MODULE_CONGES_KEY;
   soeurs: readonly string[];
 }
 
@@ -23,7 +21,7 @@ const TOUT_LE_PERSONNEL = ["pointage.pointer", "treso.creer_demande", "treso.dec
 const RH = ["pointage.corriger_pointage"] as const;
 const RH_ET_DG_LECTURE = ["pointage.consulter_tous"] as const;
 
-export const PERMISSIONS_CONGES: readonly PermissionAbsence[] = [
+export const PERMISSIONS_CONGES: readonly PermissionConge[] = [
   { key: "conges.soumettre", label: "Demander un congé, consulter ses congés et son solde", module: "conges", soeurs: TOUT_LE_PERSONNEL },
   { key: "conges.valider_rh", label: "Valider définitivement un congé (étape RH, congé d'office)", module: "conges", soeurs: RH },
   { key: "conges.annuler", label: "Annuler un congé validé", module: "conges", soeurs: RH },
@@ -32,21 +30,11 @@ export const PERMISSIONS_CONGES: readonly PermissionAbsence[] = [
   { key: "conges.consulter_tous", label: "Consulter les congés de tous les employés", module: "conges", soeurs: RH_ET_DG_LECTURE },
 ];
 
-export const PERMISSIONS_ABSENCES: readonly PermissionAbsence[] = [
-  { key: "absences.soumettre", label: "Demander une permission d'absence, consulter les siennes", module: "absences", soeurs: TOUT_LE_PERSONNEL },
-  { key: "absences.valider_rh", label: "Valider une permission d'absence (étape RH)", module: "absences", soeurs: RH },
-  { key: "absences.annuler", label: "Annuler une permission d'absence approuvée", module: "absences", soeurs: RH },
-  { key: "absences.parametrer", label: "Paramétrer les types et plafonds de permission", module: "absences", soeurs: RH },
-  { key: "absences.consulter_tous", label: "Consulter les permissions d'absence de tous les employés", module: "absences", soeurs: RH_ET_DG_LECTURE },
-];
-
-export const PERMISSIONS_CONGES_ET_ABSENCES: readonly PermissionAbsence[] = [...PERMISSIONS_CONGES, ...PERMISSIONS_ABSENCES];
-
 /**
  * Permissions d'ÉTAPE RH : le droit de décider se lit sur le RÔLE (jamais par délégation), comme les justifications de
  * retard. Elles s'ajoutent à `PERMISSIONS_DECISION_NON_DELEGABLES` (circuitDemande.ts).
  */
-export const PERMISSIONS_ETAPE_RH_ABSENCE = ["conges.valider_rh", "absences.valider_rh"] as const;
+export const PERMISSIONS_ETAPE_RH_ABSENCE = ["conges.valider_rh"] as const;
 
 export interface TypeCongeDefaut {
   code: string;
@@ -88,25 +76,11 @@ export const TYPES_CONGE_DEFAUT: readonly TypeCongeDefaut[] = [
   { code: "DEMENAGEMENT", label: "Déménagement", nbJoursDefaut: 1, ...ARTICLE_13 },
 ];
 
-export interface TypePermissionDefaut {
-  label: string;
-  dureeMaxHeures: number;
-  plafondMensuel: number;
-  justificatifRecommande: boolean;
-}
-
-export const TYPES_PERMISSION_DEFAUT: readonly TypePermissionDefaut[] = [
-  { label: "Rendez-vous médical", dureeMaxHeures: 3, plafondMensuel: 2, justificatifRecommande: true },
-  { label: "Raison familiale urgente", dureeMaxHeures: 4, plafondMensuel: 1, justificatifRecommande: false },
-  { label: "Démarche administrative", dureeMaxHeures: 3, plafondMensuel: 1, justificatifRecommande: false },
-  { label: "Autre", dureeMaxHeures: 4, plafondMensuel: 2, justificatifRecommande: false },
-];
-
 /**
- * Permissions Congés / Permissions d'absence qu'un rôle reçoit, d'après les permissions qu'il porte déjà : la règle
+ * Permissions Congés qu'un rôle reçoit, d'après les permissions qu'il porte déjà : la règle
  * de la migration (permission « sœur »), appliquée par le seed pour qu'une base neuve et une base migrée coïncident.
  */
-export function permissionsAbsencePourCles(clesDuRole: Iterable<string>): string[] {
+export function permissionsCongePourCles(clesDuRole: Iterable<string>): string[] {
   const portees = new Set(clesDuRole);
-  return PERMISSIONS_CONGES_ET_ABSENCES.filter((p) => p.soeurs.some((s) => portees.has(s))).map((p) => p.key);
+  return PERMISSIONS_CONGES.filter((p) => p.soeurs.some((s) => portees.has(s))).map((p) => p.key);
 }

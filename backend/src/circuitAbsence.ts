@@ -1,9 +1,7 @@
-// Congés et permissions d'absence — circuit de validation (Lot 2, 2026-10-15). Moteur PUR : aucun accès base, aucun envoi.
-//
-// UN SEUL circuit pour les deux natures (décision D2, option B) : le responsable du service d'abord, puis la RH.
+// Congés — circuit de validation (Lot 2, 2026-10-15). Moteur PUR : aucun accès base, aucun envoi.
 //   - Étape responsable : `Service.responsableId` désigne le décideur, SANS permission (comme « Mon équipe » et les
 //     justifications de retard). Non requise quand elle n'a pas de sens (voir `resoudreParcoursAbsence`).
-//   - Étape RH : un compte actif dont le RÔLE porte `conges.valider_rh` / `absences.valider_rh` ; à défaut d'un autre
+//   - Étape RH : un compte actif dont le RÔLE porte `conges.valider_rh` ; à défaut d'un autre
 //     compte RH que le demandeur, le DG (`treso.decider_dg`) ; à défaut, personne (la demande ne peut pas être déposée).
 //   - Personne ne décide sa propre demande, à aucune étape. Le droit de décider se lit sur le RÔLE
 //     (`session.rolePermissions`), jamais par délégation (ces permissions sont dans PERMISSIONS_DECISION_NON_DELEGABLES).
@@ -13,46 +11,34 @@
 
 import type { ServiceCollaborateur } from "./justificationPointage";
 
-export type NatureAbsence = "CONGE" | "PERMISSION";
+export type NatureAbsence = "CONGE";
 
 export type StatutCircuitAbsence =
   | "EN_ATTENTE_RESPONSABLE"
   | "EN_ATTENTE_RH"
   | "VALIDEE" // congé : état final accordé
-  | "APPROUVEE" // permission : état final accordé
-  | "CONSOMMEE" // permission : retour marqué
   | "REJETEE"
   | "ANNULEE"
   | "MODIFICATION_DEMANDEE";
 
-/** Permission d'étape RH de chaque nature (non délégable, lue sur le rôle). */
-export const PERMISSION_ETAPE_RH_ABSENCE: Record<NatureAbsence, string> = {
-  CONGE: "conges.valider_rh",
-  PERMISSION: "absences.valider_rh",
-};
+/** Permission d'étape RH (non délégable, lue sur le rôle). */
+export const PERMISSION_ETAPE_RH_ABSENCE = "conges.valider_rh";
 
 /** Dernier recours : le DG, désigné par la même permission que l'étape DG de la Trésorerie et des justifications. */
 export const PERMISSION_DG_ABSENCE = "treso.decider_dg";
 
-/**
- * Une permission d'absence se décide ou se rejette : le statut « modification demandée » n'existe pas pour elle
- * (décision du Lot 4). Le collaborateur dépose une nouvelle demande, ce qui garde la base inchangée.
- */
-export const MESSAGE_PERMISSION_SANS_MODIFICATION =
-  "Une permission d'absence ne peut pas être renvoyée pour modification : rejetez-la, le collaborateur déposera une nouvelle demande.";
-
 export const MOTIF_ABSENCE_MIN = 3;
 export const MOTIF_ABSENCE_MAX = 500;
 
-export function statutFinalAbsence(nature: NatureAbsence): "VALIDEE" | "APPROUVEE" {
-  return nature === "CONGE" ? "VALIDEE" : "APPROUVEE";
+export function statutFinalAbsence(_nature: NatureAbsence): "VALIDEE" {
+  return "VALIDEE";
 }
 
 /** Statuts en cours de circuit (une décision est attendue). */
 export const STATUTS_ABSENCE_EN_ATTENTE: readonly StatutCircuitAbsence[] = ["EN_ATTENTE_RESPONSABLE", "EN_ATTENTE_RH"];
 
 export function estStatutFinalAccorde(nature: NatureAbsence, statut: StatutCircuitAbsence): boolean {
-  return statut === statutFinalAbsence(nature) || (nature === "PERMISSION" && statut === "CONSOMMEE");
+  return statut === statutFinalAbsence(nature);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -79,7 +65,7 @@ export interface ContexteCircuitAbsence {
   demandeurId: string;
   /** Service du demandeur tel que lu maintenant (`null` : aucun service). */
   service: ServiceCollaborateur | null;
-  /** Comptes ACTIFS dont le rôle porte la permission d'étape RH de la nature (le demandeur peut y figurer). */
+  /** Comptes ACTIFS dont le rôle porte `conges.valider_rh` (le demandeur peut y figurer). */
   comptesRH: readonly string[];
   /** Comptes ACTIFS dont le rôle porte `treso.decider_dg` (le demandeur peut y figurer). */
   comptesDG: readonly string[];
@@ -228,7 +214,7 @@ export function refusDecideurAbsence(
     case "RESPONSABLE":
       return acteur.id === decideur.responsableId ? null : MESSAGE_RESERVE_RESPONSABLE_ABSENCE;
     case "RH":
-      return acteur.rolePermissions.includes(PERMISSION_ETAPE_RH_ABSENCE[nature]) ? null : MESSAGE_RESERVE_RH_ABSENCE;
+      return acteur.rolePermissions.includes(PERMISSION_ETAPE_RH_ABSENCE) ? null : MESSAGE_RESERVE_RH_ABSENCE;
     case "DG":
       return acteur.rolePermissions.includes(PERMISSION_DG_ABSENCE) ? null : MESSAGE_RESERVE_DG_ABSENCE;
     case "AUCUN":
@@ -257,11 +243,11 @@ export interface ParamsTransitionAbsence {
   /** `decideurPourStatutAbsence(statut, ctx)` calculé par l'appelant au moment de l'action. */
   decideur: DecideurAbsence | null;
   /**
-   * L'absence accordée a déjà commencé (congé : date de début atteinte ; permission : jour de la permission atteint).
+   * Le congé accordé a déjà commencé (sa date de début est atteinte).
    * Seule la RH annule alors (`peutAnnulerApresDebut`).
    */
   adebute?: boolean;
-  /** L'acteur porte `conges.annuler` / `absences.annuler` (ou l'étape RH) : il annule même après le début. */
+  /** L'acteur porte `conges.annuler` (ou l'étape RH) : il annule même après le début. */
   peutAnnulerApresDebut?: boolean;
   /** Permission exceptionnelle : une seule décision (celle du destinataire choisi), définitive. */
   etapeUnique?: boolean;
@@ -306,10 +292,8 @@ function controlerMotif(motif: string, libelle: string): { ok: true; motif: stri
 const MESSAGE_STATUT: Partial<Record<StatutCircuitAbsence, string>> = {
   REJETEE: "Cette demande a déjà été rejetée.",
   ANNULEE: "Cette demande a déjà été annulée.",
-  CONSOMMEE: "Cette permission est déjà consommée.",
   MODIFICATION_DEMANDEE: "Cette demande attend une modification du demandeur.",
   VALIDEE: "Cette demande est déjà validée.",
-  APPROUVEE: "Cette demande est déjà approuvée.",
 };
 
 /**
@@ -320,7 +304,7 @@ const MESSAGE_STATUT: Partial<Record<StatutCircuitAbsence, string>> = {
  *   - rejeter / demander une modification : par le décideur de l'étape en cours, motif obligatoire ;
  *   - resoumettre : le demandeur seul, depuis MODIFICATION_DEMANDEE ;
  *   - annuler : le demandeur tant que la demande est en cours ou accordée sans avoir commencé ; la RH
- *     (`peutAnnulerApresDebut`) aussi après le début ; jamais une demande rejetée, annulée, ou une permission consommée.
+ *     (`peutAnnulerApresDebut`) aussi après le début ; jamais une demande rejetée ou annulée.
  */
 export function transitionAbsence(p: ParamsTransitionAbsence): ResultatTransitionAbsence {
   const { nature, statut, action, acteur, demandeurId, decideur } = p;
@@ -337,7 +321,7 @@ export function transitionAbsence(p: ParamsTransitionAbsence): ResultatTransitio
   if (action.type === "ANNULER") {
     const motif = controlerMotif(action.motif, "Le motif d'annulation");
     if (!motif.ok) return motif;
-    if (statut === "REJETEE" || statut === "ANNULEE" || statut === "CONSOMMEE") {
+    if (statut === "REJETEE" || statut === "ANNULEE") {
       return { ok: false, erreur: MESSAGE_STATUT[statut]! };
     }
     const accordee = estStatutFinalAccorde(nature, statut);
@@ -351,10 +335,6 @@ export function transitionAbsence(p: ParamsTransitionAbsence): ResultatTransitio
       };
     }
     return { ok: true, statut: "ANNULEE", motif: motif.motif, effet: accordee ? "DEFAIRE_ACCORD" : "AUCUN" };
-  }
-
-  if (action.type === "DEMANDER_MODIFICATION" && nature === "PERMISSION") {
-    return { ok: false, erreur: MESSAGE_PERMISSION_SANS_MODIFICATION };
   }
 
   // Approuver / rejeter / demander une modification : le décideur de l'étape en cours, et lui seul.
@@ -440,14 +420,12 @@ export const LIBELLE_STATUT_ABSENCE: Record<StatutCircuitAbsence, string> = {
   EN_ATTENTE_RESPONSABLE: "En attente du responsable",
   EN_ATTENTE_RH: "En attente de la RH",
   VALIDEE: "Validée",
-  APPROUVEE: "Approuvée",
-  CONSOMMEE: "Consommée",
   REJETEE: "Rejetée",
   ANNULEE: "Annulée",
   MODIFICATION_DEMANDEE: "Modification demandée",
 };
 
-/** Actions d'historique (`HistoriqueEntry.entity = "DemandeConge" | "DemandePermission"`). */
+/** Actions d'historique (`HistoriqueEntry.entity = "DemandeConge"`). */
 export const ACTION_HISTORIQUE_ABSENCE = {
   SOUMETTRE: "soumission",
   APPROUVER_RESPONSABLE: "approbation_responsable",
@@ -461,8 +439,6 @@ export const ACTION_HISTORIQUE_ABSENCE = {
   ANNULER: "annulation",
   /** Congé accordé d'office par la RH (aucune demande du collaborateur, aucun circuit). */
   CONGE_OFFICE: "conge_office",
-  /** Permission d'absence : retour marqué (la permission devient consommée). */
-  RETOUR_MARQUE: "retour_marque",
   AJUSTER_SOLDE: "ajustement_solde",
   RAPPEL: "rappel",
   /** Observation de la RH / du responsable (à sa décision) ou du DG (à tout moment) : AJOUT SEUL, statut inchangé. */
@@ -505,7 +481,7 @@ export function friseAbsence(params: {
     { cle: "DEPOT", libelle: "Dépôt", etat: "faite" },
     { cle: "RESPONSABLE", libelle: "Responsable du service", etat: etat(1, etapeResponsableRequise) },
     { cle: "RH", libelle: "RH", etat: etat(2, etapeRHRequise) },
-    { cle: "DECISION", libelle: nature === "CONGE" ? "Congé validé" : "Permission approuvée", etat: accordee ? "faite" : interrompue ? "interrompue" : "a_venir" },
+    { cle: "DECISION", libelle: "Congé validé", etat: accordee ? "faite" : interrompue ? "interrompue" : "a_venir" },
   ];
 }
 
@@ -517,7 +493,6 @@ export function friseAbsence(params: {
 export const PERMISSIONS_CONSULTATION_ABSENCE: Record<NatureAbsence, readonly string[]> = {
   // Le DG voit toutes les demandes sans `consulter_tous` (C3) : sa permission d'étape, non délégable, donc lue sur le rôle.
   CONGE: ["conges.valider_rh", "conges.consulter_tous", PERMISSION_DG_ABSENCE],
-  PERMISSION: ["absences.valider_rh", "absences.consulter_tous", PERMISSION_DG_ABSENCE],
 };
 
 /**

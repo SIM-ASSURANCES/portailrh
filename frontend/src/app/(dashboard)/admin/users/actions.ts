@@ -810,10 +810,6 @@ export async function supprimerUtilisateurAction(
     congesApprouves,
     congesValides,
     congesAnnules,
-    permissionsDemandees,
-    permissionsApprouvees,
-    permissionsValidees,
-    permissionsAnnulees,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -867,7 +863,7 @@ export async function supprimerUtilisateurAction(
     // Journal permanent des purges du Pointage seul et marqueur de mise en service (RESTRICT).
     prisma.reinitialisationPointage.count({ where: { effectueeParId: userId } }),
     prisma.pointageMiseEnService.count({ where: { parId: userId } }),
-    // Congés et permissions d'absence (Lot 5) : 10 relations vers User, toutes en RESTRICT (sans ce contrôle, la suppression
+    // Congés (Lot 5) : 6 relations vers User, toutes en RESTRICT (sans ce contrôle, la suppression
     // échouerait sur une clé étrangère au lieu d'afficher ce message).
     prisma.soldeConge.count({ where: { userId } }),
     prisma.ajustementSolde.count({ where: { effectueParId: userId } }),
@@ -875,10 +871,6 @@ export async function supprimerUtilisateurAction(
     prisma.demandeConge.count({ where: { approuveParId: userId } }),
     prisma.demandeConge.count({ where: { valideParId: userId } }),
     prisma.demandeConge.count({ where: { annuleParId: userId } }),
-    prisma.demandePermission.count({ where: { userId } }),
-    prisma.demandePermission.count({ where: { approuveParId: userId } }),
-    prisma.demandePermission.count({ where: { valideParId: userId } }),
-    prisma.demandePermission.count({ where: { annuleParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -936,10 +928,6 @@ export async function supprimerUtilisateurAction(
   if (congesApprouves > 0) blocages.push(`approuvé ${congesApprouves} demande(s) de congé en tant que responsable`);
   if (congesValides > 0) blocages.push(`validé ${congesValides} demande(s) de congé`);
   if (congesAnnules > 0) blocages.push(`annulé ${congesAnnules} congé(s)`);
-  if (permissionsDemandees > 0) blocages.push(`demandé ${permissionsDemandees} permission(s) d'absence`);
-  if (permissionsApprouvees > 0) blocages.push(`approuvé ${permissionsApprouvees} permission(s) d'absence en tant que responsable`);
-  if (permissionsValidees > 0) blocages.push(`validé ${permissionsValidees} permission(s) d'absence`);
-  if (permissionsAnnulees > 0) blocages.push(`annulé ${permissionsAnnulees} permission(s) d'absence`);
 
   if (blocages.length > 0) {
     const liste =

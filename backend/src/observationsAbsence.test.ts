@@ -55,9 +55,8 @@ describe("refusObservationDG : le DG, sur le RÔLE, jamais pour sa propre demand
 
 describe("Le DG voit toutes les demandes sans consulter_tous", () => {
   const base = { acteurId: "dg", demandeurId: "collab", responsableDuServiceId: "resp" };
-  it("lecture accordée au DG (permission du rôle) pour un congé et une permission", () => {
+  it("lecture accordée au DG (permission du rôle) pour un congé", () => {
     expect(peutConsulterAbsence({ ...base, nature: "CONGE", permissions: [PERMISSION_DG_ABSENCE] })).toBe(true);
-    expect(peutConsulterAbsence({ ...base, nature: "PERMISSION", permissions: [PERMISSION_DG_ABSENCE] })).toBe(true);
   });
   it("un compte sans aucun droit ne voit pas la demande d'un autre", () => {
     expect(peutConsulterAbsence({ ...base, nature: "CONGE", permissions: [] })).toBe(false);

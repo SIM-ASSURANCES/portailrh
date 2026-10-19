@@ -4,15 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { PERMISSIONS_DECISION_NON_DELEGABLES } from "./circuitDemande";
-import {
-  MODULE_ABSENCES_KEY,
-  MODULE_CONGES_KEY,
-  PERMISSIONS_CONGES_ET_ABSENCES,
-  PERMISSIONS_ETAPE_RH_ABSENCE,
-  TYPES_CONGE_DEFAUT,
-  TYPES_PERMISSION_DEFAUT,
-  permissionsAbsencePourCles,
-} from "./congesDefauts";
+import { MODULE_CONGES_KEY, PERMISSIONS_CONGES, TYPES_CONGE_DEFAUT, permissionsCongePourCles } from "./congesDefauts";
 
 const sql = readFileSync(
   path.resolve(__dirname, "../prisma/migrations/20261021090000_conges_permissions_absence/migration.sql"),
@@ -20,34 +12,29 @@ const sql = readFileSync(
 );
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
-describe("Congés et permissions d'absence — source unique et migration synchronisées", () => {
+describe("Congés — source unique et migration synchronisées", () => {
   it("chaque permission (clé, libellé, module) figure dans la migration", () => {
-    for (const p of PERMISSIONS_CONGES_ET_ABSENCES) {
+    for (const p of PERMISSIONS_CONGES) {
       expect(sql, `permission absente ou libellé différent : ${p.key}`).toContain(`${q(p.key)}, ${q(p.label)}, ${q(p.module)}`);
     }
   });
 
-  it("chaque couple (nouvelle permission, permission sœur) figure dans la migration, et inversement", () => {
-    const attendus = PERMISSIONS_CONGES_ET_ABSENCES.flatMap((p) => p.soeurs.map((s) => `(${q(p.key)}, ${q(s)})`));
+  it("chaque couple (nouvelle permission, permission sœur) figure dans la migration", () => {
+    const attendus = PERMISSIONS_CONGES.flatMap((p) => p.soeurs.map((s) => `(${q(p.key)}, ${q(s)})`));
     for (const couple of attendus) expect(sql, `couple absent : ${couple}`).toContain(couple);
-    const dansLaMigration = [...sql.matchAll(/\('((?:conges|absences)\.[a-z_]+)', '((?:pointage|treso)\.[a-z_]+)'\)/g)];
+    const dansLaMigration = [...sql.matchAll(/\('(conges\.[a-z_]+)', '((?:pointage|treso)\.[a-z_]+)'\)/g)];
     expect(dansLaMigration).toHaveLength(attendus.length);
   });
 
-  it("les deux modules sont créés avec leurs clés (D7b : « absences », jamais « permissions »)", () => {
+  it("le module Congés est créé avec sa clé", () => {
     expect(sql).toContain(q(MODULE_CONGES_KEY));
-    expect(sql).toContain(q(MODULE_ABSENCES_KEY));
-    expect(MODULE_ABSENCES_KEY).toBe("absences");
-    expect(PERMISSIONS_CONGES_ET_ABSENCES.every((p) => !p.key.startsWith("permissions."))).toBe(true);
+    expect(MODULE_CONGES_KEY).toBe("conges");
   });
 
-  it("types de congé et de permission : mêmes valeurs dans la migration", () => {
+  it("les types de congé, y compris exceptionnels, figurent dans la migration", () => {
     for (const t of TYPES_CONGE_DEFAUT) {
       const ligne = `(${q(t.code)}, ${q(t.label)}, '${t.categorie}'::"CategorieConge", ${t.nbJoursDefaut}, '${t.decompteType}'::"DecompteType", ${t.justificatifObligatoire}, ${t.nonDeductibleSolde}, ${t.ancienneteMinimumMois})`;
       expect(sql, `type de congé absent ou différent : ${t.code}`).toContain(ligne);
-    }
-    for (const t of TYPES_PERMISSION_DEFAUT) {
-      expect(sql).toContain(`(${q(t.label)}, ${t.dureeMaxHeures}, ${t.plafondMensuel}, ${t.justificatifRecommande})`);
     }
   });
 
@@ -67,39 +54,35 @@ describe("Congés et permissions d'absence — source unique et migration synchr
     expect(conflits).toHaveLength(insertions.length);
   });
 
-  it("l'étape RH de chaque module est une permission de décision NON délégable", () => {
-    for (const k of PERMISSIONS_ETAPE_RH_ABSENCE) {
-      expect(PERMISSIONS_CONGES_ET_ABSENCES.some((p) => p.key === k)).toBe(true);
-      expect(PERMISSIONS_DECISION_NON_DELEGABLES).toContain(k);
-    }
+  it("l'étape RH des congés est une permission de décision non délégable", () => {
+    expect(PERMISSIONS_CONGES.some((p) => p.key === "conges.valider_rh")).toBe(true);
+    expect(PERMISSIONS_DECISION_NON_DELEGABLES).toContain("conges.valider_rh");
   });
 
   it("aucune permission « responsable » : le responsable est désigné par le service, pas par un droit", () => {
-    expect(PERMISSIONS_CONGES_ET_ABSENCES.some((p) => /approuver_responsable|\.approuver$/.test(p.key))).toBe(false);
+    expect(PERMISSIONS_CONGES.some((p) => /approuver_responsable|\.approuver$/.test(p.key))).toBe(false);
   });
 });
 
-describe("permissionsAbsencePourCles — la règle de la permission sœur", () => {
-  it("un rôle qui pointe peut demander un congé et une permission, rien de plus", () => {
-    const cles = permissionsAbsencePourCles(["pointage.pointer", "pointage.consulter_historique"]);
-    expect(cles.sort()).toEqual(["absences.soumettre", "conges.soumettre"]);
+describe("permissionsCongePourCles — la règle de la permission sœur", () => {
+  it("un rôle qui pointe peut demander un congé", () => {
+    expect(permissionsCongePourCles(["pointage.pointer", "pointage.consulter_historique"])).toEqual(["conges.soumettre"]);
   });
 
   it("la RH (corriger_pointage) reçoit l'étape RH, les soldes et le paramétrage", () => {
-    const cles = permissionsAbsencePourCles(["pointage.corriger_pointage"]);
-    expect(cles).toEqual(expect.arrayContaining(["conges.valider_rh", "absences.valider_rh", "conges.gerer_soldes", "absences.parametrer"]));
+    const cles = permissionsCongePourCles(["pointage.corriger_pointage"]);
+    expect(cles).toEqual(expect.arrayContaining(["conges.valider_rh", "conges.gerer_soldes", "conges.parametrer_types"]));
     expect(cles).not.toContain("conges.soumettre");
   });
 
   it("le DG (decider_dg) demande et consulte, mais ne reçoit jamais l'étape RH", () => {
-    const cles = permissionsAbsencePourCles(["treso.decider_dg"]);
-    expect(cles).toEqual(expect.arrayContaining(["conges.soumettre", "absences.soumettre"]));
+    const cles = permissionsCongePourCles(["treso.decider_dg"]);
+    expect(cles).toEqual(expect.arrayContaining(["conges.soumettre"]));
     expect(cles.some((c) => c.endsWith(".voir_dashboard") || c.endsWith(".voir_reporting"))).toBe(false);
     expect(cles).not.toContain("conges.valider_rh");
-    expect(cles).not.toContain("absences.valider_rh");
   });
 
-  it("un rôle sans permission sœur (ex. Admin seul) ne reçoit rien", () => {
-    expect(permissionsAbsencePourCles(["feedback.moderer", "pointage.reinitialiser"])).toEqual([]);
+  it("un rôle sans permission sœur ne reçoit rien", () => {
+    expect(permissionsCongePourCles(["feedback.moderer", "pointage.reinitialiser"])).toEqual([]);
   });
 });
