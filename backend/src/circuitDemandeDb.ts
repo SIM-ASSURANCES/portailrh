@@ -22,6 +22,7 @@ import {
   type TypeDemandeCircuit,
 } from "./circuitDemande";
 import { montantValideDepuisLignes } from "./etatArticles";
+import { categorisationEstObligatoire } from "./parametresTresorerie";
 import { refusMotifLigne } from "./motifLigne";
 import { dateLivraisonAEnregistrer, jourCourant, jourDepuisDate, refusDateLivraison, versDateStockee } from "./dateLivraisonArticle";
 import { champsBeneficiaire, type ChoixBeneficiaire } from "./beneficiaire";
@@ -289,7 +290,7 @@ export async function appliquerTransitionCircuit(
   if (action.type === "DECIDER_LIGNES" && d.lignes.length > 0) {
     return { ok: false, message: "Cette demande contient des lignes d'article : utilisez la décision article par article." };
   }
-  const r = transition(demandeCircuit(d), acteur, action);
+  const r = transition(await demandeCircuit(db, d), acteur, action);
   if (!r.ok) return r;
 
   const maintenant = new Date();
@@ -356,7 +357,7 @@ export async function soumettreLignesAuDG(
   await verrouillerDemande(db, demandeId);
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
-  const circuit = demandeCircuit(d);
+  const circuit = await demandeCircuit(db, d);
   const lignes = circuit.lignes!;
   const r = transition(circuit, acteur, { type: "SOUMETTRE_LIGNES_DG", ligneIds });
   if (!r.ok) return r;
@@ -422,7 +423,7 @@ export async function deciderLigneDG(
   await verrouillerDemande(db, demandeId);
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
-  const circuit = demandeCircuit(d);
+  const circuit = await demandeCircuit(db, d);
   const lignes = circuit.lignes!;
   const motif = decision.motif?.trim() ?? "";
   const r = transition(circuit, acteur, { type: "DECIDER_LIGNE_DG", ligneId, valider: decision.valider, motif });
@@ -504,7 +505,7 @@ export async function deciderArticles(
     }
   }
 
-  const circuit = demandeCircuit(d);
+  const circuit = await demandeCircuit(db, d);
   const r = transition(circuit, acteur, {
     type: "DECIDER_LIGNES",
     decisions: decisions.map((x) => ({ ligneId: x.ligneId, statut: x.statut })),
@@ -598,8 +599,9 @@ export async function deciderArticles(
 }
 
 /** Ligne `Demande` (champs de `SELECT_DEMANDE_CIRCUIT`) → `DemandeCircuit`, articles et bénéficiaires effectifs compris. */
-function demandeCircuit(d: Parameters<typeof versDemandeCircuit>[0]): DemandeCircuit {
-  return versDemandeCircuit(d);
+async function demandeCircuit(db: Db, d: Parameters<typeof versDemandeCircuit>[0]): Promise<DemandeCircuit> {
+  // Lot I : la catégorisation n'est exigée (y compris pour soumettre au DG) qu'à partir de la date fixée par la Finance.
+  return versDemandeCircuit(d, await categorisationEstObligatoire(db));
 }
 
 export interface LigneCorrigee {

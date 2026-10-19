@@ -943,6 +943,7 @@ export async function getReportingArbre(
         estConfirme: r.estConfirme,
         estAnnule: r.estAnnule,
         motifAnnulation: r.motifAnnulation,
+        motif: r.motif,
         auteur: r.auteur.fullName,
         creeLe: r.createdAt,
         confirmeLe: r.confirmeAt,

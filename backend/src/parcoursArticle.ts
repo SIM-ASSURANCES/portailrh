@@ -9,6 +9,7 @@
 // « indéterminé » ne subsiste que pour un retour ancien SANS article sur une demande à plusieurs articles réglés en Caisse.
 
 import type { EtatArticle, StatutArticle } from "./etatArticles";
+import { libelleMotifReglement } from "./motifReglement";
 import { LIBELLE_ETAT_ARTICLE } from "./etatArticles";
 import { depensesDeclareesLigne, getEcartLigne, resteNonDetailleTotal, type AgregatsRegularisation } from "./regularisationArticle";
 
@@ -58,6 +59,8 @@ export interface ParcoursReglement {
   estAnnule: boolean;
   /** Date de confirmation (le règlement a réellement eu lieu). */
   confirmeAt: Date | null;
+  /** Motif / nature du règlement (lot I) ; absent ou `null` pour un règlement antérieur (affiché « Non renseigné »). */
+  motif?: string | null;
   /** Solde à régulariser du règlement (Caisse comme Banque, lot G) ; `null` si non calculé. */
   solde: number | null;
   retours: ParcoursRetour[];
@@ -212,7 +215,7 @@ export function parcoursArticle(e: EntreeParcours): ParcoursArticle {
   if (confirmes.length > 0) {
     const lignes = confirmes.map(
       (r) =>
-        `${eur(r.montant)} — ${r.mode === "CAISSE" ? "Caisse" : "Banque"}${jour(r.confirmeAt) ? ` — le ${jour(r.confirmeAt)}` : ""} — bénéficiaire : ${e.beneficiaire}`
+        `${eur(r.montant)} — ${r.mode === "CAISSE" ? "Caisse" : "Banque"}${jour(r.confirmeAt) ? ` — le ${jour(r.confirmeAt)}` : ""} — bénéficiaire : ${e.beneficiaire} — motif : ${libelleMotifReglement(r.motif)}`
     );
     if (reste > 0) lignes.push(`Réglé ${eur(regle)} sur ${eur(valide)} — reste ${eur(reste)}`);
     etapes.push({ cle: "REGLE", libelle: "Réglé", lignes });

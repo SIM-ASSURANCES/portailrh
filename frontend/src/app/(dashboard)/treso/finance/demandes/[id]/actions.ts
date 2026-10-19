@@ -33,7 +33,7 @@ import {
 /** Refus du moteur du circuit levé DANS une transaction pour l'annuler entièrement (jamais exporté). */
 class RefusCircuit extends Error {}
 import { fieldErrorsFromZod, MOTIF_LIGNE_MIN, type ActionState } from "backend";
-import { refusDemandeSansCategorie, refusLignesValideesSansCategorie } from "backend";
+import { categorisationEstObligatoire, refusDemandeSansCategorie, refusLignesValideesSansCategorie } from "backend";
 
 /**
  * Validation complémentaire qui comble le reliquat d'une dépense directe (hors circuit : la décision finale est déjà
@@ -779,7 +779,8 @@ export async function validerLignesAction(
   }
 
   // Catégorisation obligatoire (2026-10-08) : un article validé doit porter une catégorie ; un article rejeté, non.
-  const refusCategorie = refusLignesValideesSansCategorie(parsedDecisions.data, demande.lignes);
+  // Lot I : seulement à partir de la date fixée par la Finance (`categorisationEstObligatoire`, nulle = jamais).
+  const refusCategorie = refusLignesValideesSansCategorie(parsedDecisions.data, demande.lignes, await categorisationEstObligatoire());
   if (refusCategorie) return { status: "error", message: refusCategorie };
 
   const acteurCircuit = await chargerActeur(prisma, session, demande.createurId);
@@ -842,7 +843,7 @@ export async function validerTotalementAction(demandeId: string): Promise<Simple
     };
   }
 
-  const refusCategorieTotale = refusDemandeSansCategorie(demande);
+  const refusCategorieTotale = refusDemandeSansCategorie(demande, await categorisationEstObligatoire());
   if (refusCategorieTotale) return { status: "error", message: refusCategorieTotale };
 
   const montantDemande = Number(demande.montant);
@@ -905,7 +906,7 @@ export async function validerPartiellementAction(
     };
   }
 
-  const refusCategoriePartielle = refusDemandeSansCategorie(demande);
+  const refusCategoriePartielle = refusDemandeSansCategorie(demande, await categorisationEstObligatoire());
   if (refusCategoriePartielle) return { status: "error", message: refusCategoriePartielle };
 
   const montantDemande = Number(demande.montant);
@@ -990,7 +991,7 @@ export async function validerComplementaireAction(
     };
   }
   // Une demande validée avant la règle de catégorisation obligatoire peut n'avoir aucune catégorie : refusée aussi.
-  const refusCategorieComplement = refusDemandeSansCategorie(demande);
+  const refusCategorieComplement = refusDemandeSansCategorie(demande, await categorisationEstObligatoire());
   if (refusCategorieComplement) return { status: "error", message: refusCategorieComplement };
 
   const montantDemande = Number(demande.montant);

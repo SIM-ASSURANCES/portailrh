@@ -223,13 +223,15 @@ export function HistoriqueSection({ historique: h }: { historique: HistoriqueImp
     <>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Règlements {portee}</Text>
-        {h.reglements.map((r, i) =>
+        {h.reglements.flatMap((r, i) => [
           ligne(
             `r${i}`,
             `${r.reference} — ${libelleMode(r.mode)}${r.date ? ` — ${formatDate(r.date)}` : ""} — par ${r.auteur}${r.courant ? " (ce reçu)" : ""}`,
             formatMontant(r.montant)
-          )
-        )}
+          ),
+          // Lot I : motif / nature du règlement sur sa propre ligne (un libellé trop long s'entremêlerait avec le montant).
+          ligne(`rm${i}`, `Motif : ${r.motif}`, ""),
+        ])}
         {ligne("rt", "Total réglé", formatMontant(h.totalRegle), true)}
       </View>
 
@@ -346,6 +348,8 @@ export interface ReceiptData {
   mode: "CAISSE" | "BANQUE";
   confirmeLe: Date;
   auteurNom: string;
+  /** Motif / nature du règlement (lot I) ; « Non renseigné » pour un règlement antérieur. */
+  motif: string;
   /** Section 12.2 : nom(s) du/des validateur(s) — voir `getValidateursNoms` (route.tsx). */
   validateursNoms: string;
   genereLe: Date;
@@ -476,6 +480,10 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Bénéficiaire</Text>
               <Text style={styles.detailValue}>{data.beneficiaireNom}</Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Motif / nature du règlement</Text>
+              <Text style={styles.detailValue}>{data.motif}</Text>
             </View>
             {data.repartitionCategories && data.repartitionCategories.length > 0 ? (
               data.repartitionCategories.map((r, index) => (

@@ -68,6 +68,7 @@ export async function ReglementsSection({
     motifAnnulation: r.motifAnnulation,
     auteurNom: r.auteur.fullName,
     createdAt: r.createdAt,
+    motif: r.motif,
     allocations: r.allocations.map((a) => ({ categorieId: a.categorieId, categorieLabel: a.categorie.label, montant: Number(a.montant) })),
   });
   const refus = (ligne: (typeof demande.lignes)[number] | null) =>

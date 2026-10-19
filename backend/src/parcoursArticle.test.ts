@@ -217,3 +217,20 @@ describe("parcours d'un article", () => {
     });
   });
 });
+
+describe("motif du règlement dans le parcours (lot I)", () => {
+  it("l'étape Réglé affiche le motif ; un ancien règlement affiche « Non renseigné »", () => {
+    const p = parcoursArticle(
+      base({
+        reglements: [
+          reglement({ id: "r1", montant: 60000, motif: "Achat de fournitures" }),
+          reglement({ id: "r2", montant: 40000, motif: null }),
+        ],
+      })
+    );
+    const lignes = p.etapes.find((e) => e.cle === "REGLE")!.lignes;
+    expect(lignes[0]).toContain("motif : Achat de fournitures");
+    expect(lignes[1]).toContain("motif : Non renseigné");
+  });
+});
+

@@ -201,6 +201,7 @@ async function creerEtConfirmer(p, montant, mode, attendu) {
   await p.goto(`${B}/treso/finance/demandes/${D2}`);
   await bloc(p).getByRole("button", { name: "Ajouter un règlement" }).click();
   await bloc(p).locator('input[name="montant"]').fill(String(montant));
+  await bloc(p).locator('textarea[name="motif"]').fill("Règlement de test e2e");
   await bloc(p).locator('select[name="mode"]').selectOption(mode);
   await bloc(p).getByRole("button", { name: "Créer le règlement" }).click();
   await attendre(async () => (await reglementsDe()).length === attendu);

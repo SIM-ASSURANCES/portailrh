@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 
-import { nomBeneficiaireDemande } from "backend";
+import { libelleMotifReglement, nomBeneficiaireDemande } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { chargerArticleDocument } from "@/lib/pdf/articleReglement";
@@ -137,6 +137,7 @@ export async function GET(
     mode: reglement.mode,
     confirmeLe: reglement.confirmeAt ?? reglement.createdAt,
     auteurNom: reglement.auteur.fullName,
+    motif: libelleMotifReglement(reglement.motif),
     validateursNoms,
     genereLe: new Date(),
     montantDemande: Number(reglement.demande.montant),

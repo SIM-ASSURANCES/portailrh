@@ -2,9 +2,9 @@
 
 import { useActionState, useEffect, useState } from "react";
 
-import { Button, Input, Select } from "@/components/ui";
+import { Button, Input, Select, Textarea } from "@/components/ui";
 import { useActionFeedback } from "@/lib/hooks/useActionFeedback";
-import { IDLE_ACTION_STATE } from "backend/client";
+import { IDLE_ACTION_STATE, MOTIF_REGLEMENT_MIN, refusMotifReglement } from "backend/client";
 
 import { creerReglementAction } from "./reglementActions";
 
@@ -44,6 +44,9 @@ export function ReglementForm({
   const [state, formAction, isPending] = useActionState(creerReglementAction, IDLE_ACTION_STATE);
   const [open, setOpen] = useState(false);
   const [montant, setMontant] = useState("");
+  // Lot I : motif / nature du règlement, obligatoire ; le bouton reste grisé tant qu'il est trop court (revérifié serveur).
+  const [motif, setMotif] = useState("");
+  const motifRefuse = refusMotifReglement(motif);
   useActionFeedback(state);
 
   useEffect(() => {
@@ -54,6 +57,7 @@ export function ReglementForm({
       // eslint-disable-next-line react-hooks/set-state-in-effect -- réaction ponctuelle à un ActionState de succès, pas un état dérivé du rendu
       setOpen(false);
       setMontant("");
+      setMotif("");
     }
   }, [state]);
 
@@ -96,6 +100,16 @@ export function ReglementForm({
         onChange={(e) => setMontant(e.target.value)}
         error={state.status === "error" ? state.fieldErrors?.montant : undefined}
       />
+      <Textarea
+        name="motif"
+        label="Motif / nature du règlement"
+        required
+        rows={2}
+        hint={`Obligatoire (${MOTIF_REGLEMENT_MIN} caractères minimum), pour la caisse comme pour la banque.`}
+        value={motif}
+        onChange={(e) => setMotif(e.target.value)}
+        error={state.status === "error" ? state.fieldErrors?.motif : undefined}
+      />
       <Select
         name="mode"
         label="Mode de règlement"
@@ -108,7 +122,7 @@ export function ReglementForm({
       />
 
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" loading={isPending}>
+        <Button type="submit" loading={isPending} disabled={motifRefuse !== null}>
           Créer le règlement
         </Button>
         <Button type="button" variant="secondary" disabled={isPending} onClick={() => setOpen(false)}>

@@ -87,10 +87,11 @@ const etatDG = (l: LigneValidation): EtatLigneDG =>
   etatLigneDG({ soumiseAuDG: l.soumiseAuDG ?? false, decisionDG: l.decisionDG ?? null });
 
 /** La ligne telle que le circuit la lit (sélection des articles à soumettre au DG). */
-const versLigneCircuit = (l: LigneValidation): LigneCircuit => ({
+const versLigneCircuit = (l: LigneValidation, categorisationObligatoire: boolean): LigneCircuit => ({
   id: l.id,
   libelle: l.libelle,
-  categorisee: !!l.categorieId,
+  // Lot I : exigence de catégorie satisfaite d'office tant que la Finance n'a pas rendu la catégorisation obligatoire.
+  categorisee: !categorisationObligatoire || !!l.categorieId,
   statut: l.statutValidation,
   soumiseAuDG: l.soumiseAuDG ?? false,
   decisionDG: l.decisionDG ?? null,
@@ -175,9 +176,12 @@ export function LignesValidationTable({
   soumissionDG = null,
   etapeCircuit = null,
   enteteDemande = null,
+  categorisationObligatoire = true,
 }: {
   demandeId: string;
   lignes: LigneValidation[];
+  /** Lot I : la catégorisation est-elle obligatoire aujourd'hui pour valider (`categorisationEstObligatoire`) ? */
+  categorisationObligatoire?: boolean;
   canValider: boolean;
   /** Soumission au DG ligne par ligne (2026-10-10) : `null` si la demande ne s'y prête pas (sans étape DG optionnelle).
    *  `raisonDemande` : pourquoi la soumission est impossible pour la demande entière (permission, étape…), `null` si elle
@@ -220,8 +224,8 @@ export function LignesValidationTable({
     })
   );
   const raisonDemande = soumissionDG?.raisonDemande ?? null;
-  const raisonArticle = (l: LigneValidation) => raisonSoumissionArticle(versLigneCircuit(l), raisonDemande);
-  const bandeau = soumissionDG && etapeCircuit ? bandeauEtapeDG(etapeCircuit, lignes.map(versLigneCircuit)) : null;
+  const raisonArticle = (l: LigneValidation) => raisonSoumissionArticle(versLigneCircuit(l, categorisationObligatoire), raisonDemande);
+  const bandeau = soumissionDG && etapeCircuit ? bandeauEtapeDG(etapeCircuit, lignes.map((l) => versLigneCircuit(l, categorisationObligatoire))) : null;
   const [ligneEnSoumission, setLigneEnSoumission] = useState<string | null>(null);
 
   /** Soumet UN article au DG (son propre bouton : le seul moyen de soumettre). */
@@ -266,7 +270,8 @@ export function LignesValidationTable({
     return decision.statut !== "REJETEE" || decision.motif.trim().length >= 3;
   });
   // Catégorisation obligatoire : une ligne validée doit porter une catégorie (revérifié par le serveur).
-  const valideesSansCategorie = lignesDecidees.some((ligne) => decisions[ligne.id]!.statut === "VALIDEE" && !ligne.categorieId);
+  const valideesSansCategorie =
+    categorisationObligatoire && lignesDecidees.some((ligne) => decisions[ligne.id]!.statut === "VALIDEE" && !ligne.categorieId);
   const peutEnregistrer = canValider && lignesDecidees.length > 0 && motifsValides && !valideesSansCategorie && !isPending;
 
   // Bug signalé "l'interaction se bloque après avoir cliqué Rejeter" (voir
@@ -342,6 +347,7 @@ export function LignesValidationTable({
             categories={categories}
             objets={objets}
             budgetParCategorie={budgetParCategorie}
+            categorisationObligatoire={categorisationObligatoire}
             etatDG={soumissionDG || ligne.soumiseAuDG ? etatDG(ligne) : null}
             soumission={
               soumissionDG && ligne.statutValidation === "EN_ATTENTE"
@@ -420,9 +426,12 @@ function LigneCard({
   categories,
   objets,
   budgetParCategorie,
+  categorisationObligatoire = true,
   etatDG: etatLigne = null,
   soumission = null,
 }: {
+  /** Lot I : « Valider » n'exige une catégorie que si la catégorisation est obligatoire aujourd'hui. */
+  categorisationObligatoire?: boolean;
   ligne: LigneValidation;
   enteteDemande?: ContexteDemandeArticle | null;
   dejaDecidee: boolean;
@@ -645,7 +654,7 @@ function LigneCard({
                 <Button
                   type="button"
                   variant={decision?.statut === "VALIDEE" ? "primary" : "secondary"}
-                  disabled={decisionsPending || !ligne.categorieId || etatLigne === "REFUSEE_DG" || !!ligne.raisonDecision}
+                  disabled={decisionsPending || (categorisationObligatoire && !ligne.categorieId) || etatLigne === "REFUSEE_DG" || !!ligne.raisonDecision}
                   onClick={() => onChangeStatut("VALIDEE")}
                 >
                   Valider
@@ -662,7 +671,7 @@ function LigneCard({
               </div>
               {ligne.raisonDecision ? <RaisonVisible data-raison-decision-article={ligne.id}>{ligne.raisonDecision}</RaisonVisible> : null}
               {raisonSoumettre}
-              {!ligne.categorieId && etatLigne !== "REFUSEE_DG" ? (
+              {categorisationObligatoire && !ligne.categorieId && etatLigne !== "REFUSEE_DG" ? (
                 <p data-sans-categorie className="text-xs text-muted-foreground">
                   {MESSAGE_LIGNE_SANS_CATEGORIE}
                 </p>

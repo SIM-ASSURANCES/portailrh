@@ -1,4 +1,4 @@
-import { getAgregatsRegularisation, getEcartLigne, prisma, resteNonDetailleTotal } from "backend";
+import { getAgregatsRegularisation, getEcartLigne, libelleMotifReglement, prisma, resteNonDetailleTotal } from "backend";
 
 /**
  * Historique détaillé imprimé sur les reçus (lot G, 2026-10-14) : TOUT ce qui a été fait pour l'article (ou, sans article,
@@ -15,6 +15,8 @@ export interface HistoriqueImprime {
     mode: "CAISSE" | "BANQUE";
     montant: number;
     auteur: string;
+    /** Motif / nature du règlement (lot I) ; « Non renseigné » pour un règlement antérieur. */
+    motif: string;
     /** Le règlement qui fait l'objet du document. */
     courant: boolean;
   }[];
@@ -90,6 +92,7 @@ export async function chargerHistoriqueDocument(p: {
     mode: r.mode,
     montant: Number(r.montant),
     auteur: r.auteur.fullName,
+    motif: libelleMotifReglement(r.motif),
     courant: r.id === p.reglementCourantId,
   }));
   const retours = concernes.flatMap((r) =>

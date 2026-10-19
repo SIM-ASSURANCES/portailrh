@@ -2604,7 +2604,7 @@ demandeur), service, catégorie/objet, mode, statut, type de demande.
 
 Aucune migration, aucun droit ni garde de conflit d'intérêts modifié, aucune écriture comptable existante touchée.
 
-- **Catégorie obligatoire pour valider** (`backend/src/categorisationObligatoire.ts`, pur, partagé serveur/écran) : une
+- **Catégorie obligatoire pour valider** (⚠️ depuis le lot I, seulement à partir d'une date fixée par la Finance, nulle = jamais : voir « Lot I ») (`backend/src/categorisationObligatoire.ts`, pur, partagé serveur/écran) : une
   ligne VALIDÉE doit porter une catégorie, une ligne rejetée non. Serveur : `validerLignesAction` (Finance à l'étape
   Finance et à la décision finale, DG pour les lignes du cas b, nouvelle décision après une correction — les lignes
   repassent en attente), `validerTotalementAction`/`validerPartiellementAction`/`validerComplementaireAction` (dépense
@@ -3241,6 +3241,45 @@ Aucune migration, aucune permission nouvelle, lecture seule. Deux corrections du
 - **Vérifié** : vitest (30 tests `reportingArbre`, dont totaux par devise : une devise, deux devises, pas de contamination, hors demande ; liens avec/sans droit ; libellé d'origine), tsc, eslint, `next build` ;
   e2e `lot-f.mjs` 60/60 (totaux EUR et XOF séparés avec leurs formules SUMIFS, une seule ligne « Total général » sur un export filtré à une devise, libellé d'origine, liens vérifiés par Finance et ouvrables,
   DG sans lien et refusé par la route, page identique) ; régressions des lots précédents.
+
+#### Lot I — changements demandés par le DG : « Montant rendu », motif du règlement, catégorisation à partir d'une date (2026-10-19)
+
+Aucune écriture de caisse créée ni modifiée, `PERMISSIONS_DECISION_NON_DELEGABLES` intacte, devise unique, retour nul = historique seulement. Deux migrations manuelles, additives et idempotentes
+(`20261022090000_reglement_motif`, `20261022100000_parametre_categorisation`), horodatées après `20261020090000` ; `migrate diff` vide, rejouées sans effet.
+
+**1. « Montant rendu » (libellé seulement, aucun calcul).** Le reçu PDF du retour disait déjà « Montant rendu » (et « Total dépensé + rendu ») : inchangé. Le libellé « Retourné à la compta », qui
+désignait ce même montant (retour réceptionné) sur l'écran du retour Finance et sur l'écran du collaborateur, devient « Montant rendu » (`retourAffichage.ts`, source unique `etatRetourAffiche` ; les
+deux autres états, « Retourné » — couvert par un retour post-clôture — et « À retourner », restent). **Laissés tels quels, volontairement** : le récapitulatif du collaborateur et la bande de
+régularisation (« Retours de caisse … reçus », « Retourné » = total cumulé des retours reçus d'un article/d'une demande, pas le reçu d'un retour), la colonne « Retourné » du reporting et de
+l'export (total agrégé), la ligne « Retours de caisse » du reçu de règlement (« Réceptionné » + montant), « Montant à retourner définitif », et les messages d'erreur/historique « montant retourné ».
+
+**2. Motif / nature du règlement** (`backend/src/motifReglement.ts`, pur, testé). `Reglement.motif` (nullable en base). **Obligatoire à la création** (`creerReglementAction`, zod : 5 caractères
+minimum, espaces de bord retirés, 300 maximum) côté serveur ET à l'écran (`ReglementForm` : champ « Motif / nature du règlement », bouton « Créer le règlement » grisé tant que le motif est trop court),
+Caisse comme Banque. **Modification d'un brouillon** (`modifierReglementAction(…, motif)`, `motifPourModification`) : un brouillon qui a un motif en garde un valide ; un brouillon ANTÉRIEUR sans motif
+n'est jamais bloqué (motif vide accepté, motif fourni validé). **Confirmation** (`confirmerReglementAction`) : aucune exigence de motif (un ancien brouillon se confirme). Affiché : sous chaque règlement
+de l'écran Finance (`data-motif-reglement`), dans le **parcours de l'article** (étape Réglé : « … — motif : X »), sur le **reçu PDF** (ligne « Motif / nature du règlement » dans les détails de la demande
++ une ligne « Motif : X » sous chaque règlement de l'historique imprimé), dans l'**historique** de la demande (« Règlement confirmé … — motif : X »), et dans le **reporting** : colonne dédiée « Motif / nature du
+règlement » du tableau unique du lot F (page et Excel, `motifReglement`, renseignée sur les seules lignes RÈGLEMENT). **Règlements anciens** (aucun motif) : jamais bloqués ni réécrits, affichés « Non renseigné »
+partout (`libelleMotifReglement`). Le **bon de caisse** reste minimal (pas de motif). Les e2e qui créent un règlement par l'écran remplissent désormais le champ (`articles-beneficiaire-pieces`, `lot-g`, `reglement-par-article`).
+
+**3. Catégorisation obligatoire à partir d'une date** (remplace la règle permanente du 2026-10-08, qui reste décrite plus haut). Paramètre `ParametreTresorerie` (clé `categorisation.obligatoire_a_partir_du`,
+`valeurDate` `DATE` nullable) : **nul = jamais obligatoire** ; sinon obligatoire à partir de ce jour (inclus, comparaison au jour). **La migration le pose à NUL** : rien n'est bloqué au déploiement. Règle unique :
+`categorisationObligatoireAu(date, maintenant)` dans `categorisationObligatoire.ts` ; `refusLignesValideesSansCategorie(decisions, lignes, obligatoire)` et `refusDemandeSansCategorie(demande, obligatoire)` PRENNENT
+désormais `obligatoire` (paramètre requis : aucun appelant ne peut l'oublier). Chargement : `categorisationEstObligatoire()` / `chargerRegleCategorisation()` (`parametresTresorerie.ts`). Branché sur : `validerLignesAction`,
+`validerTotalementAction`/`validerPartiellementAction`/`validerComplementaireAction` (dépense directe), les boutons « Valider » des écrans Finance et DG (`LignesValidationTable`, `ValidationActions`,
+`ValidationComplementaireActions`) et **la soumission au DG** (`versLigneCircuit`/`versDemandeCircuit(…, categorisationObligatoire)` : `categorisee` vaut « exigence satisfaite » quand la catégorie n'est pas exigée ;
+`circuitDemandeDb` charge la règle à chaque transition) — sinon un article destiné au DG aurait gardé un blocage que la validation n'a plus. Une ligne rejetée n'a jamais eu besoin de catégorie. **Écran** : carte
+« Catégorisation obligatoire pour valider » en tête de `/treso/finance/categories` (garde de la page : `isAdmin` ou `treso.gerer_categories` — la Finance ; **aucune permission nouvelle**), champ date, « Enregistrer »,
+« Ne jamais exiger », règle en vigueur en clair et 5 derniers changements ; `definirDateCategorisationAction` revérifie la garde. **Historisé** : `HistoriqueEntry` (entité `ParametreTresorerie`, action
+`parametre_categorisation_obligatoire`, « ancienne → nouvelle », auteur) + `majAt`/`majParId`. Changer la date ne touche aucune demande, aucun article validé sans catégorie (ils restent validés) ni aucune écriture.
+
+**Points ouverts** : (a) un article validé sans catégorie n'alimente aucune allocation de budget (comportement existant pour les anciens articles) : le suivi budgétaire de la catégorie ne le voit pas tant qu'il n'est pas
+catégorisé — or `categoriserLigneAction` refuse une ligne déjà décidée, donc il ne pourra plus l'être ; (b) la date est comparée au jour UTC du serveur (= Abidjan, sans heure d'été) ; (c) le bon de caisse n'affiche pas le
+motif ; (d) la colonne « Retourné » des écrans/exports (total cumulé) garde son libellé.
+
+**Vérifié** : vitest (881+ tests : `motifReglement`, `categorisationObligatoire` avant/jour même/après/nul/invalide, `categorisationSoumission`, parcours et reporting avec motif), tsc, eslint, `next build` ; migrations depuis zéro
+sur base jetable, `migrate diff` vide, rejouées sans effet ; e2e `lot-i.mjs` (date nulle / demain / aujourd'hui / remise à nul, refus serveur par appel direct de `validerLignesAction`, motif de 4 caractères et d'espaces refusés,
+Caisse et Banque, modification, anciens règlements « Non renseigné » jamais modifiés, reçu PDF, parcours, historique, reporting page et Excel, « Montant rendu » écran Finance / collaborateur / PDF, grand livre de caisse identique).
 
 ### Solde d'ouverture de caisse
 

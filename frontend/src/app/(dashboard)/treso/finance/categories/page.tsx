@@ -4,7 +4,9 @@ import { CategoriesList } from "@/app/(dashboard)/admin/categories/CategoriesLis
 import { CategorieCreateForm } from "@/app/(dashboard)/admin/categories/CategorieCreateForm";
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { prisma } from "backend";
+import { chargerRegleCategorisation, ENTITE_PARAMETRE_TRESORERIE, prisma } from "backend";
+
+import { CategorisationObligatoireDate } from "./CategorisationObligatoireDate";
 
 /**
  * Gestion des Catégories/Objets ouverte à Finance (voir CLAUDE.md "Gestion
@@ -53,12 +55,37 @@ export default async function FinanceCategoriesPage() {
     orderBy: { label: "asc" },
   });
 
+  // Lot I : règle « catégorisation obligatoire à partir d'une date », modifiable par la Finance, changements historisés.
+  const [regle, historiqueRegle] = await Promise.all([
+    chargerRegleCategorisation(),
+    prisma.historiqueEntry.findMany({
+      where: { entity: ENTITE_PARAMETRE_TRESORERIE },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      include: { user: { select: { fullName: true } } },
+    }),
+  ]);
+
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
       <PageHeader
         title="Catégories"
         description="Catégories et objets disponibles pour la catégorisation des demandes."
       />
+
+      <section className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
+        <h2 className="text-lg font-semibold text-foreground">Catégorisation obligatoire pour valider</h2>
+        <CategorisationObligatoireDate dateActuelle={regle.dateDebut} phrase={regle.libelle} />
+        {historiqueRegle.length > 0 ? (
+          <ul data-historique-parametre className="space-y-1 text-xs text-muted-foreground">
+            {historiqueRegle.map((h) => (
+              <li key={h.id}>
+                {h.createdAt.toLocaleString("fr-FR")} — {h.user.fullName} : {h.detail}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-foreground">Nouvelle catégorie</h2>

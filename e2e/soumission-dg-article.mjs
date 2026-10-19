@@ -28,6 +28,10 @@ const PHRASE_ATTENTE_FINALE = "En attente de la validation finale.";
 // Lot B : les autres articles ne sont plus bloqués pendant que le DG décide.
 const PHRASE_BANDEAU = "Des articles de cette demande attendent la décision du DG. Les autres articles ne sont pas bloqués";
 
+// Lot I : la catégorisation n'est obligatoire qu'à partir d'une date (paramètre, null = jamais). Ce scénario porte sur
+// la règle « article non catégorisé non soumissible » : on l'active (date passée) puis on remet null à la fin.
+await q(`UPDATE "ParametreTresorerie" SET "valeurDate" = DATE '2000-01-01' WHERE cle = 'categorisation.obligatoire_a_partir_du'`);
+
 // --- Données de test (idempotentes : on repart de zéro à chaque lancement) --------------------------------------
 await q(`DELETE FROM "HistoriqueEntry" WHERE "entityId" LIKE 'e2e-soum-%' OR "entityId" IN (SELECT id FROM "LigneDemande" WHERE "demandeId" LIKE 'e2e-soum-%')`);
 await q(`DELETE FROM "Notification" WHERE lien LIKE '%e2e-soum-%'`);
@@ -199,6 +203,7 @@ await enteteSur("dg@simassurances.test", "/treso/dg/e2e-soum-d-finance", "DG");
 await enteteSur("responsable-commercial@simassurances.test", "/treso/service/e2e-soum-d-finance", "responsable de service");
 await enteteSur("collaborateur@simassurances.test", "/treso/demandes/e2e-soum-d-finance", "collaborateur");
 
+await q(`UPDATE "ParametreTresorerie" SET "valeurDate" = NULL WHERE cle = 'categorisation.obligatoire_a_partir_du'`);
 await db.end();
 await browser.close();
 console.log(resultats.join("\n"));

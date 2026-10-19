@@ -16,7 +16,7 @@ import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge
 import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesIntervenantes";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { getSession, hasPermission } from "@/lib/auth";
-import { getDatesGestionDemandes, prisma, refusDemandeSansCategorie } from "backend";
+import { categorisationEstObligatoire, getDatesGestionDemandes, prisma, refusDemandeSansCategorie } from "backend";
 import { libelleGestionArticle } from "backend/client";
 import { chargerEvaluationCloture, getMontantsLignesParStatut, peutEtreCloturee } from "backend";
 import {
@@ -111,7 +111,9 @@ export default async function CategoriserDemandePage({
 
   // Circuit de validation (commit 4) : ce que ce compte peut faire à l'étape courante, et sinon pourquoi — la phrase
   // que le serveur renverrait (`raisonIndisponible`, moteur du circuit), affichée sous les boutons grisés.
-  const demandeCircuit = versDemandeCircuit(demande);
+  // Lot I : la catégorisation n'est exigée (validation, soumission au DG) qu'à partir de la date fixée par la Finance.
+  const categorisationObligatoire = await categorisationEstObligatoire();
+  const demandeCircuit = versDemandeCircuit(demande, categorisationObligatoire);
   // Soumission au DG ligne par ligne (2026-10-10) : demande standard à lignes, étape DG optionnelle.
   const soumissionParLignes = demandeAauMoinsUneLigne && demande.typeDemande === "STANDARD" && demande.modeEtapeDG === "OPTIONNELLE";
   const acteurCircuit = session ? await chargerActeur(prisma, session, demande.createurId) : null;
@@ -659,6 +661,7 @@ export default async function CategoriserDemandePage({
         // qu'un article est validé ; la clôture seulement quand tous sont traités.
         <>
           <LignesValidationTable
+              categorisationObligatoire={categorisationObligatoire}
             demandeId={demande.id}
             lignes={lignesPourTable}
             canValider={canValiderLignes && raisonDecider === null}
@@ -722,6 +725,7 @@ export default async function CategoriserDemandePage({
               commentaire plus haut). */}
           {demandeAauMoinsUneLigne ? (
             <LignesValidationTable
+              categorisationObligatoire={categorisationObligatoire}
               demandeId={demande.id}
               lignes={lignesPourTable}
               canValider={canValiderLignes && raisonDecider === null}
@@ -745,7 +749,7 @@ export default async function CategoriserDemandePage({
               montantDemande={Number(demande.montant)}
               disabled={!canValider || raisonDecider !== null}
               raisonIndisponible={canValider ? raisonDecider : attenteValidationFinale}
-              raisonValidationIndisponible={refusDemandeSansCategorie(demande)}
+              raisonValidationIndisponible={refusDemandeSansCategorie(demande, categorisationObligatoire)}
             />
           )}
 
@@ -809,6 +813,7 @@ export default async function CategoriserDemandePage({
           ) : null}
           {demandeAauMoinsUneLigne ? (
             <LignesValidationTable
+              categorisationObligatoire={categorisationObligatoire}
               demandeId={demande.id}
               lignes={lignesPourTable}
               canValider={false}
@@ -878,6 +883,7 @@ export default async function CategoriserDemandePage({
               SANS ligne (ex: DEPENSE_DIRECTE). */}
           {demandeAauMoinsUneLigne ? (
             <LignesValidationTable
+              categorisationObligatoire={categorisationObligatoire}
               demandeId={demande.id}
               lignes={lignesPourTable}
               canValider={false}
@@ -903,7 +909,7 @@ export default async function CategoriserDemandePage({
             <ValidationComplementaireActions
               demandeId={demande.id}
               montantRestant={Number(demande.montant) - Number(demande.montantValide)}
-              raisonValidationIndisponible={refusDemandeSansCategorie(demande)}
+              raisonValidationIndisponible={refusDemandeSansCategorie(demande, categorisationObligatoire)}
             />
           ) : null}
           {blocExecution}

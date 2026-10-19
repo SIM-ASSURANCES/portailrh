@@ -112,6 +112,7 @@ async function creerReglement(p, ligneId, montant, mode = "BANQUE", { viser = nu
   const b = bloc(p, ligneId);
   await b.getByRole("button", { name: "Ajouter un règlement" }).click();
   await b.locator('input[name="montant"]').fill(String(montant));
+  await b.locator('textarea[name="motif"]').fill("Règlement de test e2e");
   await b.locator('select[name="mode"]').selectOption(mode);
   // Les réécritures viennent APRÈS la saisie (React réécrit les champs contrôlés à chaque rendu).
   if (sansPlafondClient) await b.locator('input[name="montant"]').evaluate((el) => el.removeAttribute("max"));

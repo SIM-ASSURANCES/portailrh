@@ -18,6 +18,7 @@ import {
   nomBeneficiaireDemande,
   prisma,
   raisonIndisponible,
+  categorisationEstObligatoire,
   refusDemandeSansCategorie,
   versDemandeCircuit,
   getParcoursArticles,
@@ -62,7 +63,8 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
   });
   if (!demande) notFound();
 
-  const demandeCircuit = versDemandeCircuit(demande);
+  const categorisationObligatoire = await categorisationEstObligatoire();
+  const demandeCircuit = versDemandeCircuit(demande, categorisationObligatoire);
   const enteteDemande = {
     reference: demande.reference,
     demandeurNom: demande.createur.fullName,
@@ -154,6 +156,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
       {decisionParLigne && demande.lignes.length > 0 ? (
         // Cas b : le DG décide ligne par ligne (même composant que la Finance, sans catégorisation ni libellé).
         <LignesValidationTable
+          categorisationObligatoire={categorisationObligatoire}
           demandeId={demande.id}
           lignes={demande.lignes.map((l) => ({
             id: l.id,
@@ -248,7 +251,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           raisonIndisponible={raisonDecider}
           // Le DG ne catégorise pas : la Finance renseigne la catégorie avant sa décision.
           raisonValidationIndisponible={
-            refusDemandeSansCategorie(demande) ? `${refusDemandeSansCategorie(demande)} La catégorie est renseignée par la Finance.` : null
+            refusDemandeSansCategorie(demande, categorisationObligatoire) ? `${refusDemandeSansCategorie(demande, categorisationObligatoire)} La catégorie est renseignée par la Finance.` : null
           }
         />
       ) : soumissionParLignes ? null : (

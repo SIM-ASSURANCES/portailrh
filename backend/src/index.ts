@@ -37,6 +37,8 @@ export * from "./beneficiaire";
 export * from "./beneficiaireArticles";
 export * from "./motifLigne";
 export * from "./categorisationObligatoire";
+export * from "./parametresTresorerie";
+export * from "./motifReglement";
 export * from "./retourNul";
 export * from "./retourExterneRattache";
 export * from "./regularisationDepenses";

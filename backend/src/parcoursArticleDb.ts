@@ -45,6 +45,7 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
       estConfirme: true,
       estAnnule: true,
       confirmeAt: true,
+      motif: true,
       // Lot G bis : la fiche de détail des dépenses d'un fonds versé par banque n'est pas un retour de caisse à réceptionner.
       retours: {
         where: { NOT: { reglement: { mode: "BANQUE" }, versementBancaire: false } },
@@ -105,6 +106,7 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
             estConfirme: r.estConfirme,
             estAnnule: r.estAnnule,
             confirmeAt: r.confirmeAt,
+            motif: r.motif,
             solde: soldes.has(r.id) ? (soldes.get(r.id) as number) : null,
             retours: r.retours.map((x) => ({
               estReceptionne: x.estReceptionne,

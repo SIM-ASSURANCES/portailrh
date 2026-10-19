@@ -447,3 +447,18 @@ describe("reportingArbre — justificatifs et libellé d'origine (lot F bis)", (
   });
 });
 
+describe("motif / nature du règlement (lot I)", () => {
+  it("colonne dédiée : le motif sur les lignes RÈGLEMENT, « Non renseigné » pour un ancien règlement, vide ailleurs", () => {
+    const src = demandeTrois();
+    src.reglements.push(reglement("RM", "A", "CAISSE", 10_000, { motif: "Achat de fournitures" }));
+    const l = aplatirArbres([construireArbreDemande(src)]);
+    expect(COLONNES_ARBRE.some((c) => c.cle === "motifReglement" && c.titre === "Motif / nature du règlement")).toBe(true);
+    const avecMotif = l.find((x) => x.type === "REGLEMENT" && x.montantOperation === 10_000)!;
+    expect(avecMotif.motifReglement).toBe("Achat de fournitures");
+    const anciens = l.filter((x) => x.type === "REGLEMENT" && x.montantOperation !== 10_000);
+    expect(anciens.length).toBeGreaterThan(0);
+    for (const a of anciens) expect(a.motifReglement).toBe("Non renseigné");
+    for (const x of l.filter((y) => y.type !== "REGLEMENT")) expect(x.motifReglement).toBe("");
+  });
+});
+

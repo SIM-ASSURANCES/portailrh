@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
+import { libelleMotifReglement, MOTIF_REGLEMENT_MIN, motifPourModification } from "backend/client";
 
 import { annulerReglementAction, confirmerReglementAction, modifierReglementAction } from "./reglementActions";
 
@@ -22,6 +23,8 @@ export interface ReglementRowData {
   motifAnnulation: string | null;
   auteurNom: string;
   createdAt: Date;
+  /** Lot I : motif / nature du règlement ; `null` pour un règlement antérieur (affiché « Non renseigné », jamais bloqué). */
+  motif: string | null;
   /** Voir CLAUDE.md "Allocation budgétaire explicite par règlement" —
    * toujours au moins une entrée dès que la demande est catégorisée
    * (même une seule catégorie crée une allocation à 100%, transparente
@@ -98,6 +101,8 @@ export function ReglementRow({
   const [montantEdit, setMontantEdit] = useState(String(reglement.montant));
   const [motif, setMotif] = useState("");
   const [motifError, setMotifError] = useState<string | undefined>();
+  const [motifReglementEdit, setMotifReglementEdit] = useState(reglement.motif ?? "");
+  const [motifReglementError, setMotifReglementError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
 
   function handleConfirmer() {
@@ -119,9 +124,16 @@ export function ReglementRow({
       return;
     }
     setMontantError(undefined);
+    // Lot I : un brouillon qui a un motif en garde un valide ; un brouillon ancien sans motif n'est jamais bloqué.
+    const verdictMotif = motifPourModification(reglement.motif, motifReglementEdit);
+    if (!verdictMotif.ok) {
+      setMotifReglementError(verdictMotif.message);
+      return;
+    }
+    setMotifReglementError(undefined);
 
     startTransition(async () => {
-      const result = await modifierReglementAction(reglement.id, montantValue, modeValue);
+      const result = await modifierReglementAction(reglement.id, montantValue, modeValue, motifReglementEdit);
       if (result.status === "success") {
         toast.success(result.message);
         setUiMode("view");
@@ -172,6 +184,9 @@ export function ReglementRow({
                 .join(", ")}
             </p>
           ) : null}
+          <p data-motif-reglement className="mt-1 text-xs text-foreground">
+            Motif / nature : <span className="font-medium">{libelleMotifReglement(reglement.motif)}</span>
+          </p>
           {reglement.estAnnule && reglement.motifAnnulation ? (
             <p className="mt-1 text-sm text-danger">
               Motif d&apos;annulation : {reglement.motifAnnulation}
@@ -234,6 +249,16 @@ export function ReglementRow({
             value={montantEdit}
             onChange={(e) => setMontantEdit(e.target.value)}
             error={montantError}
+          />
+          <Textarea
+            name="motifReglement"
+            label="Motif / nature du règlement"
+            rows={2}
+            required={reglement.motif != null}
+            hint={reglement.motif != null ? `${MOTIF_REGLEMENT_MIN} caractères minimum.` : `Règlement antérieur sans motif : facultatif, ${MOTIF_REGLEMENT_MIN} caractères minimum si renseigné.`}
+            value={motifReglementEdit}
+            onChange={(e) => setMotifReglementEdit(e.target.value)}
+            error={motifReglementError}
           />
           <Select
             name="mode"

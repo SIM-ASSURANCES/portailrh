@@ -174,6 +174,7 @@ let demandeId;
   const blocA = p.locator("[data-article-reglement]").first();
   await blocA.getByRole("button", { name: "Ajouter un règlement" }).click();
   await blocA.locator('input[name="montant"]').fill("1000");
+  await blocA.locator('textarea[name="motif"]').fill("Règlement de test e2e");
   await blocA.locator('select[name="mode"]').selectOption("BANQUE");
   await blocA.getByRole("button", { name: "Créer le règlement" }).click();
   await p.waitForTimeout(1500);

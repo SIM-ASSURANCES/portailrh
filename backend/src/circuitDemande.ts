@@ -838,12 +838,18 @@ export function versLigneCircuit(
     decisionDGAt?: Date | null;
     decideurFinanceId?: string | null;
   } & BeneficiaireStocke,
-  demande?: BeneficiaireStocke
+  demande?: BeneficiaireStocke,
+  /**
+   * Lot I : la catégorisation est-elle obligatoire aujourd'hui (`categorisationEstObligatoire`) ? Défaut `true` (règle
+   * d'origine). Quand elle ne l'est pas, `categorisee` vaut `true` — « l'exigence de catégorie est satisfaite » — pour que
+   * la soumission au DG ne bloque pas non plus sur une catégorie que la validation n'exige pas.
+   */
+  categorisationObligatoire = true
 ): LigneCircuit {
   return {
     id: l.id,
     libelle: l.libelle,
-    categorisee: !!l.categorieId,
+    categorisee: !categorisationObligatoire || !!l.categorieId,
     statut: l.statutValidation,
     soumiseAuDG: l.soumiseAuDG,
     decisionDG: l.decisionDG,
@@ -866,10 +872,12 @@ export function versDemandeCircuit(
     dgApprobateurId: string | null;
     decideurFinanceId: string | null;
     lignes?: Parameters<typeof versLigneCircuit>[0][];
-  } & BeneficiaireStocke
+  } & BeneficiaireStocke,
+  /** Lot I : voir `versLigneCircuit`. Défaut `true`. */
+  categorisationObligatoire = true
 ): DemandeCircuit {
   return {
-    lignes: d.lignes?.map((l) => versLigneCircuit(l, d)),
+    lignes: d.lignes?.map((l) => versLigneCircuit(l, d, categorisationObligatoire)),
     etape: d.etapeCircuit,
     createurId: d.createurId,
     typeDemande: d.typeDemande,

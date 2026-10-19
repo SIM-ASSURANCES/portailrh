@@ -28,6 +28,7 @@ export * from "./beneficiaireArticles";
 export * from "./motifLigne";
 export * from "./cheminRetour";
 export * from "./categorisationObligatoire";
+export * from "./motifReglement";
 export * from "./retourNul";
 export * from "./retourExterneRattache";
 export * from "./regularisationDepenses";

@@ -7,7 +7,11 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
 import {
+  libelleMotifReglement,
+  motifPourModification,
+  nettoyerMotifReglement,
   prisma,
+  refusMotifReglement,
   refusExecutionPropreReglement,
   refusExecutionPropreSurReglement,
   type ArticleReglable,
@@ -69,6 +73,11 @@ const creerReglementSchema = z.object({
   ligneDemandeId: z.string().min(1).optional(),
   montant: montantSchema,
   mode: modeSchema,
+  /** Lot I : motif / nature du règlement, obligatoire (5 caractères minimum) pour tout NOUVEAU règlement. */
+  motif: z.string().superRefine((v, ctx) => {
+    const refus = refusMotifReglement(v);
+    if (refus) ctx.addIssue({ code: "custom", message: refus });
+  }),
 });
 
 /**
@@ -106,6 +115,7 @@ export async function creerReglementAction(
     ligneDemandeId: formData.get("ligneDemandeId") || undefined,
     montant: formData.get("montant"),
     mode: formData.get("mode"),
+    motif: formData.get("motif") ?? "",
   });
   if (!parsed.success) {
     return {
@@ -116,6 +126,7 @@ export async function creerReglementAction(
   }
 
   const { demandeId, ligneDemandeId, montant, mode } = parsed.data;
+  const motif = nettoyerMotifReglement(parsed.data.motif);
 
   const demande = await prisma.demande.findUnique({ where: { id: demandeId }, include: { lignes: true, reglements: true } });
   if (!demande) {
@@ -173,6 +184,7 @@ export async function creerReglementAction(
       ligneDemandeId: ligne?.id ?? null,
       montant,
       mode,
+      motif,
       auteurId: session.user.id,
       allocations: { create: allocationsReglementArticle(ligne, demande.categorieId, montant) },
     },
@@ -195,7 +207,8 @@ export async function creerReglementAction(
 export async function modifierReglementAction(
   reglementId: string,
   montant: number,
-  mode: "CAISSE" | "BANQUE"
+  mode: "CAISSE" | "BANQUE",
+  motif?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.effectuer_reglement")) {
@@ -215,6 +228,9 @@ export async function modifierReglementAction(
   if (reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est plus modifiable." };
   }
+  // Lot I : un brouillon qui a un motif en garde un valide ; un brouillon antérieur (sans motif) n'est jamais bloqué.
+  const verdictMotif = motifPourModification(reglement.motif, motif);
+  if (!verdictMotif.ok) return { status: "error", message: verdictMotif.message };
 
   const demande = await prisma.demande.findUnique({ where: { id: reglement.demandeId }, include: { lignes: true, reglements: true } });
   if (!demande) {
@@ -255,7 +271,7 @@ export async function modifierReglementAction(
   await prisma.$transaction([
     prisma.reglement.update({
       where: { id: reglementId },
-      data: { montant: parsedMontant.data, mode: parsedMode.data },
+      data: { montant: parsedMontant.data, mode: parsedMode.data, motif: verdictMotif.motif ?? reglement.motif },
     }),
     prisma.reglementCategorieAllocation.deleteMany({ where: { reglementId } }),
     prisma.reglementCategorieAllocation.createMany({
@@ -449,7 +465,7 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
         entity: "Demande",
         entityId: reglement.demandeId,
         action: "reglement",
-        detail: `Règlement confirmé : ${montantReglement.toLocaleString("fr-FR")} FCFA (${reglement.mode})${ligne ? ` — article « ${ligne.libelle} »` : ""}`,
+        detail: `Règlement confirmé : ${montantReglement.toLocaleString("fr-FR")} FCFA (${reglement.mode})${ligne ? ` — article « ${ligne.libelle} »` : ""} — motif : ${libelleMotifReglement(reglement.motif)}`,
         userId: session.user.id,
       },
     }),

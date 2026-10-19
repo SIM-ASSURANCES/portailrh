@@ -133,6 +133,8 @@ model User {
   encAudits         EncAudit[]         @relation("EncAuditUser")
   encMisesEnService EncMiseEnService[] @relation("EncMiseEnServiceActiveePar")
   encParametresMaj  EncParametre[]     @relation("EncParametreMajPar")
+  /// Paramètres Trésorerie (lot I) : `SetNull` (le changement reste tracé dans `HistoriqueEntry`).
+  parametresTresorerieMaj ParametreTresorerie[] @relation("ParametreTresorerieMajPar")
   encPiecesDeposees EncPieceJointe[]   @relation("EncPieceJointeDeposeePar")
   /// Paramètres V2 (docs/encaissements-conception.md §5.2) — toutes en `onDelete: Restrict`, sauf les créateurs des
   /// deux référentiels dont la toute première ligne est posée par la migration (`creeParId` nul dans ce seul cas).
@@ -855,6 +857,10 @@ model Reglement {
   estConfirme     Boolean       @default(false)
   estAnnule       Boolean       @default(false)
   motifAnnulation String?
+  /// Motif / nature du règlement (lot I, 2026-10-19) : obligatoire (5 caractères minimum) pour tout NOUVEAU règlement,
+  /// côté serveur et à l'écran, Caisse comme Banque. `null` pour les règlements antérieurs : jamais bloqués ni modifiés,
+  /// affichés « Non renseigné ».
+  motif           String?
 
   demandeId String
   demande   Demande @relation(fields: [demandeId], references: [id])
@@ -2081,6 +2087,18 @@ enum StatutExecutionTache {
   SUCCES
   ECHEC
   IGNOREE
+}
+
+/// Paramètres du module Trésorerie modifiables par la Finance (lot I, 2026-10-19). Une ligne par paramètre, jamais
+/// supprimée ; chaque changement est historisé dans `HistoriqueEntry` (entité `ParametreTresorerie`, entityId = `cle`).
+/// `categorisation.obligatoire_a_partir_du` : `valeurDate` nul = la catégorisation n'est jamais obligatoire pour valider ;
+/// sinon elle l'est à partir de ce jour (inclus). Posé à NUL par la migration : rien n'est bloqué au déploiement.
+model ParametreTresorerie {
+  cle        String    @id
+  valeurDate DateTime? @db.Date
+  majAt      DateTime  @default(now())
+  majParId   String?
+  majPar     User?     @relation("ParametreTresorerieMajPar", fields: [majParId], references: [id], onDelete: SetNull)
 }
 
 /// Une ligne par exécution d'une tâche planifiée, planifiée ou manuelle (moniteur de `/admin/journal-technique`).

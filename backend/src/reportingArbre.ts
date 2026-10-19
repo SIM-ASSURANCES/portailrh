@@ -14,6 +14,7 @@
 // `getEcartLigne` et `depensesDeclareesLigne` (les fonctions des écrans). Aucun double comptage : seules les lignes DEMANDE
 // portent « Compte dans les totaux = Oui » ; les lignes ARTICLE détaillent la demande, les événements détaillent l'article.
 
+import { libelleMotifReglement } from "./motifReglement";
 import { articleTermine, agregerRegularisation, categorieDepense, depensesDeclareesLigne, etatRegularisationArticle, getEcartLigne, AGREGATS_VIDES, type AgregatsRegularisation } from "./regularisationArticle";
 import { detailClotureForcee, libelleArticleClotureForcee, type ArticleCloturePartiel } from "./clotureDemande";
 import { derniereGestion, libelleGestionArticle, type GestionArticle } from "./parcoursArticle";
@@ -76,6 +77,8 @@ export interface LigneArbre {
   mode: string;
   refOperation: string;
   auteur: string;
+  /** Motif / nature du règlement (lot I), sur les lignes RÈGLEMENT seulement ; « Non renseigné » pour un ancien règlement. */
+  motifReglement: string;
   motif: string;
   nbArticles: number | null;
   montantDemande: number | null;
@@ -127,6 +130,7 @@ export const COLONNES_ARBRE: readonly ColonneArbre[] = [
   { cle: "mode", titre: "Mode", genre: "texte", largeur: 10 },
   { cle: "refOperation", titre: "Référence de l'opération", genre: "texte", largeur: 18 },
   { cle: "auteur", titre: "Auteur", genre: "texte", largeur: 22 },
+  { cle: "motifReglement", titre: "Motif / nature du règlement", genre: "texte", largeur: 30 },
   { cle: "motif", titre: "Motif / justification / détail", genre: "texte", largeur: 60, longue: true },
   { cle: "nbArticles", titre: "Nb. articles", genre: "entier", largeur: 10 },
   { cle: "montantDemande", titre: "Demandé", genre: "montant", largeur: 15 },
@@ -226,6 +230,8 @@ export interface ReglementArbreSource {
   estConfirme: boolean;
   estAnnule: boolean;
   motifAnnulation: string | null;
+  /** Motif / nature du règlement (lot I) ; `null` pour un règlement antérieur. */
+  motif?: string | null;
   auteur: string;
   creeLe: Date;
   confirmeLe: Date | null;
@@ -335,6 +341,7 @@ function ligneVide(niveau: 0 | 1 | 2, type: TypeLigneArbre, contexte: { referenc
     mode: "",
     refOperation: "",
     auteur: "",
+    motifReglement: "",
     motif: "",
     nbArticles: null,
     montantDemande: null,
@@ -477,6 +484,7 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
     l.mode = modeLibelle(r.mode);
     l.refOperation = `${d.reference}-R${rangReglement.get(r.id)}`;
     l.auteur = r.auteur;
+    l.motifReglement = libelleMotifReglement(r.motif);
     l.motif = r.estAnnule && r.motifAnnulation ? `motif d'annulation : ${r.motifAnnulation}` : !r.estConfirme ? `saisi le ${jour(r.creeLe)}` : "";
     l.montantOperation = r.montant;
     ajouter(cle, l);
