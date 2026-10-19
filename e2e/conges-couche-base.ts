@@ -15,6 +15,8 @@ import {
   saisirCongeRH,
   soumettreConge,
   transactionConge,
+  etatPlageConge,
+  journeeCouverteParAbsence,
   MESSAGE_CONGE_DANS_LE_PASSE,
 } from "../backend/src/index";
 
@@ -76,6 +78,12 @@ async function main() {
   await prisma.absence.deleteMany({});
   await prisma.pointage.deleteMany({ where: { userId: collab.id } });
   await prisma.jourFerie.deleteMany({});
+  // Compte créé il y a longtemps : la règle d'ancienneté des absences (aucune absence le jour de création ni avant) ne joue pas,
+  // sauf dans le scénario qui la vérifie.
+  const creeIlYALongtemps = new Date(maintenant.getTime() - 120 * 86_400_000);
+  await prisma.user.update({ where: { id: collab.id }, data: { createdAt: creeIlYALongtemps } });
+  await prisma.historiqueEntry.deleteMany({ where: { entity: "User", entityId: collab.id, action: { in: ["ACTIVATE", "INVITATION_ACTIVATED"] } } });
+  const journee = { heureDebutMatin: "07:45", heureFinApresMidi: "16:45" };
 
   const entree = (dateDebut: string, dateFin: string, motif = "Repos") => ({ nature: "CONGE" as const, dateDebut, dateFin, motif });
   const soumettre = (userId: string, e: ReturnType<typeof entree>) => transactionConge((tx) => soumettreConge(tx, { userId, entree: e, maintenant: new Date() }));
@@ -151,7 +159,7 @@ async function main() {
   const id3 = s3.ok ? s3.valeur.id : "";
   await agir(resp, id3, { type: "APPROUVER" });
   const m3 = await agir(rh, id3, { type: "DEMANDER_MODIFICATION", motif: "Réduisez la période", observationRH: "Voir avec le responsable" });
-  verifier("modification demandée, plages conservées (provisoires)", m3.ok && m3.valeur.statut === "MODIFICATION_DEMANDEE" && (await plages(id3)).length === 3);
+  verifier("modification demandée (O4) : plages retirées, la période n'est plus protégée", m3.ok && m3.valeur.statut === "MODIFICATION_DEMANDEE" && (await plages(id3)).length === 0, m3);
   const resoRefus = await transactionConge((tx) => resoumettreConge(tx, { demandeId: id3, acteurId: resp.id, entree: entree(d3, plus(d3, 1)), maintenant: new Date() }));
   verifier("seul le demandeur renvoie sa demande", !resoRefus.ok, resoRefus);
   const reso = await transactionConge((tx) => resoumettreConge(tx, { demandeId: id3, acteurId: collab.id, entree: entree(d3, plus(d3, 1), "Motif corrigé"), maintenant: new Date() }));
@@ -194,6 +202,51 @@ async function main() {
   verifier(`seules les plages jusqu'à aujourd'hui restent (${attendu.length})`, reste.length === attendu.length && reste.every((p) => jc(p.date) <= aujourdhui), reste.map((p) => jc(p.date)));
   await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: enCours.id } });
   await prisma.demandeConge.delete({ where: { id: enCours.id } });
+
+  // ── O4 : modification demandée après le début, puis renvoi ─────────────────────────────────────────────────────────────
+  console.log("Modification demandée après le début (O4)");
+  const debutO4 = plus(aujourdhui, -3);
+  const finO4 = plus(aujourdhui, 2);
+  const o4 = await prisma.demandeConge.create({
+    data: {
+      reference: "CNG-TEST-0010", nature: "CONGE", motif: "Congé déjà commencé", dateDebut: colonne(debutO4), dateFin: colonne(finO4),
+      nbJoursOuvres: 4, statut: "EN_ATTENTE_RH", etapeResponsableRequise: false, userId: collab.id, creeParId: collab.id,
+    },
+  });
+  const joursO4: string[] = [];
+  for (let j = debutO4; j <= finO4; j = plus(j, 1)) joursO4.push(j);
+  await prisma.plageAbsenceAutorisee.createMany({
+    data: joursO4.map((j) => ({ userId: collab.id, date: local(j), heureDebut: "00:00", heureFin: "23:59", source: "CONGE" as const, demandeCongeId: o4.id, provisoire: true })),
+  });
+  const mO4 = await agir(rh, o4.id, { type: "DEMANDER_MODIFICATION", motif: "Dates à revoir" });
+  const pO4 = await plages(o4.id);
+  verifier(
+    "O4 après le début : les jours passés gardent leur plage (3), aujourd'hui et la suite sont retirés",
+    mO4.ok && pO4.length === 3 && pO4.every((p) => jc(p.date) < aujourdhui && p.provisoire),
+    pO4.map((p) => jc(p.date))
+  );
+  const nouveauDebut = lundi(10);
+  const rO4 = await transactionConge((tx) => resoumettreConge(tx, { demandeId: o4.id, acteurId: collab.id, entree: entree(nouveauDebut, plus(nouveauDebut, 1), "Nouvelles dates"), maintenant: new Date() }));
+  const pO4b = await plages(o4.id);
+  verifier(
+    "renvoi : jours passés de l'ancienne période gardés (3) + nouvelle période (2)",
+    rO4.ok && pO4b.length === 5 && pO4b.filter((p) => jc(p.date) < aujourdhui).length === 3,
+    pO4b.map((p) => jc(p.date))
+  );
+  if (rO4.ok && rO4.valeur.statut === "EN_ATTENTE_RESPONSABLE") await agir(resp, o4.id, { type: "APPROUVER" });
+  const vO4 = await agir(rh, o4.id, { type: "APPROUVER" });
+  const pO4c = await plages(o4.id);
+  verifier(
+    "validation : la nouvelle période devient définitive, les jours passés restent provisoires",
+    vO4.ok && pO4c.filter((p) => !p.provisoire).length === 2 && pO4c.filter((p) => jc(p.date) < aujourdhui).every((p) => p.provisoire),
+    pO4c.map((p) => [jc(p.date), p.provisoire])
+  );
+  verifier(
+    "affichage : « en congé » pour la nouvelle période, « jour protégé » pour les jours passés, jamais « en congé »",
+    pO4c.every((p) => etatPlageConge({ provisoire: p.provisoire, statutDemande: "VALIDEE" }) === (jc(p.date) < aujourdhui ? "PROTEGE" : "EN_CONGE"))
+  );
+  await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: o4.id } });
+  await prisma.demandeConge.delete({ where: { id: o4.id } });
 
   // ── R11 : refus tardif ───────────────────────────────────────────────────────────────────────────────────────────────
   console.log("Refus tardif (R11)");
@@ -239,15 +292,49 @@ async function main() {
   const rB = await agir(rh, idB, { type: "REJETER", motif: "Pas de dépôt préalable", compterJoursPassesAbsents: false });
   verifier("décoché : aucune absence créée", rB.ok && rB.valeur.absencesCreees === 0 && (await prisma.absence.count()) === 0, rB);
   verifier("décoché : choix enregistré à faux", (await prisma.demandeConge.findUniqueOrThrow({ where: { id: idB } })).joursPassesComptesAbsents === false);
+  const pB = await plages(idB);
+  verifier(
+    "décoché : les plages des jours passés restent (12), aujourd'hui et la suite sont retirés",
+    pB.length === 12 && pB.every((p) => jc(p.date) < aujourdhui),
+    pB.map((p) => jc(p.date))
+  );
+  const plageVeille = pB.filter((p) => jc(p.date) === veille);
+  verifier(
+    "décoché : la veille reste couverte, la tâche des absences (qui réexamine la veille) n'y créera rien",
+    journeeCouverteParAbsence(plageVeille, journee)
+  );
+  verifier("décoché : ces jours s'affichent « jour protégé »", pB.every((p) => etatPlageConge({ provisoire: p.provisoire, statutDemande: "REJETEE" }) === "PROTEGE"));
 
   const idC = await nouvelleDemandeEnAttenteRH("CNG-TEST-0004");
   const rC = await agir(rh, idC, { type: "REJETER", motif: "Pas de dépôt préalable" });
-  verifier("choix absent : traité comme décoché", rC.ok && rC.valeur.absencesCreees === 0 && (await prisma.absence.count()) === 0);
+  verifier("choix absent : traité comme décoché", rC.ok && rC.valeur.absencesCreees === 0 && (await prisma.absence.count()) === 0 && (await plages(idC)).length === 12);
 
   const idD = await nouvelleDemandeEnAttenteRH("CNG-TEST-0005");
   await prisma.absence.createMany({ data: attendues.slice(0, 2).map((j) => ({ userId: collab.id, date: local(j), statut: "CONFIRMEE" as const })) });
   const rD = await agir(rh, idD, { type: "REJETER", motif: "Pas de dépôt préalable", compterJoursPassesAbsents: true });
   verifier("jamais de doublon : les jours déjà en absence sont sautés", rD.ok && rD.valeur.absencesCreees === attendues.length - 2 && (await prisma.absence.count()) === attendues.length, rD);
+  await prisma.absence.deleteMany({});
+
+  // Règle d'ancienneté de la tâche des absences : aucune absence le jour de création du compte ni avant.
+  const creeLe = plus(aujourdhui, -5);
+  await prisma.user.update({ where: { id: collab.id }, data: { createdAt: new Date(local(creeLe).getTime() + 10 * 3600_000) } });
+  const idE = await nouvelleDemandeEnAttenteRH("CNG-TEST-0006");
+  const rE = await agir(rh, idE, { type: "REJETER", motif: "Pas de dépôt préalable", compterJoursPassesAbsents: true });
+  const attenduesE = attendues.filter((j) => j > creeLe);
+  const absE = await prisma.absence.findMany({ where: { userId: collab.id }, orderBy: { date: "asc" } });
+  verifier(
+    `coché, compte créé il y a 5 jours : seulement les jours après sa création (${attenduesE.length})`,
+    rE.ok && JSON.stringify(absE.map((a) => jc(a.date))) === JSON.stringify(attenduesE),
+    { absE: absE.map((a) => jc(a.date)), attenduesE }
+  );
+  await prisma.user.update({ where: { id: collab.id }, data: { createdAt: creeIlYALongtemps } });
+  await prisma.user.update({ where: { id: collab.id }, data: { isActive: false } });
+  await prisma.absence.deleteMany({});
+  const idF = await nouvelleDemandeEnAttenteRH("CNG-TEST-0007");
+  const rF = await agir(rh, idF, { type: "REJETER", motif: "Pas de dépôt préalable", compterJoursPassesAbsents: true });
+  verifier("coché, compte désactivé : aucune absence (comme la tâche)", rF.ok && rF.valeur.absencesCreees === 0 && (await prisma.absence.count()) === 0, rF);
+  await prisma.user.update({ where: { id: collab.id }, data: { isActive: true } });
+
   await prisma.absence.deleteMany({});
   await prisma.pointage.deleteMany({ where: { userId: collab.id } });
   await prisma.jourFerie.deleteMany({});

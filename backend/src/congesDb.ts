@@ -6,7 +6,12 @@
 //     (`SELECT … FOR UPDATE`) puis le verrou du collaborateur (ordre constant : ligne, collaborateur, référence) ;
 //   - la référence est calculée sous un verrou consultatif du mois, dans la transaction de création ;
 //   - R10 : à la soumission une plage d'absence autorisée par jour de la période est posée `provisoire` (la journée n'est jamais
-//     une absence), elle devient définitive à la validation, est supprimée au refus, à l'annulation, et remplacée à la resoumission.
+//     une absence), elle devient définitive à la validation, est retirée au refus, à la demande de modification (O4) et à
+//     l'annulation, et remplacée à la resoumission ;
+//   - JOURS DÉJÀ PASSÉS : une plage d'un jour antérieur à aujourd'hui n'est JAMAIS retirée, sauf refus tardif avec la case
+//     « compter les jours passés » cochée (R11, qui crée alors les absences). Raison : la tâche des absences réexamine la veille ;
+//     retirer la plage d'hier ferait créer l'absence que le décideur a choisi de ne pas compter. L'état affiché d'un tel jour
+//     passe par `etatPlageConge` (circuitConge.ts), jamais par le seul champ `provisoire`.
 // Un refus métier en cours d'écriture est une `RefusConge` : la transaction est annulée en entier (`transactionConge`),
 // aucune écriture partielle ne subsiste.
 
@@ -36,6 +41,7 @@ import {
   colonneDateDepuisJourCivil,
   comparerJours,
   decompterJours,
+  estJourOuvre,
   formatJourCivil,
   jourCivilDepuisColonneDate,
   MAX_JOURS_PERIODE,
@@ -176,28 +182,53 @@ export async function creerPlagesConge(
 
 /**
  * Supprime les plages de la demande (par clé, jamais par plage de dates ni par texte). `aPartirDe` : seulement celles de ce jour
- * et des suivants (annulation d'un congé commencé : les jours déjà vécus restent couverts). Renvoie le nombre supprimé.
+ * et des suivants (les jours antérieurs restent couverts). `avant` : seulement celles des jours antérieurs à ce jour (refus
+ * tardif, case cochée). Renvoie le nombre supprimé.
  */
-export async function supprimerPlages(db: Db, p: { demandeId: string; aPartirDe?: JourCivil }): Promise<number> {
+export async function supprimerPlages(db: Db, p: { demandeId: string; aPartirDe?: JourCivil; avant?: JourCivil }): Promise<number> {
   const debut = p.aPartirDe ? parseJourCivil(p.aPartirDe) : null;
+  const fin = p.avant ? parseJourCivil(p.avant) : null;
   const { count } = await db.plageAbsenceAutorisee.deleteMany({
-    where: { demandeCongeId: p.demandeId, ...(debut ? { date: { gte: debut } } : {}) },
+    where: { demandeCongeId: p.demandeId, ...(debut || fin ? { date: { ...(debut ? { gte: debut } : {}), ...(fin ? { lt: fin } : {}) } } : {}) },
   });
   return count;
 }
 
-/** Resoumission : les plages de l'ancienne période sont remplacées par celles de la nouvelle, de nouveau provisoires. */
-export async function remplacerPlages(
-  db: Db,
-  p: { userId: string; demandeId: string; reference: string; jours: readonly JourCivil[]; provisoire: boolean }
-): Promise<void> {
-  await supprimerPlages(db, { demandeId: p.demandeId });
-  await creerPlagesConge(db, p);
+/** Jours (civils) des plages de la demande antérieurs à `aujourdhui` : les jours qu'elle a protégés jusqu'ici. */
+export async function joursPassesProteges(db: Db, p: { demandeId: string; aujourdhui: JourCivil }): Promise<JourCivil[]> {
+  const plages = await db.plageAbsenceAutorisee.findMany({
+    where: { demandeCongeId: p.demandeId, date: { lt: parseJourCivil(p.aujourdhui)! } },
+    select: { date: true },
+    orderBy: { date: "asc" },
+  });
+  return plages.map((x) => formatJourCivil(x.date));
 }
 
-/** Validation : les plages provisoires de la demande deviennent définitives. */
-async function validerPlages(db: Db, demandeId: string): Promise<void> {
-  await db.plageAbsenceAutorisee.updateMany({ where: { demandeCongeId: demandeId }, data: { provisoire: false } });
+/**
+ * Resoumission : les plages d'aujourd'hui et des jours suivants sont remplacées par celles de la nouvelle période (qui ne commence
+ * jamais avant aujourd'hui), de nouveau provisoires. Les jours déjà passés gardent leur plage (voir l'en-tête du fichier).
+ */
+export async function remplacerPlages(
+  db: Db,
+  p: { userId: string; demandeId: string; reference: string; jours: readonly JourCivil[]; provisoire: boolean; aujourdhui: JourCivil }
+): Promise<void> {
+  await supprimerPlages(db, { demandeId: p.demandeId, aPartirDe: p.aujourdhui });
+  await creerPlagesConge(db, { ...p, jours: p.jours.filter((j) => comparerJours(j, p.aujourdhui) >= 0) });
+}
+
+/**
+ * Validation : les plages de la PÉRIODE de la demande deviennent définitives. Un jour passé d'une ancienne période (demande
+ * renvoyée avec d'autres dates) reste provisoire : il a été protégé, il n'est pas un congé validé.
+ */
+async function validerPlages(db: Db, p: { demandeId: string; debut: JourCivil; fin: JourCivil }): Promise<void> {
+  const fin = parseJourCivil(p.fin)!;
+  await db.plageAbsenceAutorisee.updateMany({
+    where: {
+      demandeCongeId: p.demandeId,
+      date: { gte: parseJourCivil(p.debut)!, lte: new Date(fin.getFullYear(), fin.getMonth(), fin.getDate(), 23, 59, 59, 999) },
+    },
+    data: { provisoire: false },
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -397,7 +428,14 @@ export async function resoumettreConge(
     },
   });
   if (count === 0) throw new RefusConge("Cette demande a déjà été traitée.");
-  await remplacerPlages(db, { userId: demande.userId, demandeId: demande.id, reference: demande.reference, jours: prepare.decompte.jours, provisoire: true });
+  await remplacerPlages(db, {
+    userId: demande.userId,
+    demandeId: demande.id,
+    reference: demande.reference,
+    jours: prepare.decompte.jours,
+    provisoire: true,
+    aujourdhui: formatJourCivil(p.maintenant),
+  });
   await noterHistorique(db, {
     demandeId: demande.id,
     action: ACTION_HISTORIQUE_CONGE.RESOUMETTRE,
@@ -455,19 +493,36 @@ export async function lireDateDebutAbsences(db: Db): Promise<Date> {
 }
 
 /**
- * R11 : crée une `Absence` « à contrôler » pour chaque jour ouvré de `[debut, fin]` sans pointage d'ARRIVÉE, postérieur ou égal
- * à la date de départ de la tâche des absences, et sans absence déjà enregistrée. Renvoie le nombre créé.
+ * Jour d'entrée en vigueur du compte pour les absences : sa création, ou sa dernière (ré)activation si elle est plus récente. Même
+ * règle que la tâche des absences (« Option B ») : aucune absence ce jour-là ni avant.
  */
-async function compterJoursPassesAbsents(
-  db: Db,
-  p: { userId: string; reference: string; debut: JourCivil; fin: JourCivil }
-): Promise<number> {
-  if (comparerJours(p.fin, p.debut) < 0) return 0;
-  const feries = await lireJoursFeries(db, p.debut, p.fin);
-  const { joursOuvres } = decompterJours({ debut: p.debut, fin: p.fin, joursFeries: feries });
-  if (joursOuvres.length === 0) return 0;
+async function jourEntreeEnVigueur(db: Db, userId: string, creeLe: Date): Promise<JourCivil> {
+  const activation = await db.historiqueEntry.findFirst({
+    where: { entity: "User", entityId: userId, action: { in: ["ACTIVATE", "INVITATION_ACTIVATED"] } },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  return formatJourCivil(activation && activation.createdAt > creeLe ? activation.createdAt : creeLe);
+}
+
+/**
+ * R11 : crée une `Absence` « à contrôler » pour chaque jour de `jours` (les jours passés que la demande protégeait) qui est un
+ * jour ouvré, sans pointage d'ARRIVÉE, sans absence déjà enregistrée, en respectant les règles de la tâche des absences : date de
+ * départ (`dateDebutAbsences`), compte actif, et jamais le jour de création ou de (ré)activation du compte ni avant.
+ * Renvoie le nombre créé.
+ */
+async function compterJoursPassesAbsents(db: Db, p: { userId: string; reference: string; jours: readonly JourCivil[] }): Promise<number> {
+  if (p.jours.length === 0) return 0;
+  const user = await db.user.findUnique({ where: { id: p.userId }, select: { isActive: true, createdAt: true } });
+  if (!user || !user.isActive) return 0;
+  const premier = p.jours[0];
+  const dernier = p.jours[p.jours.length - 1];
+  const feries = await lireJoursFeries(db, premier, dernier);
   const plancher = formatJourCivil(await lireDateDebutAbsences(db));
-  const candidats = joursOuvres.filter((j) => comparerJours(j, plancher) >= 0);
+  const entree = await jourEntreeEnVigueur(db, p.userId, user.createdAt);
+  const candidats = p.jours.filter(
+    (j) => estJourOuvre(j, feries) && comparerJours(j, plancher) >= 0 && comparerJours(j, entree) > 0
+  );
   if (candidats.length === 0) return 0;
 
   const debutPeriode = parseJourCivil(candidats[0])!;
@@ -533,24 +588,25 @@ export async function deciderConge(
   const obs = controlerObservationRH(a.type === "ANNULER" ? null : a.observationRH, r.etape);
   if (!obs.ok) throw new RefusConge(obs.erreur, "observationRH");
 
-  // R10 : effets sur les plages (dans la transaction : un refus plus loin annule tout).
-  if (r.effet === "VALIDER") await validerPlages(db, demande.id);
-  if (a.type === "REJETER") await supprimerPlages(db, { demandeId: demande.id });
-  if (a.type === "ANNULER") await supprimerPlages(db, { demandeId: demande.id, ...(adebute ? { aPartirDe: ajouterJours(aujourdhui, 1) } : {}) });
+  // R10, O4 : effets sur les plages (dans la transaction : un refus plus loin annule tout). Les jours déjà passés gardent leur
+  // plage (voir l'en-tête) ; une annulation après le début garde aussi celle du jour même (le jour est entamé).
+  const passes = a.type === "REJETER" ? await joursPassesProteges(db, { demandeId: demande.id, aujourdhui }) : [];
+  if (r.effet === "VALIDER") await validerPlages(db, { demandeId: demande.id, debut, fin });
+  if (r.effet === "SUPPRIMER_PLAGES") {
+    const aPartirDe = a.type === "ANNULER" && adebute ? ajouterJours(aujourdhui, 1) : aujourdhui;
+    await supprimerPlages(db, { demandeId: demande.id, aPartirDe });
+  }
 
-  // R11 : refus après la date de début, la RH ou le responsable choisit de compter (ou non) les jours déjà passés comme absences.
+  // R11 : refus alors que des jours déjà passés étaient protégés par la demande. Le décideur (RH ou responsable) choisit de les
+  // compter comme absences (plages retirées, absences « à contrôler » créées) ou non (plages gardées : la tâche des absences, qui
+  // réexamine la veille, ne les comptera jamais).
   let joursPasses: boolean | null = null;
   let absencesCreees = 0;
-  if (a.type === "REJETER" && comparerJours(debut, aujourdhui) < 0) {
+  if (a.type === "REJETER" && passes.length > 0) {
     joursPasses = a.compterJoursPassesAbsents === true;
     if (joursPasses) {
-      const hier = ajouterJours(aujourdhui, -1);
-      absencesCreees = await compterJoursPassesAbsents(db, {
-        userId: demande.userId,
-        reference: demande.reference,
-        debut,
-        fin: comparerJours(fin, hier) < 0 ? fin : hier,
-      });
+      await supprimerPlages(db, { demandeId: demande.id, avant: aujourdhui });
+      absencesCreees = await compterJoursPassesAbsents(db, { userId: demande.userId, reference: demande.reference, jours: passes });
     }
   }
 

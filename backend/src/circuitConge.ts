@@ -194,9 +194,11 @@ export interface ParamsTransitionConge {
 
 /**
  * Effet sur les plages d'absence autorisée (R10) :
- *   - VALIDER : la demande est accordée, les plages deviennent définitives ;
- *   - SUPPRIMER_PLAGES : refus ou annulation (avant le début tout est supprimé, après le début à partir du lendemain : la base tranche) ;
- *   - AUCUN : les plages provisoires restent (étape suivante, modification demandée, resoumission traitée à part).
+ *   - VALIDER : la demande est accordée, les plages de sa période deviennent définitives ;
+ *   - SUPPRIMER_PLAGES : refus, modification demandée (O4, décision du 2026-10-19 : la protection ne joue que pendant l'attente du
+ *     décideur) ou annulation. Les jours DÉJÀ PASSÉS restent couverts (la base tranche : voir `congesDb.ts`), sauf refus tardif avec
+ *     la case « compter les jours passés » cochée (R11) ;
+ *   - AUCUN : les plages provisoires restent (étape suivante, resoumission traitée à part).
  */
 export type EffetTransitionConge = "VALIDER" | "SUPPRIMER_PLAGES" | "AUCUN";
 
@@ -294,7 +296,7 @@ export function transitionConge(p: ParamsTransitionConge): ResultatTransitionCon
     ok: true,
     statut: rejet ? "REJETEE" : "MODIFICATION_DEMANDEE",
     motif: motif.motif,
-    effet: rejet ? "SUPPRIMER_PLAGES" : "AUCUN",
+    effet: "SUPPRIMER_PLAGES",
     etape,
     ...(viaRepli ? { viaRepli: true } : {}),
   };
@@ -426,6 +428,31 @@ export function friseConge(params: { statut: StatutCircuitConge; etapeResponsabl
     { cle: "RH", libelle: "RH", etat: etat(2) },
     { cle: "DECISION", libelle: "Congé validé", etat: validee ? "faite" : interrompue ? "interrompue" : "a_venir" },
   ];
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Libellé d'un jour couvert par une plage de congé (Pointage, reporting, « Mon équipe ») : UNE seule règle
+// ---------------------------------------------------------------------------------------------------------------------
+
+export type EtatPlageConge = "EN_CONGE" | "EN_ATTENTE" | "PROTEGE";
+
+export const LIBELLE_ETAT_PLAGE_CONGE: Record<EtatPlageConge, string> = {
+  EN_CONGE: "En congé",
+  EN_ATTENTE: "Congé en attente de validation",
+  PROTEGE: "Non compté absent (demande non validée à temps)",
+};
+
+/**
+ * État d'un jour couvert par une plage de congé. Le champ `provisoire` ne suffit pas : une plage provisoire peut rester sur un
+ * jour passé d'une demande refusée (case « compter les jours passés » décochée), annulée, à modifier, ou d'une ancienne période
+ * renvoyée. Le jour n'est jamais une absence, mais ce n'est pas un congé validé.
+ *   - plage définitive : congé validé (ou saisi par la RH), y compris les jours vécus d'un congé annulé après son début ;
+ *   - plage provisoire d'une demande qui attend une décision : en attente ;
+ *   - toute autre plage provisoire : jour protégé.
+ */
+export function etatPlageConge(p: { provisoire: boolean; statutDemande: StatutCircuitConge }): EtatPlageConge {
+  if (!p.provisoire) return "EN_CONGE";
+  return STATUTS_CONGE_EN_ATTENTE.includes(p.statutDemande) ? "EN_ATTENTE" : "PROTEGE";
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

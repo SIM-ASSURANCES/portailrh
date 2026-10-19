@@ -1,6 +1,8 @@
 -- Congés (module simplifié, 2026-10-19). Rejouable (IF NOT EXISTS, ON CONFLICT). Migration NON déployée : réécrite en place, les
 -- bases locales qui portaient l'ancienne version (soldes, types, permissions d'absence) sont à recréer.
--- Voir PLAN_AGENTS_CONGES_SIMPLIFIE_code.md. Horodatage strictement postérieur à la dernière migration de toutes les branches.
+-- Horodatage : il DOIT rester postérieur à la dernière migration de toutes les branches. Ce n'est plus le cas depuis les
+-- migrations 20261022* de la branche `aristide` : renommer ce dossier (nouvel horodatage) au moment de la fusion, après un
+-- dernier `git fetch`. Le contenu est rejouable, le renommage est sans risque tant que la migration n'est pas en production.
 --
 -- 1) Schéma.
 

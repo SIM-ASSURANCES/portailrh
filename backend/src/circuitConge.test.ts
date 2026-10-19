@@ -10,10 +10,12 @@ import {
   MESSAGE_RESERVE_DG_CONGE,
   MESSAGE_RESERVE_RESPONSABLE_CONGE,
   MESSAGE_RESERVE_RH_CONGE,
+  LIBELLE_ETAT_PLAGE_CONGE,
   actionsPossiblesConge,
   controlerObservationRH,
   decideurPourStatutConge,
   destinatairesEtapeConge,
+  etatPlageConge,
   friseConge,
   nettoyerMotifConge,
   peutConsulterConge,
@@ -288,12 +290,15 @@ describe("annulation (R9)", () => {
 });
 
 describe("effets sur les plages (R10)", () => {
-  it("la validation par la RH valide les plages ; le refus et l'annulation les suppriment ; le reste ne touche à rien", () => {
+  it("la validation par la RH valide les plages ; le refus, la demande de modification (O4) et l'annulation les retirent ; le reste ne touche à rien", () => {
     const c = ctx();
     const rhCtx = param("EN_ATTENTE_RH", c);
     expect(transitionConge({ ...rhCtx, action: { type: "APPROUVER" }, acteur: rh() })).toMatchObject({ effet: "VALIDER" });
     expect(transitionConge({ ...rhCtx, action: { type: "REJETER", motif: "Période chargée" }, acteur: rh() })).toMatchObject({ effet: "SUPPRIMER_PLAGES" });
-    expect(transitionConge({ ...rhCtx, action: { type: "DEMANDER_MODIFICATION", motif: "Précisez" }, acteur: rh() })).toMatchObject({ effet: "AUCUN" });
+    expect(transitionConge({ ...rhCtx, action: { type: "DEMANDER_MODIFICATION", motif: "Précisez" }, acteur: rh() })).toMatchObject({ effet: "SUPPRIMER_PLAGES" });
+    expect(
+      transitionConge({ ...param("EN_ATTENTE_RESPONSABLE", c), action: { type: "DEMANDER_MODIFICATION", motif: "Précisez" }, acteur: acteur(RESP) })
+    ).toMatchObject({ effet: "SUPPRIMER_PLAGES" });
     expect(transitionConge({ ...param("EN_ATTENTE_RESPONSABLE", c), action: { type: "APPROUVER" }, acteur: acteur(RESP) })).toMatchObject({ effet: "AUCUN" });
   });
 });
@@ -405,4 +410,35 @@ describe("divers", () => {
     const d = decideurPourStatutConge("EN_ATTENTE_RH", ctx());
     expect(refusDecideurConge(d, acteur(DG, "treso.decider_dg"), DEMANDEUR)).toBe(MESSAGE_RESERVE_RH_CONGE);
   });
+});
+
+describe("état d'un jour couvert par une plage de congé", () => {
+  it("plage définitive : en congé, quel que soit le statut (jours vécus d'un congé annulé après son début compris)", () => {
+    expect(etatPlageConge({ provisoire: false, statutDemande: "VALIDEE" })).toBe("EN_CONGE");
+    expect(etatPlageConge({ provisoire: false, statutDemande: "ANNULEE" })).toBe("EN_CONGE");
+  });
+
+  it("plage provisoire d'une demande qui attend une décision : en attente", () => {
+    expect(etatPlageConge({ provisoire: true, statutDemande: "EN_ATTENTE_RESPONSABLE" })).toBe("EN_ATTENTE");
+    expect(etatPlageConge({ provisoire: true, statutDemande: "EN_ATTENTE_RH" })).toBe("EN_ATTENTE");
+  });
+
+  it("toute autre plage provisoire (refus tardif non compté, annulation, modification, ancienne période) : jour protégé, jamais « en congé »", () => {
+    for (const statut of ["REJETEE", "ANNULEE", "MODIFICATION_DEMANDEE", "VALIDEE"] as const) {
+      expect(etatPlageConge({ provisoire: true, statutDemande: statut })).toBe("PROTEGE");
+    }
+    expect(LIBELLE_ETAT_PLAGE_CONGE.PROTEGE).toBe("Non compté absent (demande non validée à temps)");
+  });
+});
+
+describe("points ouverts (décision de Thierry attendue, ne pas coder)", () => {
+  it.todo(
+    "O1 — repli DG provisoire : la RH demande un congé et aucun autre compte RH n'existe ; aujourd'hui le DG décide à l'étape RH (resoudreEtapeRH). À confirmer ou à retirer"
+  );
+  it.todo(
+    "O2 — responsable qui est aussi RH : il approuve l'étape responsable puis valide seul l'étape RH. Faut-il exiger une autre personne à l'étape RH (comparer à approuveParId) ?"
+  );
+  it.todo(
+    "O3 — saisie RH d'un congé déjà commencé ou passé : aujourd'hui refusée comme pour le salarié (R3, aucune régularisation). À confirmer"
+  );
 });
