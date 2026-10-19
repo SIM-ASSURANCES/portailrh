@@ -152,7 +152,7 @@ const caisseEmpreinte0 = await journalEmpreinte();
   for (const email of ["assistant-finance@simassurances.test", "dg@simassurances.test"]) {
     const autre = await connecter(email);
     await autre.goto(`${B}/treso/finance/categories`);
-    verifier(`3b. ${email.split("@")[0]} : écran de paramétrage inaccessible`, !new URL(autre.url()).pathname.endsWith("/treso/finance/categories"), autre.url());
+    verifier(`3b. ${email.split("@")[0]} : écran de paramétrage inaccessible (l'ancienne adresse redirige vers la page Budgets, sans la règle)`, !new URL(autre.url()).pathname.endsWith("/treso/finance/categories") && (await autre.locator("[data-regle-categorisation]").count()) === 0, autre.url());
     await autre.close();
   }
 

@@ -16,7 +16,7 @@ import {
 import { getDatesGestionDemandes } from "./dateGestionDemande";
 import { prisma } from "./prisma";
 import { chargerContexteBudget } from "./budgetsDb";
-import { libellePeriodeBudget, lireSnapshotBudget, niveauAlerte, phrasesSnapshotBudget, type NiveauAlerteBudget, type SeuilBudget } from "./budgets";
+import { libellePeriodeBudget, lireSnapshotBudget, niveauAlerte, phrasesSnapshotBudget, type DetailCaisse, type NiveauAlerteBudget, type SeuilBudget } from "./budgets";
 import { getSoldeCaisse } from "./tresorerie";
 
 /**
@@ -627,11 +627,12 @@ export async function getReportingRows(filters: ReportingFilters): Promise<Repor
 export interface ReportingSuiviBudgetaireRow {
   categorieId: string;
   categorieLabel: string;
+  /** Catégorie : budget alloué. Global (lot J ter) : le SOLDE DE CAISSE réel actuel. */
   budgetAlloue: number;
-  /** Somme des règlements confirmés et non annulés des demandes de cette Catégorie — `getMontantConsommeCategorie`. */
-  montantConsomme: number;
-  /** `budgetAlloue - montantConsomme`, **jamais plafonné à 0** — négatif = dépassement réel. */
-  budgetRestant: number;
+  /** Somme des règlements confirmés et non annulés des demandes de cette Catégorie — `getMontantConsommeCategorie`. `null` pour le global (aucune consommation : c'est le solde de caisse). */
+  montantConsomme: number | null;
+  /** `budgetAlloue - montantConsomme`, **jamais plafonné à 0** — négatif = dépassement réel. `null` pour le global. */
+  budgetRestant: number | null;
   /** Lot J : max(consommé, engagé par les validations) — ce que le budget a déjà réservé. */
   reserve: number;
   /** Lot J : `budgetAlloue − reserve`, le reste après les validations en cours (prévisionnel), jamais plafonné à 0. */
@@ -643,6 +644,8 @@ export interface ReportingSuiviBudgetaireRow {
   periode: string;
   /** Lot J : `true` pour la ligne du budget global. */
   global: boolean;
+  /** Lot J ter : composition du solde de caisse prévisionnel (ligne du budget global seulement). */
+  detailCaisse?: DetailCaisse;
 }
 
 /**
@@ -669,13 +672,15 @@ export async function getReportingSuiviBudgetaire(): Promise<ReportingSuiviBudge
   const contexte = await chargerContexteBudget();
   const perimetres = [contexte.global, ...Object.values(contexte.categories)].filter((p): p is NonNullable<typeof p> => !!p);
   const lignes = perimetres.map((p) => {
+    const estGlobal = p.portee === "GLOBAL";
     const consomme = p.consomme ?? 0;
     return {
       categorieId: p.categorieId ?? "",
-      categorieLabel: p.portee === "GLOBAL" ? "Budget global" : p.libelle,
+      categorieLabel: estGlobal ? "Budget global (solde de caisse)" : p.libelle,
       budgetAlloue: p.budget,
-      montantConsomme: consomme,
-      budgetRestant: p.budget - consomme,
+      montantConsomme: estGlobal ? null : consomme,
+      budgetRestant: estGlobal ? null : p.budget - consomme,
+      ...(estGlobal && p.caisse ? { detailCaisse: p.caisse } : {}),
       reserve: p.reserve,
       resteApresEngagements: p.budget - p.reserve,
       seuil: p.seuil,

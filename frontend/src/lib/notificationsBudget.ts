@@ -62,12 +62,15 @@ export async function notifierConfirmationDepassement(demandeId: string, referen
   }
 }
 
-/** Un paramétrage de budget vient d'être soumis : le DG est prévenu. */
-export async function notifierParametrageSoumis(acteurId: string, description: string): Promise<void> {
+/** Un lot de paramétrages vient d'être soumis (un seul budget ou plusieurs) : le DG reçoit UNE notification pour tout le lot. */
+export async function notifierParametragesSoumis(acteurId: string, nombre: number, description: string): Promise<void> {
   try {
     await notifyByPermission("treso.valider_budget", {
-      titre: "Budget à valider",
-      message: `La Finance a soumis un paramétrage de budget : ${description}. Il n'est utilisable qu'après votre validation.`,
+      titre: nombre === 1 ? "Budget à valider" : `${nombre} budgets à valider`,
+      message:
+        nombre === 1
+          ? `La Finance a soumis un paramétrage de budget : ${description}. Il n'est utilisable qu'après votre validation.`
+          : `La Finance a soumis ${nombre} paramétrages de budget : ${description}. Ils ne sont utilisables qu'après votre validation.`,
       lien: LIEN_BUDGETS,
       priority: "IMPORTANT",
       category: "TRESORERIE",
@@ -78,19 +81,32 @@ export async function notifierParametrageSoumis(acteurId: string, description: s
   }
 }
 
-/** Décision du DG sur un paramétrage : la Finance qui l'avait soumis est prévenue (motif en cas de refus). */
-export async function notifierDecisionParametrage(soumisParId: string | null, description: string, valide: boolean, motif?: string): Promise<void> {
-  if (!soumisParId) return;
-  try {
-    await notify({
-      userId: soumisParId,
-      titre: valide ? "Budget validé par le DG" : "Budget refusé par le DG",
-      message: valide ? `Le paramétrage ${description} est validé : il s'applique à sa date d'effet.` : `Le paramétrage ${description} a été refusé — motif : ${motif ?? "—"}.`,
-      lien: LIEN_BUDGETS,
-      priority: "IMPORTANT",
-      category: "TRESORERIE",
-    });
-  } catch (e) {
-    console.error("[Budget] Notification de décision impossible :", e);
+/**
+ * Décision du DG sur un ou plusieurs paramétrages : UNE notification par compte qui avait soumis (le plus souvent un seul), qui
+ * liste chaque élément décidé (et le motif en cas de refus). Jamais une notification par élément.
+ */
+export async function notifierDecisionParametrages(
+  decides: { description: string; soumisParId: string | null; motif: string | null }[],
+  valide: boolean
+): Promise<void> {
+  const parSoumetteur = new Map<string, typeof decides>();
+  for (const d of decides) {
+    if (!d.soumisParId) continue;
+    parSoumetteur.set(d.soumisParId, [...(parSoumetteur.get(d.soumisParId) ?? []), d]);
+  }
+  for (const [userId, liste] of parSoumetteur) {
+    try {
+      const detail = liste.map((d) => (valide ? d.description : `${d.description} (motif : ${d.motif ?? "—"})`)).join(" ; ");
+      await notify({
+        userId,
+        titre: valide ? (liste.length === 1 ? "Budget validé par le DG" : `${liste.length} budgets validés par le DG`) : liste.length === 1 ? "Budget refusé par le DG" : `${liste.length} budgets refusés par le DG`,
+        message: valide ? `Validé : ${detail}. Ils s'appliquent à leur date d'effet.` : `Refusé : ${detail}.`,
+        lien: LIEN_BUDGETS,
+        priority: "IMPORTANT",
+        category: "TRESORERIE",
+      });
+    } catch (e) {
+      console.error("[Budget] Notification de décision impossible :", e);
+    }
   }
 }

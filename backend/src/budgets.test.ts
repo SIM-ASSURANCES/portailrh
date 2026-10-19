@@ -68,9 +68,10 @@ describe("validerSaisieParametrage", () => {
     expect(r.ok).toBe(true);
   });
   it("accepte un paramétrage sans seuil ni fin", () => expect(validerSaisieParametrage(base, AUJOURDHUI).ok).toBe(true));
-  it("le budget global ne prend pas de catégorie", () => {
-    expect(validerSaisieParametrage({ ...base, portee: "GLOBAL", categorieId: null }, AUJOURDHUI).ok).toBe(true);
-    const r = validerSaisieParametrage({ ...base, portee: "GLOBAL" }, AUJOURDHUI);
+  it("le budget global ne prend pas de catégorie (lot J ter : seuils en montant obligatoires)", () => {
+    const seuil = { mode: "MONTANT" as const, orange: 500_000, rouge: 100_000 };
+    expect(validerSaisieParametrage({ ...base, portee: "GLOBAL", categorieId: null, seuil }, AUJOURDHUI).ok).toBe(true);
+    const r = validerSaisieParametrage({ ...base, portee: "GLOBAL", seuil }, AUJOURDHUI);
     expect(r.ok).toBe(false);
   });
   it("une catégorie est obligatoire pour un budget de catégorie", () => {

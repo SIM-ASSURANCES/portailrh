@@ -300,6 +300,7 @@ export async function creerCategorieInlineAction(label: string): Promise<CreerCa
   // d'origine de la création.
   revalidatePath("/admin/categories");
   revalidatePath("/treso/finance/categories");
+  revalidatePath("/treso/finance/budgets");
   revalidatePath("/treso/finance/reporting");
   publishDataChanged();
 
@@ -373,6 +374,7 @@ export async function creerObjetInlineAction(
   // cachée ou différente.
   revalidatePath("/admin/categories");
   revalidatePath("/treso/finance/categories");
+  revalidatePath("/treso/finance/budgets");
   revalidatePath("/treso/finance/reporting");
   publishDataChanged();
 

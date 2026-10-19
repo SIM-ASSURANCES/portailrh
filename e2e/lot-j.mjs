@@ -1,6 +1,8 @@
 // Lot J (budgets) — sur base JETABLE (voir e2e/README.md). Nécessite exceljs et unzip.
+// Adapté au lot J ter : le budget GLOBAL n'est plus un montant saisi (solde de caisse réel) — son cycle est testé par e2e/lot-j-ter.mjs ;
+// ce script couvre les budgets de CATÉGORIE (paramétrage, validation du DG, restes, orange / rouge, confirmation).
 //   1. Migration : budgets existants repris « validés par le DG », sans fin, seuil par défaut (20 % / 0 %) ; rejouée sans effet.
-//   2. Paramétrage : la Finance saisit (global et catégorie), refus d'une saisie incohérente, soumission au DG, le DG valide ou
+//   2. Paramétrage : la Finance saisit (catégorie), refus d'une saisie incohérente, soumission au DG, le DG valide ou
 //      refuse (motif obligatoire), un paramétrage en attente / refusé / futur n'est jamais pris en compte, jamais modifié en place.
 //   3. Validation d'une demande à 3 articles : reste global ET catégorie affichés à CHAQUE validation, ORANGE (alerte + notification
 //      Finance et DG, validation permise), ROUGE (bloquée, demande de confirmation au DG, seul le DG confirme, motif tracé).
@@ -47,7 +49,8 @@ const CAT2 = `${P}cat2`; // budget qui ne prend effet que demain
 const CAT3 = `${P}cat3`; // budget de 100 000 : le DG valide un article soumis en rouge
 const CAT4 = `${P}cat4`; // budget SANS seuil : aucune alerte
 const CAT5 = `${P}cat5`; // aucune catégorie budgétée
-const CATS = [CAT1, CAT2, CAT3, CAT4, CAT5];
+const CAT6 = `${P}cat6`; // budget refusé par le DG
+const CATS = [CAT1, CAT2, CAT3, CAT4, CAT5, CAT6];
 const nettoyer = async () => {
   await q(`DELETE FROM "Notification" WHERE message LIKE '%DEM-LOTJ-%' OR titre LIKE '%budget%' OR titre LIKE '%Budget%'`);
   await q(`DELETE FROM "HistoriqueEntry" WHERE entity = 'BudgetParametrage' OR "entityId" LIKE '${P}%' OR detail LIKE '%DEM-LOTJ-%'`);
@@ -107,7 +110,7 @@ async function appelerAction(page, id, args) {
   return { succes: /"status":"success"/.test(texte), message: /"message":"((?:[^"\\]|\\.)*)"/.exec(texte)?.[1] ?? texte.slice(0, 300) };
 }
 
-await q(`INSERT INTO "Categorie"(id, label, "isActive") VALUES ($1,'E2E-J-CAT1',true),($2,'E2E-J-CAT2',true),($3,'E2E-J-CAT3',true),($4,'E2E-J-CAT4',true),($5,'E2E-J-CAT5',true)`, CATS);
+await q(`INSERT INTO "Categorie"(id, label, "isActive") VALUES ($1,'E2E-J-CAT1',true),($2,'E2E-J-CAT2',true),($3,'E2E-J-CAT3',true),($4,'E2E-J-CAT4',true),($5,'E2E-J-CAT5',true),($6,'E2E-J-CAT6',true)`, CATS);
 const caisse0 = await journalEmpreinte();
 
 // ======================================================================================================================
@@ -116,12 +119,15 @@ const caisse0 = await journalEmpreinte();
 {
   const sqlMigration = readFileSync(new URL("../backend/prisma/migrations/20261023090000_budgets_parametrage/migration.sql", import.meta.url), "utf8");
   await q(`INSERT INTO "Categorie"(id, label, "isActive", "budgetAlloue") VALUES ('${P}legacy','E2E-J-LEGACY',true, 777000)`);
+  const sqlJter = readFileSync(new URL("../backend/prisma/migrations/20261024090000_budget_global_solde_caisse/migration.sql", import.meta.url), "utf8");
   await db.query(sqlMigration); // rejeu de la migration : doit créer la reprise de cette catégorie, sans erreur
+  await db.query(sqlJter); // le lot J ter retire l'ancienne contrainte que ce rejeu vient de reposer
   const r = (await q(`SELECT * FROM "BudgetParametrage" WHERE "categorieId" = '${P}legacy'`));
   verifier("1. budget existant repris : un paramétrage VALIDÉ par le DG, sans date de fin", r.length === 1 && r[0].statut === "VALIDE" && r[0].dateFin === null && r[0].repris === true, JSON.stringify(r[0] ?? {}));
   verifier("1. … montant conservé, début « depuis toujours » (2000-01-01), pas d'auteur", Number(r[0]?.montant) === 777000 && r[0]?.dateDebut.toISOString().slice(0, 10) === "2000-01-01" && r[0]?.soumisParId === null);
   verifier("1. … seuil par défaut documenté : pourcentage restant, orange 20, rouge 0", r[0]?.modeSeuil === "POURCENTAGE" && Number(r[0]?.seuilOrange) === 20 && Number(r[0]?.seuilRouge) === 0);
   await db.query(sqlMigration);
+  await db.query(sqlJter);
   verifier("1. migration rejouée : aucun doublon", (await q(`SELECT count(*)::int AS n FROM "BudgetParametrage" WHERE "categorieId" = '${P}legacy'`))[0].n === 1);
   const perm = await q(`SELECT r.name FROM "RolePermission" rp JOIN "Permission" p ON p.id = rp."permissionId" JOIN "Role" r ON r.id = rp."roleId" WHERE p.key = 'treso.valider_budget'`);
   verifier("1. permission treso.valider_budget : le DG seul", perm.length === 1 && /dg/i.test(perm[0].name), JSON.stringify(perm));
@@ -137,20 +143,19 @@ const caisse0 = await journalEmpreinte();
 const finance = await connecter("finance@simassurances.test");
 const dg = await connecter("dg@simassurances.test");
 const nbParam = async () => (await q(`SELECT count(*)::int AS n FROM "BudgetParametrage" WHERE "categorieId" = ANY($1) OR portee = 'GLOBAL'`, [CATS]))[0].n;
-async function soumettre(page, { portee, categorie, montant, debut, fin, mode, orange, rouge }) {
+async function soumettre(page, { categorie, libelle, montant, debut, fin, mode, orange, rouge }) {
   await page.goto(`${B}/treso/finance/budgets`);
   const form = page.locator("[data-parametrage-budget-form]");
-  await form.locator('select[name="portee"]').selectOption(portee);
-  if (categorie) await form.locator('select[name="categorieId"]').selectOption(categorie);
-  await form.locator('input[name="montant"]').fill(String(montant));
+  const ligne = form.locator(`[data-budget-ligne-saisie="${libelle}"]`);
   await form.locator('input[name="dateDebut"]').fill(debut ?? jourIso(0));
   await form.locator('input[name="dateFin"]').fill(fin ?? "");
-  await form.locator('select[name="modeSeuil"]').selectOption(mode ?? "AUCUN");
+  await ligne.locator(`input[name="montant-${categorie}"]`).fill(String(montant));
+  await ligne.locator(`select[name="mode-${categorie}"]`).selectOption(mode ?? "AUCUN");
   if (mode && mode !== "AUCUN") {
-    await form.locator('input[name="seuilOrange"]').fill(String(orange));
-    await form.locator('input[name="seuilRouge"]').fill(String(rouge));
+    await ligne.locator(`input[name="orange-${categorie}"]`).fill(String(orange));
+    await ligne.locator(`input[name="rouge-${categorie}"]`).fill(String(rouge));
   }
-  await form.getByRole("button", { name: "Soumettre au DG" }).click();
+  await form.locator("[data-soumettre-selection]").click();
 }
 async function decider(page, id, valider, motif) {
   await page.goto(`${B}/treso/finance/budgets`);
@@ -168,67 +173,60 @@ async function decider(page, id, valider, motif) {
 {
   const avant = await nbParam();
   // 2a. Saisie incohérente refusée (rouge ≥ orange) : rien n'est créé.
-  await soumettre(finance, { portee: "CATEGORIE", categorie: CAT1, montant: 1000000, mode: "POURCENTAGE", orange: 10, rouge: 20 });
+  await soumettre(finance, { categorie: CAT1, libelle: "E2E-J-CAT1", montant: 1000000, mode: "POURCENTAGE", orange: 10, rouge: 20 });
   verifier("2a. saisie incohérente (rouge ≥ orange) : message d'erreur, aucun paramétrage créé", (await attendre(async () => /strictement plus bas/.test(net(await finance.locator("[data-parametrage-budget-form]").innerText())))) && (await nbParam()) === avant);
 
   // 2b. Saisie correcte : EN_ATTENTE, historisée, le DG est prévenu, pas encore en vigueur.
-  await soumettre(finance, { portee: "CATEGORIE", categorie: CAT1, montant: 1000000, mode: "POURCENTAGE", orange: 20, rouge: 10 });
+  await soumettre(finance, { categorie: CAT1, libelle: "E2E-J-CAT1", montant: 1000000, mode: "POURCENTAGE", orange: 20, rouge: 10 });
   verifier("2b. paramétrage de la catégorie soumis : EN_ATTENTE", await attendre(async () => (await q(`SELECT statut FROM "BudgetParametrage" WHERE "categorieId" = $1`, [CAT1]))[0]?.statut === "EN_ATTENTE"));
   const p1 = (await q(`SELECT * FROM "BudgetParametrage" WHERE "categorieId" = $1`, [CAT1]))[0];
   verifier("2b. … soumis par la Finance, début aujourd'hui, seuils 20 / 10 en pourcentage", p1.soumisParId === idFinance && p1.dateDebut.toISOString().slice(0, 10) === jourIso(0) && p1.modeSeuil === "POURCENTAGE" && Number(p1.seuilOrange) === 20 && Number(p1.seuilRouge) === 10);
   verifier("2b. … historisé et le DG est notifié", (await q(`SELECT 1 FROM "HistoriqueEntry" WHERE entity='BudgetParametrage' AND "entityId"=$1 AND action='budget_soumis'`, [p1.id])).length === 1 && (await attendre(async () => (await q(`SELECT 1 FROM "Notification" WHERE "userId"=$1 AND titre='Budget à valider'`, [idDG])).length >= 1)));
   await finance.goto(`${B}/treso/finance/budgets`);
   verifier("2b. pas encore en vigueur : absent de « Budgets en vigueur »", (await finance.locator('[data-budget-ligne="E2E-J-CAT1"]').count()) === 0);
-  verifier("2b. un second paramétrage est refusé tant que le premier attend le DG", await (async () => {
-    await soumettre(finance, { portee: "CATEGORIE", categorie: CAT1, montant: 5, mode: "AUCUN" });
-    return (await attendre(async () => /déjà en attente/.test(net(await finance.locator("body").innerText())))) && (await nbParam()) === avant + 1;
+  verifier("2b. un second paramétrage est refusé tant que le premier attend le DG (écran : ligne désactivée ; serveur : refus par appel direct)", await (async () => {
+    await finance.goto(`${B}/treso/finance/budgets`);
+    const ligneDesactivee = await finance.locator('[data-budget-ligne-saisie="E2E-J-CAT1"] input[type="checkbox"]').isDisabled();
+    const idSoumettre = await idAction(finance, "soumettreParametragesBudgetAction");
+    const refus = idSoumettre ? await appelerAction(finance, idSoumettre, [[{ portee: "CATEGORIE", categorieId: CAT1, montant: 5, dateDebut: jourIso(0), dateFin: null, seuil: null }]]) : { succes: true, message: "" };
+    return ligneDesactivee && !refus.succes && /déjà en attente/.test(refus.message) && (await nbParam()) === avant + 1;
   })());
 
   // 2c. Droits : la Finance ne décide pas ; le DG ne paramètre pas.
   await dg.goto(`${B}/treso/finance/budgets`);
-  const idDecider = await idAction(dg, "deciderParametrageBudgetAction");
-  verifier("2c. identifiant de deciderParametrageBudgetAction retrouvé", !!idDecider);
+  const idDecider = await idAction(dg, "deciderParametragesBudgetAction");
+  verifier("2c. identifiant de deciderParametragesBudgetAction retrouvé", !!idDecider);
   if (idDecider) {
     await finance.goto(`${B}/treso/finance/budgets`);
-    const refus = await appelerAction(finance, idDecider, [p1.id, true]);
+    const refus = await appelerAction(finance, idDecider, [[{ id: p1.id }], true]);
     verifier("2c. la Finance ne peut pas valider (appel direct refusé)", !refus.succes && /non autoris/i.test(refus.message) && (await q(`SELECT statut FROM "BudgetParametrage" WHERE id=$1`, [p1.id]))[0].statut === "EN_ATTENTE", refus.message);
   }
   verifier("2c. le DG n'a pas le formulaire de paramétrage", (await dg.locator("[data-parametrage-budget-form]").count()) === 0 && (await dg.locator("[data-parametrage-attente]").count()) >= 1);
   verifier("2c. la Finance n'a pas les boutons Valider / Refuser", (await finance.locator("[data-valider-parametrage]").count()) === 0);
 
-  // 2d. Le DG REFUSE (motif obligatoire) un budget global, puis valide le bon.
-  await soumettre(finance, { portee: "GLOBAL", montant: 999, mode: "AUCUN" });
-  await attendre(async () => (await q(`SELECT 1 FROM "BudgetParametrage" WHERE portee='GLOBAL'`)).length === 1);
-  const pg1 = (await q(`SELECT id FROM "BudgetParametrage" WHERE portee='GLOBAL'`))[0];
-  await decider(dg, pg1.id, false, "Montant global trop bas pour l'exercice");
+  // 2d. Le DG REFUSE (motif obligatoire) un budget de catégorie.
+  await soumettre(finance, { categorie: CAT6, libelle: "E2E-J-CAT6", montant: 999, mode: "AUCUN" });
+  await attendre(async () => (await q(`SELECT 1 FROM "BudgetParametrage" WHERE "categorieId"=$1`, [CAT6])).length === 1);
+  const pg1 = (await q(`SELECT id FROM "BudgetParametrage" WHERE "categorieId"=$1`, [CAT6]))[0];
+  await decider(dg, pg1.id, false, "Montant trop bas pour l'exercice");
   verifier("2d. le DG refuse avec motif : REFUSE, motif conservé, décideur tracé", await attendre(async () => (await q(`SELECT statut, "motifRefus", "decideParId" FROM "BudgetParametrage" WHERE id=$1`, [pg1.id]))[0].statut === "REFUSE"));
   const refuse = (await q(`SELECT "motifRefus", "decideParId" FROM "BudgetParametrage" WHERE id=$1`, [pg1.id]))[0];
   verifier("2d. … motif et décideur", /trop bas/.test(refuse.motifRefus) && refuse.decideParId === idDG);
   verifier("2d. … la Finance est notifiée du refus", await attendre(async () => (await q(`SELECT 1 FROM "Notification" WHERE "userId"=$1 AND titre='Budget refusé par le DG'`, [idFinance])).length >= 1));
+  await soumettre(finance, { categorie: CAT6, libelle: "E2E-J-CAT6", montant: 1999, mode: "AUCUN" });
+  await attendre(async () => (await q(`SELECT 1 FROM "BudgetParametrage" WHERE "categorieId"=$1 AND statut='EN_ATTENTE'`, [CAT6])).length === 1);
+  verifier("2d. le paramétrage refusé n'est pas modifié : une NOUVELLE ligne a été créée", (await q(`SELECT statut FROM "BudgetParametrage" WHERE id=$1`, [pg1.id]))[0].statut === "REFUSE" && (await q(`SELECT count(*)::int AS n FROM "BudgetParametrage" WHERE "categorieId"=$1`, [CAT6]))[0].n === 2);
 
-  // Budget global « calé » sur l'engagé actuel de la base pour que le global n'alerte pas pendant les scénarios.
-  const e0 = Number((await q(`SELECT COALESCE(SUM(l."quantite" * l."prixUnitaire"),0)::float AS t FROM "LigneDemande" l WHERE (l."statutValidation"='VALIDEE') OR (l."statutValidation"='EN_ATTENTE' AND l."decisionDG"='VALIDEE')`))[0].t)
-    + Number((await q(`SELECT COALESCE(SUM("montantValide"),0)::float AS t FROM "Demande" WHERE "typeDemande"='DEPENSE_DIRECTE' AND statut NOT IN ('REJETEE','ABANDONNEE')`))[0].t);
-  const c0 = Number((await q(`SELECT COALESCE(SUM(montant),0)::float AS t FROM "Reglement" WHERE "estConfirme" AND NOT "estAnnule"`))[0].t);
-  const reserveGlobale = Math.max(e0, c0);
-  const montantGlobal = reserveGlobale + 2000000;
-  await soumettre(finance, { portee: "GLOBAL", montant: montantGlobal, mode: "MONTANT", orange: 600000, rouge: 100000 });
-  await attendre(async () => (await q(`SELECT 1 FROM "BudgetParametrage" WHERE portee='GLOBAL' AND statut='EN_ATTENTE'`)).length === 1);
-  const pg2 = (await q(`SELECT id FROM "BudgetParametrage" WHERE portee='GLOBAL' AND statut='EN_ATTENTE'`))[0];
-  verifier("2d. le paramétrage refusé n'est pas modifié : une NOUVELLE ligne a été créée", pg2.id !== pg1.id && (await q(`SELECT statut FROM "BudgetParametrage" WHERE id=$1`, [pg1.id]))[0].statut === "REFUSE");
-
-  // 2e. Le DG valide les deux budgets.
+  // 2e. Le DG valide le budget de la catégorie.
   await decider(dg, p1.id, true);
   verifier("2e. le DG valide le budget de la catégorie : VALIDE", await attendre(async () => (await q(`SELECT statut FROM "BudgetParametrage" WHERE id=$1`, [p1.id]))[0].statut === "VALIDE"));
-  await decider(dg, pg2.id, true);
-  verifier("2e. le DG valide le budget global : VALIDE", await attendre(async () => (await q(`SELECT statut FROM "BudgetParametrage" WHERE id=$1`, [pg2.id]))[0].statut === "VALIDE"));
-  verifier("2e. validation et refus historisés (auteur DG)", (await q(`SELECT count(*)::int AS n FROM "HistoriqueEntry" WHERE entity='BudgetParametrage' AND "userId"=$1 AND action IN ('budget_valide','budget_refuse')`, [idDG]))[0].n === 3);
+  verifier("2e. validation et refus historisés (auteur DG)", (await q(`SELECT count(*)::int AS n FROM "HistoriqueEntry" WHERE entity='BudgetParametrage' AND "userId"=$1 AND action IN ('budget_valide','budget_refuse')`, [idDG]))[0].n === 2);
   await finance.goto(`${B}/treso/finance/budgets`);
   const ligneCat1 = net(await finance.locator('[data-budget-ligne="E2E-J-CAT1"]').innerText());
-  verifier("2e. « Budgets en vigueur » : catégorie (1 000 000, seuils 20 % / 10 %) et budget global", /1 000 000 FCFA/.test(ligneCat1) && /20 % restants/.test(ligneCat1) && /10 % restants/.test(ligneCat1) && (await finance.locator('[data-budget-ligne="global"]').count()) === 1, ligneCat1);
+  verifier("2e. « Budgets en vigueur » : catégorie (1 000 000, seuils 20 % / 10 %) et budget global = solde de caisse", /1 000 000 FCFA/.test(ligneCat1) && /20 % restants/.test(ligneCat1) && /10 % restants/.test(ligneCat1) && (await finance.locator('[data-budget-ligne="global"]').count()) === 1, ligneCat1);
 
   // 2f. Date d'effet : un budget qui commence demain n'est pas pris en compte aujourd'hui.
-  await soumettre(finance, { portee: "CATEGORIE", categorie: CAT2, montant: 500000, debut: jourIso(1), mode: "POURCENTAGE", orange: 30, rouge: 5 });
+  await soumettre(finance, { categorie: CAT2, libelle: "E2E-J-CAT2", montant: 500000, debut: jourIso(1), mode: "POURCENTAGE", orange: 30, rouge: 5 });
   await attendre(async () => (await q(`SELECT 1 FROM "BudgetParametrage" WHERE "categorieId"=$1`, [CAT2])).length === 1);
   const p2 = (await q(`SELECT id FROM "BudgetParametrage" WHERE "categorieId"=$1`, [CAT2]))[0];
   await decider(dg, p2.id, true);
@@ -370,12 +368,12 @@ let D1;
   await finance.getByRole("button", { name: /Enregistrer les décisions/ }).click();
   verifier("3f. … et la validation passe", await attendre(async () => (await lignes(D4))[0].statutValidation === "VALIDEE"));
 
-  // 3g. Budget GLOBAL rouge : article d'une catégorie SANS budget (CAT5) qui épuise le global.
-  const D5 = await demande("D5", 5, [{ libelle: "Article global", montant: 1950000, categorie: CAT5 }]);
+  // 3g. Le budget GLOBAL (solde de caisse réel, sans seuil validé ici) s'affiche mais n'alerte jamais — son cycle est dans e2e/lot-j-ter.mjs.
+  const D5 = await demande("D5", 5, [{ libelle: "Article hors budget", montant: 1950000, categorie: CAT5 }]);
   await finance.goto(`${B}/treso/finance/demandes/${D5}`);
-  const idVal5 = await idValider(finance);
-  const refusGlobal = idVal5 ? await appelerAction(finance, idVal5, [D5, [{ ligneId: `${D5}-l1`, statut: "VALIDEE" }]]) : { succes: true, message: "" };
-  verifier("3g. le budget GLOBAL bloque aussi (rouge) : validation refusée sans confirmation du DG", !refusGlobal.succes && /seuil rouge/i.test(refusGlobal.message) && /Budget global/.test(refusGlobal.message), refusGlobal.message);
+  await cocherValider(finance, `${D5}-l1`);
+  await finance.locator("[data-budget-bloc]").waitFor();
+  verifier("3g. sans seuil global validé : le solde de caisse prévisionnel s'affiche, jamais d'alerte", (await finance.locator('[data-budget-prevision="global"]').count()) === 1 && (await finance.locator("[data-alerte-budget]").count()) === 0);
   await q(`DELETE FROM "LigneDemande" WHERE "demandeId" = '${D5}'`);
   await q(`DELETE FROM "Demande" WHERE id = '${D5}'`);
 }

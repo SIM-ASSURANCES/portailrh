@@ -2152,7 +2152,9 @@ model BudgetParametrage {
   portee      PorteeBudget
   categorieId String?
   categorie   Categorie?              @relation(fields: [categorieId], references: [id], onDelete: Restrict)
-  montant     Decimal                 @db.Decimal(14, 2)
+  /// Budget d'une CATÉGORIE (saisi par la Finance). `null` pour le budget GLOBAL (lot J ter) : c'est le solde de caisse réel,
+  /// jamais saisi — le paramétrage global ne porte que les seuils d'alerte (en montant).
+  montant     Decimal?                @db.Decimal(14, 2)
   dateDebut   DateTime                @db.Date
   dateFin     DateTime?               @db.Date
   modeSeuil   ModeSeuilBudget?

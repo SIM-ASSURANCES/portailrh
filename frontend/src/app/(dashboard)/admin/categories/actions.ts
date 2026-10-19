@@ -37,6 +37,7 @@ function revalidateCategoriesPaths() {
   // vérification de cette tâche (toast de succès reçu, mais page pas
   // encore à jour avant le round-trip SSE).
   revalidatePath("/treso/finance/categories");
+  revalidatePath("/treso/finance/budgets");
   // Le catalogue actif alimente aussi le formulaire de catégorisation
   // Finance (Ticket 2) et les filtres du reporting (Ticket 10).
   revalidatePath("/treso/finance/demandes", "layout");

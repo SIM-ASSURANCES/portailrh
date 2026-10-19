@@ -152,12 +152,13 @@ export async function GET(request: NextRequest) {
     { header: "Reste après validations (FCFA)", key: "resteApres", width: 24 },
     { header: "Seuils d'alerte", key: "seuils", width: 38 },
     { header: "Niveau", key: "niveau", width: 16 },
+    { header: "Détail (budget global = solde de caisse)", key: "detail", width: 70 },
   ];
   if (suiviBudgetaire.length === 0) {
     const noteRow = sheetBudget.addRow({
       categorie: "Aucun budget en vigueur pour l'instant (voir l'écran Budgets).",
     });
-    sheetBudget.mergeCells(noteRow.number, 1, noteRow.number, 8);
+    sheetBudget.mergeCells(noteRow.number, 1, noteRow.number, 9);
     noteRow.getCell(1).alignment = { wrapText: true, vertical: "top" };
     noteRow.getCell(1).font = { italic: true, color: { argb: "FF64748B" } };
     sheetBudget.getRow(noteRow.number).height = 30;
@@ -167,13 +168,16 @@ export async function GET(request: NextRequest) {
       categorie: r.categorieLabel,
       periode: r.periode,
       budget: r.budgetAlloue,
-      consomme: r.montantConsomme,
-      restant: r.budgetRestant,
+      consomme: r.montantConsomme ?? "",
+      restant: r.budgetRestant ?? "",
       resteApres: r.resteApresEngagements,
       seuils: libelleSeuil(r.seuil),
       niveau: libelleNiveauBudget(r.niveau),
+      detail: r.detailCaisse
+        ? `Solde de caisse actuel ${r.detailCaisse.soldeCaisse.toLocaleString("fr-FR")} FCFA − règlements en caisse à confirmer ${r.detailCaisse.engageCaisseConnu.toLocaleString("fr-FR")} FCFA − déjà validé sans règlement ${r.detailCaisse.engageModeInconnu.toLocaleString("fr-FR")} FCFA (mode non encore connu, supposé en caisse)`
+        : "",
     });
-    if (r.budgetRestant < 0) {
+    if (r.budgetRestant !== null && r.budgetRestant < 0) {
       row.getCell("restant").font = { bold: true, color: { argb: "FFDA0101" } };
     }
   });

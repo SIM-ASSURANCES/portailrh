@@ -1,4 +1,4 @@
-// Budgets (lot J) — couche base : chargement des paramétrages et de ce qui est déjà réservé, contrôle à la validation (alerte
+// Budgets (lots J et J ter) — couche base : chargement des paramétrages et de ce qui est déjà réservé, contrôle à la validation (alerte
 // orange, blocage rouge, confirmation du DG), paramétrage soumis/validé/refusé, demandes de confirmation de dépassement.
 // Toutes les RÈGLES sont dans `budgets.ts` (pur) ; ici seulement la lecture et l'écriture.
 
@@ -8,19 +8,22 @@ import {
   budgetEnVigueur,
   jourCourantBudget,
   MOTIF_DEPASSEMENT_MIN,
+  perimetreCaisse,
   phrasesAlertes,
   previsionBudget,
-  validerSaisieParametrage,
+  validerLotParametrages,
   verdictBudget,
   type AjoutBudget,
   type ContexteBudget,
+  type DetailCaisse,
   type ParametrageBudget,
   type PerimetreBudget,
   type PrevisionBudget,
   type SaisieParametrage,
+  type ValeurParametrage,
   type VerdictBudget,
 } from "./budgets";
-import { getMontantConsommeCategorie } from "./tresorerie";
+import { getMontantConsommeCategorie, getSoldeCaisse } from "./tresorerie";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -51,7 +54,7 @@ export function versParametrage(p: LigneParametrage | Prisma.BudgetParametrageGe
     id: p.id,
     portee: p.portee,
     categorieId: p.categorieId,
-    montant: Number(p.montant),
+    montant: p.montant == null ? null : Number(p.montant),
     dateDebut: p.dateDebut.toISOString().slice(0, 10),
     dateFin: jour(p.dateFin),
     seuil: p.modeSeuil && p.seuilOrange != null && p.seuilRouge != null ? { mode: p.modeSeuil, orange: Number(p.seuilOrange), rouge: Number(p.seuilRouge) } : null,
@@ -65,14 +68,9 @@ export async function chargerParametrages(db: Db = prisma): Promise<ParametrageB
   return (await db.budgetParametrage.findMany()).map(versParametrage);
 }
 
-/** Consommé au règlement depuis le début d'effet : règlements confirmés et non annulés (Caisse ET Banque pour le global). */
-async function consommeDepuis(db: Db, categorieId: string | null, debut: string): Promise<number> {
-  if (categorieId) return getMontantConsommeCategorie(categorieId, debutDeJour(debut));
-  const r = await db.reglement.aggregate({
-    where: { estConfirme: true, estAnnule: false, confirmeAt: { gte: debutDeJour(debut) } },
-    _sum: { montant: true },
-  });
-  return num(r._sum.montant);
+/** Consommé au règlement d'une CATÉGORIE depuis le début d'effet : règlements confirmés et non annulés (Caisse et Banque). */
+async function consommeDepuis(_db: Db, categorieId: string, debut: string): Promise<number> {
+  return getMontantConsommeCategorie(categorieId, debutDeJour(debut));
 }
 
 /**
@@ -103,14 +101,59 @@ async function engageDepuis(db: Db, categorieId: string | null, debut: string): 
   return num(lignes[0]?.total) + num(directes._sum.montantValide);
 }
 
+/**
+ * Budget GLOBAL = solde de caisse (lot J ter). Le solde vient du journal de caisse (`getSoldeCaisse`, jamais modifié). Ce qui est
+ * DÉJÀ validé et n'est pas encore sorti de la caisse s'y retranche :
+ *   - `engageCaisseConnu` : règlements en mode CAISSE créés mais non confirmés (brouillons) — le mode est connu ;
+ *   - `engageModeInconnu` : par demande ouverte (ni rejetée, ni clôturée, ni abandonnée), montants validés (articles validés,
+ *     articles validés par le DG en attente de la Finance, montant validé d'une dépense directe) moins les règlements non annulés
+ *     de la demande, toute nature et tout mode — il ne reste que l'argent validé SANS règlement. Le mode n'étant choisi qu'au
+ *     règlement, on ne peut pas savoir à la validation quelle part sortira de la caisse : on la suppose en Caisse (hypothèse
+ *     prudente — le reste affiché est une borne basse).
+ * Un règlement Banque (brouillon ou confirmé) ne compte jamais ; un règlement Caisse confirmé est déjà dans le solde.
+ */
+export async function chargerDetailCaisse(db: Db = prisma): Promise<DetailCaisse> {
+  const [solde, brouillonsCaisse, sansReglement] = await Promise.all([
+    db === prisma ? getSoldeCaisse() : soldeCaisseDans(db),
+    db.reglement.aggregate({ where: { mode: "CAISSE", estConfirme: false, estAnnule: false }, _sum: { montant: true } }),
+    db.$queryRaw<{ total: Prisma.Decimal | null }[]>`
+      SELECT COALESCE(SUM(GREATEST(0, v."valide" - COALESCE(r."regle", 0))), 0) AS total
+      FROM (
+        SELECT d."id" AS "demandeId", SUM(l."quantite" * l."prixUnitaire") AS "valide"
+        FROM "Demande" d
+        JOIN "LigneDemande" l ON l."demandeId" = d."id"
+        WHERE d."statut" NOT IN ('REJETEE', 'CLOTUREE', 'ABANDONNEE')
+          AND (l."statutValidation" = 'VALIDEE' OR (l."statutValidation" = 'EN_ATTENTE' AND l."decisionDG" = 'VALIDEE'))
+        GROUP BY d."id"
+        UNION ALL
+        SELECT d."id", d."montantValide"
+        FROM "Demande" d
+        WHERE d."typeDemande" = 'DEPENSE_DIRECTE' AND d."statut" NOT IN ('REJETEE', 'CLOTUREE', 'ABANDONNEE') AND d."montantValide" > 0
+      ) v
+      LEFT JOIN (
+        SELECT "demandeId", SUM("montant") AS "regle" FROM "Reglement" WHERE "estAnnule" = false GROUP BY "demandeId"
+      ) r ON r."demandeId" = v."demandeId"`,
+  ]);
+  return { soldeCaisse: solde, engageCaisseConnu: num(brouillonsCaisse._sum.montant), engageModeInconnu: num(sansReglement[0]?.total) };
+}
+
+/** Même formule que `getSoldeCaisse()`, lue dans la transaction de l'appelant (mêmes écritures `JournalCaisse`). */
+async function soldeCaisseDans(db: Db): Promise<number> {
+  const [entrees, sorties] = await Promise.all([
+    db.journalCaisse.aggregate({ where: { type: "ENTREE" }, _sum: { montant: true } }),
+    db.journalCaisse.aggregate({ where: { type: "SORTIE" }, _sum: { montant: true } }),
+  ]);
+  return num(entrees._sum.montant) - num(sorties._sum.montant);
+}
+
 async function perimetre(db: Db, p: ParametrageBudget, libelle: string): Promise<PerimetreBudget> {
-  const [consomme, engage] = await Promise.all([consommeDepuis(db, p.categorieId, p.dateDebut), engageDepuis(db, p.categorieId, p.dateDebut)]);
+  const [consomme, engage] = await Promise.all([consommeDepuis(db, p.categorieId as string, p.dateDebut), engageDepuis(db, p.categorieId, p.dateDebut)]);
   return {
     parametrageId: p.id,
     portee: p.portee,
     categorieId: p.categorieId,
     libelle,
-    budget: p.montant,
+    budget: p.montant ?? 0,
     reserve: Math.max(consomme, engage),
     seuil: p.seuil,
     consomme,
@@ -137,11 +180,13 @@ export async function chargerContexteBudget(db: Db = prisma, maintenant: Date = 
   const libelles = new Map(
     (await db.categorie.findMany({ where: { id: { in: enVigueur.map((p) => p.categorieId as string) } }, select: { id: true, label: true } })).map((c) => [c.id, c.label])
   );
-  const [pGlobal, pCategories] = await Promise.all([
-    global ? perimetre(db, global, "Global") : Promise.resolve(null),
+  // Budget global = solde de caisse réel (lot J ter) : toujours présent, avec les seuils du paramétrage en vigueur (aucun seuil
+  // validé = le solde s'affiche, aucune alerte).
+  const [detailCaisse, pCategories] = await Promise.all([
+    chargerDetailCaisse(db),
     Promise.all(enVigueur.map((p) => perimetre(db, p, libelles.get(p.categorieId as string) ?? "Catégorie"))),
   ]);
-  return { global: pGlobal, categories: Object.fromEntries(pCategories.map((p) => [p.categorieId as string, p])) };
+  return { global: perimetreCaisse(detailCaisse, global), categories: Object.fromEntries(pCategories.map((p) => [p.categorieId as string, p])) };
 }
 
 /** Budget restant d'une catégorie (budget en vigueur − consommé au règlement depuis son début), `null` si aucun budget en vigueur. Jamais plafonné à 0. */
@@ -149,7 +194,7 @@ export async function getBudgetRestantCategorie(categorieId: string, db: Db = pr
   const parametrages = await chargerParametrages(db);
   const p = budgetEnVigueur(parametrages, "CATEGORIE", categorieId, jourCourantBudget());
   if (!p) return null;
-  return p.montant - (await consommeDepuis(db, categorieId, p.dateDebut));
+  return (p.montant ?? 0) - (await consommeDepuis(db, categorieId, p.dateDebut));
 }
 
 export interface BudgetCategorieEnVigueur {
@@ -170,11 +215,11 @@ export async function getBudgetsCategoriesEnVigueur(db: Db = prisma, maintenant:
   const parametrages = await chargerParametrages(db);
   const ids = Array.from(new Set(parametrages.filter((p) => p.portee === "CATEGORIE" && p.categorieId).map((p) => p.categorieId as string)));
   const enVigueur = ids.map((id) => budgetEnVigueur(parametrages, "CATEGORIE", id, aujourdhui)).filter((p): p is ParametrageBudget => !!p);
-  const consommes = await Promise.all(enVigueur.map((p) => consommeDepuis(db, p.categorieId, p.dateDebut)));
+  const consommes = await Promise.all(enVigueur.map((p) => consommeDepuis(db, p.categorieId as string, p.dateDebut)));
   return Object.fromEntries(
     enVigueur.map((p, i) => [
       p.categorieId as string,
-      { parametrageId: p.id, budget: p.montant, consomme: consommes[i], restant: p.montant - consommes[i], seuil: p.seuil, dateDebut: p.dateDebut, dateFin: p.dateFin },
+      { parametrageId: p.id, budget: p.montant ?? 0, consomme: consommes[i], restant: (p.montant ?? 0) - consommes[i], seuil: p.seuil, dateDebut: p.dateDebut, dateFin: p.dateFin },
     ])
   );
 }
@@ -337,59 +382,192 @@ export async function confirmerDepassementBudget(
   });
 }
 
-// ---------- Paramétrage : soumission par la Finance, décision du DG ----------
+// ---------- Paramétrage : soumission par la Finance (seul ou en lot), décision du DG (seul ou en lot) ----------
 
 export type ResultatParametrage = { ok: true; id: string } | { ok: false; message: string; erreurs?: Record<string, string> };
+
+export type ResultatSoumissionLot =
+  | { ok: true; ids: string[]; resume: string }
+  | { ok: false; message: string; erreursParIndex?: Record<number, Record<string, string>> };
 
 const fr = (j: string) => j.split("-").reverse().join("/");
 const fcfa = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`;
 
-/** La Finance soumet un paramétrage au DG (statut EN_ATTENTE : sans effet tant que le DG ne l'a pas validé). */
-export async function soumettreParametrageBudget(saisie: SaisieParametrage, userId: string, maintenant: Date = new Date()): Promise<ResultatParametrage> {
-  const r = validerSaisieParametrage(saisie, jourCourantBudget(maintenant));
-  if (!r.ok) return { ok: false, message: Object.values(r.erreurs)[0], erreurs: r.erreurs };
-  const v = r.valeur;
+function detailSeuil(v: Pick<ValeurParametrage, "seuil">): string {
+  return v.seuil ? `seuil ${v.seuil.mode === "POURCENTAGE" ? `${v.seuil.orange} % / ${v.seuil.rouge} %` : `${fcfa(v.seuil.orange)} / ${fcfa(v.seuil.rouge)}`}` : "sans alerte";
+}
+
+function descriptionBudget(v: ValeurParametrage, libelleCategorie: string | null): string {
+  return v.portee === "GLOBAL"
+    ? `seuils du solde de caisse (budget global) : ${detailSeuil(v)}`
+    : `budget de la catégorie « ${libelleCategorie ?? "?"} » : ${fcfa(v.montant ?? 0)}, ${detailSeuil(v)}`;
+}
+
+/**
+ * La Finance soumet UN OU PLUSIEURS paramétrages d'un coup au DG (statut EN_ATTENTE : sans effet tant que le DG ne les a pas
+ * validés). Tout ou rien : une saisie incohérente, un budget déjà en attente du DG ou une catégorie introuvable refuse toute la
+ * sélection. Chaque paramétrage garde sa propre trace dans l'historique. Le budget global ne porte que des seuils (montant
+ * FCFA) : le solde de caisse réel fait foi.
+ */
+export async function soumettreParametragesBudget(saisies: readonly SaisieParametrage[], userId: string, maintenant: Date = new Date()): Promise<ResultatSoumissionLot> {
+  const r = validerLotParametrages(saisies, jourCourantBudget(maintenant));
+  if (!r.ok) {
+    const erreurs = Object.values(r.erreursParIndex);
+    return { ok: false, message: r.message, erreursParIndex: erreurs.length > 0 ? r.erreursParIndex : undefined };
+  }
   return prisma.$transaction(async (tx) => {
-    let libelle = "global";
-    if (v.categorieId) {
-      const c = await tx.categorie.findUnique({ where: { id: v.categorieId }, select: { label: true } });
-      if (!c) return { ok: false as const, message: "Catégorie introuvable." };
-      libelle = `de la catégorie « ${c.label} »`;
+    // Verrou : deux soumissions simultanées ne peuvent pas toutes les deux passer le contrôle « déjà en attente ».
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('budget-parametrage'))`;
+
+    // 1re passe : tout contrôler AVANT d'écrire quoi que ce soit — tout ou rien (rien n'est créé si une seule ligne est refusée).
+    const libelles = new Map<string, string>();
+    for (const v of r.valeurs) {
+      if (v.categorieId) {
+        const c = await tx.categorie.findUnique({ where: { id: v.categorieId }, select: { label: true } });
+        if (!c) return { ok: false as const, message: "Catégorie introuvable." };
+        libelles.set(v.categorieId, c.label);
+      }
+      const enAttente = await tx.budgetParametrage.count({ where: { portee: v.portee, categorieId: v.categorieId, statut: "EN_ATTENTE" } });
+      if (enAttente > 0) {
+        return {
+          ok: false as const,
+          message: `Un paramétrage est déjà en attente de validation du DG pour ${v.portee === "GLOBAL" ? "les seuils du solde de caisse" : `la catégorie « ${libelles.get(v.categorieId as string)} »`} : attendez sa décision avant d'en soumettre un autre.`,
+        };
+      }
     }
-    const enAttente = await tx.budgetParametrage.count({ where: { portee: v.portee, categorieId: v.categorieId, statut: "EN_ATTENTE" } });
-    if (enAttente > 0) {
-      return { ok: false as const, message: "Un paramétrage est déjà en attente de validation du DG pour ce budget : attendez sa décision avant d'en soumettre un autre." };
+
+    // 2e passe : un paramétrage et une trace d'historique PAR élément.
+    const ids: string[] = [];
+    const morceaux: string[] = [];
+    for (const v of r.valeurs) {
+      const cree = await tx.budgetParametrage.create({
+        data: {
+          portee: v.portee,
+          categorieId: v.categorieId,
+          montant: v.montant,
+          dateDebut: debutDeJour(v.dateDebut),
+          dateFin: v.dateFin ? debutDeJour(v.dateFin) : null,
+          modeSeuil: v.seuil?.mode ?? null,
+          seuilOrange: v.seuil?.orange ?? null,
+          seuilRouge: v.seuil?.rouge ?? null,
+          soumisParId: userId,
+          soumisAt: maintenant,
+        },
+      });
+      const description = descriptionBudget(v, v.categorieId ? (libelles.get(v.categorieId) ?? null) : null);
+      await tx.historiqueEntry.create({
+        data: {
+          entity: ENTITE_BUDGET,
+          entityId: cree.id,
+          action: ACTION_BUDGET.SOUMIS,
+          detail: `Soumis au DG : ${description}, ${fr(v.dateDebut)}${v.dateFin ? ` → ${fr(v.dateFin)}` : " (sans fin)"}`,
+          userId,
+        },
+      });
+      ids.push(cree.id);
+      morceaux.push(description);
     }
-    const cree = await tx.budgetParametrage.create({
-      data: {
-        portee: v.portee,
-        categorieId: v.categorieId,
-        montant: v.montant,
-        dateDebut: debutDeJour(v.dateDebut),
-        dateFin: v.dateFin ? debutDeJour(v.dateFin) : null,
-        modeSeuil: v.seuil?.mode ?? null,
-        seuilOrange: v.seuil?.orange ?? null,
-        seuilRouge: v.seuil?.rouge ?? null,
-        soumisParId: userId,
-        soumisAt: maintenant,
-      },
-    });
-    await tx.historiqueEntry.create({
-      data: {
-        entity: ENTITE_BUDGET,
-        entityId: cree.id,
-        action: ACTION_BUDGET.SOUMIS,
-        detail:
-          `Budget ${libelle} soumis au DG : ${fcfa(v.montant)}, ${fr(v.dateDebut)}${v.dateFin ? ` → ${fr(v.dateFin)}` : " (sans fin)"}` +
-          (v.seuil ? `, seuil ${v.seuil.mode === "POURCENTAGE" ? `${v.seuil.orange} % / ${v.seuil.rouge} %` : `${fcfa(v.seuil.orange)} / ${fcfa(v.seuil.rouge)}`}` : ", sans alerte"),
-        userId,
-      },
-    });
-    return { ok: true as const, id: cree.id };
+    return { ok: true as const, ids, resume: morceaux.join(" ; ") };
   });
 }
 
-/** Le DG valide ou refuse (motif obligatoire au refus). Jamais le compte qui a soumis. Le paramétrage n'est jamais modifié, seulement décidé. */
+/** Un seul paramétrage : cas particulier du lot (conservé pour les appelants qui soumettent un budget seul). */
+export async function soumettreParametrageBudget(saisie: SaisieParametrage, userId: string, maintenant: Date = new Date()): Promise<ResultatParametrage> {
+  const r = await soumettreParametragesBudget([saisie], userId, maintenant);
+  if (!r.ok) return { ok: false, message: r.message, erreurs: r.erreursParIndex?.[0] };
+  return { ok: true, id: r.ids[0] };
+}
+
+export interface DecisionParametrageLot {
+  id: string;
+  /** Motif propre à cet élément (refus) ; à défaut, le motif commun du lot. */
+  motif?: string | null;
+}
+
+export type ResultatDecisionLot =
+  | {
+      ok: true;
+      /** Éléments réellement décidés. */
+      decides: { id: string; portee: "GLOBAL" | "CATEGORIE"; description: string; soumisParId: string | null; motif: string | null }[];
+      /** Éléments laissés tels quels (déjà décidés, soumis par le décideur lui-même, introuvables) avec la raison. */
+      ignores: { id: string; message: string }[];
+    }
+  | { ok: false; message: string };
+
+/**
+ * Le DG valide ou refuse UN OU PLUSIEURS paramétrages d'un coup. Motif obligatoire au refus (3 caractères minimum), propre à
+ * chaque élément ou commun au lot. Chaque élément garde sa propre trace dans l'historique et son propre statut. Le DG ne décide
+ * jamais ce qu'il a lui-même soumis : cet élément est ignoré (avec sa raison), les autres sont décidés. Un élément déjà décidé
+ * (ou décidé entre-temps par un autre) est aussi ignoré : la décision est conditionnée au statut EN_ATTENTE lu.
+ */
+export async function deciderParametragesBudget(
+  elements: readonly DecisionParametrageLot[],
+  valider: boolean,
+  motifCommun: string | null | undefined,
+  userId: string,
+  maintenant: Date = new Date()
+): Promise<ResultatDecisionLot> {
+  if (elements.length === 0) return ERREUR("Cochez au moins un paramétrage.");
+  const ids = new Set<string>();
+  for (const e of elements) {
+    if (ids.has(e.id)) return ERREUR("Un même paramétrage figure deux fois dans la sélection.");
+    ids.add(e.id);
+  }
+  const commun = (motifCommun ?? "").trim();
+  const motifs = new Map<string, string>();
+  if (!valider) {
+    for (const e of elements) {
+      const m = (e.motif ?? "").trim() || commun;
+      if (m.length < 3) return ERREUR("Le motif du refus est obligatoire (3 caractères minimum), pour chaque élément ou en commun.");
+      motifs.set(e.id, m);
+    }
+  }
+  return prisma.$transaction(async (tx) => {
+    const decides: Extract<ResultatDecisionLot, { ok: true }>["decides"] = [];
+    const ignores: { id: string; message: string }[] = [];
+    for (const e of elements) {
+      const p = await tx.budgetParametrage.findUnique({ where: { id: e.id }, include: { categorie: { select: { label: true } } } });
+      if (!p) {
+        ignores.push({ id: e.id, message: "Paramétrage introuvable." });
+        continue;
+      }
+      const nom = p.portee === "GLOBAL" ? "solde de caisse (seuils du budget global)" : `catégorie « ${p.categorie?.label ?? "?"} »`;
+      if (p.soumisParId === userId) {
+        ignores.push({ id: e.id, message: `${nom} : vous ne pouvez pas décider un paramétrage que vous avez vous-même soumis.` });
+        continue;
+      }
+      const motif = valider ? null : (motifs.get(e.id) as string);
+      const maj = await tx.budgetParametrage.updateMany({
+        where: { id: e.id, statut: "EN_ATTENTE" },
+        data: { statut: valider ? "VALIDE" : "REFUSE", decideParId: userId, decideAt: maintenant, motifRefus: motif },
+      });
+      if (maj.count !== 1) {
+        ignores.push({ id: e.id, message: `${nom} : déjà décidé.` });
+        continue;
+      }
+      const detail = descriptionBudget(
+        { portee: p.portee, categorieId: p.categorieId, montant: p.montant == null ? null : Number(p.montant), dateDebut: "", dateFin: null, seuil: p.modeSeuil && p.seuilOrange != null && p.seuilRouge != null ? { mode: p.modeSeuil, orange: Number(p.seuilOrange), rouge: Number(p.seuilRouge) } : null },
+        p.categorie?.label ?? null
+      );
+      await tx.historiqueEntry.create({
+        data: {
+          entity: ENTITE_BUDGET,
+          entityId: e.id,
+          action: valider ? ACTION_BUDGET.VALIDE : ACTION_BUDGET.REFUSE,
+          detail: valider
+            ? `Validé par le DG : ${detail} — effectif à partir du ${fr(p.dateDebut.toISOString().slice(0, 10))}`
+            : `Refusé par le DG : ${detail} — motif : ${motif}`,
+          userId,
+        },
+      });
+      decides.push({ id: e.id, portee: p.portee, description: detail, soumisParId: p.soumisParId, motif });
+    }
+    if (decides.length === 0 && ignores.length > 0) return { ok: false as const, message: ignores.map((i) => i.message).join(" ") };
+    return { ok: true as const, decides, ignores };
+  });
+}
+
+/** Un seul paramétrage : cas particulier du lot. */
 export async function deciderParametrageBudget(
   id: string,
   valider: boolean,
@@ -397,29 +575,9 @@ export async function deciderParametrageBudget(
   userId: string,
   maintenant: Date = new Date()
 ): Promise<{ ok: true; categorieId: string | null; portee: "GLOBAL" | "CATEGORIE"; soumisParId: string | null } | { ok: false; message: string }> {
-  const m = (motif ?? "").trim();
-  if (!valider && m.length < 3) return ERREUR("Le motif du refus est obligatoire (3 caractères minimum).");
-  return prisma.$transaction(async (tx) => {
-    const p = await tx.budgetParametrage.findUnique({ where: { id }, include: { categorie: { select: { label: true } } } });
-    if (!p) return ERREUR("Paramétrage introuvable.");
-    if (p.soumisParId === userId) return ERREUR("Vous ne pouvez pas décider un paramétrage que vous avez vous-même soumis.");
-    const maj = await tx.budgetParametrage.updateMany({
-      where: { id, statut: "EN_ATTENTE" },
-      data: { statut: valider ? "VALIDE" : "REFUSE", decideParId: userId, decideAt: maintenant, motifRefus: valider ? null : m },
-    });
-    if (maj.count !== 1) return ERREUR("Ce paramétrage a déjà été décidé.");
-    const nom = p.categorie ? `de la catégorie « ${p.categorie.label} »` : "global";
-    await tx.historiqueEntry.create({
-      data: {
-        entity: ENTITE_BUDGET,
-        entityId: id,
-        action: valider ? ACTION_BUDGET.VALIDE : ACTION_BUDGET.REFUSE,
-        detail: valider
-          ? `Budget ${nom} de ${fcfa(Number(p.montant))} validé par le DG — effectif à partir du ${fr(p.dateDebut.toISOString().slice(0, 10))}`
-          : `Budget ${nom} de ${fcfa(Number(p.montant))} refusé par le DG — motif : ${m}`,
-        userId,
-      },
-    });
-    return { ok: true as const, categorieId: p.categorieId, portee: p.portee, soumisParId: p.soumisParId };
-  });
+  const r = await deciderParametragesBudget([{ id }], valider, motif, userId, maintenant);
+  if (!r.ok) return { ok: false, message: r.message };
+  const d = r.decides[0];
+  const p = await prisma.budgetParametrage.findUnique({ where: { id }, select: { categorieId: true } });
+  return { ok: true, categorieId: p?.categorieId ?? null, portee: d.portee, soumisParId: d.soumisParId };
 }

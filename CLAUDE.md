@@ -3275,7 +3275,7 @@ désormais `obligatoire` (paramètre requis : aucun appelant ne peut l'oublier).
 `validerTotalementAction`/`validerPartiellementAction`/`validerComplementaireAction` (dépense directe), les boutons « Valider » des écrans Finance et DG (`LignesValidationTable`, `ValidationActions`,
 `ValidationComplementaireActions`) et **la soumission au DG** (`versLigneCircuit`/`versDemandeCircuit(…, categorisationObligatoire)` : `categorisee` vaut « exigence satisfaite » quand la catégorie n'est pas exigée ;
 `circuitDemandeDb` charge la règle à chaque transition) — sinon un article destiné au DG aurait gardé un blocage que la validation n'a plus. Une ligne rejetée n'a jamais eu besoin de catégorie. **Écran** : carte
-« Catégorisation obligatoire pour valider » en tête de `/treso/finance/categories` (garde de la page : `isAdmin` ou `treso.gerer_categories` — la Finance ; **aucune permission nouvelle**), champ date, « Enregistrer »,
+« Catégorisation obligatoire pour valider » en tête de `/treso/finance/categories` (⚠️ depuis le lot J ter : onglet « Catégories » de `/treso/finance/budgets`, l'ancienne adresse redirige ; garde de la page : `isAdmin` ou `treso.gerer_categories` — la Finance ; **aucune permission nouvelle**), champ date, « Enregistrer »,
 « Ne jamais exiger », règle en vigueur en clair et 5 derniers changements ; `definirDateCategorisationAction` revérifie la garde. **Historisé** : `HistoriqueEntry` (entité `ParametreTresorerie`, action
 `parametre_categorisation_obligatoire`, « ancienne → nouvelle », auteur) + `majAt`/`majParId`. Changer la date ne touche aucune demande, aucun article validé sans catégorie (ils restent validés) ni aucune écriture.
 
@@ -3294,6 +3294,10 @@ et le reçu PDF du retour affichent « Montant retourné » ; « Retourné à la
 « Retourné à la compta »). Points laissés : voir la section « Lot I » ci-dessus.
 
 #### Lot J — budgets : paramétrage soumis au DG, seuils d'alerte, restes affichés à chaque validation (2026-10-19)
+
+> **⚠️ Partiellement REMPLACÉ par le lot J ter (2026-10-20, juste en dessous)** : le **budget global n'est plus un montant saisi**, c'est le **solde de caisse réel** ; la
+> Finance n'en règle que les seuils (en montant). La soumission et la décision se font seul **ou en lot**, et la page « Catégories » est fusionnée dans « Budgets ». Tout ce
+> qui suit sur les budgets de **catégorie** reste exact ; ce qui concerne un budget global « montant saisi, consommé au règlement, seuil en pourcentage » ne l'est plus.
 
 Aucune écriture de caisse créée ni modifiée ; le budget reste **consommé au règlement** ; les règlements Banque comptent comme fonds remis ;
 devise unique ; garde 8 et `PERMISSIONS_DECISION_NON_DELEGABLES` intactes. Migration additive idempotente `20261023090000_budgets_parametrage`
@@ -3372,6 +3376,74 @@ vide ; e2e `lot-j.mjs` 86/86 (migration et permissions, saisie incohérente refu
 catégorie à chaque validation, ORANGE puis ROUGE, blocage serveur par appel direct, demande de confirmation, seul le DG confirme, usage unique, le DG qui valide confirme dans le
 même geste, parcours, rien montré au demandeur, reporting page et Excel, budget sans seuil, budget global rouge, aucune écriture de caisse) ; régressions des lots précédents
 (`lot-g` et `reglement-par-article` adaptés : le budget y est un paramétrage validé).
+
+#### Lot J ter — budget global = solde de caisse, soumission en lot, page Catégories fusionnée dans Budgets (2026-10-20)
+
+Aucune écriture de caisse créée ni modifiée ; le budget d'une catégorie reste **consommé au règlement** ; les règlements Banque restent des fonds remis mais n'entrent **jamais**
+dans le solde de caisse ; devise unique ; garde 8 et `PERMISSIONS_DECISION_NON_DELEGABLES` intactes ; **aucune permission nouvelle**. Migration idempotente
+`20261024090000_budget_global_solde_caisse` (rejouée sans effet, `migrate diff` vide). Règles pures dans `backend/src/budgets.ts`, couche base dans `backend/src/budgetsDb.ts`.
+
+**1. Budget global = solde de caisse réel (décision du DG).** Le global n'a plus de montant : `BudgetParametrage.montant` devient facultatif (nul pour le global, obligatoire > 0 pour une
+catégorie, imposé par la contrainte `BudgetParametrage_coherence_v2_check`). Le « budget » du périmètre global est `getSoldeCaisse()` (journal de caisse, jamais modifié) ; sa « réserve » est
+ce qui est déjà validé et pas encore sorti de la caisse. Le **reste global** affiché à chaque validation (Finance, DG, dépense directe, parcours, reporting) =
+**solde de caisse actuel − engagé non sorti − cette validation** (jamais plafonné à 0 : négatif = « solde prévisionnel négatif »).
+- **Ce qui compte dans l'engagé** (`chargerDetailCaisse`, `perimetreCaisse`) :
+  - `engageCaisseConnu` : règlements en mode **CAISSE** créés mais **non confirmés** (brouillons) — le mode est connu ;
+  - `engageModeInconnu` : par demande ouverte (ni rejetée, ni clôturée, ni abandonnée), les montants **validés** (articles validés, articles validés par le DG en attente de la Finance,
+    montant validé d'une dépense directe) **moins tous les règlements non annulés** de la demande (toute nature, tout mode) — il ne reste que l'argent validé **sans aucun règlement**.
+  - Un règlement **Banque** (brouillon ou confirmé) ne compte **jamais** ; un règlement **Caisse confirmé** est déjà dans le solde (SORTIE du journal) et ne compte plus dans l'engagé.
+  Conséquence vérifiée : confirmer un règlement Caisse baisse le solde ET l'engagé du même montant (le reste ne bouge pas) ; un règlement Banque fait disparaître l'engagé sans toucher au solde.
+- **Ce qu'on ne peut PAS savoir à la validation** : le **mode de règlement** (Caisse ou Banque) n'est choisi qu'au règlement. Pour tout montant validé sans règlement, le prévisionnel **suppose
+  la Caisse** (hypothèse prudente : le reste affiché est une **borne basse** — si le règlement se fait finalement par banque, le solde réel sera plus élevé). L'écran le dit en clair
+  (« mode non encore connu, supposé en caisse ») et détaille la composition : solde actuel − règlements Caisse à confirmer − validé sans règlement − cette validation. Rien n'est deviné de plus.
+- **Seuils du global : montant (FCFA) uniquement**, orange puis rouge strictement plus bas (rouge ≥ 0), avec date d'effet (début ≥ aujourd'hui, fin facultative) ; **obligatoires** pour un
+  nouveau paramétrage global (`validerSaisieParametrage`) ; un pourcentage est refusé (pas de total de référence) ; un montant envoyé par un client est **ignoré** (nul en base). Soumis au DG
+  (`treso.valider_budget`), utilisable seulement une fois validé, jamais modifié en place (comme les autres).
+- **Alertes** (règle du lot J inchangée) : **orange** = alerte visible + notification Finance et DG (sauf l'auteur), validation permise ; **rouge**, ou **prévisionnel négatif**, = validation bloquée
+  jusqu'à la confirmation du DG avec motif (≥ 10 caractères) — demandée par la Finance, ou donnée par le DG dans le même geste. Un reste négatif est toujours ≤ rouge (rouge ≥ 0) : dès qu'un seuil
+  global est en vigueur, un prévisionnel négatif est donc rouge.
+- **Sans seuil global validé : aucune alerte globale** (le solde de caisse prévisionnel s'affiche quand même). Une base qui n'a jamais validé de seuil global ne bloque donc **rien** au déploiement.
+- **Migration** : chaque paramétrage global du lot J est converti sur place (statut, période et trace conservés) : montant **ignoré** (nul) ; seuil en montant **conservé** ; seuil en pourcentage →
+  `SEUIL_CAISSE_PAR_DEFAUT` (**orange 100 000 FCFA, rouge 0 FCFA** : rouge seulement quand la caisse est à sec) ; sans seuil → sans seuil. Rejouée sans effet (condition `montant IS NOT NULL`).
+  Testé sur une base portant les 4 cas (miroir pur `convertirParametrageGlobalLotJ`).
+- **Affichage** : bloc « Solde de caisse (budget global) » (`BudgetPrevision`, partout où le lot J montrait le reste global) ; photo de l'article (`budgetApresValidation.global`) et parcours disent
+  « Solde de caisse prévisionnel » ; reporting « Suivi budgétaire » : ligne « Budget global (solde de caisse) » (solde actuel, consommation « — », reste après validations, seuils, niveau) et colonne
+  Excel « Détail (budget global = solde de caisse) ». Le demandeur ne voit rien (gestion interne, inchangé).
+
+**2. Budgets de catégorie (inchangés sur le fond).** Montant saisi, seuil au choix en pourcentage restant OU en montant restant, orange puis rouge, date d'effet, soumission au DG avant usage.
+**Alertes vérifiées chez la Finance ET chez le DG** : `notifierAlerteBudget` notifie les porteurs de `treso.decider_finance` **et** de `treso.decider_dg` (hors l'auteur de la validation), pour un
+périmètre global comme pour une catégorie (e2e `lot-j.mjs` 3b pour une catégorie, `lot-j-ter.mjs` 5b pour le solde de caisse ; le DG qui valide, la Finance est prévenue).
+
+**3. Soumission seul ou en lot.** Un seul formulaire (`ParametrageBudgetForm`) : tableau « Budget global = solde de caisse » + une ligne par catégorie active, cases à cocher, **dates d'effet
+communes à la sélection**, bouton « Soumettre la sélection au DG » (grisé sans case cochée) ; une ligne dont un paramétrage attend déjà le DG est désactivée. `soumettreParametragesBudget` :
+**tout ou rien** (toute la sélection est contrôlée AVANT la moindre écriture : saisie incohérente, catégorie introuvable, budget déjà en attente, même budget deux fois → rien n'est créé), verrou
+`pg_advisory_xact_lock`, **un paramétrage et une trace d'historique (`budget_soumis`) par élément**, **une seule notification** pour le DG (« n budgets à valider »). Les erreurs reviennent par ligne.
+**Décision du DG seul ou en lot** (`ParametragesEnAttente`, `deciderParametragesBudget`) : cases à cocher + « Valider la sélection » / « Refuser la sélection » (motif commun), ou les boutons de
+chaque budget (motif propre) ; l'action accepte aussi un motif **par élément** (à défaut le motif commun) ; refus sans motif pour un élément → **rien n'est décidé**. Chaque élément garde son statut
+et sa trace (`budget_valide` / `budget_refuse`). **Le DG ne décide jamais ce qu'il a lui-même soumis** (case désactivée ; dans un lot l'élément est **ignoré avec sa raison**, les autres sont décidés ;
+un élément déjà décidé est ignoré de même). **Une seule notification par soumetteur et par lot** (« 2 budgets validés par le DG » / « 2 budgets refusés par le DG », motifs inclus).
+
+**4. Page « Catégories » fusionnée dans « Budgets ».** L'entrée de menu « Catégories » de la Finance est retirée ; « Budgets » apparaît pour qui paramètre/valide/consulte les budgets **ou**
+gère les catégories (`canVoirBudgets || canGererCategories`). `/treso/finance/budgets` a deux onglets (`?onglet=categories`) ; `/treso/finance/categories` **redirige** vers l'onglet « Catégories ».
+**Fonctions de l'ancienne page, toutes conservées** (aucune supprimée) : règle « catégorisation obligatoire à partir d'une date » (lot I, `CategorisationObligatoireDate`, `parametreActions.ts`,
+historique des 5 derniers changements), création de catégorie, liste des catégories avec création d'objet, suppression de catégorie et d'objet, **activation / désactivation réservée à l'Admin**
+(inchangé : masquée pour la Finance), budget en vigueur en lecture seule. Il n'existait pas de « modification » (renommage) de catégorie, et il n'en a pas été ajouté. Accès **inchangé** par permission :
+Admin ou `treso.gerer_categories` pour l'onglet Catégories (le DG, qui ne l'a pas, ne le voit pas ; l'Assistant Finance n'a aucun des deux), permissions budgets pour l'onglet Budgets ; chaque Server
+Action revérifie sa permission. `/admin/categories` (console Admin) est inchangée.
+
+**Points ouverts / limites** : (1) la **borne basse** du solde prévisionnel suppose la Caisse pour tout ce qui n'a pas encore de règlement — un décideur peut donc voir « rouge » alors que les
+règlements futurs se feraient par banque ; (2) **sans seuil global validé, un solde prévisionnel négatif ne bloque pas** (« rien ne doit être bloqué au déploiement ») : à arbitrer si le DG veut
+bloquer systématiquement le négatif ; (3) le seuil par défaut de la migration (orange 100 000 / rouge 0 FCFA) est un choix documenté, pas une donnée du client ; (4) les **dates d'effet sont
+communes** à une sélection (pour des dates différentes, soumettre en plusieurs fois) ; (5) le contrôle bloquant au **règlement** d'une catégorie (allocation > reste) est inchangé : un dépassement
+confirmé à la validation sera refusé au règlement tant que le budget n'est pas relevé ; il n'existe **aucun blocage du solde par le budget global au règlement** (le contrôle de solde de caisse
+insuffisant de `confirmerReglementAction` est l'existant, inchangé) ; (6) l'engagé d'une dépense directe se lit sur `Demande.montantValide` (comme au lot J) ; (7) l'Admin n'atteint pas l'onglet
+Catégories de Budgets sans permission Trésorerie (le layout Finance ne l'admet pas seul — comme avant pour l'ancienne page) : il garde `/admin/categories`.
+
+**Vérifié** : vitest (`budgetsCaisse.test.ts` 41 tests : périmètre caisse, prévisionnel, seuils en montant, orange, rouge, négatif, sans seuil, saisie globale, lot tout ou rien, migration ; 978 au total),
+tsc, eslint, `next build` ; migration sur une base portant 4 paramétrages globaux (montant, pourcentage, en attente, sans seuil) puis rejouée, `migrate diff` vide, contraintes testées ; e2e
+`lot-j-ter.mjs` 96/96 (migration, page fusionnée avec création/suppression de catégorie et d'objet, ancienne URL, menu, accès par rôle, global sans montant, lot tout ou rien, notifications uniques,
+décision en lot, motif propre/commun, soumission du DG ignorée, solde de caisse recoupé avec un calcul SQL indépendant, règlements Caisse/Banque, orange, rouge, négatif, DG dans le même geste,
+parcours, reporting page et Excel, journal de caisse intact) ; `lot-j.mjs` adapté (85/85) ; régressions des lots I, C, F, G, H et précédents.
 
 ### Solde d'ouverture de caisse
 

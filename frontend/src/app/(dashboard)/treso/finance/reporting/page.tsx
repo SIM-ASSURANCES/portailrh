@@ -264,22 +264,29 @@ export default async function ReportingPage({
                 </thead>
                 <tbody className="divide-y divide-border bg-surface">
                   {suiviBudgetaireRows.map((r) => {
-                    const depassement = r.budgetRestant < 0;
+                    const depassement = r.budgetRestant !== null && r.budgetRestant < 0;
                     return (
                       <tr key={r.global ? "global" : r.categorieId} data-suivi-budget={r.global ? "global" : r.categorieLabel} className="hover:bg-muted/50">
                         <td className="px-4 py-2 text-foreground">{r.categorieLabel}</td>
                         <td className="px-4 py-2 text-xs text-muted-foreground">{r.periode}</td>
-                        <td className="px-4 py-2 text-right text-foreground">
+                        <td className="px-4 py-2 text-right text-foreground" data-budget-alloue>
                           {r.budgetAlloue.toLocaleString("fr-FR")} FCFA
+                          {r.global ? <span className="block text-xs text-muted-foreground">solde de caisse actuel</span> : null}
                         </td>
                         <td className="px-4 py-2 text-right text-foreground">
-                          {r.montantConsomme.toLocaleString("fr-FR")} FCFA
+                          {r.montantConsomme === null ? "—" : `${r.montantConsomme.toLocaleString("fr-FR")} FCFA`}
                         </td>
                         <td
                           className={`px-4 py-2 text-right font-semibold ${depassement ? "text-danger" : "text-success"}`}
                         >
-                          {depassement ? "Dépassement de " : ""}
-                          {Math.abs(r.budgetRestant).toLocaleString("fr-FR")} FCFA
+                          {r.budgetRestant === null ? (
+                            "—"
+                          ) : (
+                            <>
+                              {depassement ? "Dépassement de " : ""}
+                              {Math.abs(r.budgetRestant).toLocaleString("fr-FR")} FCFA
+                            </>
+                          )}
                         </td>
                         <td className={`px-4 py-2 text-right font-semibold ${r.resteApresEngagements < 0 ? "text-danger" : "text-foreground"}`} data-reste-apres-validations>
                           {r.resteApresEngagements < 0 ? "Dépassement de " : ""}

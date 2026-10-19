@@ -103,11 +103,9 @@ export interface NavFlags {
    */
   canGererSoldeOuverture: boolean;
   /**
-   * `isAdmin()` OU `treso.gerer_categories` : ajoute "Catégories" — voir
-   * CLAUDE.md "Gestion des Catégories/Objets ouverte à Finance". Cible
-   * `/treso/finance/categories`, distincte de `/admin/categories`
-   * (toujours accessible séparément à l'Admin via la section
-   * "Administration" de la sidebar).
+   * `isAdmin()` OU `treso.gerer_categories` : fait apparaître « Budgets » (lot J ter) — la gestion des catégories vit dans l'onglet
+   * « Catégories » de cette page ; l'entrée de menu « Catégories » n'existe plus (voir CLAUDE.md « Lot J ter »). Distincte de
+   * `/admin/categories` (toujours accessible séparément à l'Admin via la section "Administration" de la sidebar).
    */
   canGererCategories: boolean;
 
@@ -278,15 +276,6 @@ export function getNavBranches({
                   } satisfies NavItem,
                 ]
               : []),
-            ...(canGererCategories
-              ? [
-                  {
-                    label: "Catégories",
-                    href: "/treso/finance/categories",
-                    icon: "folder-tree",
-                  } satisfies NavItem,
-                ]
-              : []),
             ...(canAccesMonTableauDeBord
               ? [
                   {
@@ -346,7 +335,9 @@ export function getNavBranches({
                   } satisfies NavItem,
                 ]
               : []),
-            ...(canVoirBudgets
+            // Lot J ter : la page « Budgets » porte aussi la gestion des catégories (ancienne entrée « Catégories », retirée du
+            // menu : /treso/finance/categories redirige vers l'onglet « Catégories » de cette page).
+            ...(canVoirBudgets || canGererCategories
               ? [
                   {
                     label: "Budgets",

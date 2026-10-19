@@ -14,15 +14,53 @@ export function BadgeNiveauBudget({ niveau }: { niveau: NiveauAlerteBudget }) {
 
 const fcfa = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`;
 
-function LigneBudget({ l }: { l: LignePrevision }) {
+/**
+ * Budget global = solde de caisse (lot J ter). Affiche le solde de caisse PRÉVISIONNEL après la validation, et de quoi il est fait :
+ * solde réel du journal de caisse − ce qui est déjà validé sans être sorti de la caisse − cette validation. Le mode de règlement
+ * (Caisse ou Banque) n'étant choisi qu'au règlement, la part « validée sans règlement » est supposée sortir de la caisse.
+ */
+function LigneSoldeCaisse({ l }: { l: LignePrevision }) {
+  const c = l.caisse;
   return (
     <li
-      data-budget-prevision={l.portee === "GLOBAL" ? "global" : "categorie"}
+      data-budget-prevision="global"
+      data-niveau-budget={l.niveau}
+      className="space-y-1 rounded-lg border border-border bg-surface px-3 py-2"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm text-foreground">
+          <span className="font-semibold">Solde de caisse (budget global)</span>
+          {" — "}
+          <span data-reste-apres className="font-black tabular-nums">
+            {l.resteApres < 0 ? `négatif de ${fcfa(Math.abs(l.resteApres))}` : fcfa(l.resteApres)}
+          </span>{" "}
+          <span className="text-muted-foreground">après cette validation</span>
+          {l.seuil ? <span className="block text-xs text-muted-foreground">{libelleSeuil(l.seuil)}</span> : <span className="block text-xs text-muted-foreground">Aucun seuil validé : pas d&apos;alerte.</span>}
+        </span>
+        <BadgeNiveauBudget niveau={l.niveau} />
+      </div>
+      {c ? (
+        <p data-detail-solde-caisse className="text-xs text-muted-foreground">
+          Solde actuel {fcfa(c.soldeCaisse)}
+          {c.engageCaisseConnu > 0 ? ` − règlements en caisse à confirmer ${fcfa(c.engageCaisseConnu)}` : ""}
+          {c.engageModeInconnu > 0 ? ` − déjà validé sans règlement ${fcfa(c.engageModeInconnu)} (mode non encore connu, supposé en caisse)` : ""}
+          {l.ajout > 0 ? ` − cette validation ${fcfa(l.ajout)}` : ""}.
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+function LigneBudget({ l }: { l: LignePrevision }) {
+  if (l.portee === "GLOBAL") return <LigneSoldeCaisse l={l} />;
+  return (
+    <li
+      data-budget-prevision="categorie"
       data-niveau-budget={l.niveau}
       className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-2"
     >
       <span className="text-sm text-foreground">
-        <span className="font-semibold">{l.portee === "GLOBAL" ? "Budget global" : `Budget « ${l.libelle} »`}</span>
+        <span className="font-semibold">{`Budget « ${l.libelle} »`}</span>
         {" — "}
         <span data-reste-apres className="font-black tabular-nums">
           {l.resteApres < 0 ? `dépassé de ${fcfa(Math.abs(l.resteApres))}` : `reste ${fcfa(l.resteApres)}`}
