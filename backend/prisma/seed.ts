@@ -233,6 +233,8 @@ async function main() {
     { key: "treso.deleguer_acces", label: "Déléguer des accès", moduleId: moduleTresorerie.id },
     // Circuit de validation (2026-10-06) : décision à l'étape DG.
     { key: "treso.decider_dg", label: "Décider à l'étape DG (valider ou rejeter une demande soumise)", moduleId: moduleTresorerie.id },
+    // Lot J : le DG valide ou refuse les paramétrages de budget (la Finance les soumet avec modifier_budget_categorie).
+    { key: "treso.valider_budget", label: "Valider ou refuser un paramétrage de budget (DG)", moduleId: moduleTresorerie.id },
     {
       key: "treso.modifier_description",
       label: "Modifier la description d'une demande et le libellé de ses lignes",
@@ -333,6 +335,7 @@ async function main() {
       "treso.voir_reporting",
       "treso.approuver_validation_complete",
       "treso.decider_dg",
+      "treso.valider_budget",
       // Décision 3 : le DG crée aussi des demandes (cas a : la Finance les décide) et déclare leur retour de caisse.
       "treso.creer_demande",
       "treso.declarer_retour",

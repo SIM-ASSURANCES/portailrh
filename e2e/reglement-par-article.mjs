@@ -52,7 +52,10 @@ const idCollab = await uid("collaborateur@simassurances.test");
 const idRh = await uid("rh@simassurances.test");
 const idFinance = await uid("finance@simassurances.test");
 const idAssistant = await uid("assistant-finance@simassurances.test");
-await q(`INSERT INTO "Categorie"(id, label, "isActive", "budgetAlloue") VALUES ('e2e-lotd-cat1', 'E2E-D-CAT1', true, 100000), ('e2e-lotd-cat2', 'E2E-D-CAT2', true, 100000) ON CONFLICT (id) DO UPDATE SET "budgetAlloue" = 100000`);
+await q(`INSERT INTO "Categorie"(id, label, "isActive") VALUES ('e2e-lotd-cat1', 'E2E-D-CAT1', true), ('e2e-lotd-cat2', 'E2E-D-CAT2', true) ON CONFLICT (id) DO NOTHING`);
+// Lot J : le budget d'une catégorie est un paramétrage validé par le DG (la colonne Categorie.budgetAlloue n'est plus lue).
+await q(`DELETE FROM "BudgetParametrage" WHERE "categorieId" IN ('e2e-lotd-cat1', 'e2e-lotd-cat2')`);
+await q(`INSERT INTO "BudgetParametrage"(id, portee, "categorieId", montant, "dateDebut", "modeSeuil", "seuilOrange", "seuilRouge", statut, repris, "decideAt") VALUES ('e2e-lotd-b1', 'CATEGORIE', 'e2e-lotd-cat1', 100000, DATE '2000-01-01', 'POURCENTAGE', 20, 0, 'VALIDE', true, now()), ('e2e-lotd-b2', 'CATEGORIE', 'e2e-lotd-cat2', 100000, DATE '2000-01-01', 'POURCENTAGE', 20, 0, 'VALIDE', true, now())`);
 
 async function demande(suffixe, lignes, { statut = "PARTIELLEMENT_VALIDEE" } = {}) {
   const id = `${PREFIXE}${suffixe}`;

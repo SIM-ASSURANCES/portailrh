@@ -135,6 +135,10 @@ model User {
   encParametresMaj  EncParametre[]     @relation("EncParametreMajPar")
   /// Paramètres Trésorerie (lot I) : `SetNull` (le changement reste tracé dans `HistoriqueEntry`).
   parametresTresorerieMaj ParametreTresorerie[] @relation("ParametreTresorerieMajPar")
+  budgetsSoumis           BudgetParametrage[]   @relation("BudgetParametrageSoumisPar")
+  budgetsDecides          BudgetParametrage[]   @relation("BudgetParametrageDecidePar")
+  depassementsDemandes    BudgetDepassement[]   @relation("BudgetDepassementDemandePar")
+  depassementsConfirmes   BudgetDepassement[]   @relation("BudgetDepassementConfirmePar")
   encPiecesDeposees EncPieceJointe[]   @relation("EncPieceJointeDeposeePar")
   /// Paramètres V2 (docs/encaissements-conception.md §5.2) — toutes en `onDelete: Restrict`, sauf les créateurs des
   /// deux référentiels dont la toute première ligne est posée par la migration (`creeParId` nul dans ce seul cas).
@@ -480,6 +484,10 @@ model Categorie {
   /// calculé). Aucun renouvellement automatique périodique : un montant
   /// total consommable jusqu'à épuisement, à réajuster manuellement par
   /// l'Admin (`admin/categories`).
+  ///
+  /// **Lot J (2026-10-19) — ANCIENNE valeur, plus lue.** Le budget d'une catégorie est désormais porté par
+  /// `BudgetParametrage` (date d'effet, seuils, validation du DG) ; la migration a copié chaque `budgetAlloue` existant en
+  /// paramétrage validé par le DG. Colonne conservée (historique, retour arrière), jamais écrite par l'application.
   budgetAlloue Decimal? @db.Decimal(14, 2)
 
   demandes             Demande[]                      @relation("DemandeCategorie")
@@ -488,6 +496,8 @@ model Categorie {
   /// ne couvre que les `DEPENSE_DIRECTE` depuis cette tâche.
   lignesDemande        LigneDemande[]                 @relation("LigneDemandeCategorie")
   allocationsReglement ReglementCategorieAllocation[]
+  /// Paramétrages de budget de cette catégorie (lot J) : seule source du budget EN VIGUEUR (`budgetAlloue` est l'ancienne valeur).
+  budgetsParametres    BudgetParametrage[]
 }
 
 model Objet {
@@ -574,6 +584,8 @@ model Demande {
   /// Lignes d'articles (Libellé / Nombre / Prix unitaire). `montant` ci-dessus
   /// est la somme des (quantite × prixUnitaire) — jamais saisi directement.
   lignes LigneDemande[]
+  /// Dépassements de budget (seuil rouge) demandés/confirmés pour cette demande (lot J).
+  depassementsBudget BudgetDepassement[]
 
   /// Motif du dernier rejet : ancien rejet définitif, ou renvoi en correction / rejet DG du circuit (voir
   /// `niveauRejet`).
@@ -743,6 +755,9 @@ model LigneDemande {
   libelle      String
   quantite     Int
   prixUnitaire Decimal @db.Decimal(14, 2)
+  /// Lot J : reste du budget global et de la catégorie APRÈS la validation de cet article (photo posée une seule fois, à la
+  /// première validation — celle du DG ou de la Finance —, jamais recalculée). Gestion interne : jamais montrée au demandeur.
+  budgetApresValidation Json?
 
   /// Version ORIGINALE de `libelle`, immuable une fois posée — même
   /// mécanique exacte que `Demande.descriptionOriginale` (voir CLAUDE.md
@@ -2099,6 +2114,86 @@ model ParametreTresorerie {
   majAt      DateTime  @default(now())
   majParId   String?
   majPar     User?     @relation("ParametreTresorerieMajPar", fields: [majParId], references: [id], onDelete: SetNull)
+}
+
+enum PorteeBudget {
+  GLOBAL
+  CATEGORIE
+}
+
+enum ModeSeuilBudget {
+  POURCENTAGE
+  MONTANT
+}
+
+enum StatutParametrageBudget {
+  EN_ATTENTE
+  VALIDE
+  REFUSE
+}
+
+enum StatutDepassementBudget {
+  /// Demandé par la Finance, en attente du DG.
+  DEMANDE
+  /// Confirmé par le DG (motif obligatoire), pas encore utilisé par une validation.
+  CONFIRME
+  /// Utilisé par la validation qu'il autorisait (à usage unique).
+  UTILISE
+}
+
+/// Paramétrage de budget (lot J, 2026-10-19) : budget GLOBAL ou d'une CATÉGORIE, avec date d'effet (début, fin facultative) et
+/// seuils d'alerte facultatifs. Soumis par la Finance, utilisable seulement une fois VALIDÉ par le DG ; jamais modifié en
+/// place : un nouveau paramétrage remplace l'ancien à sa date d'effet (`budgetEnVigueur`, `backend/src/budgets.ts`), l'historique
+/// reste. `categorieId` renseignée pour CATEGORIE seulement. Seuil : `modeSeuil` nul = aucune alerte ; sinon `seuilOrange` >
+/// `seuilRouge` ≥ 0 (pourcentage restant ou montant restant). Les budgets existants avant le lot J sont repris par la migration
+/// (`repris`, validés, début 2000-01-01, sans fin, seuil 20 % / 0 %) ; leur `soumisParId` est nul.
+model BudgetParametrage {
+  id          String                  @id @default(cuid())
+  portee      PorteeBudget
+  categorieId String?
+  categorie   Categorie?              @relation(fields: [categorieId], references: [id], onDelete: Restrict)
+  montant     Decimal                 @db.Decimal(14, 2)
+  dateDebut   DateTime                @db.Date
+  dateFin     DateTime?               @db.Date
+  modeSeuil   ModeSeuilBudget?
+  seuilOrange Decimal?                @db.Decimal(14, 2)
+  seuilRouge  Decimal?                @db.Decimal(14, 2)
+  statut      StatutParametrageBudget @default(EN_ATTENTE)
+  repris      Boolean                 @default(false)
+  soumisParId String?
+  soumisPar   User?                   @relation("BudgetParametrageSoumisPar", fields: [soumisParId], references: [id])
+  soumisAt    DateTime                @default(now())
+  decideParId String?
+  decidePar   User?                   @relation("BudgetParametrageDecidePar", fields: [decideParId], references: [id])
+  decideAt    DateTime?
+  /// Obligatoire (3 caractères minimum) quand le DG refuse.
+  motifRefus  String?
+
+  @@index([portee, categorieId, statut])
+  @@index([statut, soumisAt])
+}
+
+/// Dépassement du seuil rouge d'un budget (lot J) : la validation d'une demande est bloquée tant que le DG n'a pas confirmé le
+/// dépassement avec un motif. La Finance le DEMANDE (statut DEMANDE, `resume` = photo des périmètres en alerte) ; le DG le
+/// CONFIRME (motif obligatoire) ; la validation qui s'en sert le fait passer à UTILISE (usage unique). Quand c'est le DG qui
+/// valide, il confirme dans le même geste : la ligne est créée directement UTILISE (demandeur = confirmateur).
+model BudgetDepassement {
+  id           String                  @id @default(cuid())
+  demandeId    String
+  demande      Demande                 @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+  statut       StatutDepassementBudget
+  resume       String
+  demandeParId String
+  demandePar   User                    @relation("BudgetDepassementDemandePar", fields: [demandeParId], references: [id])
+  demandeAt    DateTime                @default(now())
+  confirmeParId String?
+  confirmePar  User?                   @relation("BudgetDepassementConfirmePar", fields: [confirmeParId], references: [id])
+  confirmeAt   DateTime?
+  motif        String?
+  utiliseAt    DateTime?
+
+  @@index([demandeId, statut])
+  @@index([statut, demandeAt])
 }
 
 /// Une ligne par exécution d'une tâche planifiée, planifiée ou manuelle (moniteur de `/admin/journal-technique`).

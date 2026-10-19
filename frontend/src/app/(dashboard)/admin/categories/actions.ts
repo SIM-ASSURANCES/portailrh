@@ -20,10 +20,8 @@ type SimpleActionResult = { status: "success" | "error"; message: string };
  * désactivation (`toggleCategorieActiveAction`/`toggleObjetActiveAction`)
  * reste réservée à `isAdmin()` seul — voir CLAUDE.md "Gestion des
  * Catégories/Objets ouverte à Finance" pour ce choix explicite. Le budget
- * partagé (`modifierBudgetCategorieAction`), lui, est désormais ouvert
- * en plus au Responsable Finance (voir "Finance peut définir le budget
- * d'une catégorie" ci-dessous, `peutModifierBudget()` — une garde
- * distincte, jamais fusionnée avec celle-ci).
+ * d'une catégorie ne se modifie plus ici (lot J) : il est paramétré par la Finance et validé par le DG
+ * (`treso/finance/budgets`).
  */
 function peutGererCategories(session: { estAdmin: boolean; permissions: string[] } | null): boolean {
   return !!session && (isAdmin(session) || hasPermission(session, "treso.gerer_categories"));
@@ -183,84 +181,9 @@ export async function toggleCategorieActiveAction(
   return { status: "success", message: active ? "Catégorie activée." : "Catégorie désactivée." };
 }
 
-const budgetAlloueSchema = z
-  .number()
-  .positive("Le budget doit être supérieur à 0")
-  .nullable();
-
-/**
- * Éligibilité à MODIFIER le budget partagé d'une Catégorie — `isAdmin()`
- * OU `treso.valider_demande` (Responsable Finance), voir CLAUDE.md "Finance
- * peut définir le budget d'une catégorie". **`treso.valider_demande` seule
- * ne suffit pas** : le rôle DG la possède aussi (il valide/rejette les
- * demandes au même titre que Finance) — même conflit de spécification déjà
- * rencontré et tranché pour "Restreindre 'Déléguer des accès'"/"Description
- * du besoin modifiable", résolu ici avec exactement le même schéma : exclut
- * spécifiquement le DG via l'absence de `treso.approuver_validation_complete`
- * (jamais transmise à Finance dans le seed), sans jamais comparer de nom de
- * rôle en dur. L'Assistant Finance n'a de toute façon jamais
- * `treso.valider_demande` — exclu structurellement, aucune exclusion
- * supplémentaire nécessaire pour lui.
- */
-function peutModifierBudget(session: { estAdmin: boolean; permissions: string[] } | null): boolean {
-  return (
-    !!session &&
-    (isAdmin(session) || hasPermission(session, "treso.modifier_budget_categorie"))
-  );
-}
-
-/**
- * Définit ou retire le budget PARTAGÉ (`budgetAlloue`) d'une Catégorie —
- * voir CLAUDE.md "Budget partagé par Catégorie". `null` = aucune limite,
- * aucun contrôle appliqué désormais pour cette catégorie (jamais la
- * consommation déjà enregistrée qui, elle, ne peut techniquement pas être
- * "retirée" — le grand livre des règlements reste immuable). Réservée à
- * `peutModifierBudget()` (Admin OU Responsable Finance, voir plus haut) —
- * depuis "Finance peut définir le budget d'une catégorie" (voir CLAUDE.md),
- * plus réservée à l'Admin seul.
- */
-export async function modifierBudgetCategorieAction(
-  categorieId: string,
-  budgetAlloue: number | null
-): Promise<SimpleActionResult> {
-  const session = await getSession();
-  if (!session || !peutModifierBudget(session)) {
-    return { status: "error", message: "Action non autorisée." };
-  }
-
-  const parsed = budgetAlloueSchema.safeParse(budgetAlloue);
-  if (!parsed.success) {
-    return { status: "error", message: parsed.error.issues[0].message };
-  }
-
-  const categorie = await prisma.categorie.update({
-    where: { id: categorieId },
-    data: { budgetAlloue: parsed.data },
-  });
-
-  await prisma.historiqueEntry.create({
-    data: {
-      entity: "Categorie",
-      entityId: categorie.id,
-      action: "BUDGET_ALLOUE",
-      detail:
-        parsed.data != null
-          ? `Budget alloué de « ${categorie.label} » fixé à ${parsed.data.toLocaleString("fr-FR")} FCFA`
-          : `Budget alloué de « ${categorie.label} » retiré (aucune limite)`,
-      userId: session.user.id,
-    },
-  });
-
-  revalidateCategoriesPaths();
-
-  return {
-    status: "success",
-    message:
-      parsed.data != null
-        ? `Budget de « ${categorie.label} » fixé à ${parsed.data.toLocaleString("fr-FR")} FCFA.`
-        : `Budget de « ${categorie.label} » retiré (aucune limite).`,
-  };
-}
+// Lot J (2026-10-19) : le budget d'une catégorie n'est plus modifiable « en place » (ancienne `modifierBudgetCategorieAction`,
+// supprimée). Il est paramétré par la Finance puis validé par le DG, avec date d'effet et seuils : voir
+// `treso/finance/budgets/actions.ts` et `backend/src/budgets.ts`.
 
 /** Active ou désactive un Objet. Même principe que toggleCategorieActiveAction. */
 export async function toggleObjetActiveAction(
@@ -352,10 +275,11 @@ export async function supprimerCategorieAction(categorieId: string): Promise<Sim
   if (categorie._count.lignesDemande > 0) {
     blocages.push(`${categorie._count.lignesDemande} ligne(s) d'article l'utilisant`);
   }
-  if (categorie.budgetAlloue != null) {
-    blocages.push(
-      `un budget alloué de ${Number(categorie.budgetAlloue).toLocaleString("fr-FR")} FCFA défini`
-    );
+  // Lot J : un budget paramétré (en vigueur, en attente ou passé) fait partie de l'historique budgétaire : la catégorie ne
+  // se supprime pas, elle se désactive.
+  const parametrages = await prisma.budgetParametrage.count({ where: { categorieId } });
+  if (parametrages > 0) {
+    blocages.push(`${parametrages} paramétrage(s) de budget enregistré(s)`);
   }
 
   if (blocages.length > 0) {

@@ -21,7 +21,7 @@ import { remettreChronoDemande } from "backend";
 import {
   allocationsReglementArticle,
   calculerStatutDemande,
-  getMontantConsommeCategorie,
+  getBudgetsCategoriesEnVigueur,
   getResteARegler,
   getSoldeCaisse,
   getTotalRegle,
@@ -387,11 +387,14 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   // nomme TOUTES les catégories en cause en une seule fois (jamais
   // seulement la première trouvée) — et pour que, si aucune catégorie ne
   // dépasse, aucune n'ait été touchée par un test partiel.
+  // Lot J : le budget d'une catégorie est celui EN VIGUEUR (paramétrage validé par le DG, depuis sa date d'effet), plus
+  // `Categorie.budgetAlloue`. Règle inchangée : consommé au règlement, confirmation refusée si l'allocation dépasse le reste.
+  const budgetsEnVigueur = await getBudgetsCategoriesEnVigueur();
   const depassements: string[] = [];
   for (const allocation of reglement.allocations) {
-    if (allocation.categorie.budgetAlloue == null) continue;
-    const consommeExistant = await getMontantConsommeCategorie(allocation.categorieId);
-    const restantAvantCeReglement = Number(allocation.categorie.budgetAlloue) - consommeExistant;
+    const enVigueur = budgetsEnVigueur[allocation.categorieId];
+    if (!enVigueur) continue;
+    const restantAvantCeReglement = enVigueur.restant;
     const montantAlloue = Number(allocation.montant);
     if (montantAlloue > restantAvantCeReglement) {
       depassements.push(

@@ -137,6 +137,8 @@ export interface ParcoursArticle {
   note: string | null;
   /** Lot C : « Clôturé sans régularisation — solde restant X » si la demande a été clôturée de force avec cet article non régularisé. */
   clotureSansRegularisation?: string | null;
+  /** Lot J (Finance et DG seulement) : reste du budget global et de la catégorie après la validation de l'article. */
+  budget?: { lignes: string[]; niveau: "AUCUN" | "ORANGE" | "ROUGE" };
 }
 
 const c = (n: number) => Math.round(n * 100);

@@ -15,7 +15,9 @@ import {
 } from "./dashboardFinance";
 import { getDatesGestionDemandes } from "./dateGestionDemande";
 import { prisma } from "./prisma";
-import { getMontantConsommeCategorie, getSoldeCaisse } from "./tresorerie";
+import { chargerContexteBudget } from "./budgetsDb";
+import { libellePeriodeBudget, lireSnapshotBudget, niveauAlerte, phrasesSnapshotBudget, type NiveauAlerteBudget, type SeuilBudget } from "./budgets";
+import { getSoldeCaisse } from "./tresorerie";
 
 /**
  * Filtres du reporting Trésorerie (Ticket 10), partagés entre l'écran
@@ -630,6 +632,17 @@ export interface ReportingSuiviBudgetaireRow {
   montantConsomme: number;
   /** `budgetAlloue - montantConsomme`, **jamais plafonné à 0** — négatif = dépassement réel. */
   budgetRestant: number;
+  /** Lot J : max(consommé, engagé par les validations) — ce que le budget a déjà réservé. */
+  reserve: number;
+  /** Lot J : `budgetAlloue − reserve`, le reste après les validations en cours (prévisionnel), jamais plafonné à 0. */
+  resteApresEngagements: number;
+  /** Lot J : seuil d'alerte du budget en vigueur (`null` = aucune alerte) et niveau actuel sur le reste ci-dessus. */
+  seuil: SeuilBudget | null;
+  niveau: NiveauAlerteBudget;
+  /** Lot J : période du budget en vigueur (« à partir du 19/10/2026 », « depuis toujours (budget repris) »…). */
+  periode: string;
+  /** Lot J : `true` pour la ligne du budget global. */
+  global: boolean;
 }
 
 /**
@@ -650,24 +663,28 @@ export interface ReportingSuiviBudgetaireRow {
  * catégorie reste largement suffisant, jamais une requête par demande.
  */
 export async function getReportingSuiviBudgetaire(): Promise<ReportingSuiviBudgetaireRow[]> {
-  const categories = await prisma.categorie.findMany({
-    where: { budgetAlloue: { not: null } },
-    orderBy: { label: "asc" },
+  // Lot J : budgets EN VIGUEUR (paramétrage validé par le DG, date d'effet, seuils). La consommation est comptée depuis la
+  // date d'effet du budget en vigueur ; le « réservé » (consommé ou engagé par les validations) donne le reste prévisionnel.
+  // Le budget global (toutes dépenses) est la première ligne s'il en existe un.
+  const contexte = await chargerContexteBudget();
+  const perimetres = [contexte.global, ...Object.values(contexte.categories)].filter((p): p is NonNullable<typeof p> => !!p);
+  const lignes = perimetres.map((p) => {
+    const consomme = p.consomme ?? 0;
+    return {
+      categorieId: p.categorieId ?? "",
+      categorieLabel: p.portee === "GLOBAL" ? "Budget global" : p.libelle,
+      budgetAlloue: p.budget,
+      montantConsomme: consomme,
+      budgetRestant: p.budget - consomme,
+      reserve: p.reserve,
+      resteApresEngagements: p.budget - p.reserve,
+      seuil: p.seuil,
+      niveau: niveauAlerte(p.budget - p.reserve, p.budget, p.seuil),
+      periode: p.dateDebut ? libellePeriodeBudget(p.dateDebut, p.dateFin ?? null) : "",
+      global: p.portee === "GLOBAL",
+    } satisfies ReportingSuiviBudgetaireRow;
   });
-
-  return Promise.all(
-    categories.map(async (c) => {
-      const budgetAlloue = Number(c.budgetAlloue);
-      const montantConsomme = await getMontantConsommeCategorie(c.id);
-      return {
-        categorieId: c.id,
-        categorieLabel: c.label,
-        budgetAlloue,
-        montantConsomme,
-        budgetRestant: budgetAlloue - montantConsomme,
-      };
-    })
-  );
+  return lignes.sort((x, y) => Number(y.global) - Number(x.global) || x.categorieLabel.localeCompare(y.categorieLabel, "fr"));
 }
 
 export interface ReportingJournalDetail {
@@ -917,6 +934,10 @@ export async function getReportingArbre(
         id: l.id,
         libelle: l.libelle,
         libelleOrigine: l.libelleDemandeur ?? l.libelleOriginal ?? l.libelle,
+        budgetApres: (() => {
+          const snap = lireSnapshotBudget(l.budgetApresValidation);
+          return snap ? phrasesSnapshotBudget(snap).join(" | ") : undefined;
+        })(),
         motif: l.motif,
         quantite: l.quantite,
         prixUnitaire: Number(l.prixUnitaire),

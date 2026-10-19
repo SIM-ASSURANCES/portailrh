@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Icon } from "@/components/icons";
 import { STATUT_LIGNE_DEMANDE_BADGE_VARIANT, STATUT_LIGNE_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 import { EnteteDemandeArticle, type ContexteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
+import { BudgetPrevision } from "@/components/tresorerie/BudgetPrevision";
 import { RaisonVisible } from "@/components/tresorerie/RaisonVisible";
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 
@@ -16,7 +17,11 @@ import {
   MESSAGE_LIGNE_SANS_CATEGORIE,
   MOTIF_LIGNE_MIN,
   MESSAGE_INTRO_ARTICLES,
+  MOTIF_DEPASSEMENT_MIN,
+  previsionBudget,
   raisonSoumissionArticle,
+  verdictBudget,
+  type ContexteBudget,
   type EtatLigneDG,
   type LigneCircuit,
 } from "backend/client";
@@ -31,8 +36,22 @@ import {
   validerLignesAction,
 } from "./actions";
 import { soumettreLignesAuDGAction } from "../../../circuit/actions";
+import { demanderConfirmationDepassementAction } from "../../budgets/actions";
 
 type LigneStatut = "EN_ATTENTE" | "VALIDEE" | "REJETEE";
+
+/**
+ * Budgets à la validation (lot J) : budgets en vigueur et ce qui est déjà réservé (chargés par la page), pour afficher en direct
+ * le reste du budget global ET de chaque catégorie APRÈS les validations cochées. `estDG` : le DG confirme lui-même un
+ * dépassement rouge dans ce geste ; `confirmationDonnee` : le DG a déjà confirmé pour cette demande (la Finance peut valider) ;
+ * `confirmationDemandee` : la Finance a déjà demandé cette confirmation.
+ */
+export interface BudgetValidation {
+  contexte: ContexteBudget;
+  estDG: boolean;
+  confirmationDonnee: boolean;
+  confirmationDemandee: boolean;
+}
 
 export interface CategorieOption {
   id: string;
@@ -177,9 +196,12 @@ export function LignesValidationTable({
   etapeCircuit = null,
   enteteDemande = null,
   categorisationObligatoire = true,
+  budget = null,
 }: {
   demandeId: string;
   lignes: LigneValidation[];
+  /** Lot J : budgets en vigueur (voir `BudgetValidation`) ; `null` = aucun budget à afficher. */
+  budget?: BudgetValidation | null;
   /** Lot I : la catégorisation est-elle obligatoire aujourd'hui pour valider (`categorisationEstObligatoire`) ? */
   categorisationObligatoire?: boolean;
   canValider: boolean;
@@ -272,7 +294,21 @@ export function LignesValidationTable({
   // Catégorisation obligatoire : une ligne validée doit porter une catégorie (revérifié par le serveur).
   const valideesSansCategorie =
     categorisationObligatoire && lignesDecidees.some((ligne) => decisions[ligne.id]!.statut === "VALIDEE" && !ligne.categorieId);
-  const peutEnregistrer = canValider && lignesDecidees.length > 0 && motifsValides && !valideesSansCategorie && !isPending;
+  // Lot J : prévisionnel du budget global et de la catégorie après ces validations (les articles déjà validés par le DG sont
+  // déjà engagés : non recomptés). Orange : on valide. Rouge : le DG confirme dans ce geste (motif), la Finance a besoin
+  // d'une confirmation déjà donnée.
+  const [motifDepassement, setMotifDepassement] = useState("");
+  const [demandeEnCours, setDemandeEnCours] = useState(false);
+  const ajoutsBudget = lignesDecidees
+    .filter((l) => decisions[l.id]!.statut === "VALIDEE" && l.decisionDG !== "VALIDEE")
+    .map((l) => ({ categorieId: l.categorieId ?? null, montant: l.quantite * l.prixUnitaire }));
+  const prevision = budget && ajoutsBudget.length > 0 ? previsionBudget(budget.contexte, ajoutsBudget) : null;
+  const verdict =
+    budget && prevision
+      ? verdictBudget({ prevision, acteurEstDG: budget.estDG, motifConfirmation: motifDepassement, confirmationExistante: budget.confirmationDonnee })
+      : null;
+  const depassementBloque = verdict !== null && !verdict.autorise;
+  const peutEnregistrer = canValider && lignesDecidees.length > 0 && motifsValides && !valideesSansCategorie && !depassementBloque && !isPending;
 
   // Bug signalé "l'interaction se bloque après avoir cliqué Rejeter" (voir
   // CLAUDE.md) : le bouton restait CORRECTEMENT désactivé tant qu'un motif
@@ -286,7 +322,9 @@ export function LignesValidationTable({
       ? "Un motif de rejet d'au moins 3 caractères est requis pour chaque ligne rejetée."
       : valideesSansCategorie
         ? MESSAGE_LIGNE_SANS_CATEGORIE
-        : null;
+        : verdict && !verdict.autorise
+          ? verdict.raison
+          : null;
 
   function handleEnregistrer() {
     const payload = lignesDecidees.map((ligne) => {
@@ -298,13 +336,31 @@ export function LignesValidationTable({
       };
     });
     startTransition(async () => {
-      const result = await validerLignesAction(demandeId, payload);
+      const result = await validerLignesAction(
+        demandeId,
+        payload,
+        budget?.estDG && prevision?.niveau === "ROUGE" ? motifDepassement.trim() : undefined
+      );
       if (result.status === "success") {
         toast.success(result.message);
         setDecisions({});
+        setMotifDepassement("");
       } else {
         toast.error(result.message);
       }
+    });
+  }
+
+  function demanderConfirmationDG() {
+    setDemandeEnCours(true);
+    startTransition(async () => {
+      const result = await demanderConfirmationDepassementAction(
+        demandeId,
+        lignesDecidees.filter((l) => decisions[l.id]!.statut === "VALIDEE").map((l) => l.id)
+      );
+      setDemandeEnCours(false);
+      if (result.status === "success") toast.success(result.message);
+      else toast.error(result.message);
     });
   }
 
@@ -382,6 +438,45 @@ export function LignesValidationTable({
             )}
             <span className="tabular-nums">{montantQuiSeraValide.toLocaleString("fr-FR")} FCFA</span>
           </p>
+          {prevision ? <BudgetPrevision prevision={prevision} /> : null}
+          {prevision && prevision.niveau === "ORANGE" ? (
+            <p data-alerte-budget="ORANGE" role="status" className="rounded-md border border-warning bg-warning-bg px-3 py-2 text-sm font-medium text-foreground">
+              Alerte orange : cette validation rapproche un budget de son seuil. Vous pouvez valider ; la Finance et le DG sont prévenus.
+            </p>
+          ) : null}
+          {prevision && prevision.niveau === "ROUGE" && budget ? (
+            <div data-alerte-budget="ROUGE" role="alert" className="space-y-2 rounded-md border border-danger bg-danger-bg px-3 py-2">
+              <p className="text-sm font-semibold text-foreground">
+                Alerte rouge : cette validation atteint le seuil rouge d&apos;un budget.{" "}
+                {budget.estDG
+                  ? "Seul le DG peut confirmer le dépassement : confirmez-le ci-dessous (motif obligatoire), tracé dans l'historique."
+                  : budget.confirmationDonnee
+                    ? "Le DG a confirmé le dépassement : vous pouvez valider."
+                    : "La validation est bloquée tant que le DG n'a pas confirmé le dépassement."}
+              </p>
+              {budget.estDG ? (
+                <Input
+                  name="motifDepassement"
+                  label="Motif de la confirmation du dépassement"
+                  required
+                  value={motifDepassement}
+                  onChange={(e) => setMotifDepassement(e.target.value)}
+                  hint={`${MOTIF_DEPASSEMENT_MIN} caractères minimum.`}
+                />
+              ) : !budget.confirmationDonnee ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  data-demander-confirmation-dg
+                  loading={demandeEnCours}
+                  disabled={isPending || budget.confirmationDemandee}
+                  onClick={demanderConfirmationDG}
+                >
+                  {budget.confirmationDemandee ? "Confirmation demandée au DG — en attente" : "Demander la confirmation du DG"}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           {!canValider && raisonIndisponible ? (
             <RaisonVisible data-raison-decision>{raisonIndisponible}</RaisonVisible>
           ) : !canValider ? (
@@ -492,7 +587,7 @@ function LigneCard({
   ) : null;
 
   return (
-    <div className="card-shadow-hover relative rounded-2xl border border-border bg-surface p-4 shadow-elevated transition-transform duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 sm:p-5">
+    <div data-ligne-card={ligne.id} className="card-shadow-hover relative rounded-2xl border border-border bg-surface p-4 shadow-elevated transition-transform duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 sm:p-5">
       {enteteDemande ? <EnteteDemandeArticle contexte={enteteDemande} /> : null}
       {/* En-tête de carte : libellé + action Modifier, montant Total en face */}
       <div className="flex flex-wrap items-start justify-between gap-4">

@@ -10,6 +10,7 @@ import {
 } from "@/components/tresorerie/demandeStatut";
 import { detailsArticleDe } from "@/components/tresorerie/DetailsArticle";
 import { getSession, hasPermission } from "@/lib/auth";
+import { chargerBudgetValidation } from "@/lib/budgetValidation";
 import {
   aPlusieursBeneficiaires,
   BENEFICIAIRE_TYPE_LABEL,
@@ -64,6 +65,8 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
   if (!demande) notFound();
 
   const categorisationObligatoire = await categorisationEstObligatoire();
+  // Lot J : budgets en vigueur et confirmations de dépassement de cette demande (reste après chaque validation du DG).
+  const budgetValidation = await chargerBudgetValidation(demande.id, session);
   const demandeCircuit = versDemandeCircuit(demande, categorisationObligatoire);
   const enteteDemande = {
     reference: demande.reference,
@@ -80,7 +83,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
   const lignesSoumises = demande.lignes.filter((l) => l.soumiseAuDG);
   const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
   // Lot D : parcours de chaque article (validé, réglé, retour de caisse, régularisé), lecture seule.
-  const parcoursArticles = await getParcoursArticles(demande.id);
+  const parcoursArticles = await getParcoursArticles(demande.id, { avecBudget: true });
   const devise = demande.devise === "XOF" ? "FCFA" : demande.devise;
 
   return (
@@ -156,6 +159,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
       {decisionParLigne && demande.lignes.length > 0 ? (
         // Cas b : le DG décide ligne par ligne (même composant que la Finance, sans catégorisation ni libellé).
         <LignesValidationTable
+          budget={budgetValidation}
           categorisationObligatoire={categorisationObligatoire}
           demandeId={demande.id}
           lignes={demande.lignes.map((l) => ({
@@ -188,6 +192,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
         />
       ) : soumissionParLignes ? (
         <DecisionLignesDG
+          budget={budgetValidation}
           devise={devise}
           enteteDemande={enteteDemande}
           raisonDecider={raisonIndisponible(demandeCircuit, acteur, "DECIDER_LIGNE_DG")}
@@ -199,6 +204,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
             quantite: l.quantite,
             prixUnitaire: Number(l.prixUnitaire),
             categorieLabel: l.categorie?.label ?? null,
+            categorieId: l.categorieId,
             objetLabel: l.objet?.label ?? null,
             decisionDG: l.decisionDG,
             decisionDGParNom: l.decisionDGPar?.fullName ?? null,
@@ -245,6 +251,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
       {decisionParLigne && demande.lignes.length === 0 ? (
         // Garde 9 : dépense directe de la Finance pour elle-même, sans lignes — le DG décide le montant.
         <ValidationActions
+          budget={budgetValidation ? { ...budgetValidation, categorieId: demande.categorieId } : null}
           demandeId={demande.id}
           montantDemande={Number(demande.montant)}
           disabled={raisonDecider !== null}

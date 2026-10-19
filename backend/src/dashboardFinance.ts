@@ -1,8 +1,8 @@
 import type { ModeReglement, Prisma } from "./generated/prisma/client";
+import { getBudgetsCategoriesEnVigueur } from "./budgetsDb";
 import { prisma } from "./prisma";
 import {
   DEMANDES_A_TRAITER_FINANCE_WHERE,
-  getMontantConsommeCategorie,
   getSoldesARegulariserParReglements,
   VALIDATION_COMPLETE_EN_ATTENTE_WHERE,
 } from "./tresorerie";
@@ -443,22 +443,19 @@ export interface CategorieBudgetSuivi {
  * "Budget visible au moment de la catégorisation").
  */
 export async function getTopCategoriesBudget(limite = 5): Promise<CategorieBudgetSuivi[]> {
-  const categories = await prisma.categorie.findMany({
-    where: { budgetAlloue: { not: null }, isActive: true },
-    select: { id: true, label: true, budgetAlloue: true },
-  });
-  if (categories.length === 0) {
+  // Lot J : budgets EN VIGUEUR (paramétrages validés par le DG), consommation depuis leur date d'effet.
+  const enVigueur = await getBudgetsCategoriesEnVigueur();
+  const ids = Object.keys(enVigueur);
+  if (ids.length === 0) {
     return [];
   }
-
-  const consommations = await Promise.all(categories.map((c) => getMontantConsommeCategorie(c.id)));
+  const categories = await prisma.categorie.findMany({ where: { id: { in: ids }, isActive: true }, select: { id: true, label: true } });
 
   return categories
-    .map((c, i) => {
-      const budgetAlloue = Number(c.budgetAlloue);
-      const consomme = consommations[i];
-      return { id: c.id, label: c.label, budgetAlloue, consomme, restant: budgetAlloue - consomme };
+    .map((c) => {
+      const b = enVigueur[c.id];
+      return { id: c.id, label: c.label, budgetAlloue: b.budget, consomme: b.consomme, restant: b.restant };
     })
-    .sort((a, b) => b.consomme - a.consomme)
+    .sort((x, y) => y.consomme - x.consomme)
     .slice(0, limite);
 }

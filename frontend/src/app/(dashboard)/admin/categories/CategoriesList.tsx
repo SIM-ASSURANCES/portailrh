@@ -9,6 +9,8 @@ import {
   toggleCategorieActiveAction,
   toggleObjetActiveAction,
 } from "./actions";
+import type { SeuilBudget } from "backend/client";
+
 import { BudgetAlloueField } from "./BudgetAlloueField";
 import { DeleteButton } from "./DeleteButton";
 import { ObjetCreateForm } from "./ObjetCreateForm";
@@ -23,8 +25,8 @@ export interface CategorieRow {
   id: string;
   label: string;
   isActive: boolean;
-  /** Budget partagé — voir CLAUDE.md "Budget partagé par Catégorie". `null` = aucune limite. */
-  budgetAlloue: number | null;
+  /** Budget EN VIGUEUR (lot J, paramétrage validé par le DG). `null` = aucune limite. */
+  budget: { montant: number; dateDebut: string; dateFin: string | null; seuil: SeuilBudget | null } | null;
   objets: ObjetRow[];
 }
 
@@ -51,10 +53,13 @@ export function CategoriesList({
   categories,
   isAdmin,
   canModifierBudget = isAdmin,
+  lienBudgets = false,
 }: {
   categories: CategorieRow[];
   isAdmin: boolean;
   canModifierBudget?: boolean;
+  /** Lot J : affiche le lien vers l'écran « Budgets » (espace Finance). */
+  lienBudgets?: boolean;
 }) {
   if (categories.length === 0) {
     return <p className="text-sm text-muted-foreground">Aucune catégorie pour l&apos;instant.</p>;
@@ -89,9 +94,9 @@ export function CategoriesList({
           {canModifierBudget ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Budget alloué
+                Budget en vigueur
               </span>
-              <BudgetAlloueField categorieId={categorie.id} budgetAlloue={categorie.budgetAlloue} />
+              <BudgetAlloueField budget={categorie.budget} lienBudgets={lienBudgets} />
             </div>
           ) : null}
 

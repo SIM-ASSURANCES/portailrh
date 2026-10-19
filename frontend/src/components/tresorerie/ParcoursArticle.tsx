@@ -37,6 +37,16 @@ export function ParcoursArticleView({ parcours }: { parcours: ParcoursArticle })
           </span>
         ))}
       </div>
+      {parcours.budget ? (
+        <div data-parcours-budget data-niveau-budget={parcours.budget.niveau} className="text-muted-foreground">
+          <span className="font-medium text-foreground">Budget après la validation de cet article</span>
+          {parcours.budget.lignes.map((l, i) => (
+            <span key={i} className="block">
+              {l}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <p data-gere-le className="text-muted-foreground">
         {libelleGestionArticle(parcours.gere)}
       </p>

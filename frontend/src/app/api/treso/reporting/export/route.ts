@@ -11,6 +11,8 @@ import {
   getReportingJournalDetail,
   getReportingRows,
   getReportingSuiviBudgetaire,
+  libelleNiveauBudget,
+  libelleSeuil,
   parseReportingFilters,
 } from "backend";
 
@@ -142,16 +144,20 @@ export async function GET(request: NextRequest) {
   // c'est une enveloppe cumulative, pas une donnée découpable par période.
   const sheetBudget = workbook.addWorksheet("Suivi budgétaire");
   sheetBudget.columns = [
-    { header: "Catégorie", key: "categorie", width: 22 },
+    { header: "Budget", key: "categorie", width: 22 },
+    { header: "Période", key: "periode", width: 26 },
     { header: "Budget alloué (FCFA)", key: "budget", width: 18 },
     { header: "Consommé - réglé (FCFA)", key: "consomme", width: 20 },
     { header: "Restant (FCFA)", key: "restant", width: 16 },
+    { header: "Reste après validations (FCFA)", key: "resteApres", width: 24 },
+    { header: "Seuils d'alerte", key: "seuils", width: 38 },
+    { header: "Niveau", key: "niveau", width: 16 },
   ];
   if (suiviBudgetaire.length === 0) {
     const noteRow = sheetBudget.addRow({
-      categorie: "Aucune catégorie n'a de budget alloué défini pour l'instant (voir /admin/categories).",
+      categorie: "Aucun budget en vigueur pour l'instant (voir l'écran Budgets).",
     });
-    sheetBudget.mergeCells(noteRow.number, 1, noteRow.number, 4);
+    sheetBudget.mergeCells(noteRow.number, 1, noteRow.number, 8);
     noteRow.getCell(1).alignment = { wrapText: true, vertical: "top" };
     noteRow.getCell(1).font = { italic: true, color: { argb: "FF64748B" } };
     sheetBudget.getRow(noteRow.number).height = 30;
@@ -159,9 +165,13 @@ export async function GET(request: NextRequest) {
   suiviBudgetaire.forEach((r) => {
     const row = sheetBudget.addRow({
       categorie: r.categorieLabel,
+      periode: r.periode,
       budget: r.budgetAlloue,
       consomme: r.montantConsomme,
       restant: r.budgetRestant,
+      resteApres: r.resteApresEngagements,
+      seuils: libelleSeuil(r.seuil),
+      niveau: libelleNiveauBudget(r.niveau),
     });
     if (r.budgetRestant < 0) {
       row.getCell("restant").font = { bold: true, color: { argb: "FFDA0101" } };

@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/ui";
 import { getSession, isAdmin } from "@/lib/auth";
-import { prisma } from "backend";
+import { getBudgetsCategoriesEnVigueur, prisma } from "backend";
 
 import { CategorieCreateForm } from "./CategorieCreateForm";
 import { CategoriesList } from "./CategoriesList";
@@ -23,6 +23,7 @@ export default async function AdminCategoriesPage() {
   const session = await getSession();
   const admin = isAdmin(session);
 
+  const budgets = await getBudgetsCategoriesEnVigueur();
   const categories = await prisma.categorie.findMany({
     include: { objets: { orderBy: { label: "asc" } } },
     orderBy: { label: "asc" },
@@ -48,7 +49,7 @@ export default async function AdminCategoriesPage() {
             id: c.id,
             label: c.label,
             isActive: c.isActive,
-            budgetAlloue: c.budgetAlloue != null ? Number(c.budgetAlloue) : null,
+            budget: budgets[c.id] ? { montant: budgets[c.id].budget, dateDebut: budgets[c.id].dateDebut, dateFin: budgets[c.id].dateFin, seuil: budgets[c.id].seuil } : null,
             objets: c.objets.map((o) => ({ id: o.id, label: o.label, isActive: o.isActive })),
           }))}
         />

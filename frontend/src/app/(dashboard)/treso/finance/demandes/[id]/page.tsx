@@ -6,7 +6,7 @@ import {
   aPlusieursBeneficiaires,
   BENEFICIAIRE_TYPE_LABEL,
   detailsArticles,
-  getMontantConsommeCategorie,
+  getBudgetsCategoriesEnVigueur,
   getParcoursArticles,
   nomBeneficiaireDemande,
 } from "backend";
@@ -39,6 +39,7 @@ import { CircuitFinanceActions } from "./CircuitFinanceActions";
 import { ClotureForceeBandeau } from "@/components/tresorerie/ClotureForceeBandeau";
 import { ClotureActions } from "./ClotureActions";
 import { DescriptionEditor } from "./DescriptionEditor";
+import { chargerBudgetValidation } from "@/lib/budgetValidation";
 import { LignesValidationTable } from "./LignesValidationTable";
 import { ReglementsSection } from "./ReglementsSection";
 import { RetourExceptionnelSection } from "./RetourExceptionnelSection";
@@ -157,7 +158,7 @@ export default async function CategoriserDemandePage({
     getMontantsLignesParStatut(demande.lignes);
   const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
   // Lot D : parcours de chaque article (validé, réglé, retour de caisse, régularisé), lecture seule.
-  const parcoursArticles = await getParcoursArticles(demande.id);
+  const parcoursArticles = await getParcoursArticles(demande.id, { avecBudget: true });
   // Pourquoi CE compte ne peut pas décider tel article (bénéficiaire de l'article, règle des deux personnes…) : la phrase
   // du moteur pour un rejet hypothétique de l'article — `null` s'il le peut ou si l'article n'attend pas la Finance.
   const raisonDecisionArticle = (ligneId: string): string | null => {
@@ -291,17 +292,17 @@ export default async function CategoriserDemandePage({
     { budgetAlloue: number | null; consomme: number; restant: number | null }
   > = {};
   if (categories.length > 0) {
-    const consommations = await Promise.all(categories.map((c) => getMontantConsommeCategorie(c.id)));
-    categories.forEach((c, i) => {
-      const budgetAlloue = c.budgetAlloue == null ? null : Number(c.budgetAlloue);
-      const consomme = consommations[i];
-      budgetParCategorie[c.id] = {
-        budgetAlloue,
-        consomme,
-        restant: budgetAlloue == null ? null : budgetAlloue - consomme,
-      };
+    // Lot J : budget EN VIGUEUR (paramétrage validé par le DG) et consommé depuis sa date d'effet.
+    const enVigueur = await getBudgetsCategoriesEnVigueur();
+    categories.forEach((c) => {
+      const b = enVigueur[c.id];
+      budgetParCategorie[c.id] = { budgetAlloue: b ? b.budget : null, consomme: b ? b.consomme : 0, restant: b ? b.restant : null };
     });
   }
+
+  // Lot J : budgets en vigueur et confirmations de dépassement de cette demande (reste après chaque validation).
+  const budgetValidation = session ? await chargerBudgetValidation(demande.id, session) : null;
+  const budgetDepenseDirecte = budgetValidation ? { ...budgetValidation, categorieId: demande.categorieId } : null;
 
   // Lot C : clôture d'une demande à articles = tous les articles terminés ; sinon la liste de ce qui manque à chacun.
   const evaluationCloture =
@@ -661,6 +662,7 @@ export default async function CategoriserDemandePage({
         // qu'un article est validé ; la clôture seulement quand tous sont traités.
         <>
           <LignesValidationTable
+            budget={budgetValidation}
               categorisationObligatoire={categorisationObligatoire}
             demandeId={demande.id}
             lignes={lignesPourTable}
@@ -725,6 +727,7 @@ export default async function CategoriserDemandePage({
               commentaire plus haut). */}
           {demandeAauMoinsUneLigne ? (
             <LignesValidationTable
+            budget={budgetValidation}
               categorisationObligatoire={categorisationObligatoire}
               demandeId={demande.id}
               lignes={lignesPourTable}
@@ -745,6 +748,7 @@ export default async function CategoriserDemandePage({
             />
           ) : (
             <ValidationActions
+              budget={budgetDepenseDirecte}
               demandeId={demande.id}
               montantDemande={Number(demande.montant)}
               disabled={!canValider || raisonDecider !== null}
@@ -813,6 +817,7 @@ export default async function CategoriserDemandePage({
           ) : null}
           {demandeAauMoinsUneLigne ? (
             <LignesValidationTable
+            budget={budgetValidation}
               categorisationObligatoire={categorisationObligatoire}
               demandeId={demande.id}
               lignes={lignesPourTable}
@@ -883,6 +888,7 @@ export default async function CategoriserDemandePage({
               SANS ligne (ex: DEPENSE_DIRECTE). */}
           {demandeAauMoinsUneLigne ? (
             <LignesValidationTable
+            budget={budgetValidation}
               categorisationObligatoire={categorisationObligatoire}
               demandeId={demande.id}
               lignes={lignesPourTable}
@@ -907,6 +913,7 @@ export default async function CategoriserDemandePage({
             </div>
           ) : demande.statut === "PARTIELLEMENT_VALIDEE" && canValider ? (
             <ValidationComplementaireActions
+              budget={budgetDepenseDirecte}
               demandeId={demande.id}
               montantRestant={Number(demande.montant) - Number(demande.montantValide)}
               raisonValidationIndisponible={refusDemandeSansCategorie(demande, categorisationObligatoire)}

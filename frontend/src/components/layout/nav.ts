@@ -76,6 +76,8 @@ export interface NavFlags {
   canVoirToutesLesDemandes: boolean;
   /** Responsable Finance uniquement (valider_demande sans approuver_validation_complete) : ajoute "Retour externe". */
   canRetourExterne?: boolean;
+  /** Lot J : `treso.modifier_budget_categorie` (paramètre), `treso.valider_budget` (DG) ou `treso.voir_dashboard_finance` (consulte) : ajoute « Budgets ». */
+  canVoirBudgets?: boolean;
   /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
   canReceptionnerRetour: boolean;
   /** `treso.voir_dashboard_finance` : ajoute « Accueil Finance » (en tête de branche). */
@@ -229,6 +231,7 @@ export function getNavBranches({
   canAccesFinanceDemandes,
   canVoirToutesLesDemandes,
   canRetourExterne,
+  canVoirBudgets,
   canReceptionnerRetour,
   canVoirDashboardFinance,
   canVoirReporting,
@@ -340,6 +343,15 @@ export function getNavBranches({
                     // du détail `/treso/finance/demandes/[id]`, non modifié
                     // par cette tâche).
                     exact: true,
+                  } satisfies NavItem,
+                ]
+              : []),
+            ...(canVoirBudgets
+              ? [
+                  {
+                    label: "Budgets",
+                    href: "/treso/finance/budgets",
+                    icon: "pie-chart",
                   } satisfies NavItem,
                 ]
               : []),

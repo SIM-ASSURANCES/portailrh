@@ -78,6 +78,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "treso.receptionner_retour")
       }
       canRetourExterne={hasPermission(session, "treso.creer_retour_externe")}
+      // Lot J : budgets — la Finance les paramètre, le DG les valide, les autres comptes Finance/DG les consultent.
+      canVoirBudgets={
+        hasPermission(session, "treso.modifier_budget_categorie") ||
+        hasPermission(session, "treso.valider_budget") ||
+        hasPermission(session, "treso.voir_dashboard_finance")
+      }
       canReceptionnerRetour={hasPermission(session, "treso.receptionner_retour")}
       canVoirDashboardFinance={hasPermission(session, "treso.voir_dashboard_finance")}
       canVoirReporting={hasPermission(session, "treso.voir_reporting")}

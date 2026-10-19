@@ -20,6 +20,7 @@ node e2e/lot-h.mjs                  # Trésorerie (lot H) : libellés de dates (
 node e2e/lot-c.mjs                  # Trésorerie (lot C) : décision du DG par article, notifications nommant l'article, clôture « tous les articles terminés » (message de blocage), clôture forcée (motif, garde 8, historique, notifications, reporting/export), rappel unique (unzip requis)
 node e2e/lot-f.mjs                  # Trésorerie (lot F) : reporting et export en UN seul tableau (demande → articles → événements) : classeur relu avec exceljs (niveaux, filtre, volets, formats numériques, totaux par devise SUMIFS, liens des justificatifs des retours externes), page dépliable, filtres communs, cohérence avec l'écran de la demande (exceljs requis)
 node e2e/lot-i.mjs                  # Trésorerie (lot I) : « Montant retourné », motif / nature du règlement obligatoire (serveur + écran, anciens « Non renseigné »), catégorisation obligatoire à partir d'une date (nulle / future / aujourd'hui), reçu PDF, parcours, reporting (pdftotext et exceljs requis)
+node e2e/lot-j.mjs                  # Trésorerie (lot J) : budgets paramétrés par la Finance, validés par le DG (date d'effet, seuils), restes global et catégorie à chaque validation, alertes ORANGE / ROUGE, confirmation du DG (demandée ou dans le même geste), parcours, reporting, migration des budgets existants (exceljs requis)
 bash e2e/arreter.sh                  # arrête le serveur et le conteneur
 npm uninstall --no-save playwright
 ```

@@ -2375,6 +2375,10 @@ sinon, la laisser suivre son cours normal.
 
 ### Budget partagé par Catégorie
 
+> **⚠️ Partiellement REMPLACÉ par le lot J (2026-10-19, plus bas)** : le budget d'une catégorie est un **paramétrage validé par le DG** (date d'effet, seuils, restes
+> à chaque validation, alertes orange/rouge) ; `Categorie.budgetAlloue` n'est plus lu ni écrit. La règle « consommé au règlement, jamais plafonné à 0, refus de
+> l'ensemble à la confirmation » reste exacte, appliquée au budget EN VIGUEUR. Le reste de cette section décrit l'état d'avant le lot J.
+
 Le budget appartient à la **Catégorie** (nature de la dépense), jamais au
 demandeur, au bénéficiaire ni à son service — une enveloppe partagée entre
 toutes les demandes de cette catégorie.
@@ -3288,6 +3292,86 @@ Caisse et Banque, modification, anciens règlements « Non renseigné » jamais 
 Correction d'une erreur de consigne du lot I. Libellé seulement : aucun calcul, aucune écriture de caisse, aucune migration. `etatRetourAffiche` (source unique : écran Finance du retour, page du collaborateur)
 et le reçu PDF du retour affichent « Montant retourné » ; « Retourné à la compta » ne s'affiche plus nulle part. Tests : `e2e/lot-i.mjs` (écran Finance, collaborateur, PDF : « Montant retourné », ni « Montant rendu » ni
 « Retourné à la compta »). Points laissés : voir la section « Lot I » ci-dessus.
+
+#### Lot J — budgets : paramétrage soumis au DG, seuils d'alerte, restes affichés à chaque validation (2026-10-19)
+
+Aucune écriture de caisse créée ni modifiée ; le budget reste **consommé au règlement** ; les règlements Banque comptent comme fonds remis ;
+devise unique ; garde 8 et `PERMISSIONS_DECISION_NON_DELEGABLES` intactes. Migration additive idempotente `20261023090000_budgets_parametrage`
+(rejouée sans effet, `migrate diff` vide). Règles **pures** dans `backend/src/budgets.ts` (53 tests), lecture/écriture dans `backend/src/budgetsDb.ts`.
+
+**Audit de l'existant (avant le lot).** Il n'y avait **pas de budget global**. Un budget de catégorie était une seule colonne `Categorie.budgetAlloue`
+(nul = illimité), modifiable sans validation par l'Admin ou la Finance (`modifierBudgetCategorieAction`), sans date d'effet ni seuil. Consommé =
+somme des `ReglementCategorieAllocation` des règlements confirmés et non annulés (`getMontantConsommeCategorie`, l'unique source), contrôle
+**bloquant seulement à la confirmation d'un règlement** (`confirmerReglementAction` : allocation > reste de la catégorie → refus de l'ensemble). Le
+budget est **partagé** par toutes les demandes de la catégorie (jamais par demandeur ni service). Lecteurs : aperçu de catégorisation
+(`BudgetCategorieApercu`), barres du dashboard (`getTopCategoriesBudget`), « Suivi budgétaire » du reporting, refus de suppression d'une catégorie.
+
+**Modèle.** `BudgetParametrage` (portée GLOBAL ou CATEGORIE, montant, `dateDebut`, `dateFin` facultative, `modeSeuil` POURCENTAGE | MONTANT, `seuilOrange`,
+`seuilRouge`, statut EN_ATTENTE | VALIDE | REFUSE, `repris`, soumis par/le, décidé par/le, motif de refus ; CHECK en base : montant > 0, portée/catégorie,
+fin ≥ début, seuil complet ou absent avec rouge < orange) ; `BudgetDepassement` (demande de confirmation d'un dépassement rouge : DEMANDE → CONFIRME →
+UTILISE, à usage unique) ; `LigneDemande.budgetApresValidation` (photo JSON du reste après la validation de l'article). `Categorie.budgetAlloue` est
+**l'ancienne valeur : conservée, plus jamais lue ni écrite** (retour arrière).
+
+**Règles (une seule définition, `budgets.ts`).**
+- **Paramétrage** : la Finance (`treso.modifier_budget_categorie`) saisit montant, date d'effet (jamais dans le passé), fin facultative et seuil facultatif ;
+  `validerSaisieParametrage` refuse : rouge ≥ orange, pourcentage hors 0–100, seuil en montant > budget, fin avant début, montant ≤ 0. **Soumis** au DG
+  (`treso.valider_budget`) qui valide ou refuse (motif ≥ 3 caractères) ; jamais le compte qui a soumis. **Rien n'est pris en compte avant la validation**, et un
+  paramétrage n'est **jamais modifié** : `budgetEnVigueur(parametrages, portée, catégorie, jour)` retient, parmi les VALIDÉS dont la période contient le
+  jour, celui de début le plus récent (le nouveau remplace l'ancien à sa date d'effet, l'historique reste). Un seul paramétrage en attente par budget.
+- **Seuils** : pourcentage restant OU montant restant ; `niveauAlerte` inclusif (reste ≤ seuil) en centimes exacts ; ORANGE puis ROUGE (plus bas). **Sans seuil,
+  aucune alerte**, même en dépassement.
+- **Réservé = max(consommé au règlement, engagé par les validations)**, depuis la date d'effet du budget en vigueur (la consommation d'avant ne compte pas).
+  Engagé = articles validés (ou validés par le DG en attente de confirmation) + montant validé des dépenses directes (date de création, faute de date de
+  validation). Sans ce « engagé », le reste ne bougerait qu'au règlement et le prévisionnel serait vide. Global : tous les règlements/articles ; catégorie :
+  ceux de la catégorie.
+- **Prévisionnel à CHAQUE validation** (`previsionBudget`, aucune écriture) : reste du budget global ET de chaque catégorie touchée après la validation, jamais
+  plafonné à 0 (« dépassé de X »). Affiché par `BudgetPrevision` : tableau des articles de la Finance (calcul en direct côté client à partir du contexte chargé
+  par `chargerBudgetValidation`), décision du DG sur un article soumis, dépense directe (validation totale, partielle, complémentaire). Les articles déjà validés
+  par le DG ne sont pas recomptés à la confirmation de la Finance.
+- **ORANGE** : alerte visible, validation permise, entrée `alerte_budget` dans l'historique, notification (`notifierAlerteBudget`) à la Finance
+  (`decider_finance`) et au DG (`decider_dg`), sauf l'auteur. **ROUGE** : validation **bloquée côté serveur** (`controlerBudgetValidation`, sous verrou
+  `pg_advisory_xact_lock` : deux validations simultanées voient le même reste) tant que le DG n'a pas confirmé. **Seul le DG confirme** (`treso.decider_dg`,
+  jamais délégable) : s'il valide lui-même, il confirme **dans le même geste** (motif ≥ 10 caractères, `BudgetDepassement` créé UTILISE, historique
+  `confirmation_depassement_budget`) ; pour une validation de la Finance, la Finance **demande** (`demanderConfirmationDepassementAction` → DEMANDE, DG notifié),
+  le DG confirme sur `/treso/finance/budgets` (motif obligatoire, `confirmerDepassementBudgetAction`), la Finance est notifiée et valide : la confirmation est
+  consommée (UTILISE, usage unique). Un motif saisi par la Finance ne débloque rien (revérifié par appel direct).
+- Chemins branchés : `validerLignesAction`/`deciderArticles` (Finance, et DG cas b), `deciderLigneDG` (DG, article soumis), `validerTotalementAction`/
+  `validerPartiellementAction`/`validerComplementaireAction` (dépense directe). Non concernés (aucun montant décidé) : étape Service, validation du DG d'une
+  demande soumise entière, approbation de clôture.
+- **Photo du budget** (`snapshotBudgetLigne`) posée **une seule fois** sur l'article à sa première validation (DG ou Finance), jamais recalculée. Montrée dans le
+  **parcours de l'article** (`getParcoursArticles(demandeId, { avecBudget: true })`, **écrans Finance et DG seulement** — ni demandeur, ni responsable de service,
+  ni PDF), dans le **reporting** (colonne « Budget après validation (reste) » du tableau unique et de l'Excel, lignes ARTICLE) et le **suivi budgétaire**
+  (global en tête, période, réservé, reste après validations, seuils, niveau ; page et feuille Excel). Les 4 actions d'historique budget sont de la gestion
+  interne (`ACTIONS_GESTION_INTERNE`) : jamais montrées au demandeur.
+- **Écran `/treso/finance/budgets`** (entrée de menu « Budgets ») : budgets en vigueur (montant, réservé, reste, période, seuils, niveau), dépassements à
+  confirmer (DG), paramétrages en attente (boutons Valider / Refuser avec motif pour le DG), formulaire de paramétrage (Finance), historique complet. Garde :
+  `modifier_budget_categorie` | `valider_budget` | `decider_dg` | `voir_dashboard_finance` (consultation). `/admin/categories` et `/treso/finance/categories`
+  n'affichent plus qu'un budget **en lecture seule** (+ lien) : `modifierBudgetCategorieAction` et son champ éditable sont **supprimés**. Une catégorie qui a
+  un paramétrage (tout statut) ne se supprime plus (désactiver).
+- **Règlement** (`confirmerReglementAction`), dashboard (`getTopCategoriesBudget`), aperçu de catégorisation et reporting lisent désormais le budget **en
+  vigueur** (`getBudgetsCategoriesEnVigueur`, consommé depuis sa date d'effet). Règle inchangée : refus de l'ensemble si une allocation dépasse le reste.
+- **Migration des budgets existants** : chaque `Categorie.budgetAlloue` non nul devient un paramétrage **VALIDÉ** (`repris`, sans auteur ni décideur), début
+  **2000-01-01** (toute la consommation passée reste comptée, comportement inchangé), **sans date de fin**, seuil **par défaut = pourcentage restant, orange 20,
+  rouge 0** (`SEUIL_BUDGET_PAR_DEFAUT`) : ROUGE seulement à l'épuisement, donc rien n'est bloqué au déploiement tant qu'un budget n'est pas épuisé. Aucun budget
+  global n'existait : aucun créé. Idempotente (`ON CONFLICT DO NOTHING`).
+- **Permissions** : **une seule nouvelle**, `treso.valider_budget` (le DG valide/refuse les paramétrages), créée **dans le seed ET par la migration** de
+  rattrapage (donnée aux rôles qui portent `treso.decider_dg` : le DG seul, jamais un nom de rôle). Paramétrer réutilise `treso.modifier_budget_categorie`
+  (Finance, déjà en production) ; confirmer un dépassement réutilise `treso.decider_dg`. **À attribuer via `/admin/roles`** : cocher `treso.modifier_budget_categorie`
+  sur les rôles qui paramètrent (Finance) et `treso.valider_budget` sur celui qui valide (DG), puis rien d'autre. `supprimerUtilisateurAction` compte les 4 nouvelles relations vers `User`.
+
+**Décisions / points ouverts.** (1) Le contrôle bloquant du **règlement** reste « allocation > reste » : un dépassement du budget **confirmé par le DG à la
+validation** sera quand même refusé au règlement tant que le budget n'est pas relevé (nouveau paramétrage) — non assoupli, car « consommé au règlement (inchangé) ».
+(2) Le budget global n'a **pas** de blocage au règlement (seulement l'alerte à la validation). (3) Réservé = max(consommé, engagé) ; la date de validation d'une
+dépense directe est approchée par sa date de création. (4) Un nouveau paramétrage repart de **zéro de consommation à sa date d'effet** (budget par période) : pour
+relever un budget sans remettre le compteur à zéro, saisir un début « depuis toujours » est impossible (début ≥ aujourd'hui) — à arbitrer si besoin. (5) L'**Admin** ne
+paramètre plus les budgets (sauf s'il porte `modifier_budget_categorie`). (6) Pas de refus par le DG d'une demande de confirmation de dépassement (il ne confirme
+simplement pas) ni de retrait par la Finance. (7) Un article sans catégorie ne touche que le budget global.
+
+**Vérifié** : vitest (53 tests `budgets`, 937 au total), tsc, eslint, `next build` ; migration depuis une base portant des budgets existants, rejouée sans effet, `migrate diff`
+vide ; e2e `lot-j.mjs` 86/86 (migration et permissions, saisie incohérente refusée, soumission/validation/refus du DG avec motif, budget futur non en vigueur, restes global et
+catégorie à chaque validation, ORANGE puis ROUGE, blocage serveur par appel direct, demande de confirmation, seul le DG confirme, usage unique, le DG qui valide confirme dans le
+même geste, parcours, rien montré au demandeur, reporting page et Excel, budget sans seuil, budget global rouge, aucune écriture de caisse) ; régressions des lots précédents
+(`lot-g` et `reglement-par-article` adaptés : le budget y est un paramétrage validé).
 
 ### Solde d'ouverture de caisse
 
@@ -7413,6 +7497,7 @@ combinaison de permissions** : chaque action a sa permission.
 | `treso.deleguer_acces` | Déléguer des accès (lue sur les permissions du RÔLE, jamais celles reçues par délégation) |
 | `treso.modifier_description` | Description d'une demande et libellé de ses lignes |
 | `treso.decider_dg` | Décider à l'étape DG du circuit (migration `20261006120000`, rôles portant `systeme.reinitialiser` : le DG seul) |
+| `treso.valider_budget` | Valider ou refuser un paramétrage de budget (lot J, migration `20261023090000`, rôles portant `treso.decider_dg` : le DG seul) |
 
 **Jamais délégables** (circuit, 2026-10-06) : `treso.decider_finance`, `treso.soumettre_dg`, `treso.decider_dg`,
 `treso.approuver_validation_complete` — voir « Circuit de validation des demandes — moteur ».

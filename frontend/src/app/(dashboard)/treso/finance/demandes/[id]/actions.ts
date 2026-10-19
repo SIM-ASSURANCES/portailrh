@@ -7,7 +7,8 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify, notifyByPermission } from "@/lib/notifications";
 import { notifierApprobationCloture, notifierEtapeCircuit } from "@/lib/notificationsCircuit";
-import { prisma, refusConflitInteret } from "backend";
+import { notifierAlerteBudget } from "@/lib/notificationsBudget";
+import { controlerBudgetValidation, prisma, refusConflitInteret, type PrevisionBudget } from "backend";
 import { calculerStatutDemande, getEcart, peutEtreCloturee } from "backend";
 import {
   chargerEvaluationCloture,
@@ -665,10 +666,25 @@ async function enregistrerValidation(
   action: "validation" | "validation_complementaire",
   // Décision initiale : transition du circuit (étape Finance ou décision finale → Terminée), dans la même
   // transaction. Absent pour une validation complémentaire (décision finale déjà prise).
-  acteurCircuit?: ActeurCircuit
-): Promise<string | null> {
+  acteurCircuit?: ActeurCircuit,
+  // Lot J : contrôle budgétaire de la somme validée à cette étape (catégorie de la dépense directe + budget global).
+  // Seuil rouge : le DG confirme lui-même (motif), la Finance a besoin d'une confirmation déjà donnée.
+  budget?: { categorieId: string | null; acteurEstDG: boolean; motifDepassement?: string | null }
+): Promise<{ refus: string | null; budget?: PrevisionBudget }> {
+  let prevision: PrevisionBudget | undefined;
   try {
     await prisma.$transaction(async (tx) => {
+      if (budget) {
+        const controle = await controlerBudgetValidation(tx, {
+          demandeId,
+          ajouts: [{ categorieId: budget.categorieId, montant: montantCetteEtape }],
+          acteurId: userId,
+          acteurEstDG: budget.acteurEstDG,
+          motifConfirmation: budget.motifDepassement,
+        });
+        if (!controle.ok) throw new RefusCircuit(controle.message);
+        prevision = controle.prevision;
+      }
       if (acteurCircuit) {
         const r = await appliquerTransitionCircuit(tx, demandeId, acteurCircuit, {
           type: "DECIDER_LIGNES",
@@ -688,12 +704,12 @@ async function enregistrerValidation(
       });
     });
   } catch (e) {
-    if (e instanceof RefusCircuit) return e.message;
+    if (e instanceof RefusCircuit) return { refus: e.message };
     throw e;
   }
 
   await calculerStatutDemande(demandeId);
-  return null;
+  return { refus: null, budget: prevision };
 }
 
 /**
@@ -735,7 +751,9 @@ const validerLignesSchema = z.array(decisionLigneSchema).min(1);
  */
 export async function validerLignesAction(
   demandeId: string,
-  decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE"; motif?: string }[]
+  decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE"; motif?: string }[],
+  // Lot J : motif du DG qui confirme, dans ce geste, le dépassement du seuil rouge d'un budget (ignoré de tout autre compte).
+  motifDepassement?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   const peutValider =
@@ -787,7 +805,9 @@ export async function validerLignesAction(
   let resultat: Extract<Awaited<ReturnType<typeof deciderArticles>>, { ok: true }>;
   try {
     resultat = await prisma.$transaction(async (tx) => {
-      const r = await deciderArticles(tx, demandeId, acteurCircuit, parsedDecisions.data);
+      const r = await deciderArticles(tx, demandeId, acteurCircuit, parsedDecisions.data, {
+        motifDepassement: typeof motifDepassement === "string" ? motifDepassement : null,
+      });
       if (!r.ok) throw new RefusCircuit(r.message);
       return r;
     });
@@ -800,6 +820,8 @@ export async function validerLignesAction(
 
   // Demandeur (articles décidés), Assistants (montant à régler), ou renvoi en correction / demande terminée.
   await notifierEtapeCircuit(demandeId, session.user.id, "DECISION_ARTICLES", { ligneIds: parsedDecisions.data.map((d) => d.ligneId) });
+  // Lot J : alerte orange (ou rouge confirmé) → Finance et DG prévenus.
+  if (resultat.budget) await notifierAlerteBudget(demandeId, session.user.id, resultat.budget);
 
   return {
     status: "success",
@@ -820,7 +842,7 @@ export async function validerLignesAction(
  * avant toute validation — et la clôture d'une phase ultérieure ferment le
  * dossier).
  */
-export async function validerTotalementAction(demandeId: string): Promise<SimpleActionResult> {
+export async function validerTotalementAction(demandeId: string, motifDepassement?: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !(hasPermission(session, "treso.valider_demande") || hasPermission(session, "treso.decider_dg"))) {
     return { status: "error", message: "Action non autorisée." };
@@ -853,11 +875,13 @@ export async function validerTotalementAction(demandeId: string): Promise<Simple
     montantDemande,
     montantDemande,
     "validation",
-    await chargerActeur(prisma, session, demande.createurId)
+    await chargerActeur(prisma, session, demande.createurId),
+    { categorieId: demande.categorieId, acteurEstDG: hasPermission(session, "treso.decider_dg"), motifDepassement }
   );
-  if (refus) return { status: "error", message: refus };
+  if (refus.refus) return { status: "error", message: refus.refus };
   revalidateDemandePaths(demandeId);
   await notifierEtapeCircuit(demandeId, session.user.id);
+  if (refus.budget) await notifierAlerteBudget(demandeId, session.user.id, refus.budget);
 
   return { status: "success", message: `Demande ${demande.reference} validée totalement.` };
 }
@@ -877,7 +901,8 @@ export async function validerTotalementAction(demandeId: string): Promise<Simple
  */
 export async function validerPartiellementAction(
   demandeId: string,
-  montant: number
+  montant: number,
+  motifDepassement?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !(hasPermission(session, "treso.valider_demande") || hasPermission(session, "treso.decider_dg"))) {
@@ -929,12 +954,14 @@ export async function validerPartiellementAction(
     parsedMontant.data,
     parsedMontant.data,
     "validation",
-    await chargerActeur(prisma, session, demande.createurId)
+    await chargerActeur(prisma, session, demande.createurId),
+    { categorieId: demande.categorieId, acteurEstDG: hasPermission(session, "treso.decider_dg"), motifDepassement }
   );
-  if (refus) return { status: "error", message: refus };
+  if (refus.refus) return { status: "error", message: refus.refus };
   revalidateDemandePaths(demandeId);
 
   await notifierEtapeCircuit(demandeId, session.user.id);
+  if (refus.budget) await notifierAlerteBudget(demandeId, session.user.id, refus.budget);
 
   return {
     status: "success",
@@ -952,7 +979,8 @@ export async function validerPartiellementAction(
  */
 export async function validerComplementaireAction(
   demandeId: string,
-  montant: number
+  montant: number,
+  motifDepassement?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.valider_demande")) {
@@ -1006,14 +1034,18 @@ export async function validerComplementaireAction(
   }
 
   const montantValideFinal = montantValideActuel + parsedMontant.data;
-  await enregistrerValidation(
+  const complement = await enregistrerValidation(
     demandeId,
     session.user.id,
     montantValideFinal,
     parsedMontant.data,
-    "validation_complementaire"
+    "validation_complementaire",
+    undefined,
+    { categorieId: demande.categorieId, acteurEstDG: hasPermission(session, "treso.decider_dg"), motifDepassement }
   );
+  if (complement.refus) return { status: "error", message: complement.refus };
   revalidateDemandePaths(demandeId);
+  if (complement.budget) await notifierAlerteBudget(demandeId, session.user.id, complement.budget);
 
   // Notifie uniquement si cette validation complémentaire comble
   // ENTIÈREMENT le reliquat (voir la consigne : pas de notification à

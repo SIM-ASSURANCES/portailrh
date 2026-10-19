@@ -16,6 +16,11 @@ import {
  */
 const ACTION_LABELS: Record<string, string> = {
   CREATE: "Création de la demande",
+  // Lot J : budgets (gestion interne Finance/DG, jamais montrée au demandeur).
+  alerte_budget: "Alerte budget à la validation",
+  confirmation_depassement_budget: "Dépassement de budget confirmé par le DG",
+  demande_confirmation_depassement: "Confirmation du DG demandée (dépassement de budget)",
+  depassement_budget_utilise: "Validation avec dépassement de budget confirmé",
   CATEGORISER: "Catégorisation",
   modification_description: "Description du besoin modifiée",
   validation: "Validation",
@@ -241,6 +246,11 @@ const ACTIONS_GESTION_INTERNE = new Set([
   "categorisation_ligne",
   "retour_exceptionnel_saisie",
   "retour_exceptionnel_rejete",
+  // Lot J : les budgets sont de la gestion interne Finance/DG.
+  "alerte_budget",
+  "confirmation_depassement_budget",
+  "demande_confirmation_depassement",
+  "depassement_budget_utilise",
 ]);
 
 /**

@@ -3,7 +3,9 @@ import { redirect } from "next/navigation";
 import { Button, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { peutTelechargerJustificatifsRetourExterne } from "@/lib/droitsPiecesJointes";
-import { prisma } from "backend";
+import { libelleSeuil, prisma } from "backend";
+
+import { BadgeNiveauBudget } from "@/components/tresorerie/BudgetPrevision";
 import {
   getBeneficiairesConnus,
   COLONNES_ARBRE,
@@ -237,9 +239,9 @@ export default async function ReportingPage({
         {suiviBudgetaireRows.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             Aucune catégorie n&apos;a de budget alloué défini pour l&apos;instant — aucune limite
-            n&apos;est donc appliquée. Un budget se définit par catégorie depuis{" "}
-            <a href="/admin/categories" className="text-info underline-offset-4 hover:underline">
-              la console d&apos;administration
+            n&apos;est donc appliquée. Un budget se paramètre (et se soumet à la validation du DG) depuis{" "}
+            <a href="/treso/finance/budgets" className="text-info underline-offset-4 hover:underline">
+              l&apos;écran Budgets
             </a>
             .
           </p>
@@ -250,18 +252,23 @@ export default async function ReportingPage({
               <table className="w-full min-w-full divide-y divide-border text-sm">
                 <thead className="bg-muted">
                   <tr>
-                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Catégorie</th>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Budget</th>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Période</th>
                     <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Budget alloué</th>
                     <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Consommé (réglé)</th>
                     <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Restant</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Reste après validations</th>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Seuils</th>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Niveau</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border bg-surface">
                   {suiviBudgetaireRows.map((r) => {
                     const depassement = r.budgetRestant < 0;
                     return (
-                      <tr key={r.categorieId} className="hover:bg-muted/50">
+                      <tr key={r.global ? "global" : r.categorieId} data-suivi-budget={r.global ? "global" : r.categorieLabel} className="hover:bg-muted/50">
                         <td className="px-4 py-2 text-foreground">{r.categorieLabel}</td>
+                        <td className="px-4 py-2 text-xs text-muted-foreground">{r.periode}</td>
                         <td className="px-4 py-2 text-right text-foreground">
                           {r.budgetAlloue.toLocaleString("fr-FR")} FCFA
                         </td>
@@ -273,6 +280,14 @@ export default async function ReportingPage({
                         >
                           {depassement ? "Dépassement de " : ""}
                           {Math.abs(r.budgetRestant).toLocaleString("fr-FR")} FCFA
+                        </td>
+                        <td className={`px-4 py-2 text-right font-semibold ${r.resteApresEngagements < 0 ? "text-danger" : "text-foreground"}`} data-reste-apres-validations>
+                          {r.resteApresEngagements < 0 ? "Dépassement de " : ""}
+                          {Math.abs(r.resteApresEngagements).toLocaleString("fr-FR")} FCFA
+                        </td>
+                        <td className="px-4 py-2 text-xs text-muted-foreground">{libelleSeuil(r.seuil)}</td>
+                        <td className="px-4 py-2">
+                          <BadgeNiveauBudget niveau={r.niveau} />
                         </td>
                       </tr>
                     );

@@ -60,6 +60,8 @@ export interface LigneArbre {
   article: string;
   /** Libellé d'ORIGINE de l'article, tel qu'écrit par le demandeur (lignes ARTICLE seulement ; `article` porte le libellé Finance). */
   libelleOrigine: string;
+  /** Lot J : reste du budget global et de la catégorie APRÈS la validation de l'article (lignes ARTICLE validées seulement). */
+  budgetApres: string;
   demandeur: string;
   service: string;
   beneficiaire: string;
@@ -113,6 +115,7 @@ export const COLONNES_ARBRE: readonly ColonneArbre[] = [
   { cle: "reference", titre: "Référence demande", genre: "texte", largeur: 20 },
   { cle: "article", titre: "Article", genre: "texte", largeur: 34 },
   { cle: "libelleOrigine", titre: "Libellé d'origine (demandeur)", genre: "texte", largeur: 34 },
+  { cle: "budgetApres", titre: "Budget après validation (reste)", genre: "texte", largeur: 46 },
   { cle: "demandeur", titre: "Demandeur", genre: "texte", largeur: 22 },
   { cle: "service", titre: "Service", genre: "texte", largeur: 16 },
   { cle: "beneficiaire", titre: "Bénéficiaire", genre: "texte", largeur: 24 },
@@ -167,6 +170,8 @@ export interface ArticleArbreSource {
   motif: string | null;
   /** Libellé écrit par le demandeur (`libelleDemandeur ?? libelleOriginal ?? libelle`). */
   libelleOrigine: string;
+  /** Lot J : photo du budget après la validation de l'article, en texte (absente = aucun budget concerné). */
+  budgetApres?: string;
   quantite: number;
   prixUnitaire: number;
   categorie: string | null;
@@ -324,6 +329,7 @@ function ligneVide(niveau: 0 | 1 | 2, type: TypeLigneArbre, contexte: { referenc
     reference: contexte.reference,
     article: contexte.article,
     libelleOrigine: "",
+    budgetApres: "",
     demandeur: contexte.demandeur,
     service: contexte.service,
     beneficiaire: "",
@@ -585,6 +591,7 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
     const l = ligneVide(1, "ARTICLE", { ...contexteDemande, article: a.libelle });
     l.beneficiaire = a.beneficiaire;
     l.libelleOrigine = a.libelleOrigine;
+    l.budgetApres = a.budgetApres ?? "";
     l.statut = statutArticle(a, etat);
     l.decisionFinance = decisionFinanceArticle(a);
     l.decisionDG = decisionDGArticle(a);

@@ -2,6 +2,7 @@
 // articles de la demande, puis `parcoursArticle` (pur) pour chacun. Lecture seule.
 
 import { beneficiaireArticle } from "./beneficiaireArticles";
+import { lireSnapshotBudget, phrasesSnapshotBudget } from "./budgets";
 import { etatLigneCircuit, totalArticle } from "./etatArticles";
 import { parcoursArticle, type ParcoursArticle } from "./parcoursArticle";
 import { prisma } from "./prisma";
@@ -10,7 +11,12 @@ import { libelleArticleClotureForcee, lireInstantaneClotureForcee } from "./clot
 import { getSoldesARegulariserParReglements } from "./tresorerie";
 
 /** Parcours de chaque article de la demande, par identifiant d'article. Vide pour une demande sans article. */
-export async function getParcoursArticles(demandeId: string): Promise<Map<string, ParcoursArticle>> {
+export async function getParcoursArticles(
+  demandeId: string,
+  // Lot J : les restes de budget sont une information de gestion interne (Finance, DG) — jamais transmise au demandeur ni au
+  // responsable de service, ni imprimée dans les documents : seuls les écrans Finance et DG la demandent.
+  options: { avecBudget?: boolean } = {}
+): Promise<Map<string, ParcoursArticle>> {
   const demande = await prisma.demande.findUnique({
     where: { id: demandeId },
     select: {
@@ -115,6 +121,10 @@ export async function getParcoursArticles(demandeId: string): Promise<Map<string
             })),
           })),
       });
+    if (options.avecBudget) {
+      const snap = lireSnapshotBudget(ligne.budgetApresValidation);
+      if (snap) parcours.budget = { lignes: phrasesSnapshotBudget(snap), niveau: snap.niveau };
+    }
     // Lot C : demande clôturée de force — l'article encore non régularisé le dit, avec son solde restant.
     parcours.clotureSansRegularisation = libelleArticleClotureForcee(
       demande,

@@ -4,7 +4,7 @@ import { CategoriesList } from "@/app/(dashboard)/admin/categories/CategoriesLis
 import { CategorieCreateForm } from "@/app/(dashboard)/admin/categories/CategorieCreateForm";
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { chargerRegleCategorisation, ENTITE_PARAMETRE_TRESORERIE, prisma } from "backend";
+import { chargerRegleCategorisation, ENTITE_PARAMETRE_TRESORERIE, getBudgetsCategoriesEnVigueur, prisma } from "backend";
 
 import { CategorisationObligatoireDate } from "./CategorisationObligatoireDate";
 
@@ -50,6 +50,7 @@ export default async function FinanceCategoriesPage() {
   const admin = isAdmin(session);
   const canModifierBudget = admin || hasPermission(session, "treso.modifier_budget_categorie");
 
+  const budgets = await getBudgetsCategoriesEnVigueur();
   const categories = await prisma.categorie.findMany({
     include: { objets: { orderBy: { label: "asc" } } },
     orderBy: { label: "asc" },
@@ -97,11 +98,12 @@ export default async function FinanceCategoriesPage() {
         <CategoriesList
           isAdmin={admin}
           canModifierBudget={canModifierBudget}
+          lienBudgets={canModifierBudget || hasPermission(session, "treso.voir_dashboard_finance") || hasPermission(session, "treso.valider_budget")}
           categories={categories.map((c) => ({
             id: c.id,
             label: c.label,
             isActive: c.isActive,
-            budgetAlloue: c.budgetAlloue != null ? Number(c.budgetAlloue) : null,
+            budget: budgets[c.id] ? { montant: budgets[c.id].budget, dateDebut: budgets[c.id].dateDebut, dateFin: budgets[c.id].dateFin, seuil: budgets[c.id].seuil } : null,
             objets: c.objets.map((o) => ({ id: o.id, label: o.label, isActive: o.isActive })),
           }))}
         />

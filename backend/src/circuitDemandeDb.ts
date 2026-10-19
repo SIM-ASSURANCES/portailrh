@@ -2,7 +2,9 @@
 // moteur pur (`circuitDemande.ts`). Toujours dans la transaction de l'appelant ; chaque changement d'étape est
 // conditionné à l'étape lue (deux décisions simultanées : une seule passe) et tracé dans `HistoriqueEntry`.
 
-import type { Prisma } from "./generated/prisma/client";
+import { ajoutsPourArticles, controlerBudgetValidation } from "./budgetsDb";
+import { snapshotBudgetLigne, type PrevisionBudget } from "./budgets";
+import { Prisma } from "./generated/prisma/client";
 import type { EtapeCircuit, NiveauRejet } from "./generated/prisma/enums";
 import {
   determinerParcours,
@@ -415,8 +417,8 @@ export async function deciderLigneDG(
   db: Db,
   ligneId: string,
   acteur: ActeurCircuit,
-  decision: { valider: boolean; motif?: string }
-): Promise<ResultatCircuit & { demandeId?: string; libelle?: string }> {
+  decision: { valider: boolean; motif?: string; motifDepassement?: string | null }
+): Promise<ResultatCircuit & { demandeId?: string; libelle?: string; budget?: PrevisionBudget }> {
   const ligne = await db.ligneDemande.findUnique({ where: { id: ligneId }, select: { demandeId: true } });
   if (!ligne) return { ok: false, message: "Ligne introuvable." };
   const demandeId = ligne.demandeId;
@@ -429,6 +431,20 @@ export async function deciderLigneDG(
   const r = transition(circuit, acteur, { type: "DECIDER_LIGNE_DG", ligneId, valider: decision.valider, motif });
   if (!r.ok) return r;
 
+  // Lot J : la validation du DG engage le budget (global et catégorie). Seuil rouge : le DG confirme lui-même, dans ce geste.
+  let budget: PrevisionBudget | undefined;
+  if (decision.valider) {
+    const controle = await controlerBudgetValidation(db as Prisma.TransactionClient, {
+      demandeId,
+      ajouts: await ajoutsPourArticles(db, demandeId, [ligneId]),
+      acteurId: acteur.userId,
+      acteurEstDG: acteur.permissions.includes("treso.decider_dg"),
+      motifConfirmation: decision.motifDepassement,
+    });
+    if (!controle.ok) return { ok: false, message: controle.message };
+    budget = controle.prevision;
+  }
+
   const maintenant = new Date();
   const majLigne = await db.ligneDemande.updateMany({
     where: { id: ligneId, soumiseAuDG: true, decisionDG: null },
@@ -440,6 +456,14 @@ export async function deciderLigneDG(
     },
   });
   if (majLigne.count !== 1) return { ok: false, message: "Cette ligne a déjà été décidée." };
+  // Lot J : photo du budget après la validation du DG (posée une seule fois, jamais recalculée).
+  if (budget) {
+    const cat = await db.ligneDemande.findUnique({ where: { id: ligneId }, select: { categorieId: true } });
+    const snap = snapshotBudgetLigne(budget, cat?.categorieId ?? null);
+    if (snap) {
+      await db.ligneDemande.updateMany({ where: { id: ligneId, budgetApresValidation: { equals: Prisma.DbNull } }, data: { budgetApresValidation: snap as unknown as Prisma.InputJsonValue } });
+    }
+  }
   // Lot B : étape déduite des articles, chronomètre de rappel remis à zéro à chaque décision d'un article.
   const maj = await db.demande.updateMany({
     where: { id: demandeId, etapeCircuit: d.etapeCircuit },
@@ -459,7 +483,7 @@ export async function deciderLigneDG(
       userId: acteur.userId,
     },
   });
-  return { ok: true, etapeSuivante: r.etapeSuivante, demandeId, libelle };
+  return { ok: true, etapeSuivante: r.etapeSuivante, demandeId, libelle, budget };
 }
 
 export interface DecisionArticle {
@@ -475,6 +499,8 @@ export interface ResultatDecisionArticles {
   montantValide: number;
   nbValidees: number;
   nbRejetees: number;
+  /** Prévisionnel budgétaire de ces validations (lot J) ; absent quand aucun article n'est validé. */
+  budget?: PrevisionBudget;
 }
 
 const formaterMontant = (n: number) => n.toLocaleString("fr-FR");
@@ -491,7 +517,8 @@ export async function deciderArticles(
   db: Db,
   demandeId: string,
   acteur: ActeurCircuit,
-  decisions: readonly DecisionArticle[]
+  decisions: readonly DecisionArticle[],
+  options: { motifDepassement?: string | null } = {}
 ): Promise<(ResultatDecisionArticles & { ok: true }) | { ok: false; message: string }> {
   await verrouillerDemande(db, demandeId);
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
@@ -511,6 +538,23 @@ export async function deciderArticles(
     decisions: decisions.map((x) => ({ ligneId: x.ligneId, statut: x.statut })),
   });
   if (!r.ok) return r;
+
+  // Lot J : budget global et de chaque catégorie après ces validations. Orange : on valide (alerte tracée, notifiée par
+  // l'appelant). Rouge : bloqué sauf accord du DG — le DG qui valide le confirme lui-même (motif), la Finance a besoin d'une
+  // confirmation déjà donnée. Les articles déjà validés par le DG sont déjà engagés : non recomptés à la confirmation de la Finance.
+  const validees = decisions.filter((x) => x.statut === "VALIDEE").map((x) => x.ligneId);
+  let budget: PrevisionBudget | undefined;
+  if (validees.length > 0) {
+    const controle = await controlerBudgetValidation(db as Prisma.TransactionClient, {
+      demandeId,
+      ajouts: await ajoutsPourArticles(db, demandeId, validees),
+      acteurId: acteur.userId,
+      acteurEstDG: acteur.permissions.includes("treso.decider_dg"),
+      motifConfirmation: options.motifDepassement,
+    });
+    if (!controle.ok) return { ok: false, message: controle.message };
+    budget = controle.prevision;
+  }
 
   const roleDG = d.modeEtapeDG === "OBLIGATOIRE";
   const maintenant = new Date();
@@ -536,6 +580,17 @@ export async function deciderArticles(
       },
     });
     if (maj.count !== 1) return { ok: false, message: "Un article a été décidé entre-temps : rechargez la page." };
+  }
+
+  // Lot J : photo du budget après la validation de chaque article validé (posée une seule fois : la confirmation par la
+  // Finance d'un article validé par le DG ne recalcule rien).
+  if (budget) {
+    for (const x of decisions.filter((d) => d.statut === "VALIDEE")) {
+      const snap = snapshotBudgetLigne(budget, parId.get(x.ligneId)!.categorieId ?? null);
+      if (snap) {
+        await db.ligneDemande.updateMany({ where: { id: x.ligneId, budgetApresValidation: { equals: Prisma.DbNull } }, data: { budgetApresValidation: snap as unknown as Prisma.InputJsonValue } });
+      }
+    }
   }
 
   const apres = await db.ligneDemande.findMany({
@@ -595,7 +650,7 @@ export async function deciderArticles(
   await db.historiqueEntry.create({
     data: { entity: "Demande", entityId: demandeId, action: ACTION_HISTORIQUE.DECIDER_LIGNES, detail: morceaux.join(" — "), userId: acteur.userId },
   });
-  return { ok: true, etapeSuivante: r.etapeSuivante, montantValide, nbValidees, nbRejetees };
+  return { ok: true, etapeSuivante: r.etapeSuivante, montantValide, nbValidees, nbRejetees, budget };
 }
 
 /** Ligne `Demande` (champs de `SELECT_DEMANDE_CIRCUIT`) → `DemandeCircuit`, articles et bénéficiaires effectifs compris. */

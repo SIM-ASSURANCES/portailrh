@@ -807,6 +807,10 @@ export async function supprimerUtilisateurAction(
     lignesBeneficiees,
     lignesDecideesFinance,
     demandesClotureesDeForce,
+    budgetsSoumis,
+    budgetsDecides,
+    depassementsDemandes,
+    depassementsConfirmes,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -866,6 +870,11 @@ export async function supprimerUtilisateurAction(
     prisma.ligneDemande.count({ where: { decideurFinanceId: userId } }),
     // Lot C (2026-10-20) : clôture forcée d'une demande (SET NULL en base).
     prisma.demande.count({ where: { clotureForceeParId: userId } }),
+    // Lot J (budgets) : paramétrages soumis ou décidés (SET NULL en base) et dépassements demandés (RESTRICT) ou confirmés.
+    prisma.budgetParametrage.count({ where: { soumisParId: userId } }),
+    prisma.budgetParametrage.count({ where: { decideParId: userId } }),
+    prisma.budgetDepassement.count({ where: { demandeParId: userId } }),
+    prisma.budgetDepassement.count({ where: { confirmeParId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -920,6 +929,10 @@ export async function supprimerUtilisateurAction(
   if (pointageMisEnServiceParCompte > 0) blocages.push("mis le Pointage en service");
   if (lignesDecideesFinance > 0) blocages.push(`validé ${lignesDecideesFinance} ligne(s) d'article en tant que Finance`);
   if (demandesClotureesDeForce > 0) blocages.push(`forcé la clôture de ${demandesClotureesDeForce} demande(s)`);
+  if (budgetsSoumis > 0) blocages.push(`soumis ${budgetsSoumis} paramétrage(s) de budget`);
+  if (budgetsDecides > 0) blocages.push(`décidé ${budgetsDecides} paramétrage(s) de budget`);
+  if (depassementsDemandes > 0) blocages.push(`demandé ${depassementsDemandes} confirmation(s) de dépassement de budget`);
+  if (depassementsConfirmes > 0) blocages.push(`confirmé ${depassementsConfirmes} dépassement(s) de budget`);
 
   if (blocages.length > 0) {
     const liste =

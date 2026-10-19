@@ -882,102 +882,20 @@ export async function getEcart(demandeId: string): Promise<number> {
  * RÈGLEMENT (pas à la validation), toujours : c'est le moment où l'argent
  * sort réellement (règle impérative du module).
  */
-export async function getMontantConsommeCategorie(categorieId: string): Promise<number> {
+export async function getMontantConsommeCategorie(categorieId: string, depuis?: Date): Promise<number> {
+  // Lot J : `depuis` = début d'effet du budget en vigueur (la consommation d'avant ne compte pas pour la période courante).
   const result = await prisma.reglementCategorieAllocation.aggregate({
-    where: { categorieId, reglement: { estConfirme: true, estAnnule: false } },
+    where: {
+      categorieId,
+      reglement: { estConfirme: true, estAnnule: false, ...(depuis ? { confirmeAt: { gte: depuis } } : {}) },
+    },
     _sum: { montant: true },
   });
   return Number(result._sum.montant ?? 0);
 }
 
-/**
- * Budget restant d'une Catégorie : `null` si `budgetAlloue` est `null`
- * (aucune limite définie, aucun contrôle appliqué) ; sinon `budgetAlloue -
- * getMontantConsommeCategorie(categorieId)`. **Retourne la valeur BRUTE,
- * jamais plafonnée à 0** — un résultat négatif signale un dépassement réel
- * (utile à `confirmerReglementAction` et au reporting "Suivi budgétaire"
- * pour le détecter) ; c'est à l'affichage de choisir, au cas par cas, de
- * clamper avec `Math.max(0, ...)` ou de montrer le dépassement tel quel.
- */
-export async function getBudgetRestantCategorie(categorieId: string): Promise<number | null> {
-  const categorie = await prisma.categorie.findUnique({
-    where: { id: categorieId },
-    select: { budgetAlloue: true },
-  });
-  if (!categorie || categorie.budgetAlloue == null) {
-    return null;
-  }
-  const consomme = await getMontantConsommeCategorie(categorieId);
-  return Number(categorie.budgetAlloue) - consomme;
-}
-
-export interface CategorieConcerneeInfo {
-  categorieId: string;
-  categorieLabel: string;
-  budgetAlloue: number | null;
-  consomme: number;
-  restant: number | null;
-}
-
-/**
- * Catégories DISTINCTES concernées par une demande — voir CLAUDE.md
- * "Catégorisation par ligne" / "Allocation budgétaire explicite par
- * règlement" : détermine, pour une demande donnée, la liste des
- * catégories entre lesquelles un règlement doit être réparti.
- *
- * - `DEPENSE_DIRECTE` (0 ligne) : la catégorie unique de la demande
- *   elle-même (`Demande.categorieId`), ou liste vide si pas encore
- *   catégorisée.
- * - `STANDARD` (≥ 1 ligne) : les catégories distinctes des lignes
- *   `VALIDEE` UNIQUEMENT (une ligne encore `EN_ATTENTE` ou `REJETEE` ne
- *   représente aucun montant à régler, donc aucune catégorie "concernée"
- *   par le règlement) — une ligne `VALIDEE` sans catégorie n'ajoute rien
- *   à cette liste (aucune limite ne s'applique à une portion non
- *   catégorisée, même principe que l'ancien contrôle "aucune limite si
- *   pas de `categorieId`").
- *
- * Utilisée à la fois par `reglementActions.ts` (déterminer si le
- * règlement est en cas simple/mono-catégorie ou en cas
- * multi-catégorie) et par l'UI (`ReglementsSection`/`ReglementForm`) pour
- * construire les champs de répartition avec leur aperçu de budget —
- * réutilise `getMontantConsommeCategorie` (jamais un second calcul).
- */
-export async function getCategoriesConcerneesDemande(demandeId: string): Promise<CategorieConcerneeInfo[]> {
-  const demande = await prisma.demande.findUnique({
-    where: { id: demandeId },
-    include: {
-      categorie: true,
-      lignes: {
-        where: { statutValidation: "VALIDEE", categorieId: { not: null } },
-        include: { categorie: true },
-      },
-    },
-  });
-  if (!demande) return [];
-
-  const categoriesBrutes =
-    demande.typeDemande === "DEPENSE_DIRECTE"
-      ? demande.categorie
-        ? [demande.categorie]
-        : []
-      : Array.from(
-          new Map(demande.lignes.filter((l) => l.categorie).map((l) => [l.categorie!.id, l.categorie!])).values()
-        );
-
-  return Promise.all(
-    categoriesBrutes.map(async (categorie) => {
-      const budgetAlloue = categorie.budgetAlloue == null ? null : Number(categorie.budgetAlloue);
-      const consomme = await getMontantConsommeCategorie(categorie.id);
-      return {
-        categorieId: categorie.id,
-        categorieLabel: categorie.label,
-        budgetAlloue,
-        consomme,
-        restant: budgetAlloue == null ? null : budgetAlloue - consomme,
-      };
-    })
-  );
-}
+// Lot J : `getBudgetRestantCategorie` (budget restant d'une catégorie) vit désormais dans `budgetsDb.ts`, qui lit le budget EN
+// VIGUEUR (paramétrage validé par le DG) au lieu de l'ancienne colonne `Categorie.budgetAlloue`.
 
 export interface MesIndicateurs {
   /** Somme des montants de TOUTES les demandes créées par cet utilisateur, quel que soit leur statut. */

@@ -10,6 +10,7 @@ import { revalidatePath } from "next/cache";
 
 import { getSession } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { notifierAlerteBudget } from "@/lib/notificationsBudget";
 import { notifierEtapeCircuit, notifierRefusLigneDG } from "@/lib/notificationsCircuit";
 import {
   appliquerTransitionCircuit,
@@ -21,6 +22,7 @@ import {
   type ActionCircuit,
   type ChoixBeneficiaire,
   type CorrectionDemande,
+  type PrevisionBudget,
 } from "backend";
 
 import { rejeterDemandeAction } from "../finance/demandes/[id]/actions";
@@ -132,7 +134,7 @@ export async function soumettreLignesAuDGAction(demandeId: string, ligneIds: str
  * Étape DG : le DG décide UNE ligne soumise — validée, ou refusée avec motif (elle revient à la Finance, prévenue).
  * La dernière ligne décidée rend la main à la Finance pour la décision finale.
  */
-export async function deciderLigneDGAction(ligneId: string, valider: boolean, motif?: string): Promise<Resultat> {
+export async function deciderLigneDGAction(ligneId: string, valider: boolean, motif?: string, motifDepassement?: string): Promise<Resultat> {
   const session = await getSession();
   if (!session) return { status: "error", message: "Action non autorisée." };
   const ligne = await prisma.ligneDemande.findUnique({
@@ -142,19 +144,26 @@ export async function deciderLigneDGAction(ligneId: string, valider: boolean, mo
   if (!ligne) return { status: "error", message: "Ligne introuvable." };
 
   const acteur = await chargerActeur(prisma, session, ligne.demande.createurId);
-  const decision = { valider: valider === true, motif: motif === undefined ? undefined : String(motif) };
-  let resultat: { etapeSuivante: string; libelle: string } = { etapeSuivante: "DG", libelle: "" };
+  const decision = {
+    valider: valider === true,
+    motif: motif === undefined ? undefined : String(motif),
+    // Lot J : le DG confirme, dans ce geste, le dépassement du seuil rouge d'un budget (motif obligatoire).
+    motifDepassement: motifDepassement === undefined ? null : String(motifDepassement),
+  };
+  let resultat: { etapeSuivante: string; libelle: string; budget?: PrevisionBudget } = { etapeSuivante: "DG", libelle: "" };
   try {
     await prisma.$transaction(async (tx) => {
       const r = await deciderLigneDG(tx, String(ligneId), acteur, decision);
       if (!r.ok) throw new RefusTransaction(r.message);
-      resultat = { etapeSuivante: r.etapeSuivante, libelle: r.libelle ?? "" };
+      resultat = { etapeSuivante: r.etapeSuivante, libelle: r.libelle ?? "", budget: r.budget };
     });
   } catch (e) {
     if (e instanceof RefusTransaction) return { status: "error", message: e.message };
     throw e;
   }
   rafraichir(ligne.demandeId);
+  // Lot J : alerte orange (ou rouge confirmé par le DG) → Finance et DG prévenus.
+  if (resultat.budget) await notifierAlerteBudget(ligne.demandeId, session.user.id, resultat.budget);
   // Lot B : l'étape ne dit plus si le DG a fini — on compte les articles qui l'attendent encore.
   const resteChezLeDG = await prisma.ligneDemande.count({
     where: { demandeId: ligne.demandeId, statutValidation: "EN_ATTENTE", soumiseAuDG: true, decisionDG: null },

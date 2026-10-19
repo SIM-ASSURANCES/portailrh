@@ -64,7 +64,10 @@ const uid = async (email) => (await q(`SELECT id FROM "User" WHERE email = $1`, 
 const idCollab = await uid("collaborateur@simassurances.test");
 const idFinance = await uid("finance@simassurances.test");
 const idAssistant = await uid("assistant-finance@simassurances.test");
-await q(`INSERT INTO "Categorie"(id, label, "isActive", "budgetAlloue") VALUES ('e2e-lotg-cat', 'E2E-G-CAT', true, 150000) ON CONFLICT (id) DO UPDATE SET "budgetAlloue" = 150000`);
+await q(`INSERT INTO "Categorie"(id, label, "isActive") VALUES ('e2e-lotg-cat', 'E2E-G-CAT', true) ON CONFLICT (id) DO NOTHING`);
+// Lot J : le budget d'une catégorie est un paramétrage validé par le DG (la colonne Categorie.budgetAlloue n'est plus lue).
+await q(`DELETE FROM "BudgetParametrage" WHERE "categorieId" = 'e2e-lotg-cat'`);
+await q(`INSERT INTO "BudgetParametrage"(id, portee, "categorieId", montant, "dateDebut", "modeSeuil", "seuilOrange", "seuilRouge", statut, repris, "decideAt") VALUES ('e2e-lotg-budget', 'CATEGORIE', 'e2e-lotg-cat', 150000, DATE '2000-01-01', 'POURCENTAGE', 20, 0, 'VALIDE', true, now())`);
 
 const sessions = new Map();
 async function connecter(email) {

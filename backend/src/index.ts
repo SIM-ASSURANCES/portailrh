@@ -38,6 +38,8 @@ export * from "./beneficiaireArticles";
 export * from "./motifLigne";
 export * from "./categorisationObligatoire";
 export * from "./parametresTresorerie";
+export * from "./budgets";
+export * from "./budgetsDb";
 export * from "./motifReglement";
 export * from "./retourNul";
 export * from "./retourExterneRattache";
