@@ -28,8 +28,6 @@ interface ProfileClientProps {
   /** Service lu en base : jamais modifiable depuis le profil (il pilote le circuit de validation des demandes). */
   serviceNom: string | null;
   membreDepuis: string | null;
-  /** Date d'embauche (JJ/MM/AAAA), en lecture seule : fixée par la RH (point de départ de l'exercice de congé). */
-  dateEmbauche?: string | null;
   selectedMonth: string;
   showPointageStats: boolean;
   showTresoStats: boolean;
@@ -150,7 +148,6 @@ export function ProfileClient({
   role,
   serviceNom,
   membreDepuis,
-  dateEmbauche = null,
   selectedMonth,
   showPointageStats,
   showTresoStats,
@@ -340,10 +337,6 @@ export function ProfileClient({
               <div>
                 <dt className="text-xs text-muted-foreground">Service</dt>
                 <dd className="mt-0.5 text-foreground">{serviceNom ?? "Non renseigné"}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Date d&apos;embauche</dt>
-                <dd className="mt-0.5 text-foreground">{dateEmbauche ?? "Non renseignée"}</dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">Rôle applicatif</dt>
@@ -558,15 +551,6 @@ export function ProfileClient({
                     <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground">
                       <Icon name="building" className="size-4 text-muted-foreground shrink-0" />
                       <span className="truncate">{serviceNom ?? "Non renseigné"}</span>
-                    </div>
-                  </div>
-
-                  {/* Date d'embauche — lue en base, jamais modifiable par l'utilisateur (c'est la RH qui la renseigne, `/conges/soldes`). */}
-                  <div>
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Date d&apos;embauche</p>
-                    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground">
-                      <Icon name="calendar" className="size-4 text-muted-foreground shrink-0" />
-                      <span className="truncate">{dateEmbauche ?? "Non renseignée"}</span>
                     </div>
                   </div>
 

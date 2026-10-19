@@ -2,7 +2,6 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { redirect } from "next/navigation";
 import { ProfileClient } from "./ProfileClient";
-import { frDateColonne } from "@/lib/conges/format";
 
 import { format } from "date-fns";
 
@@ -34,7 +33,7 @@ export default async function ProfilPage({
   // Service lu en base, en lecture seule : l'utilisateur ne le choisit pas (affecté par l'Admin, `/admin/users`).
   const userDb = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { service: { select: { name: true } }, createdAt: true, dateEmbauche: true },
+    select: { service: { select: { name: true } }, createdAt: true },
   });
 
   const canPointer = hasPermission(session, "pointage.pointer");
@@ -100,7 +99,6 @@ export default async function ProfilPage({
         user={session.user}
         role={session.role}
         serviceNom={userDb?.service?.name ?? null}
-        dateEmbauche={userDb?.dateEmbauche ? frDateColonne(userDb.dateEmbauche) : null}
         membreDepuis={userDb?.createdAt?.toISOString() ?? null}
         selectedMonth={selectedMonth}
         showPointageStats={canPointer}

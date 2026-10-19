@@ -10,8 +10,8 @@ export interface LienSousNav {
 }
 
 /**
- * Sous-navigation d'un module d'absence (Congés, Permissions d'absence) : liens en défilement horizontal sur mobile
- * (jamais de débordement de la page). `racine` : le lien « Mes … », actif seulement à l'identique.
+ * Sous-navigation du module Congés : liens en défilement horizontal sur mobile (jamais de débordement de la page).
+ * `racine` : le lien « Mes congés », actif seulement à l'identique.
  */
 export function SousNavConges({ liens, racine = "/conges", libelle = "Congés" }: { liens: LienSousNav[]; racine?: string; libelle?: string }) {
   const chemin = usePathname();

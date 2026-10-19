@@ -804,9 +804,8 @@ export async function supprimerUtilisateurAction(
     lignesDecideesParDG,
     reinitialisationsPointageEffectuees,
     pointageMisEnServiceParCompte,
-    soldesConge,
-    ajustementsSolde,
     congesDemandes,
+    congesCreees,
     congesApprouves,
     congesValides,
     congesAnnules,
@@ -863,11 +862,9 @@ export async function supprimerUtilisateurAction(
     // Journal permanent des purges du Pointage seul et marqueur de mise en service (RESTRICT).
     prisma.reinitialisationPointage.count({ where: { effectueeParId: userId } }),
     prisma.pointageMiseEnService.count({ where: { parId: userId } }),
-    // Congés (Lot 5) : 6 relations vers User, toutes en RESTRICT (sans ce contrôle, la suppression
-    // échouerait sur une clé étrangère au lieu d'afficher ce message).
-    prisma.soldeConge.count({ where: { userId } }),
-    prisma.ajustementSolde.count({ where: { effectueParId: userId } }),
+    // Congés : les cinq relations vers User de DemandeConge sont vérifiées avant suppression.
     prisma.demandeConge.count({ where: { userId } }),
+    prisma.demandeConge.count({ where: { creeParId: userId } }),
     prisma.demandeConge.count({ where: { approuveParId: userId } }),
     prisma.demandeConge.count({ where: { valideParId: userId } }),
     prisma.demandeConge.count({ where: { annuleParId: userId } }),
@@ -922,9 +919,8 @@ export async function supprimerUtilisateurAction(
   if (reinitialisationsPointageEffectuees > 0)
     blocages.push(`purgé le Pointage ${reinitialisationsPointageEffectuees} fois (journal d'audit permanent)`);
   if (pointageMisEnServiceParCompte > 0) blocages.push("mis le Pointage en service");
-  if (soldesConge > 0) blocages.push(`${soldesConge} solde(s) de congé`);
-  if (ajustementsSolde > 0) blocages.push(`effectué ${ajustementsSolde} ajustement(s) de solde de congé`);
   if (congesDemandes > 0) blocages.push(`demandé ${congesDemandes} congé(s)`);
+  if (congesCreees > 0) blocages.push(`créé ${congesCreees} demande(s) de congé`);
   if (congesApprouves > 0) blocages.push(`approuvé ${congesApprouves} demande(s) de congé en tant que responsable`);
   if (congesValides > 0) blocages.push(`validé ${congesValides} demande(s) de congé`);
   if (congesAnnules > 0) blocages.push(`annulé ${congesAnnules} congé(s)`);
