@@ -31,10 +31,6 @@ export * from "./retourNul";
 export * from "./regularisationDepenses";
 // Pas de congé dans le passé : phrase et règle partagées avec le formulaire (pure, importe seulement congesCalcul).
 export * from "./congesPasse";
-// Observations (limite de caractères, libellés des étapes) : pures, partagées avec les formulaires.
-export * from "./observationsAbsence";
-// Historique des types de congé (pure) : message affiché près du nombre de jours.
-export * from "./typesCongeHistorique";
 // Constantes/validations pures uniquement (compteur de caractères côté
 // client) — depuis `./feedback-constants`, JAMAIS depuis `./feedback` :
 // même un `export { X } from "./feedback"` nommé (pas `export *`)

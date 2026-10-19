@@ -40,12 +40,15 @@ PLANIFICATEUR_ACTIF=false bash e2e/base-jetable.sh && node e2e/reinitialisation-
 E2E_CAPTURES=./e2e-captures node e2e/presence-rh.mjs   # page « Présence du jour » de la RH (capture dans e2e-captures/, non versionné)
 ```
 
-### Congés (2026-10-15)
+### Congés (2026-10-15) — ATTENTION : seuls `conges-couche-base.ts` et `conges-migration-admin.sh` sont à jour (module simplifié)
+
+Les scripts Playwright de cette section et des suivantes visent l'ANCIEN module (soldes, types, observations DG, permissions
+d'absence) : ils sont à remplacer par `conges-recette.mjs` (tâche T11 du plan).
 
 ```bash
 # Base jetable migrée et seedée, serveur lancé (production ou `next dev`) sur E2E_BASE_URL (défaut http://localhost:3100) :
 E2E_DATABASE_URL=postgresql://postgres:pw@localhost:55497/e2e node e2e/conges-ecrans.mjs   # écrans Congés : circuit, soldes, annulation, repli DG, congé d'office, droits, 390 px
-npx tsx e2e/conges-couche-base.ts                                                            # couche base (verrous, concurrence, pièces, soldes)
+DATABASE_URL="postgresql://postgres:pw@localhost:45497/e2e?schema=public" npx tsx e2e/conges-couche-base.ts   # couche base (T03) : plages provisoires, circuit, R3 à R12, repli DG, concurrence
 # Sans le Chromium de Playwright : E2E_CHROMIUM=/chemin/vers/chrome ; captures : E2E_CAPTURES=./e2e-captures
 ```
 

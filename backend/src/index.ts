@@ -49,11 +49,8 @@ export * from "./encParametres";
 export * from "./encPermissions";
 export * from "./congesPermissions";
 export * from "./congesCalcul";
-export * from "./circuitAbsence";
-export * from "./congesPieces";
+export * from "./circuitConge";
 export * from "./congesPasse";
-export * from "./observationsAbsence";
-export * from "./typesCongeHistorique";
 export * from "./congesDb";
 export * from "./encReferentiels";
 // F1 (import mensuel du fichier de production) : lecture (4a), règles (4b), application en base (4c) — encCalcul.ts,

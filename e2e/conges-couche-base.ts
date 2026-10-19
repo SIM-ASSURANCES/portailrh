@@ -2,11 +2,21 @@
 //
 //   DATABASE_URL=postgresql://postgres:pw@localhost:5432/jetable npx tsx e2e/conges-couche-base.ts
 //
-// La base doit être migrée et seedée (comptes de test). Le script y ÉCRIT (demandes, soldes, plages) : jamais la base de
-// développement. Garde : le nom de la base doit contenir « jetable », « e2e » ou « conges ».
+// La base doit être migrée et seedée (comptes de test). Le script y ÉCRIT (demandes, plages, absences, pointages, jours fériés) :
+// jamais la base de développement. Garde : le nom de la base doit contenir « jetable », « e2e » ou « conges ».
+// Scénarios : plages provisoires (R10), circuit, observation RH, chevauchement (R5), date passée (R3), modification et resoumission
+// (R8), annulation avant / après le début (R9), refus tardif avec ou sans jours comptés absents (R11), saisie RH (R12), repli DG (O1),
+// concurrence (deux décisions, une soumission contre une saisie RH).
 
-import { randomUUID } from "node:crypto";
-import { prisma, ajouterObservationDG, initialiserSoldesExercice, soumettreConge, resoumettreConge, deciderConge, accorderCongeOffice, ajusterSolde, transactionAbsence, MESSAGE_CONGE_DANS_LE_PASSE } from "../backend/src/index";
+import {
+  prisma,
+  deciderConge,
+  resoumettreConge,
+  saisirCongeRH,
+  soumettreConge,
+  transactionConge,
+  MESSAGE_CONGE_DANS_LE_PASSE,
+} from "../backend/src/index";
 
 const url = process.env.DATABASE_URL ?? "";
 if (!/(jetable|e2e|conges)/i.test(url.split("/").pop() ?? "")) {
@@ -26,7 +36,8 @@ function verifier(nom: string, condition: boolean, detail?: unknown) {
   }
 }
 
-async function compte(email: string) {
+type Compte = { id: string; rolePermissions: string[] };
+async function compte(email: string): Promise<Compte> {
   const u = await prisma.user.findUniqueOrThrow({
     where: { email: `${email}@simassurances.test` },
     include: { role: { include: { permissions: { include: { permission: true } } } } },
@@ -34,361 +45,265 @@ async function compte(email: string) {
   return { id: u.id, rolePermissions: u.role.permissions.map((p) => p.permission.key) };
 }
 
+const jc = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 /** Prochain lundi à partir d'aujourd'hui + `semaines` semaines, en jour civil local. */
 function lundi(semaines: number): string {
   const d = new Date();
   d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7) + 7 * semaines);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return jc(d);
 }
 function plus(jour: string, n: number): string {
   const [a, m, j] = jour.split("-").map(Number);
-  const d = new Date(a, m - 1, j + n);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return jc(new Date(a, m - 1, j + n));
 }
+const local = (jour: string) => {
+  const [a, m, j] = jour.split("-").map(Number);
+  return new Date(a, m - 1, j);
+};
+const colonne = (jour: string) => new Date(`${jour}T00:00:00.000Z`);
 
 async function main() {
   const collab = await compte("collaborateur");
   const resp = await compte("responsable-commercial");
   const rh = await compte("rh");
   const dg = await compte("dg");
-  const annuel = await prisma.typeConge.findUniqueOrThrow({ where: { code: "ANNUEL" } });
   const maintenant = new Date();
+  const aujourdhui = jc(maintenant);
 
   // Nettoyage des essais précédents de ce script.
-  await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: { not: null } } });
+  await prisma.plageAbsenceAutorisee.deleteMany({});
   await prisma.demandeConge.deleteMany({});
-  await prisma.ajustementSolde.deleteMany({});
-  await prisma.soldeConge.deleteMany({});
+  await prisma.absence.deleteMany({});
+  await prisma.pointage.deleteMany({ where: { userId: collab.id } });
+  await prisma.jourFerie.deleteMany({});
 
-  const agir = (utilisateur: { id: string; rolePermissions: string[] }, demandeId: string, action: Parameters<typeof deciderConge>[1]["action"], peutAnnuler = false) =>
-    transactionAbsence((tx) => deciderConge(tx, { demandeId, acteur: { id: utilisateur.id, rolePermissions: utilisateur.rolePermissions }, action, peutAnnulerApresDebut: peutAnnuler, maintenant: new Date() }));
+  const entree = (dateDebut: string, dateFin: string, motif = "Repos") => ({ nature: "CONGE" as const, dateDebut, dateFin, motif });
+  const soumettre = (userId: string, e: ReturnType<typeof entree>) => transactionConge((tx) => soumettreConge(tx, { userId, entree: e, maintenant: new Date() }));
+  const agir = (u: Compte, demandeId: string, action: Parameters<typeof deciderConge>[1]["action"], peutAnnuler = false) =>
+    transactionConge((tx) => deciderConge(tx, { demandeId, acteur: u, action, peutAnnulerApresDebut: peutAnnuler, maintenant: new Date() }));
+  const plages = (demandeId: string) => prisma.plageAbsenceAutorisee.findMany({ where: { demandeCongeId: demandeId }, orderBy: { date: "asc" } });
 
+  // ── Circuit normal et plages (R10) ───────────────────────────────────────────────────────────────────────────────────
   console.log("Circuit normal : collaborateur → responsable → RH");
-  const debut = lundi(2);
-  const fin = plus(debut, 2); // lundi à mercredi : 3 jours ouvrables
-  const s1 = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: debut, dateFin: fin, motif: "Repos annuel" }, maintenant }));
-  verifier("soumission acceptée", s1.ok, s1);
-  if (!s1.ok) throw new Error("arrêt");
-  const d1 = s1.valeur;
-  verifier("étape responsable d'abord", d1.statut === "EN_ATTENTE_RESPONSABLE");
-  verifier("destinataire = le responsable seul", d1.destinataires.length === 1 && d1.destinataires[0] === resp.id, d1.destinataires);
-  verifier("référence CNG-AAAAMM-NNNN", /^CNG-\d{6}-\d{4}$/.test(d1.reference), d1.reference);
-  verifier("3 jours décomptés", d1.nbJours === 3, d1.nbJours);
+  const d1 = lundi(2);
+  const f1 = plus(d1, 4); // lundi à vendredi : 5 jours ouvrés
+  const s1 = await soumettre(collab.id, entree(d1, f1));
+  verifier("soumission acceptée, en attente du responsable", s1.ok && s1.valeur.statut === "EN_ATTENTE_RESPONSABLE" && s1.valeur.nbJoursOuvres === 5, s1);
+  const id1 = s1.ok ? s1.valeur.id : "";
+  verifier("destinataire : le responsable du service", s1.ok && s1.valeur.destinataires.length === 1 && s1.valeur.destinataires[0] === resp.id);
+  let p1 = await plages(id1);
+  verifier("une plage par jour (5), toutes provisoires, 00:00–23:59, source CONGE", p1.length === 5 && p1.every((p) => p.provisoire && p.heureDebut === "00:00" && p.heureFin === "23:59" && p.source === "CONGE"), p1.length);
+  const dem1 = await prisma.demandeConge.findUniqueOrThrow({ where: { id: id1 } });
+  verifier("créée par le demandeur, référence CNG-", dem1.creeParId === collab.id && /^CNG-\d{6}-\d{4}$/.test(dem1.reference) && dem1.etapeResponsableRequise);
 
-  const r1 = await agir(rh, d1.id, { type: "APPROUVER" });
-  verifier("la RH ne valide pas depuis l'étape responsable (B3)", !r1.ok, r1);
-  const r1b = await agir(collab, d1.id, { type: "APPROUVER" });
-  verifier("personne ne décide sa propre demande", !r1b.ok, r1b);
-  const r2 = await agir(resp, d1.id, { type: "APPROUVER" });
-  verifier("le responsable approuve → en attente RH", r2.ok && r2.valeur.statut === "EN_ATTENTE_RH", r2);
-  verifier("la RH est prévenue (ni le demandeur ni le DG)", r2.ok && r2.valeur.destinatairesSuivants.includes(rh.id) && !r2.valeur.destinatairesSuivants.includes(collab.id) && !r2.valeur.destinatairesSuivants.includes(dg.id), r2.ok && r2.valeur.destinatairesSuivants);
+  const refusRespObs = await agir(resp, id1, { type: "APPROUVER", observationRH: "Bon repos" });
+  verifier("observation refusée au responsable (réservée à la RH)", !refusRespObs.ok && refusRespObs.erreur.includes("réservée à la RH"), refusRespObs);
+  verifier("aucune écriture après ce refus", (await prisma.demandeConge.findUniqueOrThrow({ where: { id: id1 } })).statut === "EN_ATTENTE_RESPONSABLE");
+  const autre = await agir(rh, id1, { type: "APPROUVER" });
+  verifier("la RH ne décide pas à l'étape du responsable", !autre.ok, autre);
+  const a1 = await agir(resp, id1, { type: "APPROUVER" });
+  verifier("le responsable approuve : en attente de la RH", a1.ok && a1.valeur.statut === "EN_ATTENTE_RH" && a1.valeur.destinatairesSuivants.includes(rh.id), a1);
+  p1 = await plages(id1);
+  verifier("les plages restent provisoires après le responsable", p1.length === 5 && p1.every((p) => p.provisoire));
+  const propre = await agir(collab, id1, { type: "APPROUVER" });
+  verifier("le demandeur ne décide pas de sa demande", !propre.ok, propre);
+  const v1 = await agir(rh, id1, { type: "APPROUVER", observationRH: "  Bon   repos " });
+  verifier("la RH valide avec une observation nettoyée", v1.ok && v1.valeur.statut === "VALIDEE" && v1.valeur.observationRH === "Bon repos", v1);
+  p1 = await plages(id1);
+  verifier("à la validation, les plages deviennent définitives", p1.length === 5 && p1.every((p) => !p.provisoire));
+  const dv1 = await prisma.demandeConge.findUniqueOrThrow({ where: { id: id1 } });
+  verifier("approbateur, validateur et observation enregistrés", dv1.approuveParId === resp.id && dv1.valideParId === rh.id && dv1.observationRH === "Bon repos");
+  const histo1 = await prisma.historiqueEntry.findMany({ where: { entity: "DemandeConge", entityId: id1 }, orderBy: { createdAt: "asc" } });
+  verifier("historique : soumission, approbation responsable, accord RH", ["soumission", "approbation_responsable", "accord_rh"].every((a) => histo1.some((h) => h.action === a)), histo1.map((h) => h.action));
 
-  console.log("Accord simultané (B4) : un seul débit, un seul jeu de plages");
-  const [a, b] = await Promise.all([agir(rh, d1.id, { type: "APPROUVER" }), agir(rh, d1.id, { type: "APPROUVER" })]);
-  verifier("exactement un accord réussit", [a, b].filter((x) => x.ok).length === 1, [a, b]);
-  const solde = await prisma.soldeConge.findFirstOrThrow({ where: { userId: collab.id, typeCongeId: annuel.id } });
-  verifier("solde débité une seule fois (30 → 27)", solde.soldeRestant === 27, solde.soldeRestant);
-  const plages = await prisma.plageAbsenceAutorisee.count({ where: { demandeCongeId: d1.id } });
-  verifier("3 plages créées une seule fois, liées à la demande", plages === 3, plages);
-  const dem1 = await prisma.demandeConge.findUniqueOrThrow({ where: { id: d1.id } });
-  verifier("statut VALIDEE, ligne de solde mémorisée", dem1.statut === "VALIDEE" && dem1.soldeCongeId === solde.id && dem1.joursDebites === 3, dem1);
+  // ── R5 chevauchement, R3 date passée ─────────────────────────────────────────────────────────────────────────────────
+  console.log("Chevauchement et date passée");
+  const chev = await soumettre(collab.id, entree(plus(d1, 4), plus(d1, 6)));
+  verifier("chevauchement avec un congé validé refusé", !chev.ok && chev.erreur.includes("couvre déjà"), chev);
+  const suivant = await soumettre(collab.id, entree(plus(d1, 7), plus(d1, 7)));
+  verifier("période qui commence le lendemain de la fin : acceptée", suivant.ok, suivant);
+  const hier = await soumettre(collab.id, entree(plus(aujourdhui, -1), plus(aujourdhui, 1)));
+  verifier("début hier refusé avec la phrase de l'écran", !hier.ok && hier.erreur === MESSAGE_CONGE_DANS_LE_PASSE, hier);
+  const sansOuvre = await soumettre(collab.id, entree(plus(lundi(6), 5), plus(lundi(6), 6))); // samedi–dimanche
+  verifier("période sans jour ouvré refusée", !sansOuvre.ok && sansOuvre.erreur.includes("aucun jour ouvré"), sansOuvre);
+  const courtMotif = await soumettre(collab.id, entree(lundi(7), lundi(7), "ab"));
+  verifier("motif de 2 caractères refusé", !courtMotif.ok && courtMotif.champ === "motif", courtMotif);
+  const inversee = await soumettre(collab.id, entree(lundi(7), plus(lundi(7), -1)));
+  verifier("fin avant le début refusée", !inversee.ok && inversee.champ === "dateFin", inversee);
+  if (suivant.ok) await agir(collab, suivant.valeur.id, { type: "ANNULER", motif: "Plus nécessaire" });
 
-  console.log("Chevauchement et solde");
-  const chev = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: plus(debut, 1), dateFin: plus(debut, 4), motif: "Chevauche" }, maintenant }));
-  verifier("chevauchement refusé", !chev.ok, chev);
-  await prisma.soldeConge.update({ where: { id: solde.id }, data: { soldeRestant: 1 } });
-  const trop = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(5), dateFin: plus(lundi(5), 2), motif: "Trop long" }, maintenant }));
-  verifier("solde insuffisant refusé", !trop.ok, trop);
-  await prisma.soldeConge.update({ where: { id: solde.id }, data: { soldeRestant: 27 } });
+  // ── Refus avant le début : plages supprimées ─────────────────────────────────────────────────────────────────────────
+  console.log("Refus avant le début");
+  const d2 = lundi(4);
+  const s2 = await soumettre(collab.id, entree(d2, plus(d2, 2)));
+  const id2 = s2.ok ? s2.valeur.id : "";
+  await agir(resp, id2, { type: "APPROUVER" });
+  const r2 = await agir(rh, id2, { type: "REJETER", motif: "Période chargée", compterJoursPassesAbsents: true });
+  verifier("refus accepté", r2.ok && r2.valeur.statut === "REJETEE" && r2.valeur.absencesCreees === 0, r2);
+  verifier("plages supprimées au refus", (await plages(id2)).length === 0);
+  const dr2 = await prisma.demandeConge.findUniqueOrThrow({ where: { id: id2 } });
+  verifier("début futur : le choix « jours passés » est sans objet (null)", dr2.joursPassesComptesAbsents === null && dr2.motifRejet === "Période chargée");
 
-  console.log("Pièce jointe piégée (B1)");
-  const piege = await transactionAbsence((tx) =>
-    soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(6), dateFin: lundi(6), motif: "Piège", piecesJointes: [{ url: "../../../../proc/self/environ" }] }, maintenant })
-  );
-  verifier("nom de pièce piégé refusé", !piege.ok, piege);
+  // ── Modification demandée puis resoumission (R8) ─────────────────────────────────────────────────────────────────────
+  console.log("Modification demandée puis resoumission");
+  const d3 = lundi(5);
+  const s3 = await soumettre(collab.id, entree(d3, plus(d3, 2), "Premier motif"));
+  const id3 = s3.ok ? s3.valeur.id : "";
+  await agir(resp, id3, { type: "APPROUVER" });
+  const m3 = await agir(rh, id3, { type: "DEMANDER_MODIFICATION", motif: "Réduisez la période", observationRH: "Voir avec le responsable" });
+  verifier("modification demandée, plages conservées (provisoires)", m3.ok && m3.valeur.statut === "MODIFICATION_DEMANDEE" && (await plages(id3)).length === 3);
+  const resoRefus = await transactionConge((tx) => resoumettreConge(tx, { demandeId: id3, acteurId: resp.id, entree: entree(d3, plus(d3, 1)), maintenant: new Date() }));
+  verifier("seul le demandeur renvoie sa demande", !resoRefus.ok, resoRefus);
+  const reso = await transactionConge((tx) => resoumettreConge(tx, { demandeId: id3, acteurId: collab.id, entree: entree(d3, plus(d3, 1), "Motif corrigé"), maintenant: new Date() }));
+  verifier("resoumission : retour à la première étape", reso.ok && reso.valeur.statut === "EN_ATTENTE_RESPONSABLE" && reso.valeur.nbJoursOuvres === 2, reso);
+  const p3 = await plages(id3);
+  verifier("plages remplacées : 2 jours, provisoires", p3.length === 2 && p3.every((p) => p.provisoire));
+  const dem3 = await prisma.demandeConge.findUniqueOrThrow({ where: { id: id3 } });
+  verifier("décisions précédentes effacées, motif mis à jour", dem3.approuveParId === null && dem3.valideParId === null && dem3.observationRH === null && dem3.motifModification === null && dem3.motif === "Motif corrigé");
 
-  console.log("Annulation avant le début : solde recrédité, plages supprimées par clé (I3)");
-  const ann = await agir(collab, d1.id, { type: "ANNULER", motif: "Plans changés" });
-  verifier("annulation par le demandeur", ann.ok && ann.valeur.statut === "ANNULEE" && ann.valeur.effet === "DEFAIRE_ACCORD", ann);
-  const solde2 = await prisma.soldeConge.findUniqueOrThrow({ where: { id: solde.id } });
-  verifier("solde recrédité (27 → 30)", solde2.soldeRestant === 30, solde2.soldeRestant);
-  verifier("plages supprimées", (await prisma.plageAbsenceAutorisee.count({ where: { demandeCongeId: d1.id } })) === 0);
+  // ── Annulation avant le début (R9) ───────────────────────────────────────────────────────────────────────────────────
+  console.log("Annulation avant le début");
+  const an = await agir(collab, id1, { type: "ANNULER", motif: "Changement de programme" });
+  verifier("le demandeur annule un congé validé qui n'a pas commencé", an.ok && an.valeur.statut === "ANNULEE", an);
+  verifier("toutes les plages supprimées", (await plages(id1)).length === 0);
 
-  console.log("Références simultanées (I1)");
-  const autres = await Promise.all(
-    ["finance", "assistant-finance", "enc-finance", "enc-technique", "responsable-technique"].map(async (e) => (await compte(e)).id)
-  );
-  const lots = await Promise.all(
-    autres.map((id, i) =>
-      transactionAbsence((tx) => soumettreConge(tx, { userId: id, entree: { typeCongeId: annuel.id, dateDebut: lundi(8 + i), dateFin: lundi(8 + i), motif: "Simultané" }, maintenant }))
-    )
-  );
-  const refs = lots.filter((x) => x.ok).map((x) => (x.ok ? x.valeur.reference : ""));
-  verifier("5 soumissions simultanées, 5 références distinctes", lots.every((x) => x.ok) && new Set(refs).size === 5, lots);
+  // ── Annulation après le début : seules les plages futures partent ────────────────────────────────────────────────────
+  console.log("Annulation après le début");
+  const debutPasse = plus(aujourdhui, -2);
+  const finFutur = plus(aujourdhui, 3);
+  const enCours = await prisma.demandeConge.create({
+    data: {
+      reference: "CNG-TEST-0001", nature: "CONGE", motif: "Congé commencé", dateDebut: colonne(debutPasse), dateFin: colonne(finFutur),
+      nbJoursOuvres: 3, statut: "VALIDEE", etapeResponsableRequise: true, userId: collab.id, creeParId: collab.id, valideParId: rh.id, valideAt: new Date(),
+    },
+  });
+  const joursEnCours: string[] = [];
+  for (let j = debutPasse; j <= finFutur; j = plus(j, 1)) joursEnCours.push(j);
+  await prisma.plageAbsenceAutorisee.createMany({
+    data: joursEnCours.map((j) => ({ userId: collab.id, date: local(j), heureDebut: "00:00", heureFin: "23:59", source: "CONGE" as const, demandeCongeId: enCours.id })),
+  });
+  const refusDem = await agir(collab, enCours.id, { type: "ANNULER", motif: "Trop tard" });
+  verifier("le demandeur n'annule plus un congé commencé", !refusDem.ok && refusDem.erreur.includes("déjà commencé"), refusDem);
+  verifier("aucune plage supprimée par ce refus", (await plages(enCours.id)).length === joursEnCours.length);
+  const refusSansDroit = await agir(rh, enCours.id, { type: "ANNULER", motif: "Sans droit" }, false);
+  verifier("sans conges.annuler, la RH n'annule pas non plus", !refusSansDroit.ok, refusSansDroit);
+  const anRH = await agir(rh, enCours.id, { type: "ANNULER", motif: "Retour anticipé du collaborateur" }, true);
+  verifier("avec conges.annuler, annulation après le début", anRH.ok && anRH.valeur.statut === "ANNULEE", anRH);
+  const reste = await plages(enCours.id);
+  const attendu = joursEnCours.filter((j) => j <= aujourdhui);
+  verifier(`seules les plages jusqu'à aujourd'hui restent (${attendu.length})`, reste.length === attendu.length && reste.every((p) => jc(p.date) <= aujourdhui), reste.map((p) => jc(p.date)));
+  await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: enCours.id } });
+  await prisma.demandeConge.delete({ where: { id: enCours.id } });
 
-  console.log("Demandeur responsable de son service : étape responsable non requise");
-  const sResp = await transactionAbsence((tx) => soumettreConge(tx, { userId: resp.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(10), dateFin: lundi(10), motif: "Responsable" }, maintenant }));
-  verifier("directement à la RH", sResp.ok && sResp.valeur.statut === "EN_ATTENTE_RH", sResp);
-
-  console.log("Demandeur RH sans autre compte RH : le DG décide");
-  const sRh = await transactionAbsence((tx) => soumettreConge(tx, { userId: rh.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(11), dateFin: lundi(11), motif: "RH demandeur" }, maintenant }));
-  verifier("soumise (étape RH tenue par le DG)", sRh.ok, sRh);
-  if (sRh.ok) {
-    const refusRh = await agir(rh, sRh.valeur.id, { type: "APPROUVER" });
-    verifier("la RH demandeur ne décide pas sa demande", !refusRh.ok, refusRh);
-    const okDg = await agir(dg, sRh.valeur.id, { type: "APPROUVER" });
-    verifier("le DG accorde", okDg.ok && okDg.valeur.statut === "VALIDEE", okDg);
-  }
-
-  console.log("Modification demandée puis rejet");
-  if (sResp.ok) {
-    const mod = await agir(rh, sResp.valeur.id, { type: "DEMANDER_MODIFICATION", motif: "Précisez l'intérim" });
-    verifier("modification demandée", mod.ok && mod.valeur.statut === "MODIFICATION_DEMANDEE", mod);
-    const rejetSurModif = await agir(rh, sResp.valeur.id, { type: "REJETER", motif: "non" });
-    verifier("aucune décision sur une demande à modifier", !rejetSurModif.ok);
-  }
-
-  console.log("Congé d'office (RH) et ajustement");
-  const off = await transactionAbsence((tx) => accorderCongeOffice(tx, { acteurId: rh.id, userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(12), dateFin: plus(lundi(12), 1), motif: "Fermeture annuelle" }, maintenant }));
-  verifier("congé d'office accordé", off.ok, off);
-  const soi = await transactionAbsence((tx) => accorderCongeOffice(tx, { acteurId: rh.id, userId: rh.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(13), dateFin: lundi(13), motif: "Pour moi" }, maintenant }));
-  verifier("jamais pour soi-même", !soi.ok);
-  const s3 = await prisma.soldeConge.findUniqueOrThrow({ where: { id: solde.id } });
-  verifier("solde débité de 2 (30 → 28)", s3.soldeRestant === 28, s3.soldeRestant);
-  const aj = await transactionAbsence((tx) => ajusterSolde(tx, { soldeCongeId: solde.id, montant: -100, motif: "Trop", acteurId: rh.id }));
-  verifier("ajustement qui passerait sous zéro refusé", !aj.ok);
-  const aj2 = await transactionAbsence((tx) => ajusterSolde(tx, { soldeCongeId: solde.id, montant: 2, motif: "Régularisation 2025", acteurId: rh.id }));
-  verifier("ajustement +2 → 30", aj2.ok && aj2.valeur.soldeRestant === 30, aj2);
-
-  console.log("Permission exceptionnelle (C4) : une seule décision, destinataire choisi");
-  const mariage = await prisma.typeConge.findUniqueOrThrow({ where: { code: "MARIAGE_SALARIE" } });
-  const piece = () => [{ url: randomUUID() + ".pdf", nomFichier: "livret.pdf" }];
-  const exc = (semaine: number, destinataire?: "RESPONSABLE" | "RH" | null) =>
-    transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: mariage.id, dateDebut: lundi(semaine), dateFin: lundi(semaine), motif: "Mariage du salarié", piecesJointes: piece(), destinataire }, maintenant }));
-  const decE = (id: string, acteur: { id: string; rolePermissions: string[] }, action: Parameters<typeof deciderConge>[1]["action"]) =>
-    transactionAbsence((tx) => deciderConge(tx, { demandeId: id, acteur, action, peutAnnulerApresDebut: false, maintenant: new Date() }));
-  const effacer = async (id: string) => {
-    await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: id } });
-    await prisma.demandeConge.delete({ where: { id } });
+  // ── R11 : refus tardif ───────────────────────────────────────────────────────────────────────────────────────────────
+  console.log("Refus tardif (R11)");
+  const debutR11 = plus(aujourdhui, -12);
+  const finR11 = plus(aujourdhui, 2);
+  const nouvelleDemandeEnAttenteRH = async (ref: string) => {
+    const d = await prisma.demandeConge.create({
+      data: {
+        reference: ref, nature: "CONGE", motif: "Congé déjà commencé", dateDebut: colonne(debutR11), dateFin: colonne(finR11),
+        nbJoursOuvres: 10, statut: "EN_ATTENTE_RH", etapeResponsableRequise: false, userId: collab.id, creeParId: collab.id,
+      },
+    });
+    const jours: string[] = [];
+    for (let j = debutR11; j <= finR11; j = plus(j, 1)) jours.push(j);
+    await prisma.plageAbsenceAutorisee.createMany({
+      data: jours.map((j) => ({ userId: collab.id, date: local(j), heureDebut: "00:00", heureFin: "23:59", source: "CONGE" as const, demandeCongeId: d.id, provisoire: true })),
+    });
+    return d.id;
   };
-
-  const sansChoix = await exc(41);
-  verifier("permission exceptionnelle sans destinataire : refusée", !sansChoix.ok && /Choisissez qui valide/.test(sansChoix.erreur) && sansChoix.champ === "destinataire", sansChoix);
-  const ordinaireAvecChoix = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(41), dateFin: lundi(41), motif: "Congé ordinaire", destinataire: "RH" }, maintenant }));
-  verifier("congé ordinaire avec un destinataire : refusé", !ordinaireAvecChoix.ok, ordinaireAvecChoix);
-  const inconnu = await exc(41, "DG" as unknown as "RH");
-  verifier("destinataire inconnu (DG) : refusé", !inconnu.ok, inconnu);
-
-  // Choix responsable : une seule décision, définitive (VALIDEE avec les plages, sans débit).
-  const eR = await exc(42, "RESPONSABLE");
-  verifier("choix responsable : en attente du responsable seul", eR.ok && eR.valeur.statut === "EN_ATTENTE_RESPONSABLE" && eR.valeur.destinataires.length === 1 && eR.valeur.destinataires[0] === resp.id, eR);
-  if (eR.ok) {
-    const rhNon = await decE(eR.valeur.id, rh, { type: "APPROUVER" });
-    verifier("la RH ne décide pas à la place d'un responsable utilisable", !rhNon.ok, rhNon);
-    const accordE = await decE(eR.valeur.id, resp, { type: "APPROUVER" });
-    verifier("le responsable accorde : VALIDEE tout de suite (aucune étape RH)", accordE.ok && accordE.valeur.statut === "VALIDEE" && accordE.valeur.effet === "ACCORDER", accordE);
-    const ligneE = await prisma.demandeConge.findUniqueOrThrow({ where: { id: eR.valeur.id } });
-    verifier("approuvé par et validé par = le responsable ; destinataire conservé", ligneE.approuveParId === resp.id && ligneE.valideParId === resp.id && ligneE.destinataire === "RESPONSABLE");
-    verifier("plages d'absence créées, aucun débit (non déductible)", (await prisma.plageAbsenceAutorisee.count({ where: { demandeCongeId: eR.valeur.id } })) === 4 && ligneE.joursDebites === 0);
-    verifier("historique : accord_responsable", (await prisma.historiqueEntry.count({ where: { entity: "DemandeConge", entityId: eR.valeur.id, action: "accord_responsable" } })) === 1);
-    const encore = await decE(eR.valeur.id, resp, { type: "REJETER", motif: "Trop tard" });
-    verifier("décision définitive : plus rien à décider", !encore.ok, encore);
-    await effacer(eR.valeur.id);
+  // Un jour férié et un jour pointé dans la fenêtre.
+  const veille = plus(aujourdhui, -1);
+  const jourFerie = plus(aujourdhui, -9);
+  const jourPointe = plus(aujourdhui, -8);
+  await prisma.jourFerie.create({ data: { date: local(jourFerie), libelle: "Férié de test" } });
+  await prisma.pointage.create({ data: { type: "ARRIVEE", source: "ORDINATEUR", heure: new Date(local(jourPointe).getTime() + 8 * 3600_000), userId: collab.id } });
+  const plancher = process.env.SYSTEM_START_DATE || "2026-09-07";
+  const attendues: string[] = [];
+  for (let j = debutR11; j <= veille; j = plus(j, 1)) {
+    const g = local(j).getDay();
+    if (g === 0 || g === 6 || j === jourFerie || j === jourPointe || j < plancher) continue;
+    attendues.push(j);
   }
+  const idA = await nouvelleDemandeEnAttenteRH("CNG-TEST-0002");
+  const rA = await agir(rh, idA, { type: "REJETER", motif: "Pas de dépôt préalable", compterJoursPassesAbsents: true });
+  const absA = await prisma.absence.findMany({ where: { userId: collab.id }, orderBy: { date: "asc" } });
+  verifier(`coché : ${attendues.length} absence(s) « à contrôler » (ouvrés passés, sans férié, sans jour pointé)`, rA.ok && rA.valeur.absencesCreees === attendues.length && absA.length === attendues.length && absA.every((a) => a.statut === "A_CONTROLER"), { absA: absA.map((a) => jc(a.date)), attendues, rA });
+  verifier("jours exacts", JSON.stringify(absA.map((a) => jc(a.date))) === JSON.stringify(attendues));
+  verifier("le choix est écrit sur la demande et dans l'historique", (await prisma.demandeConge.findUniqueOrThrow({ where: { id: idA } })).joursPassesComptesAbsents === true && (await prisma.historiqueEntry.count({ where: { entity: "DemandeConge", entityId: idA, action: "jours_passes" } })) === 1);
+  verifier("plages supprimées par le refus", (await plages(idA)).length === 0);
 
-  // Choix RH : la RH décide seule ; un rejet est définitif aussi.
-  const eH = await exc(43, "RH");
-  verifier("choix RH : en attente de la RH, étape responsable non requise", eH.ok && eH.valeur.statut === "EN_ATTENTE_RH" && eH.valeur.destinataires.includes(rh.id) && !eH.valeur.destinataires.includes(resp.id), eH);
-  if (eH.ok) {
-    const respNon = await decE(eH.valeur.id, resp, { type: "APPROUVER" });
-    verifier("le responsable ne décide pas quand la RH est choisie", !respNon.ok, respNon);
-    const rejet = await decE(eH.valeur.id, rh, { type: "REJETER", motif: "Pièce non conforme" });
-    verifier("la RH rejette : REJETEE définitive", rejet.ok && rejet.valeur.statut === "REJETEE", rejet);
-    const apres = await decE(eH.valeur.id, rh, { type: "APPROUVER" });
-    verifier("après un rejet, aucune seconde décision", !apres.ok, apres);
-    await effacer(eH.valeur.id);
-  }
+  const idB = await nouvelleDemandeEnAttenteRH("CNG-TEST-0003");
+  await prisma.absence.deleteMany({});
+  const rB = await agir(rh, idB, { type: "REJETER", motif: "Pas de dépôt préalable", compterJoursPassesAbsents: false });
+  verifier("décoché : aucune absence créée", rB.ok && rB.valeur.absencesCreees === 0 && (await prisma.absence.count()) === 0, rB);
+  verifier("décoché : choix enregistré à faux", (await prisma.demandeConge.findUniqueOrThrow({ where: { id: idB } })).joursPassesComptesAbsents === false);
 
-  // Repli : le responsable choisi est désactivé après la soumission -> la RH ; plus de RH -> le DG ; jamais le demandeur.
-  const eRep = await exc(44, "RESPONSABLE");
-  if (eRep.ok) {
-    try {
-      await prisma.user.update({ where: { id: resp.id }, data: { isActive: false } });
-      const parRH = await decE(eRep.valeur.id, rh, { type: "APPROUVER" });
-      verifier("responsable désactivé : la RH décide à sa place (repli), VALIDEE", parRH.ok && parRH.valeur.statut === "VALIDEE" && parRH.valeur.viaRepli, parRH);
-      if (parRH.ok) await effacer(eRep.valeur.id);
-      const eRep2 = await exc(45, "RH");
-      if (eRep2.ok) {
-        await prisma.user.update({ where: { id: rh.id }, data: { isActive: false } });
-        const parDG = await decE(eRep2.valeur.id, dg, { type: "APPROUVER" });
-        verifier("plus aucun compte RH actif : le DG décide, VALIDEE", parDG.ok && parDG.valeur.statut === "VALIDEE", parDG);
-        await effacer(eRep2.valeur.id);
-        const eRep3 = await exc(45, "RH");
-        if (eRep3.ok) {
-          const parDemandeur = await decE(eRep3.valeur.id, collab, { type: "APPROUVER" });
-          verifier("jamais le demandeur", !parDemandeur.ok, parDemandeur);
-          await effacer(eRep3.valeur.id);
-        }
-      }
-      await prisma.user.update({ where: { id: rh.id }, data: { isActive: true } });
-      // Le choix responsable n'est plus proposé tant qu'il est désactivé.
-      const refus = await exc(46, "RESPONSABLE");
-      verifier("responsable désactivé : le choix responsable est refusé par le serveur", !refus.ok && /pas disponible/.test(refus.erreur), refus);
-    } finally {
-      await prisma.user.updateMany({ where: { id: { in: [resp.id, rh.id] } }, data: { isActive: true } });
-    }
-  }
+  const idC = await nouvelleDemandeEnAttenteRH("CNG-TEST-0004");
+  const rC = await agir(rh, idC, { type: "REJETER", motif: "Pas de dépôt préalable" });
+  verifier("choix absent : traité comme décoché", rC.ok && rC.valeur.absencesCreees === 0 && (await prisma.absence.count()) === 0);
 
-  // Resoumission : le destinataire déjà choisi est conservé, et peut être changé.
-  const eMod = await exc(47, "RESPONSABLE");
-  if (eMod.ok) {
-    await prisma.demandeConge.update({ where: { id: eMod.valeur.id }, data: { statut: "MODIFICATION_DEMANDEE", motifModification: "Précisez" } });
-    const reso = await transactionAbsence((tx) => resoumettreConge(tx, { demandeId: eMod.valeur.id, acteurId: collab.id, entree: { typeCongeId: mariage.id, dateDebut: lundi(47), dateFin: lundi(47), motif: "Mariage corrigé", piecesJointes: piece() }, maintenant }));
-    verifier("resoumission sans nouveau choix : le destinataire est conservé (responsable)", reso.ok && reso.valeur.statut === "EN_ATTENTE_RESPONSABLE", reso);
-    await prisma.demandeConge.update({ where: { id: eMod.valeur.id }, data: { statut: "MODIFICATION_DEMANDEE", motifModification: "Encore" } });
-    const reso2 = await transactionAbsence((tx) => resoumettreConge(tx, { demandeId: eMod.valeur.id, acteurId: collab.id, entree: { typeCongeId: mariage.id, dateDebut: lundi(47), dateFin: lundi(47), motif: "Mariage re-corrigé", piecesJointes: piece(), destinataire: "RH" }, maintenant }));
-    verifier("resoumission avec un autre choix (RH) : la demande part à la RH", reso2.ok && reso2.valeur.statut === "EN_ATTENTE_RH", reso2);
-    await effacer(eMod.valeur.id);
-  }
+  const idD = await nouvelleDemandeEnAttenteRH("CNG-TEST-0005");
+  await prisma.absence.createMany({ data: attendues.slice(0, 2).map((j) => ({ userId: collab.id, date: local(j), statut: "CONFIRMEE" as const })) });
+  const rD = await agir(rh, idD, { type: "REJETER", motif: "Pas de dépôt préalable", compterJoursPassesAbsents: true });
+  verifier("jamais de doublon : les jours déjà en absence sont sautés", rD.ok && rD.valeur.absencesCreees === attendues.length - 2 && (await prisma.absence.count()) === attendues.length, rD);
+  await prisma.absence.deleteMany({});
+  await prisma.pointage.deleteMany({ where: { userId: collab.id } });
+  await prisma.jourFerie.deleteMany({});
+  await prisma.plageAbsenceAutorisee.deleteMany({});
+  await prisma.demandeConge.deleteMany({ where: { reference: { startsWith: "CNG-TEST-" } } });
 
-  console.log("Observations (C3) : RH à sa décision, DG à tout moment, ajout seul");
-  const debutO = lundi(26);
-  const sO = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: debutO, dateFin: debutO, motif: "Pour les observations" }, maintenant }));
-  if (!sO.ok) throw new Error("préparation C3 : " + JSON.stringify(sO));
-  const idO = sO.valeur.id;
-  const decider = (acteur: { id: string; rolePermissions: string[] }, action: Parameters<typeof deciderConge>[1]["action"], observation?: string | null) =>
-    transactionAbsence((tx) => deciderConge(tx, { demandeId: idO, acteur, action, peutAnnulerApresDebut: false, observation, maintenant: new Date() }));
-  const tropLong = await decider(resp, { type: "APPROUVER" }, "x".repeat(501));
-  verifier("observation de 501 caractères refusée, rien d'écrit", !tropLong.ok && (await prisma.demandeConge.findUniqueOrThrow({ where: { id: idO } })).statut === "EN_ATTENTE_RESPONSABLE", tropLong);
-  const apRESP = await decider(resp, { type: "APPROUVER" }, "  Bon dossier,   à valider. ");
-  verifier("le responsable approuve avec une observation", apRESP.ok, apRESP);
-  const apRH = await decider(rh, { type: "APPROUVER" }, "RAS côté RH, solde suffisant.");
-  verifier("la RH valide avec ses observations", apRH.ok && apRH.valeur.statut === "VALIDEE", apRH);
-  const obs = await prisma.observationAbsence.findMany({ where: { demandeCongeId: idO }, orderBy: { createdAt: "asc" } });
-  verifier("deux observations, étapes RESPONSABLE puis RH, auteurs exacts", obs.length === 2 && obs[0].etape === "RESPONSABLE" && obs[0].auteurId === resp.id && obs[1].etape === "RH" && obs[1].auteurId === rh.id, obs);
-  verifier("espaces nettoyés", obs[0].texte === "Bon dossier, à valider.", obs[0]?.texte);
-  const sansObs = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(27), dateFin: lundi(27), motif: "Sans observation" }, maintenant }));
-  if (sansObs.ok) {
-    await decider2(sansObs.valeur.id, resp, undefined);
-    verifier("observation facultative : décision sans observation, aucune ligne créée", (await prisma.observationAbsence.count({ where: { demandeCongeId: sansObs.valeur.id } })) === 0);
-    await prisma.demandeConge.delete({ where: { id: sansObs.valeur.id } });
-  }
-  async function decider2(id: string, acteur: { id: string; rolePermissions: string[] }, observation?: string | null) {
-    return transactionAbsence((tx) => deciderConge(tx, { demandeId: id, acteur, action: { type: "APPROUVER" }, peutAnnulerApresDebut: false, observation, maintenant: new Date() }));
-  }
+  // ── R12 : saisie RH ─────────────────────────────────────────────────────────────────────────────────────────────────
+  console.log("Saisie RH");
+  const d6 = lundi(8);
+  const saisie = await transactionConge((tx) => saisirCongeRH(tx, { acteurId: rh.id, userId: collab.id, entree: entree(d6, plus(d6, 1)), maintenant: new Date() }));
+  verifier("saisie RH acceptée", saisie.ok && saisie.valeur.nbJoursOuvres === 2, saisie);
+  const ds = saisie.ok ? await prisma.demandeConge.findUniqueOrThrow({ where: { id: saisie.valeur.id } }) : null;
+  verifier("statut VALIDEE directement, saisieParRH, créée par la RH", !!ds && ds.statut === "VALIDEE" && ds.saisieParRH && ds.creeParId === rh.id && ds.userId === collab.id && ds.valideParId === rh.id);
+  verifier("plages définitives", saisie.ok && (await plages(saisie.valeur.id)).length === 2 && (await plages(saisie.valeur.id)).every((p) => !p.provisoire));
+  const soi = await transactionConge((tx) => saisirCongeRH(tx, { acteurId: rh.id, userId: rh.id, entree: entree(lundi(9), lundi(9)), maintenant: new Date() }));
+  verifier("la RH ne se saisit pas un congé à elle-même", !soi.ok, soi);
+  const passe = await transactionConge((tx) => saisirCongeRH(tx, { acteurId: rh.id, userId: collab.id, entree: entree(plus(aujourdhui, -3), plus(aujourdhui, -3)), maintenant: new Date() }));
+  verifier("saisie RH d'une date passée refusée (R3)", !passe.ok && passe.erreur === MESSAGE_CONGE_DANS_LE_PASSE, passe);
+  const chevRH = await transactionConge((tx) => saisirCongeRH(tx, { acteurId: rh.id, userId: collab.id, entree: entree(plus(d6, 1), plus(d6, 3)), maintenant: new Date() }));
+  verifier("la saisie RH est soumise au chevauchement", !chevRH.ok && chevRH.erreur.includes("couvre déjà"), chevRH);
 
-  // DG : à tout moment, statut inchangé, destinataires = demandeur + RH, jamais lui-même.
-  const avantDG = await prisma.demandeConge.findUniqueOrThrow({ where: { id: idO } });
-  const obsDG = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: idO, acteur: dg, texte: "  À suivre   de près.  " }));
-  verifier("le DG ajoute une observation sur une demande déjà validée", obsDG.ok, obsDG);
-  const apresDG = await prisma.demandeConge.findUniqueOrThrow({ where: { id: idO } });
-  verifier("statut, étapes et décideurs inchangés après l'observation du DG", apresDG.statut === avantDG.statut && apresDG.valideParId === avantDG.valideParId && apresDG.approuveParId === avantDG.approuveParId && apresDG.etapeDepuis.getTime() === avantDG.etapeDepuis.getTime());
-  if (obsDG.ok) {
-    verifier("destinataires : le demandeur et la RH, pas le DG", obsDG.valeur.destinataires.includes(collab.id) && obsDG.valeur.destinataires.includes(rh.id) && !obsDG.valeur.destinataires.includes(dg.id), obsDG.valeur.destinataires);
-    const ligneDG = await prisma.observationAbsence.findUniqueOrThrow({ where: { id: obsDG.valeur.observationId } });
-    verifier("observation du DG : étape DG, texte nettoyé", ligneDG.etape === "DG" && ligneDG.texte === "À suivre de près.", ligneDG);
-  }
-  verifier("une entrée d'historique par observation (3)", (await prisma.historiqueEntry.count({ where: { entity: "DemandeConge", entityId: idO, action: "observation" } })) === 3);
-  const obsRH = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: idO, acteur: rh, texte: "Je ne suis pas le DG" }));
-  verifier("un compte RH (non DG) ne peut pas observer hors décision", !obsRH.ok, obsRH);
-  const obsDemandeur = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: idO, acteur: collab, texte: "Je réponds" }));
-  verifier("le demandeur ne peut pas ajouter d'observation", !obsDemandeur.ok, obsDemandeur);
-  const obsVide = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: idO, acteur: dg, texte: "   " }));
-  verifier("observation vide du DG refusée", !obsVide.ok, obsVide);
-  // DG sur sa propre demande : le DG du seed dépose une demande, puis tente d'y observer.
-  const sDG = await transactionAbsence((tx) => soumettreConge(tx, { userId: dg.id, entree: { typeCongeId: annuel.id, dateDebut: lundi(28), dateFin: lundi(28), motif: "Congé du DG" }, maintenant }));
-  if (sDG.ok) {
-    const propre = await transactionAbsence((tx) => ajouterObservationDG(tx, { nature: "CONGE", demandeId: sDG.valeur.id, acteur: dg, texte: "Mon propre congé" }));
-    verifier("le DG n'observe jamais sa propre demande", !propre.ok, propre);
-    await prisma.demandeConge.delete({ where: { id: sDG.valeur.id } });
-  }
-  // Annulation avec une observation : refusée (une observation accompagne une décision responsable/RH).
-  const annulObs = await decider(rh, { type: "ANNULER", motif: "Annulation de test" }, "Observation interdite ici");
-  verifier("une observation n'accompagne pas une annulation", !annulObs.ok && (await prisma.demandeConge.findUniqueOrThrow({ where: { id: idO } })).statut === "VALIDEE", annulObs);
+  // ── O1 : repli DG quand la RH est le demandeur ───────────────────────────────────────────────────────────────────────
+  console.log("Repli DG (O1, provisoire)");
+  const d7 = lundi(10);
+  const s7 = await soumettre(rh.id, entree(d7, plus(d7, 1)));
+  verifier("la demande de la RH (seule RH) part chez le DG", s7.ok && s7.valeur.statut === "EN_ATTENTE_RH" && s7.valeur.destinataires.length === 1 && s7.valeur.destinataires[0] === dg.id, s7);
+  const id7 = s7.ok ? s7.valeur.id : "";
+  verifier("la RH ne valide pas sa propre demande", !(await agir(rh, id7, { type: "APPROUVER" })).ok);
+  const v7 = await agir(dg, id7, { type: "APPROUVER" });
+  verifier("le DG valide à sa place", v7.ok && v7.valeur.statut === "VALIDEE", v7);
 
-  // Ajout seul : le déclencheur refuse la modification et la suppression directe, mais pas la cascade de la demande.
-  const uneObs = obs[0].id;
-  let erreurUpdate = "";
-  try { await prisma.$executeRaw`UPDATE "ObservationAbsence" SET "texte" = 'modifiée' WHERE id = ${uneObs}`; } catch (e) { erreurUpdate = String(e); }
-  verifier("modification d'une observation refusée par la base", /OBSERVATION_IMMUABLE/.test(erreurUpdate), erreurUpdate.slice(0, 120));
-  let erreurDelete = "";
-  try { await prisma.observationAbsence.delete({ where: { id: uneObs } }); } catch (e) { erreurDelete = String(e); }
-  verifier("suppression directe d'une observation refusée par la base", /OBSERVATION_IMMUABLE/.test(erreurDelete), erreurDelete.slice(0, 120));
-  verifier("les observations sont toujours là", (await prisma.observationAbsence.count({ where: { demandeCongeId: idO } })) === 3);
-  await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: idO } });
-  await prisma.demandeConge.delete({ where: { id: idO } });
-  verifier("la suppression de la demande emporte ses observations (cascade admise)", (await prisma.observationAbsence.count({ where: { demandeCongeId: idO } })) === 0);
+  // ── Concurrence ─────────────────────────────────────────────────────────────────────────────────────────────────────
+  console.log("Concurrence");
+  const d8 = lundi(12);
+  const s8 = await soumettre(collab.id, entree(d8, plus(d8, 1)));
+  const id8 = s8.ok ? s8.valeur.id : "";
+  await agir(resp, id8, { type: "APPROUVER" });
+  const deux = await Promise.all([agir(rh, id8, { type: "APPROUVER" }), agir(rh, id8, { type: "REJETER", motif: "Simultané" })]);
+  verifier("deux décisions simultanées : une seule passe", deux.filter((r) => r.ok).length === 1, deux);
+  const statutFinal = (await prisma.demandeConge.findUniqueOrThrow({ where: { id: id8 } })).statut;
+  const plages8 = await plages(id8);
+  verifier("état cohérent après la course (plages définitives si validée, supprimées si rejetée)", (statutFinal === "VALIDEE" && plages8.every((p) => !p.provisoire) && plages8.length === 2) || (statutFinal === "REJETEE" && plages8.length === 0), { statutFinal, plages8: plages8.length });
 
-  console.log("Pas de congé dans le passé (art. 12)");
-  const hier = plus(new Date().getFullYear() + "-" + String(new Date().getMonth() + 1).padStart(2, "0") + "-" + String(new Date().getDate()).padStart(2, "0"), -1);
-  const passe = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: hier, dateFin: hier, motif: "Déjà pris" }, maintenant }));
-  verifier("soumission avec une date de début passée refusée", !passe.ok && passe.erreur === MESSAGE_CONGE_DANS_LE_PASSE && passe.champ === "dateDebut", passe);
-  // Resoumission : la date corrigée ne peut pas non plus être dans le passé.
-  const futur = lundi(30);
-  const dem = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: futur, dateFin: futur, motif: "À corriger" }, maintenant }));
-  if (dem.ok) {
-    await prisma.demandeConge.update({ where: { id: dem.valeur.id }, data: { statut: "MODIFICATION_DEMANDEE", motifModification: "Précisez" } });
-    const reso = await transactionAbsence((tx) => resoumettreConge(tx, { demandeId: dem.valeur.id, acteurId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: hier, dateFin: hier, motif: "Corrigé" }, maintenant }));
-    verifier("resoumission avec une date passée refusée", !reso.ok && reso.erreur === MESSAGE_CONGE_DANS_LE_PASSE, reso);
-    await prisma.demandeConge.delete({ where: { id: dem.valeur.id } });
-  } else verifier("préparation de la resoumission", false, dem);
-  const officePasse = await transactionAbsence((tx) => accorderCongeOffice(tx, { acteurId: rh.id, userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: hier, dateFin: hier, motif: "Régularisation du passé" }, maintenant }));
-  verifier("congé d'office avec une date passée accordé (régularisation)", officePasse.ok, officePasse);
-  if (officePasse.ok) {
-    await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: officePasse.valeur.id } });
-    await prisma.demandeConge.delete({ where: { id: officePasse.valeur.id } });
-  }
+  const d9 = lundi(14);
+  const course = await Promise.all([
+    soumettre(collab.id, entree(d9, plus(d9, 1))),
+    transactionConge((tx) => saisirCongeRH(tx, { acteurId: rh.id, userId: collab.id, entree: entree(d9, plus(d9, 1)), maintenant: new Date() })),
+  ]);
+  verifier("soumission et saisie RH simultanées pour le même salarié : une seule passe", course.filter((r) => r.ok).length === 1, course);
+  const surPeriode = await prisma.demandeConge.count({ where: { userId: collab.id, dateDebut: colonne(d9) } });
+  verifier("une seule demande en base sur cette période", surPeriode === 1, surPeriode);
 
-  console.log("Congé annuel : 12 mois de service (art. 12)");
-  const embaucheInitiale = (await prisma.user.findUniqueOrThrow({ where: { id: collab.id }, select: { dateEmbauche: true } })).dateEmbauche;
-  const debutA = lundi(20);
-  /** Date d'embauche située `mois` mois avant `jour`, décalée de `jours` jours (colonne DATE : minuit UTC). */
-  const embauche = (jour: string, mois: number, jours: number) => {
-    const [an, m, j] = jour.split("-").map(Number);
-    return new Date(Date.UTC(an, m - 1 - mois, j + jours));
-  };
-  try {
-    // Il manque exactement un jour pour 12 mois révolus au début du congé.
-    await prisma.user.update({ where: { id: collab.id }, data: { dateEmbauche: embauche(debutA, 12, 1) } });
-    const refuse = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: debutA, dateFin: debutA, motif: "Trop tôt" }, maintenant }));
-    verifier("11 mois et 30 jours : demande refusée", !refuse.ok && /12 mois d'ancienneté/.test(refuse.erreur), refuse);
-    const officeOk = await transactionAbsence((tx) => accorderCongeOffice(tx, { acteurId: rh.id, userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: debutA, dateFin: debutA, motif: "Régularisation" }, maintenant }));
-    verifier("même salarié : congé d'office (RH) accordé", officeOk.ok, officeOk);
-    if (officeOk.ok) {
-      await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: officeOk.valeur.id } });
-      await prisma.demandeConge.delete({ where: { id: officeOk.valeur.id } });
-    }
-    // Douze mois révolus exactement : accepté.
-    await prisma.user.update({ where: { id: collab.id }, data: { dateEmbauche: embauche(debutA, 12, 0) } });
-    const accepte = await transactionAbsence((tx) => soumettreConge(tx, { userId: collab.id, entree: { typeCongeId: annuel.id, dateDebut: debutA, dateFin: debutA, motif: "Douze mois révolus" }, maintenant }));
-    verifier("12 mois révolus : demande acceptée", accepte.ok, accepte);
-  } finally {
-    await prisma.user.update({ where: { id: collab.id }, data: { dateEmbauche: embaucheInitiale } });
-  }
-
-  console.log("Nombre de jours par an paramétrable (C1) : soldes créés ensuite seulement");
-  const avantJours = (await prisma.typeConge.findUniqueOrThrow({ where: { id: annuel.id } })).nbJoursDefaut;
-  const existant = await prisma.soldeConge.findFirstOrThrow({ where: { userId: collab.id, typeCongeId: annuel.id }, orderBy: { exercice: "desc" } });
-  // Le lendemain de la fin du dernier exercice existant : l'initialisation crée forcément l'exercice SUIVANT.
-  const dansUnAn = plus(existant.dateFinExercice.toISOString().slice(0, 10), 1);
-  try {
-    await prisma.typeConge.update({ where: { id: annuel.id }, data: { nbJoursDefaut: 28 } });
-    const init = await transactionAbsence((tx) => initialiserSoldesExercice(tx, { reference: dansUnAn, acteurId: rh.id }));
-    verifier("initialisation du nouvel exercice réussie", init.ok, init);
-    const nouveau = await prisma.soldeConge.findFirst({ where: { userId: collab.id, typeCongeId: annuel.id, exercice: { gt: existant.exercice } } });
-    verifier("le solde du NOUVEL exercice reçoit la nouvelle valeur (28)", nouveau?.soldeInitial === 28 && nouveau?.soldeRestant === 28, nouveau);
-    const inchange = await prisma.soldeConge.findUniqueOrThrow({ where: { id: existant.id } });
-    verifier("le solde EXISTANT n'est pas touché", inchange.soldeInitial === existant.soldeInitial && inchange.soldeRestant === existant.soldeRestant, inchange);
-  } finally {
-    await prisma.soldeConge.deleteMany({ where: { userId: collab.id, typeCongeId: annuel.id, exercice: { gt: existant.exercice } } });
-    await prisma.soldeConge.deleteMany({ where: { typeCongeId: annuel.id, exercice: { gt: existant.exercice } } });
-    await prisma.typeConge.update({ where: { id: annuel.id }, data: { nbJoursDefaut: avantJours } });
-  }
-
-  const hist = await prisma.historiqueEntry.count({ where: { entity: "DemandeConge" } });
-  verifier("historique écrit à chaque transition", hist >= 10, hist);
-
-  console.log(`\n${ok} vérifications réussies, ${ko} échec(s).`);
+  // Nettoyage.
+  await prisma.plageAbsenceAutorisee.deleteMany({});
+  await prisma.demandeConge.deleteMany({});
+  console.log(`\n${ok} vérification(s) réussie(s), ${ko} en échec.`);
   await prisma.$disconnect();
   process.exit(ko === 0 ? 0 : 1);
 }

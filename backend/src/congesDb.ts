@@ -1,84 +1,73 @@
-// Congés — application en base (Lot 3a, 2026-10-15). Toujours dans la transaction de l'appelant.
+// Congés — application en base (module simplifié, 2026-10-19). Toujours dans la transaction de l'appelant.
 //
-// Les règles sont dans `congesCalcul.ts` (jours, exercice, solde) et `circuitAbsence.ts` (qui décide, quelle transition) :
-// ce fichier ne fait que LIRE le contexte et ÉCRIRE le résultat, avec les garanties du plan de fusion :
-//   - B4 : chaque changement de statut est un `updateMany` conditionné au statut lu, sous un verrou de ligne sur la
-//     demande (`SELECT … FOR UPDATE`) ; le débit du solde est conditionnel (`soldeRestant >= n`) ;
-//   - I1 : la référence est calculée sous un verrou consultatif du mois, dans la transaction de création ;
-//   - I3 : les plages d'absence autorisée portent `demandeCongeId` ; l'annulation les supprime par cette clé ;
-//   - B7 : la date d'embauche est obligatoire pour un congé déductible, jamais de repli sur `createdAt`.
-// Un refus métier en cours d'écriture est une `RefusAbsence` : la transaction est annulée en entier
-// (`transactionAbsence`), aucune écriture partielle ne subsiste.
+// Les règles sont dans `congesCalcul.ts` (jours ouvrés, chevauchement) et `circuitConge.ts` (qui décide, quelle transition) :
+// ce fichier ne fait que LIRE le contexte et ÉCRIRE le résultat, avec ces garanties :
+//   - chaque changement de statut est un `updateMany` conditionné au statut lu, sous un verrou de ligne sur la demande
+//     (`SELECT … FOR UPDATE`) puis le verrou du collaborateur (ordre constant : ligne, collaborateur, référence) ;
+//   - la référence est calculée sous un verrou consultatif du mois, dans la transaction de création ;
+//   - R10 : à la soumission une plage d'absence autorisée par jour de la période est posée `provisoire` (la journée n'est jamais
+//     une absence), elle devient définitive à la validation, est supprimée au refus, à l'annulation, et remplacée à la resoumission.
+// Un refus métier en cours d'écriture est une `RefusConge` : la transaction est annulée en entier (`transactionConge`),
+// aucune écriture partielle ne subsiste.
 
 import { prisma } from "./prisma";
 import type { Prisma } from "./generated/prisma/client";
-import type { StatutDemandeConge } from "./generated/prisma/enums";
+import type { NatureConge, StatutDemandeConge } from "./generated/prisma/enums";
+import { dateDebutAbsences } from "./absencesDebut";
 import {
-  ACTION_HISTORIQUE_ABSENCE,
-  PERMISSION_DG_ABSENCE,
-  PERMISSION_ETAPE_RH_ABSENCE,
-  decideurPourStatutAbsence,
-  destinatairesEtapeAbsence,
-  nettoyerMotifAbsence,
-  resoudreParcoursAbsence,
-  controlerDestinataire,
-  destinatairesProposes,
-  transitionAbsence,
-  type ActeurAbsence,
-  type ActionCircuitAbsence,
-  type ContexteCircuitAbsence,
-  type DestinataireDecision,
-  type EffetTransitionAbsence,
-  type NatureAbsence,
-  type ParcoursAbsence,
-  type StatutCircuitAbsence,
-} from "./circuitAbsence";
+  ACTION_HISTORIQUE_CONGE,
+  MOTIF_CONGE_MAX,
+  MOTIF_CONGE_MIN,
+  PERMISSION_DG_CONGE,
+  PERMISSION_ETAPE_RH_CONGE,
+  STATUTS_CONGE_OCCUPANT_LA_PERIODE,
+  controlerObservationRH,
+  decideurPourStatutConge,
+  destinatairesEtapeConge,
+  nettoyerMotifConge,
+  resoudreParcoursConge,
+  transitionConge,
+  type ActeurConge,
+  type ContexteCircuitConge,
+  type StatutCircuitConge,
+} from "./circuitConge";
 import {
-  MAX_JOURS_PERIODE,
   ajouterJours,
-  MESSAGE_DATE_EMBAUCHE_MANQUANTE,
-  calculerNbJours,
+  colonneDateDepuisJourCivil,
   comparerJours,
-  dateFinPourJours,
-  exerciceDuDebit,
+  decompterJours,
   formatJourCivil,
   jourCivilDepuisColonneDate,
-  colonneDateDepuisJourCivil,
-  messageSoldeInsuffisant,
+  MAX_JOURS_PERIODE,
   parseJourCivil,
-  planifierDebit,
   premierChevauchement,
-  verifierAnciennete,
-  calculerExercice,
   type DecompteJours,
   type JourCivil,
 } from "./congesCalcul";
-import { validerPieces, type PieceEntree } from "./congesPieces";
 import { refusDateDebutPassee } from "./congesPasse";
-import { LIBELLE_ETAPE_OBSERVATION, controlerObservation, refusObservationDG, type EtapeObservation } from "./observationsAbsence";
 
 export type Db = Prisma.TransactionClient;
 
 /** Refus métier levé PENDANT une transaction : tout ce qui a été écrit avant est annulé. */
-export class RefusAbsence extends Error {
+export class RefusConge extends Error {
   constructor(
     message: string,
     readonly champ?: string
   ) {
     super(message);
-    this.name = "RefusAbsence";
+    this.name = "RefusConge";
   }
 }
 
-export type ResultatAbsence<T> = { ok: true; valeur: T } | { ok: false; erreur: string; champ?: string };
+export type ResultatConge<T> = { ok: true; valeur: T } | { ok: false; erreur: string; champ?: string };
 
-/** Exécute `fn` dans une transaction ; un `RefusAbsence` annule tout et revient en `{ ok: false }`. */
-export async function transactionAbsence<T>(fn: (tx: Db) => Promise<T>): Promise<ResultatAbsence<T>> {
+/** Exécute `fn` dans une transaction ; un `RefusConge` annule tout et revient en `{ ok: false }`. */
+export async function transactionConge<T>(fn: (tx: Db) => Promise<T>): Promise<ResultatConge<T>> {
   try {
     const valeur = await prisma.$transaction(fn, { maxWait: 10_000, timeout: 30_000 });
     return { ok: true, valeur };
   } catch (e) {
-    if (e instanceof RefusAbsence) return { ok: false, erreur: e.message, champ: e.champ };
+    if (e instanceof RefusConge) return { ok: false, erreur: e.message, champ: e.champ };
     throw e;
   }
 }
@@ -88,23 +77,26 @@ async function verrouiller(db: Db, cle: string): Promise<void> {
 }
 
 /**
- * Verrou UNIQUE par collaborateur : protège le contrôle de chevauchement des congés contre deux soumissions simultanées.
- * À prendre AVANT tout contrôle de chevauchement et toute écriture qui change ce que ce contrôle lit.
+ * Verrou UNIQUE par collaborateur : protège le contrôle de chevauchement contre deux soumissions simultanées (dont une saisie
+ * de la RH pour le même salarié). À prendre AVANT tout contrôle de chevauchement et toute écriture qui change ce qu'il lit.
  */
-export async function verrouillerAbsenceUtilisateur(db: Db, userId: string): Promise<void> {
-  await verrouiller(db, `absence-utilisateur:${userId}`);
+export async function verrouillerCongeUtilisateur(db: Db, userId: string): Promise<void> {
+  await verrouiller(db, `conge-utilisateur:${userId}`);
+}
+
+async function verrouillerLigneDemande(db: Db, demandeId: string): Promise<void> {
+  await db.$executeRaw`SELECT id FROM "DemandeConge" WHERE id = ${demandeId} FOR UPDATE`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Références (I1)
+// Références
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** `CNG-AAAAMM-NNNN`, calculée SOUS VERROU dans la transaction de création. */
-export async function genererReferenceAbsence(db: Db, _nature: NatureAbsence, maintenant: Date): Promise<string> {
-  const prefixe = "CNG";
+export async function genererReferenceConge(db: Db, maintenant: Date): Promise<string> {
   const mois = `${maintenant.getFullYear()}${String(maintenant.getMonth() + 1).padStart(2, "0")}`;
-  const debut = `${prefixe}-${mois}-`;
-  await verrouiller(db, `reference:${prefixe}-${mois}`);
+  const debut = `CNG-${mois}-`;
+  await verrouiller(db, `reference:CNG-${mois}`);
   const existantes = await db.demandeConge.findMany({ where: { reference: { startsWith: debut } }, select: { reference: true } });
   let max = 0;
   for (const { reference } of existantes) {
@@ -127,14 +119,14 @@ export async function comptesActifsAvecPermission(db: Db, cle: string): Promise<
   return comptes.map((c) => c.id);
 }
 
-export async function chargerContexteCircuit(db: Db, demandeurId: string, _nature: NatureAbsence): Promise<ContexteCircuitAbsence> {
+export async function chargerContexteCircuit(db: Db, demandeurId: string): Promise<ContexteCircuitConge> {
   const [demandeur, comptesRH, comptesDG] = await Promise.all([
     db.user.findUnique({
       where: { id: demandeurId },
       select: { service: { select: { name: true, responsableId: true, responsable: { select: { isActive: true } } } } },
     }),
-    comptesActifsAvecPermission(db, PERMISSION_ETAPE_RH_ABSENCE),
-    comptesActifsAvecPermission(db, PERMISSION_DG_ABSENCE),
+    comptesActifsAvecPermission(db, PERMISSION_ETAPE_RH_CONGE),
+    comptesActifsAvecPermission(db, PERMISSION_DG_CONGE),
   ]);
   const s = demandeur?.service ?? null;
   return {
@@ -146,7 +138,7 @@ export async function chargerContexteCircuit(db: Db, demandeurId: string, _natur
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Jours fériés, plages
+// Jours fériés, plages d'absence autorisée (R10)
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** Jours fériés de la table `JourFerie` dans la période (jour civil local, comme le reste du module). */
@@ -162,7 +154,10 @@ export async function lireJoursFeries(db: Db, debut: JourCivil, fin: JourCivil):
 }
 
 /** Une plage d'absence autorisée par jour de la période (le Pointage ne lit rien d'autre d'un congé), liées à la demande. */
-async function creerPlagesConge(db: Db, p: { userId: string; demandeId: string; reference: string; jours: readonly JourCivil[] }) {
+export async function creerPlagesConge(
+  db: Db,
+  p: { userId: string; demandeId: string; reference: string; jours: readonly JourCivil[]; provisoire: boolean }
+): Promise<void> {
   const data = p.jours.map((jour) => {
     const d = parseJourCivil(jour)!;
     return {
@@ -173,167 +168,97 @@ async function creerPlagesConge(db: Db, p: { userId: string; demandeId: string; 
       source: "CONGE" as const,
       description: `Congé ${p.reference}`,
       demandeCongeId: p.demandeId,
+      provisoire: p.provisoire,
     };
   });
   if (data.length > 0) await db.plageAbsenceAutorisee.createMany({ data });
 }
 
-// ---------------------------------------------------------------------------------------------------------------------
-// Solde
-// ---------------------------------------------------------------------------------------------------------------------
-
-function typeDeductible(t: { nonDeductibleSolde: boolean; nbJoursDefaut: number }): boolean {
-  return !t.nonDeductibleSolde && t.nbJoursDefaut > 0;
+/**
+ * Supprime les plages de la demande (par clé, jamais par plage de dates ni par texte). `aPartirDe` : seulement celles de ce jour
+ * et des suivants (annulation d'un congé commencé : les jours déjà vécus restent couverts). Renvoie le nombre supprimé.
+ */
+export async function supprimerPlages(db: Db, p: { demandeId: string; aPartirDe?: JourCivil }): Promise<number> {
+  const debut = p.aPartirDe ? parseJourCivil(p.aPartirDe) : null;
+  const { count } = await db.plageAbsenceAutorisee.deleteMany({
+    where: { demandeCongeId: p.demandeId, ...(debut ? { date: { gte: debut } } : {}) },
+  });
+  return count;
 }
 
-/** Ligne de solde de l'exercice, créée (dotation complète du type) si elle n'existe pas encore. Sûre en concurrence. */
-export async function assurerSoldeExercice(
+/** Resoumission : les plages de l'ancienne période sont remplacées par celles de la nouvelle, de nouveau provisoires. */
+export async function remplacerPlages(
   db: Db,
-  p: { userId: string; typeCongeId: string; nbJoursDefaut: number; exercice: { exercice: number; debut: JourCivil; fin: JourCivil } }
-) {
-  const cle = { userId: p.userId, typeCongeId: p.typeCongeId, exercice: p.exercice.exercice };
-  await db.soldeConge.createMany({
-    data: [
-      {
-        ...cle,
-        soldeInitial: p.nbJoursDefaut,
-        soldeRestant: p.nbJoursDefaut,
-        dateDebutExercice: colonneDateDepuisJourCivil(p.exercice.debut),
-        dateFinExercice: colonneDateDepuisJourCivil(p.exercice.fin),
-      },
-    ],
-    skipDuplicates: true,
-  });
-  return db.soldeConge.findUniqueOrThrow({
-    where: { userId_typeCongeId_exercice: cle },
-  });
+  p: { userId: string; demandeId: string; reference: string; jours: readonly JourCivil[]; provisoire: boolean }
+): Promise<void> {
+  await supprimerPlages(db, { demandeId: p.demandeId });
+  await creerPlagesConge(db, p);
 }
 
-/** Solde de l'exercice qui contient les jours du congé, ou le refus (date d'embauche absente, deux exercices). */
-async function soldeDuConge(
-  db: Db,
-  p: { userId: string; type: { id: string; nbJoursDefaut: number }; dateEmbauche: JourCivil | null; decompte: DecompteJours }
-) {
-  if (!p.dateEmbauche) throw new RefusAbsence(MESSAGE_DATE_EMBAUCHE_MANQUANTE);
-  const ex = exerciceDuDebit(p.decompte.joursDecomptes, p.dateEmbauche);
-  if (!ex.ok) throw new RefusAbsence(ex.erreur);
-  const solde = await db.soldeConge.findUnique({
-    where: { userId_typeCongeId_exercice: { userId: p.userId, typeCongeId: p.type.id, exercice: ex.exercice.exercice } },
-  });
-  return { exercice: ex.exercice, solde };
+/** Validation : les plages provisoires de la demande deviennent définitives. */
+async function validerPlages(db: Db, demandeId: string): Promise<void> {
+  await db.plageAbsenceAutorisee.updateMany({ where: { demandeCongeId: demandeId }, data: { provisoire: false } });
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Contrôles communs à la soumission, à la resoumission et au congé d'office
+// Contrôles communs à la soumission, à la resoumission et à la saisie RH
 // ---------------------------------------------------------------------------------------------------------------------
 
-export interface DemandeCongeEntree {
-  typeCongeId: string;
+export interface EntreeConge {
+  nature: NatureConge;
+  motif: string;
   dateDebut: JourCivil;
   dateFin: JourCivil;
-  motif: string;
-  interimaire?: string | null;
-  piecesJointes?: readonly PieceEntree[];
-  /**
-   * Permission exceptionnelle seulement (C4) : qui valide, parmi `destinatairesProposes`. Obligatoire pour ce type, refusé pour
-   * tout autre ; le serveur refuse un choix que l'écran ne propose pas.
-   */
-  destinataire?: DestinataireDecision | null;
 }
 
 interface CongePrepare {
-  type: NonNullable<Awaited<ReturnType<Db["typeConge"]["findUnique"]>>>;
-  dateEmbauche: JourCivil | null;
+  nature: NatureConge;
+  motif: string;
   dateDebut: JourCivil;
   dateFin: JourCivil;
   decompte: DecompteJours;
-  motif: string;
-  interimaire: string | null;
-  pieces: PieceEntree[];
 }
 
-export const MOTIF_CONGE_MIN = 5;
-export const MOTIF_CONGE_MAX = 500;
+const NATURES: readonly NatureConge[] = ["CONGE", "PERMISSION_EXCEPTIONNELLE"];
 
-async function preparerConge(
-  db: Db,
-  p: {
-    userId: string;
-    entree: DemandeCongeEntree;
-    exclureDemandeId?: string;
-    ignorerAnciennete?: boolean;
-    /** Congé d'office (RH, régularisation) : la date de début peut être passée. */
-    autoriserDatePassee?: boolean;
-    maintenant: Date;
-  }
-): Promise<CongePrepare> {
+/**
+ * R1 à R4 : nature, motif nettoyé (3 à 500 caractères), période en jours entiers (début ≤ fin, jamais dans le passé, 366 jours au
+ * plus) et au moins un jour ouvré. Aucune exception pour la RH : pas de date passée non plus à la saisie (R3).
+ */
+async function preparerConge(db: Db, p: { userId: string; entree: EntreeConge; maintenant: Date }): Promise<CongePrepare> {
   const { entree } = p;
-  const user = await db.user.findUnique({ where: { id: p.userId }, select: { isActive: true, dateEmbauche: true } });
-  if (!user || !user.isActive) throw new RefusAbsence("Compte introuvable ou désactivé.");
-  const dateEmbauche = user.dateEmbauche ? jourCivilDepuisColonneDate(user.dateEmbauche) : null;
+  const user = await db.user.findUnique({ where: { id: p.userId }, select: { isActive: true } });
+  if (!user || !user.isActive) throw new RefusConge("Compte introuvable ou désactivé.");
 
-  if (!parseJourCivil(entree.dateDebut)) throw new RefusAbsence("Date de début invalide.", "dateDebut");
-  if (!parseJourCivil(entree.dateFin)) throw new RefusAbsence("Date de fin invalide.", "dateFin");
+  if (!NATURES.includes(entree.nature)) throw new RefusConge("Nature de la demande invalide.", "nature");
+  if (!parseJourCivil(entree.dateDebut)) throw new RefusConge("Date de début invalide.", "dateDebut");
+  if (!parseJourCivil(entree.dateFin)) throw new RefusConge("Date de fin invalide.", "dateFin");
   if (comparerJours(entree.dateFin, entree.dateDebut) < 0) {
-    throw new RefusAbsence("La date de fin ne peut pas être antérieure à la date de début.", "dateFin");
+    throw new RefusConge("La date de fin ne peut pas être antérieure à la date de début.", "dateFin");
+  }
+  const passe = refusDateDebutPassee(entree.dateDebut, formatJourCivil(p.maintenant));
+  if (passe) throw new RefusConge(passe, "dateDebut");
+  if (comparerJours(entree.dateFin, ajouterJours(entree.dateDebut, MAX_JOURS_PERIODE - 1)) > 0) {
+    throw new RefusConge(`La période ne peut pas dépasser ${MAX_JOURS_PERIODE} jours.`, "dateFin");
   }
 
-  // Art. 12 : autorisation PRÉALABLE. Même phrase qu'à l'écran ; seul le congé d'office (régularisation) y échappe.
-  if (!p.autoriserDatePassee) {
-    const passe = refusDateDebutPassee(entree.dateDebut, formatJourCivil(p.maintenant));
-    if (passe) throw new RefusAbsence(passe, "dateDebut");
-  }
+  const motif = nettoyerMotifConge(entree.motif ?? "");
+  if (motif.length < MOTIF_CONGE_MIN) throw new RefusConge(`Le motif doit comporter au moins ${MOTIF_CONGE_MIN} caractères.`, "motif");
+  if (motif.length > MOTIF_CONGE_MAX) throw new RefusConge(`Le motif ne doit pas dépasser ${MOTIF_CONGE_MAX} caractères.`, "motif");
 
-  const motif = nettoyerMotifAbsence(entree.motif ?? "");
-  if (motif.length < MOTIF_CONGE_MIN) throw new RefusAbsence(`Le motif doit comporter au moins ${MOTIF_CONGE_MIN} caractères.`, "motif");
-  if (motif.length > MOTIF_CONGE_MAX) throw new RefusAbsence(`Le motif ne doit pas dépasser ${MOTIF_CONGE_MAX} caractères.`, "motif");
-  const interimaire = nettoyerMotifAbsence(entree.interimaire ?? "").slice(0, 120) || null;
+  const feries = await lireJoursFeries(db, entree.dateDebut, entree.dateFin);
+  const decompte = decompterJours({ debut: entree.dateDebut, fin: entree.dateFin, joursFeries: feries });
+  if (decompte.nbJoursOuvres <= 0) throw new RefusConge("La période sélectionnée ne comporte aucun jour ouvré.", "dateDebut");
 
-  const piecesOk = validerPieces(entree.piecesJointes ? [...entree.piecesJointes] : []);
-  if (!piecesOk.ok) throw new RefusAbsence(piecesOk.erreur, "piecesJointes");
-
-  const type = await db.typeConge.findUnique({ where: { id: entree.typeCongeId } });
-  if (!type || !type.isActive) throw new RefusAbsence("Type de congé invalide ou inactif.", "typeCongeId");
-
-  // Ancienneté exigée par le type (article 13 : 6 mois) : jamais de repli sur la date de création du compte.
-  if (!p.ignorerAnciennete) {
-    const anc = verifierAnciennete({ dateEmbauche, moisRequis: type.ancienneteMinimumMois, reference: entree.dateDebut });
-    if (!anc.eligible) throw new RefusAbsence(anc.erreur, "typeCongeId");
-  }
-
-  // Durée fixée par le type (permission exceptionnelle) : la date de fin est calculée, pas saisie.
-  let dateFin = entree.dateFin;
-  const feriesLarges = await lireJoursFeries(db, entree.dateDebut, ajouterJours(entree.dateDebut, MAX_JOURS_PERIODE * 2));
-  if (type.categorie === "PERMISSION_EXCEPTIONNELLE") {
-    dateFin = dateFinPourJours({ debut: entree.dateDebut, nbJours: type.nbJoursDefaut, decompte: type.decompteType, joursFeries: feriesLarges });
-  }
-
-  let decompte: DecompteJours;
-  try {
-    decompte = calculerNbJours({ debut: entree.dateDebut, fin: dateFin, decompte: type.decompteType, joursFeries: feriesLarges });
-  } catch {
-    throw new RefusAbsence(`La période ne peut pas dépasser ${MAX_JOURS_PERIODE} jours.`, "dateFin");
-  }
-  if (decompte.nbJours <= 0) throw new RefusAbsence("La période sélectionnée ne comporte aucun jour décomptable.", "dateDebut");
-
-  if ((type.categorie === "PERMISSION_EXCEPTIONNELLE" || type.justificatifObligatoire) && piecesOk.pieces.length === 0) {
-    throw new RefusAbsence(
-      type.categorie === "PERMISSION_EXCEPTIONNELLE"
-        ? "Règlement interne (article 13) : une pièce justificative est obligatoire pour cet événement."
-        : `Une pièce justificative est obligatoire pour le type « ${type.label} ».`,
-      "piecesJointes"
-    );
-  }
-
-  return { type, dateEmbauche, dateDebut: entree.dateDebut, dateFin, decompte, motif, interimaire, pieces: piecesOk.pieces };
+  return { nature: entree.nature, motif, dateDebut: entree.dateDebut, dateFin: entree.dateFin, decompte };
 }
 
-/** Chevauchement avec un autre congé en cours ou validé. */
+/** R5 : refus si une autre demande en cours (ou à modifier) ou validée du même salarié chevauche la période. */
 async function controlerChevauchement(db: Db, p: { userId: string; debut: JourCivil; fin: JourCivil; exclureDemandeId?: string }) {
   const existants = await db.demandeConge.findMany({
     where: {
       userId: p.userId,
-      statut: { in: ["EN_ATTENTE_RESPONSABLE", "EN_ATTENTE_RH", "VALIDEE"] },
+      statut: { in: [...STATUTS_CONGE_OCCUPANT_LA_PERIODE] as StatutDemandeConge[] },
       dateDebut: { lte: colonneDateDepuisJourCivil(p.fin) },
       dateFin: { gte: colonneDateDepuisJourCivil(p.debut) },
       ...(p.exclureDemandeId ? { id: { not: p.exclureDemandeId } } : {}),
@@ -344,265 +269,147 @@ async function controlerChevauchement(db: Db, p: { userId: string; debut: JourCi
   const conflit = premierChevauchement({ debut: p.debut, fin: p.fin }, periodes);
   if (conflit) {
     const ref = existants.find((e) => e.id === conflit.id)?.reference ?? "";
-    throw new RefusAbsence(`Une demande de congé en cours ou validée couvre déjà cette période (${ref}).`, "dateDebut");
+    throw new RefusConge(`Une demande en cours ou validée couvre déjà cette période (${ref}).`, "dateDebut");
   }
 }
 
-/** Solde suffisant pour un congé déductible (vérifié à la demande ; le débit réel est conditionnel, à l'accord). */
-async function controlerSolde(db: Db, p: { userId: string; prepare: CongePrepare }) {
-  const { type, dateEmbauche, decompte } = p.prepare;
-  if (!typeDeductible(type)) return;
-  const { solde } = await soldeDuConge(db, { userId: p.userId, type, dateEmbauche, decompte });
-  const plan = planifierDebit({
-    nonDeductible: false,
-    nbJoursDefaut: type.nbJoursDefaut,
-    soldeRestant: solde ? solde.soldeRestant : null,
-    nbJours: decompte.nbJours,
-  });
-  if (!plan.suffisant) throw new RefusAbsence(messageSoldeInsuffisant(plan), "dateFin");
-}
-
-async function noterHistorique(
-  db: Db,
-  p: { nature: NatureAbsence; demandeId: string; action: string; detail: string; userId: string }
-) {
+async function noterHistorique(db: Db, p: { demandeId: string; action: string; detail: string; userId: string }) {
   await db.historiqueEntry.create({
     data: { entity: "DemandeConge", entityId: p.demandeId, action: p.action, detail: p.detail, userId: p.userId },
   });
 }
 
-// ---------------------------------------------------------------------------------------------------------------------
-// Observations (C3) : AJOUT SEUL, jamais de changement de statut
-// ---------------------------------------------------------------------------------------------------------------------
-
-/** Écrit une observation et sa ligne d'historique (une par observation). Le texte est DÉJÀ validé par `controlerObservation`. */
-export async function ajouterObservation(
+/** Aperçu sans écriture (formulaire) : jours ouvrés et chevauchement, avec exactement les contrôles de la soumission. */
+export async function apercuConge(
   db: Db,
-  p: { nature: NatureAbsence; demandeId: string; reference: string; auteurId: string; etape: EtapeObservation; texte: string }
-): Promise<string> {
-  const o = await db.observationAbsence.create({
-    data: {
-      demandeCongeId: p.demandeId,
-      auteurId: p.auteurId,
-      etape: p.etape,
-      texte: p.texte,
-    },
-    select: { id: true },
-  });
-  await noterHistorique(db, {
-    nature: p.nature,
-    demandeId: p.demandeId,
-    action: ACTION_HISTORIQUE_ABSENCE.OBSERVATION,
-    detail: `${p.reference} : observation (${LIBELLE_ETAPE_OBSERVATION[p.etape]}) — ${p.texte}`,
-    userId: p.auteurId,
-  });
-  return o.id;
-}
-
-/** Valide l'observation facultative d'une décision AVANT toute écriture : une erreur annule la transaction entière. */
-export function observationDeDecision(brut: unknown): string | null {
-  const o = controlerObservation(brut, true);
-  if (!o.ok) throw new RefusAbsence(o.erreur, "observation");
-  return o.texte;
-}
-
-export interface ObservationDG {
-  observationId: string;
-  demandeId: string;
-  reference: string;
-  demandeurId: string;
-  libelleType: string;
-  /** Comptes à prévenir (information, sans rappel) : le demandeur et la RH de la nature, jamais l'auteur. */
-  destinataires: string[];
-}
-
-/**
- * Observation du DG sur une demande, À TOUT MOMENT (en attente, validée, rejetée, annulée…) : le statut et le circuit ne
- * bougent pas. Le DG se lit sur le RÔLE (`treso.decider_dg`) et n'observe jamais sa propre demande.
- */
-export async function ajouterObservationDG(
-  db: Db,
-  p: { nature: NatureAbsence; demandeId: string; acteur: ActeurAbsence; texte: unknown }
-): Promise<ObservationDG> {
-  const o = controlerObservation(p.texte, false);
-  if (!o.ok) throw new RefusAbsence(o.erreur, "observation");
-  const base = await db.demandeConge.findUnique({
-    where: { id: p.demandeId },
-    select: { id: true, reference: true, userId: true, typeConge: { select: { label: true } } },
-  });
-  if (!base) throw new RefusAbsence("Demande introuvable.");
-  const refus = refusObservationDG({ acteur: p.acteur, demandeurId: base.userId });
-  if (refus) throw new RefusAbsence(refus);
-
-  const observationId = await ajouterObservation(db, {
-    nature: p.nature,
-    demandeId: base.id,
-    reference: base.reference,
-    auteurId: p.acteur.id,
-    etape: "DG",
-    texte: o.texte!,
-  });
-  const rh = await comptesActifsAvecPermission(db, PERMISSION_ETAPE_RH_ABSENCE);
-  const destinataires = [...new Set([base.userId, ...rh])].filter((id) => id !== p.acteur.id);
-  const libelleType = base.typeConge.label;
-  return { observationId, demandeId: base.id, reference: base.reference, demandeurId: base.userId, libelleType, destinataires };
+  p: { userId: string; entree: EntreeConge; maintenant: Date; exclureDemandeId?: string }
+): Promise<{ nbJoursOuvres: number; joursFeriesInclus: JourCivil[] }> {
+  const prepare = await preparerConge(db, p);
+  await controlerChevauchement(db, { userId: p.userId, debut: prepare.dateDebut, fin: prepare.dateFin, exclureDemandeId: p.exclureDemandeId });
+  return { nbJoursOuvres: prepare.decompte.nbJoursOuvres, joursFeriesInclus: prepare.decompte.joursFeriesInclus };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Soumission
+// Soumission, resoumission
 // ---------------------------------------------------------------------------------------------------------------------
 
 export interface SoumissionConge {
   id: string;
   reference: string;
-  statut: StatutCircuitAbsence;
-  nbJours: number;
+  statut: StatutCircuitConge;
+  nbJoursOuvres: number;
   /** Comptes à prévenir (le responsable, ou la RH, ou le DG) : calculés avec le contexte lu dans la transaction. */
   destinataires: string[];
-  libelleType: string;
 }
 
-export interface ChoixDestinataire {
-  /** Destinataires proposés au demandeur pour une permission exceptionnelle (au moins « RH »). */
-  proposes: DestinataireDecision[];
-  /** Nom du responsable à afficher (« Mon responsable (nom) »), `null` s'il n'est pas proposé. */
-  responsableNom: string | null;
+function libelleNature(nature: NatureConge): string {
+  return nature === "CONGE" ? "Congé" : "Permission exceptionnelle";
 }
 
-/** Ce que l'écran propose au demandeur (C4) : calculé avec la même règle que le contrôle serveur de la soumission. */
-export async function chargerChoixDestinataire(db: Db, userId: string): Promise<ChoixDestinataire> {
-  const ctx = await chargerContexteCircuit(db, userId, "CONGE");
-  const proposes = destinatairesProposes(ctx);
-  const responsable =
-    proposes.includes("RESPONSABLE") && ctx.service?.responsableId
-      ? await db.user.findUnique({ where: { id: ctx.service.responsableId }, select: { fullName: true } })
-      : null;
-  return { proposes, responsableNom: responsable?.fullName ?? null };
-}
-
-export async function soumettreConge(db: Db, p: { userId: string; entree: DemandeCongeEntree; maintenant: Date }): Promise<SoumissionConge> {
-  await verrouillerAbsenceUtilisateur(db, p.userId);
-  const prepare = await preparerConge(db, { userId: p.userId, entree: p.entree, maintenant: p.maintenant });
+export async function soumettreConge(db: Db, p: { userId: string; entree: EntreeConge; maintenant: Date }): Promise<SoumissionConge> {
+  await verrouillerCongeUtilisateur(db, p.userId);
+  const prepare = await preparerConge(db, p);
   await controlerChevauchement(db, { userId: p.userId, debut: prepare.dateDebut, fin: prepare.dateFin });
-  await controlerSolde(db, { userId: p.userId, prepare });
 
-  const ctx = await chargerContexteCircuit(db, p.userId, "CONGE");
-  const choix = controlerDestinataire({ choix: p.entree.destinataire, exceptionnelle: prepare.type.categorie === "PERMISSION_EXCEPTIONNELLE", ctx });
-  if (!choix.ok) throw new RefusAbsence(choix.erreur, "destinataire");
-  const parcours = resoudreParcoursAbsence(ctx, choix.destinataire);
-  if (!parcours.ok) throw new RefusAbsence(parcours.erreur);
+  const ctx = await chargerContexteCircuit(db, p.userId);
+  const parcours = resoudreParcoursConge(ctx);
+  if (!parcours.ok) throw new RefusConge(parcours.erreur);
 
-  const reference = await genererReferenceAbsence(db, "CONGE", p.maintenant);
+  const reference = await genererReferenceConge(db, p.maintenant);
   const demande = await db.demandeConge.create({
     data: {
       reference,
+      nature: prepare.nature,
+      motif: prepare.motif,
       dateDebut: colonneDateDepuisJourCivil(prepare.dateDebut),
       dateFin: colonneDateDepuisJourCivil(prepare.dateFin),
-      nbJours: prepare.decompte.nbJours,
-      motif: prepare.motif,
-      interimaire: prepare.interimaire,
+      nbJoursOuvres: prepare.decompte.nbJoursOuvres,
       statut: parcours.premierStatut,
       etapeResponsableRequise: parcours.etapeResponsable.requise,
-      destinataire: choix.destinataire,
       etapeDepuis: p.maintenant,
       userId: p.userId,
-      typeCongeId: prepare.type.id,
-      piecesJointes: { create: prepare.pieces.map((x) => ({ url: x.url, nomFichier: x.nomFichier ?? null })) },
+      creeParId: p.userId,
     },
   });
+  await creerPlagesConge(db, { userId: p.userId, demandeId: demande.id, reference, jours: prepare.decompte.jours, provisoire: true });
   await noterHistorique(db, {
-    nature: "CONGE",
     demandeId: demande.id,
-    action: ACTION_HISTORIQUE_ABSENCE.SOUMETTRE,
-    detail: `${reference} : ${prepare.type.label}, ${prepare.decompte.nbJours} jour(s) du ${prepare.dateDebut} au ${prepare.dateFin}.`,
+    action: ACTION_HISTORIQUE_CONGE.SOUMETTRE,
+    detail: `${reference} : ${libelleNature(prepare.nature)}, ${prepare.decompte.nbJoursOuvres} jour(s) ouvré(s) du ${prepare.dateDebut} au ${prepare.dateFin}.`,
     userId: p.userId,
   });
   return {
     id: demande.id,
     reference,
     statut: parcours.premierStatut,
-    nbJours: prepare.decompte.nbJours,
-    destinataires: destinatairesEtapeAbsence(parcours.premierStatut, ctx),
-    libelleType: prepare.type.label,
+    nbJoursOuvres: prepare.decompte.nbJoursOuvres,
+    destinataires: destinatairesEtapeConge(parcours.premierStatut, ctx),
   };
 }
 
 /**
- * Le demandeur renvoie sa demande après une demande de modification : mêmes contrôles qu'à la soumission, le circuit
- * repart de la première étape applicable (parcours recalculé), les décisions précédentes sont effacées (l'historique
- * les garde).
+ * R8 : le demandeur renvoie sa demande après une demande de modification. Nature, motif et dates sont recontrôlés (R2 à R5), le
+ * circuit repart de la première étape applicable (parcours recalculé), les décisions précédentes sont effacées (l'historique
+ * les garde) et les plages sont remplacées.
  */
 export async function resoumettreConge(
   db: Db,
-  p: { demandeId: string; acteurId: string; entree: DemandeCongeEntree; maintenant: Date }
+  p: { demandeId: string; acteurId: string; entree: EntreeConge; maintenant: Date }
 ): Promise<SoumissionConge> {
-  await db.$executeRaw`SELECT id FROM "DemandeConge" WHERE id = ${p.demandeId} FOR UPDATE`;
+  await verrouillerLigneDemande(db, p.demandeId);
   const demande = await db.demandeConge.findUnique({ where: { id: p.demandeId } });
-  if (!demande) throw new RefusAbsence("Demande introuvable.");
-  await verrouillerAbsenceUtilisateur(db, demande.userId);
+  if (!demande) throw new RefusConge("Demande introuvable.");
+  await verrouillerCongeUtilisateur(db, demande.userId);
 
-  // Le type (donc son éventuelle décision unique) se lit sur la demande renvoyée : on la prépare d'abord.
-  const prepare = await preparerConge(db, { userId: demande.userId, entree: p.entree, exclureDemandeId: demande.id, maintenant: p.maintenant });
-  const ctx = await chargerContexteCircuit(db, demande.userId, "CONGE");
-  // Renvoi sans nouveau choix : le destinataire déjà choisi est conservé s'il est toujours proposé.
-  const exceptionnelle = prepare.type.categorie === "PERMISSION_EXCEPTIONNELLE";
-  const choix = controlerDestinataire({ choix: p.entree.destinataire ?? (exceptionnelle ? demande.destinataire : null), exceptionnelle, ctx });
-  if (!choix.ok) throw new RefusAbsence(choix.erreur, "destinataire");
-  const parcours = resoudreParcoursAbsence(ctx, choix.destinataire);
-  if (!parcours.ok) throw new RefusAbsence(parcours.erreur);
-  const r = transitionAbsence({
-    nature: "CONGE",
+  const ctx = await chargerContexteCircuit(db, demande.userId);
+  const parcours = resoudreParcoursConge(ctx);
+  if (!parcours.ok) throw new RefusConge(parcours.erreur);
+  const r = transitionConge({
     statut: demande.statut,
     action: { type: "RESOUMETTRE", premierStatut: parcours.premierStatut },
     acteur: { id: p.acteurId, rolePermissions: [] },
     demandeurId: demande.userId,
     decideur: null,
   });
-  if (!r.ok) throw new RefusAbsence(r.erreur);
+  if (!r.ok) throw new RefusConge(r.erreur);
 
+  const prepare = await preparerConge(db, { userId: demande.userId, entree: p.entree, maintenant: p.maintenant });
   await controlerChevauchement(db, { userId: demande.userId, debut: prepare.dateDebut, fin: prepare.dateFin, exclureDemandeId: demande.id });
-  await controlerSolde(db, { userId: demande.userId, prepare });
 
   const { count } = await db.demandeConge.updateMany({
     where: { id: demande.id, statut: "MODIFICATION_DEMANDEE" },
     data: {
       statut: parcours.premierStatut,
       etapeResponsableRequise: parcours.etapeResponsable.requise,
-      destinataire: choix.destinataire,
       etapeDepuis: p.maintenant,
       dernierRappelAt: null,
+      nature: prepare.nature,
+      motif: prepare.motif,
       dateDebut: colonneDateDepuisJourCivil(prepare.dateDebut),
       dateFin: colonneDateDepuisJourCivil(prepare.dateFin),
-      nbJours: prepare.decompte.nbJours,
-      motif: prepare.motif,
-      interimaire: prepare.interimaire,
-      typeCongeId: prepare.type.id,
+      nbJoursOuvres: prepare.decompte.nbJoursOuvres,
       motifModification: null,
+      observationRH: null,
       approuveParId: null,
       approuveAt: null,
+      valideParId: null,
+      valideAt: null,
     },
   });
-  if (count === 0) throw new RefusAbsence("Cette demande a déjà été traitée.");
-  // Les nouvelles pièces s'ajoutent aux précédentes (jamais effacées en silence).
-  const existantes = new Set((await db.pieceJointeConge.findMany({ where: { demandeCongeId: demande.id }, select: { url: true } })).map((x) => x.url));
-  const nouvelles = prepare.pieces.filter((x) => !existantes.has(x.url));
-  if (nouvelles.length > 0) {
-    await db.pieceJointeConge.createMany({ data: nouvelles.map((x) => ({ demandeCongeId: demande.id, url: x.url, nomFichier: x.nomFichier ?? null })) });
-  }
+  if (count === 0) throw new RefusConge("Cette demande a déjà été traitée.");
+  await remplacerPlages(db, { userId: demande.userId, demandeId: demande.id, reference: demande.reference, jours: prepare.decompte.jours, provisoire: true });
   await noterHistorique(db, {
-    nature: "CONGE",
     demandeId: demande.id,
-    action: ACTION_HISTORIQUE_ABSENCE.RESOUMETTRE,
-    detail: `${demande.reference} renvoyée : ${prepare.type.label}, ${prepare.decompte.nbJours} jour(s) du ${prepare.dateDebut} au ${prepare.dateFin}.`,
+    action: ACTION_HISTORIQUE_CONGE.RESOUMETTRE,
+    detail: `${demande.reference} renvoyée : ${libelleNature(prepare.nature)}, ${prepare.decompte.nbJoursOuvres} jour(s) ouvré(s) du ${prepare.dateDebut} au ${prepare.dateFin}.`,
     userId: p.acteurId,
   });
   return {
     id: demande.id,
     reference: demande.reference,
     statut: parcours.premierStatut,
-    nbJours: prepare.decompte.nbJours,
-    destinataires: destinatairesEtapeAbsence(parcours.premierStatut, ctx),
-    libelleType: prepare.type.label,
+    nbJoursOuvres: prepare.decompte.nbJoursOuvres,
+    destinataires: destinatairesEtapeConge(parcours.premierStatut, ctx),
   };
 }
 
@@ -610,116 +417,148 @@ export async function resoumettreConge(
 // Décision, annulation
 // ---------------------------------------------------------------------------------------------------------------------
 
+export type ActionDecisionConge =
+  | { type: "APPROUVER"; observationRH?: string | null }
+  | { type: "REJETER"; motif: string; compterJoursPassesAbsents?: boolean; observationRH?: string | null }
+  | { type: "DEMANDER_MODIFICATION"; motif: string; observationRH?: string | null }
+  | { type: "ANNULER"; motif: string };
+
 export interface DecisionConge {
   id: string;
   reference: string;
   demandeurId: string;
-  libelleType: string;
-  ancienStatut: StatutCircuitAbsence;
-  statut: StatutCircuitAbsence;
-  effet: EffetTransitionAbsence;
+  ancienStatut: StatutCircuitConge;
+  statut: StatutCircuitConge;
   viaRepli: boolean;
   motif?: string;
+  observationRH: string | null;
   /** Comptes à prévenir de l'étape suivante (vide si la demande n'attend plus rien). */
   destinatairesSuivants: string[];
-  nbJours: number;
+  /** Absences « à contrôler » créées par un refus tardif dont la RH a choisi de compter les jours passés (R11). */
+  absencesCreees: number;
+  nbJoursOuvres: number;
   dateDebut: JourCivil;
   dateFin: JourCivil;
 }
 
-/** Debit du solde et plages, à l'accord d'un congé (dans la transaction de la décision). */
-async function accorderEffets(db: Db, demande: DemandeCongeAvecType): Promise<{ soldeCongeId: string | null; joursDebites: number }> {
-  const debut = jourCivilDepuisColonneDate(demande.dateDebut);
-  const fin = jourCivilDepuisColonneDate(demande.dateFin);
-  const feries = await lireJoursFeries(db, debut, fin);
-  const decompte = calculerNbJours({ debut, fin, decompte: demande.typeConge.decompteType, joursFeries: feries });
-
-  let soldeCongeId: string | null = null;
-  let joursDebites = 0;
-  if (typeDeductible(demande.typeConge)) {
-    const user = await db.user.findUnique({ where: { id: demande.userId }, select: { dateEmbauche: true } });
-    const dateEmbauche = user?.dateEmbauche ? jourCivilDepuisColonneDate(user.dateEmbauche) : null;
-    if (!dateEmbauche) throw new RefusAbsence(MESSAGE_DATE_EMBAUCHE_MANQUANTE);
-    // Exercice des jours du congé ; si la période n'a plus aucun jour décompté, celui du premier jour.
-    const ex = decompte.joursDecomptes.length > 0 ? exerciceDuDebit(decompte.joursDecomptes, dateEmbauche) : null;
-    if (ex && !ex.ok) throw new RefusAbsence(ex.erreur);
-    const exercice = ex && ex.ok ? ex.exercice : calculerExercice(dateEmbauche, debut);
-    const solde = await assurerSoldeExercice(db, {
-      userId: demande.userId,
-      typeCongeId: demande.typeCongeId,
-      nbJoursDefaut: demande.typeConge.nbJoursDefaut,
-      exercice,
-    });
-    // Débit conditionnel : deux accords simultanés ne peuvent pas faire passer le solde sous zéro.
-    const { count } = await db.soldeConge.updateMany({
-      where: { id: solde.id, soldeRestant: { gte: demande.nbJours } },
-      data: { soldeRestant: { decrement: demande.nbJours } },
-    });
-    if (count === 0) {
-      throw new RefusAbsence(`Solde insuffisant : ${solde.soldeRestant} jour(s) restant(s) pour l'exercice ${exercice.exercice}, ${demande.nbJours} demandé(s).`);
-    }
-    soldeCongeId = solde.id;
-    joursDebites = demande.nbJours;
-  }
-  await creerPlagesConge(db, { userId: demande.userId, demandeId: demande.id, reference: demande.reference, jours: decompte.jours });
-  return { soldeCongeId, joursDebites };
+/** Date de départ de la tâche des absences (R11) : la même règle que le planificateur (`dateDebutAbsences`). */
+export async function lireDateDebutAbsences(db: Db): Promise<Date> {
+  const [dernierePurge, miseEnService] = await Promise.all([
+    db.reinitialisationPointage.findFirst({ orderBy: { effectueeAt: "desc" }, select: { effectueeAt: true } }),
+    db.pointageMiseEnService.findFirst({ select: { misEnServiceAt: true } }),
+  ]);
+  return dateDebutAbsences({
+    systemStartDate: new Date(process.env.SYSTEM_START_DATE || "2026-09-07"),
+    dernierePurge: dernierePurge?.effectueeAt,
+    miseEnService: miseEnService?.misEnServiceAt,
+  });
 }
 
-type DemandeCongeAvecType = Prisma.DemandeCongeGetPayload<{ include: { typeConge: true } }>;
+/**
+ * R11 : crée une `Absence` « à contrôler » pour chaque jour ouvré de `[debut, fin]` sans pointage d'ARRIVÉE, postérieur ou égal
+ * à la date de départ de la tâche des absences, et sans absence déjà enregistrée. Renvoie le nombre créé.
+ */
+async function compterJoursPassesAbsents(
+  db: Db,
+  p: { userId: string; reference: string; debut: JourCivil; fin: JourCivil }
+): Promise<number> {
+  if (comparerJours(p.fin, p.debut) < 0) return 0;
+  const feries = await lireJoursFeries(db, p.debut, p.fin);
+  const { joursOuvres } = decompterJours({ debut: p.debut, fin: p.fin, joursFeries: feries });
+  if (joursOuvres.length === 0) return 0;
+  const plancher = formatJourCivil(await lireDateDebutAbsences(db));
+  const candidats = joursOuvres.filter((j) => comparerJours(j, plancher) >= 0);
+  if (candidats.length === 0) return 0;
 
-/** Annulation d'un congé accordé : le solde débité est recrédité (la même ligne), les plages supprimées par clé. */
-async function defaireEffets(db: Db, demande: DemandeCongeAvecType): Promise<void> {
-  if (demande.soldeCongeId && demande.joursDebites > 0) {
-    await db.soldeConge.update({ where: { id: demande.soldeCongeId }, data: { soldeRestant: { increment: demande.joursDebites } } });
-  }
-  await db.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: demande.id } });
+  const debutPeriode = parseJourCivil(candidats[0])!;
+  const finPeriode = parseJourCivil(candidats[candidats.length - 1])!;
+  const finPeriodeInclus = new Date(finPeriode.getFullYear(), finPeriode.getMonth(), finPeriode.getDate(), 23, 59, 59, 999);
+  const [pointages, absences] = await Promise.all([
+    db.pointage.findMany({ where: { userId: p.userId, type: "ARRIVEE", heure: { gte: debutPeriode, lte: finPeriodeInclus } }, select: { heure: true } }),
+    db.absence.findMany({ where: { userId: p.userId, date: { gte: debutPeriode, lte: finPeriodeInclus } }, select: { date: true } }),
+  ]);
+  const pointes = new Set(pointages.map((x) => formatJourCivil(x.heure)));
+  const deja = new Set(absences.map((x) => formatJourCivil(x.date)));
+  const aCreer = candidats.filter((j) => !pointes.has(j) && !deja.has(j));
+  if (aCreer.length === 0) return 0;
+  await db.absence.createMany({
+    data: aCreer.map((j) => {
+      const d = parseJourCivil(j)!;
+      return {
+        userId: p.userId,
+        date: new Date(d.getFullYear(), d.getMonth(), d.getDate()),
+        statut: "A_CONTROLER" as const,
+        motif: `Congé ${p.reference} refusé : jour déjà passé compté comme absence.`,
+      };
+    }),
+  });
+  return aCreer.length;
 }
 
 export async function deciderConge(
   db: Db,
   p: {
     demandeId: string;
-    acteur: ActeurAbsence;
-    action: Exclude<ActionCircuitAbsence, { type: "RESOUMETTRE" }>;
+    acteur: ActeurConge;
+    action: ActionDecisionConge;
     /** L'acteur porte `conges.annuler` (annule même après le début). */
     peutAnnulerApresDebut: boolean;
-    /** Observation facultative (500 caractères) de celui qui décide, écrite avec la décision (étape responsable ou RH). */
-    observation?: string | null;
     maintenant: Date;
   }
 ): Promise<DecisionConge> {
-  const observation = observationDeDecision(p.observation);
   // Verrou de ligne : deux décisions simultanées sur la même demande s'enchaînent, la seconde voit le nouveau statut.
-  await db.$executeRaw`SELECT id FROM "DemandeConge" WHERE id = ${p.demandeId} FOR UPDATE`;
-  const demande = await db.demandeConge.findUnique({ where: { id: p.demandeId }, include: { typeConge: true } });
-  if (!demande) throw new RefusAbsence("Demande introuvable.");
-  // Même verrou que les soumissions : un accord (statut VALIDEE) change ce que lit le contrôle « congé validé » d'une
-  // permission en cours d'accord (`congeCouvre`). Ordre constant : verrou de ligne, puis verrou du collaborateur.
-  await verrouillerAbsenceUtilisateur(db, demande.userId);
+  await verrouillerLigneDemande(db, p.demandeId);
+  const demande = await db.demandeConge.findUnique({ where: { id: p.demandeId } });
+  if (!demande) throw new RefusConge("Demande introuvable.");
+  await verrouillerCongeUtilisateur(db, demande.userId);
 
-  const ctx = await chargerContexteCircuit(db, demande.userId, "CONGE");
-  const decideur = decideurPourStatutAbsence(demande.statut, ctx);
+  const ctx = await chargerContexteCircuit(db, demande.userId);
+  const decideur = decideurPourStatutConge(demande.statut, ctx);
   const aujourdhui = formatJourCivil(p.maintenant);
-  const r = transitionAbsence({
-    nature: "CONGE",
+  const debut = jourCivilDepuisColonneDate(demande.dateDebut);
+  const fin = jourCivilDepuisColonneDate(demande.dateFin);
+  const adebute = comparerJours(aujourdhui, debut) >= 0;
+  const a = p.action;
+  const r = transitionConge({
     statut: demande.statut,
-    action: p.action,
+    action: a.type === "APPROUVER" ? { type: "APPROUVER" } : a,
     acteur: p.acteur,
     demandeurId: demande.userId,
     decideur,
-    adebute: comparerJours(aujourdhui, jourCivilDepuisColonneDate(demande.dateDebut)) >= 0,
+    adebute,
     peutAnnulerApresDebut: p.peutAnnulerApresDebut,
-    // Permission exceptionnelle : une seule décision, celle du destinataire choisi (C4).
-    etapeUnique: demande.destinataire !== null,
   });
-  if (!r.ok) throw new RefusAbsence(r.erreur);
+  if (!r.ok) throw new RefusConge(r.erreur);
 
-  // Effets d'abord (débit conditionnel) : un refus annule toute la transaction, statut compris.
-  let effets: { soldeCongeId: string | null; joursDebites: number } | null = null;
-  if (r.effet === "ACCORDER") effets = await accorderEffets(db, demande);
-  if (r.effet === "DEFAIRE_ACCORD") await defaireEffets(db, demande);
+  const obs = controlerObservationRH(a.type === "ANNULER" ? null : a.observationRH, r.etape);
+  if (!obs.ok) throw new RefusConge(obs.erreur, "observationRH");
 
-  const data: Prisma.DemandeCongeUpdateManyMutationInput & Record<string, unknown> = { statut: r.statut as StatutDemandeConge, etapeDepuis: p.maintenant, dernierRappelAt: null };
+  // R10 : effets sur les plages (dans la transaction : un refus plus loin annule tout).
+  if (r.effet === "VALIDER") await validerPlages(db, demande.id);
+  if (a.type === "REJETER") await supprimerPlages(db, { demandeId: demande.id });
+  if (a.type === "ANNULER") await supprimerPlages(db, { demandeId: demande.id, ...(adebute ? { aPartirDe: ajouterJours(aujourdhui, 1) } : {}) });
+
+  // R11 : refus après la date de début, la RH ou le responsable choisit de compter (ou non) les jours déjà passés comme absences.
+  let joursPasses: boolean | null = null;
+  let absencesCreees = 0;
+  if (a.type === "REJETER" && comparerJours(debut, aujourdhui) < 0) {
+    joursPasses = a.compterJoursPassesAbsents === true;
+    if (joursPasses) {
+      const hier = ajouterJours(aujourdhui, -1);
+      absencesCreees = await compterJoursPassesAbsents(db, {
+        userId: demande.userId,
+        reference: demande.reference,
+        debut,
+        fin: comparerJours(fin, hier) < 0 ? fin : hier,
+      });
+    }
+  }
+
+  const data: Prisma.DemandeCongeUpdateManyMutationInput & Record<string, unknown> = {
+    statut: r.statut as StatutDemandeConge,
+    etapeDepuis: p.maintenant,
+    dernierRappelAt: null,
+  };
   if (r.etape === "RESPONSABLE") {
     data.approuveParId = p.acteur.id;
     data.approuveAt = p.maintenant;
@@ -727,11 +566,7 @@ export async function deciderConge(
     data.valideParId = p.acteur.id;
     data.valideAt = p.maintenant;
   }
-  // Décision unique accordée par le responsable : la demande est validée, « Validée par » est lui aussi renseigné.
-  if (r.etape === "RESPONSABLE" && r.effet === "ACCORDER") {
-    data.valideParId = p.acteur.id;
-    data.valideAt = p.maintenant;
-  }
+  if (obs.texte) data.observationRH = obs.texte;
   if (r.statut === "REJETEE") data.motifRejet = r.motif ?? null;
   if (r.statut === "MODIFICATION_DEMANDEE") data.motifModification = r.motif ?? null;
   if (r.statut === "ANNULEE") {
@@ -739,217 +574,98 @@ export async function deciderConge(
     data.annuleParId = p.acteur.id;
     data.annuleAt = p.maintenant;
   }
-  if (effets) {
-    data.soldeCongeId = effets.soldeCongeId;
-    data.joursDebites = effets.joursDebites;
-  }
+  if (joursPasses !== null) data.joursPassesComptesAbsents = joursPasses;
   const { count } = await db.demandeConge.updateMany({ where: { id: demande.id, statut: demande.statut }, data });
-  if (count === 0) throw new RefusAbsence("Cette demande a déjà été traitée.");
+  if (count === 0) throw new RefusConge("Cette demande a déjà été traitée.");
 
   const action =
-    p.action.type === "APPROUVER"
+    a.type === "APPROUVER"
       ? r.statut === "EN_ATTENTE_RH"
-        ? ACTION_HISTORIQUE_ABSENCE.APPROUVER_RESPONSABLE
+        ? ACTION_HISTORIQUE_CONGE.APPROUVER_RESPONSABLE
         : r.viaRepli
-          ? ACTION_HISTORIQUE_ABSENCE.ACCORDER_PAR_REPLI
-          : r.etape === "RESPONSABLE"
-            ? ACTION_HISTORIQUE_ABSENCE.ACCORDER_PAR_RESPONSABLE
-            : ACTION_HISTORIQUE_ABSENCE.ACCORDER
-      : p.action.type === "REJETER"
-        ? ACTION_HISTORIQUE_ABSENCE.REJETER
-        : p.action.type === "DEMANDER_MODIFICATION"
-          ? ACTION_HISTORIQUE_ABSENCE.DEMANDER_MODIFICATION
-          : ACTION_HISTORIQUE_ABSENCE.ANNULER;
+          ? ACTION_HISTORIQUE_CONGE.ACCORDER_PAR_REPLI
+          : ACTION_HISTORIQUE_CONGE.ACCORDER
+      : a.type === "REJETER"
+        ? ACTION_HISTORIQUE_CONGE.REJETER
+        : a.type === "DEMANDER_MODIFICATION"
+          ? ACTION_HISTORIQUE_CONGE.DEMANDER_MODIFICATION
+          : ACTION_HISTORIQUE_CONGE.ANNULER;
   await noterHistorique(db, {
-    nature: "CONGE",
     demandeId: demande.id,
     action,
-    detail: `${demande.reference} : ${demande.statut} → ${r.statut}${r.motif ? `. Motif : ${r.motif}` : ""}${r.viaRepli ? " (étape responsable remplacée : responsable indisponible)." : ""}`,
+    detail: `${demande.reference} : ${demande.statut} → ${r.statut}${r.motif ? `. Motif : ${r.motif}` : ""}${r.viaRepli ? " (étape responsable remplacée : responsable indisponible)." : ""}${obs.texte ? ` Observation RH : ${obs.texte}` : ""}`,
     userId: p.acteur.id,
   });
-
-  if (observation) {
-    if (!r.etape) throw new RefusAbsence("Une observation accompagne une décision du responsable ou de la RH, pas une annulation.", "observation");
-    await ajouterObservation(db, { nature: "CONGE", demandeId: demande.id, reference: demande.reference, auteurId: p.acteur.id, etape: r.etape, texte: observation });
+  if (joursPasses !== null) {
+    await noterHistorique(db, {
+      demandeId: demande.id,
+      action: ACTION_HISTORIQUE_CONGE.JOURS_PASSES,
+      detail: joursPasses
+        ? `${demande.reference} : jours déjà passés comptés comme absences (${absencesCreees} absence(s) à contrôler créée(s)).`
+        : `${demande.reference} : jours déjà passés NON comptés comme absences.`,
+      userId: p.acteur.id,
+    });
   }
 
   return {
     id: demande.id,
     reference: demande.reference,
     demandeurId: demande.userId,
-    libelleType: demande.typeConge.label,
     ancienStatut: demande.statut,
     statut: r.statut,
-    effet: r.effet,
     viaRepli: r.viaRepli === true,
     motif: r.motif,
-    destinatairesSuivants: destinatairesEtapeAbsence(r.statut, ctx),
-    nbJours: demande.nbJours,
-    dateDebut: jourCivilDepuisColonneDate(demande.dateDebut),
-    dateFin: jourCivilDepuisColonneDate(demande.dateFin),
+    observationRH: obs.texte,
+    destinatairesSuivants: destinatairesEtapeConge(r.statut, ctx),
+    absencesCreees,
+    nbJoursOuvres: demande.nbJoursOuvres,
+    dateDebut: debut,
+    dateFin: fin,
   };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Congé d'office (RH)
+// Saisie RH (R12)
 // ---------------------------------------------------------------------------------------------------------------------
 
 /**
- * Congé accordé d'office par la RH : aucun circuit, mais mêmes contrôles de période et de solde, et jamais pour
- * soi-même (personne ne décide sa propre demande). Débit et plages comme à un accord.
+ * R12 : la RH enregistre un congé pour un autre salarié (jamais pour elle-même) : statut VALIDEE directement, plages définitives,
+ * mêmes contrôles R2 à R5 que la soumission. L'appelant a déjà contrôlé `conges.valider_rh` sur le rôle.
  */
-export async function accorderCongeOffice(
+export async function saisirCongeRH(
   db: Db,
-  p: { acteurId: string; userId: string; entree: DemandeCongeEntree; maintenant: Date }
-): Promise<{ id: string; reference: string; nbJours: number; libelleType: string }> {
-  if (p.acteurId === p.userId) throw new RefusAbsence("Vous ne pouvez pas vous accorder un congé d'office.");
-  await verrouillerAbsenceUtilisateur(db, p.userId);
-  const prepare = await preparerConge(db, { userId: p.userId, entree: p.entree, ignorerAnciennete: true, autoriserDatePassee: true, maintenant: p.maintenant });
+  p: { acteurId: string; userId: string; entree: EntreeConge; maintenant: Date }
+): Promise<{ id: string; reference: string; nbJoursOuvres: number }> {
+  if (p.acteurId === p.userId) throw new RefusConge("Vous ne pouvez pas enregistrer un congé pour vous-même.");
+  await verrouillerCongeUtilisateur(db, p.userId);
+  const prepare = await preparerConge(db, { userId: p.userId, entree: p.entree, maintenant: p.maintenant });
   await controlerChevauchement(db, { userId: p.userId, debut: prepare.dateDebut, fin: prepare.dateFin });
-  await controlerSolde(db, { userId: p.userId, prepare });
 
-  const reference = await genererReferenceAbsence(db, "CONGE", p.maintenant);
+  const reference = await genererReferenceConge(db, p.maintenant);
   const demande = await db.demandeConge.create({
     data: {
       reference,
+      nature: prepare.nature,
+      motif: prepare.motif,
       dateDebut: colonneDateDepuisJourCivil(prepare.dateDebut),
       dateFin: colonneDateDepuisJourCivil(prepare.dateFin),
-      nbJours: prepare.decompte.nbJours,
-      motif: prepare.motif,
-      interimaire: prepare.interimaire,
+      nbJoursOuvres: prepare.decompte.nbJoursOuvres,
       statut: "VALIDEE",
       etapeResponsableRequise: false,
+      saisieParRH: true,
       etapeDepuis: p.maintenant,
+      userId: p.userId,
+      creeParId: p.acteurId,
       valideParId: p.acteurId,
       valideAt: p.maintenant,
-      userId: p.userId,
-      typeCongeId: prepare.type.id,
-      piecesJointes: { create: prepare.pieces.map((x) => ({ url: x.url, nomFichier: x.nomFichier ?? null })) },
     },
-    include: { typeConge: true },
   });
-  const effets = await accorderEffets(db, demande);
-  if (effets.soldeCongeId) {
-    await db.demandeConge.update({ where: { id: demande.id }, data: { soldeCongeId: effets.soldeCongeId, joursDebites: effets.joursDebites } });
-  }
+  await creerPlagesConge(db, { userId: p.userId, demandeId: demande.id, reference, jours: prepare.decompte.jours, provisoire: false });
   await noterHistorique(db, {
-    nature: "CONGE",
     demandeId: demande.id,
-    action: ACTION_HISTORIQUE_ABSENCE.CONGE_OFFICE,
-    detail: `${reference} accordé d'office : ${prepare.type.label}, ${prepare.decompte.nbJours} jour(s) du ${prepare.dateDebut} au ${prepare.dateFin}.`,
+    action: ACTION_HISTORIQUE_CONGE.SAISIE_RH,
+    detail: `${reference} enregistré par la RH : ${libelleNature(prepare.nature)}, ${prepare.decompte.nbJoursOuvres} jour(s) ouvré(s) du ${prepare.dateDebut} au ${prepare.dateFin}.`,
     userId: p.acteurId,
   });
-  return { id: demande.id, reference, nbJours: prepare.decompte.nbJours, libelleType: prepare.type.label };
+  return { id: demande.id, reference, nbJoursOuvres: prepare.decompte.nbJoursOuvres };
 }
-
-// ---------------------------------------------------------------------------------------------------------------------
-// Soldes, dates d'embauche
-// ---------------------------------------------------------------------------------------------------------------------
-
-export const MOTIF_AJUSTEMENT_MIN = 5;
-/** Conflit d'intérêts : même phrase côté serveur et côté écran (`/conges/soldes`). */
-export const MESSAGE_AJUSTEMENT_PROPRE_SOLDE = "Vous ne pouvez pas ajuster votre propre solde : un autre compte RH ou le DG doit le faire.";
-export const MESSAGE_DATE_EMBAUCHE_PROPRE = "Vous ne pouvez pas modifier votre propre date d'embauche.";
-
-/** Ajustement manuel d'un solde (RH) : positif ajoute, négatif retire sans jamais passer sous zéro. Tracé. */
-export async function ajusterSolde(
-  db: Db,
-  p: { soldeCongeId: string; montant: number; motif: string; acteurId: string }
-): Promise<{ soldeRestant: number }> {
-  if (!Number.isInteger(p.montant) || p.montant === 0) throw new RefusAbsence("Le montant de l'ajustement doit être un entier non nul.", "montant");
-  if (Math.abs(p.montant) > 365) throw new RefusAbsence("Ajustement excessif (365 jours au plus).", "montant");
-  const motif = nettoyerMotifAbsence(p.motif);
-  if (motif.length < MOTIF_AJUSTEMENT_MIN) throw new RefusAbsence(`Le motif doit comporter au moins ${MOTIF_AJUSTEMENT_MIN} caractères.`, "motif");
-
-  // Personne n'ajuste son propre solde : le propriétaire est lu AVANT toute écriture.
-  const cible = await db.soldeConge.findUnique({ where: { id: p.soldeCongeId }, select: { userId: true } });
-  if (!cible) throw new RefusAbsence("Solde introuvable ou insuffisant pour ce retrait.", "montant");
-  if (cible.userId === p.acteurId) throw new RefusAbsence(MESSAGE_AJUSTEMENT_PROPRE_SOLDE);
-
-  const { count } = await db.soldeConge.updateMany({
-    where: { id: p.soldeCongeId, ...(p.montant < 0 ? { soldeRestant: { gte: -p.montant } } : {}) },
-    data: { soldeRestant: { increment: p.montant } },
-  });
-  if (count === 0) throw new RefusAbsence("Solde introuvable ou insuffisant pour ce retrait.", "montant");
-  await db.ajustementSolde.create({ data: { soldeCongeId: p.soldeCongeId, montant: p.montant, motif, effectueParId: p.acteurId } });
-  const solde = await db.soldeConge.findUniqueOrThrow({ where: { id: p.soldeCongeId }, select: { soldeRestant: true, userId: true } });
-  await db.historiqueEntry.create({
-    data: {
-      entity: "SoldeConge",
-      entityId: p.soldeCongeId,
-      action: ACTION_HISTORIQUE_ABSENCE.AJUSTER_SOLDE,
-      detail: `Ajustement de ${p.montant > 0 ? "+" : ""}${p.montant} jour(s) (solde : ${solde.soldeRestant}). Motif : ${motif}`,
-      userId: p.acteurId,
-    },
-  });
-  return { soldeRestant: solde.soldeRestant };
-}
-
-/**
- * Crée la ligne de solde de l'exercice en cours pour chaque compte actif ayant une date d'embauche et chaque type
- * déductible. Sans effet sur les lignes qui existent (jamais de remise à zéro). Retourne le nombre de lignes créées.
- */
-// Volontairement SANS garde « pas pour soi-même » : la dotation suit le type de congé (`nbJoursDefaut`), l'acteur ne la
-// choisit pas, et elle est créée à l'identique pour tous les comptes.
-export async function initialiserSoldesExercice(db: Db, p: { reference: JourCivil; acteurId: string }): Promise<{ utilisateurs: number; soldesCrees: number }> {
-  const [types, users] = await Promise.all([
-    db.typeConge.findMany({ where: { isActive: true, nonDeductibleSolde: false, nbJoursDefaut: { gt: 0 } } }),
-    db.user.findMany({ where: { isActive: true, dateEmbauche: { not: null } }, select: { id: true, dateEmbauche: true } }),
-  ]);
-  let soldesCrees = 0;
-  for (const u of users) {
-    const exercice = calculerExercice(jourCivilDepuisColonneDate(u.dateEmbauche!), p.reference);
-    for (const t of types) {
-      const { count } = await db.soldeConge.createMany({
-        data: [
-          {
-            userId: u.id,
-            typeCongeId: t.id,
-            exercice: exercice.exercice,
-            soldeInitial: t.nbJoursDefaut,
-            soldeRestant: t.nbJoursDefaut,
-            dateDebutExercice: colonneDateDepuisJourCivil(exercice.debut),
-            dateFinExercice: colonneDateDepuisJourCivil(exercice.fin),
-          },
-        ],
-        skipDuplicates: true,
-      });
-      soldesCrees += count;
-    }
-  }
-  await db.historiqueEntry.create({
-    data: {
-      entity: "SoldeConge",
-      entityId: "exercice",
-      action: "initialisation_soldes",
-      detail: `Soldes de l'exercice en cours initialisés pour ${users.length} compte(s) : ${soldesCrees} ligne(s) créée(s).`,
-      userId: p.acteurId,
-    },
-  });
-  return { utilisateurs: users.length, soldesCrees };
-}
-
-/** Date d'embauche d'un compte (RH). Les soldes déjà créés ne sont pas touchés ; les congés suivants suivent la nouvelle date. */
-export async function modifierDateEmbauche(db: Db, p: { userId: string; date: JourCivil | null; acteurId: string }): Promise<void> {
-  // La date d'embauche fixe l'exercice et l'ancienneté : personne ne la modifie pour soi-même.
-  if (p.userId === p.acteurId) throw new RefusAbsence(MESSAGE_DATE_EMBAUCHE_PROPRE, "date");
-  if (p.date !== null) {
-    if (!parseJourCivil(p.date)) throw new RefusAbsence("Date d'embauche invalide.", "date");
-    if (comparerJours(p.date, formatJourCivil(new Date())) > 0) throw new RefusAbsence("La date d'embauche ne peut pas être dans le futur.", "date");
-    if (comparerJours(p.date, "1970-01-01") < 0) throw new RefusAbsence("Date d'embauche invalide.", "date");
-  }
-  const avant = await db.user.findUnique({ where: { id: p.userId }, select: { dateEmbauche: true, fullName: true } });
-  if (!avant) throw new RefusAbsence("Compte introuvable.");
-  await db.user.update({ where: { id: p.userId }, data: { dateEmbauche: p.date ? colonneDateDepuisJourCivil(p.date) : null } });
-  await db.historiqueEntry.create({
-    data: {
-      entity: "User",
-      entityId: p.userId,
-      action: "modification_date_embauche",
-      detail: `Date d'embauche de ${avant.fullName} : ${avant.dateEmbauche ? jourCivilDepuisColonneDate(avant.dateEmbauche) : "non renseignée"} → ${p.date ?? "non renseignée"}.`,
-      userId: p.acteurId,
-    },
-  });
-}
-
-export type { ParcoursAbsence };

@@ -1,58 +1,53 @@
-// Congés — circuit de validation (Lot 2, 2026-10-15). Moteur PUR : aucun accès base, aucun envoi.
+// Congés — circuit de validation (module simplifié, 2026-10-19). Moteur PUR : aucun accès base, aucun envoi.
 //   - Étape responsable : `Service.responsableId` désigne le décideur, SANS permission (comme « Mon équipe » et les
-//     justifications de retard). Non requise quand elle n'a pas de sens (voir `resoudreParcoursAbsence`).
-//   - Étape RH : un compte actif dont le RÔLE porte `conges.valider_rh` ; à défaut d'un autre
-//     compte RH que le demandeur, le DG (`treso.decider_dg`) ; à défaut, personne (la demande ne peut pas être déposée).
+//     justifications de retard). Non requise quand elle n'a pas de sens (voir `resoudreParcoursConge`).
+//   - Étape RH : un compte actif dont le RÔLE porte `conges.valider_rh` ; à défaut d'un autre compte RH que le demandeur,
+//     le DG (`treso.decider_dg`, repli PROVISOIRE, point ouvert O1 : une seule condition, dans `resoudreEtapeRH`) ; à défaut,
+//     personne (la demande ne peut pas être déposée).
 //   - Personne ne décide sa propre demande, à aucune étape. Le droit de décider se lit sur le RÔLE
 //     (`session.rolePermissions`), jamais par délégation (ces permissions sont dans PERMISSIONS_DECISION_NON_DELEGABLES).
 //   - Le décideur est RECALCULÉ à chaque action : un changement de responsable de service prend effet immédiatement.
-//   - Repli : une demande « en attente du responsable » dont l'étape responsable n'a plus de sens (responsable
-//     désactivé, service sans responsable…) est décidée par l'étape RH, qui la termine directement.
+//   - Repli : une demande « en attente du responsable » dont l'étape responsable n'a plus de sens (responsable désactivé,
+//     service sans responsable…) est décidée par l'étape RH, qui la termine directement.
 
 import type { ServiceCollaborateur } from "./justificationPointage";
 
-export type NatureAbsence = "CONGE";
+import type { NatureConge } from "./generated/prisma/enums";
 
-export type StatutCircuitAbsence =
+export type StatutCircuitConge =
   | "EN_ATTENTE_RESPONSABLE"
   | "EN_ATTENTE_RH"
-  | "VALIDEE" // congé : état final accordé
+  | "VALIDEE"
   | "REJETEE"
   | "ANNULEE"
   | "MODIFICATION_DEMANDEE";
 
 /** Permission d'étape RH (non délégable, lue sur le rôle). */
-export const PERMISSION_ETAPE_RH_ABSENCE = "conges.valider_rh";
+export const PERMISSION_ETAPE_RH_CONGE = "conges.valider_rh";
 
-/** Dernier recours : le DG, désigné par la même permission que l'étape DG de la Trésorerie et des justifications. */
-export const PERMISSION_DG_ABSENCE = "treso.decider_dg";
+/** Dernier recours (O1, provisoire) : le DG, désigné par la même permission que l'étape DG de la Trésorerie. */
+export const PERMISSION_DG_CONGE = "treso.decider_dg";
 
-export const MOTIF_ABSENCE_MIN = 3;
-export const MOTIF_ABSENCE_MAX = 500;
-
-export function statutFinalAbsence(_nature: NatureAbsence): "VALIDEE" {
-  return "VALIDEE";
-}
+export const MOTIF_CONGE_MIN = 3;
+export const MOTIF_CONGE_MAX = 500;
+export const OBSERVATION_RH_MAX = 500;
 
 /** Statuts en cours de circuit (une décision est attendue). */
-export const STATUTS_ABSENCE_EN_ATTENTE: readonly StatutCircuitAbsence[] = ["EN_ATTENTE_RESPONSABLE", "EN_ATTENTE_RH"];
+export const STATUTS_CONGE_EN_ATTENTE: readonly StatutCircuitConge[] = ["EN_ATTENTE_RESPONSABLE", "EN_ATTENTE_RH"];
 
-export function estStatutFinalAccorde(nature: NatureAbsence, statut: StatutCircuitAbsence): boolean {
-  return statut === statutFinalAbsence(nature);
-}
+/** Statuts qui occupent la période du salarié (R5 : une autre demande ne peut pas la chevaucher). */
+export const STATUTS_CONGE_OCCUPANT_LA_PERIODE: readonly StatutCircuitConge[] = [
+  "EN_ATTENTE_RESPONSABLE",
+  "EN_ATTENTE_RH",
+  "MODIFICATION_DEMANDEE",
+  "VALIDEE",
+];
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Parcours (fixé à la soumission)
 // ---------------------------------------------------------------------------------------------------------------------
 
-export type RaisonEtapeResponsableNonRequise =
-  | "SANS_SERVICE"
-  | "SANS_RESPONSABLE"
-  | "EST_RESPONSABLE"
-  | "RESPONSABLE_INACTIF"
-  | "DEMANDEUR_DG"
-  /** Permission exceptionnelle : le demandeur a choisi la RH, l'étape responsable n'existe pas pour cette demande. */
-  | "CHOIX_RH";
+export type RaisonEtapeResponsableNonRequise = "SANS_SERVICE" | "SANS_RESPONSABLE" | "EST_RESPONSABLE" | "RESPONSABLE_INACTIF";
 
 export type EtapeResponsable =
   | { requise: true; responsableId: string }
@@ -61,7 +56,7 @@ export type EtapeResponsable =
 /** Qui décide à l'étape RH : la RH, à défaut le DG, à défaut personne. */
 export type EtapeRH = { type: "RH" } | { type: "DG" } | { type: "AUCUN" };
 
-export interface ContexteCircuitAbsence {
+export interface ContexteCircuitConge {
   demandeurId: string;
   /** Service du demandeur tel que lu maintenant (`null` : aucun service). */
   service: ServiceCollaborateur | null;
@@ -71,8 +66,7 @@ export interface ContexteCircuitAbsence {
   comptesDG: readonly string[];
 }
 
-export function resoudreEtapeResponsable(ctx: ContexteCircuitAbsence): EtapeResponsable {
-  if (ctx.comptesDG.includes(ctx.demandeurId)) return { requise: false, raison: "DEMANDEUR_DG" };
+export function resoudreEtapeResponsable(ctx: ContexteCircuitConge): EtapeResponsable {
   const { service } = ctx;
   if (!service) return { requise: false, raison: "SANS_SERVICE" };
   if (!service.responsableId) return { requise: false, raison: "SANS_RESPONSABLE" };
@@ -81,8 +75,9 @@ export function resoudreEtapeResponsable(ctx: ContexteCircuitAbsence): EtapeResp
   return { requise: true, responsableId: service.responsableId };
 }
 
-export function resoudreEtapeRH(ctx: ContexteCircuitAbsence): EtapeRH {
+export function resoudreEtapeRH(ctx: ContexteCircuitConge): EtapeRH {
   if (ctx.comptesRH.some((id) => id !== ctx.demandeurId)) return { type: "RH" };
+  // O1 (provisoire) : repli sur le DG quand la RH est le demandeur et qu'aucun autre compte RH n'existe. À retirer ici seulement.
   if (ctx.comptesDG.some((id) => id !== ctx.demandeurId)) return { type: "DG" };
   return { type: "AUCUN" };
 }
@@ -90,73 +85,28 @@ export function resoudreEtapeRH(ctx: ContexteCircuitAbsence): EtapeRH {
 export const MESSAGE_AUCUN_DECIDEUR =
   "Aucun compte ne peut décider de cette demande (aucun autre compte RH, ni DG) : contactez l'administrateur.";
 
-export type ParcoursAbsence =
+export type ParcoursConge =
   | {
       ok: true;
       etapeResponsable: EtapeResponsable;
       etapeRH: EtapeRH;
       premierStatut: "EN_ATTENTE_RESPONSABLE" | "EN_ATTENTE_RH";
-      /** Permission exceptionnelle : UNE seule décision, celle du destinataire choisi (définitive). */
-      etapeUnique: boolean;
     }
   | { ok: false; erreur: string };
-
-/**
- * Qui valide une permission EXCEPTIONNELLE (mariage, décès, naissance…) : le responsable du service du demandeur ou la RH,
- * au choix du demandeur (C4, consignes du 2026-10-16). Une seule décision, définitive.
- */
-export type DestinataireDecision = "RESPONSABLE" | "RH";
-
-export const MESSAGE_DESTINATAIRE_OBLIGATOIRE = "Choisissez qui valide votre demande : votre responsable ou la RH.";
-export const MESSAGE_DESTINATAIRE_NON_PROPOSE = "Ce destinataire n'est pas disponible pour votre demande : choisissez l'une des propositions.";
-export const MESSAGE_DESTINATAIRE_HORS_PERMISSION_EXCEPTIONNELLE = "Le choix du destinataire ne concerne que les permissions exceptionnelles.";
-
-/**
- * Destinataires proposés au demandeur : « Mon responsable » seulement si son responsable est utilisable (service, responsable
- * actif, qui n'est pas lui-même, et lui-même n'est pas le DG) ; « La RH » est toujours proposée.
- */
-export function destinatairesProposes(ctx: ContexteCircuitAbsence): DestinataireDecision[] {
-  return resoudreEtapeResponsable(ctx).requise ? ["RESPONSABLE", "RH"] : ["RH"];
-}
-
-/**
- * Valide le choix du destinataire d'une demande. Permission exceptionnelle : obligatoire, parmi `destinatairesProposes`.
- * Autre type : aucun choix n'existe, un choix fourni est refusé. Le serveur refuse ce que l'écran ne propose pas.
- */
-export function controlerDestinataire(p: {
-  choix: unknown;
-  exceptionnelle: boolean;
-  ctx: ContexteCircuitAbsence;
-}): { ok: true; destinataire: DestinataireDecision | null } | { ok: false; erreur: string } {
-  const absent = p.choix === undefined || p.choix === null || p.choix === "";
-  if (!p.exceptionnelle) {
-    return absent ? { ok: true, destinataire: null } : { ok: false, erreur: MESSAGE_DESTINATAIRE_HORS_PERMISSION_EXCEPTIONNELLE };
-  }
-  if (absent) return { ok: false, erreur: MESSAGE_DESTINATAIRE_OBLIGATOIRE };
-  if (p.choix !== "RESPONSABLE" && p.choix !== "RH") return { ok: false, erreur: MESSAGE_DESTINATAIRE_NON_PROPOSE };
-  if (!destinatairesProposes(p.ctx).includes(p.choix)) return { ok: false, erreur: MESSAGE_DESTINATAIRE_NON_PROPOSE };
-  return { ok: true, destinataire: p.choix };
-}
 
 /**
  * Parcours d'une demande à la soumission (ou à la resoumission après une demande de modification). Une demande qui
  * n'aurait aucun décideur à l'étape RH est refusée d'emblée : elle resterait bloquée.
  */
-export function resoudreParcoursAbsence(ctx: ContexteCircuitAbsence, destinataire: DestinataireDecision | null = null): ParcoursAbsence {
+export function resoudreParcoursConge(ctx: ContexteCircuitConge): ParcoursConge {
   const etapeResponsable = resoudreEtapeResponsable(ctx);
   const etapeRH = resoudreEtapeRH(ctx);
   if (etapeRH.type === "AUCUN") return { ok: false, erreur: MESSAGE_AUCUN_DECIDEUR };
-  // Permission exceptionnelle, choix « RH » : pas d'étape responsable, une seule décision.
-  if (destinataire === "RH") {
-    return { ok: true, etapeResponsable: { requise: false, raison: "CHOIX_RH" }, etapeRH, premierStatut: "EN_ATTENTE_RH", etapeUnique: true };
-  }
   return {
     ok: true,
     etapeResponsable,
     etapeRH,
-    // Choix « responsable » devenu inutilisable (repli) : la demande part directement chez celui qui le remplace.
     premierStatut: etapeResponsable.requise ? "EN_ATTENTE_RESPONSABLE" : "EN_ATTENTE_RH",
-    etapeUnique: destinataire === "RESPONSABLE",
   };
 }
 
@@ -164,7 +114,7 @@ export function resoudreParcoursAbsence(ctx: ContexteCircuitAbsence, destinatair
 // Décideur de l'étape en cours (recalculé à chaque action)
 // ---------------------------------------------------------------------------------------------------------------------
 
-export type DecideurAbsence =
+export type DecideurConge =
   | { type: "RESPONSABLE"; responsableId: string }
   | { type: "RH"; repli: boolean }
   | { type: "DG"; repli: boolean }
@@ -174,8 +124,8 @@ export type DecideurAbsence =
  * Qui décide pour ce statut, `null` s'il n'y a rien à décider (statut final, rejeté, annulé, modification demandée).
  * `repli` : le responsable ne peut plus décider (désactivé, plus de responsable…), la RH ou le DG décide à sa place.
  */
-export function decideurPourStatutAbsence(statut: StatutCircuitAbsence, ctx: ContexteCircuitAbsence): DecideurAbsence | null {
-  if (!STATUTS_ABSENCE_EN_ATTENTE.includes(statut)) return null;
+export function decideurPourStatutConge(statut: StatutCircuitConge, ctx: ContexteCircuitConge): DecideurConge | null {
+  if (!STATUTS_CONGE_EN_ATTENTE.includes(statut)) return null;
   if (statut === "EN_ATTENTE_RESPONSABLE") {
     const etape = resoudreEtapeResponsable(ctx);
     if (etape.requise) return { type: "RESPONSABLE", responsableId: etape.responsableId };
@@ -184,39 +134,34 @@ export function decideurPourStatutAbsence(statut: StatutCircuitAbsence, ctx: Con
   return decideurRH(ctx, false);
 }
 
-function decideurRH(ctx: ContexteCircuitAbsence, repli: boolean): DecideurAbsence {
+function decideurRH(ctx: ContexteCircuitConge, repli: boolean): DecideurConge {
   const etape = resoudreEtapeRH(ctx);
   return etape.type === "RH" ? { type: "RH", repli } : etape.type === "DG" ? { type: "DG", repli } : { type: "AUCUN", repli };
 }
 
 /** Compte qui agit : son identifiant et les permissions de son RÔLE (jamais celles reçues par délégation). */
-export interface ActeurAbsence {
+export interface ActeurConge {
   id: string;
   rolePermissions: readonly string[];
 }
 
-export const MESSAGE_PROPRE_DEMANDE_ABSENCE = "Vous ne pouvez pas décider de votre propre demande.";
-export const MESSAGE_RESERVE_RESPONSABLE_ABSENCE = "Seul le responsable du service du demandeur peut décider de cette demande.";
-export const MESSAGE_RESERVE_RH_ABSENCE = "Cette demande est décidée par la RH.";
-export const MESSAGE_RESERVE_DG_ABSENCE = "Cette demande est décidée par le DG (aucun autre compte RH ne peut le faire).";
+export const MESSAGE_PROPRE_DEMANDE_CONGE = "Vous ne pouvez pas décider de votre propre demande.";
+export const MESSAGE_RESERVE_RESPONSABLE_CONGE = "Seul le responsable du service du demandeur peut décider de cette demande.";
+export const MESSAGE_RESERVE_RH_CONGE = "Cette demande est décidée par la RH.";
+export const MESSAGE_RESERVE_DG_CONGE = "Cette demande est décidée par le DG (aucun autre compte RH ne peut le faire).";
 
 /** Raison du refus si `acteur` ne peut pas décider à cette étape, `null` s'il le peut. */
-export function refusDecideurAbsence(
-  decideur: DecideurAbsence | null,
-  acteur: ActeurAbsence,
-  demandeurId: string,
-  nature: NatureAbsence
-): string | null {
+export function refusDecideurConge(decideur: DecideurConge | null, acteur: ActeurConge, demandeurId: string): string | null {
   if (!decideur) return "Cette demande n'attend plus de décision.";
   // Le décideur n'est jamais le demandeur, même s'il détient la permission RH.
-  if (acteur.id === demandeurId) return MESSAGE_PROPRE_DEMANDE_ABSENCE;
+  if (acteur.id === demandeurId) return MESSAGE_PROPRE_DEMANDE_CONGE;
   switch (decideur.type) {
     case "RESPONSABLE":
-      return acteur.id === decideur.responsableId ? null : MESSAGE_RESERVE_RESPONSABLE_ABSENCE;
+      return acteur.id === decideur.responsableId ? null : MESSAGE_RESERVE_RESPONSABLE_CONGE;
     case "RH":
-      return acteur.rolePermissions.includes(PERMISSION_ETAPE_RH_ABSENCE) ? null : MESSAGE_RESERVE_RH_ABSENCE;
+      return acteur.rolePermissions.includes(PERMISSION_ETAPE_RH_CONGE) ? null : MESSAGE_RESERVE_RH_CONGE;
     case "DG":
-      return acteur.rolePermissions.includes(PERMISSION_DG_ABSENCE) ? null : MESSAGE_RESERVE_DG_ABSENCE;
+      return acteur.rolePermissions.includes(PERMISSION_DG_CONGE) ? null : MESSAGE_RESERVE_DG_CONGE;
     case "AUCUN":
       return MESSAGE_AUCUN_DECIDEUR;
   }
@@ -226,7 +171,7 @@ export function refusDecideurAbsence(
 // Transitions
 // ---------------------------------------------------------------------------------------------------------------------
 
-export type ActionCircuitAbsence =
+export type ActionCircuitConge =
   | { type: "APPROUVER" }
   | { type: "REJETER"; motif: string }
   | { type: "DEMANDER_MODIFICATION"; motif: string }
@@ -234,38 +179,33 @@ export type ActionCircuitAbsence =
   | { type: "RESOUMETTRE"; premierStatut: "EN_ATTENTE_RESPONSABLE" | "EN_ATTENTE_RH" }
   | { type: "ANNULER"; motif: string };
 
-export interface ParamsTransitionAbsence {
-  nature: NatureAbsence;
-  statut: StatutCircuitAbsence;
-  action: ActionCircuitAbsence;
-  acteur: ActeurAbsence;
+export interface ParamsTransitionConge {
+  statut: StatutCircuitConge;
+  action: ActionCircuitConge;
+  acteur: ActeurConge;
   demandeurId: string;
-  /** `decideurPourStatutAbsence(statut, ctx)` calculé par l'appelant au moment de l'action. */
-  decideur: DecideurAbsence | null;
-  /**
-   * Le congé accordé a déjà commencé (sa date de début est atteinte).
-   * Seule la RH annule alors (`peutAnnulerApresDebut`).
-   */
+  /** `decideurPourStatutConge(statut, ctx)` calculé par l'appelant au moment de l'action. */
+  decideur: DecideurConge | null;
+  /** La date de début est atteinte (aujourd'hui >= début) : le demandeur n'annule plus (R9). */
   adebute?: boolean;
-  /** L'acteur porte `conges.annuler` (ou l'étape RH) : il annule même après le début. */
+  /** L'acteur porte `conges.annuler` : il annule à tout moment (R9). */
   peutAnnulerApresDebut?: boolean;
-  /** Permission exceptionnelle : une seule décision (celle du destinataire choisi), définitive. */
-  etapeUnique?: boolean;
 }
 
-export type EffetTransitionAbsence =
-  /** La demande est accordée : débiter le solde (congé) et créer les plages d'absence autorisée. */
-  | "ACCORDER"
-  /** Une absence accordée est annulée : recréditer le solde (congé) et supprimer les plages. */
-  | "DEFAIRE_ACCORD"
-  | "AUCUN";
+/**
+ * Effet sur les plages d'absence autorisée (R10) :
+ *   - VALIDER : la demande est accordée, les plages deviennent définitives ;
+ *   - SUPPRIMER_PLAGES : refus ou annulation (avant le début tout est supprimé, après le début à partir du lendemain : la base tranche) ;
+ *   - AUCUN : les plages provisoires restent (étape suivante, modification demandée, resoumission traitée à part).
+ */
+export type EffetTransitionConge = "VALIDER" | "SUPPRIMER_PLAGES" | "AUCUN";
 
-export type ResultatTransitionAbsence =
+export type ResultatTransitionConge =
   | {
       ok: true;
-      statut: StatutCircuitAbsence;
+      statut: StatutCircuitConge;
       motif?: string;
-      effet: EffetTransitionAbsence;
+      effet: EffetTransitionConge;
       /** L'approbation a été donnée par la RH/le DG à la place d'un responsable qui ne peut plus décider. */
       viaRepli?: boolean;
       /** L'étape franchie, pour l'historique et l'horodatage (`approuveParId` / `valideParId`). */
@@ -274,40 +214,43 @@ export type ResultatTransitionAbsence =
   | { ok: false; erreur: string };
 
 /** Espaces de début et de fin retirés, suites d'espaces réduites à un seul. */
-export function nettoyerMotifAbsence(motif: string): string {
+export function nettoyerMotifConge(motif: string): string {
   return motif.replace(/\s+/g, " ").trim();
 }
 
 function controlerMotif(motif: string, libelle: string): { ok: true; motif: string } | { ok: false; erreur: string } {
-  const propre = nettoyerMotifAbsence(motif);
-  if (propre.length < MOTIF_ABSENCE_MIN) {
-    return { ok: false, erreur: `${libelle} doit contenir au moins ${MOTIF_ABSENCE_MIN} caractères.` };
+  const propre = nettoyerMotifConge(motif);
+  if (propre.length < MOTIF_CONGE_MIN) {
+    return { ok: false, erreur: `${libelle} doit contenir au moins ${MOTIF_CONGE_MIN} caractères.` };
   }
-  if (propre.length > MOTIF_ABSENCE_MAX) {
-    return { ok: false, erreur: `${libelle} ne doit pas dépasser ${MOTIF_ABSENCE_MAX} caractères.` };
+  if (propre.length > MOTIF_CONGE_MAX) {
+    return { ok: false, erreur: `${libelle} ne doit pas dépasser ${MOTIF_CONGE_MAX} caractères.` };
   }
   return { ok: true, motif: propre };
 }
 
-const MESSAGE_STATUT: Partial<Record<StatutCircuitAbsence, string>> = {
+const MESSAGE_STATUT: Partial<Record<StatutCircuitConge, string>> = {
   REJETEE: "Cette demande a déjà été rejetée.",
   ANNULEE: "Cette demande a déjà été annulée.",
   MODIFICATION_DEMANDEE: "Cette demande attend une modification du demandeur.",
   VALIDEE: "Cette demande est déjà validée.",
 };
 
+export const MESSAGE_ANNULATION_NON_AUTORISEE = "Vous n'avez pas l'autorisation d'annuler cette demande.";
+export const MESSAGE_CONGE_COMMENCE = "Ce congé a déjà commencé : seule la RH peut l'annuler.";
+
 /**
  * Transitions permises (une seule fonction, utilisée par les écrans pour griser un bouton ET par le serveur pour
  * refuser) :
- *   - approuver : étape en cours → étape suivante ; responsable → EN_ATTENTE_RH ; RH ou DG → état final accordé
- *     (effet ACCORDER) ; la RH qui remplace un responsable empêché termine directement (`viaRepli`) ;
+ *   - approuver : étape en cours → étape suivante ; responsable → EN_ATTENTE_RH ; RH ou DG → VALIDEE (effet VALIDER) ;
+ *     la RH qui remplace un responsable empêché termine directement (`viaRepli`) ;
  *   - rejeter / demander une modification : par le décideur de l'étape en cours, motif obligatoire ;
  *   - resoumettre : le demandeur seul, depuis MODIFICATION_DEMANDEE ;
- *   - annuler : le demandeur tant que la demande est en cours ou accordée sans avoir commencé ; la RH
- *     (`peutAnnulerApresDebut`) aussi après le début ; jamais une demande rejetée ou annulée.
+ *   - annuler (R9) : le demandeur tant que la date de début n'est pas atteinte (demande en cours, à modifier ou validée) ;
+ *     un compte qui porte `conges.annuler` (`peutAnnulerApresDebut`) à tout moment ; jamais une demande rejetée ou annulée.
  */
-export function transitionAbsence(p: ParamsTransitionAbsence): ResultatTransitionAbsence {
-  const { nature, statut, action, acteur, demandeurId, decideur } = p;
+export function transitionConge(p: ParamsTransitionConge): ResultatTransitionConge {
+  const { statut, action, acteur, demandeurId, decideur } = p;
   const estDemandeur = acteur.id === demandeurId;
 
   if (action.type === "RESOUMETTRE") {
@@ -321,56 +264,61 @@ export function transitionAbsence(p: ParamsTransitionAbsence): ResultatTransitio
   if (action.type === "ANNULER") {
     const motif = controlerMotif(action.motif, "Le motif d'annulation");
     if (!motif.ok) return motif;
-    if (statut === "REJETEE" || statut === "ANNULEE") {
-      return { ok: false, erreur: MESSAGE_STATUT[statut]! };
+    if (statut === "REJETEE" || statut === "ANNULEE") return { ok: false, erreur: MESSAGE_STATUT[statut]! };
+    if (!p.peutAnnulerApresDebut) {
+      if (!estDemandeur) return { ok: false, erreur: MESSAGE_ANNULATION_NON_AUTORISEE };
+      if (p.adebute) return { ok: false, erreur: MESSAGE_CONGE_COMMENCE };
     }
-    const accordee = estStatutFinalAccorde(nature, statut);
-    if (!estDemandeur && !p.peutAnnulerApresDebut) {
-      return { ok: false, erreur: "Vous n'avez pas l'autorisation d'annuler cette demande." };
-    }
-    if (estDemandeur && accordee && p.adebute && !p.peutAnnulerApresDebut) {
-      return {
-        ok: false,
-        erreur: "Cette absence a déjà commencé : seule la RH peut l'annuler.",
-      };
-    }
-    return { ok: true, statut: "ANNULEE", motif: motif.motif, effet: accordee ? "DEFAIRE_ACCORD" : "AUCUN" };
+    return { ok: true, statut: "ANNULEE", motif: motif.motif, effet: "SUPPRIMER_PLAGES" };
   }
 
   // Approuver / rejeter / demander une modification : le décideur de l'étape en cours, et lui seul.
-  if (!STATUTS_ABSENCE_EN_ATTENTE.includes(statut)) {
+  if (!STATUTS_CONGE_EN_ATTENTE.includes(statut)) {
     return { ok: false, erreur: MESSAGE_STATUT[statut] ?? "Cette demande n'attend plus de décision." };
   }
-  const refus = refusDecideurAbsence(decideur, acteur, demandeurId, nature);
+  const refus = refusDecideurConge(decideur, acteur, demandeurId);
   if (refus) return { ok: false, erreur: refus };
   const viaRepli = decideur !== null && decideur.type !== "RESPONSABLE" && statut === "EN_ATTENTE_RESPONSABLE";
   const etape: "RESPONSABLE" | "RH" = decideur?.type === "RESPONSABLE" ? "RESPONSABLE" : "RH";
 
   if (action.type === "APPROUVER") {
-    // Circuit ordinaire : le responsable envoie à la RH. Décision unique : celui qui reçoit la demande l'accorde, c'est final.
-    if (decideur?.type === "RESPONSABLE" && !p.etapeUnique) {
-      return { ok: true, statut: "EN_ATTENTE_RH", effet: "AUCUN", etape };
-    }
-    return { ok: true, statut: statutFinalAbsence(nature), effet: "ACCORDER", etape, ...(viaRepli ? { viaRepli: true } : {}) };
+    // Le responsable envoie à la RH ; la RH (ou le DG en repli) valide.
+    if (decideur?.type === "RESPONSABLE") return { ok: true, statut: "EN_ATTENTE_RH", effet: "AUCUN", etape };
+    return { ok: true, statut: "VALIDEE", effet: "VALIDER", etape, ...(viaRepli ? { viaRepli: true } : {}) };
   }
 
   const motif = controlerMotif(action.motif, action.type === "REJETER" ? "Le motif du rejet" : "Le motif de la demande de modification");
   if (!motif.ok) return motif;
+  const rejet = action.type === "REJETER";
   return {
     ok: true,
-    statut: action.type === "REJETER" ? "REJETEE" : "MODIFICATION_DEMANDEE",
+    statut: rejet ? "REJETEE" : "MODIFICATION_DEMANDEE",
     motif: motif.motif,
-    effet: "AUCUN",
+    effet: rejet ? "SUPPRIMER_PLAGES" : "AUCUN",
     etape,
     ...(viaRepli ? { viaRepli: true } : {}),
   };
+}
+
+/**
+ * Observation facultative de la RH, jointe à sa décision : réservée à l'étape RH (un responsable n'en écrit pas), 500 caractères
+ * au plus, espaces nettoyés. `null` si vide.
+ */
+export function controlerObservationRH(brut: unknown, etape: "RESPONSABLE" | "RH" | undefined): { ok: true; texte: string | null } | { ok: false; erreur: string } {
+  if (brut === undefined || brut === null) return { ok: true, texte: null };
+  if (typeof brut !== "string") return { ok: false, erreur: "Observation invalide." };
+  const texte = nettoyerMotifConge(brut);
+  if (texte === "") return { ok: true, texte: null };
+  if (etape !== "RH") return { ok: false, erreur: "L'observation est réservée à la RH, au moment de sa décision." };
+  if (texte.length > OBSERVATION_RH_MAX) return { ok: false, erreur: `L'observation ne doit pas dépasser ${OBSERVATION_RH_MAX} caractères.` };
+  return { ok: true, texte };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Ce que chaque bouton peut faire (affichage grisé + phrase)
 // ---------------------------------------------------------------------------------------------------------------------
 
-export interface ActionsPossiblesAbsence {
+export interface ActionsPossiblesConge {
   approuver: string | null;
   rejeter: string | null;
   demanderModification: string | null;
@@ -382,9 +330,9 @@ export interface ActionsPossiblesAbsence {
  * Pour chaque action : `null` si l'acteur peut la faire maintenant, sinon la phrase du refus (la même que renverrait
  * le serveur). Les écrans grisent le bouton avec cette phrase au lieu de le masquer.
  */
-export function actionsPossiblesAbsence(p: Omit<ParamsTransitionAbsence, "action">): ActionsPossiblesAbsence {
-  const essayer = (action: ActionCircuitAbsence): string | null => {
-    const r = transitionAbsence({ ...p, action });
+export function actionsPossiblesConge(p: Omit<ParamsTransitionConge, "action">): ActionsPossiblesConge {
+  const essayer = (action: ActionCircuitConge): string | null => {
+    const r = transitionConge({ ...p, action });
     return r.ok ? null : r.erreur;
   };
   return {
@@ -404,8 +352,8 @@ export function actionsPossiblesAbsence(p: Omit<ParamsTransitionAbsence, "action
  * Comptes à prévenir quand une demande arrive à `statut` : le responsable désigné, ou la RH (tous ses comptes,
  * sauf le demandeur), ou à défaut le DG. Jamais le demandeur.
  */
-export function destinatairesEtapeAbsence(statut: StatutCircuitAbsence, ctx: ContexteCircuitAbsence): string[] {
-  const decideur = decideurPourStatutAbsence(statut, ctx);
+export function destinatairesEtapeConge(statut: StatutCircuitConge, ctx: ContexteCircuitConge): string[] {
+  const decideur = decideurPourStatutConge(statut, ctx);
   if (!decideur) return [];
   if (decideur.type === "RESPONSABLE") return [decideur.responsableId];
   const source = decideur.type === "RH" ? ctx.comptesRH : decideur.type === "DG" ? ctx.comptesDG : [];
@@ -416,7 +364,7 @@ export function destinatairesEtapeAbsence(statut: StatutCircuitAbsence, ctx: Con
 // Libellés et frise
 // ---------------------------------------------------------------------------------------------------------------------
 
-export const LIBELLE_STATUT_ABSENCE: Record<StatutCircuitAbsence, string> = {
+export const LIBELLE_STATUT_CONGE: Record<StatutCircuitConge, string> = {
   EN_ATTENTE_RESPONSABLE: "En attente du responsable",
   EN_ATTENTE_RH: "En attente de la RH",
   VALIDEE: "Validée",
@@ -425,24 +373,26 @@ export const LIBELLE_STATUT_ABSENCE: Record<StatutCircuitAbsence, string> = {
   MODIFICATION_DEMANDEE: "Modification demandée",
 };
 
+export const LIBELLE_NATURE_CONGE: Record<NatureConge, string> = {
+  CONGE: "Congé",
+  PERMISSION_EXCEPTIONNELLE: "Permission exceptionnelle",
+};
+
 /** Actions d'historique (`HistoriqueEntry.entity = "DemandeConge"`). */
-export const ACTION_HISTORIQUE_ABSENCE = {
+export const ACTION_HISTORIQUE_CONGE = {
   SOUMETTRE: "soumission",
   APPROUVER_RESPONSABLE: "approbation_responsable",
   ACCORDER: "accord_rh",
   ACCORDER_PAR_REPLI: "accord_par_repli",
-  /** Permission exceptionnelle : accordée par le responsable choisi (décision unique, sans étape RH). */
-  ACCORDER_PAR_RESPONSABLE: "accord_responsable",
   REJETER: "rejet",
   DEMANDER_MODIFICATION: "demande_modification",
   RESOUMETTRE: "resoumission",
   ANNULER: "annulation",
-  /** Congé accordé d'office par la RH (aucune demande du collaborateur, aucun circuit). */
-  CONGE_OFFICE: "conge_office",
-  AJUSTER_SOLDE: "ajustement_solde",
+  /** Congé enregistré par la RH pour le salarié (aucun circuit). */
+  SAISIE_RH: "saisie_rh",
+  /** Refus après le début : choix de compter ou non les jours déjà passés comme absences (R11). */
+  JOURS_PASSES: "jours_passes",
   RAPPEL: "rappel",
-  /** Observation de la RH / du responsable (à sa décision) ou du DG (à tout moment) : AJOUT SEUL, statut inchangé. */
-  OBSERVATION: "observation",
 } as const;
 
 export type EtatEtapeFrise = "faite" | "en_cours" | "a_venir" | "non_requise" | "interrompue";
@@ -457,18 +407,11 @@ export interface EtapeFrise {
  * Frise d'avancement : Dépôt → Responsable (ou « non requise ») → RH → Décision. Une demande rejetée, annulée ou en
  * attente de modification interrompt l'étape où elle se trouvait.
  */
-export function friseAbsence(params: {
-  nature: NatureAbsence;
-  statut: StatutCircuitAbsence;
-  etapeResponsableRequise: boolean;
-  /** Faux pour une permission exceptionnelle dont le destinataire est le responsable (la RH n'est pas une étape). */
-  etapeRHRequise?: boolean;
-}): EtapeFrise[] {
-  const { nature, statut, etapeResponsableRequise, etapeRHRequise = true } = params;
-  const accordee = estStatutFinalAccorde(nature, statut);
+export function friseConge(params: { statut: StatutCircuitConge; etapeResponsableRequise: boolean }): EtapeFrise[] {
+  const { statut, etapeResponsableRequise } = params;
+  const validee = statut === "VALIDEE";
   const interrompue = statut === "REJETEE" || statut === "ANNULEE" || statut === "MODIFICATION_DEMANDEE";
-  // Étape où la demande s'est arrêtée : sans trace d'approbation du responsable, on l'a arrêtée à la première étape applicable.
-  const position = statut === "EN_ATTENTE_RESPONSABLE" ? 1 : statut === "EN_ATTENTE_RH" ? 2 : accordee ? 3 : 0;
+  const position = statut === "EN_ATTENTE_RESPONSABLE" ? 1 : statut === "EN_ATTENTE_RH" ? 2 : validee ? 3 : 0;
 
   const etat = (index: number, requise = true): EtatEtapeFrise => {
     if (!requise) return "non_requise";
@@ -480,27 +423,23 @@ export function friseAbsence(params: {
   return [
     { cle: "DEPOT", libelle: "Dépôt", etat: "faite" },
     { cle: "RESPONSABLE", libelle: "Responsable du service", etat: etat(1, etapeResponsableRequise) },
-    { cle: "RH", libelle: "RH", etat: etat(2, etapeRHRequise) },
-    { cle: "DECISION", libelle: "Congé validé", etat: accordee ? "faite" : interrompue ? "interrompue" : "a_venir" },
+    { cle: "RH", libelle: "RH", etat: etat(2) },
+    { cle: "DECISION", libelle: "Congé validé", etat: validee ? "faite" : interrompue ? "interrompue" : "a_venir" },
   ];
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Qui peut consulter une demande (page de détail, pièces jointes)
+// Qui peut consulter une demande (page de détail)
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** Permissions de consultation de toutes les demandes d'une nature (RH, DG en lecture). */
-export const PERMISSIONS_CONSULTATION_ABSENCE: Record<NatureAbsence, readonly string[]> = {
-  // Le DG voit toutes les demandes sans `consulter_tous` (C3) : sa permission d'étape, non délégable, donc lue sur le rôle.
-  CONGE: ["conges.valider_rh", "conges.consulter_tous", PERMISSION_DG_ABSENCE],
-};
+/** Permissions de consultation de toutes les demandes (RH, DG en lecture). */
+export const PERMISSIONS_CONSULTATION_CONGE: readonly string[] = ["conges.valider_rh", "conges.consulter_tous"];
 
 /**
- * Le demandeur, le responsable ACTUEL de son service, les comptes RH de la nature et ceux qui consultent tout.
- * `permissions` : celles du compte (rôle et délégations : consulter n'engage pas d'argent).
+ * Le demandeur, le responsable ACTUEL de son service, les comptes RH et ceux qui consultent tout.
+ * `permissions` : celles du compte (rôle et délégations : consulter n'engage rien).
  */
-export function peutConsulterAbsence(p: {
-  nature: NatureAbsence;
+export function peutConsulterConge(p: {
   acteurId: string;
   demandeurId: string;
   responsableDuServiceId: string | null;
@@ -508,5 +447,5 @@ export function peutConsulterAbsence(p: {
 }): boolean {
   if (p.acteurId === p.demandeurId) return true;
   if (p.responsableDuServiceId !== null && p.responsableDuServiceId === p.acteurId) return true;
-  return PERMISSIONS_CONSULTATION_ABSENCE[p.nature].some((k) => p.permissions.includes(k));
+  return PERMISSIONS_CONSULTATION_CONGE.some((k) => p.permissions.includes(k));
 }
