@@ -47,7 +47,7 @@ export * from "./encSequence";
 export * from "./encAudit";
 export * from "./encParametres";
 export * from "./encPermissions";
-export * from "./congesDefauts";
+export * from "./congesPermissions";
 export * from "./congesCalcul";
 export * from "./circuitAbsence";
 export * from "./congesPieces";

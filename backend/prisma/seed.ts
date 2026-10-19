@@ -14,17 +14,14 @@ import {
   MODULE_CONGES_KEY,
   MODULE_CONGES_LABEL,
   PERMISSIONS_CONGES,
-  TYPES_CONGE_DEFAUT,
   permissionsCongePourCles,
-} from "../src/congesDefauts";
+} from "../src/congesPermissions";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
 const SALT_ROUNDS = 10;
 const TEST_PASSWORD = "password123";
-// Date d'embauche des comptes de test (Congés : exercice et ancienneté). Jamais déduite de `createdAt`.
-const DATE_EMBAUCHE_TEST = new Date("2024-01-15T00:00:00.000Z");
 
 async function main() {
   // Module Encaissements : une base mise en service ne se reseede JAMAIS (audit et séquences verrouillés par trigger).
@@ -44,12 +41,8 @@ async function main() {
   await prisma.notification.deleteMany();
   await prisma.feedback.deleteMany();
   await prisma.plageAbsenceAutorisee.deleteMany();
-  // Congés et permissions d'absence : enfants avant parents (les comptes sont supprimés plus bas).
-  await prisma.ajustementSolde.deleteMany();
-  await prisma.soldeConge.deleteMany();
-  await prisma.pieceJointeConge.deleteMany();
+  // Congés : les demandes avant les comptes (supprimés plus bas).
   await prisma.demandeConge.deleteMany();
-  await prisma.typeConge.deleteMany();
   await prisma.depenseLigne.deleteMany();
   await prisma.pieceJointe.deleteMany();
   await prisma.journalCaisse.deleteMany();
@@ -285,7 +278,7 @@ async function main() {
     // Module Encaissements (source unique : src/encPermissions.ts). La mise en service va au module technique « systeme ».
     ...ENC_PERMISSIONS.map((p) => ({ key: p.key, label: p.label, moduleId: moduleEncaissements.id })),
     { ...ENC_PERMISSION_MISE_EN_SERVICE, moduleId: moduleSysteme.id },
-    // Congés (source unique : src/congesDefauts.ts, aussi posées par la migration).
+    // Congés (source unique : src/congesPermissions.ts, aussi posées par la migration).
     ...PERMISSIONS_CONGES.map((p) => ({
       key: p.key,
       label: p.label,
@@ -416,12 +409,10 @@ async function main() {
   };
 
   // Congés : même règle que la migration (permission sœur), jamais un nom de rôle.
-  // Le rôle Admin (`estAdmin`) ne reçoit que les droits de DEMANDE (soumettre), comme la migration : jamais l'étape RH, les soldes
-  // ni le paramétrage (relecture du 2026-10-16). Dans ce seed il ne porte aucune permission sœur, donc n'en reçoit aucune.
-  const DROITS_DEMANDE = new Set(["conges.soumettre"]);
+  // Le rôle Admin (`estAdmin`) ne reçoit que le droit de DEMANDE (soumettre), comme la migration : jamais l'étape RH, l'annulation
+  // ni la consultation de tout. Dans ce seed il ne porte aucune permission sœur, donc n'en reçoit aucune.
   for (const [roleId, keys] of Object.entries(rolePermissionMap)) {
-    const derivees = permissionsCongePourCles(keys);
-    rolePermissionMap[roleId] = [...keys, ...(roleId === roleAdmin.id ? derivees.filter((k) => DROITS_DEMANDE.has(k)) : derivees)];
+    rolePermissionMap[roleId] = [...keys, ...permissionsCongePourCles(keys, roleId === roleAdmin.id)];
   }
 
   let rolePermissionCount = 0;
@@ -527,7 +518,6 @@ async function main() {
           roleId: u.roleId,
           serviceId: u.serviceId,
           isActive: true,
-          dateEmbauche: DATE_EMBAUCHE_TEST,
         },
         create: {
           fullName: u.fullName,
@@ -536,7 +526,6 @@ async function main() {
           roleId: u.roleId,
           serviceId: u.serviceId,
           isActive: true,
-          dateEmbauche: DATE_EMBAUCHE_TEST,
         },
       })
     )
@@ -637,10 +626,6 @@ async function main() {
   console.log(
     `Paramétrage horaire créé : ${parametrageHoraire.heureDebutMatin}-${parametrageHoraire.heureFinMatin} / ${parametrageHoraire.heureDebutApresMidi}-${parametrageHoraire.heureFinApresMidi}`
   );
-
-  // Congés : types de départ (source unique : src/congesDefauts.ts, aussi posés par la migration).
-  await prisma.typeConge.createMany({ data: TYPES_CONGE_DEFAUT.map((t) => ({ ...t })) });
-  console.log(`Types de congé : ${TYPES_CONGE_DEFAUT.length}`);
 
   // Module Encaissements : paramètres par défaut (source unique : src/encParametres.ts, aussi posés par la migration).
   await prisma.encParametre.createMany({ data: ENC_PARAMETRES.map((p) => ({ cle: p.cle, valeur: p.defaut })) });

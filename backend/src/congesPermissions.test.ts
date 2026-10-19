@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { PERMISSIONS_DECISION_NON_DELEGABLES } from "./circuitDemande";
-import { MODULE_CONGES_KEY, PERMISSIONS_CONGES, TYPES_CONGE_DEFAUT, permissionsCongePourCles } from "./congesDefauts";
+import { MODULE_CONGES_KEY, PERMISSIONS_CONGES, permissionsCongePourCles } from "./congesPermissions";
 
 const sql = readFileSync(
   path.resolve(__dirname, "../prisma/migrations/20261021090000_conges_permissions_absence/migration.sql"),
@@ -31,11 +31,11 @@ describe("Congés — source unique et migration synchronisées", () => {
     expect(MODULE_CONGES_KEY).toBe("conges");
   });
 
-  it("les types de congé, y compris exceptionnels, figurent dans la migration", () => {
-    for (const t of TYPES_CONGE_DEFAUT) {
-      const ligne = `(${q(t.code)}, ${q(t.label)}, '${t.categorie}'::"CategorieConge", ${t.nbJoursDefaut}, '${t.decompteType}'::"DecompteType", ${t.justificatifObligatoire}, ${t.nonDeductibleSolde}, ${t.ancienneteMinimumMois})`;
-      expect(sql, `type de congé absent ou différent : ${t.code}`).toContain(ligne);
-    }
+  it("la migration ne garde ni solde, ni type, ni permission d'absence, ni date d'embauche", () => {
+    const code = sql.replace(/^--.*$/gm, "");
+    expect(code).not.toMatch(/TypeConge|SoldeConge|AjustementSolde|PieceJointeConge|TypePermission|DemandePermission|ObservationAbsence|dateEmbauche/);
+    expect(code).not.toContain("absences.");
+    expect(PERMISSIONS_CONGES.map((p) => p.key)).toEqual(["conges.soumettre", "conges.valider_rh", "conges.annuler", "conges.consulter_tous"]);
   });
 
   it("aucune attribution par nom de rôle dans la migration", () => {
@@ -69,17 +69,18 @@ describe("permissionsCongePourCles — la règle de la permission sœur", () => 
     expect(permissionsCongePourCles(["pointage.pointer", "pointage.consulter_historique"])).toEqual(["conges.soumettre"]);
   });
 
-  it("la RH (corriger_pointage) reçoit l'étape RH, les soldes et le paramétrage", () => {
+  it("la RH (corriger_pointage) reçoit l'étape RH, l'annulation et la consultation, pas la demande", () => {
     const cles = permissionsCongePourCles(["pointage.corriger_pointage"]);
-    expect(cles).toEqual(expect.arrayContaining(["conges.valider_rh", "conges.gerer_soldes", "conges.parametrer_types"]));
-    expect(cles).not.toContain("conges.soumettre");
+    expect(cles).toEqual(["conges.valider_rh", "conges.annuler", "conges.consulter_tous"]);
   });
 
-  it("le DG (decider_dg) demande et consulte, mais ne reçoit jamais l'étape RH", () => {
+  it("le DG (decider_dg) demande et consulte tout, mais ne reçoit jamais l'étape RH ni l'annulation", () => {
     const cles = permissionsCongePourCles(["treso.decider_dg"]);
-    expect(cles).toEqual(expect.arrayContaining(["conges.soumettre"]));
-    expect(cles.some((c) => c.endsWith(".voir_dashboard") || c.endsWith(".voir_reporting"))).toBe(false);
-    expect(cles).not.toContain("conges.valider_rh");
+    expect(cles).toEqual(["conges.soumettre", "conges.consulter_tous"]);
+  });
+
+  it("un rôle estAdmin ne reçoit que le droit de demander", () => {
+    expect(permissionsCongePourCles(["pointage.pointer", "pointage.corriger_pointage", "treso.decider_dg"], true)).toEqual(["conges.soumettre"]);
   });
 
   it("un rôle sans permission sœur ne reçoit rien", () => {

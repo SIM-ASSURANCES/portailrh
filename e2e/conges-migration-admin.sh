@@ -51,23 +51,23 @@ SQL
 
 $PSQL -d $DBN < "$MIGS/$CIBLE/migration.sql" >/dev/null
 
-# Permissions congés/absences d'un rôle (clés triées, séparées par des virgules).
-cles() { $PSQL -d $DBN -c "SELECT coalesce(string_agg(p.key, ',' ORDER BY p.key), '') FROM \"RolePermission\" rp JOIN \"Permission\" p ON p.id = rp.\"permissionId\" JOIN \"Role\" ro ON ro.id = rp.\"roleId\" WHERE ro.name = '$1' AND (p.key LIKE 'conges.%' OR p.key LIKE 'absences.%')"; }
+# Permissions congés d'un rôle (clés triées, séparées par des virgules).
+cles() { $PSQL -d $DBN -c "SELECT coalesce(string_agg(p.key, ',' ORDER BY p.key), '') FROM \"RolePermission\" rp JOIN \"Permission\" p ON p.id = rp.\"permissionId\" JOIN \"Role\" ro ON ro.id = rp.\"roleId\" WHERE ro.name = '$1' AND p.key LIKE 'conges.%'"; }
 RES=0
 verifier() { if [ "$2" = "$3" ]; then echo "OK  $1"; else echo "KO  $1 — attendu « $3 », obtenu « $2 »"; RES=1; fi; }
 
-verifier "Admin (estAdmin) : soumettre seulement, aucun droit RH ni de gestion" "$(cles Admin)" "absences.soumettre,conges.soumettre"
-verifier "RH : toutes les permissions RH" "$(cles RH)" "absences.annuler,absences.consulter_tous,absences.parametrer,absences.soumettre,absences.valider_rh,conges.annuler,conges.consulter_tous,conges.gerer_soldes,conges.parametrer_types,conges.soumettre,conges.valider_rh"
-verifier "DG : soumettre seulement" "$(cles DG)" "absences.soumettre,conges.soumettre"
-verifier "Collaborateur : soumettre seulement" "$(cles Collaborateur)" "absences.soumettre,conges.soumettre"
-verifier "Finance : soumettre seulement" "$(cles Finance)" "absences.soumettre,conges.soumettre"
-verifier "Assistant Finance : soumettre seulement" "$(cles "Assistant Finance")" "absences.soumettre,conges.soumettre"
+verifier "Admin (estAdmin) : soumettre seulement, aucun droit RH ni de gestion" "$(cles Admin)" "conges.soumettre"
+verifier "RH : valider, annuler, consulter tout, et demander (elle pointe)" "$(cles RH)" "conges.annuler,conges.consulter_tous,conges.soumettre,conges.valider_rh"
+verifier "DG : soumettre et consulter tout, jamais valider_rh" "$(cles DG)" "conges.consulter_tous,conges.soumettre"
+verifier "Collaborateur : soumettre seulement" "$(cles Collaborateur)" "conges.soumettre"
+verifier "Finance : soumettre seulement" "$(cles Finance)" "conges.soumettre"
+verifier "Assistant Finance : soumettre seulement" "$(cles "Assistant Finance")" "conges.soumettre"
 
 AVANT=$($PSQL -d $DBN -c 'SELECT count(*) FROM "RolePermission"')
 $PSQL -d $DBN < "$MIGS/$CIBLE/migration.sql" >/dev/null
 APRES=$($PSQL -d $DBN -c 'SELECT count(*) FROM "RolePermission"')
 verifier "Second passage de la migration : aucun effet" "$APRES" "$AVANT"
-verifier "Après le second passage, l'Admin n'a toujours que soumettre" "$(cles Admin)" "absences.soumettre,conges.soumettre"
+verifier "Après le second passage, l'Admin n'a toujours que soumettre" "$(cles Admin)" "conges.soumettre"
 
 docker exec pg-e2e psql -U postgres -q -c "DROP DATABASE $DBN" >/dev/null
 exit $RES

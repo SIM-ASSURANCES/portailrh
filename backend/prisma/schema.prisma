@@ -48,7 +48,6 @@ model User {
   photoUrl               String?   @default("/default-avatar.svg")
   /// Date d'embauche (Congés, 2026-10-15) : exercice de congé et ancienneté. Jamais de repli silencieux sur
   /// `createdAt` (tous les comptes ont été créés en septembre 2026) : la RH la renseigne.
-  dateEmbauche           DateTime? @db.Date
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
@@ -147,18 +146,12 @@ model User {
   encEncaissementsNonRecus  EncEncaissement[] @relation("EncEncaissementNonRecuPar")
   encSignalementsTraites EncSignalement[] @relation("EncSignalementTraitePar")
 
-  // Congés et permissions d'absence
+  // Congés
   congesDemandes                DemandeConge[]      @relation("CongeDemandeur")
+  congesCrees                   DemandeConge[]      @relation("CongeCreateur")
   congesApprouves               DemandeConge[]      @relation("CongeApprobateur")
   congesValides                 DemandeConge[]      @relation("CongeValidateur")
   congesAnnules                 DemandeConge[]      @relation("CongeAnnulateur")
-  congesSoldes                  SoldeConge[]        @relation("CongeSolde")
-  congesAjustements             AjustementSolde[]   @relation("CongeAjustement")
-  observationsAbsence           ObservationAbsence[] @relation("ObservationAbsenceAuteur")
-  absencesPermissionsDemandees  DemandePermission[] @relation("PermissionAbsenceDemandeur")
-  absencesPermissionsApprouvees DemandePermission[] @relation("PermissionAbsenceApprobateur")
-  absencesPermissionsValidees   DemandePermission[] @relation("PermissionAbsenceValidateur")
-  absencesPermissionsAnnulees   DemandePermission[] @relation("PermissionAbsenceAnnulateur")
 }
 
 model Role {
@@ -1326,39 +1319,32 @@ model PlageAbsenceAutorisee {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
-  /// Demande qui a créé la plage (jamais les deux à la fois) : l'annulation supprime par ces clés, jamais par
-  /// plage de dates ni par le texte de la description. Nulles pour une plage créée autrement.
+  /// Demande de congé qui a créé la plage : l'annulation supprime par cette clé, jamais par plage de dates ni par le texte de la
+  /// description. Nulle pour une plage créée autrement.
   demandeCongeId      String?
   demandeConge        DemandeConge?      @relation(fields: [demandeCongeId], references: [id], onDelete: Cascade)
-  demandePermissionId String?
-  demandePermission   DemandePermission? @relation(fields: [demandePermissionId], references: [id], onDelete: Cascade)
+
+  /// Plage posée dès la soumission, avant décision : la journée n'est pas comptée absente, mais le congé n'est pas encore validé.
+  provisoire Boolean @default(false)
 
   createdAt DateTime @default(now())
 
   @@index([userId, date])
   @@index([demandeCongeId])
-  @@index([demandePermissionId])
 }
 
 // ============================================================
-// CONGÉS ET PERMISSIONS D'ABSENCE (fusion de portailRHv2, 2026-10-15)
+// CONGÉS (module simplifié, 2026-10-19)
 // ============================================================
 //
-// Voir docs/PLAN_FUSION_CONGES_V2.md. Circuit : responsable du service d'abord (Service.responsableId, aucune
-// permission), puis la RH (rôle porteur de `conges.valider_rh` / `absences.valider_rh`) ; repli RH puis DG quand
-// l'étape n'est pas possible (moteur pur backend/src/circuitAbsence.ts). Seul point de contact avec le Pointage :
-// `PlageAbsenceAutorisee`.
+// Circuit : responsable du service d'abord (Service.responsableId, aucune permission), puis la RH (rôle porteur de
+// `conges.valider_rh`) ; repli DG si la RH est le demandeur (moteur pur backend/src/circuitConge.ts). Seul point de
+// contact avec le Pointage : `PlageAbsenceAutorisee`.
 
-enum CategorieConge {
-  /// Congé annuel, maladie, sans solde.
-  CONGE_STANDARD
-  /// Article 13 : permission exceptionnelle, non déductible du congé annuel.
+/// Nature d'une demande : un congé, ou une permission exceptionnelle (mariage, décès, naissance…). Même circuit.
+enum NatureConge {
+  CONGE
   PERMISSION_EXCEPTIONNELLE
-}
-
-enum DecompteType {
-  CALENDAIRE
-  OUVRABLE
 }
 
 enum StatutDemandeConge {
@@ -1370,126 +1356,52 @@ enum StatutDemandeConge {
   MODIFICATION_DEMANDEE
 }
 
-enum StatutDemandePermission {
-  EN_ATTENTE_RESPONSABLE
-  EN_ATTENTE_RH
-  APPROUVEE
-  REJETEE
-  ANNULEE
-  CONSOMMEE
-}
-
-model TypeConge {
-  id                      String         @id @default(cuid())
-  label                   String         @unique
-  code                    String         @unique
-  categorie               CategorieConge @default(CONGE_STANDARD)
-  /// Jours accordés par défaut.
-  nbJoursDefaut           Int
-  decompteType            DecompteType   @default(OUVRABLE)
-  justificatifObligatoire Boolean        @default(false)
-  /// Vrai : ce type n'est PAS déduit du solde de congé annuel (permissions exceptionnelles, article 13).
-  nonDeductibleSolde      Boolean        @default(false)
-  /// Ancienneté minimale requise, en mois (article 13 : 6 mois).
-  ancienneteMinimumMois   Int            @default(0)
-  isActive                Boolean        @default(true)
-  createdAt               DateTime       @default(now())
-  updatedAt               DateTime       @updatedAt
-
-  soldes   SoldeConge[]
-  demandes DemandeConge[]
-}
-
-model SoldeConge {
-  id                String   @id @default(cuid())
-  /// Année de début de l'exercice.
-  exercice          Int
-  soldeInitial      Int
-  soldeRestant      Int
-  dateDebutExercice DateTime
-  dateFinExercice   DateTime
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  userId      String
-  user        User      @relation("CongeSolde", fields: [userId], references: [id])
-  typeCongeId String
-  typeConge   TypeConge @relation(fields: [typeCongeId], references: [id])
-
-  ajustements AjustementSolde[]
-  demandes    DemandeConge[]
-
-  @@unique([userId, typeCongeId, exercice])
-  @@index([userId])
-}
-
-model AjustementSolde {
-  id        String   @id @default(cuid())
-  /// Positif = ajout, négatif = retrait.
-  montant   Int
-  motif     String
-  createdAt DateTime @default(now())
-
-  soldeCongeId String
-  soldeConge   SoldeConge @relation(fields: [soldeCongeId], references: [id])
-
-  effectueParId String
-  effectuePar   User   @relation("CongeAjustement", fields: [effectueParId], references: [id])
-
-  @@index([soldeCongeId])
-}
-
+/// Demande de congé (module simplifié, 2026-10-19) : aucun solde, aucun type, aucune pièce jointe. Circuit : responsable du
+/// service puis RH (backend/src/circuitConge.ts). Les jours demandés sont couverts par des plages d'absence autorisée.
 model DemandeConge {
-  id                String             @id @default(cuid())
+  id                        String             @id @default(cuid())
   /// CNG-AAAAMM-NNNN, calculée sous verrou consultatif dans la transaction de création.
-  reference         String             @unique
-  dateDebut         DateTime           @db.Date
-  dateFin           DateTime           @db.Date
-  /// Nombre de jours décomptés (fériés et week-ends exclus si le type est ouvrable).
-  nbJours           Int
-  motif             String
-  interimaire       String?
-  statut            StatutDemandeConge @default(EN_ATTENTE_RESPONSABLE)
-  motifRejet        String?
-  motifAnnulation   String?
-  /// Demandé à la RH de modifier la demande (statut MODIFICATION_DEMANDEE) : motif de cette demande.
-  motifModification String?
+  reference                 String             @unique
+  nature                    NatureConge
+  motif                     String
+  dateDebut                 DateTime           @db.Date
+  dateFin                   DateTime           @db.Date
+  /// Jours du lundi au vendredi hors `JourFerie` : information seulement.
+  nbJoursOuvres             Int
+  statut                    StatutDemandeConge @default(EN_ATTENTE_RESPONSABLE)
+  /// Étape du responsable requise, fixée à la soumission (affichage « non requise » dans la frise).
+  etapeResponsableRequise   Boolean            @default(true)
+  /// Congé enregistré par la RH pour le salarié (statut VALIDEE d'emblée).
+  saisieParRH               Boolean            @default(false)
+  motifRejet                String?
+  motifModification         String?
+  motifAnnulation           String?
+  /// Observation facultative de la RH, jointe à sa décision.
+  observationRH             String?
+  /// Refus après la date de début : les jours déjà passés et non pointés ont-ils été comptés comme absences ? (`null` : sans objet)
+  joursPassesComptesAbsents Boolean?
 
-  userId      String
-  user        User      @relation("CongeDemandeur", fields: [userId], references: [id])
-  typeCongeId String
-  typeConge   TypeConge @relation(fields: [typeCongeId], references: [id])
-
-  /// Étape du responsable de service requise, fixée à la soumission (affichage « non requise » dans la frise).
-  etapeResponsableRequise Boolean @default(true)
-  /// Permission exceptionnelle (C4) : celui que le demandeur a choisi pour la décision UNIQUE. `null` pour un congé ordinaire
-  /// (circuit responsable puis RH).
-  destinataire DestinataireDecisionConge?
-  /// Solde débité à la validation (0 pour un type non déductible) : sert à recréditer exactement à l'annulation.
-  joursDebites            Int     @default(0)
-  /// Solde (exercice) réellement débité à la validation : recrédité à l'annulation, même si la date d'embauche change ensuite.
-  soldeCongeId            String?
-  soldeConge              SoldeConge? @relation(fields: [soldeCongeId], references: [id])
-
+  userId        String
+  user          User      @relation("CongeDemandeur", fields: [userId], references: [id])
+  /// = userId, sauf saisie par la RH.
+  creeParId     String
+  creePar       User      @relation("CongeCreateur", fields: [creeParId], references: [id])
   approuveParId String?
   approuvePar   User?     @relation("CongeApprobateur", fields: [approuveParId], references: [id])
   approuveAt    DateTime?
-
-  valideParId String?
-  validePar   User?     @relation("CongeValidateur", fields: [valideParId], references: [id])
-  valideAt    DateTime?
-
-  annuleParId String?
-  annulePar   User?     @relation("CongeAnnulateur", fields: [annuleParId], references: [id])
-  annuleAt    DateTime?
+  /// Auteur de la décision RH (validation ou refus à l'étape RH).
+  valideParId   String?
+  validePar     User?     @relation("CongeValidateur", fields: [valideParId], references: [id])
+  valideAt      DateTime?
+  annuleParId   String?
+  annulePar     User?     @relation("CongeAnnulateur", fields: [annuleParId], references: [id])
+  annuleAt      DateTime?
 
   /// Début de l'étape en cours et dernier rappel envoyé (rappel quotidien, planificateur).
   etapeDepuis     DateTime  @default(now())
   dernierRappelAt DateTime?
 
-  piecesJointes PieceJointeConge[]
-  plages        PlageAbsenceAutorisee[]
-  observations  ObservationAbsence[]
+  plages PlageAbsenceAutorisee[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1497,86 +1409,6 @@ model DemandeConge {
   @@index([userId])
   @@index([statut])
   @@index([dateDebut, dateFin])
-  @@index([soldeCongeId])
-}
-
-model PieceJointeConge {
-  id             String       @id @default(cuid())
-  /// Nom de fichier produit par la route d'upload (UUID + extension), JAMAIS une valeur libre du client.
-  url            String
-  nomFichier     String?
-  demandeCongeId String
-  demandeConge   DemandeConge @relation(fields: [demandeCongeId], references: [id], onDelete: Cascade)
-  createdAt      DateTime     @default(now())
-
-  @@index([demandeCongeId])
-}
-
-model TypePermission {
-  id                     String   @id @default(cuid())
-  label                  String   @unique
-  /// Durée maximale autorisée, en heures.
-  dureeMaxHeures         Int
-  /// Nombre maximal par mois (configurable par la RH).
-  plafondMensuel         Int
-  justificatifRecommande Boolean  @default(false)
-  isActive               Boolean  @default(true)
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
-
-  demandes DemandePermission[]
-}
-
-model DemandePermission {
-  id                    String                  @id @default(cuid())
-  /// PRM-AAAAMM-NNNN, calculée sous verrou consultatif dans la transaction de création.
-  reference             String                  @unique
-  date                  DateTime                @db.Date
-  /// « HH:MM ».
-  heureDepart           String
-  heureRetourPrevue     String
-  /// Renseignée au retour (marque la permission CONSOMMEE).
-  heureRetourReelle     String?
-  dureeMinutes          Int
-  dureeReelleMinutes    Int?
-  motif                 String
-  statut                StatutDemandePermission @default(EN_ATTENTE_RESPONSABLE)
-  motifRejet            String?
-  motifAnnulation       String?
-  /// Motif quand la RH dépasse le plafond mensuel.
-  motifExceptionPlafond String?
-
-  userId           String
-  user             User           @relation("PermissionAbsenceDemandeur", fields: [userId], references: [id])
-  typePermissionId String
-  typePermission   TypePermission @relation(fields: [typePermissionId], references: [id])
-
-  etapeResponsableRequise Boolean @default(true)
-
-  approuveParId String?
-  approuvePar   User?     @relation("PermissionAbsenceApprobateur", fields: [approuveParId], references: [id])
-  approuveAt    DateTime?
-
-  valideParId String?
-  validePar   User?     @relation("PermissionAbsenceValidateur", fields: [valideParId], references: [id])
-  valideAt    DateTime?
-
-  annuleParId String?
-  annulePar   User?     @relation("PermissionAbsenceAnnulateur", fields: [annuleParId], references: [id])
-  annuleAt    DateTime?
-
-  etapeDepuis     DateTime  @default(now())
-  dernierRappelAt DateTime?
-
-  plages PlageAbsenceAutorisee[]
-  observations ObservationAbsence[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([userId])
-  @@index([date])
-  @@index([statut])
 }
 
 // ============================================================
@@ -2342,42 +2174,4 @@ model PointageMiseEnService {
   misEnServiceAt DateTime @default(now())
   parId        String
   par          User     @relation(fields: [parId], references: [id])
-}
-
-/// Étape où une observation a été faite sur une demande de congé ou de permission d'absence.
-enum EtapeObservationAbsence {
-  RESPONSABLE
-  RH
-  DG
-}
-
-/// Observation sur une demande de congé OU de permission d'absence (jamais les deux). AJOUT SEUL : aucune modification,
-/// aucune suppression directe (déclencheur en base ; seule la suppression en cascade de la demande est admise).
-/// La RH (et le responsable) l'ajoute au moment de sa décision ; le DG à tout moment, sans changer le statut.
-model ObservationAbsence {
-  id String @id @default(cuid())
-
-  demandeCongeId String?
-  demandeConge   DemandeConge? @relation(fields: [demandeCongeId], references: [id], onDelete: Cascade)
-
-  demandePermissionId String?
-  demandePermission   DemandePermission? @relation(fields: [demandePermissionId], references: [id], onDelete: Cascade)
-
-  auteurId String
-  auteur   User   @relation("ObservationAbsenceAuteur", fields: [auteurId], references: [id])
-
-  etape EtapeObservationAbsence
-  /// 1 à 500 caractères (contrainte en base).
-  texte String
-
-  createdAt DateTime @default(now())
-
-  @@index([demandeCongeId, createdAt])
-  @@index([demandePermissionId, createdAt])
-}
-
-/// Qui valide une permission exceptionnelle (mariage, décès, naissance…) : une seule décision, définitive.
-enum DestinataireDecisionConge {
-  RESPONSABLE
-  RH
 }
