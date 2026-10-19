@@ -5,17 +5,18 @@ import { toast } from "sonner";
 
 import { Button, Input } from "@/components/ui";
 
-import { deciderParametragesBudgetAction } from "./actions";
+import { deciderBudgetsCategoriesAction, deciderSeuilsCaisseAction } from "./actions";
 
-/** Le DG valide ou refuse (motif obligatoire) UN paramétrage de budget soumis par la Finance (décision seule ; voir `ParametragesEnAttente` pour le lot). */
-export function DecisionParametrage({ id, desactive, raison }: { id: string; desactive?: boolean; raison?: string }) {
+/** Le DG valide ou refuse (motif obligatoire) UN paramétrage de budget soumis par la Finance (décision seule ; voir `ParametragesEnAttente` pour le lot). L'action appelée dépend de la section (lot J quater). */
+export function DecisionParametrage({ id, portee, desactive, raison }: { id: string; portee: "GLOBAL" | "CATEGORIE"; desactive?: boolean; raison?: string }) {
   const [refus, setRefus] = useState(false);
   const [motif, setMotif] = useState("");
   const [isPending, startTransition] = useTransition();
 
   function decider(valider: boolean) {
     startTransition(async () => {
-      const r = await deciderParametragesBudgetAction([{ id }], valider, valider ? undefined : motif);
+      const decideur = portee === "GLOBAL" ? deciderSeuilsCaisseAction : deciderBudgetsCategoriesAction;
+      const r = await decideur([{ id }], valider, valider ? undefined : motif);
       if (r.status === "success") toast.success(r.message);
       else toast.error(r.message);
     });

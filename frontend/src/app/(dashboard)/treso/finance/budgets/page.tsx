@@ -23,7 +23,8 @@ import {
 
 import { CategorisationObligatoireDate } from "./CategorisationObligatoireDate";
 import { ConfirmerDepassement } from "./ConfirmerDepassement";
-import { ParametrageBudgetForm } from "./ParametrageBudgetForm";
+import { ParametrageCaisseForm } from "./ParametrageCaisseForm";
+import { ParametrageCategoriesForm } from "./ParametrageCategoriesForm";
 import { ParametragesEnAttente } from "./ParametragesEnAttente";
 
 const fcfa = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`;
@@ -31,13 +32,16 @@ const fr = (d: Date) => d.toLocaleDateString("fr-FR", { timeZone: "UTC" });
 const VARIANTE_STATUT: Record<StatutParametrageBudget, BadgeVariant> = { EN_ATTENTE: "warning", VALIDE: "success", REFUSE: "danger" };
 
 /**
- * Budgets (lot J, 2026-10-19 ; lot J ter, 2026-10-20) — deux onglets :
+ * Budgets (lot J, 2026-10-19 ; lot J ter, 2026-10-20 ; lot J quater) — deux onglets :
  *
- * **Budgets** — la Finance (`treso.modifier_budget_categorie`) paramètre les budgets de catégorie (montant, date d'effet, seuils) et
- * les SEUILS du solde de caisse (le budget global n'est plus un montant saisi : c'est le solde de caisse réel), seul ou en lot ; le
- * DG (`treso.valider_budget`) valide ou refuse seul ou en lot (motif au refus) — un paramétrage n'est utilisable qu'une fois validé et
- * ne modifie jamais l'ancien. Le DG (`treso.decider_dg`) confirme aussi ici les dépassements du seuil rouge que la Finance lui demande.
- * Tout autre compte de l'espace Finance (`treso.voir_dashboard_finance`) consulte.
+ * **Budgets** — DEUX sections séparées, sans mélange (lot J quater), chacune avec son tableau, son formulaire, ses actions
+ * (soumettre, valider, refuser — seul ou en lot), sa notification et son historique :
+ *   - « Budget de caisse » : le solde de caisse réel (jamais un montant saisi) et ses SEUILS (FCFA, orange puis rouge, date d'effet) ;
+ *   - « Budgets par catégorie » : une ligne par catégorie (budget en vigueur, consommé, réservé, reste, seuils, statut, alerte).
+ * La Finance (`treso.modifier_budget_categorie`) paramètre, le DG (`treso.valider_budget`) valide ou refuse (motif au refus) — un
+ * paramétrage n'est utilisable qu'une fois validé et ne modifie jamais l'ancien. Le DG (`treso.decider_dg`) confirme aussi ici les
+ * dépassements du seuil rouge que la Finance lui demande (bloc commun aux deux sections, en tête de page). Tout autre compte de
+ * l'espace Finance (`treso.voir_dashboard_finance`) consulte.
  *
  * **Catégories** — ancienne page `/treso/finance/categories` (Admin ou `treso.gerer_categories`), fusionnée ici sans perdre aucune
  * fonction : règle « catégorisation obligatoire à partir d'une date » (lot I), création de catégorie, liste avec création d'objet,
@@ -63,7 +67,7 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
     <div className="mx-auto max-w-5xl space-y-8 px-6 py-10">
       <PageHeader
         title="Budgets"
-        description="Budget global (solde de caisse) et budgets par catégorie : seuils et montants paramétrés par la Finance, validés par le DG, avec date d'effet. La gestion des catégories se trouve dans l'onglet « Catégories »."
+        description="Budget de caisse (solde réel et seuils d'alerte) et budgets par catégorie : deux sections distinctes, paramétrées par la Finance, validées par le DG, avec date d'effet. La gestion des catégories se trouve dans l'onglet « Catégories »."
       />
 
       {peutVoirBudgets && peutGererCategories ? (
@@ -163,6 +167,20 @@ async function OngletCategories({ session }: { session: SessionBudget }) {
   );
 }
 
+type ParametrageListe = Awaited<ReturnType<typeof chargerParametragesSection>>[number];
+
+/** Paramétrages d'UNE section, du plus récent au plus ancien (le tableau, la liste « en attente » et l'historique n'y mélangent jamais l'autre). */
+function chargerParametragesSection(portee: "GLOBAL" | "CATEGORIE") {
+  return prisma.budgetParametrage.findMany({
+    where: { portee },
+    orderBy: [{ soumisAt: "desc" }],
+    take: 100,
+    include: { categorie: { select: { label: true } }, soumisPar: { select: { fullName: true } }, decidePar: { select: { fullName: true } } },
+  });
+}
+
+const TITRE_ATTENTE: Record<string, string> = { GLOBAL: "Seuils du solde de caisse" };
+
 async function OngletBudgets({
   session,
   peutParametrer,
@@ -174,14 +192,16 @@ async function OngletBudgets({
   peutValider: boolean;
   peutConfirmer: boolean;
 }) {
-  const [contexte, enVigueur, categories, parametrages, depassements] = await Promise.all([
+  const [contexte, enVigueur, parametragesCaisse, parametragesCategories, dernierParCategorie, depassements] = await Promise.all([
     chargerContexteBudget(),
     getBudgetsCategoriesEnVigueur(),
-    prisma.categorie.findMany({ where: { isActive: true }, select: { id: true, label: true }, orderBy: { label: "asc" } }),
+    chargerParametragesSection("GLOBAL"),
+    chargerParametragesSection("CATEGORIE"),
     prisma.budgetParametrage.findMany({
-      orderBy: [{ soumisAt: "desc" }],
-      take: 100,
-      include: { categorie: { select: { label: true } }, soumisPar: { select: { fullName: true } }, decidePar: { select: { fullName: true } } },
+      where: { portee: "CATEGORIE" },
+      orderBy: [{ categorieId: "asc" }, { soumisAt: "desc" }],
+      distinct: ["categorieId"],
+      select: { categorieId: true, statut: true },
     }),
     peutConfirmer
       ? prisma.budgetDepassement.findMany({
@@ -191,111 +211,27 @@ async function OngletBudgets({
         })
       : Promise.resolve([]),
   ]);
+  // Toutes les catégories actives (une ligne chacune, même sans budget) et celles, désactivées, qui ont encore un budget en vigueur.
+  const categories = await prisma.categorie.findMany({
+    where: { OR: [{ isActive: true }, { id: { in: Object.keys(contexte.categories) } }] },
+    select: { id: true, label: true, isActive: true },
+    orderBy: { label: "asc" },
+  });
 
-  const categoriesAvecBudget = Object.values(contexte.categories).sort((a, b) => a.libelle.localeCompare(b.libelle, "fr"));
-  const enAttente = parametrages.filter((p) => p.statut === "EN_ATTENTE");
   const global = contexte.global;
   const resteGlobal = global ? global.budget - global.reserve : 0;
-  const categoriesEnAttente = new Set(enAttente.filter((p) => p.categorieId).map((p) => p.categorieId as string));
-  const globalEnAttente = enAttente.some((p) => p.portee === "GLOBAL");
+  const caisseEnAttente = parametragesCaisse.filter((p) => p.statut === "EN_ATTENTE");
+  const categoriesEnAttenteListe = parametragesCategories.filter((p) => p.statut === "EN_ATTENTE");
+  const categoriesEnAttente = new Set(categoriesEnAttenteListe.map((p) => p.categorieId as string));
+  const statutCategorie = new Map(dernierParCategorie.map((d) => [d.categorieId as string, d.statut]));
+  const statutCaisse = parametragesCaisse[0]?.statut ?? null;
 
   return (
-    <div className="space-y-8">
-      <section data-budgets-en-vigueur className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
-        <h2 className="text-lg font-semibold text-foreground">Budgets en vigueur</h2>
-
-        {global ? (
-          <div data-budget-ligne="global" className="space-y-2 rounded-xl border border-border bg-info-bg/20 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="font-semibold text-foreground">Budget global = solde de caisse</p>
-                <p className="text-xs text-muted-foreground">
-                  Le solde de caisse réel (journal de caisse), jamais un montant saisi. Les règlements banque n&apos;y touchent pas.
-                </p>
-              </div>
-              <BadgeNiveauBudget niveau={niveauAlerte(resteGlobal, global.budget, global.seuil)} />
-            </div>
-            <dl className="grid gap-3 text-sm sm:grid-cols-4">
-              <div>
-                <dt className="text-xs uppercase text-muted-foreground">Solde de caisse actuel</dt>
-                <dd data-solde-caisse className="font-black tabular-nums">{fcfa(global.budget)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase text-muted-foreground" title="Règlements en caisse à confirmer, plus l'argent validé qui n'a pas encore de règlement (mode non encore connu, supposé en caisse)">
-                  Déjà validé, pas encore sorti
-                </dt>
-                <dd className="font-black tabular-nums" data-engage-caisse>{fcfa(global.reserve)}</dd>
-                {global.caisse ? (
-                  <p className="text-xs text-muted-foreground">
-                    dont règlements Caisse à confirmer {fcfa(global.caisse.engageCaisseConnu)} ; validé sans règlement {fcfa(global.caisse.engageModeInconnu)}
-                  </p>
-                ) : null}
-              </div>
-              <div>
-                <dt className="text-xs uppercase text-muted-foreground">Solde prévisionnel</dt>
-                <dd data-reste-budget className={`font-black tabular-nums ${resteGlobal < 0 ? "text-danger" : ""}`}>{fcfa(resteGlobal)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase text-muted-foreground">Seuils d&apos;alerte</dt>
-                <dd className="text-xs text-foreground">{libelleSeuil(global.seuil)}</dd>
-                {global.dateDebut ? <dd className="text-xs text-muted-foreground">{libellePeriodeBudget(global.dateDebut, global.dateFin ?? null)}</dd> : <dd className="text-xs text-muted-foreground">Aucun seuil validé : pas d&apos;alerte.</dd>}
-              </div>
-            </dl>
-          </div>
-        ) : null}
-
-        {categoriesAvecBudget.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aucun budget de catégorie en vigueur : aucune alerte de catégorie ne s&apos;applique.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="py-2 pr-3">Catégorie</th>
-                  <th className="py-2 pr-3 text-right">Montant</th>
-                  <th className="py-2 pr-3 text-right">Réservé</th>
-                  <th className="py-2 pr-3 text-right">Reste</th>
-                  <th className="py-2 pr-3">Période</th>
-                  <th className="py-2 pr-3">Seuils</th>
-                  <th className="py-2">Niveau</th>
-                </tr>
-              </thead>
-              <tbody>
-                {categoriesAvecBudget.map((p) => {
-                  const reste = p.budget - p.reserve;
-                  const b = p.categorieId ? enVigueur[p.categorieId] : null;
-                  return (
-                    <tr key={p.parametrageId ?? p.libelle} data-budget-ligne={p.libelle} className="border-t border-border">
-                      <td className="py-2 pr-3 font-semibold">{p.libelle}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{fcfa(p.budget)}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums" title="Le plus grand du consommé au règlement et du montant validé (engagé)">
-                        {fcfa(p.reserve)}
-                      </td>
-                      <td className="py-2 pr-3 text-right font-black tabular-nums" data-reste-budget>
-                        {fcfa(reste)}
-                      </td>
-                      <td className="py-2 pr-3 text-xs text-muted-foreground">{b ? libellePeriodeBudget(b.dateDebut, b.dateFin) : ""}</td>
-                      <td className="py-2 pr-3 text-xs text-muted-foreground">{libelleSeuil(p.seuil)}</td>
-                      <td className="py-2">
-                        <BadgeNiveauBudget niveau={niveauAlerte(reste, p.budget, p.seuil)} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="text-xs text-muted-foreground">
-          Un budget de catégorie se consomme au règlement ; « Réservé » compte aussi ce qui est déjà validé et pas encore réglé, pour que le reste
-          baisse dès la validation. Le budget global est le solde de caisse : la validation en cours s&apos;y retranche, sans savoir si le règlement
-          se fera en caisse ou par banque (le mode n&apos;est choisi qu&apos;au règlement) — on suppose la caisse. Un budget en attente du DG ou refusé n&apos;est jamais pris en compte.
-        </p>
-      </section>
-
+    <div className="space-y-10">
       {peutConfirmer ? (
         <section data-depassements-a-confirmer className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
           <h2 className="text-lg font-semibold text-foreground">Dépassements à confirmer ({depassements.length})</h2>
+          <p className="text-xs text-muted-foreground">Validations bloquées par un seuil rouge (budget de caisse ou d&apos;une catégorie) : la Finance attend votre confirmation, avec motif.</p>
           {depassements.length === 0 ? (
             <p className="text-sm text-muted-foreground">Aucune confirmation demandée.</p>
           ) : (
@@ -314,105 +250,267 @@ async function OngletBudgets({
         </section>
       ) : null}
 
-      {peutValider || enAttente.length > 0 ? (
-        <section data-parametrages-a-valider className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
-          <h2 className="text-lg font-semibold text-foreground">Paramétrages en attente du DG ({enAttente.length})</h2>
-          {enAttente.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Aucun paramétrage en attente.</p>
-          ) : peutValider ? (
-            <ParametragesEnAttente
-              items={enAttente.map((p) => {
-                const v = versParametrage(p);
-                return {
-                  id: p.id,
-                  titre: p.categorie ? `Catégorie « ${p.categorie.label} »` : "Solde de caisse (budget global)",
-                  detail: `${v.montant != null ? `${fcfa(v.montant)}, ` : ""}${libellePeriodeBudget(v.dateDebut, v.dateFin)}. ${libelleSeuil(v.seuil)}.`,
-                  soumisPar: `Soumis par ${p.soumisPar?.fullName ?? "—"} le ${fr(p.soumisAt)}`,
-                  soiMeme: p.soumisParId === session.user.id,
-                };
-              })}
-            />
+      {/* ───────────── Section 1 : budget de caisse ───────────── */}
+      <section data-section-caisse aria-labelledby="titre-section-caisse" className="space-y-5">
+        <header className="border-b-2 border-primary pb-2">
+          <h2 id="titre-section-caisse" className="text-xl font-black text-foreground">Budget de caisse</h2>
+          <p className="text-sm text-muted-foreground">
+            Le budget de caisse est le solde de caisse réel (journal de caisse) : aucun montant n&apos;est saisi. La Finance en règle les seuils d&apos;alerte, le DG les valide.
+          </p>
+        </header>
+
+        <div data-budgets-caisse className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
+          {global ? (
+            <div data-budget-ligne="global" className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-foreground">Solde de caisse et seuils en vigueur</p>
+                  <p className="text-xs text-muted-foreground">Les règlements banque n&apos;y touchent pas.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {statutCaisse ? (
+                    <span data-statut-caisse={statutCaisse} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      Dernier paramétrage : <Badge variant={VARIANTE_STATUT[statutCaisse]}>{libelleStatutParametrage(statutCaisse)}</Badge>
+                    </span>
+                  ) : null}
+                  <BadgeNiveauBudget niveau={niveauAlerte(resteGlobal, global.budget, global.seuil)} />
+                </div>
+              </div>
+              <dl className="grid gap-3 text-sm sm:grid-cols-4">
+                <div>
+                  <dt className="text-xs uppercase text-muted-foreground">Solde de caisse actuel</dt>
+                  <dd data-solde-caisse className="font-black tabular-nums">{fcfa(global.budget)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase text-muted-foreground" title="Règlements en caisse à confirmer, plus l'argent validé qui n'a pas encore de règlement (mode non encore connu, supposé en caisse)">
+                    Déjà validé, pas encore sorti
+                  </dt>
+                  <dd className="font-black tabular-nums" data-engage-caisse>{fcfa(global.reserve)}</dd>
+                  {global.caisse ? (
+                    <p className="text-xs text-muted-foreground">
+                      dont règlements Caisse à confirmer {fcfa(global.caisse.engageCaisseConnu)} ; validé sans règlement {fcfa(global.caisse.engageModeInconnu)}
+                    </p>
+                  ) : null}
+                </div>
+                <div>
+                  <dt className="text-xs uppercase text-muted-foreground">Solde prévisionnel</dt>
+                  <dd data-reste-budget className={`font-black tabular-nums ${resteGlobal < 0 ? "text-danger" : ""}`}>{fcfa(resteGlobal)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase text-muted-foreground">Seuils d&apos;alerte (FCFA)</dt>
+                  <dd className="text-xs text-foreground">{libelleSeuil(global.seuil)}</dd>
+                  {global.dateDebut ? <dd className="text-xs text-muted-foreground">{libellePeriodeBudget(global.dateDebut, global.dateFin ?? null)}</dd> : <dd className="text-xs text-muted-foreground">Aucun seuil validé : pas d&apos;alerte.</dd>}
+                </div>
+              </dl>
+            </div>
+          ) : null}
+          <p className="text-xs text-muted-foreground">
+            Le solde prévisionnel retranche l&apos;argent déjà validé qui n&apos;est pas encore sorti de la caisse. À la validation, le mode de règlement (caisse ou banque) n&apos;est pas encore connu :
+            on suppose la caisse. Des seuils en attente du DG ou refusés ne sont jamais pris en compte.
+          </p>
+        </div>
+
+        {peutValider || caisseEnAttente.length > 0 ? (
+          <div data-parametrages-a-valider data-parametrages-caisse className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
+            <h3 className="text-base font-semibold text-foreground">Seuils de caisse en attente du DG ({caisseEnAttente.length})</h3>
+            <ListeEnAttente parametrages={caisseEnAttente} portee="GLOBAL" peutValider={peutValider} userId={session.user.id} />
+          </div>
+        ) : null}
+
+        {peutParametrer ? (
+          <div data-nouveau-parametrage data-nouveau-parametrage-caisse className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
+            <h3 className="text-base font-semibold text-foreground">Nouveaux seuils de caisse</h3>
+            <p className="text-sm text-muted-foreground">
+              Soumis au DG, ils ne remplacent les seuils en vigueur qu&apos;une fois validés, à leur date d&apos;effet. Les anciens ne sont jamais modifiés.
+            </p>
+            <ParametrageCaisseForm aujourdhui={jourCourantBudget()} actuel={global?.seuil ?? null} enAttente={caisseEnAttente.length > 0} />
+          </div>
+        ) : null}
+
+        <HistoriqueSection portee="GLOBAL" parametrages={parametragesCaisse} />
+      </section>
+
+      {/* ───────────── Section 2 : budgets par catégorie ───────────── */}
+      <section data-section-categories aria-labelledby="titre-section-categories" className="space-y-5">
+        <header className="border-b-2 border-primary pb-2">
+          <h2 id="titre-section-categories" className="text-xl font-black text-foreground">Budgets par catégorie</h2>
+          <p className="text-sm text-muted-foreground">
+            Chaque catégorie a son propre budget : un montant, une période et des seuils d&apos;alerte, consommé au règlement. La Finance les paramètre, le DG les valide.
+          </p>
+        </header>
+
+        <div data-budgets-categories className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
+          {categories.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Aucune catégorie. Créez-en dans l&apos;onglet « Catégories ».</p>
           ) : (
-            <ul className="space-y-3">
-              {enAttente.map((p) => {
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[56rem] text-left text-sm">
+                <thead className="text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="py-2 pr-3">Catégorie</th>
+                    <th className="py-2 pr-3 text-right">Budget en vigueur</th>
+                    <th className="py-2 pr-3 text-right">Consommé</th>
+                    <th className="py-2 pr-3 text-right">Réservé</th>
+                    <th className="py-2 pr-3 text-right">Reste</th>
+                    <th className="py-2 pr-3">Période</th>
+                    <th className="py-2 pr-3">Seuils</th>
+                    <th className="py-2 pr-3">Statut</th>
+                    <th className="py-2">Alerte</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {categories.map((c) => {
+                    const p = contexte.categories[c.id];
+                    const b = enVigueur[c.id];
+                    const reste = p ? p.budget - p.reserve : null;
+                    const statut = statutCategorie.get(c.id) ?? null;
+                    return (
+                      <tr key={c.id} data-budget-ligne={c.label} className="border-t border-border">
+                        <td className="py-2 pr-3 font-semibold">{c.label}{c.isActive ? "" : " (désactivée)"}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums">{p ? fcfa(p.budget) : "—"}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums" title="Consommé au règlement depuis le début d'effet">{p ? fcfa(p.consomme ?? 0) : "—"}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums" title="Le plus grand du consommé au règlement et du montant validé (engagé)">{p ? fcfa(p.reserve) : "—"}</td>
+                        <td className="py-2 pr-3 text-right font-black tabular-nums" data-reste-budget>{reste != null ? fcfa(reste) : "—"}</td>
+                        <td className="py-2 pr-3 text-xs text-muted-foreground">{b ? libellePeriodeBudget(b.dateDebut, b.dateFin) : "—"}</td>
+                        <td className="py-2 pr-3 text-xs text-muted-foreground">{p ? libelleSeuil(p.seuil) : "—"}</td>
+                        <td className="py-2 pr-3" data-statut-categorie={statut ?? "AUCUN"}>
+                          {categoriesEnAttente.has(c.id) ? (
+                            <Badge variant="warning">{libelleStatutParametrage("EN_ATTENTE")}</Badge>
+                          ) : statut ? (
+                            <Badge variant={VARIANTE_STATUT[statut]}>{libelleStatutParametrage(statut)}</Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Aucun paramétrage</span>
+                          )}
+                        </td>
+                        <td className="py-2">{p && reste != null ? <BadgeNiveauBudget niveau={niveauAlerte(reste, p.budget, p.seuil)} /> : <span className="text-xs text-muted-foreground">—</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Un budget de catégorie se consomme au règlement ; « Réservé » compte aussi ce qui est déjà validé et pas encore réglé, pour que le reste baisse dès la validation. Un budget en
+            attente du DG ou refusé n&apos;est jamais pris en compte.
+          </p>
+        </div>
+
+        {peutValider || categoriesEnAttenteListe.length > 0 ? (
+          <div data-parametrages-a-valider data-parametrages-categories className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
+            <h3 className="text-base font-semibold text-foreground">Budgets de catégorie en attente du DG ({categoriesEnAttenteListe.length})</h3>
+            <ListeEnAttente parametrages={categoriesEnAttenteListe} portee="CATEGORIE" peutValider={peutValider} userId={session.user.id} />
+          </div>
+        ) : null}
+
+        {peutParametrer ? (
+          <div data-nouveau-parametrage data-nouveau-parametrage-categories className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
+            <h3 className="text-base font-semibold text-foreground">Nouveau paramétrage de catégorie</h3>
+            <p className="text-sm text-muted-foreground">
+              Cochez un ou plusieurs budgets : ils sont soumis au DG en une fois et ne remplacent le budget en vigueur qu&apos;une fois validés, à leur date d&apos;effet.
+              L&apos;ancien paramétrage n&apos;est jamais modifié.
+            </p>
+            <ParametrageCategoriesForm
+              aujourdhui={jourCourantBudget()}
+              categories={categories
+                .filter((c) => c.isActive)
+                .map((c) => ({
+                  id: c.id,
+                  label: c.label,
+                  actuel: enVigueur[c.id] ? { montant: enVigueur[c.id].budget, seuil: enVigueur[c.id].seuil } : null,
+                  enAttente: categoriesEnAttente.has(c.id),
+                }))}
+            />
+          </div>
+        ) : null}
+
+        <HistoriqueSection portee="CATEGORIE" parametrages={parametragesCategories} />
+      </section>
+    </div>
+  );
+}
+
+/** Paramétrages d'une section en attente du DG : le DG décide (seul ou en lot), les autres comptes consultent. */
+function ListeEnAttente({ parametrages, portee, peutValider, userId }: { parametrages: ParametrageListe[]; portee: "GLOBAL" | "CATEGORIE"; peutValider: boolean; userId: string }) {
+  if (parametrages.length === 0) return <p className="text-sm text-muted-foreground">Aucun paramétrage en attente.</p>;
+  const titre = (p: ParametrageListe) => (p.categorie ? `Catégorie « ${p.categorie.label} »` : TITRE_ATTENTE.GLOBAL);
+  const detail = (p: ParametrageListe) => {
+    const v = versParametrage(p);
+    return `${v.montant != null ? `${fcfa(v.montant)}, ` : ""}${libellePeriodeBudget(v.dateDebut, v.dateFin)}. ${libelleSeuil(v.seuil)}.`;
+  };
+  if (peutValider) {
+    return (
+      <ParametragesEnAttente
+        portee={portee}
+        items={parametrages.map((p) => ({
+          id: p.id,
+          titre: titre(p),
+          detail: detail(p),
+          soumisPar: `Soumis par ${p.soumisPar?.fullName ?? "—"} le ${fr(p.soumisAt)}`,
+          soiMeme: p.soumisParId === userId,
+        }))}
+      />
+    );
+  }
+  return (
+    <ul className="space-y-3">
+      {parametrages.map((p) => (
+        <li key={p.id} data-parametrage-attente={p.id} className="space-y-1 rounded-lg border border-border p-3">
+          <p className="text-sm text-foreground">
+            <span className="font-semibold">{titre(p)}</span> — {detail(p)}
+          </p>
+          <p className="text-xs text-muted-foreground">Soumis par {p.soumisPar?.fullName ?? "—"} le {fr(p.soumisAt)}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Historique d'UNE section (jamais mélangé avec l'autre) : chaque paramétrage, son statut et son suivi. */
+function HistoriqueSection({ portee, parametrages }: { portee: "GLOBAL" | "CATEGORIE"; parametrages: ParametrageListe[] }) {
+  const caisse = portee === "GLOBAL";
+  return (
+    <div {...(caisse ? { "data-historique-caisse": "" } : { "data-historique-categories": "" })} data-historique-budgets className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
+      <h3 className="text-base font-semibold text-foreground">{caisse ? "Historique des seuils de caisse" : "Historique des budgets de catégorie"}</h3>
+      {parametrages.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Aucun paramétrage.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-xs uppercase text-muted-foreground">
+              <tr>
+                {caisse ? null : <th className="py-2 pr-3">Catégorie</th>}
+                {caisse ? null : <th className="py-2 pr-3 text-right">Montant</th>}
+                <th className="py-2 pr-3">Période</th>
+                <th className="py-2 pr-3">Seuils</th>
+                <th className="py-2 pr-3">Statut</th>
+                <th className="py-2">Suivi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {parametrages.map((p) => {
                 const v = versParametrage(p);
                 return (
-                  <li key={p.id} data-parametrage-attente={p.id} className="space-y-1 rounded-lg border border-border p-3">
-                    <p className="text-sm text-foreground">
-                      <span className="font-semibold">{p.categorie ? `Catégorie « ${p.categorie.label} »` : "Solde de caisse (budget global)"}</span> — {v.montant != null ? `${fcfa(v.montant)}, ` : ""}
-                      {libellePeriodeBudget(v.dateDebut, v.dateFin)}. {libelleSeuil(v.seuil)}.
-                    </p>
-                    <p className="text-xs text-muted-foreground">Soumis par {p.soumisPar?.fullName ?? "—"} le {fr(p.soumisAt)}</p>
-                  </li>
+                  <tr key={p.id} data-parametrage={p.id} className="border-t border-border align-top">
+                    {caisse ? null : <td className="py-2 pr-3 font-semibold">{p.categorie?.label ?? "—"}</td>}
+                    {caisse ? null : <td className="py-2 pr-3 text-right tabular-nums">{v.montant != null ? fcfa(v.montant) : "—"}</td>}
+                    <td className="py-2 pr-3 text-xs">{libellePeriodeBudget(v.dateDebut, v.dateFin)}</td>
+                    <td className="py-2 pr-3 text-xs text-muted-foreground">{libelleSeuil(v.seuil)}</td>
+                    <td className="py-2 pr-3">
+                      <Badge variant={VARIANTE_STATUT[p.statut]}>{libelleStatutParametrage(p.statut)}</Badge>
+                    </td>
+                    <td className="py-2 text-xs text-muted-foreground">
+                      {p.repris ? "Budget existant repris au déploiement (validé d'office)." : `Soumis par ${p.soumisPar?.fullName ?? "—"} le ${fr(p.soumisAt)}.`}
+                      {p.decideAt && !p.repris ? ` ${p.statut === "VALIDE" ? "Validé" : "Refusé"} par ${p.decidePar?.fullName ?? "—"} le ${fr(p.decideAt)}.` : ""}
+                      {p.motifRefus ? ` Motif : ${p.motifRefus}` : ""}
+                    </td>
+                  </tr>
                 );
               })}
-            </ul>
-          )}
-        </section>
-      ) : null}
-
-      {peutParametrer ? (
-        <section data-nouveau-parametrage className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
-          <h2 className="text-lg font-semibold text-foreground">Nouveau paramétrage</h2>
-          <p className="text-sm text-muted-foreground">
-            Cochez un ou plusieurs budgets : ils sont soumis au DG en une fois et ne remplacent le budget en vigueur qu&apos;une fois validés, à leur date d&apos;effet.
-            L&apos;ancien paramétrage n&apos;est jamais modifié.
-          </p>
-          <ParametrageBudgetForm
-            aujourdhui={jourCourantBudget()}
-            global={{ actuel: global?.seuil ?? null, enAttente: globalEnAttente }}
-            categories={categories.map((c) => ({
-              id: c.id,
-              label: c.label,
-              actuel: enVigueur[c.id] ? { montant: enVigueur[c.id].budget, seuil: enVigueur[c.id].seuil } : null,
-              enAttente: categoriesEnAttente.has(c.id),
-            }))}
-          />
-        </section>
-      ) : null}
-
-      <section data-historique-budgets className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
-        <h2 className="text-lg font-semibold text-foreground">Historique des paramétrages</h2>
-        {parametrages.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aucun paramétrage.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="py-2 pr-3">Budget</th>
-                  <th className="py-2 pr-3 text-right">Montant</th>
-                  <th className="py-2 pr-3">Période</th>
-                  <th className="py-2 pr-3">Seuils</th>
-                  <th className="py-2 pr-3">Statut</th>
-                  <th className="py-2">Suivi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {parametrages.map((p) => {
-                  const v = versParametrage(p);
-                  return (
-                    <tr key={p.id} data-parametrage={p.id} className="border-t border-border align-top">
-                      <td className="py-2 pr-3 font-semibold">{p.categorie ? p.categorie.label : "Solde de caisse (global)"}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{v.montant != null ? fcfa(v.montant) : "Solde réel"}</td>
-                      <td className="py-2 pr-3 text-xs">{libellePeriodeBudget(v.dateDebut, v.dateFin)}</td>
-                      <td className="py-2 pr-3 text-xs text-muted-foreground">{libelleSeuil(v.seuil)}</td>
-                      <td className="py-2 pr-3">
-                        <Badge variant={VARIANTE_STATUT[p.statut]}>{libelleStatutParametrage(p.statut)}</Badge>
-                      </td>
-                      <td className="py-2 text-xs text-muted-foreground">
-                        {p.repris ? "Budget existant repris au déploiement (validé d'office)." : `Soumis par ${p.soumisPar?.fullName ?? "—"} le ${fr(p.soumisAt)}.`}
-                        {p.decideAt && !p.repris ? ` ${p.statut === "VALIDE" ? "Validé" : "Refusé"} par ${p.decidePar?.fullName ?? "—"} le ${fr(p.decideAt)}.` : ""}
-                        {p.motifRefus ? ` Motif : ${p.motifRefus}` : ""}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

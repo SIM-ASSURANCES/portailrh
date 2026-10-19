@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import { Button, Input } from "@/components/ui";
 
-import { deciderParametragesBudgetAction } from "./actions";
+import { deciderBudgetsCategoriesAction, deciderSeuilsCaisseAction } from "./actions";
 import { DecisionParametrage } from "./DecisionParametrage";
 
 export interface ParametrageEnAttenteItem {
@@ -18,11 +18,11 @@ export interface ParametrageEnAttenteItem {
 }
 
 /**
- * Paramétrages de budget en attente du DG (lot J ter) : chaque budget se décide SEUL (Valider / Refuser avec son motif) ou en LOT
+ * Paramétrages d'UNE section en attente du DG (lots J ter et J quater : une liste par section, `portee` choisit l'action) : chaque budget se décide SEUL (Valider / Refuser avec son motif) ou en LOT
  * (cases à cocher, « Valider la sélection » / « Refuser la sélection » avec un motif commun). Chaque élément garde sa propre trace
  * dans l'historique ; le DG ne décide jamais ce qu'il a lui-même soumis (case désactivée, et ignoré côté serveur).
  */
-export function ParametragesEnAttente({ items }: { items: ParametrageEnAttenteItem[] }) {
+export function ParametragesEnAttente({ items, portee }: { items: ParametrageEnAttenteItem[]; portee: "GLOBAL" | "CATEGORIE" }) {
   const [coches, setCoches] = useState<Set<string>>(new Set());
   const [refus, setRefus] = useState(false);
   const [motif, setMotif] = useState("");
@@ -42,7 +42,8 @@ export function ParametragesEnAttente({ items }: { items: ParametrageEnAttenteIt
 
   function decider(valider: boolean) {
     startTransition(async () => {
-      const r = await deciderParametragesBudgetAction(selection.map((i) => ({ id: i.id })), valider, valider ? undefined : motif);
+      const decideur = portee === "GLOBAL" ? deciderSeuilsCaisseAction : deciderBudgetsCategoriesAction;
+      const r = await decideur(selection.map((i) => ({ id: i.id })), valider, valider ? undefined : motif);
       if (r.status === "success") {
         toast.success(r.message);
         setCoches(new Set());
@@ -99,7 +100,7 @@ export function ParametragesEnAttente({ items }: { items: ParametrageEnAttenteIt
               </div>
             </div>
             <div className="pl-7">
-              <DecisionParametrage id={i.id} desactive={i.soiMeme} raison={i.soiMeme ? "Vous ne pouvez pas décider un paramétrage que vous avez soumis." : undefined} />
+              <DecisionParametrage id={i.id} portee={portee} desactive={i.soiMeme} raison={i.soiMeme ? "Vous ne pouvez pas décider un paramétrage que vous avez soumis." : undefined} />
             </div>
           </li>
         ))}

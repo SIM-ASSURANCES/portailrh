@@ -52,7 +52,7 @@ const CAT5 = `${P}cat5`; // aucune catégorie budgétée
 const CAT6 = `${P}cat6`; // budget refusé par le DG
 const CATS = [CAT1, CAT2, CAT3, CAT4, CAT5, CAT6];
 const nettoyer = async () => {
-  await q(`DELETE FROM "Notification" WHERE message LIKE '%DEM-LOTJ-%' OR titre LIKE '%budget%' OR titre LIKE '%Budget%'`);
+  await q(`DELETE FROM "Notification" WHERE message LIKE '%DEM-LOTJ-%' OR titre LIKE '%budget%' OR titre LIKE '%Budget%' OR titre LIKE 'Seuils de caisse%'`);
   await q(`DELETE FROM "HistoriqueEntry" WHERE entity = 'BudgetParametrage' OR "entityId" LIKE '${P}%' OR detail LIKE '%DEM-LOTJ-%'`);
   await q(`DELETE FROM "BudgetDepassement" WHERE "demandeId" LIKE '${P}%'`);
   await q(`DELETE FROM "BudgetParametrage" WHERE portee = 'GLOBAL' OR "categorieId" = ANY($1)`, [CATS]);
@@ -181,21 +181,24 @@ async function decider(page, id, valider, motif) {
   verifier("2b. paramétrage de la catégorie soumis : EN_ATTENTE", await attendre(async () => (await q(`SELECT statut FROM "BudgetParametrage" WHERE "categorieId" = $1`, [CAT1]))[0]?.statut === "EN_ATTENTE"));
   const p1 = (await q(`SELECT * FROM "BudgetParametrage" WHERE "categorieId" = $1`, [CAT1]))[0];
   verifier("2b. … soumis par la Finance, début aujourd'hui, seuils 20 / 10 en pourcentage", p1.soumisParId === idFinance && p1.dateDebut.toISOString().slice(0, 10) === jourIso(0) && p1.modeSeuil === "POURCENTAGE" && Number(p1.seuilOrange) === 20 && Number(p1.seuilRouge) === 10);
-  verifier("2b. … historisé et le DG est notifié", (await q(`SELECT 1 FROM "HistoriqueEntry" WHERE entity='BudgetParametrage' AND "entityId"=$1 AND action='budget_soumis'`, [p1.id])).length === 1 && (await attendre(async () => (await q(`SELECT 1 FROM "Notification" WHERE "userId"=$1 AND titre='Budget à valider'`, [idDG])).length >= 1)));
+  verifier("2b. … historisé et le DG est notifié", (await q(`SELECT 1 FROM "HistoriqueEntry" WHERE entity='BudgetParametrage' AND "entityId"=$1 AND action='budget_soumis'`, [p1.id])).length === 1 && (await attendre(async () => (await q(`SELECT 1 FROM "Notification" WHERE "userId"=$1 AND titre='Budget de catégorie à valider'`, [idDG])).length >= 1)));
   await finance.goto(`${B}/treso/finance/budgets`);
-  verifier("2b. pas encore en vigueur : absent de « Budgets en vigueur »", (await finance.locator('[data-budget-ligne="E2E-J-CAT1"]').count()) === 0);
+  verifier("2b. pas encore en vigueur : la ligne de la catégorie existe mais sans budget, statut « En attente du DG »", await (async () => {
+    const t = net(await finance.locator('[data-section-categories] [data-budgets-categories] [data-budget-ligne="E2E-J-CAT1"]').innerText());
+    return !/1 000 000/.test(t) && /En attente/.test(t);
+  })());
   verifier("2b. un second paramétrage est refusé tant que le premier attend le DG (écran : ligne désactivée ; serveur : refus par appel direct)", await (async () => {
     await finance.goto(`${B}/treso/finance/budgets`);
     const ligneDesactivee = await finance.locator('[data-budget-ligne-saisie="E2E-J-CAT1"] input[type="checkbox"]').isDisabled();
-    const idSoumettre = await idAction(finance, "soumettreParametragesBudgetAction");
+    const idSoumettre = await idAction(finance, "soumettreBudgetsCategoriesAction");
     const refus = idSoumettre ? await appelerAction(finance, idSoumettre, [[{ portee: "CATEGORIE", categorieId: CAT1, montant: 5, dateDebut: jourIso(0), dateFin: null, seuil: null }]]) : { succes: true, message: "" };
     return ligneDesactivee && !refus.succes && /déjà en attente/.test(refus.message) && (await nbParam()) === avant + 1;
   })());
 
   // 2c. Droits : la Finance ne décide pas ; le DG ne paramètre pas.
   await dg.goto(`${B}/treso/finance/budgets`);
-  const idDecider = await idAction(dg, "deciderParametragesBudgetAction");
-  verifier("2c. identifiant de deciderParametragesBudgetAction retrouvé", !!idDecider);
+  const idDecider = await idAction(dg, "deciderBudgetsCategoriesAction");
+  verifier("2c. identifiant de deciderBudgetsCategoriesAction retrouvé", !!idDecider);
   if (idDecider) {
     await finance.goto(`${B}/treso/finance/budgets`);
     const refus = await appelerAction(finance, idDecider, [[{ id: p1.id }], true]);
@@ -212,7 +215,7 @@ async function decider(page, id, valider, motif) {
   verifier("2d. le DG refuse avec motif : REFUSE, motif conservé, décideur tracé", await attendre(async () => (await q(`SELECT statut, "motifRefus", "decideParId" FROM "BudgetParametrage" WHERE id=$1`, [pg1.id]))[0].statut === "REFUSE"));
   const refuse = (await q(`SELECT "motifRefus", "decideParId" FROM "BudgetParametrage" WHERE id=$1`, [pg1.id]))[0];
   verifier("2d. … motif et décideur", /trop bas/.test(refuse.motifRefus) && refuse.decideParId === idDG);
-  verifier("2d. … la Finance est notifiée du refus", await attendre(async () => (await q(`SELECT 1 FROM "Notification" WHERE "userId"=$1 AND titre='Budget refusé par le DG'`, [idFinance])).length >= 1));
+  verifier("2d. … la Finance est notifiée du refus", await attendre(async () => (await q(`SELECT 1 FROM "Notification" WHERE "userId"=$1 AND titre='Budget de catégorie refusé par le DG'`, [idFinance])).length >= 1));
   await soumettre(finance, { categorie: CAT6, libelle: "E2E-J-CAT6", montant: 1999, mode: "AUCUN" });
   await attendre(async () => (await q(`SELECT 1 FROM "BudgetParametrage" WHERE "categorieId"=$1 AND statut='EN_ATTENTE'`, [CAT6])).length === 1);
   verifier("2d. le paramétrage refusé n'est pas modifié : une NOUVELLE ligne a été créée", (await q(`SELECT statut FROM "BudgetParametrage" WHERE id=$1`, [pg1.id]))[0].statut === "REFUSE" && (await q(`SELECT count(*)::int AS n FROM "BudgetParametrage" WHERE "categorieId"=$1`, [CAT6]))[0].n === 2);
@@ -232,8 +235,8 @@ async function decider(page, id, valider, motif) {
   await decider(dg, p2.id, true);
   await attendre(async () => (await q(`SELECT statut FROM "BudgetParametrage" WHERE id=$1`, [p2.id]))[0].statut === "VALIDE");
   await finance.goto(`${B}/treso/finance/budgets`);
-  verifier("2f. budget validé mais qui commence demain : pas « en vigueur » aujourd'hui, présent dans l'historique", (await finance.locator('[data-budget-ligne="E2E-J-CAT2"]').count()) === 0 && (await finance.locator(`[data-parametrage="${p2.id}"]`).count()) === 1);
-  const nouveauDebut = await finance.locator('input[name="dateDebut"]').getAttribute("min");
+  verifier("2f. budget validé mais qui commence demain : pas « en vigueur » aujourd'hui (aucun montant dans la ligne), présent dans l'historique", !/500 000/.test(net(await finance.locator('[data-budget-ligne="E2E-J-CAT2"]').innerText())) && (await finance.locator(`[data-parametrage="${p2.id}"]`).count()) === 1);
+  const nouveauDebut = await finance.locator('[data-parametrage-budget-form] input[name="dateDebut"]').getAttribute("min");
   verifier("2f. le champ date de début interdit le passé (min = aujourd'hui)", nouveauDebut === jourIso(0));
 
   // Budgets de test posés directement : CAT3 (100 000, 20 % / 10 %), CAT4 (50 000 sans seuil).

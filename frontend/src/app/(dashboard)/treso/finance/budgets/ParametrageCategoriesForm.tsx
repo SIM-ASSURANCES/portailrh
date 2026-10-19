@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button, Input } from "@/components/ui";
 import { libelleSeuil, type SeuilBudget } from "backend/client";
 
-import { soumettreParametragesBudgetAction } from "./actions";
+import { soumettreBudgetsCategoriesAction } from "./actions";
 
 type ModeSeuil = "AUCUN" | "POURCENTAGE" | "MONTANT";
 
@@ -39,54 +39,40 @@ const ligneInitiale = (actuel: LigneCategorieSaisie["actuel"]): Ligne => ({
 });
 
 /**
- * Paramétrage des budgets (lots J et J ter), un seul formulaire pour UN budget ou PLUSIEURS d'un coup : cases à cocher puis
- * « Soumettre la sélection ». Les dates d'effet (début, fin facultative) sont communes à la sélection.
- *   - Une CATÉGORIE : montant, puis seuils d'alerte en pourcentage restant OU en montant restant (orange puis rouge plus bas).
- *   - Le budget GLOBAL n'a aucun montant : c'est le SOLDE DE CAISSE réel (journal de caisse). La Finance n'en règle que les seuils,
- *     en montant (FCFA) uniquement : un pourcentage n'a pas de total de référence.
- * La sélection est soumise au DG et ne sert qu'une fois validée ; elle ne modifie jamais un budget en vigueur.
+ * Paramétrage des budgets de CATÉGORIE (lot J quater ; le budget de caisse a son propre formulaire, `ParametrageCaisseForm`).
+ * Un seul formulaire pour UN budget ou PLUSIEURS d'un coup : cases à cocher puis « Soumettre la sélection ». Les dates d'effet
+ * (début, fin facultative) sont communes à la sélection. Par catégorie : montant, puis seuils d'alerte en pourcentage restant OU en
+ * montant restant (orange puis rouge plus bas). La sélection est soumise au DG et ne sert qu'une fois validée ; elle ne modifie
+ * jamais un budget en vigueur.
  */
-export function ParametrageBudgetForm({
-  categories,
-  global,
-  aujourdhui,
-}: {
-  categories: LigneCategorieSaisie[];
-  global: { actuel: SeuilBudget | null; enAttente: boolean };
-  aujourdhui: string;
-}) {
+export function ParametrageCategoriesForm({ categories, aujourdhui }: { categories: LigneCategorieSaisie[]; aujourdhui: string }) {
   const [dateDebut, setDateDebut] = useState(aujourdhui);
   const [dateFin, setDateFin] = useState("");
-  const [lignes, setLignes] = useState<Record<string, Ligne>>(() => ({
-    GLOBAL: { coche: false, montant: "", mode: "MONTANT", orange: String(global.actuel?.mode === "MONTANT" ? global.actuel.orange : 100000), rouge: String(global.actuel?.mode === "MONTANT" ? global.actuel.rouge : 0) },
-    ...Object.fromEntries(categories.map((c) => [c.id, ligneInitiale(c.actuel)])),
-  }));
+  const [lignes, setLignes] = useState<Record<string, Ligne>>(() => Object.fromEntries(categories.map((c) => [c.id, ligneInitiale(c.actuel)])));
   const [erreurs, setErreurs] = useState<Record<string, Record<string, string>>>({});
   const [isPending, startTransition] = useTransition();
 
   // Une catégorie créée pendant que le formulaire est affiché (rafraîchissement) n'a pas encore d'état : on part de ses valeurs courantes.
-  const defaut = (cle: string): Ligne => (cle === "GLOBAL" ? lignes.GLOBAL : ligneInitiale(categories.find((c) => c.id === cle)?.actuel ?? null));
+  const defaut = (cle: string): Ligne => ligneInitiale(categories.find((c) => c.id === cle)?.actuel ?? null);
   const ligneDe = (cle: string): Ligne => lignes[cle] ?? defaut(cle);
   const maj = (cle: string, patch: Partial<Ligne>) => setLignes((l) => ({ ...l, [cle]: { ...(l[cle] ?? defaut(cle)), ...patch } }));
-  const cles = ["GLOBAL", ...categories.map((c) => c.id)];
-  const cochees = cles.filter((k) => ligneDe(k).coche);
+  const cochees = categories.map((c) => c.id).filter((k) => ligneDe(k).coche);
 
   function soumettre() {
     setErreurs({});
     const saisies = cochees.map((k) => {
       const l = ligneDe(k);
-      const estGlobal = k === "GLOBAL";
       return {
-        portee: estGlobal ? ("GLOBAL" as const) : ("CATEGORIE" as const),
-        categorieId: estGlobal ? null : k,
-        montant: estGlobal ? null : Number(l.montant),
+        portee: "CATEGORIE" as const,
+        categorieId: k,
+        montant: Number(l.montant),
         dateDebut,
         dateFin: dateFin || null,
-        seuil: estGlobal || l.mode !== "AUCUN" ? { mode: estGlobal ? ("MONTANT" as const) : (l.mode as "POURCENTAGE" | "MONTANT"), orange: Number(l.orange), rouge: Number(l.rouge) } : null,
+        seuil: l.mode !== "AUCUN" ? { mode: l.mode as "POURCENTAGE" | "MONTANT", orange: Number(l.orange), rouge: Number(l.rouge) } : null,
       };
     });
     startTransition(async () => {
-      const r = await soumettreParametragesBudgetAction(saisies);
+      const r = await soumettreBudgetsCategoriesAction(saisies);
       if (r.status === "success") {
         toast.success(r.message);
         setLignes((l) => Object.fromEntries(Object.entries(l).map(([k, v]) => [k, { ...v, coche: false }])));
@@ -100,53 +86,36 @@ export function ParametrageBudgetForm({
     });
   }
 
-  const ligneChamps = (cle: string, estGlobal: boolean, desactive: boolean) => {
+  const ligneChamps = (cle: string, desactive: boolean) => {
     const l = ligneDe(cle);
     const e = erreurs[cle] ?? {};
-    const unite = estGlobal || l.mode === "MONTANT" ? "FCFA" : "%";
+    const unite = l.mode === "MONTANT" ? "FCFA" : "%";
     return (
       <>
         <td className="px-2 py-2 align-top">
-          {estGlobal ? (
-            <span className="block text-xs text-muted-foreground">Solde de caisse réel (non saisi)</span>
-          ) : (
-            <>
-              <input
-                aria-label={`Montant du budget (FCFA) — ${cle}`}
-                name={`montant-${cle}`}
-                type="number"
-                min={0}
-                step="0.01"
-                className={CLASSE_CHAMP}
-                disabled={desactive}
-                value={l.montant}
-                onChange={(ev) => maj(cle, { montant: ev.target.value, coche: ev.target.value !== "" ? true : l.coche })}
-              />
-              {e.montant ? <p className="mt-1 text-xs text-danger">{e.montant}</p> : null}
-            </>
-          )}
+          <input
+            aria-label={`Montant du budget (FCFA) — ${cle}`}
+            name={`montant-${cle}`}
+            type="number"
+            min={0}
+            step="0.01"
+            className={CLASSE_CHAMP}
+            disabled={desactive}
+            value={l.montant}
+            onChange={(ev) => maj(cle, { montant: ev.target.value, coche: ev.target.value !== "" ? true : l.coche })}
+          />
+          {e.montant ? <p className="mt-1 text-xs text-danger">{e.montant}</p> : null}
         </td>
         <td className="px-2 py-2 align-top">
-          {estGlobal ? (
-            <span className="block text-xs text-foreground">Montant restant (FCFA)</span>
-          ) : (
-            <select
-              aria-label={`Mesurer le reste en — ${cle}`}
-              name={`mode-${cle}`}
-              className={CLASSE_CHAMP}
-              disabled={desactive}
-              value={l.mode}
-              onChange={(ev) => maj(cle, { mode: ev.target.value as ModeSeuil })}
-            >
-              <option value="POURCENTAGE">Pourcentage restant</option>
-              <option value="MONTANT">Montant restant</option>
-              <option value="AUCUN">Aucune alerte</option>
-            </select>
-          )}
+          <select aria-label={`Mesurer le reste en — ${cle}`} name={`mode-${cle}`} className={CLASSE_CHAMP} disabled={desactive} value={l.mode} onChange={(ev) => maj(cle, { mode: ev.target.value as ModeSeuil })}>
+            <option value="POURCENTAGE">Pourcentage restant</option>
+            <option value="MONTANT">Montant restant</option>
+            <option value="AUCUN">Aucune alerte</option>
+          </select>
           {e.seuilMode ? <p className="mt-1 text-xs text-danger">{e.seuilMode}</p> : null}
         </td>
         <td className="px-2 py-2 align-top">
-          {l.mode !== "AUCUN" || estGlobal ? (
+          {l.mode !== "AUCUN" ? (
             <>
               <input aria-label={`Seuil orange (${unite}) — ${cle}`} name={`orange-${cle}`} type="number" min={0} step="0.01" className={CLASSE_CHAMP} disabled={desactive} value={l.orange} onChange={(ev) => maj(cle, { orange: ev.target.value })} />
               {e.seuilOrange ? <p className="mt-1 text-xs text-danger">{e.seuilOrange}</p> : null}
@@ -156,7 +125,7 @@ export function ParametrageBudgetForm({
           )}
         </td>
         <td className="px-2 py-2 align-top">
-          {l.mode !== "AUCUN" || estGlobal ? (
+          {l.mode !== "AUCUN" ? (
             <>
               <input aria-label={`Seuil rouge (${unite}) — ${cle}`} name={`rouge-${cle}`} type="number" min={0} step="0.01" className={CLASSE_CHAMP} disabled={desactive} value={l.rouge} onChange={(ev) => maj(cle, { rouge: ev.target.value })} />
               {e.seuilRouge ? <p className="mt-1 text-xs text-danger">{e.seuilRouge}</p> : null}
@@ -189,7 +158,7 @@ export function ParametrageBudgetForm({
           <thead className="text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-2 py-2">Soumettre</th>
-              <th className="px-2 py-2">Budget</th>
+              <th className="px-2 py-2">Catégorie</th>
               <th className="px-2 py-2">Montant (FCFA)</th>
               <th className="px-2 py-2">Seuils mesurés en…</th>
               <th className="px-2 py-2">Orange ≤</th>
@@ -197,17 +166,6 @@ export function ParametrageBudgetForm({
             </tr>
           </thead>
           <tbody>
-            <tr data-budget-ligne-saisie="global" className="border-t border-border bg-info-bg/20">
-              <td className="px-2 py-2 align-top">
-                <input type="checkbox" data-coche-budget="global" aria-label="Soumettre les seuils du solde de caisse" disabled={global.enAttente} checked={ligneDe("GLOBAL").coche} onChange={(ev) => maj("GLOBAL", { coche: ev.target.checked })} />
-              </td>
-              <td className="px-2 py-2 align-top">
-                <p className="font-semibold text-foreground">Budget global = solde de caisse</p>
-                <p className="text-xs text-muted-foreground">{global.actuel ? `En vigueur : ${libelleSeuil(global.actuel)}` : "Aucun seuil validé : le solde s'affiche, sans alerte."}</p>
-                {global.enAttente ? <p className="text-xs font-semibold text-warning">Un paramétrage attend déjà la décision du DG.</p> : null}
-              </td>
-              {ligneChamps("GLOBAL", true, global.enAttente)}
-            </tr>
             {categories.map((c) => (
               <tr key={c.id} data-budget-ligne-saisie={c.label} className="border-t border-border">
                 <td className="px-2 py-2 align-top">
@@ -221,17 +179,14 @@ export function ParametrageBudgetForm({
                   {c.enAttente ? <p className="text-xs font-semibold text-warning">Un paramétrage attend déjà la décision du DG.</p> : null}
                   {erreurs[c.id]?.categorieId ? <p className="text-xs text-danger">{erreurs[c.id].categorieId}</p> : null}
                 </td>
-                {ligneChamps(c.id, false, c.enAttente)}
+                {ligneChamps(c.id, c.enAttente)}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        Le budget global n&apos;est pas un montant saisi : c&apos;est le solde de caisse réel. Seuls ses seuils se règlent, en FCFA (orange puis rouge
-        strictement plus bas). Cochez un budget pour le soumettre seul, ou plusieurs pour les soumettre ensemble.
-      </p>
+      <p className="text-xs text-muted-foreground">Cochez un budget pour le soumettre seul, ou plusieurs pour les soumettre ensemble au DG.</p>
 
       <Button type="submit" loading={isPending} disabled={cochees.length === 0 || isPending} data-soumettre-selection>
         {cochees.length <= 1 ? "Soumettre la sélection au DG" : `Soumettre la sélection au DG (${cochees.length} budgets)`}

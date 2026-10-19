@@ -22,7 +22,7 @@ import {
 } from "backend";
 
 /**
- * Actions des budgets (lot J, 2026-10-19 ; lot J ter, 2026-10-20). Chaque action revérifie sa permission ici, jamais seulement le masquage d'un bouton :
+ * Actions des budgets (lot J, 2026-10-19 ; lot J ter, 2026-10-20 ; lot J quater : une action de soumission et une de décision PAR section). Chaque action revérifie sa permission ici, jamais seulement le masquage d'un bouton :
  *   - paramétrer (soumettre au DG, seul ou en lot) : `treso.modifier_budget_categorie` (la Finance) ;
  *   - valider / refuser des paramétrages (seul ou en lot) : `treso.valider_budget` (le DG), jamais le compte qui les a soumis ;
  *   - demander la confirmation d'un dépassement rouge : `treso.decider_finance` (la Finance) ;
@@ -48,16 +48,21 @@ function rafraichir(demandeId?: string) {
 
 const NON_AUTORISE: ResultatBudgetAction = { status: "error", message: "Action non autorisée." };
 
-/** Saisie reçue du client, recopiée champ par champ (jamais l'objet reçu tel quel). */
-function saisieRecue(s: unknown): SaisieParametrage | null {
+type PorteeBudget = "GLOBAL" | "CATEGORIE";
+
+/**
+ * Saisie reçue du client, recopiée champ par champ (jamais l'objet reçu tel quel). La PORTÉE n'est jamais lue de l'objet reçu : elle est
+ * imposée par l'action appelée (section « Budget de caisse » ou « Budgets par catégorie »), qui ne peut donc pas être détournée pour
+ * écrire dans l'autre.
+ */
+function saisieRecue(s: unknown, portee: PorteeBudget): SaisieParametrage | null {
   if (!s || typeof s !== "object") return null;
   const o = s as Record<string, unknown>;
   const seuil = o.seuil && typeof o.seuil === "object" ? (o.seuil as Record<string, unknown>) : null;
-  const portee = o.portee === "GLOBAL" ? "GLOBAL" : "CATEGORIE";
   return {
     portee,
-    categorieId: typeof o.categorieId === "string" && o.categorieId ? o.categorieId : null,
-    // Le budget global n'a aucun montant (c'est le solde de caisse réel) : jamais transmis au serveur de calcul.
+    // Le budget de caisse n'a ni catégorie ni montant (c'est le solde de caisse réel) : jamais transmis au serveur de calcul.
+    categorieId: portee === "GLOBAL" ? null : typeof o.categorieId === "string" && o.categorieId ? o.categorieId : null,
     montant: portee === "GLOBAL" ? null : Number(o.montant),
     dateDebut: String(o.dateDebut ?? ""),
     dateFin: typeof o.dateFin === "string" && o.dateFin ? o.dateFin : null,
@@ -73,32 +78,52 @@ export interface ResultatSoumissionBudgetAction extends ResultatBudgetAction {
 }
 
 /**
- * La Finance soumet au DG UN OU PLUSIEURS budgets d'un coup : budgets de catégorie (montant, seuils) et/ou seuils du solde de caisse
- * (budget global). Tout ou rien. Sans effet tant que le DG n'a pas validé. UNE seule notification pour tout le lot.
+ * Soumission d'une section (lot J quater : une action PAR section). La Finance soumet au DG un ou plusieurs paramétrages de LA section ;
+ * tout ou rien ; sans effet tant que le DG n'a pas validé ; UNE seule notification pour tout le lot, propre à la section.
  */
-export async function soumettreParametragesBudgetAction(saisies: SaisieParametrage[]): Promise<ResultatSoumissionBudgetAction> {
+async function soumettreSection(saisies: unknown, portee: PorteeBudget): Promise<ResultatSoumissionBudgetAction> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.modifier_budget_categorie")) return NON_AUTORISE;
-  if (!Array.isArray(saisies) || saisies.length === 0 || saisies.length > 200) return { status: "error", message: "Cochez au moins un budget à soumettre." };
-  const recues = saisies.map(saisieRecue);
+  if (!Array.isArray(saisies) || saisies.length === 0 || saisies.length > 200) return { status: "error", message: portee === "GLOBAL" ? "Renseignez les seuils à soumettre." : "Cochez au moins un budget à soumettre." };
+  const recues = saisies.map((s) => saisieRecue(s, portee));
   if (recues.some((x) => x === null)) return { status: "error", message: "Saisie invalide." };
+  if (portee === "GLOBAL" && recues.length !== 1) return { status: "error", message: "Les seuils du budget de caisse se soumettent en un seul paramétrage." };
+  if (portee === "CATEGORIE" && recues.some((x) => !x?.categorieId)) return { status: "error", message: "Choisissez une catégorie pour chaque budget." };
 
   const r = await soumettreParametragesBudget(recues as SaisieParametrage[], session.user.id);
   if (!r.ok) return { status: "error", message: r.message, erreursParIndex: r.erreursParIndex };
 
-  await notifierParametragesSoumis(session.user.id, r.ids.length, r.resume);
+  await notifierParametragesSoumis(session.user.id, r.ids.length, r.resume, portee);
   rafraichir();
   return {
     status: "success",
-    message: r.ids.length === 1 ? "Budget soumis au DG : il ne sera pris en compte qu'une fois validé." : `${r.ids.length} budgets soumis au DG : ils ne seront pris en compte qu'une fois validés.`,
+    message:
+      portee === "GLOBAL"
+        ? "Seuils de caisse soumis au DG : ils ne seront pris en compte qu'une fois validés."
+        : r.ids.length === 1
+          ? "Budget de catégorie soumis au DG : il ne sera pris en compte qu'une fois validé."
+          : `${r.ids.length} budgets de catégorie soumis au DG : ils ne seront pris en compte qu'une fois validés.`,
   };
 }
 
+/** Section « Budget de caisse » : la Finance soumet au DG les SEUILS du solde de caisse (en FCFA, avec date d'effet). Jamais de montant. */
+export async function soumettreSeuilsCaisseAction(saisie: SaisieParametrage): Promise<ResultatSoumissionBudgetAction> {
+  return soumettreSection([saisie], "GLOBAL");
+}
+
+/** Section « Budgets par catégorie » : la Finance soumet au DG un ou plusieurs budgets de catégorie (montant, seuils, date d'effet). Tout ou rien. */
+export async function soumettreBudgetsCategoriesAction(saisies: SaisieParametrage[]): Promise<ResultatSoumissionBudgetAction> {
+  return soumettreSection(saisies, "CATEGORIE");
+}
+
 /**
- * Le DG valide ou refuse UN OU PLUSIEURS paramétrages (motif obligatoire au refus, propre à chaque élément ou commun au lot).
- * Chaque élément garde sa propre trace ; ce que le DG a lui-même soumis est ignoré. UNE seule notification par soumetteur.
+ * Décision d'une section (lot J quater : une action PAR section). Le DG valide ou refuse un ou plusieurs paramétrages (motif obligatoire
+ * au refus, propre à chaque élément ou commun). Chaque élément garde sa propre trace ; ce que le DG a lui-même soumis est ignoré ;
+ * UNE seule notification par soumetteur. La portée de CHAQUE identifiant est revérifiée en base : une action de section ne peut pas
+ * décider un paramétrage de l'autre section.
  */
-export async function deciderParametragesBudgetAction(
+async function deciderSection(
+  portee: PorteeBudget,
   elements: { id: string; motif?: string }[],
   valider: boolean,
   motifCommun?: string
@@ -106,6 +131,11 @@ export async function deciderParametragesBudgetAction(
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.valider_budget")) return NON_AUTORISE;
   if (!Array.isArray(elements) || elements.length === 0 || elements.length > 200) return { status: "error", message: "Cochez au moins un paramétrage." };
+  const ids = elements.map((e) => String(e?.id ?? ""));
+  const trouves = await prisma.budgetParametrage.findMany({ where: { id: { in: ids } }, select: { id: true, portee: true } });
+  if (trouves.some((t) => t.portee !== portee)) {
+    return { status: "error", message: portee === "GLOBAL" ? "Cette action ne décide que les seuils du budget de caisse." : "Cette action ne décide que les budgets de catégorie." };
+  }
 
   const r = await deciderParametragesBudget(
     elements.map((e) => ({ id: String(e?.id ?? ""), motif: e?.motif === undefined ? null : String(e.motif) })),
@@ -115,14 +145,29 @@ export async function deciderParametragesBudgetAction(
   );
   if (!r.ok) return { status: "error", message: r.message };
 
-  await notifierDecisionParametrages(r.decides, valider === true);
+  await notifierDecisionParametrages(r.decides, valider === true, portee);
   rafraichir();
   const n = r.decides.length;
   const ignores = r.ignores.map((i) => i.message);
-  const base = valider === true
-    ? n === 1 ? "Budget validé : il s'applique à sa date d'effet." : `${n} budgets validés : ils s'appliquent à leur date d'effet.`
-    : n === 1 ? "Budget refusé : la Finance en est informée." : `${n} budgets refusés : la Finance en est informée.`;
+  const base =
+    portee === "GLOBAL"
+      ? valider === true
+        ? "Seuils de caisse validés : ils s'appliquent à leur date d'effet."
+        : "Seuils de caisse refusés : la Finance en est informée."
+      : valider === true
+        ? n === 1 ? "Budget de catégorie validé : il s'applique à sa date d'effet." : `${n} budgets de catégorie validés : ils s'appliquent à leur date d'effet.`
+        : n === 1 ? "Budget de catégorie refusé : la Finance en est informée." : `${n} budgets de catégorie refusés : la Finance en est informée.`;
   return { status: "success", message: ignores.length > 0 ? `${base} Non décidés : ${ignores.join(" ")}` : base, ignores };
+}
+
+/** Section « Budget de caisse » : le DG valide ou refuse des seuils de caisse (seul, ou en lot si plusieurs ont été soumis). */
+export async function deciderSeuilsCaisseAction(elements: { id: string; motif?: string }[], valider: boolean, motifCommun?: string) {
+  return deciderSection("GLOBAL", elements, valider, motifCommun);
+}
+
+/** Section « Budgets par catégorie » : le DG valide ou refuse des budgets de catégorie, seul ou en lot. */
+export async function deciderBudgetsCategoriesAction(elements: { id: string; motif?: string }[], valider: boolean, motifCommun?: string) {
+  return deciderSection("CATEGORIE", elements, valider, motifCommun);
 }
 
 /**

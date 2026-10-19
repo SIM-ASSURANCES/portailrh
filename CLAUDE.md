@@ -3379,6 +3379,8 @@ même geste, parcours, rien montré au demandeur, reporting page et Excel, budge
 
 #### Lot J ter — budget global = solde de caisse, soumission en lot, page Catégories fusionnée dans Budgets (2026-10-20)
 
+> **⚠️ Présentation REMPLACÉE par le lot J quater (juste en dessous)** : la page Budgets sépare « Budget de caisse » et « Budgets par catégorie » (sections, formulaires, actions, notifications et historiques propres) ; les actions mixtes `soumettreParametragesBudgetAction` / `deciderParametragesBudgetAction` et le formulaire unique en lot n'existent plus. Les règles (solde de caisse réel, seuils en FCFA, lot tout ou rien, décision seul ou en lot) tiennent.
+
 Aucune écriture de caisse créée ni modifiée ; le budget d'une catégorie reste **consommé au règlement** ; les règlements Banque restent des fonds remis mais n'entrent **jamais**
 dans le solde de caisse ; devise unique ; garde 8 et `PERMISSIONS_DECISION_NON_DELEGABLES` intactes ; **aucune permission nouvelle**. Migration idempotente
 `20261024090000_budget_global_solde_caisse` (rejouée sans effet, `migrate diff` vide). Règles pures dans `backend/src/budgets.ts`, couche base dans `backend/src/budgetsDb.ts`.
@@ -3444,6 +3446,57 @@ tsc, eslint, `next build` ; migration sur une base portant 4 paramétrages globa
 `lot-j-ter.mjs` 96/96 (migration, page fusionnée avec création/suppression de catégorie et d'objet, ancienne URL, menu, accès par rôle, global sans montant, lot tout ou rien, notifications uniques,
 décision en lot, motif propre/commun, soumission du DG ignorée, solde de caisse recoupé avec un calcul SQL indépendant, règlements Caisse/Banque, orange, rouge, négatif, DG dans le même geste,
 parcours, reporting page et Excel, journal de caisse intact) ; `lot-j.mjs` adapté (85/85) ; régressions des lots I, C, F, G, H et précédents.
+
+#### Lot J quater — page Budgets : deux sections séparées, « Budget de caisse » et « Budgets par catégorie » (2026-10-21)
+
+Décision de l'utilisateur : pour plus de clarté, la page « Budgets » (onglet Budgets) sépare le budget de caisse et les budgets de catégorie, **chacun dans sa propre section, sans mélange**.
+**Aucune migration, aucun changement de calcul ni de règle** (budget consommé au règlement, alertes orange/rouge, confirmation du DG du rouge, budget de caisse = solde de caisse réel, seuils
+en FCFA), aucune écriture de caisse créée ni modifiée, aucune permission nouvelle ni modifiée, `PERMISSIONS_DECISION_NON_DELEGABLES` intacte. Les onglets « Catégories » (création, objets, date de
+catégorisation obligatoire) et la redirection de `/treso/finance/categories` sont inchangés. Le moteur (`backend/src/budgets.ts`, `budgetsDb.ts`) n'a pas été touché.
+
+**Avant (audit)** : l'onglet Budgets empilait des blocs mixtes — « Budgets en vigueur » (la ligne du solde de caisse puis le tableau des catégories), « Paramétrages en attente du DG » (liste
+mélangée), « Nouveau paramétrage » (UN formulaire en lot avec la ligne « solde de caisse » au milieu des catégories, dates communes) et « Historique des paramètres » (un seul tableau). Une seule
+action de soumission et une seule action de décision servaient aux deux, avec des notifications génériques (« n budgets à valider »).
+
+**Maintenant** — `/treso/finance/budgets` (onglet Budgets), de haut en bas :
+- **« Dépassements à confirmer »** (DG seul, `treso.decider_dg`) — bloc commun conservé en tête : un dépassement rouge concerne indifféremment la caisse ou une catégorie.
+- **Section « Budget de caisse »** (`data-section-caisse`) : le **solde de caisse réel** (jamais un montant saisi : solde actuel, déjà validé pas encore sorti, solde prévisionnel), les **seuils orange
+  et rouge en FCFA** avec leur période (date d'effet), le **statut du dernier paramétrage** (en attente du DG / validé / refusé) et le niveau d'alerte ; les **seuils en attente du DG** (liste propre,
+  décision seul ou en lot) ; le **formulaire de paramétrage des seuils** (`ParametrageCaisseForm` : date de début jamais dans le passé, fin facultative, deux champs FCFA — aucun champ montant, aucun
+  pourcentage) ; **son propre historique** (`data-historique-caisse`, sans colonne catégorie).
+- **Section « Budgets par catégorie »** (`data-section-categories`) : **un tableau avec UNE ligne par catégorie** (toutes les catégories actives, même sans budget, plus celles désactivées qui ont encore un
+  budget en vigueur) — budget en vigueur, consommé, réservé, reste, période, seuils, **statut** du dernier paramétrage (`data-statut-categorie`), alerte — ; les budgets en attente du DG ; le
+  **formulaire de paramétrage** (`ParametrageCategoriesForm` : cases à cocher, dates communes à la sélection, soumission individuelle ou en lot, tout ou rien) ; **son propre historique**
+  (`data-historique-categories`, avec colonnes catégorie et montant).
+
+**Actions et notifications PAR section** (`budgets/actions.ts`, `lib/notificationsBudget.ts`) — remplacent `soumettreParametragesBudgetAction` / `deciderParametragesBudgetAction` :
+| Section | Soumettre (Finance, `treso.modifier_budget_categorie`) | Valider / refuser (DG, `treso.valider_budget`) |
+|---|---|---|
+| Caisse | `soumettreSeuilsCaisseAction(saisie)` | `deciderSeuilsCaisseAction(elements, valider, motifCommun?)` |
+| Catégories | `soumettreBudgetsCategoriesAction(saisies)` | `deciderBudgetsCategoriesAction(elements, valider, motifCommun?)` |
+- **La portée est imposée par l'action, jamais lue de l'entrée** : l'action de caisse force `GLOBAL` (montant et catégorie envoyés par un client sont ignorés — testé), celle des catégories force `CATEGORIE` et
+  refuse une ligne sans catégorie. Un pourcentage envoyé pour la caisse reste refusé par la validation (rien n'est converti en silence).
+- **Les actions de décision revérifient la portée de chaque identifiant en base** : décider un paramétrage de l'autre section est refusé (testé dans les deux sens), sans rien écrire.
+- Notifications propres : « Seuils de caisse à valider » / « Seuils de caisse validés (refusés) par le DG » ; « Budget de catégorie à valider » / « n budgets de catégorie à valider » /
+  « n budgets de catégorie validés (refusés) par le DG ». Toujours UNE notification par lot et par soumetteur (motifs inclus au refus). Les notifications d'alerte orange/rouge et de confirmation de
+  dépassement sont inchangées.
+- Inchangés : le DG ne décide jamais ce qu'il a soumis (case et boutons désactivés, ignoré côté serveur), motif obligatoire au refus (par élément ou commun), une trace d'historique par élément, un seul
+  paramétrage en attente par budget, un nouveau paramétrage ne modifie jamais l'ancien et n'est utilisable qu'une fois validé, à sa date d'effet.
+
+**Blocs retirés de l'écran** (devenus doublons ou inutiles après la séparation) : le bloc mixte « Budgets en vigueur » (remplacé par l'encadré du solde de caisse et le tableau des catégories) ; la liste
+unique « Paramétrages en attente du DG » (une liste par section) ; le formulaire unique `ParametrageBudgetForm` (supprimé, remplacé par `ParametrageCaisseForm` et `ParametrageCategoriesForm`) avec sa ligne
+« Budget global = solde de caisse » mêlée aux catégories ; l'historique unique des paramétrages (un par section) ; les deux actions mixtes et leurs notifications génériques.
+
+**Points ouverts** : (1) **la décision en lot du DG existe dans chaque section, mais celle de caisse ne s'affiche jamais** : la règle du lot J (un seul paramétrage en attente par budget) limite la caisse à
+UN paramétrage en attente à la fois ; la barre de lot n'apparaît que s'il y en a au moins deux (le même composant sert les deux sections). Lever cette limite serait un changement de règle, non fait.
+(2) Le bloc « Dépassements à confirmer » reste commun aux deux sections (un dépassement peut viser la caisse ou une catégorie dans la même validation). (3) Les dates d'effet restent communes à la sélection
+d'un lot de catégories. (4) Le tableau des catégories lit « Consommé » et « Réservé » du contexte budgétaire existant (consommé au règlement depuis la date d'effet ; réservé = le plus grand du consommé et de
+l'engagé) : aucun nouveau calcul. (5) Le statut d'une catégorie est celui de son **dernier paramétrage soumis** (en attente, validé ou refusé) : une catégorie dont le dernier paramétrage a été refusé affiche
+« Refusé » alors que son budget en vigueur peut venir d'un paramétrage validé plus ancien.
+
+**Vérifié** : vitest (978 réussis), tsc, eslint, `next build` ; e2e `lot-j-ter.mjs` 117/117 (deux sections et leur contenu, formulaire de caisse sans montant ni pourcentage, portée imposée par chaque action, refus
+croisés, notifications propres, historiques séparés, tableau des catégories, décision seul et en lot par section, lot tout ou rien, soumission du DG ignorée, parcours, reporting, journal de caisse intact) ;
+`lot-j.mjs` adapté 85/85 ; `lot-i.mjs` 56/56 ; régressions des lots C, F, G, G bis, G ter, H et précédents.
 
 ### Solde d'ouverture de caisse
 
