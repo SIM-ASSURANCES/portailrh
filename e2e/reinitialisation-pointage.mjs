@@ -34,7 +34,7 @@ async function donneesPointage() {
   await q(`INSERT INTO "Pointage"(id, type, source, heure, "heurePrevue", "estRetard", "minutesRetard", "userId") VALUES ($1, 'ARRIVEE', 'ORDINATEUR', now() - interval '1 day', '07:45', true, 25, $2)`, [pid, collab]);
   await q(`INSERT INTO "JustificationPointage"(id, "pointageId", statut, "updatedAt") VALUES ($1, $2, 'SOUMISE', now())`, [`j-${pid}`, pid]);
   await q(`INSERT INTO "Absence"(id, date, statut, "userId", "updatedAt") VALUES ($1, now() - interval '${n + 3} days', 'A_CONTROLER', $2, now())`, [`a-${pid}`, collab]);
-  await q(`INSERT INTO "PlageAbsenceAutorisee"(id, date, "heureDebut", "heureFin", source, "userId") VALUES ($1, now(), '08:00', '12:00', 'PERMISSION', $2)`, [`pl-${pid}`, collab]);
+  await q(`INSERT INTO "PlageAbsenceAutorisee"(id, date, "heureDebut", "heureFin", source, "userId") VALUES ($1, now(), '08:00', '12:00', 'CONGE', $2)`, [`pl-${pid}`, collab]);
   await q(`INSERT INTO "Notification"(id, titre, message, category, "userId") VALUES ($1, 'Pointage', 'm', 'POINTAGE', $2), ($3, 'RH', 'm', 'RH', $2)`, [`np-${pid}`, collab, `nr-${pid}`]);
   await q(`INSERT INTO "HistoriqueEntry"(id, entity, "entityId", action, detail, "userId") VALUES ($1, 'Pointage', $2, 'POINTAGE', 'test', $3)`, [`h-${pid}`, pid, collab]);
   await q(`INSERT INTO "JournalTechnique"(id, niveau, source, code, message) VALUES ($1, 'ERREUR', 'EMAIL', 'SMTP_ECHEC', 'test')`, [`jt-${pid}`]);

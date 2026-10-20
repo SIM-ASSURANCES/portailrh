@@ -401,7 +401,7 @@ export async function enregistrerAbsenceAutomatiqueAction(): Promise<ActionState
       heureFinApresMidi: parametrage?.heureFinApresMidi || "16:45",
     })
   ) {
-    return { status: "error", message: "Absence autorisée (congé ou permission) enregistrée pour aujourd'hui." };
+    return { status: "error", message: "Congé autorisé enregistré pour aujourd'hui." };
   }
 
   const hasPointage = await prisma.pointage.findFirst({

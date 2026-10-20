@@ -69,6 +69,27 @@ describe("purge : une fois par jour à 03:00", () => {
   });
 });
 
+describe("rappels congés : lundi au vendredi à 08:30", () => {
+  // 2026-10-13 = mardi, 2026-10-16 = vendredi, 2026-10-17 = samedi, 2026-10-19 = lundi.
+  it("créneau d'un mardi 09:00 → 08:30 du jour", () => {
+    expect(dernierCreneau("RAPPELS_CONGES", d(13, 9, 0))).toEqual(d(13, 8, 30));
+  });
+
+  it("créneau d'un lundi 08:00 → vendredi 08:30", () => {
+    expect(dernierCreneau("RAPPELS_CONGES", d(19, 8, 0))).toEqual(d(16, 8, 30));
+  });
+
+  it("créneau d'un samedi → vendredi 08:30", () => {
+    expect(dernierCreneau("RAPPELS_CONGES", d(17, 12, 0))).toEqual(d(16, 8, 30));
+  });
+
+  it("en retard à 09:01 sans exécution", () => {
+    expect(tacheEnRetard("RAPPELS_CONGES", d(13, 9, 0), null)).toBe(false);
+    expect(tacheEnRetard("RAPPELS_CONGES", d(13, 9, 1), null)).toBe(true);
+    expect(tacheEnRetard("RAPPELS_CONGES", d(13, 9, 1), d(13, 8, 31))).toBe(false);
+  });
+});
+
 describe("double instance", () => {
   it("l'exécution ignorée d'une instance compte : l'autre ne la relance pas pour le même créneau", () => {
     // Instance A a pris le verrou ; instance B a enregistré une exécution IGNOREE à 10:05:04.
@@ -106,6 +127,7 @@ describe("libellés", () => {
     expect(libelleBilan("RELANCES_JUSTIFICATION", { envois: 3, clotures: 1, erreurs: 0 })).toBe("3 envois, 1 clôture, 0 erreur");
     expect(libelleBilan("ABSENCES", { nouvellesAbsences: 2, oublisDetectes: 1 })).toBe("2 nouvelles absences, 1 oubli de départ");
     expect(libelleBilan("PURGE", null)).toBe("0 exécution et 0 incident supprimés");
+    expect(libelleBilan("RAPPELS_CONGES", { rappels: 2, erreurs: 1 })).toBe("2 rappels, 1 erreur");
   });
 
   it("erreur courte : une ligne, 200 caractères", () => {

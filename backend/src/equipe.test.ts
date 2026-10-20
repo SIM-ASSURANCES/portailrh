@@ -23,6 +23,12 @@ describe("etatJourMembre", () => {
   });
   it("sans arrivée : absence autorisée, absent, jour non ouvré, pas encore pointé (dans cet ordre)", () => {
     expect(etatJourMembre({ ...base, absenceAutorisee: true, absent: true }).code).toBe("ABSENCE_AUTORISEE");
+    // T08 : un congé validé ou en attente s'affiche comme tel ; un jour seulement protégé reste « absence autorisée ».
+    expect(etatJourMembre({ ...base, absenceAutorisee: true, etatConge: "EN_CONGE" })).toEqual({ code: "EN_CONGE", libelle: "En congé" });
+    expect(etatJourMembre({ ...base, absenceAutorisee: true, etatConge: "EN_ATTENTE" }).code).toBe("CONGE_EN_ATTENTE");
+    expect(etatJourMembre({ ...base, absenceAutorisee: true, etatConge: "PROTEGE" }).code).toBe("ABSENCE_AUTORISEE");
+    // Une arrivée pointée prime toujours, même un jour de congé (le signal « pointé pendant un congé » est à part).
+    expect(etatJourMembre({ ...base, aArrive: true, absenceAutorisee: false, etatConge: "EN_CONGE" }).code).toBe("A_L_HEURE");
     expect(etatJourMembre({ ...base, absent: true, jourNonOuvre: true }).code).toBe("ABSENT");
     expect(etatJourMembre({ ...base, jourNonOuvre: true }).code).toBe("NON_OUVRE");
     expect(etatJourMembre(base).code).toBe("PAS_ENCORE_POINTE");

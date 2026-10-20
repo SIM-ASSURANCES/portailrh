@@ -6,6 +6,7 @@ import { Badge, Card, EmptyState, PageHeader, StatCard } from "@/components/ui";
 import type { BadgeVariant } from "@/components/ui";
 import { VARIANTE_STATUT_JUSTIFICATION } from "@/components/pointage/justificationStatut";
 import { getSession } from "@/lib/auth";
+import { chargerNavConges } from "@/lib/conges/navigation";
 import { chargerEquipeResponsable } from "@/lib/equipe";
 import { compteurMenuJustificationsSession } from "@/lib/justificationsPointage";
 import { chargerPresenceJour } from "@/lib/presenceJour";
@@ -19,6 +20,8 @@ const VARIANTE_ETAT: Record<CodeEtatJour, BadgeVariant> = {
   EN_RETARD: "warning",
   PARTI_EN_AVANCE: "warning",
   ABSENCE_AUTORISEE: "info",
+  EN_CONGE: "success",
+  CONGE_EN_ATTENTE: "warning",
   ABSENT: "danger",
   PAS_ENCORE_POINTE: "neutral",
   NON_OUVRE: "neutral",
@@ -40,16 +43,19 @@ export default async function MonEquipePage({ searchParams }: { searchParams: Pr
   const filtres = { dateDebut: periode.du, dateFin: periode.au, userIds: ids };
 
   // Mêmes lectures que la page « Présence » de la RH et que le reporting RH, restreintes à l'équipe (aucun second calcul).
-  const [jour, aggregats, synthese, aDecider] = await Promise.all([
+  const [jour, aggregats, synthese, aDecider, congesNav] = await Promise.all([
     chargerPresenceJour(new Date(), ids),
     ids.length > 0 ? getReportingAgrégé(filtres) : Promise.resolve([]),
     ids.length > 0 ? getSyntheseEquipe(filtres) : Promise.resolve(new Map()),
     compteurMenuJustificationsSession(session),
+    // Congés à décider : même file que le module, aucun second calcul.
+    chargerNavConges(session, true),
   ]);
+  const congesADecider = congesNav?.aDecider ?? null;
 
   const presentParId = new Map(jour.presents.map((p) => [p.userId, p]));
   const absentsIds = new Set(jour.absents.map((a) => a.userId));
-  const autorisesIds = new Set(jour.autorises.map((a) => a.userId));
+  const autoriseParId = new Map(jour.autorises.map((a) => [a.userId, a]));
   const aggParId = new Map(aggregats.map((a) => [a.id, a]));
 
   const lignesJour = equipe.membres.map((m) => {
@@ -59,7 +65,8 @@ export default async function MonEquipePage({ searchParams }: { searchParams: Pr
       estRetard: !!p?.estRetard,
       minutesRetard: p?.minutesRetard ?? null,
       departAnticipe: !!p?.departAnticipe,
-      absenceAutorisee: autorisesIds.has(m.id),
+      absenceAutorisee: autoriseParId.has(m.id),
+      etatConge: autoriseParId.get(m.id)?.etatConge ?? null,
       absent: absentsIds.has(m.id),
       jourNonOuvre: jour.isJourNonOuvre,
     });
@@ -89,6 +96,12 @@ export default async function MonEquipePage({ searchParams }: { searchParams: Pr
         />
       </div>
 
+      {congesADecider !== null ? (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4" data-section="conges-a-decider">
+          <StatCard icon="calendar" tone="info" label="Congés à décider" value={congesADecider} href="/conges/a-decider" />
+        </div>
+      ) : null}
+
       {equipe.membres.length === 0 ? (
         <EmptyState icon="users" message="Aucun membre à suivre dans vos services." />
       ) : (
@@ -117,6 +130,11 @@ export default async function MonEquipePage({ searchParams }: { searchParams: Pr
                           {etat.code === "PARTI_EN_AVANCE" && p?.estRetard ? (
                             <Badge variant="warning" className="ml-1">
                               En retard · {p.minutesRetard} min
+                            </Badge>
+                          ) : null}
+                          {p?.pointeEnConge ? (
+                            <Badge variant="warning" className="ml-1">
+                              Pointé pendant un congé
                             </Badge>
                           ) : null}
                         </td>
@@ -159,6 +177,7 @@ export default async function MonEquipePage({ searchParams }: { searchParams: Pr
                     <th className="px-3 py-2 text-right font-medium">Minutes</th>
                     <th className="px-3 py-2 text-right font-medium">Départs anticipés</th>
                     <th className="px-3 py-2 text-right font-medium">Absences</th>
+                    <th className="px-3 py-2 text-right font-medium">Jours de congé</th>
                     <th className="px-3 py-2 text-right font-medium">Refusées / non justifiées</th>
                     <th className="px-3 py-2 font-medium" />
                   </tr>
@@ -174,6 +193,7 @@ export default async function MonEquipePage({ searchParams }: { searchParams: Pr
                         <td className="px-3 py-2 text-right tabular-nums" data-col="minutes">{a?.minutesRetard ?? 0}</td>
                         <td className="px-3 py-2 text-right tabular-nums" data-col="departs">{s?.departsAnticipes ?? 0}</td>
                         <td className="px-3 py-2 text-right tabular-nums" data-col="absences">{a?.absences ?? 0}</td>
+                        <td className="px-3 py-2 text-right tabular-nums" data-col="conges">{a?.joursConge ?? 0}</td>
                         <td className="px-3 py-2 text-right tabular-nums" data-col="refusees">{s?.justificationsRefuseesOuNonJustifiees ?? 0}</td>
                         <td className="px-3 py-2 text-right">
                           <Link

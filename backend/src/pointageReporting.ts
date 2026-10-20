@@ -2,6 +2,8 @@ import { prisma } from "./prisma";
 import { Prisma } from "./generated/prisma/client";
 import { z } from "zod";
 import { justificationAffichee, type JustificationLue } from "./justificationPointage";
+import { syntheseCongesPeriode } from "./congesPointage";
+import { formatJourCivil } from "./congesCalcul";
 
 export const pointageReportingSchema = z.object({
   dateDebut: z.string().optional(),
@@ -123,6 +125,16 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
     }
   }
 
+  // Bornes de la période (mêmes que les absences), réutilisées pour les plages de congé et les jours fériés (T08).
+  const bornesJour: { gte?: Date; lte?: Date } = {};
+  if (filters.dateDebut) bornesJour.gte = new Date(filters.dateDebut);
+  if (filters.dateFin) {
+    const fin = new Date(filters.dateFin);
+    fin.setHours(23, 59, 59, 999);
+    bornesJour.lte = fin;
+  }
+  const filtreDate = filters.dateDebut || filters.dateFin ? { date: bornesJour } : {};
+
   const users = await prisma.user.findMany({
     where: whereUser,
     select: {
@@ -137,15 +149,26 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
         select: {
           estRetard: true,
           minutesRetard: true,
+          heure: true,
         },
       },
       absencesDeclarees: {
         where: whereAbsence,
         select: { id: true },
-      }
+      },
+      // T08 : plages de congé de la période (même bornes que les absences) pour « Jours de congé » et « Pointé pendant un congé ».
+      plagesAbsenceAutorisee: {
+        where: { ...filtreDate, source: "CONGE" },
+        select: { date: true, source: true, provisoire: true, demandeConge: { select: { statut: true, reference: true } } },
+      },
     },
     orderBy: { fullName: "asc" },
   });
+
+  // Jours fériés de la période : un jour férié n'est pas un jour de congé (même règle que le décompte des jours ouvrés).
+  const joursFeries = (
+    await prisma.jourFerie.findMany({ where: filtreDate, select: { date: true } })
+  ).map((j) => formatJourCivil(j.date));
 
   return users.map((u) => {
     const presences = u.pointagesEffectues.length;
@@ -155,7 +178,14 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
     const retards = u.pointagesEffectues.filter((p) => p.estRetard);
     const joursRetard = retards.length;
     const minutesRetard = retards.reduce((acc, p) => acc + (p.minutesRetard || 0), 0);
-    
+    // Jours de congé validés (jours ouvrés) et ceux où une arrivée a pourtant été pointée. N'entre dans AUCUN autre compteur :
+    // un jour couvert n'a jamais d'absence (la tâche des absences l'ignore), les chiffres existants ne changent pas.
+    const { joursConge, joursPointesEnConge } = syntheseCongesPeriode({
+      plages: u.plagesAbsenceAutorisee,
+      arrivees: u.pointagesEffectues.map((p) => p.heure),
+      joursFeries,
+    });
+
     return {
       id: u.id,
       fullName: u.fullName,
@@ -165,6 +195,8 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
       absences,
       joursRetard,
       minutesRetard,
+      joursConge,
+      joursPointesEnConge,
     };
   });
 }

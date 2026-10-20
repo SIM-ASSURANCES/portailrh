@@ -13,6 +13,10 @@ type AgregeData = {
   absences: number;
   joursRetard: number;
   minutesRetard: number;
+  /** T08 : jours ouvrés de congé validé ; ne comptent jamais comme des absences. */
+  joursConge: number;
+  /** T08 (R13) : jours de congé validé où une arrivée a été pointée. */
+  joursPointesEnConge: number;
 };
 
 type DetailsData = {
@@ -61,6 +65,14 @@ export function ReportingSummaryTable({ data }: { data: AgregeData[] }) {
           key: "minutesRetard", 
           header: "Minutes de retard", 
           accessor: (r) => r.minutesRetard 
+        },
+        { key: "joursConge", header: "Jours de congé", accessor: (r) => r.joursConge },
+        {
+          key: "joursPointesEnConge",
+          header: "Pointé pendant un congé",
+          accessor: (r) => r.joursPointesEnConge,
+          render: (r) =>
+            r.joursPointesEnConge > 0 ? <Badge variant="warning">{r.joursPointesEnConge} jour(s)</Badge> : "0",
         },
       ]}
       data={data}
