@@ -64,6 +64,12 @@ const derniersJoursOuvres = (d, n) => {
 const attenteMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const resultats = [];
+// Une exception (sélecteur introuvable, délai dépassé) affiche quand même les contrôles déjà passés.
+process.on("uncaughtException", (e) => {
+  console.log(resultats.join("\n"));
+  console.error("ARRÊT :", e.message.split("\n")[0]);
+  process.exit(1);
+});
 async function verifier(num, nom, ok, detail = "", page = null) {
   if (ok) {
     resultats.push(`OK ${num} — ${nom}`);
@@ -104,14 +110,18 @@ const browser = await chromium.launch(
 );
 const erreursJs = [];
 
+// Session mémorisée par compte : la connexion est limitée à 5 tentatives par minute et par compte (checkRateLimit).
+const sessions = new Map();
 async function connecter(email, viewport) {
   const ctx = await browser.newContext({
     extraHTTPHeaders: { "x-forwarded-for": "10.9.9.9" },
     acceptDownloads: true,
     ...(viewport ? { viewport } : {}),
+    ...(sessions.has(email) ? { storageState: sessions.get(email) } : {}),
   });
   const p = await ctx.newPage();
   p.on("pageerror", (e) => erreursJs.push(`[${email}] ${e.message}`));
+  if (sessions.has(email)) return { ctx, p };
   await p.goto(`${B}/login`);
   await p.fill('input[name="email"]', email);
   await p.fill('input[name="password"]', "password123");
@@ -119,6 +129,7 @@ async function connecter(email, viewport) {
     p.waitForURL((u) => !u.pathname.startsWith("/login")),
     p.click('button[type="submit"]'),
   ]);
+  sessions.set(email, await ctx.storageState());
   return { ctx, p };
 }
 
@@ -679,13 +690,15 @@ let demandeId7b = null;
     )
   ).map((p) => p.j);
   const aujourdhuiStr = iso(new Date());
-  const seulesPassesRestent =
-    plages7bRestantes.length === jPasses7b.length && plages7bRestantes.every((j) => j < aujourdhuiStr);
+  // Règle du moteur (T03) : une annulation après le début retire les plages à partir de DEMAIN ; le jour en cours,
+  // déjà commencé, reste couvert comme les jours passés.
+  const attendues7b = estWeekEnd(new Date()) ? jPasses7b : [...jPasses7b, aujourdhuiStr];
+  const seulesPassesRestent = plages7bRestantes.join(",") === attendues7b.join(",");
   await verifier(
     "7.e",
-    "Seules les plages à partir d'aujourd'hui disparaissent, les jours passés restent couverts",
+    "Seules les plages à partir de demain disparaissent, les jours passés et le jour même restent couverts",
     seulesPassesRestent,
-    `restantes=${plages7bRestantes.join(",")}, attendues=${jPasses7b.join(",")}`
+    `restantes=${plages7bRestantes.join(",")}, attendues=${attendues7b.join(",")}`
   );
   await rhAnnule.ctx.close();
 }
@@ -776,7 +789,7 @@ let demandeId9 = null;
   await q(`DELETE FROM "PlageAbsenceAutorisee" WHERE "demandeCongeId" = $1`, [demandeId9]);
   await q(
     `INSERT INTO "PlageAbsenceAutorisee" (id, date, "heureDebut", "heureFin", source, description, "userId", "demandeCongeId", provisoire)
-     VALUES ('e2e-plage-sc9', $1, '08:00', '18:00', 'CONGE', 'Congé', $2, $3, true)`,
+     VALUES ('e2e-plage-sc9', $1, '00:00', '23:59', 'CONGE', 'Congé', $2, $3, true)`,
     [aujourdhuiStr, respTechId, demandeId9]
   );
   await q(`DELETE FROM "Absence" WHERE "userId" = $1 AND to_char(date, 'YYYY-MM-DD') = $2`, [
@@ -1002,11 +1015,14 @@ let demandeId10b = null;
 {
   const rh = await connecter("rh@simassurances.test");
   await rh.p.goto(`${B}/conges/toutes?onglet=toutes`);
-  await rh.p.locator('input[name="du"]').fill("2025-01-01");
-  await rh.p.locator('input[name="au"]').fill("2027-12-31");
+  // Période limitée à 366 jours (filtresCongesDepuisRecherche) ; couvre tous les congés créés par la recette.
+  await rh.p.locator('input[name="du"]').fill(iso(ajouterJours(new Date(), -60)));
+  await rh.p.locator('input[name="au"]').fill(iso(ajouterJours(new Date(), 300)));
   await rh.p.locator('select[name="statut"]').selectOption("TOUS");
+  // Pas de « networkidle » : le flux SSE du portail (/api/events) garde une connexion ouverte en permanence.
+  const avantFiltre = rh.p.url();
   await rh.p.getByRole("button", { name: "Filtrer" }).click();
-  await rh.p.waitForLoadState("networkidle");
+  await rh.p.waitForURL((u) => u.toString() !== avantFiltre);
 
   const refsEcran = [];
   while (true) {
@@ -1014,20 +1030,22 @@ let demandeId10b = null;
     refsEcran.push(...liens.map((l) => l.trim()));
     const btnSuivant = rh.p.locator('a:has-text("Suivant")');
     if ((await btnSuivant.count()) > 0) {
+      const avantPage = rh.p.url();
       await btnSuivant.click();
-      await rh.p.waitForLoadState("networkidle");
+      await rh.p.waitForURL((u) => u.toString() !== avantPage);
     } else {
       break;
     }
   }
 
-  const [download] = await Promise.all([
-    rh.p.waitForEvent("download"),
-    rh.p.getByRole("link", { name: "Exporter en Excel" }).click(),
-  ]);
-  const filePath = await download.path();
+  // Lien du bouton « Exporter en Excel » de la page, appelé avec la session de rh@ (statut et corps vérifiés).
+  const hrefExport = await rh.p.getByRole("link", { name: "Exporter en Excel" }).getAttribute("href");
+  const repExport = await rh.p.request.get(`${B}${hrefExport}`);
+  if (repExport.status() !== 200) {
+    console.error("Export :", repExport.status(), (await repExport.text()).slice(0, 300));
+  }
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
+  await workbook.xlsx.load(await repExport.body());
   const sheet = workbook.getWorksheet("Congés") ?? workbook.worksheets[0];
 
   const refsExcel = [];
@@ -1077,22 +1095,25 @@ let demandeId10b = null;
 
   // Rejeu par appel direct de l'action serveur avec une date passée
   const countAvant = Number((await q('SELECT count(*) FROM "DemandeConge"'))[0].count);
+  let corpsRejeu = "";
   if (requeteSoumissionValide) {
     const headersRejeu = { ...requeteSoumissionValide.headers };
     delete headersRejeu["content-length"];
     delete headersRejeu["host"];
     const postDataModifie = requeteSoumissionValide.postData.replace(/\d{4}-\d{2}-\d{2}/, "2025-01-10");
-    await col.p.request.post(requeteSoumissionValide.url, {
+    const repRejeu = await col.p.request.post(requeteSoumissionValide.url, {
       headers: headersRejeu,
       data: postDataModifie,
     });
+    corpsRejeu = await repRejeu.text();
   }
   const countApres = Number((await q('SELECT count(*) FROM "DemandeConge"'))[0].count);
+  // Le refus doit venir de la règle « pas dans le passé » (message dans la réponse de l'action), pas d'une autre cause.
   await verifier(
     "13.b",
-    "Appel direct de l'action serveur avec date passée ne crée aucune demande en base",
-    countAvant === countApres,
-    `avant=${countAvant}, apres=${countApres}`
+    "Appel direct de l'action serveur avec date passée : refusé par la règle « pas dans le passé », aucune demande en base",
+    requeteSoumissionValide !== null && /ne peut pas être dans le passé/.test(corpsRejeu) && countAvant === countApres,
+    `requeteCapturee=${requeteSoumissionValide !== null}, avant=${countAvant}, apres=${countApres}, reponse=${corpsRejeu.slice(0, 150)}`
   );
   await col.ctx.close();
 }
@@ -1187,7 +1208,6 @@ let demandeId14 = null;
 
   for (const pageTest of pagesATester) {
     await pageTest.p.goto(pageTest.url);
-    await pageTest.p.waitForLoadState("networkidle");
     const scrollWidth = await pageTest.p.evaluate(() => document.documentElement.scrollWidth);
     await verifier(
       pageTest.code,
