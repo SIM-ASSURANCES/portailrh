@@ -51,7 +51,6 @@ async function main() {
 
   // Sans demande, la purge n'est plus refusée pour ce motif (elle l'est pour l'empreinte factice).
   await prisma.plageAbsenceAutorisee.deleteMany({ where: { demandeCongeId: { not: null } } });
-  await prisma.pieceJointeConge.deleteMany();
   await prisma.demandeConge.deleteMany();
   const apres = await message(() => executerReinitialisationPointage({ userId: user.id, sauvegardeSha256: "0".repeat(64) }));
   verifier("Sans demande : le refus change de motif (empreinte invalide)", apres !== null && apres !== MESSAGE_PURGE_REFUSEE_ABSENCES && /sauvegarde/i.test(apres), apres);
