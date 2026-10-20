@@ -88,7 +88,7 @@ export function ParametrageCaisseForm({
       <p className="text-xs text-muted-foreground">
         Le budget de caisse n&apos;est pas un montant saisi : c&apos;est le solde de caisse réel. Seuls ses seuils se règlent, en FCFA (orange puis rouge strictement plus bas).
       </p>
-      <Button type="submit" loading={isPending} disabled={enAttente || isPending} data-soumettre-caisse>
+      <Button signe type="submit" loading={isPending} disabled={enAttente || isPending} data-soumettre-caisse>
         Soumettre les seuils au DG
       </Button>
     </form>

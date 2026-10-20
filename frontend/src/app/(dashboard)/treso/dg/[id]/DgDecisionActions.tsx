@@ -52,7 +52,7 @@ export function DgDecisionActions({
       <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Votre décision</h2>
       <div className="flex flex-wrap gap-2">
         {!decisionParLigne ? (
-          <Button
+          <Button signe
             type="button"
             disabled={!!raisonValider || isPending}
             loading={isPending && !rejetOuvert}
@@ -82,7 +82,7 @@ export function DgDecisionActions({
             error={motif.length > 0 && !motifValide ? `${MOTIF_MIN} caractères minimum.` : undefined}
           />
           <div className="flex flex-wrap gap-2">
-            <Button
+            <Button signe
               type="button"
               variant="danger"
               disabled={!motifValide || isPending}

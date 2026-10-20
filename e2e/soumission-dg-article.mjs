@@ -5,6 +5,7 @@
 // son bouton individuel, le bandeau « étape DG ». Aucune règle métier testée ici : le serveur reste l'autorité.
 import { chromium } from "playwright";
 import pg from "pg";
+import { assurerSignatures } from "./signatures-auto.mjs";
 
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
@@ -12,6 +13,7 @@ if (!/localhost:55497|e2e/.test(DB)) throw new Error("E2E_DATABASE_URL doit vise
 
 const db = new pg.Client({ connectionString: DB });
 await db.connect();
+await assurerSignatures(db); // lot L : les actions sensibles exigent une signature enrôlée
 const q = async (sql, params = []) => (await db.query(sql, params)).rows;
 
 const resultats = [];
@@ -39,6 +41,8 @@ await q(`DELETE FROM "LigneDemande" WHERE "demandeId" LIKE 'e2e-soum-%'`);
 await q(`DELETE FROM "Demande" WHERE id LIKE 'e2e-soum-%'`);
 await q(`DELETE FROM "Notification" WHERE "userId" = 'e2e-soum-u-sansdg'`);
 await q(`DELETE FROM "HistoriqueEntry" WHERE "userId" = 'e2e-soum-u-sansdg'`);
+await q(`DELETE FROM "ActionSignee" WHERE "signataireId" = 'e2e-soum-u-sansdg'`);
+await q(`DELETE FROM "SignatureUtilisateur" WHERE "userId" = 'e2e-soum-u-sansdg'`); // lot L : signature créée par le déclencheur de signatures-auto.mjs
 await q(`DELETE FROM "User" WHERE id = 'e2e-soum-u-sansdg'`);
 await q(`DELETE FROM "RolePermission" WHERE "roleId" = 'e2e-soum-r-sansdg'`);
 await q(`DELETE FROM "Role" WHERE id = 'e2e-soum-r-sansdg'`);

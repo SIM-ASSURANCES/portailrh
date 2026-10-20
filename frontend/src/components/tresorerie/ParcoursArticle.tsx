@@ -1,6 +1,7 @@
 import type { ParcoursArticle } from "backend";
 import { libelleGestionArticle } from "backend/client";
 
+import { MentionSignature } from "@/components/signature/MentionSignature";
 import { Badge } from "@/components/ui";
 
 const fcfa = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`;
@@ -60,6 +61,25 @@ export function ParcoursArticleView({ parcours }: { parcours: ParcoursArticle })
               {t}
             </span>
           ))}
+        </div>
+      ) : null}
+      {parcours.signatures && parcours.signatures.length > 0 ? (
+        <div data-parcours-signatures className="text-muted-foreground">
+          <span className="font-medium text-foreground">Signatures</span>
+          {parcours.signatures.map((sg, i) => (
+            <div key={i} className="mt-1">
+              <span className="block">
+                {sg.libelle} — {sg.at.toLocaleString("fr-FR", { timeZone: "Africa/Abidjan" })}
+              </span>
+              <MentionSignature signature={sg} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {parcours.signatureAnterieure ? (
+        <div data-parcours-signature-anterieure className="text-muted-foreground">
+          <span className="font-medium text-foreground">Signature de la décision</span>
+          <MentionSignature anterieure />
         </div>
       ) : null}
       <p data-gere-le className="text-muted-foreground">

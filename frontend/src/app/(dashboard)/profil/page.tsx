@@ -2,6 +2,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { redirect } from "next/navigation";
 import { ProfileClient } from "./ProfileClient";
+import { SignatureProfil } from "./SignatureProfil";
 
 import { format } from "date-fns";
 
@@ -93,6 +94,12 @@ export default async function ProfilPage({
     },
   });
 
+  const versionsSignature = await prisma.signatureUtilisateur.findMany({
+    where: { userId: session.user.id },
+    orderBy: { version: "desc" },
+    select: { id: true, version: true, creeAt: true },
+  });
+
   return (
     <div className="mx-auto max-w-6xl">
       <ProfileClient
@@ -113,6 +120,7 @@ export default async function ProfilPage({
           detail: c.detail ?? "",
         }))}
       />
+      <SignatureProfil versions={versionsSignature.map((v) => ({ id: v.id, version: v.version, creeAt: v.creeAt.toISOString() }))} />
     </div>
   );
 }

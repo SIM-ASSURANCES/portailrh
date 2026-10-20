@@ -1,5 +1,6 @@
 import { LIBELLE_ETAPE_CIRCUIT } from "./circuitDemande";
 import { chargerEvenementsCircuit } from "./circuitEvenementsDb";
+import { lireActionsSignees, lireMiseEnServiceSignatures } from "./signatureDb";
 
 import { lireInstantaneClotureForcee } from "./clotureDemande";
 import { beneficiaireArticle, nomBeneficiaireDemande } from "./beneficiaireArticles";
@@ -924,9 +925,20 @@ export async function getReportingArbre(
   );
   // Lot J bis : articles dont le règlement est couvert par une confirmation de dépassement du DG.
   const couvertures = await phrasesCouvertureParArticle(prisma, ids);
+  // Lot L : signatures des actions (qui, quelle version, quand, au nom de qui) et repère de mise en service.
+  const [actionsSignees, miseEnServiceSignatures] = await Promise.all([lireActionsSignees(prisma, ids), lireMiseEnServiceSignatures(prisma)]);
+  const signeesParDemande = new Map<string, NonNullable<DemandeArbreSource["signatures"]>>();
+  for (const a of actionsSignees) {
+    if (!a.demandeId) continue;
+    const liste = signeesParDemande.get(a.demandeId) ?? [];
+    liste.push({ action: a.action, creeAt: a.creeAt, signataire: a.signataire, auNomDe: a.auNomDe, signatureId: a.signatureId });
+    signeesParDemande.set(a.demandeId, liste);
+  }
   const arbres = demandes.map((d) => {
     const det = detailParId.get(d.id)!;
     return construireArbreDemande({
+      signatures: signeesParDemande.get(d.id) ?? [],
+      miseEnServiceSignatures,
       reference: d.reference,
       creeLe: d.createdAt,
       gere: gestions.get(d.id) ?? null,

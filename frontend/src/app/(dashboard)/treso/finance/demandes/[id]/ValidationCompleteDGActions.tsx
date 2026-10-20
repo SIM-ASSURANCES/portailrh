@@ -148,7 +148,7 @@ export function ValidationCompleteDGActions({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" variant="danger" loading={isPending} onClick={handleRejeter}>
+            <Button signe type="button" variant="danger" loading={isPending} onClick={handleRejeter}>
               Confirmer le rejet
             </Button>
             <Button type="button" variant="secondary" disabled={isPending} onClick={resetMotif}>
@@ -161,7 +161,7 @@ export function ValidationCompleteDGActions({
 
     return (
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" loading={isPending} disabled={attenteResoumission} onClick={handleApprouver}>
+        <Button signe type="button" loading={isPending} disabled={attenteResoumission} onClick={handleApprouver}>
           Approuver la validation complète
         </Button>
         {attenteResoumission ? (
@@ -193,7 +193,7 @@ export function ValidationCompleteDGActions({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" loading={isPending} onClick={handleResoumettre}>
+            <Button signe type="button" loading={isPending} onClick={handleResoumettre}>
               Confirmer la resoumission
             </Button>
             <Button type="button" variant="secondary" disabled={isPending} onClick={resetMotif}>
@@ -228,7 +228,7 @@ export function ValidationCompleteDGActions({
           error={motifError}
         />
         <div className="flex flex-wrap gap-3">
-          <Button type="button" variant="danger" loading={isPending} onClick={handleAnnuler}>
+          <Button signe type="button" variant="danger" loading={isPending} onClick={handleAnnuler}>
             Confirmer l&apos;annulation
           </Button>
           <Button type="button" variant="secondary" disabled={isPending} onClick={resetMotif}>

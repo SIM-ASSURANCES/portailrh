@@ -219,7 +219,7 @@ export function ReglementRow({
               >
                 Modifier
               </Button>
-              <Button type="button" loading={isPending} disabled={!canEffectuerReglement} onClick={handleConfirmer}>
+              <Button signe type="button" loading={isPending} disabled={!canEffectuerReglement} onClick={handleConfirmer}>
                 Confirmer
               </Button>
             </>
@@ -294,7 +294,7 @@ export function ReglementRow({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" variant="danger" loading={isPending} onClick={handleAnnuler}>
+            <Button signe type="button" variant="danger" loading={isPending} onClick={handleAnnuler}>
               Confirmer l&apos;annulation
             </Button>
             <Button

@@ -171,7 +171,7 @@ function LigneDG({
             </div>
           ) : null}
           <div className="flex flex-wrap gap-2">
-            <Button type="button" loading={isPending && !refusOuvert} disabled={!!raisonDecider || isPending || depassementBloque} onClick={() => decider(true)}>
+            <Button signe type="button" loading={isPending && !refusOuvert} disabled={!!raisonDecider || isPending || depassementBloque} onClick={() => decider(true)}>
               Valider
             </Button>
             <Button type="button" variant="danger" disabled={!!raisonDecider || isPending} onClick={() => setRefusOuvert((v) => !v)}>
@@ -188,7 +188,7 @@ function LigneDG({
                 onChange={(e) => setMotif(e.target.value)}
                 error={motif.length > 0 && !motifValide ? `${MOTIF_MIN} caractères minimum.` : undefined}
               />
-              <Button type="button" variant="danger" loading={isPending} disabled={!motifValide || isPending} onClick={() => decider(false)}>
+              <Button signe type="button" variant="danger" loading={isPending} disabled={!motifValide || isPending} onClick={() => decider(false)}>
                 Confirmer le refus
               </Button>
             </div>

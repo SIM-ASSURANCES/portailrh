@@ -44,6 +44,17 @@ export const VARIANTE_BADGE_PARCOURS: Record<BadgeParcours, VarianteBadgeParcour
   REGULARISE: "success",
 };
 
+export interface ParcoursSignature {
+  /** Ce qui a été signé, en clair (`ACTIONS_SIGNEES`). */
+  libelle: string;
+  at: Date;
+  signatureId: string;
+  signataire: string;
+  fonction: string;
+  auNomDe: string | null;
+  version: number;
+}
+
 export interface ParcoursRetour {
   estReceptionne: boolean;
   montantARetourner: number;
@@ -139,6 +150,10 @@ export interface ParcoursArticle {
   clotureSansRegularisation?: string | null;
   /** Lot K : réorientations de l'étape Service et reprises (retour à l'étape précédente) qui ont touché la demande ou cet article, une ligne chacune (date — auteur — détail avec motif). */
   circuit?: string[];
+  /** Lot L : actions signées qui concernent l'article (ou la demande entière), dans l'ordre. */
+  signatures?: ParcoursSignature[];
+  /** Lot L : la décision de l'article précède la mise en service des signatures (« Antérieur à la signature »). */
+  signatureAnterieure?: boolean;
   /** Lot J (Finance et DG seulement) : reste du budget global et de la catégorie après la validation de l'article. */
   budget?: { lignes: string[]; niveau: "AUCUN" | "ORANGE" | "ROUGE"; /** Lot J bis : la confirmation du DG couvre le règlement de l'article. */ couvertureReglement?: string };
 }

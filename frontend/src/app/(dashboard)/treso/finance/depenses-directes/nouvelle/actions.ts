@@ -11,6 +11,7 @@ import { notifierEtapeCircuit } from "@/lib/notificationsCircuit";
 import { prisma } from "backend";
 import { generateDemandeReference, initialiserCircuit } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
+import { avecSignature } from "@/lib/signature";
 
 const MAX_ATTEMPTS = 5;
 
@@ -86,6 +87,13 @@ function isReferenceConflict(error: unknown): boolean {
  * Seule cette action de création est spécifique.
  */
 export async function creerDepenseDirecteAction(
+  _prevState: ActionState<{ demandeId: string }>,
+  formData: FormData
+): Promise<ActionState<{ demandeId: string }>> {
+  return avecSignature({ action: "depense_directe", permission: "treso.saisir_depense_directe", cibleApres: (r) => (r.status === "success" && r.data?.demandeId ? { type: "demande" as const, id: r.data.demandeId } : null) }, () => creerDepenseDirecteInterne(_prevState, formData));
+}
+
+async function creerDepenseDirecteInterne(
   _prevState: ActionState<{ demandeId: string }>,
   formData: FormData
 ): Promise<ActionState<{ demandeId: string }>> {

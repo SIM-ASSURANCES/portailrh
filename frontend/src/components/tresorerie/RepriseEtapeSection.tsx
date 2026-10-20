@@ -96,7 +96,7 @@ export function RepriseEtapeSection({
                     error={motif.length > 0 && !motifValide ? `${MOTIF_REPRISE_MIN} caractères minimum.` : undefined}
                   />
                   <div className="flex flex-wrap gap-2">
-                    <Button type="button" disabled={!motifValide || isPending} loading={isPending} onClick={() => confirmer(e)}>
+                    <Button signe type="button" disabled={!motifValide || isPending} loading={isPending} onClick={() => confirmer(e)}>
                       Confirmer la reprise
                     </Button>
                     <Button type="button" variant="secondary" disabled={isPending} onClick={() => setOuvert(null)}>

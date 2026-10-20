@@ -5,6 +5,7 @@ import { estRetourNul, nomBeneficiaireDemande, prisma, referenceRecuRetour } fro
 import { getSession, hasPermission } from "@/lib/auth";
 import { chargerArticleDocument } from "@/lib/pdf/articleReglement";
 import { chargerHistoriqueDocument } from "@/lib/pdf/historiqueDocument";
+import { chargerSignaturesImprimees } from "@/lib/pdf/signaturesDocument";
 import { RetourReceiptDocument, type RetourReceiptData } from "@/lib/pdf/RetourReceiptDocument";
 
 /**
@@ -28,7 +29,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     where: { id },
     include: {
       declarant: { select: { fullName: true } },
-      receptionnePar: { select: { fullName: true } },
+      receptionnePar: { select: { fullName: true, role: { select: { name: true } } } },
       depenses: { orderBy: { date: "asc" } },
       reglement: { include: { demande: { include: { createur: { include: { service: true } }, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } } } },
     },
@@ -68,7 +69,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const totalNonJustifie = depenses.filter((d) => d.etat !== "justifiée").reduce((t, d) => t + d.montant, 0);
 
   const article = await chargerArticleDocument(retour.reglement, demande, accesFinance);
+  // Lot L : signatures des étapes validées (ordre du circuit), puis de la personne qui a réceptionné CE retour.
+  const signatures = await chargerSignaturesImprimees(demande.id, {
+    action: "reception_retour",
+    entiteId: retour.id,
+    etape: "Réception du retour de caisse",
+    repli: retour.receptionnePar ? { nom: retour.receptionnePar.fullName, fonction: retour.receptionnePar.role.name, date: retour.receptionneAt } : null,
+  });
   const data: RetourReceiptData = {
+    signatures,
     recuReference,
     demandeReference: demande.reference,
     demandeurNom: demande.createur.fullName,

@@ -11,6 +11,8 @@ import { getRegularisationParArticle } from "./regularisationArticleDb";
 import { libelleArticleClotureForcee, lireInstantaneClotureForcee } from "./clotureDemande";
 import { getSoldesARegulariserParReglements } from "./tresorerie";
 import { chargerEvenementsCircuit } from "./circuitEvenementsDb";
+import { ACTIONS_SIGNEES } from "./signatureConstantes";
+import { lireActionsSignees, lireMiseEnServiceSignatures } from "./signatureDb";
 
 /** Parcours de chaque article de la demande, par identifiant d'article. Vide pour une demande sans article. */
 export async function getParcoursArticles(
@@ -84,6 +86,8 @@ export async function getParcoursArticles(
   // Lot K : réorientations (demande) et reprises (demande ou article), relues de l'historique.
   const evenementsCircuit = (await chargerEvenementsCircuit(prisma, [{ id: demandeId, ligneIds: demande.lignes.map((l) => l.id) }])).get(demandeId) ?? [];
   const instantaneForce = lireInstantaneClotureForcee(demande.clotureForceeArticles);
+  // Lot L : actions signées de la demande (signature utilisée à ce moment-là) et repère de mise en service.
+  const [actionsSignees, miseEnService] = await Promise.all([lireActionsSignees(prisma, [demandeId]), lireMiseEnServiceSignatures(prisma)]);
   for (const ligne of demande.lignes) {
     const benef = beneficiaireArticle(ligne, demande);
     const decideParNom = ligne.decidePar?.fullName ?? null;
@@ -126,6 +130,19 @@ export async function getParcoursArticles(
             })),
           })),
       });
+    const signees = actionsSignees
+      .filter((a) => a.ligneDemandeId === null || a.ligneDemandeId === ligne.id)
+      .map((a) => ({
+        libelle: ACTIONS_SIGNEES[a.action] ?? a.action,
+        at: a.creeAt,
+        signatureId: a.signatureId,
+        signataire: a.signataire,
+        fonction: a.fonction,
+        auNomDe: a.auNomDe,
+        version: a.version,
+      }));
+    if (signees.length > 0) parcours.signatures = signees;
+    if (miseEnService && ligne.decideAt && ligne.decideAt < miseEnService) parcours.signatureAnterieure = true;
     const circuit = evenementsCircuit.filter((e) => e.ligneId === null || e.ligneId === ligne.id).map((e) => e.texte);
     if (circuit.length > 0) parcours.circuit = circuit;
     if (options.avecBudget) {

@@ -487,7 +487,7 @@ export function LignesValidationTable({
           ) : raisonBlocage ? (
             <p className="text-xs text-muted-foreground">{raisonBlocage}</p>
           ) : null}
-          <Button type="button" loading={isPending} disabled={!peutEnregistrer} onClick={handleEnregistrer}>
+          <Button signe type="button" loading={isPending} disabled={!peutEnregistrer} onClick={handleEnregistrer}>
             Enregistrer les décisions
             {lignesDecidees.length > 0 ? ` (${lignesDecidees.length} article${lignesDecidees.length > 1 ? "s" : ""})` : ""}
           </Button>
@@ -571,7 +571,7 @@ function LigneCard({
 
   // Bouton « Soumettre au DG » de CET article : toujours visible, grisé avec sa raison (lisible) s'il est impossible.
   const boutonSoumettre = soumission ? (
-    <Button
+    <Button signe
       type="button"
       variant="secondary"
       data-soumettre-article={ligne.id}

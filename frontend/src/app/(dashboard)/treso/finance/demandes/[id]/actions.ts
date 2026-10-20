@@ -35,6 +35,7 @@ import {
 class RefusCircuit extends Error {}
 import { fieldErrorsFromZod, MOTIF_LIGNE_MIN, type ActionState } from "backend";
 import { categorisationEstObligatoire, refusDemandeSansCategorie, refusLignesValideesSansCategorie } from "backend";
+import { avecSignature } from "@/lib/signature";
 
 /**
  * Validation complémentaire qui comble le reliquat d'une dépense directe (hors circuit : la décision finale est déjà
@@ -757,6 +758,15 @@ export async function validerLignesAction(
   // Lot J : motif du DG qui confirme, dans ce geste, le dépassement du seuil rouge d'un budget (ignoré de tout autre compte).
   motifDepassement?: string
 ): Promise<SimpleActionResult> {
+  return avecSignature({ action: "decision_lignes", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerLignesInterne(demandeId, decisions, motifDepassement));
+}
+
+async function validerLignesInterne(
+  demandeId: string,
+  decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE"; motif?: string }[],
+  // Lot J : motif du DG qui confirme, dans ce geste, le dépassement du seuil rouge d'un budget (ignoré de tout autre compte).
+  motifDepassement?: string
+): Promise<SimpleActionResult> {
   const session = await getSession();
   const peutValider =
     !!session && (hasPermission(session, "treso.decider_finance") || hasPermission(session, "treso.decider_dg"));
@@ -845,6 +855,10 @@ export async function validerLignesAction(
  * dossier).
  */
 export async function validerTotalementAction(demandeId: string, motifDepassement?: string): Promise<SimpleActionResult> {
+  return avecSignature({ action: "validation_depense_directe", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerTotalementInterne(demandeId, motifDepassement));
+}
+
+async function validerTotalementInterne(demandeId: string, motifDepassement?: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !(hasPermission(session, "treso.valider_demande") || hasPermission(session, "treso.decider_dg"))) {
     return { status: "error", message: "Action non autorisée." };
@@ -902,6 +916,14 @@ export async function validerTotalementAction(demandeId: string, motifDepassemen
  * pour ce cas précis.
  */
 export async function validerPartiellementAction(
+  demandeId: string,
+  montant: number,
+  motifDepassement?: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "validation_depense_directe", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerPartiellementInterne(demandeId, montant, motifDepassement));
+}
+
+async function validerPartiellementInterne(
   demandeId: string,
   montant: number,
   motifDepassement?: string
@@ -980,6 +1002,14 @@ export async function validerPartiellementAction(
  * validé (contrôle serveur, pas seulement l'UI qui plafonne déjà la saisie).
  */
 export async function validerComplementaireAction(
+  demandeId: string,
+  montant: number,
+  motifDepassement?: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "validation_depense_directe", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerComplementaireInterne(demandeId, montant, motifDepassement));
+}
+
+async function validerComplementaireInterne(
   demandeId: string,
   montant: number,
   motifDepassement?: string
@@ -1092,6 +1122,13 @@ export async function rejeterReliquatAction(
   demandeId: string,
   motif: string
 ): Promise<SimpleActionResult> {
+  return avecSignature({ action: "rejet_reliquat", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => rejeterReliquatInterne(demandeId, motif));
+}
+
+async function rejeterReliquatInterne(
+  demandeId: string,
+  motif: string
+): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.valider_demande")) {
     return { status: "error", message: "Action non autorisée." };
@@ -1185,6 +1222,13 @@ export async function rejeterDemandeAction(
   demandeId: string,
   motif: string
 ): Promise<SimpleActionResult> {
+  return avecSignature({ action: "rejet_demande", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => rejeterDemandeInterne(demandeId, motif));
+}
+
+async function rejeterDemandeInterne(
+  demandeId: string,
+  motif: string
+): Promise<SimpleActionResult> {
   // Circuit (2026-10-06) : le moteur décide qui peut rejeter à l'étape courante (responsable de service, Finance,
   // DG pour une demande de la Finance) ; la demande part en correction, jamais en REJETEE (anciennes demandes seules).
   const session = await getSession();
@@ -1243,6 +1287,14 @@ const motifClotureSchema = z
  * vide.
  */
 export async function cloturerDemandeAction(
+  demandeId: string,
+  type: "TOTALE" | "PARTIELLE" | "FORCEE",
+  motif?: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "cloture", permission: "treso.cloturer_demande", cible: { type: "demande", id: demandeId } }, () => cloturerDemandeInterne(demandeId, type, motif));
+}
+
+async function cloturerDemandeInterne(
   demandeId: string,
   type: "TOTALE" | "PARTIELLE" | "FORCEE",
   motif?: string
@@ -1412,6 +1464,10 @@ export async function cloturerDemandeAction(
  *   même principe que l'absence de "dévalidation").
  */
 export async function approuverValidationCompleteAction(demandeId: string): Promise<SimpleActionResult> {
+  return avecSignature({ action: "approbation_cloture", permission: "treso.approuver_validation_complete", cible: { type: "demande", id: demandeId } }, () => approuverValidationCompleteInterne(demandeId));
+}
+
+async function approuverValidationCompleteInterne(demandeId: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.approuver_validation_complete")) {
     return { status: "error", message: "Action non autorisée." };
@@ -1526,6 +1582,13 @@ export async function rejeterValidationCompleteAction(
   demandeId: string,
   motif: string
 ): Promise<SimpleActionResult> {
+  return avecSignature({ action: "rejet_approbation_cloture", permission: "treso.approuver_validation_complete", cible: { type: "demande", id: demandeId } }, () => rejeterValidationCompleteInterne(demandeId, motif));
+}
+
+async function rejeterValidationCompleteInterne(
+  demandeId: string,
+  motif: string
+): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.approuver_validation_complete")) {
     return { status: "error", message: "Action non autorisée." };
@@ -1612,6 +1675,13 @@ export async function rejeterValidationCompleteAction(
  * l'approbation ne défait donc aucun règlement déjà confirmé.
  */
 export async function annulerValidationCompleteAction(
+  demandeId: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "annulation_approbation_cloture", permission: "treso.approuver_validation_complete", cible: { type: "demande", id: demandeId } }, () => annulerValidationCompleteInterne(demandeId, motif));
+}
+
+async function annulerValidationCompleteInterne(
   demandeId: string,
   motif: string
 ): Promise<SimpleActionResult> {
@@ -1712,6 +1782,13 @@ const motifResoumissionSchema = z
  * de déjà fait pour le lui soumettre à nouveau.
  */
 export async function resoumettreValidationCompleteDGAction(
+  demandeId: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "resoumission_approbation_dg", permission: "treso.soumettre_dg", cible: { type: "demande", id: demandeId } }, () => resoumettreValidationCompleteDGInterne(demandeId, motif));
+}
+
+async function resoumettreValidationCompleteDGInterne(
   demandeId: string,
   motif: string
 ): Promise<SimpleActionResult> {

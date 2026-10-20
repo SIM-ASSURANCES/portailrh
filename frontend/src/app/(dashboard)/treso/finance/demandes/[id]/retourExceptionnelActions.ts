@@ -18,6 +18,7 @@ import {
   refusConflitInteret,
   AGREGATS_VIDES,
 } from "backend";
+import { avecSignature } from "@/lib/signature";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -160,6 +161,10 @@ export async function creerRetourExceptionnelAction(
 
 /** Validation (Responsable Finance UNIQUEMENT, jamais l'auteur de la saisie). */
 export async function validerRetourExceptionnelAction(retourId: string): Promise<SimpleActionResult> {
+  return avecSignature({ action: "validation_retour_exceptionnel", permission: "treso.valider_retour_exceptionnel", cible: { type: "retourExceptionnel", id: retourId } }, () => validerRetourExceptionnelInterne(retourId));
+}
+
+async function validerRetourExceptionnelInterne(retourId: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !estResponsableFinance(session)) {
     return { status: "error", message: "Action non autorisée." };
@@ -285,6 +290,10 @@ export async function validerRetourExceptionnelAction(retourId: string): Promise
 
 /** Rejet (Responsable Finance UNIQUEMENT), motif obligatoire. L'Assistant peut ensuite resaisir. */
 export async function rejeterRetourExceptionnelAction(retourId: string, motifRejet: string): Promise<SimpleActionResult> {
+  return avecSignature({ action: "rejet_retour_exceptionnel", permission: "treso.valider_retour_exceptionnel", cible: { type: "retourExceptionnel", id: retourId } }, () => rejeterRetourExceptionnelInterne(retourId, motifRejet));
+}
+
+async function rejeterRetourExceptionnelInterne(retourId: string, motifRejet: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !estResponsableFinance(session)) {
     return { status: "error", message: "Action non autorisée." };

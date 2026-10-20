@@ -15,6 +15,7 @@ import {
   refusRetourRattache,
   type DemandeRattachable,
 } from "backend";
+import { avecSignature } from "@/lib/signature";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -40,6 +41,20 @@ const schema = z.object({
  * sans statut "en attente" ni double validation.
  */
 export async function creerRetourExterneAction(
+  collaborateurId: string | undefined,
+  nomExterne: string | undefined,
+  montantChequeInitial: number,
+  montantRetourne: number,
+  motif: string,
+  pieceJointeUrl: string,
+  pieceJointeChequeUrl: string,
+  demandeId?: string,
+  ligneDemandeId?: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "retour_externe", permission: "treso.creer_retour_externe", cible: demandeId ? { type: "demande", id: demandeId } : null, entite: "RetourExterne" }, () => creerRetourExterneInterne(collaborateurId, nomExterne, montantChequeInitial, montantRetourne, motif, pieceJointeUrl, pieceJointeChequeUrl, demandeId, ligneDemandeId));
+}
+
+async function creerRetourExterneInterne(
   collaborateurId: string | undefined,
   nomExterne: string | undefined,
   montantChequeInitial: number,

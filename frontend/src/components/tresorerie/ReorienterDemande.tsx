@@ -80,7 +80,7 @@ export function ReorienterDemande({
             error={motif.length > 0 && !motifValide ? `${MOTIF_REORIENTATION_MIN} caractères minimum.` : undefined}
           />
           <div className="flex flex-wrap gap-2">
-            <Button type="button" disabled={!cible || !motifValide || isPending} loading={isPending} onClick={confirmer}>
+            <Button signe type="button" disabled={!cible || !motifValide || isPending} loading={isPending} onClick={confirmer}>
               Confirmer la réorientation
             </Button>
             <Button type="button" variant="secondary" disabled={isPending} onClick={() => setOuvert(false)}>

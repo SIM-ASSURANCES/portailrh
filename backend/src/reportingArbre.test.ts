@@ -462,3 +462,82 @@ describe("motif / nature du règlement (lot I)", () => {
   });
 });
 
+
+describe("reportingArbre — signatures (lot L)", () => {
+  const mise = d("2026-09-30");
+  const sig = (action: string, signataire: string, quand: Date, extra: Partial<{ auNomDe: string | null; signatureId: string }> = {}) => ({
+    action,
+    creeAt: quand,
+    signataire,
+    auNomDe: null,
+    signatureId: "sig-1",
+    ...extra,
+  });
+
+  it("la ligne de règlement, de retour et la décision de l'article portent la signature de leur auteur", () => {
+    const arbre = construireArbreDemande(
+      demandeTrois({
+        miseEnServiceSignatures: mise,
+        signatures: [
+          sig("confirmation_reglement", "Assistant Test", d("2026-10-04"), { signatureId: "sig-assistant" }),
+          sig("reception_retour", "Assistant Test", d("2026-10-07"), { signatureId: "sig-assistant" }),
+          sig("decision_lignes", "Finance Test", d("2026-10-02"), { signatureId: "sig-finance" }),
+        ],
+      })
+    );
+    const lignes = aplatirArbres([arbre]);
+    const regl = lignes.find((l) => l.type === "REGLEMENT" && l.mode === "Caisse")!;
+    expect(regl.signePar).toBe("signé par Assistant Test");
+    expect(regl.signatureId).toBe("sig-assistant");
+    expect(regl.signeLe).not.toBe("");
+    expect(lignes.find((l) => l.type === "RETOUR_CAISSE")!.signatureId).toBe("sig-assistant");
+    const articleA = lignes.find((l) => l.type === "ARTICLE" && l.article === "Article A")!;
+    expect(articleA.signePar).toBe("signé par Finance Test");
+    expect(articleA.signatureId).toBe("sig-finance");
+  });
+
+  it("une action par délégation dit « au nom de »", () => {
+    const arbre = construireArbreDemande(
+      demandeTrois({
+        miseEnServiceSignatures: mise,
+        signatures: [sig("confirmation_reglement", "Assistant Test", d("2026-10-04"), { auNomDe: "Moussa Traoré" })],
+      })
+    );
+    const regl = aplatirArbres([arbre]).find((l) => l.type === "REGLEMENT" && l.mode === "Caisse")!;
+    expect(regl.signePar).toBe("signé par Assistant Test, au nom de Moussa Traoré");
+    expect(regl.signeAuNomDe).toBe("Moussa Traoré");
+  });
+
+  it("une action d'avant la mise en service est « Antérieur à la signature », sans image", () => {
+    const arbre = construireArbreDemande(demandeTrois({ miseEnServiceSignatures: d("2026-11-01"), signatures: [] }));
+    const regl = aplatirArbres([arbre]).find((l) => l.type === "REGLEMENT" && l.mode === "Caisse")!;
+    expect(regl.signePar).toBe("Antérieur à la signature");
+    expect(regl.signatureId).toBe("");
+  });
+
+  it("après la mise en service sans signature trouvée : rien (ni image ni mention anormale) ; sans repère de mise en service : aucune colonne remplie", () => {
+    const apres = aplatirArbres([construireArbreDemande(demandeTrois({ miseEnServiceSignatures: mise, signatures: [] }))]);
+    expect(apres.every((l) => l.signatureId === "")).toBe(true);
+    expect(apres.find((l) => l.type === "REGLEMENT")!.signePar).toBe("");
+    const sansRepere = aplatirArbres([construireArbreDemande(demandeTrois())]);
+    expect(sansRepere.every((l) => l.signePar === "")).toBe(true);
+  });
+
+  it("ne rapproche ni la signature d'un autre compte ni une signature trop éloignée dans le temps", () => {
+    const arbre = construireArbreDemande(
+      demandeTrois({
+        miseEnServiceSignatures: mise,
+        signatures: [sig("confirmation_reglement", "Finance Test", d("2026-10-04")), sig("confirmation_reglement", "Assistant Test", d("2026-10-05"))],
+      })
+    );
+    const regl = aplatirArbres([arbre]).find((l) => l.type === "REGLEMENT" && l.mode === "Caisse")!;
+    expect(regl.signePar).toBe("");
+  });
+
+  it("les colonnes « Signé par », « Signé le », « Au nom de » et « Signature » existent, dans cet ordre, après l'auteur", () => {
+    const cles = COLONNES_ARBRE.map((c) => c.cle);
+    const i = cles.indexOf("auteur");
+    expect(cles.slice(i + 1, i + 5)).toEqual(["signePar", "signeLe", "signeAuNomDe", "signatureId"]);
+    expect(COLONNES_ARBRE.find((c) => c.cle === "signatureId")!.genre).toBe("image");
+  });
+});

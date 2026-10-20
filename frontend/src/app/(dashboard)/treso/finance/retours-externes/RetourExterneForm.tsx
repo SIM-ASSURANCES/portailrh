@@ -197,7 +197,7 @@ export function RetourExterneForm({ utilisateurs }: { utilisateurs: { id: string
       <PieceJointeUpload key={`c${resetKey}`} label="Justificatif du chèque initial (obligatoire)" onChange={(url) => setPjCheque(url ?? undefined)} />
       <PieceJointeUpload key={`r${resetKey}`} label="Justificatif du retour (obligatoire)" onChange={(url) => setPj(url ?? undefined)} />
       {erreur ? <p className="text-sm text-danger">{erreur}</p> : null}
-      <Button type="button" loading={isPending} onClick={submit}>
+      <Button signe type="button" loading={isPending} onClick={submit}>
         Enregistrer le retour externe
       </Button>
     </div>

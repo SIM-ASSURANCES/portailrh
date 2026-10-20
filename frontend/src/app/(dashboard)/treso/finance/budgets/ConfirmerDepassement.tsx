@@ -17,7 +17,7 @@ export function ConfirmerDepassement({ id }: { id: string }) {
       <div className="w-80">
         <Input name="motifDepassement" label="Motif de la confirmation" required value={motif} onChange={(e) => setMotif(e.target.value)} hint="10 caractères minimum, tracé dans l'historique." />
       </div>
-      <Button
+      <Button signe
         type="button"
         loading={isPending}
         disabled={motif.trim().length < 10}

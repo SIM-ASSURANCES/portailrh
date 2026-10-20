@@ -97,3 +97,5 @@ export * from "./encSaisie";
 // `permissions.ts` pour le détail du raisonnement).
 export * from "./permissions";
 export * from "./recapRetourCaisseDb";
+export * from "./signature";
+export * from "./signatureDb";

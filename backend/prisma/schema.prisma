@@ -85,6 +85,10 @@ model User {
   retoursExternesCrees          RetourExterne[]      @relation("RetourExterneCreePar")
   reinitialisationsSysteme      ReinitialisationSysteme[]
   reinitialisationsPointage     ReinitialisationPointage[]
+  /// Lot L : signatures manuscrites enrôlées (une ligne par version) et actions signées.
+  signatures                    SignatureUtilisateur[] @relation("SignatureUtilisateur")
+  actionsSignees                ActionSignee[]         @relation("ActionSigneeSignataire")
+  actionsSigneesAuNomDe         ActionSignee[]         @relation("ActionSigneeAuNomDe")
   pointageMisEnService          PointageMiseEnService[]
   remboursementsRetourProposes  RemboursementRetour[] @relation("RemboursementRetourProposePar")
   remboursementsRetourValides   RemboursementRetour[] @relation("RemboursementRetourValidePar")
@@ -2287,4 +2291,52 @@ model PointageMiseEnService {
   misEnServiceAt DateTime @default(now())
   parId        String
   par          User     @relation(fields: [parId], references: [id])
+}
+
+
+/// Lot L (2026-10-27) — signature manuscrite (dessinée au curseur ou au doigt), enrôlée UNE fois dans le profil. Une ligne par
+/// VERSION : une nouvelle signature ajoute une version, l'ancienne n'est jamais modifiée ni supprimée (les actions déjà signées
+/// gardent celle qu'elles ont utilisée). La version courante d'un compte est la plus élevée. Traçabilité interne, PAS une
+/// signature électronique qualifiée.
+model SignatureUtilisateur {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("SignatureUtilisateur", fields: [userId], references: [id])
+  version   Int
+  /// PNG validé et reconstruit côté serveur (IHDR + IDAT + IEND seulement).
+  image     Bytes
+  largeur   Int
+  hauteur   Int
+  /// SHA-256 (hexadécimal) de `image`.
+  empreinte String
+  creeAt    DateTime @default(now())
+  actions   ActionSignee[]
+
+  @@unique([userId, version])
+  @@index([userId])
+}
+
+/// Lot L — une action sensible signée : qui (signataire), avec quelle version de signature, quand, depuis quelle adresse IP.
+/// Table à ajout seul. Aucune clé vers la demande (comme `HistoriqueEntry`) : `demandeId`/`ligneDemandeId` sont des repères.
+/// `auNomDeId` : titulaire de la permission quand le signataire agit par délégation.
+model ActionSignee {
+  id             String               @id @default(cuid())
+  signatureId    String
+  signature      SignatureUtilisateur @relation(fields: [signatureId], references: [id])
+  signataireId   String
+  signataire     User                 @relation("ActionSigneeSignataire", fields: [signataireId], references: [id])
+  auNomDeId      String?
+  auNomDe        User?                @relation("ActionSigneeAuNomDe", fields: [auNomDeId], references: [id], onDelete: SetNull)
+  action         String
+  demandeId      String?
+  ligneDemandeId String?
+  entite         String?
+  entiteId       String?
+  ip             String
+  creeAt         DateTime             @default(now())
+
+  @@index([demandeId, creeAt])
+  @@index([signataireId, creeAt])
+  @@index([signatureId])
+  @@index([auNomDeId])
 }

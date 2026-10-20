@@ -223,7 +223,7 @@ export function SoldeOuvertureCorrection({
             onChange={(e) => setMotifAlimentation(e.target.value)}
           />
           <div className="flex flex-wrap gap-3">
-            <Button
+            <Button signe
               type="button"
               loading={isPendingAlimentation}
               disabled={!pieceJointeAlimentation}
@@ -285,7 +285,7 @@ export function SoldeOuvertureCorrection({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button
+            <Button signe
               type="button"
               variant="danger"
               loading={isPending}

@@ -166,7 +166,7 @@ export function ValidationActions({
           </p>
           {budgetValidation.bloc}
           <div className="flex flex-wrap gap-3">
-            <Button type="button" loading={isPending} disabled={budgetValidation.bloque} onClick={handleValiderTotalement}>
+            <Button signe type="button" loading={isPending} disabled={budgetValidation.bloque} onClick={handleValiderTotalement}>
               Confirmer la validation totale
             </Button>
             <Button type="button" variant="secondary" disabled={isPending} onClick={() => setMode("idle")}>
@@ -195,7 +195,7 @@ export function ValidationActions({
           </p>
           {budgetValidation.bloc}
           <div className="flex flex-wrap gap-3">
-            <Button type="button" loading={isPending} disabled={budgetValidation.bloque} onClick={handleValiderPartiellement}>
+            <Button signe type="button" loading={isPending} disabled={budgetValidation.bloque} onClick={handleValiderPartiellement}>
               Confirmer la validation partielle
             </Button>
             <Button
@@ -229,7 +229,7 @@ export function ValidationActions({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" variant="danger" loading={isPending} onClick={handleRejeter}>
+            <Button signe type="button" variant="danger" loading={isPending} onClick={handleRejeter}>
               Confirmer le rejet
             </Button>
             <Button

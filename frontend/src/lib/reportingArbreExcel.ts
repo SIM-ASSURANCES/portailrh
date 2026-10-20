@@ -31,8 +31,28 @@ function lettreColonne(index: number): string {
   return s;
 }
 
-/** `origine` : origine du site (`https://hôte`), pour des liens de téléchargement absolus utilisables depuis Excel. */
-export function ajouterFeuilleReporting(workbook: ExcelJS.Workbook, lignes: readonly LigneArbre[], origine: string): ExcelJS.Worksheet {
+/**
+ * Lot L — limite du nombre de lignes signées dont l'IMAGE de signature est intégrée au classeur. Au-delà, le fichier devient trop lourd :
+ * seules les colonnes « Signé par / Signé le / Au nom de » sont remplies (elles restent complètes, sur toutes les lignes) et une note
+ * l'indique sous le tableau. Chaque image n'est ajoutée qu'une fois au classeur (une par version de signature), puis réutilisée.
+ */
+export const SIGNATURES_IMAGES_MAX_LIGNES = 2000;
+export const NOTE_IMAGES_SIGNATURE_OMISES = `Les images de signature ne sont pas incluses au-delà de ${SIGNATURES_IMAGES_MAX_LIGNES} lignes signées : les colonnes « Signé par », « Signé le » et « Au nom de » restent complètes.`;
+
+/**
+ * `origine` : origine du site (`https://hôte`), pour des liens de téléchargement absolus utilisables depuis Excel.
+ * `signatures` : octets PNG des versions de signature citées par les lignes (clé = identifiant de la version).
+ */
+export function ajouterFeuilleReporting(
+  workbook: ExcelJS.Workbook,
+  lignes: readonly LigneArbre[],
+  origine: string,
+  signatures: ReadonlyMap<string, Buffer> = new Map()
+): ExcelJS.Worksheet {
+  const nbSignees = lignes.filter((l) => l.signatureId !== "").length;
+  const avecImages = nbSignees > 0 && nbSignees <= SIGNATURES_IMAGES_MAX_LIGNES && signatures.size > 0;
+  const idImages = new Map<string, number>();
+  const colSignature = COLONNES_ARBRE.findIndex((c) => c.genre === "image");
   const sheet = workbook.addWorksheet("Reporting", { views: [{ state: "frozen", xSplit: 2, ySplit: 1 }] });
   // Les lignes de détail sont SOUS leur ligne de synthèse (la demande, l'article) : le bouton de repli est sur celle-ci.
   sheet.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
@@ -59,7 +79,7 @@ export function ajouterFeuilleReporting(workbook: ExcelJS.Workbook, lignes: read
     const valeurs: Record<string, string | number | Date | null> = {};
     for (const c of COLONNES_ARBRE) {
       const v = l[c.cle];
-      if (v == null || v === "") valeurs[String(c.cle)] = null;
+      if (v == null || v === "" || c.genre === "image") valeurs[String(c.cle)] = null;
       else if (c.genre === "lien") valeurs[String(c.cle)] = { text: "Télécharger", hyperlink: `${origine}${v}` } as unknown as string;
       else if (v instanceof Date) valeurs[String(c.cle)] = jourSansHeure(v);
       else if (typeof v === "number") valeurs[String(c.cle)] = Math.round(v * 100) / 100;
@@ -67,6 +87,18 @@ export function ajouterFeuilleReporting(workbook: ExcelJS.Workbook, lignes: read
     }
     const row = sheet.addRow(valeurs);
     row.outlineLevel = l.niveau;
+    if (avecImages && l.signatureId && colSignature >= 0) {
+      const octets = signatures.get(l.signatureId);
+      if (octets) {
+        let idImage = idImages.get(l.signatureId);
+        if (idImage === undefined) {
+          idImage = workbook.addImage({ buffer: octets as unknown as ExcelJS.Buffer, extension: "png" });
+          idImages.set(l.signatureId, idImage);
+        }
+        row.height = 34;
+        sheet.addImage(idImage, { tl: { col: colSignature + 0.05, row: row.number - 1 + 0.05 }, ext: { width: 96, height: 32 } });
+      }
+    }
     // Niveau 0 : demande (gras, fond marqué) ; niveau 1 : article (fond léger, retrait) ; niveau 2 : événements (texte courant, retrait double).
     if (l.niveau === 0) {
       row.font = { bold: true };
@@ -114,6 +146,10 @@ export function ajouterFeuilleReporting(workbook: ExcelJS.Workbook, lignes: read
         cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
       });
     }
+  }
+  if (nbSignees > SIGNATURES_IMAGES_MAX_LIGNES) {
+    sheet.addRow({});
+    sheet.addRow({ typeLibelle: NOTE_IMAGES_SIGNATURE_OMISES });
   }
   return sheet;
 }

@@ -3,6 +3,8 @@ import { Document, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 import { COLORS } from "./colors";
 import { formatDate, formatMontant } from "./format";
 import type { HistoriqueImprime } from "./historiqueDocument";
+import { SignaturesSection } from "./SignaturesSection";
+import type { SignatureImprimee } from "./signaturesDocument";
 import "./registerFonts";
 
 /** Styles partagés avec le reçu de retour de caisse (`RetourReceiptDocument.tsx`) : même gabarit, mêmes mentions. */
@@ -320,6 +322,8 @@ export function RappelDemande({
 export interface ReceiptData {
   /** Historique détaillé (lot G) : règlements, retours, dépenses, solde final. */
   historique: HistoriqueImprime;
+  /** Lot L : signatures des étapes validées, dans l'ordre du circuit. */
+  signatures: SignatureImprimee[];
   recuReference: string;
   demandeReference: string;
   demandeurNom: string;
@@ -462,6 +466,8 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
           </View>
 
           <HistoriqueSection historique={data.historique} />
+
+          <SignaturesSection signatures={data.signatures} />
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Détails de la demande</Text>

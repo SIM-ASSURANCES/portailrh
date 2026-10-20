@@ -1,5 +1,8 @@
+import { MentionSignature } from "@/components/signature/MentionSignature";
 import { parseCorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
 import {
+  ACTIONS_HISTORIQUE_SIGNEES,
+  etatsSignatureHistorique,
   lignesRetireesParCorrection,
   lireVersionCorrection,
   prisma,
@@ -318,6 +321,8 @@ export async function DemandeHistorique({
         })
       : [];
   const entries = [...entreesDemande, ...entreesLignes].sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime());
+  // Lot L : signature de chaque action signée (ou « Antérieur à la signature » avant la mise en service).
+  const signatures = await etatsSignatureHistorique(prisma, demandeId, entries, ACTIONS_HISTORIQUE_SIGNEES);
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
@@ -332,6 +337,13 @@ export async function DemandeHistorique({
               <p className="text-xs text-muted-foreground">
                 {entry.user.fullName} — {entry.createdAt.toLocaleString("fr-FR")}
               </p>
+              {(() => {
+                const etat = signatures.get(entry.id);
+                if (!etat) return null;
+                if (etat.etat === "SIGNEE") return <MentionSignature signature={etat.signature} />;
+                if (etat.etat === "ANTERIEURE") return <MentionSignature anterieure />;
+                return null;
+              })()}
               {(() => {
                 const versionCorrection = versionParEntree.get(entry.id);
                 if (versionCorrection) {

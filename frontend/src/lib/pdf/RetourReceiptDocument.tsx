@@ -3,6 +3,8 @@ import { Document, Page, Text, View } from "@react-pdf/renderer";
 import { COLORS } from "./colors";
 import { formatDate, formatMontant } from "./format";
 import type { HistoriqueImprime } from "./historiqueDocument";
+import { SignaturesSection } from "./SignaturesSection";
+import type { SignatureImprimee } from "./signaturesDocument";
 import { ArticleSection, HistoriqueSection, RappelDemande, styles, type ArticleImprime } from "./ReceiptDocument";
 import "./registerFonts";
 
@@ -28,6 +30,8 @@ export interface RetourReceiptData {
   versementBancaire: boolean;
   /** Historique détaillé (lot G) : règlements, retours, dépenses, solde final. */
   historique: HistoriqueImprime;
+  /** Lot L : signatures des étapes validées, dans l'ordre du circuit. */
+  signatures: SignatureImprimee[];
   receptionneLe: Date;
   declarantNom: string;
   creeParAssistant: boolean;
@@ -135,6 +139,8 @@ export function RetourReceiptDocument({ data }: { data: RetourReceiptData }) {
           ) : null}
 
           <HistoriqueSection historique={data.historique} />
+
+          <SignaturesSection signatures={data.signatures} />
 
           <RappelDemande reference={data.demandeReference} demandeurNom={data.demandeurNom} serviceNom={data.serviceNom} creeeLe={data.demandeCreeeLe} />
           {data.article ? (

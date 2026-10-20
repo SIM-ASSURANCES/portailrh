@@ -3623,6 +3623,73 @@ au serveur, garde 8 sur le nouveau responsable, ancien responsable : lien 404, f
 reprise Finance → Service puis re-validation du responsable, DG → Finance dans les deux sens, refus sur article validé par le DG / rejeté / réglé en brouillon puis confirmé / demande clôturée / bénéficiaire / Assistant, reprise d'un article validé avec
 dépassement confirmé, confirmation caduque, revalidation refusée sans nouvelle confirmation, parcours, reporting page et Excel, journal de caisse strictement identique).
 
+#### Lot L — signature manuscrite (dessinée à la souris ou au doigt) sur les actions sensibles (2026-10-27)
+
+Décision du DG : les actions sensibles portent la signature de leur auteur. **Traçabilité interne, PAS une signature électronique qualifiée** — l'interface le dit (profil, fenêtre de création, reçus imprimés : « sans valeur de signature électronique qualifiée ») et ne doit jamais prétendre le contraire.
+Aucune écriture de caisse créée ni modifiée, `PERMISSIONS_DECISION_NON_DELEGABLES` et garde 8 intactes, **aucune permission nouvelle**. Migration additive à la main `20261027090000_signatures_manuscrites`
+(2 tables + le repère de mise en service ; `migrate diff` vide ; les tables ne se rejouent pas, comme toute migration de création, le repère `ON CONFLICT DO NOTHING` si).
+
+**Ce que prouve la signature (décision structurante)** : on la dessine **une seule fois** dans le profil. Chaque action sensible n'est ensuite qu'un clic : le serveur applique la signature enregistrée du compte connecté. Elle prouve donc que
+l'action vient du **compte connecté** (mot de passe / session), avec la signature qu'il a enrôlée à une date connue, depuis telle adresse IP — **pas** que la personne a redessiné sa signature à ce moment-là. Pas de fenêtre de dessin par action.
+
+**Modèle** (`SignatureUtilisateur`, `ActionSignee`, relations vers `User` ; stockage en base, `Bytes`, jamais d'URL publique) :
+- `SignatureUtilisateur` : une ligne par **version** (`@@unique([userId, version])`), PNG reconstruit, largeur, hauteur, empreinte SHA-256. Une nouvelle signature ajoute une version ; **une version n'est jamais modifiée ni supprimée** (la version courante = la plus élevée).
+- `ActionSignee` (ajout seul) : signataire (= le compte connecté), **version utilisée**, `auNomDeId` (titulaire si délégation), code d'action, demande / article / entité visés, adresse IP (`getTrustedClientIp`), date. Aucune clé vers la demande (comme `HistoriqueEntry`).
+- Repère `MarqueurUnique` `signatures.mise_en_service` (posé par la migration) : tout ce qui le précède est « **Antérieur à la signature** » (jamais signalé comme anormal, jamais modifié).
+
+**Image validée côté serveur, jamais crue du navigateur** (`backend/src/signature.ts`, pur, 16 tests ; constantes client-safe dans `signatureConstantes.ts`) : data URL `image/png` seulement, taille contrôlée **avant** décodage (100 Ko), PNG réellement décodé
+(CRC, IHDR, 8 bits gris / gris+alpha / RVB / RVBA, sans entrelacement, dimensions 200×60 à 1200×600, flux zlib borné, défiltrage), **tracé vide ou quasi vide refusé** (150 pixels encrés, étendue 40×10), puis **PNG reconstruit** (IHDR + IDAT + IEND : métadonnées retirées).
+
+**Enrôlement** : section « Ma signature » de `/profil` (`SignatureProfil`, `SignaturePad`) : cadre 600×200, **Pointer Events + `touch-action: none`** (le doigt dessine sans faire défiler la page), « Effacer » / « Enregistrer », aperçu de la signature actuelle, redessin = nouvelle version, anciennes versions listées.
+`enregistrerSignatureAction` (`profil/signatureActions.ts`, historique `enregistrement_signature`). Même cadre dans une **fenêtre de création** (`FournisseurSignature` dans `(dashboard)/layout.tsx`, contexte `contexteBase.ts`) et un **bandeau « Créer ma signature »** pour les comptes qui signent
+(`PERMISSIONS_SIGNATAIRES` ou responsable de service) tant qu'ils n'en ont pas.
+**Service des images** : `GET /api/signatures/[id]` — session obligatoire ; propriétaire, **ou** lecteur Finance / DG / reporting (seulement pour une signature réellement utilisée), **ou** demandeur / bénéficiaire / responsable de service d'une demande dont une action a été signée avec elle ; sinon 403 (401 sans session). Cache privé, `nosniff`.
+
+**Garde serveur — `avecSignature`** (`frontend/src/lib/signature.ts`, enveloppe de chaque action signée) : (1) le compte connecté **doit** avoir une signature enrôlée, sinon l'action est **refusée** (message `MESSAGE_SIGNATURE_REQUISE`) **même si l'appel contourne l'interface** (testé par appel direct) ;
+(2) l'action s'exécute avec ses propres contrôles inchangés (permission, statut, garde 8…) ; (3) en cas de **succès seulement**, `ActionSignee` est enregistrée (version courante, IP, date, cible résolue par `resoudreCible`). Chaque action `xxxAction` devient une enveloppe de `xxxInterne` (même corps, rien d'autre ne change).
+Un échec de l'enregistrement après une action réussie est journalisé (`console.error`) sans annuler l'action (**limite assumée**, voir plus bas). Le contrôle de signature passe AVANT la permission : un compte non autorisé ET sans signature reçoit le message de signature (sans conséquence).
+
+**Actions signées** (code → ce qui est signé ; liste source : `ACTIONS_SIGNEES`) :
+| Domaine | Actions |
+|---|---|
+| Étape Service | `validerEtapeServiceAction`, `rejeterEtapeServiceAction` |
+| Finance | `validerLignesAction` (décision sur les articles), `validerTotalement / Partiellement / ComplementaireAction` et `rejeterReliquatAction` / `rejeterDemandeAction` (dépense directe, anciennes demandes) |
+| DG | `deciderLigneDGAction`, `validerEtapeDGAction`, `rejeterEtapeDGAction`, `rejeterDemandeEtapeDGAction`, `approuver / rejeter / annulerValidationCompleteAction` |
+| Circuit | `soumettreAuDGAction`, `soumettreLignesAuDGAction`, `resoumettreAuDGAction`, `resoumettreValidationCompleteDGAction`, `reorienterDemandeAction`, `reprendreEtapeAction` (lot K) |
+| Budgets | `confirmerDepassementBudgetAction` (DG), soumission et décision des seuils de caisse et des budgets de catégorie (`soumettreSeuilsCaisseAction`, `soumettreBudgetsCategoriesAction`, `deciderSeuilsCaisseAction`, `deciderBudgetsCategoriesAction`) |
+| Argent | `confirmerReglementAction`, `annulerReglementAction` (Caisse comme Banque), `receptionnerRetourAction`, `declarerRetourAssistantAction`, `validerRemboursementRetourAction` / `rejeter…`, `validerRetourExceptionnelAction` / `rejeter…`, `creerRetourExterneAction`, `alimenterCaisseAction`, `definirSoldeOuvertureAction` / `corrigerSoldeOuvertureAction` |
+| Clôture | `cloturerDemandeAction` (totale, partielle ET **forcée**) |
+| Dépense directe | `creerDepenseDirecteAction` |
+**Non signées, volontairement** : consultations, notifications, tâches automatiques (cron, planificateur), catégorisation, libellés / descriptions / motifs, création et correction d'une demande par le demandeur, abandon, **déclaration d'un retour de caisse par le collaborateur**
+(`creerRetourCaisseAction` : sans effet sur la caisse, « déclarer ≠ réceptionner » — c'est la réception qui est signée), brouillons de règlement, saisie d'un retour exceptionnel. Une action qui en appelle une autre (`rejeterEtapeServiceAction` → `rejeterDemandeAction`) laisse DEUX enregistrements de signature pour un seul clic (inoffensif).
+
+**Délégation** : un délégué signe avec **sa propre signature** ; `titulaireDelegation` repère le titulaire quand la permission de l'action ne lui vient **que** d'une délégation active (donneur actif le plus ancien) : « signé par [délégué], au nom de [titulaire] » partout.
+Les permissions de décision restent non délégables (inchangé).
+
+**Affichages** (une seule vue de la mention : `MentionSignature` = miniature agrandie au survol / image entière au clic + libellé ; `libelleSignature`) :
+- **Historique de la demande** (`DemandeHistorique`) : chaque entrée d'une action signée (`ACTIONS_HISTORIQUE_SIGNEES`) montre sa signature, rapprochée par (compte, fenêtre de 60 s) — `rapprocherSignatures` ; « Antérieur à la signature » avant le repère. Même version que celle utilisée à ce moment-là, même après un nouvel enrôlement.
+- **Parcours de l'article** : bloc « Signatures » (ce qui a été signé, quand, par qui) et « Signature de la décision : Antérieur à la signature ».
+- **Reporting** (page et Excel, **sans nouvelle table**) : colonnes « Signé par », « Signé le », « Au nom de », « Signature » du tableau unique, sur les lignes dont l'action est signée (décision de l'article, règlement, retour réceptionné, remboursement, retour externe, retour exceptionnel, clôture ; la demande à défaut la validation de service),
+  `appliquerSignature` (même compte que la colonne « Auteur », dans la minute). Page : miniature + survol ; Excel : image par version **intégrée une seule fois** puis réutilisée. **Limite : `SIGNATURES_IMAGES_MAX_LIGNES = 2000` lignes signées** (`frontend/src/lib/reportingArbreExcel.ts`) —
+  au-delà, plus d'image (fichier trop lourd), les colonnes de texte restent complètes et une note le dit sous le tableau. Droit de lecture = celui du reporting (`treso.voir_reporting`), l'export est refusé aux autres.
+- **Reçu de règlement et reçu de retour** (PDF) : bloc « Validations et signatures » (`SignaturesSection`, `chargerSignaturesDocument`) : une ligne par étape validée **dans l'ordre du circuit** (Service, Finance, DG, puis le régleur / la personne qui a réceptionné CE règlement / CE retour) avec nom, **fonction (nom du rôle)**, date et signature ; avant le repère : « Antérieur à la signature ».
+  Il n'existe pas de « PDF de la demande » ; le **bon de caisse reste minimal** (document remis en main propre, inchangé).
+- `supprimerUtilisateurAction` compte les signatures, les actions signées et celles faites « au nom de » le compte.
+
+**Bouton « signe »** (`Button`, désormais un Client Component) : les boutons des actions signées portent la prop `signe` — plume, infobulle « Signer et valider : cette action sera signée avec votre signature enregistrée… » (`RAPPEL_SIGNATURE_PAR_DEFAUT`, `signeRappel` pour la préciser), `data-signe="true"`.
+Sans signature enrôlée, le clic **n'exécute pas** l'action : il ouvre la fenêtre de création, puis l'action reprend toute seule (clic rejoué). **Écart assumé par rapport à la demande** : le libellé du bouton garde son verbe (« Valider », « Confirmer… ») — le renommer en « Signer et valider » aurait cassé les sélecteurs des 936 contrôles e2e existants de la Trésorerie sans rien apporter de plus ;
+la plume, l'infobulle et l'attribut disent la même chose.
+
+**Tests** : vitest `signature.test.ts` (16 : image valide dans les 4 types de pixels, métadonnées retirées, vide / point / trait court / non-PNG / dimensions / poids / entrelacé / 16 bits / CRC refusés, data URL, refus sans signature, version conservée, « Antérieur à la signature », « au nom de ») et 6 tests de `reportingArbre.test.ts` (signature d'une ligne,
+délégation, antérieur, aucune, autre compte / hors fenêtre, colonnes). **e2e** : `e2e/signatures-auto.mjs` enrôle une signature de test pour tous les comptes de la base jetable et crée un déclencheur PostgreSQL qui le fait pour les comptes créés ensuite — **importé et appelé par les 16 scripts Trésorerie** (sinon toutes leurs actions signées seraient refusées) ;
+`soumission-dg-article.mjs` supprime aussi ces lignes avant de supprimer son compte. **`e2e/lot-l.mjs`** (76 contrôles) : enrôlement (souris, tactile sans défilement, Effacer / Enregistrer, versions), revalidation serveur (vide, JPEG, faux PNG, > 100 Ko, dimensions, non-image), refus sans signature par appel direct (décision, règlement), création à l'écran puis reprise de l'action,
+trace (signataire, version, IP, date), version conservée après un nouvel enrôlement, délégation (« au nom de »), droits de lecture de l'image, reçu PDF (ordre du circuit, « Antérieur… »), reporting page + Excel (images dédupliquées), aucune écriture de caisse.
+Le plafond de 2000 images a été vérifié à part (classeur de 10, 2000 et 2001 lignes signées : images dédupliquées jusqu'à 2000, aucune et note au-delà, colonnes de texte conservées).
+
+**Points ouverts / limites** : (1) l'enregistrement de l'action signée suit l'action : un échec entre les deux laisse une action faite sans trace de signature (journalisée) — à passer dans la transaction de chaque action si le DG l'exige ; (2) le rapprochement historique ↔ signature se fait par (compte, minute), pas par identifiant :
+deux actions du même compte à moins de 60 s avec deux versions différentes pourraient se confondre ; (3) les lignes du reporting hors liste (dépense, mouvement banque) et le bon de caisse n'ont pas de signature ; (4) un compte sans signature ne peut ni valider, ni régler, ni clôturer : le déploiement doit être précédé de l'enrôlement des signataires (bandeau) ;
+(5) la fenêtre flottante « Alertes en temps réel » peut recouvrir le cadre de signature du profil (elle se ferme) ; (6) aucune expiration ni révocation d'une signature (une nouvelle version suffit) ; (7) l'image est stockée en base (pas dans `uploads/`) : sauvegardée avec elle.
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié

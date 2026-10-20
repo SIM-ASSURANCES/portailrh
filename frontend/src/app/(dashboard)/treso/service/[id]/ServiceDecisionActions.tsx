@@ -45,7 +45,7 @@ export function ServiceDecisionActions({
     <section aria-label="Décision du responsable de service" className="space-y-3 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
       <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Votre décision</h2>
       <div className="flex flex-wrap gap-2">
-        <Button
+        <Button signe
           type="button"
           disabled={!!raisonValider || isPending}
           loading={isPending && !rejetOuvert}
@@ -74,7 +74,7 @@ export function ServiceDecisionActions({
             error={motif.length > 0 && !motifValide ? `${MOTIF_MIN} caractères minimum.` : undefined}
           />
           <div className="flex flex-wrap gap-2">
-            <Button
+            <Button signe
               type="button"
               variant="danger"
               disabled={!motifValide || isPending}

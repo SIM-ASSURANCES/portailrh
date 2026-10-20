@@ -6,6 +6,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { chargerArticleDocument } from "@/lib/pdf/articleReglement";
 import { chargerHistoriqueDocument } from "@/lib/pdf/historiqueDocument";
+import { chargerSignaturesImprimees } from "@/lib/pdf/signaturesDocument";
 import { ReceiptDocument, type ReceiptData } from "@/lib/pdf/ReceiptDocument";
 import { getResteARegler, getTotalRegle } from "backend";
 
@@ -60,7 +61,7 @@ export async function GET(
     where: { id },
     include: {
       demande: { include: { createur: { include: { service: true } }, categorie: true, objet: true, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } },
-      auteur: true,
+      auteur: { include: { role: true } },
       allocations: { include: { categorie: true } },
     },
   });
@@ -121,7 +122,15 @@ export async function GET(
     ligneDemandeId: reglement.ligneDemandeId,
     reglementCourantId: reglement.id,
   });
+  // Lot L : signature de chaque personne qui a validé une étape (ordre du circuit), puis du régleur de CE règlement.
+  const signatures = await chargerSignaturesImprimees(reglement.demandeId, {
+    action: "confirmation_reglement",
+    entiteId: reglement.id,
+    etape: "Règlement (décaissement)",
+    repli: reglement.confirmeAt ? { nom: reglement.auteur.fullName, fonction: reglement.auteur.role.name, date: reglement.confirmeAt } : null,
+  });
   const data: ReceiptData = {
+    signatures,
     historique,
     recuReference,
     demandeReference: reglement.demande.reference,

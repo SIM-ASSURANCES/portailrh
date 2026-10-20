@@ -188,7 +188,7 @@ export function ParametrageCategoriesForm({ categories, aujourdhui }: { categori
 
       <p className="text-xs text-muted-foreground">Cochez un budget pour le soumettre seul, ou plusieurs pour les soumettre ensemble au DG.</p>
 
-      <Button type="submit" loading={isPending} disabled={cochees.length === 0 || isPending} data-soumettre-selection>
+      <Button signe type="submit" loading={isPending} disabled={cochees.length === 0 || isPending} data-soumettre-selection>
         {cochees.length <= 1 ? "Soumettre la sélection au DG" : `Soumettre la sélection au DG (${cochees.length} budgets)`}
       </Button>
     </form>

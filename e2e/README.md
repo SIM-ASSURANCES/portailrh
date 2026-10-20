@@ -24,9 +24,13 @@ node e2e/lot-j-ter.mjs              # Trésorerie (lots J ter et J quater : page
 node e2e/lot-j.mjs                  # Trésorerie (lot J, adapté au lot J quater : formulaire et actions de la section des catégories) : budgets paramétrés par la Finance, validés par le DG (date d'effet, seuils), restes global et catégorie à chaque validation, alertes ORANGE / ROUGE, confirmation du DG (demandée ou dans le même geste), parcours, reporting, migration des budgets existants (exceljs requis)
 node e2e/lot-j-bis.mjs            # Trésorerie (lot J bis) : la confirmation du DG d'un dépassement rouge couvre le règlement de l'article (jusqu'au montant confirmé, trace, parcours, reporting, autre article et excédent refusés), mention « Dernier paramétrage refusé », catégories et objets désactivables / réactivables par la Finance (unzip requis)
 node e2e/lot-k.mjs                # Trésorerie (lot K) : réorientation de l'étape Service vers un autre responsable disponible (demandeur et Finance, liste filtrée, motif, garde 8, ancien responsable bloqué, chronomètre et rappel, historique, notifications) et reprise avec motif obligatoire (Finance → Service, DG → Finance, validation → à décider ; interdits ; dépassement confirmé puis article repris) ; parcours et reporting (unzip requis)
+node e2e/lot-l.mjs                # Trésorerie (lot L) : signature manuscrite sur les actions sensibles — enrôlement (souris et doigt), revalidation serveur de l'image, refus sans signature (appel direct), création à l'écran, trace (signataire, version, IP), délégation « au nom de », reçu PDF et reporting (page + Excel) (unzip et pdftotext requis)
 bash e2e/arreter.sh                  # arrête le serveur et le conteneur
 npm uninstall --no-save playwright
 ```
+
+**Lot L** : les actions sensibles de la Trésorerie sont signées et le serveur refuse toute action signée d'un compte sans signature enrôlée. Chaque script Trésorerie appelle donc `assurerSignatures(db)` (`e2e/signatures-auto.mjs`) juste après sa connexion à la base :
+cela enrôle une signature de test pour tous les comptes et crée un déclencheur PostgreSQL qui le fait pour les comptes créés ensuite. Un script qui supprime un compte qu'il a créé doit d'abord supprimer ses lignes `ActionSignee` et `SignatureUtilisateur`.
 
 `next build` doit avoir été lancé avant `base-jetable.sh`. Le script écrit seulement dans la base jetable
 (`E2E_DATABASE_URL`, par défaut `postgresql://postgres:pw@localhost:55497/e2e`).

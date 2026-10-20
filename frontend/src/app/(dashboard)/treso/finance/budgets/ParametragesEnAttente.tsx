@@ -68,7 +68,7 @@ export function ParametragesEnAttente({ items, portee }: { items: ParametrageEnA
             />
             Tout sélectionner
           </label>
-          <Button type="button" loading={isPending} disabled={selection.length === 0 || isPending} data-valider-selection onClick={() => decider(true)}>
+          <Button signe type="button" loading={isPending} disabled={selection.length === 0 || isPending} data-valider-selection onClick={() => decider(true)}>
             Valider la sélection ({selection.length})
           </Button>
           <Button type="button" variant="danger" disabled={selection.length === 0 || isPending} data-refuser-selection onClick={() => setRefus((v) => !v)}>
@@ -79,7 +79,7 @@ export function ParametragesEnAttente({ items, portee }: { items: ParametrageEnA
               <div className="w-80">
                 <Input name="motifRefusLot" label="Motif commun du refus" required value={motif} onChange={(e) => setMotif(e.target.value)} hint="3 caractères minimum. Refuser un budget seul permet un motif propre." />
               </div>
-              <Button type="button" variant="danger" loading={isPending} disabled={motif.trim().length < 3 || isPending} data-confirmer-refus-selection onClick={() => decider(false)}>
+              <Button signe type="button" variant="danger" loading={isPending} disabled={motif.trim().length < 3 || isPending} data-confirmer-refus-selection onClick={() => decider(false)}>
                 Confirmer le refus de la sélection
               </Button>
             </div>

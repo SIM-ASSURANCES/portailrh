@@ -20,6 +20,7 @@ import {
   type AjoutBudget,
   type SaisieParametrage,
 } from "backend";
+import { avecSignature } from "@/lib/signature";
 
 /**
  * Actions des budgets (lot J, 2026-10-19 ; lot J ter, 2026-10-20 ; lot J quater : une action de soumission et une de décision PAR section). Chaque action revérifie sa permission ici, jamais seulement le masquage d'un bouton :
@@ -108,11 +109,19 @@ async function soumettreSection(saisies: unknown, portee: PorteeBudget): Promise
 
 /** Section « Budget de caisse » : la Finance soumet au DG les SEUILS du solde de caisse (en FCFA, avec date d'effet). Jamais de montant. */
 export async function soumettreSeuilsCaisseAction(saisie: SaisieParametrage): Promise<ResultatSoumissionBudgetAction> {
+  return avecSignature({ action: "budget_soumission_caisse", permission: "treso.modifier_budget_categorie", entite: "BudgetParametrage" }, () => soumettreSeuilsCaisseInterne(saisie));
+}
+
+async function soumettreSeuilsCaisseInterne(saisie: SaisieParametrage): Promise<ResultatSoumissionBudgetAction> {
   return soumettreSection([saisie], "GLOBAL");
 }
 
 /** Section « Budgets par catégorie » : la Finance soumet au DG un ou plusieurs budgets de catégorie (montant, seuils, date d'effet). Tout ou rien. */
 export async function soumettreBudgetsCategoriesAction(saisies: SaisieParametrage[]): Promise<ResultatSoumissionBudgetAction> {
+  return avecSignature({ action: "budget_soumission_categories", permission: "treso.modifier_budget_categorie", entite: "BudgetParametrage" }, () => soumettreBudgetsCategoriesInterne(saisies));
+}
+
+async function soumettreBudgetsCategoriesInterne(saisies: SaisieParametrage[]): Promise<ResultatSoumissionBudgetAction> {
   return soumettreSection(saisies, "CATEGORIE");
 }
 
@@ -162,11 +171,19 @@ async function deciderSection(
 
 /** Section « Budget de caisse » : le DG valide ou refuse des seuils de caisse (seul, ou en lot si plusieurs ont été soumis). */
 export async function deciderSeuilsCaisseAction(elements: { id: string; motif?: string }[], valider: boolean, motifCommun?: string) {
+  return avecSignature({ action: "budget_decision_caisse", permission: "treso.valider_budget", entite: "BudgetParametrage" }, () => deciderSeuilsCaisseInterne(elements, valider, motifCommun));
+}
+
+async function deciderSeuilsCaisseInterne(elements: { id: string; motif?: string }[], valider: boolean, motifCommun?: string) {
   return deciderSection("GLOBAL", elements, valider, motifCommun);
 }
 
 /** Section « Budgets par catégorie » : le DG valide ou refuse des budgets de catégorie, seul ou en lot. */
 export async function deciderBudgetsCategoriesAction(elements: { id: string; motif?: string }[], valider: boolean, motifCommun?: string) {
+  return avecSignature({ action: "budget_decision_categories", permission: "treso.valider_budget", entite: "BudgetParametrage" }, () => deciderBudgetsCategoriesInterne(elements, valider, motifCommun));
+}
+
+async function deciderBudgetsCategoriesInterne(elements: { id: string; motif?: string }[], valider: boolean, motifCommun?: string) {
   return deciderSection("CATEGORIE", elements, valider, motifCommun);
 }
 
@@ -205,6 +222,10 @@ export async function demanderConfirmationDepassementAction(
 
 /** Le DG (seul) confirme un dépassement rouge demandé par la Finance, avec un motif obligatoire (10 caractères minimum). */
 export async function confirmerDepassementBudgetAction(id: string, motif: string): Promise<ResultatBudgetAction> {
+  return avecSignature({ action: "confirmation_depassement_budget", permission: "treso.decider_dg", entite: "BudgetDepassement", entiteId: id }, () => confirmerDepassementBudgetInterne(id, motif));
+}
+
+async function confirmerDepassementBudgetInterne(id: string, motif: string): Promise<ResultatBudgetAction> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.decider_dg")) return NON_AUTORISE;
 

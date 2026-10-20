@@ -29,6 +29,7 @@ import {
   verdictReglementArticle,
 } from "backend";
 import { fieldErrorsFromZod, type ActionState } from "backend";
+import { avecSignature } from "@/lib/signature";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -315,6 +316,10 @@ export async function modifierReglementAction(
  * entièrement validée, voir `calculerStatutDemande`).
  */
 export async function confirmerReglementAction(reglementId: string): Promise<SimpleActionResult> {
+  return avecSignature({ action: "confirmation_reglement", permission: "treso.effectuer_reglement", cible: { type: "reglement", id: reglementId } }, () => confirmerReglementInterne(reglementId));
+}
+
+async function confirmerReglementInterne(reglementId: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.effectuer_reglement")) {
     return { status: "error", message: "Action non autorisée." };
@@ -555,6 +560,13 @@ const motifAnnulationSchema = z
  * laisse `PARTIELLEMENT_VALIDEE` inchangé) selon le nouveau total réglé.
  */
 export async function annulerReglementAction(
+  reglementId: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "annulation_reglement", permission: "treso.annuler_reglement", cible: { type: "reglement", id: reglementId } }, () => annulerReglementInterne(reglementId, motif));
+}
+
+async function annulerReglementInterne(
   reglementId: string,
   motif: string
 ): Promise<SimpleActionResult> {

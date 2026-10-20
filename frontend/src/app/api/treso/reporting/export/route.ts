@@ -14,6 +14,7 @@ import {
   libelleNiveauBudget,
   libelleSeuil,
   parseReportingFilters,
+  prisma,
 } from "backend";
 
 const HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF004B9C" } };
@@ -65,7 +66,14 @@ export async function GET(request: NextRequest) {
   // Lot F : UN seul tableau, de la demande jusqu'au détail de chaque article (règlements / fonds remis, mouvements banque,
   // retours de caisse, dépenses, retours externes…) — les anciennes feuilles Demandes, Retours de caisse, Mouvements banque,
   // Retours externes et Fonds remis n'existent plus. Mêmes lignes et mêmes colonnes que l'écran (`COLONNES_ARBRE`).
-  ajouterFeuilleReporting(workbook, arbre.lignes, request.nextUrl.origin);
+  // Lot L : images des signatures (une par version citée) — le droit de lecture est celui du reporting, déjà vérifié plus haut.
+  const idsSignatures = Array.from(new Set(arbre.lignes.map((l) => l.signatureId).filter((id) => id !== "")));
+  const imagesSignatures = new Map<string, Buffer>();
+  if (idsSignatures.length > 0) {
+    const versions = await prisma.signatureUtilisateur.findMany({ where: { id: { in: idsSignatures } }, select: { id: true, image: true } });
+    for (const v of versions) imagesSignatures.set(v.id, Buffer.from(v.image));
+  }
+  ajouterFeuilleReporting(workbook, arbre.lignes, request.nextUrl.origin, imagesSignatures);
 
   const sheetJournal = workbook.addWorksheet("Journal de caisse");
   sheetJournal.columns = [

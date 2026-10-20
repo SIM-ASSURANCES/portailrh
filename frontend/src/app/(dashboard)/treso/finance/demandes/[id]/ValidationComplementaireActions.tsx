@@ -124,7 +124,7 @@ export function ValidationComplementaireActions({
           />
           {budgetValidation.bloc}
           <div className="flex flex-wrap gap-3">
-            <Button type="button" loading={isPending} disabled={budgetValidation.bloque} onClick={handleValider}>
+            <Button signe type="button" loading={isPending} disabled={budgetValidation.bloque} onClick={handleValider}>
               Confirmer la validation complémentaire
             </Button>
             <Button
@@ -163,7 +163,7 @@ export function ValidationComplementaireActions({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" variant="danger" loading={isPending} onClick={handleRejeter}>
+            <Button signe type="button" variant="danger" loading={isPending} onClick={handleRejeter}>
               Confirmer le rejet du reliquat
             </Button>
             <Button

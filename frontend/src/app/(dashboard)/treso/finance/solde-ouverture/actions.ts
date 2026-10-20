@@ -13,6 +13,7 @@ import {
   SOLDE_OUVERTURE_CORRECTION_SOURCE,
   SOLDE_OUVERTURE_SOURCE,
 } from "backend";
+import { avecSignature } from "@/lib/signature";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -61,6 +62,14 @@ const pieceJointeUrlSchema = z
  * jamais `demandeId` — aucune demande d'origine ici).
  */
 export async function definirSoldeOuvertureAction(
+  montant: number,
+  pieceJointeUrl: string,
+  motif?: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "solde_ouverture", permission: "treso.corriger_solde_ouverture", entite: "JournalCaisse" }, () => definirSoldeOuvertureInterne(montant, pieceJointeUrl, motif));
+}
+
+async function definirSoldeOuvertureInterne(
   montant: number,
   pieceJointeUrl: string,
   motif?: string
@@ -149,6 +158,14 @@ const motifCorrectionSchema = z
  * CLAUDE.md "Séparation Responsable Finance / Assistant Finance".
  */
 export async function corrigerSoldeOuvertureAction(
+  nouveauMontant: number,
+  pieceJointeUrl: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "solde_ouverture", permission: "treso.corriger_solde_ouverture", entite: "JournalCaisse" }, () => corrigerSoldeOuvertureInterne(nouveauMontant, pieceJointeUrl, motif));
+}
+
+async function corrigerSoldeOuvertureInterne(
   nouveauMontant: number,
   pieceJointeUrl: string,
   motif: string
@@ -260,6 +277,15 @@ const pieceJointeUrlSchemaAlimentation = z
  * la ligne `PieceJointe` elle-même (`journalCaisseId`, jamais `demandeId`).
  */
 export async function alimenterCaisseAction(
+  montant: number,
+  dateOperation: string,
+  pieceJointeUrl: string,
+  motif?: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "alimentation_caisse", permission: "treso.alimenter_caisse", entite: "JournalCaisse" }, () => alimenterCaisseInterne(montant, dateOperation, pieceJointeUrl, motif));
+}
+
+async function alimenterCaisseInterne(
   montant: number,
   dateOperation: string,
   pieceJointeUrl: string,

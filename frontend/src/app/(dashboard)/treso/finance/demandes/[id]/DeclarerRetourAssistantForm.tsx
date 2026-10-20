@@ -82,7 +82,7 @@ export function DeclarerRetourAssistantForm({
       {erreur ? <p className="text-sm text-danger">{erreur}</p> : null}
 
       <div className="flex flex-wrap gap-3">
-        <Button type="button" loading={isPending} onClick={handleSubmit}>
+        <Button signe type="button" loading={isPending} onClick={handleSubmit}>
           Déclarer
         </Button>
         <Button type="button" variant="secondary" disabled={isPending} onClick={onCancel}>

@@ -166,7 +166,7 @@ export function DepenseDirecteForm({ users, disabled = false }: { users: UserOpt
       <input type="hidden" name="pieceJointeUrl" value={pieceJointeUrl ?? ""} />
       <PieceJointeUpload onChange={setPieceJointeUrl} />
 
-      <Button type="submit" loading={isPending} disabled={disabled} className="w-full sm:w-auto">
+      <Button signe type="submit" loading={isPending} disabled={disabled} className="w-full sm:w-auto">
         Créer la dépense directe
       </Button>
       {disabled ? (

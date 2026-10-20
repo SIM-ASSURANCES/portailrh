@@ -139,6 +139,19 @@ export function ReportingArbreTable({ colonnes, lignes, totauxParDevise, nbDeman
                           ) : (
                             ""
                           );
+                      } else if (c.genre === "image") {
+                        // Lot L : miniature de la signature (agrandie au survol, image entière au clic) servie par la route protégée.
+                        contenu =
+                          typeof v === "string" && v !== "" ? (
+                            <a href={`/api/signatures/${v}`} target="_blank" rel="noreferrer" data-signature-reporting className="group relative inline-block rounded border border-border bg-white px-1">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={`/api/signatures/${v}`} alt={`Signature : ${l.signePar}`} className="h-6 w-auto" />
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={`/api/signatures/${v}`} alt="" aria-hidden="true" className="pointer-events-none absolute bottom-full right-0 z-20 mb-1 hidden h-24 w-auto rounded border border-border bg-white p-1 shadow-elevated-lg group-hover:block" />
+                            </a>
+                          ) : (
+                            ""
+                          );
                       } else if (c.genre === "date") {
                         contenu = v instanceof Date ? jour(v) : "";
                       } else {

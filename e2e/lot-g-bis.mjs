@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import pg from "pg";
+import { assurerSignatures } from "./signatures-auto.mjs";
 
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
@@ -14,6 +15,7 @@ if (!/localhost:55497|e2e/i.test(DB)) throw new Error("E2E_DATABASE_URL doit vis
 
 const db = new pg.Client({ connectionString: DB });
 await db.connect();
+await assurerSignatures(db); // lot L : les actions sensibles exigent une signature enrôlée
 const q = async (sql, params = []) => (await db.query(sql, params)).rows;
 const resultats = [];
 const verifier = (nom, ok, detail = "") => resultats.push(`${ok ? "OK " : "KO "} ${nom}${detail ? ` — ${detail}` : ""}`);

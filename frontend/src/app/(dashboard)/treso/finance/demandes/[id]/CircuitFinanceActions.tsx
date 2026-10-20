@@ -72,7 +72,7 @@ export function CircuitFinanceActions({
       </h2>
       <div className="flex flex-wrap gap-2">
         {apresRejetDG ? (
-          <Button
+          <Button signe
             type="button"
             disabled={!!raisonResoumettre || isPending}
             loading={isPending && !rejetOuvert}
@@ -81,7 +81,7 @@ export function CircuitFinanceActions({
             Resoumettre au DG
           </Button>
         ) : soumissionParLignes || afficherRejet ? null : (
-          <Button
+          <Button signe
             type="button"
             variant="secondary"
             disabled={!!raisonSoumettre || isPending}
@@ -114,7 +114,7 @@ export function CircuitFinanceActions({
             error={motif.length > 0 && !motifValide ? `${MOTIF_MIN} caractères minimum.` : undefined}
           />
           <div className="flex flex-wrap gap-2">
-            <Button
+            <Button signe
               type="button"
               variant="danger"
               disabled={!motifValide || isPending}

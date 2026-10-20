@@ -29,6 +29,7 @@ import {
   refusConflitInteret,
   refusExecutionPropreSurReglement,
 } from "backend";
+import { avecSignature } from "@/lib/signature";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -75,6 +76,13 @@ const motifReouvertureSchema = z
  * sur une même demande").
  */
 export async function declarerRetourAssistantAction(
+  reglementId: string,
+  motifReouverture?: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "declaration_retour_assistant", permission: "treso.receptionner_retour", cible: { type: "reglement", id: reglementId } }, () => declarerRetourAssistantInterne(reglementId, motifReouverture));
+}
+
+async function declarerRetourAssistantInterne(
   reglementId: string,
   motifReouverture?: string
 ): Promise<SimpleActionResult> {
@@ -227,6 +235,10 @@ export async function declarerRetourAssistantAction(
  * encore bloquer.
  */
 export async function receptionnerRetourAction(retourId: string): Promise<SimpleActionResult> {
+  return avecSignature({ action: "reception_retour", permission: "treso.receptionner_retour", cible: { type: "retour", id: retourId } }, () => receptionnerRetourInterne(retourId));
+}
+
+async function receptionnerRetourInterne(retourId: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.receptionner_retour")) {
     return { status: "error", message: "Action non autorisée." };
@@ -1110,6 +1122,10 @@ function estResponsable(session: NonNullable<Awaited<ReturnType<typeof getSessio
 
 /** Validation (Responsable Finance) : SORTIE de caisse, dépense du retour d'origine relevée du même montant. */
 export async function validerRemboursementRetourAction(remboursementId: string): Promise<SimpleActionResult> {
+  return avecSignature({ action: "validation_remboursement", permission: "treso.valider_remboursement", cible: { type: "remboursement", id: remboursementId } }, () => validerRemboursementRetourInterne(remboursementId));
+}
+
+async function validerRemboursementRetourInterne(remboursementId: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !estResponsable(session)) return { status: "error", message: "Action non autorisée." };
   // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le demandeur ni le bénéficiaire de la demande.
@@ -1194,6 +1210,10 @@ export async function validerRemboursementRetourAction(remboursementId: string):
 
 /** Rejet (Responsable Finance), motif obligatoire ; le signalement reste actif, l'Assistant peut re-proposer. */
 export async function rejeterRemboursementRetourAction(remboursementId: string, motifRejet: string): Promise<SimpleActionResult> {
+  return avecSignature({ action: "rejet_remboursement", permission: "treso.valider_remboursement", cible: { type: "remboursement", id: remboursementId } }, () => rejeterRemboursementRetourInterne(remboursementId, motifRejet));
+}
+
+async function rejeterRemboursementRetourInterne(remboursementId: string, motifRejet: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !estResponsable(session)) return { status: "error", message: "Action non autorisée." };
   // Conflit d'intérêts (gardes 1 à 4, 6, 8) : jamais le demandeur ni le bénéficiaire de la demande.

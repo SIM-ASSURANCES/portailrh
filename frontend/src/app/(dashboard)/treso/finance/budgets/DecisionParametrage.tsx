@@ -25,7 +25,7 @@ export function DecisionParametrage({ id, portee, desactive, raison }: { id: str
   return (
     <div data-decision-parametrage className="space-y-2">
       <div className="flex flex-wrap gap-2">
-        <Button type="button" loading={isPending} disabled={desactive || isPending} data-valider-parametrage onClick={() => decider(true)}>
+        <Button signe type="button" loading={isPending} disabled={desactive || isPending} data-valider-parametrage onClick={() => decider(true)}>
           Valider
         </Button>
         <Button type="button" variant="danger" disabled={desactive || isPending} data-refuser-parametrage onClick={() => setRefus((v) => !v)}>
@@ -38,7 +38,7 @@ export function DecisionParametrage({ id, portee, desactive, raison }: { id: str
           <div className="w-72">
             <Input name="motifRefus" label="Motif du refus" required value={motif} onChange={(e) => setMotif(e.target.value)} hint="3 caractères minimum." />
           </div>
-          <Button type="button" variant="danger" loading={isPending} disabled={motif.trim().length < 3} data-confirmer-refus onClick={() => decider(false)}>
+          <Button signe type="button" variant="danger" loading={isPending} disabled={motif.trim().length < 3} data-confirmer-refus onClick={() => decider(false)}>
             Confirmer le refus
           </Button>
         </div>

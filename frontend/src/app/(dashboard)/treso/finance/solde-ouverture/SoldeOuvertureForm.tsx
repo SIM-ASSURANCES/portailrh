@@ -90,7 +90,7 @@ export function SoldeOuvertureForm({ disabled = false }: { disabled?: boolean })
         value={motif}
         onChange={(e) => setMotif(e.target.value)}
       />
-      <Button type="button" loading={isPending} disabled={!pieceJointeUrl || disabled} onClick={handleSubmit}>
+      <Button signe type="button" loading={isPending} disabled={!pieceJointeUrl || disabled} onClick={handleSubmit}>
         Définir le solde d&apos;ouverture
       </Button>
       {disabled ? (

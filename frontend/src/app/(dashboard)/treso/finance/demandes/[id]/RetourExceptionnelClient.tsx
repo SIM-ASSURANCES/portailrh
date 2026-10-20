@@ -138,7 +138,7 @@ export function RetourExceptionnelDecision({ retourId, disabled }: { retourId: s
         <Textarea label="Motif du rejet" rows={2} required value={motif} onChange={(e) => setMotif(e.target.value)} />
         {erreur ? <p className="text-sm text-danger">{erreur}</p> : null}
         <div className="flex flex-wrap gap-3">
-          <Button type="button" variant="danger" loading={isPending} onClick={rejeter}>
+          <Button signe type="button" variant="danger" loading={isPending} onClick={rejeter}>
             Confirmer le rejet
           </Button>
           <Button type="button" variant="secondary" disabled={isPending} onClick={() => setRejet(false)}>
@@ -150,7 +150,7 @@ export function RetourExceptionnelDecision({ retourId, disabled }: { retourId: s
   }
   return (
     <div className="flex flex-wrap gap-3">
-      <Button type="button" loading={isPending} disabled={disabled} onClick={valider}>
+      <Button signe type="button" loading={isPending} disabled={disabled} onClick={valider}>
         Valider
       </Button>
       <Button type="button" variant="danger" disabled={disabled || isPending} onClick={() => setRejet(true)}>

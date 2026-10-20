@@ -124,7 +124,7 @@ export function ClotureActions({
             onChange={(e) => setMotif(e.target.value)}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" loading={isPending} onClick={() => handleCloturer("TOTALE")}>
+            <Button signe type="button" loading={isPending} onClick={() => handleCloturer("TOTALE")}>
               Confirmer la clôture totale
             </Button>
             <Button
@@ -163,7 +163,7 @@ export function ClotureActions({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" variant="danger" loading={isPending} onClick={() => handleCloturer("FORCEE")}>
+            <Button signe type="button" variant="danger" loading={isPending} onClick={() => handleCloturer("FORCEE")}>
               Confirmer la clôture forcée
             </Button>
             <Button
@@ -201,7 +201,7 @@ export function ClotureActions({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" loading={isPending} onClick={() => handleCloturer("PARTIELLE")}>
+            <Button signe type="button" loading={isPending} onClick={() => handleCloturer("PARTIELLE")}>
               Confirmer la clôture partielle
             </Button>
             <Button

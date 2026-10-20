@@ -810,6 +810,9 @@ export async function supprimerUtilisateurAction(
     budgetsSoumis,
     budgetsDecides,
     depassementsDemandes,
+    signaturesEnregistrees,
+    actionsSigneesParCompte,
+    actionsSigneesAuNomDe,
     depassementsConfirmes,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
@@ -875,6 +878,10 @@ export async function supprimerUtilisateurAction(
     prisma.budgetParametrage.count({ where: { decideParId: userId } }),
     prisma.budgetDepassement.count({ where: { demandeParId: userId } }),
     prisma.budgetDepassement.count({ where: { confirmeParId: userId } }),
+    // Lot L : signatures manuscrites enrôlées et actions signées (RESTRICT) ou faites au nom de ce compte (SET NULL).
+    prisma.signatureUtilisateur.count({ where: { userId } }),
+    prisma.actionSignee.count({ where: { signataireId: userId } }),
+    prisma.actionSignee.count({ where: { auNomDeId: userId } }),
   ]);
 
   const blocages: string[] = [];
@@ -932,6 +939,9 @@ export async function supprimerUtilisateurAction(
   if (budgetsSoumis > 0) blocages.push(`soumis ${budgetsSoumis} paramétrage(s) de budget`);
   if (budgetsDecides > 0) blocages.push(`décidé ${budgetsDecides} paramétrage(s) de budget`);
   if (depassementsDemandes > 0) blocages.push(`demandé ${depassementsDemandes} confirmation(s) de dépassement de budget`);
+  if (signaturesEnregistrees > 0) blocages.push(`enregistré ${signaturesEnregistrees} version(s) de signature manuscrite`);
+  if (actionsSigneesParCompte > 0) blocages.push(`signé ${actionsSigneesParCompte} action(s)`);
+  if (actionsSigneesAuNomDe > 0) blocages.push(`été titulaire de ${actionsSigneesAuNomDe} action(s) signée(s) par délégation`);
   if (depassementsConfirmes > 0) blocages.push(`confirmé ${depassementsConfirmes} dépassement(s) de budget`);
 
   if (blocages.length > 0) {
