@@ -6,21 +6,28 @@
  * Cadence (heure LOCALE du serveur, qui est l'heure d'Abidjan en production, comme le reste du module) :
  * - relances de justification : toutes les 5 minutes (créneaux alignés sur les minutes multiples de 5) ;
  * - absences : du lundi au vendredi à 17:30 et 20:00 ;
- * - purge : une fois par jour à 03:00.
+ * - purge : une fois par jour à 03:00 ;
+ * - rappels des congés en attente : du lundi au vendredi à 08:30.
  *
  * Une tâche est « due » quand le créneau le plus récent déjà passé n'a pas encore été couvert par une exécution
  * (`debut` ≥ créneau). Conséquence : une exécution manquée parce que le serveur était arrêté est rattrapée au
  * redémarrage, et une exécution manuelle récente évite un doublon immédiat.
  */
 
-export type NomTache = "RELANCES_JUSTIFICATION" | "ABSENCES" | "PURGE";
+export type NomTache = "RELANCES_JUSTIFICATION" | "ABSENCES" | "PURGE" | "RAPPELS_CONGES";
 
-export const TOUTES_LES_TACHES: readonly NomTache[] = ["RELANCES_JUSTIFICATION", "ABSENCES", "PURGE"];
+export const TOUTES_LES_TACHES: readonly NomTache[] = [
+  "RELANCES_JUSTIFICATION",
+  "ABSENCES",
+  "PURGE",
+  "RAPPELS_CONGES",
+];
 
 export const LIBELLE_TACHE: Record<NomTache, string> = {
   RELANCES_JUSTIFICATION: "Relances de justification",
   ABSENCES: "Absences et oublis de départ",
   PURGE: "Purge des journaux",
+  RAPPELS_CONGES: "Rappels des congés en attente",
 };
 
 /** Intervalle des relances, en minutes. */
@@ -38,6 +45,7 @@ const CRENEAUX_ABSENCES: ReadonlyArray<[number, number]> = [
   [20, 0],
 ];
 const CRENEAUX_PURGE: ReadonlyArray<[number, number]> = [[3, 0]];
+const CRENEAUX_RAPPELS_CONGES: ReadonlyArray<[number, number]> = [[8, 30]];
 
 function estJourOuvre(date: Date): boolean {
   const jour = date.getDay();
@@ -45,8 +53,13 @@ function estJourOuvre(date: Date): boolean {
 }
 
 function creneauxDuJour(tache: NomTache, jour: Date): Date[] {
-  if (tache === "ABSENCES" && !estJourOuvre(jour)) return [];
-  const liste = tache === "ABSENCES" ? CRENEAUX_ABSENCES : CRENEAUX_PURGE;
+  if ((tache === "ABSENCES" || tache === "RAPPELS_CONGES") && !estJourOuvre(jour)) return [];
+  const liste =
+    tache === "ABSENCES"
+      ? CRENEAUX_ABSENCES
+      : tache === "RAPPELS_CONGES"
+        ? CRENEAUX_RAPPELS_CONGES
+        : CRENEAUX_PURGE;
   return liste.map(([h, m]) => new Date(jour.getFullYear(), jour.getMonth(), jour.getDate(), h, m, 0, 0));
 }
 
@@ -112,7 +125,7 @@ export function prochaineExecution(tache: NomTache, now: Date, derniere: Date | 
 /**
  * Une tâche est « en retard » quand elle n'a pas réussi comme prévu :
  * - relances : aucune exécution réussie depuis deux intervalles (10 min), ou jamais ;
- * - absences / purge : le dernier créneau est passé de plus de 30 minutes sans exécution réussie depuis.
+ * - absences / purge / rappels congés : le dernier créneau est passé de plus de 30 minutes sans exécution réussie depuis.
  */
 export function tacheEnRetard(tache: NomTache, now: Date, derniereReussie: Date | null): boolean {
   if (tache === "RELANCES_JUSTIFICATION") {
@@ -148,5 +161,7 @@ export function libelleBilan(tache: NomTache, bilan: unknown): string {
       return `${pluriel(n("nouvellesAbsences"), "nouvelle absence", "nouvelles absences")}, ${pluriel(n("oublisDetectes"), "oubli")} de départ`;
     case "PURGE":
       return `${pluriel(n("executionsSupprimees"), "exécution")} et ${pluriel(n("incidentsSupprimes"), "incident")} supprimés`;
+    case "RAPPELS_CONGES":
+      return `${pluriel(n("rappels"), "rappel")}, ${pluriel(n("erreurs"), "erreur")}`;
   }
 }

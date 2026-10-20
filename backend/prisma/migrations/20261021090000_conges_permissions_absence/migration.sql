@@ -126,3 +126,5 @@ JOIN "Permission" sp ON sp."key" = m.soeur
 JOIN "RolePermission" rp ON rp."permissionId" = sp."id"
 JOIN "Role" r ON r."id" = rp."roleId" AND (r."estAdmin" = false OR m.nouvelle = 'conges.soumettre')
 ON CONFLICT ("roleId", "permissionId") DO NOTHING;
+
+ALTER TYPE "TacheNom" ADD VALUE IF NOT EXISTS 'RAPPELS_CONGES';

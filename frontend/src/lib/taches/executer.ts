@@ -2,6 +2,7 @@ import { cleVerrouTache, erreurCourte, prisma, type DeclenchementTache, type Nom
 import { journaliserIncident } from "@/lib/journalTechnique";
 import { executerAbsences } from "./absences";
 import { executerPurge } from "./purge";
+import { executerRappelsConges } from "./rappelsConges";
 import { executerRelancesJustification } from "./relancesJustification";
 
 export interface ResultatExecution {
@@ -14,6 +15,7 @@ const FONCTIONS: Record<NomTache, () => Promise<unknown>> = {
   RELANCES_JUSTIFICATION: executerRelancesJustification,
   ABSENCES: executerAbsences,
   PURGE: executerPurge,
+  RAPPELS_CONGES: executerRappelsConges,
 };
 
 /**

@@ -2082,6 +2082,7 @@ enum TacheNom {
   RELANCES_JUSTIFICATION
   ABSENCES
   PURGE
+  RAPPELS_CONGES
 }
 
 enum DeclenchementTache {
