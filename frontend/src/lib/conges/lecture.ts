@@ -2,18 +2,19 @@ import {
   actionsPossiblesConge,
   chargerContexteCircuit,
   comptesActifsAvecPermission,
-  colonneDateDepuisJourCivil,
   decideurPourStatutConge,
   friseConge,
   jourCivilDepuisColonneDate,
   joursPassesProteges,
+  listerCongesVueEnsemble,
   PERMISSION_DG_CONGE,
-  parseJourCivil,
   peutConsulterConge,
   prisma,
   refusDecideurConge,
   type EtapeFrise,
+  type FiltresCongesRequete,
   type NatureConge,
+  type PaginationCongesVueEnsemble,
   type StatutCircuitConge,
 } from "backend";
 import type { Prisma } from "backend";
@@ -247,60 +248,9 @@ export async function chargerDetailConge(id: string, session: SessionPortail) {
   };
 }
 
-export async function listerTousConges(filtres: {
-  du?: string;
-  au?: string;
-  statut?: StatutCircuitConge;
-}) {
-  const session = await getSession();
-  if (
-    !session ||
-    (!session.rolePermissions.includes("conges.consulter_tous") &&
-      !session.rolePermissions.includes("conges.valider_rh"))
-  ) {
-    throw new Error("Action non autorisée.");
-  }
-
-  const du = filtres.du ? parseJourCivil(filtres.du) : null;
-  const au = filtres.au ? parseJourCivil(filtres.au) : null;
-  if ((filtres.du && !du) || (filtres.au && !au)) {
-    throw new Error("Les dates de filtre doivent être au format AAAA-MM-JJ.");
-  }
-  if (filtres.du && filtres.au && filtres.du > filtres.au) {
-    throw new Error("La date de début du filtre ne peut pas dépasser sa date de fin.");
-  }
-
-  const demandes = await prisma.demandeConge.findMany({
-    where: {
-      ...(filtres.statut ? { statut: filtres.statut } : {}),
-      ...(filtres.du || filtres.au
-        ? {
-            AND: [
-              ...(filtres.au && au
-                ? [{ dateDebut: { lte: colonneDateDepuisJourCivil(filtres.au) } }]
-                : []),
-              ...(filtres.du && du
-                ? [{ dateFin: { gte: colonneDateDepuisJourCivil(filtres.du) } }]
-                : []),
-            ],
-          }
-        : {}),
-    },
-    orderBy: [{ dateDebut: "desc" }, { createdAt: "desc" }],
-    include: {
-      user: {
-        select: {
-          fullName: true,
-          service: { select: { name: true } },
-        },
-      },
-    },
-    take: 500,
-  });
-
-  return demandes.map((demande) => ({
-    ...demande,
-    dateDebut: dateConge(demande.dateDebut),
-    dateFin: dateConge(demande.dateFin),
-  }));
+export async function listerTousConges(
+  filtres: FiltresCongesRequete,
+  pagination?: PaginationCongesVueEnsemble
+) {
+  return listerCongesVueEnsemble(prisma, filtres, pagination);
 }

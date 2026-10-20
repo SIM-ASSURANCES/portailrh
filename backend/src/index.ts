@@ -53,6 +53,8 @@ export * from "./circuitConge";
 export * from "./congesNotifications";
 export * from "./congesPasse";
 export * from "./congesDb";
+export * from "./congesVueEnsemble";
+export * from "./congesVueEnsembleDb";
 export * from "./encReferentiels";
 // F1 (import mensuel du fichier de production) : lecture (4a), règles (4b), application en base (4c) — encCalcul.ts,
 // lui, reste non réexporté (importé directement là où il sert, commentaire ci-dessus).
