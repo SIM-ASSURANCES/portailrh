@@ -4544,9 +4544,9 @@ Plan : `docs/PLAN_FIABILISATION_POINTAGE.md`. Les tâches planifiées vivent **d
 - **Logique pure** `backend/src/planificateur.ts` (14 tests, horloge simulée) : `tachesDues(now, dernieres)`, `dernierCreneau`,
   `prochaineExecution`, `tacheEnRetard`, `libelleBilan`, `erreurCourte`. Cadence (heure locale du serveur = Abidjan) :
   relances toutes les 5 minutes (créneaux alignés sur les multiples de 5), absences lundi-vendredi 17:30 et 20:00, purge
-  quotidienne 03:00. Une tâche est due quand le créneau le plus récent passé n'est couvert par aucune exécution
+  quotidienne 03:00, rappels des congés en attente lundi-vendredi 08:30 (Module Congés). Une tâche est due quand le créneau le plus récent passé n'est couvert par aucune exécution
   (`debut` ≥ créneau, tous statuts) : rattrapage automatique après arrêt, pas de doublon avec un déclenchement manuel.
-- **Exécution** `frontend/src/lib/taches/` : `relancesJustification.ts`, `absences.ts`, `purge.ts` (logique des anciennes
+- **Exécution** `frontend/src/lib/taches/` : `relancesJustification.ts`, `absences.ts`, `purge.ts`, `rappelsConges.ts` (logique des anciennes
   routes, sans duplication) ; `executer.ts` (`executerTache(tache, declenchement)`, SEUL point d'exécution : verrou
   `pg_try_advisory_xact_lock(hashtext('tache:<nom>'))` tenu par une transaction ouverte pendant toute l'exécution — verrou
   pris ⇒ ligne `IGNOREE`, rien n'est lancé ; ne lève jamais ; écrit une ligne `ExecutionTache`) ; `planificateur.ts`
@@ -4556,7 +4556,7 @@ Plan : `docs/PLAN_FIABILISATION_POINTAGE.md`. Les tâches planifiées vivent **d
   le désactive. Les routes `/api/cron/relances-justification` et `/api/cron/absences` restent (déclenchement manuel,
   `CRON_SECRET`) et passent par `executerTache` (déclenchement `MANUEL`).
 - **Modèle** `ExecutionTache` (migration `20261014090000_execution_tache`, rejouable) : `tache` (RELANCES_JUSTIFICATION,
-  ABSENCES, PURGE), `declenchement`, `debut`, `fin`, `statut` (SUCCES, ECHEC, IGNOREE), `bilan` (JSON), `erreur` (texte
+  ABSENCES, PURGE, RAPPELS_CONGES), `declenchement`, `debut`, `fin`, `statut` (SUCCES, ECHEC, IGNOREE), `bilan` (JSON), `erreur` (texte
   court sans donnée personnelle). La purge supprime les exécutions de plus de 90 jours (jamais le marqueur de clôture initiale, § 18, qui vit dans `MarqueurUnique`).
 - **Limite connue** : l'écriture de la ligne d'exécution se fait à la FIN ; une exécution qui plante le processus entier n'en
   laisse pas.
@@ -5868,66 +5868,134 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
   paiements de la fiche police (colonnes figées ajoutées en 6b), visible à 768 px. Le formulaire de saisie (6c), lui,
   tient à 768 px. À traiter dans un commit dédié (cartes empilées ou colonnes réduites sous la largeur d'une tablette).
 
-## Module Congés et Permissions d'absence (en cours — branche `conges-permissions`)
+## Module Congés
 
-> Section complète prévue au Lot 6 (règles, permissions, circuit, limites, décisions provisoires). Règles déjà arrêtées :
+La RH a son propre logiciel de congés (décision du 19/10). Le portail sert seulement à **demander** un congé, le **faire valider** (responsable du
+service, puis RH) et **ne compter aucune absence** pendant le congé. **Retirés** : soldes, types de congé, date d'embauche, pièces jointes,
+permissions de quelques heures (l'ancien module « Permissions d'absence » n'existe plus). Statuts (`StatutDemandeConge`) : `EN_ATTENTE_RESPONSABLE`,
+`EN_ATTENTE_RH`, `MODIFICATION_DEMANDEE`, `VALIDEE`, `REJETEE`, `ANNULEE`. Référence `CNG-AAAAMM-NNNN` (`genererReferenceConge`, sous verrou).
+Règles pures : `backend/src/circuitConge.ts`, `congesCalcul.ts`, `congesPasse.ts` ; écritures (une transaction, `RefusConge` annule tout) : `congesDb.ts`.
 
-- **Droits `conges.*` / `absences.*` attribués par la migration `20261021090000`** par permission sœur (jamais par nom de rôle). Les rôles
-  `estAdmin` en sont exclus pour tout ce qui DÉCIDE ou GÈRE (valider_rh, annuler, parametrer, gerer_soldes, consulter_tous) mais gardent
-  `conges.soumettre` / `absences.soumettre` (relecture du 2026-10-16, option b) : c'est le pouvoir de décider qui posait problème —
-  en base de dev l'Admin porte les permissions sœurs (anomalie des 23 permissions) et serait devenu décideur RH, comptant dans les
-  comptes RH et supprimant le repli DG —, pas le droit de demander (un rôle combiné « Admin / Collaborateur » porte un vrai employé).
-  Droits RH d'un rôle `estAdmin` à cocher à la main dans `/admin/roles` si voulu. Le seed applique la même règle. **À vérifier en
-  production avant déploiement** : quels comptes portent un rôle `estAdmin` (ils pourront demander un congé).
-- **Responsable de service sans permission** : le responsable ACTUEL d'au moins un service accède à « À décider » (congés et permissions),
-  au détail des demandes de son service et les approuve, rejette ou renvoie, sans aucune permission — comme « Mon service » en
-  Trésorerie. Il ne voit jamais « Mes congés » / « Nouvelle demande » : `/conges` et `/permissions-absence` le redirigent vers « À décider »,
-  et la demande pour lui-même reste refusée (page ET Server Action). Layouts, `chargerNavAbsences` et cartes d'accueil suivent la même règle.
-- **Personne n'agit sur son propre dossier de congé** : `ajusterSolde` refuse le solde de l'acteur, `modifierDateEmbauche` refuse sa
-  propre date d'embauche (`MESSAGE_AJUSTEMENT_PROPRE_SOLDE`, `MESSAGE_DATE_EMBAUCHE_PROPRE`, mêmes phrases à l'écran, qui grise).
-  `initialiserSoldesExercice` n'a pas cette garde, volontairement : la dotation suit le type, l'acteur ne la choisit pas.
-- **Un seul verrou par collaborateur** pour les congés ET les permissions d'absence (`verrouillerAbsenceUtilisateur`, clé
-  `absence-utilisateur:<id>`) : pris par `soumettreConge`, `resoumettreConge`, `accorderCongeOffice`, `soumettrePermission` et par les
-  décisions (`deciderConge`, `deciderPermission`, dont l'accord change ce que lit le contrôle de chevauchement de l'autre nature).
-  Avant : deux clés distinctes, donc un congé et une permission soumis ensemble passaient chacun le contrôle de l'autre.
-- **Permissions retirées (Lot 5)** : `conges.voir_dashboard`, `conges.voir_reporting`, `absences.voir_dashboard`, `absences.voir_reporting`
-  n'avaient aucun écran et aucun lot prévu ne les utilise : retirées de la migration, du seed et des tests. Restent 6 permissions
-  `conges.*` (soumettre, valider_rh, annuler, parametrer_types, gerer_soldes, consulter_tous) et 5 `absences.*` (soumettre,
-  valider_rh, annuler, parametrer, consulter_tous). Le DG reçoit `soumettre` (par `treso.decider_dg`) et `consulter_tous` (par `pointage.consulter_tous`), plus la décision de repli.
-- **Intégration au socle (Lot 5)** : branches « Congés » et « Permissions d'absence » dans le menu (`ModuleAbsenceNav`, calculées par
-  `lib/absences/navigation.ts` avec les mêmes conditions que les layouts des modules, qui restent la garde) ; compteur « À décider »
-  (la file n'est chargée que pour un responsable de service, la RH ou le DG : aucune requête de plus pour un collaborateur ordinaire) ;
-  cartes de l'accueil (« Aucun accès » — jamais « Bientôt disponible » — pour un compte sans permission, Admin compris) ; date d'embauche
-  en lecture seule au profil ; cartes « Congés à décider » / « Permissions à décider » dans « Mon équipe » (mêmes files que les modules).
-- **Suppression d'un compte** (`supprimerUtilisateurAction`) : compte les 10 relations vers `User` du module (soldes, ajustements,
-  congés demandés / approuvés / validés / annulés, permissions demandées / approuvées / validées / annulées) et affiche le message
-  habituel au lieu d'échouer sur une clé étrangère.
-- **Purge du Pointage (D5)** : refusée — exécution ET sauvegarde — dès qu'une `DemandeConge` ou une `DemandePermission` existe
-  (`refusPurgePointageAbsences`, `MESSAGE_PURGE_REFUSEE_ABSENCES`) (même une demande rejetée ou annulée) : traiter une demande ne débloque rien, il faut mettre le Pointage en service avant d'ouvrir les congés. Elle supprimerait toutes les `PlageAbsenceAutorisee`, y compris celles
-  d'un congé validé. L'écran affiche le message à la place du formulaire ; la sauvegarde répond 409.
-- **Règles du règlement intérieur (consignes du 2026-10-16)** : le congé annuel exige **12 mois de service** (art. 12 ; `ANNUEL.ancienneteMinimumMois = 12`,
-  référence = date de début du congé, congé d'office exempté) ; **pas de congé dans le passé** (`preparerConge` refuse une date de début
-  antérieure à aujourd'hui, soumission et resoumission, avec `MESSAGE_CONGE_DANS_LE_PASSE` partagé avec le formulaire ; seul le congé d'office y
-  échappe) ; **jours ouvrables = lundi à vendredi, hors jours fériés** (calcul inchangé, libellé unique `LIBELLE_DECOMPTE_CONGE`) ; le **nombre de
-  jours par an** est `TypeConge.nbJoursDefaut` (30 au départ, provisoire), modifiable par la RH, historisé « ancienne → nouvelle valeur »
-  (`decrireModificationType`) et appliqué aux soldes créés ENSUITE seulement (les soldes existants se corrigent par « Ajuster »).
-- **Observations (C3)** : table `ObservationAbsence` (une demande de congé OU de permission, auteur, étape RESPONSABLE / RH / DG, 1 à 500 caractères),
-  **ajout seul** — déclencheur en base : modification et suppression directe refusées (`OBSERVATION_IMMUABLE`), seule la cascade de la suppression de la
-  demande est admise. Celui qui décide (responsable, RH) ajoute une observation **facultative avec sa décision** (`observation` de `deciderConge` /
-  `deciderPermission`, refusée avec une annulation). Le **DG** (`treso.decider_dg` lu sur le RÔLE, jamais sur sa propre demande) en ajoute une **à tout
-  moment** (`ajouterObservationDG`) : le statut et le circuit ne bougent pas, le demandeur et la RH reçoivent une notification d'information
-  (priorité INFO, aucun rappel). Visibilité : toute personne qui voit la demande, demandeur compris, avec le nom de l'auteur ; le demandeur n'en ajoute
-  pas. Le DG voit **toutes** les demandes sans `consulter_tous` (`PERMISSIONS_CONSULTATION_ABSENCE`, layouts, menu) via les listes
-  « Toutes les demandes » (`/conges/toutes`, `/permissions-absence/toutes`, aussi pour la RH et `consulter_tous`).
-- **Permission exceptionnelle en une seule décision (C4)** — types `PERMISSION_EXCEPTIONNELLE` du module Congés (mariage, décès, naissance…), pas les
-  permissions de quelques heures. À la soumission le demandeur choisit **« Mon responsable (nom) » ou « La RH »** (`DemandeConge.destinataire`,
-  `DestinataireDecisionConge`) ; seule « La RH » est proposée si son responsable est inutilisable (pas de service, pas de responsable, désactivé, ou lui-même)
-  et le serveur refuse un choix non proposé, ou fourni pour un autre type (`controlerDestinataire`, `destinatairesProposes`). **Une seule décision, définitive** :
-  celui qui reçoit la demande l'accorde (VALIDEE avec plages et débit éventuel) ou la rejette (REJETEE) — plus de seconde étape (`etapeUnique` du moteur,
-  `approuveParId` et `valideParId` renseignés pour le responsable, action d'historique `accord_responsable`). Repli si le destinataire devient indisponible :
-  responsable désactivé → la RH ; aucune RH → le DG ; jamais le demandeur. La resoumission conserve le choix (ou le change). Frise : l'étape non choisie est
-  « non requise ». Toujours valables : 6 mois d'ancienneté, pièce justificative obligatoire, durée fixée par le type, non déductible. Le bouton « Demander une
-  modification » reste disponible (ce n'est pas une décision).
+### Règles R1 à R14
+
+- **R1 Nature** : `CONGE` ou `PERMISSION_EXCEPTIONNELLE` (`LIBELLE_NATURE_CONGE`), contrôlée par `preparerConge` (congesDb.ts, aussi pour R2 à R4).
+- **R2 Motif** : 3 à 500 caractères, espaces réduits (`nettoyerMotifConge`, `MOTIF_CONGE_MIN` / `_MAX`).
+- **R3 Période** : début ≤ fin, **jamais avant aujourd'hui, même pour la RH** (`refusDateDebutPassee`, `MESSAGE_CONGE_DANS_LE_PASSE` partagé avec le
+  formulaire), 366 jours au plus (`MAX_JOURS_PERIODE`).
+- **R4 Jours ouvrés** : lundi à vendredi hors `JourFerie` (`decompterJours`), affichés seulement (`nbJoursOuvres`) ; période sans jour ouvré refusée.
+- **R5 Chevauchement** : refus si une autre demande du salarié est en attente, à modifier ou validée (`controlerChevauchement`,
+  `STATUTS_CONGE_OCCUPANT_LA_PERIODE`). Un verrou par salarié (`verrouillerCongeUtilisateur`, clé `conge-utilisateur:<id>`) est pris par la
+  soumission, la resoumission, la saisie RH et chaque décision.
+- **R6 Circuit** (`resoudreParcoursConge`) : responsable (`Service.responsableId`, sans permission) puis RH (compte actif dont le RÔLE porte
+  `conges.valider_rh`). Étape responsable **« non requise »** — demande directement `EN_ATTENTE_RH` — si le demandeur n'a pas de service, son
+  service pas de responsable, le responsable est désactivé, ou le demandeur **est** le responsable (`resoudreEtapeResponsable`). Le décideur est
+  recalculé à chaque action (`decideurPourStatutConge`) ; si le responsable devient inutilisable en cours d'attente, la RH décide à sa place et
+  termine directement (`viaRepli`, historique `accord_par_repli`). Personne ne décide sa propre demande (`refusDecideurConge`).
+  **Repli DG (O1)** : si aucun autre compte RH que le demandeur n'existe, le DG (RÔLE `treso.decider_dg`) décide à l'étape RH (`resoudreEtapeRH`) ;
+  ni RH ni DG : dépôt refusé (`MESSAGE_AUCUN_DECIDEUR`).
+- **R7 Actions d'un décideur** (`transitionConge`) : valider (responsable → `EN_ATTENTE_RH` ; RH ou DG → `VALIDEE`), refuser, demander une
+  modification (motif ≥ 3 caractères). Observation RH facultative (500 car.), à l'étape RH seulement (`controlerObservationRH`). Le droit de décider
+  se lit sur le RÔLE (`session.rolePermissions`), jamais sur une délégation. Les boutons impossibles restent visibles, grisés avec la raison
+  (`actionsPossiblesConge`).
+- **R8 Modification** : seul le demandeur renvoie (`/conges/[id]/modifier`, `resoumettreConge`) ; nature, motif et dates sont recontrôlés (R2 à R5), le
+  parcours est recalculé, les décisions et l'observation sont effacées (l'historique les garde), les plages sont remplacées (R10).
+- **R9 Annulation** (`transitionConge`, motif ≥ 3) : jamais une demande déjà rejetée ou annulée ; le **demandeur** tant que `dateDebut` n'est pas
+  atteinte (`MESSAGE_CONGE_COMMENCE` ensuite) ; un compte dont le RÔLE porte `conges.annuler`, **à tout moment** (c'est la RH après le début).
+- **R10 Plages** : une `PlageAbsenceAutorisee` (source `CONGE`, 00:00–23:59, `demandeCongeId`) par jour de la période (`creerPlagesConge`),
+  `provisoire = true` dès la soumission (saisie RH : définitives), rendues définitives à la validation (`validerPlages`). Une journée couverte
+  n'est **jamais** une absence, provisoire ou non (`journeeCouverteParAbsence`, lue par la tâche des absences et « Présence du jour »).
+- **R11 Refus tardif** : au **refus** d'une demande dont des plages sont déjà passées (`joursPassesProteges`), le décideur voit la case
+  « Compter les jours déjà passés comme absences » (`compterJoursPassesAbsents`, décochée par défaut). **Cochée** : plages passées retirées et une
+  `Absence` `A_CONTROLER` créée (`compterJoursPassesAbsents` de congesDb.ts) par jour ouvré passé sans arrivée pointée ni absence existante, à
+  partir de `lireDateDebutAbsences`, après le jour d'entrée en vigueur du compte (`jourEntreeEnVigueur`), compte actif. **Décochée** : plages
+  passées gardées, jamais comptées absentes. Choix écrit sur la demande (`joursPassesComptesAbsents`) et en historique (`jours_passes`). La demande
+  de modification n'offre pas ce choix : ses jours passés restent couverts.
+- **R12 Saisie RH** (`saisirCongeRH`, `conges.valider_rh` sur le RÔLE) : congé pour un **autre** salarié actif, `VALIDEE` d'emblée
+  (`saisieParRH`, étape responsable non requise, plages définitives), mêmes contrôles R2 à R5 ; le salarié est notifié.
+- **R13 Pointage pendant un congé validé** : enregistré normalement, signalé « Pointé pendant un congé » (`pointeEnConge`, `joursPointesEnConge`).
+- **R14 Visibilité** (`peutConsulterConge`) : le demandeur, le responsable ACTUEL de son service, les comptes qui portent `conges.valider_rh` ou
+  `conges.consulter_tous` (rôle ou délégation). Liste complète et export : `consulter_tous` ou `valider_rh`.
+
+### États d'une journée couverte
+
+`etatPlageConge` (circuitConge.ts) est la **seule** règle d'affichage, jamais le champ `provisoire` seul : plage définitive → « En congé » ;
+provisoire d'une demande en attente → « Congé en attente de validation » ; autre provisoire (demande refusée, annulée, à modifier) →
+« Non compté absent (demande non validée à temps) ». Plusieurs plages le même jour : la plus forte l'emporte (`etatCongeDuJour`). Affichée dans
+« Présence du jour » (onglet « Absence autorisée », `libelleAbsenceAutorisee`), « Mon équipe » (`etatJourMembre`, `equipe.ts`), le reporting
+RH et son export (`pointageReporting.ts` : colonnes « Jours de congé », qui ne compte que les jours ouvrés « En congé », et « Pointé pendant un
+congé »). L'export `/api/conges/export` donne le statut de la DEMANDE, pas l'état d'une journée.
+
+### Plages retirées : annulation, refus, modification (décision du 20/10, Thierry)
+
+Dans `deciderConge` : **annulation après le début** → plages supprimées **à partir de demain** (`aPartirDe = demain`) ; le jour même et les jours passés
+restent couverts (« En congé » si le congé était validé, sinon « Non compté absent »). Annulation avant le début : toutes les plages. **Refus** et
+**demande de modification** → plages d'**aujourd'hui** et des jours suivants supprimées (le jour même n'est donc **pas** gardé, contrairement à
+l'annulation) ; jours passés gardés, sauf refus avec la case R11 cochée. Resoumission : aujourd'hui et la suite remplacés (`remplacerPlages`).
+
+### Permissions
+
+Quatre `conges.*` (module `conges`, source unique `congesPermissions.ts`, posées par la migration `20261021090000_conges_permissions_absence` ET par
+le seed, synchronisation vérifiée par `congesPermissions.test.ts`) : `soumettre`, `valider_rh`, `annuler`, `consulter_tous`.
+- **Attribution par permission sœur, jamais par nom de rôle** (le rôle qui porte la sœur reçoit la nouvelle ; seed : `permissionsCongePourCles`) :
+  `soumettre` ← `pointage.pointer`, `treso.creer_demande`, `treso.decider_dg` ; `valider_rh` et `annuler` ← `pointage.corriger_pointage` ;
+  `consulter_tous` ← `pointage.corriger_pointage`, `pointage.consulter_tous`, `treso.decider_dg` (le DG la reçoit, jamais `valider_rh`).
+- **Rôles `estAdmin`** : ils ne reçoivent que `conges.soumettre` (en base de dev l'Admin porte les permissions sœurs : il serait devenu décideur RH et
+  aurait supprimé le repli DG) ; `valider_rh`, `annuler`, `consulter_tous` se cochent à la main dans `/admin/roles`. **À vérifier en production avant
+  déploiement** : quels comptes portent un rôle `estAdmin` (ils pourront demander un congé).
+- **Lues sur le RÔLE** : `conges.valider_rh` (étape RH, saisie RH ; non délégable, `PERMISSIONS_DECISION_NON_DELEGABLES`), `treso.decider_dg` (repli),
+  `conges.annuler`. `soumettre` et `consulter_tous` passent par `hasPermission` (rôle + délégations).
+- **Responsable de service, sans permission** : désigné par `Service.responsableId`, comme « Mon équipe » ; il accède à « À décider » et au détail des
+  demandes de son service. Sans `conges.soumettre`, `/conges` et `/conges/nouvelle` le redirigent vers « À décider ».
+
+### Écrans et routes (`frontend/src/app/(dashboard)/conges/`)
+
+Le layout garde la session (accès : `soumettre`, `valider_rh`, `consulter_tous`, responsable de service ou DG, sinon `/?error=acces_refuse_conges`) ;
+chaque page revérifie. Menu « Congés » et compteur « À décider » : `lib/conges/navigation.ts` ; carte dans « Mon équipe ».
+- `/conges` « Mes congés » et `/conges/nouvelle` (aperçu des jours ouvrés, `apercuConge`, mêmes contrôles que le dépôt) : `conges.soumettre`.
+- `/conges/a-decider` : responsable de service, `valider_rh` ou DG ; chacun ne voit que ce qu'il peut décider **maintenant** (`chargerFileDecisionConges`,
+  du plus ancien au plus récent). `/conges/[id]` : frise (`friseConge`), historique, actions ; `/conges/[id]/modifier` : le demandeur.
+- `/conges/saisie-rh` : `conges.valider_rh`. `/conges/toutes` : `consulter_tous` ou `valider_rh`, 3 onglets en GET (« En congé aujourd'hui »,
+  « À venir » = début dans 30 jours, « Toutes les demandes » : filtres du / au / service / statut / nature, défaut mois en cours et statut Validée,
+  50 par page).
+- `GET /api/conges/export` : mêmes filtres (`filtresCongesDepuisRecherche`, 400 si invalides, 401, 403), **toutes** les lignes sans pagination,
+  13 colonnes (`COLONNES_EXPORT_CONGE`).
+- Notifications (`lib/conges/notifier.ts`, catégorie `RH`) : dépôt → décideur de l'étape ; décision → demandeur et étape suivante ; annulation →
+  `destinatairesAnnulationConge` (jamais l'auteur) ; saisie RH → le salarié.
+
+### Rappel quotidien
+
+Tâche `RAPPELS_CONGES` (« Rappels des congés en attente », `planificateur.ts`) : lundi à vendredi à 08:30, rattrapée après un arrêt comme les autres ;
+exécution `executerRappelsConges` (`frontend/src/lib/taches/rappelsConges.ts`) via `executerTache`. `rappelCongeDu` (congesRappels.ts) : statut
+`EN_ATTENTE_*` et dernier rappel (à défaut `etapeDepuis`, remis à zéro à chaque décision) d'au moins 24 h. Destinataires = ceux de l'étape
+(`destinatairesEtapeConge`), jamais le demandeur. Priorité (`prioriteRappelConge`) : `IMPORTANT` si le congé commence dans 2 jours ou moins (ou a
+commencé), sinon `INFO`. **Réservation** : `updateMany` conditionné au statut et au `dernierRappelAt` lu avant l'envoi, donc jamais deux rappels
+pour la même demande, même avec deux exécutions simultanées. Suivi et « Lancer maintenant » : `/admin/journal-technique` (bilan « N rappels, N erreurs »).
+
+### Intégrations
+
+« Présence du jour » (`lib/presenceJour.ts`), « Mon équipe », reporting et export du Pointage, tâche des absences : voir « États d'une journée ».
+**Purge du Pointage refusée dès qu'une `DemandeConge` existe**, même rejetée ou annulée (`refusPurgePointageAbsences` : exécution ET sauvegarde,
+409), car elle supprimerait toutes les plages. **Suppression de compte** (`supprimerUtilisateurAction`) : compte les 5 relations de `DemandeConge`
+vers `User` (demandeur, créateur, approbateur, valideur, annulateur) et affiche le message habituel au lieu d'échouer.
+
+### Vérifications
+
+Cinq scripts, **sur base PostgreSQL jetable seulement**, jamais la base de dev (chacun refuse une base dont le nom ne contient pas `jetable`, `e2e` ou
+`conges` ; `conges-rappels.ts` : `jetable` ou `test`) :
+`DATABASE_URL=… npx tsx e2e/conges-couche-base.ts` (couche base R3 à R12, repli DG, concurrence) et `e2e/conges-vue-ensemble.ts` (vue d'ensemble,
+export) depuis la racine ; `npx tsx ../e2e/conges-pointage.ts` (lundi à jeudi) et `../e2e/conges-rappels.ts` depuis `frontend/` ;
+`npm i --no-save playwright`, puis `PLANIFICATEUR_ACTIF=false bash e2e/base-jetable.sh && node e2e/conges-recette.mjs && bash e2e/arreter.sh`, puis
+`npm uninstall --no-save playwright`. **Dernière recette** (`conges-recette.mjs`) : **48/48**, trois passages, 20/10/2026, aucune erreur JavaScript.
+
+### Points ouverts
+
+- **O1** : le repli sur le DG (RH seule demandeuse) est provisoire ; une seule condition à retirer, dans `resoudreEtapeRH`.
+- **O2** : un responsable de service qui porte aussi `conges.valider_rh` valide les deux étapes d'une demande de son service (seule la propre demande
+  est interdite).
+- **O3** : la saisie RH n'accepte aucune date de début passée (R3) : un congé déjà commencé ne s'enregistre pas après coup.
+- **À la fusion** : renommer le dossier `20261021090000_conges_permissions_absence` (nouvel horodatage, **après** les migrations `20261022*` d'Aristide,
+  après un dernier `git fetch`). Il contient aussi `ALTER TYPE "TacheNom" ADD VALUE 'RAPPELS_CONGES'`. Contenu rejouable ; sans risque tant qu'il n'est
+  pas en production (migration jamais déployée : les bases locales de l'ancienne version sont à recréer).
 
 ## Socle Portail — Authentification et permissions
 
@@ -6121,7 +6189,7 @@ ou bénéficiaire de délégation, **auteur d'un motif Finance sur dépense non
 justifiée** — voir "Motif Finance sur dépense non justifiée"). Si au moins
 une relation existe : refus
 avec message précis listant chaque catégorie non nulle, invitant à
-désactiver plutôt. Sinon : suppression réelle + `HistoriqueEntry`.
+désactiver plutôt. Le module Congés y ajoute les 5 relations de `DemandeConge` vers `User` (« Module Congés », Intégrations). Sinon : suppression réelle + `HistoriqueEntry`.
 Toujours refusée pour l'auto-suppression et pour le **dernier compte dont
 le rôle a `estAdmin: true`** (comptage des autres comptes admin restants).
 Confirmation à deux temps côté UI, la vraie autorité restant toujours
@@ -6861,7 +6929,7 @@ combinaison de permissions** : chaque action a sa permission.
 | `treso.decider_dg` | Décider à l'étape DG du circuit (migration `20261006120000`, rôles portant `systeme.reinitialiser` : le DG seul) |
 
 **Jamais délégables** (circuit, 2026-10-06) : `treso.decider_finance`, `treso.soumettre_dg`, `treso.decider_dg`,
-`treso.approuver_validation_complete` — voir « Circuit de validation des demandes — moteur ».
+`treso.approuver_validation_complete` et, depuis le module Congés, `conges.valider_rh` — voir « Circuit de validation des demandes — moteur ».
 
 La migration accorde les 9 premières **aux rôles qui remplissaient la règle « Resp » au moment de la migration**
 (calculé en SQL, jamais un nom de rôle), et `modifier_description` à « Resp OU `treso.effectuer_reglement` » (garde
@@ -6906,6 +6974,8 @@ etc.) ont déjà leur migration. **Toute nouvelle permission ajoutée au seed do
 n'a pas de responsable actif ; s'il n'existe aucun autre compte RH actif, le DG (`treso.decider_dg`) décide (section 14).
 Le responsable de service décide sans permission (`Service.responsableId`). Routes : `/pointage/justifier/[pointageId]`,
 `/pointage/justifications`, `/api/cron/relances-justification` ; modèle `JustificationPointage`.
+
+**Congés** (`conges.*`) : `soumettre`, `valider_rh`, `annuler`, `consulter_tous` (attribution par permission sœur ; `valider_rh` non délégable) — voir « Module Congés ».
 
 **Champs de rôle transverses** (jamais un nom de rôle en dur) :
 `Role.estAdmin` (accès `/admin`, figé à la création),
