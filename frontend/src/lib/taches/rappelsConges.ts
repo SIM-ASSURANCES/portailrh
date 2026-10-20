@@ -5,9 +5,9 @@ import {
   messageRappelConge,
   prioriteRappelConge,
   prisma,
-  rappelDu,
+  rappelCongeDu,
 } from "backend";
-import { aujourdhui, frDate } from "@/lib/conges/format";
+import { aujourdhui } from "@/lib/conges/format";
 import { notify } from "@/lib/notifications";
 
 export interface BilanRappelsConges {
@@ -53,7 +53,7 @@ export async function executerRappelsConges(): Promise<BilanRappelsConges> {
   for (const d of demandes) {
     try {
       if (
-        !rappelDu({
+        !rappelCongeDu({
           statut: d.statut,
           dernierRappelAt: d.dernierRappelAt,
           etapeDepuis: d.etapeDepuis,
@@ -85,8 +85,8 @@ export async function executerRappelsConges(): Promise<BilanRappelsConges> {
         demandeurNom: d.user.fullName,
         reference: d.reference,
         nature: d.nature,
-        dateDebut: frDate(debutCivil),
-        dateFin: frDate(finCivil),
+        dateDebut: debutCivil,
+        dateFin: finCivil,
         nbJoursOuvres: d.nbJoursOuvres,
       });
 

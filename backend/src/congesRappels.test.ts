@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { StatutCircuitConge } from "./circuitConge";
-import { DELAI_RAPPEL_CONGE_MS, messageRappelConge, prioriteRappelConge, rappelDu } from "./congesRappels";
+import { DELAI_RAPPEL_CONGE_MS, messageRappelConge, prioriteRappelConge, rappelCongeDu } from "./congesRappels";
 
 const now = new Date("2026-10-20T08:30:00.000Z");
 const ilYA = (ms: number) => new Date(now.getTime() - ms);
 
-describe("rappelDu", () => {
+describe("rappelCongeDu", () => {
   it("accepte uniquement EN_ATTENTE_RESPONSABLE et EN_ATTENTE_RH, refuse tous les autres statuts", () => {
     const ancien = ilYA(DELAI_RAPPEL_CONGE_MS + 60_000);
     const statuts: Record<StatutCircuitConge, boolean> = {
@@ -17,13 +17,13 @@ describe("rappelDu", () => {
       ANNULEE: false,
     };
     for (const [statut, attendu] of Object.entries(statuts) as [StatutCircuitConge, boolean][]) {
-      expect(rappelDu({ statut, dernierRappelAt: null, etapeDepuis: ancien, now })).toBe(attendu);
+      expect(rappelCongeDu({ statut, dernierRappelAt: null, etapeDepuis: ancien, now })).toBe(attendu);
     }
   });
 
   it("avec dernierRappelAt nul : compare etapeDepuis au seuil de 24 h (juste avant / pile / juste après)", () => {
     expect(
-      rappelDu({
+      rappelCongeDu({
         statut: "EN_ATTENTE_RESPONSABLE",
         dernierRappelAt: null,
         etapeDepuis: ilYA(DELAI_RAPPEL_CONGE_MS - 1),
@@ -31,7 +31,7 @@ describe("rappelDu", () => {
       })
     ).toBe(false);
     expect(
-      rappelDu({
+      rappelCongeDu({
         statut: "EN_ATTENTE_RESPONSABLE",
         dernierRappelAt: null,
         etapeDepuis: ilYA(DELAI_RAPPEL_CONGE_MS),
@@ -39,7 +39,7 @@ describe("rappelDu", () => {
       })
     ).toBe(true);
     expect(
-      rappelDu({
+      rappelCongeDu({
         statut: "EN_ATTENTE_RH",
         dernierRappelAt: null,
         etapeDepuis: ilYA(DELAI_RAPPEL_CONGE_MS + 1),
@@ -51,7 +51,7 @@ describe("rappelDu", () => {
   it("avec dernierRappelAt renseigné : prend dernierRappelAt plutôt que etapeDepuis (juste avant / juste après 24 h)", () => {
     const etapeAncienne = ilYA(5 * DELAI_RAPPEL_CONGE_MS);
     expect(
-      rappelDu({
+      rappelCongeDu({
         statut: "EN_ATTENTE_RH",
         dernierRappelAt: ilYA(DELAI_RAPPEL_CONGE_MS - 1),
         etapeDepuis: etapeAncienne,
@@ -59,7 +59,7 @@ describe("rappelDu", () => {
       })
     ).toBe(false);
     expect(
-      rappelDu({
+      rappelCongeDu({
         statut: "EN_ATTENTE_RH",
         dernierRappelAt: ilYA(DELAI_RAPPEL_CONGE_MS),
         etapeDepuis: etapeAncienne,
@@ -67,7 +67,7 @@ describe("rappelDu", () => {
       })
     ).toBe(true);
     expect(
-      rappelDu({
+      rappelCongeDu({
         statut: "EN_ATTENTE_RESPONSABLE",
         dernierRappelAt: ilYA(DELAI_RAPPEL_CONGE_MS + 1),
         etapeDepuis: etapeAncienne,

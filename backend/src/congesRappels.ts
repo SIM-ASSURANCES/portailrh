@@ -19,7 +19,7 @@ export interface ParamsRappelDu {
  * Un rappel est dû seulement si la demande attend une décision (`EN_ATTENTE_RESPONSABLE` ou `EN_ATTENTE_RH`) et que le dernier
  * rappel (ou, à défaut, l'entrée dans l'étape) remonte à au moins 24 heures.
  */
-export function rappelDu(p: ParamsRappelDu): boolean {
+export function rappelCongeDu(p: ParamsRappelDu): boolean {
   if (!STATUTS_CONGE_EN_ATTENTE.includes(p.statut)) return false;
   const repere = p.dernierRappelAt ?? p.etapeDepuis;
   return repere.getTime() <= p.now.getTime() - DELAI_RAPPEL_CONGE_MS;
