@@ -1,32 +1,174 @@
-// Lecture des demandes de congé pour les écrans (Lot 3c). Aucune règle ici : le moteur (`circuitAbsence.ts`) décide
-// qui peut quoi ; ces fonctions ne font que charger les données et appeler le moteur pour griser les boutons.
 import {
-  actionsPossiblesAbsence,
+  actionsPossiblesConge,
   chargerContexteCircuit,
   comptesActifsAvecPermission,
-  decideurPourStatutAbsence,
-  friseAbsence,
+  colonneDateDepuisJourCivil,
+  decideurPourStatutConge,
+  friseConge,
   jourCivilDepuisColonneDate,
-  PERMISSION_DG_ABSENCE,
-  peutConsulterAbsence,
+  joursPassesProteges,
+  PERMISSION_DG_CONGE,
+  parseJourCivil,
+  peutConsulterConge,
   prisma,
-  refusDecideurAbsence,
-  refusObservationDG,
-  type ContexteCircuitAbsence,
-  type StatutCircuitAbsence,
+  refusDecideurConge,
+  type EtapeFrise,
+  type NatureConge,
+  type StatutCircuitConge,
 } from "backend";
-import { getSession, hasPermission } from "@/lib/auth";
+import type { Prisma } from "backend";
+import { getSession } from "@/lib/auth";
 import { aujourdhui } from "@/lib/conges/format";
 
 export type SessionPortail = NonNullable<Awaited<ReturnType<typeof getSession>>>;
 
-export async function chargerDemandeConge(id: string, session: SessionPortail) {
+function dateConge(date: Date): string {
+  return jourCivilDepuisColonneDate(date);
+}
+
+export async function listerMesConges(userId: string) {
+  const demandes = await prisma.demandeConge.findMany({
+    where: { userId },
+    orderBy: [{ dateDebut: "desc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      reference: true,
+      nature: true,
+      motif: true,
+      dateDebut: true,
+      dateFin: true,
+      nbJoursOuvres: true,
+      statut: true,
+      saisieParRH: true,
+      motifRejet: true,
+      motifModification: true,
+      motifAnnulation: true,
+      observationRH: true,
+      etapeResponsableRequise: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  return demandes.map((demande) => ({
+    ...demande,
+    dateDebut: dateConge(demande.dateDebut),
+    dateFin: dateConge(demande.dateFin),
+  }));
+}
+
+export interface DemandeFile {
+  id: string;
+  reference: string;
+  statut: StatutCircuitConge;
+  nature: NatureConge;
+  demandeurId: string;
+  demandeurNom: string;
+  serviceNom: string | null;
+  dateDebut: string;
+  dateFin: string;
+  nbJoursOuvres: number;
+  etapeDepuis: Date;
+}
+
+/**
+ * Candidates are intentionally broad; the circuit engine decides which of them this session may actually decide now.
+ */
+export async function chargerFileDecisionConges(session: SessionPortail): Promise<DemandeFile[]> {
+  const estRHouDG =
+    session.rolePermissions.includes("conges.valider_rh") ||
+    session.rolePermissions.includes(PERMISSION_DG_CONGE);
+  const statutsEnAttente: StatutCircuitConge[] = ["EN_ATTENTE_RESPONSABLE", "EN_ATTENTE_RH"];
+  const requete = {
+    where: {
+      OR: [
+        { statut: "EN_ATTENTE_RESPONSABLE", user: { service: { responsableId: session.user.id } } },
+        ...(estRHouDG ? [{ statut: { in: statutsEnAttente } }] : []),
+      ],
+    },
+    orderBy: { etapeDepuis: "asc" },
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          service: {
+            select: {
+              name: true,
+              responsableId: true,
+              responsable: { select: { isActive: true } },
+            },
+          },
+        },
+      },
+    },
+    take: 300,
+  } satisfies Prisma.DemandeCongeFindManyArgs;
+  const candidates = await prisma.demandeConge.findMany(requete);
+  if (candidates.length === 0) return [];
+
+  const [comptesRH, comptesDG] = await Promise.all([
+    comptesActifsAvecPermission(prisma, "conges.valider_rh"),
+    comptesActifsAvecPermission(prisma, PERMISSION_DG_CONGE),
+  ]);
+  const acteur = { id: session.user.id, rolePermissions: session.rolePermissions };
+  const file: DemandeFile[] = [];
+
+  for (const demande of candidates) {
+    const service = demande.user.service;
+    const contexte = {
+      demandeurId: demande.userId,
+      service: service
+        ? {
+            name: service.name,
+            responsableId: service.responsableId,
+            responsableActif: service.responsable?.isActive ?? false,
+          }
+        : null,
+      comptesRH,
+      comptesDG,
+    };
+    const statut = demande.statut as StatutCircuitConge;
+    const decideur = decideurPourStatutConge(statut, contexte);
+    if (refusDecideurConge(decideur, acteur, demande.userId) !== null) continue;
+
+    file.push({
+      id: demande.id,
+      reference: demande.reference,
+      statut,
+      nature: demande.nature,
+      demandeurId: demande.userId,
+      demandeurNom: demande.user.fullName,
+      serviceNom: service?.name ?? null,
+      dateDebut: dateConge(demande.dateDebut),
+      dateFin: dateConge(demande.dateFin),
+      nbJoursOuvres: demande.nbJoursOuvres,
+      etapeDepuis: demande.etapeDepuis,
+    });
+  }
+
+  return file;
+}
+
+export async function chargerDetailConge(id: string, session: SessionPortail) {
   const demande = await prisma.demandeConge.findUnique({
     where: { id },
     include: {
-      typeConge: true,
-      user: { select: { id: true, fullName: true, email: true, service: { select: { name: true, responsableId: true, responsable: { select: { fullName: true, isActive: true } } } } } },
-      piecesJointes: { orderBy: { createdAt: "asc" } },
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          service: {
+            select: {
+              name: true,
+              responsableId: true,
+              responsable: { select: { fullName: true, isActive: true } },
+            },
+          },
+        },
+      },
+      creePar: { select: { fullName: true } },
       approuvePar: { select: { fullName: true } },
       validePar: { select: { fullName: true } },
       annulePar: { select: { fullName: true } },
@@ -34,52 +176,46 @@ export async function chargerDemandeConge(id: string, session: SessionPortail) {
   });
   if (!demande) return null;
 
-  const autorise = peutConsulterAbsence({
-    nature: "CONGE",
-    acteurId: session.user.id,
-    demandeurId: demande.userId,
-    responsableDuServiceId: demande.user.service?.responsableId ?? null,
-    permissions: session.permissions,
-  });
-  if (!autorise) return null;
+  if (
+    !peutConsulterConge({
+      acteurId: session.user.id,
+      demandeurId: demande.userId,
+      responsableDuServiceId: demande.user.service?.responsableId ?? null,
+      permissions: session.permissions,
+    })
+  ) {
+    return null;
+  }
 
-  const statut = demande.statut as StatutCircuitAbsence;
-  const ctx = await chargerContexteCircuit(prisma, demande.userId, "CONGE");
-  const decideur = decideurPourStatutAbsence(statut, ctx);
-  const actions = actionsPossiblesAbsence({
-    nature: "CONGE",
+  const aujourdHui = aujourdhui();
+  const statut = demande.statut as StatutCircuitConge;
+  const contexte = await chargerContexteCircuit(prisma, demande.userId);
+  const decideur = decideurPourStatutConge(statut, contexte);
+  const acteur = { id: session.user.id, rolePermissions: session.rolePermissions };
+  const actions = actionsPossiblesConge({
     statut,
-    acteur: { id: session.user.id, rolePermissions: session.rolePermissions },
+    acteur,
     demandeurId: demande.userId,
     decideur,
-    adebute: jourCivilDepuisColonneDate(demande.dateDebut) <= aujourdhui(),
-    peutAnnulerApresDebut: hasPermission(session, "conges.annuler"),
-    // Permission exceptionnelle : une seule décision (C4).
-    etapeUnique: demande.destinataire !== null,
+    adebute: aujourdHui >= dateConge(demande.dateDebut),
+    peutAnnulerApresDebut: session.rolePermissions.includes("conges.annuler"),
   });
-  // Choix « responsable » : la RH n'est pas une étape — sauf si le responsable a été remplacé à la soumission (repli vers la RH).
-  const frise = friseAbsence({
-    nature: "CONGE",
-    statut,
-    etapeResponsableRequise: demande.etapeResponsableRequise,
-    etapeRHRequise: !(demande.destinataire === "RESPONSABLE" && demande.etapeResponsableRequise),
-  });
+  const [frise, joursPasses, historique] = await Promise.all([
+    Promise.resolve(
+      friseConge({
+        statut,
+        etapeResponsableRequise: demande.etapeResponsableRequise,
+      })
+    ),
+    joursPassesProteges(prisma, { demandeId: demande.id, aujourdhui: aujourdHui }),
+    prisma.historiqueEntry.findMany({
+      where: { entity: "DemandeConge", entityId: demande.id },
+      orderBy: { createdAt: "asc" },
+      include: { user: { select: { fullName: true } } },
+    }),
+  ]);
 
-  const historique = await prisma.historiqueEntry.findMany({
-    where: { entity: "DemandeConge", entityId: demande.id },
-    orderBy: { createdAt: "asc" },
-    include: { user: { select: { fullName: true } } },
-  });
-
-  // Observations (C3) : visibles de tous ceux qui voient la demande, demandeur compris ; ajout seul.
-  const observations = await prisma.observationAbsence.findMany({
-    where: { demandeCongeId: demande.id },
-    orderBy: { createdAt: "asc" },
-    include: { auteur: { select: { fullName: true } } },
-  });
-  const acteurObs = { id: session.user.id, rolePermissions: session.rolePermissions };
-
-  const lignesDecideur =
+  const decideurLibelle =
     decideur === null
       ? null
       : decideur.type === "RESPONSABLE"
@@ -90,86 +226,81 @@ export async function chargerDemandeConge(id: string, session: SessionPortail) {
             ? "Le DG (aucun autre compte RH)"
             : "Personne";
 
+  const estEtapeRH = decideur?.type === "RH" || decideur?.type === "DG";
+  const friseEtapes: EtapeFrise[] = frise;
+
   return {
-    demande,
+    demande: {
+      ...demande,
+      dateDebut: dateConge(demande.dateDebut),
+      dateFin: dateConge(demande.dateFin),
+    },
     statut,
+    decideur,
+    decideurLibelle,
+    estEtapeRH,
     actions,
-    frise,
+    frise: friseEtapes,
+    joursPasses,
     historique,
-    decideurLibelle: lignesDecideur,
     estDemandeur: demande.userId === session.user.id,
-    observations: observations.map((o) => ({ id: o.id, etape: o.etape, texte: o.texte, createdAt: o.createdAt, auteurNom: o.auteur.fullName })),
-    /** Le DG (permission du RÔLE) peut ajouter une observation, jamais sur sa propre demande. */
-    peutObserverDG: refusObservationDG({ acteur: acteurObs, demandeurId: demande.userId }) === null,
   };
 }
 
-export interface DemandeFile {
-  id: string;
-  reference: string;
-  statut: StatutCircuitAbsence;
-  demandeurNom: string;
-  serviceNom: string | null;
-  libelleType: string;
-  dateDebut: Date;
-  dateFin: Date;
-  nbJours: number;
-  etapeDepuis: Date;
-}
-
-/**
- * Demandes que CE compte peut décider maintenant : celles de son service à l'étape responsable, et — s'il porte
- * `conges.valider_rh` (ou `treso.decider_dg`) sur son rôle — celles que le moteur lui attribue à l'étape RH ou en repli.
- * Le moteur (`decideurPourStatutAbsence` + `refusDecideurAbsence`) tranche pour chaque demande : jamais la sienne.
- */
-export async function chargerFileDecisionConges(session: SessionPortail): Promise<DemandeFile[]> {
-  const estRHouDG = session.rolePermissions.includes("conges.valider_rh") || session.rolePermissions.includes(PERMISSION_DG_ABSENCE);
-  const candidates = await prisma.demandeConge.findMany({
-    where: {
-      OR: [
-        { statut: "EN_ATTENTE_RESPONSABLE", user: { service: { responsableId: session.user.id } } },
-        ...(estRHouDG ? [{ statut: { in: ["EN_ATTENTE_RESPONSABLE", "EN_ATTENTE_RH"] as ("EN_ATTENTE_RESPONSABLE" | "EN_ATTENTE_RH")[] } }] : []),
-      ],
-    },
-    orderBy: { etapeDepuis: "asc" },
-    include: {
-      typeConge: { select: { label: true } },
-      user: { select: { id: true, fullName: true, service: { select: { name: true, responsableId: true, responsable: { select: { isActive: true } } } } } },
-    },
-    take: 300,
-  });
-  if (candidates.length === 0) return [];
-
-  const [comptesRH, comptesDG] = await Promise.all([
-    comptesActifsAvecPermission(prisma, "conges.valider_rh"),
-    comptesActifsAvecPermission(prisma, PERMISSION_DG_ABSENCE),
-  ]);
-  const acteur = { id: session.user.id, rolePermissions: session.rolePermissions };
-
-  const file: DemandeFile[] = [];
-  for (const d of candidates) {
-    const s = d.user.service;
-    const ctx: ContexteCircuitAbsence = {
-      demandeurId: d.userId,
-      service: s ? { name: s.name, responsableId: s.responsableId, responsableActif: s.responsable?.isActive ?? false } : null,
-      comptesRH,
-      comptesDG,
-    };
-    const statut = d.statut as StatutCircuitAbsence;
-    const decideur = decideurPourStatutAbsence(statut, ctx);
-    if (refusDecideurAbsence(decideur, acteur, d.userId, "CONGE") !== null) continue;
-    file.push({
-      id: d.id,
-      reference: d.reference,
-      statut,
-      demandeurNom: d.user.fullName,
-      serviceNom: s?.name ?? null,
-      libelleType: d.typeConge.label,
-      dateDebut: d.dateDebut,
-      dateFin: d.dateFin,
-      nbJours: d.nbJours,
-      etapeDepuis: d.etapeDepuis,
-    });
+export async function listerTousConges(filtres: {
+  du?: string;
+  au?: string;
+  statut?: StatutCircuitConge;
+}) {
+  const session = await getSession();
+  if (
+    !session ||
+    (!session.rolePermissions.includes("conges.consulter_tous") &&
+      !session.rolePermissions.includes("conges.valider_rh"))
+  ) {
+    throw new Error("Action non autorisée.");
   }
-  return file;
+
+  const du = filtres.du ? parseJourCivil(filtres.du) : null;
+  const au = filtres.au ? parseJourCivil(filtres.au) : null;
+  if ((filtres.du && !du) || (filtres.au && !au)) {
+    throw new Error("Les dates de filtre doivent être au format AAAA-MM-JJ.");
+  }
+  if (filtres.du && filtres.au && filtres.du > filtres.au) {
+    throw new Error("La date de début du filtre ne peut pas dépasser sa date de fin.");
+  }
+
+  const demandes = await prisma.demandeConge.findMany({
+    where: {
+      ...(filtres.statut ? { statut: filtres.statut } : {}),
+      ...(filtres.du || filtres.au
+        ? {
+            AND: [
+              ...(filtres.au && au
+                ? [{ dateDebut: { lte: colonneDateDepuisJourCivil(filtres.au) } }]
+                : []),
+              ...(filtres.du && du
+                ? [{ dateFin: { gte: colonneDateDepuisJourCivil(filtres.du) } }]
+                : []),
+            ],
+          }
+        : {}),
+    },
+    orderBy: [{ dateDebut: "desc" }, { createdAt: "desc" }],
+    include: {
+      user: {
+        select: {
+          fullName: true,
+          service: { select: { name: true } },
+        },
+      },
+    },
+    take: 500,
+  });
+
+  return demandes.map((demande) => ({
+    ...demande,
+    dateDebut: dateConge(demande.dateDebut),
+    dateFin: dateConge(demande.dateFin),
+  }));
 }

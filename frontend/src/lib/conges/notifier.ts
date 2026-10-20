@@ -1,74 +1,107 @@
-// Notifications des congés (Lot 3b). Toujours CIBLÉES (correction I2 du plan de fusion) : le décideur de l'étape qui
-// vient d'être atteinte (calculé par le moteur, `destinatairesEtapeAbsence`), puis le demandeur pour l'issue de sa
-// demande. Jamais tous les porteurs d'une permission, jamais l'auteur de l'action. Les liens sont relatifs : les
-// gabarits d'e-mail les préfixent avec `urlPublique()`.
-
-import type { DecisionConge, SoumissionConge } from "backend";
+import {
+  LIBELLE_NATURE_CONGE,
+  LIBELLE_STATUT_CONGE,
+  type DecisionConge,
+  type EntreeConge,
+  type SoumissionConge,
+} from "backend";
 import { notify } from "@/lib/notifications";
+import { frDate } from "@/lib/conges/format";
 
-function frDate(jour: string): string {
-  const [a, m, j] = jour.split("-");
-  return `${j}/${m}/${a}`;
+function destinatairesUniques(ids: readonly string[], auteurId: string): string[] {
+  return [...new Set(ids)].filter((id) => id !== auteurId);
 }
 
-export async function notifierSoumissionConge(p: {
+function libellePeriode(dateDebut: string, dateFin: string): string {
+  return dateDebut === dateFin ? frDate(dateDebut) : `du ${frDate(dateDebut)} au ${frDate(dateFin)}`;
+}
+
+export async function notifierSoumissionConge(params: {
   soumission: SoumissionConge;
   demandeurNom: string;
+  nature: EntreeConge["nature"];
   dateDebut: string;
   dateFin: string;
   auteurId: string;
-}) {
-  const { soumission: s } = p;
+}): Promise<void> {
+  const destinataires = destinatairesUniques(params.soumission.destinataires, params.auteurId);
+  const message = `${params.demandeurNom} a soumis ${LIBELLE_NATURE_CONGE[params.nature].toLowerCase()} ${params.soumission.reference}, ${libellePeriode(params.dateDebut, params.dateFin)} (${params.soumission.nbJoursOuvres} jours ouvrés).`;
+
   await Promise.all(
-    s.destinataires
-      .filter((id) => id !== p.auteurId)
-      .map((userId) =>
-        notify({
-          userId,
-          titre: "Demande de congé à examiner",
-          message: `${p.demandeurNom} demande un congé (${s.libelleType}, ${s.nbJours} jour(s)) du ${frDate(p.dateDebut)} au ${frDate(p.dateFin)}. Référence ${s.reference}.`,
-          lien: `/conges/${s.id}`,
-          priority: "IMPORTANT",
-          category: "RH",
-        })
-      )
+    destinataires.map((userId) =>
+      notify({
+        userId,
+        titre: "Demande de congé à examiner",
+        message,
+        lien: `/conges/${params.soumission.id}`,
+        priority: "IMPORTANT",
+        category: "RH",
+      })
+    )
   );
 }
 
-export async function notifierDecisionConge(p: { decision: DecisionConge; acteurId: string; acteurNom: string }) {
-  const d = p.decision;
-  const periode = `du ${frDate(d.dateDebut)} au ${frDate(d.dateFin)}`;
-  const lien = `/conges/${d.id}`;
-  const envois: Promise<unknown>[] = [];
+export async function notifierDecisionConge(params: {
+  decision: DecisionConge;
+  acteurId: string;
+  acteurNom: string;
+}): Promise<void> {
+  const { decision } = params;
+  const destinataires = destinatairesUniques(
+    [decision.demandeurId, ...decision.destinatairesSuivants],
+    params.acteurId
+  );
+  const titreParStatut: Record<DecisionConge["statut"], string> = {
+    EN_ATTENTE_RESPONSABLE: "Demande de congé à examiner",
+    EN_ATTENTE_RH: "Demande de congé transmise à la RH",
+    MODIFICATION_DEMANDEE: "Modification demandée pour votre congé",
+    VALIDEE: "Demande de congé validée",
+    REJETEE: "Demande de congé rejetée",
+    ANNULEE: "Demande de congé annulée",
+  };
+  const details = [
+    `${params.acteurNom} a mis à jour la demande ${decision.reference} : ${LIBELLE_STATUT_CONGE[decision.statut].toLowerCase()}.`,
+    decision.motif ? `Motif : ${decision.motif}` : null,
+    decision.observationRH ? `Observation RH : ${decision.observationRH}` : null,
+    decision.absencesCreees > 0
+      ? `${decision.absencesCreees} jour(s) passé(s) ont été enregistrés comme absence à contrôler.`
+      : null,
+  ].filter((detail): detail is string => detail !== null);
 
-  // Étape suivante : ses décideurs (le responsable a approuvé → la RH ; renvoi après modification…).
-  if (d.statut === "EN_ATTENTE_RH" || d.statut === "EN_ATTENTE_RESPONSABLE") {
-    for (const userId of d.destinatairesSuivants.filter((id) => id !== p.acteurId)) {
-      envois.push(
-        notify({
-          userId,
-          titre: "Demande de congé à examiner",
-          message: `Demande ${d.reference} (${d.libelleType}, ${d.nbJours} jour(s), ${periode}) en attente de votre décision.`,
-          lien,
-          priority: "IMPORTANT",
-          category: "RH",
-        })
-      );
-    }
-  }
+  await Promise.all(
+    destinataires.map((userId) =>
+      notify({
+        userId,
+        titre: titreParStatut[decision.statut],
+        message: details.join(" "),
+        lien: `/conges/${decision.id}`,
+        priority: "IMPORTANT",
+        category: "RH",
+      })
+    )
+  );
+}
 
-  // Issue pour le demandeur (sauf s'il est l'auteur de l'action : annulation de sa propre demande).
-  if (d.demandeurId !== p.acteurId) {
-    const base = `Votre demande ${d.reference} (${d.libelleType}, ${periode})`;
-    const parStatut: Record<string, { titre: string; message: string; priority: "INFO" | "IMPORTANT" } | undefined> = {
-      EN_ATTENTE_RH: { titre: "Congé approuvé par votre responsable", message: `${base} a été approuvée par ${p.acteurNom} ; elle attend maintenant la RH.`, priority: "INFO" },
-      VALIDEE: { titre: "Congé validé", message: `${base} est validée.`, priority: "IMPORTANT" },
-      REJETEE: { titre: "Congé rejeté", message: `${base} est rejetée par ${p.acteurNom}.${d.motif ? ` Motif : ${d.motif}` : ""}`, priority: "IMPORTANT" },
-      MODIFICATION_DEMANDEE: { titre: "Modification demandée sur votre congé", message: `${p.acteurNom} demande une modification de ${base.toLowerCase()}.${d.motif ? ` ${d.motif}` : ""}`, priority: "IMPORTANT" },
-      ANNULEE: { titre: "Congé annulé", message: `${base} a été annulée par ${p.acteurNom}.${d.motif ? ` Motif : ${d.motif}` : ""}`, priority: "IMPORTANT" },
-    };
-    const msg = parStatut[d.statut];
-    if (msg) envois.push(notify({ userId: d.demandeurId, titre: msg.titre, message: msg.message, lien, priority: msg.priority, category: "RH" }));
-  }
-  await Promise.all(envois);
+export async function notifierSaisieRHConge(params: {
+  demandeId: string;
+  reference: string;
+  nature: EntreeConge["nature"];
+  dateDebut: string;
+  dateFin: string;
+  salarieId: string;
+  auteurId: string;
+}): Promise<void> {
+  const destinataires = destinatairesUniques([params.salarieId], params.auteurId);
+  await Promise.all(
+    destinataires.map((userId) =>
+      notify({
+        userId,
+        titre: "Congé enregistré par la RH",
+        message: `La RH a enregistré et validé ${LIBELLE_NATURE_CONGE[params.nature].toLowerCase()} ${params.reference}, ${libellePeriode(params.dateDebut, params.dateFin)}.`,
+        lien: `/conges/${params.demandeId}`,
+        priority: "IMPORTANT",
+        category: "RH",
+      })
+    )
+  );
 }
