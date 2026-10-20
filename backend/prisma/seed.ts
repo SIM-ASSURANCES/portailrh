@@ -233,6 +233,8 @@ async function main() {
     { key: "treso.deleguer_acces", label: "Déléguer des accès", moduleId: moduleTresorerie.id },
     // Circuit de validation (2026-10-06) : décision à l'étape DG.
     { key: "treso.decider_dg", label: "Décider à l'étape DG (valider ou rejeter une demande soumise)", moduleId: moduleTresorerie.id },
+    // Lot K : réorienter l'étape Service d'une demande vers un autre responsable disponible (le demandeur le peut sans permission).
+    { key: "treso.reorienter_demande", label: "Réorienter l'étape Service d'une demande vers un autre responsable", moduleId: moduleTresorerie.id },
     // Lot J : le DG valide ou refuse les paramétrages de budget (la Finance les soumet avec modifier_budget_categorie).
     { key: "treso.valider_budget", label: "Valider ou refuser un paramétrage de budget (DG)", moduleId: moduleTresorerie.id },
     {
@@ -327,6 +329,7 @@ async function main() {
       "treso.modifier_budget_categorie",
       "treso.deleguer_acces",
       "treso.modifier_description",
+      "treso.reorienter_demande",
     ],
     [roleDG.id]: [
       // Décision 10 (2026-10-08) : plus de "treso.valider_demande" — le DG décide à l'étape DG (decider_dg) et approuve

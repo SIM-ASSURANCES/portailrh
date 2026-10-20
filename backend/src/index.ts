@@ -81,6 +81,11 @@ export * from "./dateGestionDemande";
 export * from "./circuitDemande";
 export * from "./soumissionDGEcran";
 export * from "./circuitDemandeDb";
+export * from "./circuitReorientation";
+export * from "./circuitReorientationDb";
+export * from "./circuitReprise";
+export * from "./circuitEvenementsDb";
+export * from "./circuitRepriseDb";
 export * from "./circuitNotifications";
 // Onglet « À vérifier » (traitement des signalements) — commit 5b.
 export * from "./encSignalements";

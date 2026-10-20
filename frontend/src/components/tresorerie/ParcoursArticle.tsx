@@ -52,6 +52,16 @@ export function ParcoursArticleView({ parcours }: { parcours: ParcoursArticle })
           ) : null}
         </div>
       ) : null}
+      {parcours.circuit && parcours.circuit.length > 0 ? (
+        <div data-parcours-circuit className="text-muted-foreground">
+          <span className="font-medium text-foreground">Réorientations et reprises</span>
+          {parcours.circuit.map((t, i) => (
+            <span key={i} className="block">
+              {t}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <p data-gere-le className="text-muted-foreground">
         {libelleGestionArticle(parcours.gere)}
       </p>

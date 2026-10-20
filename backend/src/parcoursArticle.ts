@@ -137,6 +137,8 @@ export interface ParcoursArticle {
   note: string | null;
   /** Lot C : « Clôturé sans régularisation — solde restant X » si la demande a été clôturée de force avec cet article non régularisé. */
   clotureSansRegularisation?: string | null;
+  /** Lot K : réorientations de l'étape Service et reprises (retour à l'étape précédente) qui ont touché la demande ou cet article, une ligne chacune (date — auteur — détail avec motif). */
+  circuit?: string[];
   /** Lot J (Finance et DG seulement) : reste du budget global et de la catégorie après la validation de l'article. */
   budget?: { lignes: string[]; niveau: "AUCUN" | "ORANGE" | "ROUGE"; /** Lot J bis : la confirmation du DG couvre le règlement de l'article. */ couvertureReglement?: string };
 }

@@ -72,6 +72,8 @@ export interface LigneArbre {
   decisionService: string;
   decisionFinance: string;
   decisionDG: string;
+  /** Lot K : réorientations de l'étape Service et reprises (retour à l'étape précédente), une ligne chacune. */
+  circuitEvenements: string;
   livraison: Date | null;
   gereLe: string;
   cloture: string;
@@ -126,6 +128,7 @@ export const COLONNES_ARBRE: readonly ColonneArbre[] = [
   { cle: "decisionService", titre: "Validation Service", genre: "texte", largeur: 30 },
   { cle: "decisionFinance", titre: "Décision Finance", genre: "texte", largeur: 34 },
   { cle: "decisionDG", titre: "Décision DG", genre: "texte", largeur: 34 },
+  { cle: "circuitEvenements", titre: "Réorientations et reprises", genre: "texte", largeur: 50, longue: true },
   { cle: "livraison", titre: "Livraison prévue le", genre: "date", largeur: 14 },
   { cle: "gereLe", titre: "Géré le", genre: "texte", largeur: 22 },
   { cle: "cloture", titre: "Clôture sans régularisation", genre: "texte", largeur: 40 },
@@ -296,6 +299,8 @@ export interface DemandeArbreSource {
   montantDemande: number;
   montantValide: number;
   validationService: { par: string; le: Date } | null;
+  /** Lot K : réorientations et reprises (`ligneId` nul = demande entière), du plus ancien au plus récent. */
+  circuitEvenements?: { ligneId: string | null; texte: string }[];
   articles: ArticleArbreSource[];
   reglements: ReglementArbreSource[];
   mouvementsBanque: MouvementBanqueArbreSource[];
@@ -340,6 +345,7 @@ function ligneVide(niveau: 0 | 1 | 2, type: TypeLigneArbre, contexte: { referenc
     decisionService: "",
     decisionFinance: "",
     decisionDG: "",
+    circuitEvenements: "",
     livraison: null,
     gereLe: "",
     cloture: "",
@@ -596,6 +602,7 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
     l.decisionFinance = decisionFinanceArticle(a);
     l.decisionDG = decisionDGArticle(a);
     l.livraison = a.dateLivraison;
+    l.circuitEvenements = (d.circuitEvenements ?? []).filter((e) => e.ligneId === a.id).map((e) => e.texte).join("\n");
     const evts = evenementsParCible.get(a.id) ?? [];
     l.gereLe = libelleGestionArticle(
       derniereGestion([
@@ -667,6 +674,7 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
   l.statut = libelleEnCours(d.articles.map((a) => ({ statut: a.statut }))) ?? d.statutLibelle;
   l.etape = d.etapeCircuit ?? "";
   l.decisionService = d.validationService ? `Validé ${par(d.validationService.par, d.validationService.le)}` : "";
+  l.circuitEvenements = (d.circuitEvenements ?? []).map((e) => e.texte).join("\n");
   l.gereLe = libelleGestionArticle(d.gere).replace(/^Géré le /, "");
   if (l.gereLe === "—") l.gereLe = "";
   l.cloture = d.clotureForcee ? texteClotureForcee(d.clotureForcee) : "";

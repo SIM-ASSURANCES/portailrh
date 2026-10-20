@@ -1,4 +1,5 @@
 import { LIBELLE_ETAPE_CIRCUIT } from "./circuitDemande";
+import { chargerEvenementsCircuit } from "./circuitEvenementsDb";
 
 import { lireInstantaneClotureForcee } from "./clotureDemande";
 import { beneficiaireArticle, nomBeneficiaireDemande } from "./beneficiaireArticles";
@@ -916,6 +917,11 @@ export async function getReportingArbre(
   }
 
   const gestions = await getDatesGestionDemandes(ids);
+  // Lot K : réorientations de l'étape Service et reprises, relues de l'historique (même texte que le parcours de l'article).
+  const circuitParDemande = await chargerEvenementsCircuit(
+    prisma,
+    details.map((det) => ({ id: det.id, ligneIds: det.lignes.map((l) => l.id) }))
+  );
   // Lot J bis : articles dont le règlement est couvert par une confirmation de dépassement du DG.
   const couvertures = await phrasesCouvertureParArticle(prisma, ids);
   const arbres = demandes.map((d) => {
@@ -937,6 +943,7 @@ export async function getReportingArbre(
       montantDemande: Number(d.montant),
       montantValide: Number(d.montantValide ?? 0),
       validationService: validationParDemande.get(d.id) ?? null,
+      circuitEvenements: circuitParDemande.get(d.id) ?? [],
       articles: det.lignes.map((l) => ({
         id: l.id,
         libelle: l.libelle,

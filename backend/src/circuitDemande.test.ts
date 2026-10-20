@@ -272,10 +272,12 @@ describe("À corriger, Abandonnée, Terminée", () => {
       expect(actionsPossibles(d, qui)).toEqual([]);
     }
   });
-  it("le demandeur ne peut rien faire hors de « À corriger »", () => {
-    for (const e of ["SERVICE", "FINANCE", "DG", "REJET_DG", "DECISION_FINALE", "TERMINEE", "ABANDONNEE"] as const) {
+  it("le demandeur ne peut rien faire hors de « À corriger » — sauf réorienter l'étape Service (lot K)", () => {
+    for (const e of ["FINANCE", "DG", "REJET_DG", "DECISION_FINALE", "TERMINEE", "ABANDONNEE"] as const) {
       expect(actionsPossibles(demande(e), AUTEUR)).toEqual([]);
     }
+    // Lot K : tant que la demande attend le responsable de service, son demandeur peut la réorienter (motif obligatoire).
+    expect(actionsPossibles(demande("SERVICE"), AUTEUR)).toEqual(["REORIENTER"]);
   });
   it("Abandonnée et Terminée sont finales pour le circuit", () => {
     for (const qui of [FINANCE, DG, RESPONSABLE, ASSISTANT, AUTEUR]) {

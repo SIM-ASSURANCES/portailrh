@@ -632,3 +632,129 @@ export function notificationRefusLigneDG(
     priority: "IMPORTANT",
   };
 }
+
+// ---------- Lot K : réorientation de l'étape Service et reprise (retour à l'étape précédente) ----------
+
+export interface EvenementReorientation {
+  acteurId: string;
+  ancienId: string | null;
+  nouveauId: string;
+  ancienNom: string;
+  nouveauNom: string;
+  motif: string;
+  /** Délai écoulé chez l'ancien décideur (le chronomètre repart de zéro chez le nouveau). */
+  delai: string;
+}
+
+/**
+ * Réorientation de l'étape Service : le NOUVEAU responsable doit agir ; l'ANCIEN apprend que la demande lui est retirée (il ne
+ * peut plus la décider) ; le demandeur est prévenu quand ce n'est pas lui qui l'a réorientée. Jamais l'auteur de l'action.
+ */
+export function notificationsReorientation(ctx: ContexteNotificationCircuit, e: EvenementReorientation): NotificationCircuit[] {
+  const resultat: NotificationCircuit[] = [];
+  const nouveau = sans([e.nouveauId], e.acteurId);
+  if (nouveau.length > 0) {
+    resultat.push({
+      destinataires: nouveau,
+      titre: "Demande à valider (réorientée vers vous)",
+      message: `${rappelDemande(ctx)} vous a été réorientée pour l'étape du responsable de service (${fcfa(ctx.montant)}). Motif : ${e.motif.trim()}`,
+      lien: `/treso/service/${ctx.demandeId}`,
+      priority: "IMPORTANT",
+    });
+  }
+  const ancien = sans(e.ancienId ? [e.ancienId] : [], e.acteurId, e.nouveauId);
+  if (ancien.length > 0) {
+    resultat.push({
+      destinataires: ancien,
+      titre: "Demande retirée de votre file",
+      message: `${rappelDemande(ctx)} a été réorientée vers ${e.nouveauNom} : vous n'avez plus à la valider. Motif : ${e.motif.trim()}`,
+      lien: "/treso/service",
+      priority: "INFO",
+    });
+  }
+  const demandeur = sans([ctx.createurId], e.acteurId);
+  if (demandeur.length > 0) {
+    resultat.push({
+      destinataires: demandeur,
+      titre: "Votre demande a été réorientée",
+      message: `${rappelDemande(ctx)} est désormais chez ${e.nouveauNom} pour la validation du responsable de service (avant : ${e.ancienNom}). Motif : ${e.motif.trim()}`,
+      lien: lienDemandeur(ctx.demandeId),
+      priority: "INFO",
+    });
+  }
+  return resultat;
+}
+
+export type TypeRepriseNotif = "FINANCE_VERS_SERVICE" | "DG_VERS_FINANCE" | "VALIDATION_VERS_FINANCE";
+
+export interface EvenementReprise {
+  acteurId: string;
+  type: TypeRepriseNotif;
+  motif: string;
+  /** Article repris (absent pour la demande entière). */
+  article?: ArticleNotification;
+  libelleArticle?: string | null;
+}
+
+/**
+ * Reprise : le décideur de l'étape PRÉCÉDENTE est prévenu avec le motif — le responsable du service (Finance → Service), la
+ * Finance (DG → Finance, validation → Finance), et le DG quand la Finance retire un article de son étape. Le demandeur est
+ * informé de tout retour en arrière de sa demande. Jamais l'auteur de l'action.
+ */
+export function notificationsReprise(
+  ctx: ContexteNotificationCircuit,
+  candidats: readonly CandidatNotification[],
+  e: EvenementReprise
+): NotificationCircuit[] {
+  const cible = e.article ? `l'article ${nommerArticle(e.article)}` : e.libelleArticle ? `l'article « ${e.libelleArticle} »` : "la demande entière";
+  const resultat: NotificationCircuit[] = [];
+  if (e.type === "FINANCE_VERS_SERVICE") {
+    const dest = sans(ctx.responsableServiceId ? [ctx.responsableServiceId] : [], ctx.createurId, e.acteurId);
+    if (dest.length > 0) {
+      resultat.push({
+        destinataires: dest,
+        titre: "Demande reprise par la Finance",
+        message: `${rappelDemande(ctx)} vous est renvoyée par la Finance : ${cible} repasse à l'étape du responsable de service. Motif : ${e.motif.trim()}`,
+        lien: `/treso/service/${ctx.demandeId}`,
+        priority: "IMPORTANT",
+      });
+    }
+  } else {
+    const aLaFinance = sans(avec(candidats, "treso.decider_finance", "treso.soumettre_dg"), ctx.createurId, e.acteurId);
+    if (aLaFinance.length > 0) {
+      resultat.push({
+        destinataires: aLaFinance,
+        titre: e.type === "DG_VERS_FINANCE" ? "Article repris à l'étape DG" : "Validation reprise : article à décider",
+        message:
+          `${rappelDemande(ctx)} — ${cible} revient à la Finance` +
+          `${e.type === "DG_VERS_FINANCE" ? " (retiré de l'étape du DG)" : " (sa validation est reprise)"}. Motif : ${e.motif.trim()}`,
+        lien: lienFinance(ctx.demandeId),
+        priority: "IMPORTANT",
+      });
+    }
+    // La Finance qui retire un article de l'étape du DG : le DG n'a plus à le décider.
+    if (e.type === "DG_VERS_FINANCE") {
+      const auDG = sans(avec(candidats, "treso.decider_dg"), ctx.createurId, e.acteurId, ...aLaFinance);
+      if (auDG.length > 0) {
+        resultat.push({
+          destinataires: auDG,
+          titre: "Article retiré de votre étape",
+          message: `${rappelDemande(ctx)} — ${cible} n'est plus à décider par le DG. Motif : ${e.motif.trim()}`,
+          lien: `/treso/dg/${ctx.demandeId}`,
+          priority: "INFO",
+        });
+      }
+    }
+  }
+  const demandeur = sans([ctx.createurId], e.acteurId);
+  if (demandeur.length > 0) {
+    resultat.push({
+      destinataires: demandeur,
+      titre: "Votre demande est revenue à l'étape précédente",
+      message: `${rappelDemande(ctx)} — ${cible} est revenue à l'étape précédente du circuit. Motif : ${e.motif.trim()}`,
+      lien: lienDemandeur(ctx.demandeId),
+      priority: "INFO",
+    });
+  }
+  return resultat;
+}

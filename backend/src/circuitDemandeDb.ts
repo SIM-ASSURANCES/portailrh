@@ -23,6 +23,7 @@ import {
   type ProfilDemandeur,
   type TypeDemandeCircuit,
 } from "./circuitDemande";
+import { responsableServiceEffectif } from "./circuitReorientation";
 import { montantValideDepuisLignes } from "./etatArticles";
 import { categorisationEstObligatoire } from "./parametresTresorerie";
 import { refusMotifLigne } from "./motifLigne";
@@ -37,7 +38,15 @@ type Db = Prisma.TransactionClient;
  * autre service) : page « Demandes de mon service » et compteur du menu.
  */
 export function demandesServiceAValiderWhere(responsableId: string): Prisma.DemandeWhereInput {
-  return { etapeCircuit: "SERVICE", createur: { service: { responsableId } } };
+  // Lot K : une demande réorientée appartient à son nouveau responsable (et plus à celui du service) ; sans réorientation,
+  // c'est toujours le responsable ACTUEL du service du demandeur (`responsableServiceEffectif`).
+  return {
+    etapeCircuit: "SERVICE",
+    OR: [
+      { responsableEtapeServiceId: responsableId },
+      { responsableEtapeServiceId: null, createur: { service: { responsableId } } },
+    ],
+  };
 }
 
 /** Étapes posées explicitement par le circuit : une demande qui y est n'attend ni la Finance ni le DG sur ses articles. */
@@ -202,16 +211,19 @@ export async function initialiserCircuit(
 export async function chargerActeur(
   db: Db,
   session: { user: { id: string }; permissions: readonly string[] },
-  createurId: string
+  createurId: string,
+  /** Lot K : avec la demande, le décideur de l'étape Service tient compte d'une réorientation. */
+  demandeId?: string
 ): Promise<ActeurCircuit> {
-  const createur = await db.user.findUnique({
-    where: { id: createurId },
-    select: { service: { select: { responsableId: true } } },
-  });
+  const [createur, demande] = await Promise.all([
+    db.user.findUnique({ where: { id: createurId }, select: { service: { select: { responsableId: true } } } }),
+    demandeId ? db.demande.findUnique({ where: { id: demandeId }, select: { responsableEtapeServiceId: true } }) : null,
+  ]);
   return {
     userId: session.user.id,
     permissions: session.permissions,
-    estResponsableServiceDuDemandeur: createur?.service?.responsableId === session.user.id,
+    estResponsableServiceDuDemandeur:
+      responsableServiceEffectif(demande ?? {}, createur?.service?.responsableId) === session.user.id,
   };
 }
 
@@ -227,6 +239,8 @@ const ACTION_HISTORIQUE: Record<ActionCircuit["type"], string> = {
   DECIDER_LIGNE_DG: "decision_ligne_dg",
   RESOUMETTRE_CORRECTION: "resoumission_correction",
   ABANDONNER: "abandon",
+  REORIENTER: "reorientation_service",
+  REPRENDRE: "reprise_etape",
 };
 
 export type ResultatCircuit = { ok: true; etapeSuivante: EtapeCircuit } | { ok: false; message: string };
@@ -253,12 +267,15 @@ export const SELECT_LIGNE_CIRCUIT = {
  * soumission et une décision finale) se succèdent, et la seconde relit l'état laissé par la première — la dernière
  * ligne décidée par le DG rend toujours la main à la Finance.
  */
-async function verrouillerDemande(db: Db, demandeId: string): Promise<void> {
+export async function verrouillerDemande(db: Db, demandeId: string): Promise<void> {
   await db.$queryRaw`SELECT "id" FROM "Demande" WHERE "id" = ${demandeId} FOR UPDATE`;
 }
 
-const SELECT_DEMANDE_CIRCUIT = {
+export const SELECT_DEMANDE_CIRCUIT = {
   etapeCircuit: true,
+  statut: true,
+  responsableEtapeServiceId: true,
+  createur: { select: { service: { select: { responsableId: true } } } },
   createurId: true,
   typeDemande: true,
   etapeServiceRequise: true,
@@ -269,7 +286,11 @@ const SELECT_DEMANDE_CIRCUIT = {
   beneficiaireType: true,
   beneficiaireUserId: true,
   beneficiaireNom: true,
-  lignes: { select: SELECT_LIGNE_CIRCUIT, orderBy: { createdAt: "asc" } },
+  lignes: {
+    // Lot K : règlements non annulés de chaque article (brouillons compris) — une reprise d'article validé est refusée s'il y en a.
+    select: { ...SELECT_LIGNE_CIRCUIT, _count: { select: { reglements: { where: { estAnnule: false } } } } },
+    orderBy: { createdAt: "asc" },
+  },
 } as const;
 
 const listeLibelles = (libelles: string[]) => libelles.map((l) => `« ${l} »`).join(", ");
@@ -292,7 +313,12 @@ export async function appliquerTransitionCircuit(
   if (action.type === "DECIDER_LIGNES" && d.lignes.length > 0) {
     return { ok: false, message: "Cette demande contient des lignes d'article : utilisez la décision article par article." };
   }
-  const r = transition(await demandeCircuit(db, d), acteur, action);
+  // Lot K : le responsable de l'étape Service est celui de CETTE demande (réorientation), relu sous le verrou.
+  const acteurEtape: ActeurCircuit = {
+    ...acteur,
+    estResponsableServiceDuDemandeur: responsableServiceEffectif(d, d.createur.service?.responsableId) === acteur.userId,
+  };
+  const r = transition(await demandeCircuit(db, d), acteurEtape, action);
   if (!r.ok) return r;
 
   const maintenant = new Date();
@@ -653,6 +679,12 @@ export async function deciderArticles(
   return { ok: true, etapeSuivante: r.etapeSuivante, montantValide, nbValidees, nbRejetees, budget };
 }
 
+/** Lot K : la demande telle que le moteur la lit, règlements de chaque article compris (écrans de reprise). `null` si introuvable. */
+export async function chargerDemandeCircuit(db: Db, demandeId: string): Promise<DemandeCircuit | null> {
+  const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
+  return d ? demandeCircuit(db, d) : null;
+}
+
 /** Ligne `Demande` (champs de `SELECT_DEMANDE_CIRCUIT`) → `DemandeCircuit`, articles et bénéficiaires effectifs compris. */
 async function demandeCircuit(db: Db, d: Parameters<typeof versDemandeCircuit>[0]): Promise<DemandeCircuit> {
   // Lot I : la catégorisation n'est exigée (y compris pour soumettre au DG) qu'à partir de la date fixée par la Finance.
@@ -817,6 +849,8 @@ export async function corrigerEtResoumettre(
       etapeCircuit: etape,
       etapeCircuitDepuis: new Date(),
       ...champsParcours(parcours),
+      // Lot K : une réorientation ne vaut que pour le tour où elle a été décidée ; le nouveau tour repart du responsable du service.
+      responsableEtapeServiceId: null,
       soumiseAuDG: false,
       niveauRejet: null,
       motifRejet: null,

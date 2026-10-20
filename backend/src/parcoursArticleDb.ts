@@ -10,6 +10,7 @@ import { prisma } from "./prisma";
 import { getRegularisationParArticle } from "./regularisationArticleDb";
 import { libelleArticleClotureForcee, lireInstantaneClotureForcee } from "./clotureDemande";
 import { getSoldesARegulariserParReglements } from "./tresorerie";
+import { chargerEvenementsCircuit } from "./circuitEvenementsDb";
 
 /** Parcours de chaque article de la demande, par identifiant d'article. Vide pour une demande sans article. */
 export async function getParcoursArticles(
@@ -80,6 +81,8 @@ export async function getParcoursArticles(
   const articlesRegles = new Set(confirmes.map((r) => r.ligneDemandeId));
   const regularisationIndeterminee = exceptionnels > 0 && articlesRegles.size >= 2;
 
+  // Lot K : réorientations (demande) et reprises (demande ou article), relues de l'historique.
+  const evenementsCircuit = (await chargerEvenementsCircuit(prisma, [{ id: demandeId, ligneIds: demande.lignes.map((l) => l.id) }])).get(demandeId) ?? [];
   const instantaneForce = lireInstantaneClotureForcee(demande.clotureForceeArticles);
   for (const ligne of demande.lignes) {
     const benef = beneficiaireArticle(ligne, demande);
@@ -123,6 +126,8 @@ export async function getParcoursArticles(
             })),
           })),
       });
+    const circuit = evenementsCircuit.filter((e) => e.ligneId === null || e.ligneId === ligne.id).map((e) => e.texte);
+    if (circuit.length > 0) parcours.circuit = circuit;
     if (options.avecBudget) {
       const snap = lireSnapshotBudget(ligne.budgetApresValidation);
       if (snap) parcours.budget = { lignes: phrasesSnapshotBudget(snap), niveau: snap.niveau };

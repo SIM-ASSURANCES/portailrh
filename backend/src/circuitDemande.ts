@@ -17,7 +17,7 @@
 
 // Types des enums Prisma (`EtapeCircuit`, `ModeEtapeDG`, `NiveauRejet`, voir schema.prisma) : import de TYPE seul,
 // le moteur reste pur et sûr pour un Client Component.
-import type { EtapeCircuit, ModeEtapeDG } from "./generated/prisma/enums";
+import type { EtapeCircuit, ModeEtapeDG, StatutDemande } from "./generated/prisma/enums";
 import {
   beneficiaireArticle,
   comptesConcernesArticle,
@@ -25,6 +25,8 @@ import {
   type ArticleBeneficiaire,
   type BeneficiaireStocke,
 } from "./beneficiaireArticles";
+import { MOTIF_REORIENTATION_MIN, PERMISSION_REORIENTER_DEMANDE, refusMotifReorientation } from "./circuitReorientation";
+import { evaluerReprise, type TypeReprise } from "./circuitReprise";
 import {
   appliquerDecisionsSimulees,
   etapeDepuisArticles,
@@ -153,6 +155,8 @@ export interface LigneCircuit {
   decideurFinanceId?: string | null;
   /** Compte bénéficiaire EFFECTIF de l'article (le sien, sinon celui de la demande) : il ne décide pas cet article. */
   beneficiaireUserId?: string | null;
+  /** Lot K : règlements non annulés de l'article (brouillons compris). Absent = inconnu ; une reprise d'article validé est alors refusée. */
+  nbReglementsActifs?: number;
 }
 
 export function etatLigneDG(l: Pick<LigneCircuit, "soumiseAuDG" | "decisionDG">): EtatLigneDG {
@@ -232,6 +236,8 @@ export interface DemandeCircuit {
   decideurFinanceId?: string | null;
   /** Lignes d'articles (soumission au DG ligne par ligne). Absentes : contrôles de lignes non faits. */
   lignes?: readonly LigneCircuit[];
+  /** Lot K : statut de la demande (reprise refusée si clôturée, rejetée ou abandonnée). */
+  statutDemande?: StatutDemande;
 }
 
 /**
@@ -316,7 +322,11 @@ export type ActionCircuit =
   /** Le DG décide une ligne soumise. Sans `ligneId` : contrôle de la demande seulement. */
   | { type: "DECIDER_LIGNE_DG"; ligneId?: string; valider: boolean; motif?: string }
   | { type: "RESOUMETTRE_CORRECTION" }
-  | { type: "ABANDONNER" };
+  | { type: "ABANDONNER" }
+  /** Lot K : le demandeur, ou la Finance (`treso.reorienter_demande`), confie l'étape Service à un autre responsable. */
+  | { type: "REORIENTER"; motif: string }
+  /** Lot K : retour à l'étape précédente (demande entière sans `ligneId`, sinon un article), motif obligatoire. */
+  | { type: "REPRENDRE"; motif: string; ligneId?: string };
 
 export type TypeActionCircuit = ActionCircuit["type"];
 
@@ -335,6 +345,8 @@ export interface EffetsTransition {
   decideurFinance?: boolean;
   /** Approbation de clôture acquise par un AUTRE compte que l'acteur (le DG qui a validé les lignes, règle 5). */
   approbateurDGId?: string;
+  /** Lot K : la décision est une reprise (retour à l'étape précédente) de ce type, sur cet article (`null` = demande). */
+  reprise?: { type: TypeReprise; ligneId: string | null };
 }
 
 export type ResultatTransition =
@@ -342,6 +354,8 @@ export type ResultatTransition =
   | { ok: false; message: string };
 
 const MOTIF_MIN = 3;
+/** Motif de contrôle (boutons grisés) : assez long pour passer le minimum d'une réorientation ou d'une reprise. */
+const MOTIF_PLACEHOLDER = "x".repeat(MOTIF_REORIENTATION_MIN);
 
 /** Nom d'une étape pour les écrans et l'historique. */
 export const LIBELLE_ETAPE_CIRCUIT: Record<EtapeCircuit, string> = {
@@ -699,6 +713,42 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
       return { ok: true, etapeSuivante: etapeDepuisArticles(demande.etape, demande.modeEtapeDG, apres), effets: {} };
     }
 
+    case "REORIENTER": {
+      if (!estAuteur && !a(acteur, PERMISSION_REORIENTER_DEMANDE)) return refus("Action non autorisée.");
+      const motifRefuse = refusMotifReorientation(action.motif);
+      if (motifRefuse) return refus(motifRefuse);
+      // Seule l'étape du responsable de service se réoriente : après sa décision, la demande n'est plus chez lui.
+      if (etape !== "SERVICE") return refus("La réorientation n'est possible que pendant l'étape du responsable de service.");
+      return { ok: true, etapeSuivante: "SERVICE", effets: {} };
+    }
+
+    case "REPRENDRE": {
+      const r = evaluerReprise(
+        {
+          etape: demande.etape,
+          createurId: demande.createurId,
+          typeDemande: demande.typeDemande,
+          etapeServiceRequise: demande.etapeServiceRequise,
+          modeEtapeDG: demande.modeEtapeDG,
+          statutDemande: demande.statutDemande,
+          lignes: lignes.map((l) => ({
+            id: l.id,
+            libelle: l.libelle,
+            statut: l.statut,
+            soumiseAuDG: l.soumiseAuDG,
+            decisionDG: l.decisionDG,
+            beneficiaireUserId: l.beneficiaireUserId,
+            nbReglementsActifs: l.nbReglementsActifs,
+          })),
+        },
+        acteur,
+        action.ligneId,
+        action.motif
+      );
+      if (!r.ok) return refus(r.message);
+      return { ok: true, etapeSuivante: r.etapeSuivante, effets: { reprise: { type: r.type, ligneId: r.ligneId } } };
+    }
+
     case "RESOUMETTRE_CORRECTION":
     case "ABANDONNER": {
       if (etape !== "A_CORRIGER") return refus("Cette demande n'est pas en correction.");
@@ -724,6 +774,8 @@ export function actionsPossibles(demande: DemandeCircuit, acteur: ActeurCircuit)
     { type: "DECIDER_LIGNE_DG", valider: true },
     { type: "RESOUMETTRE_CORRECTION" },
     { type: "ABANDONNER" },
+    { type: "REORIENTER", motif: MOTIF_PLACEHOLDER },
+    { type: "REPRENDRE", motif: MOTIF_PLACEHOLDER },
   ];
   return essais.filter((x) => transition(demande, acteur, x).ok).map((x) => x.type);
 }
@@ -837,6 +889,8 @@ export function versLigneCircuit(
     decisionDGParId: string | null;
     decisionDGAt?: Date | null;
     decideurFinanceId?: string | null;
+    /** Lot K : `_count.reglements` (non annulés) quand le chargement l'a lu. */
+    _count?: { reglements: number };
   } & BeneficiaireStocke,
   demande?: BeneficiaireStocke,
   /**
@@ -857,6 +911,7 @@ export function versLigneCircuit(
     decisionDGAt: l.decisionDGAt ?? null,
     decideurFinanceId: l.decideurFinanceId ?? null,
     beneficiaireUserId: demande ? beneficiaireArticle(l, demande).userId : (l.beneficiaireUserId ?? null),
+    nbReglementsActifs: l._count?.reglements,
   };
 }
 
@@ -871,6 +926,7 @@ export function versDemandeCircuit(
     modeEtapeDG: ModeEtapeDG;
     dgApprobateurId: string | null;
     decideurFinanceId: string | null;
+    statut?: StatutDemande;
     lignes?: Parameters<typeof versLigneCircuit>[0][];
   } & BeneficiaireStocke,
   /** Lot I : voir `versLigneCircuit`. Défaut `true`. */
@@ -886,6 +942,7 @@ export function versDemandeCircuit(
     modeEtapeDG: d.modeEtapeDG,
     approbateurDGId: d.dgApprobateurId,
     decideurFinanceId: d.decideurFinanceId,
+    statutDemande: d.statut,
   };
 }
 
@@ -897,6 +954,8 @@ export function raisonIndisponible(demande: DemandeCircuit, acteur: ActeurCircui
   const action: ActionCircuit =
     type === "REJETER" || type === "REJETER_DG"
       ? { type, motif: "motif" }
+      : type === "REORIENTER" || type === "REPRENDRE"
+        ? { type, motif: MOTIF_PLACEHOLDER }
       : type === "DECIDER_LIGNES"
         ? { type, auMoinsUneValidee: true }
         : type === "DECIDER_LIGNE_DG"
@@ -909,6 +968,57 @@ export function raisonIndisponible(demande: DemandeCircuit, acteur: ActeurCircui
     return MESSAGE_ATTENTE_VALIDATION_FINALE;
   }
   return r.message;
+}
+
+/** Lot K : pourquoi la reprise (demande entière sans `ligneId`, sinon un article) est impossible ; `null` si elle l'est. */
+export function raisonRepriseIndisponible(demande: DemandeCircuit, acteur: ActeurCircuit, ligneId?: string): string | null {
+  const r = transition(demande, acteur, { type: "REPRENDRE", motif: MOTIF_PLACEHOLDER, ligneId });
+  return r.ok ? null : r.message;
+}
+
+/** Élément repris ou reprenable affiché sur un écran : la demande entière (`ligneId` nul) ou un article. */
+export interface ElementReprise {
+  ligneId: string | null;
+  libelle: string;
+  /** Où il se trouve aujourd'hui, en clair. */
+  situation: string;
+  /** Pourquoi le bouton est grisé ; `null` = la reprise est possible. */
+  raison: string | null;
+}
+
+/**
+ * Lot K : ce que l'écran propose à `acteur` — la demande entière quand elle est à l'étape Finance sans aucun article décidé, et
+ * chaque article repris-able en principe (soumis au DG sans décision, ou validé par la Finance seule). Les articles rejetés,
+ * validés par le DG ou encore « à décider » n'y figurent pas (aucune reprise n'a de sens ou n'est permise). Chaque élément porte la
+ * phrase du serveur quand la reprise est impossible (article réglé, garde 8…).
+ */
+export function elementsReprise(demande: DemandeCircuit, acteur: ActeurCircuit): ElementReprise[] {
+  const lignes = demande.lignes ?? [];
+  if (demande.typeDemande === "DEPENSE_DIRECTE" || lignes.length === 0) return [];
+  const elements: ElementReprise[] = [];
+  const toutADecider = lignes.every((l) => etatLigneCircuit(l, demande.modeEtapeDG) === "A_DECIDER");
+  if (demande.etapeServiceRequise && demande.etape === "FINANCE" && toutADecider) {
+    elements.push({
+      ligneId: null,
+      libelle: "Demande entière",
+      situation: "À l'étape Finance, aucun article décidé",
+      raison: raisonRepriseIndisponible(demande, acteur),
+    });
+  }
+  for (const l of lignes) {
+    const etat = etatLigneCircuit(l, demande.modeEtapeDG);
+    const reprenable =
+      (etat === "CHEZ_DG" && demande.modeEtapeDG !== "OBLIGATOIRE") ||
+      (etat === "VALIDEE" && l.decisionDG === null && !l.soumiseAuDG && demande.modeEtapeDG !== "OBLIGATOIRE");
+    if (!reprenable) continue;
+    elements.push({
+      ligneId: l.id,
+      libelle: l.libelle,
+      situation: etat === "CHEZ_DG" ? "Soumis au DG, en attente de sa décision" : "Validé par la Finance",
+      raison: raisonRepriseIndisponible(demande, acteur, l.id),
+    });
+  }
+  return elements;
 }
 
 /**

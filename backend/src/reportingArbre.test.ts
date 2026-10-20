@@ -177,7 +177,7 @@ describe("reportingArbre — structure", () => {
   it("colonnes : une seule colonne « Réglé » (pas de doublon) et clés distinctes", () => {
     const cles = COLONNES_ARBRE.map((c) => c.cle);
     expect(new Set(cles).size).toBe(cles.length);
-    expect(COLONNES_ARBRE.filter((c) => c.longue).map((c) => c.cle)).toEqual(["motif"]);
+    expect(COLONNES_ARBRE.filter((c) => c.longue).map((c) => c.cle)).toEqual(["circuitEvenements", "motif"]);
   });
 });
 

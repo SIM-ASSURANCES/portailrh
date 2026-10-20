@@ -457,6 +457,19 @@ export function lireCouverture(brut: unknown): CouvertureDepassement[] {
   return resultat;
 }
 
+/**
+ * Lot K : un article validé avec dépassement confirmé est REPRIS (retour à la Finance). Sa part de la confirmation du DG devient
+ * caduque : on la retire de la couverture ; les autres articles de la même confirmation gardent la leur. Revalider l'article exige
+ * une NOUVELLE confirmation (une confirmation est à usage unique). Renvoie la couverture restante et le montant retiré.
+ */
+export function retirerCouvertureArticle(
+  couvertures: readonly CouvertureDepassement[],
+  ligneId: string
+): { restante: CouvertureDepassement[]; retire: number } {
+  const retire = couvertures.filter((c) => c.ligneId === ligneId).reduce((s, c) => s + centimes(c.montant), 0) / 100;
+  return { restante: couvertures.filter((c) => c.ligneId !== ligneId), retire };
+}
+
 /** Total couvert pour un article (ou la dépense directe si `ligneId` est nul) dans une catégorie. */
 export function totalCouvert(couvertures: readonly CouvertureDepassement[], ligneId: string | null, categorieId: string): number {
   return couvertures.filter((c) => c.ligneId === ligneId && c.categorieId === categorieId).reduce((s, c) => s + centimes(c.montant), 0) / 100;

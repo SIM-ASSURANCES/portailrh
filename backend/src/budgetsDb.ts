@@ -7,6 +7,7 @@ import { prisma } from "./prisma";
 import {
   budgetEnVigueur,
   couvertureDepuisAjouts,
+  retirerCouvertureArticle,
   jourCourantBudget,
   lireCouverture,
   MOTIF_DEPASSEMENT_MIN,
@@ -45,6 +46,8 @@ export const ACTION_HISTORIQUE_BUDGET = {
   UTILISE: "depassement_budget_utilise",
   /** Lot J bis : un règlement passe au-delà du reste du budget parce que la confirmation du DG le couvre. */
   REGLEMENT_COUVERT: "reglement_couvert_depassement",
+  /** Lot K : l'article couvert par une confirmation du DG est repris — sa part de la confirmation est caduque. */
+  CONFIRMATION_CADUQUE: "confirmation_depassement_caduque",
 } as const;
 
 const jour = (d: Date | null): string | null => (d ? d.toISOString().slice(0, 10) : null);
@@ -344,6 +347,38 @@ export async function controlerBudgetValidation(db: Prisma.TransactionClient, p:
     });
   }
   return ok(prevision, verdict);
+}
+
+/**
+ * Lot K — reprise d'un article validé avec dépassement confirmé par le DG : la part de l'article dans les confirmations UTILISÉES
+ * de la demande est retirée (la confirmation reste UTILISÉE, mais ne couvre plus cet article — aucun règlement n'en existe, la reprise
+ * l'exige). Le budget engagé est recalculé à chaque lecture (articles validés) : aucun engagement fantôme ne subsiste. Revalider
+ * l'article demandera une nouvelle confirmation. Trace dans l'historique de la demande. Sans effet si l'article n'était pas couvert.
+ */
+export async function rendreCaduqueCouvertureArticle(
+  db: Prisma.TransactionClient,
+  p: { demandeId: string; ligneId: string; libelle: string; acteurId: string }
+): Promise<{ retire: number }> {
+  const confirmations = await db.budgetDepassement.findMany({ where: { demandeId: p.demandeId, statut: "UTILISE" }, select: { id: true, couverture: true, motif: true } });
+  let retireTotal = 0;
+  for (const c of confirmations) {
+    const { restante, retire } = retirerCouvertureArticle(lireCouverture(c.couverture), p.ligneId);
+    if (retire <= 0) continue;
+    await db.budgetDepassement.update({ where: { id: c.id }, data: { couverture: restante as unknown as Prisma.InputJsonValue } });
+    retireTotal += retire;
+  }
+  if (retireTotal > 0) {
+    await db.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: p.demandeId,
+        action: ACTION_HISTORIQUE_BUDGET.CONFIRMATION_CADUQUE,
+        detail: `Article « ${p.libelle} » repris : la confirmation du DG ne le couvre plus (${retireTotal.toLocaleString("fr-FR")} FCFA retirés de la couverture) — une nouvelle confirmation sera nécessaire pour le valider de nouveau si le dépassement subsiste.`,
+        userId: p.acteurId,
+      },
+    });
+  }
+  return { retire: retireTotal };
 }
 
 // ---------- Lot J bis : la confirmation du DG couvre le règlement ----------

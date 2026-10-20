@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { peutTelechargerJustificatifsRetourExterne } from "@/lib/droitsPiecesJointes";
-import { prisma } from "backend";
+import { prisma, responsableServiceEffectif } from "backend";
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 
@@ -55,6 +55,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         select: {
           createurId: true,
           beneficiaireUserId: true,
+          responsableEtapeServiceId: true,
           createur: { select: { service: { select: { responsableId: true } } } },
           // Autonomie des articles, lot A : le bénéficiaire propre d'un article a les droits du bénéficiaire de la demande.
           lignes: { select: { beneficiaireUserId: true } },
@@ -84,7 +85,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       piece.demande.beneficiaireUserId === session.user.id ||
       piece.demande.lignes.some((l) => l.beneficiaireUserId === session.user.id);
     // Circuit de validation : le responsable ACTUEL du service du demandeur, qui décide l'étape Service.
-    const estResponsableService = piece.demande.createur.service?.responsableId === session.user.id;
+    // Lot K : le responsable de l'étape est celui de CETTE demande (réorientation), l'ancien perd l'accès aux pièces.
+    const estResponsableService =
+      responsableServiceEffectif(piece.demande, piece.demande.createur.service?.responsableId) === session.user.id;
     accesAutorise = estFinanceOuDG || estCreateurOuBeneficiaire || estResponsableService;
   } else if (piece.retourExterne || piece.retourExterneCheque) {
     // Retour externe : même permission que l'action (`treso.creer_retour_externe`), ou Admin.

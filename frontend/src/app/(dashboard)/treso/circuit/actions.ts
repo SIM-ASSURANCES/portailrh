@@ -11,9 +11,12 @@ import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notifierAlerteBudget } from "@/lib/notificationsBudget";
-import { notifierEtapeCircuit, notifierRefusLigneDG } from "@/lib/notificationsCircuit";
+import { notifierEtapeCircuit, notifierRefusLigneDG, notifierReorientation, notifierReprise } from "@/lib/notificationsCircuit";
 import {
   appliquerTransitionCircuit,
+  calculerStatutDemande,
+  reorienterEtapeService,
+  reprendreEtape,
   chargerActeur,
   corrigerEtResoumettre,
   deciderLigneDG,
@@ -248,4 +251,74 @@ export async function corrigerEtResoumettreDemandeAction(
   rafraichir(demandeId);
   await notifierEtapeCircuit(demandeId, session.user.id);
   return { status: "success", message: `Demande ${demande.reference} corrigée et resoumise.` };
+}
+
+/**
+ * Lot K — réorientation de l'étape Service : le demandeur, ou la Finance (`treso.reorienter_demande`), confie la validation du
+ * responsable de service à un AUTRE responsable disponible. Motif obligatoire (10 caractères). Le moteur et la cible sont
+ * revérifiés côté serveur (étape, permission, compte actif, absent, garde 8) ; l'ancien responsable ne peut plus décider.
+ */
+export async function reorienterDemandeAction(demandeId: string, cibleId: string, motif: string): Promise<Resultat> {
+  const session = await getSession();
+  if (!session) return { status: "error", message: "Action non autorisée." };
+  const demande = await prisma.demande.findUnique({ where: { id: String(demandeId) }, select: { createurId: true, reference: true } });
+  if (!demande) return { status: "error", message: "Demande introuvable." };
+
+  const acteur = await chargerActeur(prisma, session, demande.createurId, String(demandeId));
+  let resultat: Extract<Awaited<ReturnType<typeof reorienterEtapeService>>, { ok: true }>;
+  try {
+    resultat = await prisma.$transaction(async (tx) => {
+      const r = await reorienterEtapeService(tx, String(demandeId), acteur, String(cibleId ?? ""), String(motif ?? ""));
+      if (!r.ok) throw new RefusTransaction(r.message);
+      return r;
+    });
+  } catch (e) {
+    if (e instanceof RefusTransaction) return { status: "error", message: e.message };
+    throw e;
+  }
+  rafraichir(String(demandeId));
+  await notifierReorientation(String(demandeId), {
+    acteurId: session.user.id,
+    ancienId: resultat.de.id,
+    nouveauId: resultat.vers.id,
+    ancienNom: resultat.de.nom,
+    nouveauNom: resultat.vers.nom,
+    motif: String(motif).trim(),
+    delai: resultat.delai,
+  });
+  return { status: "success", message: `Demande ${demande.reference} réorientée vers ${resultat.vers.nom}.` };
+}
+
+/**
+ * Lot K — reprise : la demande entière (`ligneId` absent : Finance → Service) ou un article (DG → Finance ; validation de la
+ * Finance → à décider) revient à l'étape précédente, motif obligatoire (10 caractères). Jamais un article réglé, rejeté, validé par
+ * le DG, ni une demande clôturée : le moteur refuse, la transaction est annulée en entier. Aucune écriture de caisse.
+ */
+export async function reprendreEtapeAction(demandeId: string, ligneId: string | null, motif: string): Promise<Resultat> {
+  const session = await getSession();
+  if (!session) return { status: "error", message: "Action non autorisée." };
+  const demande = await prisma.demande.findUnique({ where: { id: String(demandeId) }, select: { createurId: true, reference: true } });
+  if (!demande) return { status: "error", message: "Demande introuvable." };
+
+  const acteur = await chargerActeur(prisma, session, demande.createurId, String(demandeId));
+  let resultat: Extract<Awaited<ReturnType<typeof reprendreEtape>>, { ok: true }>;
+  try {
+    resultat = await prisma.$transaction(async (tx) => {
+      const r = await reprendreEtape(tx, String(demandeId), acteur, ligneId ? String(ligneId) : undefined, String(motif ?? ""));
+      if (!r.ok) throw new RefusTransaction(r.message);
+      return r;
+    });
+  } catch (e) {
+    if (e instanceof RefusTransaction) return { status: "error", message: e.message };
+    throw e;
+  }
+  await calculerStatutDemande(String(demandeId));
+  rafraichir(String(demandeId));
+  await notifierReprise(String(demandeId), { acteurId: session.user.id, type: resultat.type, motif: String(motif).trim(), ligneId: resultat.ligneId, libelleArticle: resultat.libelleArticle });
+  return {
+    status: "success",
+    message: resultat.libelleArticle
+      ? `Article « ${resultat.libelleArticle} » de la demande ${demande.reference} repris à l'étape précédente.`
+      : `Demande ${demande.reference} renvoyée au responsable de service.`,
+  };
 }

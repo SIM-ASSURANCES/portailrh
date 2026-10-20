@@ -57,6 +57,7 @@ model User {
   /// Demandes dont ce DG a approuvé la "validation complète" (verrou de clôture, Ticket 7).
   demandesApprouveesDG          Demande[]         @relation("DgApprobateurValidationComplete")
   demandesDecideesFinance       Demande[]         @relation("DemandeDecideurFinance")
+  demandesReorienteesVersMoi    Demande[]         @relation("DemandeResponsableEtapeService")
   /// Demandes clôturées de force par ce compte (lot C).
   demandesClotureesDeForce      Demande[]         @relation("DemandeClotureForceePar")
   reglementsFaits               Reglement[]       @relation("ReglementAuteur")
@@ -624,6 +625,11 @@ model Demande {
   /// approbation de clôture), voir `MESSAGE_DEUX_PERSONNES`. `null` tant qu'aucune décision Finance n'est prise.
   decideurFinanceId            String?
   decideurFinance              User?        @relation("DemandeDecideurFinance", fields: [decideurFinanceId], references: [id])
+  /// Lot K : décideur de l'étape Service posé par une RÉORIENTATION (autre responsable de service disponible). `null` =
+  /// le responsable ACTUEL du service du demandeur (règle d'origine). Remis à `null` à la resoumission après correction.
+  /// Le service du demandeur ne change jamais. Voir `backend/src/circuitReorientation.ts`.
+  responsableEtapeServiceId    String?
+  responsableEtapeService      User?        @relation("DemandeResponsableEtapeService", fields: [responsableEtapeServiceId], references: [id])
   /// Dernière version de la description écrite par le DEMANDEUR lors d'une correction. `null` = jamais corrigée :
   /// sa version est alors `descriptionOriginale ?? description`. Le demandeur voit toujours sa dernière version.
   descriptionDemandeur         String?
@@ -679,6 +685,7 @@ model Demande {
   // dashboard Finance et le filtre "validations en attente DG".
   @@index([validationCompleteParDG, statut])
   @@index([etapeCircuit])
+  @@index([responsableEtapeServiceId])
 }
 
 /// Stockage local sur disque (`./uploads/`, hors dépôt git — voir

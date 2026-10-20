@@ -148,7 +148,7 @@ export function ReportingArbreTable({ colonnes, lignes, totauxParDevise, nbDeman
                       return (
                         <td
                           key={String(c.cle)}
-                          className={`px-3 py-2 ${c.longue ? "min-w-72 max-w-md whitespace-normal break-words" : "whitespace-nowrap"} ${
+                          className={`px-3 py-2 ${c.longue ? "min-w-72 max-w-md whitespace-pre-line break-words" : "whitespace-nowrap"} ${
                             c.genre === "montant" || c.genre === "entier" ? "text-right tabular-nums" : ""
                           } ${estSolde ? "font-semibold text-warning" : ""}`}
                         >

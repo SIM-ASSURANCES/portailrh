@@ -21,6 +21,8 @@ import { libelleGestionArticle } from "backend/client";
 import { chargerEvaluationCloture, getMontantsLignesParStatut, peutEtreCloturee } from "backend";
 import {
   chargerActeur,
+  chargerAffichageReorientation,
+  chargerElementsReprise,
   attendValidationPourExecution,
   estExecutantFinance,
   etapeDepuisArticles,
@@ -33,6 +35,8 @@ import {
   type TypeActionCircuit,
 } from "backend";
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
+import { RepriseEtapeSection } from "@/components/tresorerie/RepriseEtapeSection";
+import { ReorienterDemande } from "@/components/tresorerie/ReorienterDemande";
 
 import { CategorisationForm } from "./CategorisationForm";
 import { CircuitFinanceActions } from "./CircuitFinanceActions";
@@ -117,10 +121,19 @@ export default async function CategoriserDemandePage({
   const demandeCircuit = versDemandeCircuit(demande, categorisationObligatoire);
   // Soumission au DG ligne par ligne (2026-10-10) : demande standard à lignes, étape DG optionnelle.
   const soumissionParLignes = demandeAauMoinsUneLigne && demande.typeDemande === "STANDARD" && demande.modeEtapeDG === "OPTIONNELLE";
-  const acteurCircuit = session ? await chargerActeur(prisma, session, demande.createurId) : null;
+  const acteurCircuit = session ? await chargerActeur(prisma, session, demande.createurId, demande.id) : null;
   const raisonCircuit = (type: TypeActionCircuit) =>
     acteurCircuit ? raisonIndisponible(demandeCircuit, acteurCircuit, type) : "Action non autorisée.";
   const raisonDecider = raisonCircuit("DECIDER_LIGNES");
+  // Lot K : réorientation (étape Service) et reprise — chargées seulement quand elles peuvent s'afficher.
+  const affichageReorientation =
+    demande.etapeCircuit === "SERVICE" && acteurCircuit && raisonCircuit("REORIENTER") === null
+      ? await chargerAffichageReorientation(prisma, demande.id)
+      : null;
+  const elementsReprise =
+    acteurCircuit && (acteurCircuit.permissions.includes("treso.decider_finance") || acteurCircuit.permissions.includes("treso.decider_dg"))
+      ? await chargerElementsReprise(prisma, demande.id, acteurCircuit)
+      : [];
   // Soumission au DG : phrases lisibles (lot 2, 2026-10-13) — permission absente, demande décidée d'office par le DG…
   // `raisonSoumissionLignes` : la demande se prête-t-elle à la soumission d'articles ? (les raisons propres à chaque
   // article s'y ajoutent dans le tableau) ; `raisonSoumissionEntiere` : le bouton « Soumettre la demande entière ».
@@ -530,6 +543,12 @@ export default async function CategoriserDemandePage({
         niveauRejet={demande.niveauRejet}
         motifRejet={demande.motifRejet}
       />
+
+      {/* Lot K : réorientation de l'étape Service (Finance avec `treso.reorienter_demande`) et reprise (retour à l'étape précédente). */}
+      {demande.etapeCircuit === "SERVICE" && acteurCircuit && raisonCircuit("REORIENTER") === null && affichageReorientation ? (
+        <ReorienterDemande demandeId={demande.id} responsableActuel={affichageReorientation.responsableActuel} eligibles={affichageReorientation.eligibles} />
+      ) : null}
+      <RepriseEtapeSection demandeId={demande.id} elements={elementsReprise} />
 
       <DemandeHistorique demandeId={demande.id} />
 

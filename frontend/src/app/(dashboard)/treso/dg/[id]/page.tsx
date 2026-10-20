@@ -4,6 +4,7 @@ import { Badge, PageHeader } from "@/components/ui";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { EnteteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
+import { RepriseEtapeSection } from "@/components/tresorerie/RepriseEtapeSection";
 import {
   STATUT_LIGNE_DEMANDE_BADGE_VARIANT,
   STATUT_LIGNE_DEMANDE_LABEL,
@@ -17,6 +18,7 @@ import {
   chargerActeur,
   detailsArticles,
   nomBeneficiaireDemande,
+  chargerElementsReprise,
   prisma,
   raisonIndisponible,
   categorisationEstObligatoire,
@@ -75,7 +77,9 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
     creeeLe: demande.createdAt,
     devise: demande.devise,
   };
-  const acteur = await chargerActeur(prisma, session, demande.createurId);
+  const acteur = await chargerActeur(prisma, session, demande.createurId, demande.id);
+  // Lot K : retirer ou renvoyer à la Finance un article soumis au DG (reprise, motif obligatoire).
+  const elementsReprise = await chargerElementsReprise(prisma, demande.id, acteur);
   const decisionParLigne = demande.modeEtapeDG === "OBLIGATOIRE";
   const raisonDecider = raisonIndisponible(demandeCircuit, acteur, "DECIDER_LIGNES");
   // Soumission au DG ligne par ligne (2026-10-10) : le DG ne voit et ne décide que les lignes soumises par la Finance.
@@ -269,6 +273,14 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
           raisonRejeter={raisonIndisponible(demandeCircuit, acteur, decisionParLigne ? "REJETER" : "REJETER_DG")}
         />
       )}
+
+      <RepriseEtapeSection
+        demandeId={demande.id}
+        elements={elementsReprise}
+        titre="Reprise — renvoyer à l'étape précédente"
+        libelleBoutonArticle="Renvoyer à la Finance"
+        libelleBoutonDemande="Reprendre"
+      />
 
       <DemandeHistorique demandeId={demande.id} />
     </div>

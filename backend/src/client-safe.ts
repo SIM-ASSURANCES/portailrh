@@ -59,4 +59,6 @@ export * from "./etatArticles";
 export * from "./reglementArticle";
 export * from "./parcoursArticle";
 export * from "./circuitDemande";
+export * from "./circuitReorientation";
+export * from "./circuitReprise";
 export * from "./soumissionDGEcran";

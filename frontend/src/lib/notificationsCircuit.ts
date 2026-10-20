@@ -8,6 +8,11 @@ import {
   notificationApprobationCloture,
   notificationsRappel,
   notificationRefusLigneDG,
+  notificationsReorientation,
+  notificationsReprise,
+  responsableServiceEffectif,
+  type EvenementReorientation,
+  type EvenementReprise,
   notificationsEtape,
   PERMISSIONS_NOTIFICATION_CIRCUIT,
   prisma,
@@ -46,6 +51,7 @@ async function chargerContexte(demandeId: string, detail: DetailEvenementCircuit
       typeDemande: true,
       createurId: true,
       beneficiaireUserId: true,
+      responsableEtapeServiceId: true,
       modeEtapeDG: true,
       decideurFinanceId: true,
       dgApprobateurId: true,
@@ -139,7 +145,8 @@ async function chargerContexte(demandeId: string, detail: DetailEvenementCircuit
     modeEtapeDG: d.modeEtapeDG,
     decideurFinanceId: d.decideurFinanceId,
     dgApprobateurId: d.dgApprobateurId,
-    responsableServiceId: d.createur.service?.responsableId ?? null,
+    // Lot K : le décideur de l'étape Service est celui de CETTE demande (réorientation), sinon le responsable du service.
+    responsableServiceId: responsableServiceEffectif(d, d.createur.service?.responsableId),
     niveauRejet: d.niveauRejet,
     motifRejet: d.motifRejet,
     montant: Number(d.montant),
@@ -230,5 +237,28 @@ export async function notifierRefusLigneDG(
     if (n) await envoyer([n]);
   } catch (e) {
     console.error(`[Circuit] Notification du refus DG (demande ${demandeId}) impossible :`, e);
+  }
+}
+
+/** Lot K : réorientation de l'étape Service — le nouveau responsable agit, l'ancien est prévenu du retrait. Rappels : ils lisent le nouveau. */
+export async function notifierReorientation(demandeId: string, evenement: EvenementReorientation): Promise<void> {
+  try {
+    const ctx = await chargerContexte(demandeId);
+    if (!ctx) return;
+    await envoyer(notificationsReorientation(ctx, evenement));
+  } catch (e) {
+    console.error(`[Circuit] Notification de réorientation (demande ${demandeId}) impossible :`, e);
+  }
+}
+
+/** Lot K : reprise — le décideur de l'étape précédente est prévenu avec le motif. */
+export async function notifierReprise(demandeId: string, evenement: Omit<EvenementReprise, "article"> & { ligneId?: string | null }): Promise<void> {
+  try {
+    const ctx = await chargerContexte(demandeId, { ligneIds: evenement.ligneId ? [evenement.ligneId] : undefined });
+    if (!ctx) return;
+    const article = evenement.ligneId ? ctx.articlesDetail?.find((a) => a.id === evenement.ligneId) : undefined;
+    await envoyer(notificationsReprise(ctx, await chargerCandidats(ctx.responsableServiceId), { ...evenement, article }));
+  } catch (e) {
+    console.error(`[Circuit] Notification de reprise (demande ${demandeId}) impossible :`, e);
   }
 }

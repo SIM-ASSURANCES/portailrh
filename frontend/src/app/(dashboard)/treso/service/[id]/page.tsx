@@ -17,6 +17,7 @@ import {
   raisonIndisponible,
   versDemandeCircuit,
   getParcoursArticles,
+  responsableServiceEffectif,
 } from "backend";
 
 import { ServiceDecisionActions } from "./ServiceDecisionActions";
@@ -42,7 +43,8 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
       lignes: { orderBy: { createdAt: "asc" }, include: { beneficiaireUser: true } },
     },
   });
-  if (!demande || demande.createur.service?.responsableId !== session.user.id) notFound();
+  // Lot K : le décideur de l'étape est celui de CETTE demande (réorientation) — l'ancien responsable tombe ici sur « introuvable ».
+  if (!demande || responsableServiceEffectif(demande, demande.createur.service?.responsableId) !== session.user.id) notFound();
 
   const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
   // Lot D : parcours de chaque article (validé, réglé, retour de caisse, régularisé), lecture seule.
@@ -55,7 +57,7 @@ export default async function DemandeServicePage({ params }: { params: Promise<{
     creeeLe: demande.createdAt,
     devise: demande.devise,
   };
-  const acteur = await chargerActeur(prisma, session, demande.createurId);
+  const acteur = await chargerActeur(prisma, session, demande.createurId, demande.id);
   // La version du demandeur, jamais une description modifiée par la Finance.
   const motif = demande.descriptionDemandeur ?? demande.descriptionOriginale ?? demande.description;
 

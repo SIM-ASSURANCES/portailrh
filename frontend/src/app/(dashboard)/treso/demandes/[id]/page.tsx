@@ -16,6 +16,7 @@ import {
   saisieDepuisChoix,
   getMontantsLignesParStatut,
   LIBELLE_ETAPE_CIRCUIT,
+  chargerAffichageReorientation,
   versDemandeCircuit,
   getParcoursArticles,
 } from "backend";
@@ -24,6 +25,7 @@ import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
+import { ReorienterDemande } from "@/components/tresorerie/ReorienterDemande";
 import { RecapRetourCaisse } from "@/components/tresorerie/RecapRetourCaisse";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { ClotureForceeBandeau } from "@/components/tresorerie/ClotureForceeBandeau";
@@ -115,6 +117,7 @@ export default async function MaDemandeDetailPage({
   };
   const libelleDemandeur = (l: (typeof demande.lignes)[number]) => l.libelleDemandeur ?? l.libelleOriginal ?? l.libelle;
   const aCorriger = demande.etapeCircuit === "A_CORRIGER";
+  const affichageReorientation = demande.etapeCircuit === "SERVICE" ? await chargerAffichageReorientation(prisma, demande.id) : null;
   // Comptes proposables comme bénéficiaire d'un article lors de la correction (autres comptes actifs du portail).
   const comptesCorrection = aCorriger
     ? (
@@ -348,6 +351,15 @@ export default async function MaDemandeDetailPage({
         niveauRejet={demande.niveauRejet}
         motifRejet={demande.motifRejet}
       />
+
+      {/* Lot K : le responsable de service est absent — le demandeur confie l'étape à un autre responsable disponible. */}
+      {demande.etapeCircuit === "SERVICE" && affichageReorientation ? (
+        <ReorienterDemande
+          demandeId={demande.id}
+          responsableActuel={affichageReorientation.responsableActuel}
+          eligibles={affichageReorientation.eligibles}
+        />
+      ) : null}
 
       {aCorriger ? (
         <section

@@ -22,6 +22,10 @@ const ACTION_LABELS: Record<string, string> = {
   demande_confirmation_depassement: "Confirmation du DG demandée (dépassement de budget)",
   depassement_budget_utilise: "Validation avec dépassement de budget confirmé",
   reglement_couvert_depassement: "Règlement couvert par la confirmation du DG (dépassement de budget)",
+  confirmation_depassement_caduque: "Confirmation du DG caduque (article repris)",
+  // Lot K : réorientation de l'étape Service et reprise (retour à l'étape précédente) — visibles du demandeur (histoire de SA demande).
+  reorientation_service: "Étape Service réorientée vers un autre responsable",
+  reprise_etape: "Reprise : retour à l'étape précédente",
   CATEGORISER: "Catégorisation",
   modification_description: "Description du besoin modifiée",
   validation: "Validation",
@@ -253,6 +257,7 @@ const ACTIONS_GESTION_INTERNE = new Set([
   "demande_confirmation_depassement",
   "depassement_budget_utilise",
   "reglement_couvert_depassement",
+  "confirmation_depassement_caduque",
 ]);
 
 /**

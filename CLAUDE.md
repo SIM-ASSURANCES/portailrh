@@ -3562,6 +3562,67 @@ absentes des choix, visibles dans l'historique, le reporting et le tableau des b
 `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34. **Piège d'environnement** : au-delà de ~6 scripts sur le même serveur, la limite de connexions fait expirer l'ouverture de session
 du script suivant — redémarrer le serveur entre les scripts.
 
+#### Lot K — réorientation de l'étape Service et reprise (retour à l'étape précédente) (2026-10-26)
+
+Aucune écriture de caisse créée ni modifiée (une réorientation ou une reprise n'en génère jamais) ; `PERMISSIONS_DECISION_NON_DELEGABLES` intacte ; garde 8 jamais contournée ; « DG définitif » et mécanisme de dépassement
+(lot J bis) non élargis. Migration `20261026090000_circuit_reorientation_reprise` (écrite à la main, idempotente, rejouée sans effet, `migrate diff` vide) : `Demande.responsableEtapeServiceId` (facultatif, clé `SET NULL`, indexé)
+et la permission `treso.reorienter_demande` (donnée aux rôles qui portent `treso.decider_finance`, seed compris : Finance). Moteur pur : `circuitReorientation.ts` et `circuitReprise.ts` (branchés dans `transition` par les
+actions `REORIENTER` / `REPRENDRE` : les boutons grisés lisent donc la même phrase que le serveur). Couche base : `circuitReorientationDb.ts`, `circuitRepriseDb.ts`, `circuitEvenementsDb.ts` (lecture de l'historique pour le parcours et
+le reporting). Actions : `reorienterDemandeAction`, `reprendreEtapeAction` (`treso/circuit/actions.ts`).
+
+**Constat préalable (la spec du lot supposait du code existant)** : `repriseArticles.ts` / `repriseReglements.ts` sont des scripts de rattrapage de DONNÉES (lots B et D, lancés à la main) et `cheminRetour.ts` valide la redirection après
+connexion — aucun ne fait revenir une demande à l'étape précédente. Il n'existait AUCUNE fonction de retour en arrière dans le circuit (« aucune dévalidation », voir plus haut) : `circuitReprise.ts` est le premier et le seul mécanisme de
+reprise, ajouté au moteur existant (`transition`) plutôt qu'à côté.
+
+**Partie 1 — réorientation vers un autre responsable disponible**
+- **Qui** : le demandeur (sans permission) ou la Finance (`treso.reorienter_demande`, permission dédiée, délégable comme les autres permissions ordinaires). **Quand** : seulement tant que la demande attend le responsable de service (étape
+  Service) ; jamais après sa décision. **Motif obligatoire**, 10 caractères (« Pourquoi réorienter ? »), revérifié côté serveur.
+- **Décideur effectif de l'étape** (`responsableServiceEffectif`, une seule définition) = `Demande.responsableEtapeServiceId` s'il existe, sinon le responsable ACTUEL du service du demandeur (règle d'origine, inchangée pour toute demande non
+  réorientée). Lu par : la file `demandesServiceAValiderWhere`, `chargerActeur` (avec `demandeId`) et `appliquerTransitionCircuit` (revérifié sous le verrou de la demande), la garde de `/treso/service/[id]` (**404 pour l'ancien responsable**),
+  la route des pièces jointes (403 pour l'ancien), les notifications et les rappels (`chargerContexte`). Le **service du demandeur ne change jamais**. La surcharge est remise à `NULL` à la resoumission après correction (nouveau tour).
+  `changerResponsableService` (Admin) ne touche plus les demandes réorientées (pas de ligne d'historique « suit le nouveau responsable » pour elles).
+- **Cibles éligibles** (`responsablesEligibles` / `refusCibleReorientation`, revérifiées par le serveur, jamais la liste affichée seule) : comptes responsables d'au moins un service, **actifs**, différents du décideur actuel, **pas en
+  absence autorisée aujourd'hui**, et **garde 8** (ni le demandeur ni le bénéficiaire de la demande ou de l'un de ses articles). **Absence** : la seule connaissance d'absence du portail est `PlageAbsenceAutorisee` (congé ou permission couvrant
+  toute la journée, règle `utilisateursCouvertsParAbsence` du Pointage) ; un responsable absent SANS plage déclarée n'est pas exclu (point ouvert).
+- **Effets** (une seule transaction) : décideur remplacé ; chronomètre de la demande remis à zéro (`etapeCircuitDepuis`) et `dernierRappelAt` effacé (le rappel de 48 h repart du NOUVEAU responsable) ; historique `reorientation_service`
+  (qui, de qui vers qui, « à la demande du demandeur » / « par la Finance », motif, **délai écoulé chez l'ancien décideur**), visible du demandeur ; plusieurs réorientations possibles, chacune tracée (l'ancien décideur redevient proposable).
+  Notifications : nouveau responsable (à valider, motif), ancien (demande retirée), demandeur quand ce n'est pas lui qui réoriente — jamais l'auteur.
+- **Écrans** : `ReorienterDemande` (liste « Nom — Service » + « Pourquoi réorienter ? ») sur la page du demandeur et sur celle de la Finance, **seulement à l'étape Service** ; aucun reste de budget n'y figure (règle du lot J).
+- **Traces** : parcours de l'article (`ParcoursArticle.circuit`, bloc « Réorientations et reprises ») et reporting (colonne « Réorientations et reprises » du tableau unique, page et Excel, lignes DEMANDE et ARTICLE) — relus de
+  l'historique, aucune nouvelle table.
+
+**Partie 2 — reprise (retour à l'étape précédente), motif obligatoire (10 caractères)**
+Enchaînement réel vérifié dans le code : Service (demande entière) → Finance (article par article) → DG (articles soumis par la Finance), puis exécution. Trois reprises, rien d'autre (`evaluerReprise`) :
+| Reprise | Cible | Conditions | Qui |
+|---|---|---|---|
+| Finance → Service | la demande entière | étape Finance, parcours avec étape Service, **aucun article décidé, soumis au DG ni rejeté** | `treso.decider_finance` (étape en cours) ou `treso.decider_dg` (étape suivante, moteur seulement) |
+| DG → Finance | un article soumis au DG, sans décision du DG | demande qui n'est pas à décision DG d'office (cas b) | le DG qui renvoie, ou la Finance qui le retire |
+| Validation → à décider | un article validé par la Finance **seule** | `decisionDG` nulle, jamais soumis au DG, **aucun règlement non annulé (brouillon et règlement partiel compris)**, demande ni clôturée ni rejetée ni abandonnée | Finance ou DG |
+**Interdits** (phrase du serveur, bouton grisé avec elle) : article rejeté (définitif), article validé par le DG (définitif, y compris cas b), article avec un règlement (même brouillon), demande `CLOTUREE` / `REJETEE` / `ABANDONNEE` ou en
+correction, dépense directe (aucune étape précédente), propre demande ou **propre article** (garde 8), compte sans permission de décision (Assistant Finance, Collaborateur). Le nombre de règlements inconnu refuse la reprise (jamais de devinette).
+- **Effets** (`reprendreEtape`, transaction annulée en entier sur refus, verrou de la demande) : l'article repasse « à décider » (validation reprise : décision, décideur Finance et **photo du budget** effacés — l'historique garde tout ; retrait de
+  l'étape DG : soumission annulée) ; montant validé recalculé, étape déduite des articles, statut par `calculerStatutDemande` (seul point d'écriture) ; chronomètre remis à zéro et rappel recalibré ; historique `reprise_etape` (qui, étape
+  avant → après, motif ; rattaché à l'article pour une reprise d'article, à la demande sinon) ; notifications avec le motif : responsable du service (Finance → Service), Finance (DG → Finance, validation reprise), DG quand la Finance retire un
+  article de son étape, et le demandeur (information). Un règlement créé entre-temps annule la reprise (contrôle après écriture, dans la transaction).
+- **Budgets** : l'engagé se recalcule des articles validés → **aucun engagement fantôme** après une reprise. **Dépassement confirmé par le DG (lot J bis) puis article repris — décision : la confirmation devient CADUQUE pour cet article.** Sa part est
+  retirée de `BudgetDepassement.couverture` (`rendreCaduqueCouvertureArticle`, historique `confirmation_depassement_caduque`, interne) ; la confirmation reste « utilisée » (usage unique) mais ne couvre plus rien pour lui ; les autres articles de la même
+  confirmation gardent la leur ; **revalider l'article exige une NOUVELLE confirmation du DG** si le dépassement subsiste (vérifié : alerte ROUGE de nouveau, appel direct refusé). Raison : la confirmation portait sur UNE validation précise ; la garder
+  vivante laisserait contourner le seuil rouge à la revalidation, éventuellement avec un autre montant.
+- **Écrans** : `RepriseEtapeSection` sur la page Finance (demande entière, articles soumis au DG, articles validés — bouton grisé avec la phrase du serveur quand c'est interdit) et sur la page du DG (« Renvoyer à la Finance »).
+- Les décideurs reçoivent la reprise sans nouvelle permission : `treso.decider_finance` / `treso.decider_dg` (non délégables) suffisent.
+
+**Points ouverts / décisions à confirmer** : (1) un responsable absent sans `PlageAbsenceAutorisee` reste proposable ; (2) la reprise « Finance → Service » par le DG n'est accessible que par le moteur (le DG n'a pas de page pour un dossier à l'étape
+Finance) ; (3) une reprise ne remet pas en cause `validationCompleteParDG` / `dgApprobateurId` éventuellement acquis par une approbation séparée de clôture (elle reste valable : la clôture exige de toute façon que tous les articles soient traités) ;
+(4) un article validé par la Finance mais encore « à confirmer » par le DG n'existe pas (le DG valide d'abord) ; (5) le compte « deux personnes » (`decideurFinanceId` de la demande) n'est pas effacé par la reprise d'un article (l'historique le garde) ;
+(6) l'ancien responsable qui suivait une demande réorientée tombe sur « introuvable » (404) plutôt que sur une page en lecture seule ; (7) les pièces jointes d'une demande réorientée ne sont plus lisibles par l'ancien responsable.
+
+**Vérifié** : vitest (1034 réussis : `circuitReorientation.test.ts` 16, `circuitReprise.test.ts` 30 — éligibilité des cibles, garde 8, interdits de reprise, motif obligatoire, caducité de la
+couverture ; `circuitDemande.test.ts` adapté : le demandeur peut réorienter à l'étape Service ; `reportingArbre.test.ts` adapté : nouvelle colonne longue), tsc (backend et frontend), eslint, `next build` ; migration depuis une base vide (deploy + seed),
+`migrate diff` vide, rejeu sans effet, et sur une base « déjà seedée » (permission rattrapée pour la Finance) ; e2e `lot-k.mjs` 101/101 (réorientation par le demandeur et par la Finance, liste filtrée — actuel, inactif, absent —, motif court refusé
+au serveur, garde 8 sur le nouveau responsable, ancien responsable : lien 404, file vide, valider/rejeter refusés, pièce jointe 403, notifications, délai tracé, rappel recalibré sur le nouveau, réorientations multiples, refus après l'étape Service ;
+reprise Finance → Service puis re-validation du responsable, DG → Finance dans les deux sens, refus sur article validé par le DG / rejeté / réglé en brouillon puis confirmé / demande clôturée / bénéficiaire / Assistant, reprise d'un article validé avec
+dépassement confirmé, confirmation caduque, revalidation refusée sans nouvelle confirmation, parcours, reporting page et Excel, journal de caisse strictement identique).
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié
@@ -7688,6 +7749,7 @@ combinaison de permissions** : chaque action a sa permission.
 | `treso.modifier_description` | Description d'une demande et libellé de ses lignes |
 | `treso.decider_dg` | Décider à l'étape DG du circuit (migration `20261006120000`, rôles portant `systeme.reinitialiser` : le DG seul) |
 | `treso.valider_budget` | Valider ou refuser un paramétrage de budget (lot J, migration `20261023090000`, rôles portant `treso.decider_dg` : le DG seul) |
+| `treso.reorienter_demande` | Réorienter l'étape Service d'une demande vers un autre responsable (lot K, migration `20261026090000`, rôles portant `treso.decider_finance` : la Finance ; le demandeur réoriente la sienne sans permission) |
 
 **Jamais délégables** (circuit, 2026-10-06) : `treso.decider_finance`, `treso.soumettre_dg`, `treso.decider_dg`,
 `treso.approuver_validation_complete` — voir « Circuit de validation des demandes — moteur ».
