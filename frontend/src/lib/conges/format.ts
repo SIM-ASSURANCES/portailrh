@@ -1,4 +1,4 @@
-import { formatJourCivil, jourCivilDepuisColonneDate } from "backend";
+import { formatJourCivil, jourCivilDepuisColonneDate } from "backend/client";
 
 /** `AAAA-MM-JJ` → `JJ/MM/AAAA`. */
 export function frDate(jour: string): string {

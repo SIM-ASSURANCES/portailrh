@@ -50,6 +50,7 @@ export * from "./encPermissions";
 export * from "./congesPermissions";
 export * from "./congesCalcul";
 export * from "./circuitConge";
+export * from "./congesNotifications";
 export * from "./congesPasse";
 export * from "./congesDb";
 export * from "./encReferentiels";

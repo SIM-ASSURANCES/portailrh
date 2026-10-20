@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { Button, Textarea } from "@/components/ui";
+import { frDate } from "@/lib/conges/format";
 import type { ActionsPossiblesConge, ActionState } from "backend";
 import {
   annulerCongeAction,
@@ -14,6 +15,13 @@ import {
 } from "@/app/(dashboard)/conges/actions";
 
 type ModeDecision = "rejeter" | "modifier" | "annuler" | null;
+
+function formaterJoursProteges(jours: readonly string[]): string {
+  if (jours.length > 10) {
+    return `du ${frDate(jours[0])} au ${frDate(jours[jours.length - 1])}, ${jours.length} jours`;
+  }
+  return jours.map(frDate).join(", ");
+}
 
 interface DecisionCongeProps {
   demandeId: string;
@@ -67,6 +75,18 @@ export function DecisionConge({
           Les actions indisponibles restent visibles avec la raison communiquée par le circuit.
         </p>
       </div>
+
+      {estEtapeRH ? (
+        <Textarea
+          label="Observation RH (facultative)"
+          rows={2}
+          maxLength={500}
+          value={observationRH}
+          onChange={(event) => setObservationRH(event.target.value)}
+          disabled={enCours || actions.approuver !== null && actions.rejeter !== null && actions.demanderModification !== null}
+          hint="Au maximum 500 caractères."
+        />
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
@@ -129,18 +149,6 @@ export function DecisionConge({
         </div>
       </div>
 
-      {estEtapeRH ? (
-        <Textarea
-          label="Observation RH (facultative)"
-          rows={2}
-          maxLength={500}
-          value={observationRH}
-          onChange={(event) => setObservationRH(event.target.value)}
-          disabled={enCours || actions.approuver !== null && actions.rejeter !== null && actions.demanderModification !== null}
-          hint="Au maximum 500 caractères."
-        />
-      ) : null}
-
       {mode === "rejeter" && !actions.rejeter ? (
         <div className="space-y-3 rounded-xl border border-danger-border bg-danger-bg p-4">
           <Textarea
@@ -162,7 +170,7 @@ export function DecisionConge({
               <span>
                 Compter les jours déjà passés comme absences
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  Jours protégés : {joursPassesProteges.join(", ")}
+                  Jours protégés : {formaterJoursProteges(joursPassesProteges)}
                 </span>
               </span>
             </label>

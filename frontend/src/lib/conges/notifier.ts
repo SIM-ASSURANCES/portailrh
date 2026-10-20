@@ -1,6 +1,11 @@
 import {
+  chargerContexteCircuit,
+  comptesActifsAvecPermission,
+  destinatairesAnnulationConge,
+  destinatairesEtapeConge,
   LIBELLE_NATURE_CONGE,
   LIBELLE_STATUT_CONGE,
+  prisma,
   type DecisionConge,
   type EntreeConge,
   type SoumissionConge,
@@ -47,10 +52,6 @@ export async function notifierDecisionConge(params: {
   acteurNom: string;
 }): Promise<void> {
   const { decision } = params;
-  const destinataires = destinatairesUniques(
-    [decision.demandeurId, ...decision.destinatairesSuivants],
-    params.acteurId
-  );
   const titreParStatut: Record<DecisionConge["statut"], string> = {
     EN_ATTENTE_RESPONSABLE: "Demande de congé à examiner",
     EN_ATTENTE_RH: "Demande de congé transmise à la RH",
@@ -59,6 +60,44 @@ export async function notifierDecisionConge(params: {
     REJETEE: "Demande de congé rejetée",
     ANNULEE: "Demande de congé annulée",
   };
+
+  if (decision.statut === "ANNULEE") {
+    const [comptesRH, contexte] = await Promise.all([
+      comptesActifsAvecPermission(prisma, "conges.valider_rh"),
+      chargerContexteCircuit(prisma, decision.demandeurId),
+    ]);
+    const destinataires = destinatairesAnnulationConge({
+      ancienStatut: decision.ancienStatut,
+      acteurId: params.acteurId,
+      demandeurId: decision.demandeurId,
+      comptesRH,
+      destinatairesEtapeEnCours: destinatairesEtapeConge(decision.ancienStatut, contexte),
+    });
+    const titre = decision.ancienStatut === "VALIDEE" ? "Congé validé annulé" : titreParStatut.ANNULEE;
+    const details = [
+      `${params.acteurNom} a annulé la demande ${decision.reference} (${libellePeriode(decision.dateDebut, decision.dateFin)}).`,
+      decision.motif ? `Motif : ${decision.motif}` : null,
+    ].filter((detail): detail is string => detail !== null);
+
+    await Promise.all(
+      destinataires.map((userId) =>
+        notify({
+          userId,
+          titre,
+          message: details.join(" "),
+          lien: `/conges/${decision.id}`,
+          priority: "IMPORTANT",
+          category: "RH",
+        })
+      )
+    );
+    return;
+  }
+
+  const destinataires = destinatairesUniques(
+    [decision.demandeurId, ...decision.destinatairesSuivants],
+    params.acteurId
+  );
   const details = [
     `${params.acteurNom} a mis à jour la demande ${decision.reference} : ${LIBELLE_STATUT_CONGE[decision.statut].toLowerCase()}.`,
     decision.motif ? `Motif : ${decision.motif}` : null,

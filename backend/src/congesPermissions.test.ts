@@ -33,17 +33,7 @@ describe("Congés — source unique et migration synchronisées", () => {
 
   it("la migration ne garde ni solde, ni type, ni permission d'absence, ni date d'embauche", () => {
     const code = sql.replace(/^--.*$/gm, "");
-    const symbolesObsoletes = [
-      ["Type", "Conge"].join(""),
-      ["Solde", "Conge"].join(""),
-      ["Ajustement", "Solde"].join(""),
-      ["PieceJointe", "Conge"].join(""),
-      ["Type", "Permission"].join(""),
-      ["Demande", "Permission"].join(""),
-      ["Observation", "Absence"].join(""),
-      ["date", "Embauche"].join(""),
-    ];
-    for (const symbole of symbolesObsoletes) expect(code).not.toContain(symbole);
+    expect(code).not.toMatch(/TypeConge|SoldeConge|AjustementSolde|PieceJointeConge|TypePermission|DemandePermission|ObservationAbsence|dateEmbauche/);
     expect(code).not.toContain("absences.");
     expect(PERMISSIONS_CONGES.map((p) => p.key)).toEqual(["conges.soumettre", "conges.valider_rh", "conges.annuler", "conges.consulter_tous"]);
   });

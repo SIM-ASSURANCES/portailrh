@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma } from "backend";
+import { PERMISSION_DG_CONGE, prisma } from "backend";
 import { chargerFileDecisionConges } from "@/lib/conges/lecture";
 import { SousNavConges, type LienSousNav } from "./SousNavConges";
 
@@ -14,15 +14,17 @@ export default async function CongesLayout({ children }: { children: React.React
   if (!session) redirect("/login");
 
   const estRH = session.rolePermissions.includes("conges.valider_rh");
+  const estDG = session.rolePermissions.includes(PERMISSION_DG_CONGE);
   const peutSoumettre = hasPermission(session, "conges.soumettre");
   const consulteTous = hasPermission(session, "conges.consulter_tous");
   // Le responsable ACTUEL d'au moins un service décide les demandes de son service sans aucune permission (comme « Mon service »
   // en Trésorerie) : il n'accède qu'à « À décider » et au détail des demandes de son service, jamais à « Mes congés ».
   const estResponsable = (await prisma.service.count({ where: { responsableId: session.user.id } })) > 0;
-  if (!peutSoumettre && !estRH && !consulteTous && !estResponsable) redirect("/?error=acces_refuse_conges");
+  const peutDecider = estResponsable || estRH || estDG;
+  if (!peutSoumettre && !estRH && !consulteTous && !estResponsable && !estDG) redirect("/?error=acces_refuse_conges");
 
   // La file n'est chargée que pour qui peut décider quelque chose (responsable de service, RH, DG).
-  const file = await chargerFileDecisionConges(session);
+  const file = peutDecider ? await chargerFileDecisionConges(session) : [];
 
   const liens: LienSousNav[] = [];
   if (peutSoumettre) {
