@@ -3,9 +3,9 @@ import type { EtapeFrise, EtatEtapeFrise } from "backend";
 
 /**
  * Frise d'avancement d'une demande de congé : Dépôt → Responsable → RH → Décision.
- * Lecture seule, calcul unique par `friseAbsence` (moteur du circuit).
+ * Lecture seule, calcul unique par `friseConge` (moteur du circuit).
  */
-export function FriseAbsence({ etapes }: { etapes: readonly EtapeFrise[] }) {
+export function FriseConge({ etapes }: { etapes: readonly EtapeFrise[] }) {
   return (
     <section aria-label="Avancement de la demande" className="space-y-3 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
       <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Avancement</h2>

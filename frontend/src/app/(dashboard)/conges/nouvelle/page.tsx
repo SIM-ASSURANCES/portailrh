@@ -3,37 +3,25 @@ import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { aujourdhui } from "@/lib/conges/format";
-import { chargerChoixDestinataire, prisma } from "backend";
+import { prisma } from "backend";
 
 import { DemandeCongeForm } from "../DemandeCongeForm";
 
 export default async function NouvelleDemandeCongePage() {
   const session = await getSession();
   if (!session) redirect("/login");
-  if (!hasPermission(session, "conges.soumettre")) redirect("/?error=acces_refuse_conges");
-
-  const types = await prisma.typeConge.findMany({ where: { isActive: true }, orderBy: [{ categorie: "asc" }, { label: "asc" }] });
-  // Permission exceptionnelle (C4) : à qui le demandeur peut adresser sa demande (même règle que le contrôle serveur).
-  const choixDestinataire = await chargerChoixDestinataire(prisma, session.user.id);
+  if (!hasPermission(session, "conges.soumettre")) {
+    const estResponsable = await prisma.service.count({ where: { responsableId: session.user.id } });
+    redirect(estResponsable > 0 ? "/conges/a-decider" : "/?error=acces_refuse_conges");
+  }
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Nouvelle demande de congé" description="Votre responsable de service examine d'abord votre demande, puis la RH la valide." />
-      <DemandeCongeForm
-        mode="nouvelle"
-        aujourdhui={aujourdhui()}
-        choixDestinataire={choixDestinataire}
-        types={types.map((t) => ({
-          id: t.id,
-          label: t.label,
-          categorie: t.categorie,
-          nbJoursDefaut: t.nbJoursDefaut,
-          decompteType: t.decompteType,
-          justificatifObligatoire: t.justificatifObligatoire,
-          nonDeductibleSolde: t.nonDeductibleSolde,
-          ancienneteMinimumMois: t.ancienneteMinimumMois,
-        }))}
+      <PageHeader
+        title="Nouvelle demande de congé"
+        description="Votre responsable de service examine d’abord la demande, puis la RH prend la décision finale."
       />
+      <DemandeCongeForm aujourdhui={aujourdhui()} />
     </div>
   );
 }

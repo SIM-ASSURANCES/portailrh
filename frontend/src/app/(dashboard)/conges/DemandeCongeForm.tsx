@@ -1,267 +1,146 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { refusDateDebutPassee } from "backend/client";
 
 import { Button, Input, Select, Textarea } from "@/components/ui";
-import { PiecesUpload, type PieceDeposee } from "@/components/conges/PiecesUpload";
+import type { ActionState } from "backend";
 import {
-  accorderCongeOfficeAction,
   apercuCongeAction,
   resoumettreCongeAction,
+  saisirCongeRHAction,
   soumettreCongeAction,
-  type ApercuConge,
 } from "./actions";
 
-export interface TypeCongeOption {
-  id: string;
-  label: string;
-  categorie: "CONGE_STANDARD" | "PERMISSION_EXCEPTIONNELLE";
-  nbJoursDefaut: number;
-  decompteType: "CALENDAIRE" | "OUVRABLE";
-  justificatifObligatoire: boolean;
-  nonDeductibleSolde: boolean;
-  ancienneteMinimumMois: number;
-}
-
-/** Ce que l'écran propose pour une permission exceptionnelle (C4) : voir `chargerChoixDestinataire`. */
-export interface ChoixDestinataireEcran {
-  proposes: ("RESPONSABLE" | "RH")[];
-  responsableNom: string | null;
-}
-
-export interface ValeursInitiales {
-  destinataire?: "RESPONSABLE" | "RH" | null;
-  typeCongeId: string;
+interface ValeursConge {
+  nature: "CONGE" | "PERMISSION_EXCEPTIONNELLE";
+  motif: string;
   dateDebut: string;
   dateFin: string;
-  motif: string;
-  interimaire: string;
-  pieces: PieceDeposee[];
 }
 
-type Mode = "nouvelle" | "modifier" | "office";
+interface ApercuConge {
+  nbJoursOuvres: number;
+  joursFeriesInclus: string[];
+}
 
-/**
- * Formulaire de demande de congé — trois usages, un seul composant :
- *  - `nouvelle` : le collaborateur dépose sa demande ;
- *  - `modifier` : il corrige puis renvoie une demande dont la modification a été demandée (le circuit repart de zéro) ;
- *  - `office` : la RH accorde un congé à un collaborateur, sans circuit (aucune demande préalable).
- * Aucun calcul de jours ni de solde ici : l'aperçu vient du serveur (`apercuCongeAction`, mêmes règles que la soumission).
- */
 export function DemandeCongeForm({
-  mode,
-  types,
-  collaborateurs,
+  aujourdhui,
   demandeId,
   initial,
-  aujourdhui,
-  choixDestinataire,
+  saisieRH = false,
+  salaries = [],
 }: {
-  mode: Mode;
-  choixDestinataire?: ChoixDestinataireEcran;
-  types: TypeCongeOption[];
-  collaborateurs?: { id: string; label: string }[];
-  demandeId?: string;
-  initial?: ValeursInitiales;
   aujourdhui: string;
+  demandeId?: string;
+  initial?: ValeursConge;
+  saisieRH?: boolean;
+  salaries?: { id: string; fullName: string }[];
 }) {
   const router = useRouter();
   const [enCours, demarrer] = useTransition();
-  const [userId, setUserId] = useState("");
-  const [typeCongeId, setTypeCongeId] = useState(initial?.typeCongeId ?? "");
+  const [nature, setNature] = useState<ValeursConge["nature"]>(initial?.nature ?? "CONGE");
+  const [motif, setMotif] = useState(initial?.motif ?? "");
   const [dateDebut, setDateDebut] = useState(initial?.dateDebut ?? "");
   const [dateFin, setDateFin] = useState(initial?.dateFin ?? "");
-  const [motif, setMotif] = useState(initial?.motif ?? "");
-  const [interimaire, setInterimaire] = useState(initial?.interimaire ?? "");
-  const [pieces, setPieces] = useState<PieceDeposee[]>(initial?.pieces ?? []);
-  // Permission exceptionnelle : celui qui valide (seule « La RH » quand le responsable n'est pas utilisable).
-  const [destinataire, setDestinataire] = useState<string>(
-    initial?.destinataire && choixDestinataire?.proposes.includes(initial.destinataire) ? initial.destinataire : choixDestinataire?.proposes.length === 1 ? choixDestinataire.proposes[0] : ""
-  );
+  const [salarieId, setSalarieId] = useState("");
   const [erreurs, setErreurs] = useState<Partial<Record<string, string>>>({});
-  // L'aperçu est rangé avec la clé de la saisie qui l'a produit : jamais affiché pour une saisie différente.
-  const [apercu, setApercu] = useState<{ cle: string; valeur: ApercuConge | null; erreur: string | null } | null>(null);
+  const [apercu, setApercu] = useState<{
+    cle: string;
+    valeur: ApercuConge | null;
+    erreur: string | null;
+  } | null>(null);
 
-  const type = useMemo(() => types.find((t) => t.id === typeCongeId) ?? null, [types, typeCongeId]);
-  const dureeFixee = type?.categorie === "PERMISSION_EXCEPTIONNELLE";
-  const pieceObligatoire = Boolean(type && (type.categorie === "PERMISSION_EXCEPTIONNELLE" || type.justificatifObligatoire));
-
-  const finPourApercu = dureeFixee ? dateDebut : dateFin;
-  const cle = `${mode === "office" ? userId : ""}|${typeCongeId}|${dateDebut}|${finPourApercu}`;
-  const pret = Boolean(typeCongeId && dateDebut && finPourApercu && (mode !== "office" || userId));
+  const cle = `${nature}|${dateDebut}|${dateFin}`;
+  const formulairePret = Boolean(
+    dateDebut && dateFin && motif.trim().length >= 3 && (!saisieRH || salarieId)
+  );
+  const apercuCourant = apercu?.cle === cle ? apercu : null;
 
   useEffect(() => {
-    if (!pret) return;
+    if (!formulairePret || saisieRH) return;
+
     let annule = false;
     const minuteur = setTimeout(async () => {
-      const r = await apercuCongeAction({ typeCongeId, dateDebut, dateFin: finPourApercu, ...(mode === "office" ? { userId } : {}) });
+      const resultat = await apercuCongeAction({ nature, motif, dateDebut, dateFin }, demandeId);
       if (annule) return;
-      if (r.status === "success" && r.data) setApercu({ cle, valeur: r.data, erreur: null });
-      else setApercu({ cle, valeur: null, erreur: r.status === "error" ? r.message : null });
+      if (resultat.status === "success" && resultat.data) {
+        setApercu({ cle, valeur: resultat.data, erreur: null });
+      } else {
+        setApercu({
+          cle,
+          valeur: null,
+          erreur: resultat.status === "error" ? resultat.message : null,
+        });
+      }
     }, 300);
+
     return () => {
       annule = true;
       clearTimeout(minuteur);
     };
-  }, [pret, cle, typeCongeId, dateDebut, finPourApercu, mode, userId]);
-
-  const apercuCourant = apercu && apercu.cle === cle ? apercu : null;
+  }, [cle, demandeId, dateDebut, dateFin, formulairePret, motif, nature, saisieRH]);
 
   const envoyer = () => {
+    const entree = { nature, motif, dateDebut, dateFin };
     setErreurs({});
-    const donnees = {
-      typeCongeId,
-      dateDebut,
-      // Pour une durée fixée par le type, le serveur recalcule la fin : on envoie le début pour un champ jamais vide.
-      dateFin: dureeFixee ? (apercuCourant?.valeur?.dateFin ?? dateDebut) : dateFin,
-      motif,
-      interimaire: interimaire.trim() === "" ? undefined : interimaire,
-      destinataire: mode !== "office" && dureeFixee && destinataire ? destinataire : undefined,
-      piecesJointes: pieces.map((p) => ({ url: p.url, nomFichier: p.nomFichier })),
-    };
     demarrer(async () => {
-      const r =
-        mode === "office"
-          ? await accorderCongeOfficeAction({ ...donnees, userId })
-          : mode === "modifier" && demandeId
-            ? await resoumettreCongeAction(demandeId, donnees)
-            : await soumettreCongeAction(donnees);
-      if (r.status === "success") {
-        toast.success(r.message ?? "Enregistré.");
-        const id = (r.data as { id?: string } | undefined)?.id;
-        router.push(id ? `/conges/${id}` : "/conges");
+      const resultat: ActionState<{ id: string; reference: string }> = demandeId
+        ? await resoumettreCongeAction(demandeId, entree)
+        : saisieRH
+          ? await saisirCongeRHAction(salarieId, entree)
+          : await soumettreCongeAction(entree);
+
+      if (resultat.status === "success") {
+        toast.success(resultat.message ?? "Demande enregistrée.");
+        const id = resultat.data?.id;
+        if (!id) {
+          throw new Error("La demande a été enregistrée, mais aucun identifiant n'a été renvoyé.");
+        }
+        router.push(`/conges/${id}`);
         router.refresh();
-      } else if (r.status === "error") {
-        setErreurs(r.fieldErrors ?? {});
-        toast.error(r.message);
+      } else if (resultat.status === "error") {
+        setErreurs(resultat.fieldErrors ?? {});
+        toast.error(resultat.message);
       }
     });
   };
 
-  const titreBouton = mode === "office" ? "Accorder le congé" : mode === "modifier" ? "Renvoyer la demande" : "Envoyer la demande";
-  const minDebut = mode === "office" ? undefined : aujourdhui;
-  // Art. 12 : autorisation préalable. Même règle et même phrase que le serveur ; seul le congé d'office (RH) y échappe.
-  const erreurPasse = mode !== "office" && dateDebut ? refusDateDebutPassee(dateDebut, aujourdhui) : null;
-  const incomplet = !typeCongeId || !dateDebut || (!dureeFixee && !dateFin) || motif.trim().length < 5 || (mode === "office" && !userId) || erreurPasse !== null || (mode !== "office" && dureeFixee && !destinataire);
-
   return (
     <form
       className="space-y-5"
-      onSubmit={(e) => {
-        e.preventDefault();
+      onSubmit={(event) => {
+        event.preventDefault();
         envoyer();
       }}
     >
-      {mode === "office" ? (
+      {saisieRH ? (
         <Select
-          label="Collaborateur"
+          label="Salarié"
           required
-          placeholder="Choisir un collaborateur"
-          options={(collaborateurs ?? []).map((c) => ({ value: c.id, label: c.label }))}
-          value={userId}
-          onChange={(e) => setUserId(e.target.value)}
+          value={salarieId}
+          onChange={(event) => setSalarieId(event.target.value)}
+          options={salaries.map((salarie) => ({ value: salarie.id, label: salarie.fullName }))}
+          placeholder="Choisir un salarié"
+          error={erreurs.userId}
         />
       ) : null}
 
       <Select
-        label="Type de congé"
+        label="Nature de la demande"
         required
-        placeholder="Choisir un type"
-        options={types.map((t) => ({ value: t.id, label: t.label }))}
-        value={typeCongeId}
-        onChange={(e) => setTypeCongeId(e.target.value)}
-        error={erreurs.typeCongeId}
-        hint={
-          type
-            ? [
-                type.nonDeductibleSolde ? "Non déduit de votre solde annuel." : null,
-                type.ancienneteMinimumMois > 0 ? `Ancienneté minimale : ${type.ancienneteMinimumMois} mois.` : null,
-                type.decompteType === "OUVRABLE" ? "Jours ouvrables (lundi à vendredi), jours fériés exclus." : "Jours calendaires.",
-              ]
-                .filter(Boolean)
-                .join(" ")
-            : undefined
-        }
+        value={nature}
+        onChange={(event) => {
+          const value = event.target.value;
+          if (value === "CONGE" || value === "PERMISSION_EXCEPTIONNELLE") setNature(value);
+        }}
+        options={[
+          { value: "CONGE", label: "Congé" },
+          { value: "PERMISSION_EXCEPTIONNELLE", label: "Permission exceptionnelle" },
+        ]}
+        error={erreurs.nature}
       />
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Input
-          label="Date de début"
-          type="date"
-          required
-          min={minDebut}
-          value={dateDebut}
-          onChange={(e) => setDateDebut(e.target.value)}
-          error={erreurs.dateDebut ?? erreurPasse ?? undefined}
-        />
-        {dureeFixee ? (
-          <Input
-            label="Date de fin"
-            type="date"
-            disabled
-            value={apercuCourant?.valeur?.dateFin ?? ""}
-            onChange={() => {}}
-            hint={`Durée fixée par le type : ${type?.nbJoursDefaut} jour(s).`}
-            error={erreurs.dateFin}
-          />
-        ) : (
-          <Input
-            label="Date de fin"
-            type="date"
-            required
-            min={dateDebut || minDebut}
-            value={dateFin}
-            onChange={(e) => setDateFin(e.target.value)}
-            error={erreurs.dateFin}
-          />
-        )}
-      </div>
-
-      {apercuCourant ? (
-        <div className="space-y-1 rounded-lg border border-border bg-muted px-4 py-3 text-sm" role="status" aria-live="polite">
-          {apercuCourant.valeur ? (
-            <>
-              <p className="font-semibold text-foreground">
-                {apercuCourant.valeur.nbJours} jour{apercuCourant.valeur.nbJours > 1 ? "s" : ""} décompté{apercuCourant.valeur.nbJours > 1 ? "s" : ""}
-                {apercuCourant.valeur.joursFeriesInclus > 0 ? ` (dont ${apercuCourant.valeur.joursFeriesInclus} jour(s) férié(s) sur la période)` : ""}
-              </p>
-              {apercuCourant.valeur.soldeRestant !== null ? (
-                <p className="text-muted-foreground">
-                  Solde de l&apos;exercice {apercuCourant.valeur.exercice} : {apercuCourant.valeur.soldeRestant} jour(s) avant cette demande.
-                </p>
-              ) : null}
-              {apercuCourant.valeur.avertissement ? <p className="font-medium text-warning">{apercuCourant.valeur.avertissement}</p> : null}
-            </>
-          ) : (
-            <p className="text-warning">{apercuCourant.erreur ?? "Aperçu indisponible."}</p>
-          )}
-        </div>
-      ) : null}
-
-      {mode !== "office" && dureeFixee && choixDestinataire ? (
-        <Select
-          label="Qui valide votre demande ?"
-          required
-          placeholder="Choisir…"
-          options={[
-            ...(choixDestinataire.proposes.includes("RESPONSABLE")
-              ? [{ value: "RESPONSABLE", label: `Mon responsable${choixDestinataire.responsableNom ? ` (${choixDestinataire.responsableNom})` : ""}` }]
-              : []),
-            { value: "RH", label: "La RH" },
-          ]}
-          value={destinataire}
-          onChange={(e) => setDestinataire(e.target.value)}
-          hint={
-            choixDestinataire.proposes.length === 1
-              ? "Votre responsable ne peut pas valider cette demande : la RH la valide."
-              : "Une seule validation suffit : celui que vous choisissez accorde ou rejette, et sa décision est définitive."
-          }
-          error={erreurs.destinataire}
-        />
-      ) : null}
 
       <Textarea
         label="Motif"
@@ -269,37 +148,66 @@ export function DemandeCongeForm({
         rows={4}
         maxLength={500}
         value={motif}
-        onChange={(e) => setMotif(e.target.value)}
+        onChange={(event) => setMotif(event.target.value)}
         error={erreurs.motif}
-        hint="5 caractères minimum."
+        hint="Décrivez brièvement le motif de votre demande (3 à 500 caractères)."
       />
 
-      <Input
-        label="Intérimaire (facultatif)"
-        maxLength={120}
-        value={interimaire}
-        onChange={(e) => setInterimaire(e.target.value)}
-        hint="Nom de la personne qui vous remplace."
-        error={erreurs.interimaire}
-      />
-
-      <PiecesUpload
-        endpoint="/api/conges/upload"
-        pieces={pieces}
-        onChange={setPieces}
-        obligatoire={pieceObligatoire}
-        urlsFixes={initial?.pieces.map((p) => p.url)}
-        error={erreurs.piecesJointes}
-      />
-
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <Button type="submit" variant="primary" loading={enCours} disabled={incomplet}>
-          {titreBouton}
-        </Button>
-        <Button type="button" variant="secondary" disabled={enCours} onClick={() => router.back()}>
-          Annuler
-        </Button>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Input
+          label="Date de début"
+          type="date"
+          required
+          min={aujourdhui}
+          value={dateDebut}
+          onChange={(event) => setDateDebut(event.target.value)}
+          error={erreurs.dateDebut}
+          hint="La date du jour ou une date future."
+        />
+        <Input
+          label="Date de fin"
+          type="date"
+          required
+          min={dateDebut || aujourdhui}
+          value={dateFin}
+          onChange={(event) => setDateFin(event.target.value)}
+          error={erreurs.dateFin}
+        />
       </div>
+
+      <div aria-live="polite" className="rounded-xl border border-border bg-surface p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Aperçu indicatif</p>
+        {saisieRH ? (
+          <p className="mt-1 text-sm text-muted-foreground">Le serveur calculera les jours ouvrés à l’enregistrement.</p>
+        ) : !formulairePret ? (
+          <p className="mt-1 text-sm text-muted-foreground">Renseignez le motif et les deux dates pour calculer les jours ouvrés.</p>
+        ) : apercuCourant?.erreur ? (
+          <p className="mt-1 text-sm text-danger">{apercuCourant.erreur}</p>
+        ) : apercuCourant?.valeur ? (
+          <div className="mt-1 space-y-1">
+            <p className="text-lg font-bold tabular-nums text-foreground">
+              {apercuCourant.valeur.nbJoursOuvres} jour{apercuCourant.valeur.nbJoursOuvres === 1 ? "" : "s"} ouvré{apercuCourant.valeur.nbJoursOuvres === 1 ? "" : "s"}
+            </p>
+            {apercuCourant.valeur.joursFeriesInclus.length > 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Jours fériés exclus : {apercuCourant.valeur.joursFeriesInclus.join(", ")}
+              </p>
+            ) : null}
+            <p className="text-xs text-muted-foreground">Décompte du lundi au vendredi, hors jours fériés. Le serveur recalcule à l&apos;envoi.</p>
+          </div>
+        ) : (
+          <p className="mt-1 text-sm text-muted-foreground">Calcul des jours ouvrés…</p>
+        )}
+      </div>
+
+      <Button
+        type="submit"
+        variant="primary"
+        loading={enCours}
+        disabled={enCours || !formulairePret}
+      >
+        {demandeId ? "Renvoyer la demande" : "Envoyer la demande"}
+      </Button>
     </form>
   );
 }

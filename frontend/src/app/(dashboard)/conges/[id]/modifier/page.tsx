@@ -3,51 +3,37 @@ import { notFound, redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { aujourdhui } from "@/lib/conges/format";
-import { chargerChoixDestinataire, jourCivilDepuisColonneDate, prisma } from "backend";
+import { jourCivilDepuisColonneDate, prisma } from "backend";
 
 import { DemandeCongeForm } from "../../DemandeCongeForm";
 
-/** Correction d'une demande dont la RH a demandé la modification : réservée au demandeur, statut MODIFICATION_DEMANDEE. */
 export default async function ModifierDemandeCongePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await getSession();
   if (!session) redirect("/login");
-  if (!hasPermission(session, "conges.soumettre")) redirect("/?error=acces_refuse_conges");
+  if (!hasPermission(session, "conges.soumettre")) {
+    const estResponsable = await prisma.service.count({ where: { responsableId: session.user.id } });
+    redirect(estResponsable > 0 ? "/conges/a-decider" : "/?error=acces_refuse_conges");
+  }
 
-  const demande = await prisma.demandeConge.findUnique({ where: { id }, include: { piecesJointes: true } });
+  const demande = await prisma.demandeConge.findUnique({ where: { id } });
   if (!demande || demande.userId !== session.user.id) notFound();
   if (demande.statut !== "MODIFICATION_DEMANDEE") redirect(`/conges/${id}`);
 
-  const types = await prisma.typeConge.findMany({ where: { isActive: true }, orderBy: [{ categorie: "asc" }, { label: "asc" }] });
-  const choixDestinataire = await chargerChoixDestinataire(prisma, session.user.id);
-
   return (
     <div className="space-y-6">
-      <PageHeader title={`Modifier la demande ${demande.reference}`} description={demande.motifModification ? `Modification demandée : ${demande.motifModification}` : undefined} />
+      <PageHeader
+        title={`Modifier la demande ${demande.reference}`}
+        description={`Modification demandée : ${demande.motifModification ?? "Veuillez corriger les informations de la demande."}`}
+      />
       <DemandeCongeForm
-        mode="modifier"
-        demandeId={demande.id}
-        choixDestinataire={choixDestinataire}
         aujourdhui={aujourdhui()}
-        types={types.map((t) => ({
-          id: t.id,
-          label: t.label,
-          categorie: t.categorie,
-          nbJoursDefaut: t.nbJoursDefaut,
-          decompteType: t.decompteType,
-          justificatifObligatoire: t.justificatifObligatoire,
-          nonDeductibleSolde: t.nonDeductibleSolde,
-          ancienneteMinimumMois: t.ancienneteMinimumMois,
-        }))}
+        demandeId={demande.id}
         initial={{
-          typeCongeId: demande.typeCongeId,
-          destinataire: demande.destinataire,
+          nature: demande.nature,
+          motif: demande.motif,
           dateDebut: jourCivilDepuisColonneDate(demande.dateDebut),
           dateFin: jourCivilDepuisColonneDate(demande.dateFin),
-          motif: demande.motif,
-          interimaire: demande.interimaire ?? "",
-          // Les pièces déjà déposées sont reprises ; la resoumission les remplace par la liste envoyée.
-          pieces: demande.piecesJointes.map((p) => ({ url: p.url, nomFichier: p.nomFichier ?? p.url })),
         }}
       />
     </div>
