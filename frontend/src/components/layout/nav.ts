@@ -30,8 +30,8 @@ export interface ModuleCongeNav {
   /** `<module>.soumettre` : « Mes … » et « Nouvelle demande ». */
   soumettre: boolean;
   aDecider: number | null;
-  /** Congés seulement : « Soldes » (gestion des soldes, consultation de tous, ou étape RH). */
-  soldes: boolean;
+  /** « Saisir un congé » : la RH (permission du rôle), comme le layout du module. */
+  saisieRH: boolean;
   /** « Toutes les demandes » : DG (permission du rôle), RH ou consultation de tous. */
   toutes: boolean;
 }
@@ -468,7 +468,9 @@ export function getNavBranches({
                   ? [{ label: "À décider", href: "/conges/a-decider", icon: "check-circle", compteur: congesNav.aDecider } satisfies NavItem]
                   : []),
                 ...(congesNav.toutes ? [{ label: "Toutes les demandes", href: "/conges/toutes", icon: "file-text" } satisfies NavItem] : []),
-                ...(congesNav.soldes ? [{ label: "Soldes", href: "/conges/soldes", icon: "wallet" } satisfies NavItem] : []),
+                ...(congesNav.saisieRH
+                  ? [{ label: "Saisir un congé", href: "/conges/saisie-rh", icon: "plus-circle" } satisfies NavItem]
+                  : []),
               ]
             : [],
         },

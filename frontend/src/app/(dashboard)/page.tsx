@@ -102,7 +102,7 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
   if (moduleKey === "conges") {
     if (hasPermission(session, "conges.soumettre")) return { href: "/conges", reason: "no_access" };
     if (hasPermission(session, "conges.valider_rh")) return { href: "/conges/a-decider", reason: "no_access" };
-    if (hasPermission(session, "conges.consulter_tous")) return { href: "/conges/soldes", reason: "no_access" };
+    if (hasPermission(session, "conges.consulter_tous")) return { href: "/conges/toutes", reason: "no_access" };
     if (estResponsableDeService) return { href: "/conges/a-decider", reason: "no_access" };
     return { href: null, reason: "no_access" };
   }

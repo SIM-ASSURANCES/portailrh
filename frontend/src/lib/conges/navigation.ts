@@ -20,7 +20,7 @@ export async function chargerNavConges(
   return {
     soumettre,
     aDecider: file && (file.length > 0 || estRH || estResponsableDeService) ? file.length : null,
-    soldes: false,
+    saisieRH: estRH,
     toutes: consulteTous || estRH || estDG,
   };
 }
