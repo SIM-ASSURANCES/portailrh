@@ -449,7 +449,8 @@ export async function getTopCategoriesBudget(limite = 5): Promise<CategorieBudge
   if (ids.length === 0) {
     return [];
   }
-  const categories = await prisma.categorie.findMany({ where: { id: { in: ids }, isActive: true }, select: { id: true, label: true } });
+  const categories = await prisma.categorie.findMany({ where: { id: { in: ids } }, select: { id: true, label: true } });
+  // Lot J bis : une catégorie désactivée garde son budget visible (le budget en vigueur fait foi, pas l'état d'activation).
 
   return categories
     .map((c) => {

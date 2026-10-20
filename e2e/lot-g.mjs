@@ -371,6 +371,8 @@ await q(`INSERT INTO "JournalBanque"(id, type, montant, "reglementId", "retourCa
   const classeur = execFileSync("unzip", ["-p", xlsx, "xl/workbook.xml"]).toString();
   verifier("5. export : feuille unique « Reporting » (plus de feuille « Retours de caisse »)", classeur.includes('name="Reporting"') && !classeur.includes('name="Retours de caisse"'));
   const partages = execFileSync("unzip", ["-p", xlsx, "xl/sharedStrings.xml"], { maxBuffer: 64 * 1024 * 1024 }).toString();
+  // Contrôle rétabli au lot J bis : il avait disparu au lot F (a46f643), quand le tableau unique a remplacé les colonnes dédiées de la feuille « Retours de caisse ».
+  verifier("5. export : colonnes d'article d'origine (Finance + demandeur) et de règlements Caisse / Banque dans la feuille unique", (partages.includes("Libellé d&apos;origine (demandeur)") || partages.includes("Libellé d'origine (demandeur)")) && partages.includes(">Article<") && /Dont Caisse/.test(partages) && /Dont Banque/.test(partages));
   verifier("5. export : valeurs de l'article (Ordinateur (Finance)) et mention Banque/Caisse", partages.includes("Ordinateur (Finance)") && partages.includes("Banque") && partages.includes("Retour de caisse"));
   await p.close();
 }

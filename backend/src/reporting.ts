@@ -15,7 +15,7 @@ import {
 } from "./dashboardFinance";
 import { getDatesGestionDemandes } from "./dateGestionDemande";
 import { prisma } from "./prisma";
-import { chargerContexteBudget } from "./budgetsDb";
+import { chargerContexteBudget, phrasesCouvertureParArticle } from "./budgetsDb";
 import { libellePeriodeBudget, lireSnapshotBudget, niveauAlerte, phrasesSnapshotBudget, type DetailCaisse, type NiveauAlerteBudget, type SeuilBudget } from "./budgets";
 import { getSoldeCaisse } from "./tresorerie";
 
@@ -916,6 +916,8 @@ export async function getReportingArbre(
   }
 
   const gestions = await getDatesGestionDemandes(ids);
+  // Lot J bis : articles dont le règlement est couvert par une confirmation de dépassement du DG.
+  const couvertures = await phrasesCouvertureParArticle(prisma, ids);
   const arbres = demandes.map((d) => {
     const det = detailParId.get(d.id)!;
     return construireArbreDemande({
@@ -941,7 +943,8 @@ export async function getReportingArbre(
         libelleOrigine: l.libelleDemandeur ?? l.libelleOriginal ?? l.libelle,
         budgetApres: (() => {
           const snap = lireSnapshotBudget(l.budgetApresValidation);
-          return snap ? phrasesSnapshotBudget(snap).join(" | ") : undefined;
+          const phrases = [...(snap ? phrasesSnapshotBudget(snap) : []), ...(couvertures.has(l.id) ? [couvertures.get(l.id) as string] : [])];
+          return phrases.length > 0 ? phrases.join(" | ") : undefined;
         })(),
         motif: l.motif,
         quantite: l.quantite,

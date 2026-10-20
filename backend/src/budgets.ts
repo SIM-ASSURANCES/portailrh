@@ -338,6 +338,8 @@ export interface ContexteBudget {
 export interface AjoutBudget {
   categorieId: string | null;
   montant: number;
+  /** Lot J bis : article concerné (nul pour une dépense directe, qui n'a pas d'article) — sert à rattacher la couverture du règlement. */
+  ligneId?: string | null;
 }
 
 export interface LignePrevision {
@@ -410,6 +412,65 @@ export function previsionBudget(contexte: ContexteBudget, ajouts: readonly Ajout
   }
   categories.sort((a, b) => a.libelle.localeCompare(b.libelle, "fr"));
   return { global, categories, niveau: niveauLePlusGrave(global?.niveau ?? "AUCUN", ...categories.map((c) => c.niveau)) };
+}
+
+// ---------- Lot J bis : la confirmation du DG couvre aussi le règlement de l'article ----------
+
+/**
+ * Montant qu'une confirmation du DG couvre, par article (ou pour la dépense directe, `ligneId` nul) et par catégorie : exactement
+ * ce que la validation ajoute à une catégorie arrivée au seuil rouge. Enregistré (JSON) sur le `BudgetDepassement` utilisé.
+ */
+export interface CouvertureDepassement {
+  ligneId: string | null;
+  categorieId: string;
+  montant: number;
+}
+
+/** Couverture d'une validation : les ajouts des seules catégories qui atteignent le seuil rouge (les autres n'ont rien à couvrir). */
+export function couvertureDepuisAjouts(prevision: PrevisionBudget, ajouts: readonly AjoutBudget[]): CouvertureDepassement[] {
+  const rouges = new Set(prevision.categories.filter((c) => c.niveau === "ROUGE" && c.categorieId).map((c) => c.categorieId as string));
+  const cumul = new Map<string, CouvertureDepassement>();
+  for (const a of ajouts) {
+    if (!a.categorieId || !rouges.has(a.categorieId) || !(a.montant > 0)) continue;
+    const cle = `${a.ligneId ?? ""}|${a.categorieId}`;
+    const existant = cumul.get(cle);
+    cumul.set(cle, {
+      ligneId: a.ligneId ?? null,
+      categorieId: a.categorieId,
+      montant: ((existant ? centimes(existant.montant) : 0) + centimes(a.montant)) / 100,
+    });
+  }
+  return [...cumul.values()];
+}
+
+/** Relit la couverture enregistrée (JSON de la base) ; toute entrée mal formée est ignorée. */
+export function lireCouverture(brut: unknown): CouvertureDepassement[] {
+  if (!Array.isArray(brut)) return [];
+  const resultat: CouvertureDepassement[] = [];
+  for (const e of brut) {
+    if (!e || typeof e !== "object") continue;
+    const o = e as Record<string, unknown>;
+    const montant = Number(o.montant);
+    if (typeof o.categorieId !== "string" || !o.categorieId || !Number.isFinite(montant) || montant <= 0) continue;
+    resultat.push({ ligneId: typeof o.ligneId === "string" && o.ligneId ? o.ligneId : null, categorieId: o.categorieId, montant });
+  }
+  return resultat;
+}
+
+/** Total couvert pour un article (ou la dépense directe si `ligneId` est nul) dans une catégorie. */
+export function totalCouvert(couvertures: readonly CouvertureDepassement[], ligneId: string | null, categorieId: string): number {
+  return couvertures.filter((c) => c.ligneId === ligneId && c.categorieId === categorieId).reduce((s, c) => s + centimes(c.montant), 0) / 100;
+}
+
+/**
+ * Part d'un règlement que la confirmation du DG couvre, et part qui doit encore passer le contrôle du budget de la catégorie.
+ * `dejaRegle` : ce que les règlements déjà confirmés de l'article (non annulés) ont déjà consommé dans cette catégorie. Un règlement
+ * au-delà du montant confirmé n'est donc jamais couvert pour l'excédent : celui-ci doit tenir dans le reste du budget.
+ */
+export function partieCouverteReglement(p: { montant: number; couvertureTotale: number; dejaRegle: number }): { couvert: number; aControler: number } {
+  const disponible = Math.max(0, centimes(p.couvertureTotale) - centimes(p.dejaRegle));
+  const couvert = Math.min(centimes(p.montant), disponible);
+  return { couvert: couvert / 100, aControler: (centimes(p.montant) - couvert) / 100 };
 }
 
 // ---------- Verdict : alerte orange, blocage rouge, confirmation du DG ----------

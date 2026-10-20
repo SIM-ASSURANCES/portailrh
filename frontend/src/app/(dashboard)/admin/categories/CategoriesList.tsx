@@ -19,12 +19,16 @@ export interface ObjetRow {
   id: string;
   label: string;
   isActive: boolean;
+  /** Lot J bis : « Désactivé le … par … » (historique), pour un élément inactif. */
+  desactivation?: string | null;
 }
 
 export interface CategorieRow {
   id: string;
   label: string;
   isActive: boolean;
+  /** Lot J bis : « Désactivée le … par … » (historique), pour une catégorie inactive. */
+  desactivation?: string | null;
   /** Budget EN VIGUEUR (lot J, paramétrage validé par le DG). `null` = aucune limite. */
   budget: { montant: number; dateDebut: string; dateFin: string | null; seuil: SeuilBudget | null } | null;
   objets: ObjetRow[];
@@ -39,9 +43,10 @@ export interface CategorieRow {
  * ouverte à Finance") : disponible pour quiconque a atteint cette page — la
  * garde d'accès (Admin ou `treso.gerer_categories`) est déjà assurée par la
  * page appelante, jamais revérifiée ici (composant purement de
- * présentation). **Activer/Désactiver reste réservé à l'Admin** (`isAdmin`,
- * prop) : masqué entièrement plutôt que désactivé pour un non-admin, jamais
- * un bouton voué à échouer côté serveur.
+ * présentation). **Désactiver / Réactiver** (prop `canToggleActive`, lot J
+ * bis : Admin ou `treso.gerer_categories`) : masqué entièrement plutôt que
+ * désactivé quand le compte n'y a pas droit, jamais un bouton voué à échouer
+ * côté serveur.
  *
  * **Budget alloué** (voir CLAUDE.md "Finance peut définir le budget d'une
  * catégorie") — prop DISTINCTE `canModifierBudget` (défaut = `isAdmin`,
@@ -53,11 +58,14 @@ export function CategoriesList({
   categories,
   isAdmin,
   canModifierBudget = isAdmin,
+  canToggleActive = isAdmin,
   lienBudgets = false,
 }: {
   categories: CategorieRow[];
   isAdmin: boolean;
   canModifierBudget?: boolean;
+  /** Lot J bis : Désactiver / Réactiver. Ouvert à la Finance (`treso.gerer_categories`) en plus de l'Admin, distinct de `isAdmin`. */
+  canToggleActive?: boolean;
   /** Lot J : affiche le lien vers l'écran « Budgets » (espace Finance). */
   lienBudgets?: boolean;
 }) {
@@ -78,9 +86,12 @@ export function CategoriesList({
               <Badge variant={categorie.isActive ? "success" : "neutral"}>
                 {categorie.isActive ? "Active" : "Inactive"}
               </Badge>
+              {!categorie.isActive && categorie.desactivation ? (
+                <span data-desactivation className="text-xs text-muted-foreground">{categorie.desactivation}</span>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {isAdmin ? (
+              {canToggleActive ? (
                 <ActiveToggleButton
                   id={categorie.id}
                   isActive={categorie.isActive}
@@ -114,9 +125,12 @@ export function CategoriesList({
                     <Badge variant={objet.isActive ? "success" : "neutral"}>
                       {objet.isActive ? "Actif" : "Inactif"}
                     </Badge>
+                    {!objet.isActive && objet.desactivation ? (
+                      <span data-desactivation className="text-xs text-muted-foreground">{objet.desactivation.replace("Désactivée", "Désactivé")}</span>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {isAdmin ? (
+                    {canToggleActive ? (
                       <ActiveToggleButton
                         id={objet.id}
                         isActive={objet.isActive}

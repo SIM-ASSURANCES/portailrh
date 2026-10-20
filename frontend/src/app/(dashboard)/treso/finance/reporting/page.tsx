@@ -51,10 +51,8 @@ export default async function ReportingPage({
   const rawParams = await searchParams;
   const filters = parseReportingFilters(rawParams);
 
-  // Ticket A.1 : les filtres ne listent que les catégories/objets actifs
-  // (soft-delete) — les demandes historiques liées à une catégorie
-  // désactivée depuis continuent d'apparaître normalement dans les
-  // résultats, ce filtre ne porte que sur les OPTIONS du formulaire.
+  // Ticket A.1, modifié au lot J bis : les catégories/objets désactivés (soft-delete) restent filtrables, signalés « désactivée » —
+  // les demandes historiques qui les référencent apparaissent de toute façon normalement dans les résultats.
   const [arbre, rows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
     await Promise.all([
       getReportingArbre(filters, (statut) => STATUT_DEMANDE_LABEL[statut], {
@@ -62,8 +60,9 @@ export default async function ReportingPage({
       }),
       getReportingRows(filters),
       getReportingSuiviBudgetaire(),
-      prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
-      prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
+      // Lot J bis : une catégorie / un objet désactivé reste filtrable (l'historique et le reporting le gardent), signalé « désactivée ».
+      prisma.categorie.findMany({ orderBy: { label: "asc" } }),
+      prisma.objet.findMany({ orderBy: { label: "asc" } }),
       prisma.user.findMany({ orderBy: { fullName: "asc" } }),
       prisma.service.findMany({ orderBy: { name: "asc" }, select: { name: true } }),
       getBeneficiairesConnus(),
@@ -114,8 +113,8 @@ export default async function ReportingPage({
       />
 
       <ReportingFiltersForm
-        categories={categories.map((c) => ({ id: c.id, label: c.label }))}
-        objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
+        categories={categories.map((c) => ({ id: c.id, label: c.isActive ? c.label : `${c.label} (désactivée)` }))}
+        objets={objets.map((o) => ({ id: o.id, label: o.isActive ? o.label : `${o.label} (désactivé)`, categorieId: o.categorieId }))}
         users={users.map((u) => ({ id: u.id, label: u.fullName }))}
         services={services}
         beneficiaires={beneficiaires}

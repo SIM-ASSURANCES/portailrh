@@ -8,7 +8,7 @@ import { Button } from "@/components/ui";
 type ToggleResult = { status: "success" | "error"; message: string };
 
 /**
- * Bouton Activer/Désactiver générique — même pattern que
+ * Bouton Désactiver / Réactiver générique — même pattern que
  * `ModuleActiveToggle.tsx` (admin/modules), généralisé ici pour être
  * partagé entre les lignes Catégorie ET Objet de cette page (`toggleAction`
  * en prop plutôt qu'importé en dur, seule vraie différence entre les deux
@@ -38,7 +38,7 @@ export function ActiveToggleButton({
 
   return (
     <Button type="button" variant={isActive ? "danger" : "secondary"} loading={isPending} onClick={handleClick}>
-      {isActive ? "Désactiver" : "Activer"}
+      {isActive ? "Désactiver" : "Réactiver"}
     </Button>
   );
 }

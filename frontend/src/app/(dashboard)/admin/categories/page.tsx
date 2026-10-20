@@ -4,6 +4,7 @@ import { getBudgetsCategoriesEnVigueur, prisma } from "backend";
 
 import { CategorieCreateForm } from "./CategorieCreateForm";
 import { CategoriesList } from "./CategoriesList";
+import { chargerDesactivations } from "./desactivations";
 
 /**
  * Gestion des Catégories/Objets (dette technique du Ticket 2 : le cahier
@@ -11,13 +12,13 @@ import { CategoriesList } from "./CategoriesList";
  * par le seed). Garde de la console admin déjà assurée par
  * `admin/layout.tsx` (isAdmin()) — cette page reste donc TOUJOURS visitée
  * par un Admin, `isAdmin` transmis à `CategoriesList` y vaut donc toujours
- * `true` (Activer/Désactiver et le budget restent visibles ici, inchangé).
+ * `true` (Désactiver / Réactiver restent visibles ici, inchangé ; la Finance les a aussi depuis le lot J bis).
  *
  * **Création et suppression désormais aussi accessibles à Finance** depuis
  * un second point d'entrée, `/treso/finance/categories` (voir CLAUDE.md
  * "Gestion des Catégories/Objets ouverte à Finance") — cette page-ci
  * (`/admin/categories`) reste le CRUD complet réservé à l'Admin,
- * inchangée dans son périmètre (Activer/Désactiver, budget partagé).
+ * inchangée dans son périmètre.
  */
 export default async function AdminCategoriesPage() {
   const session = await getSession();
@@ -28,6 +29,8 @@ export default async function AdminCategoriesPage() {
     include: { objets: { orderBy: { label: "asc" } } },
     orderBy: { label: "asc" },
   });
+
+  const desactivations = await chargerDesactivations(categories.flatMap((c) => [c.id, ...c.objets.map((o) => o.id)]));
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
@@ -50,7 +53,8 @@ export default async function AdminCategoriesPage() {
             label: c.label,
             isActive: c.isActive,
             budget: budgets[c.id] ? { montant: budgets[c.id].budget, dateDebut: budgets[c.id].dateDebut, dateFin: budgets[c.id].dateFin, seuil: budgets[c.id].seuil } : null,
-            objets: c.objets.map((o) => ({ id: o.id, label: o.label, isActive: o.isActive })),
+            desactivation: desactivations.get(c.id) ?? null,
+            objets: c.objets.map((o) => ({ id: o.id, label: o.label, isActive: o.isActive, desactivation: desactivations.get(o.id) ?? null })),
           }))}
         />
       </section>

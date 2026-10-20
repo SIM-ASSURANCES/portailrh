@@ -15,11 +15,9 @@ type SimpleActionResult = { status: "success" | "error"; message: string };
  * OU la permission dédiée `treso.gerer_categories` (accordée à Finance
  * dans le seed ; tout rôle combiné qui cumulerait le module Finance, ex.
  * "Rh/finances", en hérite de la même façon dès qu'il porte cette
- * permission — jamais un accès en dur sur un nom de rôle). Volontairement
- * SCOPÉ à la création et la suppression seulement : l'activation/
- * désactivation (`toggleCategorieActiveAction`/`toggleObjetActiveAction`)
- * reste réservée à `isAdmin()` seul — voir CLAUDE.md "Gestion des
- * Catégories/Objets ouverte à Finance" pour ce choix explicite. Le budget
+ * permission — jamais un accès en dur sur un nom de rôle). Création, suppression et (lot J bis, 2026-10-20) activation/désactivation
+ * (`toggleCategorieActiveAction`/`toggleObjetActiveAction`) : la Finance n'a pas besoin de l'Admin pour désactiver ce qu'elle ne peut
+ * pas supprimer. Aucune permission nouvelle. Le budget
  * d'une catégorie ne se modifie plus ici (lot J) : il est paramétré par la Finance et validé par le DG
  * (`treso/finance/budgets`).
  */
@@ -161,7 +159,7 @@ export async function toggleCategorieActiveAction(
   active: boolean
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !isAdmin(session)) {
+  if (!session || !peutGererCategories(session)) {
     return { status: "error", message: "Action non autorisée." };
   }
 
@@ -192,7 +190,7 @@ export async function toggleObjetActiveAction(
   active: boolean
 ): Promise<SimpleActionResult> {
   const session = await getSession();
-  if (!session || !isAdmin(session)) {
+  if (!session || !peutGererCategories(session)) {
     return { status: "error", message: "Action non autorisée." };
   }
 

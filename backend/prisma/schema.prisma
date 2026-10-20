@@ -2193,6 +2193,9 @@ model BudgetDepassement {
   confirmeAt   DateTime?
   motif        String?
   utiliseAt    DateTime?
+  /// Lot J bis : montants que cette confirmation couvre, par article (ou dépense directe) et par catégorie
+  /// (`[{ ligneId, categorieId, montant }]`), posés à l'utilisation — le règlement de l'article peut les dépasser du reste du budget.
+  couverture   Json?
 
   @@index([demandeId, statut])
   @@index([statut, demandeAt])

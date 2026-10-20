@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { CategorieCreateForm } from "@/app/(dashboard)/admin/categories/CategorieCreateForm";
 import { CategoriesList } from "@/app/(dashboard)/admin/categories/CategoriesList";
+import { chargerDesactivations } from "@/app/(dashboard)/admin/categories/desactivations";
 import { BadgeNiveauBudget } from "@/components/tresorerie/BudgetPrevision";
 import { Badge, PageHeader, type BadgeVariant } from "@/components/ui";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
@@ -118,6 +119,10 @@ async function OngletCategories({ session }: { session: SessionBudget }) {
     }),
   ]);
 
+  const desactivations = await chargerDesactivations(categories.flatMap((c) => [c.id, ...c.objets.map((o) => o.id)]));
+  // Lot J bis : la Finance (`treso.gerer_categories`) désactive / réactive elle-même ; l'Admin garde ce droit.
+  const canToggleActive = admin || hasPermission(session, "treso.gerer_categories");
+
   return (
     <div data-onglet-categories className="space-y-8">
       <section className="space-y-3 rounded-2xl border border-border bg-surface p-5 shadow-elevated">
@@ -144,13 +149,15 @@ async function OngletCategories({ session }: { session: SessionBudget }) {
         <CategoriesList
           isAdmin={admin}
           canModifierBudget={canModifierBudget}
+          canToggleActive={canToggleActive}
           lienBudgets={false}
           categories={categories.map((c) => ({
             id: c.id,
             label: c.label,
             isActive: c.isActive,
             budget: budgets[c.id] ? { montant: budgets[c.id].budget, dateDebut: budgets[c.id].dateDebut, dateFin: budgets[c.id].dateFin, seuil: budgets[c.id].seuil } : null,
-            objets: c.objets.map((o) => ({ id: o.id, label: o.label, isActive: o.isActive })),
+            desactivation: desactivations.get(c.id) ?? null,
+            objets: c.objets.map((o) => ({ id: o.id, label: o.label, isActive: o.isActive, desactivation: desactivations.get(o.id) ?? null })),
           }))}
         />
         {canModifierBudget ? (
@@ -376,6 +383,14 @@ async function OngletBudgets({
                         <td className="py-2 pr-3" data-statut-categorie={statut ?? "AUCUN"}>
                           {categoriesEnAttente.has(c.id) ? (
                             <Badge variant="warning">{libelleStatutParametrage("EN_ATTENTE")}</Badge>
+                          ) : statut === "REFUSE" ? (
+                            // Lot J bis : un refus ne retire jamais le budget déjà en vigueur — la ligne le dit en toutes lettres.
+                            <div data-dernier-parametrage-refuse className="space-y-1">
+                              <Badge variant={VARIANTE_STATUT.REFUSE}>Dernier paramétrage refusé</Badge>
+                              <p className="text-xs text-muted-foreground" data-budget-conserve>
+                                {p && b ? `Budget en vigueur conservé : ${fcfa(p.budget)} (${libellePeriodeBudget(b.dateDebut, b.dateFin)}).` : "Aucun budget en vigueur."}
+                              </p>
+                            </div>
                           ) : statut ? (
                             <Badge variant={VARIANTE_STATUT[statut]}>{libelleStatutParametrage(statut)}</Badge>
                           ) : (

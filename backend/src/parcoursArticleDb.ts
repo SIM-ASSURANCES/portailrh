@@ -3,6 +3,7 @@
 
 import { beneficiaireArticle } from "./beneficiaireArticles";
 import { lireSnapshotBudget, phrasesSnapshotBudget } from "./budgets";
+import { phrasesCouvertureParArticle } from "./budgetsDb";
 import { etatLigneCircuit, totalArticle } from "./etatArticles";
 import { parcoursArticle, type ParcoursArticle } from "./parcoursArticle";
 import { prisma } from "./prisma";
@@ -38,6 +39,7 @@ export async function getParcoursArticles(
     },
   });
   const resultat = new Map<string, ParcoursArticle>();
+  const couvertures = options.avecBudget ? await phrasesCouvertureParArticle(prisma, [demandeId]) : new Map<string, string>();
   if (!demande || demande.lignes.length === 0) return resultat;
 
   const reglements = await prisma.reglement.findMany({
@@ -124,6 +126,8 @@ export async function getParcoursArticles(
     if (options.avecBudget) {
       const snap = lireSnapshotBudget(ligne.budgetApresValidation);
       if (snap) parcours.budget = { lignes: phrasesSnapshotBudget(snap), niveau: snap.niveau };
+      const couverture = couvertures.get(ligne.id);
+      if (couverture) parcours.budget = { lignes: parcours.budget?.lignes ?? [], niveau: parcours.budget?.niveau ?? "ROUGE", couvertureReglement: couverture };
     }
     // Lot C : demande clôturée de force — l'article encore non régularisé le dit, avec son solde restant.
     parcours.clotureSansRegularisation = libelleArticleClotureForcee(

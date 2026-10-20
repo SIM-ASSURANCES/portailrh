@@ -21,6 +21,7 @@ const ACTION_LABELS: Record<string, string> = {
   confirmation_depassement_budget: "Dépassement de budget confirmé par le DG",
   demande_confirmation_depassement: "Confirmation du DG demandée (dépassement de budget)",
   depassement_budget_utilise: "Validation avec dépassement de budget confirmé",
+  reglement_couvert_depassement: "Règlement couvert par la confirmation du DG (dépassement de budget)",
   CATEGORISER: "Catégorisation",
   modification_description: "Description du besoin modifiée",
   validation: "Validation",
@@ -251,6 +252,7 @@ const ACTIONS_GESTION_INTERNE = new Set([
   "confirmation_depassement_budget",
   "demande_confirmation_depassement",
   "depassement_budget_utilise",
+  "reglement_couvert_depassement",
 ]);
 
 /**

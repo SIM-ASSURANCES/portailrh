@@ -45,6 +45,11 @@ export function ParcoursArticleView({ parcours }: { parcours: ParcoursArticle })
               {l}
             </span>
           ))}
+          {parcours.budget.couvertureReglement ? (
+            <span data-couverture-reglement className="block font-medium text-foreground">
+              {parcours.budget.couvertureReglement}
+            </span>
+          ) : null}
         </div>
       ) : null}
       <p data-gere-le className="text-muted-foreground">

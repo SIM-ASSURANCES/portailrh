@@ -4,7 +4,7 @@
 //   1. Migration : les paramétrages GLOBAUX du lot J sont convertis (montant ignoré, seuil en montant conservé, pourcentage →
 //      seuil par défaut, sans seuil → sans seuil) ; rejouée sans effet ; la nouvelle contrainte refuse un global avec montant.
 //   2. Page « Budgets » fusionnée : onglet Catégories (règle de catégorisation, création de catégorie et d'objet, suppression,
-//      activation réservée à l'Admin), ancienne adresse qui redirige, entrée de menu « Catégories » retirée, accès par permission.
+//      désactivation/réactivation : Admin et Finance depuis le lot J bis), ancienne adresse qui redirige, entrée de menu « Catégories » retirée, accès par permission.
 //   3. Soumission (une action PAR section) : le budget global ne prend AUCUN montant (le solde de caisse réel fait foi), seuils en montant uniquement ;
 //      soumission en lot (global + catégories) tout ou rien, une seule notification pour le DG, une trace par élément.
 //   4. Décision du DG par section, seul ou en lot (valider / refuser, motif commun ou propre à l'élément), jamais sa propre soumission, une seule
@@ -176,7 +176,8 @@ const dg = await connecter("dg@simassurances.test");
   verifier("2. onglets « Budgets » et « Catégories » présents", (await finance.locator('[data-onglet="budgets"]').count()) === 1 && (await finance.locator('[data-onglet="categories"]').count()) === 1);
   verifier("2. onglet Catégories : règle « catégorisation obligatoire à partir d'une date » (lot I) conservée", (await finance.locator("[data-regle-categorisation]").count()) === 1 && (await finance.locator('input[name="dateCategorisation"]').count()) === 1);
   verifier("2. … création de catégorie, liste, suppression disponibles", (await finance.getByRole("button", { name: "Créer la catégorie" }).count()) === 1 && (await finance.getByRole("button", { name: "Supprimer" }).count()) >= 1);
-  verifier("2. … activation / désactivation : réservée à l'Admin (absente pour la Finance)", (await finance.getByRole("button", { name: "Désactiver" }).count()) === 0 && (await finance.getByRole("button", { name: "Activer", exact: true }).count()) === 0);
+  // Lot J bis : la Finance (`treso.gerer_categories`) désactive / réactive elle aussi (avant : réservé à l'Admin).
+  verifier("2. … désactivation proposée à la Finance (lot J bis ; réactivation une fois désactivée)", (await finance.getByRole("button", { name: "Désactiver" }).count()) >= 1 && (await finance.getByRole("button", { name: "Activer", exact: true }).count()) === 0);
 
   // Création d'une catégorie puis d'un objet, et suppression : tout par l'écran fusionné.
   await finance.locator('[data-onglet-categories] input[name="label"]').first().fill("E2E-JT-NOUVELLE");
@@ -438,9 +439,9 @@ const seuilsGlobaux = { orange: R0 - 400000, rouge: R0 - 900000 };
   const ligneA = net(await tableau.locator('[data-budget-ligne="E2E-JT-CATA"]').innerText());
   const ligneB = net(await tableau.locator('[data-budget-ligne="E2E-JT-CATB"]').innerText());
   const ligneD = net(await tableau.locator('[data-budget-ligne="E2E-JT-CATD"]').innerText());
-  verifier("4. tableau des catégories : une ligne par catégorie avec budget en vigueur, consommé, réservé, reste, seuils, statut et alerte", /1 000 000 FCFA/.test(ligneA) && /0 FCFA/.test(ligneA) && /20 % restants/.test(ligneA) && /Refusé|Validé/.test(ligneA) && /500 000 FCFA/.test(ligneB) && /Montant restant|restants/.test(ligneB), ligneA + " || " + ligneB);
+  verifier("4. tableau des catégories : une ligne par catégorie avec budget en vigueur, consommé, réservé, reste, seuils, statut et alerte", /1 000 000 FCFA/.test(ligneA) && /0 FCFA/.test(ligneA) && /20 % restants/.test(ligneA) && /refusé|Validé/i.test(ligneA) && /500 000 FCFA/.test(ligneB) && /Montant restant|restants/.test(ligneB), ligneA + " || " + ligneB);
   verifier("4. … en-têtes du tableau : budget en vigueur, consommé, réservé, reste, période, seuils, statut, alerte", await (async () => { const e = net(await tableau.locator("thead").innerText()).toLowerCase(); return ["budget en vigueur", "consommé", "réservé", "reste", "période", "seuils", "statut", "alerte"].every((h) => e.includes(h)); })() && (await tableau.locator("thead th").count()) === 9);
-  verifier("4. … une catégorie sans budget en vigueur reste listée (statut du dernier paramétrage)", /—/.test(ligneD) && /Refusé/.test(ligneD), ligneD);
+  verifier("4. … une catégorie sans budget en vigueur reste listée (statut du dernier paramétrage)", /—/.test(ligneD) && /refusé/i.test(ligneD), ligneD);
   verifier("4. … les statuts du tableau suivent les paramétrages (B validé, D refusé)", (await tableau.locator('[data-budget-ligne="E2E-JT-CATB"] [data-statut-categorie="VALIDE"]').count()) === 1 && (await tableau.locator('[data-budget-ligne="E2E-JT-CATD"] [data-statut-categorie="REFUSE"]').count()) === 1);
 }
 

@@ -73,7 +73,7 @@ sim-portail/
 │   │   │           ├── CategorieCreateForm.tsx    # Client, useActionState
 │   │   │           ├── ObjetCreateForm.tsx        # Client, categorieId en champ caché
 │   │   │           ├── CategoriesList.tsx         # Client, liste + toggles imbriqués
-│   │   │           ├── ActiveToggleButton.tsx     # Bouton Activer/Désactiver générique
+│   │   │           ├── ActiveToggleButton.tsx     # Bouton Désactiver / Réactiver générique (Admin ou Finance, lot J bis)
 │   │   │           └── actions.ts                 # créer/toggle Categorie et Objet
 │   │   ├── (dashboard)/treso/            # Module Trésorerie (écrans métier)
 │   │   │   └── demandes/
@@ -1707,6 +1707,7 @@ sans toucher au toggle Activer/Désactiver ni à l'Assistant Finance.
   la transmet à `CategoriesList`.
 - **Toggle Activer/Désactiver — inchangé**, toujours réservé à `isAdmin()`
   seul (`toggleCategorieActiveAction`), jamais touché par cette tâche.
+  **⚠️ REMPLACÉ par le lot J bis (2026-10-20, plus bas)** : la Finance (`treso.gerer_categories`) désactive / réactive elle aussi.
 
 **Vérifications, parcours réel + rejeu réseau direct (comptes de test)** :
 - Catégorie de test créée par Finance (`treso.gerer_categories`, mécanisme
@@ -3492,11 +3493,74 @@ UN paramétrage en attente à la fois ; la barre de lot n'apparaît que s'il y e
 (2) Le bloc « Dépassements à confirmer » reste commun aux deux sections (un dépassement peut viser la caisse ou une catégorie dans la même validation). (3) Les dates d'effet restent communes à la sélection
 d'un lot de catégories. (4) Le tableau des catégories lit « Consommé » et « Réservé » du contexte budgétaire existant (consommé au règlement depuis la date d'effet ; réservé = le plus grand du consommé et de
 l'engagé) : aucun nouveau calcul. (5) Le statut d'une catégorie est celui de son **dernier paramétrage soumis** (en attente, validé ou refusé) : une catégorie dont le dernier paramétrage a été refusé affiche
-« Refusé » alors que son budget en vigueur peut venir d'un paramétrage validé plus ancien.
+« Refusé » alors que son budget en vigueur peut venir d'un paramétrage validé plus ancien. **(⚠️ résolu par le lot J bis : « Dernier paramétrage refusé » + budget conservé affichés.)**
 
 **Vérifié** : vitest (978 réussis), tsc, eslint, `next build` ; e2e `lot-j-ter.mjs` 117/117 (deux sections et leur contenu, formulaire de caisse sans montant ni pourcentage, portée imposée par chaque action, refus
 croisés, notifications propres, historiques séparés, tableau des catégories, décision seul et en lot par section, lot tout ou rien, soumission du DG ignorée, parcours, reporting, journal de caisse intact) ;
 `lot-j.mjs` adapté 85/85 ; `lot-i.mjs` 56/56 ; régressions des lots C, F, G, G bis, G ter, H et précédents.
+
+#### Lot J bis — confirmation de dépassement et règlement, « dernier paramétrage refusé », catégories désactivables par la Finance (2026-10-20)
+
+Aucune écriture de caisse créée ni modifiée ; budget toujours **consommé au règlement** ; `PERMISSIONS_DECISION_NON_DELEGABLES` intacte ; **aucune permission nouvelle** ; devise unique.
+Une migration additive, rejouable, **justifiée** : `20261025090000_budget_depassement_couverture` ajoute `BudgetDepassement.couverture` (JSONB, nullable) — sans elle, le règlement ne saurait pas ce que le DG
+a autorisé (le `resume` d'un dépassement est un texte, pas une donnée exploitable). `migrate diff` vide.
+
+**1. La confirmation du DG couvre le règlement de l'article.** *Incohérence corrigée* : un dépassement du seuil rouge confirmé par le DG à la validation était ensuite refusé à la confirmation du règlement
+(`confirmerReglementAction` : « allocation > reste du budget de la catégorie »).
+- **Ce qui est enregistré** (`couvertureDepuisAjouts`, `backend/src/budgets.ts`, pur) : à l'UTILISATION de la confirmation (validation effective), `couverture` = `[{ ligneId, categorieId, montant }]` — le montant de CHAQUE
+  article validé (ou, pour une dépense directe, `ligneId` nul) dans les seules catégories qui atteignent le seuil rouge. Elle est calculée sur la validation RÉELLE, pas sur la demande de confirmation : si la Finance
+  valide moins d'articles que prévu, seuls ceux-là sont couverts. Écrite dans les deux chemins (le DG confirme dans le même geste ; confirmation demandée par la Finance puis utilisée). `AjoutBudget` gagne `ligneId`
+  (renseigné par `ajoutsPourArticles`).
+- **La règle** (`partieCouverteReglement`, pur, centimes) : pour l'allocation d'un règlement (article, catégorie), `couvert = min(montant du règlement, couverture totale de l'article dans la catégorie − déjà réglé
+  (règlements confirmés non annulés du même article/catégorie, hors ce règlement))` ; **`aControler = montant − couvert`**. `confirmerReglementAction` n'applique la couverture que si l'allocation dépasse le reste du
+  budget **et** que `aControler` tient dans ce reste ; sinon le refus d'origine (« Ce règlement dépasse le budget disponible… ») est inchangé. Donc : règlement dans la limite confirmée = accepté ; règlement au-delà
+  du montant confirmé = l'excédent doit tenir dans le budget, sinon refusé ; **un autre article de la même catégorie n'est jamais couvert** ; un article sans confirmation garde la règle d'origine. Le plafond du
+  règlement par article (montant validé) et le contrôle du solde de caisse sont inchangés.
+- **Chargement** : `chargerCouvertureReglement` (`budgetsDb.ts`, lecture seule) lit les confirmations `UTILISE` de la demande (seules les validations effectives comptent, jamais une confirmation seulement `CONFIRME`).
+- **Trace** : `HistoriqueEntry` (demande) `reglement_couvert_depassement`, posée dans la MÊME transaction que la confirmation du règlement, **seulement quand la couverture a réellement joué** : « Règlement de X FCFA
+  confirmé au-delà du reste du budget de « Cat » : dépassement confirmé par <DG> (motif : …) — montant couvert par cette confirmation : A FCFA sur B FCFA confirmés[, C FCFA contrôlés sur le reste du budget] ».
+  La validation elle-même ajoute « cette confirmation couvre aussi le règlement jusqu'à X FCFA » aux entrées `confirmation_depassement_budget` / `depassement_budget_utilise`. Libellé `Règlement couvert par la
+  confirmation du DG (dépassement de budget)`, **gestion interne** (jamais montrée au demandeur, comme les autres actions budget).
+- **Affichage** (Finance et DG seulement) : parcours de l'article — « Dépassement de budget confirmé par le DG — <qui> (motif : …) : couvre le règlement de cet article jusqu'à X FCFA » (`phrasesCouvertureParArticle`,
+  `data-couverture-reglement`) ; reporting (page et Excel) : même phrase dans la colonne « Budget après validation (reste) » de la ligne ARTICLE. Rien chez le demandeur ni dans les PDF.
+- **Anciennes confirmations** (utilisées avant ce lot, `couverture` nul) : **ne couvrent aucun règlement** (rien n'est deviné). À traiter à la main si le cas existe : redemander une confirmation ou relever le budget.
+
+**2. Page « Budgets », section catégories.** Quand le dernier paramétrage d'une catégorie a été refusé, la ligne affiche « **Dernier paramétrage refusé** » et, dessous, « Budget en vigueur conservé : X FCFA (période) »
+(`data-dernier-parametrage-refuse`, `data-budget-conserve`) — ou « Aucun budget en vigueur » si elle n'en a jamais eu. Les colonnes budget / consommé / reste montraient déjà le budget en vigueur : la mention le dit
+désormais explicitement. Un dernier paramétrage en attente ou validé garde son badge habituel.
+
+**3. e2e/lot-g : 60 → 59 contrôles — explication.** Le contrôle disparu est `"5. export : colonnes d'article d'origine et de règlements"` (colonnes « Article (libellé Finance) » / « Article (libellé d'origine du demandeur) » de
+la feuille **« Retours de caisse »**). Il n'a pas disparu au lot J mais au **lot F** (commit `a46f643`), qui a remplacé cette feuille par le tableau unique : le contrôle visait une feuille qui n'existe plus, et le
+remplacement du lot F ne portait que sur la présence de la feuille « Reporting » ; le compte passait de 60 à 59 sans que rien n'ait été ajouté. **Rétabli au lot J bis**, adapté à la feuille unique :
+`"5. export : colonnes d'article d'origine (Finance + demandeur) et de règlements Caisse / Banque dans la feuille unique"` (colonnes « Article », « Libellé d'origine (demandeur) », « Dont Caisse », « Dont Banque »). Le
+script revient à 60 contrôles.
+
+**4. Désactiver / Réactiver par la Finance.** `toggleCategorieActiveAction` / `toggleObjetActiveAction` passent de `isAdmin` à `peutGererCategories` (Admin **ou** `treso.gerer_categories` — la même garde que la création et
+la suppression ; aucune permission nouvelle). `CategoriesList` gagne la prop `canToggleActive` (défaut = `isAdmin`, donc `/admin/categories` ne change pas ; l'onglet « Catégories » de `/treso/finance/budgets` la passe
+à `admin || gerer_categories`). Boutons « Désactiver » / « Réactiver » sur **chaque catégorie et chaque objet**. Le message de refus de suppression (« Désactivez-la plutôt ») mène donc désormais à un bouton.
+- **Trace** (qui, quand) : `HistoriqueEntry` `ACTIVATE` / `DEACTIVATE` (entité `Categorie` ou `Objet`, auteur, date) — déjà écrite par les actions — et, à l'écran, « Désactivée le 20/10/2026 09:14 par X »
+  (`chargerDesactivations`, dernière entrée de l'historique ; disparaît à la réactivation).
+- **Effets** : une catégorie / un objet désactivé n'est plus proposé pour catégoriser un NOUVEL article (filtre `isActive` des choix de catégorisation, inchangé) mais reste affiché sur les demandes existantes, dans
+  l'historique et le reporting ; **le filtre du reporting** liste désormais aussi les désactivés, signalés « (désactivée) » (avant : absents du filtre alors que leurs demandes étaient dans les résultats) ; **son budget en
+  vigueur reste visible** (page Catégories, tableau des budgets avec « (désactivée) », et barres du dashboard Finance : `getTopCategoriesBudget` ne filtre plus sur `isActive`). Aucune demande n'est modifiée.
+- Admin : `/admin/categories` inchangée (mêmes droits, mêmes boutons, libellé « Activer » devenu « Réactiver »). Sans `treso.gerer_categories` (DG, Assistant Finance, Collaborateur) : refus serveur « Action non autorisée. ».
+
+**Points ouverts / décisions** : (1) la couverture est celle du **montant de l'article** (ou de la validation de la dépense directe) : elle ne couvre que les catégories au seuil rouge au moment de la validation ; un
+article validé SANS atteindre le rouge n'a rien de couvert, et si le budget se dégrade ensuite (autres règlements) son règlement reste soumis au contrôle ordinaire ; (2) le **budget de caisse** (global) n'est
+toujours pas lié au règlement : la confirmation couvre les catégories, le contrôle de solde de caisse suffisant de `confirmerReglementAction` est inchangé ; (3) la couverture se consomme par les règlements **confirmés** de
+l'article ; l'annulation d'un règlement la restitue (le « déjà réglé » est recalculé à chaque confirmation) ; (4) plusieurs confirmations utilisées sur la même demande s'additionnent par article / catégorie ; (5) les
+anciennes confirmations (avant la migration) ne couvrent rien — voir plus haut ; (6) deux confirmations de règlements simultanées d'un même article peuvent chacune voir la même couverture disponible (le contrôle de
+budget existant n'est pas non plus verrouillé) ; (7) le cas « confirmation qui ne couvre qu'une partie du règlement » (dépense directe validée en plusieurs étapes) est couvert par vitest et un scénario SQL de l'e2e, non
+par le parcours complet à l'écran.
+
+**Vérifié** : vitest (988 réussis, dont 10 nouveaux dans `budgetsCouverture.test.ts` : couverture par article / catégorie, seuil rouge seul, cumul, relecture JSON, règlement dans la limite, partiel puis solde,
+au-delà du confirmé, au centime), tsc, eslint, `next build` ; migration appliquée, `migrate diff` vide ; e2e `lot-j-bis.mjs` 61/61 (validation avec confirmation du DG par l'écran réel, règlement de 120 000 confirmé malgré
+un budget de 100 000, trace avec le DG / le motif / le montant couvert, autre article refusé, dépense directe couverte à 70 000 puis règlement suivant refusé, article sans confirmation refusé, parcours, historique,
+reporting page et Excel, rien chez le demandeur, caisse intacte ; mention « Dernier paramétrage refusé » chez la Finance et le DG ; désactivation / réactivation de catégorie et d'objet par la Finance, tracées,
+absentes des choix, visibles dans l'historique, le reporting et le tableau des budgets, refus sans permission, Admin inchangé) ; `lot-g.mjs` rétabli à 60 contrôles ; régressions : `lot-j` 85/85, `lot-j-ter` 117/117 (trois attentes mises à jour : désactivation désormais offerte à la Finance, libellé « Dernier paramétrage refusé »),
+`lot-i` 56/56, `lot-c` (aucun KO), `lot-f` 60/60, `lot-g-bis` 35/35, `lot-g-ter` 31/31, `lot-h` 46/46, `regularisation-par-article` 38/38, `reglement-par-article` 55/55, `articles-decision-finance` 65/65,
+`soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34. **Piège d'environnement** : au-delà de ~6 scripts sur le même serveur, la limite de connexions fait expirer l'ouverture de session
+du script suivant — redémarrer le serveur entre les scripts.
 
 ### Solde d'ouverture de caisse
 
@@ -6899,6 +6963,7 @@ côté serveur.
   `/admin/categories`, mais limité à **créer** et **supprimer**
   (Activer/Désactiver et Budget alloué restent Admin-only, gardés comme
   leviers de configuration globale distincts).
+  **⚠️ Désactiver / Réactiver ouverts à la Finance par le lot J bis (2026-10-20)** ; le budget n'est plus éditable ici (lot J).
 - **Suppression définitive** (`supprimerCategorieAction`/
   `supprimerObjetAction`, n'existait pour personne avant, y compris
   l'Admin) : bloquée si au moins un Objet rattaché, au moins une Demande

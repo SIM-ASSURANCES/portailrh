@@ -17,7 +17,7 @@ import {
   type ArticleReglable,
   type Prisma,
 } from "backend";
-import { remettreChronoDemande } from "backend";
+import { chargerCouvertureReglement, remettreChronoDemande, tracerReglementCouvert, type CouvertureReglement } from "backend";
 import {
   allocationsReglementArticle,
   calculerStatutDemande,
@@ -390,13 +390,27 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
   // Lot J : le budget d'une catégorie est celui EN VIGUEUR (paramétrage validé par le DG, depuis sa date d'effet), plus
   // `Categorie.budgetAlloue`. Règle inchangée : consommé au règlement, confirmation refusée si l'allocation dépasse le reste.
   const budgetsEnVigueur = await getBudgetsCategoriesEnVigueur();
+  // Lot J bis : un dépassement du seuil rouge CONFIRMÉ par le DG à la validation couvre aussi le règlement de CET article, jusqu'au
+  // montant confirmé (moins ce que ses règlements déjà confirmés ont consommé) ; l'excédent reste soumis au contrôle ordinaire.
   const depassements: string[] = [];
+  const couvertures: { categorie: string; couverture: CouvertureReglement }[] = [];
   for (const allocation of reglement.allocations) {
     const enVigueur = budgetsEnVigueur[allocation.categorieId];
     if (!enVigueur) continue;
     const restantAvantCeReglement = enVigueur.restant;
     const montantAlloue = Number(allocation.montant);
     if (montantAlloue > restantAvantCeReglement) {
+      const couverture = await chargerCouvertureReglement(prisma, {
+        demandeId: reglement.demandeId,
+        ligneDemandeId: reglement.ligneDemandeId,
+        categorieId: allocation.categorieId,
+        montant: montantAlloue,
+        reglementId,
+      });
+      if (couverture.couvert > 0 && couverture.aControler <= restantAvantCeReglement) {
+        couvertures.push({ categorie: allocation.categorie.label, couverture });
+        continue;
+      }
       depassements.push(
         `« ${allocation.categorie.label} » (${montantAlloue.toLocaleString("fr-FR")} FCFA alloués, ${Math.max(0, restantAvantCeReglement).toLocaleString("fr-FR")} FCFA restants)`
       );
@@ -472,6 +486,10 @@ export async function confirmerReglementAction(reglementId: string): Promise<Sim
         userId: session.user.id,
       },
     }),
+    // Lot J bis : trace des règlements passés au-delà du reste du budget grâce à la confirmation du DG (qui, motif, montant couvert).
+    ...couvertures.map((c) =>
+      tracerReglementCouvert(prisma, { demandeId: reglement.demandeId, userId: session.user.id, montantReglement, categorie: c.categorie, couverture: c.couverture })
+    ),
   ];
   await prisma.$transaction(operations);
 

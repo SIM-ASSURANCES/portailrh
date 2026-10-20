@@ -6,11 +6,15 @@ import { Prisma } from "./generated/prisma/client";
 import { prisma } from "./prisma";
 import {
   budgetEnVigueur,
+  couvertureDepuisAjouts,
   jourCourantBudget,
+  lireCouverture,
   MOTIF_DEPASSEMENT_MIN,
   perimetreCaisse,
+  partieCouverteReglement,
   phrasesAlertes,
   previsionBudget,
+  totalCouvert,
   validerLotParametrages,
   verdictBudget,
   type AjoutBudget,
@@ -39,6 +43,8 @@ export const ACTION_HISTORIQUE_BUDGET = {
   CONFIRMATION: "confirmation_depassement_budget",
   DEMANDE_CONFIRMATION: "demande_confirmation_depassement",
   UTILISE: "depassement_budget_utilise",
+  /** Lot J bis : un règlement passe au-delà du reste du budget parce que la confirmation du DG le couvre. */
+  REGLEMENT_COUVERT: "reglement_couvert_depassement",
 } as const;
 
 const jour = (d: Date | null): string | null => (d ? d.toISOString().slice(0, 10) : null);
@@ -230,11 +236,11 @@ export async function getBudgetsCategoriesEnVigueur(db: Db = prisma, maintenant:
 export async function ajoutsPourArticles(db: Db, demandeId: string, ligneIds: readonly string[]): Promise<AjoutBudget[]> {
   const lignes = await db.ligneDemande.findMany({
     where: { demandeId, id: { in: [...ligneIds] }, statutValidation: "EN_ATTENTE" },
-    select: { categorieId: true, quantite: true, prixUnitaire: true, decisionDG: true },
+    select: { id: true, categorieId: true, quantite: true, prixUnitaire: true, decisionDG: true },
   });
   return lignes
     .filter((l) => l.decisionDG !== "VALIDEE")
-    .map((l) => ({ categorieId: l.categorieId, montant: Math.round(l.quantite * Number(l.prixUnitaire) * 100) / 100 }));
+    .map((l) => ({ ligneId: l.id, categorieId: l.categorieId, montant: Math.round(l.quantite * Number(l.prixUnitaire) * 100) / 100 }));
 }
 
 export interface ParamControleBudget {
@@ -278,6 +284,7 @@ export async function controlerBudgetValidation(db: Prisma.TransactionClient, p:
   }
 
   const resume = phrasesAlertes(prevision).join(" ; ");
+  const couverture = couvertureDepuisAjouts(prevision, ajouts);
   if (prevision.niveau !== "AUCUN") {
     await db.historiqueEntry.create({
       data: {
@@ -300,6 +307,7 @@ export async function controlerBudgetValidation(db: Prisma.TransactionClient, p:
         confirmeAt: maintenant,
         motif: verdict.motifConfirme,
         utiliseAt: maintenant,
+        couverture: couverture as unknown as Prisma.InputJsonValue,
       },
     });
     await db.historiqueEntry.create({
@@ -307,12 +315,16 @@ export async function controlerBudgetValidation(db: Prisma.TransactionClient, p:
         entity: "Demande",
         entityId: p.demandeId,
         action: ACTION_HISTORIQUE_BUDGET.CONFIRMATION,
-        detail: `Le DG confirme le dépassement du seuil rouge en validant — motif : ${verdict.motifConfirme} — ${resume}`,
+        detail: `Le DG confirme le dépassement du seuil rouge en validant — motif : ${verdict.motifConfirme} — ${resume}${phraseCouvertureReglement(couverture)}`,
         userId: p.acteurId,
       },
     });
   } else if (verdict.utiliseConfirmationExistante && confirmation) {
-    const maj = await db.budgetDepassement.updateMany({ where: { id: confirmation.id, statut: "CONFIRME" }, data: { statut: "UTILISE", utiliseAt: maintenant } });
+    // Lot J bis : la couverture du règlement est celle de la validation RÉELLE (les articles effectivement validés), pas de la demande de confirmation.
+    const maj = await db.budgetDepassement.updateMany({
+      where: { id: confirmation.id, statut: "CONFIRME" },
+      data: { statut: "UTILISE", utiliseAt: maintenant, couverture: couverture as unknown as Prisma.InputJsonValue },
+    });
     if (maj.count !== 1) {
       return {
         ok: false,
@@ -326,12 +338,113 @@ export async function controlerBudgetValidation(db: Prisma.TransactionClient, p:
         entity: "Demande",
         entityId: p.demandeId,
         action: ACTION_HISTORIQUE_BUDGET.UTILISE,
-        detail: `Validation avec dépassement du seuil rouge, confirmé par le DG (motif : ${confirmation.motif ?? "—"}) — ${resume}`,
+        detail: `Validation avec dépassement du seuil rouge, confirmé par le DG (motif : ${confirmation.motif ?? "—"}) — ${resume}${phraseCouvertureReglement(couverture)}`,
         userId: p.acteurId,
       },
     });
   }
   return ok(prevision, verdict);
+}
+
+// ---------- Lot J bis : la confirmation du DG couvre le règlement ----------
+
+function phraseCouvertureReglement(couverture: readonly { montant: number }[]): string {
+  const total = couverture.reduce((s, c) => s + Math.round(c.montant * 100), 0) / 100;
+  return total > 0 ? ` — cette confirmation couvre aussi le règlement jusqu'à ${total.toLocaleString("fr-FR")} FCFA` : "";
+}
+
+export interface CouvertureReglement {
+  /** Part du règlement couverte par la confirmation du DG (0 s'il n'y en a aucune). */
+  couvert: number;
+  /** Part qui doit encore tenir dans le reste du budget de la catégorie. */
+  aControler: number;
+  /** Total confirmé pour cet article (ou la dépense directe) dans cette catégorie, déjà réglé inclus. */
+  couvertureTotale: number;
+  dejaRegle: number;
+  /** DG qui ont confirmé (nom, motif, date) — pour la trace. */
+  confirmations: { par: string; motif: string; le: Date }[];
+}
+
+/**
+ * Lot J bis. Un dépassement du seuil rouge confirmé par le DG à la validation doit pouvoir être réglé : sinon `confirmerReglementAction`
+ * refuserait ce que le DG vient d'autoriser. La couverture est celle des confirmations UTILISÉES de la demande (article ou dépense
+ * directe), dans la catégorie de l'allocation, moins ce que les règlements déjà confirmés (non annulés) de l'article ont déjà consommé.
+ * Au-delà du montant confirmé, l'excédent reste soumis au contrôle ordinaire du budget. Lecture seule.
+ */
+export async function chargerCouvertureReglement(
+  db: Db,
+  p: { demandeId: string; ligneDemandeId: string | null; categorieId: string; montant: number; reglementId: string }
+): Promise<CouvertureReglement> {
+  const confirmations = await db.budgetDepassement.findMany({
+    where: { demandeId: p.demandeId, statut: "UTILISE" },
+    select: { couverture: true, motif: true, confirmeAt: true, confirmePar: { select: { fullName: true } } },
+    orderBy: { confirmeAt: "asc" },
+  });
+  const concernees = confirmations.filter((c) => totalCouvert(lireCouverture(c.couverture), p.ligneDemandeId, p.categorieId) > 0);
+  const couvertureTotale = concernees.reduce((s, c) => s + Math.round(totalCouvert(lireCouverture(c.couverture), p.ligneDemandeId, p.categorieId) * 100), 0) / 100;
+  if (couvertureTotale <= 0) return { couvert: 0, aControler: p.montant, couvertureTotale: 0, dejaRegle: 0, confirmations: [] };
+  const dejaReglé = await db.reglementCategorieAllocation.aggregate({
+    where: {
+      categorieId: p.categorieId,
+      reglement: { demandeId: p.demandeId, ligneDemandeId: p.ligneDemandeId, estConfirme: true, estAnnule: false, id: { not: p.reglementId } },
+    },
+    _sum: { montant: true },
+  });
+  const dejaRegle = num(dejaReglé._sum.montant);
+  const part = partieCouverteReglement({ montant: p.montant, couvertureTotale, dejaRegle });
+  return {
+    ...part,
+    couvertureTotale,
+    dejaRegle,
+    confirmations: concernees.map((c) => ({ par: c.confirmePar?.fullName ?? "le DG", motif: c.motif ?? "—", le: c.confirmeAt ?? new Date(0) })),
+  };
+}
+
+/**
+ * Lot J bis : pour chaque article couvert par une confirmation du DG (UTILISÉE), la phrase « Dépassement de budget confirmé par le DG
+ * (qui, motif) : couvre le règlement de cet article jusqu'à X FCFA ». Une requête groupée pour toutes les demandes demandées ; sert
+ * au parcours de l'article et au reporting (Finance et DG seulement : gestion interne).
+ */
+export async function phrasesCouvertureParArticle(db: Db, demandeIds: readonly string[]): Promise<Map<string, string>> {
+  const resultat = new Map<string, string>();
+  if (demandeIds.length === 0) return resultat;
+  const lignes = await db.budgetDepassement.findMany({
+    where: { demandeId: { in: [...demandeIds] }, statut: "UTILISE" },
+    select: { couverture: true, motif: true, confirmePar: { select: { fullName: true } } },
+    orderBy: { confirmeAt: "asc" },
+  });
+  const parArticle = new Map<string, { centimes: number; qui: string[] }>();
+  for (const d of lignes) {
+    for (const c of lireCouverture(d.couverture)) {
+      if (!c.ligneId) continue;
+      const e = parArticle.get(c.ligneId) ?? { centimes: 0, qui: [] };
+      e.centimes += Math.round(c.montant * 100);
+      const qui = `${d.confirmePar?.fullName ?? "le DG"} (motif : ${d.motif ?? "—"})`;
+      if (!e.qui.includes(qui)) e.qui.push(qui);
+      parArticle.set(c.ligneId, e);
+    }
+  }
+  for (const [ligneId, e] of parArticle) {
+    resultat.set(ligneId, `Dépassement de budget confirmé par le DG — ${e.qui.join(" ; ")} : couvre le règlement de cet article jusqu'à ${(e.centimes / 100).toLocaleString("fr-FR")} FCFA`);
+  }
+  return resultat;
+}
+
+/** Trace (historique de la demande) d'un règlement passé grâce à la confirmation du DG : qui a confirmé, motif, montant couvert. */
+export function tracerReglementCouvert(
+  db: Db,
+  p: { demandeId: string; userId: string; montantReglement: number; categorie: string; couverture: CouvertureReglement }
+) {
+  const qui = p.couverture.confirmations.map((c) => `${c.par} (motif : ${c.motif})`).join(" ; ");
+  return db.historiqueEntry.create({
+    data: {
+      entity: "Demande",
+      entityId: p.demandeId,
+      action: ACTION_HISTORIQUE_BUDGET.REGLEMENT_COUVERT,
+      detail: `Règlement de ${p.montantReglement.toLocaleString("fr-FR")} FCFA confirmé au-delà du reste du budget de « ${p.categorie} » : dépassement confirmé par ${qui} — montant couvert par cette confirmation : ${p.couverture.couvert.toLocaleString("fr-FR")} FCFA sur ${p.couverture.couvertureTotale.toLocaleString("fr-FR")} FCFA confirmés${p.couverture.aControler > 0 ? `, ${p.couverture.aControler.toLocaleString("fr-FR")} FCFA contrôlés sur le reste du budget` : ""}`,
+      userId: p.userId,
+    },
+  });
 }
 
 // ---------- Confirmation d'un dépassement : demande de la Finance, confirmation du DG ----------
