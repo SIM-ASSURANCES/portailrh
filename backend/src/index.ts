@@ -53,6 +53,7 @@ export * from "./circuitConge";
 export * from "./congesNotifications";
 export * from "./congesPasse";
 export * from "./congesDb";
+export * from "./congesPointage";
 export * from "./congesVueEnsemble";
 export * from "./congesVueEnsembleDb";
 export * from "./encReferentiels";

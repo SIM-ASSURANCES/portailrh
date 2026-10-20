@@ -1,5 +1,13 @@
 import { endOfDay, startOfDay } from "date-fns";
-import { horairesPointage, justificationAffichee, prisma, utilisateursCouvertsParAbsence } from "backend";
+import {
+  etatCongeDuJour,
+  horairesPointage,
+  justificationAffichee,
+  libelleAbsenceAutorisee,
+  prisma,
+  utilisateursCouvertsParAbsence,
+  type PlageAbsenceLue,
+} from "backend";
 
 import type { PresenceData } from "@/app/(dashboard)/pointage/rh/presence/PresenceTabs";
 
@@ -51,7 +59,17 @@ export async function chargerPresenceJour(now: Date, userIds?: string[]) {
     // Pointage V2, lot 7 : absences autorisées du jour (congés, permissions).
     prisma.plageAbsenceAutorisee.findMany({
       where: { date: { gte: todayStart, lte: todayEnd }, user: { isActive: true }, ...filtreComptes },
-      select: { userId: true, heureDebut: true, heureFin: true, source: true, user: { select: { fullName: true, email: true } } },
+      // T08 : `provisoire` et le statut de la demande liée disent si le jour est « en congé », « en attente » ou seulement protégé.
+      select: {
+        userId: true,
+        date: true,
+        heureDebut: true,
+        heureFin: true,
+        source: true,
+        provisoire: true,
+        demandeConge: { select: { statut: true, reference: true } },
+        user: { select: { fullName: true, email: true } },
+      },
       orderBy: { heureDebut: "asc" },
     }),
   ]);
@@ -95,6 +113,13 @@ export async function chargerPresenceJour(now: Date, userIds?: string[]) {
     }
   });
 
+  // T08 (R13) : un pointage d'arrivée un jour de congé VALIDÉ est enregistré normalement mais signalé.
+  const plagesParCompte = new Map<string, (PlageAbsenceLue & (typeof plagesDuJour)[number])[]>();
+  for (const pl of plagesDuJour) plagesParCompte.set(pl.userId, [...(plagesParCompte.get(pl.userId) ?? []), pl]);
+  userPointagesMap.forEach((u) => {
+    if (u.arrivee && etatCongeDuJour(plagesParCompte.get(u.userId) ?? []) === "EN_CONGE") u.pointeEnConge = true;
+  });
+
   const presents: PresenceData[] = Array.from(userPointagesMap.values());
   const retards = presents.filter((p) => p.estRetard);
 
@@ -102,8 +127,9 @@ export async function chargerPresenceJour(now: Date, userIds?: string[]) {
   // absences (`journeeCouverteParAbsence`) — apparaît comme telle, jamais comme absent ni manquant.
   const presentsIds = presents.map((p) => p.userId);
   const couvertsIds = utilisateursCouvertsParAbsence(plagesDuJour, horairesPointage(parametrage));
-  presentsIds.forEach((id) => couvertsIds.delete(id));
+  // Une journée couverte n'est jamais une absence, même si le compte a pointé (T08) : filtre AVANT de retirer les présents.
   const absentsReels = absentsDb.filter((a) => !couvertsIds.has(a.userId));
+  presentsIds.forEach((id) => couvertsIds.delete(id));
 
   // Calcul des manquants (ni présents, ni déclarés absents, ni en absence autorisée)
   const absentsIds = absentsDb.map((a) => a.userId);
@@ -136,14 +162,14 @@ export async function chargerPresenceJour(now: Date, userIds?: string[]) {
   }));
 
   const autorises: PresenceData[] = [...couvertsIds].map((id) => {
-    const plages = plagesDuJour.filter((pl) => pl.userId === id);
+    const plages = plagesParCompte.get(id) ?? [];
     return {
       userId: id,
       fullName: plages[0].user.fullName,
       email: plages[0].user.email,
-      absenceAutorisee: plages
-        .map((pl) => `${pl.source === "CONGE" ? "Congé" : "Permission"} ${pl.heureDebut}–${pl.heureFin}`)
-        .join(", "),
+      // T08 : « En congé », « Congé en attente de validation » ou « Non compté absent », jamais déduit du seul `provisoire`.
+      absenceAutorisee: libelleAbsenceAutorisee(plages),
+      etatConge: etatCongeDuJour(plages),
     };
   });
 
