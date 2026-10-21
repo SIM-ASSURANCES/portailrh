@@ -64,6 +64,9 @@ const nettoyer = async () => {
   await q(`DELETE FROM "Notification" WHERE message LIKE '%DEM-LOTL-%'`);
   await q(`DELETE FROM "ActionSignee" WHERE "demandeId" LIKE '${P}%' OR "signataireId" IN ($1,$2) AND action='annulation_reglement'`, [idFinance, idAssistant]);
   await q(`DELETE FROM "HistoriqueEntry" WHERE "entityId" LIKE '${P}%' OR detail LIKE '%DEM-LOTL-%'`);
+  await q(`DELETE FROM "SignatureUtilisateur" WHERE id LIKE '${P}%'`);
+  await q(`DROP TRIGGER IF EXISTS e2e_refus_signature ON "ActionSignee"`);
+  await q(`DROP TRIGGER IF EXISTS e2e_refus_historique ON "HistoriqueEntry"`);
   await q(`DELETE FROM "JournalBanque" WHERE "reglementId" LIKE '${P}%'`);
   await q(`DELETE FROM "Reglement" WHERE id LIKE '${P}%'`);
   await q(`DELETE FROM "LigneDemande" WHERE "demandeId" LIKE '${P}%'`);
@@ -442,6 +445,90 @@ const mise = (await q(`SELECT "creeAt" FROM "MarqueurUnique" WHERE cle='signatur
   const refusExport = await collab.request.get(`${B}/api/treso/reporting/export`);
   verifier("6c. sans droit de reporting : l'export (donc les signatures) est refusé", refusExport.status() === 403 || refusExport.status() === 401);
   await collab.close();
+}
+
+// ======================================================================================================================
+// PARTIE 7 — LOT L BIS : l'action et sa signature sont écrites dans la MÊME transaction (tout ou rien)
+// ======================================================================================================================
+{
+  const D6 = await demande("d6", 6, [{ libelle: "Atomicité 1 e2e lot L", montant: 12000 }]);
+  const D7 = await demande("d7", 7, [{ libelle: "Atomicité 2 e2e lot L", montant: 13000 }]);
+  const fin = await connecter("finance@simassurances.test");
+  await fin.goto(`${B}/treso/finance/demandes/${D6}`);
+  const idValider = await idAction(fin, "validerLignesAction");
+  verifier("0. (L bis) identifiant de validerLignesAction trouvé", !!idValider);
+  const statutLigne = async (D) => (await q(`SELECT "statutValidation" FROM "LigneDemande" WHERE id=$1`, [`${D}-l1`]))[0].statutValidation;
+  const nbHisto = async (D) => (await q(`SELECT count(*)::int AS n FROM "HistoriqueEntry" WHERE action IN ('validation_ligne','rejet_ligne') AND "entityId"=$1`, [`${D}-l1`]))[0].n;
+
+  // 7a. L'enregistrement de la signature échoue : l'action n'a PAS lieu (ni décision, ni historique).
+  await q(`CREATE OR REPLACE FUNCTION e2e_refus_signature() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'E2E : échec simulé de l''enregistrement de la signature'; END; $$ LANGUAGE plpgsql`);
+  await q(`CREATE TRIGGER e2e_refus_signature BEFORE INSERT ON "ActionSignee" FOR EACH ROW WHEN (NEW."demandeId" = '${D6}') EXECUTE FUNCTION e2e_refus_signature()`);
+  const r6 = await appelerAction(fin, idValider, [D6, [{ ligneId: `${D6}-l1`, statut: "VALIDEE" }]]);
+  verifier("7a. (L bis) si l'enregistrement de la signature échoue, l'action est refusée", !r6.succes, r6.message);
+  verifier("7a. … l'article est resté EN ATTENTE, aucune ligne d'historique, aucune action signée", (await statutLigne(D6)) === "EN_ATTENTE" && (await nbHisto(D6)) === 0 && (await actionsSignees(D6)).length === 0);
+  await q(`DROP TRIGGER e2e_refus_signature ON "ActionSignee"`);
+
+  // 7b. L'action échoue APRÈS l'écriture de la signature : la signature n'existe pas non plus (pas de signature orpheline).
+  await q(`CREATE OR REPLACE FUNCTION e2e_refus_historique() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'E2E : échec simulé de l''historique'; END; $$ LANGUAGE plpgsql`);
+  await q(`CREATE TRIGGER e2e_refus_historique BEFORE INSERT ON "HistoriqueEntry" FOR EACH ROW WHEN (NEW."entityId" = '${D7}-l1' AND NEW.action = 'validation_ligne') EXECUTE FUNCTION e2e_refus_historique()`);
+  const r7 = await appelerAction(fin, idValider, [D7, [{ ligneId: `${D7}-l1`, statut: "VALIDEE" }]]);
+  verifier("7b. (L bis) si l'action échoue en cours de route, elle est refusée", !r7.succes, r7.message);
+  verifier("7b. … ni décision, ni historique, ET AUCUNE signature orpheline (la ligne de signature est annulée avec l'action)", (await statutLigne(D7)) === "EN_ATTENTE" && (await nbHisto(D7)) === 0 && (await actionsSignees(D7)).length === 0);
+  await q(`DROP TRIGGER e2e_refus_historique ON "HistoriqueEntry"`);
+
+  // 7c. Sans l'incident, la même action réussit et laisse une action signée ET sa ligne d'historique liée par identifiant.
+  const r7bis = await appelerAction(fin, idValider, [D7, [{ ligneId: `${D7}-l1`, statut: "VALIDEE" }]]);
+  verifier("7c. (L bis) l'incident levé, la même décision réussit", r7bis.succes, r7bis.message);
+  const lies = await q(`SELECT h."actionSigneeId", a.action, a."signataireId" FROM "HistoriqueEntry" h JOIN "ActionSignee" a ON a.id = h."actionSigneeId" WHERE h."entityId"=$1 AND h.action='validation_ligne'`, [`${D7}-l1`]);
+  verifier("7c. … la ligne d'historique de la décision est liée PAR IDENTIFIANT à l'action signée du compte", lies.length === 1 && lies[0].signataireId === idFinance, JSON.stringify(lies));
+  await q(`DROP FUNCTION IF EXISTS e2e_refus_signature()`);
+  await q(`DROP FUNCTION IF EXISTS e2e_refus_historique()`);
+  await fin.close();
+}
+
+// ======================================================================================================================
+// PARTIE 8 — LOT L BIS : lien par IDENTIFIANT — deux actions du même compte à moins d'une minute, deux versions de signature
+// ======================================================================================================================
+{
+  const D8 = await demande("d8", 8, [
+    { libelle: "Premier article e2e lot L bis", montant: 11000 },
+    { libelle: "Second article e2e lot L bis", montant: 14000 },
+  ]);
+  const fin = await connecter("finance@simassurances.test");
+  await fin.goto(`${B}/treso/finance/demandes/${D8}`);
+  const idValider = await idAction(fin, "validerLignesAction");
+  const a1 = await appelerAction(fin, idValider, [D8, [{ ligneId: `${D8}-l1`, statut: "VALIDEE" }]]);
+  // Nouvelle version de signature (enrôlement simulé en base : même effet que le profil), puis la seconde décision, dans la minute.
+  await q(`INSERT INTO "SignatureUtilisateur"(id, "userId", version, image, largeur, hauteur, empreinte)
+           SELECT $2 || version::text, "userId", version + 1, image, largeur, hauteur, empreinte || 'bis' FROM "SignatureUtilisateur" WHERE "userId"=$1 ORDER BY version DESC LIMIT 1`, [idFinance, `${P}sigv`]);
+  const a2 = await appelerAction(fin, idValider, [D8, [{ ligneId: `${D8}-l2`, statut: "VALIDEE" }]]);
+  verifier("8a. (L bis) deux décisions du même compte à quelques secondes d'écart réussissent", a1.succes && a2.succes, `${a1.message} / ${a2.message}`);
+  const actions = await actionsSignees(D8);
+  verifier("8a. … deux actions signées, avec DEUX versions de signature différentes", actions.length === 2 && actions[0].signatureId !== actions[1].signatureId && actions[1].version === actions[0].version + 1, JSON.stringify(actions.map((x) => x.version)));
+  const ecart = new Date(actions[1].creeAt).getTime() - new Date(actions[0].creeAt).getTime();
+  verifier("8a. … à moins de 60 secondes l'une de l'autre (le cas que l'ancienne fenêtre de temps confondait)", ecart < 60000, `${ecart} ms`);
+  const histo = await q(`SELECT h."entityId", h."actionSigneeId" FROM "HistoriqueEntry" h WHERE h.action='validation_ligne' AND h."entityId" LIKE $1 ORDER BY h."entityId"`, [`${D8}-l%`]);
+  verifier("8b. chaque ligne d'historique pointe vers l'action signée de SA décision (identifiant)", histo.length === 2 && histo[0].actionSigneeId === actions[0].id && histo[1].actionSigneeId === actions[1].id, JSON.stringify(histo));
+
+  await fin.goto(`${B}/treso/finance/demandes/${D8}`);
+  await fin.locator("[data-signature-mention]").first().waitFor();
+  const versions = await fin.locator("[data-signature-mention]").evaluateAll((els) => els.map((e) => e.getAttribute("data-signature-version")));
+  verifier("8c. l'historique affiche, pour chaque décision, SA version de signature (1 et 2, jamais deux fois la même)", versions.filter((v) => v === String(actions[0].version)).length >= 1 && versions.filter((v) => v === String(actions[1].version)).length >= 1, versions.join(","));
+  verifier("8c. … aucune mention « Signature non rattachée » sur des actions faites depuis le lot L bis", (await fin.locator("[data-signature-non-rattachee]").count()) === 0);
+
+  await fin.goto(`${B}/treso/finance/reporting`);
+  const deplier = fin.getByRole("button", { name: /Tout déplier/ });
+  if (await deplier.count()) await deplier.first().click();
+  await fin.locator("[data-signature-reporting]").first().waitFor({ timeout: 15000 });
+  const sur = async (id) => fin.locator(`[data-signature-reporting][href="/api/signatures/${id}"]`).count();
+  verifier("8d. reporting (page) : les deux signatures distinctes y figurent (chaque article garde la sienne)", (await sur(actions[0].signatureId)) >= 1 && (await sur(actions[1].signatureId)) >= 1);
+
+  // Une ancienne ligne du lot L, laissée SANS lien (ambiguïté de la reprise), est signalée honnêtement — jamais devinée.
+  const mise2 = (await q(`SELECT "creeAt" FROM "MarqueurUnique" WHERE cle='signatures.mise_en_service'`))[0].creeAt;
+  await q(`INSERT INTO "HistoriqueEntry"(id, entity, "entityId", action, detail, "userId", "createdAt") VALUES ($1,'Demande',$2,'validation_service','Validé (ancien, lot L, sans lien) e2e',$3,$4)`, [`${P}h-orph`, D8, idRespCommercial, new Date(new Date(mise2).getTime() + 3600000)]);
+  await fin.goto(`${B}/treso/finance/demandes/${D8}`);
+  verifier("8e. une ligne d'historique signable, postérieure à la mise en service et sans lien, affiche « Signature non rattachée »", (await fin.locator("[data-signature-non-rattachee]").count()) === 1);
+  await fin.close();
 }
 
 // ======================================================================================================================

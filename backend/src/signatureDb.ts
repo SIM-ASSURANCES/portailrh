@@ -2,7 +2,8 @@
 // délégation, lecture pour l'historique / le parcours / le reporting / les PDF. Aucune écriture dans une table existante.
 
 import type { Prisma } from "./generated/prisma/client";
-import { CLE_MARQUEUR_SIGNATURES, rapprocherSignatures, type EtatSignatureEntree, type EntreeHistoriqueSignable } from "./signature";
+import { CLE_MARQUEUR_SIGNATURES, lierSignatures, type EtatSignatureEntree, type EntreeHistoriqueSignable } from "./signature";
+import type { OperationsSignature, TxSignee } from "./signatureTransaction";
 
 type Db = Pick<
   Prisma.TransactionClient,
@@ -11,6 +12,7 @@ type Db = Pick<
   | "marqueurUnique"
   | "permissionDelegation"
   | "ligneDemande"
+  | "historiqueEntry"
   | "reglement"
   | "retourCaisse"
   | "remboursementRetour"
@@ -138,6 +140,50 @@ export async function enregistrerActionSignee(
   return a.id;
 }
 
+/**
+ * Opérations d'enregistrement de la signature d'UNE action, pour `executerEnTransactionSignee` (tout se passe dans la transaction de
+ * l'action) : la ligne est écrite AVANT l'action avec la cible connue d'avance, puis complétée après son succès (cible connue seulement
+ * après, entité créée par l'action : repérée par la ligne d'historique qu'elle a produite).
+ */
+export function operationsActionSignee<T>(o: {
+  cible?: CibleSignature | null;
+  cibleApres?: (resultat: T) => CibleSignature | null | undefined;
+  entite?: string;
+  entiteId?: string | ((resultat: T) => string | undefined);
+  /** Modèle (`MODELES_SUIVIS`) de l'entité CRÉÉE par l'action : son identifiant devient l'`entiteId` de la signature (ex. `retourExterne`). */
+  creation?: string;
+}): OperationsSignature<T> {
+  return {
+    cibleAvant: async (tx: TxSignee) => (o.cible ? resoudreCible(tx, o.cible) : null),
+    enregistrer: async (tx: TxSignee, p) =>
+      enregistrerActionSignee(tx, {
+        signatureId: p.signatureId,
+        signataireId: p.signataireId,
+        auNomDeId: p.auNomDeId,
+        action: p.action,
+        ip: p.ip,
+        cible: p.cible,
+        entite: o.entite,
+      }),
+    completer: async (tx: TxSignee, actionSigneeId: string, avant: CibleResolue | null, resultat: T, creations) => {
+      const posterieure = o.cibleApres?.(resultat);
+      const cible = posterieure ? await resoudreCible(tx, posterieure) : avant;
+      let entiteId: string | null = (typeof o.entiteId === "function" ? o.entiteId(resultat) : o.entiteId) ?? cible?.entiteId ?? null;
+      const entite = o.creation && entiteId ? (o.entite ?? cible?.entite ?? null) : (cible?.entite ?? o.entite ?? null);
+      // Entité CRÉÉE par l'action (retour externe, retour déclaré par l'Assistant…) : la première du modèle indiqué.
+      const creee = o.creation ? creations.find((c) => c.modele === o.creation) : undefined;
+      if (creee) entiteId = creee.id;
+      const data = {
+        demandeId: cible?.demandeId ?? null,
+        ligneDemandeId: cible?.ligneDemandeId ?? null,
+        entite,
+        entiteId,
+      };
+      if (posterieure || entiteId) await tx.actionSignee.update({ where: { id: actionSigneeId }, data });
+    },
+  };
+}
+
 export async function lireMiseEnServiceSignatures(db: Pick<Db, "marqueurUnique">): Promise<Date | null> {
   const m = await db.marqueurUnique.findUnique({ where: { cle: CLE_MARQUEUR_SIGNATURES }, select: { creeAt: true } });
   return m?.creeAt ?? null;
@@ -200,7 +246,7 @@ export async function lireActionsSignees(db: Pick<Db, "actionSignee">, demandeId
   }));
 }
 
-/** État de signature de chaque entrée d'historique signable (voir `rapprocherSignatures`). */
+/** État de signature de chaque entrée d'historique signable (voir `lierSignatures`) : par l'identifiant de l'action signée. */
 export async function etatsSignatureHistorique(
   db: Pick<Db, "actionSignee" | "marqueurUnique">,
   demandeId: string,
@@ -208,7 +254,46 @@ export async function etatsSignatureHistorique(
   actionsSignables: ReadonlySet<string>
 ): Promise<Map<string, EtatSignatureEntree<ActionSigneeLue>>> {
   const [signatures, mise] = await Promise.all([lireActionsSignees(db, [demandeId]), lireMiseEnServiceSignatures(db)]);
-  return rapprocherSignatures(entrees, signatures, mise, actionsSignables);
+  return lierSignatures(entrees, new Map(signatures.map((a) => [a.id, a])), mise, actionsSignables);
+}
+
+/** Lien d'une ligne d'historique avec l'action signée qui l'a produite (lot L bis). */
+export interface LienHistoriqueSigne {
+  entity: string;
+  entityId: string;
+  action: string;
+  actionSigneeId: string;
+  createdAt: Date;
+}
+
+/** Les lignes d'historique liées à une action signée, pour les demandes et articles donnés (reporting). Plus ancienne d'abord. */
+export async function lireLiensHistoriqueSignes(
+  db: Pick<Db, "historiqueEntry">,
+  demandes: readonly { id: string; ligneIds: readonly string[] }[]
+): Promise<Map<string, LienHistoriqueSigne[]>> {
+  const resultat = new Map<string, LienHistoriqueSigne[]>();
+  if (demandes.length === 0) return resultat;
+  const demandeParLigne = new Map<string, string>();
+  for (const d of demandes) for (const l of d.ligneIds) demandeParLigne.set(l, d.id);
+  const lignes = await db.historiqueEntry.findMany({
+    where: {
+      actionSigneeId: { not: null },
+      OR: [
+        { entity: "Demande", entityId: { in: demandes.map((d) => d.id) } },
+        { entity: "LigneDemande", entityId: { in: [...demandeParLigne.keys()] } },
+      ],
+    },
+    orderBy: { createdAt: "asc" },
+    select: { entity: true, entityId: true, action: true, actionSigneeId: true, createdAt: true },
+  });
+  for (const l of lignes) {
+    const demandeId = l.entity === "Demande" ? l.entityId : demandeParLigne.get(l.entityId);
+    if (!demandeId || !l.actionSigneeId) continue;
+    const liste = resultat.get(demandeId) ?? [];
+    liste.push({ entity: l.entity, entityId: l.entityId, action: l.action, actionSigneeId: l.actionSigneeId, createdAt: l.createdAt });
+    resultat.set(demandeId, liste);
+  }
+  return resultat;
 }
 
 /** Image PNG d'une version de signature (octets). */

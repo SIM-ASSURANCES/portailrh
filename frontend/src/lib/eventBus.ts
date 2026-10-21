@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { differerApresCommit } from "backend";
 
 const DATA_CHANGED_EVENT = "data-changed";
 
@@ -40,6 +41,9 @@ if (process.env.NODE_ENV !== "production") {
  * est prévue.
  */
 export function publishDataChanged(): void {
+  // Lot L bis : dans une action signée, le signal part APRÈS la validation de sa transaction (les clients qui se rafraîchissent
+  // doivent lire les données validées, et une action annulée ne signale rien).
+  if (differerApresCommit(() => void eventBus.emit(DATA_CHANGED_EVENT))) return;
   eventBus.emit(DATA_CHANGED_EVENT);
 }
 

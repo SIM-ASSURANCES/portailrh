@@ -284,6 +284,11 @@ model HistoriqueEntry {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
+  /// Lot L bis : action signée dont cette ligne est une conséquence (posée à la création, dans la même transaction que
+  /// l'action). Vide pour une ligne qui n'est pas la suite d'une action signée, ou antérieure au lot L bis.
+  actionSigneeId String?
+  actionSignee   ActionSignee? @relation(fields: [actionSigneeId], references: [id], onDelete: SetNull)
+
   // PERF-06 : Index composé (entity + entityId) pour les requêtes
   // "tous les historiques d'une Demande/User/etc." qui filtrent sur les deux.
   // Index sur createdAt pour les tris chronologiques et les recherches par
@@ -291,6 +296,7 @@ model HistoriqueEntry {
   @@index([entity, entityId])
   @@index([createdAt])
   @@index([userId])
+  @@index([actionSigneeId])
 }
 
 /// Niveaux de priorité des notifications (routage des canaux)
@@ -2334,6 +2340,9 @@ model ActionSignee {
   entiteId       String?
   ip             String
   creeAt         DateTime             @default(now())
+
+  /// Lot L bis : les lignes d'historique que cette action a produites (lien par identifiant, plus de fenêtre de temps).
+  historique HistoriqueEntry[]
 
   @@index([demandeId, creeAt])
   @@index([signataireId, creeAt])

@@ -79,7 +79,7 @@ export async function declarerRetourAssistantAction(
   reglementId: string,
   motifReouverture?: string
 ): Promise<SimpleActionResult> {
-  return avecSignature({ action: "declaration_retour_assistant", permission: "treso.receptionner_retour", cible: { type: "reglement", id: reglementId } }, () => declarerRetourAssistantInterne(reglementId, motifReouverture));
+  return avecSignature({ action: "declaration_retour_assistant", permission: "treso.receptionner_retour", cible: { type: "reglement", id: reglementId }, entite: "RetourCaisse", creation: "retourCaisse" }, () => declarerRetourAssistantInterne(reglementId, motifReouverture));
 }
 
 async function declarerRetourAssistantInterne(

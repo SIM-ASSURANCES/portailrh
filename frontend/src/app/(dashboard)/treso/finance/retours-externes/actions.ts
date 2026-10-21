@@ -51,7 +51,7 @@ export async function creerRetourExterneAction(
   demandeId?: string,
   ligneDemandeId?: string
 ): Promise<SimpleActionResult> {
-  return avecSignature({ action: "retour_externe", permission: "treso.creer_retour_externe", cible: demandeId ? { type: "demande", id: demandeId } : null, entite: "RetourExterne" }, () => creerRetourExterneInterne(collaborateurId, nomExterne, montantChequeInitial, montantRetourne, motif, pieceJointeUrl, pieceJointeChequeUrl, demandeId, ligneDemandeId));
+  return avecSignature({ action: "retour_externe", permission: "treso.creer_retour_externe", cible: demandeId ? { type: "demande", id: demandeId } : null, entite: "RetourExterne", creation: "retourExterne" }, () => creerRetourExterneInterne(collaborateurId, nomExterne, montantChequeInitial, montantRetourne, motif, pieceJointeUrl, pieceJointeChequeUrl, demandeId, ligneDemandeId));
 }
 
 async function creerRetourExterneInterne(

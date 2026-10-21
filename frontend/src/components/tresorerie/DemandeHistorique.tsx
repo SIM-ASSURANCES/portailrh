@@ -342,7 +342,7 @@ export async function DemandeHistorique({
                 if (!etat) return null;
                 if (etat.etat === "SIGNEE") return <MentionSignature signature={etat.signature} />;
                 if (etat.etat === "ANTERIEURE") return <MentionSignature anterieure />;
-                return null;
+                return <MentionSignature nonRattachee />;
               })()}
               {(() => {
                 const versionCorrection = versionParEntree.get(entry.id);

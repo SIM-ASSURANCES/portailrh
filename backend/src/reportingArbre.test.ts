@@ -105,6 +105,7 @@ function demandeTrois(extra: Partial<DemandeArbreSource> = {}): DemandeArbreSour
       reglement("RA", "A", "CAISSE", 100_000, {
         retours: [
           retour({
+            id: "RET-A",
             estReceptionne: true,
             montantARetourner: 30_000,
             receptionneLe: d("2026-10-07"),
@@ -463,26 +464,36 @@ describe("motif / nature du règlement (lot I)", () => {
 });
 
 
-describe("reportingArbre — signatures (lot L)", () => {
+describe("reportingArbre — signatures (lots L et L bis : lien par identifiant)", () => {
   const mise = d("2026-09-30");
-  const sig = (action: string, signataire: string, quand: Date, extra: Partial<{ auNomDe: string | null; signatureId: string }> = {}) => ({
+  const sig = (
+    id: string,
+    action: string,
+    signataire: string,
+    quand: Date,
+    extra: Partial<{ auNomDe: string | null; signatureId: string; entiteId: string | null }> = {}
+  ) => ({
+    id,
     action,
     creeAt: quand,
     signataire,
     auNomDe: null,
     signatureId: "sig-1",
+    entiteId: null,
     ...extra,
   });
+  const lien = (entity: string, entityId: string, action: string, actionSigneeId: string, quand: Date) => ({ entity, entityId, action, actionSigneeId, createdAt: quand });
 
-  it("la ligne de règlement, de retour et la décision de l'article portent la signature de leur auteur", () => {
+  it("la ligne de règlement, de retour et la décision de l'article portent la signature de leur action, retrouvée par identifiant", () => {
     const arbre = construireArbreDemande(
       demandeTrois({
         miseEnServiceSignatures: mise,
         signatures: [
-          sig("confirmation_reglement", "Assistant Test", d("2026-10-04"), { signatureId: "sig-assistant" }),
-          sig("reception_retour", "Assistant Test", d("2026-10-07"), { signatureId: "sig-assistant" }),
-          sig("decision_lignes", "Finance Test", d("2026-10-02"), { signatureId: "sig-finance" }),
+          sig("as-1", "confirmation_reglement", "Assistant Test", d("2026-10-04"), { signatureId: "sig-assistant", entiteId: "RA" }),
+          sig("as-2", "reception_retour", "Assistant Test", d("2026-10-07"), { signatureId: "sig-assistant", entiteId: "RET-A" }),
+          sig("as-3", "decision_lignes", "Finance Test", d("2026-10-02"), { signatureId: "sig-finance" }),
         ],
+        liensSignature: [lien("LigneDemande", "A", "validation_ligne", "as-3", d("2026-10-02"))],
       })
     );
     const lignes = aplatirArbres([arbre]);
@@ -496,11 +507,29 @@ describe("reportingArbre — signatures (lot L)", () => {
     expect(articleA.signatureId).toBe("sig-finance");
   });
 
+  it("deux actions du MÊME compte à quelques secondes d'écart, deux versions de signature : chaque événement garde la sienne", () => {
+    const t = d("2026-10-04");
+    const arbre = construireArbreDemande(
+      demandeTrois({
+        miseEnServiceSignatures: mise,
+        // Deux articles décidés par le même compte à 2 secondes d'intervalle, avec deux versions de signature différentes.
+        signatures: [
+          sig("as-A", "decision_lignes", "Finance Test", new Date(t.getTime()), { signatureId: "sig-v1" }),
+          sig("as-B", "decision_lignes", "Finance Test", new Date(t.getTime() + 2000), { signatureId: "sig-v2" }),
+        ],
+        liensSignature: [lien("LigneDemande", "A", "validation_ligne", "as-A", t), lien("LigneDemande", "B", "validation_ligne", "as-B", new Date(t.getTime() + 2000))],
+      })
+    );
+    const lignes = aplatirArbres([arbre]);
+    expect(lignes.find((l) => l.type === "ARTICLE" && l.article === "Article A")!.signatureId).toBe("sig-v1");
+    expect(lignes.find((l) => l.type === "ARTICLE" && l.article === "Article B")!.signatureId).toBe("sig-v2");
+  });
+
   it("une action par délégation dit « au nom de »", () => {
     const arbre = construireArbreDemande(
       demandeTrois({
         miseEnServiceSignatures: mise,
-        signatures: [sig("confirmation_reglement", "Assistant Test", d("2026-10-04"), { auNomDe: "Moussa Traoré" })],
+        signatures: [sig("as-1", "confirmation_reglement", "Assistant Test", d("2026-10-04"), { auNomDe: "Moussa Traoré", entiteId: "RA" })],
       })
     );
     const regl = aplatirArbres([arbre]).find((l) => l.type === "REGLEMENT" && l.mode === "Caisse")!;
@@ -515,23 +544,27 @@ describe("reportingArbre — signatures (lot L)", () => {
     expect(regl.signatureId).toBe("");
   });
 
-  it("après la mise en service sans signature trouvée : rien (ni image ni mention anormale) ; sans repère de mise en service : aucune colonne remplie", () => {
+  it("après la mise en service sans lien : « Signature non rattachée » (sans image) ; sans repère de mise en service : aucune colonne remplie", () => {
     const apres = aplatirArbres([construireArbreDemande(demandeTrois({ miseEnServiceSignatures: mise, signatures: [] }))]);
     expect(apres.every((l) => l.signatureId === "")).toBe(true);
-    expect(apres.find((l) => l.type === "REGLEMENT")!.signePar).toBe("");
+    expect(apres.find((l) => l.type === "REGLEMENT")!.signePar).toBe("Signature non rattachée");
     const sansRepere = aplatirArbres([construireArbreDemande(demandeTrois())]);
     expect(sansRepere.every((l) => l.signePar === "")).toBe(true);
   });
 
-  it("ne rapproche ni la signature d'un autre compte ni une signature trop éloignée dans le temps", () => {
+  it("la signature d'un autre règlement, d'une autre action ou d'un autre compte n'est jamais prise : seul l'identifiant compte", () => {
     const arbre = construireArbreDemande(
       demandeTrois({
         miseEnServiceSignatures: mise,
-        signatures: [sig("confirmation_reglement", "Finance Test", d("2026-10-04")), sig("confirmation_reglement", "Assistant Test", d("2026-10-05"))],
+        signatures: [
+          sig("as-1", "confirmation_reglement", "Finance Test", d("2026-10-04"), { entiteId: "AUTRE-REGLEMENT" }),
+          sig("as-2", "annulation_reglement", "Assistant Test", d("2026-10-04"), { entiteId: "RA" }),
+        ],
       })
     );
     const regl = aplatirArbres([arbre]).find((l) => l.type === "REGLEMENT" && l.mode === "Caisse")!;
-    expect(regl.signePar).toBe("");
+    expect(regl.signePar).toBe("Signature non rattachée");
+    expect(regl.signatureId).toBe("");
   });
 
   it("les colonnes « Signé par », « Signé le », « Au nom de » et « Signature » existent, dans cet ordre, après l'auteur", () => {
