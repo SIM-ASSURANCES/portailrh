@@ -168,59 +168,45 @@ export function validerImageSignature(octets: Buffer): ResultatImageSignature {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Rapprochement entre l'historique d'une demande et les signatures enregistrées.
+// Lien entre l'historique d'une demande et les signatures (lot L bis : PAR IDENTIFIANT, plus de fenêtre de temps).
 // ---------------------------------------------------------------------------------------------------------------------------
-
-/** Fenêtre (ms) entre la ligne d'historique et l'enregistrement de la signature de la même action. */
-export const FENETRE_RAPPROCHEMENT_MS = 60_000;
 
 export interface EntreeHistoriqueSignable {
   id: string;
-  userId: string;
   createdAt: Date;
   action: string;
+  /** Action signée dont la ligne est une conséquence (`HistoriqueEntry.actionSigneeId`). */
+  actionSigneeId: string | null;
 }
 
 export interface SignatureEnregistree {
   id: string;
-  signataireId: string;
-  creeAt: Date;
 }
 
 export type EtatSignatureEntree<S> =
   | { etat: "SIGNEE"; signature: S }
   | { etat: "ANTERIEURE" }
-  | { etat: "AUCUNE" };
+  /** Après la mise en service mais sans lien : action du lot L dont le rattachement était ambigu (voir la reprise de données). */
+  | { etat: "NON_RATTACHEE" };
 
 /**
- * Pour chaque entrée d'historique d'une action SIGNABLE : la signature du même compte la plus proche dans le temps (fenêtre
- * `FENETRE_RAPPROCHEMENT_MS`), « Antérieure à la signature » si l'entrée précède la mise en service, sinon « AUCUNE ». Une entrée
- * dont l'action n'est pas signable est absente du résultat.
+ * Pour chaque entrée d'historique d'une action SIGNABLE : sa signature (par l'identifiant de l'action signée), « Antérieure à la
+ * signature » si elle précède la mise en service, sinon « NON_RATTACHEE ». Une entrée dont l'action n'est pas signable est absente
+ * du résultat.
  */
-export function rapprocherSignatures<S extends SignatureEnregistree>(
+export function lierSignatures<S extends SignatureEnregistree>(
   entrees: readonly EntreeHistoriqueSignable[],
-  signatures: readonly S[],
+  signaturesParId: ReadonlyMap<string, S>,
   miseEnService: Date | null,
   actionsSignables: ReadonlySet<string>
 ): Map<string, EtatSignatureEntree<S>> {
   const resultat = new Map<string, EtatSignatureEntree<S>>();
   for (const e of entrees) {
     if (!actionsSignables.has(e.action)) continue;
-    if (miseEnService && e.createdAt.getTime() < miseEnService.getTime()) {
-      resultat.set(e.id, { etat: "ANTERIEURE" });
-      continue;
-    }
-    let meilleure: S | null = null;
-    let ecart = Infinity;
-    for (const s of signatures) {
-      if (s.signataireId !== e.userId) continue;
-      const d = Math.abs(s.creeAt.getTime() - e.createdAt.getTime());
-      if (d <= FENETRE_RAPPROCHEMENT_MS && d < ecart) {
-        meilleure = s;
-        ecart = d;
-      }
-    }
-    resultat.set(e.id, meilleure ? { etat: "SIGNEE", signature: meilleure } : { etat: "AUCUNE" });
+    const signature = e.actionSigneeId ? signaturesParId.get(e.actionSigneeId) : undefined;
+    if (signature) resultat.set(e.id, { etat: "SIGNEE", signature });
+    else if (miseEnService && e.createdAt.getTime() < miseEnService.getTime()) resultat.set(e.id, { etat: "ANTERIEURE" });
+    else resultat.set(e.id, { etat: "NON_RATTACHEE" });
   }
   return resultat;
 }

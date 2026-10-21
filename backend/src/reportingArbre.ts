@@ -15,7 +15,7 @@
 // portent « Compte dans les totaux = Oui » ; les lignes ARTICLE détaillent la demande, les événements détaillent l'article.
 
 import { libelleMotifReglement } from "./motifReglement";
-import { LIBELLE_ANTERIEUR_SIGNATURE, libelleSignature } from "./signatureConstantes";
+import { LIBELLE_ANTERIEUR_SIGNATURE, LIBELLE_NON_RATTACHEE_SIGNATURE, libelleSignature } from "./signatureConstantes";
 import { articleTermine, agregerRegularisation, categorieDepense, depensesDeclareesLigne, etatRegularisationArticle, getEcartLigne, AGREGATS_VIDES, type AgregatsRegularisation } from "./regularisationArticle";
 import { detailClotureForcee, libelleArticleClotureForcee, type ArticleCloturePartiel } from "./clotureDemande";
 import { derniereGestion, libelleGestionArticle, type GestionArticle } from "./parcoursArticle";
@@ -217,6 +217,7 @@ export interface DepenseArbreSource {
 }
 
 export interface RemboursementArbreSource {
+  id?: string;
   montant: number;
   statut: "EN_ATTENTE_VALIDATION" | "VALIDE" | "REJETE";
   proposePar: string;
@@ -227,6 +228,8 @@ export interface RemboursementArbreSource {
 }
 
 export interface RetourArbreSource {
+  /** Identifiant du retour (lien avec sa signature de réception ou de déclaration, lot L bis). */
+  id?: string;
   montantARetourner: number;
   estReceptionne: boolean;
   receptionneLe: Date | null;
@@ -269,6 +272,7 @@ export interface MouvementBanqueArbreSource {
 }
 
 export interface RetourExceptionnelArbreSource {
+  id?: string;
   ligneDemandeId: string | null;
   montant: number;
   statut: "EN_ATTENTE_VALIDATION" | "VALIDE" | "REJETE";
@@ -280,6 +284,7 @@ export interface RetourExceptionnelArbreSource {
 }
 
 export interface RetourExterneArbreSource {
+  id?: string;
   ligneDemandeId: string | null;
   personne: string;
   montant: number;
@@ -293,11 +298,24 @@ export interface RetourExterneArbreSource {
 
 /** Une action signée (lot L), telle que lue par `lireActionsSignees`. */
 export interface SignatureArbreSource {
+  /** Identifiant de l'action signée (`ActionSignee.id`) : c'est par lui que la signature est liée à son événement. */
+  id: string;
   action: string;
   creeAt: Date;
   signataire: string;
   auNomDe: string | null;
   signatureId: string;
+  /** Entité visée par l'action (règlement, retour, remboursement…), quand elle est connue. */
+  entiteId?: string | null;
+}
+
+/** Ligne d'historique liée à l'action signée qui l'a produite (`HistoriqueEntry.actionSigneeId`, lot L bis). */
+export interface LienHistoriqueArbreSource {
+  entity: string;
+  entityId: string;
+  action: string;
+  actionSigneeId: string;
+  createdAt: Date;
 }
 
 export interface DemandeArbreSource {
@@ -325,6 +343,8 @@ export interface DemandeArbreSource {
   circuitEvenements?: { ligneId: string | null; texte: string }[];
   /** Lot L : actions signées de la demande et repère de mise en service des signatures (absents : aucune mention de signature). */
   signatures?: SignatureArbreSource[];
+  /** Lot L bis : lignes d'historique de la demande (et de ses articles) liées à une action signée. */
+  liensSignature?: LienHistoriqueArbreSource[];
   miseEnServiceSignatures?: Date | null;
   articles: ArticleArbreSource[];
   reglements: ReglementArbreSource[];
@@ -349,37 +369,46 @@ const par = (nom: string | null | undefined, d: Date | null | undefined) =>
 const fcfa = (m: number) => `${Math.round(m).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ")} FCFA`;
 const modeLibelle = (m: "CAISSE" | "BANQUE") => (m === "CAISSE" ? "Caisse" : "Banque");
 
-/** Fenêtre (ms) entre l'instant d'un événement et l'enregistrement de sa signature. */
-const FENETRE_SIGNATURE_MS = 60_000;
 const formatSignatureLe = (d: Date) => d.toLocaleString("fr-FR", { timeZone: "Africa/Abidjan", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
+/** Comment retrouver, PAR IDENTIFIANT, l'action signée d'un événement (jamais par le compte ni par l'heure). */
+export type LienEvenementSigne =
+  /** L'événement a une ligne d'historique liée à son action signée (décision d'un article, validation de service, clôture…). */
+  | { historique: { entity: "Demande" | "LigneDemande"; entityId?: string; actions: readonly string[] } }
+  /** L'action signée vise directement l'entité (règlement, retour, remboursement, retour exceptionnel, retour externe). */
+  | { entiteId: string | undefined; actions: readonly string[] };
+
+function signatureDeLEvenement(d: DemandeArbreSource, lien: LienEvenementSigne): SignatureArbreSource | null {
+  const signatures = d.signatures ?? [];
+  if ("historique" in lien) {
+    const h = lien.historique;
+    const liens = (d.liensSignature ?? []).filter(
+      (x) => x.entity === h.entity && (h.entityId === undefined || x.entityId === h.entityId) && h.actions.includes(x.action)
+    );
+    const dernier = liens.sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())[0];
+    return dernier ? (signatures.find((sg) => sg.id === dernier.actionSigneeId) ?? null) : null;
+  }
+  if (!lien.entiteId) return null;
+  const candidates = signatures.filter((sg) => sg.entiteId === lien.entiteId && lien.actions.includes(sg.action));
+  return candidates.sort((x, y) => y.creeAt.getTime() - x.creeAt.getTime())[0] ?? null;
+}
+
 /**
- * Lot L : pose sur une ligne la signature de la personne qui a fait l'action (même compte que `auteur` quand il est connu, action de la
- * `famille`, enregistrée dans la minute de `moment`). Avant la mise en service des signatures : « Antérieur à la signature ». Sinon : rien.
+ * Lot L / L bis : pose sur une ligne la signature de l'action qui a produit l'événement, liée PAR IDENTIFIANT (`lien`). Avant la mise en
+ * service des signatures : « Antérieur à la signature ». Après, sans lien (action du lot L dont le rattachement était ambigu) :
+ * « Signature non rattachée ». `moment` vaut `null` pour un événement qui n'a pas (encore) d'action signée : rien n'est posé.
  */
-function appliquerSignature(
-  l: LigneArbre,
-  d: DemandeArbreSource,
-  moment: Date | null | undefined,
-  famille: readonly string[]
-): void {
+function appliquerSignature(l: LigneArbre, d: DemandeArbreSource, moment: Date | null | undefined, lien: LienEvenementSigne): void {
   if (!moment || !d.miseEnServiceSignatures) return;
   if (moment.getTime() < d.miseEnServiceSignatures.getTime()) {
     l.signePar = LIBELLE_ANTERIEUR_SIGNATURE;
     return;
   }
-  let meilleure: SignatureArbreSource | null = null;
-  let ecart = Infinity;
-  for (const sg of d.signatures ?? []) {
-    if (!famille.includes(sg.action)) continue;
-    if (l.auteur && sg.signataire !== l.auteur) continue;
-    const delta = Math.abs(sg.creeAt.getTime() - moment.getTime());
-    if (delta <= FENETRE_SIGNATURE_MS && delta < ecart) {
-      meilleure = sg;
-      ecart = delta;
-    }
+  const meilleure = signatureDeLEvenement(d, lien);
+  if (!meilleure) {
+    l.signePar = LIBELLE_NON_RATTACHEE_SIGNATURE;
+    return;
   }
-  if (!meilleure) return;
   l.signePar = libelleSignature({ signataire: meilleure.signataire, auNomDe: meilleure.auNomDe });
   l.signeLe = formatSignatureLe(meilleure.creeAt);
   l.signeAuNomDe = meilleure.auNomDe ?? "";
@@ -565,7 +594,7 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
     l.motifReglement = libelleMotifReglement(r.motif);
     l.motif = r.estAnnule && r.motifAnnulation ? `motif d'annulation : ${r.motifAnnulation}` : !r.estConfirme ? `saisi le ${jour(r.creeLe)}` : "";
     l.montantOperation = r.montant;
-    appliquerSignature(l, d, r.confirmeLe, ["confirmation_reglement"]);
+    appliquerSignature(l, d, r.confirmeLe, { entiteId: r.id, actions: ["confirmation_reglement"] });
     ajouter(cle, l);
 
     for (const m of d.mouvementsBanque.filter((x) => x.reglementId === r.id).sort((a, b) => a.creeLe.getTime() - b.creeLe.getTime())) {
@@ -600,7 +629,10 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
       lt.auteur = (t.estReceptionne ? t.receptionnePar : null) ?? t.declarant;
       lt.motif = [`retour ${rangRetour}`, ...origine].join(" — ");
       lt.montantOperation = t.montantARetourner;
-      appliquerSignature(lt, d, t.estReceptionne ? t.receptionneLe : t.creeParAssistant ? t.declareLe : null, t.estReceptionne ? ["reception_retour"] : ["declaration_retour_assistant"]);
+      appliquerSignature(lt, d, t.estReceptionne ? t.receptionneLe : t.creeParAssistant ? t.declareLe : null, {
+        entiteId: t.id,
+        actions: t.estReceptionne ? ["reception_retour"] : ["declaration_retour_assistant"],
+      });
       ajouter(cle, lt);
 
       for (const dep of t.depenses) {
@@ -624,7 +656,7 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
         lr.auteur = rb.validePar ?? rb.proposePar;
         lr.motif = [`proposé ${par(rb.proposePar, rb.proposeLe)}`, rb.motifRejet ? `motif de rejet : ${rb.motifRejet}` : null].filter(Boolean).join(" — ");
         lr.montantOperation = rb.montant;
-        appliquerSignature(lr, d, rb.valideLe, ["validation_remboursement", "rejet_remboursement"]);
+        appliquerSignature(lr, d, rb.valideLe, { entiteId: rb.id, actions: ["validation_remboursement", "rejet_remboursement"] });
         ajouter(cle, lr);
       }
     }
@@ -640,7 +672,7 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
     l.montantOperation = x.montant;
     l.lienJustificatifRetour = x.pieceRetourId ? cheminPieceJointe(x.pieceRetourId) : "";
     l.lienJustificatifCheque = x.pieceChequeId ? cheminPieceJointe(x.pieceChequeId) : "";
-    appliquerSignature(l, d, x.creeLe, ["retour_externe"]);
+    appliquerSignature(l, d, x.creeLe, { entiteId: x.id, actions: ["retour_externe"] });
     ajouter(cle, l);
   }
   for (const e of [...d.retoursExceptionnels].sort((a, b) => a.saisiLe.getTime() - b.saisiLe.getTime())) {
@@ -652,7 +684,7 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
     l.auteur = e.validePar ?? e.saisiPar;
     l.motif = [`saisi ${par(e.saisiPar, e.saisiLe)}`, e.motifRejet ? `motif de rejet : ${e.motifRejet}` : null].filter(Boolean).join(" — ");
     l.montantOperation = e.montant;
-    appliquerSignature(l, d, e.valideLe, ["validation_retour_exceptionnel", "rejet_retour_exceptionnel"]);
+    appliquerSignature(l, d, e.valideLe, { entiteId: e.id, actions: ["validation_retour_exceptionnel", "rejet_retour_exceptionnel"] });
     ajouter(cle, l);
   }
 
@@ -673,7 +705,9 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
     l.decisionFinance = decisionFinanceArticle(a);
     l.decisionDG = decisionDGArticle(a);
     // Lot L : la décision de la Finance sur l'article est signée (l'auteur est le décideur Finance de l'article).
-    appliquerSignature(l, d, a.statut === "EN_ATTENTE" ? null : a.decideLe, ["decision_lignes"]);
+    appliquerSignature(l, d, a.statut === "EN_ATTENTE" ? null : a.decideLe, {
+      historique: { entity: "LigneDemande", entityId: a.id, actions: ["validation_ligne", "rejet_ligne"] },
+    });
     l.livraison = a.dateLivraison;
     l.circuitEvenements = (d.circuitEvenements ?? []).filter((e) => e.ligneId === a.id).map((e) => e.texte).join("\n");
     const evts = evenementsParCible.get(a.id) ?? [];
@@ -753,11 +787,11 @@ export function construireArbreDemande(d: DemandeArbreSource): ArbreDemande {
   l.cloture = d.clotureForcee ? texteClotureForcee(d.clotureForcee) : "";
   l.motif = sansArticle ? [d.description].filter(Boolean).join("") : "";
   // Lot L : la clôture est signée ; à défaut, la validation de l'étape Service.
-  appliquerSignature(l, d, d.gere?.etape === "Clôturée" ? d.gere.date : null, ["cloture"]);
+  appliquerSignature(l, d, d.gere?.etape === "Clôturée" ? d.gere.date : null, {
+    historique: { entity: "Demande", actions: ["cloture_totale", "cloture_partielle", "cloture_forcee"] },
+  });
   if (!l.signePar && d.validationService) {
-    l.auteur = d.validationService.par;
-    appliquerSignature(l, d, d.validationService.le, ["validation_service"]);
-    l.auteur = "";
+    appliquerSignature(l, d, d.validationService.le, { historique: { entity: "Demande", actions: ["validation_service"] } });
   }
   l.nbArticles = d.articles.length;
   l.montantDemande = d.montantDemande;

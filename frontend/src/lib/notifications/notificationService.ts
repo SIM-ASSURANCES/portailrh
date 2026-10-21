@@ -1,4 +1,4 @@
-import { prisma, type NotificationPriority, type NotificationCategory } from "backend";
+import { contexteSignatureCourant, differerApresCommit, prisma, type NotificationPriority, type NotificationCategory } from "backend";
 import { publishUserNotification, publishDataChanged } from "@/lib/eventBus";
 import { fcmAdmin } from "@/lib/firebase/firebaseAdmin";
 import { sendEmail, generateCriticalNotificationEmail } from "@/lib/email";
@@ -36,57 +36,65 @@ export async function notify(params: NotifyParams) {
 
   try {
     // 1. Canal DB Prisma (Toujours enregistré)
-    const notification = await prisma.notification.create({
-      data: {
-        userId: params.userId,
-        titre: params.titre,
-        message: params.message,
-        lien: params.lien || null,
-        priority: priority,
-        category: category,
-      },
-    });
-
-    // 2. Canal SSE temps réel (In-app)
-    publishUserNotification(params.userId, {
-      id: notification.id,
-      titre: notification.titre,
-      message: notification.message,
-      lien: notification.lien,
-      priority: notification.priority,
-      category: notification.category,
-      createdAt: notification.createdAt.toISOString(),
-    });
-    // Rafraîchissement global des vues ouvertes
-    publishDataChanged();
-
-    // 3. Canal FCM Push (Pour IMPORTANT et CRITIQUE)
-    if (priority !== "INFO") {
-      sendFcmPush(params.userId, notification).catch((err) => {
-        console.error(`[FCM] Échec envoi push pour user ${params.userId}:`, err);
-        void journaliserIncident({
-          niveau: "ERREUR",
-          source: "PUSH",
-          code: "FCM_ECHEC",
-          message: err instanceof Error ? `${err.name}: ${err.message}` : "Échec de l'envoi du push",
-          contexte: { userId: params.userId, notificationId: notification.id },
-        });
+    const creer = () =>
+      prisma.notification.create({
+        data: {
+          userId: params.userId,
+          titre: params.titre,
+          message: params.message,
+          lien: params.lien || null,
+          priority: priority,
+          category: category,
+        },
       });
-    }
+    // Dans une action signée (transaction unique), un échec ici ne doit pas abîmer la transaction de l'action : point de reprise.
+    const notification = contexteSignatureCourant() ? await prisma.$transaction(() => creer()) : await creer();
 
-    // 4. Canal Email SMTP (Pour CRITIQUE)
-    if (priority === "CRITIQUE") {
-      sendCriticalEmail(params.userId, notification).catch((err) => {
-        console.error(`[Email] Échec envoi email critique pour user ${params.userId}:`, err);
-        void journaliserIncident({
-          niveau: "ERREUR",
-          source: "EMAIL",
-          code: "SMTP_ECHEC",
-          message: err instanceof Error ? `${err.name}: ${err.message}` : "Échec de l'envoi de l'e-mail",
-          contexte: { userId: params.userId, notificationId: notification.id },
-        });
+    // Canaux 2 à 4 (temps réel, push, e-mail) : lot L bis — dans une action signée ils partent APRÈS la validation de la transaction
+    // (une action annulée n'envoie rien) ; hors action signée, tout de suite, comme avant.
+    const diffuser = () => {
+      // 2. Canal SSE temps réel (In-app)
+      publishUserNotification(params.userId, {
+        id: notification.id,
+        titre: notification.titre,
+        message: notification.message,
+        lien: notification.lien,
+        priority: notification.priority,
+        category: notification.category,
+        createdAt: notification.createdAt.toISOString(),
       });
-    }
+      // Rafraîchissement global des vues ouvertes
+      publishDataChanged();
+
+      // 3. Canal FCM Push (Pour IMPORTANT et CRITIQUE)
+      if (priority !== "INFO") {
+        sendFcmPush(params.userId, notification).catch((err) => {
+          console.error(`[FCM] Échec envoi push pour user ${params.userId}:`, err);
+          void journaliserIncident({
+            niveau: "ERREUR",
+            source: "PUSH",
+            code: "FCM_ECHEC",
+            message: err instanceof Error ? `${err.name}: ${err.message}` : "Échec de l'envoi du push",
+            contexte: { userId: params.userId, notificationId: notification.id },
+          });
+        });
+      }
+
+      // 4. Canal Email SMTP (Pour CRITIQUE)
+      if (priority === "CRITIQUE") {
+        sendCriticalEmail(params.userId, notification).catch((err) => {
+          console.error(`[Email] Échec envoi email critique pour user ${params.userId}:`, err);
+          void journaliserIncident({
+            niveau: "ERREUR",
+            source: "EMAIL",
+            code: "SMTP_ECHEC",
+            message: err instanceof Error ? `${err.name}: ${err.message}` : "Échec de l'envoi de l'e-mail",
+            contexte: { userId: params.userId, notificationId: notification.id },
+          });
+        });
+      }
+    };
+    if (!differerApresCommit(diffuser)) diffuser();
 
     return notification;
   } catch (error) {

@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   ACTIONS_SIGNEES,
   decoderDataUrlPng,
-  FENETRE_RAPPROCHEMENT_MS,
   LIBELLE_ANTERIEUR_SIGNATURE,
+  LIBELLE_NON_RATTACHEE_SIGNATURE,
   libelleSignature,
-  rapprocherSignatures,
+  lierSignatures,
   refusSansSignature,
   SIGNATURE_TAILLE_MAX,
   validerImageSignature,
@@ -147,41 +147,53 @@ describe("refus sans signature enrôlée", () => {
   });
 });
 
-describe("rapprocherSignatures", () => {
+describe("lierSignatures (lien par identifiant, lot L bis)", () => {
   const t0 = new Date("2026-11-02T10:00:00Z");
   const mise = new Date("2026-10-27T00:00:00Z");
   const signables = new Set(["confirmation_reglement"]);
-  const entree = (id: string, userId: string, createdAt: Date, action = "confirmation_reglement") => ({ id, userId, createdAt, action });
-  const sig = (id: string, signataireId: string, creeAt: Date, version: number) => ({ id, signataireId, creeAt, version });
+  const entree = (id: string, createdAt: Date, actionSigneeId: string | null, action = "confirmation_reglement") => ({ id, createdAt, action, actionSigneeId });
+  const sig = (id: string, version: number) => ({ id, version });
+  const parId = (...s: { id: string; version: number }[]) => new Map(s.map((x) => [x.id, x]));
 
-  it("garde la version de signature utilisée à ce moment-là, même après un nouvel enrôlement", () => {
-    const e1 = entree("e1", "u1", t0);
-    const e2 = entree("e2", "u1", new Date(t0.getTime() + 3 * 86400_000));
-    const sigs = [sig("s1", "u1", new Date(t0.getTime() + 500), 1), sig("s2", "u1", new Date(t0.getTime() + 3 * 86400_000 + 500), 2)];
-    const r = rapprocherSignatures([e1, e2], sigs, mise, signables);
+  it("garde la version de signature de SON action, même après un nouvel enrôlement", () => {
+    const r = lierSignatures([entree("e1", t0, "s1"), entree("e2", new Date(t0.getTime() + 3 * 86400_000), "s2")], parId(sig("s1", 1), sig("s2", 2)), mise, signables);
     expect(r.get("e1")).toMatchObject({ etat: "SIGNEE", signature: { version: 1 } });
     expect(r.get("e2")).toMatchObject({ etat: "SIGNEE", signature: { version: 2 } });
   });
 
+  it("deux actions du même compte à moins de 60 secondes, deux versions de signature : chacune garde la sienne", () => {
+    // Avec l'ancienne fenêtre de 60 s, les deux lignes auraient pu se confondre ; le lien par identifiant ne se trompe pas.
+    const e1 = entree("e1", t0, "s1");
+    const e2 = entree("e2", new Date(t0.getTime() + 1500), "s2");
+    const r = lierSignatures([e1, e2], parId(sig("s1", 1), sig("s2", 2)), mise, signables);
+    expect(r.get("e1")).toMatchObject({ etat: "SIGNEE", signature: { id: "s1", version: 1 } });
+    expect(r.get("e2")).toMatchObject({ etat: "SIGNEE", signature: { id: "s2", version: 2 } });
+  });
+
+  it("plusieurs lignes d'une même action pointent vers la même signature", () => {
+    const r = lierSignatures([entree("e1", t0, "s1"), entree("e2", t0, "s1")], parId(sig("s1", 3)), mise, signables);
+    expect(r.get("e1")).toMatchObject({ etat: "SIGNEE", signature: { id: "s1" } });
+    expect(r.get("e2")).toMatchObject({ etat: "SIGNEE", signature: { id: "s1" } });
+  });
+
   it("une action d'avant la mise en service est « antérieure », jamais anormale", () => {
-    const avant = entree("e0", "u1", new Date("2026-09-01T10:00:00Z"));
-    expect(rapprocherSignatures([avant], [], mise, signables).get("e0")).toEqual({ etat: "ANTERIEURE" });
+    const avant = entree("e0", new Date("2026-09-01T10:00:00Z"), null);
+    expect(lierSignatures([avant], new Map(), mise, signables).get("e0")).toEqual({ etat: "ANTERIEURE" });
     expect(LIBELLE_ANTERIEUR_SIGNATURE).toBe("Antérieur à la signature");
   });
 
-  it("ne rapproche ni un autre compte ni une signature hors fenêtre", () => {
-    const e = entree("e1", "u1", t0);
-    const r = rapprocherSignatures(
-      [e],
-      [sig("sx", "u2", t0, 1), sig("sy", "u1", new Date(t0.getTime() + FENETRE_RAPPROCHEMENT_MS + 1000), 1)],
-      mise,
-      signables
-    );
-    expect(r.get("e1")).toEqual({ etat: "AUCUNE" });
+  it("après la mise en service sans lien (rattachement ambigu du lot L) : « non rattachée » ; la proximité dans le temps ne compte plus", () => {
+    const r = lierSignatures([entree("e1", t0, null)], parId(sig("sx", 1)), mise, signables);
+    expect(r.get("e1")).toEqual({ etat: "NON_RATTACHEE" });
+    expect(LIBELLE_NON_RATTACHEE_SIGNATURE).toBe("Signature non rattachée");
+  });
+
+  it("un lien vers une signature inconnue est « non rattaché », jamais une signature inventée", () => {
+    expect(lierSignatures([entree("e1", t0, "fantome")], new Map(), mise, signables).get("e1")).toEqual({ etat: "NON_RATTACHEE" });
   });
 
   it("ignore les actions non signables", () => {
-    const r = rapprocherSignatures([entree("e1", "u1", t0, "creation")], [], mise, signables);
+    const r = lierSignatures([entree("e1", t0, "s1", "creation")], parId(sig("s1", 1)), mise, signables);
     expect(r.has("e1")).toBe(false);
   });
 });

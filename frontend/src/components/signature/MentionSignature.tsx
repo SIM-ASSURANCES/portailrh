@@ -1,4 +1,4 @@
-import { LIBELLE_ANTERIEUR_SIGNATURE, libelleSignature } from "backend/client";
+import { LIBELLE_ANTERIEUR_SIGNATURE, LIBELLE_NON_RATTACHEE_SIGNATURE, libelleSignature } from "backend/client";
 
 export interface SignatureAffichee {
   signatureId: string;
@@ -10,9 +10,9 @@ export interface SignatureAffichee {
 
 /**
  * Signature d'une action : miniature (agrandie au survol, image entière au clic) et « signé par X, au nom de Y ».
- * L'image est servie par `/api/signatures/[id]`, jamais par une URL publique. `null` = action antérieure à la signature (jamais anormal).
+ * L'image est servie par `/api/signatures/[id]`, jamais par une URL publique. `anterieure` = action d'avant les signatures (jamais anormal) ; `nonRattachee` = action du lot L dont le lien avec sa signature n'a pu être établi sans ambiguïté.
  */
-export function MentionSignature({ signature, anterieure }: { signature?: SignatureAffichee | null; anterieure?: boolean }) {
+export function MentionSignature({ signature, anterieure, nonRattachee }: { signature?: SignatureAffichee | null; anterieure?: boolean; nonRattachee?: boolean }) {
   if (signature) {
     return (
       <span className="mt-1 flex items-center gap-2" data-signature-mention data-signature-version={signature.version}>
@@ -43,6 +43,13 @@ export function MentionSignature({ signature, anterieure }: { signature?: Signat
     return (
       <span className="mt-1 block text-xs italic text-muted-foreground" data-signature-anterieure>
         {LIBELLE_ANTERIEUR_SIGNATURE}
+      </span>
+    );
+  }
+  if (nonRattachee) {
+    return (
+      <span className="mt-1 block text-xs italic text-muted-foreground" data-signature-non-rattachee>
+        {LIBELLE_NON_RATTACHEE_SIGNATURE}
       </span>
     );
   }

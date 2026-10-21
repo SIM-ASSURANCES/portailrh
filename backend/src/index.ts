@@ -109,3 +109,5 @@ export * from "./permissions";
 export * from "./recapRetourCaisseDb";
 export * from "./signature";
 export * from "./signatureDb";
+export * from "./signatureTransaction";
+export * from "./signatureReprise";

@@ -1,6 +1,6 @@
 import { LIBELLE_ETAPE_CIRCUIT } from "./circuitDemande";
 import { chargerEvenementsCircuit } from "./circuitEvenementsDb";
-import { lireActionsSignees, lireMiseEnServiceSignatures } from "./signatureDb";
+import { lireActionsSignees, lireLiensHistoriqueSignes, lireMiseEnServiceSignatures } from "./signatureDb";
 
 import { lireInstantaneClotureForcee } from "./clotureDemande";
 import { beneficiaireArticle, nomBeneficiaireDemande } from "./beneficiaireArticles";
@@ -926,18 +926,26 @@ export async function getReportingArbre(
   // Lot J bis : articles dont le règlement est couvert par une confirmation de dépassement du DG.
   const couvertures = await phrasesCouvertureParArticle(prisma, ids);
   // Lot L : signatures des actions (qui, quelle version, quand, au nom de qui) et repère de mise en service.
-  const [actionsSignees, miseEnServiceSignatures] = await Promise.all([lireActionsSignees(prisma, ids), lireMiseEnServiceSignatures(prisma)]);
+  const [actionsSignees, miseEnServiceSignatures, liensSignatureParDemande] = await Promise.all([
+    lireActionsSignees(prisma, ids),
+    lireMiseEnServiceSignatures(prisma),
+    lireLiensHistoriqueSignes(
+      prisma,
+      details.map((det) => ({ id: det.id, ligneIds: det.lignes.map((l) => l.id) }))
+    ),
+  ]);
   const signeesParDemande = new Map<string, NonNullable<DemandeArbreSource["signatures"]>>();
   for (const a of actionsSignees) {
     if (!a.demandeId) continue;
     const liste = signeesParDemande.get(a.demandeId) ?? [];
-    liste.push({ action: a.action, creeAt: a.creeAt, signataire: a.signataire, auNomDe: a.auNomDe, signatureId: a.signatureId });
+    liste.push({ id: a.id, action: a.action, creeAt: a.creeAt, signataire: a.signataire, auNomDe: a.auNomDe, signatureId: a.signatureId, entiteId: a.entiteId });
     signeesParDemande.set(a.demandeId, liste);
   }
   const arbres = demandes.map((d) => {
     const det = detailParId.get(d.id)!;
     return construireArbreDemande({
       signatures: signeesParDemande.get(d.id) ?? [],
+      liensSignature: liensSignatureParDemande.get(d.id) ?? [],
       miseEnServiceSignatures,
       reference: d.reference,
       creeLe: d.createdAt,
@@ -996,6 +1004,7 @@ export async function getReportingArbre(
         creeLe: r.createdAt,
         confirmeLe: r.confirmeAt,
         retours: r.retours.map((t) => ({
+          id: t.id,
           montantARetourner: Number(t.montantARetourner),
           estReceptionne: t.estReceptionne,
           receptionneLe: t.receptionneAt,
@@ -1016,6 +1025,7 @@ export async function getReportingArbre(
             date: dep.date,
           })),
           remboursements: t.remboursements.map((rb) => ({
+            id: rb.id,
             montant: Number(rb.montant),
             statut: rb.statut,
             proposePar: rb.proposePar.fullName,
@@ -1028,6 +1038,7 @@ export async function getReportingArbre(
       })),
       mouvementsBanque: mouvementsParDemande.get(d.id) ?? [],
       retoursExceptionnels: det.retoursExceptionnels.map((e) => ({
+        id: e.id,
         ligneDemandeId: e.ligneDemandeId,
         montant: Number(e.montant),
         statut: e.statut,
@@ -1038,6 +1049,7 @@ export async function getReportingArbre(
         motifRejet: e.motifRejet,
       })),
       retoursExternes: det.retoursExternes.map((x) => ({
+        id: x.id,
         ligneDemandeId: x.ligneDemandeId,
         personne: x.collaborateur?.fullName ?? x.nomExterne ?? "—",
         montant: Number(x.montantRetourne),

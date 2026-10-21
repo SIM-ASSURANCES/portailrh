@@ -27,6 +27,9 @@ export const CLE_MARQUEUR_SIGNATURES = "signatures.mise_en_service";
 
 export const LIBELLE_ANTERIEUR_SIGNATURE = "Antérieur à la signature";
 
+/** Lot L bis : action du lot L dont le rattachement à sa signature était ambigu (deux candidates différentes) : on ne devine pas. */
+export const LIBELLE_NON_RATTACHEE_SIGNATURE = "Signature non rattachée";
+
 export const MENTION_SIGNATURE_INTERNE =
   "Signature manuscrite enregistrée : traçabilité interne, sans valeur de signature électronique qualifiée.";
 
