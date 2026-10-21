@@ -65,3 +65,32 @@ PLANIFICATEUR_ACTIF=false bash e2e/base-jetable.sh && node e2e/reinitialisation-
 # Après une base peuplée par les autres scripts :
 E2E_CAPTURES=./e2e-captures node e2e/presence-rh.mjs   # page « Présence du jour » de la RH (capture dans e2e-captures/, non versionné)
 ```
+
+### Congés (2026-10-15) — ATTENTION : seuls `conges-couche-base.ts` et `conges-migration-admin.sh` sont à jour (module simplifié)
+
+Les scripts Playwright de cette section et des suivantes visent l'ANCIEN module (soldes, types, observations DG, permissions
+d'absence) : ils sont à remplacer par `conges-recette.mjs` (tâche T11 du plan).
+
+```bash
+PLANIFICATEUR_ACTIF=false bash e2e/base-jetable.sh && node e2e/conges-recette.mjs && bash e2e/arreter.sh   # recette Playwright complète (T11)
+# Base jetable migrée et seedée, serveur lancé (production ou `next dev`) sur E2E_BASE_URL (défaut http://localhost:3100) :
+E2E_DATABASE_URL=postgresql://postgres:pw@localhost:55497/e2e node e2e/conges-ecrans.mjs   # écrans Congés : circuit, soldes, annulation, repli DG, congé d'office, droits, 390 px
+DATABASE_URL="postgresql://postgres:pw@localhost:45497/e2e?schema=public" npx tsx e2e/conges-couche-base.ts   # couche base (T03) : plages provisoires, circuit, R3 à R12, repli DG, concurrence
+# Sans le Chromium de Playwright : E2E_CHROMIUM=/chemin/vers/chrome ; captures : E2E_CAPTURES=./e2e-captures
+```
+
+Le Chromium de Playwright peut manquer : `E2E_CHROMIUM=/chemin/vers/chrome`. Les formulaires sont remplis après `networkidle`
+(remplir avant l'hydratation fait revenir les champs à leur valeur initiale) et les statuts sont attendus en base, pas par
+un mot du texte de la page (« Approuvée » apparaît aussi dans « Approuvée par le responsable »).
+
+### Congés — droits propres de la RH (2026-10-16)
+
+```bash
+# Le port 55497 peut être réservé par Windows (Hyper-V) : E2E_PG_PORT=45497 bash e2e/base-jetable.sh
+E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-droits-propres.mjs   # personne n'ajuste son solde ni sa date d'embauche
+E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-integration.mjs      # Lot 5 : menu, accueil, profil, Mon équipe, suppression de compte, purge refusée, 390 px
+E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-responsable-sans-permission.mjs   # responsable de service sans permission : « À décider » seulement
+DATABASE_URL="postgresql://postgres:pw@localhost:45497/e2e?schema=public" npx tsx e2e/purge-pointage-absences.ts   # à lancer APRÈS conges-integration.mjs
+E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-observations.mjs   # C3 : observations de la RH et du DG, ajout seul, DG sans consulter_tous
+E2E_DATABASE_URL=postgresql://postgres:pw@localhost:45497/e2e node e2e/conges-exceptionnelle.mjs   # C4 : permission exceptionnelle, une seule décision, choix du destinataire, replis
+```

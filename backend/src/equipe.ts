@@ -4,11 +4,15 @@
  * recalculées), les absences autorisées et les absents de la même lecture que la page « Présence » de la RH.
  */
 
+import type { EtatPlageConge } from "./circuitConge";
+
 export type CodeEtatJour =
   | "A_L_HEURE"
   | "EN_RETARD"
   | "PARTI_EN_AVANCE"
   | "ABSENCE_AUTORISEE"
+  | "EN_CONGE"
+  | "CONGE_EN_ATTENTE"
   | "ABSENT"
   | "PAS_ENCORE_POINTE"
   | "NON_OUVRE";
@@ -22,6 +26,8 @@ export interface SourceEtatJour {
   departAnticipe: boolean;
   /** Journée entièrement couverte par un congé ou une permission. */
   absenceAutorisee: boolean;
+  /** État du congé qui couvre la journée (`etatCongeDuJour`, congesPointage.ts) ; absent ou `null` : pas un congé. */
+  etatConge?: EtatPlageConge | null;
   /** Absence enregistrée pour ce jour (cron des absences). */
   absent: boolean;
   /** Week-end ou jour férié. */
@@ -43,7 +49,12 @@ export function etatJourMembre(s: SourceEtatJour): EtatJour {
     if (s.estRetard) return { code: "EN_RETARD", libelle: `En retard${s.minutesRetard ? ` · ${s.minutesRetard} min` : ""}` };
     return { code: "A_L_HEURE", libelle: "À l'heure" };
   }
-  if (s.absenceAutorisee) return { code: "ABSENCE_AUTORISEE", libelle: "Absence autorisée" };
+  if (s.absenceAutorisee) {
+    // Un congé s'affiche comme tel (T08) ; un jour seulement protégé (demande non validée à temps) reste une absence autorisée.
+    if (s.etatConge === "EN_CONGE") return { code: "EN_CONGE", libelle: "En congé" };
+    if (s.etatConge === "EN_ATTENTE") return { code: "CONGE_EN_ATTENTE", libelle: "Congé en attente de validation" };
+    return { code: "ABSENCE_AUTORISEE", libelle: "Absence autorisée" };
+  }
   if (s.absent) return { code: "ABSENT", libelle: "Absent" };
   if (s.jourNonOuvre) return { code: "NON_OUVRE", libelle: "Jour non ouvré" };
   return { code: "PAS_ENCORE_POINTE", libelle: "Pas encore pointé" };

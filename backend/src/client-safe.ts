@@ -34,6 +34,10 @@ export * from "./montant";
 export * from "./retourNul";
 export * from "./retourExterneRattache";
 export * from "./regularisationDepenses";
+// Pas de congé dans le passé : phrase et règle partagées avec le formulaire (pure, importe seulement congesCalcul).
+export * from "./congesCalcul";
+export * from "./congesPasse";
+export * from "./congesVueEnsemble";
 export * from "./regularisationArticle";
 export * from "./clotureDemande";
 export * from "./dateLivraisonArticle";

@@ -70,7 +70,7 @@ export default async function PointagePage({ searchParams }: { searchParams: Pro
         : "Aujourd'hui est un jour de repos (week-end). Aucun pointage obligatoire.";
     } else if (enAbsenceAutorisee) {
       mode = "NON_OUVRABLE";
-      messageAuto = "Une absence autorisée (congé ou permission) couvre votre journée. Aucun pointage obligatoire.";
+      messageAuto = "Un congé autorisé couvre votre journée. Aucun pointage obligatoire.";
     } else if (currentMinutes >= limiteDepartMinutes) {
       mode = "ABSENCE_AUTO";
       messageAuto = "Journée terminée sans pointage. Vous avez été marqué(e) comme absent(e).";

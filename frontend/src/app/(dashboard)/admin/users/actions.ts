@@ -804,6 +804,11 @@ export async function supprimerUtilisateurAction(
     lignesDecideesParDG,
     reinitialisationsPointageEffectuees,
     pointageMisEnServiceParCompte,
+    congesDemandes,
+    congesCreees,
+    congesApprouves,
+    congesValides,
+    congesAnnules,
     lignesBeneficiees,
     lignesDecideesFinance,
     demandesClotureesDeForce,
@@ -867,6 +872,12 @@ export async function supprimerUtilisateurAction(
     // Journal permanent des purges du Pointage seul et marqueur de mise en service (RESTRICT).
     prisma.reinitialisationPointage.count({ where: { effectueeParId: userId } }),
     prisma.pointageMiseEnService.count({ where: { parId: userId } }),
+    // Congés : les cinq relations vers User de DemandeConge sont vérifiées avant suppression.
+    prisma.demandeConge.count({ where: { userId } }),
+    prisma.demandeConge.count({ where: { creeParId: userId } }),
+    prisma.demandeConge.count({ where: { approuveParId: userId } }),
+    prisma.demandeConge.count({ where: { valideParId: userId } }),
+    prisma.demandeConge.count({ where: { annuleParId: userId } }),
     // Autonomie des articles, lot A (2026-10-14) : bénéficiaire propre d'un article (SET NULL en base).
     prisma.ligneDemande.count({ where: { beneficiaireUserId: userId } }),
     // Autonomie des articles, lot B (2026-10-15) : décideur Finance d'un article (SET NULL en base).
@@ -934,6 +945,11 @@ export async function supprimerUtilisateurAction(
   if (reinitialisationsPointageEffectuees > 0)
     blocages.push(`purgé le Pointage ${reinitialisationsPointageEffectuees} fois (journal d'audit permanent)`);
   if (pointageMisEnServiceParCompte > 0) blocages.push("mis le Pointage en service");
+  if (congesDemandes > 0) blocages.push(`demandé ${congesDemandes} congé(s)`);
+  if (congesCreees > 0) blocages.push(`créé ${congesCreees} demande(s) de congé`);
+  if (congesApprouves > 0) blocages.push(`approuvé ${congesApprouves} demande(s) de congé en tant que responsable`);
+  if (congesValides > 0) blocages.push(`validé ${congesValides} demande(s) de congé`);
+  if (congesAnnules > 0) blocages.push(`annulé ${congesAnnules} congé(s)`);
   if (lignesDecideesFinance > 0) blocages.push(`validé ${lignesDecideesFinance} ligne(s) d'article en tant que Finance`);
   if (demandesClotureesDeForce > 0) blocages.push(`forcé la clôture de ${demandesClotureesDeForce} demande(s)`);
   if (budgetsSoumis > 0) blocages.push(`soumis ${budgetsSoumis} paramétrage(s) de budget`);

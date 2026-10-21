@@ -46,6 +46,8 @@ model User {
   /// Services dont ce compte est le responsable (étape « Service » du circuit de validation, 2026-10-06).
   servicesResponsable    Service[] @relation("ServiceResponsable")
   photoUrl               String?   @default("/default-avatar.svg")
+  /// Date d'embauche (Congés, 2026-10-15) : exercice de congé et ancienneté. Jamais de repli silencieux sur
+  /// `createdAt` (tous les comptes ont été créés en septembre 2026) : la RH la renseigne.
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
@@ -159,6 +161,13 @@ model User {
   encEncaissementsConfirmes EncEncaissement[] @relation("EncEncaissementConfirmePar")
   encEncaissementsNonRecus  EncEncaissement[] @relation("EncEncaissementNonRecuPar")
   encSignalementsTraites EncSignalement[] @relation("EncSignalementTraitePar")
+
+  // Congés
+  congesDemandes                DemandeConge[]      @relation("CongeDemandeur")
+  congesCrees                   DemandeConge[]      @relation("CongeCreateur")
+  congesApprouves               DemandeConge[]      @relation("CongeApprobateur")
+  congesValides                 DemandeConge[]      @relation("CongeValidateur")
+  congesAnnules                 DemandeConge[]      @relation("CongeAnnulateur")
 }
 
 model Role {
@@ -1427,9 +1436,96 @@ model PlageAbsenceAutorisee {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
+  /// Demande de congé qui a créé la plage : l'annulation supprime par cette clé, jamais par plage de dates ni par le texte de la
+  /// description. Nulle pour une plage créée autrement.
+  demandeCongeId      String?
+  demandeConge        DemandeConge?      @relation(fields: [demandeCongeId], references: [id], onDelete: Cascade)
+
+  /// Plage posée dès la soumission, avant décision : la journée n'est pas comptée absente, mais le congé n'est pas encore validé.
+  provisoire Boolean @default(false)
+
   createdAt DateTime @default(now())
 
   @@index([userId, date])
+  @@index([demandeCongeId])
+}
+
+// ============================================================
+// CONGÉS (module simplifié, 2026-10-19)
+// ============================================================
+//
+// Circuit : responsable du service d'abord (Service.responsableId, aucune permission), puis la RH (rôle porteur de
+// `conges.valider_rh`) ; repli DG si la RH est le demandeur (moteur pur backend/src/circuitConge.ts). Seul point de
+// contact avec le Pointage : `PlageAbsenceAutorisee`.
+
+/// Nature d'une demande : un congé, ou une permission exceptionnelle (mariage, décès, naissance…). Même circuit.
+enum NatureConge {
+  CONGE
+  PERMISSION_EXCEPTIONNELLE
+}
+
+enum StatutDemandeConge {
+  EN_ATTENTE_RESPONSABLE
+  EN_ATTENTE_RH
+  VALIDEE
+  REJETEE
+  ANNULEE
+  MODIFICATION_DEMANDEE
+}
+
+/// Demande de congé (module simplifié, 2026-10-19) : aucun solde, aucun type, aucune pièce jointe. Circuit : responsable du
+/// service puis RH (backend/src/circuitConge.ts). Les jours demandés sont couverts par des plages d'absence autorisée.
+model DemandeConge {
+  id                        String             @id @default(cuid())
+  /// CNG-AAAAMM-NNNN, calculée sous verrou consultatif dans la transaction de création.
+  reference                 String             @unique
+  nature                    NatureConge
+  motif                     String
+  dateDebut                 DateTime           @db.Date
+  dateFin                   DateTime           @db.Date
+  /// Jours du lundi au vendredi hors `JourFerie` : information seulement.
+  nbJoursOuvres             Int
+  statut                    StatutDemandeConge @default(EN_ATTENTE_RESPONSABLE)
+  /// Étape du responsable requise, fixée à la soumission (affichage « non requise » dans la frise).
+  etapeResponsableRequise   Boolean            @default(true)
+  /// Congé enregistré par la RH pour le salarié (statut VALIDEE d'emblée).
+  saisieParRH               Boolean            @default(false)
+  motifRejet                String?
+  motifModification         String?
+  motifAnnulation           String?
+  /// Observation facultative de la RH, jointe à sa décision.
+  observationRH             String?
+  /// Refus après la date de début : les jours déjà passés et non pointés ont-ils été comptés comme absences ? (`null` : sans objet)
+  joursPassesComptesAbsents Boolean?
+
+  userId        String
+  user          User      @relation("CongeDemandeur", fields: [userId], references: [id])
+  /// = userId, sauf saisie par la RH.
+  creeParId     String
+  creePar       User      @relation("CongeCreateur", fields: [creeParId], references: [id])
+  approuveParId String?
+  approuvePar   User?     @relation("CongeApprobateur", fields: [approuveParId], references: [id])
+  approuveAt    DateTime?
+  /// Auteur de la décision RH (validation ou refus à l'étape RH).
+  valideParId   String?
+  validePar     User?     @relation("CongeValidateur", fields: [valideParId], references: [id])
+  valideAt      DateTime?
+  annuleParId   String?
+  annulePar     User?     @relation("CongeAnnulateur", fields: [annuleParId], references: [id])
+  annuleAt      DateTime?
+
+  /// Début de l'étape en cours et dernier rappel envoyé (rappel quotidien, planificateur).
+  etapeDepuis     DateTime  @default(now())
+  dernierRappelAt DateTime?
+
+  plages PlageAbsenceAutorisee[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([statut])
+  @@index([dateDebut, dateFin])
 }
 
 // ============================================================
@@ -2117,6 +2213,7 @@ enum TacheNom {
   RELANCES_JUSTIFICATION
   ABSENCES
   PURGE
+  RAPPELS_CONGES
 }
 
 enum DeclenchementTache {

@@ -22,6 +22,20 @@ export interface NavItem {
   compteur?: number;
 }
 
+/**
+ * Entrées de menu du module Congés. `null` côté `NavFlags` = aucun accès (branche absente).
+ * `aDecider` : `null` = pas de décision possible pour ce compte (entrée absente), sinon le nombre en pastille.
+ */
+export interface ModuleCongeNav {
+  /** `<module>.soumettre` : « Mes … » et « Nouvelle demande ». */
+  soumettre: boolean;
+  aDecider: number | null;
+  /** « Saisir un congé » : la RH (permission du rôle), comme le layout du module. */
+  saisieRH: boolean;
+  /** « Toutes les demandes » : DG (permission du rôle), RH ou consultation de tous. */
+  toutes: boolean;
+}
+
 export interface NavGroup {
   /** Sous-titre de groupe à l'intérieur d'une branche (facultatif). */
   title?: string;
@@ -149,6 +163,8 @@ export interface NavFlags {
   justificationsADecider?: number | null;
   /** Pointage (phase 5 de la fiabilisation) : responsable actuel d'au moins un service → entrée « Mon équipe ». */
   canVoirMonEquipe?: boolean;
+  /** Congés : `null` sans accès au module (branche absente). */
+  congesNav?: ModuleCongeNav | null;
 }
 
 /**
@@ -248,6 +264,7 @@ export function getNavBranches({
   demandesDGADecider = null,
   justificationsADecider = null,
   canVoirMonEquipe = false,
+  congesNav = null,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -435,6 +452,33 @@ export function getNavBranches({
           : []),
       ],
     },
+    // Congés : branche masquée sans accès (mêmes conditions que le layout du module).
+    {
+      key: "conges",
+      label: "Congés",
+      icon: "calendar",
+      groups: [
+        {
+          items: congesNav
+            ? [
+                ...(congesNav.soumettre
+                  ? [
+                      { label: "Mes congés", href: "/conges", icon: "calendar", exact: true } satisfies NavItem,
+                      { label: "Nouvelle demande", href: "/conges/nouvelle", icon: "plus-circle" } satisfies NavItem,
+                    ]
+                  : []),
+                ...(congesNav.aDecider !== null
+                  ? [{ label: "À décider", href: "/conges/a-decider", icon: "check-circle", compteur: congesNav.aDecider } satisfies NavItem]
+                  : []),
+                ...(congesNav.toutes ? [{ label: "Toutes les demandes", href: "/conges/toutes", icon: "file-text" } satisfies NavItem] : []),
+                ...(congesNav.saisieRH
+                  ? [{ label: "Saisir un congé", href: "/conges/saisie-rh", icon: "plus-circle" } satisfies NavItem]
+                  : []),
+              ]
+            : [],
+        },
+      ],
+    },
     {
       key: "feedback",
       label: "FeedbackApp",
@@ -518,4 +562,3 @@ export const ADMIN_GROUP: NavGroup = {
     { label: "Catégories", href: "/admin/categories", icon: "folder-tree" },
   ],
 };
-

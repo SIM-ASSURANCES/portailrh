@@ -10,6 +10,12 @@ import bcrypt from "bcryptjs";
 import { ENC_MODULE_KEY, ENC_PERMISSIONS, ENC_PERMISSION_MISE_EN_SERVICE, ENC_ROLES_DEPART } from "../src/encPermissions";
 import { ENC_PARAMETRES } from "../src/encParametres";
 import { ENC_BENEFICIAIRE_HONORAIRES_INITIAL } from "../src/encReferentiels";
+import {
+  MODULE_CONGES_KEY,
+  MODULE_CONGES_LABEL,
+  PERMISSIONS_CONGES,
+  permissionsCongePourCles,
+} from "../src/congesPermissions";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -35,6 +41,8 @@ async function main() {
   await prisma.notification.deleteMany();
   await prisma.feedback.deleteMany();
   await prisma.plageAbsenceAutorisee.deleteMany();
+  // Congés : les demandes avant les comptes (supprimés plus bas).
+  await prisma.demandeConge.deleteMany();
   await prisma.depenseLigne.deleteMany();
   await prisma.pieceJointe.deleteMany();
   await prisma.journalCaisse.deleteMany();
@@ -187,6 +195,12 @@ async function main() {
     create: { key: ENC_MODULE_KEY, label: "Encaissements, taxes et commissions" },
   });
 
+  const moduleConges = await prisma.module.upsert({
+    where: { key: MODULE_CONGES_KEY },
+    update: { label: MODULE_CONGES_LABEL },
+    create: { key: MODULE_CONGES_KEY, label: MODULE_CONGES_LABEL },
+  });
+
   console.log("Création des permissions...");
 
   const permissionKeys = [
@@ -268,6 +282,12 @@ async function main() {
     // Module Encaissements (source unique : src/encPermissions.ts). La mise en service va au module technique « systeme ».
     ...ENC_PERMISSIONS.map((p) => ({ key: p.key, label: p.label, moduleId: moduleEncaissements.id })),
     { ...ENC_PERMISSION_MISE_EN_SERVICE, moduleId: moduleSysteme.id },
+    // Congés (source unique : src/congesPermissions.ts, aussi posées par la migration).
+    ...PERMISSIONS_CONGES.map((p) => ({
+      key: p.key,
+      label: p.label,
+      moduleId: moduleConges.id,
+    })),
   ];
 
   const createdPermissions = await Promise.all(
@@ -393,6 +413,13 @@ async function main() {
     // Module Encaissements : un rôle par profil du cahier (§2).
     ...Object.fromEntries(rolesEncaissements.map((role, i) => [role.id, ENC_ROLES_DEPART[i].permissions])),
   };
+
+  // Congés : même règle que la migration (permission sœur), jamais un nom de rôle.
+  // Le rôle Admin (`estAdmin`) ne reçoit que le droit de DEMANDE (soumettre), comme la migration : jamais l'étape RH, l'annulation
+  // ni la consultation de tout. Dans ce seed il ne porte aucune permission sœur, donc n'en reçoit aucune.
+  for (const [roleId, keys] of Object.entries(rolePermissionMap)) {
+    rolePermissionMap[roleId] = [...keys, ...permissionsCongePourCles(keys, roleId === roleAdmin.id)];
+  }
 
   let rolePermissionCount = 0;
   for (const [roleId, keys] of Object.entries(rolePermissionMap)) {

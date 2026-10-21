@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui";
 import { Icon, type IconName } from "@/components/icons";
 import { VARIANTE_STATUT_JUSTIFICATION } from "@/components/pointage/justificationStatut";
-import type { JustificationAffichee } from "backend";
+import type { EtatPlageConge, JustificationAffichee } from "backend";
 
 export interface PresenceData {
   userId: string;
@@ -30,9 +30,31 @@ export interface PresenceData {
   justificationDepart?: JustificationAffichee;
   /** Le départ pointé est un départ anticipé. */
   departAnticipe?: boolean;
-  /** Absence autorisée couvrant la journée (« Congé 00:00–23:59 »). */
+  /** Absence autorisée couvrant la journée (« En congé (CNG-…) », « Congé en attente de validation (CNG-…) »…). */
   absenceAutorisee?: string;
+  /** T08 : état du congé qui couvre la journée (`null` : pas un congé). */
+  etatConge?: EtatPlageConge | null;
+  /** T08 (R13) : arrivée pointée un jour de congé validé. */
+  pointeEnConge?: boolean;
 }
+
+/** T08 (R13) : arrivée pointée un jour de congé validé, enregistrée normalement mais signalée. */
+function BadgePointeEnConge({ visible }: { visible?: boolean }) {
+  if (!visible) return null;
+  return (
+    <span data-pointe-en-conge>
+      <Badge variant="warning" className="text-[10px]">
+        Pointé pendant un congé
+      </Badge>
+    </span>
+  );
+}
+
+const VARIANTE_ETAT_CONGE: Record<EtatPlageConge, "success" | "warning" | "neutral"> = {
+  EN_CONGE: "success",
+  EN_ATTENTE: "warning",
+  PROTEGE: "neutral",
+};
 
 function BadgeJustification({ j }: { j?: JustificationAffichee }) {
   if (!j?.statut) return null;
@@ -77,7 +99,15 @@ function PresenceListeMobile({ data, tab }: { data: PresenceData[]; tab: TabType
               {depart ? ` → ${depart}` : ""}
             </span>
           ) : tab === "autorises" ? (
-            <span className="text-xs text-muted-foreground">{item.absenceAutorisee}</span>
+            <span className="text-xs text-muted-foreground" data-etat-conge={item.etatConge ?? undefined}>
+              {item.etatConge ? (
+                <Badge variant={VARIANTE_ETAT_CONGE[item.etatConge]} className="text-[10px]">
+                  {item.absenceAutorisee}
+                </Badge>
+              ) : (
+                item.absenceAutorisee
+              )}
+            </span>
           ) : null;
         const details: React.ReactNode[] = [];
         if (tab === "retards") {
@@ -104,6 +134,7 @@ function PresenceListeMobile({ data, tab }: { data: PresenceData[]; tab: TabType
             </span>,
           );
         }
+        if (aDesHeures && item.pointeEnConge) details.push(<BadgePointeEnConge key="c" visible />);
         if (tab === "retards" && item.motif) {
           details.push(
             <span key="m" className="max-w-full truncate italic">
@@ -190,6 +221,7 @@ export function PresenceTabs({ presents, retards, absents, autorises, manquants 
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-1.5">
                     <div className="font-medium text-foreground">{item.fullName}</div>
+                    <BadgePointeEnConge visible={(activeTab === "presents" || activeTab === "retards") && item.pointeEnConge} />
                     {item.sourceArrivee === "GEOLOCALISATION" && (
                       <span
                         title={item.geoDistance != null ? `Géolocalisé — ${item.geoDistance}m du bureau` : "Pointage géolocalisé"}
@@ -233,7 +265,15 @@ export function PresenceTabs({ presents, retards, absents, autorises, manquants 
                   </td>
                 )}
                 {activeTab === "autorises" && (
-                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">{item.absenceAutorisee}</td>
+                  <td className="px-3 py-2 text-right text-[11px] text-muted-foreground" data-etat-conge={item.etatConge ?? undefined}>
+                    {item.etatConge ? (
+                      <Badge variant={VARIANTE_ETAT_CONGE[item.etatConge]} className="text-[10px]">
+                        {item.absenceAutorisee}
+                      </Badge>
+                    ) : (
+                      item.absenceAutorisee
+                    )}
+                  </td>
                 )}
                 {activeTab === "retards" && (
                   <td className="px-3 py-2 text-right">

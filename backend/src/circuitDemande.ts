@@ -63,6 +63,8 @@ export const PERMISSIONS_DECISION_NON_DELEGABLES: readonly string[] = [
   "treso.soumettre_dg",
   "treso.decider_dg",
   "treso.approuver_validation_complete",
+  // Étape RH des congés (le droit de décider se lit sur le RÔLE).
+  "conges.valider_rh",
 ];
 
 /** Permissions du RÔLE du demandeur (jamais celles reçues par délégation) et son rattachement. */

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getSession, hasPermission } from "@/lib/auth";
-import { PERMISSION_REINITIALISER_POINTAGE, genererSauvegardePointage, pointageEnService } from "backend";
+import { PERMISSION_REINITIALISER_POINTAGE, genererSauvegardePointage, pointageEnService, prisma, refusPurgePointageAbsences } from "backend";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +14,9 @@ export async function GET() {
   if (!session) return new NextResponse("Non authentifié.", { status: 401 });
   if (!hasPermission(session, PERMISSION_REINITIALISER_POINTAGE)) return new NextResponse("Accès refusé.", { status: 403 });
   if (await pointageEnService()) return new NextResponse("Le Pointage est en service : sa purge est refusée.", { status: 409 });
+
+  const refusAbsences = await refusPurgePointageAbsences(prisma);
+  if (refusAbsences) return new NextResponse(refusAbsences, { status: 409 });
 
   const { contenu, empreinte } = await genererSauvegardePointage(session.user.id);
   const horodatage = new Date().toISOString().replace(/[:.]/g, "-");
