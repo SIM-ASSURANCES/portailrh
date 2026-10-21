@@ -17,7 +17,8 @@ import {
 } from "date-fns";
 import { fr } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from "lucide-react";
-import { getJoursFeries } from "@/app/(dashboard)/pointage/rh/calendrier/actions";
+import { getJoursFeries, getMesPlagesConges } from "@/app/(dashboard)/pointage/rh/calendrier/actions";
+import { plageDuJour, type PlageCongeCalendrier } from "@/lib/conges/plagesCalendrier";
 
 type JourFerieDb = {
   id: string;
@@ -28,6 +29,7 @@ type JourFerieDb = {
 export function TopbarCalendar({ isRH }: { isRH?: boolean }) {
   const [isOpen, setIsOpen] = useState(false);
   const [joursFeries, setJoursFeries] = useState<JourFerieDb[]>([]);
+  const [plagesConges, setPlagesConges] = useState<PlageCongeCalendrier[]>([]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -49,6 +51,16 @@ export function TopbarCalendar({ isRH }: { isRH?: boolean }) {
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
+  }, [isOpen]);
+
+  // Plages de congé du collaborateur : rechargées à chaque ouverture (reflète une décision récente).
+  useEffect(() => {
+    if (!isOpen) return;
+    let annule = false;
+    getMesPlagesConges()
+      .then((res) => { if (!annule) setPlagesConges(res); })
+      .catch((err) => console.error("Erreur de chargement des congés", err));
+    return () => { annule = true; };
   }, [isOpen]);
 
   // Charger les jours fériés quand on ouvre le calendrier pour la première fois
@@ -127,6 +139,11 @@ export function TopbarCalendar({ isRH }: { isRH?: boolean }) {
               const isCurrentMonth = isSameMonth(day, currentMonth);
               const isToday = isSameDay(day, new Date());
               const dateStr = format(day, "yyyy-MM-dd");
+              // Jours ouvrés seulement : week-ends et fériés restent neutres dans une plage.
+              const plage = !isWknd && !jourFerie ? plageDuJour(dateStr, plagesConges) : null;
+              const libellePlage = plage
+                ? plage.etat === "valide" ? "Congé validé" : "Congé en attente de validation"
+                : undefined;
 
               return (
                 <div
@@ -135,15 +152,21 @@ export function TopbarCalendar({ isRH }: { isRH?: boolean }) {
                     if (isRH) {
                       setIsOpen(false);
                       router.push(`/pointage/rh/presence?date=${dateStr}`);
+                    } else if (plage) {
+                      setIsOpen(false);
+                      router.push(`/conges/${plage.id}`);
                     }
                   }}
                   className={`
                     relative flex h-10 w-full flex-col items-center justify-center bg-white transition-colors
-                    ${isRH ? 'cursor-pointer' : 'cursor-default'}
+                    ${isRH || plage ? 'cursor-pointer' : 'cursor-default'}
                     ${!isCurrentMonth ? 'bg-slate-50 text-slate-300' : ''} 
                     ${isWknd ? 'bg-slate-50 hover:bg-slate-100' : (isRH ? 'hover:bg-indigo-50/50' : '')}
+                    ${plage?.etat === "valide" ? '!bg-emerald-100 hover:!bg-emerald-200' : ''}
+                    ${plage?.etat === "demande" ? '!bg-amber-50 bg-[repeating-linear-gradient(135deg,transparent_0_4px,rgb(253_230_138/0.6)_4px_6px)] hover:!bg-amber-100' : ''}
                   `}
-                  title={jourFerie ? jourFerie.libelle : (isRH ? "Voir les présences" : undefined)}
+                  aria-label={libellePlage ? `${format(day, "d MMMM yyyy", { locale: fr })} : ${libellePlage}` : undefined}
+                  title={libellePlage ?? (jourFerie ? jourFerie.libelle : (isRH ? "Voir les présences" : undefined))}
                 >
                   <span className={`
                     flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium
@@ -160,6 +183,17 @@ export function TopbarCalendar({ isRH }: { isRH?: boolean }) {
               );
             })}
           </div>
+          <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border px-4 py-2 text-[11px] text-slate-600">
+            <li className="flex items-center gap-1.5">
+              <span className="size-3 rounded-sm bg-emerald-100 ring-1 ring-emerald-300" /> Validé
+            </li>
+            <li className="flex items-center gap-1.5">
+              <span className="size-3 rounded-sm bg-amber-50 bg-[repeating-linear-gradient(135deg,transparent_0_2px,rgb(253_230_138)_2px_4px)] ring-1 ring-amber-300" /> En attente
+            </li>
+            <li className="flex items-center gap-1.5">
+              <span className="size-1.5 rounded-full bg-rose-500" /> Férié
+            </li>
+          </ul>
         </div>
       )}
     </div>
