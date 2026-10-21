@@ -2,22 +2,36 @@ import { createHash } from "node:crypto";
 
 import type { Prisma } from "./generated/prisma/client";
 import { prisma } from "./prisma";
+import {
+  ENTITES_HISTORIQUE_POINTAGE,
+  ENTITES_HISTORIQUE_PURGEES,
+  ENTITES_HISTORIQUE_TRESORERIE,
+} from "./reinitialisationClassification";
 
 /**
- * Réinitialisation À USAGE UNIQUE avant mise en production (voir CLAUDE.md "Réinitialisation avant mise en
- * production") : purge des données de test des modules Trésorerie et Pointage RH / FeedbackApp.
+ * Réinitialisation avant mise en production (voir CLAUDE.md "Réinitialisation avant mise en production" et "Lot N + O") :
+ * purge de TOUTES les données de test, jamais de la configuration. La liste table par table (purgée / partielle / conservée)
+ * est `CLASSIFICATION_TABLES` (`reinitialisationClassification.ts`), vérifiée contre `schema.prisma` par un test.
  *
- * Périmètre (jamais la configuration : comptes, rôles, permissions, catégories, horaires, jours fériés, jetons
- * FCM, audit Admin/Auth) — voir `chargerJeuxReinitialisation` (lecture) et `executerReinitialisation` (suppression,
- * dans cet ordre exact : enfants avant parents, d'après les clés étrangères du schéma).
+ * Verrou : une ligne `ReinitialisationSysteme` de `verrou = VERROU_REINITIALISATION` interdit toute nouvelle purge. Pour une
+ * purge ultérieure VOLONTAIRE, le verrou se lève par une commande SQL qui garde la ligne d'audit (voir
+ * `docs/mise-en-production.md`, § 10) : `UPDATE "ReinitialisationSysteme" SET verrou = 'LEVE-' || id WHERE verrou = 'REINITIALISATION'`.
+ *
+ * Ordre de suppression : enfants avant parents, d'après les clés étrangères du schéma. Une seule transaction sérialisable.
+ * Le module Encaissements n'est purgé QUE s'il n'est pas encore mis en service (`EncMiseEnService` absente) : ses triggers
+ * d'immuabilité l'interdisent ensuite, et ses données sont alors réelles.
  */
+
+/** Valeur du verrou actif ; une valeur différente (levée par SQL) ne bloque plus. */
+export const VERROU_REINITIALISATION = "REINITIALISATION";
+
+/** Tables réécrites en continu (planificateur, journal) : sauvegardées et purgées, mais EXCLUES de l'empreinte. */
+export const TABLES_HORS_EMPREINTE_REINITIALISATION = ["executionTache", "journalTechnique"] as const;
 
 type Db = Prisma.TransactionClient;
 
 export const CONFIRMATION_REINITIALISATION = "REINITIALISER";
 
-const ENTITES_HISTORIQUE_TRESORERIE = ["Demande", "LigneDemande", "JournalCaisse", "RetourExterne"];
-export const ENTITES_HISTORIQUE_POINTAGE = ["Pointage", "PointageQR", "PointageGeo", "JustificationPointage"];
 export const CATEGORIES_NOTIFICATION_POINTAGE = ["RH", "POINTAGE"] as const;
 
 export class ReinitialisationError extends Error {}
@@ -26,9 +40,12 @@ const parId = { orderBy: { id: "asc" as const } };
 
 /**
  * Lit EXACTEMENT les lignes qui seront supprimées. Sert à la fois à la sauvegarde JSON et à la purge (qui relit
- * dans sa propre transaction et refuse si l'empreinte diffère de celle de la sauvegarde téléchargée).
+ * dans sa propre transaction et refuse si l'empreinte diffère de celle de la sauvegarde).
+ * Les tables du module Encaissements sont vides ici si le module est déjà en service (`encEnService`) : il n'est alors pas purgé.
  */
 export async function chargerJeuxReinitialisation(db: Db) {
+  const encEnService = (await db.encMiseEnService.count()) > 0;
+
   // Trésorerie (ordre de suppression)
   const remboursementRetour = await db.remboursementRetour.findMany(parId);
   const journalBanque = await db.journalBanque.findMany(parId);
@@ -41,6 +58,7 @@ export async function chargerJeuxReinitialisation(db: Db) {
   const journalCaisse = await db.journalCaisse.findMany(parId);
   const retourExceptionnel = await db.retourExceptionnel.findMany(parId);
   const reglement = await db.reglement.findMany(parId);
+  const budgetDepassement = await db.budgetDepassement.findMany(parId);
   const ligneDemande = await db.ligneDemande.findMany(parId);
   const demande = await db.demande.findMany(parId);
   const historiqueTresorerie = await db.historiqueEntry.findMany({
@@ -63,6 +81,23 @@ export async function chargerJeuxReinitialisation(db: Db) {
     where: { entity: { in: ENTITES_HISTORIQUE_POINTAGE } },
     ...parId,
   });
+  // Signatures d'ACTION : celles dont une ligne d'historique CONSERVÉE dépend (budgets) restent, pour que cet historique ne passe
+  // pas en « Signature non rattachée » ; toutes les autres sont supprimées.
+  const actionSignee = await db.actionSignee.findMany({
+    where: { historique: { none: { entity: { notIn: ENTITES_HISTORIQUE_PURGEES } } } },
+    ...parId,
+  });
+  // Techniques (hors empreinte : réécrites en continu)
+  const executionTache = await db.executionTache.findMany(parId);
+  const journalTechnique = await db.journalTechnique.findMany(parId);
+  // Encaissements : seulement avant la mise en service du module
+  const encSignalement = encEnService ? [] : await db.encSignalement.findMany(parId);
+  const encEncaissement = encEnService ? [] : await db.encEncaissement.findMany(parId);
+  const encContrat = encEnService ? [] : await db.encContrat.findMany(parId);
+  const encImport = encEnService ? [] : await db.encImport.findMany(parId);
+  const encPieceJointe = encEnService ? [] : await db.encPieceJointe.findMany(parId);
+  const encAudit = encEnService ? [] : await db.encAudit.findMany(parId);
+  const encSequence = encEnService ? [] : await db.encSequence.findMany({ orderBy: { cle: "asc" } });
 
   return {
     remboursementRetour,
@@ -76,6 +111,7 @@ export async function chargerJeuxReinitialisation(db: Db) {
     journalCaisse,
     retourExceptionnel,
     reglement,
+    budgetDepassement,
     ligneDemande,
     demande,
     historiqueTresorerie,
@@ -88,28 +124,55 @@ export async function chargerJeuxReinitialisation(db: Db) {
     feedback,
     notificationPointage,
     historiquePointage,
+    actionSignee,
+    executionTache,
+    journalTechnique,
+    encSignalement,
+    encEncaissement,
+    encContrat,
+    encImport,
+    encPieceJointe,
+    encAudit,
+    encSequence,
   };
 }
 
 export type JeuxReinitialisation = Awaited<ReturnType<typeof chargerJeuxReinitialisation>>;
 
+/** JSON stable : les BigInt (ex. `EncAudit.id`) ne se sérialisent pas nativement, ils sont écrits en texte. */
+const enTexteLesBigInt = (_cle: string, valeur: unknown) => (typeof valeur === "bigint" ? valeur.toString() : valeur);
+
+/** Empreinte SHA-256 des seuls jeux « métier » (voir `TABLES_HORS_EMPREINTE_REINITIALISATION`). */
 export function calculerEmpreinte(jeux: JeuxReinitialisation): string {
-  return createHash("sha256").update(JSON.stringify(jeux)).digest("hex");
+  const metier = Object.fromEntries(
+    Object.entries(jeux).filter(([table]) => !(TABLES_HORS_EMPREINTE_REINITIALISATION as readonly string[]).includes(table))
+  );
+  return createHash("sha256").update(JSON.stringify(metier, enTexteLesBigInt)).digest("hex");
 }
 
 export function decompterJeux(jeux: JeuxReinitialisation): Record<string, number> {
   return Object.fromEntries(Object.entries(jeux).map(([table, lignes]) => [table, lignes.length]));
 }
 
-export async function reinitialisationEffectuee(): Promise<boolean> {
-  return (await prisma.reinitialisationSysteme.count()) > 0;
+/** `true` si le verrou est ACTIF (une purge a eu lieu et le verrou n'a pas été levé par SQL). */
+export async function reinitialisationEffectuee(db: Pick<Prisma.TransactionClient, "reinitialisationSysteme"> = prisma): Promise<boolean> {
+  return (await db.reinitialisationSysteme.count({ where: { verrou: VERROU_REINITIALISATION } })) > 0;
 }
 
+/** La purge active (verrou posé) ; `null` si aucune ou si le verrou a été levé. */
 export async function getReinitialisationInfo() {
-  return prisma.reinitialisationSysteme.findFirst({ include: { effectueePar: { select: { fullName: true } } } });
+  return prisma.reinitialisationSysteme.findFirst({
+    where: { verrou: VERROU_REINITIALISATION },
+    include: { effectueePar: { select: { fullName: true } } },
+  });
 }
 
-/** Sauvegarde : jeux complets + méta, et empreinte (calculée sur les seuls jeux, pas sur la méta horodatée). */
+/** Fichiers de `uploads/` référencés par les pièces jointes qui seront supprimées (Trésorerie et Encaissements). */
+export function urlsFichiersAPurger(jeux: JeuxReinitialisation): string[] {
+  return [...jeux.pieceJointe.map((p) => p.url), ...jeux.encPieceJointe.map((p) => p.url)];
+}
+
+/** Sauvegarde : jeux complets + méta, et empreinte (calculée sur les seuls jeux métier, pas sur la méta horodatée). */
 export async function genererSauvegardeReinitialisation(userId: string) {
   const jeux = await chargerJeuxReinitialisation(prisma);
   const empreinte = calculerEmpreinte(jeux);
@@ -121,18 +184,32 @@ export async function genererSauvegardeReinitialisation(userId: string) {
         generueePar: userId,
         empreinteSha256: empreinte,
         decompte: decompterJeux(jeux),
-        note: "Contient les lignes des tables purgées. Les fichiers de uploads/ ne sont PAS inclus (seules leurs références le sont).",
+        fichiersReferences: urlsFichiersAPurger(jeux).length,
+        note: "Contient les lignes des tables purgées. Les fichiers de uploads/ ne sont PAS inclus (seules leurs références le sont) : copier le volume uploads avant la purge. ExecutionTache et JournalTechnique y figurent mais sont hors empreinte (réécrites en continu).",
       },
       tables: jeux,
     },
-    null,
+    enTexteLesBigInt,
     2
   );
   return { contenu, empreinte, decompte: decompterJeux(jeux) };
 }
 
+/** Compte, SANS rien écrire, ce qu'une purge supprimerait (simulation). */
+export async function simulerReinitialisation() {
+  const jeux = await chargerJeuxReinitialisation(prisma);
+  return {
+    decompte: decompterJeux(jeux),
+    fichiers: urlsFichiersAPurger(jeux).length,
+    encEnService: (await prisma.encMiseEnService.count()) > 0,
+    verrouActif: await reinitialisationEffectuee(),
+    empreinte: calculerEmpreinte(jeux),
+    jeux,
+  };
+}
+
 /**
- * Purge en UNE SEULE transaction (tout ou rien, isolation sérialisable). Refuse si déjà effectuée, ou si les données
+ * Purge en UNE SEULE transaction (tout ou rien, isolation sérialisable). Refuse si le verrou est actif, ou si les données
  * ont changé depuis la sauvegarde (empreinte différente). `verrou` unique : une exécution concurrente échoue.
  */
 export async function executerReinitialisation({
@@ -144,16 +221,17 @@ export async function executerReinitialisation({
 }): Promise<{ id: string; decompte: Record<string, number>; urlsFichiers: string[] }> {
   return prisma.$transaction(
     async (tx) => {
-      if ((await tx.reinitialisationSysteme.count()) > 0) {
-        throw new ReinitialisationError("La réinitialisation a déjà été effectuée : elle ne peut être exécutée qu'une seule fois.");
+      if (await reinitialisationEffectuee(tx)) {
+        throw new ReinitialisationError("La réinitialisation a déjà été effectuée : le verrou est actif (voir docs/mise-en-production.md pour le lever volontairement).");
       }
       const jeux = await chargerJeuxReinitialisation(tx);
       if (calculerEmpreinte(jeux) !== sauvegardeSha256) {
         throw new ReinitialisationError(
-          "Les données ont changé depuis la sauvegarde téléchargée (ou la sauvegarde est invalide) : générez et téléchargez une nouvelle sauvegarde."
+          "Les données ont changé depuis la sauvegarde (ou la sauvegarde est invalide) : générez une nouvelle sauvegarde."
         );
       }
-      const urlsFichiers = jeux.pieceJointe.map((p) => p.url);
+      const urlsFichiers = urlsFichiersAPurger(jeux);
+      const encEnService = (await tx.encMiseEnService.count()) > 0;
       const d: Record<string, number> = {};
 
       // ---- Trésorerie : enfants avant parents
@@ -168,6 +246,7 @@ export async function executerReinitialisation({
       d.journalCaisse = (await tx.journalCaisse.deleteMany()).count;
       d.retourExceptionnel = (await tx.retourExceptionnel.deleteMany()).count;
       d.reglement = (await tx.reglement.deleteMany()).count;
+      d.budgetDepassement = (await tx.budgetDepassement.deleteMany()).count;
       d.ligneDemande = (await tx.ligneDemande.deleteMany()).count;
       d.demande = (await tx.demande.deleteMany()).count;
       d.historiqueTresorerie = (
@@ -189,6 +268,26 @@ export async function executerReinitialisation({
         await tx.historiqueEntry.deleteMany({ where: { entity: { in: ENTITES_HISTORIQUE_POINTAGE } } })
       ).count;
 
+      // ---- Signatures d'action : seulement celles qu'aucune ligne d'historique restante ne référence
+      d.actionSignee = (await tx.actionSignee.deleteMany({ where: { historique: { none: {} } } })).count;
+
+      // ---- Techniques
+      d.executionTache = (await tx.executionTache.deleteMany()).count;
+      d.journalTechnique = (await tx.journalTechnique.deleteMany()).count;
+
+      // ---- Encaissements : jamais une fois le module en service (triggers d'immuabilité, données réelles)
+      if (!encEnService) {
+        d.encSignalement = (await tx.encSignalement.deleteMany()).count;
+        // Contre-passation (clé étrangère sur soi-même, RESTRICT) : détachée avant la suppression de masse.
+        await tx.encEncaissement.updateMany({ data: { contrePasseId: null } });
+        d.encEncaissement = (await tx.encEncaissement.deleteMany()).count;
+        d.encContrat = (await tx.encContrat.deleteMany()).count; // EncContratMot en cascade
+        d.encImport = (await tx.encImport.deleteMany()).count;
+        d.encPieceJointe = (await tx.encPieceJointe.deleteMany()).count;
+        d.encAudit = (await tx.encAudit.deleteMany()).count;
+        d.encSequence = (await tx.encSequence.deleteMany()).count;
+      }
+
       // ---- Flag définitif + journal d'audit (jamais purgé) ; le verrou unique fait échouer une exécution concurrente
       const ligne = await tx.reinitialisationSysteme.create({
         data: { effectueeParId: userId, decompte: d, sauvegardeSha256 },
@@ -204,7 +303,7 @@ export async function executerReinitialisation({
       });
       return { id: ligne.id, decompte: d, urlsFichiers };
     },
-    { timeout: 120_000, maxWait: 10_000, isolationLevel: "Serializable" }
+    { timeout: 300_000, maxWait: 10_000, isolationLevel: "Serializable" }
   );
 }
 

@@ -130,6 +130,6 @@ async function notifierDecideur(decideur: DecideurJustification, collaborateurId
   if (dest.type === "COMPTE") {
     await notify({ userId: dest.userId, ...commun });
   } else {
-    await notifyByPermission(dest.permission, { ...commun, excludeUserId: dest.exclureUserId });
+    await notifyByPermission(dest.permission, { ...commun, excludeUserId: dest.exclureUserId, inclureDelegues: false });
   }
 }

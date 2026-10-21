@@ -75,10 +75,13 @@ export function ReinitialisationForm() {
       <div className="space-y-2 rounded-lg border border-danger/40 bg-danger-bg p-4 text-sm text-danger">
         <p className="font-semibold">Action irréversible, utilisable une seule fois.</p>
         <p>
-          Supprimés : demandes, règlements, retours (caisse, exceptionnels, externes), remboursements, journaux de caisse
-          et de banque, pièces jointes (et leurs fichiers), pointages, corrections, absences, plages d&apos;absence
-          autorisées, feedbacks, et les notifications et historiques liés. Conservés : comptes, rôles, permissions,
-          catégories, horaires, jours fériés, jetons de notification, audit d&apos;administration.
+          Supprimés : demandes, articles, règlements, retours (caisse, exceptionnels, externes), remboursements, journaux de
+          caisse et de banque (le solde d&apos;ouverture est à ressaisir ensuite), pièces jointes (et leurs fichiers),
+          confirmations de dépassement, actions signées, pointages, justifications, corrections, absences, feedbacks,
+          données de test d&apos;Encaissements (si le module n&apos;est pas encore en service), journaux techniques, et les
+          notifications et historiques liés. Conservés : comptes, rôles, permissions, délégations, services et
+          responsables, catégories, objets, budgets et seuils validés, paramètres, signatures enrôlées, horaires, jours
+          fériés, jetons de notification, audit d&apos;administration.
         </p>
         <p>
           La sauvegarde JSON contient les lignes supprimées mais <strong>pas les fichiers de uploads/</strong> : copiez ce

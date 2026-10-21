@@ -1497,6 +1497,10 @@ message de confirmation et `router.refresh()` après succès.
 
 ### Réinitialisation avant mise en production (usage unique)
 
+> **⚠️ Partiellement REMPLACÉ par le lot N (2026-10-30, plus bas, « Lot N + O »)** : la purge couvre désormais TOUTES les tables de test (classement table par table
+> `reinitialisationClassification.ts`), le verrou peut être levé volontairement par une commande SQL qui garde l'audit, et la même logique existe en ligne de commande
+> (`prisma/reinitialiser-production.ts`). La liste « Purgé / Jamais purgé » ci-dessous décrit l'état d'AVANT le lot N.
+
 Purge des données de TEST des modules Trésorerie et Pointage RH / FeedbackApp en une seule action, puis désactivation
 définitive. Écran `/systeme/reinitialisation`, route de sauvegarde `GET /api/systeme/reinitialisation/sauvegarde`,
 logique dans `backend/src/reinitialisation.ts`.
@@ -3778,6 +3782,76 @@ validation partielle/complémentaire, solde d'ouverture et alimentation de caiss
 
 **Points ouverts** : (1) en devise décimale, taper `1.5` au clavier donne `1,5` (un point suivi de 1 ou 2 chiffres est décimal) — pour des milliers avec des points, coller le nombre ou utiliser des espaces ; (2) les notifications et e-mails déjà envoyés gardent leur ancien texte ; (3) `statut = REFUSE` / `REFUSEE` restent les valeurs internes (rapports SQL externes) ;
 (4) le rappel de réorientation (lot K) garde son motif de 10 caractères (non concerné) ; (5) les motifs d'un lot de décisions de budgets sont communs, avec un motif propre possible par élément par appel direct seulement ; (6) le bon de caisse (document minimal) n'imprime aucun motif.
+
+#### Lot N + O — préparation de la mise en production : réinitialisation complète, vérification avant mise en service, rattrapage chaîné (2026-10-30)
+
+Procédure pas à pas : **[docs/mise-en-production.md](docs/mise-en-production.md)** (10 étapes, sauvegarde, rattrapage, rôles, purge, solde d'ouverture, tâches, vérification, retour arrière, levée du verrou).
+**Aucune migration** (la dernière reste `20261029090000_motifs_echanges_finance_dg`), aucune permission nouvelle, `PERMISSIONS_DECISION_NON_DELEGABLES` et garde 8 intactes, aucune écriture de caisse existante modifiée
+hors la remise à zéro voulue par la purge. Tous les outils sont en **simulation par défaut** ; `.env` chargé AVANT les autres imports (`import "./chargerEnv"`).
+
+**1. Audit de la réinitialisation d'avant le lot N.** `reinitialisation.ts` purgeait Trésorerie (remboursements, banque, retours externes, pièces jointes, signalements, dépenses, retours, allocations, journal de caisse, retours
+exceptionnels, règlements, lignes, demandes), Pointage/Feedback et leurs historiques/notifications. **Oubliés depuis les lots récents** : `BudgetDepassement` (lot J), `ActionSignee` et ses liens (lots L, L bis),
+`ExecutionTache`/`JournalTechnique`, et **tout Encaissements** (`EncImport/Contrat/ContratMot/Encaissement/Signalement/Sequence/Audit/PieceJointe`). `ReinitialisationPointage` ne purgeait que le Pointage.
+Le verrou ne se levait pas. Aucun classement table par table, aucune ligne de commande.
+
+**2. Purge élargie** (`backend/src/reinitialisation.ts`, une seule transaction sérialisable, enfants avant parents, empreinte SHA-256 de la sauvegarde relue dans la transaction). Ajouts : `budgetDepassement`,
+`actionSignee` (seulement celles qu'**aucune ligne d'historique conservée** ne référence : celles du budget restent, pour que son historique ne passe pas en « Signature non rattachée »), `executionTache`/`journalTechnique`
+(hors empreinte, réécrites en continu), Encaissements **seulement tant que le module n'est pas en service** (`EncMiseEnService` absente ; `contrePasseId` détaché avant la suppression de masse ; les triggers d'immuabilité interdiraient le reste).
+**Les réorientations et reprises** (lot K) vivent dans l'historique des demandes : supprimées avec lui. Les BigInt (`EncAudit.id`) sont sérialisés en texte (bug trouvé par le test d'intégration : `JSON.stringify` plantait).
+**Classement de CHAQUE modèle Prisma** (58) : `backend/src/reinitialisationClassification.ts` (purgée / partielle / conservée + note), repris en annexe A du runbook ; le test `reinitialisationClassification.test.ts` lit `schema.prisma` et
+**échoue** si un modèle n'est pas classé ou si une entité d'historique écrite par le code ne l'est pas. Conservés : comptes, rôles, permissions, **délégations**, services et responsables, catégories/objets, **budgets et seuils validés avec leur
+historique**, paramètres (dont la date de catégorisation), **signatures enrôlées (toutes versions)**, verrou, `MarqueurUnique`, audit permanent, `Enc*` de configuration. Historique : supprimées les entités `Demande, LigneDemande, JournalCaisse,
+RetourExterne, Pointage, PointageQR, PointageGeo, JustificationPointage` ; notifications `TRESORERIE/RH/POINTAGE` supprimées, `ADMIN/SYSTEME` conservées.
+
+**3. La caisse.** `JournalCaisse` est vidé en entier (SEULE exception au « jamais modifié ») : **solde de caisse = 0**, solde d'ouverture compris, à **ressaisir par l'écran normal** « Solde d'ouverture de caisse » (aucune écriture forcée ; testé : une
+écriture `ENTREE` de 750 000 créée par l'écran). Tant qu'il n'est pas ressaisi, les seuils de caisse (rouge à 0) peuvent bloquer une validation. Aucune autre écriture du journal ne devrait être purgée à la main.
+
+**4. Ligne de commande** `backend/prisma/reinitialiser-production.ts` (+ logique pure `reinitialisationCli.ts`, `reinitialisationFichiers.ts`) : **simulation par défaut** (décompte par table, fichiers, verrou, tables conservées) ;
+`--appliquer --utilisateur <email du DG> [--dossier-sauvegarde] [--uploads] [--confirmation REINITIALISER]`. Garde-fous : compte portant `systeme.reinitialiser` **par son rôle** (jamais une délégation), phrase exacte, **sauvegarde JSON écrite, `fsync`,
+relue et comparée par empreinte AVANT la purge — si elle échoue, rien n'est supprimé** (testé avec un dossier inutilisable), empreinte recomparée dans la transaction, verrou unique (`ReinitialisationSysteme.verrou = 'REINITIALISATION'`). Fichiers de `uploads/`
+supprimés après le commit (garde anti path traversal ; un fichier déjà absent n'est pas un échec). Le chemin web (`/systeme/reinitialisation`) utilise la même logique (texte de portée mis à jour, plus de rappel `SYSTEM_START_DATE` : la tâche
+des absences (`absences.ts`) part du lendemain de la dernière purge, Pointage OU globale).
+**Levée du verrou** (réinitialisation ultérieure voulue) : `UPDATE "ReinitialisationSysteme" SET verrou = 'LEVE-' || id WHERE verrou = 'REINITIALISATION'` — garde la ligne d'audit (jamais de `DELETE`). **La production a déjà un verrou actif (purge du 26/09/2026) :
+il faut le lever avant de purger de nouveau.**
+
+**5. `notifyByPermission` et les délégués (1.7).** Constat : il ne lisait que le rôle — un délégué ACTIF n'était jamais notifié. Règle unique extraite dans `backend/src/delegations.ts` (`delegationCompte`, utilisée aussi par `getSession()`) :
+la délégation compte si la permission n'est pas non délégable, le donneur est actif et possède encore la permission par son rôle ; `utilisateursAvecPermission` = titulaires du rôle + délégués actifs (bénéficiaire et donneur actifs). `notifyByPermission` l'utilise.
+**Exception voulue** : les notifications de **décision** d'une justification de pointage (`inclureDelegues: false`) — la décision se lit sur le RÔLE, un délégué de `pointage.corriger_pointage` ne la décide pas, il ne doit pas être notifié d'une file qu'il ne voit pas.
+
+**6. Vérification avant mise en service** `backend/prisma/verifier-mise-en-production.ts` (logique pure `miseEnProduction.ts`, 28 tests) — **lecture seule** (transaction `SET TRANSACTION READ ONLY`, aucune écriture possible), rapport `OK / À CORRIGER / AVERTISSEMENT / À CONTRÔLER`,
+code de sortie 1 s'il y a un « À CORRIGER » (`--final` : un compte `*@simassurances.test` actif en est un). Contrôle : migrations (dossiers vs `_prisma_migrations`) ; Finance (sans `approuver_validation_complete`, avec `soumettre_dg`, `decider_finance`, `cloturer_demande`,
+`modifier_budget_categorie`, `reorienter_demande`) ; DG (`approuver_validation_complete`, `systeme.reinitialiser`, `valider_budget`, et `valider_budget` DG seul) ; ≥ 2 Assistants Finance actifs ; ≥ 2 comptes RH avec `pointage.corriger_pointage` ; service de chaque compte actif ;
+responsable actif de chacun des 8 services ; signature enrôlée de chaque compte qui doit signer (`PERMISSIONS_SIGNATAIRES` ou responsable de service) ; **seuils de caisse en vigueur ET validés par le DG** (un seuil « repris par migration », sans décideur, est « À CORRIGER ») ;
+budgets de catégorie en vigueur validés (idem) ; date de catégorisation (avertissement si absente ou pas future) ; variables `AUTH_URL` (https, adresse publique — pas localhost/privée), `AUTH_SECRET` (≥ 32), `CRON_SECRET` (≥ 16), `DATABASE_URL` (valeurs jamais affichées) ;
+comptes de test ; délégations actives de `pointage.corriger_pointage` (liste). Testé sur une base seedée : 7 OK / 7 À CORRIGER (comptes, signatures, seuils, variables absentes) / 3 avertissements, code de sortie 1.
+
+**7. Rattrapage chaîné** `backend/prisma/rattrapage-production.ts` (+ `rattrapageProduction.ts` pur, 8 tests). La logique des 4 scripts de reprise a été **extraite** dans `backend/src/rattrapageEtapes.ts` (une seule définition : `etapeStatutsArticles`,
+`etapeReglementsArticles`, `etapeClotureArticles`, `etapeSignatures`, `etapeComptageReglements`) ; `recalculer-statuts-articles.ts`, `recalculer-reglements-articles.ts` (`--automatique`, `--affecter`), `simuler-cloture-articles.ts` et `rattacher-signatures.ts`
+n'en sont plus que des enveloppes (mêmes options, mêmes sorties, simulation par défaut — vérifié). Ordre : **comptage (lecture seule, SQL de comptage) → statuts (B) → règlements (D) → clôture (C, après D car elle lit les règlements rattachés) → signatures (L bis)**. Simulation
+par défaut ; `--appliquer` exige la phrase `RATTRAPER` ; pour chaque étape : état avant, écriture, **nouvelle simulation de contrôle**, bilan « à traiter / écrites / restant / ambigus » ; **arrêt à la première erreur** ; les écritures sont signalées « non défaisables par le script »
+(retour arrière = sauvegarde). Les cas ambigus ne sont jamais devinés (règlement sans article avec ≥ 2 articles validés ; historique à plusieurs signatures candidates).
+
+**8. Dockerfile — constat et correction.** L'image de production ne contenait que `backend/prisma` et `backend/src/generated/prisma` : **tous les scripts qui importent `../src/...` (reprises des lots B à L bis, et les nouveaux outils) échouaient dans le conteneur** (« Cannot find module »).
+Le `Dockerfile` copie maintenant `backend/src` en entier. Non vérifié par un `docker build` ici (pas de démon Docker) ; vérifié par simulation de la disposition de l'image (`backend/prisma` + `backend/src` + `node_modules`, sans `.env` ni `frontend/`) : les trois scripts s'exécutent.
+
+**9. Performance** (`next build` + `next start`, base `perf` : 150 comptes en plus, 4 000 demandes à 3 articles, 2 400 règlements, 30 000 pointages ; `e2e/perf-donnees.ts`, `e2e/perf-navigation.mjs`, 3 passages, médiane en ms jusqu'à l'évènement load) :
+accueil 294 · Mon accueil Trésorerie 308 · Mes demandes 228 · Mon historique de pointage 379 · Accueil Finance 966 · Demandes en attente de validation 1 477 · À décaisser 326 · Fonds à régulariser 1 331 · Budgets 237 · Retours en attente 755 · Étape DG 766 · Mon service 227 · Mon équipe 233 ·
+Présence du jour 278 · Reporting pointage 290 · Corrections 365 · Console admin 218. **Lentes** : « Pointages (RH) » **44 636 ms → 341 ms** (corrigé : la page chargeait TOUS les pointages, 30 000, sans limite — pagination par 200 avec `page`, filtres conservés, total affiché) ;
+« Toutes les demandes » 3 434 ms (4 000 demandes sans pagination + dates de gestion) ; « À régulariser » 11 927 ms (`getRegularisationParArticle` demande par demande — conçue pour une file bornée ; la base de test simule un arriéré de 2 000 demandes réglées non clôturées) ;
+« Reporting (tableau unique) » 19 759 ms (3,9 s côté serveur pour 21 868 lignes, le reste est le rendu de ces lignes). **Non corrigés** (ni évidents ni sans risque) : voir points ouverts.
+
+**10. Points ouverts.** (a) « À régulariser », « Toutes les demandes » et « Reporting » n'ont ni pagination ni période par défaut : lents au-delà de quelques centaines de demandes actives ; (b) le runbook est écrit pour le **planificateur intégré** (le cahier du lot demandait cron-job.org : il est obsolète depuis le 2026-10-14, appeler les routes
+en plus est inutile) ; (c) `EncPartenaire`/`EncBranche` créés par un import de test sont conservés (configuration) ; (d) `ActionSignee` de budget conservées volontairement ; (e) le parcours de test complet après la purge laisse des données dans la base réelle (le runbook conseille de le faire avant) ; (f) le `Dockerfile` modifié n'a pas pu être construit ici ;
+(g) un seuil de caisse validé n'est « en vigueur » qu'à sa date d'effet (au plus tôt aujourd'hui) : le planifier assez tôt ; (h) le build `next build` sans base joignable écrit un message `[FeedbackApp] Erreur synchronisation…` (bruit sans effet, préexistant).
+
+**Tests** : vitest (`reinitialisationClassification` 6, `delegations` 8, `reinitialisationFichiers` 5, `reinitialisationCli` 7, `miseEnProduction` 28, `rattrapageProduction` 8) ; **`e2e/lot-n.mjs`** (base jetable autonome, fixture `e2e/lot-n-donnees.ts` : 30 tables purgées toutes remplies avant ; simulation sans écriture ; refus sans compte / mauvais rôle / mauvaise phrase / sauvegarde impossible ;
+purge réelle, sauvegarde relue, table par table (30 purgées vides, 25 conservées intactes), historique, notifications, actions signées partielles, fichiers, configuration, verrou CLI/écran/route 409/403, script de vérification en lecture seule, **parcours neuf** : demande `DEM-…-000001` et solde d'ouverture
+750 000 ressaisi par l'écran, levée du verrou par la commande SQL, seconde purge par l'écran du DG avec sauvegarde téléchargée) ; **`e2e/lot-o.mjs`** (données anciennes `e2e/lot-o-donnees-anciennes.ts` : simulation par défaut de chaque script, simulation chaînée, refus sans phrase, application, 2ᵉ simulation à 0, ré-application sans effet, cas ambigus non devinés, `--affecter`, journal de caisse intact).
+
+**Vérifié** : vitest 1277 réussis (75 fichiers) ; tsc backend et frontend, eslint (backend + frontend) et `next build` propres ; `prisma migrate diff` vide (aucune migration) ; e2e `lot-n.mjs` 65/65 et `lot-o.mjs` 37/37 ; non-régression complète sur 18 scripts, 0 KO :
+`articles-decision-finance` 65, `articles-beneficiaire-pieces` 34, `soumission-dg-article` 38, `reglement-par-article` 55, `regularisation-par-article` 38, `lot-c` 55, `lot-f` 60, `lot-g` 60, `lot-g-bis` 35, `lot-g-ter` 31, `lot-h` 46, `lot-i` 56, `lot-j` 87, `lot-j-ter` 118, `lot-j-bis` 61, `lot-k` 101, `lot-l` 91, `lot-m` 89
+(un premier passage de `lot-m` a eu un KO sur « 1e. notification du DG » pendant qu'un autre test tournait en parallèle ; rejoué seul : 89/89 — contrôle sensible au délai de création de la notification, non lié au lot).
+Piège d'environnement : `pkill -f "next start"` tue aussi le shell qui contient cette chaîne ; arrêter les serveurs par leur numéro de processus.
 
 ### Solde d'ouverture de caisse
 
@@ -7835,6 +7909,9 @@ pas de build côté Dokploy).
 >   données (historique, notifications, feedbacks, demandes, pointages…). Le marqueur `/app/uploads/.seeded` du
 >   service `init` ne protège que le démarrage automatique, pas un lancement manuel.
 
+- **Scripts de `backend/prisma/*.ts` dans le conteneur (lot N+O)** : l'image copie désormais `backend/src` EN ENTIER (avant : seulement `backend/src/generated/prisma`) ;
+  sans cela, tout script qui importe `../src/...` (reprises des lots B à L bis, `reinitialiser-production`, `rattrapage-production`, `verifier-mise-en-production`)
+  échouait avec « Cannot find module ». Lancement : `cd /app/backend && npx tsx prisma/<script>.ts`. Procédure complète : [docs/mise-en-production.md](docs/mise-en-production.md).
 - **Migrations automatiques (`prisma migrate deploy`) à chaque démarrage,
   seed JAMAIS automatisé** — le seed fait des `deleteMany`, protégé par un
   marqueur `.seeded` sur le volume `uploads` en production ; un service

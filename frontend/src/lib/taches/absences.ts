@@ -21,13 +21,18 @@ export async function executerAbsences(): Promise<BilanAbsences> {
 
     // 1. Date de départ : la plus récente entre SYSTEM_START_DATE, le lendemain de la dernière purge du Pointage et le jour de sa
     //    mise en service (`dateDebutAbsences`) — jamais d'absence recréée avant une purge, sans dépendre d'un réglage du superviseur.
-    const [dernierePurge, miseEnService] = await Promise.all([
+    const [purgePointage, purgeGlobale, miseEnService] = await Promise.all([
       prisma.reinitialisationPointage.findFirst({ orderBy: { effectueeAt: "desc" }, select: { effectueeAt: true } }),
+      prisma.reinitialisationSysteme.findFirst({ orderBy: { effectueeAt: "desc" }, select: { effectueeAt: true } }),
       prisma.pointageMiseEnService.findFirst({ select: { misEnServiceAt: true } }),
     ]);
+    // La réinitialisation globale supprime aussi les pointages : même règle que la purge du Pointage seul (lot N).
+    const dernierePurge = [purgePointage?.effectueeAt, purgeGlobale?.effectueeAt]
+      .filter((d): d is Date => d instanceof Date)
+      .sort((a, b) => b.getTime() - a.getTime())[0];
     const systemStartDate = dateDebutAbsences({
       systemStartDate: new Date(process.env.SYSTEM_START_DATE || "2026-09-07"),
-      dernierePurge: dernierePurge?.effectueeAt,
+      dernierePurge,
       miseEnService: miseEnService?.misEnServiceAt,
     });
 

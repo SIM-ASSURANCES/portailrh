@@ -55,6 +55,8 @@ export * from "./chronoDemande";
 export * from "./retourExterneRattacheDb";
 export * from "./feedback";
 export * from "./reinitialisation";
+export * from "./reinitialisationClassification";
+export * from "./reinitialisationFichiers";
 
 // Module Encaissements : socle technique (séquences, audit, paramètres, permissions). Le moteur de calcul
 // (encCalcul.ts) n'est pas réexporté ici : il est importé directement là où il sert.
@@ -81,6 +83,7 @@ export * from "./parcoursArticle";
 export * from "./parcoursArticleDb";
 export * from "./dateGestionDemande";
 export * from "./circuitDemande";
+export * from "./delegations";
 export * from "./soumissionDGEcran";
 export * from "./circuitDemandeDb";
 export * from "./circuitReorientation";

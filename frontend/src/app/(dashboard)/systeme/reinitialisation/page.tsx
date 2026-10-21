@@ -6,9 +6,6 @@ import { getReinitialisationInfo } from "backend";
 
 import { ReinitialisationForm } from "./ReinitialisationForm";
 
-const RAPPEL_SYSTEM_START_DATE =
-  "Pensez à régler SYSTEM_START_DATE sur la date de bascule en production avant la mise en production (.env en local ; docker-compose.raw.yml ou variable Dokploy en production) : le cron d'absences ignore tout ce qui est antérieur.";
-
 /** Réinitialisation à usage unique avant mise en production — DG seul (`systeme.reinitialiser`). */
 export default async function ReinitialisationPage() {
   const session = await getSession();
@@ -25,7 +22,7 @@ export default async function ReinitialisationPage() {
       <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
         <PageHeader
           title="Réinitialisation effectuée"
-          description="Cette opération est à usage unique et ne peut plus être relancée."
+          description="Le verrou est actif : elle ne peut plus être relancée (le lever est une opération volontaire documentée dans docs/mise-en-production.md)."
         />
         <div className="space-y-3 rounded-lg border border-border bg-surface p-5 text-sm">
           <p>
@@ -44,7 +41,10 @@ export default async function ReinitialisationPage() {
               </li>
             ))}
           </ul>
-          <p className="rounded-md bg-warning-bg px-3 py-2 text-warning">{RAPPEL_SYSTEM_START_DATE}</p>
+          <p className="rounded-md bg-warning-bg px-3 py-2 text-warning">
+            La date de cette purge est enregistrée : la détection des absences ne remontera jamais avant elle. Ressaisissez le
+            solde d&apos;ouverture de caisse (Trésorerie &gt; Solde d&apos;ouverture), puis désactivez les comptes de test.
+          </p>
         </div>
       </div>
     );
@@ -54,7 +54,7 @@ export default async function ReinitialisationPage() {
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title="Réinitialisation avant mise en production"
-        description="Supprime définitivement les données de test de la Trésorerie et du Pointage RH / FeedbackApp. Usage unique."
+        description="Supprime définitivement TOUTES les données de test (Trésorerie, Pointage RH, FeedbackApp, Encaissements non mis en service, journaux, signatures d'actions) et conserve la configuration. Usage unique."
       />
       <ReinitialisationForm />
     </div>

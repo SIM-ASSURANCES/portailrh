@@ -8,7 +8,7 @@ import {
   isAdmin,
   getAccessibleModules,
   ensureFeedbackModuleAndPermission,
-  PERMISSIONS_DECISION_NON_DELEGABLES,
+  delegationCompte,
 } from "backend";
 import { cache } from "react";
 
@@ -235,11 +235,11 @@ export const getSession = cache(async (): Promise<{
   // Une permission de décision du circuit n'est jamais comptée par délégation (décision du 2026-10-06), même si la
   // délégation existait avant cette règle.
   const delegatedKeys = delegations
-    .filter(
-      (d) =>
-        !PERMISSIONS_DECISION_NON_DELEGABLES.includes(d.permission.key) &&
-        d.donneur.isActive &&
-        d.donneur.role.permissions.some((rp) => rp.permission.key === d.permission.key)
+    .filter((d) =>
+      delegationCompte(d.permission.key, {
+        isActive: d.donneur.isActive,
+        permissionsRole: d.donneur.role.permissions.map((rp) => rp.permission.key),
+      })
     )
     .map((d) => d.permission.key);
 

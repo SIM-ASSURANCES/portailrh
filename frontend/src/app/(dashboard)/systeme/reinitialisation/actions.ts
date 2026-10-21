@@ -1,6 +1,5 @@
 "use server";
 
-import { unlink } from "node:fs/promises";
 import path from "node:path";
 
 import { revalidatePath } from "next/cache";
@@ -13,14 +12,12 @@ import {
   enregistrerNettoyageFichiers,
   executerReinitialisation,
   reinitialisationEffectuee,
+  supprimerFichiersUploads,
 } from "backend";
 
 type Resultat = { status: "success" | "error"; message: string; decompte?: Record<string, number> };
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
-
-const RAPPEL_SYSTEM_START_DATE =
-  "Pensez à régler SYSTEM_START_DATE sur la date de bascule en production avant la mise en production (.env en local ; docker-compose.raw.yml ou variable Dokploy en production) : le cron d'absences ignore tout ce qui est antérieur.";
 
 /**
  * Réinitialisation À USAGE UNIQUE (voir CLAUDE.md "Réinitialisation avant mise en production") : `systeme.reinitialiser`
@@ -63,21 +60,7 @@ export async function reinitialiserAction(confirmation: string, sauvegardeSha256
   }
 
   // Après le commit : fichiers référencés par les PieceJointe supprimées (garde anti path traversal).
-  let supprimes = 0;
-  let echecs = 0;
-  for (const url of resultat.urlsFichiers) {
-    const chemin = path.resolve(UPLOAD_DIR, url);
-    if (!chemin.startsWith(UPLOAD_DIR + path.sep)) {
-      echecs++;
-      continue;
-    }
-    try {
-      await unlink(chemin);
-      supprimes++;
-    } catch {
-      echecs++;
-    }
-  }
+  const { supprimes, echecs } = await supprimerFichiersUploads(resultat.urlsFichiers, UPLOAD_DIR);
   await enregistrerNettoyageFichiers(resultat.id, supprimes, echecs);
 
   revalidatePath("/", "layout");
@@ -88,7 +71,7 @@ export async function reinitialiserAction(confirmation: string, sauvegardeSha256
     status: "success",
     message: `Réinitialisation effectuée : ${total} ligne(s) supprimée(s), ${supprimes} fichier(s) supprimé(s)${
       echecs > 0 ? ` (${echecs} fichier(s) non supprimé(s), à nettoyer à la main)` : ""
-    }. ${RAPPEL_SYSTEM_START_DATE}`,
+    }. La date de cette purge est enregistrée : la détection des absences ne remontera jamais avant elle.`,
     decompte: resultat.decompte,
   };
 }

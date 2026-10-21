@@ -107,3 +107,7 @@ exemple
 
 # Captures d'écran des tests e2e
 e2e-captures/
+
+# Sauvegardes JSON écrites par backend/prisma/reinitialiser-production.ts (contiennent des données : jamais dans le dépôt)
+sauvegardes-reinitialisation/
+sauvegarde-reinitialisation-*.json
