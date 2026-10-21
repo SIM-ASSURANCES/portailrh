@@ -4,8 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Textarea } from "@/components/ui";
-import { MOTIF_REPRISE_MIN } from "backend/client";
+import { ChampMotifEchange, motifEchangeValide } from "@/components/tresorerie/ChampMotifEchange";
+import { Button } from "@/components/ui";
 
 import { reprendreEtapeAction } from "@/app/(dashboard)/treso/circuit/actions";
 
@@ -19,7 +19,7 @@ export interface ElementRepriseAffiche {
 
 /**
  * Lot K — « Reprise » : renvoyer la demande entière, ou un article, à l'étape PRÉCÉDENTE du circuit, avec un motif obligatoire
- * (10 caractères). Un bouton par élément, toujours visible, grisé avec la phrase du serveur quand la reprise est interdite (article
+ * (10 à 300 caractères). Un bouton par élément, toujours visible, grisé avec la phrase du serveur quand la reprise est interdite (article
  * réglé, validé par le DG, garde 8…). Aucune écriture de caisse, jamais.
  */
 export function RepriseEtapeSection({
@@ -40,12 +40,12 @@ export function RepriseEtapeSection({
   const [ouvert, setOuvert] = useState<string | null>(null);
   const [motif, setMotif] = useState("");
   const [isPending, startTransition] = useTransition();
-  const motifValide = motif.trim().length >= MOTIF_REPRISE_MIN;
+  const motifValide = motifEchangeValide(motif);
   if (elements.length === 0) return null;
 
   function confirmer(e: ElementRepriseAffiche) {
     startTransition(async () => {
-      const r = await reprendreEtapeAction(demandeId, e.ligneId, motif);
+      const r = await reprendreEtapeAction(demandeId, e.ligneId, motif.trim());
       if (r.status === "success") {
         toast.success(r.message);
         setOuvert(null);
@@ -86,14 +86,13 @@ export function RepriseEtapeSection({
               {e.raison ? <p className="text-xs text-foreground" data-reprise-raison>{e.raison}</p> : null}
               {ouvert === cle && !e.raison ? (
                 <div className="space-y-2" data-reprise-formulaire>
-                  <Textarea
+                  <ChampMotifEchange
                     label="Motif de la reprise"
-                    required
                     rows={3}
                     value={motif}
-                    onChange={(ev) => setMotif(ev.target.value)}
-                    hint={`${MOTIF_REPRISE_MIN} caractères minimum. Transmis à l'étape précédente et conservé dans l'historique.`}
-                    error={motif.length > 0 && !motifValide ? `${MOTIF_REPRISE_MIN} caractères minimum.` : undefined}
+                    onChange={setMotif}
+                    hint="Transmis à l'étape précédente et conservé dans l'historique."
+                    disabled={isPending}
                   />
                   <div className="flex flex-wrap gap-2">
                     <Button signe type="button" disabled={!motifValide || isPending} loading={isPending} onClick={() => confirmer(e)}>

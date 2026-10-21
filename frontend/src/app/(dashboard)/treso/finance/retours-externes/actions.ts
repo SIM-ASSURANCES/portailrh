@@ -4,6 +4,8 @@ import { remettreChronoDemande } from "backend";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { schemaMontant } from "@/lib/schemaMontant";
+
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
@@ -24,8 +26,8 @@ const RETOUR_EXTERNE_SOURCE = "retour_externe";
 const schema = z.object({
   collaborateurId: z.string().trim().min(1).optional(),
   nomExterne: z.string().trim().min(2, "Le nom de la personne externe est trop court.").optional(),
-  montantChequeInitial: z.coerce.number().positive("Le montant du chèque initial doit être supérieur à 0."),
-  montantRetourne: z.coerce.number().positive("Le montant retourné doit être supérieur à 0."),
+  montantChequeInitial: schemaMontant({ messagePositif: "Le montant du chèque initial doit être supérieur à 0." }),
+  montantRetourne: schemaMontant({ messagePositif: "Le montant retourné doit être supérieur à 0." }),
   motif: z.string().trim().min(10, "Le motif est obligatoire (10 caractères minimum)."),
   pieceJointeUrl: z.string().trim().min(1, "Le justificatif du retour est obligatoire."),
   pieceJointeChequeUrl: z.string().trim().min(1, "Le justificatif du chèque initial est obligatoire."),
@@ -43,8 +45,8 @@ const schema = z.object({
 export async function creerRetourExterneAction(
   collaborateurId: string | undefined,
   nomExterne: string | undefined,
-  montantChequeInitial: number,
-  montantRetourne: number,
+  montantChequeInitial: number | string,
+  montantRetourne: number | string,
   motif: string,
   pieceJointeUrl: string,
   pieceJointeChequeUrl: string,
@@ -57,8 +59,8 @@ export async function creerRetourExterneAction(
 async function creerRetourExterneInterne(
   collaborateurId: string | undefined,
   nomExterne: string | undefined,
-  montantChequeInitial: number,
-  montantRetourne: number,
+  montantChequeInitial: number | string,
+  montantRetourne: number | string,
   motif: string,
   pieceJointeUrl: string,
   pieceJointeChequeUrl: string,

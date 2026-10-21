@@ -18,6 +18,9 @@ import {
 import { notificationRefusLigneDG, notificationsEtape, type ContexteNotificationCircuit } from "./circuitNotifications";
 import type { EtapeCircuit } from "./generated/prisma/enums";
 
+/** Lot M : tout envoi de la Finance au DG et toute réponse du DG portent un motif (10 à 300 caractères). */
+const MOTIF_TEST = "Motif de test suffisant";
+
 // Soumission au DG ligne par ligne (2026-10-10).
 
 const DEMANDEUR = "u-demandeur";
@@ -63,23 +66,23 @@ describe("soumission partielle (règle 1)", () => {
 
   // RÉÉCRIT (lot B) : l'étape se déduit des articles ; la Finance garde l'étape tant qu'un article l'attend.
   it("la Finance soumet une partie des lignes : la demande reste à l'étape Finance (l'article b l'attend encore)", () => {
-    const r = ok(demande("FINANCE", lignes), FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["a", "c"] });
+    const r = ok(demande("FINANCE", lignes), FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["a", "c"], motif: MOTIF_TEST });
     expect(r.etapeSuivante).toBe("FINANCE");
     expect(r.effets.soumiseAuDG).toBe(true);
   });
 
   it("la Finance soumet TOUS ses articles : la demande passe à l'étape DG", () => {
-    const r = ok(demande("FINANCE", [ligne("a"), ligne("b")]), FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["a", "b"] });
+    const r = ok(demande("FINANCE", [ligne("a"), ligne("b")]), FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["a", "b"], motif: MOTIF_TEST });
     expect(r.etapeSuivante).toBe("DG");
   });
 
   it("permission treso.soumettre_dg requise", () => {
-    expect(ko(demande("FINANCE", lignes), DG, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["a"] })).toBe("Action non autorisée.");
+    expect(ko(demande("FINANCE", lignes), DG, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["a"], motif: MOTIF_TEST })).toBe("Action non autorisée.");
   });
 
   it("une ligne sans catégorie ne peut pas être soumise", () => {
     const d = demande("FINANCE", [ligne("a"), ligne("b", { categorisee: false })]);
-    expect(ko(d, FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["b"] })).toContain("Catégorisez la ligne « Ligne b »");
+    expect(ko(d, FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["b"], motif: MOTIF_TEST })).toContain("Catégorisez la ligne « Ligne b »");
   });
 
   it("sélection vide, ligne étrangère, ligne déjà en attente ou déjà validée par le DG : refusées", () => {
@@ -92,25 +95,25 @@ describe("soumission partielle (règle 1)", () => {
   });
 
   it("soumission complémentaire pendant que le DG décide : tous les articles chez le DG, étape DG", () => {
-    const r = ok(demande("DG", [enAttente("a"), ligne("b")]), FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["b"] });
+    const r = ok(demande("DG", [enAttente("a"), ligne("b")]), FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["b"], motif: MOTIF_TEST });
     expect(r.etapeSuivante).toBe("DG");
   });
 
   it("le demandeur ne soumet pas sa propre demande", () => {
     const d = { ...demande("FINANCE", lignes), createurId: FINANCE.userId };
-    expect(ko(d, FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["a"] })).toContain("propre demande");
+    expect(ko(d, FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["a"], motif: MOTIF_TEST })).toContain("propre demande");
   });
 
   it("l'ancienne soumission de la demande entière est remplacée par la sélection", () => {
-    expect(ko(demande("FINANCE", lignes), FINANCE, { type: "SOUMETTRE_DG" })).toBe("Choisissez les lignes à soumettre au DG.");
+    expect(ko(demande("FINANCE", lignes), FINANCE, { type: "SOUMETTRE_DG", motif: MOTIF_TEST })).toBe("Choisissez les lignes à soumettre au DG.");
   });
 
   // RÉÉCRIT (lot B) : le DG du cas b décide un SOUS-ENSEMBLE d'articles, à des moments différents (décision définitive).
   it("cas b (DG obligatoire) : pas de sélection, le DG décide les articles par sous-ensemble", () => {
     const p = determinerParcours({ estDG: false, estFinance: true, estResponsableDeSonService: false }, "STANDARD");
     const d: DemandeCircuit = { etape: "DG", createurId: DEMANDEUR, typeDemande: "STANDARD", ...p, lignes };
-    expect(ko(d, FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["a"] })).toContain("soumission d'office");
-    const partiel = ok(d, DG, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "a", statut: "VALIDEE" }] });
+    expect(ko(d, FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["a"], motif: MOTIF_TEST })).toContain("soumission d'office");
+    const partiel = ok(d, DG, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "a", statut: "VALIDEE" }], motifDG: MOTIF_TEST });
     expect(partiel.etapeSuivante).toBe("DG");
     expect(partiel.effets.approbationClotureParDG).toBeUndefined();
     const fin = ok(d, DG, {
@@ -120,6 +123,7 @@ describe("soumission partielle (règle 1)", () => {
         { ligneId: "b", statut: "REJETEE" },
         { ligneId: "c", statut: "VALIDEE" },
       ],
+      motifDG: MOTIF_TEST,
     });
     expect(fin.etapeSuivante).toBe("TERMINEE");
     expect(fin.effets.approbationClotureParDG).toBe(true);
@@ -131,45 +135,46 @@ describe("décision du DG ligne par ligne (règle 2)", () => {
   // Finance, qui a donc quelque chose à faire dès la première décision du DG — l'étape déduite est Finance.
   it("le DG valide une ligne soumise ; il en reste une chez lui : la Finance a un article à confirmer (étape Finance)", () => {
     const d = demande("DG", [enAttente("a"), enAttente("b"), ligne("c")]);
-    expect(ok(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: true }).etapeSuivante).toBe("FINANCE");
+    expect(ok(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: true, motif: MOTIF_TEST }).etapeSuivante).toBe("FINANCE");
   });
 
   it("le DG décide pendant que la Finance traite d'autres articles : il n'est pas bloqué", () => {
     const d = demande("FINANCE", [enAttente("a"), ligne("c")]);
-    expect(ok(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: true }).etapeSuivante).toBe("FINANCE");
+    expect(ok(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: true, motif: MOTIF_TEST }).etapeSuivante).toBe("FINANCE");
   });
 
   it("dernière ligne en attente décidée : la Finance reprend la main", () => {
     const d = demande("DG", [valideeDG("a"), enAttente("b"), ligne("c")]);
-    expect(ok(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "b", valider: false, motif: "Hors budget" }).etapeSuivante).toBe("FINANCE");
+    expect(ok(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "b", valider: false, motif: MOTIF_TEST }).etapeSuivante).toBe("FINANCE");
   });
 
   it("le DG ne décide qu'une ligne soumise et en attente", () => {
     const d = demande("DG", [enAttente("a"), ligne("c"), valideeDG("v")]);
-    expect(ko(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "c", valider: true })).toContain("n'attend pas votre décision");
-    expect(ko(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "v", valider: true })).toContain("n'attend pas votre décision");
+    expect(ko(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "c", valider: true, motif: MOTIF_TEST })).toContain("n'attend pas votre décision");
+    expect(ko(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "v", valider: true, motif: MOTIF_TEST })).toContain("n'attend pas votre décision");
   });
 
   it("refus sans motif : refusé", () => {
     const d = demande("DG", [enAttente("a")]);
-    expect(ko(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: false, motif: "x" })).toContain("motif du refus");
+    expect(ko(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: false, motif: "x" })).toContain("motif");
+    expect(ko(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: false, motif: "x" })).toContain("rejet du DG");
   });
 
   it("permission treso.decider_dg requise ; jamais sa propre demande", () => {
     const d = demande("DG", [enAttente("a")]);
-    expect(ko(d, FINANCE, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: true })).toBe("Action non autorisée.");
-    expect(ko({ ...d, createurId: DG.userId }, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: true })).toContain("propre demande");
+    expect(ko(d, FINANCE, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: true, motif: MOTIF_TEST })).toBe("Action non autorisée.");
+    expect(ko({ ...d, createurId: DG.userId }, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: true, motif: MOTIF_TEST })).toContain("propre demande");
   });
 
   it("le bénéficiaire d'un article ne le décide pas (garde par article)", () => {
     const d = demande("DG", [{ ...enAttente("a"), beneficiaireUserId: DG.userId }, enAttente("b")]);
-    expect(ko(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: true })).toContain("bénéficiaire de l'article « Ligne a »");
-    expect(ok(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "b", valider: true }).ok).toBe(true);
+    expect(ko(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "a", valider: true, motif: MOTIF_TEST })).toContain("bénéficiaire de l'article « Ligne a »");
+    expect(ok(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "b", valider: true, motif: MOTIF_TEST }).ok).toBe(true);
   });
 
   it("l'ancienne décision du DG sur la demande entière ne s'applique plus aux demandes à lignes", () => {
     const d = demande("DG", [enAttente("a")]);
-    expect(ko(d, DG, { type: "VALIDER_DG" })).toContain("une par une");
+    expect(ko(d, DG, { type: "VALIDER_DG", motif: MOTIF_TEST })).toContain("une par une");
   });
 });
 
@@ -178,7 +183,7 @@ describe("refus du DG puis nouvelle soumission (règle 3)", () => {
     const d = demande("FINANCE", [valideeDG("a"), refuseeDG("b")]);
     expect(etatLigneDG(d.lignes![1])).toBe("REFUSEE_DG");
     // RÉÉCRIT (lot B) : « a » (validé par le DG) attend toujours la confirmation de la Finance : étape Finance.
-    expect(ok(d, FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["b"] }).etapeSuivante).toBe("FINANCE");
+    expect(ok(d, FINANCE, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["b"], motif: MOTIF_TEST }).etapeSuivante).toBe("FINANCE");
   });
 
   it("ou la rejeter définitivement (jamais la valider seule)", () => {
@@ -188,12 +193,12 @@ describe("refus du DG puis nouvelle soumission (règle 3)", () => {
       decisions: [{ ligneId: "a", statut: "VALIDEE" }, { ligneId: "b", statut: "REJETEE" }],
     });
     expect(ok1.etapeSuivante).toBe("TERMINEE");
-    expect(ko(d, FINANCE, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "b", statut: "VALIDEE" }] })).toContain("refusée par le DG");
+    expect(ko(d, FINANCE, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "b", statut: "VALIDEE" }], motifDG: MOTIF_TEST })).toContain("rejetée par le DG");
   });
 
   it("une ligne validée par le DG reste validée (DG définitif)", () => {
     const d = demande("FINANCE", [valideeDG("a"), ligne("b")]);
-    expect(ko(d, FINANCE, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "a", statut: "REJETEE" }] })).toContain("reste validée");
+    expect(ko(d, FINANCE, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "a", statut: "REJETEE" }], motifDG: MOTIF_TEST })).toContain("reste validée");
   });
 
   it("la Finance ne rejette plus la demande entière quand le DG a validé ou refusé des lignes", () => {
@@ -208,26 +213,26 @@ describe("refus du DG puis nouvelle soumission (règle 3)", () => {
 describe("la Finance n'est plus bloquée par le DG (règle 4 supprimée)", () => {
   it("décision d'un article non soumis pendant qu'un autre attend le DG : acceptée", () => {
     const d = demande("FINANCE", [enAttente("a"), ligne("b")]);
-    const r = ok(d, FINANCE, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "b", statut: "VALIDEE" }] });
+    const r = ok(d, FINANCE, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "b", statut: "VALIDEE" }], motifDG: MOTIF_TEST });
     expect(r.etapeSuivante).toBe("DG");
     expect(r.effets.decideurFinance).toBe(true);
   });
 
   it("mais un article qui attend le DG ne se décide pas à sa place", () => {
     const d = demande("FINANCE", [enAttente("a"), ligne("b")]);
-    expect(ko(d, FINANCE, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "a", statut: "VALIDEE" }] })).toContain("attend la décision du DG");
+    expect(ko(d, FINANCE, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "a", statut: "VALIDEE" }], motifDG: MOTIF_TEST })).toContain("attend la décision du DG");
   });
 
   it("deux personnes : le DG qui a décidé un article ne prend pas de décision Finance", () => {
     const d = demande("FINANCE", [valideeDG("a", TOUT.userId), ligne("b")]);
-    expect(ko(d, TOUT, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "b", statut: "VALIDEE" }] })).toBe(MESSAGE_DEUX_PERSONNES);
-    expect(ok(d, FINANCE2, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "b", statut: "VALIDEE" }] }).etapeSuivante).toBe("FINANCE");
+    expect(ko(d, TOUT, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "b", statut: "VALIDEE" }], motifDG: MOTIF_TEST })).toBe(MESSAGE_DEUX_PERSONNES);
+    expect(ok(d, FINANCE2, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "b", statut: "VALIDEE" }], motifDG: MOTIF_TEST }).etapeSuivante).toBe("FINANCE");
   });
 
   it("deux personnes, sens inverse : le décideur Finance d'un article ne décide pas comme DG", () => {
     const d = demande("FINANCE", [ligne("a", { statut: "VALIDEE", decideurFinanceId: TOUT.userId }), enAttente("b")]);
-    expect(ko(d, TOUT, { type: "DECIDER_LIGNE_DG", ligneId: "b", valider: true })).toBe(MESSAGE_DEUX_PERSONNES);
-    expect(ok(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "b", valider: true }).ok).toBe(true);
+    expect(ko(d, TOUT, { type: "DECIDER_LIGNE_DG", ligneId: "b", valider: true, motif: MOTIF_TEST })).toBe(MESSAGE_DEUX_PERSONNES);
+    expect(ok(d, DG, { type: "DECIDER_LIGNE_DG", ligneId: "b", valider: true, motif: MOTIF_TEST }).ok).toBe(true);
   });
 
   it("l'Assistant Finance attend le DG quand seuls des articles sont chez lui (comportement inchangé)", () => {
@@ -261,7 +266,7 @@ describe("règle de clôture (règle 5)", () => {
   // RÉÉCRIT (lot B) : l'approbation est calculée par le moteur sur les articles finaux (plus d'argument de l'appelant).
   it("la dernière décision de la Finance applique l'approbation acquise, au nom du DG", () => {
     const d = demande("FINANCE", [valideeDG("a")]);
-    const r = ok(d, FINANCE, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "a", statut: "VALIDEE" }] });
+    const r = ok(d, FINANCE, { type: "DECIDER_LIGNES", decisions: [{ ligneId: "a", statut: "VALIDEE" }], motifDG: MOTIF_TEST });
     expect(r.etapeSuivante).toBe("TERMINEE");
     expect(r.effets.approbationClotureParDG).toBe(true);
     expect(r.effets.approbateurDGId).toBe(DG.userId);
@@ -281,7 +286,7 @@ describe("règle de clôture (règle 5)", () => {
 describe("frise : état partiel de l'étape DG", () => {
   it("lignes soumises, en attente, validées et refusées", () => {
     const d = { ...demande("DG", [enAttente("a"), valideeDG("b"), refuseeDG("c"), ligne("d")]), soumiseAuDG: true };
-    expect(detailLignesDG(d)).toBe("3 lignes sur 4 soumises · 1 en attente · 1 validée · 1 refusée");
+    expect(detailLignesDG(d)).toBe("3 lignes sur 4 soumises · 1 en attente · 1 validée · 1 rejetée");
     const dg = friseProgression(d).find((e) => e.etape === "DG")!;
     expect(dg.statut).toBe("EN_COURS");
     expect(dg.detail).toContain("1 en attente");
@@ -345,7 +350,7 @@ describe("notifications de la soumission ligne par ligne", () => {
     );
     expect(n.destinataires.sort()).toEqual([FINANCE.userId, "u-soumet"].sort());
     expect(n.message).toContain("1 article validé par le DG à confirmer");
-    expect(n.message).toContain("1 article refusé par le DG");
+    expect(n.message).toContain("1 article rejeté par le DG");
   });
 
   it("le DG décide un article alors qu'il lui en reste : la Finance n'est pas prévenue (seuls les refus notifient)", () => {

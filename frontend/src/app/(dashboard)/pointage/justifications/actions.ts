@@ -69,7 +69,7 @@ async function deciderJustification(
         detail:
           statut === "ACCEPTEE"
             ? `Pointage ${justification.pointage.id} de ${collaborateur.fullName} : justification acceptée.`
-            : `Pointage ${justification.pointage.id} de ${collaborateur.fullName} : justification refusée. Motif : ${resultat.motifRefus}`,
+            : `Pointage ${justification.pointage.id} de ${collaborateur.fullName} : justification rejetée. Motif : ${resultat.motifRefus}`,
         userId: session.user.id,
       },
     });
@@ -95,7 +95,7 @@ async function deciderJustification(
   revalidatePath("/pointage/justifications");
   revalidatePath(`/pointage/justifier/${justification.pointage.id}`);
   publishDataChanged();
-  return { status: "success", message: statut === "ACCEPTEE" ? "Justification acceptée." : "Justification refusée." };
+  return { status: "success", message: statut === "ACCEPTEE" ? "Justification acceptée." : "Justification rejetée." };
 }
 
 export async function accepterJustificationAction(justificationId: string): Promise<ActionState> {

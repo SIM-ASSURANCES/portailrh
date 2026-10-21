@@ -8,6 +8,7 @@ import { STATUT_LIGNE_DEMANDE_BADGE_VARIANT, STATUT_LIGNE_DEMANDE_LABEL } from "
 import { EnteteDemandeArticle, type ContexteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
 import { BudgetPrevision } from "@/components/tresorerie/BudgetPrevision";
 import { RaisonVisible } from "@/components/tresorerie/RaisonVisible";
+import { ChampMotifEchange } from "@/components/tresorerie/ChampMotifEchange";
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
 
 import {
@@ -17,7 +18,10 @@ import {
   MESSAGE_LIGNE_SANS_CATEGORIE,
   MOTIF_LIGNE_MIN,
   MESSAGE_INTRO_ARTICLES,
-  MOTIF_DEPASSEMENT_MIN,
+  MOTIF_ECHANGE_MIN,
+  motifEchangeValide,
+  motifOuNonRenseigne,
+  refusMotifEchange,
   previsionBudget,
   raisonSoumissionArticle,
   verdictBudget,
@@ -90,6 +94,9 @@ export type LigneValidation = {
   decisionDGParNom?: string | null;
   decisionDGAt?: Date | null;
   motifRefusDG?: string | null;
+  /** Lot M : motif de la Finance à l'envoi au DG et motif du DG à sa décision (`null` : échange antérieur, « Non renseigné »). */
+  motifSoumissionDG?: string | null;
+  motifDecisionDG?: string | null;
   /** Lot B : pourquoi CE compte ne peut pas décider cet article (bénéficiaire, deux personnes…), `null` s'il le peut.
    *  Phrase du moteur du circuit (`transition`), posée par la page. */
   raisonDecision?: string | null;
@@ -197,7 +204,10 @@ export function LignesValidationTable({
   enteteDemande = null,
   categorisationObligatoire = true,
   budget = null,
+  parDG = false,
 }: {
+  /** Cas b : le DG décide lui-même chaque article (motif commun obligatoire + motif de rejet de 10 caractères minimum par article). */
+  parDG?: boolean;
   demandeId: string;
   lignes: LigneValidation[];
   /** Lot J : budgets en vigueur (voir `BudgetValidation`) ; `null` = aucun budget à afficher. */
@@ -249,15 +259,18 @@ export function LignesValidationTable({
   const raisonArticle = (l: LigneValidation) => raisonSoumissionArticle(versLigneCircuit(l, categorisationObligatoire), raisonDemande);
   const bandeau = soumissionDG && etapeCircuit ? bandeauEtapeDG(etapeCircuit, lignes.map((l) => versLigneCircuit(l, categorisationObligatoire))) : null;
   const [ligneEnSoumission, setLigneEnSoumission] = useState<string | null>(null);
+  // Lot M : motif d'envoi au DG, saisi PAR ARTICLE (10 à 300 caractères), transmis au DG avec la soumission.
+  const [motifsSoumission, setMotifsSoumission] = useState<Record<string, string>>({});
 
   /** Soumet UN article au DG (son propre bouton : le seul moyen de soumettre). */
   function soumettreAuDG(ligneId: string) {
     setLigneEnSoumission(ligneId);
     startTransition(async () => {
-      const result = await soumettreLignesAuDGAction(demandeId, [ligneId]);
+      const result = await soumettreLignesAuDGAction(demandeId, [ligneId], (motifsSoumission[ligneId] ?? "").trim());
       setLigneEnSoumission(null);
       if (result.status === "success") {
         toast.success(result.message);
+        setMotifsSoumission((prev) => ({ ...prev, [ligneId]: "" }));
       } else {
         toast.error(result.message);
       }
@@ -289,8 +302,15 @@ export function LignesValidationTable({
   const lignesDecidees = lignes.filter((ligne) => decisions[ligne.id] != null);
   const motifsValides = lignesDecidees.every((ligne) => {
     const decision = decisions[ligne.id]!;
-    return decision.statut !== "REJETEE" || decision.motif.trim().length >= 3;
+    // Lot M : le DG motive chaque rejet (10 à 300 caractères) ; la Finance, 3 à 300 caractères.
+    if (decision.statut !== "REJETEE") return true;
+    return parDG ? motifEchangeValide(decision.motif) : decision.motif.trim().length >= 3 && decision.motif.trim().length <= 300;
   });
+  // Lot M : le DG qui décide (cas b) joint UN motif commun (validation comme rejet), obligatoire.
+  const [motifDG, setMotifDG] = useState("");
+  const motifDGValide = !parDG || lignesDecidees.length === 0 || motifEchangeValide(motifDG);
+  // Lot M : demande de confirmation d'un dépassement par la Finance : motif obligatoire.
+  const [motifDemandeDepassement, setMotifDemandeDepassement] = useState("");
   // Catégorisation obligatoire : une ligne validée doit porter une catégorie (revérifié par le serveur).
   const valideesSansCategorie =
     categorisationObligatoire && lignesDecidees.some((ligne) => decisions[ligne.id]!.statut === "VALIDEE" && !ligne.categorieId);
@@ -308,7 +328,7 @@ export function LignesValidationTable({
       ? verdictBudget({ prevision, acteurEstDG: budget.estDG, motifConfirmation: motifDepassement, confirmationExistante: budget.confirmationDonnee })
       : null;
   const depassementBloque = verdict !== null && !verdict.autorise;
-  const peutEnregistrer = canValider && lignesDecidees.length > 0 && motifsValides && !valideesSansCategorie && !depassementBloque && !isPending;
+  const peutEnregistrer = canValider && lignesDecidees.length > 0 && motifsValides && motifDGValide && !valideesSansCategorie && !depassementBloque && !isPending;
 
   // Bug signalé "l'interaction se bloque après avoir cliqué Rejeter" (voir
   // CLAUDE.md) : le bouton restait CORRECTEMENT désactivé tant qu'un motif
@@ -319,7 +339,9 @@ export function LignesValidationTable({
   const raisonBlocage = lignesDecidees.length === 0
     ? "Choisissez Valider (ou Rejeter) pour au moins un article : les autres peuvent être décidés plus tard."
     : !motifsValides
-      ? "Un motif de rejet d'au moins 3 caractères est requis pour chaque ligne rejetée."
+      ? `Un motif de rejet (${parDG ? MOTIF_ECHANGE_MIN : 3} à 300 caractères) est requis pour chaque ligne rejetée.`
+      : !motifDGValide
+        ? `Le motif de votre décision est obligatoire (${MOTIF_ECHANGE_MIN} à 300 caractères).`
       : valideesSansCategorie
         ? MESSAGE_LIGNE_SANS_CATEGORIE
         : verdict && !verdict.autorise
@@ -339,12 +361,14 @@ export function LignesValidationTable({
       const result = await validerLignesAction(
         demandeId,
         payload,
-        budget?.estDG && prevision?.niveau === "ROUGE" ? motifDepassement.trim() : undefined
+        budget?.estDG && prevision?.niveau === "ROUGE" ? motifDepassement.trim() : undefined,
+        parDG ? motifDG.trim() : undefined
       );
       if (result.status === "success") {
         toast.success(result.message);
         setDecisions({});
         setMotifDepassement("");
+        setMotifDG("");
       } else {
         toast.error(result.message);
       }
@@ -356,7 +380,9 @@ export function LignesValidationTable({
     startTransition(async () => {
       const result = await demanderConfirmationDepassementAction(
         demandeId,
-        lignesDecidees.filter((l) => decisions[l.id]!.statut === "VALIDEE").map((l) => l.id)
+        lignesDecidees.filter((l) => decisions[l.id]!.statut === "VALIDEE").map((l) => l.id),
+        undefined,
+        motifDemandeDepassement.trim()
       );
       setDemandeEnCours(false);
       if (result.status === "success") toast.success(result.message);
@@ -405,12 +431,15 @@ export function LignesValidationTable({
             budgetParCategorie={budgetParCategorie}
             categorisationObligatoire={categorisationObligatoire}
             etatDG={soumissionDG || ligne.soumiseAuDG ? etatDG(ligne) : null}
+            parDG={parDG}
             soumission={
               soumissionDG && ligne.statutValidation === "EN_ATTENTE"
                 ? {
                     raison: raisonArticle(ligne),
                     enCours: ligneEnSoumission === ligne.id,
                     occupe: isPending,
+                    motif: motifsSoumission[ligne.id] ?? "",
+                    changerMotif: (m: string) => setMotifsSoumission((prev) => ({ ...prev, [ligne.id]: m })),
                     soumettre: () => soumettreAuDG(ligne.id),
                   }
                 : null
@@ -455,25 +484,34 @@ export function LignesValidationTable({
                     : "La validation est bloquée tant que le DG n'a pas confirmé le dépassement."}
               </p>
               {budget.estDG ? (
-                <Input
+                <ChampMotifEchange
                   name="motifDepassement"
                   label="Motif de la confirmation du dépassement"
-                  required
                   value={motifDepassement}
-                  onChange={(e) => setMotifDepassement(e.target.value)}
-                  hint={`${MOTIF_DEPASSEMENT_MIN} caractères minimum.`}
+                  onChange={setMotifDepassement}
                 />
               ) : !budget.confirmationDonnee ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  data-demander-confirmation-dg
-                  loading={demandeEnCours}
-                  disabled={isPending || budget.confirmationDemandee}
-                  onClick={demanderConfirmationDG}
-                >
-                  {budget.confirmationDemandee ? "Confirmation demandée au DG — en attente" : "Demander la confirmation du DG"}
-                </Button>
+                <>
+                  {!budget.confirmationDemandee ? (
+                    <ChampMotifEchange
+                      name="motifDemandeDepassement"
+                      label="Motif de la demande de confirmation au DG"
+                      hint="Transmis au DG."
+                      value={motifDemandeDepassement}
+                      onChange={setMotifDemandeDepassement}
+                    />
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    data-demander-confirmation-dg
+                    loading={demandeEnCours}
+                    disabled={isPending || budget.confirmationDemandee || !motifEchangeValide(motifDemandeDepassement)}
+                    onClick={demanderConfirmationDG}
+                  >
+                    {budget.confirmationDemandee ? "Confirmation demandée au DG — en attente" : "Demander la confirmation du DG"}
+                  </Button>
+                </>
               ) : null}
             </div>
           ) : null}
@@ -486,6 +524,16 @@ export function LignesValidationTable({
             </p>
           ) : raisonBlocage ? (
             <p className="text-xs text-muted-foreground">{raisonBlocage}</p>
+          ) : null}
+          {parDG && lignesDecidees.length > 0 ? (
+            <ChampMotifEchange
+              name="motifDG"
+              label="Motif de la décision du DG"
+              hint="Transmis à la Finance."
+              value={motifDG}
+              onChange={setMotifDG}
+              disabled={isPending}
+            />
           ) : null}
           <Button signe type="button" loading={isPending} disabled={!peutEnregistrer} onClick={handleEnregistrer}>
             Enregistrer les décisions
@@ -524,7 +572,9 @@ function LigneCard({
   categorisationObligatoire = true,
   etatDG: etatLigne = null,
   soumission = null,
+  parDG = false,
 }: {
+  parDG?: boolean;
   /** Lot I : « Valider » n'exige une catégorie que si la catégorisation est obligatoire aujourd'hui. */
   categorisationObligatoire?: boolean;
   ligne: LigneValidation;
@@ -543,7 +593,15 @@ function LigneCard({
   /** État de la ligne vis-à-vis du DG (soumission ligne par ligne) ; `null` si sans objet. */
   etatDG?: EtatLigneDG | null;
   /** Bouton « Soumettre au DG » propre à l'article : toujours affiché (grisé avec sa raison si impossible). */
-  soumission?: { raison: string | null; enCours: boolean; occupe: boolean; soumettre: () => void } | null;
+  soumission?: {
+    raison: string | null;
+    enCours: boolean;
+    occupe: boolean;
+    /** Lot M : motif d'envoi au DG (10 à 300 caractères), obligatoire. */
+    motif: string;
+    changerMotif: (motif: string) => void;
+    soumettre: () => void;
+  } | null;
 }) {
   const [ouvertLibelle, setOuvertLibelle] = useState(false);
   const [valeurLibelle, setValeurLibelle] = useState(ligne.libelle);
@@ -576,7 +634,7 @@ function LigneCard({
       variant="secondary"
       data-soumettre-article={ligne.id}
       loading={soumission.enCours}
-      disabled={soumission.raison !== null || soumission.occupe}
+      disabled={soumission.raison !== null || soumission.occupe || !motifEchangeValide(soumission.motif)}
       onClick={soumission.soumettre}
     >
       {etatLigne === "REFUSEE_DG" ? "Resoumettre au DG" : "Soumettre au DG"}
@@ -585,6 +643,18 @@ function LigneCard({
   const raisonSoumettre = soumission?.raison ? (
     <RaisonVisible data-raison-article={ligne.id}>{soumission.raison}</RaisonVisible>
   ) : null;
+  // Lot M : le motif d'envoi se saisit à côté du bouton (toujours visible quand la soumission est possible).
+  const champMotifSoumission =
+    soumission && soumission.raison === null ? (
+      <ChampMotifEchange
+        name={`motifSoumission-${ligne.id}`}
+        label="Motif de l'envoi au DG"
+        hint="Transmis au DG avec l'article."
+        value={soumission.motif}
+        onChange={soumission.changerMotif}
+        disabled={soumission.occupe}
+      />
+    ) : null;
 
   return (
     <div data-ligne-card={ligne.id} className="card-shadow-hover relative rounded-2xl border border-border bg-surface p-4 shadow-elevated transition-transform duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5 sm:p-5">
@@ -660,6 +730,14 @@ function LigneCard({
               {etatLigne === "REFUSEE_DG" && ligne.motifRefusDG ? (
                 <span className="text-muted-foreground">— motif du DG : {ligne.motifRefusDG}</span>
               ) : null}
+              <span data-motif-soumission-dg className="basis-full text-muted-foreground">
+                Motif de la Finance : {motifOuNonRenseigne(ligne.motifSoumissionDG)}
+              </span>
+              {etatLigne !== "EN_ATTENTE_DG" ? (
+                <span data-motif-decision-dg className="basis-full text-muted-foreground">
+                  Motif du DG : {motifOuNonRenseigne(ligne.motifDecisionDG ?? ligne.motifRefusDG)}
+                </span>
+              ) : null}
             </div>
           ) : null}
           {/* Quantité / prix unitaire — informations secondaires, jamais en
@@ -717,6 +795,7 @@ function LigneCard({
           ) : etatLigne === "EN_ATTENTE_DG" ? (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">En attente de la décision du DG.</p>
+              {champMotifSoumission}
               {boutonSoumettre}
               {raisonSoumettre}
             </div>
@@ -742,7 +821,7 @@ function LigneCard({
             <div className="space-y-2">
               {etatLigne === "REFUSEE_DG" ? (
                 <p className="text-xs text-muted-foreground">
-                  Refusée par le DG : resoumettez-la au DG, ou refusez-la définitivement (motif ci-dessous).
+                  Rejetée par le DG : resoumettez-la au DG, ou rejetez-la définitivement (motif ci-dessous).
                 </p>
               ) : null}
               <div className="flex flex-wrap gap-2">
@@ -766,6 +845,7 @@ function LigneCard({
               </div>
               {ligne.raisonDecision ? <RaisonVisible data-raison-decision-article={ligne.id}>{ligne.raisonDecision}</RaisonVisible> : null}
               {raisonSoumettre}
+              {champMotifSoumission}
               {categorisationObligatoire && !ligne.categorieId && etatLigne !== "REFUSEE_DG" ? (
                 <p data-sans-categorie className="text-xs text-muted-foreground">
                   {MESSAGE_LIGNE_SANS_CATEGORIE}
@@ -775,13 +855,19 @@ function LigneCard({
                 <Textarea
                   aria-label="Motif du rejet de la ligne"
                   rows={2}
-                  placeholder="Motif du rejet (3 caractères minimum)..."
+                  placeholder={`Motif du rejet (${parDG ? MOTIF_ECHANGE_MIN : 3} à 300 caractères)...`}
                   value={decision.motif}
                   disabled={decisionsPending}
                   onChange={(e) => onChangeMotif(e.target.value)}
                   error={
-                    decision.motif.length > 0 && decision.motif.trim().length < 3
-                      ? "3 caractères minimum."
+                    decision.motif.length > 0
+                      ? parDG
+                        ? (refusMotifEchange(decision.motif) ?? undefined)
+                        : decision.motif.trim().length < 3
+                          ? "3 caractères minimum."
+                          : decision.motif.trim().length > 300
+                            ? "300 caractères maximum."
+                            : undefined
                       : undefined
                   }
                 />

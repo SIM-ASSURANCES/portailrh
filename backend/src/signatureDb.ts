@@ -2,6 +2,7 @@
 // délégation, lecture pour l'historique / le parcours / le reporting / les PDF. Aucune écriture dans une table existante.
 
 import type { Prisma } from "./generated/prisma/client";
+import { motifOuNonRenseigne } from "./motifEchange";
 import { CLE_MARQUEUR_SIGNATURES, lierSignatures, type EtatSignatureEntree, type EntreeHistoriqueSignable } from "./signature";
 import type { OperationsSignature, TxSignee } from "./signatureTransaction";
 
@@ -317,6 +318,8 @@ export interface SignatureDocument {
   signatureId: string | null;
   auNomDe: string | null;
   anterieure: boolean;
+  /** Lot M : motif de l'échange Finance ↔ DG porté par cette étape (« Motif du DG : … », « Motif de l'envoi au DG : … »), « Non renseigné » pour un échange antérieur ; absent pour les autres étapes. */
+  motif?: string;
 }
 
 const ETAPES_DOCUMENT: Record<string, { rang: number; etape: string }> = {
@@ -339,7 +342,7 @@ const HISTORIQUE_VALIDATION_ANTERIEURE: Record<string, { rang: number; etape: st
 };
 
 export async function chargerSignaturesDocument(
-  db: Pick<Db, "actionSignee" | "marqueurUnique"> & Pick<Prisma.TransactionClient, "historiqueEntry">,
+  db: Pick<Db, "actionSignee" | "marqueurUnique"> & Pick<Prisma.TransactionClient, "historiqueEntry" | "demande">,
   demandeId: string,
   execution: {
     action: string;
@@ -378,6 +381,12 @@ export async function chargerSignaturesDocument(
     if (!lignes.some((l) => l.rang === 4) && execution.repli && execution.repli.date.getTime() < mise.getTime()) {
       lignes.push({ rang: 4, etape: execution.etape, nom: execution.repli.nom, fonction: execution.repli.fonction, date: execution.repli.date, signatureId: null, auNomDe: null, anterieure: true });
     }
+  }
+  // Lot M : l'étape DG porte le motif de la réponse du DG ; l'étape Finance, celui de son envoi au DG (s'il y en a eu un).
+  const echange = await db.demande.findUnique({ where: { id: demandeId }, select: { motifSoumissionDG: true, motifDecisionDG: true, soumiseAuDG: true } });
+  for (const l of lignes) {
+    if (l.rang === 3) l.motif = `Motif du DG : ${motifOuNonRenseigne(echange?.motifDecisionDG)}`;
+    else if (l.rang === 2 && echange && (echange.soumiseAuDG || echange.motifSoumissionDG)) l.motif = `Motif de l'envoi au DG : ${motifOuNonRenseigne(echange.motifSoumissionDG)}`;
   }
   return lignes.sort((x, y) => x.rang - y.rang || x.date.getTime() - y.date.getTime());
 }

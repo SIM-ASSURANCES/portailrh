@@ -611,6 +611,11 @@ model Demande {
   /// `niveauRejet`).
   motifRejet   String?
   motifCloture String?
+  /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de chaque échange Finance ↔ DG sur la demande entière — dernier envoi de la
+  /// Finance au DG (`motifSoumissionDG`) et dernière réponse du DG à la Finance (`motifDecisionDG` : validation, rejet, approbation
+  /// de clôture…). `null` pour les échanges antérieurs au lot M (affichés « Non renseigné ») ; l'historique garde chaque motif.
+  motifSoumissionDG String?
+  motifDecisionDG   String?
   /// Lot C : demande clôturée de force (articles non régularisés), avec motif (`motifCloture`, 10 caractères minimum).
   /// Aucune écriture de caisse n'est touchée. `clotureForceeArticles` : instantané des articles non terminés (libellé,
   /// bénéficiaire, montants, solde restant) au moment de la clôture, relu par le reporting et l'affichage.
@@ -838,6 +843,10 @@ model LigneDemande {
   decisionDGParId  String?
   decisionDGPar    User?              @relation("LigneDemandeDecisionDGPar", fields: [decisionDGParId], references: [id])
   motifRefusDG     String?
+  /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de la dernière soumission de cet article au DG par la Finance, et de la
+  /// dernière réponse du DG (validation OU rejet ; `motifRefusDG` reste le motif du rejet, recopié ici). `null` avant le lot M.
+  motifSoumissionDG String?
+  motifDecisionDG   String?
 
   demandeId String
   demande   Demande @relation(fields: [demandeId], references: [id])
@@ -2282,8 +2291,12 @@ model BudgetParametrage {
   decideParId String?
   decidePar   User?                   @relation("BudgetParametrageDecidePar", fields: [decideParId], references: [id])
   decideAt    DateTime?
-  /// Obligatoire (3 caractères minimum) quand le DG refuse.
+  /// Obligatoire (10 caractères minimum depuis le lot M) quand le DG rejette ; `statut = REFUSE` reste la valeur interne (« Rejeté »).
   motifRefus  String?
+  /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de l'envoi au DG par la Finance, et de la réponse du DG (validation comme
+  /// rejet). `null` pour les paramétrages antérieurs au lot M (affichés « Non renseigné »).
+  motifSoumission String?
+  motifDecision   String?
 
   @@index([portee, categorieId, statut])
   @@index([statut, soumisAt])
@@ -2306,6 +2319,8 @@ model BudgetDepassement {
   confirmePar  User?                   @relation("BudgetDepassementConfirmePar", fields: [confirmeParId], references: [id])
   confirmeAt   DateTime?
   motif        String?
+  /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de la demande de confirmation faite au DG par la Finance (`motif` = celui du DG).
+  motifDemande String?
   utiliseAt    DateTime?
   /// Lot J bis : montants que cette confirmation couvre, par article (ou dépense directe) et par catégorie
   /// (`[{ ligneId, categorieId, montant }]`), posés à l'utilisation — le règlement de l'article peut les dépasser du reste du budget.

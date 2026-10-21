@@ -53,7 +53,7 @@ describe("ligneDetailPointage", () => {
     });
     expect(ligne).toMatchObject({
       justificationStatut: "REFUSEE",
-      justification: "Justification refusée",
+      justification: "Justification rejetée",
       motif: "Rendez-vous",
       decideePar: "Responsable",
       service: "Commercial",

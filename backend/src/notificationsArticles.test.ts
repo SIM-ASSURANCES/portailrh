@@ -101,21 +101,21 @@ describe("soumission, décision du DG, resoumission : le DG et la Finance voient
 
   it("resoumission après refus : le message le dit", () => {
     const n = notificationsEtape(ctx([A, B, C], { articlesResoumis: ["A"] }), candidats, "fin", "SOUMISSION_DG");
-    expect(norm(n[0].message)).toContain("dont 1 resoumis après refus");
+    expect(norm(n[0].message)).toContain("dont 1 resoumis après rejet");
   });
 
-  it("le DG a fini : la Finance voit l'article validé à confirmer et l'article refusé (avec motif) à resoumettre ou rejeter", () => {
-    const validee = art("A", { etat: "VALIDEE_DG_A_CONFIRMER" });
-    const refusee = art("B", { etat: "REFUSEE_DG_A_TRANCHER", motif: "Hors budget" });
+  it("le DG a fini : la Finance voit l'article validé à confirmer et l'article rejeté (avec motif) à resoumettre ou rejeter", () => {
+    const validee = art("A", { etat: "VALIDEE_DG_A_CONFIRMER", motifDecisionDG: "Budget disponible, validé." });
+    const refusee = art("B", { etat: "REFUSEE_DG_A_TRANCHER", motif: "Hors budget", motifDecisionDG: "Hors budget" });
     const n = notificationsEtape(ctx([validee, refusee, C]), candidats, "dg", "DECISION_DG");
     expect(n).toHaveLength(1);
     expect(n[0].destinataires).toEqual(["fin"]);
-    expect(norm(n[0].message)).toContain("« Article A » (bénéficiaire Bénéf A, 100 000 FCFA) — validé par le DG, à confirmer");
-    expect(norm(n[0].message)).toContain("— refusé par le DG (motif : Hors budget), à resoumettre ou à rejeter");
+    expect(norm(n[0].message)).toContain("« Article A » (bénéficiaire Bénéf A, 100 000 FCFA) — validé par le DG (motif du DG : Budget disponible, validé.), à confirmer");
+    expect(norm(n[0].message)).toContain("— rejeté par le DG (motif du DG : Hors budget), à resoumettre ou à rejeter");
     expect(norm(n[0].message)).toContain("« Article C » (bénéficiaire Bénéf C, 100 000 FCFA) — à décider");
   });
 
-  it("refus d'un article par le DG : la Finance est prévenue avec le bénéficiaire et le montant de l'article", () => {
+  it("rejet d'un article par le DG : la Finance est prévenue avec le bénéficiaire et le montant de l'article", () => {
     const n = notificationRefusLigneDG(ctx([A, B, C]), candidats, { libelle: "Article A", motif: "Trop cher", ligneId: "A" }, "dg")!;
     expect(n.destinataires).toEqual(["fin"]);
     expect(norm(n.message)).toContain("« Article A » (bénéficiaire Bénéf A, 100 000 FCFA)");

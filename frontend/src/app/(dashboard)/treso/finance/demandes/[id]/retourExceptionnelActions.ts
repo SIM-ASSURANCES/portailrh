@@ -4,6 +4,8 @@ import { remettreChronoDemande } from "backend";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { schemaMontant } from "@/lib/schemaMontant";
+
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify } from "@/lib/notifications";
@@ -42,7 +44,7 @@ function estResponsableFinance(session: NonNullable<Awaited<ReturnType<typeof ge
 }
 
 const saisieSchema = z.object({
-  montant: z.coerce.number().positive("Le montant doit être supérieur à 0."),
+  montant: schemaMontant({ messagePositif: "Le montant doit être supérieur à 0." }),
   motif: z.string().trim().min(10, "Le motif est obligatoire (10 caractères minimum)."),
   pieceJointeUrl: z.string().trim().min(1).optional(),
 });
@@ -60,7 +62,7 @@ async function revalider(demandeId: string) {
 /** Saisie (Assistant Finance ou Responsable) — statut "en attente de validation". */
 export async function creerRetourExceptionnelAction(
   demandeId: string,
-  montant: number,
+  montant: number | string,
   motif: string,
   pieceJointeUrl?: string,
   ligneDemandeId?: string

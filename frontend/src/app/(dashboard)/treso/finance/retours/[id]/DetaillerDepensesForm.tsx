@@ -4,7 +4,8 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, InputMontant, Select, Textarea } from "@/components/ui";
+import { analyserMontant, texteSaisieMontant, valeurSaisieMontant } from "backend/client";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import {
@@ -20,7 +21,7 @@ function nouvelleLigne(): LigneEdit {
   return {
     key: `ligne-${Math.random().toString(36).slice(2)}`,
     libelle: "",
-    montant: 0,
+    montant: "",
     pieceJointeFournie: false,
     pieceJointeUrl: undefined,
     justifiee: true,
@@ -67,6 +68,7 @@ export function DetaillerDepensesForm({
     lignesInitiales.length > 0
       ? lignesInitiales.map((l) => ({
           ...l,
+          montant: typeof l.montant === "number" ? texteSaisieMontant(l.montant) : l.montant,
           motif: l.justifiee ? l.libelle : (l.motif ?? l.libelle),
           key: `ligne-${Math.random().toString(36).slice(2)}`,
         }))
@@ -86,7 +88,7 @@ export function DetaillerDepensesForm({
     return () => clearTimeout(t);
   }, [enregistre]);
 
-  const totalSaisi = lignes.reduce((sum, l) => sum + (Number(l.montant) || 0), 0);
+  const totalSaisi = lignes.reduce((sum, l) => sum + valeurSaisieMontant(String(l.montant)), 0);
   const reste = Math.round((montantCible - totalSaisi) * 100) / 100;
 
   const peutEnregistrer = aEnregistrer;
@@ -99,7 +101,12 @@ export function DetaillerDepensesForm({
 
   function handleSubmit() {
     for (const l of lignes) {
-      if (!l.montant || l.montant <= 0) {
+      const analyse = analyserMontant(String(l.montant));
+      if (!analyse.ok) {
+        setErreur(`Montant invalide : ${analyse.message}`);
+        return;
+      }
+      if (analyse.centimes <= 0) {
         setErreur("Chaque entrée doit avoir un montant supérieur à 0.");
         return;
       }
@@ -203,15 +210,11 @@ export function DetaillerDepensesForm({
                   })
                 }
               />
-              <Input
+              <InputMontant
                 label="Montant"
-                type="number"
-                inputMode="decimal"
-                min="0"
-                step="1"
                 required
-                value={ligne.montant || ""}
-                onChange={(e) => updateLigne(ligne.key, { montant: Number(e.target.value) })}
+                value={String(ligne.montant)}
+                onValueChange={(texte) => updateLigne(ligne.key, { montant: texte })}
               />
             </div>
             <Textarea

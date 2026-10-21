@@ -41,6 +41,8 @@ export * from "./parametresTresorerie";
 export * from "./budgets";
 export * from "./budgetsDb";
 export * from "./motifReglement";
+export * from "./montant";
+export * from "./motifEchange";
 export * from "./retourNul";
 export * from "./retourExterneRattache";
 export * from "./regularisationDepenses";

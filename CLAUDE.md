@@ -2662,7 +2662,7 @@ Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permis
   finale, ou pendant que le DG décide), la Finance (`treso.soumettre_dg`) soumet les lignes choisies
   (`SOUMETTRE_LIGNES_DG`, catégorie obligatoire, `refusSoumissionLignes`) ; la demande passe ou reste à l'étape DG. Le DG
   (`treso.decider_dg`) ne voit et ne décide que les lignes soumises, une par une (`DECIDER_LIGNE_DG`, motif ≥ 3 au refus) ;
-  la dernière décidée passe la demande à la décision finale. Une ligne refusée revient à la Finance : resoumise, ou
+  la dernière décidée passe la demande à la décision finale. Une ligne rejetée revient à la Finance : resoumise, ou
   refusée définitivement à la décision finale. **DG définitif** (décision du 2026-10-10, `refusDecisionsFinales`) : une
   ligne validée par le DG reste validée (son auteur et sa date sont gardés), une ligne refusée par le DG n'est jamais
   validée par la Finance seule, et la Finance ne rejette plus la demande entière dès qu'une ligne est validée par le DG.
@@ -2684,7 +2684,7 @@ Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permis
   verrouillées selon le DG ; plus de bouton « Soumettre au DG » de la demande entière), DG (`DecisionLignesDG` : lignes
   soumises seulement), frise (« 2 lignes sur 4 soumises · 1 en attente… », `detailLignesDG`).
 - **Notifications** : le DG à chaque soumission ; la Finance qui peut agir (`decider_finance` ou `soumettre_dg`) à chaque
-  refus (`notificationRefusLigneDG`) — le refus de la dernière ligne en attente n'envoie que la notification de décision
+  rejet (`notificationRefusLigneDG`) — le rejet de la dernière ligne en attente n'envoie que la notification de décision
   finale (décompte validées/refusées), jamais deux.
 - **Rattrapage** (décision du 2026-10-10, selon l'étape) des demandes soumises par l'ancien circuit : toutes leurs lignes
   « soumises » ; étape DG : en attente ; décision finale : validées par le DG (auteur et date de son approbation) ; rejet
@@ -2693,7 +2693,7 @@ Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permis
   les 2 nouvelles relations vers `User`.
 - Vérifié : vitest (31 tests, 396 au total), tsc, eslint, `next build` ; migration depuis zéro (72) et sur une base dans
   l'ancien état (rattrapage contrôlé ligne par ligne, rejeu sans effet), `migrate diff` vide ; Playwright 39/39
-  (soumission partielle, refus puis resoumission, blocage et refus serveur de la décision finale, DG définitif côté
+  (soumission partielle, rejet puis resoumission, blocage et rejet serveur de la décision finale, DG définitif côté
   serveur, clôture mixte et tout-DG, notifications, historique, mobile 390 px).
 
 - **« Soumettre au DG » par article, raisons visibles (lot 2, 2026-10-13)** : diagnostic d'un clic « sans effet » en production — le
@@ -2827,7 +2827,7 @@ ni le reporting (lot F) ne changent : le règlement reste au niveau de la demand
   `DEMANDES_EN_ATTENTE_VALIDATION_WHERE`. La page « Demandes en attente de validation » classe une demande dans la première file où elle a quelque
   chose à faire (jamais deux fois). « À régulariser » : tous les articles traités (comme la clôture).
 - **Écrans** : tableau des articles (`LignesValidationTable`) par article — décision d'un sous-ensemble, « Enregistrer (n articles) » dès une décision,
-  « Confirmer la validation » pour un article validé par le DG, « Rejeter définitivement » pour un article refusé par le DG, compteur « x/n articles
+  « Confirmer la validation » pour un article validé par le DG, « Rejeter définitivement » pour un article rejeté par le DG, compteur « x/n articles
   traités », « Déjà validé : X — montant qui sera ajouté : Y » ; page Finance unifiée pour une demande à articles vivante (tableau + circuit + règlement
   + régularisation + clôture sur le même écran) ; frise Finance/DG « en cours » ensemble avec compteur, phrase « En cours : x/n articles traités — en
   attente de la Finance (n) et du DG (m) » ; bandeau « Des articles attendent la décision du DG, les autres ne sont pas bloqués ».
@@ -3167,7 +3167,7 @@ nouvelle relation vers `User`.
 
 **3. Notifications par article** (`circuitNotifications.ts`, `frontend/src/lib/notificationsCircuit.ts`) : chaque message nomme l'article (`nommerArticle` :
 « libellé » (bénéficiaire X, montant) ) et rappelle la demande (`rappelDemande` : numéro, demandeur, service). Soumission/resoumission au DG : une notification qui
-liste les articles (dont « n resoumis après refus ») ; examen du DG terminé : une notification à la Finance (articles à confirmer, articles refusés avec motif) —
+liste les articles (dont « n resoumis après rejet ») ; examen du DG terminé : une notification à la Finance (articles à confirmer, articles rejetés avec motif) —
 le refus de la dernière ligne en attente n'envoie que celle-ci ; décision de la Finance : une notification au demandeur détaillant les articles décidés, une par
 Assistant avec les articles à régler ; **pas de doublon** quand plusieurs articles sont traités ensemble (les identifiants d'articles de l'événement sont transmis :
 `DetailEvenementCircuit`). Demande terminée : `notificationsAttenteArticles` (articles à régler, retours/dépenses à traiter, garde 8 par article, « prête à être clôturée »).
@@ -3186,7 +3186,7 @@ partielle ne remplace pas la clôture forcée ; (2) la clôture forcée garde l'
 (clôturer sa propre demande) n'est codée que pour la clôture forcée.
 
 **Vérifié** : vitest (`clotureDemande` 18, `notificationsArticles` 14, `circuitNotifications` 22 ; 829 réussis + échec connu `feedback.test.ts`), tsc, eslint, `next build`, migration depuis zéro, `migrate diff` vide ;
-e2e `lot-c.mjs` 55/55 (A validé par le DG et confirmé, B refusé puis resoumis puis validé, C rejeté ; clôture bloquée avec message, A régularisé disparaît, B bloque ; garde 8 ; motif de 9 caractères refusé ; clôture forcée,
+e2e `lot-c.mjs` 55/55 (A validé par le DG et confirmé, B rejeté puis resoumis puis validé, C rejeté ; clôture bloquée avec message, A régularisé disparaît, B bloque ; garde 8 ; motif de 9 caractères rejeté ; clôture forcée,
 historique, notifications demandeur et DG, caisse intacte, bandeau, reporting, export ; clôture ordinaire ; rappel unique nommant les articles, remis à zéro) ; script de reprise testé (simulation, application, rejeu sans effet).
 
 #### Lot F — reporting et export : un seul tableau, de la demande jusqu'au détail de chaque article (2026-10-21)
@@ -3320,7 +3320,7 @@ UTILISE, à usage unique) ; `LigneDemande.budgetApresValidation` (photo JSON du 
 **Règles (une seule définition, `budgets.ts`).**
 - **Paramétrage** : la Finance (`treso.modifier_budget_categorie`) saisit montant, date d'effet (jamais dans le passé), fin facultative et seuil facultatif ;
   `validerSaisieParametrage` refuse : rouge ≥ orange, pourcentage hors 0–100, seuil en montant > budget, fin avant début, montant ≤ 0. **Soumis** au DG
-  (`treso.valider_budget`) qui valide ou refuse (motif ≥ 3 caractères) ; jamais le compte qui a soumis. **Rien n'est pris en compte avant la validation**, et un
+  (`treso.valider_budget`) qui valide ou rejette (motif ≥ 3 caractères) ; jamais le compte qui a soumis. **Rien n'est pris en compte avant la validation**, et un
   paramétrage n'est **jamais modifié** : `budgetEnVigueur(parametrages, portée, catégorie, jour)` retient, parmi les VALIDÉS dont la période contient le
   jour, celui de début le plus récent (le nouveau remplace l'ancien à sa date d'effet, l'historique reste). Un seul paramétrage en attente par budget.
 - **Seuils** : pourcentage restant OU montant restant ; `niveauAlerte` inclusif (reste ≤ seuil) en centimes exacts ; ORANGE puis ROUGE (plus bas). **Sans seuil,
@@ -3349,7 +3349,7 @@ UTILISE, à usage unique) ; `LigneDemande.budgetApresValidation` (photo JSON du 
   (global en tête, période, réservé, reste après validations, seuils, niveau ; page et feuille Excel). Les 4 actions d'historique budget sont de la gestion
   interne (`ACTIONS_GESTION_INTERNE`) : jamais montrées au demandeur.
 - **Écran `/treso/finance/budgets`** (entrée de menu « Budgets ») : budgets en vigueur (montant, réservé, reste, période, seuils, niveau), dépassements à
-  confirmer (DG), paramétrages en attente (boutons Valider / Refuser avec motif pour le DG), formulaire de paramétrage (Finance), historique complet. Garde :
+  confirmer (DG), paramétrages en attente (boutons Valider / Rejeter avec motif pour le DG), formulaire de paramétrage (Finance), historique complet. Garde :
   `modifier_budget_categorie` | `valider_budget` | `decider_dg` | `voir_dashboard_finance` (consultation). `/admin/categories` et `/treso/finance/categories`
   n'affichent plus qu'un budget **en lecture seule** (+ lien) : `modifierBudgetCategorieAction` et son champ éditable sont **supprimés**. Une catégorie qui a
   un paramétrage (tout statut) ne se supprime plus (désactiver).
@@ -3359,7 +3359,7 @@ UTILISE, à usage unique) ; `LigneDemande.budgetApresValidation` (photo JSON du 
   **2000-01-01** (toute la consommation passée reste comptée, comportement inchangé), **sans date de fin**, seuil **par défaut = pourcentage restant, orange 20,
   rouge 0** (`SEUIL_BUDGET_PAR_DEFAUT`) : ROUGE seulement à l'épuisement, donc rien n'est bloqué au déploiement tant qu'un budget n'est pas épuisé. Aucun budget
   global n'existait : aucun créé. Idempotente (`ON CONFLICT DO NOTHING`).
-- **Permissions** : **une seule nouvelle**, `treso.valider_budget` (le DG valide/refuse les paramétrages), créée **dans le seed ET par la migration** de
+- **Permissions** : **une seule nouvelle**, `treso.valider_budget` (le DG valide/rejette les paramétrages), créée **dans le seed ET par la migration** de
   rattrapage (donnée aux rôles qui portent `treso.decider_dg` : le DG seul, jamais un nom de rôle). Paramétrer réutilise `treso.modifier_budget_categorie`
   (Finance, déjà en production) ; confirmer un dépassement réutilise `treso.decider_dg`. **À attribuer via `/admin/roles`** : cocher `treso.modifier_budget_categorie`
   sur les rôles qui paramètrent (Finance) et `treso.valider_budget` sur celui qui valide (DG), puis rien d'autre. `supprimerUtilisateurAction` compte les 4 nouvelles relations vers `User`.
@@ -3369,11 +3369,11 @@ validation** sera quand même refusé au règlement tant que le budget n'est pas
 (2) Le budget global n'a **pas** de blocage au règlement (seulement l'alerte à la validation). (3) Réservé = max(consommé, engagé) ; la date de validation d'une
 dépense directe est approchée par sa date de création. (4) Un nouveau paramétrage repart de **zéro de consommation à sa date d'effet** (budget par période) : pour
 relever un budget sans remettre le compteur à zéro, saisir un début « depuis toujours » est impossible (début ≥ aujourd'hui) — à arbitrer si besoin. (5) L'**Admin** ne
-paramètre plus les budgets (sauf s'il porte `modifier_budget_categorie`). (6) Pas de refus par le DG d'une demande de confirmation de dépassement (il ne confirme
+paramètre plus les budgets (sauf s'il porte `modifier_budget_categorie`). (6) Pas de rejet par le DG d'une demande de confirmation de dépassement (il ne confirme
 simplement pas) ni de retrait par la Finance. (7) Un article sans catégorie ne touche que le budget global.
 
 **Vérifié** : vitest (53 tests `budgets`, 937 au total), tsc, eslint, `next build` ; migration depuis une base portant des budgets existants, rejouée sans effet, `migrate diff`
-vide ; e2e `lot-j.mjs` 86/86 (migration et permissions, saisie incohérente refusée, soumission/validation/refus du DG avec motif, budget futur non en vigueur, restes global et
+vide ; e2e `lot-j.mjs` 86/86 (migration et permissions, saisie incohérente rejetée, soumission/validation/rejet du DG avec motif, budget futur non en vigueur, restes global et
 catégorie à chaque validation, ORANGE puis ROUGE, blocage serveur par appel direct, demande de confirmation, seul le DG confirme, usage unique, le DG qui valide confirme dans le
 même geste, parcours, rien montré au demandeur, reporting page et Excel, budget sans seuil, budget global rouge, aucune écriture de caisse) ; régressions des lots précédents
 (`lot-g` et `reglement-par-article` adaptés : le budget y est un paramétrage validé).
@@ -3421,10 +3421,10 @@ périmètre global comme pour une catégorie (e2e `lot-j.mjs` 3b pour une catég
 communes à la sélection**, bouton « Soumettre la sélection au DG » (grisé sans case cochée) ; une ligne dont un paramétrage attend déjà le DG est désactivée. `soumettreParametragesBudget` :
 **tout ou rien** (toute la sélection est contrôlée AVANT la moindre écriture : saisie incohérente, catégorie introuvable, budget déjà en attente, même budget deux fois → rien n'est créé), verrou
 `pg_advisory_xact_lock`, **un paramétrage et une trace d'historique (`budget_soumis`) par élément**, **une seule notification** pour le DG (« n budgets à valider »). Les erreurs reviennent par ligne.
-**Décision du DG seul ou en lot** (`ParametragesEnAttente`, `deciderParametragesBudget`) : cases à cocher + « Valider la sélection » / « Refuser la sélection » (motif commun), ou les boutons de
-chaque budget (motif propre) ; l'action accepte aussi un motif **par élément** (à défaut le motif commun) ; refus sans motif pour un élément → **rien n'est décidé**. Chaque élément garde son statut
+**Décision du DG seul ou en lot** (`ParametragesEnAttente`, `deciderParametragesBudget`) : cases à cocher + « Valider la sélection » / « Rejeter la sélection » (motif commun), ou les boutons de
+chaque budget (motif propre) ; l'action accepte aussi un motif **par élément** (à défaut le motif commun) ; rejet sans motif pour un élément → **rien n'est décidé**. Chaque élément garde son statut
 et sa trace (`budget_valide` / `budget_refuse`). **Le DG ne décide jamais ce qu'il a lui-même soumis** (case désactivée ; dans un lot l'élément est **ignoré avec sa raison**, les autres sont décidés ;
-un élément déjà décidé est ignoré de même). **Une seule notification par soumetteur et par lot** (« 2 budgets validés par le DG » / « 2 budgets refusés par le DG », motifs inclus).
+un élément déjà décidé est ignoré de même). **Une seule notification par soumetteur et par lot** (« 2 budgets validés par le DG » / « 2 budgets rejetés par le DG », motifs inclus).
 
 **4. Page « Catégories » fusionnée dans « Budgets ».** L'entrée de menu « Catégories » de la Finance est retirée ; « Budgets » apparaît pour qui paramètre/valide/consulte les budgets **ou**
 gère les catégories (`canVoirBudgets || canGererCategories`). `/treso/finance/budgets` a deux onglets (`?onglet=categories`) ; `/treso/finance/categories` **redirige** vers l'onglet « Catégories ».
@@ -3462,7 +3462,7 @@ action de soumission et une seule action de décision servaient aux deux, avec d
 **Maintenant** — `/treso/finance/budgets` (onglet Budgets), de haut en bas :
 - **« Dépassements à confirmer »** (DG seul, `treso.decider_dg`) — bloc commun conservé en tête : un dépassement rouge concerne indifféremment la caisse ou une catégorie.
 - **Section « Budget de caisse »** (`data-section-caisse`) : le **solde de caisse réel** (jamais un montant saisi : solde actuel, déjà validé pas encore sorti, solde prévisionnel), les **seuils orange
-  et rouge en FCFA** avec leur période (date d'effet), le **statut du dernier paramétrage** (en attente du DG / validé / refusé) et le niveau d'alerte ; les **seuils en attente du DG** (liste propre,
+  et rouge en FCFA** avec leur période (date d'effet), le **statut du dernier paramétrage** (en attente du DG / validé / rejeté) et le niveau d'alerte ; les **seuils en attente du DG** (liste propre,
   décision seul ou en lot) ; le **formulaire de paramétrage des seuils** (`ParametrageCaisseForm` : date de début jamais dans le passé, fin facultative, deux champs FCFA — aucun champ montant, aucun
   pourcentage) ; **son propre historique** (`data-historique-caisse`, sans colonne catégorie).
 - **Section « Budgets par catégorie »** (`data-section-categories`) : **un tableau avec UNE ligne par catégorie** (toutes les catégories actives, même sans budget, plus celles désactivées qui ont encore un
@@ -3471,17 +3471,17 @@ action de soumission et une seule action de décision servaient aux deux, avec d
   (`data-historique-categories`, avec colonnes catégorie et montant).
 
 **Actions et notifications PAR section** (`budgets/actions.ts`, `lib/notificationsBudget.ts`) — remplacent `soumettreParametragesBudgetAction` / `deciderParametragesBudgetAction` :
-| Section | Soumettre (Finance, `treso.modifier_budget_categorie`) | Valider / refuser (DG, `treso.valider_budget`) |
+| Section | Soumettre (Finance, `treso.modifier_budget_categorie`) | Valider / rejeter (DG, `treso.valider_budget`) |
 |---|---|---|
 | Caisse | `soumettreSeuilsCaisseAction(saisie)` | `deciderSeuilsCaisseAction(elements, valider, motifCommun?)` |
 | Catégories | `soumettreBudgetsCategoriesAction(saisies)` | `deciderBudgetsCategoriesAction(elements, valider, motifCommun?)` |
 - **La portée est imposée par l'action, jamais lue de l'entrée** : l'action de caisse force `GLOBAL` (montant et catégorie envoyés par un client sont ignorés — testé), celle des catégories force `CATEGORIE` et
   refuse une ligne sans catégorie. Un pourcentage envoyé pour la caisse reste refusé par la validation (rien n'est converti en silence).
 - **Les actions de décision revérifient la portée de chaque identifiant en base** : décider un paramétrage de l'autre section est refusé (testé dans les deux sens), sans rien écrire.
-- Notifications propres : « Seuils de caisse à valider » / « Seuils de caisse validés (refusés) par le DG » ; « Budget de catégorie à valider » / « n budgets de catégorie à valider » /
-  « n budgets de catégorie validés (refusés) par le DG ». Toujours UNE notification par lot et par soumetteur (motifs inclus au refus). Les notifications d'alerte orange/rouge et de confirmation de
+- Notifications propres : « Seuils de caisse à valider » / « Seuils de caisse validés (rejetés) par le DG » ; « Budget de catégorie à valider » / « n budgets de catégorie à valider » /
+  « n budgets de catégorie validés (rejetés) par le DG ». Toujours UNE notification par lot et par soumetteur (motifs inclus au rejet). Les notifications d'alerte orange/rouge et de confirmation de
   dépassement sont inchangées.
-- Inchangés : le DG ne décide jamais ce qu'il a soumis (case et boutons désactivés, ignoré côté serveur), motif obligatoire au refus (par élément ou commun), une trace d'historique par élément, un seul
+- Inchangés : le DG ne décide jamais ce qu'il a soumis (case et boutons désactivés, ignoré côté serveur), motif obligatoire au rejet (par élément ou commun), une trace d'historique par élément, un seul
   paramétrage en attente par budget, un nouveau paramétrage ne modifie jamais l'ancien et n'est utilisable qu'une fois validé, à sa date d'effet.
 
 **Blocs retirés de l'écran** (devenus doublons ou inutiles après la séparation) : le bloc mixte « Budgets en vigueur » (remplacé par l'encadré du solde de caisse et le tableau des catégories) ; la liste
@@ -3492,14 +3492,14 @@ unique « Paramétrages en attente du DG » (une liste par section) ; le formula
 UN paramétrage en attente à la fois ; la barre de lot n'apparaît que s'il y en a au moins deux (le même composant sert les deux sections). Lever cette limite serait un changement de règle, non fait.
 (2) Le bloc « Dépassements à confirmer » reste commun aux deux sections (un dépassement peut viser la caisse ou une catégorie dans la même validation). (3) Les dates d'effet restent communes à la sélection
 d'un lot de catégories. (4) Le tableau des catégories lit « Consommé » et « Réservé » du contexte budgétaire existant (consommé au règlement depuis la date d'effet ; réservé = le plus grand du consommé et de
-l'engagé) : aucun nouveau calcul. (5) Le statut d'une catégorie est celui de son **dernier paramétrage soumis** (en attente, validé ou refusé) : une catégorie dont le dernier paramétrage a été refusé affiche
-« Refusé » alors que son budget en vigueur peut venir d'un paramétrage validé plus ancien. **(⚠️ résolu par le lot J bis : « Dernier paramétrage refusé » + budget conservé affichés.)**
+l'engagé) : aucun nouveau calcul. (5) Le statut d'une catégorie est celui de son **dernier paramétrage soumis** (en attente, validé ou rejeté) : une catégorie dont le dernier paramétrage a été rejeté affiche
+« Rejeté » alors que son budget en vigueur peut venir d'un paramétrage validé plus ancien. **(⚠️ résolu par le lot J bis : « Dernier paramétrage rejeté » + budget conservé affichés.)**
 
 **Vérifié** : vitest (978 réussis), tsc, eslint, `next build` ; e2e `lot-j-ter.mjs` 117/117 (deux sections et leur contenu, formulaire de caisse sans montant ni pourcentage, portée imposée par chaque action, refus
 croisés, notifications propres, historiques séparés, tableau des catégories, décision seul et en lot par section, lot tout ou rien, soumission du DG ignorée, parcours, reporting, journal de caisse intact) ;
 `lot-j.mjs` adapté 85/85 ; `lot-i.mjs` 56/56 ; régressions des lots C, F, G, G bis, G ter, H et précédents.
 
-#### Lot J bis — confirmation de dépassement et règlement, « dernier paramétrage refusé », catégories désactivables par la Finance (2026-10-20)
+#### Lot J bis — confirmation de dépassement et règlement, « dernier paramétrage rejeté », catégories désactivables par la Finance (2026-10-20)
 
 Aucune écriture de caisse créée ni modifiée ; budget toujours **consommé au règlement** ; `PERMISSIONS_DECISION_NON_DELEGABLES` intacte ; **aucune permission nouvelle** ; devise unique.
 Une migration additive, rejouable, **justifiée** : `20261025090000_budget_depassement_couverture` ajoute `BudgetDepassement.couverture` (JSONB, nullable) — sans elle, le règlement ne saurait pas ce que le DG
@@ -3525,7 +3525,7 @@ a autorisé (le `resume` d'un dépassement est un texte, pas une donnée exploit
   `data-couverture-reglement`) ; reporting (page et Excel) : même phrase dans la colonne « Budget après validation (reste) » de la ligne ARTICLE. Rien chez le demandeur ni dans les PDF.
 - **Anciennes confirmations** (utilisées avant ce lot, `couverture` nul) : **ne couvrent aucun règlement** (rien n'est deviné). À traiter à la main si le cas existe : redemander une confirmation ou relever le budget.
 
-**2. Page « Budgets », section catégories.** Quand le dernier paramétrage d'une catégorie a été refusé, la ligne affiche « **Dernier paramétrage refusé** » et, dessous, « Budget en vigueur conservé : X FCFA (période) »
+**2. Page « Budgets », section catégories.** Quand le dernier paramétrage d'une catégorie a été rejeté, la ligne affiche « **Dernier paramétrage rejeté** » et, dessous, « Budget en vigueur conservé : X FCFA (période) »
 (`data-dernier-parametrage-refuse`, `data-budget-conserve`) — ou « Aucun budget en vigueur » si elle n'en a jamais eu. Les colonnes budget / consommé / reste montraient déjà le budget en vigueur : la mention le dit
 désormais explicitement. Un dernier paramétrage en attente ou validé garde son badge habituel.
 
@@ -3556,7 +3556,7 @@ par le parcours complet à l'écran.
 **Vérifié** : vitest (988 réussis, dont 10 nouveaux dans `budgetsCouverture.test.ts` : couverture par article / catégorie, seuil rouge seul, cumul, relecture JSON, règlement dans la limite, partiel puis solde,
 au-delà du confirmé, au centime), tsc, eslint, `next build` ; migration appliquée, `migrate diff` vide ; e2e `lot-j-bis.mjs` 61/61 (validation avec confirmation du DG par l'écran réel, règlement de 120 000 confirmé malgré
 un budget de 100 000, trace avec le DG / le motif / le montant couvert, autre article refusé, dépense directe couverte à 70 000 puis règlement suivant refusé, article sans confirmation refusé, parcours, historique,
-reporting page et Excel, rien chez le demandeur, caisse intacte ; mention « Dernier paramétrage refusé » chez la Finance et le DG ; désactivation / réactivation de catégorie et d'objet par la Finance, tracées,
+reporting page et Excel, rien chez le demandeur, caisse intacte ; mention « Dernier paramétrage rejeté » chez la Finance et le DG ; désactivation / réactivation de catégorie et d'objet par la Finance, tracées,
 absentes des choix, visibles dans l'historique, le reporting et le tableau des budgets, refus sans permission, Admin inchangé) ; `lot-g.mjs` rétabli à 60 contrôles ; régressions : `lot-j` 85/85, `lot-j-ter` 117/117 (trois attentes mises à jour : désactivation désormais offerte à la Finance, libellé « Dernier paramétrage refusé »),
 `lot-i` 56/56, `lot-c` (aucun KO), `lot-f` 60/60, `lot-g-bis` 35/35, `lot-g-ter` 31/31, `lot-h` 46/46, `regularisation-par-article` 38/38, `reglement-par-article` 55/55, `articles-decision-finance` 65/65,
 `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34. **Piège d'environnement** : au-delà de ~6 scripts sur le même serveur, la limite de connexions fait expirer l'ouverture de session
@@ -3724,6 +3724,60 @@ après validation et jamais en cas d'annulation), `signature.test.ts` (`lierSign
 
 **Points ouverts** : (1) les règles de reprise SQL et TypeScript sont dupliquées ; (2) les lignes d'historique du lot L jugées ambiguës restent « Signature non rattachée » définitivement (à traiter à la main si le DG l'exige) ; (3) `revalidatePath` avant validation ; (4) l'action `reouverture_exceptionnelle_retour` n'est pas dans la liste des actions d'historique signables (inchangé) ;
 (5) toute NOUVELLE action d'historique produite par une action signée doit être ajoutée à `ACTIONS_HISTORIQUE_SIGNEES` pour que l'écran la compare à sa signature.
+
+#### Lot M — motif obligatoire Finance ↔ DG, vocabulaire « Rejeter », saisie souple des montants (2026-10-29)
+
+Aucune écriture de caisse créée ni modifiée, `PERMISSIONS_DECISION_NON_DELEGABLES` et garde 8 intactes, **aucune permission nouvelle**, signatures (lots L et L bis) et transaction unique conservées (le motif est écrit dans la MÊME transaction que l'action). Une migration
+manuelle, additive et idempotente : `20261029090000_motifs_echanges_finance_dg` (7 colonnes facultatives, `migrate diff` vide, rejouée sans effet).
+
+**1. Motif de 10 à 300 caractères dans les DEUX sens** (`backend/src/motifEchange.ts`, pur, réexporté par `backend/client` ; règle unique `refusMotifEchange`, jamais un second contrôle ; liste des échanges `ECHANGES_FINANCE_DG`). Vérifié **côté serveur** (un appel direct sans motif, vide,
+de 9 ou de 301 caractères est refusé, même `undefined` : le moteur du circuit ne lève plus d'exception sur un motif absent), conservé avec l'action, affiché partout où l'action apparaît. Le champ est toujours visible à côté des boutons (`ChampMotifEchange`, compteur « 10 à 300 caractères (n saisis) ») ; les boutons restent grisés tant qu'il n'est pas valable.
+
+| Échange | Avant | Maintenant (où le motif est conservé) |
+|---|---|---|
+| Finance → DG : soumettre un article / le resoumettre après rejet (`soumettreLignesAuDGAction`) | aucun motif | obligatoire, **un motif par article** (`LigneDemande.motifSoumissionDG`, `Demande.motifSoumissionDG`) |
+| Finance → DG : soumettre / resoumettre la demande entière (`soumettreAuDGAction`, `resoumettreAuDGAction`) | aucun motif | obligatoire (`Demande.motifSoumissionDG`) |
+| Finance → DG : resoumettre la validation complète | 10 caractères | 10 à 300 |
+| Finance → DG : demande émise directement au DG (demande de la Finance, dépense directe pour soi) | aucun motif | `motifEnvoiDG` obligatoire à la création (seulement dans ce cas ; `Demande.motifSoumissionDG`, historique `circuit_initialise`) |
+| Finance → DG : seuils de caisse / budgets de catégorie (seul ou en lot) | aucun motif | motif commun obligatoire (`BudgetParametrage.motifSoumission`) |
+| Finance → DG : demande de confirmation d'un dépassement rouge | aucun motif | obligatoire (`BudgetDepassement.motifDemande`) |
+| DG → Finance : valider / rejeter un article soumis (`deciderLigneDGAction`) | valider sans motif, rejeter ≥ 3 | **les deux** 10 à 300 (`LigneDemande.motifDecisionDG`, `motifRefusDG` au rejet, `Demande.motifDecisionDG`) |
+| DG → Finance : valider / rejeter la demande soumise entière (`validerEtapeDGAction`, `rejeterEtapeDGAction`) | valider sans motif, rejeter ≥ 3 | 10 à 300 (`Demande.motifDecisionDG`) |
+| DG → Finance : décider les articles d'une demande de la Finance (cas b), rejeter la demande entière, dépense directe décidée par le DG | rejet ≥ 3 | **un motif commun** pour la décision (`motifDG`) + un motif de 10 à 300 par article rejeté |
+| DG → Finance : approuver / rejeter / annuler la validation complète | approuver sans motif, rejeter et annuler ≥ 3 | 10 à 300 (`Demande.motifDecisionDG`, historique) |
+| DG → Finance : confirmer un dépassement de budget | 10 caractères | 10 à 300 |
+| DG → Finance : valider / rejeter des seuils de caisse ou des budgets de catégorie (seul ou en lot) | valider sans motif, rejeter ≥ 3 | **les deux** 10 à 300 (`BudgetParametrage.motifDecision` ; `motifRefus` au rejet) |
+| DG → Finance : renvoyer à la Finance (reprise) | 10 caractères | 10 à 300 |
+
+- **Affichage** : historique de la demande (le détail porte le motif ; un échange antérieur au lot M affiche « motif : Non renseigné » à la lecture, `detailHistoriqueEchange` + `ACTIONS_HISTORIQUE_ECHANGE_DG`, rien n'est réécrit en base) ; carte de l'article (« Motif de la Finance : … » / « Motif du DG : … ») ; parcours de l'article
+  (`echangeDG` : lignes dans les étapes Validé / Rejet) ; page Budgets (en attente, historiques de caisse et de catégories, dépassements) ; notifications (le DG reçoit « Motif de la Finance : … », la Finance « Motif du DG : … ») ; **reporting unique** : colonne « Décision DG » de la page et de l'Excel (« Validé par X le … — motif de la Finance : … — motif du DG : … »,
+  pas de nouvelle colonne ni table) ; **PDF** (reçus de règlement et de retour) : l'étape « Validation du DG » imprime « Motif du DG : … », l'étape Finance « Motif de l'envoi au DG : … » (`SignatureDocument.motif`).
+- **Signatures** : aucune nouvelle ligne d'historique n'est créée (le motif est ajouté au détail des lignes existantes) : `ACTIONS_HISTORIQUE_SIGNEES` et `ACTIONS_SIGNEES` inchangées.
+- **Anciens échanges** : « Non renseigné », jamais marqués anormaux.
+
+**2. Vocabulaire uniforme « Rejeter »** : une seule famille (« Rejeter », « Rejeté(e) », « Rejet ») pour une décision métier qui écarte une demande, un article, un budget, une justification, un retour… Libellés remplacés à l'écran : boutons « Refuser » (budgets, justification de pointage, article refusé par le DG → « Rejeter définitivement »), états « Refusée par le DG » → « Rejetée par le DG »
+(`LIBELLE_ETAT_LIGNE_DG`, `etatArticles`), « Refusé par le DG » (`libelleStatutParametrage`, reporting), « Dernier paramétrage refusé » → « rejeté », justification de pointage (« Justification rejetée », « Motif du rejet »), titres et textes de notifications, e-mails, historique (`ACTION_LABELS`), « Ligne rejetée par le DG », messages d'erreur (« confirmation impossible » au lieu de « confirmation refusée »), « écarté(s) » (confirmation des encaissements).
+**Valeurs internes inchangées** (aucune migration risquée) : `StatutParametrageBudget.REFUSE`, `DecisionLigneDG.REFUSEE`, `StatutJustificationPointage.REFUSEE`, `motifRefus`, `motifRefusDG`, codes d'historique (`refus_ligne_dg`, `budget_refuse`), noms de fonctions et attributs `data-…` : seuls les libellés affichés changent. À la lecture, les anciens textes d'historique enregistrés
+(« Refusé par le DG », « ligne … refusée », « après refus ») sont affichés dans le nouveau vocabulaire (`vocabulaireRejet`) ; les notifications déjà envoyées gardent leur texte d'origine.
+**Pas remplacé** (autre sens que le rejet métier) : « Accès refusé », permission refusée, droits (« Action non autorisée »), pointage hors périmètre / GPS refusé, réponse technique du service de notifications push, dimensions d'image refusées. **Garde-fou** : `backend/src/vocabulaireRejeter.test.ts` parcourt les textes visibles (chaînes, gabarits, texte JSX) du code source avec l'analyseur TypeScript
+et échoue sur tout reste de « refus/refuser/refusé » hors liste blanche (raison notée pour chaque entrée) ; toute nouvelle exception doit y être ajoutée avec sa raison.
+
+**3. Saisie souple des montants** (`backend/src/montant.ts`, pur, 67 tests ; `InputMontant`, `schemaMontant`, `lireMontant`). Acceptés : `1500000`, `1 500 000`, `1.500.000`, `1.500.000,50`, `1 500 000,50`, `1500000,5`. Règles : le **dernier séparateur est décimal** s'il est une virgule/un point suivi de 1 ou 2 chiffres ET que la devise admet des décimales ;
+sinon ce sont des milliers (groupes de 3 chiffres exactement, le premier de 1 à 3). **FCFA/XOF/XAF/CFA** : aucune décimale, tout point ou espace est un séparateur de milliers, une virgule suivie de chiffres est refusée (« Les décimales ne sont pas admises pour cette devise (FCFA)… »). **Cas ambigus tranchés** : `1.500` = 1 500 (milliers) pour **toutes** les devises (un point suivi de
+exactement 3 chiffres est toujours un groupe de milliers, `1.50` = 1,50 en devise décimale) ; `1,500` est **refusé** (virgule + 3 chiffres : ambigu) ; `1,500.50`, `1.500.50`, `1,500,50` refusés (séparateurs mélangés) ; `0.500` refusé (zéro suivi d'un groupe de milliers) ; lettres, signe négatif, exposant, séparateurs mal placés refusés ; 12 chiffres entiers au plus ; espaces insécables
+et fines normalisés. **Écran** : mise en forme française pendant la frappe (espaces pour les milliers, virgule décimale), curseur conservé (rang de chiffre), collage depuis Excel accepté, `inputMode="decimal"`, écho « = 1 500 000 FCFA », message d'erreur sous le champ, envoi du formulaire bloqué tant que la saisie est invalide, saisie invalide jamais corrigée en silence.
+Bug trouvé par le test de bout en bout : « 1 500 » + « 0 » donnait « 1 5000 » (groupes invalides laissés tels quels) : la frappe regroupe désormais les chiffres séparés par des espaces. **Le serveur ne fait jamais confiance au navigateur** : les champs postent le texte affiché, chaque action le réanalyse avec la devise de la demande (`lireMontant` accepte aussi un nombre, vérifié : fini, positif,
+deux décimales au plus, entier en FCFA). Les écrans Finance sont en FCFA seulement ; le formulaire de demande et sa correction tiennent compte de la devise choisie. Montants stockés **inchangés** (`Decimal`). Intégrés : demande (prix unitaire), règlements, retours de caisse (montant retourné, montant proposé, dépenses, ajustement, remboursement), retours exceptionnel et externe,
+validation partielle/complémentaire, solde d'ouverture et alimentation de caisse, dépense directe, budgets (montants et seuils en FCFA ; les pourcentages restent des nombres), versements des Encaissements (décimales admises). **Hors périmètre** : les imports de fichiers de production et de relevés (Encaissements) gardent leur lecture dédiée, inchangée.
+
+**Tests** : vitest `motifEchange.test.ts` (règle 10–300, historique « Non renseigné », et pour chaque échange Finance → DG et DG → Finance : accepté avec un motif valable, refusé s'il est absent, vide, d'espaces, de 9 ou de 301 caractères — 9 échanges × 6 cas), `montant.test.ts` (67 : tous les exemples, ambiguïtés, refus, FCFA contre devise décimale, frappe, curseur),
+`vocabulaireRejeter.test.ts` ; e2e `e2e/lot-m.mjs` (motifs écran + appel direct dans les deux sens, notifications, historique, reporting Excel, anciens échanges, validation complète, budgets, vocabulaire sur les pages, montants à l'écran et par le serveur) ; les scripts Trésorerie existants sont adaptés (motif à saisir, « Rejeter », `e2e/motifs.mjs`).
+
+
+**Vérifié** : vitest 1215 réussis (69 fichiers), tsc backend et frontend, eslint, `next build`, `migrate diff` vide, migration rejouée sans effet ; e2e `lot-m.mjs` 89/89 et non-régression complète sur 18 scripts, 0 KO (`lot-l` 91, `lot-i` 56, `lot-h` 46, `lot-f` 60, `lot-g` 60, `lot-g-bis` 35, `lot-g-ter` 31, `reglement-par-article` 55, `regularisation-par-article` 38, `articles-decision-finance` 65, `articles-beneficiaire-pieces` 34, `soumission-dg-article` 38, `lot-c` 55, `lot-j` 87, `lot-j-ter` 118, `lot-j-bis` 61, `lot-k` 101).
+
+**Points ouverts** : (1) en devise décimale, taper `1.5` au clavier donne `1,5` (un point suivi de 1 ou 2 chiffres est décimal) — pour des milliers avec des points, coller le nombre ou utiliser des espaces ; (2) les notifications et e-mails déjà envoyés gardent leur ancien texte ; (3) `statut = REFUSE` / `REFUSEE` restent les valeurs internes (rapports SQL externes) ;
+(4) le rappel de réorientation (lot K) garde son motif de 10 caractères (non concerné) ; (5) les motifs d'un lot de décisions de budgets sont communs, avec un motif propre possible par élément par appel direct seulement ; (6) le bon de caisse (document minimal) n'imprime aucun motif.
 
 ### Solde d'ouverture de caisse
 

@@ -10,7 +10,6 @@ import {
   retirerCouvertureArticle,
   jourCourantBudget,
   lireCouverture,
-  MOTIF_DEPASSEMENT_MIN,
   perimetreCaisse,
   partieCouverteReglement,
   phrasesAlertes,
@@ -29,6 +28,7 @@ import {
   type VerdictBudget,
 } from "./budgets";
 import { getMontantConsommeCategorie, getSoldeCaisse } from "./tresorerie";
+import { nettoyerMotifEchange, refusMotifEchange } from "./motifEchange";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
@@ -490,8 +490,13 @@ const ERREUR = (message: string) => ({ ok: false as const, message });
 export async function demanderConfirmationDepassement(
   demandeId: string,
   ajouts: readonly AjoutBudget[],
-  userId: string
+  userId: string,
+  /** Lot M : motif de la demande faite au DG (10 à 300 caractères), obligatoire. */
+  motif: string
 ): Promise<{ ok: true; resume: string; reference: string } | { ok: false; message: string }> {
+  const refusMotif = refusMotifEchange(motif, "la demande de confirmation du dépassement");
+  if (refusMotif) return ERREUR(refusMotif);
+  const motifDemande = nettoyerMotifEchange(motif);
   return prisma.$transaction(async (tx) => {
     const demande = await tx.demande.findUnique({ where: { id: demandeId }, select: { reference: true } });
     if (!demande) return ERREUR("Demande introuvable.");
@@ -502,9 +507,9 @@ export async function demanderConfirmationDepassement(
     const prevision = previsionBudget(contexte, ajouts.filter((a) => a.montant > 0));
     if (prevision.niveau !== "ROUGE") return ERREUR("Cette validation n'atteint pas le seuil rouge : aucune confirmation du DG n'est nécessaire.");
     const resume = phrasesAlertes(prevision).join(" ; ");
-    await tx.budgetDepassement.create({ data: { demandeId, statut: "DEMANDE", resume, demandeParId: userId } });
+    await tx.budgetDepassement.create({ data: { demandeId, statut: "DEMANDE", resume, demandeParId: userId, motifDemande } });
     await tx.historiqueEntry.create({
-      data: { entity: "Demande", entityId: demandeId, action: ACTION_HISTORIQUE_BUDGET.DEMANDE_CONFIRMATION, detail: `Confirmation du DG demandée (seuil rouge) — ${resume}`, userId },
+      data: { entity: "Demande", entityId: demandeId, action: ACTION_HISTORIQUE_BUDGET.DEMANDE_CONFIRMATION, detail: `Confirmation du DG demandée (seuil rouge) — ${resume} — motif de la Finance : ${motifDemande}`, userId },
     });
     return { ok: true as const, resume, reference: demande.reference };
   });
@@ -517,7 +522,9 @@ export async function confirmerDepassementBudget(
   userId: string
 ): Promise<{ ok: true; demandeId: string; reference: string; demandeParId: string } | { ok: false; message: string }> {
   const m = (motif ?? "").trim();
-  if (m.length < MOTIF_DEPASSEMENT_MIN) return ERREUR(`Le motif de la confirmation est obligatoire (${MOTIF_DEPASSEMENT_MIN} caractères minimum).`);
+  // Lot M : motif de 10 à 300 caractères (MOTIF_DEPASSEMENT_MIN = MOTIF_ECHANGE_MIN).
+  const refusMotif = refusMotifEchange(m, "la confirmation du dépassement");
+  if (refusMotif) return ERREUR(refusMotif);
   return prisma.$transaction(async (tx) => {
     const d = await tx.budgetDepassement.findUnique({ where: { id }, include: { demande: { select: { reference: true } } } });
     if (!d) return ERREUR("Demande de confirmation introuvable.");
@@ -557,7 +564,16 @@ function descriptionBudget(v: ValeurParametrage, libelleCategorie: string | null
  * sélection. Chaque paramétrage garde sa propre trace dans l'historique. Le budget global ne porte que des seuils (montant
  * FCFA) : le solde de caisse réel fait foi.
  */
-export async function soumettreParametragesBudget(saisies: readonly SaisieParametrage[], userId: string, maintenant: Date = new Date()): Promise<ResultatSoumissionLot> {
+export async function soumettreParametragesBudget(
+  saisies: readonly SaisieParametrage[],
+  userId: string,
+  /** Lot M : motif de l'envoi au DG (10 à 300 caractères), obligatoire, conservé sur chaque paramétrage soumis. */
+  motif: string,
+  maintenant: Date = new Date()
+): Promise<ResultatSoumissionLot> {
+  const refusMotif = refusMotifEchange(motif, "la soumission au DG");
+  if (refusMotif) return { ok: false, message: refusMotif };
+  const motifSoumission = nettoyerMotifEchange(motif);
   const r = validerLotParametrages(saisies, jourCourantBudget(maintenant));
   if (!r.ok) {
     const erreurs = Object.values(r.erreursParIndex);
@@ -600,6 +616,7 @@ export async function soumettreParametragesBudget(saisies: readonly SaisieParame
           seuilRouge: v.seuil?.rouge ?? null,
           soumisParId: userId,
           soumisAt: maintenant,
+          motifSoumission,
         },
       });
       const description = descriptionBudget(v, v.categorieId ? (libelles.get(v.categorieId) ?? null) : null);
@@ -608,7 +625,7 @@ export async function soumettreParametragesBudget(saisies: readonly SaisieParame
           entity: ENTITE_BUDGET,
           entityId: cree.id,
           action: ACTION_BUDGET.SOUMIS,
-          detail: `Soumis au DG : ${description}, ${fr(v.dateDebut)}${v.dateFin ? ` → ${fr(v.dateFin)}` : " (sans fin)"}`,
+          detail: `Soumis au DG : ${description}, ${fr(v.dateDebut)}${v.dateFin ? ` → ${fr(v.dateFin)}` : " (sans fin)"} — motif de la Finance : ${motifSoumission}`,
           userId,
         },
       });
@@ -620,15 +637,15 @@ export async function soumettreParametragesBudget(saisies: readonly SaisieParame
 }
 
 /** Un seul paramétrage : cas particulier du lot (conservé pour les appelants qui soumettent un budget seul). */
-export async function soumettreParametrageBudget(saisie: SaisieParametrage, userId: string, maintenant: Date = new Date()): Promise<ResultatParametrage> {
-  const r = await soumettreParametragesBudget([saisie], userId, maintenant);
+export async function soumettreParametrageBudget(saisie: SaisieParametrage, userId: string, motif: string, maintenant: Date = new Date()): Promise<ResultatParametrage> {
+  const r = await soumettreParametragesBudget([saisie], userId, motif, maintenant);
   if (!r.ok) return { ok: false, message: r.message, erreurs: r.erreursParIndex?.[0] };
   return { ok: true, id: r.ids[0] };
 }
 
 export interface DecisionParametrageLot {
   id: string;
-  /** Motif propre à cet élément (refus) ; à défaut, le motif commun du lot. */
+  /** Motif propre à cet élément (validation ou rejet) ; à défaut, le motif commun du lot. */
   motif?: string | null;
 }
 
@@ -643,7 +660,7 @@ export type ResultatDecisionLot =
   | { ok: false; message: string };
 
 /**
- * Le DG valide ou refuse UN OU PLUSIEURS paramétrages d'un coup. Motif obligatoire au refus (3 caractères minimum), propre à
+ * Le DG valide ou rejette UN OU PLUSIEURS paramétrages d'un coup. Motif obligatoire dans les deux cas (10 à 300 caractères), propre à
  * chaque élément ou commun au lot. Chaque élément garde sa propre trace dans l'historique et son propre statut. Le DG ne décide
  * jamais ce qu'il a lui-même soumis : cet élément est ignoré (avec sa raison), les autres sont décidés. Un élément déjà décidé
  * (ou décidé entre-temps par un autre) est aussi ignoré : la décision est conditionnée au statut EN_ATTENTE lu.
@@ -663,12 +680,12 @@ export async function deciderParametragesBudget(
   }
   const commun = (motifCommun ?? "").trim();
   const motifs = new Map<string, string>();
-  if (!valider) {
-    for (const e of elements) {
-      const m = (e.motif ?? "").trim() || commun;
-      if (m.length < 3) return ERREUR("Le motif du refus est obligatoire (3 caractères minimum), pour chaque élément ou en commun.");
-      motifs.set(e.id, m);
-    }
+  // Lot M : la réponse du DG (validation comme rejet) porte toujours un motif de 10 à 300 caractères, propre à l'élément ou commun.
+  for (const e of elements) {
+    const m = (e.motif ?? "").trim() || commun;
+    const refusMotif = refusMotifEchange(m, valider ? "la validation du DG" : "le rejet du DG");
+    if (refusMotif) return ERREUR(`${refusMotif} Précisez un motif pour chaque élément ou un motif commun.`);
+    motifs.set(e.id, m);
   }
   return prisma.$transaction(async (tx) => {
     const decides: Extract<ResultatDecisionLot, { ok: true }>["decides"] = [];
@@ -684,10 +701,11 @@ export async function deciderParametragesBudget(
         ignores.push({ id: e.id, message: `${nom} : vous ne pouvez pas décider un paramétrage que vous avez vous-même soumis.` });
         continue;
       }
-      const motif = valider ? null : (motifs.get(e.id) as string);
+      const motif = motifs.get(e.id) as string;
       const maj = await tx.budgetParametrage.updateMany({
         where: { id: e.id, statut: "EN_ATTENTE" },
-        data: { statut: valider ? "VALIDE" : "REFUSE", decideParId: userId, decideAt: maintenant, motifRefus: motif },
+        // `REFUSE` reste la valeur interne du statut « Rejeté » ; `motifRefus` garde le motif du rejet, `motifDecision` celui de toute réponse.
+        data: { statut: valider ? "VALIDE" : "REFUSE", decideParId: userId, decideAt: maintenant, motifRefus: valider ? null : motif, motifDecision: motif },
       });
       if (maj.count !== 1) {
         ignores.push({ id: e.id, message: `${nom} : déjà décidé.` });
@@ -703,8 +721,8 @@ export async function deciderParametragesBudget(
           entityId: e.id,
           action: valider ? ACTION_BUDGET.VALIDE : ACTION_BUDGET.REFUSE,
           detail: valider
-            ? `Validé par le DG : ${detail} — effectif à partir du ${fr(p.dateDebut.toISOString().slice(0, 10))}`
-            : `Refusé par le DG : ${detail} — motif : ${motif}`,
+            ? `Validé par le DG : ${detail} — effectif à partir du ${fr(p.dateDebut.toISOString().slice(0, 10))} — motif du DG : ${motif}`
+            : `Rejeté par le DG : ${detail} — motif du DG : ${motif}`,
           userId,
         },
       });

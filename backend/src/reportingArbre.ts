@@ -14,6 +14,7 @@
 // `getEcartLigne` et `depensesDeclareesLigne` (les fonctions des écrans). Aucun double comptage : seules les lignes DEMANDE
 // portent « Compte dans les totaux = Oui » ; les lignes ARTICLE détaillent la demande, les événements détaillent l'article.
 
+import { motifOuNonRenseigne } from "./motifEchange";
 import { libelleMotifReglement } from "./motifReglement";
 import { LIBELLE_ANTERIEUR_SIGNATURE, LIBELLE_NON_RATTACHEE_SIGNATURE, libelleSignature } from "./signatureConstantes";
 import { articleTermine, agregerRegularisation, categorieDepense, depensesDeclareesLigne, etatRegularisationArticle, getEcartLigne, AGREGATS_VIDES, type AgregatsRegularisation } from "./regularisationArticle";
@@ -204,6 +205,9 @@ export interface ArticleArbreSource {
   decisionDGPar: string | null;
   decisionDGLe: Date | null;
   motifRefusDG: string | null;
+  /** Lot M : motif de la Finance à l'envoi au DG et motif du DG à sa décision (`null` : échange antérieur, « Non renseigné »). */
+  motifSoumissionDG?: string | null;
+  motifDecisionDG?: string | null;
   dateLivraison: Date | null;
 }
 
@@ -483,7 +487,7 @@ function libelleCategorieDepense(d: DepenseArbreSource): { statut: string; detai
 function statutArticle(a: ArticleArbreSource, etat: ReturnType<typeof etatRegularisationArticle>): string {
   if (a.statut === "REJETEE") return "Rejeté";
   if (a.statut === "EN_ATTENTE") {
-    if (a.decisionDG === "REFUSEE") return "Refusé par le DG, à trancher par la Finance";
+    if (a.decisionDG === "REFUSEE") return "Rejeté par le DG, à trancher par la Finance";
     if (a.decisionDG === "VALIDEE") return "Validé par le DG, à confirmer par la Finance";
     if (a.soumiseAuDG) return "Chez le DG";
     return "À décider (Finance)";
@@ -509,10 +513,12 @@ function decisionFinanceArticle(a: ArticleArbreSource): string {
 }
 
 function decisionDGArticle(a: ArticleArbreSource): string {
-  if (a.decisionDG === "VALIDEE") return `Validé ${par(a.decisionDGPar, a.decisionDGLe)}`.trim();
-  if (a.decisionDG === "REFUSEE") return `Refusé ${par(a.decisionDGPar, a.decisionDGLe)}${a.motifRefusDG ? ` — motif : ${a.motifRefusDG}` : ""}`.trim();
-  if (a.soumiseAuDG) return "Soumis au DG, en attente de décision";
-  return "";
+  if (!a.soumiseAuDG && a.decisionDG == null) return "";
+  // Lot M : l'échange Finance ↔ DG porte ses deux motifs, dans la colonne « Décision DG » (pas de nouvelle colonne).
+  const motifFinance = ` — motif de la Finance : ${motifOuNonRenseigne(a.motifSoumissionDG)}`;
+  if (a.decisionDG === "VALIDEE") return `Validé ${par(a.decisionDGPar, a.decisionDGLe)}${motifFinance} — motif du DG : ${motifOuNonRenseigne(a.motifDecisionDG)}`.trim();
+  if (a.decisionDG === "REFUSEE") return `Rejeté ${par(a.decisionDGPar, a.decisionDGLe)}${motifFinance} — motif du DG : ${motifOuNonRenseigne(a.motifDecisionDG ?? a.motifRefusDG)}`.trim();
+  return `Soumis au DG, en attente de décision${motifFinance}`;
 }
 
 // --- Construction --------------------------------------------------------------------------------------------------

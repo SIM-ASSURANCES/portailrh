@@ -52,7 +52,7 @@ export default async function JustifierPointagePage({ params }: { params: Promis
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title={estArrivee ? "Justifier mon retard" : "Justifier mon départ anticipé"}
-        description="Expliquez la raison de ce pointage. Votre justification sera examinée puis acceptée ou refusée."
+        description="Expliquez la raison de ce pointage. Votre justification sera examinée puis acceptée ou rejetée."
       />
 
       <Card className="space-y-4 p-5 sm:p-6">
@@ -92,8 +92,8 @@ export default async function JustifierPointagePage({ params }: { params: Promis
             ) : null}
             {j.statut === "REFUSEE" ? (
               <p className="rounded-lg border border-danger-border bg-danger-bg p-3 text-sm text-danger">
-                Refusée{j.decideur ? ` par ${j.decideur.fullName}` : ""}
-                {j.decisionAt ? ` le ${dateCourte(j.decisionAt)}` : ""}. Motif du refus : {j.motifRefus}
+                Rejetée{j.decideur ? ` par ${j.decideur.fullName}` : ""}
+                {j.decisionAt ? ` le ${dateCourte(j.decisionAt)}` : ""}. Motif du rejet : {j.motifRefus}
               </p>
             ) : null}
             {j.statut === "ACCEPTEE" ? (

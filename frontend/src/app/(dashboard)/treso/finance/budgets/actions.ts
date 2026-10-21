@@ -15,6 +15,7 @@ import {
   confirmerDepassementBudget,
   demanderConfirmationDepassement,
   deciderParametragesBudget,
+  lireMontant,
   prisma,
   soumettreParametragesBudget,
   type AjoutBudget,
@@ -56,21 +57,51 @@ type PorteeBudget = "GLOBAL" | "CATEGORIE";
  * imposée par l'action appelée (section « Budget de caisse » ou « Budgets par catégorie »), qui ne peut donc pas être détournée pour
  * écrire dans l'autre.
  */
-function saisieRecue(s: unknown, portee: PorteeBudget): SaisieParametrage | null {
+function saisieRecue(s: unknown, portee: PorteeBudget): { saisie: SaisieParametrage; erreurs: Record<string, string> } | null {
   if (!s || typeof s !== "object") return null;
   const o = s as Record<string, unknown>;
   const seuil = o.seuil && typeof o.seuil === "object" ? (o.seuil as Record<string, unknown>) : null;
-  return {
-    portee,
-    // Le budget de caisse n'a ni catégorie ni montant (c'est le solde de caisse réel) : jamais transmis au serveur de calcul.
-    categorieId: portee === "GLOBAL" ? null : typeof o.categorieId === "string" && o.categorieId ? o.categorieId : null,
-    montant: portee === "GLOBAL" ? null : Number(o.montant),
-    dateDebut: String(o.dateDebut ?? ""),
-    dateFin: typeof o.dateFin === "string" && o.dateFin ? o.dateFin : null,
-    seuil: seuil
-      ? { mode: seuil.mode === "MONTANT" ? "MONTANT" : seuil.mode === "POURCENTAGE" ? "POURCENTAGE" : ("" as never), orange: Number(seuil.orange), rouge: Number(seuil.rouge) }
-      : null,
+  const erreurs: Record<string, string> = {};
+  // Lot M : montants et seuils en FCFA sont réanalysés ici (texte « 1 500 000 » ou nombre) — le serveur ne se fie jamais au formatage du client.
+  let montant: number | null = null;
+  if (portee === "CATEGORIE") {
+    const lu = lireMontant(o.montant);
+    if (lu.ok) montant = lu.valeur;
+    else {
+      montant = Number.NaN;
+      erreurs.montant = lu.message;
+    }
+  }
+  const mode = seuil?.mode === "MONTANT" ? "MONTANT" : seuil?.mode === "POURCENTAGE" ? "POURCENTAGE" : ("" as never);
+  const lireSeuil = (valeur: unknown, cle: "seuilOrange" | "seuilRouge"): number => {
+    if (mode !== "MONTANT") return Number(valeur);
+    const lu = lireMontant(valeur);
+    if (lu.ok) return lu.valeur;
+    erreurs[cle] = lu.message;
+    return Number.NaN;
   };
+  return {
+    saisie: {
+      portee,
+      // Le budget de caisse n'a ni catégorie ni montant (c'est le solde de caisse réel) : jamais transmis au serveur de calcul.
+      categorieId: portee === "GLOBAL" ? null : typeof o.categorieId === "string" && o.categorieId ? o.categorieId : null,
+      montant,
+      dateDebut: String(o.dateDebut ?? ""),
+      dateFin: typeof o.dateFin === "string" && o.dateFin ? o.dateFin : null,
+      seuil: seuil ? { mode, orange: lireSeuil(seuil.orange, "seuilOrange"), rouge: lireSeuil(seuil.rouge, "seuilRouge") } : null,
+    },
+    erreurs,
+  };
+}
+
+/** Saisie telle que l'écran l'envoie : montants et seuils en FCFA en TEXTE (« 1 500 000 ») ou nombre, réanalysés par le serveur. */
+export interface SaisieParametrageClient {
+  portee: "GLOBAL" | "CATEGORIE";
+  categorieId: string | null;
+  montant: number | string | null;
+  dateDebut: string;
+  dateFin: string | null;
+  seuil: { mode: "POURCENTAGE" | "MONTANT"; orange: number | string; rouge: number | string } | null;
 }
 
 export interface ResultatSoumissionBudgetAction extends ResultatBudgetAction {
@@ -82,19 +113,25 @@ export interface ResultatSoumissionBudgetAction extends ResultatBudgetAction {
  * Soumission d'une section (lot J quater : une action PAR section). La Finance soumet au DG un ou plusieurs paramétrages de LA section ;
  * tout ou rien ; sans effet tant que le DG n'a pas validé ; UNE seule notification pour tout le lot, propre à la section.
  */
-async function soumettreSection(saisies: unknown, portee: PorteeBudget): Promise<ResultatSoumissionBudgetAction> {
+async function soumettreSection(saisies: unknown, portee: PorteeBudget, motif: string): Promise<ResultatSoumissionBudgetAction> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.modifier_budget_categorie")) return NON_AUTORISE;
   if (!Array.isArray(saisies) || saisies.length === 0 || saisies.length > 200) return { status: "error", message: portee === "GLOBAL" ? "Renseignez les seuils à soumettre." : "Cochez au moins un budget à soumettre." };
-  const recues = saisies.map((s) => saisieRecue(s, portee));
-  if (recues.some((x) => x === null)) return { status: "error", message: "Saisie invalide." };
+  const lues = saisies.map((s) => saisieRecue(s, portee));
+  if (lues.some((x) => x === null)) return { status: "error", message: "Saisie invalide." };
+  const recues = lues.map((x) => x!.saisie);
+  const erreursTexte: Record<number, Record<string, string>> = {};
+  lues.forEach((x, i) => {
+    if (Object.keys(x!.erreurs).length > 0) erreursTexte[i] = x!.erreurs;
+  });
+  if (Object.keys(erreursTexte).length > 0) return { status: "error", message: "Corrigez les montants signalés.", erreursParIndex: erreursTexte };
   if (portee === "GLOBAL" && recues.length !== 1) return { status: "error", message: "Les seuils du budget de caisse se soumettent en un seul paramétrage." };
   if (portee === "CATEGORIE" && recues.some((x) => !x?.categorieId)) return { status: "error", message: "Choisissez une catégorie pour chaque budget." };
 
-  const r = await soumettreParametragesBudget(recues as SaisieParametrage[], session.user.id);
+  const r = await soumettreParametragesBudget(recues as SaisieParametrage[], session.user.id, String(motif ?? ""));
   if (!r.ok) return { status: "error", message: r.message, erreursParIndex: r.erreursParIndex };
 
-  await notifierParametragesSoumis(session.user.id, r.ids.length, r.resume, portee);
+  await notifierParametragesSoumis(session.user.id, r.ids.length, r.resume, portee, String(motif).trim());
   rafraichir();
   return {
     status: "success",
@@ -108,21 +145,21 @@ async function soumettreSection(saisies: unknown, portee: PorteeBudget): Promise
 }
 
 /** Section « Budget de caisse » : la Finance soumet au DG les SEUILS du solde de caisse (en FCFA, avec date d'effet). Jamais de montant. */
-export async function soumettreSeuilsCaisseAction(saisie: SaisieParametrage): Promise<ResultatSoumissionBudgetAction> {
-  return avecSignature({ action: "budget_soumission_caisse", permission: "treso.modifier_budget_categorie", entite: "BudgetParametrage" }, () => soumettreSeuilsCaisseInterne(saisie));
+export async function soumettreSeuilsCaisseAction(saisie: SaisieParametrageClient, motif: string): Promise<ResultatSoumissionBudgetAction> {
+  return avecSignature({ action: "budget_soumission_caisse", permission: "treso.modifier_budget_categorie", entite: "BudgetParametrage" }, () => soumettreSeuilsCaisseInterne(saisie, motif));
 }
 
-async function soumettreSeuilsCaisseInterne(saisie: SaisieParametrage): Promise<ResultatSoumissionBudgetAction> {
-  return soumettreSection([saisie], "GLOBAL");
+async function soumettreSeuilsCaisseInterne(saisie: SaisieParametrageClient, motif: string): Promise<ResultatSoumissionBudgetAction> {
+  return soumettreSection([saisie], "GLOBAL", motif);
 }
 
 /** Section « Budgets par catégorie » : la Finance soumet au DG un ou plusieurs budgets de catégorie (montant, seuils, date d'effet). Tout ou rien. */
-export async function soumettreBudgetsCategoriesAction(saisies: SaisieParametrage[]): Promise<ResultatSoumissionBudgetAction> {
-  return avecSignature({ action: "budget_soumission_categories", permission: "treso.modifier_budget_categorie", entite: "BudgetParametrage" }, () => soumettreBudgetsCategoriesInterne(saisies));
+export async function soumettreBudgetsCategoriesAction(saisies: SaisieParametrageClient[], motif: string): Promise<ResultatSoumissionBudgetAction> {
+  return avecSignature({ action: "budget_soumission_categories", permission: "treso.modifier_budget_categorie", entite: "BudgetParametrage" }, () => soumettreBudgetsCategoriesInterne(saisies, motif));
 }
 
-async function soumettreBudgetsCategoriesInterne(saisies: SaisieParametrage[]): Promise<ResultatSoumissionBudgetAction> {
-  return soumettreSection(saisies, "CATEGORIE");
+async function soumettreBudgetsCategoriesInterne(saisies: SaisieParametrageClient[], motif: string): Promise<ResultatSoumissionBudgetAction> {
+  return soumettreSection(saisies, "CATEGORIE", motif);
 }
 
 /**
@@ -162,10 +199,10 @@ async function deciderSection(
     portee === "GLOBAL"
       ? valider === true
         ? "Seuils de caisse validés : ils s'appliquent à leur date d'effet."
-        : "Seuils de caisse refusés : la Finance en est informée."
+        : "Seuils de caisse rejetés : la Finance en est informée."
       : valider === true
         ? n === 1 ? "Budget de catégorie validé : il s'applique à sa date d'effet." : `${n} budgets de catégorie validés : ils s'appliquent à leur date d'effet.`
-        : n === 1 ? "Budget de catégorie refusé : la Finance en est informée." : `${n} budgets de catégorie refusés : la Finance en est informée.`;
+        : n === 1 ? "Budget de catégorie rejeté : la Finance en est informée." : `${n} budgets de catégorie rejetés : la Finance en est informée.`;
   return { status: "success", message: ignores.length > 0 ? `${base} Non décidés : ${ignores.join(" ")}` : base, ignores };
 }
 
@@ -194,7 +231,9 @@ async function deciderBudgetsCategoriesInterne(elements: { id: string; motif?: s
 export async function demanderConfirmationDepassementAction(
   demandeId: string,
   ligneIds: string[],
-  montantDepenseDirecte?: number
+  montantDepenseDirecte: number | undefined,
+  /** Lot M : motif de la demande faite au DG (10 à 300 caractères), obligatoire. */
+  motif: string
 ): Promise<ResultatBudgetAction> {
   const session = await getSession();
   if (!session || !(hasPermission(session, "treso.decider_finance") || hasPermission(session, "treso.valider_demande"))) return NON_AUTORISE;
@@ -213,9 +252,9 @@ export async function demanderConfirmationDepassementAction(
     if (ajouts.length === 0) return { status: "error", message: "Aucun article à valider dans cette sélection." };
   }
 
-  const r = await demanderConfirmationDepassement(demande.id, ajouts, session.user.id);
+  const r = await demanderConfirmationDepassement(demande.id, ajouts, session.user.id, String(motif ?? ""));
   if (!r.ok) return { status: "error", message: r.message };
-  await notifierDemandeConfirmationDepassement(demande.id, r.reference, r.resume, session.user.id);
+  await notifierDemandeConfirmationDepassement(demande.id, r.reference, r.resume, session.user.id, String(motif).trim());
   rafraichir(demande.id);
   return { status: "success", message: "Confirmation demandée au DG : vous pourrez valider dès qu'il aura confirmé le dépassement." };
 }

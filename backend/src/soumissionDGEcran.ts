@@ -2,6 +2,7 @@
 // AUCUNE règle métier ici : chaque phrase vient du moteur (`transition`, `raisonLigneNonSoumettable`) ou en est une
 // reformulation lisible. Le contrôle serveur (`soumettreLignesAuDG`) reste la seule autorité.
 
+import { MOTIF_ECHANGE_MIN } from "./motifEchange";
 import {
   attendValidationPourExecution,
   estExecutantFinance,
@@ -34,7 +35,7 @@ export const MESSAGE_BANDEAU_ETAPE_DG =
   "vous pouvez les décider, ou en soumettre d'autres au DG.";
 
 export const MESSAGE_INTRO_ARTICLES =
-  "Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG. Un article refusé par le DG peut lui être resoumis. Seul un article catégorisé peut être soumis.";
+  "Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG. Un article rejeté par le DG peut lui être resoumis. Seul un article catégorisé peut être soumis.";
 
 /** Portée de la raison : un article d'une demande à lignes, ou la demande entière (dépense directe, demande décidée d'office). */
 export type PorteeSoumissionDG = "LIGNES" | "DEMANDE";
@@ -58,12 +59,12 @@ export function raisonSoumissionDemande(
 
   const r =
     portee === "DEMANDE"
-      ? transition(demande, acteur, { type: "SOUMETTRE_DG" })
+      ? transition(demande, acteur, { type: "SOUMETTRE_DG", motif: "x".repeat(MOTIF_ECHANGE_MIN) })
       : // Un article fictif soumettable : seules les raisons propres à la demande (étape, auteur…) subsistent.
         transition(
           { ...demande, lignes: [...(demande.lignes ?? []), ARTICLE_SONDE] },
           acteur,
-          { type: "SOUMETTRE_LIGNES_DG", ligneIds: [ARTICLE_SONDE.id] }
+          { type: "SOUMETTRE_LIGNES_DG", ligneIds: [ARTICLE_SONDE.id], motif: "x".repeat(MOTIF_ECHANGE_MIN) }
         );
   return r.ok ? null : r.message;
 }

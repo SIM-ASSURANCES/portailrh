@@ -13,6 +13,9 @@ import {
   raisonSoumissionDemande,
 } from "./soumissionDGEcran";
 
+/** Lot M : tout envoi de la Finance au DG et toute réponse du DG portent un motif (10 à 300 caractères). */
+const MOTIF_TEST = "Motif de test suffisant";
+
 // Lot 2 : phrases affichées sous les boutons « Soumettre au DG » grisés. Aucune règle métier nouvelle : on vérifie
 // surtout que l'écran ne contredit jamais le moteur (`transition`).
 
@@ -78,7 +81,7 @@ describe("raisonSoumissionDemande", () => {
         for (const a of [FINANCE, SANS_DG, ASSISTANT, acteur(["treso.soumettre_dg"], "u-collab")]) {
           const d = demande({ etape, modeEtapeDG: mode });
           const raison = raisonSoumissionDemande(d, a, "LIGNES");
-          const ok = transition(d, a, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["A"] }).ok;
+          const ok = transition(d, a, { type: "SOUMETTRE_LIGNES_DG", ligneIds: ["A"], motif: MOTIF_TEST }).ok;
           expect(raison === null, `${etape}/${mode}/${a.userId}: ${raison}`).toBe(ok);
         }
       }
@@ -110,7 +113,7 @@ describe("raisonSoumissionArticle", () => {
 describe("texte d'introduction du bloc des articles", () => {
   it("une phrase simple, sans mention de cases à cocher", () => {
     expect(MESSAGE_INTRO_ARTICLES).toBe(
-      "Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG. Un article refusé par le DG peut lui être resoumis. Seul un article catégorisé peut être soumis."
+      "Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG. Un article rejeté par le DG peut lui être resoumis. Seul un article catégorisé peut être soumis."
     );
     expect(MESSAGE_INTRO_ARTICLES.toLowerCase()).not.toContain("coch");
   });

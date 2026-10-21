@@ -63,7 +63,7 @@ export default async function FinanceDemandesPage() {
     {
       id: "file-rejet-dg",
       titre: "Rejetées par le DG",
-      description: "Articles refusés par le DG : à resoumettre au DG ou à rejeter définitivement.",
+      description: "Articles rejetés par le DG : à resoumettre au DG ou à rejeter définitivement.",
       vide: "Aucune demande rejetée par le DG.",
       demandes: sansDoublon(lignes(rejetDG)),
     },

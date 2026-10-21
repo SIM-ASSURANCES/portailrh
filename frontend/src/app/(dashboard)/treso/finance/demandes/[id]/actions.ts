@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { schemaMontant } from "@/lib/schemaMontant";
+
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { notify, notifyByPermission } from "@/lib/notifications";
@@ -33,7 +35,7 @@ import {
 
 /** Refus du moteur du circuit levé DANS une transaction pour l'annuler entièrement (jamais exporté). */
 class RefusCircuit extends Error {}
-import { fieldErrorsFromZod, MOTIF_LIGNE_MIN, type ActionState } from "backend";
+import { fieldErrorsFromZod, MOTIF_LIGNE_MIN, nettoyerMotifEchange, refusMotifEchange, type ActionState } from "backend";
 import { categorisationEstObligatoire, refusDemandeSansCategorie, refusLignesValideesSansCategorie } from "backend";
 import { avecSignature } from "@/lib/signature";
 
@@ -211,7 +213,7 @@ export async function categoriserLigneAction(
   if (ligne.soumiseAuDG && ligne.decisionDG !== "REFUSEE") {
     return {
       status: "error",
-      message: "Cette ligne est soumise au DG : sa catégorisation ne peut plus être modifiée (sauf si le DG la refuse).",
+      message: "Cette ligne est soumise au DG : sa catégorisation ne peut plus être modifiée (sauf si le DG la rejette).",
     };
   }
 
@@ -651,7 +653,7 @@ function revalidateDemandePaths(demandeId: string) {
   publishDataChanged();
 }
 
-const montantValidationSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
+const montantValidationSchema = schemaMontant({ messagePositif: "Le montant doit être supérieur à 0" });
 
 /**
  * Enregistre une étape de validation (initiale totale/partielle, ou
@@ -672,7 +674,7 @@ async function enregistrerValidation(
   acteurCircuit?: ActeurCircuit,
   // Lot J : contrôle budgétaire de la somme validée à cette étape (catégorie de la dépense directe + budget global).
   // Seuil rouge : le DG confirme lui-même (motif), la Finance a besoin d'une confirmation déjà donnée.
-  budget?: { categorieId: string | null; acteurEstDG: boolean; motifDepassement?: string | null }
+  budget?: { categorieId: string | null; acteurEstDG: boolean; motifDepassement?: string | null; motifDG?: string | null }
 ): Promise<{ refus: string | null; budget?: PrevisionBudget }> {
   let prevision: PrevisionBudget | undefined;
   try {
@@ -692,6 +694,8 @@ async function enregistrerValidation(
         const r = await appliquerTransitionCircuit(tx, demandeId, acteurCircuit, {
           type: "DECIDER_LIGNES",
           auMoinsUneValidee: true,
+          // Lot M : motif de la décision du DG (dépense directe à l'étape DG), ignoré quand c'est la Finance qui décide.
+          motifDG: budget?.motifDG ?? undefined,
         });
         if (!r.ok) throw new RefusCircuit(r.message);
       }
@@ -756,16 +760,19 @@ export async function validerLignesAction(
   demandeId: string,
   decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE"; motif?: string }[],
   // Lot J : motif du DG qui confirme, dans ce geste, le dépassement du seuil rouge d'un budget (ignoré de tout autre compte).
-  motifDepassement?: string
+  motifDepassement?: string,
+  // Lot M : motif de la décision du DG (demande de la Finance, cas b) — obligatoire quand c'est le DG qui décide, ignoré de la Finance.
+  motifDG?: string
 ): Promise<SimpleActionResult> {
-  return avecSignature({ action: "decision_lignes", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerLignesInterne(demandeId, decisions, motifDepassement));
+  return avecSignature({ action: "decision_lignes", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerLignesInterne(demandeId, decisions, motifDepassement, motifDG));
 }
 
 async function validerLignesInterne(
   demandeId: string,
   decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE"; motif?: string }[],
   // Lot J : motif du DG qui confirme, dans ce geste, le dépassement du seuil rouge d'un budget (ignoré de tout autre compte).
-  motifDepassement?: string
+  motifDepassement?: string,
+  motifDG?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   const peutValider =
@@ -819,6 +826,7 @@ async function validerLignesInterne(
     resultat = await prisma.$transaction(async (tx) => {
       const r = await deciderArticles(tx, demandeId, acteurCircuit, parsedDecisions.data, {
         motifDepassement: typeof motifDepassement === "string" ? motifDepassement : null,
+        motifDG: typeof motifDG === "string" ? motifDG : null,
       });
       if (!r.ok) throw new RefusCircuit(r.message);
       return r;
@@ -854,11 +862,11 @@ async function validerLignesInterne(
  * avant toute validation — et la clôture d'une phase ultérieure ferment le
  * dossier).
  */
-export async function validerTotalementAction(demandeId: string, motifDepassement?: string): Promise<SimpleActionResult> {
-  return avecSignature({ action: "validation_depense_directe", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerTotalementInterne(demandeId, motifDepassement));
+export async function validerTotalementAction(demandeId: string, motifDepassement?: string, motifDG?: string): Promise<SimpleActionResult> {
+  return avecSignature({ action: "validation_depense_directe", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerTotalementInterne(demandeId, motifDepassement, motifDG));
 }
 
-async function validerTotalementInterne(demandeId: string, motifDepassement?: string): Promise<SimpleActionResult> {
+async function validerTotalementInterne(demandeId: string, motifDepassement?: string, motifDG?: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !(hasPermission(session, "treso.valider_demande") || hasPermission(session, "treso.decider_dg"))) {
     return { status: "error", message: "Action non autorisée." };
@@ -892,7 +900,7 @@ async function validerTotalementInterne(demandeId: string, motifDepassement?: st
     montantDemande,
     "validation",
     await chargerActeur(prisma, session, demande.createurId),
-    { categorieId: demande.categorieId, acteurEstDG: hasPermission(session, "treso.decider_dg"), motifDepassement }
+    { categorieId: demande.categorieId, acteurEstDG: hasPermission(session, "treso.decider_dg"), motifDepassement, motifDG }
   );
   if (refus.refus) return { status: "error", message: refus.refus };
   revalidateDemandePaths(demandeId);
@@ -917,16 +925,19 @@ async function validerTotalementInterne(demandeId: string, motifDepassement?: st
  */
 export async function validerPartiellementAction(
   demandeId: string,
-  montant: number,
-  motifDepassement?: string
+  montant: number | string,
+  motifDepassement?: string,
+  // Lot M : motif de la décision du DG (dépense directe de la Finance pour elle-même) — obligatoire pour le DG, ignoré de la Finance.
+  motifDG?: string
 ): Promise<SimpleActionResult> {
-  return avecSignature({ action: "validation_depense_directe", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerPartiellementInterne(demandeId, montant, motifDepassement));
+  return avecSignature({ action: "validation_depense_directe", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerPartiellementInterne(demandeId, montant, motifDepassement, motifDG));
 }
 
 async function validerPartiellementInterne(
   demandeId: string,
-  montant: number,
-  motifDepassement?: string
+  montant: number | string,
+  motifDepassement?: string,
+  motifDG?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !(hasPermission(session, "treso.valider_demande") || hasPermission(session, "treso.decider_dg"))) {
@@ -979,7 +990,7 @@ async function validerPartiellementInterne(
     parsedMontant.data,
     "validation",
     await chargerActeur(prisma, session, demande.createurId),
-    { categorieId: demande.categorieId, acteurEstDG: hasPermission(session, "treso.decider_dg"), motifDepassement }
+    { categorieId: demande.categorieId, acteurEstDG: hasPermission(session, "treso.decider_dg"), motifDepassement, motifDG }
   );
   if (refus.refus) return { status: "error", message: refus.refus };
   revalidateDemandePaths(demandeId);
@@ -1003,7 +1014,7 @@ async function validerPartiellementInterne(
  */
 export async function validerComplementaireAction(
   demandeId: string,
-  montant: number,
+  montant: number | string,
   motifDepassement?: string
 ): Promise<SimpleActionResult> {
   return avecSignature({ action: "validation_depense_directe", permission: "treso.decider_finance", cible: { type: "demande", id: demandeId } }, () => validerComplementaireInterne(demandeId, montant, motifDepassement));
@@ -1011,7 +1022,7 @@ export async function validerComplementaireAction(
 
 async function validerComplementaireInterne(
   demandeId: string,
-  montant: number,
+  montant: number | string,
   motifDepassement?: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -1195,7 +1206,8 @@ async function rejeterReliquatInterne(
 const motifRejetSchema = z
   .string()
   .trim()
-  .min(3, "Le motif du rejet est obligatoire (3 caractères minimum)");
+  .min(3, "Le motif du rejet est obligatoire (3 caractères minimum)")
+  .max(300, "Le motif ne doit pas dépasser 300 caractères");
 
 /**
  * Rejette une demande. Réservée à `treso.valider_demande` (même permission
@@ -1463,15 +1475,19 @@ async function cloturerDemandeInterne(
  *   fixé qu'une seule fois (aucune action de "retrait" n'existe non plus,
  *   même principe que l'absence de "dévalidation").
  */
-export async function approuverValidationCompleteAction(demandeId: string): Promise<SimpleActionResult> {
-  return avecSignature({ action: "approbation_cloture", permission: "treso.approuver_validation_complete", cible: { type: "demande", id: demandeId } }, () => approuverValidationCompleteInterne(demandeId));
+export async function approuverValidationCompleteAction(demandeId: string, motif: string): Promise<SimpleActionResult> {
+  return avecSignature({ action: "approbation_cloture", permission: "treso.approuver_validation_complete", cible: { type: "demande", id: demandeId } }, () => approuverValidationCompleteInterne(demandeId, motif));
 }
 
-async function approuverValidationCompleteInterne(demandeId: string): Promise<SimpleActionResult> {
+async function approuverValidationCompleteInterne(demandeId: string, motif: string): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.approuver_validation_complete")) {
     return { status: "error", message: "Action non autorisée." };
   }
+  // Lot M : l'approbation de clôture du DG porte un motif de 10 à 300 caractères (réponse du DG à la Finance).
+  const refusMotifApprobation = refusMotifEchange(motif, "l'approbation de clôture du DG");
+  if (refusMotifApprobation) return { status: "error", message: refusMotifApprobation };
+  const motifApprobation = nettoyerMotifEchange(motif);
 
   const demande = await prisma.demande.findUnique({
     where: { id: demandeId },
@@ -1535,6 +1551,7 @@ async function approuverValidationCompleteInterne(demandeId: string): Promise<Si
         validationCompleteRejeteeParDG: false,
         dgApprobateurId: session.user.id,
         dgApprouveAt: new Date(),
+        motifDecisionDG: motifApprobation,
       },
     }),
     prisma.historiqueEntry.create({
@@ -1542,7 +1559,7 @@ async function approuverValidationCompleteInterne(demandeId: string): Promise<Si
         entity: "Demande",
         entityId: demandeId,
         action: "validation_complete_dg",
-        detail: `Validation complète approuvée par ${session.user.fullName}`,
+        detail: `Validation complète approuvée par ${session.user.fullName} — motif : ${motifApprobation}`,
         userId: session.user.id,
       },
     }),
@@ -1553,10 +1570,14 @@ async function approuverValidationCompleteInterne(demandeId: string): Promise<Si
   return { status: "success", message: `Validation complète approuvée pour la demande ${demande.reference}.` };
 }
 
+// Lot M : le rejet et l'annulation de la validation complète par le DG portent un motif de 10 à 300 caractères.
 const motifValidationCompleteSchema = z
   .string()
   .trim()
-  .min(3, "Le motif est obligatoire (3 caractères minimum)");
+  .superRefine((v, ctx) => {
+    const refus = refusMotifEchange(v, "cette décision du DG");
+    if (refus) ctx.addIssue({ code: "custom", message: refus });
+  });
 
 /**
  * Rejette une demande lors de l'EXAMEN du verrou de clôture (le DG regarde
@@ -1614,7 +1635,7 @@ async function rejeterValidationCompleteInterne(
   // le règlement") : seul champ de la Demande touché, jusqu'à la prochaine
   // approbation DG.
   await prisma.$transaction([
-    prisma.demande.update({ where: { id: demandeId }, data: { validationCompleteRejeteeParDG: true } }),
+    prisma.demande.update({ where: { id: demandeId }, data: { validationCompleteRejeteeParDG: true, motifDecisionDG: parsedMotif.data } }),
     prisma.historiqueEntry.create({
       data: {
         entity: "Demande",
@@ -1712,7 +1733,7 @@ async function annulerValidationCompleteInterne(
   await prisma.$transaction([
     prisma.demande.update({
       where: { id: demandeId },
-      data: { validationCompleteParDG: false, dgApprobateurId: null, dgApprouveAt: null },
+      data: { validationCompleteParDG: false, dgApprobateurId: null, dgApprouveAt: null, motifDecisionDG: parsedMotif.data },
     }),
     prisma.historiqueEntry.create({
       data: {
@@ -1743,10 +1764,14 @@ async function annulerValidationCompleteInterne(
   };
 }
 
+// Lot M : la resoumission au DG porte un motif de 10 à 300 caractères.
 const motifResoumissionSchema = z
   .string()
   .trim()
-  .min(10, "Le motif de resoumission est obligatoire (10 caractères minimum)");
+  .superRefine((v, ctx) => {
+    const refus = refusMotifEchange(v, "la resoumission au DG");
+    if (refus) ctx.addIssue({ code: "custom", message: refus });
+  });
 
 /**
  * Resoumet au DG une demande dont la validation complète a été REJETÉE lors
@@ -1833,15 +1858,18 @@ async function resoumettreValidationCompleteDGInterne(
     };
   }
 
-  await prisma.historiqueEntry.create({
-    data: {
-      entity: "Demande",
-      entityId: demandeId,
-      action: "resoumission_validation_complete",
-      detail: parsedMotif.data,
-      userId: session.user.id,
-    },
-  });
+  await prisma.$transaction([
+    prisma.demande.update({ where: { id: demandeId }, data: { motifSoumissionDG: parsedMotif.data } }),
+    prisma.historiqueEntry.create({
+      data: {
+        entity: "Demande",
+        entityId: demandeId,
+        action: "resoumission_validation_complete",
+        detail: parsedMotif.data,
+        userId: session.user.id,
+      },
+    }),
+  ]);
 
   revalidateDemandePaths(demandeId);
   revalidatePath("/treso/finance/validations-attente");

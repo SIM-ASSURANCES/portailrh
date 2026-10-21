@@ -1,6 +1,7 @@
 import { MentionSignature } from "@/components/signature/MentionSignature";
 import { parseCorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
 import {
+  detailHistoriqueEchange,
   ACTIONS_HISTORIQUE_SIGNEES,
   etatsSignatureHistorique,
   lignesRetireesParCorrection,
@@ -71,7 +72,7 @@ const ACTION_LABELS: Record<string, string> = {
   // Soumission au DG ligne par ligne (2026-10-10).
   soumission_lignes_dg: "Lignes soumises au DG",
   validation_ligne_dg: "Ligne validée par le DG",
-  refus_ligne_dg: "Ligne refusée par le DG",
+  refus_ligne_dg: "Ligne rejetée par le DG",
   decision_circuit: "Décision finale",
   correction_demande: "Version avant correction",
   resoumission_correction: "Corrigée et resoumise",
@@ -356,7 +357,10 @@ export async function DemandeHistorique({
                   );
                 }
                 const correction = parseCorrectionDetail(entry.detail);
-                if (!correction) return entry.detail ? <p className="mt-1 text-foreground">{entry.detail}</p> : null;
+                if (!correction) {
+                  const detail = detailHistoriqueEchange(entry.action, entry.detail);
+                  return detail ? <p className="mt-1 text-foreground">{detail}</p> : null;
+                }
                 return (
                   <div className="mt-1 space-y-2">
                     <p className="text-foreground">{correction.resume}</p>

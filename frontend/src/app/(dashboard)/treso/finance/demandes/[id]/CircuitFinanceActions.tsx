@@ -3,8 +3,10 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
+import { ChampMotifEchange } from "@/components/tresorerie/ChampMotifEchange";
 import { RaisonVisible } from "@/components/tresorerie/RaisonVisible";
 import { Button, Textarea } from "@/components/ui";
+import { motifEchangeValide } from "backend/client";
 
 import { resoumettreAuDGAction, soumettreAuDGAction } from "../../../circuit/actions";
 import { rejeterDemandeAction } from "./actions";
@@ -44,6 +46,9 @@ export function CircuitFinanceActions({
   const [isPending, startTransition] = useTransition();
   const [rejetOuvert, setRejetOuvert] = useState(false);
   const [motif, setMotif] = useState("");
+  // Lot M : motif de l'envoi (ou de la resoumission) au DG, 10 à 300 caractères.
+  const [motifDG, setMotifDG] = useState("");
+  const motifDGValide = motifEchangeValide(motifDG);
 
   function lancer(appel: () => Promise<{ status: string; message?: string }>) {
     startTransition(async () => {
@@ -52,8 +57,9 @@ export function CircuitFinanceActions({
         toast.success(r.message ?? "Enregistré.");
         setRejetOuvert(false);
         setMotif("");
+        setMotifDG("");
       } else {
-        toast.error(r.message ?? "Action refusée.");
+        toast.error(r.message ?? "Action impossible.");
       }
     });
   }
@@ -70,13 +76,22 @@ export function CircuitFinanceActions({
       <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {apresRejetDG ? "Après le rejet du DG" : "Circuit de validation"}
       </h2>
+      {apresRejetDG || !(soumissionParLignes || afficherRejet) ? (
+        <ChampMotifEchange
+          value={motifDG}
+          onChange={setMotifDG}
+          label={apresRejetDG ? "Motif de la resoumission au DG" : "Motif de la soumission au DG"}
+          hint="Transmis au DG avec la demande."
+          disabled={apresRejetDG ? !!raisonResoumettre : !!raisonSoumettre}
+        />
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {apresRejetDG ? (
           <Button signe
             type="button"
-            disabled={!!raisonResoumettre || isPending}
+            disabled={!!raisonResoumettre || isPending || !motifDGValide}
             loading={isPending && !rejetOuvert}
-            onClick={() => lancer(() => resoumettreAuDGAction(demandeId))}
+            onClick={() => lancer(() => resoumettreAuDGAction(demandeId, motifDG))}
           >
             Resoumettre au DG
           </Button>
@@ -84,9 +99,9 @@ export function CircuitFinanceActions({
           <Button signe
             type="button"
             variant="secondary"
-            disabled={!!raisonSoumettre || isPending}
+            disabled={!!raisonSoumettre || isPending || !motifDGValide}
             loading={isPending && !rejetOuvert}
-            onClick={() => lancer(() => soumettreAuDGAction(demandeId))}
+            onClick={() => lancer(() => soumettreAuDGAction(demandeId, motifDG))}
           >
             Soumettre au DG
           </Button>

@@ -4,7 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, Input, InputMontant, Textarea } from "@/components/ui";
+import { analyserMontant } from "backend/client";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import { alimenterCaisseAction, corrigerSoldeOuvertureAction } from "./actions";
@@ -76,10 +77,10 @@ export function SoldeOuvertureCorrection({
   }
 
   function handleAlimenter() {
-    const valeur = Number(montantAlimentation);
+    const analyse = analyserMontant(montantAlimentation);
     let bloque = false;
-    if (!valeur || valeur <= 0) {
-      setMontantAlimentationError("Le montant doit être supérieur à 0.");
+    if (!analyse.ok || analyse.centimes <= 0) {
+      setMontantAlimentationError(analyse.ok ? "Le montant doit être supérieur à 0." : analyse.message);
       bloque = true;
     }
     if (!pieceJointeAlimentation) {
@@ -91,7 +92,7 @@ export function SoldeOuvertureCorrection({
     setPieceJointeAlimentationError(undefined);
     startTransitionAlimentation(async () => {
       const result = await alimenterCaisseAction(
-        valeur,
+        montantAlimentation,
         dateAlimentation,
         pieceJointeAlimentation!,
         motifAlimentation.trim() || undefined
@@ -107,10 +108,10 @@ export function SoldeOuvertureCorrection({
   }
 
   function handleCorriger() {
-    const valeur = Number(nouveauMontant);
+    const analyse = analyserMontant(nouveauMontant);
     let bloque = false;
-    if (!valeur || valeur <= 0) {
-      setMontantError("Le montant doit être supérieur à 0.");
+    if (!analyse.ok || analyse.centimes <= 0) {
+      setMontantError(analyse.ok ? "Le montant doit être supérieur à 0." : analyse.message);
       bloque = true;
     }
     if (!pieceJointeUrl) {
@@ -126,7 +127,7 @@ export function SoldeOuvertureCorrection({
     setPieceJointeError(undefined);
     setMotifError(undefined);
     startTransition(async () => {
-      const result = await corrigerSoldeOuvertureAction(valeur, pieceJointeUrl!, motif.trim());
+      const result = await corrigerSoldeOuvertureAction(nouveauMontant, pieceJointeUrl!, motif.trim());
       if (result.status === "success") {
         toast.success(result.message);
         resetFormulaire();
@@ -184,16 +185,12 @@ export function SoldeOuvertureCorrection({
             Apport d&apos;argent physique en caisse en cours d&apos;exploitation — distinct du solde d&apos;ouverture,
             répétable autant de fois que nécessaire. Pièce jointe obligatoire.
           </p>
-          <Input
+          <InputMontant
             label="Montant (FCFA)"
-            type="number"
-            inputMode="decimal"
-            min="1"
-            step="1"
             required
             value={montantAlimentation}
-            onChange={(e) => {
-              setMontantAlimentation(e.target.value);
+            onValueChange={(texte) => {
+              setMontantAlimentation(texte);
               if (montantAlimentationError) setMontantAlimentationError(undefined);
             }}
             error={montantAlimentationError}
@@ -249,16 +246,12 @@ export function SoldeOuvertureCorrection({
             L&apos;écriture d&apos;origine n&apos;est jamais modifiée : cette correction crée une nouvelle écriture
             tracée (annulation du montant actuel + nouveau montant), pièce jointe et motif obligatoires.
           </p>
-          <Input
+          <InputMontant
             label="Nouveau montant (FCFA)"
-            type="number"
-            inputMode="decimal"
-            min="1"
-            step="1"
             required
             value={nouveauMontant}
-            onChange={(e) => {
-              setNouveauMontant(e.target.value);
+            onValueChange={(texte) => {
+              setNouveauMontant(texte);
               if (montantError) setMontantError(undefined);
             }}
             error={montantError}

@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { schemaMontant } from "@/lib/schemaMontant";
+
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
@@ -23,7 +25,7 @@ function revalidateSoldeOuverturePaths() {
   publishDataChanged();
 }
 
-const montantSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
+const montantSchema = schemaMontant({ messagePositif: "Le montant doit être supérieur à 0" });
 
 const pieceJointeUrlSchema = z
   .string()
@@ -62,7 +64,7 @@ const pieceJointeUrlSchema = z
  * jamais `demandeId` — aucune demande d'origine ici).
  */
 export async function definirSoldeOuvertureAction(
-  montant: number,
+  montant: number | string,
   pieceJointeUrl: string,
   motif?: string
 ): Promise<SimpleActionResult> {
@@ -70,7 +72,7 @@ export async function definirSoldeOuvertureAction(
 }
 
 async function definirSoldeOuvertureInterne(
-  montant: number,
+  montant: number | string,
   pieceJointeUrl: string,
   motif?: string
 ): Promise<SimpleActionResult> {
@@ -158,7 +160,7 @@ const motifCorrectionSchema = z
  * CLAUDE.md "Séparation Responsable Finance / Assistant Finance".
  */
 export async function corrigerSoldeOuvertureAction(
-  nouveauMontant: number,
+  nouveauMontant: number | string,
   pieceJointeUrl: string,
   motif: string
 ): Promise<SimpleActionResult> {
@@ -166,7 +168,7 @@ export async function corrigerSoldeOuvertureAction(
 }
 
 async function corrigerSoldeOuvertureInterne(
-  nouveauMontant: number,
+  nouveauMontant: number | string,
   pieceJointeUrl: string,
   motif: string
 ): Promise<SimpleActionResult> {
@@ -277,7 +279,7 @@ const pieceJointeUrlSchemaAlimentation = z
  * la ligne `PieceJointe` elle-même (`journalCaisseId`, jamais `demandeId`).
  */
 export async function alimenterCaisseAction(
-  montant: number,
+  montant: number | string,
   dateOperation: string,
   pieceJointeUrl: string,
   motif?: string
@@ -286,7 +288,7 @@ export async function alimenterCaisseAction(
 }
 
 async function alimenterCaisseInterne(
-  montant: number,
+  montant: number | string,
   dateOperation: string,
   pieceJointeUrl: string,
   motif?: string

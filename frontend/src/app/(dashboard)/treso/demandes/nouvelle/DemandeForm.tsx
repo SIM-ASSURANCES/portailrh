@@ -6,19 +6,23 @@ import { toast } from "sonner";
 
 import Link from "next/link";
 
-import { Button, Card, Input, Select } from "@/components/ui";
+import { Button, Card, Input, InputMontant, Select } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import {
+  analyserMontant,
   appliquerATous,
   erreurSaisieBeneficiaire,
   ilYADesPersonnalisations,
   refusDateLivraison,
+  refusMotifEchange,
   MOTIF_LIGNE_MIN,
   SAISIE_BENEFICIAIRE_MOI,
   saisieVersChoix,
+  valeurSaisieMontant,
   type SaisieBeneficiaire,
 } from "backend/client";
 import { BeneficiaireChamp } from "@/components/tresorerie/BeneficiaireChamp";
+import { ChampMotifEchange } from "@/components/tresorerie/ChampMotifEchange";
 import { DetailsArticleEditeur, type DetailsArticleSaisie } from "@/components/tresorerie/DetailsArticleEditeur";
 import { DEVISE_OPTIONS, formatMontantDevise } from "@/components/tresorerie/devise";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
@@ -79,7 +83,16 @@ type FieldErrors = Partial<Record<string, string>>;
  * directement l'action via `useTransition` (même pattern que
  * `RetourCaisseForm`, Phase D), pas via `<form action={...}>`.
  */
-export function DemandeForm({ comptes, createurId }: { comptes: { value: string; label: string }[]; createurId: string }) {
+export function DemandeForm({
+  comptes,
+  createurId,
+  envoiDirectAuDG = false,
+}: {
+  comptes: { value: string; label: string }[];
+  createurId: string;
+  /** Lot M : la demande part directement chez le DG (émise par la Finance ou le DG) : un motif d'envoi est alors obligatoire. */
+  envoiDirectAuDG?: boolean;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -90,6 +103,7 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
   const [devise, setDevise] = useState("XOF");
   const [lignes, setLignes] = useState<LigneEdit[]>([nouvelleLigne()]);
   const [pieceJointeUrl, setPieceJointeUrl] = useState<string | null>(null);
+  const [motifEnvoiDG, setMotifEnvoiDG] = useState("");
 
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [erreurLignes, setErreurLignes] = useState<string | undefined>();
@@ -102,7 +116,7 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
   const aujourdHui = new Date().toISOString().slice(0, 10);
 
   const totalGeneral = lignes.reduce(
-    (sum, l) => sum + (Number(l.quantite) || 0) * (Number(l.prixUnitaire) || 0),
+    (sum, l) => sum + (Number(l.quantite) || 0) * valeurSaisieMontant(l.prixUnitaire, { devise }),
     0
   );
 
@@ -167,10 +181,19 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
       ligneError = `Chaque ligne doit avoir un motif (${MOTIF_LIGNE_MIN} caractères minimum).`;
     } else if (lignes.some((l) => !l.quantite || l.quantite < 1)) {
       ligneError = "Chaque ligne doit avoir un nombre supérieur à 0.";
+    } else if (lignes.some((l) => l.prixUnitaire.trim() !== "" && !analyserMontant(l.prixUnitaire, { devise }).ok)) {
+      const pire = lignes.map((l) => analyserMontant(l.prixUnitaire, { devise })).find((r) => !r.ok);
+      ligneError = `Prix unitaire invalide : ${pire && !pire.ok ? pire.message : "montant illisible."}`;
     } else if (totalGeneral <= 0) {
       ligneError = "Le total général doit être supérieur à 0.";
     }
     setErreurLignes(ligneError);
+
+    if (envoiDirectAuDG) {
+      const refus = refusMotifEchange(motifEnvoiDG, "l'envoi de la demande au DG");
+      if (refus) errors.motifEnvoiDG = refus;
+      setFieldErrors(errors);
+    }
 
     if (Object.keys(errors).length > 0 || ligneError) {
       return;
@@ -185,12 +208,14 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
           libelle: l.libelle,
           motif: l.motif,
           quantite: l.quantite,
-          prixUnitaire: Number(l.prixUnitaire) || 0,
+          // Texte saisi, réanalysé par le serveur avec la devise (jamais un nombre de confiance).
+          prixUnitaire: l.prixUnitaire.trim() === "" ? "0" : l.prixUnitaire,
           beneficiaire: l.details.beneficiaire ? saisieVersChoix(l.details.beneficiaire) : null,
           pieceJointeUrls: l.details.pieces.map((p) => p.url),
           dateLivraison: l.dateLivraison || undefined,
         })),
         pieceJointeUrl: pieceJointeUrl ?? undefined,
+        motifEnvoiDG: envoiDirectAuDG ? motifEnvoiDG.trim() : undefined,
       });
 
       if (result.status === "success") {
@@ -254,7 +279,7 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
           </div>
 
           {lignes.map((ligne) => {
-            const total = (Number(ligne.quantite) || 0) * (Number(ligne.prixUnitaire) || 0);
+            const total = (Number(ligne.quantite) || 0) * valeurSaisieMontant(ligne.prixUnitaire, { devise });
             return (
               <div
                 key={ligne.key}
@@ -282,15 +307,13 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
                 </div>
                 <div>
                   <span className="mb-1 block text-xs font-medium text-muted-foreground sm:hidden">Prix unitaire</span>
-                  <Input
+                  <InputMontant
                     aria-label="Prix unitaire"
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="1"
+                    devise={devise}
                     placeholder="0"
+                    echo={false}
                     value={ligne.prixUnitaire}
-                    onChange={(e) => updateLigne(ligne.key, { prixUnitaire: e.target.value })}
+                    onValueChange={(texte) => updateLigne(ligne.key, { prixUnitaire: texte })}
                   />
                 </div>
                 <div className="text-sm font-bold text-foreground tabular-nums sm:text-right">
@@ -428,6 +451,20 @@ export function DemandeForm({ comptes, createurId }: { comptes: { value: string;
           </div>
         </div>
       </Card>
+
+      {envoiDirectAuDG ? (
+        <Card>
+          <ChampMotifEchange
+            name="motifEnvoiDG"
+            label="Motif de l'envoi au DG"
+            hint="Votre demande est décidée par le DG : ce motif lui est transmis."
+            value={motifEnvoiDG}
+            onChange={setMotifEnvoiDG}
+            disabled={isPending}
+          />
+          {fieldErrors.motifEnvoiDG ? <p className="mt-1 text-xs text-danger">{fieldErrors.motifEnvoiDG}</p> : null}
+        </Card>
+      ) : null}
 
       <Button type="button" onClick={handleSubmit} loading={isPending} className="w-full">
         Envoyer la demande

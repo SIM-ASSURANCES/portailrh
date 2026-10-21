@@ -57,6 +57,8 @@ async function chargerContexte(demandeId: string, detail: DetailEvenementCircuit
       dgApprobateurId: true,
       niveauRejet: true,
       motifRejet: true,
+      motifSoumissionDG: true,
+      motifDecisionDG: true,
       montant: true,
       montantValide: true,
       statut: true,
@@ -75,6 +77,8 @@ async function chargerContexte(demandeId: string, detail: DetailEvenementCircuit
           prixUnitaire: true,
           motifRejet: true,
           motifRefusDG: true,
+          motifSoumissionDG: true,
+          motifDecisionDG: true,
           statutValidation: true,
           soumiseAuDG: true,
           decisionDG: true,
@@ -122,6 +126,9 @@ async function chargerContexte(demandeId: string, detail: DetailEvenementCircuit
           statut: l.statutValidation,
           etat,
           motif: l.statutValidation === "REJETEE" ? l.motifRejet : l.decisionDG === "REFUSEE" ? l.motifRefusDG : null,
+          // Lot M : motif d'envoi au DG et motif de sa réponse (un article antérieur au lot M n'en a pas : « Non renseigné »).
+          motifSoumissionDG: l.motifSoumissionDG,
+          motifDecisionDG: l.motifDecisionDG,
           manque: l.statutValidation === "VALIDEE" ? (manques.get(l.id) ?? null) : null,
         };
       })
@@ -149,6 +156,8 @@ async function chargerContexte(demandeId: string, detail: DetailEvenementCircuit
     responsableServiceId: responsableServiceEffectif(d, d.createur.service?.responsableId),
     niveauRejet: d.niveauRejet,
     motifRejet: d.motifRejet,
+    motifSoumissionDG: d.motifSoumissionDG,
+    motifDecisionDG: d.motifDecisionDG,
     montant: Number(d.montant),
     montantValide: d.montantValide === null ? null : Number(d.montantValide),
     approbationClotureNonRequise: d.approbationClotureNonRequise,
@@ -224,7 +233,7 @@ export async function envoyerRappelsCircuit(maintenant = new Date()): Promise<vo
   }
 }
 
-/** Refus d'une ligne par le DG qui ne termine pas son examen : la Finance qui peut agir est prévenue. */
+/** Rejet d'une ligne par le DG qui ne termine pas son examen : la Finance qui peut agir est prévenue. */
 export async function notifierRefusLigneDG(
   demandeId: string,
   acteurId: string,
@@ -236,7 +245,7 @@ export async function notifierRefusLigneDG(
     const n = notificationRefusLigneDG(ctx, await chargerCandidats(ctx.responsableServiceId), refus, acteurId);
     if (n) await envoyer([n]);
   } catch (e) {
-    console.error(`[Circuit] Notification du refus DG (demande ${demandeId}) impossible :`, e);
+    console.error(`[Circuit] Notification du rejet DG (demande ${demandeId}) impossible :`, e);
   }
 }
 

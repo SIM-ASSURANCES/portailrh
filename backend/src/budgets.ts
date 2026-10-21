@@ -516,7 +516,7 @@ export function verdictBudget(e: EntreeVerdictBudget): VerdictBudget {
   }
   const motif = (e.motifConfirmation ?? "").trim();
   if (e.acteurEstDG) {
-    if (motif.length >= MOTIF_DEPASSEMENT_MIN) {
+    if (motif.length >= MOTIF_DEPASSEMENT_MIN && motif.length <= 300) {
       return { autorise: true, niveau: "ROUGE", alerteOrange: false, confirmationRequise: false, utiliseConfirmationExistante: false, motifConfirme: motif };
     }
     return {
@@ -524,7 +524,7 @@ export function verdictBudget(e: EntreeVerdictBudget): VerdictBudget {
       niveau: "ROUGE",
       confirmationRequise: true,
       motifInvalide: true,
-      raison: `Seuil rouge atteint : confirmez le dépassement du budget avec un motif d'au moins ${MOTIF_DEPASSEMENT_MIN} caractères pour valider.`,
+      raison: `Seuil rouge atteint : confirmez le dépassement du budget avec un motif de ${MOTIF_DEPASSEMENT_MIN} à 300 caractères pour valider.`,
     };
   }
   if (e.confirmationExistante) {
@@ -564,7 +564,7 @@ export function phrasesAlertes(p: PrevisionBudget): string[] {
 
 /** Texte de l'état d'un paramétrage pour les listes. */
 export function libelleStatutParametrage(s: StatutParametrageBudget): string {
-  return s === "VALIDE" ? "Validé par le DG" : s === "REFUSE" ? "Refusé par le DG" : "En attente du DG";
+  return s === "VALIDE" ? "Validé par le DG" : s === "REFUSE" ? "Rejeté par le DG" : "En attente du DG";
 }
 
 /** Période lisible : « du 19/10/2026 » / « du 19/10/2026 au 31/12/2026 ». */

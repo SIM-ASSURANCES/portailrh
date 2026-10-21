@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import pg from "pg";
 import { assurerSignatures } from "./signatures-auto.mjs";
+import { MOTIF, remplirMotif, remplirMotifArticle, remplirMotifDans } from "./motifs.mjs";
 
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
@@ -141,6 +142,7 @@ const REF_A = "DEM-LOTB-A";
   // La Finance soumet C au DG (son bouton).
   await pageFinance(p, A);
   await vieillirChrono(A);
+  await remplirMotifArticle(p, `${A}-l3`);
   await p.locator(`[data-soumettre-article="${A}-l3"]`).click();
   verifier("1. C soumis au DG en base", await attendre(async () => (await lignesDe(A)).find((x) => x.libelle === "Article C").soumiseAuDG === true));
   const apresSoumission = await lecture(A);
@@ -162,6 +164,7 @@ const REF_A = "DEM-LOTB-A";
   const lignesDG = await p.locator("[data-ligne-dg]").count();
   verifier("1. DG : il ne voit que l'article soumis (C)", lignesDG === 1 && (await p.locator('[data-ligne-dg="Article C"]').count()) === 1, `${lignesDG} ligne(s)`);
   await vieillirChrono(A);
+  await remplirMotifDans(p.locator('[data-ligne-dg="Article C"]'));
   await p.locator('[data-ligne-dg="Article C"]').getByRole("button", { name: "Valider", exact: true }).click();
   verifier("1. DG : décision enregistrée", await attendre(async () => (await lignesDe(A)).find((x) => x.libelle === "Article C").decisionDG === "VALIDEE"));
   const c = (await lignesDe(A)).find((x) => x.libelle === "Article C");
@@ -307,6 +310,7 @@ const BB = await demande("b", { createur: "assistant-finance@simassurances.test"
   await carte(p, "Article A").getByRole("button", { name: "Valider", exact: true }).click();
   await carte(p, "Article B").getByRole("button", { name: "Rejeter", exact: true }).click();
   await carte(p, "Article B").getByLabel("Motif du rejet de la ligne").fill("Non prioritaire");
+  await remplirMotif(p, MOTIF, "motifDG");
   await enregistrer(p).click();
   verifier("7. cas b : DG décide A et B sans C", await attendre(async () => (await lignesDe(BB)).filter((x) => x.statutValidation !== "EN_ATTENTE").length === 2));
   let d = await lecture(BB);
@@ -315,6 +319,7 @@ const BB = await demande("b", { createur: "assistant-finance@simassurances.test"
   verifier("7. cas b : approbation de clôture pas encore donnée (demande en cours)", d.validationCompleteParDG === false);
   await p.reload();
   await carte(p, "Article C").getByRole("button", { name: "Valider", exact: true }).click();
+  await remplirMotif(p, MOTIF, "motifDG");
   await enregistrer(p).click();
   verifier("7. cas b : dernier article décidé → Terminée", await attendre(async () => (await lecture(BB)).etapeCircuit === "TERMINEE"));
   d = await lecture(BB);

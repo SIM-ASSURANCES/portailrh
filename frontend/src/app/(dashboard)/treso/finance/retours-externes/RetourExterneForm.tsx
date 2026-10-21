@@ -4,10 +4,10 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, Input, InputMontant, Select, Textarea } from "@/components/ui";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
-import type { DemandeRattachable } from "backend/client";
+import { analyserMontant, type DemandeRattachable } from "backend/client";
 
 import { chercherDemandeRattachableAction, creerRetourExterneAction } from "./actions";
 
@@ -49,7 +49,11 @@ export function RetourExterneForm({ utilisateurs }: { utilisateurs: { id: string
   function submit() {
     if (typePersonne === "COLLABORATEUR" && !collaborateurId) return setErreur("Choisissez un collaborateur.");
     if (typePersonne === "EXTERNE" && nomExterne.trim().length < 2) return setErreur("Saisissez le nom de la personne externe.");
-    if (!(Number(cheque) > 0) || !(Number(retourne) > 0)) return setErreur("Les deux montants doivent être supérieurs à 0.");
+    const aCheque = analyserMontant(cheque);
+    const aRetourne = analyserMontant(retourne);
+    if (!aCheque.ok) return setErreur(`Montant du chèque initial invalide : ${aCheque.message}`);
+    if (!aRetourne.ok) return setErreur(`Montant retourné invalide : ${aRetourne.message}`);
+    if (aCheque.centimes <= 0 || aRetourne.centimes <= 0) return setErreur("Les deux montants doivent être supérieurs à 0.");
     if (motif.trim().length < 10) return setErreur("Le motif est obligatoire (10 caractères minimum).");
     if (!pjCheque) return setErreur("Le justificatif du chèque initial est obligatoire.");
     if (!pj) return setErreur("Le justificatif du retour est obligatoire.");
@@ -59,8 +63,8 @@ export function RetourExterneForm({ utilisateurs }: { utilisateurs: { id: string
       const r = await creerRetourExterneAction(
         typePersonne === "COLLABORATEUR" ? collaborateurId : undefined,
         typePersonne === "EXTERNE" ? nomExterne : undefined,
-        Number(cheque),
-        Number(retourne),
+        cheque,
+        retourne,
         motif,
         pj,
         pjCheque,
@@ -112,23 +116,19 @@ export function RetourExterneForm({ utilisateurs }: { utilisateurs: { id: string
         <Input label="Nom de la personne" required value={nomExterne} onChange={(e) => setNomExterne(e.target.value)} />
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Input
+        <InputMontant
           label="Montant du chèque initial (FCFA)"
-          type="number"
-          min="0"
           required
           hint="Information déclarative : non vérifiée par le système."
           value={cheque}
-          onChange={(e) => setCheque(e.target.value)}
+          onValueChange={setCheque}
         />
-        <Input
+        <InputMontant
           label="Montant retourné en caisse (FCFA)"
-          type="number"
-          min="0"
           required
           hint="Ce montant est immédiatement ajouté au solde de caisse."
           value={retourne}
-          onChange={(e) => setRetourne(e.target.value)}
+          onValueChange={setRetourne}
         />
       </div>
       <div className="space-y-3 rounded-md border border-border p-3">

@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input } from "@/components/ui";
+import { Button, Input, InputMontant } from "@/components/ui";
+import { analyserMontant, texteSaisieMontant, valeurSaisieMontant } from "backend/client";
 
 import { creerRetourCaisseAction, modifierRetourCaisseAction } from "./retourActions";
 
@@ -75,7 +76,7 @@ export function RetourCaisseForm({
   // mode `edit`, `montantRetourneInitial` reste préchargé normalement,
   // inchangé.
   const [montantRetourne, setMontantRetourne] = useState(
-    montantRetourneInitial != null ? String(montantRetourneInitial) : ""
+    montantRetourneInitial != null ? texteSaisieMontant(montantRetourneInitial) : ""
   );
   const [erreur, setErreur] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
@@ -89,7 +90,8 @@ export function RetourCaisseForm({
   const dateMinEffective = dateMin && dateMin > aujourdHui ? dateMin : aujourdHui;
 
   function handleSubmit() {
-    const montant = Number(montantRetourne);
+    const analyse = analyserMontant(montantRetourne);
+    const montant = analyse.ok ? analyse.valeur : Number.NaN;
     if (!dateRetour) {
       setErreur("La date du retour est obligatoire.");
       return;
@@ -102,8 +104,8 @@ export function RetourCaisseForm({
       setErreur(`La date du retour ne peut pas être antérieure au ${new Date(dateMin).toLocaleDateString("fr-FR")}.`);
       return;
     }
-    if (Number.isNaN(montant) || montant < 0) {
-      setErreur("Le montant retourné doit être un nombre positif ou nul.");
+    if (!analyse.ok || montant < 0) {
+      setErreur(analyse.ok ? "Le montant retourné doit être un nombre positif ou nul." : analyse.message);
       return;
     }
     if (montant > montantReglement) {
@@ -115,8 +117,8 @@ export function RetourCaisseForm({
     startTransition(async () => {
       const result =
         mode === "edit" && retourId
-          ? await modifierRetourCaisseAction(retourId, montant, dateRetour)
-          : await creerRetourCaisseAction(reglementId, montant, dateRetour);
+          ? await modifierRetourCaisseAction(retourId, montantRetourne, dateRetour)
+          : await creerRetourCaisseAction(reglementId, montantRetourne, dateRetour);
       if (result.status === "success") {
         toast.success(result.message);
         onSuccess();
@@ -142,22 +144,17 @@ export function RetourCaisseForm({
           value={dateRetour}
           onChange={(e) => setDateRetour(e.target.value)}
         />
-        <Input
+        <InputMontant
           label="Montant à retourner"
-          type="number"
-          inputMode="decimal"
-          min="0"
-          max={montantReglement}
-          step="1"
           required
           hint={`Montant du règlement : ${montantReglement.toLocaleString("fr-FR")} FCFA`}
           value={montantRetourne}
-          onChange={(e) => setMontantRetourne(e.target.value)}
+          onValueChange={setMontantRetourne}
         />
       </div>
       <p className="text-xs text-muted-foreground">
         Le solde éventuellement dépensé (
-        {Math.max(0, montantReglement - (Number(montantRetourne) || 0)).toLocaleString("fr-FR")} FCFA) sera transmis
+        {Math.max(0, montantReglement - valeurSaisieMontant(montantRetourne)).toLocaleString("fr-FR")} FCFA) sera transmis
         à l&apos;équipe Finance, qui se chargera elle-même de le classer (justifié ou non, pièce jointe, motif).
       </p>
 

@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useState } from "react";
 
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, InputMontant, Select, Textarea } from "@/components/ui";
 import { useActionFeedback } from "@/lib/hooks/useActionFeedback";
 import { IDLE_ACTION_STATE, MOTIF_REGLEMENT_MIN, refusMotifReglement } from "backend/client";
 
@@ -86,18 +86,13 @@ export function ReglementForm({
       <input type="hidden" name="demandeId" value={demandeId} />
       {ligneDemandeId ? <input type="hidden" name="ligneDemandeId" value={ligneDemandeId} /> : null}
       {libelleArticle ? <p className="text-sm text-muted-foreground">Article : {libelleArticle}</p> : null}
-      <Input
+      <InputMontant
         name="montant"
         label="Montant"
-        type="number"
-        inputMode="decimal"
-        min="1"
-        max={resteARegler}
-        step="1"
         required
         hint={`Reste à régler : ${resteARegler.toLocaleString("fr-FR")} FCFA`}
         value={montant}
-        onChange={(e) => setMontant(e.target.value)}
+        onValueChange={setMontant}
         error={state.status === "error" ? state.fieldErrors?.montant : undefined}
       />
       <Textarea

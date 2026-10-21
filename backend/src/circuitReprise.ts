@@ -16,6 +16,7 @@
 // définitif »), article avec un règlement, demande clôturée / rejetée / abandonnée, demande émise par le DG, dépense directe
 // (aucune étape précédente), propre demande ou propre article (garde 8). Une reprise n'écrit JAMAIS dans le journal de caisse.
 
+import { MOTIF_ECHANGE_MAX } from "./motifEchange";
 import type { EtapeCircuit, ModeEtapeDG, StatutDemande } from "./generated/prisma/enums";
 import { etapeDepuisArticles, etatLigneCircuit, type LigneEtat } from "./etatArticles";
 
@@ -63,9 +64,11 @@ export type ResultatReprise =
 const refus = (message: string): ResultatReprise => ({ ok: false, message });
 
 export function refusMotifReprise(motif: string | null | undefined): string | null {
-  return (motif ?? "").trim().length >= MOTIF_REPRISE_MIN
-    ? null
-    : `Le motif de la reprise est obligatoire (${MOTIF_REPRISE_MIN} caractères minimum).`;
+  // Lot M : le renvoi à la Finance par le DG (et toute reprise) porte un motif de 10 à 300 caractères.
+  const n = (motif ?? "").trim().length;
+  if (n < MOTIF_REPRISE_MIN) return `Le motif de la reprise est obligatoire (${MOTIF_REPRISE_MIN} caractères minimum).`;
+  if (n > MOTIF_ECHANGE_MAX) return `Le motif de la reprise ne doit pas dépasser ${MOTIF_ECHANGE_MAX} caractères (${n} saisis).`;
+  return null;
 }
 
 const STATUTS_CLOS: readonly StatutDemande[] = ["CLOTUREE", "REJETEE", "ABANDONNEE"];

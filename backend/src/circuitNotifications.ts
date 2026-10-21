@@ -6,6 +6,7 @@
 // Les rappels sont calculés à la volée (aucune tâche planifiée) : une demande à la même étape depuis plus de 48 h
 // relance ceux qui doivent agir, au plus une fois par 24 h et par demande (`Demande.dernierRappelAt`).
 
+import { motifOuNonRenseigne } from "./motifEchange";
 import type { Prisma } from "./generated/prisma/client";
 import type { EtapeCircuit, ModeEtapeDG, NiveauRejet, StatutDemande } from "./generated/prisma/enums";
 import { LIBELLE_ETAPE_CIRCUIT, refusApprobationCloture, type TypeDemandeCircuit } from "./circuitDemande";
@@ -63,6 +64,9 @@ export interface ContexteNotificationCircuit {
   responsableServiceId: string | null;
   niveauRejet: NiveauRejet | null;
   motifRejet: string | null;
+  /** Lot M : motif du dernier envoi de la Finance au DG et de la dernière réponse du DG (colonnes de la demande). */
+  motifSoumissionDG?: string | null;
+  motifDecisionDG?: string | null;
   montant: number;
   montantValide: number | null;
   approbationClotureNonRequise: boolean;
@@ -95,8 +99,11 @@ export interface ArticleNotification {
   montant: number;
   statut: StatutArticle;
   etat: EtatArticle;
-  /** Motif du rejet, ou du refus du DG pour un article à trancher. */
+  /** Motif du rejet, ou du rejet du DG pour un article à trancher. */
   motif: string | null;
+  /** Lot M : motif d'envoi de l'article au DG par la Finance, et motif de la réponse du DG. */
+  motifSoumissionDG?: string | null;
+  motifDecisionDG?: string | null;
   /** Article VALIDÉ : ce qui lui manque pour être terminé (règlement, retour, dépenses, solde) ; `null` = terminé. */
   manque: ManqueArticle | null;
 }
@@ -140,8 +147,8 @@ function listeArticles(intro: string, articles: readonly ArticleNotification[], 
 
 /** Précision d'un article pour la Finance : ce qui est attendu d'elle. */
 function precisionFinance(a: ArticleNotification): string {
-  if (a.etat === "VALIDEE_DG_A_CONFIRMER") return " — validé par le DG, à confirmer";
-  if (a.etat === "REFUSEE_DG_A_TRANCHER") return ` — refusé par le DG${a.motif ? ` (motif : ${a.motif})` : ""}, à resoumettre ou à rejeter`;
+  if (a.etat === "VALIDEE_DG_A_CONFIRMER") return ` — validé par le DG (motif du DG : ${motifOuNonRenseigne(a.motifDecisionDG)}), à confirmer`;
+  if (a.etat === "REFUSEE_DG_A_TRANCHER") return ` — rejeté par le DG (motif du DG : ${motifOuNonRenseigne(a.motifDecisionDG ?? a.motif)}), à resoumettre ou à rejeter`;
   return " — à décider";
 }
 
@@ -253,7 +260,7 @@ function demandeAction(
     const morceaux: string[] = [];
     if (aDecider > 0) morceaux.push(`${pluriel(aDecider, "article")} à décider`);
     if (x.valideesDGAConfirmer > 0) morceaux.push(`${pluriel(x.valideesDGAConfirmer, "article")} validé${x.valideesDGAConfirmer > 1 ? "s" : ""} par le DG à confirmer`);
-    if (x.refuseesDGATrancher > 0) morceaux.push(`${pluriel(x.refuseesDGATrancher, "article")} refusé${x.refuseesDGATrancher > 1 ? "s" : ""} par le DG à resoumettre ou à rejeter`);
+    if (x.refuseesDGATrancher > 0) morceaux.push(`${pluriel(x.refuseesDGATrancher, "article")} rejeté${x.refuseesDGATrancher > 1 ? "s" : ""} par le DG à resoumettre ou à rejeter`);
     const enAttente = articlesDe(ctx).filter((a) => a.etat === "A_DECIDER" || a.etat === "VALIDEE_DG_A_CONFIRMER" || a.etat === "REFUSEE_DG_A_TRANCHER");
     return {
       titre: "Demande à décider (Finance)",
@@ -274,8 +281,8 @@ function demandeAction(
       message:
         (ctx.modeEtapeDG === "OBLIGATOIRE"
           ? `La demande ${ref} de ${ctx.createurNom}${service} — ${fcfa(ctx.montant)} — attend votre décision à l'étape DG, article par article (${ctx.articles.traites}/${ctx.articles.total} articles traités).`
-          : `${pluriel(n, "article")} de la demande ${ref} de ${ctx.createurNom}${service} vous ${n > 1 ? "sont soumis" : "est soumis"}${resoumis > 0 ? ` (dont ${resoumis} resoumis après refus)` : ""} par la Finance : décidez-${n > 1 ? "les" : "le"} un par un à l'étape DG.`) +
-        listeArticles("Articles à décider", chezDG),
+          : `${pluriel(n, "article")} de la demande ${ref} de ${ctx.createurNom}${service} vous ${n > 1 ? "sont soumis" : "est soumis"}${resoumis > 0 ? ` (dont ${resoumis} resoumis après rejet)` : ""} par la Finance : décidez-${n > 1 ? "les" : "le"} un par un à l'étape DG.`) +
+        listeArticles("Articles à décider", chezDG, (a) => ` — motif d'envoi de la Finance : ${motifOuNonRenseigne(a.motifSoumissionDG)}`),
       lien: `/treso/dg/${ctx.demandeId}`,
       priority: "IMPORTANT",
     };
@@ -301,21 +308,21 @@ function demandeAction(
         message:
           ctx.modeEtapeDG === "OBLIGATOIRE"
             ? `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) attend votre décision à l'étape DG, ligne par ligne.`
-            : `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) vous est soumise par la Finance : elle attend votre décision à l'étape DG.`,
+            : `La demande ${ref} de ${ctx.createurNom} (${fcfa(ctx.montant)}) vous est soumise par la Finance : elle attend votre décision à l'étape DG. Motif de la Finance : ${motifOuNonRenseigne(ctx.motifSoumissionDG)}.`,
         lien: `/treso/dg/${ctx.demandeId}`,
         priority: "IMPORTANT",
       };
     case "REJET_DG":
       return {
         titre: "Demande rejetée par le DG",
-        message: `Le DG a rejeté la demande ${ref}. Motif : ${ctx.motifRejet ?? "non précisé"}. Resoumettez-la au DG ou renvoyez-la au demandeur.`,
+        message: `Le DG a rejeté la demande ${ref}. Motif du DG : ${motifOuNonRenseigne(ctx.motifDecisionDG ?? ctx.motifRejet)}. Resoumettez-la au DG (avec un nouveau motif) ou renvoyez-la au demandeur.`,
         lien: lienFinance(ctx.demandeId),
         priority: "IMPORTANT",
       };
     case "DECISION_FINALE":
       return {
         titre: "Demande validée par le DG : décision finale",
-        message: `Le DG a validé la demande ${ref} : la décision finale revient à la Finance.`,
+        message: `Le DG a validé la demande ${ref} : la décision finale revient à la Finance. Motif du DG : ${motifOuNonRenseigne(ctx.motifDecisionDG)}.`,
         lien: lienFinance(ctx.demandeId),
         priority: "IMPORTANT",
       };
@@ -626,8 +633,8 @@ export function notificationRefusLigneDG(
   const article = refus.ligneId ? articlesDe(ctx, [refus.ligneId])[0] : undefined;
   return {
     destinataires,
-    titre: "Ligne refusée par le DG",
-    message: `${rappelDemande(ctx)} — le DG a refusé la ligne ${article ? nommerArticle(article) : `« ${refus.libelle} »`}. Motif : ${refus.motif}. Resoumettez-la au DG ou rejetez-la définitivement.`,
+    titre: "Ligne rejetée par le DG",
+    message: `${rappelDemande(ctx)} — le DG a rejeté la ligne ${article ? nommerArticle(article) : `« ${refus.libelle} »`}. Motif du DG : ${refus.motif}. Resoumettez-la au DG (avec un nouveau motif) ou rejetez-la définitivement.`,
     lien: lienFinance(ctx.demandeId),
     priority: "IMPORTANT",
   };

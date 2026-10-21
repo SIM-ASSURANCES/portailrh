@@ -5,13 +5,12 @@ import { toast } from "sonner";
 
 import { EnteteDemandeArticle, type ContexteDemandeArticle } from "@/components/tresorerie/EnteteDemandeArticle";
 import { BudgetPrevision } from "@/components/tresorerie/BudgetPrevision";
-import { Badge, Button, Input, Textarea } from "@/components/ui";
-import { MOTIF_DEPASSEMENT_MIN, previsionBudget, verdictBudget } from "backend/client";
+import { ChampMotifEchange } from "@/components/tresorerie/ChampMotifEchange";
+import { Badge, Button } from "@/components/ui";
+import { motifEchangeValide, motifOuNonRenseigne, previsionBudget, verdictBudget } from "backend/client";
 
 import { deciderLigneDGAction } from "../../circuit/actions";
 import type { BudgetValidation } from "../../finance/demandes/[id]/LignesValidationTable";
-
-const MOTIF_MIN = 3;
 
 export interface LigneSoumiseDG {
   id: string;
@@ -27,6 +26,9 @@ export interface LigneSoumiseDG {
   decisionDGParNom: string | null;
   decisionDGAt: Date | null;
   motifRefusDG: string | null;
+  /** Lot M : motif d'envoi de la Finance et motif de la réponse du DG (« Non renseigné » pour un échange antérieur). */
+  motifSoumissionDG?: string | null;
+  motifDecisionDG?: string | null;
   soumiseParNom: string | null;
   /** Bénéficiaire et pièces de l'article (autonomie des articles, lot A). */
   details?: ReactNode;
@@ -34,7 +36,7 @@ export interface LigneSoumiseDG {
 
 /**
  * Lignes soumises au DG par la Finance (2026-10-10) : le DG ne voit et ne décide QUE celles-ci, une par une — Valider,
- * ou Refuser avec motif (la ligne revient à la Finance). Boutons grisés hors de son étape avec la phrase du moteur
+ * ou Rejeter, TOUJOURS avec un motif (lot M : 10 à 300 caractères ; la ligne revient à la Finance). Boutons grisés hors de son étape avec la phrase du moteur
  * (`raisonDecider`), que le serveur renverrait de toute façon.
  */
 export function DecisionLignesDG({
@@ -91,10 +93,10 @@ function LigneDG({
   enteteDemande?: ContexteDemandeArticle;
   budget: BudgetValidation | null;
 }) {
-  const [refusOuvert, setRefusOuvert] = useState(false);
   const [motif, setMotif] = useState("");
   const [isPending, startTransition] = useTransition();
-  const motifValide = motif.trim().length >= MOTIF_MIN;
+  // Lot M : la réponse du DG (validation comme rejet) porte toujours un motif de 10 à 300 caractères.
+  const motifValide = motifEchangeValide(motif);
   // Lot J : reste du budget global et de la catégorie APRÈS la validation de cet article. Rouge : le DG confirme le
   // dépassement dans ce même geste (motif obligatoire), tracé dans l'historique.
   const [motifDepassement, setMotifDepassement] = useState("");
@@ -105,10 +107,9 @@ function LigneDG({
 
   function decider(valider: boolean) {
     startTransition(async () => {
-      const r = await deciderLigneDGAction(ligne.id, valider, valider ? undefined : motif, valider && prevision?.niveau === "ROUGE" ? motifDepassement.trim() : undefined);
+      const r = await deciderLigneDGAction(ligne.id, valider, motif, valider && prevision?.niveau === "ROUGE" ? motifDepassement.trim() : undefined);
       if (r.status === "success") {
         toast.success(r.message);
-        setRefusOuvert(false);
         setMotif("");
         setMotifDepassement("");
       } else {
@@ -130,6 +131,7 @@ function LigneDG({
             {ligne.categorieLabel ? ` · ${ligne.categorieLabel}${ligne.objetLabel ? ` / ${ligne.objetLabel}` : ""}` : ""}
           </p>
           {ligne.soumiseParNom ? <p className="text-xs text-muted-foreground">Soumise par {ligne.soumiseParNom}</p> : null}
+          <p data-motif-soumission className="text-xs text-muted-foreground">Motif d&apos;envoi de la Finance : {motifOuNonRenseigne(ligne.motifSoumissionDG)}</p>
         </div>
         <p className="text-lg font-black tabular-nums text-foreground">
           {(ligne.quantite * ligne.prixUnitaire).toLocaleString("fr-FR")} {devise}
@@ -139,12 +141,12 @@ function LigneDG({
       {ligne.decisionDG !== null ? (
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <Badge variant={ligne.decisionDG === "VALIDEE" ? "success" : "danger"}>
-            {ligne.decisionDG === "VALIDEE" ? "Validée" : "Refusée"}
+            {ligne.decisionDG === "VALIDEE" ? "Validée" : "Rejetée"}
           </Badge>
           <span className="text-muted-foreground">
             {ligne.decisionDGParNom ? `par ${ligne.decisionDGParNom}` : ""}
             {ligne.decisionDGAt ? ` le ${ligne.decisionDGAt.toLocaleDateString("fr-FR")}` : ""}
-            {ligne.decisionDG === "REFUSEE" && ligne.motifRefusDG ? ` — motif : ${ligne.motifRefusDG}` : ""}
+            {` — motif du DG : ${motifOuNonRenseigne(ligne.motifDecisionDG ?? ligne.motifRefusDG)}`}
           </span>
         </div>
       ) : (
@@ -160,39 +162,29 @@ function LigneDG({
               <p className="text-sm font-semibold text-foreground">
                 Alerte rouge : valider cet article atteint le seuil rouge d&apos;un budget. Confirmez le dépassement (motif obligatoire) pour valider ; tracé dans l&apos;historique.
               </p>
-              <Input
+              <ChampMotifEchange
                 name={`motifDepassement-${ligne.id}`}
                 label="Motif de la confirmation du dépassement"
-                required
                 value={motifDepassement}
-                onChange={(e) => setMotifDepassement(e.target.value)}
-                hint={`${MOTIF_DEPASSEMENT_MIN} caractères minimum.`}
+                onChange={setMotifDepassement}
               />
             </div>
           ) : null}
+          <ChampMotifEchange
+            value={motif}
+            onChange={setMotif}
+            label="Motif de votre décision (transmis à la Finance)"
+            hint="Obligatoire pour valider comme pour rejeter."
+            disabled={!!raisonDecider}
+          />
           <div className="flex flex-wrap gap-2">
-            <Button signe type="button" loading={isPending && !refusOuvert} disabled={!!raisonDecider || isPending || depassementBloque} onClick={() => decider(true)}>
+            <Button signe type="button" loading={isPending} disabled={!!raisonDecider || isPending || depassementBloque || !motifValide} onClick={() => decider(true)}>
               Valider
             </Button>
-            <Button type="button" variant="danger" disabled={!!raisonDecider || isPending} onClick={() => setRefusOuvert((v) => !v)}>
-              Refuser
+            <Button signe type="button" variant="danger" disabled={!!raisonDecider || isPending || !motifValide} onClick={() => decider(false)}>
+              Rejeter
             </Button>
           </div>
-          {refusOuvert && !raisonDecider ? (
-            <div className="space-y-2">
-              <Textarea
-                label="Motif du refus (transmis à la Finance)"
-                required
-                rows={2}
-                value={motif}
-                onChange={(e) => setMotif(e.target.value)}
-                error={motif.length > 0 && !motifValide ? `${MOTIF_MIN} caractères minimum.` : undefined}
-              />
-              <Button signe type="button" variant="danger" loading={isPending} disabled={!motifValide || isPending} onClick={() => decider(false)}>
-                Confirmer le refus
-              </Button>
-            </div>
-          ) : null}
         </div>
       )}
     </li>

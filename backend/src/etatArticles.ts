@@ -38,7 +38,7 @@ export const LIBELLE_ETAT_ARTICLE: Record<EtatArticle, string> = {
   A_DECIDER: "À décider par la Finance",
   CHEZ_DG: "Chez le DG",
   VALIDEE_DG_A_CONFIRMER: "Validé par le DG — à confirmer par la Finance",
-  REFUSEE_DG_A_TRANCHER: "Refusé par le DG — à trancher par la Finance",
+  REFUSEE_DG_A_TRANCHER: "Rejeté par le DG — à trancher par la Finance",
   VALIDEE: "Validé",
   REJETEE: "Rejeté",
 };

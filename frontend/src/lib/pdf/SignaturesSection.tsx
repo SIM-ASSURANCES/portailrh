@@ -30,6 +30,7 @@ export function SignaturesSection({ signatures }: { signatures: SignatureImprime
               {formatDate(s.date)}
               {s.auNomDe ? ` — ${libelleSignature({ signataire: s.nom, auNomDe: s.auNomDe })}` : ""}
             </Text>
+            {s.motif ? <Text style={{ fontSize: 8 }}>{s.motif}</Text> : null}
           </View>
           {s.image ? (
             // eslint-disable-next-line jsx-a11y/alt-text -- <Image> de @react-pdf/renderer (pas une balise HTML) : aucune prop `alt` n'existe

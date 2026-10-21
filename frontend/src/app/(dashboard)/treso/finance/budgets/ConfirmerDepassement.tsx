@@ -3,11 +3,12 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input } from "@/components/ui";
+import { ChampMotifEchange, motifEchangeValide } from "@/components/tresorerie/ChampMotifEchange";
+import { Button } from "@/components/ui";
 
 import { confirmerDepassementBudgetAction } from "./actions";
 
-/** Le DG confirme un dépassement du seuil rouge demandé par la Finance (motif obligatoire, 10 caractères minimum). */
+/** Le DG confirme un dépassement du seuil rouge demandé par la Finance (motif obligatoire, 10 à 300 caractères). */
 export function ConfirmerDepassement({ id }: { id: string }) {
   const [motif, setMotif] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -15,15 +16,15 @@ export function ConfirmerDepassement({ id }: { id: string }) {
   return (
     <div data-confirmer-depassement className="flex flex-wrap items-end gap-2">
       <div className="w-80">
-        <Input name="motifDepassement" label="Motif de la confirmation" required value={motif} onChange={(e) => setMotif(e.target.value)} hint="10 caractères minimum, tracé dans l'historique." />
+        <ChampMotifEchange name="motifDepassement" label="Motif de la confirmation" hint="Tracé dans l'historique." value={motif} onChange={setMotif} />
       </div>
       <Button signe
         type="button"
         loading={isPending}
-        disabled={motif.trim().length < 10}
+        disabled={!motifEchangeValide(motif)}
         onClick={() =>
           startTransition(async () => {
-            const r = await confirmerDepassementBudgetAction(id, motif);
+            const r = await confirmerDepassementBudgetAction(id, motif.trim());
             if (r.status === "success") {
               toast.success(r.message);
               setMotif("");

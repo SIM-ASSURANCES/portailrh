@@ -18,6 +18,9 @@ import {
 } from "./circuitDemande";
 import type { EtapeCircuit } from "./generated/prisma/enums";
 
+/** Lot M : tout envoi de la Finance au DG et toute réponse du DG portent un motif (10 à 300 caractères). */
+const MOTIF_TEST = "Motif de test suffisant";
+
 // Lot B (2026-10-15) : décision Finance par article, sous-ensemble d'articles, étape déduite, gardes par article.
 
 const DEMANDEUR = "u-demandeur";
@@ -46,7 +49,7 @@ function demande(lignes: LigneCircuit[], etape: EtapeCircuit = "FINANCE", mode: 
   const p = determinerParcours({ estDG: false, estFinance: mode === "OBLIGATOIRE", estResponsableDeSonService: true }, "STANDARD");
   return { etape, createurId: DEMANDEUR, typeDemande: "STANDARD", ...p, modeEtapeDG: mode, lignes };
 }
-const decider = (decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE" }[]): ActionCircuit => ({ type: "DECIDER_LIGNES", decisions });
+const decider = (decisions: { ligneId: string; statut: "VALIDEE" | "REJETEE" }[]): ActionCircuit => ({ type: "DECIDER_LIGNES", decisions, motifDG: MOTIF_TEST });
 function ok(d: DemandeCircuit, qui: ActeurCircuit, action: ActionCircuit) {
   const r = transition(d, qui, action);
   if (!r.ok) throw new Error(`refusé : ${r.message}`);
@@ -117,7 +120,7 @@ describe("décision d'un sous-ensemble d'articles", () => {
   });
 
   it("contrôle seul (bouton) : possible tant qu'un article attend la Finance, sinon la phrase d'attente", () => {
-    expect(ok(trois(), FINANCE, { type: "DECIDER_LIGNES" }).ok).toBe(true);
+    expect(ok(trois(), FINANCE, { type: "DECIDER_LIGNES", motifDG: MOTIF_TEST }).ok).toBe(true);
     expect(raisonIndisponible(demande([chezDG("A")], "DG"), FINANCE, "DECIDER_LIGNES")).toBe("En attente de la décision du DG.");
     expect(raisonIndisponible(demande([validee("A")], "TERMINEE"), FINANCE, "DECIDER_LIGNES")).toBe("Décision finale prise.");
     expect(actionsPossibles(trois(), FINANCE)).toContain("DECIDER_LIGNES");
@@ -220,7 +223,7 @@ describe("dépense directe (sans article) : comportement d'origine inchangé", (
     etape, createurId: FINANCE.userId, typeDemande: "DEPENSE_DIRECTE", etapeServiceRequise: false, etapeFinanceRequise: true, modeEtapeDG: "OPTIONNELLE",
   });
   it("validation du montant par son auteur Finance (exception tracée) → Terminée", () => {
-    const r = ok(dd("FINANCE"), FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true });
+    const r = ok(dd("FINANCE"), FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST });
     expect(r.etapeSuivante).toBe("TERMINEE");
     expect(r.effets.decisionParAuteurDepenseDirecte).toBe(true);
   });

@@ -178,7 +178,7 @@ export default async function MonEquipePage({ searchParams }: { searchParams: Pr
                     <th className="px-3 py-2 text-right font-medium">Départs anticipés</th>
                     <th className="px-3 py-2 text-right font-medium">Absences</th>
                     <th className="px-3 py-2 text-right font-medium">Jours de congé</th>
-                    <th className="px-3 py-2 text-right font-medium">Refusées / non justifiées</th>
+                    <th className="px-3 py-2 text-right font-medium">Rejetées / non justifiées</th>
                     <th className="px-3 py-2 font-medium" />
                   </tr>
                 </thead>

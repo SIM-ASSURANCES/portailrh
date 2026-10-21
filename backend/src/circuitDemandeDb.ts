@@ -27,6 +27,8 @@ import { responsableServiceEffectif } from "./circuitReorientation";
 import { montantValideDepuisLignes } from "./etatArticles";
 import { categorisationEstObligatoire } from "./parametresTresorerie";
 import { refusMotifLigne } from "./motifLigne";
+import { MOTIF_ECHANGE_MAX, nettoyerMotifEchange, refusMotifEchange } from "./motifEchange";
+import { lireMontant } from "./montant";
 import { dateLivraisonAEnregistrer, jourCourant, jourDepuisDate, refusDateLivraison, versDateStockee } from "./dateLivraisonArticle";
 import { champsBeneficiaire, type ChoixBeneficiaire } from "./beneficiaire";
 import { beneficiaireArticle, choixDepuisStocke, choixPropreArticle } from "./beneficiaireArticles";
@@ -197,13 +199,22 @@ export async function initialiserCircuit(
 ): Promise<{
   data: ReturnType<typeof champsParcours> & { etapeCircuit: EtapeCircuit; etapeCircuitDepuis: Date };
   detail: string;
+  /** Lot M : la demande part DIRECTEMENT chez le DG (demande de la Finance, dépense directe pour soi) — c'est un envoi de la
+   *  Finance au DG, qui exige donc un motif (10 à 300 caractères) saisi à la création. */
+  envoiDirectAuDG: boolean;
 }> {
   const parcours = determinerParcours(await chargerProfilDemandeur(db, createurId), type, options);
   const etape = etapeInitiale(parcours);
   return {
     data: { ...champsParcours(parcours), etapeCircuit: etape, etapeCircuitDepuis: new Date() },
     detail: `Circuit : ${CAS_LIBELLE[parcours.cas]}. Première étape : ${LIBELLE_ETAPE_CIRCUIT[etape]}.`,
+    envoiDirectAuDG: etape === "DG",
   };
+}
+
+/** Lot M : cette création partira-t-elle directement chez le DG ? (l'écran n'affiche le champ « Motif de l'envoi au DG » que dans ce cas) */
+export async function envoiDirectAuDG(db: Db, createurId: string, type: TypeDemandeCircuit, options: OptionsParcours = {}): Promise<boolean> {
+  return etapeInitiale(determinerParcours(await chargerProfilDemandeur(db, createurId), type, options)) === "DG";
 }
 
 /** Acteur du circuit pour une demande : ses permissions effectives et s'il est le responsable ACTUEL du service du
@@ -323,7 +334,13 @@ export async function appliquerTransitionCircuit(
 
   const maintenant = new Date();
   const motif = "motif" in action ? action.motif.trim() : null;
+  // Lot M : motif de l'échange Finance ↔ DG, conservé avec l'action (colonnes de la demande) ET dans l'historique.
+  const motifDG = action.type === "DECIDER_LIGNES" ? nettoyerMotifEchange(action.motifDG) : null;
   const data: Prisma.DemandeUncheckedUpdateManyInput = { etapeCircuit: r.etapeSuivante, etapeCircuitDepuis: maintenant };
+  if (action.type === "SOUMETTRE_DG" || action.type === "RESOUMETTRE_DG") data.motifSoumissionDG = motif;
+  if (action.type === "VALIDER_DG" || action.type === "REJETER_DG") data.motifDecisionDG = motif;
+  if (action.type === "REJETER" && r.effets.niveauRejet === "DG") data.motifDecisionDG = motif;
+  if (action.type === "DECIDER_LIGNES" && d.etapeCircuit === "DG" && motifDG) data.motifDecisionDG = motifDG;
   if (r.effets.niveauRejet) {
     data.niveauRejet = r.effets.niveauRejet;
     data.motifRejet = motif ?? "Toutes les lignes ont été rejetées.";
@@ -348,6 +365,7 @@ export async function appliquerTransitionCircuit(
   const morceaux: string[] = [`${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}`];
   if (r.effets.niveauRejet) morceaux.push(`niveau ${NIVEAU_LIBELLE[r.effets.niveauRejet]}`);
   if (motif) morceaux.push(`motif : ${motif}`);
+  else if (motifDG && d.etapeCircuit === "DG") morceaux.push(`motif du DG : ${motifDG}`);
   if (r.effets.approbationClotureParDG) morceaux.push("vaut approbation de clôture du DG");
   await db.historiqueEntry.create({
     data: {
@@ -380,14 +398,16 @@ export async function soumettreLignesAuDG(
   db: Db,
   demandeId: string,
   acteur: ActeurCircuit,
-  ligneIds: readonly string[]
+  ligneIds: readonly string[],
+  /** Lot M : motif de l'envoi au DG (10 à 300 caractères), obligatoire, conservé sur chaque article envoyé. */
+  motifEnvoi: string
 ): Promise<ResultatCircuit & { libelles?: string[]; resoumisIds?: string[] }> {
   await verrouillerDemande(db, demandeId);
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
   if (!d) return { ok: false, message: "Demande introuvable." };
   const circuit = await demandeCircuit(db, d);
   const lignes = circuit.lignes!;
-  const r = transition(circuit, acteur, { type: "SOUMETTRE_LIGNES_DG", ligneIds });
+  const r = transition(circuit, acteur, { type: "SOUMETTRE_LIGNES_DG", ligneIds, motif: motifEnvoi });
   if (!r.ok) return r;
 
   const maintenant = new Date();
@@ -397,7 +417,7 @@ export async function soumettreLignesAuDG(
   const maj = await db.demande.updateMany({
     where: { id: demandeId, etapeCircuit: d.etapeCircuit },
     // Lot B : chaque événement d'un article remet à zéro le chronomètre de rappel de la demande (étape déduite des articles).
-    data: { etapeCircuit: r.etapeSuivante, soumiseAuDG: true, etapeCircuitDepuis: maintenant },
+    data: { etapeCircuit: r.etapeSuivante, soumiseAuDG: true, etapeCircuitDepuis: maintenant, motifSoumissionDG: nettoyerMotifEchange(motifEnvoi) },
   });
   if (maj.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
   const majLignes = await db.ligneDemande.updateMany({
@@ -415,6 +435,8 @@ export async function soumettreLignesAuDG(
       decisionDGAt: null,
       decisionDGParId: null,
       motifRefusDG: null,
+      motifSoumissionDG: nettoyerMotifEchange(motifEnvoi),
+      motifDecisionDG: null,
     },
   });
   if (majLignes.count !== ligneIds.length) return { ok: false, message: "Une ligne a changé entre-temps : rechargez la page." };
@@ -428,7 +450,8 @@ export async function soumettreLignesAuDG(
       detail:
         `${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]} — ${libelles.length} ligne${libelles.length > 1 ? "s" : ""} sur ` +
         `${lignes.length} soumise${libelles.length > 1 ? "s" : ""} au DG : ${listeLibelles(libelles)}` +
-        (resoumises.length > 0 ? ` (resoumise${resoumises.length > 1 ? "s" : ""} après refus : ${listeLibelles(resoumises.map((l) => l.libelle))})` : ""),
+        (resoumises.length > 0 ? ` (resoumise${resoumises.length > 1 ? "s" : ""} après rejet : ${listeLibelles(resoumises.map((l) => l.libelle))})` : "") +
+        ` — motif : ${nettoyerMotifEchange(motifEnvoi)}`,
       userId: acteur.userId,
     },
   });
@@ -479,6 +502,8 @@ export async function deciderLigneDG(
       decisionDGAt: maintenant,
       decisionDGParId: acteur.userId,
       motifRefusDG: decision.valider ? null : motif,
+      // Lot M : la réponse du DG (validation comme rejet) porte toujours un motif.
+      motifDecisionDG: motif,
     },
   });
   if (majLigne.count !== 1) return { ok: false, message: "Cette ligne a déjà été décidée." };
@@ -493,7 +518,7 @@ export async function deciderLigneDG(
   // Lot B : étape déduite des articles, chronomètre de rappel remis à zéro à chaque décision d'un article.
   const maj = await db.demande.updateMany({
     where: { id: demandeId, etapeCircuit: d.etapeCircuit },
-    data: { etapeCircuit: r.etapeSuivante, etapeCircuitDepuis: maintenant },
+    data: { etapeCircuit: r.etapeSuivante, etapeCircuitDepuis: maintenant, motifDecisionDG: motif },
   });
   if (maj.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
 
@@ -504,7 +529,8 @@ export async function deciderLigneDG(
       entityId: demandeId,
       action: decision.valider ? "validation_ligne_dg" : "refus_ligne_dg",
       detail:
-        (decision.valider ? `DG — ligne « ${libelle} » validée` : `DG — ligne « ${libelle} » refusée — motif : ${motif}`) +
+        (decision.valider ? `DG — ligne « ${libelle} » validée` : `DG — ligne « ${libelle} » rejetée`) +
+        ` — motif : ${motif}` +
         (r.etapeSuivante !== d.etapeCircuit ? ` — ${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}` : ""),
       userId: acteur.userId,
     },
@@ -544,7 +570,7 @@ export async function deciderArticles(
   demandeId: string,
   acteur: ActeurCircuit,
   decisions: readonly DecisionArticle[],
-  options: { motifDepassement?: string | null } = {}
+  options: { motifDepassement?: string | null; motifDG?: string | null } = {}
 ): Promise<(ResultatDecisionArticles & { ok: true }) | { ok: false; message: string }> {
   await verrouillerDemande(db, demandeId);
   const d = await db.demande.findUnique({ where: { id: demandeId }, select: SELECT_DEMANDE_CIRCUIT });
@@ -552,16 +578,25 @@ export async function deciderArticles(
   if (d.lignes.length === 0) {
     return { ok: false, message: "Cette demande n'a aucune ligne d'article — utilisez la validation par montant." };
   }
+  const roleDG = d.modeEtapeDG === "OBLIGATOIRE";
   for (const x of decisions) {
-    if (x.statut === "REJETEE" && (x.motif?.trim().length ?? 0) < 3) {
-      return { ok: false, message: "Un motif de rejet (3 caractères minimum) est obligatoire pour chaque ligne rejetée." };
+    if (x.statut !== "REJETEE") continue;
+    // Lot M : un rejet du DG (demande de la Finance, cas b) porte un motif de 10 à 300 caractères ; celui de la Finance, 3 à 300.
+    const longueur = x.motif?.trim().length ?? 0;
+    if (roleDG) {
+      const refusRejet = refusMotifEchange(x.motif, "le rejet du DG sur l'article");
+      if (refusRejet) return { ok: false, message: refusRejet };
+    } else if (longueur < 3 || longueur > MOTIF_ECHANGE_MAX) {
+      return { ok: false, message: `Un motif de rejet (3 à ${MOTIF_ECHANGE_MAX} caractères) est obligatoire pour chaque ligne rejetée.` };
     }
   }
 
   const circuit = await demandeCircuit(db, d);
+  const motifDG = nettoyerMotifEchange(options.motifDG);
   const r = transition(circuit, acteur, {
     type: "DECIDER_LIGNES",
     decisions: decisions.map((x) => ({ ligneId: x.ligneId, statut: x.statut })),
+    motifDG,
   });
   if (!r.ok) return r;
 
@@ -582,7 +617,6 @@ export async function deciderArticles(
     budget = controle.prevision;
   }
 
-  const roleDG = d.modeEtapeDG === "OBLIGATOIRE";
   const maintenant = new Date();
   const detail = new Map(
     (await db.ligneDemande.findMany({ where: { demandeId }, select: { id: true, quantite: true, prixUnitaire: true } })).map((l) => [l.id, l])
@@ -599,6 +633,8 @@ export async function deciderArticles(
       data: {
         statutValidation: x.statut,
         motifRejet: x.statut === "REJETEE" ? x.motif!.trim() : null,
+        // Lot M : motif de la réponse du DG (cas b) ; un article validé par le DG à l'étape précédente garde le sien.
+        ...(roleDG ? { motifDecisionDG: x.statut === "REJETEE" ? x.motif!.trim() : motifDG } : {}),
         decideParId: parDG ? l.decisionDGParId : acteur.userId,
         decideAt: parDG ? (l.decisionDGAt ?? maintenant) : maintenant,
         // Le décideur Finance n'est enregistré que pour une VALIDATION par la Finance (rejeter n'engage pas d'argent).
@@ -646,6 +682,7 @@ export async function deciderArticles(
     data.dgApprouveAt = maintenant;
   }
   if (r.effets.decideurFinance) data.decideurFinanceId = acteur.userId;
+  if (roleDG && motifDG) data.motifDecisionDG = motifDG;
   const majDemande = await db.demande.updateMany({ where: { id: demandeId, etapeCircuit: d.etapeCircuit }, data });
   if (majDemande.count !== 1) return { ok: false, message: "La demande a changé entre-temps : rechargez la page." };
 
@@ -660,7 +697,7 @@ export async function deciderArticles(
         detail:
           x.statut === "VALIDEE"
             ? `Ligne « ${l.libelle} » validée${l.decisionDG === "VALIDEE" ? " par le DG" : ""} (${montantLigne.quantite} × ${formaterMontant(Number(montantLigne.prixUnitaire))} FCFA)`
-            : `Ligne « ${l.libelle} » rejetée${l.decisionDG === "REFUSEE" ? " définitivement après refus du DG" : ""} — motif : ${x.motif!.trim()}`,
+            : `Ligne « ${l.libelle} » rejetée${l.decisionDG === "REFUSEE" ? " définitivement après rejet du DG" : ""} — motif : ${x.motif!.trim()}`,
         userId: acteur.userId,
       },
     });
@@ -672,6 +709,7 @@ export async function deciderArticles(
   ];
   if (r.etapeSuivante !== d.etapeCircuit) morceaux.push(`${LIBELLE_ETAPE_CIRCUIT[d.etapeCircuit]} → ${LIBELLE_ETAPE_CIRCUIT[r.etapeSuivante]}`);
   if (r.effets.niveauRejet) morceaux.push(`niveau ${NIVEAU_LIBELLE[r.effets.niveauRejet]}`);
+  if (roleDG && motifDG) morceaux.push(`motif du DG : ${motifDG}`);
   if (r.effets.approbationClotureParDG) morceaux.push("vaut approbation de clôture du DG");
   await db.historiqueEntry.create({
     data: { entity: "Demande", entityId: demandeId, action: ACTION_HISTORIQUE.DECIDER_LIGNES, detail: morceaux.join(" — "), userId: acteur.userId },
@@ -776,7 +814,8 @@ export async function corrigerEtResoumettre(
     const refusMotif = refusMotifLigne(l.motif);
     if (refusMotif) return { ok: false, message: refusMotif };
     if (!Number.isInteger(l.quantite) || l.quantite < 1) return { ok: false, message: "Chaque ligne doit avoir un nombre entier supérieur à 0." };
-    if (!(l.prixUnitaire >= 0)) return { ok: false, message: "Prix unitaire invalide." };
+    const prix = lireMontant(l.prixUnitaire, { devise: d.devise });
+    if (!prix.ok) return { ok: false, message: `Prix unitaire invalide : ${prix.message}` };
     if (l.dateLivraison) {
       const avantDate = l.id ? d.lignes.find((x) => x.id === l.id)?.dateLivraison : null;
       // Une date inchangée (même passée) n'est pas réexaminée ; seule une date saisie ou modifiée doit être valide.

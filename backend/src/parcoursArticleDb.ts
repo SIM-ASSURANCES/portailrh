@@ -105,6 +105,12 @@ export async function getParcoursArticles(
         decideAt: ligne.decideAt,
         confirmeParFinance: finance && finance !== decideParNom ? finance : null,
         motifRejet: ligne.motifRejet,
+        echangeDG: {
+          soumis: ligne.soumiseAuDG,
+          decide: ligne.decisionDG != null,
+          motifSoumission: ligne.motifSoumissionDG,
+          motifDecision: ligne.motifDecisionDG ?? ligne.motifRefusDG,
+        },
         regularisationIndeterminee,
         retoursExternes: externes
           .filter((x) => x.ligneDemandeId === ligne.id)

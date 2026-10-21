@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { schemaMontant } from "@/lib/schemaMontant";
 import { notify } from "@/lib/notifications";
 import {
   libelleMotifReglement,
@@ -40,7 +41,8 @@ type SimpleActionResult = { status: "success" | "error"; message: string };
 const MESSAGE_GEL_REJET_DG =
   "Rejetée par le DG — en attente de resoumission par Finance : aucun règlement possible pour l'instant.";
 
-const montantSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
+// Lot M : montant réanalysé côté serveur (texte « 1 500 000 » ou nombre), jamais un `Number()` du texte reçu.
+const montantSchema = schemaMontant();
 const modeSchema = z.enum(["CAISSE", "BANQUE"]);
 /** Articles d'une demande, vus sous l'angle du règlement (lot D : un règlement = un article). */
 function articlesReglables(
@@ -207,7 +209,7 @@ export async function creerReglementAction(
  */
 export async function modifierReglementAction(
   reglementId: string,
-  montant: number,
+  montant: number | string,
   mode: "CAISSE" | "BANQUE",
   motif?: string
 ): Promise<SimpleActionResult> {
@@ -219,7 +221,7 @@ export async function modifierReglementAction(
   const parsedMontant = montantSchema.safeParse(montant);
   const parsedMode = modeSchema.safeParse(mode);
   if (!parsedMontant.success || !parsedMode.success) {
-    return { status: "error", message: "Montant ou mode invalide." };
+    return { status: "error", message: parsedMontant.success ? "Mode invalide." : parsedMontant.error.issues[0]?.message ?? "Montant invalide." };
   }
 
   const reglement = await prisma.reglement.findUnique({ where: { id: reglementId } });
@@ -372,7 +374,7 @@ async function confirmerReglementInterne(reglementId: string): Promise<SimpleAct
   if (totalConfirme + montantReglement > Number(demande.montantValide)) {
     return {
       status: "error",
-      message: "Ce règlement dépasserait le montant validé de la demande — confirmation refusée.",
+      message: "Ce règlement dépasserait le montant validé de la demande — confirmation impossible.",
     };
   }
 
@@ -424,7 +426,7 @@ async function confirmerReglementInterne(reglementId: string): Promise<SimpleAct
   if (depassements.length > 0) {
     return {
       status: "error",
-      message: `Ce règlement dépasse le budget disponible pour : ${depassements.join(" ; ")} — confirmation refusée pour l'ensemble du règlement. Ajustez la répartition et resoumettez.`,
+      message: `Ce règlement dépasse le budget disponible pour : ${depassements.join(" ; ")} — confirmation impossible pour l'ensemble du règlement. Ajustez la répartition et resoumettez.`,
     };
   }
 

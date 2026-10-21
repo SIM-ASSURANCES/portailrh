@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { schemaMontant } from "@/lib/schemaMontant";
+
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { suffixeArticle } from "@/lib/nomArticle";
@@ -16,11 +18,11 @@ import {
   prisma,
   rienARendre,
 } from "backend";
-import { remettreChronoDemande } from "backend";
+import { lireMontant, remettreChronoDemande } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
-const montantRetourneSchema = z.coerce.number().min(0, "Le montant retourné doit être un nombre positif ou nul.");
+const montantRetourneSchema = schemaMontant({ positif: false, messagePositif: "Le montant retourné doit être un nombre positif ou nul." });
 
 // Tâche "Aucune date dans le passé" (voir CLAUDE.md) : contrainte
 // AJOUTÉE à celle déjà existante (pas avant le dernier règlement confirmé,
@@ -106,7 +108,8 @@ function construireLigneSynthetique(montantDepense: number, date: Date) {
  */
 export async function creerRetourCaisseAction(
   reglementId: string,
-  montantRetourne: number,
+  /** Texte saisi (« 1 500 000 ») ou nombre : réanalysé ici (lot M). */
+  montantRetourne: number | string,
   dateRetour: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -347,7 +350,7 @@ async function completerFicheRegularisation(
  */
 export async function modifierRetourCaisseAction(
   retourId: string,
-  montantRetourne: number,
+  montantRetourne: number | string,
   dateRetour: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -482,7 +485,7 @@ const signalementCommentaireSchema = z
 export async function signalerErreurRetourAction(
   retourId: string,
   commentaire: string,
-  montantPropose?: number
+  montantPropose?: number | string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.declarer_retour")) {
@@ -495,8 +498,12 @@ export async function signalerErreurRetourAction(
   }
 
   // Montant proposé : INFORMATIF (ne déclenche jamais rien automatiquement), strictement positif si fourni.
-  if (montantPropose != null && (!Number.isFinite(montantPropose) || montantPropose <= 0)) {
-    return { status: "error", message: "Le montant proposé doit être supérieur à 0." };
+  let montantProposeNombre: number | undefined;
+  if (montantPropose != null && !(typeof montantPropose === "string" && montantPropose.trim() === "")) {
+    const lu = lireMontant(montantPropose);
+    if (!lu.ok) return { status: "error", message: `Montant proposé invalide : ${lu.message}` };
+    if (lu.centimes <= 0) return { status: "error", message: "Le montant proposé doit être supérieur à 0." };
+    montantProposeNombre = lu.valeur;
   }
 
   const retour = await prisma.retourCaisse.findUnique({
@@ -532,7 +539,7 @@ export async function signalerErreurRetourAction(
         retourCaisseId: retourId,
         commentaire: parsedCommentaire.data,
         signaleParId: session.user.id,
-        montantPropose: montantPropose ?? null,
+        montantPropose: montantProposeNombre ?? null,
       },
     });
     await tx.historiqueEntry.create({
@@ -541,7 +548,7 @@ export async function signalerErreurRetourAction(
         entityId: demandeId,
         action: "signalement_retour",
         detail: `Erreur signalée par le collaborateur sur le détail d'un retour de caisse : ${parsedCommentaire.data}${
-          montantPropose != null ? ` (montant du retour proposé par le collaborateur : ${montantPropose.toLocaleString("fr-FR")} FCFA)` : ""
+          montantProposeNombre != null ? ` (montant du retour proposé par le collaborateur : ${montantProposeNombre.toLocaleString("fr-FR")} FCFA)` : ""
         }`,
         userId: session.user.id,
       },

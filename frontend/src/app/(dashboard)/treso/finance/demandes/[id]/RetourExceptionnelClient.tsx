@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, InputMontant, Select, Textarea } from "@/components/ui";
+import { analyserMontant } from "backend/client";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import {
@@ -40,13 +41,14 @@ export function RetourExceptionnelForm({
   }
 
   function handleSubmit() {
-    const m = Number(montant);
+    const m = analyserMontant(montant);
     if (articles.length > 0 && !ligneId) return setErreur("Choisissez l'article concerné.");
-    if (!m || m <= 0) return setErreur("Le montant doit être supérieur à 0.");
+    if (!m.ok) return setErreur(m.message);
+    if (m.centimes <= 0) return setErreur("Le montant doit être supérieur à 0.");
     if (motif.trim().length < 10) return setErreur("Le motif est obligatoire (10 caractères minimum).");
     setErreur(undefined);
     startTransition(async () => {
-      const result = await creerRetourExceptionnelAction(demandeId, m, motif, pieceUrl, ligneId || undefined);
+      const result = await creerRetourExceptionnelAction(demandeId, montant, motif, pieceUrl, ligneId || undefined);
       if (result.status === "success") {
         toast.success(result.message);
         setOpen(false);
@@ -73,16 +75,7 @@ export function RetourExceptionnelForm({
         />
       ) : null}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Input
-          label="Montant rendu (FCFA)"
-          type="number"
-          inputMode="decimal"
-          min="0"
-          step="1"
-          required
-          value={montant}
-          onChange={(e) => setMontant(e.target.value)}
-        />
+        <InputMontant label="Montant rendu (FCFA)" required value={montant} onValueChange={setMontant} />
       </div>
       <Textarea
         label="Motif"
