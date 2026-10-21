@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "backend";
+import { prisma, jourCivilDepuisColonneDate } from "backend";
+import type { PlageCongeCalendrier } from "@/lib/conges/plagesCalendrier";
 import { getSession } from "@/lib/auth";
 import { hasPermission } from "@/lib/auth";
 
@@ -14,6 +15,36 @@ export async function getJoursFeries() {
   return await prisma.jourFerie.findMany({
     orderBy: { date: 'asc' }
   });
+}
+
+/**
+ * Plages de congé du collaborateur connecté (validées ou en cours de circuit) pour le calendrier du Topbar.
+ * Strictement limitées à `session.user.id`.
+ */
+export async function getMesPlagesConges(): Promise<PlageCongeCalendrier[]> {
+  const session = await getSession();
+  if (!session) {
+    throw new Error("Non autorisé");
+  }
+
+  const limite = new Date();
+  limite.setMonth(limite.getMonth() - 3);
+
+  const demandes = await prisma.demandeConge.findMany({
+    where: {
+      userId: session.user.id,
+      statut: { in: ["VALIDEE", "EN_ATTENTE_RESPONSABLE", "EN_ATTENTE_RH", "MODIFICATION_DEMANDEE"] },
+      dateFin: { gte: limite },
+    },
+    select: { id: true, dateDebut: true, dateFin: true, statut: true },
+  });
+
+  return demandes.map((d) => ({
+    id: d.id,
+    debut: jourCivilDepuisColonneDate(d.dateDebut),
+    fin: jourCivilDepuisColonneDate(d.dateFin),
+    etat: d.statut === "VALIDEE" ? "valide" : "demande",
+  }));
 }
 
 export async function ajouterJoursFeriesBatch(jours: { date: Date, libelle: string }[]) {
