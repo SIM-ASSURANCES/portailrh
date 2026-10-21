@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 DBN=mig_a2
 PSQL="docker exec -i -e PGOPTIONS=-cclient_min_messages=warning pg-e2e psql -U postgres -v ON_ERROR_STOP=1 -q -t -A"
 MIGS=backend/prisma/migrations
-CIBLE=20261028090000_conges_permissions_absence
+CIBLE=20261030090000_conges_permissions_absence
 
 docker exec pg-e2e psql -U postgres -q -c "DROP DATABASE IF EXISTS $DBN" -c "CREATE DATABASE $DBN" >/dev/null
 for d in $(ls "$MIGS" | grep -E '^[0-9]{14}_' | sort); do
