@@ -6,6 +6,7 @@
 import { chromium } from "playwright";
 import pg from "pg";
 import { assurerSignatures } from "./signatures-auto.mjs";
+import { remplirMotifArticle } from "./motifs.mjs";
 
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
@@ -25,7 +26,7 @@ const erreursJs = [];
 
 const PHRASE_PERMISSION = "Votre rôle n'a pas la permission de soumettre au DG. Contactez un administrateur.";
 const PHRASE_SANS_CATEGORIE = "Catégorisez cet article avant de le soumettre au DG.";
-const PHRASE_INTRO = "Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG. Un article refusé par le DG peut lui être resoumis. Seul un article catégorisé peut être soumis.";
+const PHRASE_INTRO = "Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG. Un article rejeté par le DG peut lui être resoumis. Seul un article catégorisé peut être soumis.";
 const PHRASE_ATTENTE_FINALE = "En attente de la validation finale.";
 // Lot B : les autres articles ne sont plus bloqués pendant que le DG décide.
 const PHRASE_BANDEAU = "Des articles de cette demande attendent la décision du DG. Les autres articles ne sont pas bloqués";
@@ -117,6 +118,10 @@ async function visible(loc) {
   await ouvrir(p, "e2e-soum-d-finance");
   const nb = await p.locator("[data-soumettre-article]").count();
   verifier("finance@ : un bouton « Soumettre au DG » par article (3)", nb === 3, `${nb} boutons`);
+  // Lot M : l'envoi au DG porte un motif (10 à 300 caractères) — le bouton reste grisé tant qu'il n'est pas saisi.
+  verifier("finance@ : A grisé tant que le motif d'envoi n'est pas saisi (lot M)", await bouton(p, 1).isDisabled());
+  await remplirMotifArticle(p, ligneId("d-finance", 1));
+  await remplirMotifArticle(p, ligneId("d-finance", 2));
   verifier("finance@ : A actif", !(await bouton(p, 1).isDisabled()));
   verifier("finance@ : B actif", !(await bouton(p, 2).isDisabled()));
   verifier("finance@ : C (non catégorisé) grisé", await bouton(p, 3).isDisabled());

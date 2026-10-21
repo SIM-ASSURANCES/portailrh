@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { BENEFICIAIRE_TYPE_OPTIONS } from "backend/client";
 import { NATURE_DEPENSE_DIRECTE_OPTIONS } from "@/components/tresorerie/depenseDirecte";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, Input, InputMontant, Select, Textarea } from "@/components/ui";
 import type { BeneficiaireType } from "backend";
 import { useActionFeedback } from "@/lib/hooks/useActionFeedback";
 import { IDLE_ACTION_STATE } from "backend/client";
@@ -143,15 +143,11 @@ export function DepenseDirecteForm({ users, disabled = false }: { users: UserOpt
         error={state.status === "error" ? state.fieldErrors?.description : undefined}
       />
 
-      <Input
+      <InputMontant
         name="montant"
         label="Montant (FCFA)"
-        type="number"
-        inputMode="decimal"
-        min="1"
-        step="1"
         required
-        placeholder="Ex: 50000"
+        placeholder="Ex: 50 000"
         error={state.status === "error" ? state.fieldErrors?.montant : undefined}
       />
 
@@ -161,6 +157,16 @@ export function DepenseDirecteForm({ users, disabled = false }: { users: UserOpt
         rows={3}
         hint="Optionnel"
         error={state.status === "error" ? state.fieldErrors?.commentaire : undefined}
+      />
+
+      {/* Lot M : une dépense directe dont le bénéficiaire est son auteur part chez le DG — le motif d'envoi est alors obligatoire (revérifié par le serveur). */}
+      <Textarea
+        name="motifEnvoiDG"
+        label="Motif de l'envoi au DG"
+        rows={2}
+        maxLength={300}
+        hint="Obligatoire (10 à 300 caractères) si vous êtes vous-même le bénéficiaire : la dépense est alors décidée par le DG."
+        error={state.status === "error" ? state.fieldErrors?.motifEnvoiDG : undefined}
       />
 
       <input type="hidden" name="pieceJointeUrl" value={pieceJointeUrl ?? ""} />

@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+
+import { schemaMontant } from "@/lib/schemaMontant";
 import type { Prisma } from "backend";
-import { remettreChronoDemande } from "backend";
+import { lireMontant, remettreChronoDemande } from "backend";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
@@ -355,7 +357,7 @@ async function receptionnerRetourInterne(retourId: string): Promise<SimpleAction
 const ligneDetailSchema = z
   .object({
     libelle: z.string().trim().min(1, "Le libellé est obligatoire."),
-    montant: z.coerce.number().positive("Le montant doit être supérieur à 0."),
+    montant: schemaMontant({ messagePositif: "Le montant doit être supérieur à 0." }),
     pieceJointeFournie: z.boolean(),
     pieceJointeUrl: z.string().optional(),
     justifiee: z.boolean(),
@@ -395,7 +397,8 @@ const lignesDetailSchema = z.array(ligneDetailSchema);
 export interface LigneDetailInput {
   /** Texte libre décrivant l'usage réel de la dépense (ex: "Transport pour livraison X"). */
   libelle: string;
-  montant: number;
+  /** Texte saisi (« 1 500 ») ou nombre : réanalysé par le serveur (lot M). */
+  montant: number | string;
   /** État EXPLICITE, jamais déduit du silence — voir CLAUDE.md "L'Assistant
    * Finance détaille réellement le retour" : `false` affiche "Aucune pièce
    * jointe fournie." côté Collaborateur, jamais une simple absence muette. */
@@ -766,7 +769,7 @@ const motifAjustementTotalSchema = z
  */
 export async function ajusterTotalDeclareRetourAction(
   retourId: string,
-  nouveauTotal: number,
+  nouveauTotalBrut: number | string,
   motif: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -783,9 +786,10 @@ export async function ajusterTotalDeclareRetourAction(
   if (!parsedMotif.success) {
     return { status: "error", message: parsedMotif.error.issues[0].message };
   }
-  if (!Number.isFinite(nouveauTotal) || nouveauTotal <= 0) {
-    return { status: "error", message: "Le nouveau total doit être supérieur à 0." };
-  }
+  const totalLu = lireMontant(nouveauTotalBrut);
+  if (!totalLu.ok) return { status: "error", message: `Nouveau total invalide : ${totalLu.message}` };
+  if (totalLu.centimes <= 0) return { status: "error", message: "Le nouveau total doit être supérieur à 0." };
+  const nouveauTotal = totalLu.valeur;
 
   const retour = await prisma.retourCaisse.findUnique({
     where: { id: retourId },
@@ -1030,7 +1034,7 @@ export async function declarerRetourComplementaireAction(retourId: string): Prom
 }
 
 const remboursementSchema = z.object({
-  montant: z.coerce.number().positive("Le montant doit être supérieur à 0."),
+  montant: schemaMontant({ messagePositif: "Le montant doit être supérieur à 0." }),
   motif: z.string().trim().min(10, "Le motif est obligatoire (10 caractères minimum)."),
   pieceJointeUrl: z.string().trim().min(1, "Le justificatif est obligatoire."),
 });
@@ -1042,7 +1046,7 @@ const remboursementSchema = z.object({
  */
 export async function proposerRemboursementRetourAction(
   retourId: string,
-  montant: number,
+  montant: number | string,
   motif: string,
   pieceJointeUrl: string
 ): Promise<SimpleActionResult> {
@@ -1413,7 +1417,7 @@ export async function detaillerDepensesReglementAction(
 
 export interface ModificationDepenseInput {
   libelle: string;
-  montant: number;
+  montant: number | string;
   justifiee: boolean;
   /** Nouvelle pièce jointe (nom renvoyé par l'upload) ; absente : la pièce actuelle est gardée. */
   pieceJointeUrl?: string;
@@ -1423,7 +1427,7 @@ export interface ModificationDepenseInput {
 
 const modificationDepenseSchema = z.object({
   libelle: z.string().trim().min(1, "Le libellé est obligatoire."),
-  montant: z.coerce.number().positive("Le montant doit être supérieur à 0."),
+  montant: schemaMontant({ messagePositif: "Le montant doit être supérieur à 0." }),
   justifiee: z.boolean(),
   pieceJointeUrl: z.string().optional(),
   motifNonJustifie: z.string().optional(),

@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, InputMontant, Textarea } from "@/components/ui";
+import { analyserMontant } from "backend/client";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import { definirSoldeOuvertureAction } from "./actions";
@@ -32,9 +33,9 @@ export function SoldeOuvertureForm({ disabled = false }: { disabled?: boolean })
   const [isPending, startTransition] = useTransition();
 
   function handleSubmit() {
-    const valeur = Number(montant);
-    if (!valeur || valeur <= 0) {
-      setMontantError("Le montant doit être supérieur à 0.");
+    const analyse = analyserMontant(montant);
+    if (!analyse.ok || analyse.centimes <= 0) {
+      setMontantError(analyse.ok ? "Le montant doit être supérieur à 0." : analyse.message);
       return;
     }
     if (!pieceJointeUrl) {
@@ -44,7 +45,7 @@ export function SoldeOuvertureForm({ disabled = false }: { disabled?: boolean })
     setMontantError(undefined);
     setPieceJointeError(undefined);
     startTransition(async () => {
-      const result = await definirSoldeOuvertureAction(valeur, pieceJointeUrl, motif.trim() || undefined);
+      const result = await definirSoldeOuvertureAction(montant, pieceJointeUrl, motif.trim() || undefined);
       if (result.status === "success") {
         toast.success(result.message);
       } else {
@@ -60,16 +61,12 @@ export function SoldeOuvertureForm({ disabled = false }: { disabled?: boolean })
         caisse à ce jour — cette opération n&apos;est possible qu&apos;<strong>une seule fois</strong> ; une
         correction ultérieure passera par une écriture tracée distincte.
       </p>
-      <Input
+      <InputMontant
         label="Montant (FCFA)"
-        type="number"
-        inputMode="decimal"
-        min="1"
-        step="1"
         required
         value={montant}
-        onChange={(e) => {
-          setMontant(e.target.value);
+        onValueChange={(texte) => {
+          setMontant(texte);
           if (montantError) setMontantError(undefined);
         }}
         error={montantError}

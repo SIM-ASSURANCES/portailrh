@@ -130,7 +130,7 @@ const MESSAGE_STATUT_FIGE: Record<StatutJustificationPointage, string> = {
   NON_JUSTIFIEE: "Le collaborateur n'a pas encore envoyé de justification.",
   SOUMISE: "La justification a déjà été envoyée et attend la décision.",
   ACCEPTEE: "La justification a déjà été acceptée.",
-  REFUSEE: "La justification a déjà été refusée.",
+  REFUSEE: "La justification a déjà été rejetée.",
 };
 
 /**
@@ -160,11 +160,11 @@ export function transitionJustification(
   if (motifRefus.length < MOTIF_REFUS_JUSTIFICATION_MIN) {
     return {
       ok: false,
-      erreur: `Le motif du refus doit contenir au moins ${MOTIF_REFUS_JUSTIFICATION_MIN} caractères.`,
+      erreur: `Le motif du rejet doit contenir au moins ${MOTIF_REFUS_JUSTIFICATION_MIN} caractères.`,
     };
   }
   if (motifRefus.length > MOTIF_JUSTIFICATION_MAX) {
-    return { ok: false, erreur: `Le motif du refus ne doit pas dépasser ${MOTIF_JUSTIFICATION_MAX} caractères.` };
+    return { ok: false, erreur: `Le motif du rejet ne doit pas dépasser ${MOTIF_JUSTIFICATION_MAX} caractères.` };
   }
   return { ok: true, statut: "REFUSEE", motifRefus };
 }
@@ -177,7 +177,7 @@ export const LIBELLE_STATUT_JUSTIFICATION: Record<StatutJustificationPointage, s
   EN_ATTENTE: "Justification attendue",
   SOUMISE: "Justification envoyée",
   ACCEPTEE: "Justification acceptée",
-  REFUSEE: "Justification refusée",
+  REFUSEE: "Justification rejetée",
   NON_JUSTIFIEE: "Non justifié",
 };
 
@@ -277,8 +277,8 @@ export function messageDecisionJustification(params: {
     return { titre: "Justification acceptée", message: `${objet} a été acceptée par ${decideurNom}.` };
   }
   return {
-    titre: "Justification refusée",
-    message: `${objet} a été refusée par ${decideurNom}. Motif : ${motifRefus ?? "—"}`,
+    titre: "Justification rejetée",
+    message: `${objet} a été rejetée par ${decideurNom}. Motif : ${motifRefus ?? "—"}`,
   };
 }
 

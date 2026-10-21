@@ -3,8 +3,8 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
-import { libelleMotifReglement, MOTIF_REGLEMENT_MIN, motifPourModification } from "backend/client";
+import { Badge, Button, InputMontant, Select, Textarea } from "@/components/ui";
+import { analyserMontant, libelleMotifReglement, MOTIF_REGLEMENT_MIN, motifPourModification, texteSaisieMontant } from "backend/client";
 
 import { annulerReglementAction, confirmerReglementAction, modifierReglementAction } from "./reglementActions";
 
@@ -98,7 +98,7 @@ export function ReglementRow({
 }) {
   const [uiMode, setUiMode] = useState<"view" | "edit" | "annuler">("view");
   const [montantError, setMontantError] = useState<string | undefined>();
-  const [montantEdit, setMontantEdit] = useState(String(reglement.montant));
+  const [montantEdit, setMontantEdit] = useState(texteSaisieMontant(reglement.montant));
   const [motif, setMotif] = useState("");
   const [motifError, setMotifError] = useState<string | undefined>();
   const [motifReglementEdit, setMotifReglementEdit] = useState(reglement.motif ?? "");
@@ -116,11 +116,13 @@ export function ReglementRow({
   function handleSubmitEdition(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const montantValue = Number(formData.get("montant"));
+    // Lot M : le texte saisi est envoyé tel quel, le serveur le réanalyse (jamais un nombre de confiance).
+    const montantValue = String(formData.get("montant") ?? "");
+    const analyse = analyserMontant(montantValue);
     const modeValue = formData.get("mode") as "CAISSE" | "BANQUE";
 
-    if (!montantValue || montantValue <= 0) {
-      setMontantError("Montant invalide.");
+    if (!analyse.ok || analyse.centimes <= 0) {
+      setMontantError(analyse.ok ? "Le montant doit être supérieur à 0." : analyse.message);
       return;
     }
     setMontantError(undefined);
@@ -239,15 +241,11 @@ export function ReglementRow({
 
       {uiMode === "edit" ? (
         <form onSubmit={handleSubmitEdition} className="animate-fade-in-up space-y-3 border-t border-border pt-3">
-          <Input
+          <InputMontant
             name="montant"
             label="Montant"
-            type="number"
-            inputMode="decimal"
-            min="1"
-            step="1"
             value={montantEdit}
-            onChange={(e) => setMontantEdit(e.target.value)}
+            onValueChange={setMontantEdit}
             error={montantError}
           />
           <Textarea

@@ -3,13 +3,11 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input } from "@/components/ui";
-import { libelleSeuil, type SeuilBudget } from "backend/client";
+import { ChampMotifEchange, motifEchangeValide } from "@/components/tresorerie/ChampMotifEchange";
+import { Button, Input, InputMontant } from "@/components/ui";
+import { analyserMontant, libelleSeuil, texteSaisieMontant, type SeuilBudget } from "backend/client";
 
 import { soumettreSeuilsCaisseAction } from "./actions";
-
-const CLASSE_CHAMP =
-  "block w-full rounded-lg border border-border px-2 py-1.5 text-sm text-foreground tabular-nums focus:outline-2 focus:outline-offset-2 focus:outline-primary disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground";
 
 /**
  * Paramétrage du budget de caisse (lot J quater). Le budget de caisse n'a AUCUN montant : c'est le solde de caisse réel (journal de caisse).
@@ -29,13 +27,21 @@ export function ParametrageCaisseForm({
 }) {
   const [dateDebut, setDateDebut] = useState(aujourdhui);
   const [dateFin, setDateFin] = useState("");
-  const [orange, setOrange] = useState(String(actuel?.mode === "MONTANT" ? actuel.orange : 100000));
-  const [rouge, setRouge] = useState(String(actuel?.mode === "MONTANT" ? actuel.rouge : 0));
+  const [orange, setOrange] = useState(texteSaisieMontant(actuel?.mode === "MONTANT" ? actuel.orange : 100000));
+  const [rouge, setRouge] = useState(texteSaisieMontant(actuel?.mode === "MONTANT" ? actuel.rouge : 0));
+  const [motif, setMotif] = useState("");
   const [erreurs, setErreurs] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
 
   function soumettre() {
     setErreurs({});
+    // Lot M : les seuils sont envoyés tels que saisis (« 100 000 »), le serveur les réanalyse ; refus clair avant l'envoi.
+    const aOrange = analyserMontant(orange);
+    const aRouge = analyserMontant(rouge);
+    if (!aOrange.ok || !aRouge.ok) {
+      setErreurs({ ...(!aOrange.ok ? { seuilOrange: aOrange.message } : {}), ...(!aRouge.ok ? { seuilRouge: aRouge.message } : {}) });
+      return;
+    }
     startTransition(async () => {
       const r = await soumettreSeuilsCaisseAction({
         portee: "GLOBAL",
@@ -43,11 +49,12 @@ export function ParametrageCaisseForm({
         montant: null,
         dateDebut,
         dateFin: dateFin || null,
-        seuil: { mode: "MONTANT", orange: Number(orange), rouge: Number(rouge) },
-      });
+        seuil: { mode: "MONTANT", orange, rouge },
+      }, motif.trim());
       if (r.status === "success") {
         toast.success(r.message);
         setDateFin("");
+        setMotif("");
       } else {
         setErreurs(r.erreursParIndex?.[0] ?? {});
         toast.error(r.message);
@@ -75,12 +82,12 @@ export function ParametrageCaisseForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="mb-1 block text-sm font-medium text-foreground" htmlFor="caisse-orange">Seuil orange (FCFA) — solde de caisse ≤</label>
-          <input id="caisse-orange" aria-label="Seuil orange (FCFA) — solde de caisse" name="orange-caisse" type="number" min={0} step="0.01" className={CLASSE_CHAMP} disabled={enAttente} value={orange} onChange={(e) => setOrange(e.target.value)} />
+          <InputMontant id="caisse-orange" aria-label="Seuil orange (FCFA) — solde de caisse" name="orange-caisse" disabled={enAttente} value={orange} onValueChange={setOrange} />
           {erreurs.seuilOrange ? <p className="mt-1 text-xs text-danger">{erreurs.seuilOrange}</p> : null}
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-foreground" htmlFor="caisse-rouge">Seuil rouge (FCFA) — solde de caisse ≤</label>
-          <input id="caisse-rouge" aria-label="Seuil rouge (FCFA) — solde de caisse" name="rouge-caisse" type="number" min={0} step="0.01" className={CLASSE_CHAMP} disabled={enAttente} value={rouge} onChange={(e) => setRouge(e.target.value)} />
+          <InputMontant id="caisse-rouge" aria-label="Seuil rouge (FCFA) — solde de caisse" name="rouge-caisse" disabled={enAttente} value={rouge} onValueChange={setRouge} />
           {erreurs.seuilRouge ? <p className="mt-1 text-xs text-danger">{erreurs.seuilRouge}</p> : null}
         </div>
       </div>
@@ -88,7 +95,8 @@ export function ParametrageCaisseForm({
       <p className="text-xs text-muted-foreground">
         Le budget de caisse n&apos;est pas un montant saisi : c&apos;est le solde de caisse réel. Seuls ses seuils se règlent, en FCFA (orange puis rouge strictement plus bas).
       </p>
-      <Button signe type="submit" loading={isPending} disabled={enAttente || isPending} data-soumettre-caisse>
+      <ChampMotifEchange name="motifSoumission" label="Motif de l'envoi au DG" hint="Transmis au DG avec les seuils." value={motif} onChange={setMotif} disabled={enAttente} />
+      <Button signe type="submit" loading={isPending} disabled={enAttente || isPending || !motifEchangeValide(motif)} data-soumettre-caisse>
         Soumettre les seuils au DG
       </Button>
     </form>

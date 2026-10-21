@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { OPTIONS_MODE } from "@/components/encaissements/libelles";
-import { Button, Input, Select } from "@/components/ui";
+import { Button, Input, InputMontant, Select } from "@/components/ui";
 
 import { saisirVersementAction } from "./actions";
 
@@ -101,13 +101,17 @@ export function AjouterVersement({ contratId, resteDu, aujourdHui }: { contratId
           onChange={changer(setReference)}
           error={erreurs.reference}
         />
-        <Input
+        <InputMontant
           label="Montant (FCFA)"
-          inputMode="decimal"
+          decimales
           required
           hint="Le reste dû est proposé."
           value={montant}
-          onChange={changer(setMontant)}
+          onValueChange={(texte) => {
+            setMontant(texte);
+            setAlerte(null);
+            setConfirmations({});
+          }}
           error={erreurs.montant}
         />
       </div>

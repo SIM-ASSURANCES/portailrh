@@ -80,7 +80,7 @@ describe("destinataires par étape", () => {
   it("Rejet DG : la Finance, qui peut resoumettre ou renvoyer au demandeur", () => {
     const n = notificationsEtape(ctx("REJET_DG", { niveauRejet: "DG", motifRejet: "Budget insuffisant" }), candidats, "dg");
     expect(destinataires(n)).toEqual(["fin-1", "fin-2"]);
-    expect(n[0].message).toMatch(/Motif : Budget insuffisant. Resoumettez-la au DG ou renvoyez-la au demandeur/);
+    expect(n[0].message).toMatch(/Motif du DG : Budget insuffisant. Resoumettez-la au DG \(avec un nouveau motif\) ou renvoyez-la au demandeur/);
   });
 
   it("Décision finale après validation du DG : la Finance, jamais le DG qui a validé", () => {

@@ -3,7 +3,7 @@
 //      validation avec confirmation du DG (écran réel), règlement confirmé au-delà du reste du budget, trace (qui, motif, montant couvert),
 //      mention dans le parcours de l'article et le reporting ; un autre article, un règlement au-delà du montant confirmé et un
 //      article sans confirmation restent refusés ; budget toujours consommé au règlement ; aucune écriture de caisse.
-//   2. Page « Budgets », catégories : « Dernier paramétrage refusé » + budget en vigueur conservé.
+//   2. Page « Budgets », catégories : « Dernier paramétrage rejeté » + budget en vigueur conservé.
 //   3. La Finance (`treso.gerer_categories`) désactive / réactive catégories et objets : tracé, absent des choix mais présent dans
 //      l'historique, le reporting et les demandes existantes ; budget visible ; droits de l'Admin inchangés ; refus sans la permission.
 import { execFileSync } from "node:child_process";
@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { chromium } from "playwright";
 import pg from "pg";
 import { assurerSignatures } from "./signatures-auto.mjs";
+import { MOTIF } from "./motifs.mjs";
 
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
@@ -167,12 +168,13 @@ const L2 = `${D1}-l2`;
   await finance.locator(`[data-ligne-card="${L1}"]`).getByRole("button", { name: "Valider", exact: true }).click();
   await finance.locator("[data-budget-bloc]").waitFor();
   verifier("1a. validation de 120 000 sur un budget de 100 000 : alerte ROUGE, « Enregistrer » grisé", (await finance.locator('[data-alerte-budget="ROUGE"]').count()) === 1 && (await finance.getByRole("button", { name: /Enregistrer les décisions/ }).isDisabled()));
+  await finance.locator('[data-motif-echange][name="motifDemandeDepassement"]').fill(MOTIF);
   await finance.locator("[data-demander-confirmation-dg]").click();
   verifier("1a. la Finance demande la confirmation du DG", await attendre(async () => (await q(`SELECT statut FROM "BudgetDepassement" WHERE "demandeId"=$1`, [D1])).length === 1));
 
   await dg.goto(`${B}/treso/finance/budgets`);
   const bd = dg.locator("[data-depassement]").first();
-  await bd.locator('input[name="motifDepassement"]').fill("Serveur indispensable à la reprise d'activité");
+  await bd.locator('[name="motifDepassement"]').fill("Serveur indispensable à la reprise d'activité");
   await bd.getByRole("button", { name: "Confirmer le dépassement" }).click();
   verifier("1b. le DG confirme (statut CONFIRME)", await attendre(async () => (await q(`SELECT statut FROM "BudgetDepassement" WHERE "demandeId"=$1`, [D1]))[0]?.statut === "CONFIRME"));
 
@@ -283,11 +285,11 @@ await q(`INSERT INTO "BudgetParametrage"(id, portee, "categorieId", montant, "da
     await p.goto(`${B}/treso/finance/budgets`);
     const ligneD = p.locator('[data-budget-ligne="E2E-JB-CATD"]');
     const tD = net(await ligneD.innerText());
-    verifier(`2. ${email.split("@")[0]} : catégorie au dernier paramétrage refusé → « Dernier paramétrage refusé » et budget en vigueur conservé (200 000)`, (await ligneD.locator("[data-dernier-parametrage-refuse]").count()) === 1 && /Dernier paramétrage refusé/.test(tD) && /Budget en vigueur conservé : 200.000 FCFA/.test(tD), tD);
+    verifier(`2. ${email.split("@")[0]} : catégorie au dernier paramétrage refusé → « Dernier paramétrage rejeté » et budget en vigueur conservé (200 000)`, (await ligneD.locator("[data-dernier-parametrage-refuse]").count()) === 1 && /Dernier paramétrage rejeté/.test(tD) && /Budget en vigueur conservé : 200.000 FCFA/.test(tD), tD);
     const tE = net(await p.locator('[data-budget-ligne="E2E-JB-CATE"]').innerText());
-    verifier(`2. ${email.split("@")[0]} : catégorie dont le seul paramétrage a été refusé → « Aucun budget en vigueur »`, /Dernier paramétrage refusé/.test(tE) && /Aucun budget en vigueur/.test(tE), tE);
+    verifier(`2. ${email.split("@")[0]} : catégorie dont le seul paramétrage a été refusé → « Aucun budget en vigueur »`, /Dernier paramétrage rejeté/.test(tE) && /Aucun budget en vigueur/.test(tE), tE);
     const tA = net(await p.locator('[data-budget-ligne="E2E-JB-CATA"]').innerText());
-    verifier(`2. ${email.split("@")[0]} : une catégorie dont le dernier paramétrage est validé n'affiche pas cette mention`, !/Dernier paramétrage refusé/.test(tA), tA);
+    verifier(`2. ${email.split("@")[0]} : une catégorie dont le dernier paramétrage est validé n'affiche pas cette mention`, !/Dernier paramétrage rejeté/.test(tA), tA);
     await p.close();
   }
 }

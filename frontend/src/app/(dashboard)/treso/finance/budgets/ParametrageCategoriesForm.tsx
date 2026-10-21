@@ -3,8 +3,9 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input } from "@/components/ui";
-import { libelleSeuil, type SeuilBudget } from "backend/client";
+import { ChampMotifEchange, motifEchangeValide } from "@/components/tresorerie/ChampMotifEchange";
+import { Button, Input, InputMontant } from "@/components/ui";
+import { analyserMontant, libelleSeuil, texteSaisieMontant, type SeuilBudget } from "backend/client";
 
 import { soumettreBudgetsCategoriesAction } from "./actions";
 
@@ -32,10 +33,10 @@ const CLASSE_CHAMP =
 
 const ligneInitiale = (actuel: LigneCategorieSaisie["actuel"]): Ligne => ({
   coche: false,
-  montant: actuel ? String(actuel.montant) : "",
+  montant: actuel ? texteSaisieMontant(actuel.montant) : "",
   mode: actuel?.seuil?.mode ?? "POURCENTAGE",
-  orange: String(actuel?.seuil?.orange ?? 20),
-  rouge: String(actuel?.seuil?.rouge ?? 10),
+  orange: actuel?.seuil?.mode === "MONTANT" ? texteSaisieMontant(actuel.seuil.orange) : String(actuel?.seuil?.orange ?? 20),
+  rouge: actuel?.seuil?.mode === "MONTANT" ? texteSaisieMontant(actuel.seuil.rouge) : String(actuel?.seuil?.rouge ?? 10),
 });
 
 /**
@@ -46,6 +47,7 @@ const ligneInitiale = (actuel: LigneCategorieSaisie["actuel"]): Ligne => ({
  * jamais un budget en vigueur.
  */
 export function ParametrageCategoriesForm({ categories, aujourdhui }: { categories: LigneCategorieSaisie[]; aujourdhui: string }) {
+  const [motif, setMotif] = useState("");
   const [dateDebut, setDateDebut] = useState(aujourdhui);
   const [dateFin, setDateFin] = useState("");
   const [lignes, setLignes] = useState<Record<string, Ligne>>(() => Object.fromEntries(categories.map((c) => [c.id, ligneInitiale(c.actuel)])));
@@ -60,23 +62,44 @@ export function ParametrageCategoriesForm({ categories, aujourdhui }: { categori
 
   function soumettre() {
     setErreurs({});
+    // Lot M : montants et seuils en FCFA sont envoyés tels que saisis (le serveur les réanalyse) ; refus clair avant l'envoi.
+    const erreursTexte: Record<string, Record<string, string>> = {};
+    for (const k of cochees) {
+      const l = ligneDe(k);
+      const e: Record<string, string> = {};
+      const m = analyserMontant(l.montant);
+      if (!m.ok) e.montant = m.message;
+      if (l.mode === "MONTANT") {
+        const o = analyserMontant(l.orange);
+        const r = analyserMontant(l.rouge);
+        if (!o.ok) e.seuilOrange = o.message;
+        if (!r.ok) e.seuilRouge = r.message;
+      }
+      if (Object.keys(e).length > 0) erreursTexte[k] = e;
+    }
+    if (Object.keys(erreursTexte).length > 0) {
+      setErreurs(erreursTexte);
+      toast.error("Corrigez les montants signalés.");
+      return;
+    }
     const saisies = cochees.map((k) => {
       const l = ligneDe(k);
       return {
         portee: "CATEGORIE" as const,
         categorieId: k,
-        montant: Number(l.montant),
+        montant: l.montant,
         dateDebut,
         dateFin: dateFin || null,
-        seuil: l.mode !== "AUCUN" ? { mode: l.mode as "POURCENTAGE" | "MONTANT", orange: Number(l.orange), rouge: Number(l.rouge) } : null,
+        seuil: l.mode !== "AUCUN" ? { mode: l.mode as "POURCENTAGE" | "MONTANT", orange: l.mode === "MONTANT" ? l.orange : Number(l.orange), rouge: l.mode === "MONTANT" ? l.rouge : Number(l.rouge) } : null,
       };
     });
     startTransition(async () => {
-      const r = await soumettreBudgetsCategoriesAction(saisies);
+      const r = await soumettreBudgetsCategoriesAction(saisies, motif.trim());
       if (r.status === "success") {
         toast.success(r.message);
         setLignes((l) => Object.fromEntries(Object.entries(l).map(([k, v]) => [k, { ...v, coche: false }])));
         setDateFin("");
+        setMotif("");
       } else {
         const parCle: Record<string, Record<string, string>> = {};
         for (const [i, e] of Object.entries(r.erreursParIndex ?? {})) parCle[cochees[Number(i)]] = e;
@@ -93,16 +116,12 @@ export function ParametrageCategoriesForm({ categories, aujourdhui }: { categori
     return (
       <>
         <td className="px-2 py-2 align-top">
-          <input
+          <InputMontant
             aria-label={`Montant du budget (FCFA) — ${cle}`}
             name={`montant-${cle}`}
-            type="number"
-            min={0}
-            step="0.01"
-            className={CLASSE_CHAMP}
             disabled={desactive}
             value={l.montant}
-            onChange={(ev) => maj(cle, { montant: ev.target.value, coche: ev.target.value !== "" ? true : l.coche })}
+            onValueChange={(texte) => maj(cle, { montant: texte, coche: texte !== "" ? true : l.coche })}
           />
           {e.montant ? <p className="mt-1 text-xs text-danger">{e.montant}</p> : null}
         </td>
@@ -117,7 +136,11 @@ export function ParametrageCategoriesForm({ categories, aujourdhui }: { categori
         <td className="px-2 py-2 align-top">
           {l.mode !== "AUCUN" ? (
             <>
-              <input aria-label={`Seuil orange (${unite}) — ${cle}`} name={`orange-${cle}`} type="number" min={0} step="0.01" className={CLASSE_CHAMP} disabled={desactive} value={l.orange} onChange={(ev) => maj(cle, { orange: ev.target.value })} />
+              {l.mode === "MONTANT" ? (
+                <InputMontant aria-label={`Seuil orange (${unite}) — ${cle}`} name={`orange-${cle}`} disabled={desactive} value={l.orange} onValueChange={(texte) => maj(cle, { orange: texte })} />
+              ) : (
+                <input aria-label={`Seuil orange (${unite}) — ${cle}`} name={`orange-${cle}`} type="number" min={0} step="0.01" className={CLASSE_CHAMP} disabled={desactive} value={l.orange} onChange={(ev) => maj(cle, { orange: ev.target.value })} />
+              )}
               {e.seuilOrange ? <p className="mt-1 text-xs text-danger">{e.seuilOrange}</p> : null}
             </>
           ) : (
@@ -127,7 +150,11 @@ export function ParametrageCategoriesForm({ categories, aujourdhui }: { categori
         <td className="px-2 py-2 align-top">
           {l.mode !== "AUCUN" ? (
             <>
-              <input aria-label={`Seuil rouge (${unite}) — ${cle}`} name={`rouge-${cle}`} type="number" min={0} step="0.01" className={CLASSE_CHAMP} disabled={desactive} value={l.rouge} onChange={(ev) => maj(cle, { rouge: ev.target.value })} />
+              {l.mode === "MONTANT" ? (
+                <InputMontant aria-label={`Seuil rouge (${unite}) — ${cle}`} name={`rouge-${cle}`} disabled={desactive} value={l.rouge} onValueChange={(texte) => maj(cle, { rouge: texte })} />
+              ) : (
+                <input aria-label={`Seuil rouge (${unite}) — ${cle}`} name={`rouge-${cle}`} type="number" min={0} step="0.01" className={CLASSE_CHAMP} disabled={desactive} value={l.rouge} onChange={(ev) => maj(cle, { rouge: ev.target.value })} />
+              )}
               {e.seuilRouge ? <p className="mt-1 text-xs text-danger">{e.seuilRouge}</p> : null}
             </>
           ) : (
@@ -188,7 +215,9 @@ export function ParametrageCategoriesForm({ categories, aujourdhui }: { categori
 
       <p className="text-xs text-muted-foreground">Cochez un budget pour le soumettre seul, ou plusieurs pour les soumettre ensemble au DG.</p>
 
-      <Button signe type="submit" loading={isPending} disabled={cochees.length === 0 || isPending} data-soumettre-selection>
+      <ChampMotifEchange name="motifSoumission" label="Motif de l'envoi au DG" hint="Commun à la sélection, transmis au DG." value={motif} onChange={setMotif} />
+
+      <Button signe type="submit" loading={isPending} disabled={cochees.length === 0 || isPending || !motifEchangeValide(motif)} data-soumettre-selection>
         {cochees.length <= 1 ? "Soumettre la sélection au DG" : `Soumettre la sélection au DG (${cochees.length} budgets)`}
       </Button>
     </form>

@@ -8,13 +8,16 @@ import { Icon } from "@/components/icons";
 import { formatMontantDevise } from "@/components/tresorerie/devise";
 import { DetailsArticleEditeur, type DetailsArticleSaisie } from "@/components/tresorerie/DetailsArticleEditeur";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, Input, InputMontant, Textarea } from "@/components/ui";
 import {
+  analyserMontant,
   erreurSaisieBeneficiaire,
   jourCourant,
   MOTIF_LIGNE_MIN,
   refusDateLivraison,
   saisieVersChoix,
+  texteSaisieMontant,
+  valeurSaisieMontant,
   type SaisieBeneficiaire,
 } from "backend/client";
 
@@ -95,7 +98,7 @@ export function CorrectionDemande({
       libelle: l.libelle,
       motif: l.motif,
       quantite: l.quantite,
-      prixUnitaire: String(l.prixUnitaire),
+      prixUnitaire: texteSaisieMontant(l.prixUnitaire, { devise }),
       details: { beneficiaire: l.beneficiaire, pieces: [] },
       dateLivraison: l.dateLivraison,
       dateLivraisonInitiale: l.dateLivraison,
@@ -115,9 +118,10 @@ export function CorrectionDemande({
   };
   const motifsValides = lignes.every((l) => l.motif.trim().length >= MOTIF_LIGNE_MIN);
   const beneficiairesValides = lignes.every((l) => !l.details.beneficiaire || erreurSaisieBeneficiaire(l.details.beneficiaire) === null);
-  const peutResoumettre = avecLignes ? lignes.length > 0 && motifsValides && beneficiairesValides && datesValides : description.trim().length >= 3;
+  const prixValides = lignes.every((l) => l.prixUnitaire.trim() === "" || analyserMontant(l.prixUnitaire, { devise }).ok);
+  const peutResoumettre = avecLignes ? lignes.length > 0 && motifsValides && beneficiairesValides && datesValides && prixValides : description.trim().length >= 3;
 
-  const total = lignes.reduce((s, l) => s + (Number(l.quantite) || 0) * (Number(l.prixUnitaire) || 0), 0);
+  const total = lignes.reduce((s, l) => s + (Number(l.quantite) || 0) * valeurSaisieMontant(l.prixUnitaire, { devise }), 0);
   const maj = (key: string, patch: Partial<LigneEdit>) => setLignes((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
   function resoumettre() {
@@ -129,7 +133,7 @@ export function CorrectionDemande({
           libelle: l.libelle,
           motif: l.motif,
           quantite: Number(l.quantite),
-          prixUnitaire: Number(l.prixUnitaire) || 0,
+          prixUnitaire: valeurSaisieMontant(l.prixUnitaire, { devise }),
           beneficiaire: l.details.beneficiaire ? saisieVersChoix(l.details.beneficiaire) : null,
           pieceJointeUrls: l.details.pieces.map((p) => p.url),
           dateLivraison: l.dateLivraison,
@@ -226,17 +230,16 @@ export function CorrectionDemande({
                     value={l.quantite}
                     onChange={(e) => maj(l.key, { quantite: Number(e.target.value) })}
                   />
-                  <Input
+                  <InputMontant
                     aria-label="Prix unitaire"
-                    type="number"
-                    min="0"
-                    step="1"
+                    devise={devise}
                     placeholder="0"
+                    echo={false}
                     value={l.prixUnitaire}
-                    onChange={(e) => maj(l.key, { prixUnitaire: e.target.value })}
+                    onValueChange={(texte) => maj(l.key, { prixUnitaire: texte })}
                   />
                   <span className="text-sm font-bold tabular-nums text-foreground sm:text-right">
-                    {formatMontantDevise((Number(l.quantite) || 0) * (Number(l.prixUnitaire) || 0), devise)}
+                    {formatMontantDevise((Number(l.quantite) || 0) * valeurSaisieMontant(l.prixUnitaire, { devise }), devise)}
                   </span>
                   <div className="flex justify-end sm:row-start-1 sm:col-start-5">
                     {lignes.length > 1 ? (

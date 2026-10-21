@@ -10,6 +10,7 @@ import { ecrireAudit, type EncAuditDb } from "./encAudit";
 import { montant, type Montant } from "./encCalcul";
 import { confirmerEncaissement, EncConfirmationError, jourDe, type EncConfirmationDb } from "./encConfirmation";
 import { estIdentifiantWave } from "./encImportRegles";
+import { lireMontant } from "./montant";
 import { ajouterMotsContrat, type EncIndexMotsDb } from "./encRecherche";
 import { cleSequenceAnnuelle, prochainNumero, type EncSequenceDb } from "./encSequence";
 
@@ -43,9 +44,10 @@ export function controlerSaisie(s: SaisieEncaissement, maintenant: Date): Erreur
     e.reference = "Paiement Wave : la référence doit être l'identifiant de transaction (T_ suivi d'au moins 10 lettres ou chiffres).";
   }
 
-  const m = s.montant?.trim().replace(",", ".") ?? "";
-  if (!/^\d+(\.\d{1,2})?$/.test(m)) e.montant = "Montant obligatoire (nombre, deux décimales au plus).";
-  else if (montant(m).lte(0)) e.montant = "Le montant doit être supérieur à 0.";
+  // Lot M : saisie souple (« 1 500 000 », « 1.500.000,50 »…), règle unique `montant.ts` ; le module Encaissements garde les centimes.
+  const lu = lireMontant(s.montant ?? "", { decimales: true });
+  if (!lu.ok) e.montant = lu.message;
+  else if (lu.centimes <= 0) e.montant = "Le montant doit être supérieur à 0.";
   return e;
 }
 
@@ -82,7 +84,9 @@ export async function saisirEncaissement(db: EncSaisieDb, entree: EntreeSaisie):
   await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"police:" + contrat.numPolice})::bigint)`;
 
   const reference = entree.reference.trim();
-  const Z = montant(entree.montant.trim().replace(",", "."));
+  const luZ = lireMontant(entree.montant, { decimales: true });
+  if (!luZ.ok) throw new EncConfirmationError(luZ.message);
+  const Z = montant(luZ.canonique);
 
   if (!entree.accepterReferenceDejaUtilisee) {
     const memes = await db.encEncaissement.findMany({

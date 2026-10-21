@@ -9,6 +9,7 @@
 // « indéterminé » ne subsiste que pour un retour ancien SANS article sur une demande à plusieurs articles réglés en Caisse.
 
 import type { EtatArticle, StatutArticle } from "./etatArticles";
+import { motifOuNonRenseigne } from "./motifEchange";
 import { libelleMotifReglement } from "./motifReglement";
 import { LIBELLE_ETAT_ARTICLE } from "./etatArticles";
 import { depensesDeclareesLigne, getEcartLigne, resteNonDetailleTotal, type AgregatsRegularisation } from "./regularisationArticle";
@@ -97,6 +98,8 @@ export interface EntreeParcours {
   /** Finance qui a décidé ou confirmé l'article, si différent de `decidePar` (article validé par le DG). */
   confirmeParFinance: string | null;
   motifRejet: string | null;
+  /** Lot M : article soumis au DG par la Finance — motif de l'envoi et motif de la réponse du DG (`null` : échange antérieur, « Non renseigné »). */
+  echangeDG?: { soumis: boolean; decide: boolean; motifSoumission: string | null; motifDecision: string | null };
   /** Règlements rattachés à CET article (tous statuts : le parcours ne retient que les confirmés et non annulés). */
   reglements: ParcoursReglement[];
   /**
@@ -107,6 +110,15 @@ export interface EntreeParcours {
   regularisationIndeterminee?: boolean;
   /** Chiffres de régularisation de l'article (lot E) et date à laquelle son solde est devenu nul, si connue. */
   regularisation?: { agregats: AgregatsRegularisation; regulariseAt: Date | null };
+}
+
+/** Lot M : lignes « Motif de la Finance (envoi au DG) » / « Motif du DG » d'un article passé par le DG (« Non renseigné » pour un échange antérieur). */
+function lignesEchangeDG(x: EntreeParcours["echangeDG"]): string[] {
+  if (!x || !x.soumis) return [];
+  return [
+    `Motif de la Finance (envoi au DG) : ${motifOuNonRenseigne(x.motifSoumission)}`,
+    ...(x.decide ? [`Motif du DG : ${motifOuNonRenseigne(x.motifDecision)}`] : []),
+  ];
 }
 
 export interface EtapeParcours {
@@ -216,6 +228,7 @@ export function parcoursArticle(e: EntreeParcours): ParcoursArticle {
       [e.decidePar ? `Rejeté par ${e.decidePar}` : "Rejeté", jour(e.decideAt) ? `le ${jour(e.decideAt)}` : null].filter(Boolean).join(" "),
       ...(e.motifRejet ? [`Motif : ${e.motifRejet}`] : []),
     ];
+    lignes.push(...lignesEchangeDG(e.echangeDG));
     return habiller("REJETE", null, [{ cle: "REJETE", libelle: "Rejet", lignes }]);
   }
   if (e.statut === "EN_ATTENTE") {
@@ -228,6 +241,7 @@ export function parcoursArticle(e: EntreeParcours): ParcoursArticle {
     [e.decidePar ? `Validé par ${e.decidePar}` : "Validé", jour(e.decideAt) ? `le ${jour(e.decideAt)}` : null].filter(Boolean).join(" "),
   ];
   if (e.confirmeParFinance) lignesValide.push(`Confirmé par la Finance : ${e.confirmeParFinance}`);
+  lignesValide.push(...lignesEchangeDG(e.echangeDG));
   lignesValide.push(`Montant validé : ${eur(e.montant)}`);
   etapes.push({ cle: "VALIDE", libelle: "Validé", lignes: lignesValide });
 

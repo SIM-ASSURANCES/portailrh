@@ -5,6 +5,8 @@
 // Principe : le service du demandeur ne change jamais. Seul le décideur de CETTE étape Service change, pour CETTE demande
 // (colonne `Demande.responsableEtapeServiceId`). Sans surcharge, c'est le responsable ACTUEL du service (règle d'origine).
 
+import { MOTIF_ECHANGE_MAX } from "./motifEchange";
+
 /** Motif obligatoire d'une réorientation ou d'une reprise (« Pourquoi réorienter ? »). */
 export const MOTIF_REORIENTATION_MIN = 10;
 
@@ -26,9 +28,10 @@ export function responsableServiceEffectif(
 }
 
 export function refusMotifReorientation(motif: string | null | undefined): string | null {
-  return (motif ?? "").trim().length >= MOTIF_REORIENTATION_MIN
-    ? null
-    : `Le motif est obligatoire (${MOTIF_REORIENTATION_MIN} caractères minimum).`;
+  const n = (motif ?? "").trim().length;
+  if (n < MOTIF_REORIENTATION_MIN) return `Le motif est obligatoire (${MOTIF_REORIENTATION_MIN} caractères minimum).`;
+  if (n > MOTIF_ECHANGE_MAX) return `Le motif ne doit pas dépasser ${MOTIF_ECHANGE_MAX} caractères (${n} saisis).`;
+  return null;
 }
 
 /** Compte qui est responsable d'au moins un service. */

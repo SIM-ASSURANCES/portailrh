@@ -989,6 +989,8 @@ export async function getReportingArbre(
         decisionDGPar: l.decisionDGPar?.fullName ?? null,
         decisionDGLe: l.decisionDGAt,
         motifRefusDG: l.motifRefusDG,
+        motifSoumissionDG: l.motifSoumissionDG,
+        motifDecisionDG: l.motifDecisionDG,
         dateLivraison: l.dateLivraison,
       })),
       reglements: det.reglements.map((r) => ({

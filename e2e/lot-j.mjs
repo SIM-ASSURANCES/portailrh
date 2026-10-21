@@ -16,6 +16,7 @@ import ExcelJS from "exceljs";
 import { chromium } from "playwright";
 import pg from "pg";
 import { assurerSignatures } from "./signatures-auto.mjs";
+import { MOTIF, remplirMotif, remplirMotifArticle, remplirMotifDans } from "./motifs.mjs";
 
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
@@ -51,7 +52,7 @@ const CAT2 = `${P}cat2`; // budget qui ne prend effet que demain
 const CAT3 = `${P}cat3`; // budget de 100 000 : le DG valide un article soumis en rouge
 const CAT4 = `${P}cat4`; // budget SANS seuil : aucune alerte
 const CAT5 = `${P}cat5`; // aucune catégorie budgétée
-const CAT6 = `${P}cat6`; // budget refusé par le DG
+const CAT6 = `${P}cat6`; // budget rejeté par le DG
 const CATS = [CAT1, CAT2, CAT3, CAT4, CAT5, CAT6];
 const nettoyer = async () => {
   await q(`DELETE FROM "Notification" WHERE message LIKE '%DEM-LOTJ-%' OR titre LIKE '%budget%' OR titre LIKE '%Budget%' OR titre LIKE 'Seuils de caisse%'`);
@@ -157,19 +158,17 @@ async function soumettre(page, { categorie, libelle, montant, debut, fin, mode, 
     await ligne.locator(`input[name="orange-${categorie}"]`).fill(String(orange));
     await ligne.locator(`input[name="rouge-${categorie}"]`).fill(String(rouge));
   }
+  await form.locator('[data-motif-echange][name="motifSoumission"]').fill(MOTIF);
   await form.locator("[data-soumettre-selection]").click();
 }
 async function decider(page, id, valider, motif) {
   await page.goto(`${B}/treso/finance/budgets`);
   const bloc = page.locator(`[data-parametrage-attente="${id}"]`);
-  if (valider) await bloc.locator("[data-valider-parametrage]").click();
-  else {
-    await bloc.locator("[data-refuser-parametrage]").click();
-    const confirmer = bloc.locator("[data-confirmer-refus]");
-    verifier("2. refus : « Confirmer le refus » grisé tant que le motif est vide", await confirmer.isDisabled());
-    await bloc.locator('input[name="motifRefus"]').fill(motif);
-    await confirmer.click();
-  }
+  // Lot M : le motif (10 à 300 caractères) est obligatoire pour valider comme pour rejeter ; « Rejeter » agit directement.
+  const bouton = bloc.locator(valider ? "[data-valider-parametrage]" : "[data-refuser-parametrage]");
+  verifier(`2. ${valider ? "validation" : "rejet"} : bouton grisé tant que le motif est vide`, await bouton.isDisabled());
+  await remplirMotifDans(bloc, motif ?? MOTIF);
+  await bouton.click();
 }
 
 {
@@ -193,7 +192,7 @@ async function decider(page, id, valider, motif) {
     await finance.goto(`${B}/treso/finance/budgets`);
     const ligneDesactivee = await finance.locator('[data-budget-ligne-saisie="E2E-J-CAT1"] input[type="checkbox"]').isDisabled();
     const idSoumettre = await idAction(finance, "soumettreBudgetsCategoriesAction");
-    const refus = idSoumettre ? await appelerAction(finance, idSoumettre, [[{ portee: "CATEGORIE", categorieId: CAT1, montant: 5, dateDebut: jourIso(0), dateFin: null, seuil: null }]]) : { succes: true, message: "" };
+    const refus = idSoumettre ? await appelerAction(finance, idSoumettre, [[{ portee: "CATEGORIE", categorieId: CAT1, montant: 5, dateDebut: jourIso(0), dateFin: null, seuil: null }], MOTIF]) : { succes: true, message: "" };
     return ligneDesactivee && !refus.succes && /déjà en attente/.test(refus.message) && (await nbParam()) === avant + 1;
   })());
 
@@ -217,7 +216,7 @@ async function decider(page, id, valider, motif) {
   verifier("2d. le DG refuse avec motif : REFUSE, motif conservé, décideur tracé", await attendre(async () => (await q(`SELECT statut, "motifRefus", "decideParId" FROM "BudgetParametrage" WHERE id=$1`, [pg1.id]))[0].statut === "REFUSE"));
   const refuse = (await q(`SELECT "motifRefus", "decideParId" FROM "BudgetParametrage" WHERE id=$1`, [pg1.id]))[0];
   verifier("2d. … motif et décideur", /trop bas/.test(refuse.motifRefus) && refuse.decideParId === idDG);
-  verifier("2d. … la Finance est notifiée du refus", await attendre(async () => (await q(`SELECT 1 FROM "Notification" WHERE "userId"=$1 AND titre='Budget de catégorie refusé par le DG'`, [idFinance])).length >= 1));
+  verifier("2d. … la Finance est notifiée du refus", await attendre(async () => (await q(`SELECT 1 FROM "Notification" WHERE "userId"=$1 AND titre='Budget de catégorie rejeté par le DG'`, [idFinance])).length >= 1));
   await soumettre(finance, { categorie: CAT6, libelle: "E2E-J-CAT6", montant: 1999, mode: "AUCUN" });
   await attendre(async () => (await q(`SELECT 1 FROM "BudgetParametrage" WHERE "categorieId"=$1 AND statut='EN_ATTENTE'`, [CAT6])).length === 1);
   verifier("2d. le paramétrage refusé n'est pas modifié : une NOUVELLE ligne a été créée", (await q(`SELECT statut FROM "BudgetParametrage" WHERE id=$1`, [pg1.id]))[0].statut === "REFUSE" && (await q(`SELECT count(*)::int AS n FROM "BudgetParametrage" WHERE "categorieId"=$1`, [CAT6]))[0].n === 2);
@@ -310,12 +309,14 @@ let D1;
   await cocherValider(finance, C);
   await finance.locator("[data-budget-bloc]").waitFor();
   verifier("3c. ROUGE : alerte rouge affichée, reste catégorie 50 000 FCFA (5 %)", (await finance.locator('[data-alerte-budget="ROUGE"]').count()) === 1 && /reste 50 000 FCFA/.test(net(await finance.locator("[data-budget-bloc]").innerText())));
+  await finance.locator('[data-motif-echange][name="motifDemandeDepassement"]').fill(MOTIF);
   verifier("3c. ROUGE : « Enregistrer » GRISÉ pour la Finance et bouton « Demander la confirmation du DG »", (await finance.getByRole("button", { name: /Enregistrer les décisions/ }).isDisabled()) && (await finance.locator("[data-demander-confirmation-dg]").isEnabled()));
-  verifier("3c. ROUGE : la Finance n'a PAS de champ de confirmation du dépassement", (await finance.locator('input[name="motifDepassement"]').count()) === 0);
+  verifier("3c. ROUGE : la Finance n'a PAS de champ de confirmation du dépassement", (await finance.locator('[name="motifDepassement"]').count()) === 0);
   const refus = idVal ? await appelerAction(finance, idVal, [D1, [{ ligneId: C, statut: "VALIDEE" }]]) : { succes: true, message: "" };
   verifier("3c. serveur : validation de C REFUSÉE par appel direct (blocage rouge, confirmation du DG demandée)", !refus.succes && /seuil rouge/i.test(refus.message) && /DG/.test(refus.message) && (await lignes(D1)).find((l) => l.id === C).statutValidation === "EN_ATTENTE", refus.message);
   const refusMotif = idVal ? await appelerAction(finance, idVal, [D1, [{ ligneId: C, statut: "VALIDEE" }], "Je confirme moi-même ce dépassement"]) : { succes: true, message: "" };
   verifier("3c. serveur : un motif saisi par la Finance ne débloque rien (seul le DG confirme)", !refusMotif.succes && (await lignes(D1)).find((l) => l.id === C).statutValidation === "EN_ATTENTE", refusMotif.message);
+  await finance.locator('[data-motif-echange][name="motifDemandeDepassement"]').fill(MOTIF);
   await finance.locator("[data-demander-confirmation-dg]").click();
   verifier("3c. demande de confirmation enregistrée (statut DEMANDE, photo du dépassement)", await attendre(async () => (await q(`SELECT statut, resume FROM "BudgetDepassement" WHERE "demandeId"=$1`, [D1])).length === 1 && /ROUGE/.test((await q(`SELECT resume FROM "BudgetDepassement" WHERE "demandeId"=$1`, [D1]))[0].resume)));
   verifier("3c. … le DG est notifié de la demande", await attendre(async () => (await q(`SELECT 1 FROM "Notification" WHERE "userId"=$1 AND titre='Confirmation de dépassement de budget demandée'`, [idDG])).length === 1));
@@ -329,7 +330,7 @@ let D1;
   verifier("3d. le DG voit la demande de confirmation (référence, résumé)", /DEM-LOTJ-1/.test(net(await bd.innerText())) && /ROUGE/.test(net(await bd.innerText())));
   const confirmer = bd.getByRole("button", { name: "Confirmer le dépassement" });
   verifier("3d. « Confirmer » grisé sans motif suffisant", await confirmer.isDisabled());
-  await bd.locator('input[name="motifDepassement"]').fill("court");
+  await bd.locator('[name="motifDepassement"]').fill("court");
   verifier("3d. … et avec un motif de 5 caractères", await confirmer.isDisabled());
   const idConfirmer = await idAction(dg, "confirmerDepassementBudgetAction");
   await finance.goto(`${B}/treso/finance/budgets`);
@@ -337,7 +338,7 @@ let D1;
     const refuse2 = await appelerAction(finance, idConfirmer, [(await q(`SELECT id FROM "BudgetDepassement" WHERE "demandeId"=$1`, [D1]))[0].id, "Motif écrit par la Finance"]);
     verifier("3d. la Finance ne peut pas confirmer un dépassement (appel direct refusé)", !refuse2.succes && /non autoris/i.test(refuse2.message) && (await q(`SELECT statut FROM "BudgetDepassement" WHERE "demandeId"=$1`, [D1]))[0].statut === "DEMANDE", refuse2.message);
   }
-  await bd.locator('input[name="motifDepassement"]').fill("Achat urgent validé en comité de direction");
+  await bd.locator('[name="motifDepassement"]').fill("Achat urgent validé en comité de direction");
   await confirmer.click();
   verifier("3d. le DG confirme : statut CONFIRME, motif et confirmateur tracés", await attendre(async () => (await q(`SELECT statut, motif, "confirmeParId" FROM "BudgetDepassement" WHERE "demandeId"=$1`, [D1]))[0]?.statut === "CONFIRME"));
   const dep = (await q(`SELECT motif, "confirmeParId" FROM "BudgetDepassement" WHERE "demandeId"=$1`, [D1]))[0];
@@ -390,6 +391,7 @@ let D1;
   const D2 = await demande("D2", 2, [{ libelle: "Article DG", montant: 95000, categorie: CAT3 }]);
   const L = `${D2}-l1`;
   await finance.goto(`${B}/treso/finance/demandes/${D2}`);
+  await remplirMotifArticle(finance, `${L}`);
   await finance.locator(`[data-soumettre-article="${L}"]`).click();
   verifier("4. la Finance soumet l'article au DG", await attendre(async () => (await q(`SELECT "soumiseAuDG" FROM "LigneDemande" WHERE id=$1`, [L]))[0].soumiseAuDG === true));
   await dg.goto(`${B}/treso/dg/${D2}`);
@@ -398,14 +400,15 @@ let D1;
   const valider = carte.getByRole("button", { name: "Valider", exact: true });
   verifier("4. écran du DG : reste après la validation de CET article (5 000 FCFA, 5 %) et alerte rouge", /reste 5 000 FCFA/.test(net(await carte.innerText())) && (await carte.locator('[data-alerte-budget="ROUGE"]').count()) === 1);
   verifier("4. écran du DG : « Valider » grisé tant que le motif de confirmation manque", await valider.isDisabled());
-  await carte.locator('input[name^="motifDepassement"]').fill("court");
+  await carte.locator('[name^="motifDepassement"]').fill("court");
   verifier("4. … et avec un motif de 5 caractères", await valider.isDisabled());
   const idDecLigne = await idAction(dg, "deciderLigneDGAction");
   if (idDecLigne) {
     const sansMotif = await appelerAction(dg, idDecLigne, [L, true]);
     verifier("4. serveur : validation du DG sans motif de confirmation REFUSÉE (appel direct)", !sansMotif.succes && /motif/i.test(sansMotif.message) && (await q(`SELECT "decisionDG" FROM "LigneDemande" WHERE id=$1`, [L]))[0].decisionDG === null, sansMotif.message);
   }
-  await carte.locator('input[name^="motifDepassement"]').fill("Dépense stratégique approuvée par la direction");
+  await carte.locator('[name^="motifDepassement"]').fill("Dépense stratégique approuvée par la direction");
+  await remplirMotifDans(carte);
   await valider.click();
   verifier("4. le DG valide en confirmant le dépassement dans le même geste", await attendre(async () => (await q(`SELECT "decisionDG" FROM "LigneDemande" WHERE id=$1`, [L]))[0].decisionDG === "VALIDEE"));
   const dep2 = await q(`SELECT statut, motif, "confirmeParId", "demandeParId" FROM "BudgetDepassement" WHERE "demandeId"=$1`, [D2]);

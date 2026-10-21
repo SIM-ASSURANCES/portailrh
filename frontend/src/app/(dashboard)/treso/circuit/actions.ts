@@ -106,12 +106,13 @@ async function rejeterDemandeEtapeDGInterne(demandeId: string, motif: string): P
 }
 
 /** Étape Finance : soumission au DG (avant toute décision ligne par ligne). */
-export async function soumettreAuDGAction(demandeId: string): Promise<Resultat> {
-  return avecSignature({ action: "soumission_dg", permission: "treso.soumettre_dg", cible: { type: "demande", id: demandeId } }, () => soumettreAuDGInterne(demandeId));
+export async function soumettreAuDGAction(demandeId: string, motif: string): Promise<Resultat> {
+  return avecSignature({ action: "soumission_dg", permission: "treso.soumettre_dg", cible: { type: "demande", id: demandeId } }, () => soumettreAuDGInterne(demandeId, motif));
 }
 
-async function soumettreAuDGInterne(demandeId: string): Promise<Resultat> {
-  return agir(demandeId, { type: "SOUMETTRE_DG" }, (ref) => `Demande ${ref} soumise au DG.`);
+async function soumettreAuDGInterne(demandeId: string, motif: string): Promise<Resultat> {
+  // Lot M : l'envoi au DG porte un motif de 10 à 300 caractères (revérifié par le moteur dans `agir`).
+  return agir(demandeId, { type: "SOUMETTRE_DG", motif: String(motif ?? "") }, (ref) => `Demande ${ref} soumise au DG.`);
 }
 
 /** Refus du moteur levé DANS la transaction pour l'annuler entièrement (aucune écriture partielle). */
@@ -121,11 +122,11 @@ class RefusTransaction extends Error {}
  * Étape Finance (ou décision finale, ou pendant que le DG décide) : la Finance soumet au DG les lignes choisies, ou lui
  * resoumet des lignes qu'il a refusées (2026-10-10, `treso.soumettre_dg`). Le DG est notifié.
  */
-export async function soumettreLignesAuDGAction(demandeId: string, ligneIds: string[]): Promise<Resultat> {
-  return avecSignature({ action: "soumission_lignes_dg", permission: "treso.soumettre_dg", cible: { type: "demande", id: demandeId } }, () => soumettreLignesAuDGInterne(demandeId, ligneIds));
+export async function soumettreLignesAuDGAction(demandeId: string, ligneIds: string[], motif: string): Promise<Resultat> {
+  return avecSignature({ action: "soumission_lignes_dg", permission: "treso.soumettre_dg", cible: { type: "demande", id: demandeId } }, () => soumettreLignesAuDGInterne(demandeId, ligneIds, motif));
 }
 
-async function soumettreLignesAuDGInterne(demandeId: string, ligneIds: string[]): Promise<Resultat> {
+async function soumettreLignesAuDGInterne(demandeId: string, ligneIds: string[], motif: string): Promise<Resultat> {
   const session = await getSession();
   if (!session) return { status: "error", message: "Action non autorisée." };
   const demande = await prisma.demande.findUnique({ where: { id: demandeId }, select: { createurId: true, reference: true } });
@@ -137,7 +138,7 @@ async function soumettreLignesAuDGInterne(demandeId: string, ligneIds: string[])
   let resoumisIds: string[] = [];
   try {
     await prisma.$transaction(async (tx) => {
-      const r = await soumettreLignesAuDG(tx, demandeId, acteur, ids);
+      const r = await soumettreLignesAuDG(tx, demandeId, acteur, ids, String(motif ?? ""));
       if (!r.ok) throw new RefusTransaction(r.message);
       nombre = r.libelles?.length ?? 0;
       resoumisIds = r.resoumisIds ?? [];
@@ -208,27 +209,28 @@ async function deciderLigneDGInterne(ligneId: string, valider: boolean, motif?: 
   return {
     status: "success",
     message:
-      `Ligne « ${resultat.libelle} » ${decision.valider ? "validée" : "refusée"}.` +
+      `Ligne « ${resultat.libelle} » ${decision.valider ? "validée" : "rejetée"}.` +
       (resteChezLeDG === 0 ? " Toutes les lignes soumises sont décidées : la Finance reprend la main." : ""),
   };
 }
 
 /** Après un rejet du DG : la Finance resoumet au DG. */
-export async function resoumettreAuDGAction(demandeId: string): Promise<Resultat> {
-  return avecSignature({ action: "resoumission_dg", permission: "treso.soumettre_dg", cible: { type: "demande", id: demandeId } }, () => resoumettreAuDGInterne(demandeId));
+export async function resoumettreAuDGAction(demandeId: string, motif: string): Promise<Resultat> {
+  return avecSignature({ action: "resoumission_dg", permission: "treso.soumettre_dg", cible: { type: "demande", id: demandeId } }, () => resoumettreAuDGInterne(demandeId, motif));
 }
 
-async function resoumettreAuDGInterne(demandeId: string): Promise<Resultat> {
-  return agir(demandeId, { type: "RESOUMETTRE_DG" }, (ref) => `Demande ${ref} resoumise au DG.`);
+async function resoumettreAuDGInterne(demandeId: string, motif: string): Promise<Resultat> {
+  return agir(demandeId, { type: "RESOUMETTRE_DG", motif: String(motif ?? "") }, (ref) => `Demande ${ref} resoumise au DG.`);
 }
 
 /** Étape DG : le DG valide la demande entière (vaut son approbation de clôture) ; la Finance décide ensuite. */
-export async function validerEtapeDGAction(demandeId: string): Promise<Resultat> {
-  return avecSignature({ action: "validation_dg", permission: "treso.decider_dg", cible: { type: "demande", id: demandeId } }, () => validerEtapeDGInterne(demandeId));
+export async function validerEtapeDGAction(demandeId: string, motif: string): Promise<Resultat> {
+  return avecSignature({ action: "validation_dg", permission: "treso.decider_dg", cible: { type: "demande", id: demandeId } }, () => validerEtapeDGInterne(demandeId, motif));
 }
 
-async function validerEtapeDGInterne(demandeId: string): Promise<Resultat> {
-  return agir(demandeId, { type: "VALIDER_DG" }, (ref) => `Demande ${ref} validée par le DG : décision finale à la Finance.`);
+async function validerEtapeDGInterne(demandeId: string, motif: string): Promise<Resultat> {
+  // Lot M : la validation du DG porte un motif de 10 à 300 caractères, comme son rejet.
+  return agir(demandeId, { type: "VALIDER_DG", motif: String(motif ?? "") }, (ref) => `Demande ${ref} validée par le DG : décision finale à la Finance.`);
 }
 
 /** Étape DG : le DG rejette, la demande revient à la Finance avec son motif. */

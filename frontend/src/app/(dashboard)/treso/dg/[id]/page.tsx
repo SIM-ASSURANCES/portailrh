@@ -164,6 +164,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
         // Cas b : le DG décide ligne par ligne (même composant que la Finance, sans catégorisation ni libellé).
         <LignesValidationTable
           budget={budgetValidation}
+          parDG
           categorisationObligatoire={categorisationObligatoire}
           demandeId={demande.id}
           lignes={demande.lignes.map((l) => ({
@@ -183,6 +184,8 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
             categorieLabel: l.categorie?.label ?? null,
             objetId: l.objetId,
             objetLabel: l.objet?.label ?? null,
+            motifSoumissionDG: l.motifSoumissionDG,
+            motifDecisionDG: l.motifDecisionDG,
           }))}
           enteteDemande={enteteDemande}
           canValider={raisonDecider === null}
@@ -214,6 +217,8 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
             decisionDGParNom: l.decisionDGPar?.fullName ?? null,
             decisionDGAt: l.decisionDGAt,
             motifRefusDG: l.motifRefusDG,
+            motifSoumissionDG: l.motifSoumissionDG,
+            motifDecisionDG: l.motifDecisionDG,
             soumiseParNom: l.soumiseDGPar?.fullName ?? null,
           }))}
         />
@@ -255,6 +260,7 @@ export default async function DemandeDGPage({ params }: { params: Promise<{ id: 
       {decisionParLigne && demande.lignes.length === 0 ? (
         // Garde 9 : dépense directe de la Finance pour elle-même, sans lignes — le DG décide le montant.
         <ValidationActions
+          parDG
           budget={budgetValidation ? { ...budgetValidation, categorieId: demande.categorieId } : null}
           demandeId={demande.id}
           montantDemande={Number(demande.montant)}

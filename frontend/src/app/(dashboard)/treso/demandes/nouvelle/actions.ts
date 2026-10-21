@@ -14,7 +14,7 @@ import { generateDemandeReference } from "backend";
 import { chargerServiceDuDemandeur, initialiserCircuit, messageBlocageCreationDemande } from "backend";
 import { champsBeneficiaire, choixPropreArticle, MOTIF_LIGNE_MIN, type ChoixBeneficiaire } from "backend";
 import { dateLivraisonAEnregistrer, refusDateLivraison, versDateStockee } from "backend";
-import { fieldErrorsFromZod, type ActionState } from "backend";
+import { fieldErrorsFromZod, lireMontant, nettoyerMotifEchange, refusMotifEchange, type ActionState } from "backend";
 
 const MAX_ATTEMPTS = 5;
 
@@ -23,7 +23,8 @@ export interface LigneDemandeInput {
   /** Motif de la ligne (pourquoi cet article), obligatoire. */
   motif: string;
   quantite: number;
-  prixUnitaire: number;
+  /** Texte saisi (« 1 500 000 ») ou nombre : réanalysé par le serveur avec la devise de la demande. */
+  prixUnitaire: number | string;
   /** Bénéficiaire propre de l'article ; absent ou `null` = hérite du bénéficiaire de la demande (autonomie des articles, lot A). */
   beneficiaire?: ChoixBeneficiaire | null;
   /** Pièces propres à l'article (noms de fichiers renvoyés par la route d'envoi), plusieurs possibles. */
@@ -40,6 +41,8 @@ export interface CreerDemandeInput {
   lignes: LigneDemandeInput[];
   /** Nom de fichier renvoyé par `POST /api/treso/pieces-jointes/upload`, le cas échéant (facultatif). */
   pieceJointeUrl?: string;
+  /** Lot M : motif de l'envoi au DG (10 à 300 caractères), obligatoire seulement quand la demande part directement chez le DG. */
+  motifEnvoiDG?: string;
 }
 
 const choixBeneficiaireSchema = z.discriminatedUnion(
@@ -60,7 +63,7 @@ const ligneSchema = z.object({
   libelle: z.string().trim().min(1, "Libellé requis"),
   motif: z.string().trim().min(MOTIF_LIGNE_MIN, `Chaque ligne doit avoir un motif (${MOTIF_LIGNE_MIN} caractères minimum).`),
   quantite: z.coerce.number().int("Nombre entier attendu").positive("Le nombre doit être supérieur à 0"),
-  prixUnitaire: z.coerce.number().nonnegative("Prix unitaire invalide"),
+  prixUnitaire: z.union([z.string(), z.number()]),
   beneficiaire: choixBeneficiaireSchema.nullish(),
   dateLivraison: z
     .string()
@@ -91,6 +94,12 @@ const demandeSchema = z.object({
     ),
   devise: z.enum(DEVISE_CODES as [string, ...string[]], { message: "Devise invalide" }),
   lignes: z.array(ligneSchema).min(1, "Ajoutez au moins une ligne d'article"),
+}).superRefine((d, ctx) => {
+  // Lot M : le prix unitaire est réanalysé ici avec la devise de la demande (FCFA : entiers ; EUR : deux décimales).
+  d.lignes.forEach((l, i) => {
+    const r = lireMontant(l.prixUnitaire, { devise: d.devise });
+    if (!r.ok) ctx.addIssue({ code: "custom", path: ["lignes", i, "prixUnitaire"], message: `Prix unitaire invalide : ${r.message}` });
+  });
 });
 
 function isReferenceConflict(error: unknown): boolean {
@@ -137,7 +146,12 @@ export async function creerDemandeAction(
     };
   }
 
-  const { beneficiaire: choixBeneficiaire, dateLivraisonSouhaitee, devise, lignes } = parsed.data;
+  const { beneficiaire: choixBeneficiaire, dateLivraisonSouhaitee, devise } = parsed.data;
+  // Prix unitaires en nombres (déjà validés par le schéma ci-dessus).
+  const lignes = parsed.data.lignes.map((l) => {
+    const prix = lireMontant(l.prixUnitaire, { devise });
+    return { ...l, prixUnitaire: prix.ok ? prix.valeur : 0 };
+  });
 
   const montant = lignes.reduce((sum, l) => sum + l.quantite * l.prixUnitaire, 0);
   if (montant <= 0) {
@@ -186,6 +200,14 @@ export async function creerDemandeAction(
 
   // Circuit de validation : parcours selon le demandeur (règles a à d) et première étape applicable.
   const circuit = await initialiserCircuit(prisma, session.user.id, "STANDARD");
+  // Lot M : une demande émise par la Finance part chez le DG — c'est un envoi Finance → DG, qui porte un motif.
+  const motifEnvoiDG = nettoyerMotifEchange(input.motifEnvoiDG);
+  if (circuit.envoiDirectAuDG) {
+    const refusEnvoi = refusMotifEchange(motifEnvoiDG, "l'envoi de la demande au DG");
+    if (refusEnvoi) {
+      return { status: "error", message: "Le formulaire contient des erreurs.", fieldErrors: { motifEnvoiDG: refusEnvoi } };
+    }
+  }
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const reference = await generateDemandeReference();
@@ -195,6 +217,7 @@ export async function creerDemandeAction(
         const creee = await tx.demande.create({
           data: {
             ...circuit.data,
+            ...(circuit.envoiDirectAuDG ? { motifSoumissionDG: motifEnvoiDG } : {}),
             reference,
             montant,
             // Plus de motif d'en-tête : chaque ligne porte son motif.
@@ -246,7 +269,7 @@ export async function creerDemandeAction(
         },
       });
       await prisma.historiqueEntry.create({
-        data: { entity: "Demande", entityId: demande.id, action: "circuit_initialise", detail: circuit.detail, userId: session.user.id },
+        data: { entity: "Demande", entityId: demande.id, action: "circuit_initialise", detail: circuit.envoiDirectAuDG ? `${circuit.detail} Motif de l'envoi au DG : ${motifEnvoiDG}` : circuit.detail, userId: session.user.id },
       });
 
       publishDataChanged();

@@ -218,6 +218,8 @@ export default async function CategoriserDemandePage({
     decisionDGParNom: ligne.decisionDGPar?.fullName ?? null,
     decisionDGAt: ligne.decisionDGAt,
     motifRefusDG: ligne.motifRefusDG,
+    motifSoumissionDG: ligne.motifSoumissionDG,
+    motifDecisionDG: ligne.motifDecisionDG,
   }));
 
   // Les 3 requêtes ci-dessous sont mutuellement indépendantes (chacune ne

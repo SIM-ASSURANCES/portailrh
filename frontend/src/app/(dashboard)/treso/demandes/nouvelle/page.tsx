@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { chargerServiceDuDemandeur, messageBlocageCreationDemande, prisma } from "backend";
+import { chargerServiceDuDemandeur, envoiDirectAuDG, messageBlocageCreationDemande, prisma } from "backend";
 
 import { DemandeForm } from "./DemandeForm";
 
@@ -32,6 +32,7 @@ export default async function NouvelleDemandePage() {
       ) : (
         <DemandeForm
           createurId={session.user.id}
+          envoiDirectAuDG={await envoiDirectAuDG(prisma, session.user.id, "STANDARD")}
           comptes={comptes.map((c) => ({ value: c.id, label: c.service ? `${c.fullName} — ${c.service.name}` : c.fullName }))}
         />
       )}

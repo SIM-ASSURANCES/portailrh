@@ -3,11 +3,11 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Textarea } from "@/components/ui";
+import { ChampMotifEchange } from "@/components/tresorerie/ChampMotifEchange";
+import { Button } from "@/components/ui";
+import { motifEchangeValide } from "backend/client";
 
 import { rejeterDemandeEtapeDGAction, rejeterEtapeDGAction, validerEtapeDGAction } from "../../circuit/actions";
-
-const MOTIF_MIN = 3;
 
 /**
  * Décision du DG (commit 4). Demande soumise par la Finance : « Valider » (vaut son approbation de clôture ; la
@@ -28,16 +28,15 @@ export function DgDecisionActions({
   raisonRejeter: string | null;
 }) {
   const [isPending, startTransition] = useTransition();
-  const [rejetOuvert, setRejetOuvert] = useState(false);
+  // Lot M : la validation comme le rejet du DG portent un motif (10 à 300 caractères), transmis à la Finance (ou au demandeur, cas b).
   const [motif, setMotif] = useState("");
-  const motifValide = motif.trim().length >= MOTIF_MIN;
+  const motifValide = motifEchangeValide(motif);
 
   function lancer(appel: () => Promise<{ status: string; message: string }>) {
     startTransition(async () => {
       const r = await appel();
       if (r.status === "success") {
         toast.success(r.message);
-        setRejetOuvert(false);
         setMotif("");
       } else {
         toast.error(r.message);
@@ -50,62 +49,42 @@ export function DgDecisionActions({
   return (
     <section aria-label="Décision du DG" className="space-y-3 rounded-2xl border border-border bg-surface p-4 shadow-elevated sm:p-6">
       <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Votre décision</h2>
+      <ChampMotifEchange
+        value={motif}
+        onChange={setMotif}
+        label={decisionParLigne ? "Motif de votre décision (transmis au demandeur)" : "Motif de votre décision (transmis à la Finance)"}
+        hint="Obligatoire pour valider comme pour rejeter."
+        disabled={!!raisonRejeter && !!raisonValider}
+      />
       <div className="flex flex-wrap gap-2">
         {!decisionParLigne ? (
           <Button signe
             type="button"
-            disabled={!!raisonValider || isPending}
-            loading={isPending && !rejetOuvert}
-            onClick={() => lancer(() => validerEtapeDGAction(demandeId))}
+            disabled={!!raisonValider || isPending || !motifValide}
+            loading={isPending}
+            onClick={() => lancer(() => validerEtapeDGAction(demandeId, motif))}
           >
             Valider
           </Button>
         ) : null}
-        <Button
+        <Button signe
           type="button"
           variant="danger"
-          disabled={!!raisonRejeter || isPending}
-          onClick={() => setRejetOuvert((v) => !v)}
+          disabled={!!raisonRejeter || isPending || !motifValide}
+          onClick={() =>
+            lancer(() =>
+              decisionParLigne ? rejeterDemandeEtapeDGAction(demandeId, motif) : rejeterEtapeDGAction(demandeId, motif)
+            )
+          }
         >
           {decisionParLigne ? "Rejeter la demande" : "Rejeter"}
         </Button>
       </div>
-
-      {rejetOuvert && !raisonRejeter ? (
-        <div className="space-y-2">
-          <Textarea
-            label={decisionParLigne ? "Motif du rejet (transmis au demandeur)" : "Motif du rejet (transmis à la Finance)"}
-            required
-            rows={3}
-            value={motif}
-            onChange={(e) => setMotif(e.target.value)}
-            error={motif.length > 0 && !motifValide ? `${MOTIF_MIN} caractères minimum.` : undefined}
-          />
-          <div className="flex flex-wrap gap-2">
-            <Button signe
-              type="button"
-              variant="danger"
-              disabled={!motifValide || isPending}
-              loading={isPending}
-              onClick={() =>
-                lancer(() =>
-                  decisionParLigne ? rejeterDemandeEtapeDGAction(demandeId, motif) : rejeterEtapeDGAction(demandeId, motif)
-                )
-              }
-            >
-              Confirmer le rejet
-            </Button>
-            <Button type="button" variant="secondary" disabled={isPending} onClick={() => setRejetOuvert(false)}>
-              Annuler
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {decisionParLigne
-              ? "La demande retourne au demandeur, qui pourra la corriger et la resoumettre, ou l'abandonner."
-              : "La demande retourne à la Finance, qui pourra la resoumettre ou la renvoyer au demandeur."}
-          </p>
-        </div>
-      ) : null}
+      <p className="text-xs text-muted-foreground">
+        {decisionParLigne
+          ? "Un rejet renvoie la demande au demandeur, qui pourra la corriger et la resoumettre, ou l'abandonner."
+          : "Un rejet renvoie la demande à la Finance, qui pourra la resoumettre ou la renvoyer au demandeur."}
+      </p>
 
       {raison ? (
         <p className="text-xs text-muted-foreground">{raison}</p>

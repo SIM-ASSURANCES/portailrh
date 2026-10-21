@@ -88,7 +88,7 @@ export async function nonRecuAction(encaissementId: string, motif: string): Prom
 function resumeBilan(b: BilanLot, verbe: string): string {
   const parts = [`${b.traites.length} paiement(s) ${verbe}`];
   if (b.tropPercus.length > 0) parts.push(`${b.tropPercus.length} trop-perçu(s) écarté(s), à confirmer ligne par ligne`);
-  if (b.refuses.length > 0) parts.push(`${b.refuses.length} déjà traité(s) ou refusé(s)`);
+  if (b.refuses.length > 0) parts.push(`${b.refuses.length} déjà traité(s) ou écarté(s)`);
   return `${parts.join(" ; ")}.`;
 }
 

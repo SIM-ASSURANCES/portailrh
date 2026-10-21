@@ -4,8 +4,9 @@ import { useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { BudgetPrevision } from "@/components/tresorerie/BudgetPrevision";
-import { Button, Input } from "@/components/ui";
-import { MOTIF_DEPASSEMENT_MIN, previsionBudget, verdictBudget, type PrevisionBudget, type VerdictBudget } from "backend/client";
+import { ChampMotifEchange, motifEchangeValide } from "@/components/tresorerie/ChampMotifEchange";
+import { Button } from "@/components/ui";
+import { previsionBudget, verdictBudget, type PrevisionBudget, type VerdictBudget } from "backend/client";
 
 import { demanderConfirmationDepassementAction } from "../../budgets/actions";
 import type { BudgetValidation } from "./LignesValidationTable";
@@ -27,6 +28,8 @@ export function useBudgetValidation({
   montant: number;
 }): { bloc: ReactNode; bloque: boolean; motifDepassement: string | undefined; prevision: PrevisionBudget | null; verdict: VerdictBudget | null } {
   const [motif, setMotif] = useState("");
+  // Lot M : motif de la demande de confirmation adressée au DG (10 à 300 caractères).
+  const [motifDemande, setMotifDemande] = useState("");
   const [enCours, setEnCours] = useState(false);
   const [, startTransition] = useTransition();
 
@@ -38,7 +41,7 @@ export function useBudgetValidation({
   function demander() {
     setEnCours(true);
     startTransition(async () => {
-      const r = await demanderConfirmationDepassementAction(demandeId, [], montant);
+      const r = await demanderConfirmationDepassementAction(demandeId, [], montant, motifDemande.trim());
       setEnCours(false);
       if (r.status === "success") toast.success(r.message);
       else toast.error(r.message);
@@ -65,18 +68,29 @@ export function useBudgetValidation({
                   : "La validation est bloquée tant que le DG n'a pas confirmé le dépassement."}
             </p>
             {budget.estDG ? (
-              <Input
-                name="motifDepassement"
-                label="Motif de la confirmation du dépassement"
-                required
-                value={motif}
-                onChange={(e) => setMotif(e.target.value)}
-                hint={`${MOTIF_DEPASSEMENT_MIN} caractères minimum.`}
-              />
+              <ChampMotifEchange name="motifDepassement" label="Motif de la confirmation du dépassement" value={motif} onChange={setMotif} />
             ) : !budget.confirmationDonnee ? (
-              <Button type="button" variant="secondary" data-demander-confirmation-dg loading={enCours} disabled={budget.confirmationDemandee} onClick={demander}>
-                {budget.confirmationDemandee ? "Confirmation demandée au DG — en attente" : "Demander la confirmation du DG"}
-              </Button>
+              <>
+                {!budget.confirmationDemandee ? (
+                  <ChampMotifEchange
+                    name="motifDemandeDepassement"
+                    label="Motif de la demande de confirmation au DG"
+                    hint="Transmis au DG."
+                    value={motifDemande}
+                    onChange={setMotifDemande}
+                  />
+                ) : null}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  data-demander-confirmation-dg
+                  loading={enCours}
+                  disabled={budget.confirmationDemandee || !motifEchangeValide(motifDemande)}
+                  onClick={demander}
+                >
+                  {budget.confirmationDemandee ? "Confirmation demandée au DG — en attente" : "Demander la confirmation du DG"}
+                </Button>
+              </>
             ) : null}
           </div>
         ) : null}

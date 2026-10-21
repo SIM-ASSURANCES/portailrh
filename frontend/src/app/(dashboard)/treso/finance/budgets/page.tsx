@@ -16,6 +16,7 @@ import {
   libellePeriodeBudget,
   libelleSeuil,
   libelleStatutParametrage,
+  motifOuNonRenseigne,
   niveauAlerte,
   prisma,
   versParametrage,
@@ -248,6 +249,7 @@ async function OngletBudgets({
                   <p className="text-sm font-semibold text-foreground">
                     Demande {d.demande.reference} — demandé par {d.demandePar.fullName} le {fr(d.demandeAt)}
                   </p>
+                  <p data-motif-demande-depassement className="text-xs text-muted-foreground">Motif de la Finance : {motifOuNonRenseigne(d.motifDemande)}</p>
                   <p className="text-sm text-foreground">{d.resume}</p>
                   <ConfirmerDepassement id={d.id} />
                 </li>
@@ -313,7 +315,7 @@ async function OngletBudgets({
           ) : null}
           <p className="text-xs text-muted-foreground">
             Le solde prévisionnel retranche l&apos;argent déjà validé qui n&apos;est pas encore sorti de la caisse. À la validation, le mode de règlement (caisse ou banque) n&apos;est pas encore connu :
-            on suppose la caisse. Des seuils en attente du DG ou refusés ne sont jamais pris en compte.
+            on suppose la caisse. Des seuils en attente du DG ou rejetés ne sont jamais pris en compte.
           </p>
         </div>
 
@@ -384,9 +386,9 @@ async function OngletBudgets({
                           {categoriesEnAttente.has(c.id) ? (
                             <Badge variant="warning">{libelleStatutParametrage("EN_ATTENTE")}</Badge>
                           ) : statut === "REFUSE" ? (
-                            // Lot J bis : un refus ne retire jamais le budget déjà en vigueur — la ligne le dit en toutes lettres.
+                            // Lot J bis : un rejet ne retire jamais le budget déjà en vigueur — la ligne le dit en toutes lettres.
                             <div data-dernier-parametrage-refuse className="space-y-1">
-                              <Badge variant={VARIANTE_STATUT.REFUSE}>Dernier paramétrage refusé</Badge>
+                              <Badge variant={VARIANTE_STATUT.REFUSE}>Dernier paramétrage rejeté</Badge>
                               <p className="text-xs text-muted-foreground" data-budget-conserve>
                                 {p && b ? `Budget en vigueur conservé : ${fcfa(p.budget)} (${libellePeriodeBudget(b.dateDebut, b.dateFin)}).` : "Aucun budget en vigueur."}
                               </p>
@@ -407,7 +409,7 @@ async function OngletBudgets({
           )}
           <p className="text-xs text-muted-foreground">
             Un budget de catégorie se consomme au règlement ; « Réservé » compte aussi ce qui est déjà validé et pas encore réglé, pour que le reste baisse dès la validation. Un budget en
-            attente du DG ou refusé n&apos;est jamais pris en compte.
+            attente du DG ou rejeté n&apos;est jamais pris en compte.
           </p>
         </div>
 
@@ -462,6 +464,7 @@ function ListeEnAttente({ parametrages, portee, peutValider, userId }: { paramet
           titre: titre(p),
           detail: detail(p),
           soumisPar: `Soumis par ${p.soumisPar?.fullName ?? "—"} le ${fr(p.soumisAt)}`,
+          motifSoumission: motifOuNonRenseigne(p.motifSoumission),
           soiMeme: p.soumisParId === userId,
         }))}
       />
@@ -475,6 +478,7 @@ function ListeEnAttente({ parametrages, portee, peutValider, userId }: { paramet
             <span className="font-semibold">{titre(p)}</span> — {detail(p)}
           </p>
           <p className="text-xs text-muted-foreground">Soumis par {p.soumisPar?.fullName ?? "—"} le {fr(p.soumisAt)}</p>
+          <p data-motif-soumission className="text-xs text-muted-foreground">Motif de la Finance : {motifOuNonRenseigne(p.motifSoumission)}</p>
         </li>
       ))}
     </ul>
@@ -516,8 +520,13 @@ function HistoriqueSection({ portee, parametrages }: { portee: "GLOBAL" | "CATEG
                     </td>
                     <td className="py-2 text-xs text-muted-foreground">
                       {p.repris ? "Budget existant repris au déploiement (validé d'office)." : `Soumis par ${p.soumisPar?.fullName ?? "—"} le ${fr(p.soumisAt)}.`}
-                      {p.decideAt && !p.repris ? ` ${p.statut === "VALIDE" ? "Validé" : "Refusé"} par ${p.decidePar?.fullName ?? "—"} le ${fr(p.decideAt)}.` : ""}
-                      {p.motifRefus ? ` Motif : ${p.motifRefus}` : ""}
+                      {p.decideAt && !p.repris ? ` ${p.statut === "VALIDE" ? "Validé" : "Rejeté"} par ${p.decidePar?.fullName ?? "—"} le ${fr(p.decideAt)}.` : ""}
+                      {p.repris ? null : (
+                        <span data-motifs-echange className="block">
+                          Motif de la Finance : {motifOuNonRenseigne(p.motifSoumission)}
+                          {p.decideAt ? <> — Motif du DG : {motifOuNonRenseigne(p.motifDecision ?? p.motifRefus)}</> : null}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );

@@ -27,6 +27,7 @@ import {
 } from "./beneficiaireArticles";
 import { MOTIF_REORIENTATION_MIN, PERMISSION_REORIENTER_DEMANDE, refusMotifReorientation } from "./circuitReorientation";
 import { evaluerReprise, type TypeReprise } from "./circuitReprise";
+import { MOTIF_ECHANGE_MAX, MOTIF_ECHANGE_MIN, refusMotifEchange } from "./motifEchange";
 import {
   appliquerDecisionsSimulees,
   etapeDepuisArticles,
@@ -170,7 +171,7 @@ export const LIBELLE_ETAT_LIGNE_DG: Record<EtatLigneDG, string> = {
   NON_SOUMISE: "Non soumise au DG",
   EN_ATTENTE_DG: "Soumise au DG — en attente",
   VALIDEE_DG: "Validée par le DG",
-  REFUSEE_DG: "Refusée par le DG",
+  REFUSEE_DG: "Rejetée par le DG",
 };
 
 /** Pourquoi une ligne ne peut pas être soumise au DG maintenant (case grisée à l'écran) ; `null` si elle le peut. */
@@ -302,9 +303,10 @@ export type ActionCircuit =
   | { type: "VALIDER_SERVICE" }
   /** Rejet de la demande entière vers le demandeur (Service, Finance, retour après rejet DG, DG en cas b). */
   | { type: "REJETER"; motif: string }
-  | { type: "SOUMETTRE_DG" }
-  | { type: "RESOUMETTRE_DG" }
-  | { type: "VALIDER_DG" }
+  /** Lot M : tout envoi de la Finance au DG et toute réponse du DG portent un motif (10 à 300 caractères). */
+  | { type: "SOUMETTRE_DG"; motif: string }
+  | { type: "RESOUMETTRE_DG"; motif: string }
+  | { type: "VALIDER_DG"; motif: string }
   | { type: "REJETER_DG"; motif: string }
   /** Décision article par article (Finance, DG en cas b). Pour une demande à articles : un sous-ensemble d'articles,
    *  à des moments différents (lot B). `approbateurClotureId` : DG dont les validations valent approbation de clôture. */
@@ -315,10 +317,13 @@ export type ActionCircuit =
       approbateurClotureId?: string | null;
       /** Demande À ARTICLES (lot B) : décisions pour un SOUS-ENSEMBLE d'articles ; absentes = contrôle seulement. */
       decisions?: readonly { ligneId: string; statut: "VALIDEE" | "REJETEE" }[];
+      /** Lot M : motif de la réponse du DG (décision de la demande de la Finance, cas b, ou dépense directe à l'étape DG) —
+       *  obligatoire quand c'est le DG qui décide, ignoré quand c'est la Finance. */
+      motifDG?: string;
     }
   /** La Finance soumet des lignes au DG (ou les lui resoumet après un refus). Sans `ligneIds` : contrôle de la demande
    *  seulement (bouton). */
-  | { type: "SOUMETTRE_LIGNES_DG"; ligneIds?: readonly string[] }
+  | { type: "SOUMETTRE_LIGNES_DG"; ligneIds?: readonly string[]; motif?: string }
   /** Le DG décide une ligne soumise. Sans `ligneId` : contrôle de la demande seulement. */
   | { type: "DECIDER_LIGNE_DG"; ligneId?: string; valider: boolean; motif?: string }
   | { type: "RESOUMETTRE_CORRECTION" }
@@ -355,7 +360,7 @@ export type ResultatTransition =
 
 const MOTIF_MIN = 3;
 /** Motif de contrôle (boutons grisés) : assez long pour passer le minimum d'une réorientation ou d'une reprise. */
-const MOTIF_PLACEHOLDER = "x".repeat(MOTIF_REORIENTATION_MIN);
+const MOTIF_PLACEHOLDER = "x".repeat(Math.max(MOTIF_REORIENTATION_MIN, MOTIF_ECHANGE_MIN));
 
 /** Nom d'une étape pour les écrans et l'historique. */
 export const LIBELLE_ETAPE_CIRCUIT: Record<EtapeCircuit, string> = {
@@ -445,7 +450,7 @@ function raisonArticleNonDecidable(
     return `La ligne « ${l.libelle} » a été validée par le DG : elle reste validée.`;
   }
   if (etat === "REFUSEE_DG_A_TRANCHER" && decision !== null && decision !== "REJETEE") {
-    return `La ligne « ${l.libelle} » a été refusée par le DG : resoumettez-la au DG ou refusez-la définitivement.`;
+    return `La ligne « ${l.libelle} » a été rejetée par le DG : resoumettez-la au DG ou rejetez-la définitivement.`;
   }
   return null;
 }
@@ -467,7 +472,10 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
   // Étape effective : déduite des articles pour une demande à articles, sinon celle de la colonne.
   const etape = parArticles ? etapeDepuisArticles(demande.etape, demande.modeEtapeDG, lignes) : demande.etape;
 
-  const motifInvalide = (motif: string) => motif.trim().length < MOTIF_MIN;
+  // Un motif absent ou qui n'est pas un texte (appel direct du serveur) est invalide, jamais une exception.
+  const motifInvalide = (motif: unknown) => typeof motif !== "string" || motif.trim().length < MOTIF_MIN || motif.trim().length > MOTIF_ECHANGE_MAX;
+  // Lot M : toute réponse du DG et tout envoi de la Finance au DG portent un motif de 10 à 300 caractères.
+  const refusMotifDG = (motif: unknown, objet: string): string | null => refusMotifEchange(motif, objet);
   // Soumission article par article : demande standard avec articles, étape DG optionnelle.
   const parLignes = parArticles && demande.modeEtapeDG === "OPTIONNELLE";
   const etats = new Map(lignes.map((l) => [l.id, etatLigneCircuit(l, demande.modeEtapeDG)]));
@@ -479,7 +487,7 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
     case "VALIDER_SERVICE":
     case "REJETER": {
       if (action.type === "REJETER" && motifInvalide(action.motif)) {
-        return refus(`Le motif du rejet est obligatoire (${MOTIF_MIN} caractères minimum).`);
+        return refus(`Le motif du rejet est obligatoire (${MOTIF_MIN} à ${MOTIF_ECHANGE_MAX} caractères).`);
       }
       if (etape === "SERVICE") {
         if (!acteur.estResponsableServiceDuDemandeur) {
@@ -503,6 +511,9 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
       if (roleDG) {
         if (!a(acteur, "treso.decider_dg")) return refus("Action non autorisée.");
         if (estAuteur) return refus("Vous ne pouvez pas décider votre propre demande.");
+        // Lot M : un rejet du DG porte un motif de 10 à 300 caractères (réponse à la Finance, demandeur de la demande).
+        const refusRejetDG = refusMotifDG((action as { motif: string }).motif, "le rejet du DG");
+        if (refusRejetDG) return refus(refusRejetDG);
       } else {
         if (!a(acteur, "treso.decider_finance")) return refus("Action non autorisée.");
         if (auteurInterdit) return refus("Vous ne pouvez pas décider votre propre demande.");
@@ -539,6 +550,8 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
 
     case "SOUMETTRE_DG": {
       if (!a(acteur, "treso.soumettre_dg")) return refus("Action non autorisée.");
+      const refusSoumission = refusMotifDG(action.motif, "la soumission de la demande au DG");
+      if (refusSoumission) return refus(refusSoumission);
       if (parLignes) return refus("Choisissez les lignes à soumettre au DG.");
       if (etape === "DECISION_FINALE") return refus("Le DG a déjà approuvé cette demande : reste la décision finale de la Finance.");
       if (etape !== "FINANCE") return refus(messageAttente(etape));
@@ -551,6 +564,8 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
 
     case "RESOUMETTRE_DG": {
       if (!a(acteur, "treso.soumettre_dg")) return refus("Action non autorisée.");
+      const refusResoumission = refusMotifDG(action.motif, "la resoumission au DG");
+      if (refusResoumission) return refus(refusResoumission);
       if (etape !== "REJET_DG") return refus("Cette demande n'a pas été rejetée par le DG — rien à resoumettre.");
       if (auteurInterdit) return refus("Vous ne pouvez pas soumettre votre propre demande.");
       return { ok: true, etapeSuivante: "DG", effets: { soumiseAuDG: true } };
@@ -566,6 +581,9 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
       if (demande.modeEtapeDG === "OBLIGATOIRE") {
         return refus("Pour cette demande, le DG décide ligne par ligne (sa décision est finale).");
       }
+      // Lot M : validation comme rejet du DG portent un motif de 10 à 300 caractères.
+      const refusReponseDG = refusMotifDG(action.motif, action.type === "VALIDER_DG" ? "la validation du DG" : "le rejet du DG");
+      if (refusReponseDG) return refus(refusReponseDG);
       if (action.type === "VALIDER_DG") {
         return {
           ok: true,
@@ -573,7 +591,6 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
           effets: { approbationClotureParDG: DECISION_DG_VAUT_APPROBATION_CLOTURE },
         };
       }
-      if (motifInvalide(action.motif)) return refus(`Le motif du rejet est obligatoire (${MOTIF_MIN} caractères minimum).`);
       return { ok: true, etapeSuivante: "REJET_DG", effets: { niveauRejet: "DG" } };
     }
 
@@ -600,6 +617,9 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
           if (!a(acteur, "treso.decider_dg")) return refus("Action non autorisée.");
           if (estAuteur) return refus("Vous ne pouvez pas décider votre propre demande.");
           if (decideursFinance.includes(acteur.userId)) return refus(MESSAGE_DEUX_PERSONNES);
+          // Lot M : la décision du DG (validation comme rejet) porte un motif de 10 à 300 caractères.
+          const refusDecisionDG = refusMotifDG(action.motifDG, "la décision du DG");
+          if (refusDecisionDG) return refus(refusDecisionDG);
           return {
             ok: true,
             etapeSuivante: suivante,
@@ -634,6 +654,11 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
         return { ok: true, etapeSuivante: etape, effets: {} };
       }
       if (action.decisions.length === 0) return refus("Aucune décision à enregistrer.");
+      // Lot M : la décision du DG (demande de la Finance, cas b) porte un motif de 10 à 300 caractères.
+      if (roleDG) {
+        const refusDecisionDG = refusMotifDG(action.motifDG, "la décision du DG");
+        if (refusDecisionDG) return refus(refusDecisionDG);
+      }
       const ids = new Set<string>();
       for (const d of action.decisions) {
         if (ids.has(d.ligneId)) return refus("Une ligne est décidée deux fois.");
@@ -678,6 +703,9 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
       if (action.ligneIds) {
         const raison = refusSoumissionLignes(lignes, action.ligneIds);
         if (raison) return refus(raison);
+        // Lot M : l'envoi d'articles au DG porte un motif de 10 à 300 caractères.
+        const refusEnvoi = refusMotifDG(action.motif, "la soumission d'articles au DG");
+        if (refusEnvoi) return refus(refusEnvoi);
       } else if (!lignes.some((l) => raisonLigneNonSoumettable(l) === null)) {
         return refus("Aucune ligne à soumettre au DG (lignes à catégoriser, déjà soumises ou déjà validées).");
       }
@@ -703,9 +731,9 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
       if (!ligne) return refus("Une ligne ne fait pas partie de cette demande.");
       if (etats.get(ligne.id) !== "CHEZ_DG") return refus(`La ligne « ${ligne.libelle} » n'attend pas votre décision.`);
       if (ligne.beneficiaireUserId === acteur.userId) return refus(MESSAGE_ARTICLE_BENEFICIAIRE(ligne.libelle));
-      if (!action.valider && motifInvalide(action.motif ?? "")) {
-        return refus(`Le motif du refus est obligatoire (${MOTIF_MIN} caractères minimum).`);
-      }
+      // Lot M : la réponse du DG sur un article (validation comme rejet) porte un motif de 10 à 300 caractères.
+      const refusReponseArticle = refusMotifDG(action.motif, action.valider ? "la validation du DG sur l'article" : "le rejet du DG sur l'article");
+      if (refusReponseArticle) return refus(refusReponseArticle);
       // L'article validé par le DG attend la confirmation de la Finance ; refusé, il revient à la Finance.
       const apres = lignes.map((l) =>
         l.id === ligne.id ? { ...l, decisionDG: action.valider ? ("VALIDEE" as const) : ("REFUSEE" as const) } : l
@@ -764,14 +792,14 @@ export function transition(demande: DemandeCircuit, acteur: ActeurCircuit, actio
 export function actionsPossibles(demande: DemandeCircuit, acteur: ActeurCircuit): TypeActionCircuit[] {
   const essais: ActionCircuit[] = [
     { type: "VALIDER_SERVICE" },
-    { type: "REJETER", motif: "motif" },
-    { type: "SOUMETTRE_DG" },
-    { type: "RESOUMETTRE_DG" },
-    { type: "VALIDER_DG" },
-    { type: "REJETER_DG", motif: "motif" },
-    { type: "DECIDER_LIGNES", auMoinsUneValidee: true },
+    { type: "REJETER", motif: MOTIF_PLACEHOLDER },
+    { type: "SOUMETTRE_DG", motif: MOTIF_PLACEHOLDER },
+    { type: "RESOUMETTRE_DG", motif: MOTIF_PLACEHOLDER },
+    { type: "VALIDER_DG", motif: MOTIF_PLACEHOLDER },
+    { type: "REJETER_DG", motif: MOTIF_PLACEHOLDER },
+    { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_PLACEHOLDER },
     { type: "SOUMETTRE_LIGNES_DG" },
-    { type: "DECIDER_LIGNE_DG", valider: true },
+    { type: "DECIDER_LIGNE_DG", valider: true, motif: MOTIF_PLACEHOLDER },
     { type: "RESOUMETTRE_CORRECTION" },
     { type: "ABANDONNER" },
     { type: "REORIENTER", motif: MOTIF_PLACEHOLDER },
@@ -870,7 +898,7 @@ export function detailLignesDG(demande: Pick<DemandeCircuit, "lignes" | "modeEta
   const morceaux = [`${soumises.length} ligne${pluriel(soumises.length)} sur ${lignes.length} soumise${pluriel(soumises.length)}`];
   if (compte("EN_ATTENTE_DG")) morceaux.push(`${compte("EN_ATTENTE_DG")} en attente`);
   if (compte("VALIDEE_DG")) morceaux.push(`${compte("VALIDEE_DG")} validée${pluriel(compte("VALIDEE_DG"))}`);
-  if (compte("REFUSEE_DG")) morceaux.push(`${compte("REFUSEE_DG")} refusée${pluriel(compte("REFUSEE_DG"))}`);
+  if (compte("REFUSEE_DG")) morceaux.push(`${compte("REFUSEE_DG")} rejetée${pluriel(compte("REFUSEE_DG"))}`);
   return morceaux.join(" · ");
 }
 
@@ -952,14 +980,18 @@ export function versDemandeCircuit(
  */
 export function raisonIndisponible(demande: DemandeCircuit, acteur: ActeurCircuit, type: TypeActionCircuit): string | null {
   const action: ActionCircuit =
-    type === "REJETER" || type === "REJETER_DG"
-      ? { type, motif: "motif" }
-      : type === "REORIENTER" || type === "REPRENDRE"
-        ? { type, motif: MOTIF_PLACEHOLDER }
+    type === "REJETER" ||
+    type === "REJETER_DG" ||
+    type === "SOUMETTRE_DG" ||
+    type === "RESOUMETTRE_DG" ||
+    type === "VALIDER_DG" ||
+    type === "REORIENTER" ||
+    type === "REPRENDRE"
+      ? { type, motif: MOTIF_PLACEHOLDER }
       : type === "DECIDER_LIGNES"
-        ? { type, auMoinsUneValidee: true }
+        ? { type, auMoinsUneValidee: true, motifDG: MOTIF_PLACEHOLDER }
         : type === "DECIDER_LIGNE_DG"
-          ? { type, valider: true }
+          ? { type, valider: true, motif: MOTIF_PLACEHOLDER }
           : { type };
   const r = transition(demande, acteur, action);
   if (r.ok) return null;

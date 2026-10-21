@@ -33,11 +33,11 @@ export async function notifierAlerteBudget(demandeId: string, acteurId: string, 
 }
 
 /** La Finance demande au DG de confirmer un dépassement rouge. */
-export async function notifierDemandeConfirmationDepassement(demandeId: string, reference: string, resume: string, acteurId: string): Promise<void> {
+export async function notifierDemandeConfirmationDepassement(demandeId: string, reference: string, resume: string, acteurId: string, motif: string): Promise<void> {
   try {
     await notifyByPermission("treso.decider_dg", {
       titre: "Confirmation de dépassement de budget demandée",
-      message: `La validation de la demande ${reference} atteint le seuil rouge : ${resume}. Votre confirmation (avec motif) est nécessaire.`,
+      message: `La validation de la demande ${reference} atteint le seuil rouge : ${resume}. Motif de la Finance : ${motif}. Votre confirmation (avec motif) est nécessaire.`,
       lien: LIEN_BUDGETS,
       priority: "IMPORTANT",
       category: "TRESORERIE",
@@ -68,16 +68,16 @@ export async function notifierConfirmationDepassement(demandeId: string, referen
  * Un lot de paramétrages vient d'être soumis : le DG reçoit UNE notification pour tout le lot, propre à la section (lot J quater) —
  * « Seuils de caisse à valider » pour le budget de caisse, « Budget(s) de catégorie à valider » pour les catégories.
  */
-export async function notifierParametragesSoumis(acteurId: string, nombre: number, description: string, portee: PorteeNotif): Promise<void> {
+export async function notifierParametragesSoumis(acteurId: string, nombre: number, description: string, portee: PorteeNotif, motif: string): Promise<void> {
   try {
     const caisse = portee === "GLOBAL";
     await notifyByPermission("treso.valider_budget", {
       titre: caisse ? "Seuils de caisse à valider" : nombre === 1 ? "Budget de catégorie à valider" : `${nombre} budgets de catégorie à valider`,
       message: caisse
-        ? `La Finance a soumis de nouveaux seuils d'alerte pour le solde de caisse : ${description}. Ils ne sont utilisables qu'après votre validation.`
+        ? `La Finance a soumis de nouveaux seuils d'alerte pour le solde de caisse : ${description}. Ils ne sont utilisables qu'après votre validation. Motif de la Finance : ${motif}.`
         : nombre === 1
-          ? `La Finance a soumis un budget de catégorie : ${description}. Il n'est utilisable qu'après votre validation.`
-          : `La Finance a soumis ${nombre} budgets de catégorie : ${description}. Ils ne sont utilisables qu'après votre validation.`,
+          ? `La Finance a soumis un budget de catégorie : ${description}. Il n'est utilisable qu'après votre validation. Motif de la Finance : ${motif}.`
+          : `La Finance a soumis ${nombre} budgets de catégorie : ${description}. Ils ne sont utilisables qu'après votre validation. Motif de la Finance : ${motif}.`,
       lien: LIEN_BUDGETS,
       priority: "IMPORTANT",
       category: "TRESORERIE",
@@ -90,7 +90,7 @@ export async function notifierParametragesSoumis(acteurId: string, nombre: numbe
 
 /**
  * Décision du DG sur un ou plusieurs paramétrages d'une section : UNE notification par compte qui avait soumis (le plus souvent un
- * seul), qui liste chaque élément décidé (et le motif en cas de refus). Jamais une notification par élément. Titres propres à la section.
+ * seul), qui liste chaque élément décidé avec le motif du DG (validation comme rejet, lot M). Jamais une notification par élément. Titres propres à la section.
  */
 export async function notifierDecisionParametrages(
   decides: { description: string; soumisParId: string | null; motif: string | null }[],
@@ -104,18 +104,18 @@ export async function notifierDecisionParametrages(
   }
   for (const [userId, liste] of parSoumetteur) {
     try {
-      const detail = liste.map((d) => (valide ? d.description : `${d.description} (motif : ${d.motif ?? "—"})`)).join(" ; ");
+      const detail = liste.map((d) => `${d.description} (motif du DG : ${d.motif ?? "Non renseigné"})`).join(" ; ");
       const n = liste.length;
       const titre =
         portee === "GLOBAL"
-          ? valide ? "Seuils de caisse validés par le DG" : "Seuils de caisse refusés par le DG"
+          ? valide ? "Seuils de caisse validés par le DG" : "Seuils de caisse rejetés par le DG"
           : valide
             ? n === 1 ? "Budget de catégorie validé par le DG" : `${n} budgets de catégorie validés par le DG`
-            : n === 1 ? "Budget de catégorie refusé par le DG" : `${n} budgets de catégorie refusés par le DG`;
+            : n === 1 ? "Budget de catégorie rejeté par le DG" : `${n} budgets de catégorie rejetés par le DG`;
       await notify({
         userId,
         titre,
-        message: valide ? `Validé : ${detail}. ${n === 1 ? "Il s'applique" : "Ils s'appliquent"} à ${n === 1 ? "sa" : "leur"} date d'effet.` : `Refusé : ${detail}.`,
+        message: valide ? `Validé : ${detail}. ${n === 1 ? "Il s'applique" : "Ils s'appliquent"} à ${n === 1 ? "sa" : "leur"} date d'effet.` : `Rejeté : ${detail}.`,
         lien: LIEN_BUDGETS,
         priority: "IMPORTANT",
         category: "TRESORERIE",
