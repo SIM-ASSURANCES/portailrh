@@ -14,14 +14,16 @@ export const MOTIF_MODIFICATION_DEPENSE_MIN = 3;
 
 /**
  * Fiche de régularisation : retour créé par l'Assistant, pas encore réceptionné ni complété par le collaborateur
- * (`dateRetour` nulle), sur un règlement Caisse, hors réouverture exceptionnelle et complément de signalement. Son total
+ * (`dateRetour` nulle), sur un règlement Caisse OU Banque (lot G : un fonds versé par banque se détaille de la même manière),
+ * hors ancien versement bancaire, réouverture exceptionnelle et complément de signalement. Son total
  * de dépenses est libre (le montant à rendre en découle) ; tout autre retour a un total fixé (déclaré ou réceptionné).
  */
 export function estFicheRegularisation(r: {
   creeParAssistant: boolean;
   estReceptionne: boolean;
   dateRetour: Date | null;
-  mode: "CAISSE" | "BANQUE";
+  /** Ancien retour Banque (bordereau, `JournalBanque`) : jamais une fiche, il garde son traitement d'origine. */
+  versementBancaire?: boolean;
   motifReouvertureExceptionnelle: string | null;
   signalementOrigineId: string | null;
 }): boolean {
@@ -29,7 +31,7 @@ export function estFicheRegularisation(r: {
     r.creeParAssistant &&
     !r.estReceptionne &&
     r.dateRetour === null &&
-    r.mode === "CAISSE" &&
+    !r.versementBancaire &&
     !r.motifReouvertureExceptionnelle &&
     !r.signalementOrigineId
   );

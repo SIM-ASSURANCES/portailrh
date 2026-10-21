@@ -15,7 +15,6 @@ const fiche = {
   creeParAssistant: true,
   estReceptionne: false,
   dateRetour: null,
-  mode: "CAISSE" as const,
   motifReouvertureExceptionnelle: null,
   signalementOrigineId: null,
 };
@@ -27,10 +26,13 @@ describe("fiche de régularisation (détail sans retour de caisse)", () => {
   it("complétée par le collaborateur, réceptionnée, Banque, réouverture ou complément : retour à total fixé", () => {
     expect(estFicheRegularisation({ ...fiche, dateRetour: new Date() })).toBe(false);
     expect(estFicheRegularisation({ ...fiche, estReceptionne: true })).toBe(false);
-    expect(estFicheRegularisation({ ...fiche, mode: "BANQUE" })).toBe(false);
+    expect(estFicheRegularisation({ ...fiche, versementBancaire: true })).toBe(false);
     expect(estFicheRegularisation({ ...fiche, motifReouvertureExceptionnelle: "Oubli constaté" })).toBe(false);
     expect(estFicheRegularisation({ ...fiche, signalementOrigineId: "s1" })).toBe(false);
     expect(estFicheRegularisation({ ...fiche, creeParAssistant: false })).toBe(false);
+  });
+  it("lot G — un fonds versé par banque se détaille comme un fonds de caisse (fiche de régularisation)", () => {
+    expect(estFicheRegularisation({ ...fiche, versementBancaire: false })).toBe(true);
   });
   it("ligne de reste : « Dépenses non détaillées » sans motif Finance", () => {
     expect(estLigneReste({ objet: "Dépenses non détaillées", motifNonJustifie: null })).toBe(true);

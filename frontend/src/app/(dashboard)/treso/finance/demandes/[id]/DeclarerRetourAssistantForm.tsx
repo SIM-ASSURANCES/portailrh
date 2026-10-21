@@ -3,8 +3,7 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input, Textarea } from "@/components/ui";
-import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
+import { Button, Textarea } from "@/components/ui";
 
 import { declarerRetourAssistantAction } from "../../retours/retourActions";
 
@@ -31,21 +30,15 @@ export function DeclarerRetourAssistantForm({
   reglementId,
   montantReglement,
   motifReouvertureRequis,
-  modeReglement,
   onCancel,
   onSuccess,
 }: {
   reglementId: string;
   montantReglement: number;
   motifReouvertureRequis: boolean;
-  /** BANQUE : montant reversé + bordereau de versement OBLIGATOIRES (voir CLAUDE.md "Retour sur règlement Banque"). */
-  modeReglement: "CAISSE" | "BANQUE";
   onCancel: () => void;
   onSuccess: () => void;
 }) {
-  const estBanque = modeReglement === "BANQUE";
-  const [montantBanque, setMontantBanque] = useState("");
-  const [bordereau, setBordereau] = useState<string | undefined>();
   const [motifReouverture, setMotifReouverture] = useState("");
   const [erreur, setErreur] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
@@ -55,30 +48,10 @@ export function DeclarerRetourAssistantForm({
       setErreur("Le motif de réouverture exceptionnelle est obligatoire (10 caractères minimum).");
       return;
     }
-    if (estBanque) {
-      const m = Number(montantBanque);
-      if (!m || m <= 0) {
-        setErreur("Le montant reversé doit être supérieur à 0.");
-        return;
-      }
-      if (m > montantReglement) {
-        setErreur(`Le montant reversé ne peut pas dépasser le montant du règlement (${montantReglement.toLocaleString("fr-FR")} FCFA).`);
-        return;
-      }
-      if (!bordereau) {
-        setErreur("Le bordereau de versement est obligatoire pour un retour Banque.");
-        return;
-      }
-    }
     setErreur(undefined);
 
     startTransition(async () => {
-      const result = await declarerRetourAssistantAction(
-        reglementId,
-        motifReouvertureRequis ? motifReouverture : undefined,
-        estBanque ? bordereau : undefined,
-        estBanque ? Number(montantBanque) : undefined
-      );
+      const result = await declarerRetourAssistantAction(reglementId, motifReouvertureRequis ? motifReouverture : undefined);
       if (result.status === "success") {
         toast.success(result.message);
         onSuccess();
@@ -96,22 +69,6 @@ export function DeclarerRetourAssistantForm({
         justification) sur l&apos;écran de détail du retour.
       </p>
 
-      {estBanque ? (
-        <div className="space-y-3">
-          <Input
-            label="Montant reversé à la banque (FCFA)"
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="1"
-            required
-            value={montantBanque}
-            onChange={(e) => setMontantBanque(e.target.value)}
-          />
-          <PieceJointeUpload label="Bordereau de versement (obligatoire)" onChange={(url) => setBordereau(url ?? undefined)} />
-        </div>
-      ) : null}
-
       {motifReouvertureRequis ? (
         <Textarea
           label="Motif de la réouverture exceptionnelle"
@@ -125,7 +82,7 @@ export function DeclarerRetourAssistantForm({
       {erreur ? <p className="text-sm text-danger">{erreur}</p> : null}
 
       <div className="flex flex-wrap gap-3">
-        <Button type="button" loading={isPending} onClick={handleSubmit}>
+        <Button signe type="button" loading={isPending} onClick={handleSubmit}>
           Déclarer
         </Button>
         <Button type="button" variant="secondary" disabled={isPending} onClick={onCancel}>

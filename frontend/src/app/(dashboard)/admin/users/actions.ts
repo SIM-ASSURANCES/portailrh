@@ -809,6 +809,16 @@ export async function supprimerUtilisateurAction(
     congesApprouves,
     congesValides,
     congesAnnules,
+    lignesBeneficiees,
+    lignesDecideesFinance,
+    demandesClotureesDeForce,
+    budgetsSoumis,
+    budgetsDecides,
+    depassementsDemandes,
+    signaturesEnregistrees,
+    actionsSigneesParCompte,
+    actionsSigneesAuNomDe,
+    depassementsConfirmes,
   ] = await Promise.all([
     prisma.demande.count({ where: { createurId: userId } }),
     prisma.demande.count({ where: { beneficiaireUserId: userId } }),
@@ -868,11 +878,27 @@ export async function supprimerUtilisateurAction(
     prisma.demandeConge.count({ where: { approuveParId: userId } }),
     prisma.demandeConge.count({ where: { valideParId: userId } }),
     prisma.demandeConge.count({ where: { annuleParId: userId } }),
+    // Autonomie des articles, lot A (2026-10-14) : bénéficiaire propre d'un article (SET NULL en base).
+    prisma.ligneDemande.count({ where: { beneficiaireUserId: userId } }),
+    // Autonomie des articles, lot B (2026-10-15) : décideur Finance d'un article (SET NULL en base).
+    prisma.ligneDemande.count({ where: { decideurFinanceId: userId } }),
+    // Lot C (2026-10-20) : clôture forcée d'une demande (SET NULL en base).
+    prisma.demande.count({ where: { clotureForceeParId: userId } }),
+    // Lot J (budgets) : paramétrages soumis ou décidés (SET NULL en base) et dépassements demandés (RESTRICT) ou confirmés.
+    prisma.budgetParametrage.count({ where: { soumisParId: userId } }),
+    prisma.budgetParametrage.count({ where: { decideParId: userId } }),
+    prisma.budgetDepassement.count({ where: { demandeParId: userId } }),
+    prisma.budgetDepassement.count({ where: { confirmeParId: userId } }),
+    // Lot L : signatures manuscrites enrôlées et actions signées (RESTRICT) ou faites au nom de ce compte (SET NULL).
+    prisma.signatureUtilisateur.count({ where: { userId } }),
+    prisma.actionSignee.count({ where: { signataireId: userId } }),
+    prisma.actionSignee.count({ where: { auNomDeId: userId } }),
   ]);
 
   const blocages: string[] = [];
   if (demandesCreees > 0) blocages.push(`créé ${demandesCreees} demande(s)`);
   if (demandesBeneficiees > 0) blocages.push(`été bénéficiaire de ${demandesBeneficiees} demande(s)`);
+  if (lignesBeneficiees > 0) blocages.push(`été bénéficiaire de ${lignesBeneficiees} article(s) d'une demande`);
   if (demandesApprouveesDG > 0)
     blocages.push(`approuvé ${demandesApprouveesDG} validation(s) complète(s) en tant que DG`);
   if (demandesDecideesFinance > 0) blocages.push(`pris la décision Finance de ${demandesDecideesFinance} demande(s)`);
@@ -924,6 +950,15 @@ export async function supprimerUtilisateurAction(
   if (congesApprouves > 0) blocages.push(`approuvé ${congesApprouves} demande(s) de congé en tant que responsable`);
   if (congesValides > 0) blocages.push(`validé ${congesValides} demande(s) de congé`);
   if (congesAnnules > 0) blocages.push(`annulé ${congesAnnules} congé(s)`);
+  if (lignesDecideesFinance > 0) blocages.push(`validé ${lignesDecideesFinance} ligne(s) d'article en tant que Finance`);
+  if (demandesClotureesDeForce > 0) blocages.push(`forcé la clôture de ${demandesClotureesDeForce} demande(s)`);
+  if (budgetsSoumis > 0) blocages.push(`soumis ${budgetsSoumis} paramétrage(s) de budget`);
+  if (budgetsDecides > 0) blocages.push(`décidé ${budgetsDecides} paramétrage(s) de budget`);
+  if (depassementsDemandes > 0) blocages.push(`demandé ${depassementsDemandes} confirmation(s) de dépassement de budget`);
+  if (signaturesEnregistrees > 0) blocages.push(`enregistré ${signaturesEnregistrees} version(s) de signature manuscrite`);
+  if (actionsSigneesParCompte > 0) blocages.push(`signé ${actionsSigneesParCompte} action(s)`);
+  if (actionsSigneesAuNomDe > 0) blocages.push(`été titulaire de ${actionsSigneesAuNomDe} action(s) signée(s) par délégation`);
+  if (depassementsConfirmes > 0) blocages.push(`confirmé ${depassementsConfirmes} dépassement(s) de budget`);
 
   if (blocages.length > 0) {
     const liste =

@@ -42,7 +42,7 @@ export async function PersonnesIntervenantes({
       orderBy: { confirmeAt: "asc" },
     }),
     prisma.historiqueEntry.findMany({
-      where: { entity: "Demande", entityId: demandeId, action: { in: ["cloture_totale", "cloture_partielle"] } },
+      where: { entity: "Demande", entityId: demandeId, action: { in: ["cloture_totale", "cloture_partielle", "cloture_forcee"] } },
       include: { user: true },
       orderBy: { createdAt: "asc" },
     }),

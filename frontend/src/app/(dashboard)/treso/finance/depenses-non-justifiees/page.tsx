@@ -35,7 +35,10 @@ export default async function DepensesNonJustifieesPage() {
     where: { justification: "SANS_PIECE" },
     include: {
       retourCaisse: {
-        select: { reglementId: true, reglement: { select: { demande: { select: { id: true, reference: true } } } } },
+        select: {
+          reglementId: true,
+          reglement: { select: { demande: { select: { id: true, reference: true } }, ligneDemande: { select: { libelle: true } } } },
+        },
       },
     },
     orderBy: { date: "asc" },
@@ -61,6 +64,7 @@ export default async function DepensesNonJustifieesPage() {
       id: l.id,
       demandeId: l.retourCaisse.reglement.demande.id,
       demandeReference: l.retourCaisse.reglement.demande.reference,
+      articleLibelle: l.retourCaisse.reglement.ligneDemande?.libelle ?? null,
       objet: l.objet,
       montant: Number(l.montant),
       date: l.date,

@@ -4,8 +4,8 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { Badge, Button, Input, Select, Textarea } from "@/components/ui";
+import { libelleMotifReglement, MOTIF_REGLEMENT_MIN, motifPourModification } from "backend/client";
 
-import { AllocationCategorieFields, type CategorieAllocationOption } from "./AllocationCategorieFields";
 import { annulerReglementAction, confirmerReglementAction, modifierReglementAction } from "./reglementActions";
 
 export interface ReglementAllocationData {
@@ -23,6 +23,8 @@ export interface ReglementRowData {
   motifAnnulation: string | null;
   auteurNom: string;
   createdAt: Date;
+  /** Lot I : motif / nature du règlement ; `null` pour un règlement antérieur (affiché « Non renseigné », jamais bloqué). */
+  motif: string | null;
   /** Voir CLAUDE.md "Allocation budgétaire explicite par règlement" —
    * toujours au moins une entrée dès que la demande est catégorisée
    * (même une seule catégorie crée une allocation à 100%, transparente
@@ -82,12 +84,10 @@ function ReglementStatutBadge({ reglement }: { reglement: ReglementRowData }) {
  */
 export function ReglementRow({
   reglement,
-  categoriesConcernees,
   canEffectuerReglement,
   canAnnulerReglementConfirme,
 }: {
   reglement: ReglementRowData;
-  categoriesConcernees: CategorieAllocationOption[];
   canEffectuerReglement: boolean;
   /** Tâche "Annulation d'un règlement après reçu réservée au Responsable"
    * (voir CLAUDE.md) — contrôle UNIQUEMENT le bouton "Annuler" d'un
@@ -99,20 +99,11 @@ export function ReglementRow({
   const [uiMode, setUiMode] = useState<"view" | "edit" | "annuler">("view");
   const [montantError, setMontantError] = useState<string | undefined>();
   const [montantEdit, setMontantEdit] = useState(String(reglement.montant));
-  const [allocValues, setAllocValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(reglement.allocations.map((a) => [a.categorieId, String(a.montant)]))
-  );
   const [motif, setMotif] = useState("");
   const [motifError, setMotifError] = useState<string | undefined>();
+  const [motifReglementEdit, setMotifReglementEdit] = useState(reglement.motif ?? "");
+  const [motifReglementError, setMotifReglementError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
-
-  const multiCategories = categoriesConcernees.length >= 2;
-  const sommeAllocations = categoriesConcernees.reduce(
-    (total, c) => total + (Number(allocValues[c.categorieId]) || 0),
-    0
-  );
-  const allocationValide =
-    !multiCategories || Math.round(sommeAllocations * 100) === Math.round((Number(montantEdit) || 0) * 100);
 
   function handleConfirmer() {
     startTransition(async () => {
@@ -133,9 +124,16 @@ export function ReglementRow({
       return;
     }
     setMontantError(undefined);
+    // Lot I : un brouillon qui a un motif en garde un valide ; un brouillon ancien sans motif n'est jamais bloqué.
+    const verdictMotif = motifPourModification(reglement.motif, motifReglementEdit);
+    if (!verdictMotif.ok) {
+      setMotifReglementError(verdictMotif.message);
+      return;
+    }
+    setMotifReglementError(undefined);
 
     startTransition(async () => {
-      const result = await modifierReglementAction(reglement.id, montantValue, modeValue, formData);
+      const result = await modifierReglementAction(reglement.id, montantValue, modeValue, motifReglementEdit);
       if (result.status === "success") {
         toast.success(result.message);
         setUiMode("view");
@@ -171,7 +169,7 @@ export function ReglementRow({
             {reglement.montant.toLocaleString("fr-FR")} FCFA — {MODE_LABEL[reglement.mode]}
           </p>
           <p className="text-xs text-muted-foreground">
-            {reglement.auteurNom} — {reglement.createdAt.toLocaleString("fr-FR")}
+            {reglement.auteurNom} — règlement saisi le {reglement.createdAt.toLocaleString("fr-FR")}
           </p>
           {/* Répartition par catégorie (voir CLAUDE.md "Allocation
               budgétaire explicite par règlement") — affichée seulement si
@@ -186,6 +184,9 @@ export function ReglementRow({
                 .join(", ")}
             </p>
           ) : null}
+          <p data-motif-reglement className="mt-1 text-xs text-foreground">
+            Motif / nature : <span className="font-medium">{libelleMotifReglement(reglement.motif)}</span>
+          </p>
           {reglement.estAnnule && reglement.motifAnnulation ? (
             <p className="mt-1 text-sm text-danger">
               Motif d&apos;annulation : {reglement.motifAnnulation}
@@ -218,7 +219,7 @@ export function ReglementRow({
               >
                 Modifier
               </Button>
-              <Button type="button" loading={isPending} disabled={!canEffectuerReglement} onClick={handleConfirmer}>
+              <Button signe type="button" loading={isPending} disabled={!canEffectuerReglement} onClick={handleConfirmer}>
                 Confirmer
               </Button>
             </>
@@ -249,6 +250,16 @@ export function ReglementRow({
             onChange={(e) => setMontantEdit(e.target.value)}
             error={montantError}
           />
+          <Textarea
+            name="motifReglement"
+            label="Motif / nature du règlement"
+            rows={2}
+            required={reglement.motif != null}
+            hint={reglement.motif != null ? `${MOTIF_REGLEMENT_MIN} caractères minimum.` : `Règlement antérieur sans motif : facultatif, ${MOTIF_REGLEMENT_MIN} caractères minimum si renseigné.`}
+            value={motifReglementEdit}
+            onChange={(e) => setMotifReglementEdit(e.target.value)}
+            error={motifReglementError}
+          />
           <Select
             name="mode"
             label="Mode"
@@ -258,16 +269,8 @@ export function ReglementRow({
               { value: "BANQUE", label: "Banque" },
             ]}
           />
-          {multiCategories ? (
-            <AllocationCategorieFields
-              categories={categoriesConcernees}
-              montantTotal={Number(montantEdit) || 0}
-              values={allocValues}
-              onChange={(categorieId, valeur) => setAllocValues((prev) => ({ ...prev, [categorieId]: valeur }))}
-            />
-          ) : null}
           <div className="flex flex-wrap gap-3">
-            <Button type="submit" loading={isPending} disabled={!allocationValide}>
+            <Button type="submit" loading={isPending}>
               Enregistrer
             </Button>
             <Button type="button" variant="secondary" disabled={isPending} onClick={() => setUiMode("view")}>
@@ -291,7 +294,7 @@ export function ReglementRow({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" variant="danger" loading={isPending} onClick={handleAnnuler}>
+            <Button signe type="button" variant="danger" loading={isPending} onClick={handleAnnuler}>
               Confirmer l&apos;annulation
             </Button>
             <Button

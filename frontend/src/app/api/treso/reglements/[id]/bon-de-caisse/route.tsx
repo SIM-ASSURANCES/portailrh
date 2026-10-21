@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 
-import { getBeneficiaireNom } from "backend";
+import { nomBeneficiaireDemande } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
+import { chargerArticleDocument } from "@/lib/pdf/articleReglement";
 import { BonDeCaisseDocument, type BonDeCaisseData } from "@/lib/pdf/BonDeCaisseDocument";
 
 /**
@@ -39,7 +40,7 @@ export async function GET(
   const reglement = await prisma.reglement.findUnique({
     where: { id },
     include: {
-      demande: { include: { createur: true, beneficiaireUser: true } },
+      demande: { include: { createur: { include: { service: true } }, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } },
       auteur: true,
     },
   });
@@ -66,9 +67,18 @@ export async function GET(
     });
   }
 
+  // Lot D : l'article payé (libellé, bénéficiaire, montant de l'article) et le rappel de la demande. Le montant demandé,
+  // le total réglé et le reste à régler restent absents de ce bon (réservés au reçu complet).
+  const article = await chargerArticleDocument(reglement, reglement.demande, estFinanceOuDG);
   const data: BonDeCaisseData = {
     demandeReference: reglement.demande.reference,
-    beneficiaireNom: getBeneficiaireNom(reglement.demande),
+    demandeurNom: reglement.demande.createur.fullName,
+    serviceNom: reglement.demande.createur.service?.name ?? null,
+    demandeCreeeLe: reglement.demande.createdAt,
+    article: article
+      ? { libelle: article.libelle, beneficiaireNom: article.beneficiaireNom, montantValide: article.montantValide, dateLivraison: article.dateLivraison }
+      : null,
+    beneficiaireNom: article?.beneficiaireNom ?? nomBeneficiaireDemande(reglement.demande, reglement.demande.lignes, { seulementValidees: true }),
     confirmeLe: reglement.confirmeAt ?? reglement.createdAt,
     montant: Number(reglement.montant),
     auteurNom: reglement.auteur.fullName,

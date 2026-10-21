@@ -16,16 +16,17 @@ interface AppShellProps {
   canAdmin?: boolean;
   /** Affiche "Demandes" (treso.creer_demande OU treso.declarer_retour). */
   canAccesDemandes?: boolean;
-  /** Affiche "Mon tableau de bord" (treso.creer_demande seule). */
+  /** Affiche « Accueil » (ex-« Mon tableau de bord ») (treso.creer_demande seule). */
   canAccesMonTableauDeBord?: boolean;
   /** Affiche "Demandes à traiter (Finance)" (categoriser_demande OU valider_demande). */
   canAccesFinanceDemandes?: boolean;
   /** Affiche "Toutes les demandes" (valider_demande OU effectuer_reglement OU receptionner_retour). */
   canVoirToutesLesDemandes?: boolean;
   canRetourExterne?: boolean;
+  canVoirBudgets?: boolean;
   /** Affiche "Retours en attente" (treso.receptionner_retour). */
   canReceptionnerRetour?: boolean;
-  /** Affiche "Tableau de bord Finance" (treso.voir_dashboard_finance). */
+  /** Affiche « Accueil Finance » (ex-« Tableau de bord Finance ») (treso.voir_dashboard_finance). */
   canVoirDashboardFinance?: boolean;
   /** Affiche "Reporting" (treso.voir_reporting). */
   canVoirReporting?: boolean;
@@ -83,6 +84,7 @@ export function AppShell({
   canAccesFinanceDemandes = false,
   canVoirToutesLesDemandes = false,
   canRetourExterne = false,
+  canVoirBudgets = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
   canVoirReporting = false,
@@ -191,6 +193,7 @@ export function AppShell({
         canAccesFinanceDemandes={canAccesFinanceDemandes}
         canVoirToutesLesDemandes={canVoirToutesLesDemandes}
         canRetourExterne={canRetourExterne}
+        canVoirBudgets={canVoirBudgets}
         canReceptionnerRetour={canReceptionnerRetour}
         canVoirDashboardFinance={canVoirDashboardFinance}
         canVoirReporting={canVoirReporting}

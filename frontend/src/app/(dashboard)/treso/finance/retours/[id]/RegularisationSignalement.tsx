@@ -152,7 +152,7 @@ export function RemboursementDecision({ remboursementId }: { remboursementId: st
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
-        <Button type="button" loading={isPending} onClick={() => run(() => validerRemboursementRetourAction(remboursementId))}>
+        <Button signe type="button" loading={isPending} onClick={() => run(() => validerRemboursementRetourAction(remboursementId))}>
           Valider le remboursement
         </Button>
         <Button type="button" variant="secondary" disabled={isPending} onClick={() => setRejet((v) => !v)}>
@@ -162,7 +162,7 @@ export function RemboursementDecision({ remboursementId }: { remboursementId: st
       {rejet ? (
         <div className="space-y-2">
           <Textarea label="Motif du rejet" rows={2} value={motifRejet} onChange={(e) => setMotifRejet(e.target.value)} />
-          <Button
+          <Button signe
             type="button"
             variant="danger"
             loading={isPending}

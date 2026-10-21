@@ -53,7 +53,10 @@ export default async function RetoursADeclarerPage() {
               className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4"
             >
               <div>
-                <p className="font-medium text-foreground">{r.reference}</p>
+                <p className="font-medium text-foreground">
+                  {r.reference}
+                  {r.articleLibelle ? <span className="font-normal text-muted-foreground"> — Article : {r.articleLibelle}</span> : null}
+                </p>
                 <p className="text-sm text-muted-foreground">
                   {r.montant.toLocaleString("fr-FR")} FCFA — {r.mode === "BANQUE" ? "Banque" : "Caisse"}
                   {r.confirmeAt ? ` — réglé le ${r.confirmeAt.toLocaleDateString("fr-FR")}` : ""}

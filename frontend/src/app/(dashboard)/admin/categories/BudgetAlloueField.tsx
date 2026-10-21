@@ -1,71 +1,37 @@
-"use client";
+import Link from "next/link";
 
-import { useState, useTransition } from "react";
-import { toast } from "sonner";
-
-import { Button, Input } from "@/components/ui";
-
-import { modifierBudgetCategorieAction } from "./actions";
+import { libellePeriodeBudget, libelleSeuil, type SeuilBudget } from "backend/client";
 
 /**
- * Champ éditable "Budget alloué" d'une Catégorie — voir CLAUDE.md "Budget
- * partagé par Catégorie". Vide = aucune limite (`budgetAlloue = null`),
- * jamais 0 (un budget de 0 bloquerait tout règlement, ce n'est pas ce que
- * "pas de limite" signifie). Enregistrement explicite (bouton), pas à
- * chaque frappe : une saisie de montant se corrige souvent en cours de
- * route, un enregistrement immédiat par caractère n'aurait aucun sens ici.
+ * Budget EN VIGUEUR d'une Catégorie, en lecture seule (lot J, 2026-10-19). Il n'est plus modifiable ici : la Finance le
+ * paramètre (montant, date d'effet, seuils d'alerte) sur l'écran « Budgets » et le DG le valide ; l'ancien champ éditable
+ * (qui écrivait `Categorie.budgetAlloue` sans validation) a disparu.
  */
 export function BudgetAlloueField({
-  categorieId,
-  budgetAlloue,
+  budget,
+  lienBudgets = false,
 }: {
-  categorieId: string;
-  budgetAlloue: number | null;
+  budget: { montant: number; dateDebut: string; dateFin: string | null; seuil: SeuilBudget | null } | null;
+  /** Affiche le lien vers l'écran « Budgets » (comptes de l'espace Finance seulement). */
+  lienBudgets?: boolean;
 }) {
-  const [value, setValue] = useState(budgetAlloue != null ? String(budgetAlloue) : "");
-  const [isPending, startTransition] = useTransition();
-
-  function handleSave() {
-    const trimmed = value.trim();
-    if (trimmed === "") {
-      startTransition(async () => {
-        const result = await modifierBudgetCategorieAction(categorieId, null);
-        if (result.status === "success") toast.success(result.message);
-        else toast.error(result.message);
-      });
-      return;
-    }
-
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      toast.error("Le budget doit être un nombre supérieur à 0, ou vide pour aucune limite.");
-      return;
-    }
-
-    startTransition(async () => {
-      const result = await modifierBudgetCategorieAction(categorieId, parsed);
-      if (result.status === "success") toast.success(result.message);
-      else toast.error(result.message);
-    });
-  }
-
   return (
-    <div className="flex items-center gap-2">
-      <div className="w-36">
-        <Input
-          aria-label="Budget alloué (FCFA)"
-          type="number"
-          inputMode="decimal"
-          min="1"
-          step="1"
-          placeholder="Illimité"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-        />
-      </div>
-      <Button type="button" variant="secondary" loading={isPending} onClick={handleSave}>
-        Enregistrer
-      </Button>
-    </div>
+    <span data-budget-en-vigueur className="flex flex-wrap items-center gap-2 text-sm text-foreground">
+      {budget ? (
+        <>
+          <span className="font-black tabular-nums">{budget.montant.toLocaleString("fr-FR")} FCFA</span>
+          <span className="text-xs text-muted-foreground">
+            {libellePeriodeBudget(budget.dateDebut, budget.dateFin)} · {libelleSeuil(budget.seuil)}
+          </span>
+        </>
+      ) : (
+        <span className="text-muted-foreground">Aucun budget en vigueur (aucune limite).</span>
+      )}
+      {lienBudgets ? (
+        <Link href="/treso/finance/budgets" className="text-xs text-info underline-offset-4 hover:text-primary hover:underline">
+          Gérer les budgets
+        </Link>
+      ) : null}
+    </span>
   );
 }

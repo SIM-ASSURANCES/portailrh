@@ -6,7 +6,7 @@ import {
   destinatairesEtape,
   DELAI_RAPPEL_MS,
   INTERVALLE_RAPPEL_MS,
-  notificationRappel,
+  notificationsRappel,
   notificationsEtape,
   rappelDu,
   reserverRappelsDus,
@@ -182,37 +182,55 @@ describe("rappels à 48 h", () => {
   });
 
   it("message de rappel : même destinataire que l'étape, avec la durée d'attente", () => {
-    const n = notificationRappel(ctx("SERVICE"), candidats, t0, apres(3 * 24 * 3600 * 1000));
-    expect(n?.destinataires).toEqual(["resp"]);
-    expect(n?.titre).toBe("Rappel : demande à valider (service)");
-    expect(n?.message).toMatch(/^En attente depuis 3 jours à l'étape Service\./);
+    // RÉÉCRIT (lot B) : `notificationsRappel` renvoie un rappel PAR audience (Finance et DG peuvent attendre ensemble).
+    const [n, ...autres] = notificationsRappel(ctx("SERVICE"), candidats, t0, apres(3 * 24 * 3600 * 1000));
+    expect(autres).toHaveLength(0);
+    expect(n.destinataires).toEqual(["resp"]);
+    expect(n.titre).toBe("Rappel : demande à valider (service)");
+    expect(n.message).toMatch(/^En attente depuis 3 jours à l'étape Service\./);
   });
 
   it("deux affichages simultanés : la demande n'est réservée qu'une fois (puis plus pendant 24 h)", async () => {
-    type Ligne = { id: string; etapeCircuit: EtapeCircuit; etapeCircuitDepuis: Date; dernierRappelAt: Date | null };
+    // RÉÉCRIT (lot C) : la requête est un `AND` d'étapes à relancer (dont TERMINEE avec articles validés, pas clôturée) et de la fenêtre de rappel.
+    type Ligne = {
+      id: string;
+      etapeCircuit: EtapeCircuit;
+      etapeCircuitDepuis: Date;
+      dernierRappelAt: Date | null;
+      statut: string;
+      articlesValides: boolean;
+    };
     const lignes: Ligne[] = [
-      { id: "vieille", etapeCircuit: "FINANCE", etapeCircuitDepuis: t0, dernierRappelAt: null },
-      { id: "recente", etapeCircuit: "FINANCE", etapeCircuitDepuis: apres(DELAI_RAPPEL_MS), dernierRappelAt: null },
-      { id: "finie", etapeCircuit: "TERMINEE", etapeCircuitDepuis: t0, dernierRappelAt: null },
+      { id: "vieille", etapeCircuit: "FINANCE", etapeCircuitDepuis: t0, dernierRappelAt: null, statut: "EN_ATTENTE_VALIDATION", articlesValides: false },
+      { id: "recente", etapeCircuit: "FINANCE", etapeCircuitDepuis: apres(DELAI_RAPPEL_MS), dernierRappelAt: null, statut: "EN_ATTENTE_VALIDATION", articlesValides: false },
+      { id: "terminee-a-suivre", etapeCircuit: "TERMINEE", etapeCircuitDepuis: t0, dernierRappelAt: null, statut: "VALIDEE_NON_REGLEE", articlesValides: true },
+      { id: "finie-sans-article", etapeCircuit: "TERMINEE", etapeCircuitDepuis: t0, dernierRappelAt: null, statut: "VALIDEE_NON_REGLEE", articlesValides: false },
+      { id: "finie-cloturee", etapeCircuit: "TERMINEE", etapeCircuitDepuis: t0, dernierRappelAt: null, statut: "CLOTUREE", articlesValides: true },
     ];
     type Where = {
       id?: string;
       etapeCircuit?: EtapeCircuit | { in: EtapeCircuit[] };
+      statut?: { notIn: string[] };
+      lignes?: { some: { statutValidation: string } };
       etapeCircuitDepuis?: Date | { lte: Date };
-      OR?: ({ dernierRappelAt: null } | { dernierRappelAt: { lte: Date } })[];
+      dernierRappelAt?: null | { lte: Date };
+      AND?: Where[];
+      OR?: Where[];
     };
-    const correspond = (l: Ligne, w: Where) =>
+    const correspond = (l: Ligne, w: Where): boolean =>
       (!w.id || l.id === w.id) &&
       (!w.etapeCircuit ||
         (typeof w.etapeCircuit === "string" ? l.etapeCircuit === w.etapeCircuit : w.etapeCircuit.in.includes(l.etapeCircuit))) &&
+      (!w.statut || !w.statut.notIn.includes(l.statut)) &&
+      (!w.lignes || l.articlesValides) &&
       (!w.etapeCircuitDepuis ||
         (w.etapeCircuitDepuis instanceof Date
           ? l.etapeCircuitDepuis.getTime() === w.etapeCircuitDepuis.getTime()
           : l.etapeCircuitDepuis <= w.etapeCircuitDepuis.lte)) &&
-      (!w.OR ||
-        w.OR.some((o) =>
-          o.dernierRappelAt === null ? l.dernierRappelAt === null : l.dernierRappelAt !== null && l.dernierRappelAt <= o.dernierRappelAt.lte
-        ));
+      (w.dernierRappelAt === undefined ||
+        (w.dernierRappelAt === null ? l.dernierRappelAt === null : l.dernierRappelAt !== null && l.dernierRappelAt <= w.dernierRappelAt.lte)) &&
+      (!w.AND || w.AND.every((x) => correspond(l, x))) &&
+      (!w.OR || w.OR.some((x) => correspond(l, x)));
     const db = {
       demande: {
         findMany: async ({ where }: { where: Where }) => lignes.filter((l) => correspond(l, where)).map((l) => ({ ...l })),
@@ -227,12 +245,15 @@ describe("rappels à 48 h", () => {
     const maintenant = apres(DELAI_RAPPEL_MS + 1000);
     // Les deux lectures ont lieu avant la première réservation : seule une des deux réserve la demande.
     const [a, b] = await Promise.all([reserverRappelsDus(db, maintenant), reserverRappelsDus(db, maintenant)]);
-    expect([...a, ...b].map((r) => r.id)).toEqual(["vieille"]);
+    // « vieille » (étape Finance) et « terminee-a-suivre » (articles validés, pas clôturée) sont relancées, une seule fois chacune ;
+    // une demande terminée sans article validé ou clôturée ne l'est jamais.
+    expect([...a, ...b].map((r) => r.id).sort()).toEqual(["terminee-a-suivre", "vieille"]);
     // Une heure après, puis juste avant 24 h : plus rien ; 24 h après : à nouveau.
     const heure = 60 * 60 * 1000;
     expect(await reserverRappelsDus(db, new Date(maintenant.getTime() + heure))).toEqual([]);
     expect(await reserverRappelsDus(db, new Date(maintenant.getTime() + 24 * heure - 1))).toEqual([]);
-    expect((await reserverRappelsDus(db, new Date(maintenant.getTime() + 24 * heure))).map((r) => r.id)).toEqual([
+    expect((await reserverRappelsDus(db, new Date(maintenant.getTime() + 24 * heure))).map((r) => r.id).sort()).toEqual([
+      "terminee-a-suivre",
       "vieille",
     ]);
   });

@@ -272,10 +272,12 @@ describe("À corriger, Abandonnée, Terminée", () => {
       expect(actionsPossibles(d, qui)).toEqual([]);
     }
   });
-  it("le demandeur ne peut rien faire hors de « À corriger »", () => {
-    for (const e of ["SERVICE", "FINANCE", "DG", "REJET_DG", "DECISION_FINALE", "TERMINEE", "ABANDONNEE"] as const) {
+  it("le demandeur ne peut rien faire hors de « À corriger » — sauf réorienter l'étape Service (lot K)", () => {
+    for (const e of ["FINANCE", "DG", "REJET_DG", "DECISION_FINALE", "TERMINEE", "ABANDONNEE"] as const) {
       expect(actionsPossibles(demande(e), AUTEUR)).toEqual([]);
     }
+    // Lot K : tant que la demande attend le responsable de service, son demandeur peut la réorienter (motif obligatoire).
+    expect(actionsPossibles(demande("SERVICE"), AUTEUR)).toEqual(["REORIENTER"]);
   });
   it("Abandonnée et Terminée sont finales pour le circuit", () => {
     for (const qui of [FINANCE, DG, RESPONSABLE, ASSISTANT, AUTEUR]) {
@@ -360,7 +362,7 @@ describe("deux personnes distinctes pour une validation complète (Finance ≠ D
     const d = demande("FINANCE");
     const r = ok(d, CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: true });
     expect(r.effets.decideurFinance).toBe(true);
-    const decidee = { createurId: d.createurId, decideurFinanceId: CUMUL.userId, approbationClotureNonRequise: false };
+    const decidee = { createurId: d.createurId, decideursFinanceIds: [CUMUL.userId], approbationClotureNonRequise: false };
     expect(refusApprobationCloture(decidee, CUMUL.userId)).toBe(MESSAGE_DEUX_PERSONNES);
     expect(refusApprobationCloture(decidee, DG.userId)).toBeNull();
   });
@@ -373,11 +375,11 @@ describe("deux personnes distinctes pour une validation complète (Finance ≠ D
   });
 
   it("le demandeur n'approuve jamais la clôture de sa propre demande", () => {
-    expect(refusApprobationCloture({ createurId: DG.userId, decideurFinanceId: FINANCE.userId, approbationClotureNonRequise: false }, DG.userId)).toContain("propre demande");
+    expect(refusApprobationCloture({ createurId: DG.userId, decideursFinanceIds: [FINANCE.userId], approbationClotureNonRequise: false }, DG.userId)).toContain("propre demande");
   });
 
   it("demande émise par le DG : approbation non requise", () => {
-    expect(refusApprobationCloture({ createurId: "x", decideurFinanceId: null, approbationClotureNonRequise: true }, DG.userId)).toContain("n'est pas requise");
+    expect(refusApprobationCloture({ createurId: "x", decideursFinanceIds: [], approbationClotureNonRequise: true }, DG.userId)).toContain("n'est pas requise");
   });
 
   it("un rejet n'est pas une décision Finance (n'enregistre pas de décideur)", () => {
@@ -411,10 +413,10 @@ describe("raisons des boutons grisés (écran = serveur)", () => {
 
 describe("conflit d'intérêts : jamais l'exécution de sa propre demande", () => {
   it("refusé au demandeur et au bénéficiaire (garde 8), permis à tout autre compte", () => {
-    expect(refusExecutionPropreDemande({ createurId: "u-assist" }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
-    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist" }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
-    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist" }, "u-autre")).toBeNull();
-    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: null }, "u-autre")).toBeNull();
+    expect(refusExecutionPropreDemande({ createurId: "u-assist", lignes: [] }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
+    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist", lignes: [] }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
+    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist", lignes: [] }, "u-autre")).toBeNull();
+    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: null, lignes: [] }, "u-autre")).toBeNull();
   });
   it("garde 9 : dépense directe de la Finance pour elle-même → le DG décide (cas b)", () => {
     const p = determinerParcours(PROFIL.finance, "DEPENSE_DIRECTE", { beneficiaireEstLeCreateur: true });

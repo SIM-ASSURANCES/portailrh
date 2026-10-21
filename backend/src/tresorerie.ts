@@ -1,5 +1,8 @@
 import type { Prisma, StatutDemande } from "./generated/prisma/client";
 import { prisma } from "./prisma";
+import { montantValideDepuisLignes, statutDepuisLignes } from "./etatArticles";
+import { getEcartLigne } from "./regularisationArticle";
+import { getEcartDemande } from "./regularisationArticleDb";
 
 /**
  * Statuts d'une Demande dont le montant est ENTIÈREMENT validé (montantValide
@@ -67,10 +70,8 @@ export const DEMANDES_EN_ATTENTE_VALIDATION_WHERE = {
   reliquatRejete: false,
   OR: [
     { lignes: { none: {} }, statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] } },
-    {
-      statut: { in: ["EN_ATTENTE_VALIDATION", "PARTIELLEMENT_VALIDEE"] },
-      lignes: { some: { statutValidation: "EN_ATTENTE" } },
-    },
+    // Lot B : une demande à articles est « en attente » tant qu'au moins un article n'a pas de décision finale.
+    { statut: { notIn: ["REJETEE", "CLOTUREE", "ABANDONNEE"] }, lignes: { some: { statutValidation: "EN_ATTENTE" } } },
   ],
 } satisfies Prisma.DemandeWhereInput;
 
@@ -103,19 +104,46 @@ export const VALIDATION_COMPLETE_EN_ATTENTE_WHERE = {
   montantValide: { gt: 0 },
   validationCompleteParDG: false,
   approbationClotureNonRequise: false,
+  // Lot B : on n'approuve la clôture que lorsque tous les articles sont traités (aucun encore à décider ou chez le DG).
+  lignes: { none: { statutValidation: "EN_ATTENTE" } },
 } satisfies Prisma.DemandeWhereInput;
 
 /**
- * Files de la Finance dans le circuit de validation (2026-10-06) : une file par étape où la Finance agit — à
- * décider (étape Finance), après un rejet du DG (resoumettre ou renvoyer au demandeur), décision finale après
- * l'approbation du DG. S'y ajoute le reliquat d'une dépense directe partiellement validée (validation
- * complémentaire, décision finale déjà prise). Les demandes aux étapes Service et DG, à corriger ou abandonnées n'y
- * sont jamais : la Finance n'y a rien à faire.
+ * Files de la Finance (lot B, 2026-10-15) : des requêtes sur les ARTICLES, plus sur l'étape de la colonne. Une demande y
+ * figure tant qu'au moins UN de ses articles attend la Finance :
+ *  - FINANCE : un article à décider (non soumis au DG) ;
+ *  - REJET_DG : un article refusé par le DG, à resoumettre ou à rejeter définitivement ;
+ *  - DECISION_FINALE : un article validé par le DG, à confirmer par la Finance.
+ * Une demande sans article (dépense directe) reste classée par son étape. S'y ajoute le reliquat d'une dépense directe
+ * partiellement validée (validation complémentaire, décision finale déjà prise). Les demandes au Service, à corriger,
+ * abandonnées, clôturées ou rejetées n'y sont jamais : la Finance n'y a rien à faire. Le cas (b) (demande émise par la
+ * Finance, le DG décide tout) n'est jamais une file de la Finance.
  */
+const DEMANDE_ACTIVE_POUR_FINANCE = {
+  statut: { notIn: ["REJETEE", "CLOTUREE", "ABANDONNEE"] },
+  etapeCircuit: { notIn: ["SERVICE", "A_CORRIGER", "ABANDONNEE"] },
+  modeEtapeDG: { not: "OBLIGATOIRE" },
+} satisfies Prisma.DemandeWhereInput;
+
 export const FILES_FINANCE_WHERE = {
-  FINANCE: { etapeCircuit: "FINANCE" },
-  REJET_DG: { etapeCircuit: "REJET_DG" },
-  DECISION_FINALE: { etapeCircuit: "DECISION_FINALE" },
+  FINANCE: {
+    OR: [
+      { ...DEMANDE_ACTIVE_POUR_FINANCE, lignes: { some: { statutValidation: "EN_ATTENTE", soumiseAuDG: false } } },
+      { etapeCircuit: "FINANCE", lignes: { none: {} } },
+    ],
+  },
+  REJET_DG: {
+    OR: [
+      { ...DEMANDE_ACTIVE_POUR_FINANCE, lignes: { some: { statutValidation: "EN_ATTENTE", soumiseAuDG: true, decisionDG: "REFUSEE" } } },
+      { etapeCircuit: "REJET_DG", lignes: { none: {} } },
+    ],
+  },
+  DECISION_FINALE: {
+    OR: [
+      { ...DEMANDE_ACTIVE_POUR_FINANCE, lignes: { some: { statutValidation: "EN_ATTENTE", soumiseAuDG: true, decisionDG: "VALIDEE" } } },
+      { etapeCircuit: "DECISION_FINALE", lignes: { none: {} } },
+    ],
+  },
   RELIQUAT: { etapeCircuit: "TERMINEE", statut: "PARTIELLEMENT_VALIDEE", reliquatRejete: false, lignes: { none: {} } },
 } satisfies Record<string, Prisma.DemandeWhereInput>;
 
@@ -126,6 +154,16 @@ export const DEMANDES_A_TRAITER_FINANCE_WHERE = {
 
 export function lignesToutesDecidees(lignes: { statutValidation: string }[]): boolean {
   return lignes.length > 0 && lignes.every((l) => l.statutValidation !== "EN_ATTENTE");
+}
+
+/**
+ * Éligibilité à la CLÔTURE (lot B, 2026-10-15) : impossible tant qu'un article est encore à décider ou chez le DG.
+ * Demande à articles : tous les articles sont traités (validés ou rejetés) ET au moins un est validé. Sans article
+ * (dépense directe) : règle d'origine (statut de validation complète). SEULE lecture de cette règle.
+ */
+export function peutEtreCloturee(d: { statut: StatutDemande; lignes: { statutValidation: string }[] }): boolean {
+  if (d.lignes.length > 0) return lignesToutesDecidees(d.lignes) && d.lignes.some((l) => l.statutValidation === "VALIDEE");
+  return STATUTS_VALIDATION_COMPLETE.includes(d.statut);
 }
 
 /**
@@ -622,11 +660,24 @@ export async function calculerMontantARetournerNet({
 }): Promise<number> {
   const reglement = await prisma.reglement.findUnique({
     where: { id: reglementId },
-    select: { montant: true },
+    select: { montant: true, mode: true, demandeId: true, ligneDemandeId: true },
   });
   if (!reglement) {
     return 0;
   }
+  // Lot G bis : un fonds versé par banque se retourne par un retour EXTERNE rattaché à l'article ; ce qui est déjà revenu
+  // ainsi n'est plus à expliquer (sinon le détail des dépenses pourrait dépasser ce qui reste et rendre le solde négatif).
+  const retoursExternesRattaches =
+    reglement.mode === "BANQUE"
+      ? Number(
+          (
+            await prisma.retourExterne.aggregate({
+              where: { demandeId: reglement.demandeId, ligneDemandeId: reglement.ligneDemandeId },
+              _sum: { montantRetourne: true },
+            })
+          )._sum.montantRetourne ?? 0
+        )
+      : 0;
 
   const autresRetours = await prisma.retourCaisse.findMany({
     where: { reglementId, ...(excludeRetourId ? { id: { not: excludeRetourId } } : {}) },
@@ -642,7 +693,7 @@ export async function calculerMontantARetournerNet({
     }
   }
 
-  const restant = Math.max(0, Number(reglement.montant) - depensesAutres - retoursRecusAutres);
+  const restant = Math.max(0, Number(reglement.montant) - depensesAutres - retoursRecusAutres - retoursExternesRattaches);
   return Math.max(0, restant - totalDepensesNouvelles);
 }
 
@@ -683,7 +734,7 @@ export async function getSoldesARegulariserParReglements(
 
   const reglements = await prisma.reglement.findMany({
     where: { id: { in: reglementIds } },
-    select: { id: true, montant: true, demandeId: true },
+    select: { id: true, montant: true, demandeId: true, ligneDemandeId: true },
     orderBy: { createdAt: "asc" },
   });
 
@@ -720,14 +771,33 @@ export async function getSoldesARegulariserParReglements(
   // encore positifs ; le reliquat éventuel (dépenses déjà réduites à la validation) est déduit du
   // dernier règlement.
   const demandeIds = [...new Set(reglements.map((r) => r.demandeId))];
-  const exceptionnels = await prisma.retourExceptionnel.groupBy({
-    by: ["demandeId"],
-    where: { statut: "VALIDE", demandeId: { in: demandeIds } },
-    _sum: { montant: true },
-  });
+  // Un retour exceptionnel rattaché à un article (lot E) n'est imputé que sur les règlements de CET article ; un retour
+  // sans article (dépense directe, ou antérieur au lot E sur une demande ambiguë) l'est sur ceux de la demande, comme avant.
+  const [exceptionnelsValides, externesRattaches] = await Promise.all([
+    prisma.retourExceptionnel.groupBy({
+      by: ["demandeId", "ligneDemandeId"],
+      where: { statut: "VALIDE", demandeId: { in: demandeIds } },
+      _sum: { montant: true },
+    }),
+    // Lot G bis : un retour EXTERNE rattaché (fonds versé par banque, rendu à la caisse) compte comme retour reçu de son
+    // article, imputé de la même façon ; non rattaché, il n'apparaît jamais ici.
+    prisma.retourExterne.groupBy({
+      by: ["demandeId", "ligneDemandeId"],
+      where: { demandeId: { in: demandeIds } },
+      _sum: { montantRetourne: true },
+    }),
+  ]);
+  const exceptionnels = [
+    ...exceptionnelsValides.map((e) => ({ demandeId: e.demandeId, ligneDemandeId: e.ligneDemandeId, _sum: { montant: e._sum.montant } })),
+    ...externesRattaches
+      .filter((e): e is typeof e & { demandeId: string } => e.demandeId !== null)
+      .map((e) => ({ demandeId: e.demandeId, ligneDemandeId: e.ligneDemandeId, _sum: { montant: e._sum.montantRetourne } })),
+  ];
   for (const e of exceptionnels) {
     let reste = Number(e._sum.montant ?? 0);
-    const deLaDemande = reglements.filter((r) => r.demandeId === e.demandeId);
+    const deLaDemande = reglements.filter(
+      (r) => r.demandeId === e.demandeId && (e.ligneDemandeId == null || r.ligneDemandeId === e.ligneDemandeId)
+    );
     for (const r of deLaDemande) {
       if (reste <= 0) break;
       const positif = Math.max(0, soldes.get(r.id) ?? 0);
@@ -750,7 +820,7 @@ export async function getSoldesARegulariserParReglements(
  * déclaré mais pas encore traité par Finance.
  */
 export async function getRetoursRecus(demandeId: string): Promise<number> {
-  const [result, exceptionnels, rembourses] = await Promise.all([
+  const [result, exceptionnels, rembourses, externes] = await Promise.all([
     prisma.retourCaisse.aggregate({
       where: { reglement: { demandeId }, estReceptionne: true },
       _sum: { montantARetourner: true },
@@ -768,10 +838,13 @@ export async function getRetoursRecus(demandeId: string): Promise<number> {
       where: { statut: "VALIDE", retourCaisse: { reglement: { demandeId } } },
       _sum: { montant: true },
     }),
+    // Retours EXTERNES rattachés à la demande (lot G bis) : fonds versé par banque rendu à la caisse.
+    prisma.retourExterne.aggregate({ where: { demandeId }, _sum: { montantRetourne: true } }),
   ]);
   return (
     Number(result._sum.montantARetourner ?? 0) +
-    Number(exceptionnels._sum.montant ?? 0) -
+    Number(exceptionnels._sum.montant ?? 0) +
+    Number(externes._sum.montantRetourne ?? 0) -
     Number(rembourses._sum.montant ?? 0)
   );
 }
@@ -785,12 +858,9 @@ export async function getRetoursRecus(demandeId: string): Promise<number> {
  * partielle sert justement à traiter ce cas, avec un motif obligatoire).
  */
 export async function getEcart(demandeId: string): Promise<number> {
-  const [totalRegle, depensesDeclarees, retoursRecus] = await Promise.all([
-    getTotalRegle(demandeId),
-    getDepensesDeclarees(demandeId),
-    getRetoursRecus(demandeId),
-  ]);
-  return totalRegle - depensesDeclarees - retoursRecus;
+  // Lot E : même formule que l'écart d'un article (`getEcartLigne`), appliquée à la demande entière — somme exacte des
+  // articles et de la part non rattachée.
+  return getEcartDemande(demandeId);
 }
 
 /**
@@ -812,102 +882,20 @@ export async function getEcart(demandeId: string): Promise<number> {
  * RÈGLEMENT (pas à la validation), toujours : c'est le moment où l'argent
  * sort réellement (règle impérative du module).
  */
-export async function getMontantConsommeCategorie(categorieId: string): Promise<number> {
+export async function getMontantConsommeCategorie(categorieId: string, depuis?: Date): Promise<number> {
+  // Lot J : `depuis` = début d'effet du budget en vigueur (la consommation d'avant ne compte pas pour la période courante).
   const result = await prisma.reglementCategorieAllocation.aggregate({
-    where: { categorieId, reglement: { estConfirme: true, estAnnule: false } },
+    where: {
+      categorieId,
+      reglement: { estConfirme: true, estAnnule: false, ...(depuis ? { confirmeAt: { gte: depuis } } : {}) },
+    },
     _sum: { montant: true },
   });
   return Number(result._sum.montant ?? 0);
 }
 
-/**
- * Budget restant d'une Catégorie : `null` si `budgetAlloue` est `null`
- * (aucune limite définie, aucun contrôle appliqué) ; sinon `budgetAlloue -
- * getMontantConsommeCategorie(categorieId)`. **Retourne la valeur BRUTE,
- * jamais plafonnée à 0** — un résultat négatif signale un dépassement réel
- * (utile à `confirmerReglementAction` et au reporting "Suivi budgétaire"
- * pour le détecter) ; c'est à l'affichage de choisir, au cas par cas, de
- * clamper avec `Math.max(0, ...)` ou de montrer le dépassement tel quel.
- */
-export async function getBudgetRestantCategorie(categorieId: string): Promise<number | null> {
-  const categorie = await prisma.categorie.findUnique({
-    where: { id: categorieId },
-    select: { budgetAlloue: true },
-  });
-  if (!categorie || categorie.budgetAlloue == null) {
-    return null;
-  }
-  const consomme = await getMontantConsommeCategorie(categorieId);
-  return Number(categorie.budgetAlloue) - consomme;
-}
-
-export interface CategorieConcerneeInfo {
-  categorieId: string;
-  categorieLabel: string;
-  budgetAlloue: number | null;
-  consomme: number;
-  restant: number | null;
-}
-
-/**
- * Catégories DISTINCTES concernées par une demande — voir CLAUDE.md
- * "Catégorisation par ligne" / "Allocation budgétaire explicite par
- * règlement" : détermine, pour une demande donnée, la liste des
- * catégories entre lesquelles un règlement doit être réparti.
- *
- * - `DEPENSE_DIRECTE` (0 ligne) : la catégorie unique de la demande
- *   elle-même (`Demande.categorieId`), ou liste vide si pas encore
- *   catégorisée.
- * - `STANDARD` (≥ 1 ligne) : les catégories distinctes des lignes
- *   `VALIDEE` UNIQUEMENT (une ligne encore `EN_ATTENTE` ou `REJETEE` ne
- *   représente aucun montant à régler, donc aucune catégorie "concernée"
- *   par le règlement) — une ligne `VALIDEE` sans catégorie n'ajoute rien
- *   à cette liste (aucune limite ne s'applique à une portion non
- *   catégorisée, même principe que l'ancien contrôle "aucune limite si
- *   pas de `categorieId`").
- *
- * Utilisée à la fois par `reglementActions.ts` (déterminer si le
- * règlement est en cas simple/mono-catégorie ou en cas
- * multi-catégorie) et par l'UI (`ReglementsSection`/`ReglementForm`) pour
- * construire les champs de répartition avec leur aperçu de budget —
- * réutilise `getMontantConsommeCategorie` (jamais un second calcul).
- */
-export async function getCategoriesConcerneesDemande(demandeId: string): Promise<CategorieConcerneeInfo[]> {
-  const demande = await prisma.demande.findUnique({
-    where: { id: demandeId },
-    include: {
-      categorie: true,
-      lignes: {
-        where: { statutValidation: "VALIDEE", categorieId: { not: null } },
-        include: { categorie: true },
-      },
-    },
-  });
-  if (!demande) return [];
-
-  const categoriesBrutes =
-    demande.typeDemande === "DEPENSE_DIRECTE"
-      ? demande.categorie
-        ? [demande.categorie]
-        : []
-      : Array.from(
-          new Map(demande.lignes.filter((l) => l.categorie).map((l) => [l.categorie!.id, l.categorie!])).values()
-        );
-
-  return Promise.all(
-    categoriesBrutes.map(async (categorie) => {
-      const budgetAlloue = categorie.budgetAlloue == null ? null : Number(categorie.budgetAlloue);
-      const consomme = await getMontantConsommeCategorie(categorie.id);
-      return {
-        categorieId: categorie.id,
-        categorieLabel: categorie.label,
-        budgetAlloue,
-        consomme,
-        restant: budgetAlloue == null ? null : budgetAlloue - consomme,
-      };
-    })
-  );
-}
+// Lot J : `getBudgetRestantCategorie` (budget restant d'une catégorie) vit désormais dans `budgetsDb.ts`, qui lit le budget EN
+// VIGUEUR (paramétrage validé par le DG) au lieu de l'ancienne colonne `Categorie.budgetAlloue`.
 
 export interface MesIndicateurs {
   /** Somme des montants de TOUTES les demandes créées par cet utilisateur, quel que soit leur statut. */
@@ -1085,6 +1073,16 @@ export async function getMesDemandesDetail(userId: string): Promise<MaDemandeDet
     retoursParDemande.set(dId, (retoursParDemande.get(dId) ?? 0) - Number(rb.montant));
   }
 
+  // Retours EXTERNES rattachés (lot G bis) : comptent comme retours reçus de leur demande.
+  const externesRattaches = await prisma.retourExterne.groupBy({
+    by: ["demandeId"],
+    where: { demandeId: { in: ids } },
+    _sum: { montantRetourne: true },
+  });
+  for (const ex of externesRattaches) {
+    if (ex.demandeId) retoursParDemande.set(ex.demandeId, (retoursParDemande.get(ex.demandeId) ?? 0) + Number(ex._sum.montantRetourne ?? 0));
+  }
+
   const depensesParDemande = new Map<string, number>();
   for (const dep of depenses) {
     const dId = dep.retourCaisse.reglement.demandeId;
@@ -1102,7 +1100,14 @@ export async function getMesDemandesDetail(userId: string): Promise<MaDemandeDet
       montant: Number(d.montant),
       montantValide: d.montantValide == null ? null : Number(d.montantValide),
       montantRecu,
-      soldeARegulariser: montantRecu - depensesDeclarees - retoursRecus,
+      soldeARegulariser: getEcartLigne({
+        fondsRemis: montantRecu,
+        depensesJustifiees: depensesDeclarees,
+        depensesSansPieceFormelle: 0,
+        resteNonDetaille: 0,
+        retoursRecus,
+        retoursEnAttente: 0,
+      }),
       createdAt: d.createdAt,
     };
   });
@@ -1206,12 +1211,21 @@ export async function getMesDemandesParMois(
  * cette même requête — jamais deux implémentations de la même règle.
  */
 export async function getReglementsCaisseADeclarer(userId: string): Promise<
-  { reglementId: string; demandeId: string; reference: string; montant: number; confirmeAt: Date | null; mode: "CAISSE" | "BANQUE" }[]
+  {
+    reglementId: string;
+    demandeId: string;
+    reference: string;
+    /** Article payé par ce règlement (version d'origine du libellé, lot E), `null` s'il n'est rattaché à aucun article. */
+    articleLibelle: string | null;
+    montant: number;
+    confirmeAt: Date | null;
+    mode: "CAISSE" | "BANQUE";
+  }[]
 > {
   const reglements = await prisma.reglement.findMany({
     where: {
-      // Inclut désormais les règlements BANQUE (voir CLAUDE.md "Retour sur
-      // règlement Banque") — le retour y est possible, avec bordereau.
+      // Caisse seulement (lot G bis) : le retour d'un fonds versé par banque est un retour externe enregistré par la Finance.
+      mode: "CAISSE",
       estConfirme: true,
       estAnnule: false,
       demande: { createurId: userId, statut: { not: "CLOTUREE" } },
@@ -1223,11 +1237,13 @@ export async function getReglementsCaisseADeclarer(userId: string): Promise<
       mode: true,
       confirmeAt: true,
       demande: { select: { id: true, reference: true } },
+      ligneDemande: { select: { libelle: true, libelleOriginal: true, libelleDemandeur: true } },
     },
     orderBy: { confirmeAt: "asc" },
   });
 
   return reglements.map((r) => ({
+    articleLibelle: r.ligneDemande ? (r.ligneDemande.libelleDemandeur ?? r.ligneDemande.libelleOriginal ?? r.ligneDemande.libelle) : null,
     reglementId: r.id,
     demandeId: r.demande.id,
     reference: r.demande.reference,
@@ -1285,36 +1301,36 @@ function toCents(montant: number): number {
  *   ces trois statuts plus précis dès que `calculerStatutDemande` tourne.
  */
 export async function calculerStatutDemande(demandeId: string): Promise<StatutDemande> {
-  const demande = await prisma.demande.findUnique({ where: { id: demandeId } });
+  const demande = await prisma.demande.findUnique({
+    where: { id: demandeId },
+    include: { lignes: { select: { quantite: true, prixUnitaire: true, statutValidation: true } } },
+  });
   if (!demande) {
     throw new Error(`calculerStatutDemande : demande ${demandeId} introuvable.`);
   }
 
-  if (demande.statut === "REJETEE" || demande.statut === "CLOTUREE" || demande.statut === "ABANDONNEE") {
-    return demande.statut;
-  }
+  // Lot B : le statut se déduit des ARTICLES (`statutDepuisLignes`, module pur) ; le montant validé d'une demande à
+  // articles est la somme des articles validés — la colonne est resynchronisée si elle a dérivé.
+  const lignes = demande.lignes.map((l) => ({
+    quantite: l.quantite,
+    prixUnitaire: l.prixUnitaire.toString(),
+    statut: l.statutValidation,
+  }));
+  const montantValide = lignes.length > 0 ? montantValideDepuisLignes(lignes) : Number(demande.montantValide ?? 0);
+  const nouveauStatut = statutDepuisLignes({
+    statutActuel: demande.statut,
+    montant: Number(demande.montant),
+    montantValide,
+    totalRegle: montantValide > 0 ? await getTotalRegle(demandeId) : 0,
+    lignes,
+  });
 
-  const montantDemandeCents = toCents(Number(demande.montant));
-  const montantValideCents = toCents(Number(demande.montantValide ?? 0));
-
-  let nouveauStatut: StatutDemande;
-  if (montantValideCents <= 0) {
-    nouveauStatut = "EN_ATTENTE_VALIDATION";
-  } else if (montantValideCents < montantDemandeCents) {
-    nouveauStatut = "PARTIELLEMENT_VALIDEE";
-  } else {
-    const totalRegleCents = toCents(await getTotalRegle(demandeId));
-    if (totalRegleCents <= 0) {
-      nouveauStatut = "VALIDEE_NON_REGLEE";
-    } else if (totalRegleCents < montantValideCents) {
-      nouveauStatut = "PARTIELLEMENT_REGLEE";
-    } else {
-      nouveauStatut = "REGLEE";
-    }
-  }
-
-  if (nouveauStatut !== demande.statut) {
-    await prisma.demande.update({ where: { id: demandeId }, data: { statut: nouveauStatut } });
+  const colonneDerivee = lignes.length > 0 && toCents(Number(demande.montantValide ?? 0)) !== toCents(montantValide);
+  if (nouveauStatut !== demande.statut || colonneDerivee) {
+    await prisma.demande.update({
+      where: { id: demandeId },
+      data: { statut: nouveauStatut, ...(colonneDerivee ? { montantValide } : {}) },
+    });
   }
 
   return nouveauStatut;
@@ -1333,16 +1349,23 @@ export async function getCouvertureRetoursPostCloture(demandeId: string): Promis
       include: { retours: { orderBy: { createdAt: "asc" } } },
       orderBy: { createdAt: "asc" },
     }),
-    prisma.retourExceptionnel.aggregate({ where: { demandeId, statut: "VALIDE" }, _sum: { montant: true } }),
+    // Lot E : un retour exceptionnel rattaché à un article ne couvre que les retours de CET article ; sans article, tous.
+    prisma.retourExceptionnel.groupBy({ by: ["ligneDemandeId"], where: { demandeId, statut: "VALIDE" }, _sum: { montant: true } }),
   ]);
-  let restant = Number(exceptionnels._sum.montant ?? 0);
   const couvert = new Map<string, number>();
-  for (const reglement of reglements) {
-    for (const retour of reglement.retours) {
-      if (retour.estReceptionne || restant <= 0) continue;
-      const alloue = Math.min(restant, Number(retour.montantARetourner));
-      couvert.set(retour.id, alloue);
-      restant -= alloue;
+  for (const groupe of exceptionnels) {
+    let restant = Number(groupe._sum.montant ?? 0);
+    for (const reglement of reglements) {
+      if (groupe.ligneDemandeId != null && reglement.ligneDemandeId !== groupe.ligneDemandeId) continue;
+      for (const retour of reglement.retours) {
+        if (retour.estReceptionne || restant <= 0) continue;
+        const dejaCouvert = couvert.get(retour.id) ?? 0;
+        const disponible = Math.max(0, Number(retour.montantARetourner) - dejaCouvert);
+        const alloue = Math.min(restant, disponible);
+        if (alloue <= 0) continue;
+        couvert.set(retour.id, dejaCouvert + alloue);
+        restant -= alloue;
+      }
     }
   }
   return couvert;

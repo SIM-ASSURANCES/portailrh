@@ -1,0 +1,96 @@
+import { Badge, type BadgeVariant } from "@/components/ui";
+import { libelleNiveauBudget, libelleSeuil, type LignePrevision, type NiveauAlerteBudget, type PrevisionBudget } from "backend/client";
+
+const VARIANTE: Record<NiveauAlerteBudget, BadgeVariant> = { AUCUN: "success", ORANGE: "warning", ROUGE: "danger" };
+
+/** Badge du niveau d'alerte d'un budget (Dans la limite / Alerte orange / Alerte rouge). */
+export function BadgeNiveauBudget({ niveau }: { niveau: NiveauAlerteBudget }) {
+  return (
+    <Badge variant={VARIANTE[niveau]}>
+      <span data-niveau-budget={niveau}>{libelleNiveauBudget(niveau)}</span>
+    </Badge>
+  );
+}
+
+const fcfa = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`;
+
+/**
+ * Budget global = solde de caisse (lot J ter). Affiche le solde de caisse PRÉVISIONNEL après la validation, et de quoi il est fait :
+ * solde réel du journal de caisse − ce qui est déjà validé sans être sorti de la caisse − cette validation. Le mode de règlement
+ * (Caisse ou Banque) n'étant choisi qu'au règlement, la part « validée sans règlement » est supposée sortir de la caisse.
+ */
+function LigneSoldeCaisse({ l }: { l: LignePrevision }) {
+  const c = l.caisse;
+  return (
+    <li
+      data-budget-prevision="global"
+      data-niveau-budget={l.niveau}
+      className="space-y-1 rounded-lg border border-border bg-surface px-3 py-2"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm text-foreground">
+          <span className="font-semibold">Solde de caisse (budget global)</span>
+          {" — "}
+          <span data-reste-apres className="font-black tabular-nums">
+            {l.resteApres < 0 ? `négatif de ${fcfa(Math.abs(l.resteApres))}` : fcfa(l.resteApres)}
+          </span>{" "}
+          <span className="text-muted-foreground">après cette validation</span>
+          {l.seuil ? <span className="block text-xs text-muted-foreground">{libelleSeuil(l.seuil)}</span> : <span className="block text-xs text-muted-foreground">Aucun seuil validé : pas d&apos;alerte.</span>}
+        </span>
+        <BadgeNiveauBudget niveau={l.niveau} />
+      </div>
+      {c ? (
+        <p data-detail-solde-caisse className="text-xs text-muted-foreground">
+          Solde actuel {fcfa(c.soldeCaisse)}
+          {c.engageCaisseConnu > 0 ? ` − règlements en caisse à confirmer ${fcfa(c.engageCaisseConnu)}` : ""}
+          {c.engageModeInconnu > 0 ? ` − déjà validé sans règlement ${fcfa(c.engageModeInconnu)} (mode non encore connu, supposé en caisse)` : ""}
+          {l.ajout > 0 ? ` − cette validation ${fcfa(l.ajout)}` : ""}.
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+function LigneBudget({ l }: { l: LignePrevision }) {
+  if (l.portee === "GLOBAL") return <LigneSoldeCaisse l={l} />;
+  return (
+    <li
+      data-budget-prevision="categorie"
+      data-niveau-budget={l.niveau}
+      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-2"
+    >
+      <span className="text-sm text-foreground">
+        <span className="font-semibold">{`Budget « ${l.libelle} »`}</span>
+        {" — "}
+        <span data-reste-apres className="font-black tabular-nums">
+          {l.resteApres < 0 ? `dépassé de ${fcfa(Math.abs(l.resteApres))}` : `reste ${fcfa(l.resteApres)}`}
+        </span>{" "}
+        <span className="text-muted-foreground">
+          après cette validation ({l.resteApres < 0 ? `budget de ${fcfa(l.budget)}` : `${l.pctRestantApres.toLocaleString("fr-FR")} % de ${fcfa(l.budget)}`})
+        </span>
+        {l.ajout > 0 ? <span className="text-muted-foreground"> · avant : reste {fcfa(l.resteAvant)}</span> : null}
+        {l.seuil ? <span className="block text-xs text-muted-foreground">{libelleSeuil(l.seuil)}</span> : null}
+      </span>
+      <BadgeNiveauBudget niveau={l.niveau} />
+    </li>
+  );
+}
+
+/**
+ * Reste du budget global ET de chaque catégorie touchée, APRÈS la validation en cours (prévisionnel : rien n'est écrit).
+ * Affiché à chaque validation (Finance et DG). Ne rend rien quand aucun budget n'est en vigueur pour les montants validés.
+ */
+export function BudgetPrevision({ prevision, titre = "Budget après cette validation" }: { prevision: PrevisionBudget; titre?: string }) {
+  const lignes = [prevision.global, ...prevision.categories].filter((l): l is LignePrevision => !!l);
+  if (lignes.length === 0) return null;
+  return (
+    <div data-budget-bloc data-niveau-budget={prevision.niveau} className="space-y-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{titre}</p>
+      <ul className="space-y-1.5">
+        {lignes.map((l) => (
+          <LigneBudget key={`${l.portee}-${l.categorieId ?? "g"}`} l={l} />
+        ))}
+      </ul>
+    </div>
+  );
+}

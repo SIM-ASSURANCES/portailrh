@@ -62,6 +62,7 @@ export default async function FinanceLayout({ children }: { children: React.Reac
       hasPermission(session, "treso.valider_retour_exceptionnel") ||
       hasPermission(session, "treso.creer_retour_externe") ||
       hasPermission(session, "treso.modifier_budget_categorie") ||
+      hasPermission(session, "treso.valider_budget") ||
       hasPermission(session, "treso.modifier_description") ||
       // Circuit de validation (2026-10-06) : décision à l'étape DG.
       hasPermission(session, "treso.decider_dg"));

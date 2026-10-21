@@ -1,8 +1,8 @@
 import type { ModeReglement, Prisma } from "./generated/prisma/client";
+import { getBudgetsCategoriesEnVigueur } from "./budgetsDb";
 import { prisma } from "./prisma";
 import {
   DEMANDES_A_TRAITER_FINANCE_WHERE,
-  getMontantConsommeCategorie,
   getSoldesARegulariserParReglements,
   VALIDATION_COMPLETE_EN_ATTENTE_WHERE,
 } from "./tresorerie";
@@ -26,6 +26,9 @@ import {
 export const RETOUR_EN_ATTENTE_WHERE = {
   estReceptionne: false,
   reglement: { demande: { statut: { not: "CLOTUREE" } } },
+  // Lot G bis : un fonds versé par banque ne se réceptionne plus (son retour est un retour externe rattaché) ; seuls les
+  // anciens retours Banque (bordereau, `versementBancaire`) restent à réceptionner.
+  OR: [{ reglement: { mode: "CAISSE" } }, { versementBancaire: true }],
 } satisfies Prisma.RetourCaisseWhereInput;
 
 export interface CompteEtMontant {
@@ -61,7 +64,7 @@ export interface CompteEtMontant {
 async function getRepartitionDemandesValidees() {
   const demandes = await prisma.demande.findMany({
     where: { montantValide: { gt: 0 }, statut: { notIn: ["REJETEE", "CLOTUREE"] } },
-    select: { id: true, montant: true, montantValide: true },
+    select: { id: true, montant: true, montantValide: true, lignes: { select: { statutValidation: true } } },
   });
 
   if (demandes.length === 0) {
@@ -93,7 +96,12 @@ async function getRepartitionDemandesValidees() {
     // volontairement dans AUCUN des trois buckets : rien à décaisser dans
     // l'immédiat, mais pas encore prête pour la clôture puisqu'un reliquat
     // reste à valider (et pourrait ensuite être réglé à son tour).
-    const estEntierementValidee = montantValide >= Number(d.montant);
+    // Lot B : une demande à articles est candidate à la clôture quand TOUS ses articles sont traités (un article rejeté ne
+    // l'en empêche plus) — `peutEtreCloturee`, même règle que la clôture elle-même ; sans article, règle d'origine.
+    const estEntierementValidee =
+      d.lignes.length > 0
+        ? d.lignes.every((l) => l.statutValidation !== "EN_ATTENTE")
+        : montantValide >= Number(d.montant);
     if (reste > 0) {
       if (totalRegle === 0) {
         nonRegles.push({ id: d.id, reste });
@@ -177,7 +185,7 @@ export async function getDecaissementsARegulariser(): Promise<CompteEtMontant> {
 
 /**
  * Indicateur "À traiter" #4 — fonds remis à régulariser : règlements
- * CAISSE confirmés et non annulés dont le solde à régulariser
+ * confirmés et non annulés (Caisse ET Banque, lot G) dont le solde à régulariser
  * (`getSoldesARegulariserParReglements`, Phase D/G) n'est pas nul —
  * dépenses déclarées + retours reçus ne couvrent pas encore (ou dépassent)
  * le montant réglé. `montant` = somme de ces soldes (peut inclure des
@@ -188,7 +196,7 @@ export async function getDecaissementsARegulariser(): Promise<CompteEtMontant> {
  */
 export async function getFondsRemisARegulariser(): Promise<CompteEtMontant> {
   const reglements = await prisma.reglement.findMany({
-    where: { mode: "CAISSE", estConfirme: true, estAnnule: false },
+    where: { estConfirme: true, estAnnule: false },
     select: { id: true },
   });
   const soldes = await getSoldesARegulariserParReglements(reglements.map((r) => r.id));
@@ -435,22 +443,20 @@ export interface CategorieBudgetSuivi {
  * "Budget visible au moment de la catégorisation").
  */
 export async function getTopCategoriesBudget(limite = 5): Promise<CategorieBudgetSuivi[]> {
-  const categories = await prisma.categorie.findMany({
-    where: { budgetAlloue: { not: null }, isActive: true },
-    select: { id: true, label: true, budgetAlloue: true },
-  });
-  if (categories.length === 0) {
+  // Lot J : budgets EN VIGUEUR (paramétrages validés par le DG), consommation depuis leur date d'effet.
+  const enVigueur = await getBudgetsCategoriesEnVigueur();
+  const ids = Object.keys(enVigueur);
+  if (ids.length === 0) {
     return [];
   }
-
-  const consommations = await Promise.all(categories.map((c) => getMontantConsommeCategorie(c.id)));
+  const categories = await prisma.categorie.findMany({ where: { id: { in: ids } }, select: { id: true, label: true } });
+  // Lot J bis : une catégorie désactivée garde son budget visible (le budget en vigueur fait foi, pas l'état d'activation).
 
   return categories
-    .map((c, i) => {
-      const budgetAlloue = Number(c.budgetAlloue);
-      const consomme = consommations[i];
-      return { id: c.id, label: c.label, budgetAlloue, consomme, restant: budgetAlloue - consomme };
+    .map((c) => {
+      const b = enVigueur[c.id];
+      return { id: c.id, label: c.label, budgetAlloue: b.budget, consomme: b.consomme, restant: b.restant };
     })
-    .sort((a, b) => b.consomme - a.consomme)
+    .sort((x, y) => y.consomme - x.consomme)
     .slice(0, limite);
 }

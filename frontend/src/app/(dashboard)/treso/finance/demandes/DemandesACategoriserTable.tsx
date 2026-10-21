@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { Badge, Button, DataTable } from "@/components/ui";
 import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import type { BadgeVariant } from "@/components/ui";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import type { NatureDepenseDirecte, StatutDemande, TypeDemande } from "backend";
 
@@ -16,6 +17,8 @@ interface DemandeRow {
   description: string;
   createdAt: Date;
   statut: StatutDemande;
+  /** Libellé affiché si différent du statut (lot B : « En cours (x/n traités) »), posé par la page. */
+  statutAffiche?: { label: string; variant: BadgeVariant };
   typeDemande: TypeDemande;
   natureDepenseDirecte: NatureDepenseDirecte | null;
 }
@@ -63,7 +66,7 @@ export function DemandesACategoriserTable({
         },
         {
           key: "createdAt",
-          header: "Créée le",
+          header: "Demande créée le",
           sortable: true,
           accessor: (d) => d.createdAt,
           render: (d) => d.createdAt.toLocaleDateString("fr-FR"),
@@ -72,8 +75,8 @@ export function DemandesACategoriserTable({
           key: "statut",
           header: "Statut",
           render: (d) => (
-            <Badge variant={STATUT_DEMANDE_BADGE_VARIANT[d.statut]}>
-              {STATUT_DEMANDE_LABEL[d.statut]}
+            <Badge variant={d.statutAffiche?.variant ?? STATUT_DEMANDE_BADGE_VARIANT[d.statut]}>
+              {d.statutAffiche?.label ?? STATUT_DEMANDE_LABEL[d.statut]}
             </Badge>
           ),
         },

@@ -69,12 +69,12 @@ export interface NavFlags {
   canAccesDemandes: boolean;
   /**
    * `treso.creer_demande` seule (pas de OR avec `declarer_retour`) : ajoute
-   * "Mon tableau de bord". Distincte de `canAccesDemandes` — un rôle combiné
+   * « Accueil » (ex-« Mon tableau de bord », lot H). Distincte de `canAccesDemandes` — un rôle combiné
    * (ex: Finance + RH) peut avoir `declarer_retour` sans jamais créer ses
-   * propres demandes ; "Mon tableau de bord" (indicateurs Demandé/Validé/
+   * propres demandes ; « Accueil » (indicateurs Demandé/Validé/
    * Réglé sur SES demandes) n'a alors aucun sens et ne doit pas s'ajouter
-   * comme un 3ᵉ "dashboard" redondant à côté de "Tableau de bord" (général)
-   * et "Tableau de bord Finance" — voir CLAUDE.md.
+   * comme un 3ᵉ "dashboard" redondant à côté de « Tableau de bord » (général)
+   * et « Accueil Finance » — voir CLAUDE.md.
    */
   canAccesMonTableauDeBord: boolean;
   canAccesFinanceDemandes: boolean;
@@ -90,9 +90,11 @@ export interface NavFlags {
   canVoirToutesLesDemandes: boolean;
   /** Responsable Finance uniquement (valider_demande sans approuver_validation_complete) : ajoute "Retour externe". */
   canRetourExterne?: boolean;
+  /** Lot J : `treso.modifier_budget_categorie` (paramètre), `treso.valider_budget` (DG) ou `treso.voir_dashboard_finance` (consulte) : ajoute « Budgets ». */
+  canVoirBudgets?: boolean;
   /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
   canReceptionnerRetour: boolean;
-  /** `treso.voir_dashboard_finance` : ajoute "Tableau de bord Finance" (en tête de branche). */
+  /** `treso.voir_dashboard_finance` : ajoute « Accueil Finance » (en tête de branche). */
   canVoirDashboardFinance: boolean;
   /** `treso.voir_reporting` : ajoute "Reporting". */
   canVoirReporting: boolean;
@@ -115,11 +117,9 @@ export interface NavFlags {
    */
   canGererSoldeOuverture: boolean;
   /**
-   * `isAdmin()` OU `treso.gerer_categories` : ajoute "Catégories" — voir
-   * CLAUDE.md "Gestion des Catégories/Objets ouverte à Finance". Cible
-   * `/treso/finance/categories`, distincte de `/admin/categories`
-   * (toujours accessible séparément à l'Admin via la section
-   * "Administration" de la sidebar).
+   * `isAdmin()` OU `treso.gerer_categories` : fait apparaître « Budgets » (lot J ter) — la gestion des catégories vit dans l'onglet
+   * « Catégories » de cette page ; l'entrée de menu « Catégories » n'existe plus (voir CLAUDE.md « Lot J ter »). Distincte de
+   * `/admin/categories` (toujours accessible séparément à l'Admin via la section "Administration" de la sidebar).
    */
   canGererCategories: boolean;
 
@@ -245,6 +245,7 @@ export function getNavBranches({
   canAccesFinanceDemandes,
   canVoirToutesLesDemandes,
   canRetourExterne,
+  canVoirBudgets,
   canReceptionnerRetour,
   canVoirDashboardFinance,
   canVoirReporting,
@@ -276,7 +277,7 @@ export function getNavBranches({
             ...(canVoirDashboardFinance
               ? [
                   {
-                    label: "Tableau de bord Finance",
+                    label: "Accueil Finance",
                     href: "/treso/finance",
                     icon: "layout-grid",
                     exact: true,
@@ -292,19 +293,10 @@ export function getNavBranches({
                   } satisfies NavItem,
                 ]
               : []),
-            ...(canGererCategories
-              ? [
-                  {
-                    label: "Catégories",
-                    href: "/treso/finance/categories",
-                    icon: "folder-tree",
-                  } satisfies NavItem,
-                ]
-              : []),
             ...(canAccesMonTableauDeBord
               ? [
                   {
-                    label: "Mon tableau de bord",
+                    label: "Accueil",
                     href: "/treso/tableau-de-bord",
                     icon: "layout-grid",
                     exact: true,
@@ -357,6 +349,17 @@ export function getNavBranches({
                     // du détail `/treso/finance/demandes/[id]`, non modifié
                     // par cette tâche).
                     exact: true,
+                  } satisfies NavItem,
+                ]
+              : []),
+            // Lot J ter : la page « Budgets » porte aussi la gestion des catégories (ancienne entrée « Catégories », retirée du
+            // menu : /treso/finance/categories redirige vers l'onglet « Catégories » de cette page).
+            ...(canVoirBudgets || canGererCategories
+              ? [
+                  {
+                    label: "Budgets",
+                    href: "/treso/finance/budgets",
+                    icon: "pie-chart",
                   } satisfies NavItem,
                 ]
               : []),

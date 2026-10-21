@@ -2,12 +2,16 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { BanniereSignature } from "@/components/signature/BanniereSignature";
+import { FournisseurSignature } from "@/components/signature/ContexteSignature";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import {
   demandesEtapeDGWhere,
   demandesServiceAValiderWhere,
   prisma,
   PERMISSION_REINITIALISER_POINTAGE,
+  PERMISSIONS_SIGNATAIRES,
+  signatureCourante,
   pointageEnService,
   reinitialisationEffectuee,
 } from "backend";
@@ -34,11 +38,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // au plus un rappel par 24 h et par demande, quel que soit le nombre de pages affichées.
   after(() => envoyerRappelsCircuit());
 
-  const [unreadCount, topbarAlert, servicesResponsable] = await Promise.all([
+  const [unreadCount, topbarAlert, servicesResponsable, signature] = await Promise.all([
     getUnreadNotificationsCount(),
     getTopbarAlert(session.user.id, hasPermission(session, "pointage.pointer")),
     prisma.service.count({ where: { responsableId: session.user.id } }),
+    signatureCourante(prisma, session.user.id),
   ]);
+  // Lot L : le bandeau « Créer ma signature » s'adresse aux comptes qui signent des actions (permission de décision, d'exécution… ou responsable de service).
+  const doitSigner = servicesResponsable > 0 || PERMISSIONS_SIGNATAIRES.some((p) => hasPermission(session, p));
   // « Demandes de mon service » : seulement pour un responsable d'au moins un service (circuit de validation).
   const demandesServiceAValider =
     servicesResponsable > 0
@@ -55,6 +62,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const congesNav = await chargerNavConges(session, servicesResponsable > 0);
 
   return (
+    <FournisseurSignature aSignature={signature !== null}>
     <AppShell
       user={session.user}
       role={session.role}
@@ -81,6 +89,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
         hasPermission(session, "treso.receptionner_retour")
       }
       canRetourExterne={hasPermission(session, "treso.creer_retour_externe")}
+      // Lot J : budgets — la Finance les paramètre, le DG les valide, les autres comptes Finance/DG les consultent.
+      canVoirBudgets={
+        hasPermission(session, "treso.modifier_budget_categorie") ||
+        hasPermission(session, "treso.valider_budget") ||
+        hasPermission(session, "treso.voir_dashboard_finance")
+      }
       canReceptionnerRetour={hasPermission(session, "treso.receptionner_retour")}
       canVoirDashboardFinance={hasPermission(session, "treso.voir_dashboard_finance")}
       canVoirReporting={hasPermission(session, "treso.voir_reporting")}
@@ -145,8 +159,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canRecevoirFeedback={session.peutRecevoirFeedback}
       unreadNotificationsCount={unreadCount}
     >
+      <BanniereSignature visible={doitSigner} />
       {children}
       <PushPermissionPrompt />
     </AppShell>
+    </FournisseurSignature>
   );
 }

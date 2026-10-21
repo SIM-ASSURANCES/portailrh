@@ -1,5 +1,5 @@
 export interface EtatRetourAffiche {
-  libelle: "Retourné à la compta" | "Retourné" | "À retourner";
+  libelle: "Montant retourné" | "Retourné" | "À retourner";
   valeur: number;
   estRetourne: boolean;
   /** Retour non réceptionné mais entièrement couvert par un retour enregistré après la clôture. */
@@ -24,8 +24,9 @@ export function etatRetourAffiche({
   const couvertParPostCloture = !estReceptionne && montantARetourner > 0 && restant === 0;
   const estRetourne = estReceptionne || couvertParPostCloture;
   return {
-    // Réceptionné = remis à la comptabilité ; "Retourné" seul = couvert par un retour post-clôture (autre sens).
-    libelle: estReceptionne ? "Retourné à la compta" : couvertParPostCloture ? "Retourné" : "À retourner",
+    // Lot I bis : réceptionné = « Montant retourné » (ex-« Retourné à la compta », libellé seulement, même valeur) ;
+    // « Retourné » seul = couvert par un retour post-clôture (autre sens).
+    libelle: estReceptionne ? "Montant retourné" : couvertParPostCloture ? "Retourné" : "À retourner",
     valeur: estReceptionne ? montantARetourner : restant,
     estRetourne,
     couvertParPostCloture,

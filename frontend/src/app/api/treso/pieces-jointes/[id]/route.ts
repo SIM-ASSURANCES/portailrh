@@ -4,7 +4,8 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { prisma } from "backend";
+import { peutTelechargerJustificatifsRetourExterne } from "@/lib/droitsPiecesJointes";
+import { prisma, responsableServiceEffectif } from "backend";
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 
@@ -51,7 +52,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     where: { id },
     include: {
       demande: {
-        select: { createurId: true, beneficiaireUserId: true, createur: { select: { service: { select: { responsableId: true } } } } },
+        select: {
+          createurId: true,
+          beneficiaireUserId: true,
+          responsableEtapeServiceId: true,
+          createur: { select: { service: { select: { responsableId: true } } } },
+          // Autonomie des articles, lot A : le bénéficiaire propre d'un article a les droits du bénéficiaire de la demande.
+          lignes: { select: { beneficiaireUserId: true } },
+        },
       },
       retourExterne: { select: { id: true } },
       retourExterneCheque: { select: { id: true } },
@@ -73,13 +81,17 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       // Circuit de validation : le DG décide à l'étape DG (sans dépendre de treso.valider_demande).
       hasPermission(session, "treso.decider_dg");
     const estCreateurOuBeneficiaire =
-      piece.demande.createurId === session.user.id || piece.demande.beneficiaireUserId === session.user.id;
+      piece.demande.createurId === session.user.id ||
+      piece.demande.beneficiaireUserId === session.user.id ||
+      piece.demande.lignes.some((l) => l.beneficiaireUserId === session.user.id);
     // Circuit de validation : le responsable ACTUEL du service du demandeur, qui décide l'étape Service.
-    const estResponsableService = piece.demande.createur.service?.responsableId === session.user.id;
+    // Lot K : le responsable de l'étape est celui de CETTE demande (réorientation), l'ancien perd l'accès aux pièces.
+    const estResponsableService =
+      responsableServiceEffectif(piece.demande, piece.demande.createur.service?.responsableId) === session.user.id;
     accesAutorise = estFinanceOuDG || estCreateurOuBeneficiaire || estResponsableService;
   } else if (piece.retourExterne || piece.retourExterneCheque) {
     // Retour externe : même permission que l'action (`treso.creer_retour_externe`), ou Admin.
-    accesAutorise = isAdmin(session) || hasPermission(session, "treso.creer_retour_externe");
+    accesAutorise = peutTelechargerJustificatifsRetourExterne(session);
   } else {
     // Pièce du solde d'ouverture (`journalCaisseId`, pas de demande
     // d'origine) et des alimentations de caisse — mêmes permissions que la garde de

@@ -39,7 +39,7 @@ export function DemandesServiceTable({ demandes }: { demandes: DemandeServiceRow
         { key: "motif", header: "Motif", render: (d) => tronquer(d.motif) },
         {
           key: "createdAt",
-          header: "Créée le",
+          header: "Demande créée le",
           sortable: true,
           accessor: (d) => d.createdAt,
           render: (d) => new Date(d.createdAt).toLocaleDateString("fr-FR"),

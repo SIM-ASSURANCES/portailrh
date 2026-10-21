@@ -45,7 +45,7 @@ export function ReceptionnerAction({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button type="button" loading={isPending} disabled={disabled} onClick={handleReceptionner}>
+      <Button signe type="button" loading={isPending} disabled={disabled} onClick={handleReceptionner}>
         {retourNul ? "Constater le retour nul" : "Réceptionner"}
       </Button>
       {retourNul ? (

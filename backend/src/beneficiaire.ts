@@ -40,7 +40,7 @@ export type ChoixBeneficiaire =
   | { mode: "COMPTE"; userId: string }
   | { mode: "NOM"; nom: string };
 
-const normaliserNom = (s: string) =>
+export const normaliserNom = (s: string) =>
   s
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
