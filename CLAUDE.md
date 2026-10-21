@@ -5934,7 +5934,7 @@ l'annulation) ; jours passés gardés, sauf refus avec la case R11 cochée. Reso
 
 ### Permissions
 
-Quatre `conges.*` (module `conges`, source unique `congesPermissions.ts`, posées par la migration `20261021090000_conges_permissions_absence` ET par
+Quatre `conges.*` (module `conges`, source unique `congesPermissions.ts`, posées par la migration `20261028090000_conges_permissions_absence` ET par
 le seed, synchronisation vérifiée par `congesPermissions.test.ts`) : `soumettre`, `valider_rh`, `annuler`, `consulter_tous`.
 - **Attribution par permission sœur, jamais par nom de rôle** (le rôle qui porte la sœur reçoit la nouvelle ; seed : `permissionsCongePourCles`) :
   `soumettre` ← `pointage.pointer`, `treso.creer_demande`, `treso.decider_dg` ; `valider_rh` et `annuler` ← `pointage.corriger_pointage` ;
@@ -5993,7 +5993,7 @@ export) depuis la racine ; `npx tsx ../e2e/conges-pointage.ts` (lundi à jeudi) 
 - **O2** : un responsable de service qui porte aussi `conges.valider_rh` valide les deux étapes d'une demande de son service (seule la propre demande
   est interdite).
 - **O3** : la saisie RH n'accepte aucune date de début passée (R3) : un congé déjà commencé ne s'enregistre pas après coup.
-- **À la fusion** : renommer le dossier `20261021090000_conges_permissions_absence` (nouvel horodatage, **après** les migrations `20261022*` d'Aristide,
+- **À la fusion** : renommer le dossier `20261028090000_conges_permissions_absence` (nouvel horodatage, **après** les migrations `20261022*` d'Aristide,
   après un dernier `git fetch`). Il contient aussi `ALTER TYPE "TacheNom" ADD VALUE 'RAPPELS_CONGES'`. Contenu rejouable ; sans risque tant qu'il n'est
   pas en production (migration jamais déployée : les bases locales de l'ancienne version sont à recréer).
 

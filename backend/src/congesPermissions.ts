@@ -1,6 +1,6 @@
 // Congés : module et permissions (source unique).
 //
-// Repris à l'identique par le seed ET par la migration 20261021090000_conges_permissions_absence (un test de
+// Repris à l'identique par le seed ET par la migration 20261028090000_conges_permissions_absence (un test de
 // synchronisation, congesPermissions.test.ts, lit le SQL de la migration). La production n'est jamais re-seedée : tout ce
 // qui doit exister là-bas passe par la migration, qui attribue les permissions PAR PERMISSION « SŒUR » (les rôles qui
 // portent déjà la permission sœur reçoivent la nouvelle), jamais par un nom de rôle.
