@@ -77,7 +77,7 @@ export function ReinitialisationForm() {
         <p>
           Supprimés : demandes, articles, règlements, retours (caisse, exceptionnels, externes), remboursements, journaux de
           caisse et de banque (le solde d&apos;ouverture est à ressaisir ensuite), pièces jointes (et leurs fichiers),
-          confirmations de dépassement, actions signées, pointages, justifications, corrections, absences, feedbacks,
+          confirmations de dépassement, actions signées, pointages, justifications, corrections, absences, demandes de congé et de permission, feedbacks,
           données de test d&apos;Encaissements (si le module n&apos;est pas encore en service), journaux techniques, et les
           notifications et historiques liés. Conservés : comptes, rôles, permissions, délégations, services et
           responsables, catégories, objets, budgets et seuils validés, paramètres, signatures enrôlées, horaires, jours

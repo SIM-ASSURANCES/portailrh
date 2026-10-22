@@ -3853,6 +3853,27 @@ purge réelle, sauvegarde relue, table par table (30 purgées vides, 25 conserv�
 (un premier passage de `lot-m` a eu un KO sur « 1e. notification du DG » pendant qu'un autre test tournait en parallèle ; rejoué seul : 89/89 — contrôle sensible au délai de création de la notification, non lié au lot).
 Piège d'environnement : `pkill -f "next start"` tue aussi le shell qui contient cette chaîne ; arrêter les serveurs par leur numéro de processus.
 
+#### Lot Q — intégration du module Congés (Thierry) avec les lots Trésorerie (2026-10-22)
+
+Base : `origin/aristide` après la fusion de `thierry-kouame`. **Aucune règle métier de Thierry modifiée, aucune valeur interne renommée** (`REFUSE`, `REFUSEE`, `motifRejet`, codes d'historique…), **aucune migration créée**.
+
+**Partie 1 — corrections de fusion.**
+- Migration : seule `20261030090000_conges_permissions_absence` existe. Sa copie `20261028110000_conges_permissions_absence`, restée par erreur dans l'arbre fusionné, est supprimée ; toutes les références (test `congesPermissions.test.ts`, `congesPermissions.ts`, `e2e/conges-migration-admin.sh`, CLAUDE.md) pointent sur le nom définitif. Vérifié : `migrate deploy` depuis zéro, une seule migration Congés, `migrate diff` vide.
+- Marqueurs de conflit committés dans `pointage/mon-equipe/page.tsx` (cassaient `tsc`) : résolus en gardant les deux colonnes (« Jours de congé » et « Rejetées / non justifiées »). Deux lignes `///` orphelines (date d'embauche, champ qui n'existe pas) retirées de `schema.prisma`.
+- Vocabulaire « Rejeter » dans Congés : boutons, « Motif du rejet », « Confirmer le rejet », « Motif du rejet : … » (détail), notification « Congé … rejeté : jour déjà passé compté comme absence » ; recette de Thierry (`e2e/conges-recette.mjs`) mise à jour sans toucher aux données, variables ni attributs `data-…`. `vocabulaireRejeter.test.ts` passe **sans élargir sa liste blanche** ; aucun autre texte visible de Congés ne contredit le vocabulaire.
+
+**Partie 2 — réinitialisation.**
+- `reinitialisationClassification.ts` : `DemandeConge` est classée **purgée** (données de test), avec ses plages d'absence (`PlageAbsenceAutorisee.demandeCongeId`, cascade), son historique (entité `DemandeConge`, constante `ENTITES_HISTORIQUE_CONGES`, séparée de `ENTITES_HISTORIQUE_POINTAGE`) et ses notifications (catégorie `RH`, déjà purgée). **Le module n'a ni solde, ni nombre de jours par an, ni table de paramètres** : il n'y a donc rien d'autre à classer ; les jours fériés (`JourFerie`) restent **conservés**.
+- `reinitialisation.ts` : `chargerJeuxReinitialisation` sauvegarde `demandeConge` et l'historique Congés dans le JSON (donc dans l'empreinte) ; la purge supprime, dans la transaction et après les plages d'absence, les demandes puis leur historique. Texte de l'écran du DG mis à jour.
+- **Purge du Pointage seul inchangée** (règle de Thierry) : `refusPurgePointageAbsences` refuse tant qu'une demande de congé existe, même rejetée ou annulée → mettre le Pointage en service **avant** d'ouvrir les congés, ou faire la purge globale.
+- Test d'intégration : `e2e/lot-n.mjs` (base jetable) étendu — demandes de congé validée et rejetée, plage liée, historique, jour férié : demandes 2→0, historique purgé, aucune plage orpheline, jour férié conservé.
+
+**Partie 3 — vérification avant mise en service.** `verifierPermissionsConges` (`miseEnProduction.ts`, pur) appelé par `verifier-mise-en-production.ts` (lecture seule) : (1) les 4 permissions `conges.*` existent (sinon « À CORRIGER » : migration `20261030090000` non appliquée) ; (2) chaque rôle porte les permissions que lui donne `permissionsCongePourCles` d'après ce qu'il a déjà (RH : valide, annule, consulte tout ; DG : demande et consulte tout ; personnel : demande ; Admin : demande), le DG ne porte jamais `conges.valider_rh` ni `conges.annuler`, et au moins un rôle porte `conges.valider_rh` ; (3) au moins 2 comptes actifs peuvent valider l'étape RH (la RH ne décide pas sa propre demande) ; (4) AVERTISSEMENT si un responsable de service actif ne peut pas demander son propre congé. 8 tests ajoutés dans `miseEnProduction.test.ts`.
+
+**Vérifié** : vitest (1413 réussis), tsc backend et frontend, eslint, `next build`, `migrate diff` vide ; e2e `lot-n.mjs` 69/69 (65 + 4 contrôles Congés), `lot-o.mjs`, recette de Thierry `conges-recette.mjs` 48/48, série de non-régression Trésorerie (voir compte rendu). **Non relancés** : les autres scripts Congés (`conges-couche-base.ts`…) qui exigent leur propre base/ports.
+
+**Points ouverts** : `docs/PLAN_FUSION_CONGES_V2.md` garde les noms de migration historiques (document daté) ; le lot P (performance, branche locale `wip-lot-p`) devra dater sa migration d'index après `20261030090000`.
+
 ### Solde d'ouverture de caisse
 
 `getSoldeCaisse()` reste toujours le seul calcul du solde (jamais modifié
@@ -7113,7 +7134,7 @@ l'annulation) ; jours passés gardés, sauf refus avec la case R11 cochée. Reso
 
 ### Permissions
 
-Quatre `conges.*` (module `conges`, source unique `congesPermissions.ts`, posées par la migration `20261028090000_conges_permissions_absence` ET par
+Quatre `conges.*` (module `conges`, source unique `congesPermissions.ts`, posées par la migration `20261030090000_conges_permissions_absence` ET par
 le seed, synchronisation vérifiée par `congesPermissions.test.ts`) : `soumettre`, `valider_rh`, `annuler`, `consulter_tous`.
 - **Attribution par permission sœur, jamais par nom de rôle** (le rôle qui porte la sœur reçoit la nouvelle ; seed : `permissionsCongePourCles`) :
   `soumettre` ← `pointage.pointer`, `treso.creer_demande`, `treso.decider_dg` ; `valider_rh` et `annuler` ← `pointage.corriger_pointage` ;
@@ -7172,9 +7193,7 @@ export) depuis la racine ; `npx tsx ../e2e/conges-pointage.ts` (lundi à jeudi) 
 - **O2** : un responsable de service qui porte aussi `conges.valider_rh` valide les deux étapes d'une demande de son service (seule la propre demande
   est interdite).
 - **O3** : la saisie RH n'accepte aucune date de début passée (R3) : un congé déjà commencé ne s'enregistre pas après coup.
-- **À la fusion** : renommer le dossier `20261028090000_conges_permissions_absence` (nouvel horodatage, **après** les migrations `20261022*` d'Aristide,
-  après un dernier `git fetch`). Il contient aussi `ALTER TYPE "TacheNom" ADD VALUE 'RAPPELS_CONGES'`. Contenu rejouable ; sans risque tant qu'il n'est
-  pas en production (migration jamais déployée : les bases locales de l'ancienne version sont à recréer).
+- **Fusion faite (lot Q, 2026-10-22)** : la migration est le dossier `20261030090000_conges_permissions_absence` (après toutes les migrations d'Aristide ; sa copie `20261028110000_…`, restée par erreur dans la fusion, est supprimée). Elle contient aussi `ALTER TYPE "TacheNom" ADD VALUE 'RAPPELS_CONGES'`. Contenu rejouable ; jamais déployée en production : plus aucun renommage.
 
 ## Socle Portail — Authentification et permissions
 

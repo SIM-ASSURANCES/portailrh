@@ -1,3 +1,4 @@
+import { PERMISSIONS_CONGES, permissionsCongePourCles } from "./congesPermissions";
 import { PERMISSIONS_SIGNATAIRES } from "./signatureConstantes";
 
 /**
@@ -70,6 +71,8 @@ export function verifierMigrations(attendues: readonly string[], appliquees: rea
 export interface RoleConfig {
   name: string;
   permissions: readonly string[];
+  /** Rôle d'administration (lot Q) : ne reçoit que les droits de DEMANDE de congé. Absent = non. */
+  estAdmin?: boolean;
 }
 
 export function verifierRoleFinance(roles: readonly RoleConfig[]): Point {
@@ -338,6 +341,79 @@ export function listerDelegationsPointage(delegations: readonly DelegationLue[])
   return delegations.length === 0
     ? point("delegations-rh", titre, "OK", "Aucune délégation active.")
     : point("delegations-rh", titre, "INFO", `${delegations.length} délégation(s) active(s) : à contrôler à la main (/admin/delegations).`, delegations.map((d) => `${d.donneur} → ${d.beneficiaire} (depuis le ${d.depuis})`));
+}
+
+// ---------- Congés (lot Q) ----------
+
+export const PERMISSION_CONGE_SOUMETTRE = "conges.soumettre";
+export const PERMISSION_CONGE_VALIDER_RH = "conges.valider_rh";
+/** Le DG consulte les congés de tous mais ne décide jamais l'étape RH par sa permission (repli prévu par le moteur, `resoudreEtapeRH`). */
+export const PERMISSIONS_CONGE_INTERDITES_AU_DG = [PERMISSION_CONGE_VALIDER_RH, "conges.annuler"] as const;
+
+const estPermissionConge = (cle: string) => cle.startsWith("conges.");
+
+export interface CompteConge {
+  nom: string;
+  email: string;
+  rolePermissions: readonly string[];
+  responsableDeServices: number;
+}
+
+/**
+ * Permissions du module Congés (source : `congesPermissions.ts`, la même règle que la migration `20261030090000` et le seed) :
+ *  - le catalogue contient les 4 permissions `conges.*` (sinon la migration n'est pas appliquée) ;
+ *  - chaque rôle porte les permissions Congés que lui donne la règle des permissions « sœurs » d'après ce qu'il porte déjà : la RH
+ *    (`pointage.corriger_pointage`) valide, annule et consulte tout ; le DG demande et consulte tout, sans jamais valider l'étape
+ *    RH ni annuler ; tout le personnel (pointe, crée des demandes de dépense ou décide comme DG) peut demander un congé ; un rôle
+ *    d'administration ne reçoit que les droits de demande ;
+ *  - au moins deux comptes actifs peuvent valider l'étape RH (continuité : la RH ne décide jamais sa propre demande) ;
+ *  - les responsables de service décident l'étape « responsable » sans permission, mais doivent pouvoir demander leur propre congé.
+ */
+export function verifierPermissionsConges(entree: { catalogue: readonly string[]; roles: readonly RoleConfig[]; comptes: readonly CompteConge[] }): Point[] {
+  const titreCatalogue = "Congés — permissions installées";
+  const manquantesCatalogue = PERMISSIONS_CONGES.map((p) => p.key).filter((k) => !entree.catalogue.includes(k));
+  if (manquantesCatalogue.length > 0) {
+    // Sans catalogue, le reste n'a pas de sens : un seul « À CORRIGER » clair.
+    return [
+      point("conges-catalogue", titreCatalogue, "A_CORRIGER", `${manquantesCatalogue.length} permission(s) du module Congés absente(s) : la migration 20261030090000_conges_permissions_absence n'est pas appliquée (« prisma migrate deploy »).`, manquantesCatalogue.map((k) => `absente : ${k}`)),
+    ];
+  }
+  const points: Point[] = [point("conges-catalogue", titreCatalogue, "OK", `Les ${PERMISSIONS_CONGES.length} permissions conges.* existent.`)];
+
+  const problemes: string[] = [];
+  for (const role of entree.roles) {
+    const hors = role.permissions.filter((k) => !estPermissionConge(k));
+    for (const k of permissionsCongePourCles(hors, role.estAdmin === true)) {
+      if (!role.permissions.includes(k)) problemes.push(`rôle « ${role.name} » : n'a pas ${k} (à cocher dans /admin/roles)`);
+    }
+    if (role.name === ROLE_DG) {
+      for (const k of PERMISSIONS_CONGE_INTERDITES_AU_DG) if (role.permissions.includes(k)) problemes.push(`rôle « ${ROLE_DG} » : porte ${k} (le DG consulte seulement ; à décocher)`);
+    }
+  }
+  const rolesValideurs = entree.roles.filter((r) => r.permissions.includes(PERMISSION_CONGE_VALIDER_RH));
+  if (rolesValideurs.length === 0) problemes.push(`aucun rôle ne porte ${PERMISSION_CONGE_VALIDER_RH} : personne ne peut valider l'étape RH`);
+  points.push(
+    problemes.length === 0
+      ? point("conges-roles", "Congés — permissions des rôles", "OK", `Conformes à la règle des permissions sœurs ; étape RH : ${rolesValideurs.map((r) => r.name).join(", ")} ; le DG ne décide pas l'étape RH.`)
+      : point("conges-roles", "Congés — permissions des rôles", "A_CORRIGER", `${problemes.length} écart(s).`, problemes)
+  );
+
+  const valideurs = entree.comptes.filter((c) => c.rolePermissions.includes(PERMISSION_CONGE_VALIDER_RH)).map((c) => `${c.nom} <${c.email}>`);
+  points.push(
+    valideurs.length >= 2
+      ? point("conges-rh", "Congés — comptes pouvant valider l'étape RH", "OK", `${valideurs.length} compte(s) actif(s) (minimum 2).`, valideurs)
+      : point("conges-rh", "Congés — comptes pouvant valider l'étape RH", "A_CORRIGER", `${valideurs.length} compte(s) actif(s), il en faut au moins 2 (la RH ne décide pas sa propre demande).`, valideurs)
+  );
+
+  const responsablesSansDemande = entree.comptes
+    .filter((c) => c.responsableDeServices > 0 && !c.rolePermissions.includes(PERMISSION_CONGE_SOUMETTRE))
+    .map((c) => `${c.nom} <${c.email}>`);
+  points.push(
+    responsablesSansDemande.length === 0
+      ? point("conges-responsables", "Congés — responsables de service", "OK", "Tous les responsables de service actifs peuvent demander leur propre congé (ils décident l'étape « responsable » sans permission).")
+      : point("conges-responsables", "Congés — responsables de service", "AVERTISSEMENT", `${responsablesSansDemande.length} responsable(s) de service sans ${PERMISSION_CONGE_SOUMETTRE} : ils décident les demandes de leur service mais ne peuvent pas demander leur propre congé.`, responsablesSansDemande)
+  );
+  return points;
 }
 
 // ---------- Rapport ----------

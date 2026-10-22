@@ -113,7 +113,7 @@ export function DecisionConge({
             title={actions.rejeter ?? undefined}
             onClick={() => setMode(mode === "rejeter" ? null : "rejeter")}
           >
-            Refuser
+            Rejeter
           </Button>
           {actions.rejeter ? <p className="text-sm text-muted-foreground">{actions.rejeter}</p> : null}
         </div>
@@ -152,7 +152,7 @@ export function DecisionConge({
       {mode === "rejeter" && !actions.rejeter ? (
         <div className="space-y-3 rounded-xl border border-danger-border bg-danger-bg p-4">
           <Textarea
-            label="Motif du refus"
+            label="Motif du rejet"
             required
             rows={3}
             maxLength={500}
@@ -191,7 +191,7 @@ export function DecisionConge({
               )
             }
           >
-            Confirmer le refus
+            Confirmer le rejet
           </Button>
         </div>
       ) : null}

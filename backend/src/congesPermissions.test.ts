@@ -7,7 +7,7 @@ import { PERMISSIONS_DECISION_NON_DELEGABLES } from "./circuitDemande";
 import { MODULE_CONGES_KEY, PERMISSIONS_CONGES, permissionsCongePourCles } from "./congesPermissions";
 
 const sql = readFileSync(
-  path.resolve(__dirname, "../prisma/migrations/20261028090000_conges_permissions_absence/migration.sql"),
+  path.resolve(__dirname, "../prisma/migrations/20261030090000_conges_permissions_absence/migration.sql"),
   "utf8"
 );
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`;

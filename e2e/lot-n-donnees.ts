@@ -81,6 +81,18 @@ async function main() {
   await prisma.correctionPointage.create({ data: { pointageId: pointage.id, ancienneValeur: "08:00", nouvelleValeur: "08:10", motif: "correction de test", effectueParId: rh } });
   await prisma.absence.create({ data: { date: jour, userId: collab } });
   await prisma.plageAbsenceAutorisee.create({ data: { date: jour, heureDebut: "08:00", heureFin: "17:00", source: "CONGE", userId: collab } as never });
+  // Congés (lot Q) : une demande validée avec sa plage d'absence liée, une demande rejetée (la purge du Pointage seul la refuserait aussi),
+  // leur historique ; la notification de catégorie RH ci-dessous est celle de la RH. Jour férié : configuration conservée.
+  const congeValide = await prisma.demandeConge.create({
+    data: { reference: "CNG-LOTN-0001", nature: "CONGE", motif: "Congé de test (lot N)", dateDebut: jour, dateFin: jour, nbJoursOuvres: 1, statut: "VALIDEE", userId: collab, creeParId: collab, approuveParId: finance, approuveAt: maintenant, valideParId: rh, valideAt: maintenant },
+  });
+  await prisma.plageAbsenceAutorisee.create({ data: { date: jour, heureDebut: "08:00", heureFin: "17:00", source: "CONGE", userId: collab, demandeCongeId: congeValide.id } as never });
+  const congeRejete = await prisma.demandeConge.create({
+    data: { reference: "CNG-LOTN-0002", nature: "PERMISSION_EXCEPTIONNELLE", motif: "Permission de test (lot N)", dateDebut: jour, dateFin: jour, nbJoursOuvres: 1, statut: "REJETEE", motifRejet: "rejet de test", userId: collab, creeParId: collab, valideParId: rh, valideAt: maintenant },
+  });
+  await prisma.historiqueEntry.create({ data: { entity: "DemandeConge", entityId: congeValide.id, action: "validation", detail: "test", userId: rh } });
+  await prisma.historiqueEntry.create({ data: { entity: "DemandeConge", entityId: congeRejete.id, action: "rejet", detail: "test", userId: rh } });
+  await prisma.jourFerie.upsert({ where: { date: new Date(Date.UTC(2027, 0, 1)) }, create: { date: new Date(Date.UTC(2027, 0, 1)), libelle: "Jour de l'an (lot N)" }, update: {} });
   await prisma.feedback.create({ data: { content: "Avis de test suffisamment long pour passer.", source: "PUBLIC", recipientId: collab } as never });
   await prisma.notification.create({ data: { titre: "Pointage test", message: "à purger", userId: collab, category: "POINTAGE" } });
   await prisma.notification.create({ data: { titre: "RH test", message: "à purger", userId: rh, category: "RH" } });

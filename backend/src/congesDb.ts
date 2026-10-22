@@ -543,7 +543,7 @@ async function compterJoursPassesAbsents(db: Db, p: { userId: string; reference:
         userId: p.userId,
         date: new Date(d.getFullYear(), d.getMonth(), d.getDate()),
         statut: "A_CONTROLER" as const,
-        motif: `Congé ${p.reference} refusé : jour déjà passé compté comme absence.`,
+        motif: `Congé ${p.reference} rejeté : jour déjà passé compté comme absence.`,
       };
     }),
   });

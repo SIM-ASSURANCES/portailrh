@@ -110,7 +110,7 @@ idempotentes : corriger puis relancer.
 | **Finance** | `treso.decider_finance`, `treso.soumettre_dg`, `treso.cloturer_demande`, `treso.modifier_budget_categorie`, `treso.reorienter_demande` (et `treso.valider_demande`, `treso.categoriser_demande`, `treso.annuler_reglement`, `treso.ajuster_retour`, `treso.valider_remboursement`, `treso.valider_retour_exceptionnel`, `treso.creer_retour_externe`, `treso.deleguer_acces`, `treso.modifier_description`, `treso.gerer_categories`, `treso.alimenter_caisse`, `treso.corriger_solde_ouverture`, `treso.saisir_depense_directe`, `treso.voir_dashboard_finance`, `treso.voir_reporting`) | **`treso.approuver_validation_complete`** (réservée au DG : la règle des deux personnes) |
 | **DG** | `treso.approuver_validation_complete`, `treso.decider_dg`, `treso.valider_budget`, `systeme.reinitialiser`, `treso.voir_dashboard_finance`, `treso.voir_reporting` | `treso.valider_demande` (retirée du DG par la migration du 2026-10-08 ; vérifier) |
 | **Assistant Finance** | `treso.effectuer_reglement`, `treso.receptionner_retour` | tout le reste |
-| **RH** | `pointage.corriger_pointage` (+ le reste du pointage) | — |
+| **RH** | `pointage.corriger_pointage` (+ le reste du pointage) et, pour les Congés, `conges.soumettre`, `conges.valider_rh`, `conges.annuler`, `conges.consulter_tous` | — |
 | **Admin** | — | **`treso.approuver_validation_complete`** si elle y figure (anomalie connue de la production : Finance **et** Admin la portaient) |
 
 `treso.valider_budget` ne doit être détenue **que par le DG** (le script de vérification le contrôle). Les permissions de décision (`decider_finance`, `soumettre_dg`, `decider_dg`,
@@ -120,6 +120,10 @@ idempotentes : corriger puis relancer.
 - **Au moins 2 Assistants Finance actifs** (continuité : personne ne règle sa propre demande) et **au moins 2 comptes RH** portant `pointage.corriger_pointage`.
 - **Chaque compte actif a un service** ; **chacun des 8 services a un responsable actif** (`/admin/services`).
 - **Délégations de `pointage.corriger_pointage`** : le script de vérification les liste pour contrôle manuel (`/admin/delegations`).
+- **Congés** (`conges.*`, posées par la migration `20261030090000_conges_permissions_absence`, par permission « sœur » : jamais par nom de rôle) : la RH (`pointage.corriger_pointage`) porte les quatre ; le DG porte `conges.soumettre` et
+  `conges.consulter_tous`, **jamais** `conges.valider_rh` ni `conges.annuler` ; tout le personnel (`pointage.pointer`, `treso.creer_demande` ou `treso.decider_dg`) porte `conges.soumettre` ; un rôle d'administration ne reçoit que
+  `conges.soumettre`. **Au moins 2 comptes actifs** pouvant valider l'étape RH (`conges.valider_rh`). Le responsable d'un service décide l'étape « responsable » sans permission. La purge du Pointage seul est refusée dès qu'une demande de
+  congé existe (mettre le Pointage en service avant d'ouvrir les congés) ; la réinitialisation globale, elle, purge aussi les demandes de congé de test.
 
 ### 4.3 Signatures manuscrites
 Chaque compte qui valide, règle, clôture ou répond à une étape (Finance, DG, Assistants Finance, responsables de service) **dessine sa signature une fois** dans
@@ -150,7 +154,7 @@ Corriger tous les « À CORRIGER » sauf ceux qui concernent explicitement les c
 
 Ce que fait la purge (tableau complet en annexe A) : supprime **toutes les données de test** — demandes, articles, règlements, retours, remboursements, retours exceptionnels et externes,
 journaux de caisse et de banque, pièces jointes (et leurs fichiers), confirmations de dépassement, réorientations et reprises (portées par l'historique), actions signées, notifications de
-Trésorerie/RH/Pointage, historiques liés, pointages, justifications, corrections, absences et plages d'absence, feedbacks, journaux techniques, et les données de test d'Encaissements
+Trésorerie/RH/Pointage, historiques liés, pointages, justifications, corrections, absences et plages d'absence, demandes de congé et de permission (avec leur historique et leurs notifications), feedbacks, journaux techniques, et les données de test d'Encaissements
 (seulement tant que le module n'est pas mis en service). Elle **conserve** les comptes, rôles, permissions, délégations, services et responsables, catégories et objets, budgets et seuils validés
 (avec leur historique de validation), paramètres (dont la date de catégorisation), **signatures enrôlées**, horaires, jours fériés, jetons de notification et l'audit d'administration.
 
@@ -230,7 +234,7 @@ echo $?                                                      # attendu : 0
 ```
 Ce que le script contrôle : toutes les migrations appliquées ; rôle Finance (sans `approuver_validation_complete`, avec `soumettre_dg`, `decider_finance`, `cloturer_demande`,
 `modifier_budget_categorie`, `reorienter_demande`) ; rôle DG (`approuver_validation_complete`, `systeme.reinitialiser`, `valider_budget`, et `valider_budget` détenue par le DG seul) ; au moins 2
-Assistants Finance et 2 RH avec `pointage.corriger_pointage` ; un service par compte actif ; un responsable actif par service ; une signature par compte qui doit signer ; seuils de caisse en vigueur et
+Assistants Finance et 2 RH avec `pointage.corriger_pointage` ; permissions du module Congés (catalogue installé, permissions des rôles selon la règle des permissions sœurs, le DG sans `conges.valider_rh` ni `conges.annuler`, au moins 2 comptes pouvant valider l'étape RH, responsables de service pouvant demander leur congé) ; un service par compte actif ; un responsable actif par service ; une signature par compte qui doit signer ; seuils de caisse en vigueur et
 validés par le DG ; budgets de catégorie en vigueur validés ; date de catégorisation (avertissement si absente ou non future) ; variables `AUTH_URL` (https public), `AUTH_SECRET`, `CRON_SECRET`, `DATABASE_URL`
 (valeurs jamais affichées) ; comptes `*@simassurances.test` (en `--final`, un compte de test **actif** est « À CORRIGER ») ; délégations actives de `pointage.corriger_pointage` (à contrôler à la main).
 
@@ -284,6 +288,7 @@ aucune table de données métier ne peut être oubliée quand un lot en ajoute u
 | `BudgetDepassement` | **purgée** | confirmations de dépassement de budget (liées à des demandes de test) |
 | `CorrectionPointage` | **purgée** | corrections |
 | `Demande` | **purgée** | demandes (avec chronomètres, motifs d'échange, circuit) |
+| `DemandeConge` | **purgée** | demandes de congé et de permission (données de test), avec leurs plages, leur historique (entité `DemandeConge`) et leurs notifications (catégorie RH) ; aucun paramètre de congés en base (ni solde ni jours par an), `JourFerie` conservé |
 | `DepenseLigne` | **purgée** | dépenses détaillées |
 | `EncAudit` | **purgée** | audit du module — supprimable seulement avant la mise en service d'Encaissements |
 | `EncContrat` | **purgée** | contrats importés pour test — seulement avant la mise en service d'Encaissements |
@@ -301,7 +306,7 @@ aucune table de données métier ne peut être oubliée quand un lot en ajoute u
 | `JustificationPointage` | **purgée** | justifications |
 | `LigneDemande` | **purgée** | articles |
 | `PieceJointe` | **purgée** | pièces jointes (fichiers de uploads/ supprimés après le commit) |
-| `PlageAbsenceAutorisee` | **purgée** | absences déclarées (congés, permissions) |
+| `PlageAbsenceAutorisee` | **purgée** | absences déclarées (congés, permissions), y compris celles posées par une demande de congé |
 | `Pointage` | **purgée** | pointages |
 | `Reglement` | **purgée** | règlements |
 | `ReglementCategorieAllocation` | **purgée** | allocations budgétaires des règlements |

@@ -31,7 +31,7 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
   Service: C("services et leurs responsables"),
   FcmToken: C("jetons push des appareils"),
   HistoriqueEntry: PP(
-    "supprimées : entités Demande, LigneDemande, JournalCaisse, RetourExterne, Pointage, PointageQR, PointageGeo, JustificationPointage ; " +
+    "supprimées : entités Demande, LigneDemande, JournalCaisse, RetourExterne, Pointage, PointageQR, PointageGeo, JustificationPointage, DemandeConge ; " +
       "conservées : audit Admin/Auth/User/Service/Role/Module/Categorie/Objet/PermissionDelegation, budgets (BudgetParametrage, ParametreTresorerie), signatures enrôlées, verrous"
   ),
   Notification: PP("supprimées : catégories TRESORERIE, RH, POINTAGE ; conservées : ADMIN, SYSTEME"),
@@ -66,7 +66,11 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
   JustificationPointage: P("justifications"),
   CorrectionPointage: P("corrections"),
   Absence: P("absences détectées"),
-  PlageAbsenceAutorisee: P("absences déclarées (congés, permissions)"),
+  PlageAbsenceAutorisee: P("absences déclarées (congés, permissions), y compris celles posées par une demande de congé"),
+  DemandeConge: P(
+    "demandes de congé et de permission (données de test), avec leurs plages d'absence, leur historique (entité DemandeConge) et leurs notifications (catégorie RH). " +
+      "Les paramètres de congés ne sont pas dans cette table : le module n'a ni solde ni nombre de jours par an ; les jours fériés (JourFerie) sont conservés"
+  ),
   Feedback: P("avis FeedbackApp"),
   // ---- Techniques
   ExecutionTache: P("historique d'exécution du planificateur (hors empreinte : réécrit en continu)"),
@@ -95,7 +99,12 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
 /** Entités de `HistoriqueEntry` supprimées (Trésorerie puis Pointage). */
 export const ENTITES_HISTORIQUE_TRESORERIE: string[] = ["Demande", "LigneDemande", "JournalCaisse", "RetourExterne"];
 export const ENTITES_HISTORIQUE_POINTAGE: string[] = ["Pointage", "PointageQR", "PointageGeo", "JustificationPointage"];
-export const ENTITES_HISTORIQUE_PURGEES: string[] = [...ENTITES_HISTORIQUE_TRESORERIE, ...ENTITES_HISTORIQUE_POINTAGE];
+/**
+ * Congés : volontairement SÉPARÉ de `ENTITES_HISTORIQUE_POINTAGE` — la purge du Pointage seul ne touche jamais aux congés
+ * (elle est même refusée dès qu'une demande de congé existe, `refusPurgePointageAbsences`) ; seule la réinitialisation globale les efface.
+ */
+export const ENTITES_HISTORIQUE_CONGES: string[] = ["DemandeConge"];
+export const ENTITES_HISTORIQUE_PURGEES: string[] = [...ENTITES_HISTORIQUE_TRESORERIE, ...ENTITES_HISTORIQUE_POINTAGE, ...ENTITES_HISTORIQUE_CONGES];
 
 /**
  * Entités de `HistoriqueEntry` conservées (audit et configuration). Le test de classification vérifie que TOUTE entité écrite

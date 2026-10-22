@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   CLASSIFICATION_TABLES,
   ENTITES_HISTORIQUE_CONSERVEES,
+  ENTITES_HISTORIQUE_CONGES,
+  ENTITES_HISTORIQUE_POINTAGE,
   ENTITES_HISTORIQUE_PURGEES,
 } from "./reinitialisationClassification";
 
@@ -53,6 +55,12 @@ describe("classification des tables pour la réinitialisation (lot N)", () => {
     expect([...trouvees].filter((e) => !classees.has(e)).sort()).toEqual([]);
   });
 
+  it("Congés : l'historique DemandeConge est purgé par la réinitialisation globale, jamais par la purge du Pointage seul", () => {
+    expect(ENTITES_HISTORIQUE_PURGEES).toContain("DemandeConge");
+    expect(ENTITES_HISTORIQUE_CONGES).toEqual(["DemandeConge"]);
+    expect(ENTITES_HISTORIQUE_POINTAGE).not.toContain("DemandeConge");
+  });
+
   it("aucune entité d'historique n'est à la fois purgée et conservée", () => {
     const communes = ENTITES_HISTORIQUE_PURGEES.filter((e) => ENTITES_HISTORIQUE_CONSERVEES.includes(e));
     expect(communes).toEqual([]);
@@ -70,7 +78,7 @@ describe("classification des tables pour la réinitialisation (lot N)", () => {
   it("les données de test du circuit sont PURGÉES", () => {
     for (const m of [
       "Demande", "LigneDemande", "Reglement", "RetourCaisse", "RetourExterne", "PieceJointe", "BudgetDepassement",
-      "JournalCaisse", "Pointage", "JustificationPointage", "Absence", "PlageAbsenceAutorisee", "Feedback",
+      "JournalCaisse", "Pointage", "JustificationPointage", "Absence", "PlageAbsenceAutorisee", "DemandeConge", "Feedback",
     ]) {
       expect(CLASSIFICATION_TABLES[m].statut, m).toBe("PURGEE");
     }

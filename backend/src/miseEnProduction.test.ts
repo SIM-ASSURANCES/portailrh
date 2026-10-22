@@ -12,6 +12,7 @@ import {
   verifierEnvironnement,
   verifierMigrations,
   verifierMinimumComptes,
+  verifierPermissionsConges,
   verifierResponsablesServices,
   verifierRoleDG,
   verifierRoleFinance,
@@ -216,5 +217,79 @@ describe("rapport et code de sortie", () => {
     expect(texte).toMatch(/\[OK\s*\]/);
     expect(texte).toMatch(/\[À CORRIGER\s*\]/);
     expect(texte).toMatch(/Bilan : 1 OK, 1 À CORRIGER/);
+  });
+});
+
+describe("permissions du module Congés (lot Q)", () => {
+  const CATALOGUE = ["conges.soumettre", "conges.valider_rh", "conges.annuler", "conges.consulter_tous"];
+  const RH: RoleConfig = {
+    name: "RH",
+    permissions: ["pointage.pointer", "pointage.corriger_pointage", "pointage.consulter_tous", "conges.soumettre", "conges.valider_rh", "conges.annuler", "conges.consulter_tous"],
+  };
+  const DG: RoleConfig = { name: "DG", permissions: ["treso.decider_dg", "conges.soumettre", "conges.consulter_tous"] };
+  const COLLAB: RoleConfig = { name: "Collaborateur", permissions: ["pointage.pointer", "treso.creer_demande", "conges.soumettre"] };
+  const ADMIN: RoleConfig = { name: "Admin", estAdmin: true, permissions: ["pointage.pointer", "pointage.corriger_pointage", "conges.soumettre"] };
+  const rh = (n: number) => ({ nom: `RH ${n}`, email: `rh${n}@x`, rolePermissions: RH.permissions, responsableDeServices: 0 });
+  const verdicts = (ps: { id: string; verdict: string }[]) => Object.fromEntries(ps.map((p) => [p.id, p.verdict]));
+
+  it("tout est conforme : catalogue complet, rôles selon les permissions sœurs, deux comptes RH", () => {
+    const p = verifierPermissionsConges({ catalogue: CATALOGUE, roles: [RH, DG, COLLAB, ADMIN], comptes: [rh(1), rh(2)] });
+    expect(verdicts(p)).toEqual({ "conges-catalogue": "OK", "conges-roles": "OK", "conges-rh": "OK", "conges-responsables": "OK" });
+  });
+
+  it("migration non appliquée : un seul À CORRIGER qui les nomme toutes", () => {
+    const p = verifierPermissionsConges({ catalogue: ["conges.soumettre"], roles: [RH], comptes: [rh(1), rh(2)] });
+    expect(p).toHaveLength(1);
+    expect(p[0].verdict).toBe("A_CORRIGER");
+    expect(p[0].elements).toEqual(["absente : conges.valider_rh", "absente : conges.annuler", "absente : conges.consulter_tous"]);
+  });
+
+  it("RH : une permission sœur non attribuée est signalée avec son rôle", () => {
+    const rhSansAnnuler = { ...RH, permissions: RH.permissions.filter((k) => k !== "conges.annuler") };
+    const roles = verifierPermissionsConges({ catalogue: CATALOGUE, roles: [rhSansAnnuler, DG], comptes: [rh(1), rh(2)] }).find((x) => x.id === "conges-roles")!;
+    expect(roles.verdict).toBe("A_CORRIGER");
+    expect(roles.elements).toEqual(["rôle « RH » : n'a pas conges.annuler (à cocher dans /admin/roles)"]);
+  });
+
+  it("DG : demande et consulte, mais valider l'étape RH ou annuler est un écart", () => {
+    const dgTropPuissant = { ...DG, permissions: [...DG.permissions, "conges.valider_rh", "conges.annuler"] };
+    const roles = verifierPermissionsConges({ catalogue: CATALOGUE, roles: [RH, dgTropPuissant], comptes: [rh(1), rh(2)] }).find((x) => x.id === "conges-roles")!;
+    expect(roles.verdict).toBe("A_CORRIGER");
+    expect(roles.elements).toEqual([
+      "rôle « DG » : porte conges.valider_rh (le DG consulte seulement ; à décocher)",
+      "rôle « DG » : porte conges.annuler (le DG consulte seulement ; à décocher)",
+    ]);
+    // Et un DG à qui il manque la demande ou la consultation de tous :
+    const dgIncomplet = { ...DG, permissions: ["treso.decider_dg"] };
+    const manque = verifierPermissionsConges({ catalogue: CATALOGUE, roles: [RH, dgIncomplet], comptes: [rh(1), rh(2)] }).find((x) => x.id === "conges-roles")!;
+    expect(manque.elements).toEqual(["rôle « DG » : n'a pas conges.soumettre (à cocher dans /admin/roles)", "rôle « DG » : n'a pas conges.consulter_tous (à cocher dans /admin/roles)"]);
+  });
+
+  it("rôle d'administration : seul le droit de demande est attendu (pas décider ni consulter tout)", () => {
+    const adminSansDemande = { ...ADMIN, permissions: ["pointage.pointer", "pointage.corriger_pointage"] };
+    const ok = verifierPermissionsConges({ catalogue: CATALOGUE, roles: [RH, ADMIN], comptes: [rh(1), rh(2)] }).find((x) => x.id === "conges-roles")!;
+    expect(ok.verdict).toBe("OK");
+    const ko = verifierPermissionsConges({ catalogue: CATALOGUE, roles: [RH, adminSansDemande], comptes: [rh(1), rh(2)] }).find((x) => x.id === "conges-roles")!;
+    expect(ko.elements).toEqual(["rôle « Admin » : n'a pas conges.soumettre (à cocher dans /admin/roles)"]);
+  });
+
+  it("aucun rôle ne peut valider l'étape RH : À CORRIGER", () => {
+    const roles = verifierPermissionsConges({ catalogue: CATALOGUE, roles: [{ name: "RH", permissions: [] }, COLLAB], comptes: [] }).find((x) => x.id === "conges-roles")!;
+    expect(roles.verdict).toBe("A_CORRIGER");
+    expect(roles.elements?.at(-1)).toMatch(/personne ne peut valider l'étape RH/);
+  });
+
+  it("continuité : moins de deux comptes actifs pouvant valider l'étape RH est À CORRIGER", () => {
+    expect(verifierPermissionsConges({ catalogue: CATALOGUE, roles: [RH], comptes: [rh(1)] }).find((x) => x.id === "conges-rh")!.verdict).toBe("A_CORRIGER");
+    expect(verifierPermissionsConges({ catalogue: CATALOGUE, roles: [RH], comptes: [rh(1), rh(2), { nom: "C", email: "c@x", rolePermissions: COLLAB.permissions, responsableDeServices: 0 }] }).find((x) => x.id === "conges-rh")!.verdict).toBe("OK");
+  });
+
+  it("responsable de service sans conges.soumettre : avertissement (il décide mais ne peut pas demander son congé)", () => {
+    const resp = { nom: "Resp", email: "resp@x", rolePermissions: ["treso.creer_demande"], responsableDeServices: 1 };
+    const p = verifierPermissionsConges({ catalogue: CATALOGUE, roles: [RH], comptes: [rh(1), rh(2), resp] }).find((x) => x.id === "conges-responsables")!;
+    expect(p.verdict).toBe("AVERTISSEMENT");
+    expect(p.elements).toEqual(["Resp <resp@x>"]);
+    const respOk = { ...resp, rolePermissions: COLLAB.permissions };
+    expect(verifierPermissionsConges({ catalogue: CATALOGUE, roles: [RH], comptes: [rh(1), rh(2), respOk] }).find((x) => x.id === "conges-responsables")!.verdict).toBe("OK");
   });
 });

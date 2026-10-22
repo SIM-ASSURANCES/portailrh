@@ -20,6 +20,7 @@ import {
   verifierEnvironnement,
   verifierMigrations,
   verifierMinimumComptes,
+  verifierPermissionsConges,
   verifierResponsablesServices,
   verifierRoleDG,
   verifierRoleFinance,
@@ -61,10 +62,12 @@ async function main() {
         const appliquees = lignes.filter((l) => l.finished_at && !l.rolled_back_at).map((l) => l.migration_name);
         const nonTerminees = lignes.filter((l) => !l.finished_at && !l.rolled_back_at).map((l) => l.migration_name);
 
-        const roles = (await tx.role.findMany({ select: { name: true, permissions: { select: { permission: { select: { key: true } } } } } })).map((r) => ({
+        const roles = (await tx.role.findMany({ select: { name: true, estAdmin: true, permissions: { select: { permission: { select: { key: true } } } } } })).map((r) => ({
           name: r.name,
+          estAdmin: r.estAdmin,
           permissions: r.permissions.map((p) => p.permission.key),
         }));
+        const cataloguePermissions = (await tx.permission.findMany({ select: { key: true } })).map((p) => p.key);
 
         const utilisateurs = await tx.user.findMany({
           select: {
@@ -136,6 +139,16 @@ async function main() {
               aSignature: avecSignature.has(u.id),
             }))
           ),
+          ...verifierPermissionsConges({
+            catalogue: cataloguePermissions,
+            roles,
+            comptes: actifs.map((u) => ({
+              nom: u.fullName,
+              email: u.email,
+              rolePermissions: u.role.permissions.map((p) => p.permission.key),
+              responsableDeServices: u._count.servicesResponsable,
+            })),
+          }),
           verifierSeuilsCaisse(parametrages, jour),
           verifierBudgetsCategories(parametrages, jour),
           verifierDateCategorisation(jourDe(regle?.valeurDate ?? null), jour),

@@ -175,7 +175,7 @@ const attendus = { ReinitialisationSysteme: avant.ReinitialisationSysteme + 1 };
 const ecartsConservees = conservees.filter((t) => apres[t] !== (attendus[t] ?? avant[t]));
 verifier(`4. table par table : les ${conservees.length} tables CONSERVÉES sont intactes (verrou +1)`, ecartsConservees.length === 0, ecartsConservees.map((t) => `${t}: ${avant[t]}→${apres[t]}`).join(", "));
 const histoApres = Object.fromEntries((await q(`SELECT entity, count(*)::int AS n FROM "HistoriqueEntry" GROUP BY entity`)).map((x) => [x.entity, x.n]));
-const entitesPurgees = ["Demande", "LigneDemande", "JournalCaisse", "RetourExterne", "Pointage", "PointageQR", "PointageGeo", "JustificationPointage"];
+const entitesPurgees = ["Demande", "LigneDemande", "JournalCaisse", "RetourExterne", "Pointage", "PointageQR", "PointageGeo", "JustificationPointage", "DemandeConge"];
 verifier("4. historique : entités de test supprimées", entitesPurgees.every((e) => !histoApres[e]), JSON.stringify(entitesPurgees.filter((e) => histoApres[e])));
 const histoConservees = Object.keys(histoAvant).filter((e) => !entitesPurgees.includes(e));
 const ecartHisto = histoConservees.filter((e) => histoApres[e] !== histoAvant[e]);
@@ -187,6 +187,12 @@ const signees = await q(`SELECT entite FROM "ActionSignee"`);
 verifier("4. actions signées : seule celle liée à l'historique conservé (budget) subsiste", signees.length === 1 && signees[0].entite === "BudgetParametrage");
 const lien = await q(`SELECT count(*)::int AS n FROM "HistoriqueEntry" h JOIN "ActionSignee" a ON a.id = h."actionSigneeId" WHERE h.entity = 'BudgetParametrage'`);
 verifier("4. l'historique du budget garde le lien vers sa signature (pas de « Signature non rattachée »)", lien[0].n === 1);
+
+// Congés (lot Q) : demandes (validée et rejetée), plage liée, historique et notifications purgés ; jours fériés conservés
+verifier("4. congés : les demandes de congé (validée et rejetée) sont supprimées", avant.DemandeConge === 2 && apres.DemandeConge === 0, `${avant.DemandeConge}→${apres.DemandeConge}`);
+verifier("4. congés : leur historique est supprimé, y compris l'entité DemandeConge", !histoApres.DemandeConge && histoAvant.DemandeConge === 2);
+verifier("4. congés : plus aucune plage d'absence liée à un congé (aucune orpheline)", (await nombre("PlageAbsenceAutorisee", `WHERE "demandeCongeId" IS NOT NULL`)) === 0);
+verifier("4. congés : jours fériés conservés", (await nombre("JourFerie")) === avant.JourFerie && avant.JourFerie >= 1);
 
 // Configuration intacte
 verifier("4. config : permissions des rôles inchangées", (await nombre("RolePermission")) === rolePermsAvant);

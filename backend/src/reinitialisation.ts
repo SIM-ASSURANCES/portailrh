@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { Prisma } from "./generated/prisma/client";
 import { prisma } from "./prisma";
 import {
+  ENTITES_HISTORIQUE_CONGES,
   ENTITES_HISTORIQUE_POINTAGE,
   ENTITES_HISTORIQUE_PURGEES,
   ENTITES_HISTORIQUE_TRESORERIE,
@@ -72,6 +73,9 @@ export async function chargerJeuxReinitialisation(db: Db) {
   const pointage = await db.pointage.findMany(parId);
   const absence = await db.absence.findMany(parId);
   const plageAbsenceAutorisee = await db.plageAbsenceAutorisee.findMany(parId);
+  // Congés (lot Q) : demandes de test + leur historique ; leurs notifications sont de catégorie RH (déjà dans `notificationPointage`).
+  const demandeConge = await db.demandeConge.findMany(parId);
+  const historiqueConge = await db.historiqueEntry.findMany({ where: { entity: { in: ENTITES_HISTORIQUE_CONGES } }, ...parId });
   const feedback = await db.feedback.findMany(parId);
   const notificationPointage = await db.notification.findMany({
     where: { category: { in: [...CATEGORIES_NOTIFICATION_POINTAGE] } },
@@ -121,6 +125,8 @@ export async function chargerJeuxReinitialisation(db: Db) {
     pointage,
     absence,
     plageAbsenceAutorisee,
+    demandeConge,
+    historiqueConge,
     feedback,
     notificationPointage,
     historiquePointage,
@@ -260,6 +266,9 @@ export async function executerReinitialisation({
       d.pointage = (await tx.pointage.deleteMany()).count;
       d.absence = (await tx.absence.deleteMany()).count;
       d.plageAbsenceAutorisee = (await tx.plageAbsenceAutorisee.deleteMany()).count;
+      // Congés : après les plages (qui référencent la demande) ; l'historique et les notifications (catégorie RH, ci-dessous) avec elles.
+      d.demandeConge = (await tx.demandeConge.deleteMany()).count;
+      d.historiqueConge = (await tx.historiqueEntry.deleteMany({ where: { entity: { in: ENTITES_HISTORIQUE_CONGES } } })).count;
       d.feedback = (await tx.feedback.deleteMany()).count;
       d.notificationPointage = (
         await tx.notification.deleteMany({ where: { category: { in: [...CATEGORIES_NOTIFICATION_POINTAGE] } } })
