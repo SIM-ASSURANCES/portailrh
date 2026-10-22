@@ -1,4 +1,4 @@
-# Mise en production — procédure complète (lots N et O)
+# Mise en production — procédure (lots N, O et R)
 
 Procédure **répétable**, à suivre pas à pas, sans l'équipe de développement. Elle couvre : la sauvegarde, les migrations, le rattrapage des
 données existantes, la configuration des rôles, la réinitialisation des données de test, le solde d'ouverture de caisse, les tâches
@@ -15,6 +15,54 @@ planifiées, la vérification finale, le retour arrière et la levée du verrou 
 >   depuis `/app/backend`. Les variables (`DATABASE_URL`, `AUTH_URL`, `AUTH_SECRET`, `CRON_SECRET`…) y sont déjà définies.
 > - **Prérequis d'image** : les scripts importent les sources de `backend/src`. Depuis le lot N+O le `Dockerfile` les copie dans l'image
 >   (`COPY … /app/backend/src`). **Déployer d'abord l'image qui contient ce lot**, sinon `npx tsx prisma/…` répond « Cannot find module ».
+
+## Procédure en deux parties (la voie normale)
+
+Le développeur n'a pas accès à la production. La mise en production se fait donc en **deux parties**, par deux personnes différentes. Pour les suivre, **aucune connaissance du code n'est nécessaire**.
+
+### Partie A — la personne qui déploie (technique, une demi-heure)
+
+Elle ne fait **que** ceci :
+
+1. **S'assurer qu'une sauvegarde de la base existe** et la copier hors du serveur (commande `pg_dump` à l'étape 1 de l'annexe, ou la sauvegarde automatique de l'hébergeur si elle est vérifiée). Sans sauvegarde récente : on ne continue pas.
+2. **Récupérer le code** : déployer l'image qui contient le lot R (Dokploy). Le service `init` applique les migrations à chaque déploiement ; sinon, à la main, depuis `/app/backend` : `npx prisma migrate deploy --config prisma7.config.ts`.
+3. **Définir les variables d'environnement** (onglet Environment de Dokploy) : `AUTH_URL` = adresse publique **en https** (ex. `https://portailrh.mysimassurances.com`) ; `AUTH_SECRET` (au moins 32 caractères) ; `CRON_SECRET` (au moins 16) ; `DATABASE_URL`. Ne pas toucher à `PLANIFICATEUR_ACTIF` (il ne doit pas être à `false`).
+4. **Redémarrer** le service `app`.
+5. **Prévenir le DG** que l'application est prête, et lui remettre `docs/roles-et-permissions.md`. Facultatif mais utile : lancer `cd /app/backend && npx tsx prisma/lister-roles-permissions.ts` (lecture seule) et lui remettre le fichier `roles-et-permissions-base.md`, qui dit pour chaque rôle ce qu'il faut cocher ou décocher.
+
+Rien d'autre. En particulier : **jamais** `prisma migrate dev` ni `migrate reset`, **jamais** le seed.
+
+### Partie B — le DG, dans l'application
+
+Le DG se connecte avec **son compte réel** (rôle DG). Le compte de test `dg@simassurances.test` ne sert à rien en production ; il sera désactivé en B5. Dans l'ordre :
+
+**B1. Régler les rôles** — `/admin/roles`. Suivre `docs/roles-et-permissions.md` rôle par rôle (cases à cocher). Lire d'abord les encadrés « Permissions réservées » et « Vérifier avant de cocher » : en particulier **Finance et Admin ne portent pas** `treso.approuver_validation_complete`, et les cas marqués « À VALIDER PAR LE DG » demandent une décision. (Ce travail peut aussi être fait par l'Admin.)
+
+**B2. Comptes, services et signatures** — `/admin/users`, `/admin/services`, `/profil`. Créer les comptes **réels** ; chacun a un service ; chaque service a un responsable actif ; au moins 2 Assistants Finance et 2 comptes RH ; chaque personne qui valide, règle ou clôture dessine sa signature une fois (`/profil` → « Ma signature »).
+
+**B3. Seuils de caisse et budgets** — `/treso/finance/budgets`. La Finance soumet les seuils de caisse (orange 100 000 FCFA, rouge 0 FCFA suggérés) et resoumet les budgets de catégorie ; **le DG valide** (seul ou en lot). Fixer, si voulu, la date « catégorisation obligatoire » (onglet « Catégories », une date future).
+
+**B4. Remise à zéro des données de test** — `/systeme/reinitialisation` (menu « Réinitialisation »), **quatre étapes dans l'ordre** ; chacune n'est possible qu'une fois la précédente faite :
+1. **Simulation** : le décompte de ce qui sera supprimé et de ce qui sera conservé, table par table. Lire le message **en rouge** : *la caisse est entièrement vidée, solde d'ouverture compris ; il faudra le ressaisir*. Vérifier que les chiffres correspondent à ce que l'on s'attend à perdre (que des données de test).
+2. **Sauvegarde** : télécharger le fichier JSON de ce qui sera supprimé (son empreinte s'affiche). Le bouton de remise à zéro reste **grisé** tant que ce n'est pas fait dans la page. Garder le fichier hors du serveur. (Les pièces jointes sont dans le dossier `uploads/` : la Partie A les a sauvegardées avec la base.)
+3. **Levée du verrou** — *seulement si cette étape s'affiche.* Elle n'apparaît que si une remise à zéro a déjà été faite (c'est le cas de la production : elle a été faite le 26/09/2026). Taper `LEVER LE VERROU` et un motif (10 à 300 caractères) : le verrou est levé, **l'audit de la remise à zéro précédente est conservé**.
+4. **Remise à zéro** : taper `REINITIALISER`, valider. Tout se fait en une seule transaction (tout ou rien) puis le verrou est reposé. Si les données ont changé depuis la sauvegarde (quelqu'un a saisi entre-temps), la remise à zéro est **refusée** : recommencer à l'étape 2.
+
+Chaque étape est tracée (qui, quand) dans l'historique d'audit, visible au bas de la même page.
+
+**B5. Désactiver les comptes de test** — même page, après la remise à zéro (le DG **ou** l'Admin). La page liste les comptes `*@simassurances.test` encore actifs ; décocher ceux que l'on veut garder, cliquer sur **« Désactiver les comptes de test »**, confirmer. On **désactive**, on ne supprime jamais. Ne sont jamais désactivés : le compte avec lequel on est connecté, un responsable de service (désigner d'abord un autre responsable dans `/admin/services`, puis recommencer), et le dernier compte qui porte la remise à zéro (créer d'abord le compte réel du DG).
+
+**B6. Solde d'ouverture de caisse** — **avant d'ouvrir l'application aux utilisateurs.** La remise à zéro vide la caisse, solde d'ouverture compris. La Finance ouvre `/treso/finance/solde-ouverture` → « Définir le solde d'ouverture » : montant réellement en caisse, pièce justificative obligatoire.
+
+**B7. Vérification finale.** Dans l'application : se déconnecter, se connecter avec un compte réel de chaque rôle (Collaborateur, responsable de service, Finance, Assistant Finance, DG, RH) et vérifier le menu ; créer une demande de test avec le parcours décrit à l'étape 8 de l'annexe. Demander ensuite à la personne qui déploie de lancer `cd /app/backend && npx tsx prisma/verifier-mise-en-production.ts --final` : le résultat doit être `OK` (plus aucun compte de test actif, rôles conformes, seuils validés, variables correctes).
+
+> En cas de problème à n'importe quel moment : ne rien improviser, appliquer le **retour arrière** (étape 9 de l'annexe : restauration de la sauvegarde de la Partie A).
+
+---
+
+# Annexe — procédure détaillée (ligne de commande)
+
+La suite détaille chaque étape technique et sert de référence à l'équipe technique. Les parties A et B ci-dessus s'appuient dessus ; les écrans de la Partie B font **exactement** ce que font les commandes de l'étape 5 (même code).
 
 ## Vue d'ensemble
 
@@ -105,16 +153,10 @@ idempotentes : corriger puis relancer.
 
 ### 4.1 Rôles — `/admin/roles` (les cases à cocher exactes)
 
-| Rôle | À COCHER | À DÉCOCHER |
-|---|---|---|
-| **Finance** | `treso.decider_finance`, `treso.soumettre_dg`, `treso.cloturer_demande`, `treso.modifier_budget_categorie`, `treso.reorienter_demande` (et `treso.valider_demande`, `treso.categoriser_demande`, `treso.annuler_reglement`, `treso.ajuster_retour`, `treso.valider_remboursement`, `treso.valider_retour_exceptionnel`, `treso.creer_retour_externe`, `treso.deleguer_acces`, `treso.modifier_description`, `treso.gerer_categories`, `treso.alimenter_caisse`, `treso.corriger_solde_ouverture`, `treso.saisir_depense_directe`, `treso.voir_dashboard_finance`, `treso.voir_reporting`) | **`treso.approuver_validation_complete`** (réservée au DG : la règle des deux personnes) |
-| **DG** | `treso.approuver_validation_complete`, `treso.decider_dg`, `treso.valider_budget`, `systeme.reinitialiser`, `treso.voir_dashboard_finance`, `treso.voir_reporting` | `treso.valider_demande` (retirée du DG par la migration du 2026-10-08 ; vérifier) |
-| **Assistant Finance** | `treso.effectuer_reglement`, `treso.receptionner_retour` | tout le reste |
-| **RH** | `pointage.corriger_pointage` (+ le reste du pointage) et, pour les Congés, `conges.soumettre`, `conges.valider_rh`, `conges.annuler`, `conges.consulter_tous` | — |
-| **Admin** | — | **`treso.approuver_validation_complete`** si elle y figure (anomalie connue de la production : Finance **et** Admin la portaient) |
+**La liste complète et à jour est dans [roles-et-permissions.md](roles-et-permissions.md)** (une section par rôle, cases à cocher, tableau de toutes les permissions, permissions réservées, cas « À VALIDER PAR LE DG »). Elle est générée à partir du code (`backend/src/rolesCibles.ts`, la même source que le seed) et un test échoue si elle n'est plus à jour.
+Pour comparer avec l'état réel de la production : `cd /app/backend && npx tsx prisma/lister-roles-permissions.ts` (lecture seule) écrit `roles-et-permissions-base.md`, avec la liste réelle des rôles, les cases à cocher ou décocher et les alertes (couples interdits).
 
-`treso.valider_budget` ne doit être détenue **que par le DG** (le script de vérification le contrôle). Les permissions de décision (`decider_finance`, `soumettre_dg`, `decider_dg`,
-`approuver_validation_complete`) ne sont **jamais délégables**.
+Points à retenir : **Finance et Admin ne portent pas** `treso.approuver_validation_complete` (anomalie connue de la production : à décocher) ; le DG ne porte plus `treso.valider_demande` ; `treso.valider_budget`, `treso.approuver_validation_complete`, `treso.decider_dg` et `systeme.reinitialiser` ne sont portées **que par le DG**. Les permissions de décision (`decider_finance`, `soumettre_dg`, `decider_dg`, `approuver_validation_complete`) ne sont **jamais délégables**.
 
 ### 4.2 Comptes et services
 - **Au moins 2 Assistants Finance actifs** (continuité : personne ne règle sa propre demande) et **au moins 2 comptes RH** portant `pointage.corriger_pointage`.
@@ -183,7 +225,7 @@ Garde-fous (aucun n'est contournable) :
 La sauvegarde JSON ne contient **pas** les fichiers de `uploads/` (seulement leurs références) : ils ont été copiés à l'étape 1. Copier ensuite le fichier
 `sauvegarde-reinitialisation-AAAA-….json` hors du serveur.
 
-**Par l'écran** (équivalent) : le DG ouvre `/systeme/reinitialisation`, télécharge la sauvegarde, tape `REINITIALISER`, confirme. Mêmes garde-fous.
+**Par l'écran** (équivalent, voie normale — Partie B4) : le DG ouvre `/systeme/reinitialisation` et suit les quatre étapes (simulation, sauvegarde, levée du verrou si besoin, remise à zéro). Mêmes garde-fous, **même code** (`executerReinitialisation`) ; l'ordre des étapes est vérifié par le serveur à partir de l'audit, pas seulement par l'interface.
 
 ### 5.3 Conséquences à connaître
 - **Le solde de caisse repart à zéro** : le grand livre `JournalCaisse` est vidé, **solde d'ouverture compris** → étape 6. Tant qu'il n'est pas ressaisi, le solde de caisse affiché est 0 et
@@ -195,7 +237,7 @@ La sauvegarde JSON ne contient **pas** les fichiers de `uploads/` (seulement leu
 - Le compte du DG qui a lancé la purge ne peut plus être supprimé (il figure à l'audit).
 
 ### 5.4 Comptes de test
-Désactiver **chaque** compte `*@simassurances.test` dans `/admin/users` (« Désactiver ») : connexion refusée, sessions en cours coupées, historique intact, réversible.
+Par l'écran (Partie B5) : bouton « Désactiver les comptes de test » sur `/systeme/reinitialisation` (DG ou Admin, avec liste et confirmation). À la main : désactiver **chaque** compte `*@simassurances.test` dans `/admin/users` (« Désactiver ») : connexion refusée, sessions en cours coupées, historique intact, réversible.
 **Ne pas les supprimer** : la suppression est refusée pour tout compte qui a une trace d'activité (audit de connexion, signature…). Ne jamais attribuer le rôle DG à un compte de test
 (la permission appartient au rôle). Vérifier ensuite : `npx tsx prisma/verifier-mise-en-production.ts --final` ne doit plus signaler de compte de test actif.
 
@@ -258,6 +300,8 @@ pointer par QR, justifier un retard, décision du responsable. ⚠️ **Ce parco
 Une purge **déjà faite** peut aussi se « défaire » partiellement avec la sauvegarde JSON de l'étape 5 (les lignes supprimées y figurent), mais la restauration complète du `pg_dump` reste la seule voie sûre.
 
 ## 10. Lever le verrou de réinitialisation (réinitialisation ultérieure VOLONTAIRE)
+
+**Voie normale : l'écran** (`/systeme/reinitialisation`, étape 3, après la simulation et la sauvegarde) : phrase `LEVER LE VERROU` et motif obligatoire ; c'est exactement l'`UPDATE` ci-dessous, tracé dans l'historique (qui, quand, motif). La commande SQL qui suit reste le **secours** (écran inaccessible).
 
 Le verrou est la ligne `ReinitialisationSysteme` dont `verrou = 'REINITIALISATION'`. Le lever **ne supprime pas** la ligne d'audit : elle reçoit une valeur `LEVE-<id>`, ce qui permet une nouvelle purge
 (qui reposera un verrou et écrira une nouvelle ligne d'audit). **Faire d'abord la sauvegarde de l'étape 1.**
@@ -355,6 +399,10 @@ aucune table de données métier ne peut être oubliée quand un lot en ajoute u
 | `backend/prisma/reinitialiser-production.ts` | purge en ligne de commande (simulation par défaut, sauvegarde vérifiée, phrase, verrou) |
 | `backend/prisma/verifier-mise-en-production.ts` | contrôle avant mise en service (lecture seule, `SET TRANSACTION READ ONLY`) |
 | `backend/prisma/rattrapage-production.ts` | rattrapage chaîné (simulation par défaut, phrase `RATTRAPER`) |
+| `backend/prisma/lister-roles-permissions.ts` | liste réelle des rôles et permissions de la base, comparée à `docs/roles-et-permissions.md` (lecture seule, écrit `roles-et-permissions-base.md`) |
+| `backend/prisma/generer-doc-roles.ts` | régénère `docs/roles-et-permissions.md` à partir de `backend/src/rolesCibles.ts` (un test échoue si le .md n'est plus à jour) |
+| `backend/src/reinitialisationEtapes.ts`, `reinitialisationEtapesDb.ts`, `comptesDeTest.ts` | ordre des étapes de l'écran de remise à zéro, levée du verrou, désactivation des comptes de test |
+| `e2e/lot-r.mjs` | test d'intégration de l'écran de remise à zéro (étapes dans l'ordre, refus, levée du verrou, comptes de test) |
 | `backend/src/rattrapageEtapes.ts` | logique partagée des 4 scripts de reprise et du script chaîné |
 | `e2e/lot-n.mjs` | test d'intégration de la purge sur base jetable (table par table, verrou, parcours neuf, levée du verrou, purge par l'écran) |
 | `e2e/lot-o.mjs` | test d'intégration du rattrapage sur données « anciennes » (simulation, application, idempotence, cas ambigus) |

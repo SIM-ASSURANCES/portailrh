@@ -238,7 +238,7 @@ const attendre = async (fn, ms = 20000) => {
   const rep = await dg.ctx.request.get(`${B}/api/systeme/reinitialisation/sauvegarde`);
   verifier("5. verrou : la route de sauvegarde répond 409 au DG", rep.status() === 409, String(rep.status()));
   await dg.p.goto(`${B}/systeme/reinitialisation`);
-  verifier("5. verrou : l'écran n'offre plus que l'audit (plus de bouton de sauvegarde)", (await dg.p.getByText("Générer et télécharger la sauvegarde").count()) === 0 && (await dg.p.getByText(/Réinitialisation (déjà )?effectuée|déjà été effectuée/i).count()) >= 1);
+  verifier("5. verrou : l'écran affiche le verrou actif et l'audit, la remise à zéro est grisée (lot R : étapes dans l'ordre)", (await dg.p.locator('[data-etat-verrou="actif"]').count()) === 1 && (await dg.p.locator('[data-section="audit"]').count()) === 1 && (await dg.p.locator('[data-action="purger"]').isDisabled()));
   await dg.ctx.close();
   const fin = await connecter("finance@simassurances.test");
   const repF = await fin.ctx.request.get(`${B}/api/systeme/reinitialisation/sauvegarde`);
@@ -291,10 +291,12 @@ verifier("7. la simulation voit le verrou « libre »", /Verrou de réinitialisa
 {
   const dg = await connecter("dg@simassurances.test");
   await dg.p.goto(`${B}/systeme/reinitialisation`);
-  const boutonSauvegarde = dg.p.getByRole("button", { name: /Générer et télécharger la sauvegarde/ });
-  verifier("7. écran : le DG retrouve le formulaire de purge", (await boutonSauvegarde.count()) === 1);
+  verifier("7. écran : le DG retrouve les étapes (simulation d'abord, étape 3 absente puisque le verrou est levé)", (await dg.p.locator('[data-action="simuler"]').count()) === 1 && (await dg.p.locator('[data-etape="LEVEE_VERROU"]').count()) === 0);
   const confirmer = dg.p.getByRole("button", { name: "Réinitialiser définitivement" });
-  verifier("7. écran : « Réinitialiser » grisé sans sauvegarde ni phrase", await confirmer.isDisabled());
+  verifier("7. écran : « Réinitialiser » grisé sans simulation, sauvegarde ni phrase", await confirmer.isDisabled());
+  await dg.p.locator('[data-action="simuler"]').click();
+  await dg.p.locator("[data-simulation]").waitFor({ timeout: 60000 });
+  const boutonSauvegarde = dg.p.locator('[data-action="sauvegarder"]');
   const [telechargement] = await Promise.all([dg.p.waitForEvent("download", { timeout: 30000 }), boutonSauvegarde.click()]);
   const fichier = path.join(tmp, "sauvegarde-ecran.json");
   await telechargement.saveAs(fichier);
@@ -305,9 +307,9 @@ verifier("7. la simulation voit le verrou « libre »", /Verrou de réinitialisa
     web = null;
   }
   verifier("7. écran : la sauvegarde téléchargée est un JSON valide (BigInt d'EncAudit compris) avec la demande du parcours neuf", !!web && web.tables.demande.length === 1 && Array.isArray(web.tables.encAudit));
-  await dg.p.getByLabel("Tapez REINITIALISER pour confirmer").fill("REINITIALISE");
+  await dg.p.locator('[data-champ="phrase-purge"]').fill("REINITIALISE");
   verifier("7. écran : phrase incomplète → toujours grisé", await confirmer.isDisabled());
-  await dg.p.getByLabel("Tapez REINITIALISER pour confirmer").fill("REINITIALISER");
+  await dg.p.locator('[data-champ="phrase-purge"]').fill("REINITIALISER");
   await confirmer.click();
   const fait = await attendre(async () => (await nombre("ReinitialisationSysteme", `WHERE verrou = 'REINITIALISATION'`)) === 1, 60000);
   verifier("7. écran : seconde purge VOLONTAIRE effectuée, verrou reposé", fait);

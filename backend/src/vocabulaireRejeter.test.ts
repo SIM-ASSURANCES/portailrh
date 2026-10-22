@@ -28,6 +28,7 @@ const LISTE_BLANCHE: { motif: RegExp; raison: string }[] = [
   // Contrôles techniques du système (pas une décision métier d'un décideur) :
   { motif: /pointage\s+refus|gps\s+refus|sera\s+refus/i, raison: "pointage hors périmètre / GPS : contrôle d'accès du système" },
   { motif: /service\s+fcm.{0,20}refus/i, raison: "réponse technique du service de notifications push" },
+  { motif: /Valider ou refuser un paramétrage de budget/, raison: "libellé de permission déjà enregistré en base par la migration 20261023090000 (jamais réécrit ; le seed doit rester identique)" },
   { motif: /dimensions.{0,30}refus/i, raison: "validation technique de l'image de signature" },
 ];
 

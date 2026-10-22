@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { Prisma } from "./generated/prisma/client";
 import { prisma } from "./prisma";
+import { CONFIRMATION_REINITIALISATION_CONSTANTE } from "./reinitialisationConstantes";
 import {
   ENTITES_HISTORIQUE_CONGES,
   ENTITES_HISTORIQUE_POINTAGE,
@@ -31,7 +32,7 @@ export const TABLES_HORS_EMPREINTE_REINITIALISATION = ["executionTache", "journa
 
 type Db = Prisma.TransactionClient;
 
-export const CONFIRMATION_REINITIALISATION = "REINITIALISER";
+export const CONFIRMATION_REINITIALISATION = CONFIRMATION_REINITIALISATION_CONSTANTE;
 
 export const CATEGORIES_NOTIFICATION_POINTAGE = ["RH", "POINTAGE"] as const;
 
