@@ -89,6 +89,6 @@ describe("docs/roles-et-permissions.md", () => {
 
   it("le fichier du dépôt est à jour (npx tsx prisma/generer-doc-roles.ts)", () => {
     const fichier = path.resolve(__dirname, "../../docs/roles-et-permissions.md");
-    expect(fs.readFileSync(fichier, "utf-8")).toBe(genererDocRoles());
+    expect(fs.readFileSync(fichier, "utf-8").replace(/\r\n/g, "\n")).toBe(genererDocRoles());
   });
 });
