@@ -2,7 +2,7 @@
 
 Procédure **répétable**, à suivre pas à pas, sans l'équipe de développement. Elle couvre : la sauvegarde, les migrations, le rattrapage des
 données existantes, la configuration des rôles, la réinitialisation des données de test, le solde d'ouverture de caisse, les tâches
-planifiées, la vérification finale, le retour arrière et la levée du verrou de réinitialisation.
+planifiées, la vérification finale, le retour arrière et la levée du verrou de réinitialisation (par SQL uniquement).
 
 > **Règles qui valent pour TOUTE la procédure**
 > - **Sauvegarder avant d'écrire** (étape 1). Chaque outil ci-dessous est en **simulation par défaut** (aucune écriture) ; l'écriture exige `--appliquer`
@@ -42,11 +42,12 @@ Le DG se connecte avec **son compte réel** (rôle DG). Le compte de test `dg@si
 
 **B3. Seuils de caisse et budgets** — `/treso/finance/budgets`. La Finance soumet les seuils de caisse (orange 100 000 FCFA, rouge 0 FCFA suggérés) et resoumet les budgets de catégorie ; **le DG valide** (seul ou en lot). Fixer, si voulu, la date « catégorisation obligatoire » (onglet « Catégories », une date future).
 
-**B4. Remise à zéro des données de test** — `/systeme/reinitialisation` (menu « Réinitialisation »), **quatre étapes dans l'ordre** ; chacune n'est possible qu'une fois la précédente faite :
+**B4. Remise à zéro des données de test** — `/systeme/reinitialisation` (menu « Réinitialisation »), **trois étapes dans l'ordre** ; chacune n'est possible qu'une fois la précédente faite :
 1. **Simulation** : le décompte de ce qui sera supprimé et de ce qui sera conservé, table par table. Lire le message **en rouge** : *la caisse est entièrement vidée, solde d'ouverture compris ; il faudra le ressaisir*. Vérifier que les chiffres correspondent à ce que l'on s'attend à perdre (que des données de test).
 2. **Sauvegarde** : télécharger le fichier JSON de ce qui sera supprimé (son empreinte s'affiche). Le bouton de remise à zéro reste **grisé** tant que ce n'est pas fait dans la page. Garder le fichier hors du serveur. (Les pièces jointes sont dans le dossier `uploads/` : la Partie A les a sauvegardées avec la base.)
-3. **Levée du verrou** — *seulement si cette étape s'affiche.* Elle n'apparaît que si une remise à zéro a déjà été faite (c'est le cas de la production : elle a été faite le 26/09/2026). Taper `LEVER LE VERROU` et un motif (10 à 300 caractères) : le verrou est levé, **l'audit de la remise à zéro précédente est conservé**.
-4. **Remise à zéro** : taper `REINITIALISER`, valider. Tout se fait en une seule transaction (tout ou rien) puis le verrou est reposé. Si les données ont changé depuis la sauvegarde (quelqu'un a saisi entre-temps), la remise à zéro est **refusée** : recommencer à l'étape 2.
+3. **Remise à zéro** : taper `REINITIALISER`, valider. Tout se fait en une seule transaction (tout ou rien) puis **le verrou définitif est posé**. Si les données ont changé depuis la sauvegarde (quelqu'un a saisi entre-temps), la remise à zéro est **refusée** : recommencer à l'étape 2.
+
+**Verrou définitif (lot S).** Dès qu'une remise à zéro a réussi, l'écran n'affiche plus que : *« Remise à zéro effectuée le [date] par [nom]. Fonction verrouillée. »* (avec l'audit en dessous). La simulation, la sauvegarde et la remise à zéro sont alors **refusées par le serveur** (écran, route de sauvegarde et ligne de commande), avec un message clair, **quelle que soit la permission** `systeme.reinitialiser`. Le verrou est la ligne `ReinitialisationSysteme` (date, utilisateur, décompte des lignes purgées, empreinte de la sauvegarde) : il survit aux redémarrages. **Il n'existe aucun bouton ni aucune action pour le lever dans l'application** : seul l'`UPDATE` SQL du § 10 le lève.
 
 Chaque étape est tracée (qui, quand) dans l'historique d'audit, visible au bas de la même page.
 
@@ -77,10 +78,10 @@ La suite détaille chaque étape technique et sert de référence à l'équipe t
 | 7 | Tâches planifiées | planificateur intégré (rien à configurer) | — |
 | 8 | Vérification finale et parcours de test | `verifier-mise-en-production.ts --final` | non |
 | 9 | Retour arrière | restauration de la sauvegarde | — |
-| 10 | Levée du verrou de réinitialisation | une commande SQL | oui |
+| 10 | Levée du verrou de réinitialisation | une commande SQL (jamais l'application) | oui |
 
 > **État actuel de la production.** La réinitialisation globale a **déjà été exécutée** le 26/09/2026 (ligne `ReinitialisationSysteme`, verrou actif). Pour
-> purger de nouveau les données de test avant l'ouverture, il faut **lever ce verrou** (étape 10, à faire AVANT l'étape 5). La ligne d'audit du 26/09 est conservée.
+> purger de nouveau les données de test avant l'ouverture, il faut **lever ce verrou par la commande SQL du § 10** (étape 10, à faire AVANT l'étape 5) : l'application ne peut pas le faire. La ligne d'audit du 26/09 est conservée.
 
 ---
 
@@ -225,7 +226,7 @@ Garde-fous (aucun n'est contournable) :
 La sauvegarde JSON ne contient **pas** les fichiers de `uploads/` (seulement leurs références) : ils ont été copiés à l'étape 1. Copier ensuite le fichier
 `sauvegarde-reinitialisation-AAAA-….json` hors du serveur.
 
-**Par l'écran** (équivalent, voie normale — Partie B4) : le DG ouvre `/systeme/reinitialisation` et suit les quatre étapes (simulation, sauvegarde, levée du verrou si besoin, remise à zéro). Mêmes garde-fous, **même code** (`executerReinitialisation`) ; l'ordre des étapes est vérifié par le serveur à partir de l'audit, pas seulement par l'interface.
+**Par l'écran** (équivalent, voie normale — Partie B4) : le DG ouvre `/systeme/reinitialisation` et suit les trois étapes (simulation, sauvegarde, remise à zéro) — si un verrou existe, l'écran n'affiche que le message de verrou. Mêmes garde-fous, **même code** (`executerReinitialisation`) ; l'ordre des étapes est vérifié par le serveur à partir de l'audit, pas seulement par l'interface.
 
 ### 5.3 Conséquences à connaître
 - **Le solde de caisse repart à zéro** : le grand livre `JournalCaisse` est vidé, **solde d'ouverture compris** → étape 6. Tant qu'il n'est pas ressaisi, le solde de caisse affiché est 0 et
@@ -301,7 +302,7 @@ Une purge **déjà faite** peut aussi se « défaire » partiellement avec la sa
 
 ## 10. Lever le verrou de réinitialisation (réinitialisation ultérieure VOLONTAIRE)
 
-**Voie normale : l'écran** (`/systeme/reinitialisation`, étape 3, après la simulation et la sauvegarde) : phrase `LEVER LE VERROU` et motif obligatoire ; c'est exactement l'`UPDATE` ci-dessous, tracé dans l'historique (qui, quand, motif). La commande SQL qui suit reste le **secours** (écran inaccessible).
+**Seule voie : un `UPDATE` SQL, exécuté par la personne qui a l'accès à la base — jamais depuis l'application** (lot S : plus d'étape ni de bouton de levée dans l'écran du DG ; la permission `systeme.reinitialiser` ne suffit pas). Tant que le verrou existe, la simulation, la sauvegarde et la remise à zéro sont refusées par le serveur.
 
 Le verrou est la ligne `ReinitialisationSysteme` dont `verrou = 'REINITIALISATION'`. Le lever **ne supprime pas** la ligne d'audit : elle reçoit une valeur `LEVE-<id>`, ce qui permet une nouvelle purge
 (qui reposera un verrou et écrira une nouvelle ligne d'audit). **Faire d'abord la sauvegarde de l'étape 1.**
@@ -310,13 +311,13 @@ docker exec -it <conteneur-db> psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 ```
 ```sql
 -- 1) Regarder : une ligne attendue avec verrou = 'REINITIALISATION' (qui, quand, combien de lignes supprimées)
-SELECT id, "effectueeAt", verrou, "sauvegardeSha256" FROM "ReinitialisationSysteme" ORDER BY "effectueeAt";
+SELECT id, "effectueeAt", "effectueeParId", verrou, decompte, "sauvegardeSha256" FROM "ReinitialisationSysteme" ORDER BY "effectueeAt";
 -- 2) Lever le verrou (la ligne d'audit est CONSERVÉE)
 UPDATE "ReinitialisationSysteme" SET verrou = 'LEVE-' || id WHERE verrou = 'REINITIALISATION';
 -- 3) Contrôler : plus aucune ligne avec verrou = 'REINITIALISATION'
 SELECT id, verrou FROM "ReinitialisationSysteme";
 ```
-**Ne jamais** `DELETE` la ligne : l'audit des purges est permanent et le compte qui a purgé doit rester non supprimable. Après la purge suivante, un nouveau verrou est posé.
+**Ne jamais** `DELETE` la ligne : l'audit des purges est permanent et le compte qui a purgé doit rester non supprimable. Après la levée, refaire simulation → sauvegarde → remise à zéro dans l'écran ; la purge suivante repose un nouveau verrou.
 (Le Pointage a sa propre purge, `/admin/reinitialisation-pointage`, distincte : voir `DEPLOIEMENT.md`, § 8.)
 
 ---
@@ -401,8 +402,9 @@ aucune table de données métier ne peut être oubliée quand un lot en ajoute u
 | `backend/prisma/rattrapage-production.ts` | rattrapage chaîné (simulation par défaut, phrase `RATTRAPER`) |
 | `backend/prisma/lister-roles-permissions.ts` | liste réelle des rôles et permissions de la base, comparée à `docs/roles-et-permissions.md` (lecture seule, écrit `roles-et-permissions-base.md`) |
 | `backend/prisma/generer-doc-roles.ts` | régénère `docs/roles-et-permissions.md` à partir de `backend/src/rolesCibles.ts` (un test échoue si le .md n'est plus à jour) |
-| `backend/src/reinitialisationEtapes.ts`, `reinitialisationEtapesDb.ts`, `comptesDeTest.ts` | ordre des étapes de l'écran de remise à zéro, levée du verrou, désactivation des comptes de test |
-| `e2e/lot-r.mjs` | test d'intégration de l'écran de remise à zéro (étapes dans l'ordre, refus, levée du verrou, comptes de test) |
+| `backend/src/reinitialisationEtapes.ts`, `reinitialisationEtapesDb.ts`, `comptesDeTest.ts` | ordre des étapes de l'écran de remise à zéro, verrou définitif (lot S), désactivation des comptes de test |
+| `e2e/lot-r.mjs` | test d'intégration de l'écran de remise à zéro (étapes dans l'ordre, refus, levée du verrou par SQL, comptes de test) |
+| `e2e/lot-s.mjs` | test d'intégration du verrou définitif (purge, deuxième purge / simulation / sauvegarde refusées, survie à un redémarrage, levée par SQL seulement) |
 | `backend/src/rattrapageEtapes.ts` | logique partagée des 4 scripts de reprise et du script chaîné |
 | `e2e/lot-n.mjs` | test d'intégration de la purge sur base jetable (table par table, verrou, parcours neuf, levée du verrou, purge par l'écran) |
 | `e2e/lot-o.mjs` | test d'intégration du rattrapage sur données « anciennes » (simulation, application, idempotence, cas ambigus) |

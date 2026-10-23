@@ -1,17 +1,20 @@
-// Lot R (2026-10-22) — remise à zéro de mise en production DEPUIS L'APPLICATION : quatre étapes dans l'ordre, levée du verrou,
-// désactivation des comptes de test, audit. AUTONOME : crée sa PROPRE base jetable `lot_r` (PostgreSQL de test, port 55497),
+// Lot R (2026-10-22, adapté au lot S) — remise à zéro de mise en production DEPUIS L'APPLICATION : trois étapes dans l'ordre,
+// verrou définitif (levé seulement par UPDATE SQL), désactivation des comptes de test, audit. AUTONOME : crée sa PROPRE base jetable `lot_r` (PostgreSQL de test, port 55497),
 // migre, seed, remplit TOUTES les tables de test (e2e/lot-n-donnees.ts), lance son PROPRE serveur `next start` (port 3102),
 // puis supprime la base. Ne touche jamais une autre base. Prérequis : `next build` fait. Parties :
-//  1. état initial (aucun verrou) : seule la simulation est possible ; sauvegarde et remise à zéro bloquées ; étape 3 absente ;
+//  1. état initial (aucun verrou) : seule la simulation est possible ; sauvegarde et remise à zéro bloquées ; aucune étape de levée ;
 //     rejeu des Server Actions hors ordre / sans droit : refusé, rien n'est supprimé.
 //  2. simulation : décompte table par table (supprimé / conservé), avertissement rouge sur la caisse, rien n'est écrit, tracée.
 //  3. sauvegarde : JSON téléchargé avec son empreinte, tracée ; bouton de remise à zéro grisé sans phrase ET après rechargement
 //     (sauvegarde non téléchargée dans cette session) ; empreinte fausse / phrase fausse / sans droit : refusés.
-//  4. remise à zéro (aucun verrou) : table par table (purgées vides, conservées intactes), audit des étapes conservé, verrou posé.
+//  4. remise à zéro (aucun verrou) : table par table (purgées vides, conservées intactes), audit des étapes conservé, verrou posé,
+//     l'écran ne montre plus que « Remise à zéro effectuée le … par … Fonction verrouillée. » ; simulation / sauvegarde / purge refusées.
 //  5. comptes de test : Admin (panneau seul), refus (connecté, responsables, dernier porteur de systeme.reinitialiser), DG réel
 //     (liste, confirmation, désactivation, jamais supprimés), rappel du solde d'ouverture, sessions coupées.
-//  6. verrou existant : étapes recommencées, levée du verrou (UPDATE, ligne d'audit gardée, motif tracé), seconde remise à zéro.
-//  7. l'application redémarre et un parcours neuf fonctionne (demande créée, numérotation repartie de 1, solde d'ouverture ressaisi).
+//  6. verrou existant : rien n'est possible dans l'application ; levée par UPDATE SQL (ligne d'audit gardée) ; étapes recommencées ;
+//     seconde remise à zéro.
+//  7. l'application redémarre : le verrou est toujours actif et un parcours neuf fonctionne (demande créée, numérotation repartie
+//     de 1, solde d'ouverture ressaisi). (Le scénario dédié du lot S est e2e/lot-s.mjs.)
 import { chromium } from "playwright";
 import pg from "pg";
 import { spawn, spawnSync } from "node:child_process";
@@ -172,8 +175,8 @@ const HASH_FAUX = "b".repeat(64);
 // ======================================================================================================================
 const dg = await connecter("dg@simassurances.test");
 await dg.p.goto(`${B}/systeme/reinitialisation`);
-verifier("1. l'écran du DG s'ouvre et affiche les étapes 1, 2 et 4", (await dg.p.locator('[data-etape="SIMULATION"]').count()) === 1 && (await dg.p.locator('[data-etape="SAUVEGARDE"]').count()) === 1 && (await dg.p.locator('[data-etape="PURGE"]').count()) === 1);
-verifier("1. aucun verrou : l'étape « levée du verrou » ne s'affiche pas", (await dg.p.locator('[data-etape="LEVEE_VERROU"]').count()) === 0);
+verifier("1. l'écran du DG s'ouvre et affiche les étapes 1, 2 et 3", (await dg.p.locator('[data-etape="SIMULATION"]').count()) === 1 && (await dg.p.locator('[data-etape="SAUVEGARDE"]').count()) === 1 && (await dg.p.locator('[data-etape="PURGE"]').count()) === 1);
+verifier("1. il n'existe aucune étape ni bouton de levée du verrou dans l'application", (await dg.p.locator('[data-etape="LEVEE_VERROU"]').count()) === 0 && (await dg.p.locator('[data-action="lever-verrou"]').count()) === 0 && !idAction("leverVerrouAction"));
 verifier("1. statuts initiaux : simulation « À faire », sauvegarde et remise à zéro « Bloquée »", (await statutEtape(dg.p, "SIMULATION")) === "À faire" && (await statutEtape(dg.p, "SAUVEGARDE")) === "Bloquée" && (await statutEtape(dg.p, "PURGE")) === "Bloquée");
 verifier("1. boutons Sauvegarde et Remise à zéro grisés", (await dg.p.locator('[data-action="sauvegarder"]').isDisabled()) && (await dg.p.locator('[data-action="purger"]').isDisabled()));
 verifier("1. avant toute remise à zéro : ni panneau des comptes de test, ni audit", (await dg.p.locator('[data-section="comptes-test"]').count()) === 0 && (await dg.p.locator('[data-section="audit"]').count()) === 0);
@@ -185,8 +188,6 @@ const avantRefus = await instantane();
 {
   const a = await agir(dg.ctx, "reinitialiserAction", ["REINITIALISER", HASH_FAUX]);
   verifier("1. rejeu : remise à zéro sans simulation → refusée (étape 1 d'abord)", a.statut === "error" && /simulation/.test(a.message), a.message || a.brut.slice(0, 160));
-  const l = await agir(dg.ctx, "leverVerrouAction", ["LEVER LE VERROU", "Motif de test suffisant"]);
-  verifier("1. rejeu : levée du verrou alors qu'aucun verrou n'existe → refusée", l.statut === "error" && /Aucun verrou/.test(l.message), l.message);
   const c = await agir(dg.ctx, "desactiverComptesDeTestAction", [[], true]);
   verifier("1. rejeu : désactivation des comptes de test avant toute remise à zéro → refusée", c.statut === "error" && /Aucune remise à zéro/.test(c.message), c.message);
 }
@@ -194,9 +195,8 @@ const avantRefus = await instantane();
   const fin = await connecter("finance@simassurances.test");
   const s = await agir(fin.ctx, "simulerAction", []);
   const rz = await agir(fin.ctx, "reinitialiserAction", ["REINITIALISER", HASH_FAUX]);
-  const lv = await agir(fin.ctx, "leverVerrouAction", ["LEVER LE VERROU", "Motif de test suffisant"]);
   const ds = await agir(fin.ctx, "desactiverComptesDeTestAction", [[], true]);
-  verifier("1. rejeu par la Finance (sans systeme.reinitialiser) : simulation, remise à zéro, levée, désactivation → « Action non autorisée. »", [s, rz, lv, ds].every((x) => x.message === "Action non autorisée."), [s, rz, lv, ds].map((x) => x.message).join(" | "));
+  verifier("1. rejeu par la Finance (sans systeme.reinitialiser) : simulation, remise à zéro, désactivation → « Action non autorisée. »", [s, rz, ds].every((x) => x.message === "Action non autorisée."), [s, rz, ds].map((x) => x.message).join(" | "));
   const rep = await fin.ctx.request.get(`${B}/api/systeme/reinitialisation/sauvegarde`);
   verifier("1. route de sauvegarde : 403 pour la Finance", rep.status() === 403);
   await fin.p.goto(`${B}/systeme/reinitialisation`);
@@ -290,9 +290,9 @@ await dg.p.locator('[data-champ="phrase-purge"]').fill("REINITIALISER");
 await dg.p.locator('[data-action="purger"]').click();
 const fait1 = await attendre(async () => (await nombre("ReinitialisationSysteme")) === 1, 90000);
 verifier("4. remise à zéro exécutée par l'écran : une ligne d'audit, verrou posé", fait1 && (await nombre("ReinitialisationSysteme", `WHERE verrou = 'REINITIALISATION'`)) === 1);
-await dg.p.locator("[data-resultat-reinitialisation]").waitFor({ timeout: 30000 }).catch(() => {});
-const message = (await dg.p.locator("[data-resultat-reinitialisation]").innerText().catch(() => "")).replace(/\s+/g, " ");
-verifier("4. le message de succès rappelle les étapes suivantes (comptes de test, solde d'ouverture)", /Remise à zéro effectuée/.test(message) && /solde d'ouverture/.test(message), message.slice(0, 160));
+await dg.p.locator("[data-message-verrou]").waitFor({ timeout: 30000 }).catch(() => {});
+const message = (await dg.p.locator("[data-message-verrou]").innerText().catch(() => "")).replace(/\s+/g, " ");
+verifier("4. juste après la purge, l'écran remplace l'assistant par « Remise à zéro effectuée le … par … Fonction verrouillée. »", /^Remise à zéro effectuée le \d{2}\/\d{2}\/\d{4}.* par DG Test\. Fonction verrouillée\.$/.test(message), message.slice(0, 200));
 const apres = {};
 for (const t of tables) apres[t] = await nombre(t);
 const purgees = Object.entries(classification).filter(([, c]) => c.statut === "PURGEE").map(([t]) => t);
@@ -314,11 +314,19 @@ verifier("4. caisse : le grand livre est vide (solde d'ouverture à ressaisir)",
 verifier("4. tous les comptes sont conservés et actifs", (await nombre("User")) === avant.User && (await nombre("User", `WHERE "isActive"`)) === avant.User);
 await dg.p.goto(`${B}/systeme/reinitialisation`);
 verifier("4. l'écran affiche « verrou actif » et l'audit (une remise à zéro)", (await dg.p.locator('[data-etat-verrou="actif"]').count()) === 1 && (await dg.p.locator('[data-section="audit"] li').count()) === 1);
-verifier("4. les étapes repartent de zéro après la remise à zéro (simulation « À faire », étape 3 visible et bloquée)", (await statutEtape(dg.p, "SIMULATION")) === "À faire" && (await dg.p.locator('[data-etape="LEVEE_VERROU"]').count()) === 1 && (await statutEtape(dg.p, "LEVEE_VERROU")) === "Bloquée");
+verifier("4. verrou définitif : plus aucun bouton (simuler, sauvegarder, purger), aucune étape, aucune levée possible depuis l'application", (await dg.p.locator("[data-etape]").count()) === 0 && (await dg.p.locator('[data-action="simuler"], [data-action="sauvegarder"], [data-action="purger"], [data-action="lever-verrou"]').count()) === 0);
+verifier("4. le DG garde la permission systeme.reinitialiser, mais elle ne suffit plus (message de verrou seul)", (await dg.p.locator("[data-message-verrou]").innerText()).includes("Fonction verrouillée."));
 verifier("4. panneau des comptes de test + rappel exact du solde d'ouverture", (await dg.p.locator('[data-section="comptes-test"]').count()) === 1 && (await dg.p.locator("[data-rappel-solde-ouverture]").innerText()).includes("Saisir le solde d'ouverture de caisse avant d'ouvrir l'application."));
 {
+  const nbTraces = await nombre("HistoriqueEntry", `WHERE entity = 'ReinitialisationSysteme'`);
   const a = await agir(dg.ctx, "reinitialiserAction", ["REINITIALISER", sauvegarde.meta.empreinteSha256]);
-  verifier("4. rejeu avec l'ancienne sauvegarde après la remise à zéro → refusé (étapes à refaire)", a.statut === "error" && /simulation/.test(a.message), a.message);
+  verifier("4. rejeu d'une seconde remise à zéro (même sauvegarde, bonne phrase) → refusé : verrou", a.statut === "error" && /verrouill/.test(a.message) && /UPDATE SQL/.test(a.message), a.message);
+  const s = await agir(dg.ctx, "simulerAction", []);
+  verifier("4. rejeu d'une simulation → refusé : verrou, aucune trace de simulation écrite", s.statut === "error" && /verrouill/.test(s.message) && (await traces("simulation_reinitialisation")).length === 1, s.message);
+  const rep = await dg.ctx.request.get(`${B}/api/systeme/reinitialisation/sauvegarde`);
+  const texte = await rep.text();
+  verifier("4. la route de sauvegarde est refusée (409) tant que le verrou existe", rep.status() === 409 && /verrouill/.test(texte), `${rep.status()} ${texte.slice(0, 120)}`);
+  verifier("4. ces refus n'ont écrit aucune trace ni supprimé aucune ligne", (await nombre("HistoriqueEntry", `WHERE entity = 'ReinitialisationSysteme'`)) === nbTraces && (await nombre("ReinitialisationSysteme")) === 1);
 }
 await dg.ctx.close();
 
@@ -390,56 +398,39 @@ await dgr.ctx.close();
 }
 
 // ======================================================================================================================
-// 6. Verrou existant : étapes recommencées, levée du verrou, seconde remise à zéro
+// 6. Verrou existant : rien n'est possible dans l'application ; levée par UPDATE SQL ; étapes recommencées ; seconde remise à zéro
 // ======================================================================================================================
 // Le DG réel est le seul porteur actif. Données fraîches à purger : une écriture de caisse et une notification de Trésorerie.
 await db.query(`INSERT INTO "JournalCaisse" (id, type, montant, source, "refId", "userId") VALUES (gen_random_uuid()::text, 'ENTREE', 123456, 'alimentation_caisse', 'lot-r-2', $1)`, [idFinanceReel]);
 await db.query(`INSERT INTO "Notification" (id, titre, message, "userId", category) VALUES (gen_random_uuid()::text, 'Trésorerie lot R', 'à purger', $1, 'TRESORERIE')`, [idFinanceReel]);
 const dg6 = await connecter("dg.reel@societe.example");
 await dg6.p.goto(`${B}/systeme/reinitialisation`);
-verifier("6. verrou actif : l'étape 3 est visible mais bloquée, la remise à zéro aussi", (await statutEtape(dg6.p, "LEVEE_VERROU")) === "Bloquée" && (await statutEtape(dg6.p, "PURGE")) === "Bloquée" && (await dg6.p.locator('[data-etat-verrou="actif"]').count()) === 1);
+verifier("6. verrou actif : le DG réel (permission systeme.reinitialiser) ne voit que le message de verrou, aucune étape", (await dg6.p.locator('[data-etat-verrou="actif"]').count()) === 1 && (await dg6.p.locator("[data-etape]").count()) === 0 && /Fonction verrouillée\./.test(await dg6.p.locator("[data-message-verrou]").innerText()));
 {
-  const a = await agir(dg6.ctx, "leverVerrouAction", ["LEVER LE VERROU", "Nouvelle remise à zéro voulue par le DG"]);
-  verifier("6. rejeu : levée du verrou sans simulation ni sauvegarde → refusée", a.statut === "error" && /simulation/.test(a.message), a.message);
+  const avant6 = await instantane();
+  const s = await agir(dg6.ctx, "simulerAction", []);
+  const rz = await agir(dg6.ctx, "reinitialiserAction", ["REINITIALISER", HASH_FAUX]);
+  verifier("6. rejeu par le DG réel : simulation et remise à zéro refusées avec le message de verrou", [s, rz].every((x) => x.statut === "error" && /verrouill/.test(x.message)), [s, rz].map((x) => x.message).join(" | "));
+  const rep = await dg6.ctx.request.get(`${B}/api/systeme/reinitialisation/sauvegarde`);
+  verifier("6. rejeu par le DG réel : route de sauvegarde refusée (409)", rep.status() === 409);
+  verifier("6. rien n'a été supprimé par ces refus (la caisse fraîche est toujours là)", (await instantane()) === avant6 && (await nombre("JournalCaisse")) === 1, diff(avant6, await instantane()));
 }
+// La seule levée possible : l'UPDATE SQL documenté (docs/mise-en-production.md, § 10). La ligne d'audit est conservée.
+const idLigneAudit = (await q(`SELECT id FROM "ReinitialisationSysteme"`))[0].id;
+await db.query(`UPDATE "ReinitialisationSysteme" SET verrou = 'LEVE-' || id WHERE verrou = 'REINITIALISATION'`);
+verifier("6. levée par UPDATE SQL : la ligne d'audit est CONSERVÉE, verrou = LEVE-<id>", (await nombre("ReinitialisationSysteme")) === 1 && (await q(`SELECT verrou AS v FROM "ReinitialisationSysteme"`))[0].v === `LEVE-${idLigneAudit}`);
+await dg6.p.goto(`${B}/systeme/reinitialisation`);
+verifier("6. verrou levé : l'assistant revient (simulation « À faire », sauvegarde et remise à zéro « Bloquées »)", (await dg6.p.locator('[data-etat-verrou="actif"]').count()) === 0 && (await statutEtape(dg6.p, "SIMULATION")) === "À faire" && (await statutEtape(dg6.p, "PURGE")) === "Bloquée");
 await dg6.p.locator('[data-action="simuler"]').click();
 await dg6.p.locator("[data-simulation]").waitFor({ timeout: 60000 });
 verifier("6. la nouvelle simulation compte la nouvelle écriture de caisse (1 écriture)", (await dg6.p.locator("[data-avertissement-caisse]").innerText()).includes("1 écriture(s)"));
-{
-  const a = await agir(dg6.ctx, "leverVerrouAction", ["LEVER LE VERROU", "Nouvelle remise à zéro voulue par le DG"]);
-  verifier("6. rejeu : levée du verrou sans sauvegarde → refusée", a.statut === "error" && /sauvegarde/.test(a.message), a.message);
-}
 const [dl2] = await Promise.all([dg6.p.waitForEvent("download", { timeout: 60000 }), dg6.p.locator('[data-action="sauvegarder"]').click()]);
 const fichier2 = path.join(os_tmp(), "sauvegarde-lot-r-2.json");
 await dl2.saveAs(fichier2);
 const sauvegarde2 = JSON.parse(readFileSync(fichier2, "utf8"));
 verifier("6. la seconde sauvegarde contient les nouvelles données (journalCaisse 1, notification Trésorerie)", sauvegarde2.tables.journalCaisse.length === 1 && sauvegarde2.tables.notificationTresorerie.some((n) => n.titre === "Trésorerie lot R"));
-verifier("6. étape 3 « À faire » ; la remise à zéro reste bloquée tant que le verrou est actif", (await statutEtape(dg6.p, "LEVEE_VERROU")) === "À faire" && (await statutEtape(dg6.p, "PURGE")) === "Bloquée" && (await dg6.p.locator('[data-action="purger"]').isDisabled()));
-await dg6.p.locator('[data-champ="phrase-purge"]').fill("REINITIALISER").catch(() => {});
-{
-  const a = await agir(dg6.ctx, "reinitialiserAction", ["REINITIALISER", sauvegarde2.meta.empreinteSha256]);
-  verifier("6. rejeu : remise à zéro alors que le verrou est actif → refusée (levez-le d'abord)", a.statut === "error" && /verrou/.test(a.message), a.message);
-  const b = await agir(dg6.ctx, "leverVerrouAction", ["lever le verrou", "Nouvelle remise à zéro voulue par le DG"]);
-  verifier("6. rejeu : levée avec une mauvaise phrase → refusée", b.statut === "error" && /LEVER LE VERROU/.test(b.message), b.message);
-  const c = await agir(dg6.ctx, "leverVerrouAction", ["LEVER LE VERROU", "court"]);
-  verifier("6. rejeu : levée sans motif suffisant → refusée", c.statut === "error" && /motif/i.test(c.message), c.message);
-}
-verifier("6. aucun refus n'a levé le verrou", (await nombre("ReinitialisationSysteme", `WHERE verrou = 'REINITIALISATION'`)) === 1);
-verifier("6. bouton « Lever le verrou » grisé sans phrase ni motif", await dg6.p.locator('[data-action="lever-verrou"]').isDisabled());
-await dg6.p.locator('[data-champ="phrase-levee"]').fill("LEVER LE VERROU");
-verifier("6. grisé avec la phrase mais sans motif", await dg6.p.locator('[data-action="lever-verrou"]').isDisabled());
-await dg6.p.locator('[data-champ="motif-levee"]').fill("Nouvelle remise à zéro voulue par le DG avant l'ouverture");
-verifier("6. phrase + motif : bouton actif", !(await dg6.p.locator('[data-action="lever-verrou"]').isDisabled()));
-const idLigneAudit = (await q(`SELECT id FROM "ReinitialisationSysteme"`))[0].id;
-await dg6.p.locator('[data-action="lever-verrou"]').click();
-const leve = await attendre(async () => (await nombre("ReinitialisationSysteme", `WHERE verrou = 'REINITIALISATION'`)) === 0, 30000);
-verifier("6. le verrou est levé par UPDATE : la ligne d'audit est CONSERVÉE (jamais supprimée), verrou = LEVE-<id>", leve && (await nombre("ReinitialisationSysteme")) === 1 && (await q(`SELECT verrou AS v FROM "ReinitialisationSysteme"`))[0].v === `LEVE-${idLigneAudit}`);
-const traceLevee = await traces("levee_verrou_reinitialisation");
-verifier("6. la levée est tracée : qui, quand, motif, ligne d'audit concernée", traceLevee.length === 1 && traceLevee[0].email === "dg.reel@societe.example" && traceLevee[0].entityId === idLigneAudit && /Nouvelle remise à zéro voulue par le DG/.test(traceLevee[0].detail ?? ""), JSON.stringify(traceLevee));
-await attendre(async () => (await statutEtape(dg6.p, "LEVEE_VERROU")) === "Faite", 10000);
-verifier("6. étape 3 « Faite » ; la remise à zéro devient possible (phrase déjà saisie)", (await statutEtape(dg6.p, "LEVEE_VERROU")) === "Faite" && (await statutEtape(dg6.p, "PURGE")) === "À faire");
 await dg6.p.locator('[data-champ="phrase-purge"]').fill("REINITIALISER");
-verifier("6. bouton de remise à zéro actif (sauvegarde téléchargée dans cette page, verrou levé, phrase exacte)", !(await dg6.p.locator('[data-action="purger"]').isDisabled()));
+verifier("6. verrou levé + simulation + sauvegarde téléchargée + phrase exacte : bouton de remise à zéro actif", !(await dg6.p.locator('[data-action="purger"]').isDisabled()));
 const sigAvant6 = await nombre("SignatureUtilisateur"); // un compte créé en cours de test a pu recevoir sa signature de test
 await dg6.p.locator('[data-action="purger"]').click();
 const fait2 = await attendre(async () => (await nombre("ReinitialisationSysteme")) === 2, 90000);
@@ -448,7 +439,8 @@ verifier("6. les nouvelles données ont été supprimées (caisse 0, notificatio
 verifier("6. la configuration reste intacte après la seconde remise à zéro", (await nombre("RolePermission")) === rolePermsAvant && (await nombre("BudgetParametrage", `WHERE statut = 'VALIDE'`)) === 2 && (await nombre("SignatureUtilisateur")) === sigAvant6, JSON.stringify({ rp: [await nombre("RolePermission"), rolePermsAvant], bp: await nombre("BudgetParametrage", `WHERE statut = 'VALIDE'`), sig: [await nombre("SignatureUtilisateur"), sigAvant6] }));
 await dg6.p.goto(`${B}/systeme/reinitialisation`);
 const audit = (await dg6.p.locator('[data-section="audit"]').innerText()).replace(/\s+/g, " ");
-verifier("6. l'audit liste les deux remises à zéro, dont le verrou levé avec son motif", (await dg6.p.locator('[data-section="audit"] li').count()) === 2 && /Verrou levé le/.test(audit) && /Nouvelle remise à zéro voulue par le DG/.test(audit), audit.slice(0, 240));
+verifier("6. l'audit liste les deux remises à zéro, la première « Verrou levé (par UPDATE SQL », la seconde verrou actif", (await dg6.p.locator('[data-section="audit"] li').count()) === 2 && /Verrou levé \(par UPDATE SQL/.test(audit) && /Verrou actif/.test(audit), audit.slice(0, 280));
+verifier("6. de nouveau verrouillé : message seul, plus d'assistant", (await dg6.p.locator("[data-etape]").count()) === 0 && /Fonction verrouillée\./.test(await dg6.p.locator("[data-message-verrou]").innerText()));
 await dg6.ctx.close();
 
 // ======================================================================================================================
@@ -483,7 +475,7 @@ await lancerServeur();
 {
   const d = await connecter("dg.reel@societe.example");
   await d.p.goto(`${B}/systeme/reinitialisation`);
-  verifier("7. après redémarrage : le verrou est toujours actif et l'audit complet est visible", (await d.p.locator('[data-etat-verrou="actif"]').count()) === 1 && (await d.p.locator('[data-section="audit"] li').count()) === 2);
+  verifier("7. après redémarrage : le verrou est toujours actif (message seul) et l'audit complet est visible", (await d.p.locator('[data-etat-verrou="actif"]').count()) === 1 && (await d.p.locator("[data-etape]").count()) === 0 && (await d.p.locator('[data-section="audit"] li').count()) === 2);
   await d.ctx.close();
 }
 

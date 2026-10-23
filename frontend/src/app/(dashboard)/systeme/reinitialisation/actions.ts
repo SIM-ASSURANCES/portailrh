@@ -12,10 +12,9 @@ import {
   desactiverComptesDeTest,
   enregistrerNettoyageFichiers,
   executerReinitialisation,
-  leverVerrouReinitialisation,
   listerReinitialisations,
   lireEtatEtapes,
-  refusLeveeVerrou,
+  lireInfoVerrou,
   refusPurge,
   simulerReinitialisationDetaillee,
   supprimerFichiersUploads,
@@ -32,13 +31,20 @@ const NON_AUTORISE = { status: "error" as const, message: "Action non autorisée
 /**
  * Étape 1 — SIMULATION (aucune suppression) : décompte de ce qui sera supprimé et conservé, table par table, avec
  * l'avertissement de caisse. Tracée dans l'audit (qui, quand) : c'est elle qui ouvre l'étape suivante. `systeme.reinitialiser`.
+ * REFUSÉE côté serveur tant que le verrou définitif existe (lot S), quelle que soit la permission.
  */
 export async function simulerAction(): Promise<
   { status: "success"; simulation: SimulationDetaillee } | { status: "error"; message: string }
 > {
   const session = await getSession();
   if (!session || !hasPermission(session, "systeme.reinitialiser")) return NON_AUTORISE;
-  const simulation = await simulerReinitialisationDetaillee();
+  let simulation: SimulationDetaillee;
+  try {
+    simulation = await simulerReinitialisationDetaillee(); // lève ReinitialisationError si le verrou est actif
+  } catch (e) {
+    if (e instanceof ReinitialisationError) return { status: "error", message: e.message };
+    throw e;
+  }
   await tracerEtapeReinitialisation(
     session.user.id,
     ACTION_SIMULATION,
@@ -49,36 +55,20 @@ export async function simulerAction(): Promise<
 }
 
 /**
- * Étape 3 — LEVÉE DU VERROU (seulement s'il existe) : sauvegarde téléchargée, phrase exacte et motif obligatoires.
- * UPDATE qui garde la ligne d'audit (jamais DELETE), tracé.
- */
-export async function leverVerrouAction(phrase: string, motif: string): Promise<Resultat> {
-  const session = await getSession();
-  if (!session || !hasPermission(session, "systeme.reinitialiser")) return NON_AUTORISE;
-  const { etat } = await lireEtatEtapes(session.user.id);
-  const refus = refusLeveeVerrou(etat, { phrase, motif });
-  if (refus) return { status: "error", message: refus };
-  try {
-    const { leves } = await leverVerrouReinitialisation({ userId: session.user.id, motif });
-    revalidatePath("/", "layout");
-    publishDataChanged();
-    return { status: "success", message: `Verrou levé (${leves} ligne d'audit conservée). Vous pouvez maintenant exécuter la remise à zéro (étape 4).` };
-  } catch (e) {
-    if (e instanceof ReinitialisationError) return { status: "error", message: e.message };
-    return { status: "error", message: "Erreur pendant la levée du verrou : rien n'a été modifié." };
-  }
-}
-
-/**
- * Étape 4 — REMISE À ZÉRO : mêmes gardes que la ligne de commande (`executerReinitialisation`, une seule transaction) plus
- * l'ordre des étapes (simulation, sauvegarde téléchargée par ce compte, verrou levé), lu dans l'audit. Les fichiers de
- * uploads/ ne sont supprimés qu'APRÈS le commit ; un échec de fichier n'annule rien. Le verrou est reposé par la purge.
+ * Étape 3 — REMISE À ZÉRO : mêmes gardes que la ligne de commande (`executerReinitialisation`, une seule transaction) plus
+ * l'ordre des étapes (simulation, sauvegarde téléchargée par ce compte), lu dans l'audit. Les fichiers de uploads/ ne sont
+ * supprimés qu'APRÈS le commit ; un échec de fichier n'annule rien. Le verrou DÉFINITIF est posé par la purge (lot S) : refusée
+ * tant qu'il existe, et aucune action de ce fichier ne peut le lever (seul un UPDATE SQL le peut).
  */
 export async function reinitialiserAction(confirmation: string, sauvegardeSha256: string): Promise<Resultat> {
   const session = await getSession();
   if (!session || !hasPermission(session, "systeme.reinitialiser")) return NON_AUTORISE;
   const { etat, empreinteSauvegarde } = await lireEtatEtapes(session.user.id);
-  const refus = refusPurge(etat, { phrase: confirmation, empreinte: sauvegardeSha256, empreinteSauvegardee: empreinteSauvegarde });
+  const refus = refusPurge(
+    etat,
+    { phrase: confirmation, empreinte: sauvegardeSha256, empreinteSauvegardee: empreinteSauvegarde },
+    await lireInfoVerrou()
+  );
   if (refus) return { status: "error", message: refus };
 
   let resultat;
@@ -110,7 +100,7 @@ export async function reinitialiserAction(confirmation: string, sauvegardeSha256
     status: "success",
     message: `Remise à zéro effectuée : ${total} ligne(s) supprimée(s), ${supprimes} fichier(s) supprimé(s)${
       echecs > 0 ? ` (${echecs} fichier(s) non supprimé(s), à nettoyer à la main)` : ""
-    }. Le verrou est reposé. Étapes suivantes : désactiver les comptes de test et saisir le solde d'ouverture de caisse.`,
+    }. La fonction est maintenant verrouillée. Étapes suivantes : désactiver les comptes de test et saisir le solde d'ouverture de caisse.`,
     decompte: resultat.decompte,
   };
 }

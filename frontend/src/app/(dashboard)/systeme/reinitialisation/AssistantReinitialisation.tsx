@@ -4,20 +4,16 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { Badge, Button, Input, Textarea } from "@/components/ui";
+import { Badge, Button, Input } from "@/components/ui";
 import {
-  MOTIF_LEVEE_MAX,
-  MOTIF_LEVEE_MIN,
-  PHRASE_LEVEE_VERROU,
   PHRASE_PURGE,
   lignesEtapes,
-  motifLeveeValide,
   type EtatEtapes,
   type IdEtape,
   type StatutEtape,
 } from "backend/client";
 
-import { leverVerrouAction, reinitialiserAction, simulerAction } from "./actions";
+import { reinitialiserAction, simulerAction } from "./actions";
 
 /** Forme de la simulation renvoyée par le serveur (sérialisable). */
 interface LigneDecompte {
@@ -86,7 +82,7 @@ function TableauDecompte({ titre, lignes, vide }: { titre: string; lignes: Ligne
 }
 
 /**
- * Les 4 étapes de la remise à zéro (lot R) : chacune n'est possible que si la précédente est faite — l'état vient du
+ * Les 3 étapes de la remise à zéro (lots R et S) : chacune n'est possible que si la précédente est faite — l'état vient du
  * serveur (audit), le serveur REFUSE de toute façon une action hors ordre. La sauvegarde doit avoir été téléchargée dans
  * cette session (l'empreinte est gardée ici) pour que le bouton de purge se dégrise.
  */
@@ -96,8 +92,6 @@ export function AssistantReinitialisation({ etatInitial }: { etatInitial: EtatEt
   const [simulation, setSimulation] = useState<Simulation | null>(null);
   const [empreinte, setEmpreinte] = useState<string | null>(null);
   const [enCours, setEnCours] = useState<IdEtape | null>(null);
-  const [phraseLevee, setPhraseLevee] = useState("");
-  const [motifLevee, setMotifLevee] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [resultat, setResultat] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -156,26 +150,6 @@ export function AssistantReinitialisation({ etatInitial }: { etatInitial: EtatEt
     }
   }
 
-  function leverVerrou() {
-    setEnCours("LEVEE_VERROU");
-    startTransition(async () => {
-      try {
-        const r = await leverVerrouAction(phraseLevee, motifLevee);
-        if (r.status === "success") {
-          toast.success(r.message);
-          setEtat((e) => ({ ...e, verrouActif: false, verrouLeveDansLeFlux: true }));
-          setPhraseLevee("");
-          setMotifLevee("");
-          router.refresh();
-        } else {
-          toast.error(r.message);
-        }
-      } finally {
-        setEnCours(null);
-      }
-    });
-  }
-
   function reinitialiser() {
     if (!empreinte) return;
     setEnCours("PURGE");
@@ -184,8 +158,8 @@ export function AssistantReinitialisation({ etatInitial }: { etatInitial: EtatEt
         const r = await reinitialiserAction(confirmation, empreinte);
         if (r.status === "success") {
           setResultat(r.message);
-          toast.success("Remise à zéro effectuée.");
-          router.refresh();
+          toast.success("Remise à zéro effectuée : la fonction est maintenant verrouillée.");
+          router.refresh(); // la page n'affiche plus que le message de verrou
         } else {
           toast.error(r.message);
           if (r.message.includes("sauvegarde")) {
@@ -209,10 +183,8 @@ export function AssistantReinitialisation({ etatInitial }: { etatInitial: EtatEt
 
   const e1 = statut("SIMULATION");
   const e2 = statut("SAUVEGARDE");
-  const e3 = statut("LEVEE_VERROU");
-  const e4 = statut("PURGE");
-  const motifOk = motifLeveeValide(motifLevee) !== null;
-  const peutPurger = e4.statut === "ACTIVE" && empreinte !== null && confirmation === PHRASE_PURGE;
+  const e3 = statut("PURGE");
+  const peutPurger = e3.statut === "ACTIVE" && empreinte !== null && confirmation === PHRASE_PURGE;
 
   return (
     <div className="space-y-4">
@@ -278,63 +250,18 @@ export function AssistantReinitialisation({ etatInitial }: { etatInitial: EtatEt
         ) : null}
       </section>
 
-      {/* Étape 3 : seulement si un verrou existe ou vient d'être levé */}
-      {e3.statut !== "NON_APPLICABLE" ? (
-        <section className={`space-y-3 rounded-lg border border-border bg-surface p-4 ${e3.statut === "BLOQUEE" ? "opacity-60" : ""}`} data-etape="LEVEE_VERROU">
-          <EnTeteEtape id="LEVEE_VERROU" titre={e3.titre} statut={e3.statut} />
-          <p className="text-xs text-muted-foreground">
-            Une remise à zéro a déjà été effectuée : le verrou empêche d&apos;en refaire une. Le lever est une décision du DG,
-            tracée. La ligne d&apos;audit de la remise à zéro précédente est <strong>conservée</strong> (jamais supprimée).
-          </p>
-          {e3.statut !== "FAITE" ? (
-            <>
-              <Input
-                label={`Tapez ${PHRASE_LEVEE_VERROU} pour confirmer`}
-                value={phraseLevee}
-                onChange={(ev) => setPhraseLevee(ev.target.value)}
-                disabled={e3.statut !== "ACTIVE" || occupe}
-                autoComplete="off"
-                data-champ="phrase-levee"
-              />
-              <Textarea
-                label="Motif (obligatoire)"
-                hint={`${MOTIF_LEVEE_MIN} à ${MOTIF_LEVEE_MAX} caractères, conservé dans l'historique.`}
-                value={motifLevee}
-                onChange={(ev) => setMotifLevee(ev.target.value)}
-                disabled={e3.statut !== "ACTIVE" || occupe}
-                rows={3}
-                data-champ="motif-levee"
-              />
-              <Button
-                type="button"
-                variant="danger"
-                loading={enCours === "LEVEE_VERROU"}
-                disabled={e3.statut !== "ACTIVE" || occupe || phraseLevee !== PHRASE_LEVEE_VERROU || !motifOk}
-                onClick={leverVerrou}
-                data-action="lever-verrou"
-              >
-                Lever le verrou
-              </Button>
-              {e3.raison ? <p className="text-xs text-muted-foreground">{e3.raison}</p> : null}
-            </>
-          ) : (
-            <p className="text-xs text-success">Verrou levé. La remise à zéro (étape 4) reposera le verrou.</p>
-          )}
-        </section>
-      ) : null}
-
-      {/* Étape 4 */}
-      <section className={`space-y-3 rounded-lg border border-danger/40 bg-surface p-4 ${e4.statut === "BLOQUEE" ? "opacity-60" : ""}`} data-etape="PURGE">
-        <EnTeteEtape id="PURGE" titre={e4.titre} statut={e4.statut} />
+      {/* Étape 3 */}
+      <section className={`space-y-3 rounded-lg border border-danger/40 bg-surface p-4 ${e3.statut === "BLOQUEE" ? "opacity-60" : ""}`} data-etape="PURGE">
+        <EnTeteEtape id="PURGE" titre={e3.titre} statut={e3.statut} />
         <p className="text-xs text-muted-foreground">
-          Supprime définitivement les données listées à l&apos;étape 1, en une seule transaction (tout ou rien), puis repose le
-          verrou. C&apos;est exactement la même purge que la ligne de commande.
+          Supprime définitivement les données listées à l&apos;étape 1, en une seule transaction (tout ou rien), puis pose le
+          verrou définitif. C&apos;est exactement la même purge que la ligne de commande.
         </p>
         <Input
           label={`Tapez ${PHRASE_PURGE} pour confirmer`}
           value={confirmation}
           onChange={(ev) => setConfirmation(ev.target.value)}
-          disabled={e4.statut !== "ACTIVE" || empreinte === null || occupe}
+          disabled={e3.statut !== "ACTIVE" || empreinte === null || occupe}
           autoComplete="off"
           data-champ="phrase-purge"
         />
@@ -348,8 +275,8 @@ export function AssistantReinitialisation({ etatInitial }: { etatInitial: EtatEt
         >
           Réinitialiser définitivement
         </Button>
-        {e4.statut !== "ACTIVE" && e4.raison ? <p className="text-xs text-muted-foreground">{e4.raison}</p> : null}
-        {e4.statut === "ACTIVE" && empreinte === null ? (
+        {e3.statut !== "ACTIVE" && e3.raison ? <p className="text-xs text-muted-foreground">{e3.raison}</p> : null}
+        {e3.statut === "ACTIVE" && empreinte === null ? (
           <p className="text-xs text-muted-foreground">Téléchargez la sauvegarde dans cette page (étape 2) pour dégriser ce bouton.</p>
         ) : null}
       </section>

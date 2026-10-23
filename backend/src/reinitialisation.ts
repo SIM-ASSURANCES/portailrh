@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { Prisma } from "./generated/prisma/client";
 import { prisma } from "./prisma";
 import { CONFIRMATION_REINITIALISATION_CONSTANTE } from "./reinitialisationConstantes";
+import { messageVerrouActif } from "./reinitialisationEtapes";
 import {
   ENTITES_HISTORIQUE_CONGES,
   ENTITES_HISTORIQUE_POINTAGE,
@@ -15,7 +16,8 @@ import {
  * purge de TOUTES les données de test, jamais de la configuration. La liste table par table (purgée / partielle / conservée)
  * est `CLASSIFICATION_TABLES` (`reinitialisationClassification.ts`), vérifiée contre `schema.prisma` par un test.
  *
- * Verrou : une ligne `ReinitialisationSysteme` de `verrou = VERROU_REINITIALISATION` interdit toute nouvelle purge. Pour une
+ * Verrou DÉFINITIF (lot S) : une ligne `ReinitialisationSysteme` de `verrou = VERROU_REINITIALISATION` interdit toute simulation,
+ * sauvegarde et purge, côté serveur (`exigerVerrouLibre`). Il n'existe aucune action applicative pour le lever : pour une
  * purge ultérieure VOLONTAIRE, le verrou se lève par une commande SQL qui garde la ligne d'audit (voir
  * `docs/mise-en-production.md`, § 10) : `UPDATE "ReinitialisationSysteme" SET verrou = 'LEVE-' || id WHERE verrou = 'REINITIALISATION'`.
  *
@@ -167,11 +169,21 @@ export async function reinitialisationEffectuee(db: Pick<Prisma.TransactionClien
 }
 
 /** La purge active (verrou posé) ; `null` si aucune ou si le verrou a été levé. */
-export async function getReinitialisationInfo() {
-  return prisma.reinitialisationSysteme.findFirst({
+export async function getReinitialisationInfo(db: Pick<Prisma.TransactionClient, "reinitialisationSysteme"> = prisma) {
+  return db.reinitialisationSysteme.findFirst({
     where: { verrou: VERROU_REINITIALISATION },
     include: { effectueePar: { select: { fullName: true } } },
   });
+}
+
+/**
+ * VERROU DÉFINITIF (lot S) : lève `ReinitialisationError` (message clair, avec la date et l'auteur de la remise à zéro) si le
+ * verrou est actif. Appelée en TÊTE de la simulation, de la sauvegarde et de la purge, côté serveur : masquer le bouton ne
+ * suffit pas, et aucune permission (`systeme.reinitialiser` comprise) n'y change rien. Ne se lève que par UPDATE SQL.
+ */
+export async function exigerVerrouLibre(db: Pick<Prisma.TransactionClient, "reinitialisationSysteme"> = prisma): Promise<void> {
+  const info = await getReinitialisationInfo(db);
+  if (info) throw new ReinitialisationError(messageVerrouActif({ effectueeAt: info.effectueeAt, par: info.effectueePar.fullName }));
 }
 
 /** Fichiers de `uploads/` référencés par les pièces jointes qui seront supprimées (Trésorerie et Encaissements). */
@@ -181,6 +193,7 @@ export function urlsFichiersAPurger(jeux: JeuxReinitialisation): string[] {
 
 /** Sauvegarde : jeux complets + méta, et empreinte (calculée sur les seuls jeux métier, pas sur la méta horodatée). */
 export async function genererSauvegardeReinitialisation(userId: string) {
+  await exigerVerrouLibre();
   const jeux = await chargerJeuxReinitialisation(prisma);
   const empreinte = calculerEmpreinte(jeux);
   const contenu = JSON.stringify(
@@ -204,19 +217,20 @@ export async function genererSauvegardeReinitialisation(userId: string) {
 
 /** Compte, SANS rien écrire, ce qu'une purge supprimerait (simulation). */
 export async function simulerReinitialisation() {
+  await exigerVerrouLibre();
   const jeux = await chargerJeuxReinitialisation(prisma);
   return {
     decompte: decompterJeux(jeux),
     fichiers: urlsFichiersAPurger(jeux).length,
     encEnService: (await prisma.encMiseEnService.count()) > 0,
-    verrouActif: await reinitialisationEffectuee(),
+    verrouActif: false, // le verrou actif a été refusé plus haut
     empreinte: calculerEmpreinte(jeux),
     jeux,
   };
 }
 
 /**
- * Purge en UNE SEULE transaction (tout ou rien, isolation sérialisable). Refuse si le verrou est actif, ou si les données
+ * Purge en UNE SEULE transaction (tout ou rien, isolation sérialisable). Refuse si le verrou est actif (`exigerVerrouLibre`), ou si les données
  * ont changé depuis la sauvegarde (empreinte différente). `verrou` unique : une exécution concurrente échoue.
  */
 export async function executerReinitialisation({
@@ -228,9 +242,7 @@ export async function executerReinitialisation({
 }): Promise<{ id: string; decompte: Record<string, number>; urlsFichiers: string[] }> {
   return prisma.$transaction(
     async (tx) => {
-      if (await reinitialisationEffectuee(tx)) {
-        throw new ReinitialisationError("La réinitialisation a déjà été effectuée : le verrou est actif (voir docs/mise-en-production.md pour le lever volontairement).");
-      }
+      await exigerVerrouLibre(tx);
       const jeux = await chargerJeuxReinitialisation(tx);
       if (calculerEmpreinte(jeux) !== sauvegardeSha256) {
         throw new ReinitialisationError(

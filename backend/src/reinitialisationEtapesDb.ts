@@ -1,6 +1,6 @@
 /**
  * Couche base des étapes de la remise à zéro depuis l'application (lot R) : trace d'audit de chaque étape, lecture de
- * l'état des étapes, simulation détaillée, levée du verrou, comptes de test. Les règles sont dans
+ * l'état des étapes, simulation détaillée, comptes de test. AUCUNE levée de verrou ici (lot S) : le verrou ne se lève que par SQL. Les règles sont dans
  * `reinitialisationEtapes.ts` et `comptesDeTest.ts` (purs, testés). La PURGE elle-même reste `executerReinitialisation`
  * (`reinitialisation.ts`), le même code que la ligne de commande.
  *
@@ -10,8 +10,9 @@
 import type { Prisma } from "./generated/prisma/client";
 import { prisma } from "./prisma";
 import {
-  ReinitialisationError,
   VERROU_REINITIALISATION,
+  exigerVerrouLibre,
+  getReinitialisationInfo,
   calculerEmpreinte,
   chargerJeuxReinitialisation,
   decompterJeux,
@@ -19,7 +20,7 @@ import {
   urlsFichiersAPurger,
 } from "./reinitialisation";
 import { CLASSIFICATION_TABLES, ENTITES_HISTORIQUE_PURGEES, CATEGORIES_NOTIFICATION_PURGEES } from "./reinitialisationClassification";
-import { debutFenetre, motifLeveeValide, type EtatEtapes } from "./reinitialisationEtapes";
+import { debutFenetre, type EtatEtapes, type InfoVerrou } from "./reinitialisationEtapes";
 import { estCompteDeTest, planifierDesactivation, SUFFIXE_EMAIL_TEST, type CompteTest, type RefusDesactivation } from "./comptesDeTest";
 import { getSoldeCaisse } from "./tresorerie";
 
@@ -29,7 +30,6 @@ export const ID_AUDIT_ETAPES = "etapes";
 
 export const ACTION_SIMULATION = "simulation_reinitialisation";
 export const ACTION_SAUVEGARDE = "sauvegarde_reinitialisation";
-export const ACTION_LEVEE_VERROU = "levee_verrou_reinitialisation";
 export const ACTION_COMPTES_TEST = "desactivation_comptes_test";
 
 type Db = Pick<Prisma.TransactionClient, "historiqueEntry">;
@@ -42,6 +42,12 @@ export async function tracerEtapeReinitialisation(
   db: Db = prisma
 ) {
   await db.historiqueEntry.create({ data: { entity: ENTITE_AUDIT_REINITIALISATION, entityId, action, detail, userId } });
+}
+
+/** Le verrou actif (date et auteur de la remise à zéro qui l'a posé), ou `null` s'il n'y en a pas. */
+export async function lireInfoVerrou(): Promise<InfoVerrou | null> {
+  const info = await getReinitialisationInfo();
+  return info ? { effectueeAt: info.effectueeAt, par: info.effectueePar.fullName } : null;
 }
 
 const REGEX_EMPREINTE = /empreinte ([0-9a-f]{64})/;
@@ -64,7 +70,7 @@ export async function lireEtatEtapes(userId: string, maintenant: Date = new Date
     where: {
       entity: ENTITE_AUDIT_REINITIALISATION,
       userId,
-      action: { in: [ACTION_SIMULATION, ACTION_SAUVEGARDE, ACTION_LEVEE_VERROU] },
+      action: { in: [ACTION_SIMULATION, ACTION_SAUVEGARDE] },
       createdAt: { gte: depuis },
     },
     orderBy: { createdAt: "desc" },
@@ -77,7 +83,6 @@ export async function lireEtatEtapes(userId: string, maintenant: Date = new Date
       verrouActif,
       simulationFaite: traces.some((t) => t.action === ACTION_SIMULATION),
       sauvegardeFaite: empreinteSauvegarde !== null,
-      verrouLeveDansLeFlux: !verrouActif && traces.some((t) => t.action === ACTION_LEVEE_VERROU),
     },
     empreinteSauvegarde,
     depuis,
@@ -130,6 +135,7 @@ async function compterConserve(modele: string, encEnService: boolean): Promise<n
 
 /** Simulation SANS écriture : ce qu'une purge supprimerait et conserverait, table par table, plus l'avertissement de caisse. */
 export async function simulerReinitialisationDetaillee(): Promise<SimulationDetaillee> {
+  await exigerVerrouLibre(); // verrou définitif (lot S) : refusée côté serveur tant qu'il existe
   const jeux = await chargerJeuxReinitialisation(prisma);
   const decompte = decompterJeux(jeux);
   const encEnService = (await prisma.encMiseEnService.count()) > 0;
@@ -153,51 +159,18 @@ export async function simulerReinitialisationDetaillee(): Promise<SimulationDeta
     fichiers: urlsFichiersAPurger(jeux).length,
     caisse: { lignes: jeux.journalCaisse.length, solde: await getSoldeCaisse() },
     encEnService,
-    verrouActif: await reinitialisationEffectuee(),
+    verrouActif: false, // le verrou actif a été refusé plus haut
     empreinte: calculerEmpreinte(jeux),
   };
 }
 
-/**
- * Lève le verrou de réinitialisation par un UPDATE qui GARDE la ligne d'audit (jamais un DELETE) : la ligne reste, son
- * `verrou` devient `LEVE-<id>`. Tracée (auteur, date, motif) dans l'historique, dans la même transaction.
- */
-export async function leverVerrouReinitialisation({ userId, motif }: { userId: string; motif: string }): Promise<{ leves: number }> {
-  const motifPropre = motifLeveeValide(motif);
-  if (!motifPropre) throw new ReinitialisationError("Le motif de levée du verrou est invalide.");
-  return prisma.$transaction(
-    async (tx) => {
-      const lignes = await tx.reinitialisationSysteme.findMany({ where: { verrou: VERROU_REINITIALISATION }, select: { id: true, effectueeAt: true } });
-      if (lignes.length === 0) throw new ReinitialisationError("Aucun verrou de réinitialisation n'est actif : rien à lever.");
-      const n = await tx.$executeRaw`UPDATE "ReinitialisationSysteme" SET "verrou" = 'LEVE-' || "id" WHERE "verrou" = ${VERROU_REINITIALISATION}`;
-      for (const l of lignes) {
-        await tracerEtapeReinitialisation(
-          userId,
-          ACTION_LEVEE_VERROU,
-          `Verrou levé (purge du ${l.effectueeAt.toISOString().slice(0, 10)}, ligne d'audit conservée) — motif : ${motifPropre}`,
-          l.id,
-          tx
-        );
-      }
-      return { leves: n };
-    },
-    { timeout: 30_000 }
-  );
-}
-
-/** Toutes les remises à zéro enregistrées (verrou actif ou levé), la plus récente d'abord. */
+/** Toutes les remises à zéro enregistrées (verrou actif ou levé par SQL), la plus récente d'abord. */
 export async function listerReinitialisations() {
   const lignes = await prisma.reinitialisationSysteme.findMany({
     orderBy: { effectueeAt: "desc" },
     include: { effectueePar: { select: { fullName: true } } },
   });
-  const levees = await prisma.historiqueEntry.findMany({
-    where: { entity: ENTITE_AUDIT_REINITIALISATION, action: ACTION_LEVEE_VERROU },
-    orderBy: { createdAt: "desc" },
-    select: { entityId: true, createdAt: true, detail: true, user: { select: { fullName: true } } },
-  });
   return lignes.map((l) => {
-    const levee = levees.find((x) => x.entityId === l.id) ?? null;
     return {
       id: l.id,
       effectueeAt: l.effectueeAt,
@@ -207,7 +180,6 @@ export async function listerReinitialisations() {
       fichiersEchecs: l.fichiersEchecs,
       decompte: l.decompte as Record<string, number>,
       verrouActif: l.verrou === VERROU_REINITIALISATION,
-      levee: levee ? { at: levee.createdAt, par: levee.user.fullName, detail: levee.detail } : null,
     };
   });
 }

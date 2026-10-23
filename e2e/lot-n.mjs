@@ -238,7 +238,7 @@ const attendre = async (fn, ms = 20000) => {
   const rep = await dg.ctx.request.get(`${B}/api/systeme/reinitialisation/sauvegarde`);
   verifier("5. verrou : la route de sauvegarde répond 409 au DG", rep.status() === 409, String(rep.status()));
   await dg.p.goto(`${B}/systeme/reinitialisation`);
-  verifier("5. verrou : l'écran affiche le verrou actif et l'audit, la remise à zéro est grisée (lot R : étapes dans l'ordre)", (await dg.p.locator('[data-etat-verrou="actif"]').count()) === 1 && (await dg.p.locator('[data-section="audit"]').count()) === 1 && (await dg.p.locator('[data-action="purger"]').isDisabled()));
+  verifier("5. verrou (lot S) : l'écran affiche « Remise à zéro effectuée le … par … Fonction verrouillée. » et l'audit, sans aucun bouton", (await dg.p.locator('[data-etat-verrou="actif"]').count()) === 1 && (await dg.p.locator('[data-section="audit"]').count()) === 1 && (await dg.p.locator('[data-action="purger"]').count()) === 0 && (await dg.p.locator('[data-action="simuler"]').count()) === 0 && /Fonction verrouillée\./.test(await dg.p.locator("[data-message-verrou]").innerText()));
   await dg.ctx.close();
   const fin = await connecter("finance@simassurances.test");
   const repF = await fin.ctx.request.get(`${B}/api/systeme/reinitialisation/sauvegarde`);
@@ -291,7 +291,7 @@ verifier("7. la simulation voit le verrou « libre »", /Verrou de réinitialisa
 {
   const dg = await connecter("dg@simassurances.test");
   await dg.p.goto(`${B}/systeme/reinitialisation`);
-  verifier("7. écran : le DG retrouve les étapes (simulation d'abord, étape 3 absente puisque le verrou est levé)", (await dg.p.locator('[data-action="simuler"]').count()) === 1 && (await dg.p.locator('[data-etape="LEVEE_VERROU"]').count()) === 0);
+  verifier("7. écran : verrou levé par SQL, le DG retrouve les étapes (simulation d'abord) ; aucune étape de levée dans l'application", (await dg.p.locator('[data-action="simuler"]').count()) === 1 && (await dg.p.locator('[data-etape="LEVEE_VERROU"]').count()) === 0);
   const confirmer = dg.p.getByRole("button", { name: "Réinitialiser définitivement" });
   verifier("7. écran : « Réinitialiser » grisé sans simulation, sauvegarde ni phrase", await confirmer.isDisabled());
   await dg.p.locator('[data-action="simuler"]').click();

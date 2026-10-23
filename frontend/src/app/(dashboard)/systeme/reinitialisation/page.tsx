@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
-import { listerReinitialisations, lireEtatEtapes, planDesactivationComptesDeTest } from "backend";
+import { listerReinitialisations, lireEtatEtapes, phraseVerrouEcran, planDesactivationComptesDeTest } from "backend";
 
 import { AssistantReinitialisation } from "./AssistantReinitialisation";
 import { ComptesDeTestPanel, type CompteTestAffiche } from "./ComptesDeTestPanel";
@@ -11,8 +11,10 @@ import { ComptesDeTestPanel, type CompteTestAffiche } from "./ComptesDeTestPanel
 const date = (d: Date) => d.toLocaleString("fr-FR", { timeZone: "Africa/Abidjan" });
 
 /**
- * Remise à zéro de mise en production (lot R) : DG (`systeme.reinitialiser`) pour les 4 étapes et l'audit ; l'Admin n'y
+ * Remise à zéro de mise en production (lots R et S) : DG (`systeme.reinitialiser`) pour les 3 étapes et l'audit ; l'Admin n'y
  * voit, une fois une remise à zéro enregistrée, que le panneau de désactivation des comptes de test.
+ * VERROU DÉFINITIF (lot S) : tant qu'il existe, plus de bouton — seulement « Remise à zéro effectuée le … par …. Fonction
+ * verrouillée. » ; la permission `systeme.reinitialiser` ne suffit plus (le serveur refuse de toute façon).
  */
 export default async function ReinitialisationPage() {
   const session = await getSession();
@@ -60,44 +62,42 @@ export default async function ReinitialisationPage() {
     );
   }
 
-  const { etat } = await lireEtatEtapes(session.user.id);
-  const derniere = historique[0];
+  const verrou = historique.find((h) => h.verrouActif) ?? null;
+  const { etat } = verrou ? { etat: null } : await lireEtatEtapes(session.user.id);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title="Remise à zéro de mise en production"
-        description="Supprime TOUTES les données de test (Trésorerie, Pointage RH, Congés, FeedbackApp, Encaissements non mis en service, journaux, signatures d'actions) et conserve la configuration. Quatre étapes, dans l'ordre."
+        description="Supprime TOUTES les données de test (Trésorerie, Pointage RH, Congés, FeedbackApp, Encaissements non mis en service, journaux, signatures d'actions) et conserve la configuration. Trois étapes, dans l'ordre, une seule fois."
       />
 
-      {derniere ? (
-        <div
-          className={`space-y-1 rounded-lg border p-4 text-sm ${derniere.verrouActif ? "border-warning/40 bg-warning-bg text-warning" : "border-border bg-surface"}`}
-          data-etat-verrou={derniere.verrouActif ? "actif" : "leve"}
-        >
-          <p className="font-semibold">
-            {derniere.verrouActif ? "Une remise à zéro a déjà été effectuée : le verrou est actif." : "Le verrou de la dernière remise à zéro a été levé."}
+      {verrou ? (
+        <div className="space-y-1 rounded-lg border border-warning/40 bg-warning-bg p-4 text-sm text-warning" role="status" data-etat-verrou="actif">
+          <p className="font-semibold" data-message-verrou>
+            {phraseVerrouEcran({ effectueeAt: verrou.effectueeAt, par: verrou.effectueePar })}
           </p>
           <p>
-            Dernière remise à zéro le <strong>{date(derniere.effectueeAt)}</strong> par <strong>{derniere.effectueePar}</strong>.
-            {derniere.verrouActif ? " Pour en refaire une, passez par les étapes 1 à 3 : la levée du verrou est une décision explicite." : null}
+            {Object.values(verrou.decompte).reduce((a, b) => a + b, 0)} ligne(s) supprimée(s), {verrou.fichiersSupprimes} fichier(s). La simulation, la
+            sauvegarde et la remise à zéro sont impossibles (le serveur les bloque), quelle que soit la permission. Ce verrou ne se lève pas depuis l&apos;application.
           </p>
         </div>
       ) : (
         <div className="space-y-2 rounded-lg border border-danger/40 bg-danger-bg p-4 text-sm text-danger">
-          <p className="font-semibold">Action irréversible.</p>
+          <p className="font-semibold">Action irréversible, utilisable une seule fois.</p>
           <p>
             Supprimés : demandes, articles, règlements, retours (caisse, exceptionnels, externes), remboursements, journaux de caisse et de
             banque (le solde d&apos;ouverture est à ressaisir ensuite), pièces jointes (et leurs fichiers), confirmations de dépassement, actions
             signées, pointages, justifications, corrections, absences, demandes de congé, feedbacks, données de test d&apos;Encaissements (si
             le module n&apos;est pas encore en service), journaux techniques et les notifications et historiques liés. Conservés : comptes, rôles,
             permissions, délégations, services et responsables, catégories, objets, budgets et seuils validés, paramètres, signatures enrôlées,
-            horaires, jours fériés, jetons de notification, audit d&apos;administration, verrous.
+            horaires, jours fériés, jetons de notification, audit d&apos;administration, verrous. Une fois la remise à zéro faite, la fonction est
+            verrouillée définitivement.
           </p>
         </div>
       )}
 
-      <AssistantReinitialisation etatInitial={etat} />
+      {etat ? <AssistantReinitialisation etatInitial={etat} /> : null}
 
       {panneauComptes}
 
@@ -116,12 +116,8 @@ export default async function ReinitialisationPage() {
                 <p className="text-xs">
                   {h.verrouActif ? (
                     <span className="text-warning">Verrou actif.</span>
-                  ) : h.levee ? (
-                    <span>
-                      Verrou levé le {date(h.levee.at)} par {h.levee.par}. {h.levee.detail}
-                    </span>
                   ) : (
-                    <span>Verrou levé (hors application).</span>
+                    <span>Verrou levé (par UPDATE SQL, hors application).</span>
                   )}
                 </p>
               </li>
