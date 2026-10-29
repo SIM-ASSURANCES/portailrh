@@ -3,21 +3,26 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { schemaMontant } from "@/lib/schemaMontant";
+
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
+import { suffixeArticle } from "@/lib/nomArticle";
 import { notifyByPermission } from "@/lib/notifications";
 import {
   calculerMontantARetournerNet,
   estFicheRegularisation,
   getDateDernierReglementConfirme,
+  MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE,
   MESSAGE_RIEN_A_RENDRE,
   prisma,
   rienARendre,
 } from "backend";
+import { lireMontant, remettreChronoDemande } from "backend";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
-const montantRetourneSchema = z.coerce.number().min(0, "Le montant retourné doit être un nombre positif ou nul.");
+const montantRetourneSchema = schemaMontant({ positif: false, messagePositif: "Le montant retourné doit être un nombre positif ou nul." });
 
 // Tâche "Aucune date dans le passé" (voir CLAUDE.md) : contrainte
 // AJOUTÉE à celle déjà existante (pas avant le dernier règlement confirmé,
@@ -103,9 +108,9 @@ function construireLigneSynthetique(montantDepense: number, date: Date) {
  */
 export async function creerRetourCaisseAction(
   reglementId: string,
-  montantRetourne: number,
-  dateRetour: string,
-  bordereauUrl?: string
+  /** Texte saisi (« 1 500 000 ») ou nombre : réanalysé ici (lot M). */
+  montantRetourne: number | string,
+  dateRetour: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.declarer_retour")) {
@@ -132,18 +137,10 @@ export async function creerRetourCaisseAction(
   if (!reglement.estConfirme || reglement.estAnnule) {
     return { status: "error", message: "Ce règlement n'est pas éligible à un retour de caisse." };
   }
-  // Retour sur règlement BANQUE (voir CLAUDE.md "Retour sur règlement
-  // Banque") : dépôt justifié par un bordereau de versement OBLIGATOIRE, un
-  // montant réellement retourné > 0 ; aucun contrôle de solde (il n'existe
-  // pas de solde banque). Le flux Caisse reste strictement inchangé.
-  const estBanque = reglement.mode === "BANQUE";
-  if (estBanque) {
-    if (!bordereauUrl || !bordereauUrl.trim()) {
-      return { status: "error", message: "Un bordereau de versement est obligatoire pour un retour sur un règlement Banque." };
-    }
-    if (parsedMontant.data <= 0) {
-      return { status: "error", message: "Le montant retourné doit être supérieur à 0 pour un retour Banque." };
-    }
+  // Lot G bis : un fonds versé par banque n'a plus de déclaration de retour par le collaborateur — la Finance enregistre
+  // son retour en retour externe rattaché à la demande et à l'article (les anciens retours Banque gardent leur traitement).
+  if (reglement.mode === "BANQUE") {
+    return { status: "error", message: MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE };
   }
   if (reglement.demande.statut === "CLOTUREE") {
     return {
@@ -165,7 +162,7 @@ export async function creerRetourCaisseAction(
   // (détail renseigné sans retour, 2026-10-10), que cette déclaration vient compléter.
   const enAttente = reglement.retours.filter((r) => !r.estReceptionne);
   const ficheEnAttente =
-    enAttente.length === 1 && estFicheRegularisation({ ...enAttente[0], mode: reglement.mode }) ? enAttente[0] : null;
+    enAttente.length === 1 && estFicheRegularisation(enAttente[0]) ? enAttente[0] : null;
   if (enAttente.length > 0 && !ficheEnAttente) {
     return {
       status: "error",
@@ -221,20 +218,6 @@ export async function creerRetourCaisseAction(
       await tx.depenseLigne.create({ data: { retourCaisseId: retour.id, ...l } });
     }
 
-    if (estBanque) {
-      const piece = await tx.pieceJointe.create({ data: { url: bordereauUrl!.trim(), demandeId: reglement.demandeId } });
-      await tx.journalBanque.create({
-        data: {
-          type: "RETOUR",
-          montant: montantARetourner,
-          reglementId,
-          retourCaisseId: retour.id,
-          pieceJointeId: piece.id,
-          creeParId: session.user.id,
-        },
-      });
-    }
-
     await tx.historiqueEntry.create({
       data: {
         entity: "Demande",
@@ -249,6 +232,8 @@ export async function creerRetourCaisseAction(
     });
   });
 
+  await remettreChronoDemande(reglement.demandeId);
+
   revalidatePath(`/treso/demandes/${reglement.demandeId}`);
   revalidatePath("/treso/demandes");
   // Ticket 8 : un nouveau retour déclaré augmente aussitôt l'indicateur
@@ -258,7 +243,7 @@ export async function creerRetourCaisseAction(
 
   await notifyByPermission("treso.receptionner_retour", {
     titre: "Retour de caisse à réceptionner",
-    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}.`,
+    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}${await suffixeArticle(reglement.ligneDemandeId)}.`,
     lien: "/treso/finance/retours",
     priority: "IMPORTANT",
     category: "TRESORERIE",
@@ -279,7 +264,7 @@ export async function creerRetourCaisseAction(
  */
 async function completerFicheRegularisation(
   ficheId: string,
-  reglement: { id: string; demandeId: string; demande: { reference: string } },
+  reglement: { id: string; demandeId: string; ligneDemandeId: string | null; demande: { reference: string } },
   montantRetourne: number,
   dateRetour: string,
   userId: string
@@ -324,13 +309,14 @@ async function completerFicheRegularisation(
   });
   if (!maj) return { status: "error", message: "Ce retour a changé entre-temps : rechargez la page." };
 
+  await remettreChronoDemande(reglement.demandeId);
   revalidatePath(`/treso/demandes/${reglement.demandeId}`);
   revalidatePath("/treso/demandes");
   revalidatePath("/treso/finance", "layout");
   publishDataChanged();
   await notifyByPermission("treso.receptionner_retour", {
     titre: "Retour de caisse à réceptionner",
-    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}.`,
+    message: `Un retour de caisse de ${montantARetourner.toLocaleString("fr-FR")} FCFA a été déclaré sur la demande ${reglement.demande.reference}${await suffixeArticle(reglement.ligneDemandeId)}.`,
     lien: "/treso/finance/retours",
     priority: "IMPORTANT",
     category: "TRESORERIE",
@@ -364,7 +350,7 @@ async function completerFicheRegularisation(
  */
 export async function modifierRetourCaisseAction(
   retourId: string,
-  montantRetourne: number,
+  montantRetourne: number | string,
   dateRetour: string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
@@ -392,10 +378,10 @@ export async function modifierRetourCaisseAction(
   if (retour.estReceptionne) {
     return { status: "error", message: "Ce retour de caisse a déjà été réceptionné : il n'est plus modifiable." };
   }
-  // Retour sur règlement BANQUE : appuyé par un bordereau de versement et une
-  // écriture `JournalBanque` non modifiable (jamais réécrite, règle
-  // impérative n°5) — pas de modification du montant/de la date.
-  if (retour.reglement.mode === "BANQUE") {
+  // Ancien retour sur règlement BANQUE (avant le lot G) : appuyé par un bordereau de versement et une écriture
+  // `JournalBanque` non modifiable (jamais réécrite, règle impérative n°5) — pas de modification du montant/de la date.
+  // Un retour récent sur un fonds versé par banque se modifie comme un retour de caisse.
+  if (retour.versementBancaire) {
     return {
       status: "error",
       message: "Un retour sur règlement Banque n'est pas modifiable (il est appuyé par un bordereau de versement). Contactez l'équipe Finance.",
@@ -460,6 +446,8 @@ export async function modifierRetourCaisseAction(
     });
   });
 
+  await remettreChronoDemande(retour.reglement.demandeId);
+
   revalidatePath(`/treso/demandes/${retour.reglement.demandeId}`);
   revalidatePath("/treso/demandes");
   revalidatePath("/treso/finance", "layout");
@@ -497,7 +485,7 @@ const signalementCommentaireSchema = z
 export async function signalerErreurRetourAction(
   retourId: string,
   commentaire: string,
-  montantPropose?: number
+  montantPropose?: number | string
 ): Promise<SimpleActionResult> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.declarer_retour")) {
@@ -510,8 +498,12 @@ export async function signalerErreurRetourAction(
   }
 
   // Montant proposé : INFORMATIF (ne déclenche jamais rien automatiquement), strictement positif si fourni.
-  if (montantPropose != null && (!Number.isFinite(montantPropose) || montantPropose <= 0)) {
-    return { status: "error", message: "Le montant proposé doit être supérieur à 0." };
+  let montantProposeNombre: number | undefined;
+  if (montantPropose != null && !(typeof montantPropose === "string" && montantPropose.trim() === "")) {
+    const lu = lireMontant(montantPropose);
+    if (!lu.ok) return { status: "error", message: `Montant proposé invalide : ${lu.message}` };
+    if (lu.centimes <= 0) return { status: "error", message: "Le montant proposé doit être supérieur à 0." };
+    montantProposeNombre = lu.valeur;
   }
 
   const retour = await prisma.retourCaisse.findUnique({
@@ -547,7 +539,7 @@ export async function signalerErreurRetourAction(
         retourCaisseId: retourId,
         commentaire: parsedCommentaire.data,
         signaleParId: session.user.id,
-        montantPropose: montantPropose ?? null,
+        montantPropose: montantProposeNombre ?? null,
       },
     });
     await tx.historiqueEntry.create({
@@ -556,7 +548,7 @@ export async function signalerErreurRetourAction(
         entityId: demandeId,
         action: "signalement_retour",
         detail: `Erreur signalée par le collaborateur sur le détail d'un retour de caisse : ${parsedCommentaire.data}${
-          montantPropose != null ? ` (montant du retour proposé par le collaborateur : ${montantPropose.toLocaleString("fr-FR")} FCFA)` : ""
+          montantProposeNombre != null ? ` (montant du retour proposé par le collaborateur : ${montantProposeNombre.toLocaleString("fr-FR")} FCFA)` : ""
         }`,
         userId: session.user.id,
       },
@@ -571,7 +563,7 @@ export async function signalerErreurRetourAction(
 
   await notifyByPermission("treso.receptionner_retour", {
     titre: "Erreur signalée sur un retour de caisse",
-    message: `Le collaborateur a signalé une erreur sur le détail d'un retour de caisse de la demande ${retour.reglement.demande.reference}.`,
+    message: `Le collaborateur a signalé une erreur sur le détail d'un retour de caisse de la demande ${retour.reglement.demande.reference}${await suffixeArticle(retour.reglement.ligneDemandeId)}.`,
     lien: `/treso/finance/retours/${retourId}`,
   });
 

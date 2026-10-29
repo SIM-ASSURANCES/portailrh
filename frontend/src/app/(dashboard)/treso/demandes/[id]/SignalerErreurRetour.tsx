@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, InputMontant, Textarea } from "@/components/ui";
 
 import { signalerErreurRetourAction } from "./retourActions";
 
@@ -56,7 +56,7 @@ export function SignalerErreurRetour({
       const result = await signalerErreurRetourAction(
         retourId,
         commentaire,
-        montantPropose.trim() ? Number(montantPropose) : undefined
+        montantPropose.trim() ? montantPropose : undefined
       );
       if (result.status === "success") {
         toast.success(result.message);
@@ -78,13 +78,11 @@ export function SignalerErreurRetour({
         value={commentaire}
         onChange={(e) => setCommentaire(e.target.value)}
       />
-      <Input
+      <InputMontant
         label="Montant du retour selon vous (FCFA, facultatif)"
-        type="number"
-        min="0"
         hint="Le montant total que vous auriez dû retourner. Indicatif : l'équipe Finance l'utilise pour proposer la régularisation."
         value={montantPropose}
-        onChange={(e) => setMontantPropose(e.target.value)}
+        onValueChange={setMontantPropose}
       />
       <div className="flex flex-wrap gap-2">
         <Button type="button" loading={isPending} onClick={handleEnvoyer}>

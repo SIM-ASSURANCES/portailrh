@@ -3,9 +3,12 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, InputMontant, Textarea } from "@/components/ui";
+import { analyserMontant, valeurSaisieMontant } from "backend/client";
 
 import { rejeterReliquatAction, validerComplementaireAction } from "./actions";
+import { useBudgetValidation } from "./BudgetValidationBloc";
+import type { BudgetValidation } from "./LignesValidationTable";
 
 type Mode = "idle" | "complementaire" | "rejeter";
 
@@ -28,9 +31,12 @@ export function ValidationComplementaireActions({
   demandeId,
   montantRestant,
   raisonValidationIndisponible = null,
+  budget = null,
 }: {
   demandeId: string;
   montantRestant: number;
+  /** Lot J : budgets en vigueur et catégorie de la dépense directe ; `null` = aucun budget à afficher. */
+  budget?: (BudgetValidation & { categorieId: string | null }) | null;
   /** Catégorisation obligatoire : demande sans catégorie (validée avant la règle) — validation grisée, rejet possible. */
   raisonValidationIndisponible?: string | null;
 }) {
@@ -40,20 +46,22 @@ export function ValidationComplementaireActions({
   const [motif, setMotif] = useState("");
   const [motifError, setMotifError] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
+  const budgetValidation = useBudgetValidation({ budget, demandeId, categorieId: budget?.categorieId ?? null, montant: mode === "complementaire" ? valeurSaisieMontant(montant) : 0 });
 
   function handleValider() {
-    const valeur = Number(montant);
-    if (!valeur || valeur <= 0) {
-      setMontantError("Le montant doit être supérieur à 0.");
+    const analyse = analyserMontant(montant);
+    if (!analyse.ok || analyse.centimes <= 0) {
+      setMontantError(analyse.ok ? "Le montant doit être supérieur à 0." : analyse.message);
       return;
     }
+    const valeur = analyse.valeur;
     if (valeur > montantRestant) {
       setMontantError(`Le montant ne peut pas dépasser le reliquat (${montantRestant.toLocaleString("fr-FR")} FCFA).`);
       return;
     }
     setMontantError(undefined);
     startTransition(async () => {
-      const result = await validerComplementaireAction(demandeId, valeur);
+      const result = await validerComplementaireAction(demandeId, montant, budgetValidation.motifDepassement);
       if (result.status === "success") {
         toast.success(result.message);
         setMode("idle");
@@ -104,20 +112,20 @@ export function ValidationComplementaireActions({
 
       {mode === "complementaire" ? (
         <div className="animate-fade-in-up space-y-3">
-          <Input
+          <InputMontant
             label="Montant validé à cette étape"
-            type="number"
             required
             hint={`Reliquat à valider : ${montantRestant.toLocaleString("fr-FR")} FCFA`}
             value={montant}
-            onChange={(e) => {
-              setMontant(e.target.value);
+            onValueChange={(texte) => {
+              setMontant(texte);
               if (montantError) setMontantError(undefined);
             }}
             error={montantError}
           />
+          {budgetValidation.bloc}
           <div className="flex flex-wrap gap-3">
-            <Button type="button" loading={isPending} onClick={handleValider}>
+            <Button signe type="button" loading={isPending} disabled={budgetValidation.bloque} onClick={handleValider}>
               Confirmer la validation complémentaire
             </Button>
             <Button
@@ -156,7 +164,7 @@ export function ValidationComplementaireActions({
             error={motifError}
           />
           <div className="flex flex-wrap gap-3">
-            <Button type="button" variant="danger" loading={isPending} onClick={handleRejeter}>
+            <Button signe type="button" variant="danger" loading={isPending} onClick={handleRejeter}>
               Confirmer le rejet du reliquat
             </Button>
             <Button

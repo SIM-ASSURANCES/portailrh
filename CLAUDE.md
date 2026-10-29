@@ -73,7 +73,7 @@ sim-portail/
 │   │   │           ├── CategorieCreateForm.tsx    # Client, useActionState
 │   │   │           ├── ObjetCreateForm.tsx        # Client, categorieId en champ caché
 │   │   │           ├── CategoriesList.tsx         # Client, liste + toggles imbriqués
-│   │   │           ├── ActiveToggleButton.tsx     # Bouton Activer/Désactiver générique
+│   │   │           ├── ActiveToggleButton.tsx     # Bouton Désactiver / Réactiver générique (Admin ou Finance, lot J bis)
 │   │   │           └── actions.ts                 # créer/toggle Categorie et Objet
 │   │   ├── (dashboard)/treso/            # Module Trésorerie (écrans métier)
 │   │   │   └── demandes/
@@ -557,6 +557,9 @@ main) :
 | `montantValide === montant`, `getTotalRegle() === 0` | `VALIDEE_NON_REGLEE` |
 | `montantValide === montant`, `0 < réglé < montantValide` | `PARTIELLEMENT_REGLEE` |
 | `montantValide === montant`, `réglé >= montantValide` | `REGLEE` |
+
+> **Demandes à articles (lot B, 2026-10-15)** : le statut se déduit des ARTICLES (`statutDepuisLignes`), voir « Lot B » plus bas — « En cours (x/n traités) »
+> tant qu'un article attend, puis suivi du règlement sur le seul montant validé. Le tableau ci-dessus reste exact pour une demande SANS article.
 
 `VALIDEE` n'est **plus jamais produit** par cette fonction (une validation
 totale transite directement vers `VALIDEE_NON_REGLEE`) ; il reste dans
@@ -1356,6 +1359,15 @@ qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionne
 
 #### Retour sur règlement Banque (`JournalBanque`)
 
+> **⚠️ REMPLACÉ une seconde fois par le lot G bis (2026-10-19, plus bas)** : un fonds versé par banque n'a plus de déclaration ni de réception de retour ;
+> son retour est un **retour externe rattaché** (Responsable Finance). Le paragraphe suivant (lot G) est lui aussi superseded sur ce point.
+>
+> **⚠️ REMPLACÉ pour tout NOUVEAU retour par le lot G (2026-10-14, plus bas)** : un retour sur un fonds versé par banque suit désormais le
+> même circuit qu'un fonds de caisse (date + montant, dépenses détaillées par l'Assistant) et est **rendu en espèces à la caisse** — sa
+> réception écrit une `ENTREE` dans `JournalCaisse`. Plus de bordereau ni d'écriture `JournalBanque` `RETOUR`. Les **anciens** retours Banque
+> (`RetourCaisse.versementBancaire = true`, posé par migration) gardent exactement le traitement ci-dessous (non modifiables, réception sans
+> écriture de caisse) : une écriture déjà passée n'est jamais modifiée. Les puces ci-dessous ne décrivent plus que ces anciens retours.
+
 - Un retour est possible sur un règlement `BANQUE` (avant : refusé). Modélisé comme un **versement
   bancaire justifié** : **bordereau de versement (pièce jointe) OBLIGATOIRE** et montant > 0, côté
   Collaborateur (`creerRetourCaisseAction(reglementId, montant, date, bordereauUrl)`) comme côté
@@ -1372,9 +1384,10 @@ qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionne
 
 #### Retour externe (hors demande) — `RetourExterne`
 
-- Argent revenu en caisse suite à un règlement fait hors système (ex. chèque). **Totalement
-  autonome** : aucun lien avec `Demande`/`Reglement`/`RetourCaisse`/`RetourExceptionnel` — ne jamais
-  le rattacher ni le compter dans les calculs de ces objets.
+- Argent revenu en caisse suite à un règlement fait hors système (ex. chèque). **Autonome par défaut** :
+  aucun lien avec `Demande`/`Reglement`/`RetourCaisse`/`RetourExceptionnel` — non rattaché, ne jamais
+  le compter dans les calculs de ces objets. **Depuis le lot G bis (2026-10-19)** il peut en plus être
+  **rattaché** à une demande + un article (`demandeId`/`ligneDemandeId`, facultatifs) : voir « Lot G bis ».
 - `creerRetourExterneAction` : **Responsable Finance seul**, effet immédiat et définitif (pas de
   double validation). Personne = `collaborateurId` **XOR** `nomExterne` (jamais les deux ni aucun,
   contrainte applicative). Montant du chèque initial = **information déclarative non vérifiée**.
@@ -1408,7 +1421,7 @@ qui porte aussi `valider_demande`). « Assistant Finance » = `treso.receptionne
   date de création de la demande.
 - **Affichage « À retourner »** (Collaborateur ET Finance, source unique) : `getCouvertureRetoursPostCloture`
   impute les retours exceptionnels validés sur les retours **non réceptionnés** (plus ancien d'abord) ;
-  `etatRetourAffiche` (`lib/retourAffichage.ts`) en déduit « Retourné à la compta » (réceptionné),
+  `etatRetourAffiche` (`lib/retourAffichage.ts`) en déduit « Montant retourné » (réceptionné ; ex-« Retourné à la compta », lots I et I bis),
   « Retourné » (couvert par un retour post-clôture — autre sens, ne pas confondre) ou le solde restant.
   Ne jamais dupliquer cette logique dans un écran.
 
@@ -1439,7 +1452,7 @@ nouvelle écriture qui référence le retour d'origine et le signalement.
 - **« Montant à retourner définitif »** (écrans Finance ET Collaborateur, `getMontantsDefinitifsRetours` + `detailMontantDefinitif`) :
   net = réceptionné + compléments liés à un signalement (réceptionnés ou non) − remboursements **validés** (pas ceux en attente),
   affiché **seulement** s'il existe au moins un complément ou un remboursement validé, avec le détail « (50 000 reçus − 5 000
-  remboursés) ». Ne modifie jamais « Retourné à la compta » (montant brut réceptionné). Visible du Collaborateur : c'est son argent.
+  remboursés) ». Ne modifie jamais « Montant retourné » (montant brut réceptionné ; ex-« Retourné à la compta »). Visible du Collaborateur : c'est son argent.
 - Les remboursements **validés** viennent en déduction des retours reçus (`getRetoursRecus`,
   `getSoldesARegulariserParReglements`, `getMesDemandesDetail`, reporting « Fonds remis »).
 - Traçabilité : historique de la demande (`retour_complementaire_signalement`, `remboursement_retour_*`,
@@ -1483,6 +1496,12 @@ retirée, se désactive après un enregistrement réussi (cycle répétable sans
 message de confirmation et `router.refresh()` après succès.
 
 ### Réinitialisation avant mise en production (usage unique)
+
+> **⚠️ L'écran est refondu en 4 étapes par le lot R (2026-10-22, plus bas, « Lot R »)** : simulation → sauvegarde → levée du verrou (si un verrou existe) → remise à zéro, plus la désactivation des comptes de test ensuite ; l'ordre est vérifié par le serveur à partir de l'audit.
+> **⚠️ Puis verrou DÉFINITIF par le lot S (2026-10-23, « Lot S »)** : plus d'étape de levée dans l'application ; le verrou ne se lève que par UPDATE SQL.
+> **⚠️ Partiellement REMPLACÉ par le lot N (2026-10-30, plus bas, « Lot N + O »)** : la purge couvre désormais TOUTES les tables de test (classement table par table
+> `reinitialisationClassification.ts`), le verrou peut être levé volontairement par une commande SQL qui garde l'audit, et la même logique existe en ligne de commande
+> (`prisma/reinitialiser-production.ts`). La liste « Purgé / Jamais purgé » ci-dessous décrit l'état d'AVANT le lot N.
 
 Purge des données de TEST des modules Trésorerie et Pointage RH / FeedbackApp en une seule action, puis désactivation
 définitive. Écran `/systeme/reinitialisation`, route de sauvegarde `GET /api/systeme/reinitialisation/sauvegarde`,
@@ -1694,6 +1713,7 @@ sans toucher au toggle Activer/Désactiver ni à l'Assistant Finance.
   la transmet à `CategoriesList`.
 - **Toggle Activer/Désactiver — inchangé**, toujours réservé à `isAdmin()`
   seul (`toggleCategorieActiveAction`), jamais touché par cette tâche.
+  **⚠️ REMPLACÉ par le lot J bis (2026-10-20, plus bas)** : la Finance (`treso.gerer_categories`) désactive / réactive elle aussi.
 
 **Vérifications, parcours réel + rejeu réseau direct (comptes de test)** :
 - Catégorie de test créée par Finance (`treso.gerer_categories`, mécanisme
@@ -2362,6 +2382,10 @@ sinon, la laisser suivre son cours normal.
 
 ### Budget partagé par Catégorie
 
+> **⚠️ Partiellement REMPLACÉ par le lot J (2026-10-19, plus bas)** : le budget d'une catégorie est un **paramétrage validé par le DG** (date d'effet, seuils, restes
+> à chaque validation, alertes orange/rouge) ; `Categorie.budgetAlloue` n'est plus lu ni écrit. La règle « consommé au règlement, jamais plafonné à 0, refus de
+> l'ensemble à la confirmation » reste exacte, appliquée au budget EN VIGUEUR. Le reste de cette section décrit l'état d'avant le lot J.
+
 Le budget appartient à la **Catégorie** (nature de la dépense), jamais au
 demandeur, au bénéficiaire ni à son service — une enveloppe partagée entre
 toutes les demandes de cette catégorie.
@@ -2553,6 +2577,11 @@ discrète).
 
 ### Reporting et export
 
+> **⚠️ REMPLACÉ par le lot F (2026-10-21, plus bas) pour tout le tableau « par demande » et ses feuilles annexes** : un SEUL tableau (demande → articles →
+> événements) sur la page et sur une SEULE feuille Excel « Reporting ». Les feuilles Demandes, Retours de caisse, Mouvements banque, Retours externes et Fonds remis n'existent
+> plus (ni `reportingDemandeLigne.ts`, `reportingRetourCaisse.ts`, `getReportingParDemande`, `getReportingRetoursCaisse`, `getReportingFondsRemis`). Restent : la synthèse par catégorie
+> (feuille renommée « Synthèse par catégorie »), le suivi budgétaire, le Dashboard et le Journal de caisse. La suite de cette section décrit l'état d'AVANT le lot F.
+
 `backend/src/reporting.ts` / `treso/finance/reporting/page.tsx` / export
 Excel. **Depuis le 2026-10-08 : une seule ligne par demande** (voir « Retouches Trésorerie du 2026-10-08 » plus bas) —
 feuilles : Demandes (une ligne par demande), Mouvements banque, Retours externes, Fonds remis, Journal de caisse,
@@ -2586,7 +2615,7 @@ demandeur), service, catégorie/objet, mode, statut, type de demande.
 
 Aucune migration, aucun droit ni garde de conflit d'intérêts modifié, aucune écriture comptable existante touchée.
 
-- **Catégorie obligatoire pour valider** (`backend/src/categorisationObligatoire.ts`, pur, partagé serveur/écran) : une
+- **Catégorie obligatoire pour valider** (⚠️ depuis le lot I, seulement à partir d'une date fixée par la Finance, nulle = jamais : voir « Lot I ») (`backend/src/categorisationObligatoire.ts`, pur, partagé serveur/écran) : une
   ligne VALIDÉE doit porter une catégorie, une ligne rejetée non. Serveur : `validerLignesAction` (Finance à l'étape
   Finance et à la décision finale, DG pour les lignes du cas b, nouvelle décision après une correction — les lignes
   repassent en attente), `validerTotalementAction`/`validerPartiellementAction`/`validerComplementaireAction` (dépense
@@ -2628,6 +2657,10 @@ Aucune migration, aucun droit ni garde de conflit d'intérêts modifié, aucune 
 
 #### Soumission au DG ligne par ligne (2026-10-10, suite des retouches)
 
+> **⚠️ Partiellement REMPLACÉ par le lot B (2026-10-15, plus bas)** : la règle 4 « décision finale bloquée tant qu'une ligne attend le DG »
+> et l'étape « Décision finale » ne s'appliquent plus aux demandes à articles (la Finance décide article par article, sans attendre le DG ;
+> l'étape se déduit des articles). Le reste (soumission ligne par ligne, DG définitif, clôture règle 5, notifications) tient.
+
 Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permission créés) : `LigneDemande.soumiseAuDG`,
 `soumiseDGAt`/`soumiseDGParId`, `decisionDG` (enum `DecisionLigneDG` : VALIDEE/REFUSEE, `null` = en attente du DG),
 `decisionDGAt`/`decisionDGParId`, `motifRefusDG`. La décision finale de la ligne reste `statutValidation`.
@@ -2635,7 +2668,7 @@ Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permis
   finale, ou pendant que le DG décide), la Finance (`treso.soumettre_dg`) soumet les lignes choisies
   (`SOUMETTRE_LIGNES_DG`, catégorie obligatoire, `refusSoumissionLignes`) ; la demande passe ou reste à l'étape DG. Le DG
   (`treso.decider_dg`) ne voit et ne décide que les lignes soumises, une par une (`DECIDER_LIGNE_DG`, motif ≥ 3 au refus) ;
-  la dernière décidée passe la demande à la décision finale. Une ligne refusée revient à la Finance : resoumise, ou
+  la dernière décidée passe la demande à la décision finale. Une ligne rejetée revient à la Finance : resoumise, ou
   refusée définitivement à la décision finale. **DG définitif** (décision du 2026-10-10, `refusDecisionsFinales`) : une
   ligne validée par le DG reste validée (son auteur et sa date sont gardés), une ligne refusée par le DG n'est jamais
   validée par la Finance seule, et la Finance ne rejette plus la demande entière dès qu'une ligne est validée par le DG.
@@ -2657,7 +2690,7 @@ Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permis
   verrouillées selon le DG ; plus de bouton « Soumettre au DG » de la demande entière), DG (`DecisionLignesDG` : lignes
   soumises seulement), frise (« 2 lignes sur 4 soumises · 1 en attente… », `detailLignesDG`).
 - **Notifications** : le DG à chaque soumission ; la Finance qui peut agir (`decider_finance` ou `soumettre_dg`) à chaque
-  refus (`notificationRefusLigneDG`) — le refus de la dernière ligne en attente n'envoie que la notification de décision
+  rejet (`notificationRefusLigneDG`) — le rejet de la dernière ligne en attente n'envoie que la notification de décision
   finale (décompte validées/refusées), jamais deux.
 - **Rattrapage** (décision du 2026-10-10, selon l'étape) des demandes soumises par l'ancien circuit : toutes leurs lignes
   « soumises » ; étape DG : en attente ; décision finale : validées par le DG (auteur et date de son approbation) ; rejet
@@ -2666,13 +2699,1246 @@ Migration idempotente `20261010100000_lignes_soumises_dg` (aucun rôle ni permis
   les 2 nouvelles relations vers `User`.
 - Vérifié : vitest (31 tests, 396 au total), tsc, eslint, `next build` ; migration depuis zéro (72) et sur une base dans
   l'ancien état (rattrapage contrôlé ligne par ligne, rejeu sans effet), `migrate diff` vide ; Playwright 39/39
-  (soumission partielle, refus puis resoumission, blocage et refus serveur de la décision finale, DG définitif côté
+  (soumission partielle, rejet puis resoumission, blocage et rejet serveur de la décision finale, DG définitif côté
   serveur, clôture mixte et tout-DG, notifications, historique, mobile 390 px).
 
+- **« Soumettre au DG » par article, raisons visibles (lot 2, 2026-10-13)** : diagnostic d'un clic « sans effet » en production — le
+  serveur ne se tait jamais (chaque refus de `soumettreLignesAuDG` renvoie sa phrase), c'est l'écran qui ne montrait ni bouton ni
+  raison (aucune case sans `treso.soumettre_dg`, raison de l'article calculée mais jamais affichée, bouton global grisé sans
+  phrase). Aucune règle ni contrôle serveur changé. Chaque carte d'article porte un bouton « Soumettre au DG » (« Resoumettre »
+  après un refus du DG), **toujours visible**, grisé avec sa raison en dessous (`RaisonVisible`, texte foncé ≥ 14 px, jamais le
+  gris pâle). Cases à cocher et bouton global conservés (« Cochez au moins un article. »). Phrases dans
+  `backend/src/soumissionDGEcran.ts` (pur, testé) : `raisonSoumissionDemande` (assistant en attente de la validation finale →
+  demande émise par la Finance « le DG la décide d'office » / par le DG « non requise » → permission absente « Votre rôle n'a pas la
+  permission de soumettre au DG. Contactez un administrateur. » → phrase du moteur, via `transition` avec un article fictif
+  soumettable), `raisonSoumissionArticle` (article non catégorisé : « Catégorisez cet article avant de le soumettre au DG. »),
+  `raisonBoutonGlobalSoumission`, `bandeauEtapeDG`. Bandeau en tête de liste à l'étape DG quand un article attend le DG (le texte
+  ajoute que la soumission d'autres articles reste possible, règle du moteur). Test e2e : `e2e/soumission-dg-article.mjs` (31 contrôles).
+  **À vérifier en production** : le rôle Finance porte-t-il `treso.soumettre_dg` ? La migration `20261006100000` ne l'a donnée qu'aux
+  rôles ayant `valider_demande` SANS `approuver_validation_complete`.
 - **Détail des dépenses sans retour (2026-10-10)** : l'Assistant Finance détaille directement depuis la demande (`detaillerDepensesReglementAction`, règlement Caisse, demande non clôturée) ; le détail est rangé dans une fiche de régularisation (`RetourCaisse` créé d'office, `estFicheRegularisation`), montant à rendre = remis − détaillé (`calculerMontantARetournerNet`, inchangée) ; une déclaration ultérieure du collaborateur complète cette fiche (`completerFicheRegularisation`), la réception écrit seule en caisse ; retour nul possible, plus préalable.
 - **Correction du détail par l'Assistant (2026-10-10, suite du constat)** : tant que la demande n'est pas clôturée (réouverture exceptionnelle : règle existante), ni la réception du retour (retour nul compris) ni un signalement ne conditionnent plus la correction (`detaillerDepensesRetourAction`, `modifierDepenseDetailleeAction`, `detaillerResteAction`) ; un signalement actif reste résolu par la correction. **Pas de suppression** : une ligne se corrige par modification (libellé, montant, type avec ou sans pièce formelle, pièce jointe), motif obligatoire. Aucune dépense n'a d'écriture de caisse : correction sur l'enregistrement ; retour à total fixé (déclaré, ou réceptionné : remis − retourné, lié à l'écriture de la réception) → l'écart va dans la ligne de reste, une hausse au-delà est refusée (`planModificationDepense`) et un changement du montant rendu passe par complément / remboursement ; fiche de régularisation → total libre, montant à rendre recalculé.
 - **Reste « Dépenses non détaillées »** : calculé (ligne réécrite à chaque correction, ni modifiable ni supprimable), affiché comme reste avec « Détailler » (`detaillerResteAction`, `planAjoutLignes`) qui le transforme en vraies lignes. **Un seul composant** `components/tresorerie/DetailDepensesRetour.tsx` (totaux `totauxDetailRetour` : remis, détaillé, reste, sans pièce formelle, retourné ; lignes « Modifier » ; reste « Détailler ») sur l'écran du retour et dans la Régularisation de la demande ; l'écran du retour affiche aussi l'historique de la demande. Le collaborateur voit les lignes à jour en lecture seule et l'historique.
 - **Historique** : `detaillage_retour` (« Dépenses détaillées par l'Assistant Finance » : saisie et « Détailler »), `modification_depense` (JSON avant/après dont le type, motif, phrase `resumeModificationDepense`), anciennes entrées `suppression_depense` toujours lisibles ; aucune migration ; la « catégorie » d'une dépense = son type (justifiée / sans pièce formelle), `DepenseLigne` n'ayant pas de catégorie.
+
+### Autonomie des articles (chantier en cours, lots A à F — décisions validées le 2026-10-13)
+
+Objectif : qu'un article d'une demande vive sa vie propre (bénéficiaire, pièces, décision, règlement, retour), sans casser le
+circuit. Chantier livré **par lots A à F, déployés en production seulement ensemble** : un état intermédiaire doit être sûr
+(jamais incohérent), pas forcément complet. Décisions validées, à appliquer telles quelles :
+
+1. **Étape Service** : le responsable valide la demande entière, avant la Finance. L'autonomie des articles commence à la Finance.
+2. **Un règlement concerne un seul article.**
+3. **Validation du DG** : comportement actuel conservé (règle des deux personnes), appliqué par article.
+4. **Article rejeté : définitif.** Si tous les articles sont rejetés, la demande repart en correction comme aujourd'hui.
+5. **Clôture** : au niveau de la demande, seulement quand tous les articles sont terminés. Retour de caisse et régularisation par article dès qu'il est réglé.
+6. **Garde 8** : bloquée si le compte est créateur ou bénéficiaire de l'article concerné.
+7. **Statut affiché** : les 11 valeurs sont conservées ; libellé « En cours » + compteur d'articles traités.
+8. **Budget** : consommé au règlement, jamais à la validation.
+9. **Devise** : unique par demande. **Date de livraison** : commune à la demande.
+10. **Reporting** : une ligne par demande pour l'instant.
+11. **Rappels 48 h** : un chronomètre par demande, remis à zéro à chaque événement d'un article.
+
+#### Lot A — bénéficiaire et pièces jointes par article, « Appliquer à tous » (2026-10-14)
+
+Ni le circuit, ni les étapes, ni les décisions, ni le règlement, ni les retours ne changent. Migration additive idempotente
+`20261014090000_articles_beneficiaire_pieces` : `LigneDemande.beneficiaireType`/`beneficiaireUserId`/`beneficiaireNom`
+(facultatifs, **vide = hérite**) et `PieceJointe.ligneDemandeId` (facultatif, clé `SET NULL`, plusieurs pièces par article,
+index). **Aucune colonne sur `Reglement`.**
+
+- **Héritage** (`backend/src/beneficiaireArticles.ts`, pur, partagé serveur/écran/PDF) : `Demande.beneficiaire*` reste le
+  bénéficiaire PAR DÉFAUT ; un article sans bénéficiaire propre en hérite. Les lignes existantes en base héritent toutes
+  (aucune reprise de données). Un article dont le bénéficiaire égale la valeur commune **n'enregistre rien** (règle appliquée
+  aussi côté serveur, `choixPropreArticle`, jamais seulement par le formulaire). Deux noms libres sont le même bénéficiaire à
+  la casse et aux accents près.
+- **Pièces** : une pièce d'article porte `demandeId` ET `ligneDemandeId` ; la **pièce commune** reste sur la demande
+  (`ligneDemandeId` vide), n'est jamais dupliquée, et s'affiche « Pièce commune » sous chaque article dès qu'au moins un
+  article a un bénéficiaire ou des pièces propres (`detailsArticles`, `VueDetailsArticles.detaille`). Une ligne retirée à la
+  correction laisse ses pièces sur la demande (clé `SET NULL`) : elles deviennent des pièces communes (limite assumée).
+- **Formulaire** (`DemandeForm`) : bloc « Détails communs » (bénéficiaire en 3 modes + pièce commune + bouton « Appliquer à
+  tous les articles ») ; sous chaque article « Détails de l'article » (`DetailsArticleEditeur`) avec le badge « Identique aux
+  autres » / « Personnalisé », plusieurs pièces (`PiecesJointesMultiples`) et le lien « Rétablir la valeur commune ».
+  « Appliquer à tous » remet le bénéficiaire de tous les articles sur la valeur commune (les pièces propres sont gardées) ;
+  **confirmation si au moins un article est personnalisé**. La date de livraison et la devise restent dans l'en-tête.
+- **Correction / resoumission** : `CorrectionDemande` et `corrigerEtResoumettre` portent le bénéficiaire (`undefined` =
+  inchangé, `null` = hérite) et les nouvelles pièces de chaque article ; les pièces déjà jointes sont conservées ; la version
+  recopiée dans l'historique mentionne le bénéficiaire propre d'un article. Le bénéficiaire par défaut de la demande n'est pas
+  modifiable à la correction.
+- **Affichage** : demandeur, responsable de service, DG et Finance montrent le bénéficiaire et les pièces de chaque article
+  (`DetailsArticle`/`detailsArticleDe`) ; l'en-tête, les listes, les reçus (règlement et retour), le bon de caisse et le
+  reporting disent **« Plusieurs bénéficiaires »** quand les articles diffèrent (`nomBeneficiaireDemande`), jamais un seul nom
+  à tort. Filtre et options du reporting : bénéficiaire de la demande **ou** d'un article.
+- **États intermédiaires sûrs** : (1) **garde 8** et **notifications** (« Demande à régler ») écartent le créateur et le
+  bénéficiaire de N'IMPORTE QUEL article (`comptesConcernesDemande`, `refusConflitInteret`, `beneficiairesArticlesUserIds`) ;
+  (2) **le règlement est refusé** (création, modification, confirmation) tant que les articles à payer n'ont pas tous le même
+  bénéficiaire : « Cette demande a plusieurs bénéficiaires : le règlement par article arrive prochainement. » **(⚠️ blocage LEVÉ par le lot D : chaque article se règle avec SON bénéficiaire)** — seuls les articles
+  VALIDÉS comptent quand il y en a (un article rejeté n'est jamais payé). L'annulation d'un règlement existant n'est pas bloquée.
+- **Téléchargement des pièces** : droits de la demande inchangés, étendus au bénéficiaire d'un article. Un compte qui est
+  bénéficiaire d'un article ne peut plus être supprimé définitivement (`supprimerUtilisateurAction`).
+- Vérifié : vitest (18 tests dans `beneficiaireArticles.test.ts`), tsc, eslint, `next build`, migration depuis zéro et rejouée
+  sans effet (`migrate diff` vide), `e2e/articles-beneficiaire-pieces.mjs` 34/34 (création par le vrai formulaire, base,
+  affichage demandeur/Finance, droits de téléchargement, règlement bloqué, correction) et `soumission-dg-article.mjs` 31/31.
+
+#### Lot B — décision Finance par article, statut et étape déduits des articles, files par article (2026-10-15)
+
+Applique les décisions 3, 4, 5, 6, 7, 8 et 11 de la section « Autonomie des articles ». Ni le règlement par article (lot D), ni les retours (lot E),
+ni le reporting (lot F) ne changent : le règlement reste au niveau de la demande (pot commun).
+
+**Modèle d'état d'un article** (module pur `backend/src/etatArticles.ts`, `etatLigneCircuit(ligne, mode)`) :
+
+| État | Quand | Qui l'attend |
+|---|---|---|
+| `A_DECIDER` | `EN_ATTENTE`, non soumis au DG | Finance |
+| `CHEZ_DG` | soumis, sans décision du DG (cas b `OBLIGATOIRE` : tout article en attente) | DG |
+| `VALIDEE_DG_A_CONFIRMER` | validé par le DG, `statutValidation` encore `EN_ATTENTE` | Finance (confirme, ne peut pas rejeter : DG définitif) |
+| `REFUSEE_DG_A_TRANCHER` | refusé par le DG | Finance (resoumet au DG ou rejette définitivement, jamais valide seule) |
+| `VALIDEE` / `REJETEE` | décision finale | personne — **définitif**, jamais de dévalidation |
+
+- **Décision par sous-ensemble** : `validerLignesAction(demandeId, decisions[])` accepte une décision (valider, ou rejeter avec motif ≥ 3) pour un
+  SOUS-ENSEMBLE d'articles, à des moments différents ; plus aucune obligation de couvrir toutes les lignes. La règle 4 (décision finale bloquée par le DG)
+  **disparaît** : la Finance décide les articles qu'elle ne soumet pas pendant que le DG examine les autres. Tout passe par `deciderArticles`
+  (`circuitDemandeDb.ts`) : verrou `FOR UPDATE`, `transition` du moteur, écriture des articles, **décideur Finance par article**
+  (`LigneDemande.decideurFinanceId`, posé à une VALIDATION par la Finance seulement — rejeter n'engage pas d'argent), recalcul du montant validé,
+  étape déduite, chronomètre remis à zéro, historique (une entrée par article + `decision_circuit`).
+- **Étape DÉDUITE des articles** (`etapeDepuisArticles`) : Service / À corriger / Abandonnée restent posées explicitement ; sinon **Finance** dès
+  qu'un article l'attend (prioritaire quand Finance et DG ont chacun des articles), **DG** s'il ne reste que des articles chez lui, **Terminée**
+  quand tous sont traités avec au moins un validé, **À corriger** quand tous sont rejetés (comme avant, niveau Finance ou DG). La colonne
+  `Demande.etapeCircuit` est CONSERVÉE et tenue à jour (rappels, file du Service, reporting la lisent) ; `REJET_DG` et `DECISION_FINALE` ne sont plus
+  produits pour une demande à articles (gardés pour la dépense directe et les anciennes demandes, déduits des articles à l'affichage).
+- **Statut déduit** (`statutDepuisLignes`, appelée par `calculerStatutDemande` qui reste le seul point d'écriture) : l'énumération garde ses 11
+  valeurs (aucune migration d'enum). Tant qu'un article n'a pas de décision finale : `EN_ATTENTE_VALIDATION` (aucun validé) ou `PARTIELLEMENT_VALIDEE`,
+  **affichés « En cours (x/n traités) »** (`affichageStatutDemande`, `libelleEnCours`). Tous traités avec au moins un validé : le statut suit le
+  règlement du SEUL montant validé → **« Réglée » est atteignable avec un article rejeté** (défaut de l'ancienne règle, qui comparait à la somme
+  demandée). Tous rejetés : `EN_ATTENTE_VALIDATION` + à corriger. Sans article (dépense directe) : règle d'origine inchangée.
+- **Montant validé = somme des articles validés**, recalculée après chaque décision (colonne `montantValide` conservée et resynchronisée par
+  `calculerStatutDemande` si elle dérive). **Règlement possible dès qu'un article est validé** (`peutEffectuerReglement` inchangée, sur `montantValide`) ;
+  l'Assistant Finance n'attend plus « la validation finale » : `executionOuverte` = au moins un article validé ; description/libellé/motif d'un article
+  par l'Assistant : seulement sur un article VALIDÉ.
+- **Rejet de la demande entière** (`REJETER`) : possible tant qu'AUCUN article n'est décidé ni examiné par le DG ; **interdit dès qu'un article est
+  validé** (ou validé par le DG), et — décision prise, plus stricte que la demande — dès qu'un article est rejeté ou chez le DG (un article rejeté est
+  définitif, or le renvoi en correction remet tous les articles à zéro : on rejette alors les articles restants un par un, et « tous rejetés » renvoie
+  en correction). `corrigerEtResoumettre` refuse aussi une demande dont un article est validé.
+- **Règle des deux personnes et garde 8** : le décideur Finance (colonne + chaque article, `decideursFinanceDemande`) et l'approbateur DG (colonne +
+  chaque décision d'article, `decideursDGDemande`) sont deux comptes distincts pour toute la demande ; `refusApprobationCloture` prend
+  `decideursFinanceIds` (« aucun des décideurs Finance de la demande »). Le **créateur** ne décide aucun article de sa demande ; le **bénéficiaire
+  d'un article** (le sien, sinon celui de la demande, `versLigneCircuit`) ne décide pas CET article (Finance et DG) : `MESSAGE_ARTICLE_BENEFICIAIRE`,
+  affichée sous l'article (`raisonDecision`). Il décide les autres. `supprimerUtilisateurAction` compte `decideurFinanceId`.
+- **Clôture** : comportement inchangé, mais `peutEtreCloturee` (seule lecture) exige tous les articles traités (aucun à décider ni chez le DG) et au
+  moins un validé ; l'approbation de clôture du DG (`approuverValidationCompleteAction`, file « Validations complètes en attente »
+  `VALIDATION_COMPLETE_EN_ATTENTE_WHERE`) n'est donnée/proposée que lorsque tous les articles sont traités. L'approbation acquise par les décisions du
+  DG (règle 5) est calculée par le moteur sur les articles finaux ; cas b : la décision du DG vaut approbation quand la demande se termine.
+- **Files et indicateurs = requêtes sur les ARTICLES** : `FILES_FINANCE_WHERE` (FINANCE = article non soumis à décider, REJET_DG = article refusé par le
+  DG, DECISION_FINALE = article validé par le DG ; dépense directe/anciennes demandes : par étape), `DEMANDES_A_TRAITER_FINANCE_WHERE` (indicateur
+  n° 1), `demandesEtapeDGWhere` (articles chez le DG, même quand la Finance en a d'autres ; cas b ; dépense directe à l'étape DG),
+  `DEMANDES_EN_ATTENTE_VALIDATION_WHERE`. La page « Demandes en attente de validation » classe une demande dans la première file où elle a quelque
+  chose à faire (jamais deux fois). « À régulariser » : tous les articles traités (comme la clôture).
+- **Écrans** : tableau des articles (`LignesValidationTable`) par article — décision d'un sous-ensemble, « Enregistrer (n articles) » dès une décision,
+  « Confirmer la validation » pour un article validé par le DG, « Rejeter définitivement » pour un article rejeté par le DG, compteur « x/n articles
+  traités », « Déjà validé : X — montant qui sera ajouté : Y » ; page Finance unifiée pour une demande à articles vivante (tableau + circuit + règlement
+  + régularisation + clôture sur le même écran) ; frise Finance/DG « en cours » ensemble avec compteur, phrase « En cours : x/n articles traités — en
+  attente de la Finance (n) et du DG (m) » ; bandeau « Des articles attendent la décision du DG, les autres ne sont pas bloqués ».
+- **Notifications et rappels** : l'étape ne changeant plus à chaque décision, `notificationsEtape(ctx, candidats, acteur, evenement)` prend un événement
+  (`ETAPE`, `DECISION_ARTICLES`, `SOUMISSION_DG`, `DECISION_DG`) : décision de la Finance → le demandeur (articles décidés, montant validé) et les
+  Assistants (« Demande à régler ») ; soumission → le DG seul ; le DG a fini son examen (plus d'article chez lui) → la Finance (articles à confirmer /
+  à trancher) ; chaque refus d'un article → la Finance (inchangé). Rappels : `notificationsRappel` renvoie un rappel PAR audience (Finance et DG peuvent
+  attendre ensemble). **Un chronomètre par demande** (`etapeCircuitDepuis`) **remis à zéro à chaque événement d'un article** (décision, soumission,
+  décision du DG) — avant, une soumission complémentaire à l'étape DG ne le changeait pas.
+- **Migration** `20261015090000_decision_finance_par_article` : `LigneDemande.decideurFinanceId` (+ clé étrangère `SET NULL`, index), idempotente ;
+  rattrape les articles déjà VALIDÉS (décideur = `decideParId`, ou `Demande.decideurFinanceId` pour un article validé par le DG ; aucun pour le cas b).
+  Aucune donnée de statut recalculée dans la migration.
+- **Reprise des données — script MANUEL, jamais dans une migration** : `backend/prisma/recalculer-statuts-articles.ts` (logique pure testée :
+  `repriseArticles.ts`). Recalcule, pour chaque demande à articles non terminale, le montant validé, l'étape (déduite) et le statut. **Simulation par
+  défaut** (liste les changements, n'écrit rien) ; `--appliquer` écrit (une transaction par demande, entrée d'historique `reprise_statut_articles`).
+  Idempotent. À lancer UNE fois après le déploiement : `cd backend && npx tsx prisma/recalculer-statuts-articles.ts` puis `... --appliquer`.
+- **Tests réécrits** (anciens comportements) : `circuitDemande.test` (3 : signature de `refusApprobationCloture`), `circuitLignesDG.test` (soumission
+  partielle, cas b, décision du DG, refus/resoumission, règle 4 → « n'est plus bloquée », clôture règle 5, notifications), `circuitNotifications.test` (1 :
+  rappel par audience), `soumissionDGEcran.test` (2 : Assistant et bandeau) ; e2e `soumission-dg-article.mjs` (3 attentes). Ajoutés : `etatArticles.test`
+  (31), `decisionArticles.test` (33), `repriseArticles.test` (7), e2e `articles-decision-finance.mjs` (65 contrôles).
+- **Limite assumée / point ouvert** : pour une demande à articles dont la Finance et le DG ont chacun des articles, `Demande.etapeCircuit` vaut Finance (priorité) ;
+  seuls les écrans/files qui lisent les articles montrent les deux. Le règlement reste un pot commun (lot D : un règlement par article).
+
+#### Lot B bis — un seul geste par article (2026-10-16)
+
+Retouche d'écran uniquement : aucune règle métier, permission ni migration ne change.
+- **Plus de cases à cocher ni de bouton global « Soumettre au DG »** sur le tableau des articles : le bouton « Soumettre au DG » (« Resoumettre » après
+  un refus du DG) de chaque article est le SEUL moyen de soumettre. L'interface n'envoie qu'un article ; `soumettreLignesAuDGAction` / `soumettreLignesAuDG`
+  gardent leur capacité à traiter une liste. Supprimés : `raisonBoutonGlobalSoumission`, `MESSAGE_COCHER_UN_ARTICLE`, `MESSAGE_AUCUN_ARTICLE_SOUMETTABLE`, la
+  sélection et son état. Introduction du bloc : `MESSAGE_INTRO_ARTICLES` (« Pour chaque article, la Finance choisit : Valider, Rejeter ou Soumettre au DG… »).
+- **Demande décidée d'office par le DG (émise par la Finance) ou émise par le DG** : une seule phrase au niveau de la demande (`CircuitFinanceActions`),
+  jamais de bouton « Soumettre au DG » pour une demande à articles ; le bouton de la demande entière ne subsiste que pour la dépense directe (sans article).
+- **Rappel de la demande en tête de chaque article** (`components/tresorerie/EnteteDemandeArticle.tsx`) : numéro, demandeur, service, date, devise
+  (interprétation minimale de « rattache en tête de la demande à chaque article »). Écrans Finance, DG (y compris cas b), Service et collaborateur.
+
+#### Lot D — règlement par article, parcours de l'article, documents (2026-10-16)
+
+Applique les décisions 2, 6 et 8 de la section « Autonomie des articles » (un règlement concerne un seul article ; garde 8 par article ; budget consommé
+au règlement). Le statut de la demande reste dérivé des articles (`statutDepuisLignes`, « En cours (x/n traités) ») : l'énumération n'a pas bougé. Le
+retour de caisse et la régularisation PAR ARTICLE sont le lot E (non codés) : ici, seulement leur lecture dans le parcours.
+
+- **Modèle** : `Reglement.ligneDemandeId` (facultatif, clé `RESTRICT`, indexé). Vide pour une dépense directe (règlement au niveau de la demande,
+  inchangé) et pour un règlement antérieur non rattaché. Migration `20261016090000_reglement_par_article` (additive, idempotente) qui rattache, sans doute
+  possible, les règlements des demandes dont **un seul article est validé** (aucune écriture de caisse touchée). Vérifiée depuis zéro, rejouée sans effet.
+- **Règle** (`backend/src/reglementArticle.ts`, pur, 17 tests) : on règle un article VALIDÉ sans toucher aux autres ; plusieurs règlements partiels d'un même
+  article, dans la limite de SON montant validé (`resteAReglerArticle`, centimes exacts) — le plafond n'est plus le pot commun de la demande.
+  `verdictReglementArticle` / `verdictConfirmationReglementArticle` (article choisi, de la demande, validé ; aucun règlement non rattaché ; montant) sont
+  appelés par la création, la modification et la confirmation (`reglementActions.ts`). L'article d'un règlement ne change jamais. Devise et date restent
+  communes à la demande. Le blocage « plusieurs bénéficiaires » du lot A est **supprimé** (`refusReglementPlusieursBeneficiaires` retirée).
+- **Budget** : l'allocation est 100 % vers la catégorie de l'article (`allocationsReglementArticle`), aucune si l'article n'est pas catégorisé (ancien article) ;
+  consommé à la confirmation uniquement (`getMontantConsommeCategorie`, inchangée). La répartition multi-catégories à saisir (`AllocationCategorieFields`,
+  `construireAllocations`) disparaît : un article n'a qu'une catégorie. Les anciens règlements gardent leurs allocations ; `getCategoriesConcerneesDemande`
+  n'est plus appelée (conservée).
+- **Garde 8 par article** : `refusExecutionPropreReglement(demande, article, userId)` (`circuitDemande.ts`, `comptesConcernesArticle`) n'écarte que le créateur
+  et le bénéficiaire de CET article ; le bénéficiaire d'un autre article peut régler celui-ci. Appliquée à la création, modification, confirmation, annulation
+  d'un règlement et, via `refusConflitInteret` / `refusExecutionPropreSurReglement`, à tout ce qui touche les retours de CE règlement (réception, détail,
+  remboursement…). Sans article visé (dépense directe, règlement non rattaché) : la garde de la demande entière, inchangée. Retour exceptionnel
+  post-clôture, description, libellés : toujours au niveau de la demande. Notification « Demande à régler » : n'écarte que le créateur et ceux qui sont
+  bénéficiaires de TOUS les articles validés (`beneficiairesBloquesReglement`).
+- **État intermédiaire sûr — règlements non rattachés** : une demande à articles qui a un règlement non annulé sans article (deux articles validés ou plus
+  avant le lot D : on ne devine pas lequel il a payé) est signalée sur l'écran Finance (`data-reglements-non-rattaches`) et **plus aucun règlement n'y est créé,
+  modifié ni confirmé** (`MESSAGE_REGLEMENTS_NON_RATTACHES`, côté serveur ET boutons grisés) ; l'annulation reste possible. Les retours de caisse et les
+  dépenses restent attachés à leur règlement (`calculerMontantARetournerNet` est par règlement) : rien n'est attribué à un article au hasard, et le
+  parcours n'affiche que les règlements rattachés. Le retour exceptionnel post-clôture (niveau demande) rend la régularisation d'un article **indéterminée**
+  dès que deux articles ont un règlement Caisse : « Régularisé » n'est alors jamais affiché (note explicative).
+- **Reprise** : `backend/prisma/comptage-reglements-articles.sql` (lecture seule, à lancer en production AVANT le déploiement : nombre de demandes rattachées
+  par la migration / AMBIGUËS, et liste de ces dernières) ; `backend/prisma/recalculer-reglements-articles.ts` (logique pure `repriseReglements.ts`, simulation
+  par défaut) — liste les cas `[AMBIGU]` avec leurs règlements et articles validés, `--affecter ID_REGLEMENT:ID_ARTICLE --appliquer` rattache un règlement
+  (refus si l'article n'est pas validé, étranger à la demande, ou si le total réglé de l'article dépasserait son validé), `--automatique --appliquer` rattache
+  les cas à un seul article validé qui auraient échappé à la migration. Idempotent ; une entrée d'historique `rattachement_reglement_article` par demande ;
+  jamais une écriture de caisse.
+- **Parcours de l'article** (`backend/src/parcoursArticle.ts` pur, 12 tests ; chargé par `getParcoursArticles(demandeId)` ; composant
+  `components/tresorerie/ParcoursArticle.tsx`, branché dans `detailsArticleDe(vue, ligneId, parcours)` donc sur les cartes d'articles du demandeur, du
+  responsable de service, de la Finance/Assistant et du DG) : badge d'état (En attente, Rejeté, Validé, Partiellement réglé, Réglé, Retour en attente,
+  Régularisé), montants clés (validé, réglé, reste, retour attendu / reçu) et SEULES les étapes atteintes — Validé (par qui, quand, montant ; « confirmé par la
+  Finance » si le DG avait validé) → Réglé (date, montant, mode, bénéficiaire) → Retour de caisse (attendu / reçu, règlements Caisse rattachés) → Régularisé
+  (tous les règlements Caisse de l'article à solde nul, article soldé). Banque : jamais de retour ni de régularisation.
+- **Documents** (reçu de règlement, bon de caisse, reçu de retour) : bloc « Article concerné » (libellé, bénéficiaire, montant de l'article ; le reçu y ajoute le
+  réglé à ce jour et le reste de l'ARTICLE) et rappel de la demande (numéro, demandeur, service) (`lib/pdf/articleReglement.ts`, `ArticleSection`,
+  `RappelDemande`). Le libellé est celui de la Finance ; le demandeur sans droit Finance reçoit sa propre version (`libelleDemandeur ?? libelleOriginal`).
+  **Décision à confirmer** : le bon de caisse, jusque-là « volontairement minimaliste », affiche désormais le montant de l'ARTICLE (demandé par le lot) mais
+  toujours ni total réglé ni reste de la demande. Les écrans « Retours en attente » et le détail d'un retour nomment l'article ; la section « Retours de caisse »
+  du demandeur et sa liste de règlements aussi.
+- **Écran Finance** (`ReglementsSection`) : montants de la demande, puis un bloc PAR ARTICLE VALIDÉ (libellé, bénéficiaire, validé / réglé / reste, ses règlements,
+  son formulaire — champ caché `ligneDemandeId`). Boutons visibles mais grisés, avec la phrase, pour le conflit d'intérêts de CET article. `modifierReglementAction`
+  perd son 4ᵉ paramètre (répartition).
+- **Vérifié** : vitest (52 nouveaux tests dont `reglementArticle`, `parcoursArticle`, `repriseReglements` ; garde 8 par article), `tsc`, `eslint`, `next build` ;
+  migration depuis zéro, `migrate diff` vide, rattachement SQL testé (un article validé → rattaché ; deux → intact ; rejeu sans effet) ;
+  e2e `reglement-par-article.mjs` 55/55 sur base jetable (valider 2 articles sur 3, régler l'un en deux fois puis l'autre, C reste en attente, budget consommé
+  article par article, plafond de l'article refusé par le serveur, garde 8 par article contournée par un envoi direct, demande ambiguë bloquée puis débloquée par
+  le script, retour déclaré puis reçu dans le parcours, PDF lus avec `pdftotext`) ; `articles-beneficiaire-pieces.mjs` 34/34 (section règlement réécrite),
+  `soumission-dg-article.mjs` 37/37, `articles-decision-finance.mjs` 65/65.
+
+#### Lot E — retour de caisse et régularisation par article (2026-10-17)
+
+Applique les décisions 5 et 6 de la section « Autonomie des articles » : un article réglé (`Reglement.ligneDemandeId`, lot D) a SON retour de
+caisse, SES dépenses et SON solde à régulariser ; les autres articles restent en attente ou suivent leur cours. Aucune écriture de caisse
+existante n'est jamais modifiée ; un retour nul reste de l'historique seulement. Reporting, export et dashboard par article : lot F (non fait).
+
+- **`getEcartLigne`** (`backend/src/regularisationArticle.ts`, PUR, centimes exacts, jamais plafonné à 0) = fonds remis − dépenses (justifiées +
+  sans pièce formelle + reste non détaillé) − retours reçus. **Une seule formule** : `getEcart(demandeId)` (= `getEcartDemande`), l'écart de
+  `getMesDemandesDetail`, celui de chaque article et le total affiché la reprennent. Classement d'une dépense (`categorieDepense`) : justifiée ;
+  « sans pièce formelle » (sans pièce + motif Finance ou autre libellé) ; « reste non détaillé » (libellé « Dépenses non détaillées » sans motif).
+  Retours reçus = retours réceptionnés + retours exceptionnels validés − remboursements validés.
+- **`agregerRegularisation`** (pur) répartit règlements, retours, dépenses, remboursements et retours exceptionnels entre les articles et une part
+  **« non rattachée »** (règlements sans article, leurs retours/dépenses, retours exceptionnels sans article). **Invariant testé** : Σ articles + non
+  rattaché = solde de la demande (`getEcart`). `getRegularisationParArticle` (`regularisationArticleDb.ts`) charge le tout : par article libellé,
+  libellé du demandeur, bénéficiaire, montant validé, agrégats, solde, état (`etatRegularisationArticle` : non validé / en attente de règlement /
+  à régulariser / régularisé / anomalie), date de régularisation (`dateRegularisation` : la plus récente des dates qui ont fait évoluer l'article,
+  solde nul seulement), retours en attente. `getResumeArticle` + `ArticleTag` nomment un article (« Article : X · Bénéficiaire : Y · Montant validé : Z »).
+- **Retour exceptionnel post-clôture par article** : migration `20261017090000_retour_exceptionnel_par_article` (`RetourExceptionnel.ligneDemandeId`,
+  FK RESTRICT, index ; rattrape les retours des demandes à UN SEUL article validé, rejouée sans effet ; deux articles validés ou plus : laissé sans
+  article, jamais deviné). Saisie : article validé obligatoire sur une demande à articles, plafond = fonds remis de l'article − ses retours reçus,
+  un retour en attente par article, garde 8 de CET article (`refusConflitInteret` accepte `{ demandeId, ligneDemandeId }` et lit l'article d'un
+  `retourExceptionnelId`) ; **refusée tant qu'un règlement non annulé n'est rattaché à aucun article** (`MESSAGE_REGLEMENTS_NON_RATTACHES`).
+  Validation : la part qui couvre le solde de l'article ne réduit aucune dépense, l'excédent réduit d'abord ses dépenses sans pièce formelle puis
+  son « non détaillé », jamais ses justifiées, et jamais les dépenses d'un autre article. `getSoldesARegulariserParReglements` et
+  `getCouvertureRetoursPostCloture` n'imputent un retour exceptionnel rattaché que sur les règlements/retours de son article ; un ancien retour sans
+  article garde l'imputation par ancienneté sur la demande.
+- **État « indéterminé » du lot D** : ne subsiste que pour un retour exceptionnel SANS article sur une demande dont deux articles ou plus sont réglés
+  en Caisse (message mis à jour) ; les données rattachées sont précises. Le parcours de l'article affiche « Régularisé le <date> » avec le détail
+  (fonds remis − dépenses − retours reçus, dont sans pièce formelle / reste non détaillé) et le **solde final**.
+- **Écrans** : `RegularisationSummary` (Finance, Assistant, demandeur — prop `audience`) = un bloc PAR ARTICLE validé (en-tête « Article : … »,
+  bénéficiaire, montant validé, badge d'état/date, six chiffres, puis le détail de SES retours/dépenses avec leurs actions « Détailler »,
+  « Modifier », « Justifier »), un article validé sans règlement « en attente de règlement », une mention des articles rejetés/non décidés, un bloc
+  « Non rattaché à un article » (avertissement, jamais attribué), puis « Total de la demande » (« x article(s) régularisé(s) sur n ») ; une demande
+  sans article (dépense directe) garde un seul bloc. `DetailDepensesRetour` nomme l'article en tête et sur chaque carte de dépense ; détail du retour
+  Finance, « Retours en attente », « À régulariser » (solde de chaque article), « Fonds remis à régulariser », « Dépenses sans pièce formelle à
+  suivre », « Retours à déclarer », section de retours du demandeur (libellé d'origine) et notifications de retour (`lib/nomArticle.ts`) nomment l'article.
+- **Clôture (⚠️ remplacé par le lot C : voir plus bas — tous les articles doivent être terminés ou la clôture forcée)** : la clôture reste au niveau de la demande et exigeait tous les articles décidés + au moins un validé +
+  approbation du DG (`peutEtreCloturee`) ; elle n'exige PAS que chaque article validé soit réglé ni à solde nul (le message « x article(s)
+  régularisé(s) sur n » est informatif, `articleTermine`). Décision ouverte : faut-il exiger le règlement/la régularisation de chaque article ?
+- **Reprise** : aucun script pour rattacher un ancien retour exceptionnel sans article (cas ambigu, signalé à l'écran) — à ajouter si le cas se présente.
+- **Vérifié** : vitest (16 tests `regularisationArticle`, 715 au total, seul échec connu `feedback.test.ts`), tsc, eslint, `next build` ; migration depuis
+  zéro, `migrate diff` vide, rattrapage contrôlé (1 article validé rattaché, 2 laissés sans article, rejeu sans effet) ; e2e `regularisation-par-article.mjs`
+  38/38 (A régularisé + retour + dépenses, B réglé avec dépenses sans retour, C en attente, Z avec reste non détaillé ; soldes indépendants ; clôture
+  seulement une fois tous les articles décidés ; retour exceptionnel d'un article avec refus sans article / au-delà du plafond, dépenses d'un autre
+  article intactes ; ancien retour sans article non rattaché ; règlements non rattachés bloquants ; invariant avec un calcul SQL indépendant) ;
+  régression `reglement-par-article` 55/55, `articles-decision-finance` 65/65, `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
+
+#### Lot G — date de livraison par article, règlements Caisse + Banque partout, retour d'un fonds bancaire, reçus détaillés, récapitulatif, reporting des retours (2026-10-14)
+
+Ajustements après tests, au-dessus du lot E. Principe comptable inchangé : **on ne modifie jamais une écriture de caisse existante**.
+Migrations `20261018090000_date_livraison_article` et `20261018100000_retour_versement_bancaire` (additives, idempotentes, rejouées sans effet).
+
+**1. Date de livraison par article.** `LigneDemande.dateLivraison` (`DATE`, nullable). **La « date commune » du formulaire était DÉJÀ une date de
+livraison** (`Demande.dateLivraisonSouhaitee`, « Date de livraison souhaitée ») : aucun second champ « date commune » n'a été créé, elle reste la date
+commune de la demande (relibellée « Date de livraison commune », déplacée dans « Détails communs »). À l'enregistrement, un article sans date propre reçoit
+une **copie** de la date commune (`dateLivraisonAEnregistrer`, jamais un héritage dynamique) ; un ancien article reste vide, affiché « — », sans reprise.
+La date de création de la demande reste unique (`createdAt`). Module pur `backend/src/dateLivraisonArticle.ts` (refus d'une date passée, la date du jour
+admise ; à la correction, seule une date saisie ou modifiée est réexaminée). Formulaire de création **et** de correction : champ par article + bouton
+« Appliquer la date à tous les articles » (`corrigerEtResoumettre` : `LigneCorrigee.dateLivraison`, absent = inchangé, vide = effacée). Affichée « Livraison : … »
+sur chaque carte d'article (demandeur, Service, Finance/Assistant, DG : `detailsArticles` → `DetailsArticle`), dans les PDF (bloc « Article concerné ») et dans
+la colonne « Lignes d'articles » du reporting.
+
+**2. Règlements Caisse ET Banque dans tous les calculs.** Audit puis correction. Un règlement Banque **n'impacte jamais `JournalCaisse`** (inchangé) mais compte
+comme fonds remis pour l'article partout. Endroits qui ne lisaient que la Caisse, corrigés : parcours de l'article (`parcoursArticle(Db)` : soldes, retours et
+« Régularisé » sur tous les règlements confirmés), « Fonds remis à régulariser » (`getFondsRemisARegulariser`, page et libellé « Montant réglé (Caisse/Banque) »),
+reporting « Fonds remis » (`getFondsRemisParDemande`, allocations `total`), `estFicheRegularisation`, `estRetourNul`, bouton « Détailler » et déclaration de
+l'Assistant sur un règlement Banque, notification « Retour de caisse à déclarer » (aussi pour la Banque), reporting « Retours » (nul). Déjà corrects (vérifiés,
+mode ignoré) : montant réglé, reste à régler, plafond de l'article, badges Partiellement réglé/Réglé, budget consommé (allocations), `getEcartLigne`,
+`getSoldesARegulariserParReglements`. Un même article peut avoir plusieurs règlements mixtes (60 000 Caisse + 40 000 Banque = 100 000).
+- **⚠️ Le retour en espèces via déclaration/réception décrit ci-dessous est REMPLACÉ par le lot G bis** (retour externe rattaché) ; la justification par dépenses détaillées reste.
+- **Décision (réponses de l'utilisateur)** : un fonds versé par banque se justifie par les mêmes dépenses détaillées (même circuit que la Caisse, sans retour obligatoire) ;
+  **son retour est rendu en espèces à la caisse** : `receptionnerRetourAction` écrit une `ENTREE` `JournalCaisse` (comme un retour Caisse). Le formulaire du
+  collaborateur est identique (date + montant, plus de bordereau ni de `JournalBanque` `RETOUR`) ; `declarerRetourAssistantAction(reglementId, motifReouverture?)` perd ses
+  paramètres `bordereauUrl`/`montantRetourneBanque`.
+- **Anciens retours Banque conservés** : `RetourCaisse.versementBancaire` (posé par la migration pour les retours qui ont une ligne `JournalBanque` `RETOUR`). Pour eux :
+  non modifiables, réception **sans** écriture de caisse, jamais « nuls », ni fiche de régularisation, ni complément/remboursement. Tout nouveau retour : `false`.
+- **Conséquence assumée** : tout règlement Banque confirmé affiche désormais un solde à régulariser tant que ses dépenses ne sont pas détaillées (la production a été purgée le
+  26/09 : peu de données).
+
+**3. Reçus détaillés.** `lib/pdf/historiqueDocument.ts` (`chargerHistoriqueDocument`, mêmes agrégats que l'écran) + `HistoriqueSection` : reçu de règlement **et** reçu de
+retour listent chaque règlement de l'article (référence, date, mode, auteur, « ce reçu »), le total réglé, chaque retour de caisse (état, qui), chaque dépense déclarée (justifiée /
+sans pièce formelle / non détaillée), puis le solde final (fonds remis − dépenses − retours reçus). Sans article : toute la demande. Article nommé (version Finance pour la
+Finance, d'origine pour le demandeur), demande rappelée, date de livraison. **Le bon de caisse reste volontairement minimal** (document remis en main propre : pas d'historique), il gagne
+seulement la date de livraison. Aucun motif Finance ni catégorie n'est imprimé.
+
+**4. Récapitulatif du collaborateur.** `getRecapRetourCaisse` (`recapRetourCaisseDb.ts`) + `RecapRetourCaisse.tsx`, sur la page de détail de SA demande : un bloc par article
+(libellé d'origine) puis le total de la demande — fonds reçus (dont Caisse / Banque), retours de caisse (déclarés, reçus, en attente), dépenses justifiées, sans pièce formelle,
+reste non détaillé, solde, état. Aucune information de gestion interne. **Vue d'ensemble de toutes ses demandes** : déjà couverte par « Mon tableau de bord » (état de régularisation
+par demande) — non dupliquée.
+
+**5. Reporting des retours de caisse.** `getReportingRetoursCaisse` + `reportingRetourCaisse.ts` (pur) : une ligne par retour — article d'origine (libellé Finance **et** libellé du
+demandeur, bénéficiaire, montant validé, date de livraison), règlements de l'article (Caisse/Banque, dont Caisse, dont Banque), demande (numéro, demandeur, service), retour (état, déclaré,
+réception, nature, montants). Tableau sur `/treso/finance/reporting` (`ReportingRetoursTable`) et feuille Excel « Retours de caisse » (mêmes colonnes `COLONNES_REPORTING_RETOUR`). Le reste du
+reporting par article reste le lot F.
+
+**Vérifié** : vitest (16 nouveaux tests ; 731 au total, seul échec connu `feedback.test.ts`), tsc, eslint (backend + frontend), `next build` ; migrations depuis zéro, `migrate diff` vide, rejeu
+sans effet, rattrapage `versementBancaire` testé (retour avec `JournalBanque` RETOUR → `true`, autre → `false`) ; e2e `lot-g.mjs` 65/65 (formulaire de création et de correction, dates, « — » pour un ancien
+article, article de 100 000 réglé 60 000 Caisse + 40 000 Banque : solde de caisse inchangé par la Banque, budget 100 000, régularisation, retour d'un fonds bancaire rendu en espèces puis écrit en
+caisse, ancien retour bancaire inchangé, 3 PDF, récapitulatif, reporting et export) ; régressions `regularisation-par-article` 38/38, `reglement-par-article` 55/55, `articles-decision-finance` 65/65,
+`soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
+
+#### Lot G bis — le retour d'un fonds versé par banque passe par le retour externe rattaché (2026-10-19)
+
+Décision de l'utilisateur, qui remplace le circuit du lot G pour la Banque : « les retours de banque sont gérés par le retour externe, que seule la Finance peut faire,
+qui peut se rattacher en indiquant les références de la demande et de l'article ; c'est alors que ce retour entre dans le solde de la caisse ». Réponses aux trois questions
+posées : le retour rattaché **compte comme retour reçu** (il réduit le solde à régulariser) ; le circuit collaborateur/Assistant est **supprimé pour la Banque** ;
+le rattachement est **facultatif** (un retour externe sans demande reste possible, cas du chèque).
+
+- **Modèle** : `RetourExterne.demandeId` / `ligneDemandeId` (facultatifs, clés `RESTRICT`, index) — migration additive idempotente `20261019090000_retour_externe_rattache`,
+  rejouée sans effet. Les retours externes existants restent non rattachés. Rattaché → ET `ENTREE` `JournalCaisse` (`retour_externe`, inchangée), ET retour reçu de l'article.
+- **Règles pures** (`backend/src/retourExterneRattache.ts`, 6 tests) : article **obligatoire** pour une demande à articles, **interdit** pour une dépense directe, article de la
+  demande ; au moins un règlement **Banque** confirmé non annulé sur le périmètre ; **plafond** = min(fonds Banque du périmètre − retours externes déjà rattachés,
+  solde à régulariser du périmètre), jamais négatif. Chargement : `retourExterneRattacheDb.ts` (`chargerContexteRattachement`, `chercherDemandeRattachable`).
+- **Action** `creerRetourExterneAction(..., demandeId?, ligneDemandeId?)` : même garde (`treso.creer_retour_externe`, Responsable Finance seul), plus **garde de conflit d'intérêts**
+  (`refusConflitInteret` sur `{ demandeId, ligneDemandeId }` : jamais le demandeur/bénéficiaire de l'article), verrou `pg_advisory_xact_lock` par (demande, article) pour que deux
+  retours simultanés ne dépassent pas le plafond. Historique `retour_externe_rattache` sur la demande (visible du collaborateur) ; **notification du demandeur** (référence de la
+  demande + libellé de l'article). `chercherDemandeRattachableAction(reference)` retrouve la demande (insensible à la casse) et liste les articles ayant des fonds Banque.
+- **Écran** `/treso/finance/retours-externes` : case « Rattacher à une demande », référence → « Rechercher » → choix de l'article (fonds banque, déjà retourné, solde à régulariser
+  rappelés) ; la liste indique « Rattaché à la demande DEM-… · article … ». Excel « Retours externes » : colonnes « Demande rattachée » et « Article rattaché ».
+- **Compte comme retour reçu** (jamais pour un retour non rattaché) : `getRetoursRecus`, `getAgregatsRegularisation` (donc `getEcartLigne` de l'article, `RegularisationSummary`,
+  parcours, `getRecapRetourCaisse`), `getSoldesARegulariserParReglements` (imputé comme un retour exceptionnel : sur les règlements de l'article, du plus ancien au plus récent,
+  après la soustraction des dépenses et retours de chaque règlement), « Mon tableau de bord », reporting « Fonds remis » et « une ligne par demande » (colonne Retours),
+  `calculerMontantARetournerNet` (un fonds Banque n'a plus à expliquer ce qui est déjà revenu). Parcours : étape « Retour enregistré par la Finance » ; récapitulatif du collaborateur :
+  « dont X enregistrés par la Finance » ; reçus PDF : section « Retours enregistrés par la Finance (fonds versé par banque) ».
+- **Circuit supprimé pour la Banque** (serveur ET écran) : `creerRetourCaisseAction`, `declarerRetourAssistantAction` et `receptionnerRetourAction` refusent un règlement `BANQUE`
+  (`MESSAGE_RETOUR_BANQUE_PAR_RETOUR_EXTERNE`) ; `getReglementsCaisseADeclarer` et la notification « Retour de caisse à déclarer » redeviennent **Caisse seulement** ;
+  `RETOUR_EN_ATTENTE_WHERE` exclut les retours Banque non anciens. Le collaborateur voit « c'est la Finance qui enregistre le retour » ; la Finance voit un renvoi vers « Retour externe ».
+  **L'Assistant détaille toujours les dépenses d'un fonds bancaire** (`detaillerDepensesReglementAction`) : la fiche créée n'est qu'un support (badge « Détail des dépenses », jamais « en attente
+  de réception », absente de « Retours en attente », du parcours et du récapitulatif) ; son « montant à rendre » n'est plus que calculé, jamais réceptionné. **Anciens retours Banque**
+  (`versementBancaire = true`) : traitement d'origine inchangé (réception sans écriture de caisse).
+- **Limites / décisions ouvertes** : (1) article avec plusieurs règlements Banque : le plafond et `calculerMontantARetournerNet` raisonnent au niveau de l'article (retour externe imputé
+  sur les règlements dans l'ordre d'ancienneté) ; (2) pas de garde `CLOTUREE` sur le rattachement (Finance, effet immédiat, comme le retour externe) ; (3) « Mon tableau de bord » du
+  collaborateur ne compte toujours pas les retours exceptionnels validés (écart préexistant, non corrigé) mais compte les retours externes rattachés ; (4) un retour externe rattaché ne se
+  corrige pas (comme tout retour externe : écriture définitive).
+- **Vérifié** : vitest (7 nouveaux tests, 737 pass + échec connu `feedback.test.ts`), tsc, eslint, `next build` ; migration depuis zéro, `migrate diff` vide, rejeu sans effet ; e2e
+  `lot-g-bis.mjs` 35/35 (article 100 000 = 60 000 Caisse + 40 000 Banque ; plus de déclaration pour la Banque ; rattachement par référence, refus hors plafond, caisse +15 000, solde 0,
+  second retour refusé, retour non rattaché autonome) ; `lot-g.mjs` adapté 60/60 ; régressions `regularisation-par-article` 38/38, `reglement-par-article` 55/55,
+  `articles-decision-finance` 65/65, `soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34.
+
+#### Lot G ter — reste non détaillé et bouton « Détailler » du fonds banque dans le bloc de l'article (2026-10-20)
+
+Correctif d'affichage et de calcul, **aucune migration, aucune écriture de caisse touchée**. Cas de référence : article de 571 000 = 471 000 Caisse + 100 000 Banque,
+100 000 retournés, dépenses 300 000 justifiées + 71 000 sans pièce → solde 100 000. Avant : « Reste non détaillé » = 0, bande « REMIS 471 000 » (Caisse seule), aucun
+« Détailler » pour le fonds banque dans le bloc de l'article (le bouton n'existait que dans la section « Retours de caisse »).
+
+- **Une seule source du reste non détaillé** (`regularisationArticle.ts`, pur) : `resteNonDetailleTotal(a) = resteNonDetaille (lignes de reste stockées) +
+  max(0, solde − retoursEnAttente)` — les fonds remis (Caisse ET Banque) ni retournés, ni détaillés, ni annoncés en retour. Le **solde** (`getEcartLigne`) est inchangé.
+  Nouveau champ d'agrégat `retoursEnAttente` : retours déclarés non réceptionnés « attendus » (hors fiches de détail et hors fiche d'un fonds bancaire non ancien,
+  `EntreeRetour.attendu`, posé par `getAgregatsRegularisation`). Utilisée par `RegularisationSummary` (article et total), `RecapRetourCaisse`, le parcours de l'article
+  (`parcoursArticle`) et les reçus PDF (ligne « Dont reste non détaillé », seulement si > 0).
+- **Bloc de l'article = un sous-bloc par règlement confirmé** (`DetailReglements`, `data-regularisation-reglement`) : titre « Règlement Caisse/Banque — X FCFA » et
+  bande Remis / Détaillé / Reste non détaillé / Sans pièce formelle / Retourné **propre à ce règlement** (la Caisse et la Banque ne sont plus mélangées). Un règlement sans
+  retour ni fiche affiche `DetailReglementSansRetour` (reste = `calculerMontantARetournerNet`, retours externes rattachés déduits) et **« Détailler les dépenses »** pour
+  l'Assistant Finance (garde 8 par article, demande non clôturée) ; la fiche d'un fonds bancaire (`DetailDepensesRetour`) dit « Reste non détaillé » (et non « Reste à rendre »),
+  calculé sur ce qui reste à expliquer sur le règlement. Le doublon avec le bouton de la section « Retours de caisse » est accepté.
+- **Décisions ouvertes** : (1) un retour déclaré mais pas encore réceptionné n'est pas du « non détaillé » (il est annoncé) — nuance par rapport à « remis − retours − détaillé » ;
+  (2) pour un article à plusieurs règlements banque, les retours externes sont imputés au niveau de l'article ; (3) le Responsable Finance (sans `receptionner_retour`) voit les chiffres de
+  l'article mais pas les sous-blocs ni le bouton, comme avant.
+- **Vérifié** : vitest (5 tests du cas exact dans `regularisationArticle.test.ts`, 742 pass + échec connu `feedback.test.ts`), tsc, eslint, `next build` ; e2e `lot-g-ter.mjs` 22/22
+  (571 000 → reste 100 000, sous-blocs Caisse/Banque, bouton visible, détail par l'écran → reste 0, solde 0, « Régularisé », caisse inchangée, reçu PDF et récapitulatif collaborateur) ;
+  régressions `lot-g-bis` 35, `lot-g` 60, `regularisation-par-article` 38, `reglement-par-article` 55, `articles-decision-finance` 65, `soumission-dg-article` 37, `articles-beneficiaire-pieces` 34.
+
+#### Lot G quater — bande « Total de l'article » au-dessus des sous-blocs par règlement (2026-10-21)
+
+Affichage seulement : **aucune migration, aucune écriture de caisse créée ni modifiée**. Constat : dans le bloc « Régularisation » d'un article à plusieurs règlements, la bande
+Remis / Détaillé / Reste non détaillé / Sans pièce formelle / Retourné du sous-bloc Caisse ne reflétait que la caisse (« Remis 471 000 » pour un article de 571 000).
+- **`totauxBandeArticle(agregats)`** (`regularisationArticle.ts`, pur) : Remis = fonds remis (Caisse + Banque), Détaillé = justifiées + sans pièce formelle, Sans pièce = sans pièce formelle,
+  Retourné = retours reçus, **Reste = `resteNonDetailleTotal`** (aucun second calcul). Composant `BandeTotauxArticle` (`data-bande-total-article`), placé par `DetailReglements`
+  (`RegularisationSummary`) **au-dessus** des sous-blocs, **seulement si l'article a plus d'un règlement confirmé** (un seul règlement : pas de bande, la bande du règlement fait foi).
+  Même bande « Total de la demande » pour une demande sans article à plusieurs règlements, « Total non rattaché » pour la part non rattachée.
+- Sous-blocs rebaptisés **« Détail du règlement Caisse/Banque — X FCFA »**, avec leur bande propre inchangée.
+- Récapitulatif du collaborateur et reçus PDF : **aucune modification** — ils affichent déjà des totaux d'article (fonds reçus Caisse + Banque, reste non détaillé via `resteNonDetailleTotal`, solde),
+  jamais de bande par règlement.
+- **Vérifié** : vitest (3 tests `totauxBandeArticle`, dont 471 000 + 100 000 / 400 000 + 71 000 / 100 000 retournés → 571 000, 471 000, 0, 71 000, 100 000), tsc, eslint, `next build` ;
+  e2e `lot-g-ter.mjs` 31/31 (bande avant/après détail, position au-dessus des sous-blocs, cas 400 000 + 71 000, article à un seul règlement sans bande, caisse inchangée) ;
+  régressions `lot-g-bis` 35, `lot-g` 60, `regularisation-par-article` 38, `reglement-par-article` 55, `articles-decision-finance` 65, `soumission-dg-article` 37, `articles-beneficiaire-pieces` 34.
+
+#### Lot H — libellés de dates et du menu (2026-10-22)
+
+Affichage seulement : **aucune migration, aucune nouvelle colonne, aucun calcul modifié, aucune route ni URL changée**.
+
+**1. Trois dates distinctes, libellées partout.**
+- **« Demande créée le … »** (`Demande.createdAt`, une seule date pour toute la demande) : en-têtes « Créée le » de toutes les listes (Mes demandes, Accueil du collaborateur, Toutes les demandes, Demandes à catégoriser,
+  Mon service, Étape DG), descriptions des pages de détail (collaborateur, Finance, Service, DG : « Demande créée le … par … »), rappel en tête de chaque article (`EnteteDemandeArticle`), les trois PDF (reçu de règlement, bon de caisse, reçu de retour :
+  `RappelDemande`/« Détails de la demande »), colonne du reporting par demande et de l'export Excel.
+- **« Livraison prévue le … »** (`LigneDemande.dateLivraison`, lot G, « — » si absente) : carte d'article (remplace « Livraison : »), bloc « Article concerné » des PDF (remplace « Date de livraison »), « lignes d'articles » du reporting (« livraison prévue le … »),
+  colonne « Livraison prévue le » du reporting des retours de caisse.
+- **« Géré le … »** — **déduit des événements du parcours, sans colonne** : `parcoursArticle(...).gere` (module pur `parcoursArticle.ts`, `derniereGestion`) = date du **dernier événement daté** de l'article parmi : décision (Validé / Rejeté : `decideAt`), règlement confirmé non annulé (`Reglement.confirmeAt`),
+  retour de caisse (réception `receptionneAt`, sinon déclaration `createdAt`), retour externe rattaché (`creeAt`), régularisation (`regulariseAt`, étape « Régularisé » seulement quand l'article l'est). À date égale, l'étape la plus avancée du parcours l'emporte. Affiché « Géré le 05/10/2026 (réglé) » (`libelleGestionArticle`),
+  « Géré le — » tant que l'article n'a pas été traité. Cartes d'articles (via `ParcoursArticleView`, `data-gere-le`) et reçus PDF de règlement et de retour (« Géré le » du bloc « Article concerné », `ArticleDocument.gereLe`).
+  **Le bon de caisse reste minimal** (il gagne « Demande créée le » et « Livraison prévue le », pas « Géré le »).
+- **Au niveau de la demande** (`backend/src/dateGestionDemande.ts`, `getDatesGestionDemandes(ids)`, 5 requêtes groupées pour toute une liste) : même règle sur tous les événements de la demande + **clôture** (`HistoriqueEntry` `cloture_totale`/`cloture_partielle`) ; le nom « Régularisé » n'y est pas produit (il demanderait le solde de chaque règlement ; la date, elle, est identique).
+  Colonne « Géré le » : Mes demandes, Accueil du collaborateur, Toutes les demandes, reporting écran et Excel (feuille « Demandes », colonne `gereLe`), description des pages de détail collaborateur et Finance. Pas de colonne « Géré le » dans les files de tâches en cours (Service, DG, à catégoriser) : rien n'y est encore géré.
+- Autres libellés précisés : date d'une dépense (« Dépense du … »), saisie d'un règlement (« règlement saisi le … »), décision d'un article (« Par X le … »), feuilles annexes de l'export (« Date du mouvement » pour les mouvements banque, « Date du retour externe », « Date de l'écriture » pour le journal de caisse).
+  Les horodatages du journal d'historique restent « auteur — date » (événement de l'historique).
+
+**2. Menu.** Seuls les libellés changent (routes inchangées), mêmes tests de visibilité :
+| Rôle (seed) | Avant | Après |
+|---|---|---|
+| Collaborateur, Responsable de service | Tableau de bord · Mon tableau de bord | Tableau de bord · **Accueil** |
+| Finance (Responsable) | Tableau de bord · Tableau de bord Finance · Mon tableau de bord | Tableau de bord · **Accueil Finance** · **Accueil** |
+| Assistant Finance | Tableau de bord · Mon tableau de bord | Tableau de bord · **Accueil** (pas de tableau Finance : `treso.voir_dashboard_finance` absente) |
+| DG | Tableau de bord · Tableau de bord Finance · Mon tableau de bord | Tableau de bord · **Accueil Finance** · **Accueil** |
+| RH, Admin, Encaissements | Tableau de bord | Tableau de bord (inchangé) |
+Titres de page (h1) alignés : `/treso/finance` « Accueil Finance », `/treso/tableau-de-bord` « Accueil », `/` « Tableau de bord ». Il n'existe pas de fil d'Ariane dans le portail. **Infobulle** : chaque entrée du menu porte `title` = libellé complet (avant : seulement en mode réduit), y compris l'intitulé des branches ; la largeur du menu (256 px) ne change pas.
+**À arbitrer (non tranché)** : (a) l'Assistant Finance n'a pas d'« Accueil Finance » (décision de permission, pas de libellé) ; (b) Finance et DG ont deux entrées voisines « Accueil Finance » et « Accueil » (l'accueil personnel sur leurs propres demandes) ; (c) le collaborateur voit « Tableau de bord » (page des modules) à côté de « Accueil » — libellé alternatif possible pour la page « / » : « Portail ».
+
+**3. Formulaire « Nouvelle demande d'achat » (précision du lot H).** Dans la carte « En-tête de la demande », à côté de « Devise » : **« Demande créée le <date du jour> »**, automatique et non modifiable (`data-demande-creee-le`, texte seul, la vraie date est posée par le serveur dans `Demande.createdAt`) — la seule date de la demande ; les dates de livraison restent par article et dans « Détails communs ».
+Dans « Détails communs », **un seul bouton « Appliquer à tous les articles »** (`data-appliquer-a-tous`) remplace les deux anciens : il applique le bénéficiaire commun, la pièce commune (portée par la demande et héritée par chaque article, les pièces propres sont gardées : rien à copier) et la date de livraison commune. Une date vide n'efface jamais les dates des articles ; la confirmation « Remplacer » s'affiche si un article a un bénéficiaire OU une date de livraison personnalisés (message adapté). Le bouton « Appliquer la date à tous les articles » reste dans le formulaire de **correction** (`CorrectionDemande`), non concerné.
+
+**Vérifié** : vitest (`parcoursArticle` : « Géré le » rejeté/validé/réglé/retour/régularisé/retour externe ; `reportingDemandeLigne` : colonnes et valeurs), tsc, eslint, `next build` ; e2e `lot-h.mjs` (menu par rôle, infobulles, h1, dates sur écrans, listes, PDF, Excel) ; régressions `lot-g-ter`, `lot-g-bis`, `lot-g`, `regularisation-par-article`, `reglement-par-article`, `articles-decision-finance`, `soumission-dg-article`, `articles-beneficiaire-pieces` (tests mis à jour pour « Livraison prévue le » et « Accueil »).
+
+#### Lot C — décision du DG par article, notifications, rappels et clôture (2026-10-20)
+
+Applique les décisions 3, 4, 5, 6 et 11 de la section « Autonomie des articles ». Migration additive idempotente `20261020090000_cloture_forcee`
+(`Demande.clotureForcee`, `clotureForceeAt`, `clotureForceeParId` — clé `SET NULL` —, `clotureForceeArticles` JSON), drift Prisma vide.
+
+**Déjà fait avant ce lot (vérifié, rien refait)** : soumission au DG article par article (lot 2/B bis), décision du DG par article indépendante
+des autres, « DG définitif » (la Finance confirme un article validé par le DG et ne peut pas le rejeter), resoumission d'un article refusé par le DG
+(`soumettreLignesAuDG`), rejet définitif, tous rejetés → « À corriger », garde 8 par article, règle des deux personnes (niveau demande), chronomètre
+unique par demande (`etapeCircuitDepuis`) remis à zéro par une décision/soumission, rappels à 48 h puis 24 h (`dernierRappelAt`). Le lot ajoute :
+
+**1. Clôture « tous les articles terminés »** (`backend/src/clotureDemande.ts`, pur, 18 tests ; chargement `clotureDemandeDb.ts` =
+`chargerEvaluationCloture`, sur `getRegularisationParArticle`, aucune formule propre). Un article est **terminé** s'il est rejeté, ou validé ET réglé en
+entier (fonds remis ≥ montant validé) ET à solde nul (`getEcartLigne`, centimes exacts). `evaluerCloture` : la demande est « décidée » quand aucun article n'est à
+décider et qu'au moins un est validé ; `bloquants` = articles validés non terminés (+ la part non rattachée si son solde ≠ 0) avec ce qui leur manque
+(`manqueArticle` : reste à régler, retours à réceptionner, dépenses à détailler, solde à régulariser/anomalie négative). `cloturerDemandeAction` refuse la
+clôture totale ET partielle tant qu'il y a un bloquant, avec `messageBlocageCloture` (liste des articles et de ce qui manque) ; l'écran (`ClotureActions`,
+`data-cloture-bloquee` / `data-article-bloquant`) affiche la même liste et grise « Clôturer totalement/partiellement ». L'approbation du DG
+(`treso.approuver_validation_complete`, non délégable) reste exigée comme avant. Le compteur « x article(s) régularisé(s) sur n » reste informatif.
+La dépense directe (sans article) garde la règle d'origine (`peutEtreCloturee`).
+
+**2. Clôture forcée** — `cloturerDemandeAction(demandeId, "FORCEE", motif)` : possible seulement quand la demande est décidée et qu'au moins un article bloque
+(sinon « rien à forcer »). **Permission : `treso.cloturer_demande` réutilisée** (Finance), aucune permission nouvelle, `PERMISSIONS_DECISION_NON_DELEGABLES`
+inchangée. Exige l'approbation du DG comme toute clôture, un **motif d'au moins 10 caractères** (`MOTIF_CLOTURE_FORCEE_MIN`, revérifié côté serveur) et la
+**garde 8** (`refusClotureForcee` → `refusExecutionPropreDemande` : ni le demandeur ni un bénéficiaire de la demande/d'un article). Effets : statut `CLOTUREE`,
+`motifCloture` = le motif, `clotureForcee`/`At`/`ParId`, instantané des articles non régularisés (`instantaneClotureForcee` : libellé, bénéficiaire, montant validé,
+reste à régler, solde restant, manques) ; historique `cloture_forcee` (qui, quand, motif, articles avec soldes) ; notifications au demandeur (« Demande
+clôturée sans régularisation ») et au DG (`treso.decider_dg`, « Demande clôturée de force »), jamais à l'auteur ; **aucune écriture de caisse créée ni modifiée**.
+Affichage : bandeau `ClotureForceeBandeau` (écrans Finance et demandeur), badge **« Clôturé sans régularisation — solde restant X FCFA »** sur l'article du parcours
+(`libelleArticleClotureForcee`, seulement tant que l'article n'est pas terminé : un retour exceptionnel post-clôture peut le régulariser ensuite), colonne
+« Clôture forcée (sans régularisation) » du reporting par demande et de l'export Excel, date de gestion (`cloture_forcee`). `supprimerUtilisateurAction` compte la
+nouvelle relation vers `User`.
+
+**3. Notifications par article** (`circuitNotifications.ts`, `frontend/src/lib/notificationsCircuit.ts`) : chaque message nomme l'article (`nommerArticle` :
+« libellé » (bénéficiaire X, montant) ) et rappelle la demande (`rappelDemande` : numéro, demandeur, service). Soumission/resoumission au DG : une notification qui
+liste les articles (dont « n resoumis après rejet ») ; examen du DG terminé : une notification à la Finance (articles à confirmer, articles rejetés avec motif) —
+le refus de la dernière ligne en attente n'envoie que celle-ci ; décision de la Finance : une notification au demandeur détaillant les articles décidés, une par
+Assistant avec les articles à régler ; **pas de doublon** quand plusieurs articles sont traités ensemble (les identifiants d'articles de l'événement sont transmis :
+`DetailEvenementCircuit`). Demande terminée : `notificationsAttenteArticles` (articles à régler, retours/dépenses à traiter, garde 8 par article, « prête à être clôturée »).
+
+**4. Rappels** : toujours **un seul chronomètre par demande** (`etapeCircuitDepuis`), désormais remis à zéro à chaque événement d'un article — décision, soumission, décision
+du DG (déjà), plus règlement (confirmation/annulation), retour déclaré/réceptionné/détaillé/ajusté, complément, remboursement, justification après réception, retour externe
+rattaché, retour exceptionnel (`remettreChronoDemande`, `backend/src/chronoDemande.ts`, appelée par chaque action). Le rappel nomme les articles qui attendent encore une action
+(`rappelDu` avec `suiviArticles`, branche `TERMINEE` de `notificationsRappel` ; une demande `CLOTUREE`/`REJETEE`/`ABANDONNEE` n'est plus relancée, `STATUTS_DEMANDE_CLOS`).
+
+**Anciennes demandes** : jamais rouvertes. `backend/prisma/simuler-cloture-articles.ts` (LANCÉ À LA MAIN) liste les demandes déjà `CLOTUREE` dont un article validé n'est pas
+terminé ; simulation par défaut, `--appliquer` les marque « clôturée sans régularisation » (instantané, historique `reprise_cloture_articles`, statut et caisse intacts) ; idempotent.
+`npx tsx prisma/simuler-cloture-articles.ts` puis `... --appliquer`.
+
+**Décisions ouvertes** : (1) la clôture « partielle » existante reste, mais exige désormais elle aussi que tous les articles soient terminés ; le motif d'une clôture
+partielle ne remplace pas la clôture forcée ; (2) la clôture forcée garde l'approbation du DG comme condition ; (3) la règle des deux personnes reste au niveau de la demande ; (4) la garde 7
+(clôturer sa propre demande) n'est codée que pour la clôture forcée.
+
+**Vérifié** : vitest (`clotureDemande` 18, `notificationsArticles` 14, `circuitNotifications` 22 ; 829 réussis + échec connu `feedback.test.ts`), tsc, eslint, `next build`, migration depuis zéro, `migrate diff` vide ;
+e2e `lot-c.mjs` 55/55 (A validé par le DG et confirmé, B rejeté puis resoumis puis validé, C rejeté ; clôture bloquée avec message, A régularisé disparaît, B bloque ; garde 8 ; motif de 9 caractères rejeté ; clôture forcée,
+historique, notifications demandeur et DG, caisse intacte, bandeau, reporting, export ; clôture ordinaire ; rappel unique nommant les articles, remis à zéro) ; script de reprise testé (simulation, application, rejeu sans effet).
+
+#### Lot F — reporting et export : un seul tableau, de la demande jusqu'au détail de chaque article (2026-10-21)
+
+Aucune migration, aucune permission, **lecture seule** : aucune écriture de caisse créée ni modifiée, aucun nouveau calcul comptable. Les chiffres d'un article et de la demande sont ceux des écrans
+(`agregerRegularisation`, `getEcartLigne`, `depensesDeclareesLigne`, `resteNonDetailleTotal` : le test de cohérence compare le tableau à l'écran « Total de la demande »).
+
+- **Module pur** `backend/src/reportingArbre.ts` (21 tests) : `construireArbreDemande` → lignes sur 3 niveaux dans UN jeu de colonnes (`COLONNES_ARBRE`, partagé page/export) :
+  niveau 0 **DEMANDE** (panier global : statut dérivé « En cours (x/n traités) » tant qu'un article attend, étape, validation Service, nb articles, demandé, validé, réglé = fonds remis, dont Caisse / Banque,
+  dépensé, retourné, solde, mention de clôture forcée) ; niveau 1 **ARTICLE** (libellé, bénéficiaire, « Livraison prévue le », « Géré le », décision Finance, décision DG, statut — « Validé — à régulariser »,
+  « Chez le DG », « Rejeté »… —, mêmes montants, « Clôturé sans régularisation — solde restant / reste à régler X FCFA ») ; niveau 2 **événements** de l'article : règlement / fonds remis (référence
+  `<demande>-R<rang>`), mouvement banque (chacun sous son règlement), retour de caisse (chacun suivi de ses dépenses et remboursements), retour externe rattaché, retour exceptionnel. Une ligne
+  « Dépense directe » (demande sans article) ou « Non rattaché à un article » (anciens règlements ambigus) porte ce qui n'a pas d'article, jamais attribué au hasard.
+- **Référence demande, article, demandeur, service et devise sont répétés sur CHAQUE ligne** (la ligne DEMANDE a l'article « (Demande entière) ») : filtres, tris, tableaux croisés dynamiques.
+- **Pas de double comptage** : seule la ligne DEMANDE a « Compte dans les totaux = Oui » ; les articles détaillent la demande, les événements l'article (Σ articles = demande, testé). Le total général est la
+  somme des seules lignes « Oui » (`totauxGeneraux`). Le **retour nul** reste de l'historique (statut « Retour nul constaté », montant 0). Un règlement Banque compte comme fonds remis (« Dont Banque »),
+  jamais en « Dont Caisse » ni dans le journal de caisse. Annulé / brouillon : lignes visibles, hors du réglé. Devise : colonne sur chaque ligne (une devise par demande).
+- **Chargement** `getReportingArbre(filters, libelleStatut)` (`reporting.ts`) : mêmes filtres que le reste du reporting (`getDemandesFiltrees` : période, demandeur, service, catégorie/objet, mode, statut, type,
+  bénéficiaire), puis quelques requêtes groupées (jamais une par demande). Un **retour externe sans demande** (chèque…) est une ligne de niveau 0 « Hors demande », **hors totaux**, affichée seulement quand aucun
+  filtre ne vise des demandes (la période s'applique).
+- **Export** (`reportingArbreExcel.ts`, route inchangée, `treso.voir_reporting`) : feuille « Reporting » avec **regroupement Excel** (ARTICLE = sous-lignes de DEMANDE, événements = sous-lignes de l'ARTICLE, repliables,
+  bouton de repli sur la ligne de synthèse), style par niveau (demande en gras sur fond bleu, article sur fond léger, événements en retrait), filtre automatique, volets figés (en-tête + 2 premières colonnes), montants
+  **numériques** au format `#,##0.##`, vraies dates `jj/mm/aaaa`, aucun retour à la ligne sauf la colonne « Motif / justification / détail », total général en **formule `SUMIF`** (résultat pré-calculé) après une
+  ligne vide. Autres feuilles : « Journal de caisse » (audit, inchangé), « Synthèse par catégorie », « Suivi budgétaire », « Dashboard ».
+- **Page** `/treso/finance/reporting` (`ReportingArbreTable`, Client Component) : demande dépliable en ses articles, chaque article en ses événements, « Tout déplier / Tout replier », mêmes colonnes, total général ; les
+  filtres sont ceux du formulaire existant et s'appliquent à l'export (même chaîne de requête). Synthèse par catégorie et `#suivi-budgetaire` conservés.
+- **Supprimés** : `reportingDemandeLigne.ts`/`.test.ts`, `reportingRetourCaisse.ts`/`.test.ts`, `ReportingDemandesTable`, `ReportingRetoursTable`, `getReportingParDemande`, `getReportingRetoursCaisse`, `getReportingFondsRemis`,
+  `getFondsRemisParDemande`, `getReportingJournalBanqueDetail`, `getReportingRetoursExternesDetail`.
+- **Correctifs inclus** : les scripts `prisma/simuler-cloture-articles.ts`, `recalculer-statuts-articles.ts`, `recalculer-reglements-articles.ts` chargent `.env` AVANT tout import (`prisma/chargerEnv.ts`, premier import : esbuild remonte
+  les `import` au-dessus de `dotenv.config`, d'où l'erreur « Database `Arist` does not exist ») — vérifié sans `DATABASE_URL` dans l'environnement. Affichage : un article **jamais réglé** d'une clôture forcée dit
+  « reste à régler X FCFA » (script de simulation, historique, bandeau, notification, badge), plus « solde restant 0 FCFA » (`detailClotureForcee`, `libelleArticleClotureForcee`).
+- **⚠️ Précisé par le lot F bis (plus bas)** : le total général est désormais UN TOTAL PAR DEVISE (formule `SUMIFS`, plus `SUMIF`), et le libellé d'origine du demandeur ainsi que les liens vers les justificatifs des retours externes sont revenus (points (3) et (4) ci-dessous résolus).
+- **Décisions / points ouverts** : (1) UNE colonne « Réglé = fonds remis (Caisse + Banque) » (les colonnes « Réglé » et « Fonds remis » étaient identiques) + « Dont Caisse / Dont Banque » ; (2) types d'événements ajoutés au-delà
+  de la demande : remboursement de retour, retour exceptionnel post-clôture ; (3) le libellé d'origine du demandeur et les justificatifs téléchargeables (liens vers les pièces jointes des retours externes) ne sont plus dans
+  l'export — à rétablir si besoin ; (4) le total général additionne les montants nominaux de toutes les devises (une devise par demande) ; (5) le reporting « par Catégorie × Objet » (synthèse) reste distinct du tableau
+  unique et ne détaille pas les articles.
+- **Vérifié** : vitest (21 tests `reportingArbre` : niveaux, ordre, sous-totaux, Σ articles = demande, pas de double comptage, Banque vs Caisse, annulé/brouillon, retour nul, clôture forcée, article jamais réglé, devise, dépense
+  directe, non rattaché, retour externe hors demande, retour exceptionnel, remboursement ; 20 tests `clotureDemande` dont 2 pour l'article jamais réglé), tsc, eslint, `next build` ; e2e `lot-f.mjs` (demande à 3 articles : A réglé en caisse + retour,
+  B réglé par banque + retour externe rattaché, C rejeté ; DEM EUR, clôture forcée, « En cours », retour externe hors demande ; classeur relu avec exceljs : une feuille de données + Journal, niveaux, volets, filtre, formats,
+  total SUMIF, filtres communs page/export, cohérence avec l'écran de la demande) ; régressions des lots précédents (tests `lot-c`, `lot-g`, `lot-g-bis`, `lot-h` adaptés au tableau unique).
+
+#### Lot F bis — totaux par devise, justificatifs des retours externes, libellé d'origine (2026-10-21)
+
+Aucune migration, aucune permission nouvelle, lecture seule. Deux corrections du tableau unique du lot F.
+
+- **Totaux PAR DEVISE** (`totauxParDevise`, `backend/src/reportingArbre.ts`, remplace `totauxGeneraux`) : on n'additionne **jamais** des devises différentes. Une ligne de total par devise présente
+  (triées), formée des seules lignes DEMANDE de cette devise (centimes exacts) ; une seule devise = une seule ligne « Total général » ; plusieurs = « Total EUR », « Total XOF »… Un retour externe hors demande
+  (pas de devise) n'entre dans aucun total. **Excel** : formule `SUMIFS(colonne, « Compte dans les totaux », "Oui", Devise, "<devise>")` avec résultat pré-calculé, la devise reportée dans la colonne Devise de la
+  ligne de total. **Page** : `tfoot` avec une ligne par devise (`data-total-devise`), mêmes chiffres. (Détail technique : ExcelJS ne relit pas un résultat en cache égal à 0 — le XML contient bien `<v>0</v>`.)
+- **Libellé d'origine du demandeur** : colonne « Libellé d'origine (demandeur) » (`libelleOrigine` = `libelleDemandeur ?? libelleOriginal ?? libelle`), renseignée sur les seules lignes ARTICLE (la colonne « Article »
+  garde le libellé Finance).
+- **Justificatifs des retours externes** : colonnes « Justificatif du retour » et « Justificatif du chèque initial » (genre `lien`), sur les lignes RETOUR EXTERNE (rattachées et hors demande) — Excel : lien
+  hypertexte « Télécharger » absolu (origine de la requête) ; page : lien relatif. Le lien pointe vers la route **existante** `GET /api/treso/pieces-jointes/[id]`, qui applique elle-même ses droits.
+  **Aucune permission élargie** : la règle de cette route (`isAdmin` ou `treso.creer_retour_externe`) est extraite dans `peutTelechargerJustificatifsRetourExterne` (`frontend/src/lib/droitsPiecesJointes.ts`),
+  utilisée par la route ET par le reporting, qui **ne produit le lien que pour qui peut l'ouvrir** (option `justificatifsRetoursExternes` de `getReportingArbre` ; sinon les identifiants de pièces ne sont même
+  pas chargés dans les lignes). Un DG (`voir_reporting` sans `creer_retour_externe`) voit donc la ligne du retour externe mais aucun lien, et la route le refuse toujours (403).
+- **Vérifié** : vitest (30 tests `reportingArbre`, dont totaux par devise : une devise, deux devises, pas de contamination, hors demande ; liens avec/sans droit ; libellé d'origine), tsc, eslint, `next build` ;
+  e2e `lot-f.mjs` 60/60 (totaux EUR et XOF séparés avec leurs formules SUMIFS, une seule ligne « Total général » sur un export filtré à une devise, libellé d'origine, liens vérifiés par Finance et ouvrables,
+  DG sans lien et refusé par la route, page identique) ; régressions des lots précédents.
+
+#### Lot I — changements demandés par le DG : « Montant retourné », motif du règlement, catégorisation à partir d'une date (2026-10-19)
+
+Aucune écriture de caisse créée ni modifiée, `PERMISSIONS_DECISION_NON_DELEGABLES` intacte, devise unique, retour nul = historique seulement. Deux migrations manuelles, additives et idempotentes
+(`20261022090000_reglement_motif`, `20261022100000_parametre_categorisation`), horodatées après `20261020090000` ; `migrate diff` vide, rejouées sans effet.
+
+**1. « Montant retourné » (libellé seulement, aucun calcul).** ⚠️ **Corrigé par le lot I bis (consigne initiale erronée : « Montant rendu »)** : le libellé voulu par le DG est « Montant retourné ». Le libellé
+« Retourné à la compta », qui désignait ce même montant (retour réceptionné) sur l'écran du retour Finance et sur l'écran du collaborateur, devient « Montant retourné » (`retourAffichage.ts`, source unique
+`etatRetourAffiche` ; les deux autres états, « Retourné » — couvert par un retour post-clôture — et « À retourner », restent). Le **reçu PDF du retour** (`RetourReceiptDocument`, qui disait « Montant rendu »
+avant le lot I) affiche aussi « Montant retourné », et « Total dépensé + retourné » (ex-« + rendu »). **Laissés tels quels (lot I bis)** : « Montant rendu (FCFA) » du formulaire de retour exceptionnel
+post-clôture (autre écran, autre notion) et « Retour nul — rien à rendre » du reçu. **Laissés tels quels, volontairement** : le récapitulatif du collaborateur et la bande de
+régularisation (« Retours de caisse … reçus », « Retourné » = total cumulé des retours reçus d'un article/d'une demande, pas le reçu d'un retour), la colonne « Retourné » du reporting et de
+l'export (total agrégé), la ligne « Retours de caisse » du reçu de règlement (« Réceptionné » + montant), « Montant à retourner définitif », et les messages d'erreur/historique « montant retourné ».
+
+**2. Motif / nature du règlement** (`backend/src/motifReglement.ts`, pur, testé). `Reglement.motif` (nullable en base). **Obligatoire à la création** (`creerReglementAction`, zod : 5 caractères
+minimum, espaces de bord retirés, 300 maximum) côté serveur ET à l'écran (`ReglementForm` : champ « Motif / nature du règlement », bouton « Créer le règlement » grisé tant que le motif est trop court),
+Caisse comme Banque. **Modification d'un brouillon** (`modifierReglementAction(…, motif)`, `motifPourModification`) : un brouillon qui a un motif en garde un valide ; un brouillon ANTÉRIEUR sans motif
+n'est jamais bloqué (motif vide accepté, motif fourni validé). **Confirmation** (`confirmerReglementAction`) : aucune exigence de motif (un ancien brouillon se confirme). Affiché : sous chaque règlement
+de l'écran Finance (`data-motif-reglement`), dans le **parcours de l'article** (étape Réglé : « … — motif : X »), sur le **reçu PDF** (ligne « Motif / nature du règlement » dans les détails de la demande
++ une ligne « Motif : X » sous chaque règlement de l'historique imprimé), dans l'**historique** de la demande (« Règlement confirmé … — motif : X »), et dans le **reporting** : colonne dédiée « Motif / nature du
+règlement » du tableau unique du lot F (page et Excel, `motifReglement`, renseignée sur les seules lignes RÈGLEMENT). **Règlements anciens** (aucun motif) : jamais bloqués ni réécrits, affichés « Non renseigné »
+partout (`libelleMotifReglement`). Le **bon de caisse** reste minimal (pas de motif). Les e2e qui créent un règlement par l'écran remplissent désormais le champ (`articles-beneficiaire-pieces`, `lot-g`, `reglement-par-article`).
+
+**3. Catégorisation obligatoire à partir d'une date** (remplace la règle permanente du 2026-10-08, qui reste décrite plus haut). Paramètre `ParametreTresorerie` (clé `categorisation.obligatoire_a_partir_du`,
+`valeurDate` `DATE` nullable) : **nul = jamais obligatoire** ; sinon obligatoire à partir de ce jour (inclus, comparaison au jour). **La migration le pose à NUL** : rien n'est bloqué au déploiement. Règle unique :
+`categorisationObligatoireAu(date, maintenant)` dans `categorisationObligatoire.ts` ; `refusLignesValideesSansCategorie(decisions, lignes, obligatoire)` et `refusDemandeSansCategorie(demande, obligatoire)` PRENNENT
+désormais `obligatoire` (paramètre requis : aucun appelant ne peut l'oublier). Chargement : `categorisationEstObligatoire()` / `chargerRegleCategorisation()` (`parametresTresorerie.ts`). Branché sur : `validerLignesAction`,
+`validerTotalementAction`/`validerPartiellementAction`/`validerComplementaireAction` (dépense directe), les boutons « Valider » des écrans Finance et DG (`LignesValidationTable`, `ValidationActions`,
+`ValidationComplementaireActions`) et **la soumission au DG** (`versLigneCircuit`/`versDemandeCircuit(…, categorisationObligatoire)` : `categorisee` vaut « exigence satisfaite » quand la catégorie n'est pas exigée ;
+`circuitDemandeDb` charge la règle à chaque transition) — sinon un article destiné au DG aurait gardé un blocage que la validation n'a plus. Une ligne rejetée n'a jamais eu besoin de catégorie. **Écran** : carte
+« Catégorisation obligatoire pour valider » en tête de `/treso/finance/categories` (⚠️ depuis le lot J ter : onglet « Catégories » de `/treso/finance/budgets`, l'ancienne adresse redirige ; garde de la page : `isAdmin` ou `treso.gerer_categories` — la Finance ; **aucune permission nouvelle**), champ date, « Enregistrer »,
+« Ne jamais exiger », règle en vigueur en clair et 5 derniers changements ; `definirDateCategorisationAction` revérifie la garde. **Historisé** : `HistoriqueEntry` (entité `ParametreTresorerie`, action
+`parametre_categorisation_obligatoire`, « ancienne → nouvelle », auteur) + `majAt`/`majParId`. Changer la date ne touche aucune demande, aucun article validé sans catégorie (ils restent validés) ni aucune écriture.
+
+**Points ouverts** : (a) un article validé sans catégorie n'alimente aucune allocation de budget (comportement existant pour les anciens articles) : le suivi budgétaire de la catégorie ne le voit pas tant qu'il n'est pas
+catégorisé — or `categoriserLigneAction` refuse une ligne déjà décidée, donc il ne pourra plus l'être ; (b) la date est comparée au jour UTC du serveur (= Abidjan, sans heure d'été) ; (c) le bon de caisse n'affiche pas le
+motif ; (d) la colonne « Retourné » des écrans/exports (total cumulé) garde son libellé.
+
+**Vérifié** : vitest (881+ tests : `motifReglement`, `categorisationObligatoire` avant/jour même/après/nul/invalide, `categorisationSoumission`, parcours et reporting avec motif), tsc, eslint, `next build` ; migrations depuis zéro
+sur base jetable, `migrate diff` vide, rejouées sans effet ; e2e `lot-i.mjs` (date nulle / demain / aujourd'hui / remise à nul, refus serveur par appel direct de `validerLignesAction`, motif de 4 caractères et d'espaces refusés,
+Caisse et Banque, modification, anciens règlements « Non renseigné » jamais modifiés, reçu PDF, parcours, historique, reporting page et Excel, « Montant retourné » écran Finance / collaborateur / PDF, grand livre de caisse identique).
+
+#### Lot I bis — libellé du reçu du retour : « Montant retourné », pas « Montant rendu » (2026-10-23)
+
+Correction d'une erreur de consigne du lot I. Libellé seulement : aucun calcul, aucune écriture de caisse, aucune migration. `etatRetourAffiche` (source unique : écran Finance du retour, page du collaborateur)
+et le reçu PDF du retour affichent « Montant retourné » ; « Retourné à la compta » ne s'affiche plus nulle part. Tests : `e2e/lot-i.mjs` (écran Finance, collaborateur, PDF : « Montant retourné », ni « Montant rendu » ni
+« Retourné à la compta »). Points laissés : voir la section « Lot I » ci-dessus.
+
+#### Lot J — budgets : paramétrage soumis au DG, seuils d'alerte, restes affichés à chaque validation (2026-10-19)
+
+> **⚠️ Partiellement REMPLACÉ par le lot J ter (2026-10-20, juste en dessous)** : le **budget global n'est plus un montant saisi**, c'est le **solde de caisse réel** ; la
+> Finance n'en règle que les seuils (en montant). La soumission et la décision se font seul **ou en lot**, et la page « Catégories » est fusionnée dans « Budgets ». Tout ce
+> qui suit sur les budgets de **catégorie** reste exact ; ce qui concerne un budget global « montant saisi, consommé au règlement, seuil en pourcentage » ne l'est plus.
+
+Aucune écriture de caisse créée ni modifiée ; le budget reste **consommé au règlement** ; les règlements Banque comptent comme fonds remis ;
+devise unique ; garde 8 et `PERMISSIONS_DECISION_NON_DELEGABLES` intactes. Migration additive idempotente `20261023090000_budgets_parametrage`
+(rejouée sans effet, `migrate diff` vide). Règles **pures** dans `backend/src/budgets.ts` (53 tests), lecture/écriture dans `backend/src/budgetsDb.ts`.
+
+**Audit de l'existant (avant le lot).** Il n'y avait **pas de budget global**. Un budget de catégorie était une seule colonne `Categorie.budgetAlloue`
+(nul = illimité), modifiable sans validation par l'Admin ou la Finance (`modifierBudgetCategorieAction`), sans date d'effet ni seuil. Consommé =
+somme des `ReglementCategorieAllocation` des règlements confirmés et non annulés (`getMontantConsommeCategorie`, l'unique source), contrôle
+**bloquant seulement à la confirmation d'un règlement** (`confirmerReglementAction` : allocation > reste de la catégorie → refus de l'ensemble). Le
+budget est **partagé** par toutes les demandes de la catégorie (jamais par demandeur ni service). Lecteurs : aperçu de catégorisation
+(`BudgetCategorieApercu`), barres du dashboard (`getTopCategoriesBudget`), « Suivi budgétaire » du reporting, refus de suppression d'une catégorie.
+
+**Modèle.** `BudgetParametrage` (portée GLOBAL ou CATEGORIE, montant, `dateDebut`, `dateFin` facultative, `modeSeuil` POURCENTAGE | MONTANT, `seuilOrange`,
+`seuilRouge`, statut EN_ATTENTE | VALIDE | REFUSE, `repris`, soumis par/le, décidé par/le, motif de refus ; CHECK en base : montant > 0, portée/catégorie,
+fin ≥ début, seuil complet ou absent avec rouge < orange) ; `BudgetDepassement` (demande de confirmation d'un dépassement rouge : DEMANDE → CONFIRME →
+UTILISE, à usage unique) ; `LigneDemande.budgetApresValidation` (photo JSON du reste après la validation de l'article). `Categorie.budgetAlloue` est
+**l'ancienne valeur : conservée, plus jamais lue ni écrite** (retour arrière).
+
+**Règles (une seule définition, `budgets.ts`).**
+- **Paramétrage** : la Finance (`treso.modifier_budget_categorie`) saisit montant, date d'effet (jamais dans le passé), fin facultative et seuil facultatif ;
+  `validerSaisieParametrage` refuse : rouge ≥ orange, pourcentage hors 0–100, seuil en montant > budget, fin avant début, montant ≤ 0. **Soumis** au DG
+  (`treso.valider_budget`) qui valide ou rejette (motif ≥ 3 caractères) ; jamais le compte qui a soumis. **Rien n'est pris en compte avant la validation**, et un
+  paramétrage n'est **jamais modifié** : `budgetEnVigueur(parametrages, portée, catégorie, jour)` retient, parmi les VALIDÉS dont la période contient le
+  jour, celui de début le plus récent (le nouveau remplace l'ancien à sa date d'effet, l'historique reste). Un seul paramétrage en attente par budget.
+- **Seuils** : pourcentage restant OU montant restant ; `niveauAlerte` inclusif (reste ≤ seuil) en centimes exacts ; ORANGE puis ROUGE (plus bas). **Sans seuil,
+  aucune alerte**, même en dépassement.
+- **Réservé = max(consommé au règlement, engagé par les validations)**, depuis la date d'effet du budget en vigueur (la consommation d'avant ne compte pas).
+  Engagé = articles validés (ou validés par le DG en attente de confirmation) + montant validé des dépenses directes (date de création, faute de date de
+  validation). Sans ce « engagé », le reste ne bougerait qu'au règlement et le prévisionnel serait vide. Global : tous les règlements/articles ; catégorie :
+  ceux de la catégorie.
+- **Prévisionnel à CHAQUE validation** (`previsionBudget`, aucune écriture) : reste du budget global ET de chaque catégorie touchée après la validation, jamais
+  plafonné à 0 (« dépassé de X »). Affiché par `BudgetPrevision` : tableau des articles de la Finance (calcul en direct côté client à partir du contexte chargé
+  par `chargerBudgetValidation`), décision du DG sur un article soumis, dépense directe (validation totale, partielle, complémentaire). Les articles déjà validés
+  par le DG ne sont pas recomptés à la confirmation de la Finance.
+- **ORANGE** : alerte visible, validation permise, entrée `alerte_budget` dans l'historique, notification (`notifierAlerteBudget`) à la Finance
+  (`decider_finance`) et au DG (`decider_dg`), sauf l'auteur. **ROUGE** : validation **bloquée côté serveur** (`controlerBudgetValidation`, sous verrou
+  `pg_advisory_xact_lock` : deux validations simultanées voient le même reste) tant que le DG n'a pas confirmé. **Seul le DG confirme** (`treso.decider_dg`,
+  jamais délégable) : s'il valide lui-même, il confirme **dans le même geste** (motif ≥ 10 caractères, `BudgetDepassement` créé UTILISE, historique
+  `confirmation_depassement_budget`) ; pour une validation de la Finance, la Finance **demande** (`demanderConfirmationDepassementAction` → DEMANDE, DG notifié),
+  le DG confirme sur `/treso/finance/budgets` (motif obligatoire, `confirmerDepassementBudgetAction`), la Finance est notifiée et valide : la confirmation est
+  consommée (UTILISE, usage unique). Un motif saisi par la Finance ne débloque rien (revérifié par appel direct).
+- Chemins branchés : `validerLignesAction`/`deciderArticles` (Finance, et DG cas b), `deciderLigneDG` (DG, article soumis), `validerTotalementAction`/
+  `validerPartiellementAction`/`validerComplementaireAction` (dépense directe). Non concernés (aucun montant décidé) : étape Service, validation du DG d'une
+  demande soumise entière, approbation de clôture.
+- **Photo du budget** (`snapshotBudgetLigne`) posée **une seule fois** sur l'article à sa première validation (DG ou Finance), jamais recalculée. Montrée dans le
+  **parcours de l'article** (`getParcoursArticles(demandeId, { avecBudget: true })`, **écrans Finance et DG seulement** — ni demandeur, ni responsable de service,
+  ni PDF), dans le **reporting** (colonne « Budget après validation (reste) » du tableau unique et de l'Excel, lignes ARTICLE) et le **suivi budgétaire**
+  (global en tête, période, réservé, reste après validations, seuils, niveau ; page et feuille Excel). Les 4 actions d'historique budget sont de la gestion
+  interne (`ACTIONS_GESTION_INTERNE`) : jamais montrées au demandeur.
+- **Écran `/treso/finance/budgets`** (entrée de menu « Budgets ») : budgets en vigueur (montant, réservé, reste, période, seuils, niveau), dépassements à
+  confirmer (DG), paramétrages en attente (boutons Valider / Rejeter avec motif pour le DG), formulaire de paramétrage (Finance), historique complet. Garde :
+  `modifier_budget_categorie` | `valider_budget` | `decider_dg` | `voir_dashboard_finance` (consultation). `/admin/categories` et `/treso/finance/categories`
+  n'affichent plus qu'un budget **en lecture seule** (+ lien) : `modifierBudgetCategorieAction` et son champ éditable sont **supprimés**. Une catégorie qui a
+  un paramétrage (tout statut) ne se supprime plus (désactiver).
+- **Règlement** (`confirmerReglementAction`), dashboard (`getTopCategoriesBudget`), aperçu de catégorisation et reporting lisent désormais le budget **en
+  vigueur** (`getBudgetsCategoriesEnVigueur`, consommé depuis sa date d'effet). Règle inchangée : refus de l'ensemble si une allocation dépasse le reste.
+- **Migration des budgets existants** : chaque `Categorie.budgetAlloue` non nul devient un paramétrage **VALIDÉ** (`repris`, sans auteur ni décideur), début
+  **2000-01-01** (toute la consommation passée reste comptée, comportement inchangé), **sans date de fin**, seuil **par défaut = pourcentage restant, orange 20,
+  rouge 0** (`SEUIL_BUDGET_PAR_DEFAUT`) : ROUGE seulement à l'épuisement, donc rien n'est bloqué au déploiement tant qu'un budget n'est pas épuisé. Aucun budget
+  global n'existait : aucun créé. Idempotente (`ON CONFLICT DO NOTHING`).
+- **Permissions** : **une seule nouvelle**, `treso.valider_budget` (le DG valide/rejette les paramétrages), créée **dans le seed ET par la migration** de
+  rattrapage (donnée aux rôles qui portent `treso.decider_dg` : le DG seul, jamais un nom de rôle). Paramétrer réutilise `treso.modifier_budget_categorie`
+  (Finance, déjà en production) ; confirmer un dépassement réutilise `treso.decider_dg`. **À attribuer via `/admin/roles`** : cocher `treso.modifier_budget_categorie`
+  sur les rôles qui paramètrent (Finance) et `treso.valider_budget` sur celui qui valide (DG), puis rien d'autre. `supprimerUtilisateurAction` compte les 4 nouvelles relations vers `User`.
+
+**Décisions / points ouverts.** (1) Le contrôle bloquant du **règlement** reste « allocation > reste » : un dépassement du budget **confirmé par le DG à la
+validation** sera quand même refusé au règlement tant que le budget n'est pas relevé (nouveau paramétrage) — non assoupli, car « consommé au règlement (inchangé) ».
+(2) Le budget global n'a **pas** de blocage au règlement (seulement l'alerte à la validation). (3) Réservé = max(consommé, engagé) ; la date de validation d'une
+dépense directe est approchée par sa date de création. (4) Un nouveau paramétrage repart de **zéro de consommation à sa date d'effet** (budget par période) : pour
+relever un budget sans remettre le compteur à zéro, saisir un début « depuis toujours » est impossible (début ≥ aujourd'hui) — à arbitrer si besoin. (5) L'**Admin** ne
+paramètre plus les budgets (sauf s'il porte `modifier_budget_categorie`). (6) Pas de rejet par le DG d'une demande de confirmation de dépassement (il ne confirme
+simplement pas) ni de retrait par la Finance. (7) Un article sans catégorie ne touche que le budget global.
+
+**Vérifié** : vitest (53 tests `budgets`, 937 au total), tsc, eslint, `next build` ; migration depuis une base portant des budgets existants, rejouée sans effet, `migrate diff`
+vide ; e2e `lot-j.mjs` 86/86 (migration et permissions, saisie incohérente rejetée, soumission/validation/rejet du DG avec motif, budget futur non en vigueur, restes global et
+catégorie à chaque validation, ORANGE puis ROUGE, blocage serveur par appel direct, demande de confirmation, seul le DG confirme, usage unique, le DG qui valide confirme dans le
+même geste, parcours, rien montré au demandeur, reporting page et Excel, budget sans seuil, budget global rouge, aucune écriture de caisse) ; régressions des lots précédents
+(`lot-g` et `reglement-par-article` adaptés : le budget y est un paramétrage validé).
+
+#### Lot J ter — budget global = solde de caisse, soumission en lot, page Catégories fusionnée dans Budgets (2026-10-20)
+
+> **⚠️ Présentation REMPLACÉE par le lot J quater (juste en dessous)** : la page Budgets sépare « Budget de caisse » et « Budgets par catégorie » (sections, formulaires, actions, notifications et historiques propres) ; les actions mixtes `soumettreParametragesBudgetAction` / `deciderParametragesBudgetAction` et le formulaire unique en lot n'existent plus. Les règles (solde de caisse réel, seuils en FCFA, lot tout ou rien, décision seul ou en lot) tiennent.
+
+Aucune écriture de caisse créée ni modifiée ; le budget d'une catégorie reste **consommé au règlement** ; les règlements Banque restent des fonds remis mais n'entrent **jamais**
+dans le solde de caisse ; devise unique ; garde 8 et `PERMISSIONS_DECISION_NON_DELEGABLES` intactes ; **aucune permission nouvelle**. Migration idempotente
+`20261024090000_budget_global_solde_caisse` (rejouée sans effet, `migrate diff` vide). Règles pures dans `backend/src/budgets.ts`, couche base dans `backend/src/budgetsDb.ts`.
+
+**1. Budget global = solde de caisse réel (décision du DG).** Le global n'a plus de montant : `BudgetParametrage.montant` devient facultatif (nul pour le global, obligatoire > 0 pour une
+catégorie, imposé par la contrainte `BudgetParametrage_coherence_v2_check`). Le « budget » du périmètre global est `getSoldeCaisse()` (journal de caisse, jamais modifié) ; sa « réserve » est
+ce qui est déjà validé et pas encore sorti de la caisse. Le **reste global** affiché à chaque validation (Finance, DG, dépense directe, parcours, reporting) =
+**solde de caisse actuel − engagé non sorti − cette validation** (jamais plafonné à 0 : négatif = « solde prévisionnel négatif »).
+- **Ce qui compte dans l'engagé** (`chargerDetailCaisse`, `perimetreCaisse`) :
+  - `engageCaisseConnu` : règlements en mode **CAISSE** créés mais **non confirmés** (brouillons) — le mode est connu ;
+  - `engageModeInconnu` : par demande ouverte (ni rejetée, ni clôturée, ni abandonnée), les montants **validés** (articles validés, articles validés par le DG en attente de la Finance,
+    montant validé d'une dépense directe) **moins tous les règlements non annulés** de la demande (toute nature, tout mode) — il ne reste que l'argent validé **sans aucun règlement**.
+  - Un règlement **Banque** (brouillon ou confirmé) ne compte **jamais** ; un règlement **Caisse confirmé** est déjà dans le solde (SORTIE du journal) et ne compte plus dans l'engagé.
+  Conséquence vérifiée : confirmer un règlement Caisse baisse le solde ET l'engagé du même montant (le reste ne bouge pas) ; un règlement Banque fait disparaître l'engagé sans toucher au solde.
+- **Ce qu'on ne peut PAS savoir à la validation** : le **mode de règlement** (Caisse ou Banque) n'est choisi qu'au règlement. Pour tout montant validé sans règlement, le prévisionnel **suppose
+  la Caisse** (hypothèse prudente : le reste affiché est une **borne basse** — si le règlement se fait finalement par banque, le solde réel sera plus élevé). L'écran le dit en clair
+  (« mode non encore connu, supposé en caisse ») et détaille la composition : solde actuel − règlements Caisse à confirmer − validé sans règlement − cette validation. Rien n'est deviné de plus.
+- **Seuils du global : montant (FCFA) uniquement**, orange puis rouge strictement plus bas (rouge ≥ 0), avec date d'effet (début ≥ aujourd'hui, fin facultative) ; **obligatoires** pour un
+  nouveau paramétrage global (`validerSaisieParametrage`) ; un pourcentage est refusé (pas de total de référence) ; un montant envoyé par un client est **ignoré** (nul en base). Soumis au DG
+  (`treso.valider_budget`), utilisable seulement une fois validé, jamais modifié en place (comme les autres).
+- **Alertes** (règle du lot J inchangée) : **orange** = alerte visible + notification Finance et DG (sauf l'auteur), validation permise ; **rouge**, ou **prévisionnel négatif**, = validation bloquée
+  jusqu'à la confirmation du DG avec motif (≥ 10 caractères) — demandée par la Finance, ou donnée par le DG dans le même geste. Un reste négatif est toujours ≤ rouge (rouge ≥ 0) : dès qu'un seuil
+  global est en vigueur, un prévisionnel négatif est donc rouge.
+- **Sans seuil global validé : aucune alerte globale** (le solde de caisse prévisionnel s'affiche quand même). Une base qui n'a jamais validé de seuil global ne bloque donc **rien** au déploiement.
+- **Migration** : chaque paramétrage global du lot J est converti sur place (statut, période et trace conservés) : montant **ignoré** (nul) ; seuil en montant **conservé** ; seuil en pourcentage →
+  `SEUIL_CAISSE_PAR_DEFAUT` (**orange 100 000 FCFA, rouge 0 FCFA** : rouge seulement quand la caisse est à sec) ; sans seuil → sans seuil. Rejouée sans effet (condition `montant IS NOT NULL`).
+  Testé sur une base portant les 4 cas (miroir pur `convertirParametrageGlobalLotJ`).
+- **Affichage** : bloc « Solde de caisse (budget global) » (`BudgetPrevision`, partout où le lot J montrait le reste global) ; photo de l'article (`budgetApresValidation.global`) et parcours disent
+  « Solde de caisse prévisionnel » ; reporting « Suivi budgétaire » : ligne « Budget global (solde de caisse) » (solde actuel, consommation « — », reste après validations, seuils, niveau) et colonne
+  Excel « Détail (budget global = solde de caisse) ». Le demandeur ne voit rien (gestion interne, inchangé).
+
+**2. Budgets de catégorie (inchangés sur le fond).** Montant saisi, seuil au choix en pourcentage restant OU en montant restant, orange puis rouge, date d'effet, soumission au DG avant usage.
+**Alertes vérifiées chez la Finance ET chez le DG** : `notifierAlerteBudget` notifie les porteurs de `treso.decider_finance` **et** de `treso.decider_dg` (hors l'auteur de la validation), pour un
+périmètre global comme pour une catégorie (e2e `lot-j.mjs` 3b pour une catégorie, `lot-j-ter.mjs` 5b pour le solde de caisse ; le DG qui valide, la Finance est prévenue).
+
+**3. Soumission seul ou en lot.** Un seul formulaire (`ParametrageBudgetForm`) : tableau « Budget global = solde de caisse » + une ligne par catégorie active, cases à cocher, **dates d'effet
+communes à la sélection**, bouton « Soumettre la sélection au DG » (grisé sans case cochée) ; une ligne dont un paramétrage attend déjà le DG est désactivée. `soumettreParametragesBudget` :
+**tout ou rien** (toute la sélection est contrôlée AVANT la moindre écriture : saisie incohérente, catégorie introuvable, budget déjà en attente, même budget deux fois → rien n'est créé), verrou
+`pg_advisory_xact_lock`, **un paramétrage et une trace d'historique (`budget_soumis`) par élément**, **une seule notification** pour le DG (« n budgets à valider »). Les erreurs reviennent par ligne.
+**Décision du DG seul ou en lot** (`ParametragesEnAttente`, `deciderParametragesBudget`) : cases à cocher + « Valider la sélection » / « Rejeter la sélection » (motif commun), ou les boutons de
+chaque budget (motif propre) ; l'action accepte aussi un motif **par élément** (à défaut le motif commun) ; rejet sans motif pour un élément → **rien n'est décidé**. Chaque élément garde son statut
+et sa trace (`budget_valide` / `budget_refuse`). **Le DG ne décide jamais ce qu'il a lui-même soumis** (case désactivée ; dans un lot l'élément est **ignoré avec sa raison**, les autres sont décidés ;
+un élément déjà décidé est ignoré de même). **Une seule notification par soumetteur et par lot** (« 2 budgets validés par le DG » / « 2 budgets rejetés par le DG », motifs inclus).
+
+**4. Page « Catégories » fusionnée dans « Budgets ».** L'entrée de menu « Catégories » de la Finance est retirée ; « Budgets » apparaît pour qui paramètre/valide/consulte les budgets **ou**
+gère les catégories (`canVoirBudgets || canGererCategories`). `/treso/finance/budgets` a deux onglets (`?onglet=categories`) ; `/treso/finance/categories` **redirige** vers l'onglet « Catégories ».
+**Fonctions de l'ancienne page, toutes conservées** (aucune supprimée) : règle « catégorisation obligatoire à partir d'une date » (lot I, `CategorisationObligatoireDate`, `parametreActions.ts`,
+historique des 5 derniers changements), création de catégorie, liste des catégories avec création d'objet, suppression de catégorie et d'objet, **activation / désactivation réservée à l'Admin**
+(inchangé : masquée pour la Finance), budget en vigueur en lecture seule. Il n'existait pas de « modification » (renommage) de catégorie, et il n'en a pas été ajouté. Accès **inchangé** par permission :
+Admin ou `treso.gerer_categories` pour l'onglet Catégories (le DG, qui ne l'a pas, ne le voit pas ; l'Assistant Finance n'a aucun des deux), permissions budgets pour l'onglet Budgets ; chaque Server
+Action revérifie sa permission. `/admin/categories` (console Admin) est inchangée.
+
+**Points ouverts / limites** : (1) la **borne basse** du solde prévisionnel suppose la Caisse pour tout ce qui n'a pas encore de règlement — un décideur peut donc voir « rouge » alors que les
+règlements futurs se feraient par banque ; (2) **sans seuil global validé, un solde prévisionnel négatif ne bloque pas** (« rien ne doit être bloqué au déploiement ») : à arbitrer si le DG veut
+bloquer systématiquement le négatif ; (3) le seuil par défaut de la migration (orange 100 000 / rouge 0 FCFA) est un choix documenté, pas une donnée du client ; (4) les **dates d'effet sont
+communes** à une sélection (pour des dates différentes, soumettre en plusieurs fois) ; (5) le contrôle bloquant au **règlement** d'une catégorie (allocation > reste) est inchangé : un dépassement
+confirmé à la validation sera refusé au règlement tant que le budget n'est pas relevé ; il n'existe **aucun blocage du solde par le budget global au règlement** (le contrôle de solde de caisse
+insuffisant de `confirmerReglementAction` est l'existant, inchangé) ; (6) l'engagé d'une dépense directe se lit sur `Demande.montantValide` (comme au lot J) ; (7) l'Admin n'atteint pas l'onglet
+Catégories de Budgets sans permission Trésorerie (le layout Finance ne l'admet pas seul — comme avant pour l'ancienne page) : il garde `/admin/categories`.
+
+**Vérifié** : vitest (`budgetsCaisse.test.ts` 41 tests : périmètre caisse, prévisionnel, seuils en montant, orange, rouge, négatif, sans seuil, saisie globale, lot tout ou rien, migration ; 978 au total),
+tsc, eslint, `next build` ; migration sur une base portant 4 paramétrages globaux (montant, pourcentage, en attente, sans seuil) puis rejouée, `migrate diff` vide, contraintes testées ; e2e
+`lot-j-ter.mjs` 96/96 (migration, page fusionnée avec création/suppression de catégorie et d'objet, ancienne URL, menu, accès par rôle, global sans montant, lot tout ou rien, notifications uniques,
+décision en lot, motif propre/commun, soumission du DG ignorée, solde de caisse recoupé avec un calcul SQL indépendant, règlements Caisse/Banque, orange, rouge, négatif, DG dans le même geste,
+parcours, reporting page et Excel, journal de caisse intact) ; `lot-j.mjs` adapté (85/85) ; régressions des lots I, C, F, G, H et précédents.
+
+#### Lot J quater — page Budgets : deux sections séparées, « Budget de caisse » et « Budgets par catégorie » (2026-10-21)
+
+Décision de l'utilisateur : pour plus de clarté, la page « Budgets » (onglet Budgets) sépare le budget de caisse et les budgets de catégorie, **chacun dans sa propre section, sans mélange**.
+**Aucune migration, aucun changement de calcul ni de règle** (budget consommé au règlement, alertes orange/rouge, confirmation du DG du rouge, budget de caisse = solde de caisse réel, seuils
+en FCFA), aucune écriture de caisse créée ni modifiée, aucune permission nouvelle ni modifiée, `PERMISSIONS_DECISION_NON_DELEGABLES` intacte. Les onglets « Catégories » (création, objets, date de
+catégorisation obligatoire) et la redirection de `/treso/finance/categories` sont inchangés. Le moteur (`backend/src/budgets.ts`, `budgetsDb.ts`) n'a pas été touché.
+
+**Avant (audit)** : l'onglet Budgets empilait des blocs mixtes — « Budgets en vigueur » (la ligne du solde de caisse puis le tableau des catégories), « Paramétrages en attente du DG » (liste
+mélangée), « Nouveau paramétrage » (UN formulaire en lot avec la ligne « solde de caisse » au milieu des catégories, dates communes) et « Historique des paramètres » (un seul tableau). Une seule
+action de soumission et une seule action de décision servaient aux deux, avec des notifications génériques (« n budgets à valider »).
+
+**Maintenant** — `/treso/finance/budgets` (onglet Budgets), de haut en bas :
+- **« Dépassements à confirmer »** (DG seul, `treso.decider_dg`) — bloc commun conservé en tête : un dépassement rouge concerne indifféremment la caisse ou une catégorie.
+- **Section « Budget de caisse »** (`data-section-caisse`) : le **solde de caisse réel** (jamais un montant saisi : solde actuel, déjà validé pas encore sorti, solde prévisionnel), les **seuils orange
+  et rouge en FCFA** avec leur période (date d'effet), le **statut du dernier paramétrage** (en attente du DG / validé / rejeté) et le niveau d'alerte ; les **seuils en attente du DG** (liste propre,
+  décision seul ou en lot) ; le **formulaire de paramétrage des seuils** (`ParametrageCaisseForm` : date de début jamais dans le passé, fin facultative, deux champs FCFA — aucun champ montant, aucun
+  pourcentage) ; **son propre historique** (`data-historique-caisse`, sans colonne catégorie).
+- **Section « Budgets par catégorie »** (`data-section-categories`) : **un tableau avec UNE ligne par catégorie** (toutes les catégories actives, même sans budget, plus celles désactivées qui ont encore un
+  budget en vigueur) — budget en vigueur, consommé, réservé, reste, période, seuils, **statut** du dernier paramétrage (`data-statut-categorie`), alerte — ; les budgets en attente du DG ; le
+  **formulaire de paramétrage** (`ParametrageCategoriesForm` : cases à cocher, dates communes à la sélection, soumission individuelle ou en lot, tout ou rien) ; **son propre historique**
+  (`data-historique-categories`, avec colonnes catégorie et montant).
+
+**Actions et notifications PAR section** (`budgets/actions.ts`, `lib/notificationsBudget.ts`) — remplacent `soumettreParametragesBudgetAction` / `deciderParametragesBudgetAction` :
+| Section | Soumettre (Finance, `treso.modifier_budget_categorie`) | Valider / rejeter (DG, `treso.valider_budget`) |
+|---|---|---|
+| Caisse | `soumettreSeuilsCaisseAction(saisie)` | `deciderSeuilsCaisseAction(elements, valider, motifCommun?)` |
+| Catégories | `soumettreBudgetsCategoriesAction(saisies)` | `deciderBudgetsCategoriesAction(elements, valider, motifCommun?)` |
+- **La portée est imposée par l'action, jamais lue de l'entrée** : l'action de caisse force `GLOBAL` (montant et catégorie envoyés par un client sont ignorés — testé), celle des catégories force `CATEGORIE` et
+  refuse une ligne sans catégorie. Un pourcentage envoyé pour la caisse reste refusé par la validation (rien n'est converti en silence).
+- **Les actions de décision revérifient la portée de chaque identifiant en base** : décider un paramétrage de l'autre section est refusé (testé dans les deux sens), sans rien écrire.
+- Notifications propres : « Seuils de caisse à valider » / « Seuils de caisse validés (rejetés) par le DG » ; « Budget de catégorie à valider » / « n budgets de catégorie à valider » /
+  « n budgets de catégorie validés (rejetés) par le DG ». Toujours UNE notification par lot et par soumetteur (motifs inclus au rejet). Les notifications d'alerte orange/rouge et de confirmation de
+  dépassement sont inchangées.
+- Inchangés : le DG ne décide jamais ce qu'il a soumis (case et boutons désactivés, ignoré côté serveur), motif obligatoire au rejet (par élément ou commun), une trace d'historique par élément, un seul
+  paramétrage en attente par budget, un nouveau paramétrage ne modifie jamais l'ancien et n'est utilisable qu'une fois validé, à sa date d'effet.
+
+**Blocs retirés de l'écran** (devenus doublons ou inutiles après la séparation) : le bloc mixte « Budgets en vigueur » (remplacé par l'encadré du solde de caisse et le tableau des catégories) ; la liste
+unique « Paramétrages en attente du DG » (une liste par section) ; le formulaire unique `ParametrageBudgetForm` (supprimé, remplacé par `ParametrageCaisseForm` et `ParametrageCategoriesForm`) avec sa ligne
+« Budget global = solde de caisse » mêlée aux catégories ; l'historique unique des paramétrages (un par section) ; les deux actions mixtes et leurs notifications génériques.
+
+**Points ouverts** : (1) **la décision en lot du DG existe dans chaque section, mais celle de caisse ne s'affiche jamais** : la règle du lot J (un seul paramétrage en attente par budget) limite la caisse à
+UN paramétrage en attente à la fois ; la barre de lot n'apparaît que s'il y en a au moins deux (le même composant sert les deux sections). Lever cette limite serait un changement de règle, non fait.
+(2) Le bloc « Dépassements à confirmer » reste commun aux deux sections (un dépassement peut viser la caisse ou une catégorie dans la même validation). (3) Les dates d'effet restent communes à la sélection
+d'un lot de catégories. (4) Le tableau des catégories lit « Consommé » et « Réservé » du contexte budgétaire existant (consommé au règlement depuis la date d'effet ; réservé = le plus grand du consommé et de
+l'engagé) : aucun nouveau calcul. (5) Le statut d'une catégorie est celui de son **dernier paramétrage soumis** (en attente, validé ou rejeté) : une catégorie dont le dernier paramétrage a été rejeté affiche
+« Rejeté » alors que son budget en vigueur peut venir d'un paramétrage validé plus ancien. **(⚠️ résolu par le lot J bis : « Dernier paramétrage rejeté » + budget conservé affichés.)**
+
+**Vérifié** : vitest (978 réussis), tsc, eslint, `next build` ; e2e `lot-j-ter.mjs` 117/117 (deux sections et leur contenu, formulaire de caisse sans montant ni pourcentage, portée imposée par chaque action, refus
+croisés, notifications propres, historiques séparés, tableau des catégories, décision seul et en lot par section, lot tout ou rien, soumission du DG ignorée, parcours, reporting, journal de caisse intact) ;
+`lot-j.mjs` adapté 85/85 ; `lot-i.mjs` 56/56 ; régressions des lots C, F, G, G bis, G ter, H et précédents.
+
+#### Lot J bis — confirmation de dépassement et règlement, « dernier paramétrage rejeté », catégories désactivables par la Finance (2026-10-20)
+
+Aucune écriture de caisse créée ni modifiée ; budget toujours **consommé au règlement** ; `PERMISSIONS_DECISION_NON_DELEGABLES` intacte ; **aucune permission nouvelle** ; devise unique.
+Une migration additive, rejouable, **justifiée** : `20261025090000_budget_depassement_couverture` ajoute `BudgetDepassement.couverture` (JSONB, nullable) — sans elle, le règlement ne saurait pas ce que le DG
+a autorisé (le `resume` d'un dépassement est un texte, pas une donnée exploitable). `migrate diff` vide.
+
+**1. La confirmation du DG couvre le règlement de l'article.** *Incohérence corrigée* : un dépassement du seuil rouge confirmé par le DG à la validation était ensuite refusé à la confirmation du règlement
+(`confirmerReglementAction` : « allocation > reste du budget de la catégorie »).
+- **Ce qui est enregistré** (`couvertureDepuisAjouts`, `backend/src/budgets.ts`, pur) : à l'UTILISATION de la confirmation (validation effective), `couverture` = `[{ ligneId, categorieId, montant }]` — le montant de CHAQUE
+  article validé (ou, pour une dépense directe, `ligneId` nul) dans les seules catégories qui atteignent le seuil rouge. Elle est calculée sur la validation RÉELLE, pas sur la demande de confirmation : si la Finance
+  valide moins d'articles que prévu, seuls ceux-là sont couverts. Écrite dans les deux chemins (le DG confirme dans le même geste ; confirmation demandée par la Finance puis utilisée). `AjoutBudget` gagne `ligneId`
+  (renseigné par `ajoutsPourArticles`).
+- **La règle** (`partieCouverteReglement`, pur, centimes) : pour l'allocation d'un règlement (article, catégorie), `couvert = min(montant du règlement, couverture totale de l'article dans la catégorie − déjà réglé
+  (règlements confirmés non annulés du même article/catégorie, hors ce règlement))` ; **`aControler = montant − couvert`**. `confirmerReglementAction` n'applique la couverture que si l'allocation dépasse le reste du
+  budget **et** que `aControler` tient dans ce reste ; sinon le refus d'origine (« Ce règlement dépasse le budget disponible… ») est inchangé. Donc : règlement dans la limite confirmée = accepté ; règlement au-delà
+  du montant confirmé = l'excédent doit tenir dans le budget, sinon refusé ; **un autre article de la même catégorie n'est jamais couvert** ; un article sans confirmation garde la règle d'origine. Le plafond du
+  règlement par article (montant validé) et le contrôle du solde de caisse sont inchangés.
+- **Chargement** : `chargerCouvertureReglement` (`budgetsDb.ts`, lecture seule) lit les confirmations `UTILISE` de la demande (seules les validations effectives comptent, jamais une confirmation seulement `CONFIRME`).
+- **Trace** : `HistoriqueEntry` (demande) `reglement_couvert_depassement`, posée dans la MÊME transaction que la confirmation du règlement, **seulement quand la couverture a réellement joué** : « Règlement de X FCFA
+  confirmé au-delà du reste du budget de « Cat » : dépassement confirmé par <DG> (motif : …) — montant couvert par cette confirmation : A FCFA sur B FCFA confirmés[, C FCFA contrôlés sur le reste du budget] ».
+  La validation elle-même ajoute « cette confirmation couvre aussi le règlement jusqu'à X FCFA » aux entrées `confirmation_depassement_budget` / `depassement_budget_utilise`. Libellé `Règlement couvert par la
+  confirmation du DG (dépassement de budget)`, **gestion interne** (jamais montrée au demandeur, comme les autres actions budget).
+- **Affichage** (Finance et DG seulement) : parcours de l'article — « Dépassement de budget confirmé par le DG — <qui> (motif : …) : couvre le règlement de cet article jusqu'à X FCFA » (`phrasesCouvertureParArticle`,
+  `data-couverture-reglement`) ; reporting (page et Excel) : même phrase dans la colonne « Budget après validation (reste) » de la ligne ARTICLE. Rien chez le demandeur ni dans les PDF.
+- **Anciennes confirmations** (utilisées avant ce lot, `couverture` nul) : **ne couvrent aucun règlement** (rien n'est deviné). À traiter à la main si le cas existe : redemander une confirmation ou relever le budget.
+
+**2. Page « Budgets », section catégories.** Quand le dernier paramétrage d'une catégorie a été rejeté, la ligne affiche « **Dernier paramétrage rejeté** » et, dessous, « Budget en vigueur conservé : X FCFA (période) »
+(`data-dernier-parametrage-refuse`, `data-budget-conserve`) — ou « Aucun budget en vigueur » si elle n'en a jamais eu. Les colonnes budget / consommé / reste montraient déjà le budget en vigueur : la mention le dit
+désormais explicitement. Un dernier paramétrage en attente ou validé garde son badge habituel.
+
+**3. e2e/lot-g : 60 → 59 contrôles — explication.** Le contrôle disparu est `"5. export : colonnes d'article d'origine et de règlements"` (colonnes « Article (libellé Finance) » / « Article (libellé d'origine du demandeur) » de
+la feuille **« Retours de caisse »**). Il n'a pas disparu au lot J mais au **lot F** (commit `a46f643`), qui a remplacé cette feuille par le tableau unique : le contrôle visait une feuille qui n'existe plus, et le
+remplacement du lot F ne portait que sur la présence de la feuille « Reporting » ; le compte passait de 60 à 59 sans que rien n'ait été ajouté. **Rétabli au lot J bis**, adapté à la feuille unique :
+`"5. export : colonnes d'article d'origine (Finance + demandeur) et de règlements Caisse / Banque dans la feuille unique"` (colonnes « Article », « Libellé d'origine (demandeur) », « Dont Caisse », « Dont Banque »). Le
+script revient à 60 contrôles.
+
+**4. Désactiver / Réactiver par la Finance.** `toggleCategorieActiveAction` / `toggleObjetActiveAction` passent de `isAdmin` à `peutGererCategories` (Admin **ou** `treso.gerer_categories` — la même garde que la création et
+la suppression ; aucune permission nouvelle). `CategoriesList` gagne la prop `canToggleActive` (défaut = `isAdmin`, donc `/admin/categories` ne change pas ; l'onglet « Catégories » de `/treso/finance/budgets` la passe
+à `admin || gerer_categories`). Boutons « Désactiver » / « Réactiver » sur **chaque catégorie et chaque objet**. Le message de refus de suppression (« Désactivez-la plutôt ») mène donc désormais à un bouton.
+- **Trace** (qui, quand) : `HistoriqueEntry` `ACTIVATE` / `DEACTIVATE` (entité `Categorie` ou `Objet`, auteur, date) — déjà écrite par les actions — et, à l'écran, « Désactivée le 20/10/2026 09:14 par X »
+  (`chargerDesactivations`, dernière entrée de l'historique ; disparaît à la réactivation).
+- **Effets** : une catégorie / un objet désactivé n'est plus proposé pour catégoriser un NOUVEL article (filtre `isActive` des choix de catégorisation, inchangé) mais reste affiché sur les demandes existantes, dans
+  l'historique et le reporting ; **le filtre du reporting** liste désormais aussi les désactivés, signalés « (désactivée) » (avant : absents du filtre alors que leurs demandes étaient dans les résultats) ; **son budget en
+  vigueur reste visible** (page Catégories, tableau des budgets avec « (désactivée) », et barres du dashboard Finance : `getTopCategoriesBudget` ne filtre plus sur `isActive`). Aucune demande n'est modifiée.
+- Admin : `/admin/categories` inchangée (mêmes droits, mêmes boutons, libellé « Activer » devenu « Réactiver »). Sans `treso.gerer_categories` (DG, Assistant Finance, Collaborateur) : refus serveur « Action non autorisée. ».
+
+**Points ouverts / décisions** : (1) la couverture est celle du **montant de l'article** (ou de la validation de la dépense directe) : elle ne couvre que les catégories au seuil rouge au moment de la validation ; un
+article validé SANS atteindre le rouge n'a rien de couvert, et si le budget se dégrade ensuite (autres règlements) son règlement reste soumis au contrôle ordinaire ; (2) le **budget de caisse** (global) n'est
+toujours pas lié au règlement : la confirmation couvre les catégories, le contrôle de solde de caisse suffisant de `confirmerReglementAction` est inchangé ; (3) la couverture se consomme par les règlements **confirmés** de
+l'article ; l'annulation d'un règlement la restitue (le « déjà réglé » est recalculé à chaque confirmation) ; (4) plusieurs confirmations utilisées sur la même demande s'additionnent par article / catégorie ; (5) les
+anciennes confirmations (avant la migration) ne couvrent rien — voir plus haut ; (6) deux confirmations de règlements simultanées d'un même article peuvent chacune voir la même couverture disponible (le contrôle de
+budget existant n'est pas non plus verrouillé) ; (7) le cas « confirmation qui ne couvre qu'une partie du règlement » (dépense directe validée en plusieurs étapes) est couvert par vitest et un scénario SQL de l'e2e, non
+par le parcours complet à l'écran.
+
+**Vérifié** : vitest (988 réussis, dont 10 nouveaux dans `budgetsCouverture.test.ts` : couverture par article / catégorie, seuil rouge seul, cumul, relecture JSON, règlement dans la limite, partiel puis solde,
+au-delà du confirmé, au centime), tsc, eslint, `next build` ; migration appliquée, `migrate diff` vide ; e2e `lot-j-bis.mjs` 61/61 (validation avec confirmation du DG par l'écran réel, règlement de 120 000 confirmé malgré
+un budget de 100 000, trace avec le DG / le motif / le montant couvert, autre article refusé, dépense directe couverte à 70 000 puis règlement suivant refusé, article sans confirmation refusé, parcours, historique,
+reporting page et Excel, rien chez le demandeur, caisse intacte ; mention « Dernier paramétrage rejeté » chez la Finance et le DG ; désactivation / réactivation de catégorie et d'objet par la Finance, tracées,
+absentes des choix, visibles dans l'historique, le reporting et le tableau des budgets, refus sans permission, Admin inchangé) ; `lot-g.mjs` rétabli à 60 contrôles ; régressions : `lot-j` 85/85, `lot-j-ter` 117/117 (trois attentes mises à jour : désactivation désormais offerte à la Finance, libellé « Dernier paramétrage refusé »),
+`lot-i` 56/56, `lot-c` (aucun KO), `lot-f` 60/60, `lot-g-bis` 35/35, `lot-g-ter` 31/31, `lot-h` 46/46, `regularisation-par-article` 38/38, `reglement-par-article` 55/55, `articles-decision-finance` 65/65,
+`soumission-dg-article` 37/37, `articles-beneficiaire-pieces` 34/34. **Piège d'environnement** : au-delà de ~6 scripts sur le même serveur, la limite de connexions fait expirer l'ouverture de session
+du script suivant — redémarrer le serveur entre les scripts.
+
+#### Lot K — réorientation de l'étape Service et reprise (retour à l'étape précédente) (2026-10-26)
+
+Aucune écriture de caisse créée ni modifiée (une réorientation ou une reprise n'en génère jamais) ; `PERMISSIONS_DECISION_NON_DELEGABLES` intacte ; garde 8 jamais contournée ; « DG définitif » et mécanisme de dépassement
+(lot J bis) non élargis. Migration `20261026090000_circuit_reorientation_reprise` (écrite à la main, idempotente, rejouée sans effet, `migrate diff` vide) : `Demande.responsableEtapeServiceId` (facultatif, clé `SET NULL`, indexé)
+et la permission `treso.reorienter_demande` (donnée aux rôles qui portent `treso.decider_finance`, seed compris : Finance). Moteur pur : `circuitReorientation.ts` et `circuitReprise.ts` (branchés dans `transition` par les
+actions `REORIENTER` / `REPRENDRE` : les boutons grisés lisent donc la même phrase que le serveur). Couche base : `circuitReorientationDb.ts`, `circuitRepriseDb.ts`, `circuitEvenementsDb.ts` (lecture de l'historique pour le parcours et
+le reporting). Actions : `reorienterDemandeAction`, `reprendreEtapeAction` (`treso/circuit/actions.ts`).
+
+**Constat préalable (la spec du lot supposait du code existant)** : `repriseArticles.ts` / `repriseReglements.ts` sont des scripts de rattrapage de DONNÉES (lots B et D, lancés à la main) et `cheminRetour.ts` valide la redirection après
+connexion — aucun ne fait revenir une demande à l'étape précédente. Il n'existait AUCUNE fonction de retour en arrière dans le circuit (« aucune dévalidation », voir plus haut) : `circuitReprise.ts` est le premier et le seul mécanisme de
+reprise, ajouté au moteur existant (`transition`) plutôt qu'à côté.
+
+**Partie 1 — réorientation vers un autre responsable disponible**
+- **Qui** : le demandeur (sans permission) ou la Finance (`treso.reorienter_demande`, permission dédiée, délégable comme les autres permissions ordinaires). **Quand** : seulement tant que la demande attend le responsable de service (étape
+  Service) ; jamais après sa décision. **Motif obligatoire**, 10 caractères (« Pourquoi réorienter ? »), revérifié côté serveur.
+- **Décideur effectif de l'étape** (`responsableServiceEffectif`, une seule définition) = `Demande.responsableEtapeServiceId` s'il existe, sinon le responsable ACTUEL du service du demandeur (règle d'origine, inchangée pour toute demande non
+  réorientée). Lu par : la file `demandesServiceAValiderWhere`, `chargerActeur` (avec `demandeId`) et `appliquerTransitionCircuit` (revérifié sous le verrou de la demande), la garde de `/treso/service/[id]` (**404 pour l'ancien responsable**),
+  la route des pièces jointes (403 pour l'ancien), les notifications et les rappels (`chargerContexte`). Le **service du demandeur ne change jamais**. La surcharge est remise à `NULL` à la resoumission après correction (nouveau tour).
+  `changerResponsableService` (Admin) ne touche plus les demandes réorientées (pas de ligne d'historique « suit le nouveau responsable » pour elles).
+- **Cibles éligibles** (`responsablesEligibles` / `refusCibleReorientation`, revérifiées par le serveur, jamais la liste affichée seule) : comptes responsables d'au moins un service, **actifs**, différents du décideur actuel, **pas en
+  absence autorisée aujourd'hui**, et **garde 8** (ni le demandeur ni le bénéficiaire de la demande ou de l'un de ses articles). **Absence** : la seule connaissance d'absence du portail est `PlageAbsenceAutorisee` (congé ou permission couvrant
+  toute la journée, règle `utilisateursCouvertsParAbsence` du Pointage) ; un responsable absent SANS plage déclarée n'est pas exclu (point ouvert).
+- **Effets** (une seule transaction) : décideur remplacé ; chronomètre de la demande remis à zéro (`etapeCircuitDepuis`) et `dernierRappelAt` effacé (le rappel de 48 h repart du NOUVEAU responsable) ; historique `reorientation_service`
+  (qui, de qui vers qui, « à la demande du demandeur » / « par la Finance », motif, **délai écoulé chez l'ancien décideur**), visible du demandeur ; plusieurs réorientations possibles, chacune tracée (l'ancien décideur redevient proposable).
+  Notifications : nouveau responsable (à valider, motif), ancien (demande retirée), demandeur quand ce n'est pas lui qui réoriente — jamais l'auteur.
+- **Écrans** : `ReorienterDemande` (liste « Nom — Service » + « Pourquoi réorienter ? ») sur la page du demandeur et sur celle de la Finance, **seulement à l'étape Service** ; aucun reste de budget n'y figure (règle du lot J).
+- **Traces** : parcours de l'article (`ParcoursArticle.circuit`, bloc « Réorientations et reprises ») et reporting (colonne « Réorientations et reprises » du tableau unique, page et Excel, lignes DEMANDE et ARTICLE) — relus de
+  l'historique, aucune nouvelle table.
+
+**Partie 2 — reprise (retour à l'étape précédente), motif obligatoire (10 caractères)**
+Enchaînement réel vérifié dans le code : Service (demande entière) → Finance (article par article) → DG (articles soumis par la Finance), puis exécution. Trois reprises, rien d'autre (`evaluerReprise`) :
+| Reprise | Cible | Conditions | Qui |
+|---|---|---|---|
+| Finance → Service | la demande entière | étape Finance, parcours avec étape Service, **aucun article décidé, soumis au DG ni rejeté** | `treso.decider_finance` (étape en cours) ou `treso.decider_dg` (étape suivante, moteur seulement) |
+| DG → Finance | un article soumis au DG, sans décision du DG | demande qui n'est pas à décision DG d'office (cas b) | le DG qui renvoie, ou la Finance qui le retire |
+| Validation → à décider | un article validé par la Finance **seule** | `decisionDG` nulle, jamais soumis au DG, **aucun règlement non annulé (brouillon et règlement partiel compris)**, demande ni clôturée ni rejetée ni abandonnée | Finance ou DG |
+**Interdits** (phrase du serveur, bouton grisé avec elle) : article rejeté (définitif), article validé par le DG (définitif, y compris cas b), article avec un règlement (même brouillon), demande `CLOTUREE` / `REJETEE` / `ABANDONNEE` ou en
+correction, dépense directe (aucune étape précédente), propre demande ou **propre article** (garde 8), compte sans permission de décision (Assistant Finance, Collaborateur). Le nombre de règlements inconnu refuse la reprise (jamais de devinette).
+- **Effets** (`reprendreEtape`, transaction annulée en entier sur refus, verrou de la demande) : l'article repasse « à décider » (validation reprise : décision, décideur Finance et **photo du budget** effacés — l'historique garde tout ; retrait de
+  l'étape DG : soumission annulée) ; montant validé recalculé, étape déduite des articles, statut par `calculerStatutDemande` (seul point d'écriture) ; chronomètre remis à zéro et rappel recalibré ; historique `reprise_etape` (qui, étape
+  avant → après, motif ; rattaché à l'article pour une reprise d'article, à la demande sinon) ; notifications avec le motif : responsable du service (Finance → Service), Finance (DG → Finance, validation reprise), DG quand la Finance retire un
+  article de son étape, et le demandeur (information). Un règlement créé entre-temps annule la reprise (contrôle après écriture, dans la transaction).
+- **Budgets** : l'engagé se recalcule des articles validés → **aucun engagement fantôme** après une reprise. **Dépassement confirmé par le DG (lot J bis) puis article repris — décision : la confirmation devient CADUQUE pour cet article.** Sa part est
+  retirée de `BudgetDepassement.couverture` (`rendreCaduqueCouvertureArticle`, historique `confirmation_depassement_caduque`, interne) ; la confirmation reste « utilisée » (usage unique) mais ne couvre plus rien pour lui ; les autres articles de la même
+  confirmation gardent la leur ; **revalider l'article exige une NOUVELLE confirmation du DG** si le dépassement subsiste (vérifié : alerte ROUGE de nouveau, appel direct refusé). Raison : la confirmation portait sur UNE validation précise ; la garder
+  vivante laisserait contourner le seuil rouge à la revalidation, éventuellement avec un autre montant.
+- **Écrans** : `RepriseEtapeSection` sur la page Finance (demande entière, articles soumis au DG, articles validés — bouton grisé avec la phrase du serveur quand c'est interdit) et sur la page du DG (« Renvoyer à la Finance »).
+- Les décideurs reçoivent la reprise sans nouvelle permission : `treso.decider_finance` / `treso.decider_dg` (non délégables) suffisent.
+
+**Points ouverts / décisions à confirmer** : (1) un responsable absent sans `PlageAbsenceAutorisee` reste proposable ; (2) la reprise « Finance → Service » par le DG n'est accessible que par le moteur (le DG n'a pas de page pour un dossier à l'étape
+Finance) ; (3) une reprise ne remet pas en cause `validationCompleteParDG` / `dgApprobateurId` éventuellement acquis par une approbation séparée de clôture (elle reste valable : la clôture exige de toute façon que tous les articles soient traités) ;
+(4) un article validé par la Finance mais encore « à confirmer » par le DG n'existe pas (le DG valide d'abord) ; (5) le compte « deux personnes » (`decideurFinanceId` de la demande) n'est pas effacé par la reprise d'un article (l'historique le garde) ;
+(6) l'ancien responsable qui suivait une demande réorientée tombe sur « introuvable » (404) plutôt que sur une page en lecture seule ; (7) les pièces jointes d'une demande réorientée ne sont plus lisibles par l'ancien responsable.
+
+**Vérifié** : vitest (1034 réussis : `circuitReorientation.test.ts` 16, `circuitReprise.test.ts` 30 — éligibilité des cibles, garde 8, interdits de reprise, motif obligatoire, caducité de la
+couverture ; `circuitDemande.test.ts` adapté : le demandeur peut réorienter à l'étape Service ; `reportingArbre.test.ts` adapté : nouvelle colonne longue), tsc (backend et frontend), eslint, `next build` ; migration depuis une base vide (deploy + seed),
+`migrate diff` vide, rejeu sans effet, et sur une base « déjà seedée » (permission rattrapée pour la Finance) ; e2e `lot-k.mjs` 101/101 (réorientation par le demandeur et par la Finance, liste filtrée — actuel, inactif, absent —, motif court refusé
+au serveur, garde 8 sur le nouveau responsable, ancien responsable : lien 404, file vide, valider/rejeter refusés, pièce jointe 403, notifications, délai tracé, rappel recalibré sur le nouveau, réorientations multiples, refus après l'étape Service ;
+reprise Finance → Service puis re-validation du responsable, DG → Finance dans les deux sens, refus sur article validé par le DG / rejeté / réglé en brouillon puis confirmé / demande clôturée / bénéficiaire / Assistant, reprise d'un article validé avec
+dépassement confirmé, confirmation caduque, revalidation refusée sans nouvelle confirmation, parcours, reporting page et Excel, journal de caisse strictement identique).
+
+#### Lot L — signature manuscrite (dessinée à la souris ou au doigt) sur les actions sensibles (2026-10-27)
+
+Décision du DG : les actions sensibles portent la signature de leur auteur. **Traçabilité interne, PAS une signature électronique qualifiée** — l'interface le dit (profil, fenêtre de création, reçus imprimés : « sans valeur de signature électronique qualifiée ») et ne doit jamais prétendre le contraire.
+Aucune écriture de caisse créée ni modifiée, `PERMISSIONS_DECISION_NON_DELEGABLES` et garde 8 intactes, **aucune permission nouvelle**. Migration additive à la main `20261027090000_signatures_manuscrites`
+(2 tables + le repère de mise en service ; `migrate diff` vide ; les tables ne se rejouent pas, comme toute migration de création, le repère `ON CONFLICT DO NOTHING` si).
+
+**Ce que prouve la signature (décision structurante)** : on la dessine **une seule fois** dans le profil. Chaque action sensible n'est ensuite qu'un clic : le serveur applique la signature enregistrée du compte connecté. Elle prouve donc que
+l'action vient du **compte connecté** (mot de passe / session), avec la signature qu'il a enrôlée à une date connue, depuis telle adresse IP — **pas** que la personne a redessiné sa signature à ce moment-là. Pas de fenêtre de dessin par action.
+
+**Modèle** (`SignatureUtilisateur`, `ActionSignee`, relations vers `User` ; stockage en base, `Bytes`, jamais d'URL publique) :
+- `SignatureUtilisateur` : une ligne par **version** (`@@unique([userId, version])`), PNG reconstruit, largeur, hauteur, empreinte SHA-256. Une nouvelle signature ajoute une version ; **une version n'est jamais modifiée ni supprimée** (la version courante = la plus élevée).
+- `ActionSignee` (ajout seul) : signataire (= le compte connecté), **version utilisée**, `auNomDeId` (titulaire si délégation), code d'action, demande / article / entité visés, adresse IP (`getTrustedClientIp`), date. Aucune clé vers la demande (comme `HistoriqueEntry`).
+- Repère `MarqueurUnique` `signatures.mise_en_service` (posé par la migration) : tout ce qui le précède est « **Antérieur à la signature** » (jamais signalé comme anormal, jamais modifié).
+
+**Image validée côté serveur, jamais crue du navigateur** (`backend/src/signature.ts`, pur, 16 tests ; constantes client-safe dans `signatureConstantes.ts`) : data URL `image/png` seulement, taille contrôlée **avant** décodage (100 Ko), PNG réellement décodé
+(CRC, IHDR, 8 bits gris / gris+alpha / RVB / RVBA, sans entrelacement, dimensions 200×60 à 1200×600, flux zlib borné, défiltrage), **tracé vide ou quasi vide refusé** (150 pixels encrés, étendue 40×10), puis **PNG reconstruit** (IHDR + IDAT + IEND : métadonnées retirées).
+
+**Enrôlement** : section « Ma signature » de `/profil` (`SignatureProfil`, `SignaturePad`) : cadre 600×200, **Pointer Events + `touch-action: none`** (le doigt dessine sans faire défiler la page), « Effacer » / « Enregistrer », aperçu de la signature actuelle, redessin = nouvelle version, anciennes versions listées.
+`enregistrerSignatureAction` (`profil/signatureActions.ts`, historique `enregistrement_signature`). Même cadre dans une **fenêtre de création** (`FournisseurSignature` dans `(dashboard)/layout.tsx`, contexte `contexteBase.ts`) et un **bandeau « Créer ma signature »** pour les comptes qui signent
+(`PERMISSIONS_SIGNATAIRES` ou responsable de service) tant qu'ils n'en ont pas.
+**Service des images** : `GET /api/signatures/[id]` — session obligatoire ; propriétaire, **ou** lecteur Finance / DG / reporting (seulement pour une signature réellement utilisée), **ou** demandeur / bénéficiaire / responsable de service d'une demande dont une action a été signée avec elle ; sinon 403 (401 sans session). Cache privé, `nosniff`.
+
+**Garde serveur — `avecSignature`** (`frontend/src/lib/signature.ts`, enveloppe de chaque action signée) : (1) le compte connecté **doit** avoir une signature enrôlée, sinon l'action est **refusée** (message `MESSAGE_SIGNATURE_REQUISE`) **même si l'appel contourne l'interface** (testé par appel direct) ;
+(2) l'action s'exécute avec ses propres contrôles inchangés (permission, statut, garde 8…) ; (3) en cas de **succès seulement**, `ActionSignee` est enregistrée (version courante, IP, date, cible résolue par `resoudreCible`). Chaque action `xxxAction` devient une enveloppe de `xxxInterne` (même corps, rien d'autre ne change).
+Un échec de l'enregistrement après une action réussie est journalisé (`console.error`) sans annuler l'action (**limite assumée**, voir plus bas). Le contrôle de signature passe AVANT la permission : un compte non autorisé ET sans signature reçoit le message de signature (sans conséquence).
+
+**Actions signées** (code → ce qui est signé ; liste source : `ACTIONS_SIGNEES`) :
+| Domaine | Actions |
+|---|---|
+| Étape Service | `validerEtapeServiceAction`, `rejeterEtapeServiceAction` |
+| Finance | `validerLignesAction` (décision sur les articles), `validerTotalement / Partiellement / ComplementaireAction` et `rejeterReliquatAction` / `rejeterDemandeAction` (dépense directe, anciennes demandes) |
+| DG | `deciderLigneDGAction`, `validerEtapeDGAction`, `rejeterEtapeDGAction`, `rejeterDemandeEtapeDGAction`, `approuver / rejeter / annulerValidationCompleteAction` |
+| Circuit | `soumettreAuDGAction`, `soumettreLignesAuDGAction`, `resoumettreAuDGAction`, `resoumettreValidationCompleteDGAction`, `reorienterDemandeAction`, `reprendreEtapeAction` (lot K) |
+| Budgets | `confirmerDepassementBudgetAction` (DG), soumission et décision des seuils de caisse et des budgets de catégorie (`soumettreSeuilsCaisseAction`, `soumettreBudgetsCategoriesAction`, `deciderSeuilsCaisseAction`, `deciderBudgetsCategoriesAction`) |
+| Argent | `confirmerReglementAction`, `annulerReglementAction` (Caisse comme Banque), `receptionnerRetourAction`, `declarerRetourAssistantAction`, `validerRemboursementRetourAction` / `rejeter…`, `validerRetourExceptionnelAction` / `rejeter…`, `creerRetourExterneAction`, `alimenterCaisseAction`, `definirSoldeOuvertureAction` / `corrigerSoldeOuvertureAction` |
+| Clôture | `cloturerDemandeAction` (totale, partielle ET **forcée**) |
+| Dépense directe | `creerDepenseDirecteAction` |
+**Non signées, volontairement** : consultations, notifications, tâches automatiques (cron, planificateur), catégorisation, libellés / descriptions / motifs, création et correction d'une demande par le demandeur, abandon, **déclaration d'un retour de caisse par le collaborateur**
+(`creerRetourCaisseAction` : sans effet sur la caisse, « déclarer ≠ réceptionner » — c'est la réception qui est signée), brouillons de règlement, saisie d'un retour exceptionnel. Une action qui en appelle une autre (`rejeterEtapeServiceAction` → `rejeterDemandeAction`) laisse DEUX enregistrements de signature pour un seul clic (inoffensif).
+
+**Délégation** : un délégué signe avec **sa propre signature** ; `titulaireDelegation` repère le titulaire quand la permission de l'action ne lui vient **que** d'une délégation active (donneur actif le plus ancien) : « signé par [délégué], au nom de [titulaire] » partout.
+Les permissions de décision restent non délégables (inchangé).
+
+**Affichages** (une seule vue de la mention : `MentionSignature` = miniature agrandie au survol / image entière au clic + libellé ; `libelleSignature`) :
+- **Historique de la demande** (`DemandeHistorique`) : chaque entrée d'une action signée (`ACTIONS_HISTORIQUE_SIGNEES`) montre sa signature, rapprochée par (compte, fenêtre de 60 s) — `rapprocherSignatures` ; « Antérieur à la signature » avant le repère. Même version que celle utilisée à ce moment-là, même après un nouvel enrôlement.
+- **Parcours de l'article** : bloc « Signatures » (ce qui a été signé, quand, par qui) et « Signature de la décision : Antérieur à la signature ».
+- **Reporting** (page et Excel, **sans nouvelle table**) : colonnes « Signé par », « Signé le », « Au nom de », « Signature » du tableau unique, sur les lignes dont l'action est signée (décision de l'article, règlement, retour réceptionné, remboursement, retour externe, retour exceptionnel, clôture ; la demande à défaut la validation de service),
+  `appliquerSignature` (même compte que la colonne « Auteur », dans la minute). Page : miniature + survol ; Excel : image par version **intégrée une seule fois** puis réutilisée. **Limite : `SIGNATURES_IMAGES_MAX_LIGNES = 2000` lignes signées** (`frontend/src/lib/reportingArbreExcel.ts`) —
+  au-delà, plus d'image (fichier trop lourd), les colonnes de texte restent complètes et une note le dit sous le tableau. Droit de lecture = celui du reporting (`treso.voir_reporting`), l'export est refusé aux autres.
+- **Reçu de règlement et reçu de retour** (PDF) : bloc « Validations et signatures » (`SignaturesSection`, `chargerSignaturesDocument`) : une ligne par étape validée **dans l'ordre du circuit** (Service, Finance, DG, puis le régleur / la personne qui a réceptionné CE règlement / CE retour) avec nom, **fonction (nom du rôle)**, date et signature ; avant le repère : « Antérieur à la signature ».
+  Il n'existe pas de « PDF de la demande » ; le **bon de caisse reste minimal** (document remis en main propre, inchangé).
+- `supprimerUtilisateurAction` compte les signatures, les actions signées et celles faites « au nom de » le compte.
+
+**Bouton « signe »** (`Button`, désormais un Client Component) : les boutons des actions signées portent la prop `signe` — plume, infobulle « Signer et valider : cette action sera signée avec votre signature enregistrée… » (`RAPPEL_SIGNATURE_PAR_DEFAUT`, `signeRappel` pour la préciser), `data-signe="true"`.
+Sans signature enrôlée, le clic **n'exécute pas** l'action : il ouvre la fenêtre de création, puis l'action reprend toute seule (clic rejoué). **Écart assumé par rapport à la demande** : le libellé du bouton garde son verbe (« Valider », « Confirmer… ») — le renommer en « Signer et valider » aurait cassé les sélecteurs des 936 contrôles e2e existants de la Trésorerie sans rien apporter de plus ;
+la plume, l'infobulle et l'attribut disent la même chose.
+
+**Tests** : vitest `signature.test.ts` (16 : image valide dans les 4 types de pixels, métadonnées retirées, vide / point / trait court / non-PNG / dimensions / poids / entrelacé / 16 bits / CRC refusés, data URL, refus sans signature, version conservée, « Antérieur à la signature », « au nom de ») et 6 tests de `reportingArbre.test.ts` (signature d'une ligne,
+délégation, antérieur, aucune, autre compte / hors fenêtre, colonnes). **e2e** : `e2e/signatures-auto.mjs` enrôle une signature de test pour tous les comptes de la base jetable et crée un déclencheur PostgreSQL qui le fait pour les comptes créés ensuite — **importé et appelé par les 16 scripts Trésorerie** (sinon toutes leurs actions signées seraient refusées) ;
+`soumission-dg-article.mjs` supprime aussi ces lignes avant de supprimer son compte. **`e2e/lot-l.mjs`** (76 contrôles) : enrôlement (souris, tactile sans défilement, Effacer / Enregistrer, versions), revalidation serveur (vide, JPEG, faux PNG, > 100 Ko, dimensions, non-image), refus sans signature par appel direct (décision, règlement), création à l'écran puis reprise de l'action,
+trace (signataire, version, IP, date), version conservée après un nouvel enrôlement, délégation (« au nom de »), droits de lecture de l'image, reçu PDF (ordre du circuit, « Antérieur… »), reporting page + Excel (images dédupliquées), aucune écriture de caisse.
+Le plafond de 2000 images a été vérifié à part (classeur de 10, 2000 et 2001 lignes signées : images dédupliquées jusqu'à 2000, aucune et note au-delà, colonnes de texte conservées).
+
+**Points ouverts / limites** : (1) et (2) ⚠️ **RÉSOLUS par le lot L bis (ci-dessous)** : la signature s'écrit dans la même transaction que l'action et se lie à ses événements par identifiant ; (3) les lignes du reporting hors liste (dépense, mouvement banque) et le bon de caisse n'ont pas de signature ; (4) un compte sans signature ne peut ni valider, ni régler, ni clôturer : le déploiement doit être précédé de l'enrôlement des signataires (bandeau) ;
+(5) la fenêtre flottante « Alertes en temps réel » peut recouvrir le cadre de signature du profil (elle se ferme) ; (6) aucune expiration ni révocation d'une signature (une nouvelle version suffit) ; (7) l'image est stockée en base (pas dans `uploads/`) : sauvegardée avec elle.
+
+#### Lot L bis — signature liée à l'action par identifiant, dans la même transaction (2026-10-28)
+
+Corrige les deux faiblesses du lot L. **Traçabilité interne, PAS une signature électronique qualifiée** (inchangé). Aucune écriture de caisse créée ni modifiée, `PERMISSIONS_DECISION_NON_DELEGABLES` et garde 8 intactes, **aucune permission nouvelle**.
+Migration à la main `20261028090000_signature_lien_identifiant` (colonne facultative + index + FK, puis reprise des données du lot L ; `migrate diff` vide ; rejouée sans effet).
+
+**1. Action et signature dans UNE transaction PostgreSQL (tout ou rien).** Le contrôle « signature enrôlée » reste fait AVANT d'ouvrir la transaction et reste refusé côté serveur si absent (`avecSignature`, `frontend/src/lib/signature.ts`).
+Les 41 actions signées n'ont pas été réécrites : la **transaction est dite « ambiante »** (`backend/src/signatureTransaction.ts`) — un `AsyncLocalStorage` porte la transaction de l'action signée et le client `prisma` exporté par `backend/src/prisma.ts` est un
+`Proxy` qui, tant que ce contexte est actif, redirige TOUTES ses requêtes (modèles, `$executeRaw`…) vers cette transaction. Hors action signée, c'est exactement le client Prisma d'avant.
+- Ordre (`executerEnTransactionSignee`) : cible lue → **ligne `ActionSignee` écrite en premier** (si elle échoue, l'action n'a pas lieu) → l'action → un résultat qui n'est pas un succès **annule tout** (aucune écriture partielle, résultat rendu tel quel : mêmes messages d'erreur) →
+  complément de la ligne (cible connue seulement après, entité créée) → validation. Si l'action échoue ou lève après l'écriture de la signature, la signature est annulée avec elle (pas de signature orpheline). Délai de la transaction : 120 s.
+- **`prisma.$transaction(fn)` dans une action signée devient un point de reprise (`SAVEPOINT`/`RELEASE`/`ROLLBACK TO`)** : un échec rattrapé par l'action (ex. la boucle de réessai sur doublon de `creerDepenseDirecteAction`) n'abîme pas le reste de la transaction PostgreSQL. La forme tableau est exécutée dans l'ordre. **Les sections à point de reprise sont SÉRIALISÉES** (file par transaction, réentrante pour l'emboîtement) : plusieurs `notify` lancés en parallèle ouvraient des points entrelacés sur la même connexion et un `ROLLBACK TO` détruisait le point voisin (« savepoint does not exist », transaction empoisonnée) — bug trouvé par la régression `lot-j` / `lot-j-ter` / `lot-j-bis` / `lot-k` (blocage ROUGE non appliqué), corrigé et couvert par un test unitaire. Limite : une requête ordinaire lancée en parallèle PENDANT une section partage son sort si la section est annulée.
+- **Une action signée qui en appelle une autre** (ex. `rejeterEtapeServiceAction` → `rejeterDemandeAction`) : un clic = UNE signature (l'appel imbriqué exécute simplement l'action). Les anciens doubles enregistrements du lot L n'existent donc plus pour les nouvelles données.
+- **Effets vers l'extérieur différés APRÈS la validation** (`differerApresCommit`) : notifications push/e-mail/temps réel (`notify`, `publishDataChanged`). Une action annulée n'envoie rien ; la création en base de la notification, elle, est dans la transaction (isolée par un point de reprise : un échec d'insertion ne fait pas échouer l'action).
+- **Limites assumées** : `revalidatePath` s'exécute avant la validation (sans conséquence : il invalide seulement un cache) ; les actions qui laissaient des écritures partielles sur erreur les annulent désormais entièrement ; une action très longue est bornée par le délai de 120 s.
+
+**2. Lien par identifiant (plus aucune fenêtre de temps).** `HistoriqueEntry.actionSigneeId` (FK `SET NULL`, indexée) : le client de transaction enveloppé ajoute l'identifiant de l'action signée à TOUTE ligne d'historique créée pendant l'action. Pour les événements qui sont une entité créée par l'action
+(retour déclaré par l'Assistant, retour externe), `ActionSignee.entiteId` reçoit l'identifiant de l'entité CRÉÉE (`creation` dans `avecSignature`, modèles suivis `MODELES_SUIVIS`).
+La fenêtre de 60 s (`rapprocherSignatures`, `FENETRE_RAPPROCHEMENT_MS`) est **supprimée** ; `lierSignatures` (`signature.ts`) donne, pour une ligne d'historique : signée (lien), « Antérieur à la signature » (avant la mise en service) ou **« Signature non rattachée »**
+(`LIBELLE_NON_RATTACHEE_SIGNATURE`, ligne signable postérieure à la mise en service sans lien — jamais devinée). Lecteurs : historique de la demande, parcours de l'article, reporting (page et Excel : par lien d'historique ou par `entiteId` selon l'événement, `LienHistoriqueArbreSource`,
+`lireLiensHistoriqueSignes`), reçus PDF (déjà par identifiant d'entité). Deux actions du même compte à moins d'une minute avec deux versions de signature gardent chacune la leur (testé unitairement et en e2e).
+
+**3. Reprise des données du lot L (UNE DERNIÈRE FOIS).** La migration rattache chaque ligne d'historique d'une action signable, postérieure à la mise en service et sans lien, à l'action signée du MÊME compte dans la minute (même demande quand les deux la connaissent) :
+aucune candidate → reste sans lien ; candidates équivalentes (même version de signature, même titulaire : anciens doubles enregistrements) → la plus proche ; candidates DIFFÉRENTES → **ambiguë, jamais devinée** (« Signature non rattachée »). Elle rattache aussi les anciennes actions `declaration_retour_assistant`
+(entité visée : le règlement → le retour créé par l'Assistant, s'il est unique) et `retour_externe` (le retour externe créé par le même compte, s'il est unique). Les lignes antérieures à la mise en service restent « Antérieur à la signature ». Aucun journal de caisse n'est touché.
+**Script `backend/prisma/rattacher-signatures.ts`** (même règle en TypeScript pur, `backend/src/signatureReprise.ts` ; `.env` chargé avant les autres imports ; LANCÉ À LA MAIN, jamais par une migration) : simulation par défaut (par action : rattachables / ambiguës / sans candidate, déjà liées, antérieures), `--appliquer` écrit
+`actionSigneeId` des seules lignes rattachables (`updateMany … WHERE actionSigneeId IS NULL`), idempotent. `npx tsx prisma/rattacher-signatures.ts` puis `... --appliquer`. **Les règles SQL et TypeScript sont dupliquées** : toute modification doit toucher les deux (un test de recoupement a été fait, voir plus bas).
+
+**Tests** : vitest `signatureTransaction.test.ts` (13 : atomicité avec un client transactionnel simulé — l'échec de l'enregistrement de la signature empêche l'action, l'échec de la complétion annule tout, un résultat sans succès n'écrit rien, une exception annule, deux actions deux versions, appel imbriqué, points de reprise, entité créée, effets différés
+après validation et jamais en cas d'annulation), `signature.test.ts` (`lierSignatures`, dont deux actions du même compte à moins de 60 s avec deux versions), `signatureReprise.test.ts` (11 : rattachable, ambiguë avec deux versions, titulaire différent, candidates équivalentes, autre compte, 60 s, autre demande, antérieure, déjà liée),
+`reportingArbre.test.ts` (signature par identifiant). e2e `lot-l.mjs` : parties 7 (échec simulé par déclencheur PostgreSQL : de la signature → pas d'action ; de l'action → pas de signature orpheline ; l'incident levé, la même décision réussit avec son lien) et 8 (deux versions à moins d'une minute, chaque ligne liée à SA signature, historique, reporting, « Signature non rattachée »).
+
+**Vérifié** : vitest 1085 réussis ; tsc backend et frontend, eslint, `next build`, `migrate diff` vide ; migration testée sur une base portant des signatures et actions du lot L (6 cas : rattachable, ambiguë à deux versions, candidates équivalentes, sans candidate, antérieure, retour de l'Assistant ; SQL et script TypeScript donnent le même résultat, rejeu sans effet) ; e2e `lot-l` 91 contrôles (dont parties 7 et 8) et non-régression complète sur 17 scripts, 0 KO : `soumission-dg-article` 37, `articles-decision-finance` 65, `articles-beneficiaire-pieces` 34, `reglement-par-article` 55, `regularisation-par-article` 38, `lot-c` 55, `lot-f` 60, `lot-g-bis` 35, `lot-g-ter` 31, `lot-g` 60, `lot-h` 46, `lot-i` 56, `lot-j` 85, `lot-j-ter` 117, `lot-j-bis` 61, `lot-k` 101.
+
+**Points ouverts** : (1) les règles de reprise SQL et TypeScript sont dupliquées ; (2) les lignes d'historique du lot L jugées ambiguës restent « Signature non rattachée » définitivement (à traiter à la main si le DG l'exige) ; (3) `revalidatePath` avant validation ; (4) l'action `reouverture_exceptionnelle_retour` n'est pas dans la liste des actions d'historique signables (inchangé) ;
+(5) toute NOUVELLE action d'historique produite par une action signée doit être ajoutée à `ACTIONS_HISTORIQUE_SIGNEES` pour que l'écran la compare à sa signature.
+
+#### Lot M — motif obligatoire Finance ↔ DG, vocabulaire « Rejeter », saisie souple des montants (2026-10-29)
+
+Aucune écriture de caisse créée ni modifiée, `PERMISSIONS_DECISION_NON_DELEGABLES` et garde 8 intactes, **aucune permission nouvelle**, signatures (lots L et L bis) et transaction unique conservées (le motif est écrit dans la MÊME transaction que l'action). Une migration
+manuelle, additive et idempotente : `20261029090000_motifs_echanges_finance_dg` (7 colonnes facultatives, `migrate diff` vide, rejouée sans effet).
+
+**1. Motif de 10 à 300 caractères dans les DEUX sens** (`backend/src/motifEchange.ts`, pur, réexporté par `backend/client` ; règle unique `refusMotifEchange`, jamais un second contrôle ; liste des échanges `ECHANGES_FINANCE_DG`). Vérifié **côté serveur** (un appel direct sans motif, vide,
+de 9 ou de 301 caractères est refusé, même `undefined` : le moteur du circuit ne lève plus d'exception sur un motif absent), conservé avec l'action, affiché partout où l'action apparaît. Le champ est toujours visible à côté des boutons (`ChampMotifEchange`, compteur « 10 à 300 caractères (n saisis) ») ; les boutons restent grisés tant qu'il n'est pas valable.
+
+| Échange | Avant | Maintenant (où le motif est conservé) |
+|---|---|---|
+| Finance → DG : soumettre un article / le resoumettre après rejet (`soumettreLignesAuDGAction`) | aucun motif | obligatoire, **un motif par article** (`LigneDemande.motifSoumissionDG`, `Demande.motifSoumissionDG`) |
+| Finance → DG : soumettre / resoumettre la demande entière (`soumettreAuDGAction`, `resoumettreAuDGAction`) | aucun motif | obligatoire (`Demande.motifSoumissionDG`) |
+| Finance → DG : resoumettre la validation complète | 10 caractères | 10 à 300 |
+| Finance → DG : demande émise directement au DG (demande de la Finance, dépense directe pour soi) | aucun motif | `motifEnvoiDG` obligatoire à la création (seulement dans ce cas ; `Demande.motifSoumissionDG`, historique `circuit_initialise`) |
+| Finance → DG : seuils de caisse / budgets de catégorie (seul ou en lot) | aucun motif | motif commun obligatoire (`BudgetParametrage.motifSoumission`) |
+| Finance → DG : demande de confirmation d'un dépassement rouge | aucun motif | obligatoire (`BudgetDepassement.motifDemande`) |
+| DG → Finance : valider / rejeter un article soumis (`deciderLigneDGAction`) | valider sans motif, rejeter ≥ 3 | **les deux** 10 à 300 (`LigneDemande.motifDecisionDG`, `motifRefusDG` au rejet, `Demande.motifDecisionDG`) |
+| DG → Finance : valider / rejeter la demande soumise entière (`validerEtapeDGAction`, `rejeterEtapeDGAction`) | valider sans motif, rejeter ≥ 3 | 10 à 300 (`Demande.motifDecisionDG`) |
+| DG → Finance : décider les articles d'une demande de la Finance (cas b), rejeter la demande entière, dépense directe décidée par le DG | rejet ≥ 3 | **un motif commun** pour la décision (`motifDG`) + un motif de 10 à 300 par article rejeté |
+| DG → Finance : approuver / rejeter / annuler la validation complète | approuver sans motif, rejeter et annuler ≥ 3 | 10 à 300 (`Demande.motifDecisionDG`, historique) |
+| DG → Finance : confirmer un dépassement de budget | 10 caractères | 10 à 300 |
+| DG → Finance : valider / rejeter des seuils de caisse ou des budgets de catégorie (seul ou en lot) | valider sans motif, rejeter ≥ 3 | **les deux** 10 à 300 (`BudgetParametrage.motifDecision` ; `motifRefus` au rejet) |
+| DG → Finance : renvoyer à la Finance (reprise) | 10 caractères | 10 à 300 |
+
+- **Affichage** : historique de la demande (le détail porte le motif ; un échange antérieur au lot M affiche « motif : Non renseigné » à la lecture, `detailHistoriqueEchange` + `ACTIONS_HISTORIQUE_ECHANGE_DG`, rien n'est réécrit en base) ; carte de l'article (« Motif de la Finance : … » / « Motif du DG : … ») ; parcours de l'article
+  (`echangeDG` : lignes dans les étapes Validé / Rejet) ; page Budgets (en attente, historiques de caisse et de catégories, dépassements) ; notifications (le DG reçoit « Motif de la Finance : … », la Finance « Motif du DG : … ») ; **reporting unique** : colonne « Décision DG » de la page et de l'Excel (« Validé par X le … — motif de la Finance : … — motif du DG : … »,
+  pas de nouvelle colonne ni table) ; **PDF** (reçus de règlement et de retour) : l'étape « Validation du DG » imprime « Motif du DG : … », l'étape Finance « Motif de l'envoi au DG : … » (`SignatureDocument.motif`).
+- **Signatures** : aucune nouvelle ligne d'historique n'est créée (le motif est ajouté au détail des lignes existantes) : `ACTIONS_HISTORIQUE_SIGNEES` et `ACTIONS_SIGNEES` inchangées.
+- **Anciens échanges** : « Non renseigné », jamais marqués anormaux.
+
+**2. Vocabulaire uniforme « Rejeter »** : une seule famille (« Rejeter », « Rejeté(e) », « Rejet ») pour une décision métier qui écarte une demande, un article, un budget, une justification, un retour… Libellés remplacés à l'écran : boutons « Refuser » (budgets, justification de pointage, article refusé par le DG → « Rejeter définitivement »), états « Refusée par le DG » → « Rejetée par le DG »
+(`LIBELLE_ETAT_LIGNE_DG`, `etatArticles`), « Refusé par le DG » (`libelleStatutParametrage`, reporting), « Dernier paramétrage refusé » → « rejeté », justification de pointage (« Justification rejetée », « Motif du rejet »), titres et textes de notifications, e-mails, historique (`ACTION_LABELS`), « Ligne rejetée par le DG », messages d'erreur (« confirmation impossible » au lieu de « confirmation refusée »), « écarté(s) » (confirmation des encaissements).
+**Valeurs internes inchangées** (aucune migration risquée) : `StatutParametrageBudget.REFUSE`, `DecisionLigneDG.REFUSEE`, `StatutJustificationPointage.REFUSEE`, `motifRefus`, `motifRefusDG`, codes d'historique (`refus_ligne_dg`, `budget_refuse`), noms de fonctions et attributs `data-…` : seuls les libellés affichés changent. À la lecture, les anciens textes d'historique enregistrés
+(« Refusé par le DG », « ligne … refusée », « après refus ») sont affichés dans le nouveau vocabulaire (`vocabulaireRejet`) ; les notifications déjà envoyées gardent leur texte d'origine.
+**Pas remplacé** (autre sens que le rejet métier) : « Accès refusé », permission refusée, droits (« Action non autorisée »), pointage hors périmètre / GPS refusé, réponse technique du service de notifications push, dimensions d'image refusées. **Garde-fou** : `backend/src/vocabulaireRejeter.test.ts` parcourt les textes visibles (chaînes, gabarits, texte JSX) du code source avec l'analyseur TypeScript
+et échoue sur tout reste de « refus/refuser/refusé » hors liste blanche (raison notée pour chaque entrée) ; toute nouvelle exception doit y être ajoutée avec sa raison.
+
+**3. Saisie souple des montants** (`backend/src/montant.ts`, pur, 67 tests ; `InputMontant`, `schemaMontant`, `lireMontant`). Acceptés : `1500000`, `1 500 000`, `1.500.000`, `1.500.000,50`, `1 500 000,50`, `1500000,5`. Règles : le **dernier séparateur est décimal** s'il est une virgule/un point suivi de 1 ou 2 chiffres ET que la devise admet des décimales ;
+sinon ce sont des milliers (groupes de 3 chiffres exactement, le premier de 1 à 3). **FCFA/XOF/XAF/CFA** : aucune décimale, tout point ou espace est un séparateur de milliers, une virgule suivie de chiffres est refusée (« Les décimales ne sont pas admises pour cette devise (FCFA)… »). **Cas ambigus tranchés** : `1.500` = 1 500 (milliers) pour **toutes** les devises (un point suivi de
+exactement 3 chiffres est toujours un groupe de milliers, `1.50` = 1,50 en devise décimale) ; `1,500` est **refusé** (virgule + 3 chiffres : ambigu) ; `1,500.50`, `1.500.50`, `1,500,50` refusés (séparateurs mélangés) ; `0.500` refusé (zéro suivi d'un groupe de milliers) ; lettres, signe négatif, exposant, séparateurs mal placés refusés ; 12 chiffres entiers au plus ; espaces insécables
+et fines normalisés. **Écran** : mise en forme française pendant la frappe (espaces pour les milliers, virgule décimale), curseur conservé (rang de chiffre), collage depuis Excel accepté, `inputMode="decimal"`, écho « = 1 500 000 FCFA », message d'erreur sous le champ, envoi du formulaire bloqué tant que la saisie est invalide, saisie invalide jamais corrigée en silence.
+Bug trouvé par le test de bout en bout : « 1 500 » + « 0 » donnait « 1 5000 » (groupes invalides laissés tels quels) : la frappe regroupe désormais les chiffres séparés par des espaces. **Le serveur ne fait jamais confiance au navigateur** : les champs postent le texte affiché, chaque action le réanalyse avec la devise de la demande (`lireMontant` accepte aussi un nombre, vérifié : fini, positif,
+deux décimales au plus, entier en FCFA). Les écrans Finance sont en FCFA seulement ; le formulaire de demande et sa correction tiennent compte de la devise choisie. Montants stockés **inchangés** (`Decimal`). Intégrés : demande (prix unitaire), règlements, retours de caisse (montant retourné, montant proposé, dépenses, ajustement, remboursement), retours exceptionnel et externe,
+validation partielle/complémentaire, solde d'ouverture et alimentation de caisse, dépense directe, budgets (montants et seuils en FCFA ; les pourcentages restent des nombres), versements des Encaissements (décimales admises). **Hors périmètre** : les imports de fichiers de production et de relevés (Encaissements) gardent leur lecture dédiée, inchangée.
+
+**Tests** : vitest `motifEchange.test.ts` (règle 10–300, historique « Non renseigné », et pour chaque échange Finance → DG et DG → Finance : accepté avec un motif valable, refusé s'il est absent, vide, d'espaces, de 9 ou de 301 caractères — 9 échanges × 6 cas), `montant.test.ts` (67 : tous les exemples, ambiguïtés, refus, FCFA contre devise décimale, frappe, curseur),
+`vocabulaireRejeter.test.ts` ; e2e `e2e/lot-m.mjs` (motifs écran + appel direct dans les deux sens, notifications, historique, reporting Excel, anciens échanges, validation complète, budgets, vocabulaire sur les pages, montants à l'écran et par le serveur) ; les scripts Trésorerie existants sont adaptés (motif à saisir, « Rejeter », `e2e/motifs.mjs`).
+
+
+**Vérifié** : vitest 1215 réussis (69 fichiers), tsc backend et frontend, eslint, `next build`, `migrate diff` vide, migration rejouée sans effet ; e2e `lot-m.mjs` 89/89 et non-régression complète sur 18 scripts, 0 KO (`lot-l` 91, `lot-i` 56, `lot-h` 46, `lot-f` 60, `lot-g` 60, `lot-g-bis` 35, `lot-g-ter` 31, `reglement-par-article` 55, `regularisation-par-article` 38, `articles-decision-finance` 65, `articles-beneficiaire-pieces` 34, `soumission-dg-article` 38, `lot-c` 55, `lot-j` 87, `lot-j-ter` 118, `lot-j-bis` 61, `lot-k` 101).
+
+**Points ouverts** : (1) en devise décimale, taper `1.5` au clavier donne `1,5` (un point suivi de 1 ou 2 chiffres est décimal) — pour des milliers avec des points, coller le nombre ou utiliser des espaces ; (2) les notifications et e-mails déjà envoyés gardent leur ancien texte ; (3) `statut = REFUSE` / `REFUSEE` restent les valeurs internes (rapports SQL externes) ;
+(4) le rappel de réorientation (lot K) garde son motif de 10 caractères (non concerné) ; (5) les motifs d'un lot de décisions de budgets sont communs, avec un motif propre possible par élément par appel direct seulement ; (6) le bon de caisse (document minimal) n'imprime aucun motif.
+
+#### Lot N + O — préparation de la mise en production : réinitialisation complète, vérification avant mise en service, rattrapage chaîné (2026-10-30)
+
+Procédure pas à pas : **[docs/mise-en-production.md](docs/mise-en-production.md)** (10 étapes, sauvegarde, rattrapage, rôles, purge, solde d'ouverture, tâches, vérification, retour arrière, levée du verrou).
+**Aucune migration** (la dernière reste `20261029090000_motifs_echanges_finance_dg`), aucune permission nouvelle, `PERMISSIONS_DECISION_NON_DELEGABLES` et garde 8 intactes, aucune écriture de caisse existante modifiée
+hors la remise à zéro voulue par la purge. Tous les outils sont en **simulation par défaut** ; `.env` chargé AVANT les autres imports (`import "./chargerEnv"`).
+
+**1. Audit de la réinitialisation d'avant le lot N.** `reinitialisation.ts` purgeait Trésorerie (remboursements, banque, retours externes, pièces jointes, signalements, dépenses, retours, allocations, journal de caisse, retours
+exceptionnels, règlements, lignes, demandes), Pointage/Feedback et leurs historiques/notifications. **Oubliés depuis les lots récents** : `BudgetDepassement` (lot J), `ActionSignee` et ses liens (lots L, L bis),
+`ExecutionTache`/`JournalTechnique`, et **tout Encaissements** (`EncImport/Contrat/ContratMot/Encaissement/Signalement/Sequence/Audit/PieceJointe`). `ReinitialisationPointage` ne purgeait que le Pointage.
+Le verrou ne se levait pas. Aucun classement table par table, aucune ligne de commande.
+
+**2. Purge élargie** (`backend/src/reinitialisation.ts`, une seule transaction sérialisable, enfants avant parents, empreinte SHA-256 de la sauvegarde relue dans la transaction). Ajouts : `budgetDepassement`,
+`actionSignee` (seulement celles qu'**aucune ligne d'historique conservée** ne référence : celles du budget restent, pour que son historique ne passe pas en « Signature non rattachée »), `executionTache`/`journalTechnique`
+(hors empreinte, réécrites en continu), Encaissements **seulement tant que le module n'est pas en service** (`EncMiseEnService` absente ; `contrePasseId` détaché avant la suppression de masse ; les triggers d'immuabilité interdiraient le reste).
+**Les réorientations et reprises** (lot K) vivent dans l'historique des demandes : supprimées avec lui. Les BigInt (`EncAudit.id`) sont sérialisés en texte (bug trouvé par le test d'intégration : `JSON.stringify` plantait).
+**Classement de CHAQUE modèle Prisma** (58) : `backend/src/reinitialisationClassification.ts` (purgée / partielle / conservée + note), repris en annexe A du runbook ; le test `reinitialisationClassification.test.ts` lit `schema.prisma` et
+**échoue** si un modèle n'est pas classé ou si une entité d'historique écrite par le code ne l'est pas. Conservés : comptes, rôles, permissions, **délégations**, services et responsables, catégories/objets, **budgets et seuils validés avec leur
+historique**, paramètres (dont la date de catégorisation), **signatures enrôlées (toutes versions)**, verrou, `MarqueurUnique`, audit permanent, `Enc*` de configuration. Historique : supprimées les entités `Demande, LigneDemande, JournalCaisse,
+RetourExterne, Pointage, PointageQR, PointageGeo, JustificationPointage` ; notifications `TRESORERIE/RH/POINTAGE` supprimées, `ADMIN/SYSTEME` conservées.
+
+**3. La caisse.** `JournalCaisse` est vidé en entier (SEULE exception au « jamais modifié ») : **solde de caisse = 0**, solde d'ouverture compris, à **ressaisir par l'écran normal** « Solde d'ouverture de caisse » (aucune écriture forcée ; testé : une
+écriture `ENTREE` de 750 000 créée par l'écran). Tant qu'il n'est pas ressaisi, les seuils de caisse (rouge à 0) peuvent bloquer une validation. Aucune autre écriture du journal ne devrait être purgée à la main.
+
+**4. Ligne de commande** `backend/prisma/reinitialiser-production.ts` (+ logique pure `reinitialisationCli.ts`, `reinitialisationFichiers.ts`) : **simulation par défaut** (décompte par table, fichiers, verrou, tables conservées) ;
+`--appliquer --utilisateur <email du DG> [--dossier-sauvegarde] [--uploads] [--confirmation REINITIALISER]`. Garde-fous : compte portant `systeme.reinitialiser` **par son rôle** (jamais une délégation), phrase exacte, **sauvegarde JSON écrite, `fsync`,
+relue et comparée par empreinte AVANT la purge — si elle échoue, rien n'est supprimé** (testé avec un dossier inutilisable), empreinte recomparée dans la transaction, verrou unique (`ReinitialisationSysteme.verrou = 'REINITIALISATION'`). Fichiers de `uploads/`
+supprimés après le commit (garde anti path traversal ; un fichier déjà absent n'est pas un échec). Le chemin web (`/systeme/reinitialisation`) utilise la même logique (texte de portée mis à jour, plus de rappel `SYSTEM_START_DATE` : la tâche
+des absences (`absences.ts`) part du lendemain de la dernière purge, Pointage OU globale).
+**Levée du verrou** (réinitialisation ultérieure voulue) : `UPDATE "ReinitialisationSysteme" SET verrou = 'LEVE-' || id WHERE verrou = 'REINITIALISATION'` — garde la ligne d'audit (jamais de `DELETE`). **La production a déjà un verrou actif (purge du 26/09/2026) :
+il faut le lever avant de purger de nouveau.**
+
+**5. `notifyByPermission` et les délégués (1.7).** Constat : il ne lisait que le rôle — un délégué ACTIF n'était jamais notifié. Règle unique extraite dans `backend/src/delegations.ts` (`delegationCompte`, utilisée aussi par `getSession()`) :
+la délégation compte si la permission n'est pas non délégable, le donneur est actif et possède encore la permission par son rôle ; `utilisateursAvecPermission` = titulaires du rôle + délégués actifs (bénéficiaire et donneur actifs). `notifyByPermission` l'utilise.
+**Exception voulue** : les notifications de **décision** d'une justification de pointage (`inclureDelegues: false`) — la décision se lit sur le RÔLE, un délégué de `pointage.corriger_pointage` ne la décide pas, il ne doit pas être notifié d'une file qu'il ne voit pas.
+
+**6. Vérification avant mise en service** `backend/prisma/verifier-mise-en-production.ts` (logique pure `miseEnProduction.ts`, 28 tests) — **lecture seule** (transaction `SET TRANSACTION READ ONLY`, aucune écriture possible), rapport `OK / À CORRIGER / AVERTISSEMENT / À CONTRÔLER`,
+code de sortie 1 s'il y a un « À CORRIGER » (`--final` : un compte `*@simassurances.test` actif en est un). Contrôle : migrations (dossiers vs `_prisma_migrations`) ; Finance (sans `approuver_validation_complete`, avec `soumettre_dg`, `decider_finance`, `cloturer_demande`,
+`modifier_budget_categorie`, `reorienter_demande`) ; DG (`approuver_validation_complete`, `systeme.reinitialiser`, `valider_budget`, et `valider_budget` DG seul) ; ≥ 2 Assistants Finance actifs ; ≥ 2 comptes RH avec `pointage.corriger_pointage` ; service de chaque compte actif ;
+responsable actif de chacun des 8 services ; signature enrôlée de chaque compte qui doit signer (`PERMISSIONS_SIGNATAIRES` ou responsable de service) ; **seuils de caisse en vigueur ET validés par le DG** (un seuil « repris par migration », sans décideur, est « À CORRIGER ») ;
+budgets de catégorie en vigueur validés (idem) ; date de catégorisation (avertissement si absente ou pas future) ; variables `AUTH_URL` (https, adresse publique — pas localhost/privée), `AUTH_SECRET` (≥ 32), `CRON_SECRET` (≥ 16), `DATABASE_URL` (valeurs jamais affichées) ;
+comptes de test ; délégations actives de `pointage.corriger_pointage` (liste). Testé sur une base seedée : 7 OK / 7 À CORRIGER (comptes, signatures, seuils, variables absentes) / 3 avertissements, code de sortie 1.
+
+**7. Rattrapage chaîné** `backend/prisma/rattrapage-production.ts` (+ `rattrapageProduction.ts` pur, 8 tests). La logique des 4 scripts de reprise a été **extraite** dans `backend/src/rattrapageEtapes.ts` (une seule définition : `etapeStatutsArticles`,
+`etapeReglementsArticles`, `etapeClotureArticles`, `etapeSignatures`, `etapeComptageReglements`) ; `recalculer-statuts-articles.ts`, `recalculer-reglements-articles.ts` (`--automatique`, `--affecter`), `simuler-cloture-articles.ts` et `rattacher-signatures.ts`
+n'en sont plus que des enveloppes (mêmes options, mêmes sorties, simulation par défaut — vérifié). Ordre : **comptage (lecture seule, SQL de comptage) → statuts (B) → règlements (D) → clôture (C, après D car elle lit les règlements rattachés) → signatures (L bis)**. Simulation
+par défaut ; `--appliquer` exige la phrase `RATTRAPER` ; pour chaque étape : état avant, écriture, **nouvelle simulation de contrôle**, bilan « à traiter / écrites / restant / ambigus » ; **arrêt à la première erreur** ; les écritures sont signalées « non défaisables par le script »
+(retour arrière = sauvegarde). Les cas ambigus ne sont jamais devinés (règlement sans article avec ≥ 2 articles validés ; historique à plusieurs signatures candidates).
+
+**8. Dockerfile — constat et correction.** L'image de production ne contenait que `backend/prisma` et `backend/src/generated/prisma` : **tous les scripts qui importent `../src/...` (reprises des lots B à L bis, et les nouveaux outils) échouaient dans le conteneur** (« Cannot find module »).
+Le `Dockerfile` copie maintenant `backend/src` en entier. Non vérifié par un `docker build` ici (pas de démon Docker) ; vérifié par simulation de la disposition de l'image (`backend/prisma` + `backend/src` + `node_modules`, sans `.env` ni `frontend/`) : les trois scripts s'exécutent.
+
+**9. Performance** (`next build` + `next start`, base `perf` : 150 comptes en plus, 4 000 demandes à 3 articles, 2 400 règlements, 30 000 pointages ; `e2e/perf-donnees.ts`, `e2e/perf-navigation.mjs`, 3 passages, médiane en ms jusqu'à l'évènement load) :
+accueil 294 · Mon accueil Trésorerie 308 · Mes demandes 228 · Mon historique de pointage 379 · Accueil Finance 966 · Demandes en attente de validation 1 477 · À décaisser 326 · Fonds à régulariser 1 331 · Budgets 237 · Retours en attente 755 · Étape DG 766 · Mon service 227 · Mon équipe 233 ·
+Présence du jour 278 · Reporting pointage 290 · Corrections 365 · Console admin 218. **Lentes** : « Pointages (RH) » **44 636 ms → 341 ms** (corrigé : la page chargeait TOUS les pointages, 30 000, sans limite — pagination par 200 avec `page`, filtres conservés, total affiché) ;
+« Toutes les demandes » 3 434 ms (4 000 demandes sans pagination + dates de gestion) ; « À régulariser » 11 927 ms (`getRegularisationParArticle` demande par demande — conçue pour une file bornée ; la base de test simule un arriéré de 2 000 demandes réglées non clôturées) ;
+« Reporting (tableau unique) » 19 759 ms (3,9 s côté serveur pour 21 868 lignes, le reste est le rendu de ces lignes). **Non corrigés** (ni évidents ni sans risque) : voir points ouverts.
+
+**10. Points ouverts.** (a) « À régulariser », « Toutes les demandes » et « Reporting » n'ont ni pagination ni période par défaut : lents au-delà de quelques centaines de demandes actives ; (b) le runbook est écrit pour le **planificateur intégré** (le cahier du lot demandait cron-job.org : il est obsolète depuis le 2026-10-14, appeler les routes
+en plus est inutile) ; (c) `EncPartenaire`/`EncBranche` créés par un import de test sont conservés (configuration) ; (d) `ActionSignee` de budget conservées volontairement ; (e) le parcours de test complet après la purge laisse des données dans la base réelle (le runbook conseille de le faire avant) ; (f) le `Dockerfile` modifié n'a pas pu être construit ici ;
+(g) un seuil de caisse validé n'est « en vigueur » qu'à sa date d'effet (au plus tôt aujourd'hui) : le planifier assez tôt ; (h) le build `next build` sans base joignable écrit un message `[FeedbackApp] Erreur synchronisation…` (bruit sans effet, préexistant).
+
+**Tests** : vitest (`reinitialisationClassification` 6, `delegations` 8, `reinitialisationFichiers` 5, `reinitialisationCli` 7, `miseEnProduction` 28, `rattrapageProduction` 8) ; **`e2e/lot-n.mjs`** (base jetable autonome, fixture `e2e/lot-n-donnees.ts` : 30 tables purgées toutes remplies avant ; simulation sans écriture ; refus sans compte / mauvais rôle / mauvaise phrase / sauvegarde impossible ;
+purge réelle, sauvegarde relue, table par table (30 purgées vides, 25 conservées intactes), historique, notifications, actions signées partielles, fichiers, configuration, verrou CLI/écran/route 409/403, script de vérification en lecture seule, **parcours neuf** : demande `DEM-…-000001` et solde d'ouverture
+750 000 ressaisi par l'écran, levée du verrou par la commande SQL, seconde purge par l'écran du DG avec sauvegarde téléchargée) ; **`e2e/lot-o.mjs`** (données anciennes `e2e/lot-o-donnees-anciennes.ts` : simulation par défaut de chaque script, simulation chaînée, refus sans phrase, application, 2ᵉ simulation à 0, ré-application sans effet, cas ambigus non devinés, `--affecter`, journal de caisse intact).
+
+**Vérifié** : vitest 1277 réussis (75 fichiers) ; tsc backend et frontend, eslint (backend + frontend) et `next build` propres ; `prisma migrate diff` vide (aucune migration) ; e2e `lot-n.mjs` 65/65 et `lot-o.mjs` 37/37 ; non-régression complète sur 18 scripts, 0 KO :
+`articles-decision-finance` 65, `articles-beneficiaire-pieces` 34, `soumission-dg-article` 38, `reglement-par-article` 55, `regularisation-par-article` 38, `lot-c` 55, `lot-f` 60, `lot-g` 60, `lot-g-bis` 35, `lot-g-ter` 31, `lot-h` 46, `lot-i` 56, `lot-j` 87, `lot-j-ter` 118, `lot-j-bis` 61, `lot-k` 101, `lot-l` 91, `lot-m` 89
+(un premier passage de `lot-m` a eu un KO sur « 1e. notification du DG » pendant qu'un autre test tournait en parallèle ; rejoué seul : 89/89 — contrôle sensible au délai de création de la notification, non lié au lot).
+Piège d'environnement : `pkill -f "next start"` tue aussi le shell qui contient cette chaîne ; arrêter les serveurs par leur numéro de processus.
+
+#### Lot Q — intégration du module Congés (Thierry) avec les lots Trésorerie (2026-10-22)
+
+Base : `origin/aristide` après la fusion de `thierry-kouame`. **Aucune règle métier de Thierry modifiée, aucune valeur interne renommée** (`REFUSE`, `REFUSEE`, `motifRejet`, codes d'historique…), **aucune migration créée**.
+
+**Partie 1 — corrections de fusion.**
+- Migration : seule `20261030090000_conges_permissions_absence` existe. Sa copie `20261028110000_conges_permissions_absence`, restée par erreur dans l'arbre fusionné, est supprimée ; toutes les références (test `congesPermissions.test.ts`, `congesPermissions.ts`, `e2e/conges-migration-admin.sh`, CLAUDE.md) pointent sur le nom définitif. Vérifié : `migrate deploy` depuis zéro, une seule migration Congés, `migrate diff` vide.
+- Marqueurs de conflit committés dans `pointage/mon-equipe/page.tsx` (cassaient `tsc`) : résolus en gardant les deux colonnes (« Jours de congé » et « Rejetées / non justifiées »). Deux lignes `///` orphelines (date d'embauche, champ qui n'existe pas) retirées de `schema.prisma`.
+- Vocabulaire « Rejeter » dans Congés : boutons, « Motif du rejet », « Confirmer le rejet », « Motif du rejet : … » (détail), notification « Congé … rejeté : jour déjà passé compté comme absence » ; recette de Thierry (`e2e/conges-recette.mjs`) mise à jour sans toucher aux données, variables ni attributs `data-…`. `vocabulaireRejeter.test.ts` passe **sans élargir sa liste blanche** ; aucun autre texte visible de Congés ne contredit le vocabulaire.
+
+**Partie 2 — réinitialisation.**
+- `reinitialisationClassification.ts` : `DemandeConge` est classée **purgée** (données de test), avec ses plages d'absence (`PlageAbsenceAutorisee.demandeCongeId`, cascade), son historique (entité `DemandeConge`, constante `ENTITES_HISTORIQUE_CONGES`, séparée de `ENTITES_HISTORIQUE_POINTAGE`) et ses notifications (catégorie `RH`, déjà purgée). **Le module n'a ni solde, ni nombre de jours par an, ni table de paramètres** : il n'y a donc rien d'autre à classer ; les jours fériés (`JourFerie`) restent **conservés**.
+- `reinitialisation.ts` : `chargerJeuxReinitialisation` sauvegarde `demandeConge` et l'historique Congés dans le JSON (donc dans l'empreinte) ; la purge supprime, dans la transaction et après les plages d'absence, les demandes puis leur historique. Texte de l'écran du DG mis à jour.
+- **Purge du Pointage seul inchangée** (règle de Thierry) : `refusPurgePointageAbsences` refuse tant qu'une demande de congé existe, même rejetée ou annulée → mettre le Pointage en service **avant** d'ouvrir les congés, ou faire la purge globale.
+- Test d'intégration : `e2e/lot-n.mjs` (base jetable) étendu — demandes de congé validée et rejetée, plage liée, historique, jour férié : demandes 2→0, historique purgé, aucune plage orpheline, jour férié conservé.
+
+**Partie 3 — vérification avant mise en service.** `verifierPermissionsConges` (`miseEnProduction.ts`, pur) appelé par `verifier-mise-en-production.ts` (lecture seule) : (1) les 4 permissions `conges.*` existent (sinon « À CORRIGER » : migration `20261030090000` non appliquée) ; (2) chaque rôle porte les permissions que lui donne `permissionsCongePourCles` d'après ce qu'il a déjà (RH : valide, annule, consulte tout ; DG : demande et consulte tout ; personnel : demande ; Admin : demande), le DG ne porte jamais `conges.valider_rh` ni `conges.annuler`, et au moins un rôle porte `conges.valider_rh` ; (3) au moins 2 comptes actifs peuvent valider l'étape RH (la RH ne décide pas sa propre demande) ; (4) AVERTISSEMENT si un responsable de service actif ne peut pas demander son propre congé. 8 tests ajoutés dans `miseEnProduction.test.ts`.
+
+**Vérifié** : vitest (1413 réussis), tsc backend et frontend, eslint, `next build`, `migrate diff` vide ; e2e `lot-n.mjs` 69/69 (65 + 4 contrôles Congés), `lot-o.mjs`, recette de Thierry `conges-recette.mjs` 48/48, série de non-régression Trésorerie (voir compte rendu). **Non relancés** : les autres scripts Congés (`conges-couche-base.ts`…) qui exigent leur propre base/ports.
+
+**Points ouverts** : `docs/PLAN_FUSION_CONGES_V2.md` garde les noms de migration historiques (document daté) ; le lot P (performance, branche locale `wip-lot-p`) devra dater sa migration d'index après `20261030090000`.
+
+#### Lot R — liste des rôles et permissions + remise à zéro de mise en production depuis l'application (2026-10-22)
+
+> **⚠️ Étape 3 « Levée du verrou » SUPPRIMÉE par le lot S (2026-10-23, plus bas)** : l'écran n'a plus que 3 étapes (simulation, sauvegarde, remise à zéro) ; un verrou existant bloque tout dans l'application (message seul) et ne se lève que par `UPDATE` SQL. Les passages ci-dessous sur `leverVerrouAction`, `LEVER LE VERROU` et l'« étape 3 / 4 » sont superseded.
+
+Le développeur n'a pas accès à la production : celui qui déploie ne fait que récupérer le code, lancer `prisma migrate deploy` et définir les variables ; **le reste se fait depuis l'application, par le DG ou l'Admin**.
+**Aucune migration**, aucune permission nouvelle, aucune règle métier, `PERMISSIONS_DECISION_NON_DELEGABLES` et affectations de rôle intactes ; aucune base de production touchée (tout est testé sur bases jetables).
+Procédure complète : [docs/mise-en-production.md](docs/mise-en-production.md) (Partie A = la personne qui déploie, Partie B = le DG ; l'ancienne procédure en ligne de commande devient l'annexe).
+
+**1. État cible des rôles : `backend/src/rolesCibles.ts` (source UNIQUE).** Les 9 rôles (Collaborateur, Finance, DG, Admin, RH, Assistant Finance, 3 rôles Encaissements), les 6 modules et les **52 permissions** (Trésorerie 27, Pointage 9,
+Congés 4, Encaissements 9, Feedback 1, Système 2) y sont décrits une fois ; les permissions Congés sont calculées par permission « sœur » (`permissionsCongePourCles`, jamais par nom de rôle). **`prisma/seed.ts` boucle désormais sur ce fichier** (mêmes
+données déplacées telles quelles) : vérifié par comparaison de base — 76 attributions rôle↔permission, 52 permissions (clé, module, libellé) et réglages des 9 rôles **strictement identiques** avant et après.
+- **`docs/roles-et-permissions.md`** (français, généré par `npx tsx prisma/generer-doc-roles.ts` depuis `rolesCibles.ts` + `rolesDocumentation.ts`, **ne pas l'éditer à la main** : le test `rolesDocumentation.test.ts` échoue s'il n'est plus à jour) :
+  une section par rôle avec ses cases à cocher groupées par module (`- [ ] clé — ce qu'elle permet`), le rappel que « Responsable de service » n'est pas un rôle (aucune permission, `Service.responsableId`), la synthèse « permissions par rôle et par module »,
+  l'encadré **« Permissions réservées »** (DG seul : `treso.valider_budget`, `treso.approuver_validation_complete`, `treso.decider_dg`, `systeme.reinitialiser`, `enc.mettre_en_service` ; 9 couples interdits dont **Finance et Admin sans `treso.approuver_validation_complete`** ; non-délégables),
+  l'encadré **« Vérifier avant de cocher »** (permissions créées par les migrations récentes, avec leur migration : une permission absente de `/admin/roles` = migration non appliquée), les points **« À VALIDER PAR LE DG »** (V1 à V10), les **écarts seed ↔ migrations** et le tableau des 52 permissions
+  (clé, module, libellé affiché dans `/admin/roles` ou « non affichée : module Système », phrase lue dans le code, rôles qui la portent).
+- **Écarts seed ↔ migrations (vérifiés sur deux bases jetables)** : une simulation de production (seed du 2026-09-17 + toutes les migrations) donne **exactement** les mêmes 76 attributions que le seed actuel. Les 5 rôles historiques et les 8 permissions `pointage.*` d'origine n'existent que par le seed ;
+  Assistant Finance et les 3 rôles Encaissements sont créés par migration ; `pointage.reinitialiser` est créée par migration si le module `pointage` existe ; les libellés coïncident. Rien n'est retiré par migration à Finance/Admin si une ancienne base leur avait donné `treso.approuver_validation_complete`.
+- **`prisma/lister-roles-permissions.ts`** : script en **lecture seule** (`SET TRANSACTION READ ONLY`) qui lit `DATABASE_URL` et écrit `roles-et-permissions-base.md` (ignoré par git) : rôles réels, comptes actifs par rôle, permissions cochées, et **écarts avec le document** (cases à cocher / décocher, permissions absentes = migration à appliquer, rôles créés à la main, alertes : couple interdit,
+  permission réservée au DG portée ailleurs). Logique pure testée : `backend/src/rolesComparaison.ts`. Code de sortie 1 s'il y a une alerte.
+
+**2. Remise à zéro depuis l'écran `/systeme/reinitialisation`** (existait déjà, un seul formulaire ; refondu en **4 étapes dans l'ordre**, réservé à `systeme.reinitialiser` — DG seul, lue sur le RÔLE). La purge est **toujours `executerReinitialisation`** (`reinitialisation.ts`), le même code que `reinitialiser-production.ts` (aucune duplication) ;
+la classification table par table (lot N+O) est inchangée.
+| Étape | Ce qu'elle fait | Condition |
+|---|---|---|
+| 1 Simulation | `simulerAction` : décompte « supprimé » et « conservé » table par table (`simulerReinitialisationDetaillee`), fichiers, **avertissement ROUGE** « La caisse est entièrement vidée, solde d'ouverture compris ; il faudra le ressaisir. » (+ nombre d'écritures et solde) | — |
+| 2 Sauvegarde | route `GET /api/systeme/reinitialisation/sauvegarde` : JSON + empreinte SHA-256 (`X-Backup-Sha256`) ; **autorisée même verrou actif** (la levée vient après) | simulation faite |
+| 3 Levée du verrou | `leverVerrouAction(phrase, motif)` : **seulement s'il existe un verrou** (sinon l'étape n'est pas affichée) ; phrase `LEVER LE VERROU` + motif 10 à 300 caractères ; `UPDATE "ReinitialisationSysteme" SET verrou = 'LEVE-' || id` — **la ligne d'audit est conservée, jamais de DELETE** | simulation + sauvegarde |
+| 4 Remise à zéro | `reinitialiserAction(phrase, empreinte)` : phrase `REINITIALISER`, une transaction sérialisable, empreinte revérifiée, **verrou reposé** par la purge | simulation + sauvegarde + verrou absent (levé) |
+- **L'ordre est vérifié par le SERVEUR** (jamais seulement l'interface) : l'état de chaque étape est **lu dans l'historique d'audit** (`lireEtatEtapes`) — ce que CE compte a fait dans les 4 dernières heures et depuis la dernière remise à zéro (`debutFenetre`). Règles pures et testées : `backend/src/reinitialisationEtapes.ts`
+  (`lignesEtapes`, `refusSauvegarde`, `refusLeveeVerrou`, `refusPurge`, phrases `PHRASE_LEVEE_VERROU`/`PHRASE_PURGE`). Un rejeu direct d'une Server Action hors ordre est refusé avec la phrase de l'étape manquante.
+- **Sauvegarde téléchargée « dans cette session »** : le bouton de remise à zéro est grisé tant que l'empreinte n'est pas gardée dans la page (un rechargement l'oublie : il faut retélécharger). Côté serveur, `refusPurge` exige que l'empreinte transmise soit **exactement celle de la dernière sauvegarde générée pour ce compte**
+  (tracée par la route), puis `executerReinitialisation` revérifie que les données n'ont pas changé depuis (refus sinon). Limite : la trace est écrite quand le serveur envoie le fichier (le serveur ne peut pas savoir si le navigateur l'a enregistré).
+- **Tout est tracé** dans `HistoriqueEntry` (entité `ReinitialisationSysteme`, conservée par la purge : qui, quand, quelle étape) : `simulation_reinitialisation`, `sauvegarde_reinitialisation` (avec l'empreinte), `levee_verrou_reinitialisation` (ligne concernée + motif), `reinitialisation_systeme` (existant), `desactivation_comptes_test`.
+  Audit visible au bas de la page (`listerReinitialisations` : date, auteur, empreinte, fichiers, verrou actif ou levé avec qui/quand/motif).
+- **Conservé / supprimé** : inchangé par rapport au lot N+O (comptes, rôles, permissions, délégations, services, catégories/objets, budgets et seuils validés avec leur historique, paramètres, signatures enrôlées, jours fériés, verrous, audit permanent ; tout le reste de ce que la classification dit « purgé », `JournalCaisse` compris).
+- **Après la remise à zéro, même page** (panneau `ComptesDeTestPanel`, aussi pour l'**Admin** sans `systeme.reinitialiser` — il n'y voit QUE ce panneau, et le lien de menu n'apparaît que s'il reste des comptes de test actifs après une remise à zéro enregistrée, `panneauComptesDeTestAVoir`) :
+  liste des comptes `*@simassurances.test` **actifs** (`estCompteDeTest`, `comptesDeTest.ts`), bouton **« Désactiver les comptes de test »**, liste puis confirmation. **Désactiver, jamais supprimer** (`isActive = false`, `tokenVersion + 1` : sessions coupées, trace `DEACTIVATE` par compte + synthèse ; aucun e-mail).
+  Jamais désactivés (`planifierDesactivation`, recalculé côté serveur à l'état courant — la liste affichée n'est pas crue) : **le compte connecté**, **un responsable de service** (même règle que la désactivation dans Administration : désigner d'abord un autre responsable), **le dernier compte actif qui porte `systeme.reinitialiser`** (créer d'abord le compte réel du DG).
+  Seuls des comptes de test sont atteints ; un compte réel glissé dans la sélection est ignoré. Rappel affiché : « Saisir le solde d'ouverture de caisse avant d'ouvrir l'application. » (lien vers le solde d'ouverture).
+- **Fichiers** : `reinitialisationEtapes.ts` (pur, aussi exposé par `backend/client`), `reinitialisationConstantes.ts` (la phrase, sans dépendance), `reinitialisationEtapesDb.ts` (audit, état, simulation détaillée, levée du verrou, comptes de test), `comptesDeTest.ts` (pur), `systeme/reinitialisation/{page,actions,AssistantReinitialisation,ComptesDeTestPanel}.tsx`.
+  Le lien de menu « Réinitialisation » reste visible au DG **même verrou actif** (il n'est plus caché après l'exécution).
+
+**3. Corrigé au passage** : le contrôle de sauvegarde de la route ne refuse plus (409) quand le verrou est actif — il refuse quand la simulation n'a pas été faite ; `e2e/lot-n.mjs` (parties 5 et 7) adapté à l'écran à 4 étapes.
+
+**Tests** : vitest `rolesDocumentation.test.ts` (11 : catalogue, couples interdits, DG seul, document à jour), `rolesComparaison.test.ts` (7), `reinitialisationEtapes.test.ts` (14 : ordre des étapes avec et sans verrou, refus — pas de simulation, pas de sauvegarde, mauvaise empreinte, mauvaise phrase, verrou actif, motif —, fenêtre de validité,
+comptes de test, désactivation du dernier porteur) ; e2e `e2e/lot-r.mjs` (base jetable `lot_r`, serveur sur le port 3102, fixture de `lot-n-donnees.ts`, rejeu RÉEL des Server Actions par leur identifiant du manifeste) : état initial, simulation, sauvegarde, remise à zéro table par table, comptes de test (Admin, refus, DG réel), verrou existant (levée, seconde remise à zéro), redémarrage et parcours neuf.
+
+**Points ouverts** : (1) la vérification finale `verifier-mise-en-production.ts --final` reste un script (terminal) : le DG ne peut pas la lancer depuis l'écran — à demander à la personne qui déploie ; (2) l'étape 2 est tracée à l'envoi du fichier, pas à son enregistrement par le navigateur ; (3) un compte DG réel doit exister avant de désactiver les comptes de test
+(sinon le dernier porteur est refusé) ; (4) les responsables de service de test doivent être remplacés par des responsables réels avant d'être désactivés ; (5) pendant la fenêtre « simulation → sauvegarde → remise à zéro », une écriture dans les tables purgées (notification RH par le planificateur, saisie) change l'empreinte et fait refuser la remise à zéro : recommencer à l'étape 2 ;
+(6) les 10 points « À VALIDER PAR LE DG » du document de rôles attendent une décision ; (7) `lot-r` nécessite `next build` et la base de test locale (port 55497), comme `lot-n`.
+
+**Vérifié** : vitest 1445 réussis (87 fichiers) ; tsc backend et frontend, eslint (backend + frontend) et `next build` propres ; e2e `lot-r.mjs` 104/104 (état initial, simulation sans écriture, sauvegarde et empreinte tracée, refus par rejeu réel des Server Actions — hors ordre, mauvaise phrase, mauvaise empreinte, compte sans permission —, remise à zéro table par table : 31 tables purgées vides et 25 conservées intactes, audit des étapes conservé, panneau des comptes de test, Admin limité à ce panneau, refus du compte connecté / d'un responsable de service / du dernier porteur de `systeme.reinitialiser`, désactivation réelle de 14 comptes de test par un DG réel, compte désactivé ne se connecte plus, levée du verrou par UPDATE avec ligne d'audit conservée, seconde remise à zéro, redémarrage et parcours neuf `DEM-…-000001` avec solde d'ouverture 750 000 ressaisi par l'écran) ; non-régression complète sur 20 scripts (`articles-beneficiaire-pieces` 34, `articles-decision-finance` 65, `soumission-dg-article` 38, `reglement-par-article` 55, `regularisation-par-article` 38, `lot-c` 55, `lot-f` 60, `lot-g` 60, `lot-g-bis` 35, `lot-g-ter` 31, `lot-h` 46, `lot-i` 56, `lot-j` 87, `lot-j-ter` 118, `lot-j-bis` 61, `lot-k` 101, `lot-l` 91, `lot-m` 89 (un premier passage dans la série a eu le KO intermittent « 1e. notification du DG » déjà connu au lot N+O, sensible au délai de création de la notification ; rejoué seul : 89/89), `lot-n` 69 adapté à l'écran à 4 étapes, `lot-o` 37).
+Détails retenus pendant les tests : (a) la trace de synthèse `desactivation_comptes_test` est écrite pour CHAQUE tentative, y compris un rejeu refusé (0 compte désactivé, N refusés) : plusieurs lignes d'audit sont normales ; (b) la sauvegarde JSON nomme les notifications `notificationTresorerie` et `notificationRh` (pas `notification`) ; (c) les connexions écrivent dans `HistoriqueEntry` : un test qui compare l'état avant/après un refus doit exclure cette table ; (d) le libellé de permission « Valider ou refuser un paramétrage de budget (DG) » vient de la migration `20261023090000` et n'est pas réécrit (liste blanche motivée de `vocabulaireRejeter.test.ts`).
+
+#### Lot S — verrou définitif de la remise à zéro (2026-10-23)
+
+Demande : après une purge réussie, plus rien ne doit être possible depuis l'application, même pour le DG. **Aucune migration** (le verrou existant, la ligne `ReinitialisationSysteme` à `verrou = 'REINITIALISATION'`, est le verrou persistant : date `effectueeAt`, utilisateur `effectueeParId`, `decompte` = lignes purgées par table, `sauvegardeSha256`). Aucune règle métier, permission, rôle ni écriture de caisse modifiés (hors la purge elle-même).
+- **Refus côté serveur, pas seulement un bouton masqué** : `exigerVerrouLibre()` (`backend/src/reinitialisation.ts`) lève `ReinitialisationError(messageVerrouActif(...))` — « Remise à zéro déjà effectuée le … par … : la fonction est verrouillée. Elle ne peut plus être simulée, sauvegardée ni exécutée depuis l'application, quelle que soit la permission. Seul un UPDATE SQL peut lever le verrou (docs/mise-en-production.md, § 10). » Appelée en premier par `simulerReinitialisation`, `simulerReinitialisationDetaillee`, `genererSauvegardeReinitialisation` et, DANS la transaction sérialisable, `executerReinitialisation` : l'écran, la route `GET /api/systeme/reinitialisation/sauvegarde` (409), les Server Actions et la ligne de commande `reinitialiser-production.ts` (simulation comprise : « REFUS : … », code 1) sont tous bloqués par le même garde. Règles pures (testées) dans `reinitialisationEtapes.ts` : `refusSimulation`, `refusSauvegarde`, `refusPurge` testent le verrou AVANT l'ordre des étapes ; le contrôle de permission (`Action non autorisée.`) reste, lui, avant le verrou.
+- **Écran** (`systeme/reinitialisation/page.tsx`) : sous verrou, l'assistant disparaît et la page n'affiche que « Remise à zéro effectuée le [date] par [nom]. Fonction verrouillée. » (`phraseVerrouEcran`, `data-message-verrou`, `data-etat-verrou="actif"`), le décompte, l'audit et — après remise à zéro — le panneau des comptes de test (inchangé). La permission `systeme.reinitialiser` ne suffit plus. Le lien de menu reste visible (pour lire le message).
+- **Plus aucune levée dans l'application** : `leverVerrouAction`, `leverVerrouReinitialisation`, la phrase `LEVER LE VERROU`, l'étape 3 et le motif de levée sont SUPPRIMÉS (la liste des étapes est `SIMULATION`, `SAUVEGARDE`, `PURGE`). Seule voie : `UPDATE "ReinitialisationSysteme" SET verrou = 'LEVE-' || id WHERE verrou = 'REINITIALISATION'` (docs/mise-en-production.md, § 10 ; ligne d'audit conservée, jamais de DELETE). L'audit affiche « Verrou levé (par UPDATE SQL, hors application) » pour une ligne levée. **La production a déjà un verrou actif (purge du 26/09/2026)** : une nouvelle purge exige donc cet UPDATE par la personne qui a l'accès à la base.
+- **Vérifié** : vitest 1447 réussis (`reinitialisationEtapes.test.ts` réécrit : verrou bloque tout, plus d'étape de levée, messages) ; tsc, eslint, `next build` propres ; e2e **`lot-s.mjs` 30/30** (purge par l'écran, ligne de verrou avec date/utilisateur/décompte, message exact, aucun bouton, DG qui porte toujours la permission, deuxième purge refusée avec la bonne phrase et une vraie sauvegarde, simulation refusée, route 409, ligne de commande refusée, rien supprimé ni tracé, aucune action de levée dans le manifeste, survie à un redémarrage de l'application, levée par UPDATE SQL puis assistant de retour) ; `lot-r.mjs` 100/100 et `lot-n.mjs` 69/69 adaptés (3 étapes, verrou = message seul, levée par SQL).
+- **Piège vocabulaire** : `vocabulaireRejeter.test.ts` interdit « refusé(es) » dans un texte visible — le texte de la page dit « impossibles ».
 
 ### Solde d'ouverture de caisse
 
@@ -4322,8 +5588,8 @@ Module complet de gestion des temps de présence, retards, départs anticipés e
 Plan et règles : [docs/PLAN_POINTAGE_V2.md](docs/PLAN_POINTAGE_V2.md) (§2 validé, lot 3 au §4). Aucune migration.
 
 - **Une seule règle** (`backend/src/pointage-utils.ts`) : `checkLateStatus(now, horaires, plages)` — à l'heure jusqu'à
-  la référence + `toleranceRetardMinutes` INCLUSE, retard compté depuis la référence (07:45 + 15 : 08:00 à l'heure,
-  08:10 = 25 min) ; référence repoussée par une permission du matin. `heureReferenceDepartMinutes` /
+  la référence + `toleranceRetardMinutes` INCLUSE, retard compté depuis la FIN de la tolérance (07:45 + 15 : 08:00 à l'heure,
+  08:10 = 10 min ; **modifié le 2026-10-15** : avant, 25 min, compté depuis la référence ; les retards déjà enregistrés gardent leur valeur) ; référence repoussée par une permission du matin. `heureReferenceDepartMinutes` /
   `estDepartAnticipe` (fin de journée avancée au début d'une permission qui la couvre), `departTropTot`
   (`DELAI_MINIMUM_DEPART_MINUTES = 30`), `horairesPointage(parametrage)` + `HORAIRES_PAR_DEFAUT` (07:45, 16:45, 15).
   Utilisée par l'écran (`pointer/page.tsx`), `enregistrerPointageAction`, la correction RH et le pointage exceptionnel
@@ -4395,7 +5661,7 @@ collaborateur trouve sa justification à faire dans « Mon historique ».
   rattrapage automatique si la tâche était en panne). Heure locale du serveur, comme le module. Messages :
   `messageDemandeJustification`, `messageAlerteDecideurJustification`, `messageClotureJustification`. Tests :
   `relancesJustification.test.ts` (retard 08:10, départ 16:40, statut déjà soumis, maximum atteint, panne la veille).
-- **Route** `GET /api/cron/relances-justification`, toutes les 5 minutes (cron-job.org, `DEPLOIEMENT.md` §7). Protégée
+- **Route** `GET /api/cron/relances-justification`, toutes les 5 minutes (planificateur intégré depuis le 2026-10-14, section 15 ; la route sert au déclenchement manuel). Protégée
   par `refusCron` (`frontend/src/lib/cronAuth.ts` → `secretCronValide`, `backend/src/cronAuth.ts` : `Authorization:
   Bearer <CRON_SECRET>`, temps constant, refus si `CRON_SECRET` absent) — aussi utilisée par `/api/cron/absences`.
   Idempotence : chaque envoi est réservé par `updateMany` sur le `nombreEnvois` attendu, la clôture par `updateMany`
@@ -4537,6 +5803,133 @@ Aucune migration, aucune permission nouvelle.
   une décision) (rh@ seul RH en retard :
   DG notifié, rh@ non notifié et sans sa justification dans sa file, assistant-finance@ refusé, DG accède à l'écran et
   au menu, accepte ; collaborateur ordinaire : responsable notifié, ni DG ni RH) ; `e2e/pointage-lot3bis.mjs` 22/22.
+
+### 15. Fiabilisation du pointage — phase 2 : planificateur intégré (2026-10-14)
+
+Plan : `docs/PLAN_FIABILISATION_POINTAGE.md`. Les tâches planifiées vivent **dans l'application** (plus de cron-job.org).
+- **Logique pure** `backend/src/planificateur.ts` (14 tests, horloge simulée) : `tachesDues(now, dernieres)`, `dernierCreneau`,
+  `prochaineExecution`, `tacheEnRetard`, `libelleBilan`, `erreurCourte`. Cadence (heure locale du serveur = Abidjan) :
+  relances toutes les 5 minutes (créneaux alignés sur les multiples de 5), absences lundi-vendredi 17:30 et 20:00, purge
+  quotidienne 03:00, rappels des congés en attente lundi-vendredi 08:30 (Module Congés). Une tâche est due quand le créneau le plus récent passé n'est couvert par aucune exécution
+  (`debut` ≥ créneau, tous statuts) : rattrapage automatique après arrêt, pas de doublon avec un déclenchement manuel.
+- **Exécution** `frontend/src/lib/taches/` : `relancesJustification.ts`, `absences.ts`, `purge.ts`, `rappelsConges.ts` (logique des anciennes
+  routes, sans duplication) ; `executer.ts` (`executerTache(tache, declenchement)`, SEUL point d'exécution : verrou
+  `pg_try_advisory_xact_lock(hashtext('tache:<nom>'))` tenu par une transaction ouverte pendant toute l'exécution — verrou
+  pris ⇒ ligne `IGNOREE`, rien n'est lancé ; ne lève jamais ; écrit une ligne `ExecutionTache`) ; `planificateur.ts`
+  (minuterie de 60 s, premier passage 15 s après le démarrage, une seule minuterie par processus via `globalThis`, tâche
+  déjà en cours dans le processus non relancée, aucune exception ne sort).
+- **Démarrage** `frontend/src/instrumentation.ts` (`register()`, runtime `nodejs` seulement). `PLANIFICATEUR_ACTIF=false`
+  le désactive. Les routes `/api/cron/relances-justification` et `/api/cron/absences` restent (déclenchement manuel,
+  `CRON_SECRET`) et passent par `executerTache` (déclenchement `MANUEL`).
+- **Modèle** `ExecutionTache` (migration `20261014090000_execution_tache`, rejouable) : `tache` (RELANCES_JUSTIFICATION,
+  ABSENCES, PURGE, RAPPELS_CONGES), `declenchement`, `debut`, `fin`, `statut` (SUCCES, ECHEC, IGNOREE), `bilan` (JSON), `erreur` (texte
+  court sans donnée personnelle). La purge supprime les exécutions de plus de 90 jours (jamais le marqueur de clôture initiale, § 18, qui vit dans `MarqueurUnique`).
+- **Limite connue** : l'écriture de la ligne d'exécution se fait à la FIN ; une exécution qui plante le processus entier n'en
+  laisse pas.
+
+### 16. Fiabilisation du pointage — phase 3 : journal technique et moniteur des tâches (2026-10-14)
+
+Objectif : voir dans l'admin ce qui échoue sans faire tomber l'application (les erreurs d'e-mail, de push et de tâches ne finissaient
+que dans les logs du serveur).
+- **Modèle** `JournalTechnique` (migration `20261014100000_journal_technique`, rejouable) : `niveau` (ERREUR, AVERTISSEMENT), `source`
+  (EMAIL, PUSH, TACHE, IMPORT, AUTRE), `code` stable, `message`, `contexte` JSON, `createdAt`.
+- **Logique pure** `backend/src/journalTechnique.ts` (6 tests) : codes (`SMTP_ECHEC`, `SMTP_NON_CONFIGURE`, `FCM_ECHEC`, `FCM_JETON_INVALIDE`,
+  `FIREBASE_NON_CONFIGURE`, `TACHE_ECHEC`, `TACHE_ERREURS_PARTIELLES`) ; `contexteAssaini` ne garde que des clés d'une LISTE BLANCHE
+  (identifiants, nom de tâche, code FCM, compteurs : jamais mot de passe, contenu d'e-mail ni jeton entier) ; `messageAssaini` masque les
+  adresses e-mail.
+- **Une seule fonction d'écriture** `journaliserIncident()` (`frontend/src/lib/journalTechnique.ts`) : ne lève jamais (échec ⇒ `console.error`
+  seulement) ; anti-inondation : au plus une ligne par `code` et par minute dans un processus, les répétitions sont comptées dans
+  `contexte.repetitions`. Branchée sur : `sendEmail` (échec SMTP ; envoi simulé en production ⇒ `SMTP_NON_CONFIGURE`), `sendFcmPush` (échec,
+  jetons supprimés), `firebaseAdmin.ts` (JSON absent ou invalide en production), `executerTache` (tâche en échec ou terminée avec des erreurs).
+- **`Notification.emailSent`** ne passe plus à `true` pour un e-mail SIMULÉ (SMTP absent) : l'indicateur « critiques sans e-mail envoyé » est honnête.
+- **Écran `/admin/journal-technique`** (`isAdmin`, 3 onglets en GET) : *Moniteur des tâches* (dernière exécution avec bilan lisible, dernière réussie,
+  prochaine attendue, badge « En retard » = `tacheEnRetard`, historique de 50, bouton « Lancer maintenant » = `lancerTacheAction` → même
+  `executerTache` en déclenchement MANUEL, `isAdmin` revérifié) ; *Incidents* (filtres niveau/source/période, 50 par page, plus récents d'abord) ;
+  *Santé de la configuration* (oui/non, JAMAIS une valeur : SMTP, Firebase serveur, Firebase navigateur — clés `NEXT_PUBLIC_FIREBASE_*` figées dans
+  l'image —, `AUTH_URL`, planificateur ; sur 7 jours : notifications critiques sans e-mail, importantes ou critiques sans push). Carte « Journal
+  technique » sur `/admin` (erreurs 24 h, tâches en retard, rouge si anomalie) et entrée de menu.
+- **Purge** : les incidents de plus de 90 jours sont supprimés avec les exécutions (tâche `PURGE`).
+- **Invariant à préserver** : le retard va au supérieur, pas à la RH — prouvé par `e2e/planificateur-journal.mjs` (un membre de Commercial en
+  retard : 1 notification pour `responsable-commercial@`, aucune pour `rh@` ni le DG).
+
+### 17. Fiabilisation du pointage — phase 5 : « Mon équipe » du responsable (2026-10-14)
+
+- **Accès** : être **responsable ACTUEL d'au moins un service** (`Service.responsableId`, désignation dans Admin > Services) — **aucune permission**.
+  Revérifié côté serveur sur chaque page (`chargerEquipeResponsable`, `frontend/src/lib/equipe.ts`, relu à chaque requête : un changement de
+  responsable ou de service prend effet immédiatement) ; sinon `notFound()` (404). Entrée de menu « Mon équipe » (`NavFlags.canVoirMonEquipe`,
+  branche Pointage) visible à cette seule condition.
+- **Périmètre** : les membres ACTIFS des services dont il est responsable, **sans lui-même**, parmi les comptes qui pointent (`USER_CAN_POINT_WHERE`,
+  le périmètre du reporting RH). La RH garde sa vue globale ; le DG voit son service (Direction DG) comme tout responsable.
+- **`/pointage/mon-equipe`** : *Aujourd'hui* (état de chaque membre — `etatJourMembre`, `backend/src/equipe.ts`, 7 tests : à l'heure, en retard + minutes,
+  parti en avance, absence autorisée, absent, jour non ouvré, pas encore pointé —, arrivée, départ, état de la justification) ; *À décider* (compteur
+  `compteurMenuJustificationsSession`, lien vers `/pointage/justifications`) ; *Sur la période* (GET `du`/`au`, mois en cours par défaut, `periodeEquipe`) :
+  retards, minutes, départs anticipés, absences, justifications refusées ou non justifiées, lien « Historique ».
+  **`/pointage/mon-equipe/[userId]`** : historique d'un membre en LECTURE SEULE (404 pour tout compte qui n'en est pas le responsable, lui-même compris).
+- **Aucun second calcul** : la lecture de la page « Présence du jour » de la RH a été EXTRAITE dans `frontend/src/lib/presenceJour.ts`
+  (`chargerPresenceJour(date, userIds?)`) et la page de la RH l'utilise désormais elle aussi ; la période passe par `getReportingAgrégé` (le reporting
+  RH) et le nouveau `getSyntheseEquipe` (`pointageReporting.ts`) ; `PointageReportingFilters` gagne `userIds` (`filtreIdentifiants` : intersection avec
+  `userId`). Retard, minutes et départ anticipé sont ceux stockés au pointage (règles du lot 3), jamais recalculés. `PresenceData.departAnticipe` ajouté.
+- **Pas d'export** dans cette version.
+- Vérifié par `e2e/mon-equipe.mjs` : chiffres identiques à ceux du reporting RH (même période, même service), 404 hors responsabilité, accès qui suit
+  un changement de responsable, 390 px.
+
+### 18. Fiabilisation du pointage — clôture initiale au premier passage en production (2026-10-14)
+
+Décision de Thierry : au tout premier passage du planificateur **en production** (`NODE_ENV === "production"`), clôture SANS AUCUN ENVOI de
+l'arriéré, pour ne pas inonder les collaborateurs au démarrage. `backend/src/clotureInitiale.ts` (`cloturerEnAttenteInitiale`, 5 tests) ;
+appelée par `assurerClotureInitiale()` (`frontend/src/lib/taches/planificateur.ts`) AVANT toute tâche : en cas d'échec le passage s'arrête (les
+relances n'envoient rien sur l'arriéré) et le suivant réessaie.
+- **Justifications** `EN_ATTENTE` dont le pointage est d'avant le jour courant (00:00 heure locale) → `NON_JUSTIFIEE` + `clotureeAt`, aucune notification.
+  Les justifications SOUMISE/ACCEPTEE/REFUSEE et celles du jour courant ne sont pas touchées.
+- **Absences** `A_CONTROLER` d'avant le jour courant → **`CONFIRMEE`**, sans notification (`controleParId` vide ; motif « Clôture automatique à la mise en
+  production… » seulement si l'absence n'en avait pas). **Statut vérifié** : `CONFIRMEE` est l'« Absence injustifiée (confirmée) » de l'écran RH, le SEUL
+  statut qui garde l'absence comptée sans prétendre qu'elle est excusée ; `JUSTIFIEE` effacerait la sanction sans motif, et laisser `A_CONTROLER` ne clôturerait
+  rien. Les compteurs et exports comptent les absences quel que soit leur statut. Aucun autre statut ne convenait mieux.
+- **Une seule fois** : table `MarqueurUnique` (migration `20261014110000_marqueur_unique`, jamais purgée), clé `pointage.cloture_initiale`. L'insertion
+  (`ON CONFLICT DO NOTHING`) fait office de verrou, dans la MÊME transaction que les clôtures et que la ligne de journal : un échec annule tout (le marqueur
+  aussi) ; si deux instances démarrent ensemble, la seconde attend la première, puis constate le marqueur (ou exécute si la première a annulé).
+- **Journal technique** : une ligne `TACHE` / `CLOTURE_INITIALE` (niveau AVERTISSEMENT) avec `justificationsCloturees` et `absencesConfirmees`, même à 0.
+- Hors production (`NODE_ENV` ≠ `production`), rien n'est exécuté. `PLANIFICATEUR_ACTIF=false` empêche aussi cette clôture.
+- Vérifié par `e2e/cloture-initiale.mjs` (18 contrôles : statuts, aucune notification, journal, marqueur, redémarrage sans rejeu, concurrence avec marqueur
+  validé puis annulé par l'autre instance).
+
+### 19. Réinitialisation du Pointage seul, avant sa mise en service (2026-10-14)
+
+Distincte de la réinitialisation globale (« Réinitialisation avant mise en production », déjà exécutée et verrouillée, `systeme.reinitialiser`, jamais touchée).
+- **Permission** `pointage.reinitialiser` (migration `20261014120000_pointage_reinitialisation`, module Pointage) : attribuée **explicitement** (une
+  `RolePermission`, jamais le contournement `estAdmin`) aux rôles portant `estAdmin` — **autre exception délibérée** à l'invariant « le rôle Admin n'a aucune
+  RolePermission » (avec `feedback.moderer`) ; retirable dans `/admin/roles` ; **jamais délégable** (`PERMISSIONS_DECISION_NON_DELEGABLES`). Le DG ne l'a pas.
+  **Conséquence** : tout compte du rôle Admin peut purger le Pointage → neutraliser les comptes de test en production AVANT de déployer (`DEPLOIEMENT.md` § 8).
+- **Écran** `/admin/reinitialisation-pointage` (gardé par la permission EN PLUS du layout `/admin` ; redirection et toast sinon) ; **sauvegarde**
+  `GET /api/admin/reinitialisation-pointage/sauvegarde` (JSON, `X-Backup-Sha256`, 401/403/409). Lien de menu « Purge du Pointage » tant que le Pointage n'est pas en service.
+- **Mécanique** (`backend/src/reinitialisationPointage.ts`, 5 tests) — celle de `reinitialisation.ts` : sauvegarde JSON + SHA-256 ; la purge relit les données dans sa
+  transaction et refuse si l'empreinte diffère ; mot exact `REINITIALISER-POINTAGE` revérifié côté serveur ; UNE transaction sérialisable, enfants avant parents ;
+  verrou consultatif `pg_try_advisory_xact_lock` : de deux exécutions simultanées une seule réussit.
+- **Purgé** : `CorrectionPointage`, `JustificationPointage`, `Pointage`, `Absence`, `PlageAbsenceAutorisee`, notifications `POINTAGE` et `RH`, historique des entités
+  `Pointage`/`PointageQR`/`PointageGeo`/`JustificationPointage`, `ExecutionTache`, `JournalTechnique`. **Gardé** : comptes, rôles, permissions, services et responsables,
+  `ParametrageHoraire`, `JourFerie`, `FcmToken`, Trésorerie, Encaissements, FeedbackApp, et les tables d'audit ci-dessous.
+- **Écart assumé** : `ExecutionTache` et `JournalTechnique` sont sauvegardées et purgées mais **hors empreinte** — le planificateur y écrit toutes les 5 minutes, l'empreinte
+  ne tiendrait sinon jamais le temps de télécharger la sauvegarde et de confirmer.
+- **Audit permanent** : `ReinitialisationPointage` (date, auteur, décompte par table, empreinte ; jamais purgée, une ligne par purge, aussi dans `HistoriqueEntry`) ; les comptes qui
+  y figurent ne sont plus supprimables. **Répétable** tant que le Pointage n'est pas en service.
+- **« Mettre le Pointage en service »** (même permission, mot `METTRE-EN-SERVICE-POINTAGE`) : marqueur définitif `PointageMiseEnService` (`verrou` unique). Ensuite la purge est
+  refusée (action, et sauvegarde en 409), le lien de menu disparaît et l'écran n'affiche plus que l'audit.
+- **Après une purge — plus aucune dépendance au superviseur** : la tâche des absences part de la date la plus RÉCENTE entre `SYSTEM_START_DATE` (plancher), le **lendemain du jour de la
+  dernière purge** (`ReinitialisationPointage.effectueeAt`, la date enregistrée à l'audit : la purge a supprimé les pointages de ce jour-là, la tâche y verrait à tort des absents) et le **jour de la
+  mise en service** (`PointageMiseEnService.misEnServiceAt`, inclus). Fonction pure `dateDebutAbsences` (`backend/src/absencesDebut.ts`, 8 tests), lue par `lib/taches/absences.ts` à chaque exécution.
+  Plus aucun rappel « régler SYSTEM_START_DATE » à l'écran : le message de succès et le formulaire indiquent que la date de purge est enregistrée.
+- Vérifié par `e2e/reinitialisation-pointage.mjs` (43 contrôles dont la tâche des absences relancée après la purge : aucune absence recréée avant la date de purge, contre-épreuve avec la purge antidatée ; serveur lancé avec `PLANIFICATEUR_ACTIF=false`) : refus sans permission (écran, sauvegarde, actions), mot faux,
+  empreinte invalide et périmée, deux purges successives, deux simultanées, mise en service puis refus, Trésorerie/FeedbackApp/comptes/configuration intacts.
+
+### 20. Adresse du portail dans les liens et le QR code en développement (2026-10-15)
+
+- **QR code de pointage** (`/api/network-config`, dev seulement, 404 en production) : `backend/src/reseauLocal.ts` choisit l'adresse réseau local en ignorant les
+  cartes virtuelles (vEthernet/WSL/Hyper-V/Docker/VirtualBox/VMware…) puis en préférant 192.168.x.x, 10.x.x.x, 172.16-31.x.x ; port repris de l'hôte ; `DEV_NETWORK_IP` force l'adresse.
+- **Liens absolus des e-mails** : UNE règle, `urlPublique()` (`frontend/src/lib/urlPublique.ts` → `backend/src/urlPublique.ts`), à utiliser pour tout lien hors application.
+  Production : l'origine de `AUTH_URL` (puis `NEXTAUTH_URL`), jamais remplacée. Développement : si `AUTH_URL` est absente ou en localhost, l'adresse réseau local (ouvrable depuis un téléphone).
+- **Bug de production corrigé** : le lien du mail « mot de passe oublié » lisait `NEXTAUTH_URL` seule, absente du compose de production (qui ne définit que `AUTH_URL`) → il pointait sur `http://localhost:3000`.
+  Les autres fichiers (réinitialisation, profil, gabarits, invitation) utilisent maintenant la même règle ; ne plus écrire `process.env.… || "http://localhost:3000"` dans un fichier.
+- **Limite en dev** : le retour après connexion reste validé contre l'origine `AUTH_URL` (open redirect) ; pour tester le lien d'un e-mail depuis un téléphone jusqu'à la page demandée, mettre `AUTH_URL` à l'adresse réseau (ex. `http://192.168.1.49:3000`), sinon le téléphone retombe sur l'accueil après connexion.
 
 ## Module FeedbackApp — anonymat total
 
@@ -5741,6 +7134,133 @@ Cœur pur `calculerConfirmation` (et `confirmerSuccessivement` pour enchaîner d
   paiements de la fiche police (colonnes figées ajoutées en 6b), visible à 768 px. Le formulaire de saisie (6c), lui,
   tient à 768 px. À traiter dans un commit dédié (cartes empilées ou colonnes réduites sous la largeur d'une tablette).
 
+## Module Congés
+
+La RH a son propre logiciel de congés (décision du 19/10). Le portail sert seulement à **demander** un congé, le **faire valider** (responsable du
+service, puis RH) et **ne compter aucune absence** pendant le congé. **Retirés** : soldes, types de congé, date d'embauche, pièces jointes,
+permissions de quelques heures (l'ancien module « Permissions d'absence » n'existe plus). Statuts (`StatutDemandeConge`) : `EN_ATTENTE_RESPONSABLE`,
+`EN_ATTENTE_RH`, `MODIFICATION_DEMANDEE`, `VALIDEE`, `REJETEE`, `ANNULEE`. Référence `CNG-AAAAMM-NNNN` (`genererReferenceConge`, sous verrou).
+Règles pures : `backend/src/circuitConge.ts`, `congesCalcul.ts`, `congesPasse.ts` ; écritures (une transaction, `RefusConge` annule tout) : `congesDb.ts`.
+
+### Règles R1 à R14
+
+- **R1 Nature** : `CONGE` ou `PERMISSION_EXCEPTIONNELLE` (`LIBELLE_NATURE_CONGE`), contrôlée par `preparerConge` (congesDb.ts, aussi pour R2 à R4).
+- **R2 Motif** : 3 à 500 caractères, espaces réduits (`nettoyerMotifConge`, `MOTIF_CONGE_MIN` / `_MAX`).
+- **R3 Période** : début ≤ fin, **jamais avant aujourd'hui, même pour la RH** (`refusDateDebutPassee`, `MESSAGE_CONGE_DANS_LE_PASSE` partagé avec le
+  formulaire), 366 jours au plus (`MAX_JOURS_PERIODE`).
+- **R4 Jours ouvrés** : lundi à vendredi hors `JourFerie` (`decompterJours`), affichés seulement (`nbJoursOuvres`) ; période sans jour ouvré refusée.
+- **R5 Chevauchement** : refus si une autre demande du salarié est en attente, à modifier ou validée (`controlerChevauchement`,
+  `STATUTS_CONGE_OCCUPANT_LA_PERIODE`). Un verrou par salarié (`verrouillerCongeUtilisateur`, clé `conge-utilisateur:<id>`) est pris par la
+  soumission, la resoumission, la saisie RH et chaque décision.
+- **R6 Circuit** (`resoudreParcoursConge`) : responsable (`Service.responsableId`, sans permission) puis RH (compte actif dont le RÔLE porte
+  `conges.valider_rh`). Étape responsable **« non requise »** — demande directement `EN_ATTENTE_RH` — si le demandeur n'a pas de service, son
+  service pas de responsable, le responsable est désactivé, ou le demandeur **est** le responsable (`resoudreEtapeResponsable`). Le décideur est
+  recalculé à chaque action (`decideurPourStatutConge`) ; si le responsable devient inutilisable en cours d'attente, la RH décide à sa place et
+  termine directement (`viaRepli`, historique `accord_par_repli`). Personne ne décide sa propre demande (`refusDecideurConge`).
+  **Repli DG (O1)** : si aucun autre compte RH que le demandeur n'existe, le DG (RÔLE `treso.decider_dg`) décide à l'étape RH (`resoudreEtapeRH`) ;
+  ni RH ni DG : dépôt refusé (`MESSAGE_AUCUN_DECIDEUR`).
+- **R7 Actions d'un décideur** (`transitionConge`) : valider (responsable → `EN_ATTENTE_RH` ; RH ou DG → `VALIDEE`), refuser, demander une
+  modification (motif ≥ 3 caractères). Observation RH facultative (500 car.), à l'étape RH seulement (`controlerObservationRH`). Le droit de décider
+  se lit sur le RÔLE (`session.rolePermissions`), jamais sur une délégation. Les boutons impossibles restent visibles, grisés avec la raison
+  (`actionsPossiblesConge`).
+- **R8 Modification** : seul le demandeur renvoie (`/conges/[id]/modifier`, `resoumettreConge`) ; nature, motif et dates sont recontrôlés (R2 à R5), le
+  parcours est recalculé, les décisions et l'observation sont effacées (l'historique les garde), les plages sont remplacées (R10).
+- **R9 Annulation** (`transitionConge`, motif ≥ 3) : jamais une demande déjà rejetée ou annulée ; le **demandeur** tant que `dateDebut` n'est pas
+  atteinte (`MESSAGE_CONGE_COMMENCE` ensuite) ; un compte dont le RÔLE porte `conges.annuler`, **à tout moment** (c'est la RH après le début).
+- **R10 Plages** : une `PlageAbsenceAutorisee` (source `CONGE`, 00:00–23:59, `demandeCongeId`) par jour de la période (`creerPlagesConge`),
+  `provisoire = true` dès la soumission (saisie RH : définitives), rendues définitives à la validation (`validerPlages`). Une journée couverte
+  n'est **jamais** une absence, provisoire ou non (`journeeCouverteParAbsence`, lue par la tâche des absences et « Présence du jour »).
+- **R11 Refus tardif** : au **refus** d'une demande dont des plages sont déjà passées (`joursPassesProteges`), le décideur voit la case
+  « Compter les jours déjà passés comme absences » (`compterJoursPassesAbsents`, décochée par défaut). **Cochée** : plages passées retirées et une
+  `Absence` `A_CONTROLER` créée (`compterJoursPassesAbsents` de congesDb.ts) par jour ouvré passé sans arrivée pointée ni absence existante, à
+  partir de `lireDateDebutAbsences`, après le jour d'entrée en vigueur du compte (`jourEntreeEnVigueur`), compte actif. **Décochée** : plages
+  passées gardées, jamais comptées absentes. Choix écrit sur la demande (`joursPassesComptesAbsents`) et en historique (`jours_passes`). La demande
+  de modification n'offre pas ce choix : ses jours passés restent couverts.
+- **R12 Saisie RH** (`saisirCongeRH`, `conges.valider_rh` sur le RÔLE) : congé pour un **autre** salarié actif, `VALIDEE` d'emblée
+  (`saisieParRH`, étape responsable non requise, plages définitives), mêmes contrôles R2 à R5 ; le salarié est notifié.
+- **R13 Pointage pendant un congé validé** : enregistré normalement, signalé « Pointé pendant un congé » (`pointeEnConge`, `joursPointesEnConge`).
+- **R14 Visibilité** (`peutConsulterConge`) : le demandeur, le responsable ACTUEL de son service, les comptes qui portent `conges.valider_rh` ou
+  `conges.consulter_tous` (rôle ou délégation). Liste complète et export : `consulter_tous` ou `valider_rh`.
+
+### États d'une journée couverte
+
+`etatPlageConge` (circuitConge.ts) est la **seule** règle d'affichage, jamais le champ `provisoire` seul : plage définitive → « En congé » ;
+provisoire d'une demande en attente → « Congé en attente de validation » ; autre provisoire (demande refusée, annulée, à modifier) →
+« Non compté absent (demande non validée à temps) ». Plusieurs plages le même jour : la plus forte l'emporte (`etatCongeDuJour`). Affichée dans
+« Présence du jour » (onglet « Absence autorisée », `libelleAbsenceAutorisee`), « Mon équipe » (`etatJourMembre`, `equipe.ts`), le reporting
+RH et son export (`pointageReporting.ts` : colonnes « Jours de congé », qui ne compte que les jours ouvrés « En congé », et « Pointé pendant un
+congé »). L'export `/api/conges/export` donne le statut de la DEMANDE, pas l'état d'une journée.
+
+### Plages retirées : annulation, refus, modification (décision du 20/10, Thierry)
+
+Dans `deciderConge` : **annulation après le début** → plages supprimées **à partir de demain** (`aPartirDe = demain`) ; le jour même et les jours passés
+restent couverts (« En congé » si le congé était validé, sinon « Non compté absent »). Annulation avant le début : toutes les plages. **Refus** et
+**demande de modification** → plages d'**aujourd'hui** et des jours suivants supprimées (le jour même n'est donc **pas** gardé, contrairement à
+l'annulation) ; jours passés gardés, sauf refus avec la case R11 cochée. Resoumission : aujourd'hui et la suite remplacés (`remplacerPlages`).
+
+### Permissions
+
+Quatre `conges.*` (module `conges`, source unique `congesPermissions.ts`, posées par la migration `20261030090000_conges_permissions_absence` ET par
+le seed, synchronisation vérifiée par `congesPermissions.test.ts`) : `soumettre`, `valider_rh`, `annuler`, `consulter_tous`.
+- **Attribution par permission sœur, jamais par nom de rôle** (le rôle qui porte la sœur reçoit la nouvelle ; seed : `permissionsCongePourCles`) :
+  `soumettre` ← `pointage.pointer`, `treso.creer_demande`, `treso.decider_dg` ; `valider_rh` et `annuler` ← `pointage.corriger_pointage` ;
+  `consulter_tous` ← `pointage.corriger_pointage`, `pointage.consulter_tous`, `treso.decider_dg` (le DG la reçoit, jamais `valider_rh`).
+- **Rôles `estAdmin`** : ils ne reçoivent que `conges.soumettre` (en base de dev l'Admin porte les permissions sœurs : il serait devenu décideur RH et
+  aurait supprimé le repli DG) ; `valider_rh`, `annuler`, `consulter_tous` se cochent à la main dans `/admin/roles`. **À vérifier en production avant
+  déploiement** : quels comptes portent un rôle `estAdmin` (ils pourront demander un congé).
+- **Lues sur le RÔLE** : `conges.valider_rh` (étape RH, saisie RH ; non délégable, `PERMISSIONS_DECISION_NON_DELEGABLES`), `treso.decider_dg` (repli),
+  `conges.annuler`. `soumettre` et `consulter_tous` passent par `hasPermission` (rôle + délégations).
+- **Responsable de service, sans permission** : désigné par `Service.responsableId`, comme « Mon équipe » ; il accède à « À décider » et au détail des
+  demandes de son service. Sans `conges.soumettre`, `/conges` et `/conges/nouvelle` le redirigent vers « À décider ».
+
+### Écrans et routes (`frontend/src/app/(dashboard)/conges/`)
+
+Le layout garde la session (accès : `soumettre`, `valider_rh`, `consulter_tous`, responsable de service ou DG, sinon `/?error=acces_refuse_conges`) ;
+chaque page revérifie. Menu « Congés » et compteur « À décider » : `lib/conges/navigation.ts` ; carte dans « Mon équipe ».
+- `/conges` « Mes congés » et `/conges/nouvelle` (aperçu des jours ouvrés, `apercuConge`, mêmes contrôles que le dépôt) : `conges.soumettre`.
+- `/conges/a-decider` : responsable de service, `valider_rh` ou DG ; chacun ne voit que ce qu'il peut décider **maintenant** (`chargerFileDecisionConges`,
+  du plus ancien au plus récent). `/conges/[id]` : frise (`friseConge`), historique, actions ; `/conges/[id]/modifier` : le demandeur.
+- `/conges/saisie-rh` : `conges.valider_rh`. `/conges/toutes` : `consulter_tous` ou `valider_rh`, 3 onglets en GET (« En congé aujourd'hui »,
+  « À venir » = début dans 30 jours, « Toutes les demandes » : filtres du / au / service / statut / nature, défaut mois en cours et statut Validée,
+  50 par page).
+- `GET /api/conges/export` : mêmes filtres (`filtresCongesDepuisRecherche`, 400 si invalides, 401, 403), **toutes** les lignes sans pagination,
+  13 colonnes (`COLONNES_EXPORT_CONGE`).
+- Notifications (`lib/conges/notifier.ts`, catégorie `RH`) : dépôt → décideur de l'étape ; décision → demandeur et étape suivante ; annulation →
+  `destinatairesAnnulationConge` (jamais l'auteur) ; saisie RH → le salarié.
+
+### Rappel quotidien
+
+Tâche `RAPPELS_CONGES` (« Rappels des congés en attente », `planificateur.ts`) : lundi à vendredi à 08:30, rattrapée après un arrêt comme les autres ;
+exécution `executerRappelsConges` (`frontend/src/lib/taches/rappelsConges.ts`) via `executerTache`. `rappelCongeDu` (congesRappels.ts) : statut
+`EN_ATTENTE_*` et dernier rappel (à défaut `etapeDepuis`, remis à zéro à chaque décision) d'au moins 24 h. Destinataires = ceux de l'étape
+(`destinatairesEtapeConge`), jamais le demandeur. Priorité (`prioriteRappelConge`) : `IMPORTANT` si le congé commence dans 2 jours ou moins (ou a
+commencé), sinon `INFO`. **Réservation** : `updateMany` conditionné au statut et au `dernierRappelAt` lu avant l'envoi, donc jamais deux rappels
+pour la même demande, même avec deux exécutions simultanées. Suivi et « Lancer maintenant » : `/admin/journal-technique` (bilan « N rappels, N erreurs »).
+
+### Intégrations
+
+« Présence du jour » (`lib/presenceJour.ts`), « Mon équipe », reporting et export du Pointage, tâche des absences : voir « États d'une journée ».
+**Purge du Pointage refusée dès qu'une `DemandeConge` existe**, même rejetée ou annulée (`refusPurgePointageAbsences` : exécution ET sauvegarde,
+409), car elle supprimerait toutes les plages. **Suppression de compte** (`supprimerUtilisateurAction`) : compte les 5 relations de `DemandeConge`
+vers `User` (demandeur, créateur, approbateur, valideur, annulateur) et affiche le message habituel au lieu d'échouer.
+
+### Vérifications
+
+Cinq scripts, **sur base PostgreSQL jetable seulement**, jamais la base de dev (chacun refuse une base dont le nom ne contient pas `jetable`, `e2e` ou
+`conges` ; `conges-rappels.ts` : `jetable` ou `test`) :
+`DATABASE_URL=… npx tsx e2e/conges-couche-base.ts` (couche base R3 à R12, repli DG, concurrence) et `e2e/conges-vue-ensemble.ts` (vue d'ensemble,
+export) depuis la racine ; `npx tsx ../e2e/conges-pointage.ts` (lundi à jeudi) et `../e2e/conges-rappels.ts` depuis `frontend/` ;
+`npm i --no-save playwright`, puis `PLANIFICATEUR_ACTIF=false bash e2e/base-jetable.sh && node e2e/conges-recette.mjs && bash e2e/arreter.sh`, puis
+`npm uninstall --no-save playwright`. **Dernière recette** (`conges-recette.mjs`) : **48/48**, trois passages, 20/10/2026, aucune erreur JavaScript.
+
+### Points ouverts
+
+- **O1** : le repli sur le DG (RH seule demandeuse) est provisoire ; une seule condition à retirer, dans `resoudreEtapeRH`.
+- **O2** : un responsable de service qui porte aussi `conges.valider_rh` valide les deux étapes d'une demande de son service (seule la propre demande
+  est interdite).
+- **O3** : la saisie RH n'accepte aucune date de début passée (R3) : un congé déjà commencé ne s'enregistre pas après coup.
+- **Fusion faite (lot Q, 2026-10-22)** : la migration est le dossier `20261030090000_conges_permissions_absence` (après toutes les migrations d'Aristide ; sa copie `20261028110000_…`, restée par erreur dans la fusion, est supprimée). Elle contient aussi `ALTER TYPE "TacheNom" ADD VALUE 'RAPPELS_CONGES'`. Contenu rejouable ; jamais déployée en production : plus aucun renommage.
+
 ## Socle Portail — Authentification et permissions
 
 ### Contrat applicatif
@@ -5765,12 +7285,13 @@ layout ou le masquage de l'UI.
   personnalisé (`jwt.encode` custom lisant `token.rememberMe`) : 30 jours
   si coché, 1 jour sinon (décoché par défaut). `rememberMe` n'est jamais
   exposé côté `Session`, uniquement interne au JWT.
-- **Déconnexion automatique après inactivité** — 60 minutes sans
-  interaction physique réelle (`mousemove`/`mousedown`/`keydown`/`wheel`/
-  `touchstart`/`scroll`, avec `event.isTrusted` revérifié), indépendant de
-  l'âge de la session. Fonctionne même sur un onglet en arrière-plan
-  (`setTimeout`, jamais `requestAnimationFrame`). Le rafraîchissement SSE
-  ne compte jamais comme une activité.
+- **Déconnexion automatique après inactivité — RETIRÉE le 2026-10-14** (demande du DG, fluidité du pointage ; plan
+  `docs/PLAN_FIABILISATION_POINTAGE.md`, phase 1). `InactivityLogout`, `logoutForInactivityAction` et le message
+  `?error=inactivite` n'existent plus (un ancien lien qui le porte affiche la page de connexion normalement, sans
+  erreur). Il ne reste que les deux durées ci-dessus, **glissantes** (le middleware ré-encode le jeton à chaque page :
+  1 jour sans la case, 30 jours avec, comptés depuis la DERNIÈRE page visitée) — prouvé par `e2e/session-glissante.mjs`,
+  qui lit l'`exp` dans le jeton déchiffré. **Limite connue** : sur un poste partagé, l'utilisateur doit décocher la case
+  et se déconnecter lui-même.
 
 ### `estAdmin` — accès à la console `/admin`
 
@@ -5932,7 +7453,7 @@ ou bénéficiaire de délégation, **auteur d'un motif Finance sur dépense non
 justifiée** — voir "Motif Finance sur dépense non justifiée"). Si au moins
 une relation existe : refus
 avec message précis listant chaque catégorie non nulle, invitant à
-désactiver plutôt. Sinon : suppression réelle + `HistoriqueEntry`.
+désactiver plutôt. Le module Congés y ajoute les 5 relations de `DemandeConge` vers `User` (« Module Congés », Intégrations). Sinon : suppression réelle + `HistoriqueEntry`.
 Toujours refusée pour l'auto-suppression et pour le **dernier compte dont
 le rôle a `estAdmin: true`** (comptage des autres comptes admin restants).
 Confirmation à deux temps côté UI, la vraie autorité restant toujours
@@ -5947,6 +7468,7 @@ côté serveur.
   `/admin/categories`, mais limité à **créer** et **supprimer**
   (Activer/Désactiver et Budget alloué restent Admin-only, gardés comme
   leviers de configuration globale distincts).
+  **⚠️ Désactiver / Réactiver ouverts à la Finance par le lot J bis (2026-10-20)** ; le budget n'est plus éditable ici (lot J).
 - **Suppression définitive** (`supprimerCategorieAction`/
   `supprimerObjetAction`, n'existait pour personne avant, y compris
   l'Admin) : bloquée si au moins un Objet rattaché, au moins une Demande
@@ -6601,6 +8123,9 @@ pas de build côté Dokploy).
 >   données (historique, notifications, feedbacks, demandes, pointages…). Le marqueur `/app/uploads/.seeded` du
 >   service `init` ne protège que le démarrage automatique, pas un lancement manuel.
 
+- **Scripts de `backend/prisma/*.ts` dans le conteneur (lot N+O)** : l'image copie désormais `backend/src` EN ENTIER (avant : seulement `backend/src/generated/prisma`) ;
+  sans cela, tout script qui importe `../src/...` (reprises des lots B à L bis, `reinitialiser-production`, `rattrapage-production`, `verifier-mise-en-production`)
+  échouait avec « Cannot find module ». Lancement : `cd /app/backend && npx tsx prisma/<script>.ts`. Procédure complète : [docs/mise-en-production.md](docs/mise-en-production.md).
 - **Migrations automatiques (`prisma migrate deploy`) à chaque démarrage,
   seed JAMAIS automatisé** — le seed fait des `deleteMany`, protégé par un
   marqueur `.seeded` sur le volume `uploads` en production ; un service
@@ -6670,9 +8195,11 @@ combinaison de permissions** : chaque action a sa permission.
 | `treso.deleguer_acces` | Déléguer des accès (lue sur les permissions du RÔLE, jamais celles reçues par délégation) |
 | `treso.modifier_description` | Description d'une demande et libellé de ses lignes |
 | `treso.decider_dg` | Décider à l'étape DG du circuit (migration `20261006120000`, rôles portant `systeme.reinitialiser` : le DG seul) |
+| `treso.valider_budget` | Valider ou refuser un paramétrage de budget (lot J, migration `20261023090000`, rôles portant `treso.decider_dg` : le DG seul) |
+| `treso.reorienter_demande` | Réorienter l'étape Service d'une demande vers un autre responsable (lot K, migration `20261026090000`, rôles portant `treso.decider_finance` : la Finance ; le demandeur réoriente la sienne sans permission) |
 
 **Jamais délégables** (circuit, 2026-10-06) : `treso.decider_finance`, `treso.soumettre_dg`, `treso.decider_dg`,
-`treso.approuver_validation_complete` — voir « Circuit de validation des demandes — moteur ».
+`treso.approuver_validation_complete` et, depuis le module Congés, `conges.valider_rh` — voir « Circuit de validation des demandes — moteur ».
 
 La migration accorde les 9 premières **aux rôles qui remplissaient la règle « Resp » au moment de la migration**
 (calculé en SQL, jamais un nom de rôle), et `modifier_description` à « Resp OU `treso.effectuer_reglement` » (garde
@@ -6711,12 +8238,14 @@ etc.) ont déjà leur migration. **Toute nouvelle permission ajoutée au seed do
 
 **Pointage RH** (`pointage.*`) : `pointer`, `consulter_historique`,
 `consulter_tous`, `pointage_exceptionnel`, `corriger_pointage`,
-`gerer_horaires`, `voir_dashboard_rh`, `voir_reporting`.
+`gerer_horaires`, `voir_dashboard_rh`, `voir_reporting`, `reinitialiser` (purge du Pointage seul, § 19 : Admin, jamais déléguée).
 `corriger_pointage` est aussi la **permission de repli RH** du circuit de justification (Pointage V2) : ses détenteurs
 (autres que le collaborateur) décident quand le collaborateur est responsable de son service, est DG, ou que son service
 n'a pas de responsable actif ; s'il n'existe aucun autre compte RH actif, le DG (`treso.decider_dg`) décide (section 14).
 Le responsable de service décide sans permission (`Service.responsableId`). Routes : `/pointage/justifier/[pointageId]`,
 `/pointage/justifications`, `/api/cron/relances-justification` ; modèle `JustificationPointage`.
+
+**Congés** (`conges.*`) : `soumettre`, `valider_rh`, `annuler`, `consulter_tous` (attribution par permission sœur ; `valider_rh` non délégable) — voir « Module Congés ».
 
 **Champs de rôle transverses** (jamais un nom de rôle en dur) :
 `Role.estAdmin` (accès `/admin`, figé à la création),

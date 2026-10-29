@@ -1,7 +1,8 @@
-import { prisma, type NotificationPriority, type NotificationCategory } from "backend";
+import { contexteSignatureCourant, utilisateursAvecPermission, differerApresCommit, prisma, type NotificationPriority, type NotificationCategory } from "backend";
 import { publishUserNotification, publishDataChanged } from "@/lib/eventBus";
 import { fcmAdmin } from "@/lib/firebase/firebaseAdmin";
 import { sendEmail, generateCriticalNotificationEmail } from "@/lib/email";
+import { journaliserIncident } from "@/lib/journalTechnique";
 
 export interface NotifyParams {
   userId: string;
@@ -19,6 +20,11 @@ export interface NotifyByPermissionParams {
   priority?: NotificationPriority;
   category?: NotificationCategory;
   excludeUserId?: string;
+  /**
+   * Inclure les délégués ACTIFS de la permission (défaut : oui, lot N). À `false` pour une notification de DÉCISION dont la
+   * garde se lit sur le RÔLE seul (justification de pointage : un délégué de `pointage.corriger_pointage` ne la décide pas).
+   */
+  inclureDelegues?: boolean;
 }
 
 /**
@@ -35,43 +41,65 @@ export async function notify(params: NotifyParams) {
 
   try {
     // 1. Canal DB Prisma (Toujours enregistré)
-    const notification = await prisma.notification.create({
-      data: {
-        userId: params.userId,
-        titre: params.titre,
-        message: params.message,
-        lien: params.lien || null,
-        priority: priority,
-        category: category,
-      },
-    });
-
-    // 2. Canal SSE temps réel (In-app)
-    publishUserNotification(params.userId, {
-      id: notification.id,
-      titre: notification.titre,
-      message: notification.message,
-      lien: notification.lien,
-      priority: notification.priority,
-      category: notification.category,
-      createdAt: notification.createdAt.toISOString(),
-    });
-    // Rafraîchissement global des vues ouvertes
-    publishDataChanged();
-
-    // 3. Canal FCM Push (Pour IMPORTANT et CRITIQUE)
-    if (priority !== "INFO") {
-      sendFcmPush(params.userId, notification).catch((err) => {
-        console.error(`[FCM] Échec envoi push pour user ${params.userId}:`, err);
+    const creer = () =>
+      prisma.notification.create({
+        data: {
+          userId: params.userId,
+          titre: params.titre,
+          message: params.message,
+          lien: params.lien || null,
+          priority: priority,
+          category: category,
+        },
       });
-    }
+    // Dans une action signée (transaction unique), un échec ici ne doit pas abîmer la transaction de l'action : point de reprise.
+    const notification = contexteSignatureCourant() ? await prisma.$transaction(() => creer()) : await creer();
 
-    // 4. Canal Email SMTP (Pour CRITIQUE)
-    if (priority === "CRITIQUE") {
-      sendCriticalEmail(params.userId, notification).catch((err) => {
-        console.error(`[Email] Échec envoi email critique pour user ${params.userId}:`, err);
+    // Canaux 2 à 4 (temps réel, push, e-mail) : lot L bis — dans une action signée ils partent APRÈS la validation de la transaction
+    // (une action annulée n'envoie rien) ; hors action signée, tout de suite, comme avant.
+    const diffuser = () => {
+      // 2. Canal SSE temps réel (In-app)
+      publishUserNotification(params.userId, {
+        id: notification.id,
+        titre: notification.titre,
+        message: notification.message,
+        lien: notification.lien,
+        priority: notification.priority,
+        category: notification.category,
+        createdAt: notification.createdAt.toISOString(),
       });
-    }
+      // Rafraîchissement global des vues ouvertes
+      publishDataChanged();
+
+      // 3. Canal FCM Push (Pour IMPORTANT et CRITIQUE)
+      if (priority !== "INFO") {
+        sendFcmPush(params.userId, notification).catch((err) => {
+          console.error(`[FCM] Échec envoi push pour user ${params.userId}:`, err);
+          void journaliserIncident({
+            niveau: "ERREUR",
+            source: "PUSH",
+            code: "FCM_ECHEC",
+            message: err instanceof Error ? `${err.name}: ${err.message}` : "Échec de l'envoi du push",
+            contexte: { userId: params.userId, notificationId: notification.id },
+          });
+        });
+      }
+
+      // 4. Canal Email SMTP (Pour CRITIQUE)
+      if (priority === "CRITIQUE") {
+        sendCriticalEmail(params.userId, notification).catch((err) => {
+          console.error(`[Email] Échec envoi email critique pour user ${params.userId}:`, err);
+          void journaliserIncident({
+            niveau: "ERREUR",
+            source: "EMAIL",
+            code: "SMTP_ECHEC",
+            message: err instanceof Error ? `${err.name}: ${err.message}` : "Échec de l'envoi de l'e-mail",
+            contexte: { userId: params.userId, notificationId: notification.id },
+          });
+        });
+      }
+    };
+    if (!differerApresCommit(diffuser)) diffuser();
 
     return notification;
   } catch (error) {
@@ -88,20 +116,11 @@ export async function notifyByPermission(
   params: NotifyByPermissionParams
 ) {
   try {
-    const users = await prisma.user.findMany({
-      where: {
-        isActive: true,
-        ...(params.excludeUserId ? { id: { not: params.excludeUserId } } : {}),
-        role: {
-          permissions: {
-            some: {
-              permission: { key: permissionKey },
-            },
-          },
-        },
-      },
-      select: { id: true },
+    const ids = await utilisateursAvecPermission(prisma, permissionKey, {
+      excludeUserId: params.excludeUserId,
+      inclureDelegues: params.inclureDelegues,
     });
+    const users = ids.map((id) => ({ id }));
 
     if (users.length === 0) return;
 
@@ -184,6 +203,30 @@ async function sendFcmPush(
     await prisma.fcmToken.deleteMany({
       where: { id: { in: tokensToDelete } },
     });
+    await journaliserIncident({
+      niveau: "AVERTISSEMENT",
+      source: "PUSH",
+      code: "FCM_JETON_INVALIDE",
+      message: "Jetons FCM invalides ou désenregistrés supprimés.",
+      contexte: { userId, notificationId: notification.id, jetonsSupprimes: tokensToDelete.length },
+    });
+  }
+
+  // Échecs autres que des jetons périmés (clé de projet erronée, service indisponible…) : visibles au journal.
+  const echecsReels = response.responses.filter(
+    (r: { success: boolean; error?: { code?: string } }) =>
+      !r.success &&
+      r.error?.code !== "messaging/registration-token-not-registered" &&
+      r.error?.code !== "messaging/invalid-registration-token"
+  );
+  if (echecsReels.length > 0) {
+    await journaliserIncident({
+      niveau: "ERREUR",
+      source: "PUSH",
+      code: "FCM_ECHEC",
+      message: "Le service FCM a refusé l'envoi de notifications push.",
+      contexte: { userId, notificationId: notification.id, fcmCode: echecsReels[0].error?.code ?? "inconnu", echecs: echecsReels.length },
+    });
   }
 
   if (successCount > 0) {
@@ -231,11 +274,16 @@ async function sendCriticalEmail(
   });
 
   if (result.success) {
-    await prisma.notification.update({
-      where: { id: notification.id },
-      data: { emailSent: true },
-    });
+    // Un e-mail simulé (SMTP absent) n'est pas un e-mail envoyé : `emailSent` reste faux, la santé de la configuration
+    // le signale (`/admin/journal-technique`).
+    if (!result.simulated) {
+      await prisma.notification.update({
+        where: { id: notification.id },
+        data: { emailSent: true },
+      });
+    }
   }
+  // Un échec d'envoi (`result.success` faux) est déjà journalisé (SMTP_ECHEC) par `sendEmail` lui-même.
 }
 
 // ============================================================

@@ -139,7 +139,8 @@ export async function changerResponsableService(
   if (maj.count !== 1) return { ok: false, message: "Le responsable de ce service a changé entre-temps : rechargez la page." };
 
   const demandes = await db.demande.findMany({
-    where: { etapeCircuit: "SERVICE", createur: { serviceId: p.serviceId } },
+    // Lot K : une demande réorientée vers un autre responsable ne suit plus celui du service.
+    where: { etapeCircuit: "SERVICE", responsableEtapeServiceId: null, createur: { serviceId: p.serviceId } },
     select: { id: true, createurId: true },
   });
   for (const d of demandes) {

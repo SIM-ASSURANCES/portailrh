@@ -206,15 +206,16 @@ COPY --from=prod-deps --chown=nextjs:nodejs /app/frontend/node_modules/nodemaile
 COPY --from=builder --chown=nextjs:nodejs /app/backend/prisma ./backend/prisma
 COPY --from=builder --chown=nextjs:nodejs /app/backend/prisma7.config.ts ./backend/prisma7.config.ts
 
-# Client Prisma généré : requis par les scripts autonomes lancés via tsx
-# (backend/prisma/seed.ts, backend/prisma/set-admin.ts), qui importent
-# explicitement "../src/generated/prisma/client" — soit
-# `backend/src/generated/prisma/client` depuis l'image. Le traçage
-# standalone de Next.js inline ce code dans les chunks du serveur, chemin
-# que ces scripts CLI n'utilisent pas : sans cette copie, `npx prisma db
-# seed` (commande documentée dans DEPLOIEMENT.md) échoue avec "Cannot find
-# module". Le dossier est régénéré à l'étape builder par `npm run generate`.
-COPY --from=builder --chown=nextjs:nodejs /app/backend/src/generated/prisma ./backend/src/generated/prisma
+# Sources du package `backend` (dont le client Prisma généré) : requises par les scripts autonomes lancés via tsx
+# (backend/prisma/*.ts : seed, set-admin, et — lot N+O — verifier-mise-en-production, rattrapage-production,
+# reinitialiser-production, scripts de reprise des lots B à L bis). Ils importent "../src/..." (client Prisma généré
+# `../src/generated/prisma/client`, mais aussi les règles métier `../src/repriseArticles`, `../src/reinitialisation`…), soit
+# `backend/src/...` depuis l'image. Le traçage standalone de Next.js inline ce code dans les chunks du serveur, chemin que
+# ces scripts CLI n'utilisent pas : sans cette copie, `npx tsx prisma/<script>.ts` échoue avec "Cannot find module".
+# (Avant le lot N+O, seul `src/generated/prisma` était copié : les scripts de reprise des lots B à L bis, qui importent des
+# modules de `src/`, n'auraient pas pu tourner dans le conteneur.) Le dossier généré est régénéré à l'étape builder par
+# `npm run generate`. Aucun effet sur le serveur : `frontend/server.js` n'importe pas ces fichiers.
+COPY --from=builder --chown=nextjs:nodejs /app/backend/src ./backend/src
 
 # Polices du reçu PDF (frontend/src/lib/pdf/fonts/*.ttf), lues au runtime
 # via `readFileSync(path.join(process.cwd(), "src/lib/pdf/fonts", ...))` —

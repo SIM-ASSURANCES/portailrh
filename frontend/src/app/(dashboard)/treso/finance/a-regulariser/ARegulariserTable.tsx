@@ -11,6 +11,10 @@ interface ARegulariserRow {
   totalRegle: number;
   valideeLe: Date;
   ecart: number;
+  /** Articles validés de la demande et leur propre solde à régulariser (lot E). */
+  articles: { id: string; libelle: string; solde: number; regularise: boolean }[];
+  /** Solde de la part non rattachée à un article (anciens règlements), `null` s'il n'y en a pas. */
+  nonRattacheSolde: number | null;
 }
 
 /**
@@ -40,8 +44,30 @@ export function ARegulariserTable({ demandes }: { demandes: ARegulariserRow[] })
           render: (d) => `${d.totalRegle.toLocaleString("fr-FR")} FCFA`,
         },
         {
+          key: "articles",
+          header: "Articles",
+          render: (d) =>
+            d.articles.length === 0 ? (
+              <span className="text-xs text-muted-foreground">—</span>
+            ) : (
+              <ul className="space-y-0.5 text-xs">
+                {d.articles.map((a) => (
+                  <li key={a.id} data-article-solde={a.id}>
+                    Article : {a.libelle} —{" "}
+                    <span className={a.regularise ? "text-success" : "font-semibold text-warning"}>
+                      {a.regularise ? "régularisé" : `solde ${a.solde.toLocaleString("fr-FR")} FCFA`}
+                    </span>
+                  </li>
+                ))}
+                {d.nonRattacheSolde != null && d.nonRattacheSolde !== 0 ? (
+                  <li className="text-warning">Non rattaché à un article : {d.nonRattacheSolde.toLocaleString("fr-FR")} FCFA</li>
+                ) : null}
+              </ul>
+            ),
+        },
+        {
           key: "ecart",
-          header: "Solde à régulariser",
+          header: "Solde à régulariser (demande)",
           sortable: true,
           accessor: (d) => d.ecart,
           render: (d) =>

@@ -407,6 +407,12 @@ export async function modererFeedback(
   moderatorId: string,
   motif: string
 ): Promise<{ success: boolean; message: string }> {
+  // Contrôle de l'argument AVANT tout accès à la base : un motif trop court est refusé sans requête.
+  const cleanMotif = motif.trim();
+  if (cleanMotif.length < 3) {
+    return { success: false, message: "Le motif de modération doit contenir au moins 3 caractères." };
+  }
+
   const feedback = await prisma.feedback.findUnique({
     where: { id },
   });
@@ -417,11 +423,6 @@ export async function modererFeedback(
 
   if (feedback.isModerated) {
     return { success: false, message: "Ce message a déjà été modéré." };
-  }
-
-  const cleanMotif = motif.trim();
-  if (cleanMotif.length < 3) {
-    return { success: false, message: "Le motif de modération doit contenir au moins 3 caractères." };
   }
 
   await prisma.feedback.update({

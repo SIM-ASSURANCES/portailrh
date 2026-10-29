@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { schemaMontant } from "@/lib/schemaMontant";
+
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
 import { prisma } from "backend";
@@ -13,6 +15,7 @@ import {
   SOLDE_OUVERTURE_CORRECTION_SOURCE,
   SOLDE_OUVERTURE_SOURCE,
 } from "backend";
+import { avecSignature } from "@/lib/signature";
 
 type SimpleActionResult = { status: "success" | "error"; message: string };
 
@@ -22,7 +25,7 @@ function revalidateSoldeOuverturePaths() {
   publishDataChanged();
 }
 
-const montantSchema = z.coerce.number().positive("Le montant doit être supérieur à 0");
+const montantSchema = schemaMontant({ messagePositif: "Le montant doit être supérieur à 0" });
 
 const pieceJointeUrlSchema = z
   .string()
@@ -61,7 +64,15 @@ const pieceJointeUrlSchema = z
  * jamais `demandeId` — aucune demande d'origine ici).
  */
 export async function definirSoldeOuvertureAction(
-  montant: number,
+  montant: number | string,
+  pieceJointeUrl: string,
+  motif?: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "solde_ouverture", permission: "treso.corriger_solde_ouverture", entite: "JournalCaisse" }, () => definirSoldeOuvertureInterne(montant, pieceJointeUrl, motif));
+}
+
+async function definirSoldeOuvertureInterne(
+  montant: number | string,
   pieceJointeUrl: string,
   motif?: string
 ): Promise<SimpleActionResult> {
@@ -149,7 +160,15 @@ const motifCorrectionSchema = z
  * CLAUDE.md "Séparation Responsable Finance / Assistant Finance".
  */
 export async function corrigerSoldeOuvertureAction(
-  nouveauMontant: number,
+  nouveauMontant: number | string,
+  pieceJointeUrl: string,
+  motif: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "solde_ouverture", permission: "treso.corriger_solde_ouverture", entite: "JournalCaisse" }, () => corrigerSoldeOuvertureInterne(nouveauMontant, pieceJointeUrl, motif));
+}
+
+async function corrigerSoldeOuvertureInterne(
+  nouveauMontant: number | string,
   pieceJointeUrl: string,
   motif: string
 ): Promise<SimpleActionResult> {
@@ -260,7 +279,16 @@ const pieceJointeUrlSchemaAlimentation = z
  * la ligne `PieceJointe` elle-même (`journalCaisseId`, jamais `demandeId`).
  */
 export async function alimenterCaisseAction(
-  montant: number,
+  montant: number | string,
+  dateOperation: string,
+  pieceJointeUrl: string,
+  motif?: string
+): Promise<SimpleActionResult> {
+  return avecSignature({ action: "alimentation_caisse", permission: "treso.alimenter_caisse", entite: "JournalCaisse" }, () => alimenterCaisseInterne(montant, dateOperation, pieceJointeUrl, motif));
+}
+
+async function alimenterCaisseInterne(
+  montant: number | string,
   dateOperation: string,
   pieceJointeUrl: string,
   motif?: string

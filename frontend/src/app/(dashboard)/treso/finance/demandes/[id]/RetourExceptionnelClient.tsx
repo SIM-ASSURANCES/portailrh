@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, InputMontant, Select, Textarea } from "@/components/ui";
+import { analyserMontant } from "backend/client";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import {
@@ -13,8 +14,18 @@ import {
 } from "./retourExceptionnelActions";
 
 /** Bouton + formulaire "Enregistrer un retour exceptionnel" (Assistant Finance / Responsable). */
-export function RetourExceptionnelForm({ demandeId, disabled }: { demandeId: string; disabled: boolean }) {
+export function RetourExceptionnelForm({
+  demandeId,
+  disabled,
+  articles = [],
+}: {
+  demandeId: string;
+  disabled: boolean;
+  /** Articles validés et réglés (lot E) : le retour concerne UN article. Vide pour une demande sans article. */
+  articles?: { id: string; libelle: string; plafond: number }[];
+}) {
   const [open, setOpen] = useState(false);
+  const [ligneId, setLigneId] = useState(articles.length === 1 ? articles[0].id : "");
   const [montant, setMontant] = useState("");
   const [motif, setMotif] = useState("");
   const [pieceUrl, setPieceUrl] = useState<string | undefined>();
@@ -30,12 +41,14 @@ export function RetourExceptionnelForm({ demandeId, disabled }: { demandeId: str
   }
 
   function handleSubmit() {
-    const m = Number(montant);
-    if (!m || m <= 0) return setErreur("Le montant doit être supérieur à 0.");
+    const m = analyserMontant(montant);
+    if (articles.length > 0 && !ligneId) return setErreur("Choisissez l'article concerné.");
+    if (!m.ok) return setErreur(m.message);
+    if (m.centimes <= 0) return setErreur("Le montant doit être supérieur à 0.");
     if (motif.trim().length < 10) return setErreur("Le motif est obligatoire (10 caractères minimum).");
     setErreur(undefined);
     startTransition(async () => {
-      const result = await creerRetourExceptionnelAction(demandeId, m, motif, pieceUrl);
+      const result = await creerRetourExceptionnelAction(demandeId, montant, motif, pieceUrl, ligneId || undefined);
       if (result.status === "success") {
         toast.success(result.message);
         setOpen(false);
@@ -48,17 +61,21 @@ export function RetourExceptionnelForm({ demandeId, disabled }: { demandeId: str
 
   return (
     <div className="animate-fade-in-up w-full space-y-3 rounded-md border border-border p-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Input
-          label="Montant rendu (FCFA)"
-          type="number"
-          inputMode="decimal"
-          min="0"
-          step="1"
+      {articles.length > 0 ? (
+        <Select
+          label="Article concerné"
           required
-          value={montant}
-          onChange={(e) => setMontant(e.target.value)}
+          placeholder="Choisir l'article..."
+          value={ligneId}
+          onChange={(e) => setLigneId(e.target.value)}
+          options={articles.map((a) => ({
+            value: a.id,
+            label: `${a.libelle} — maximum ${a.plafond.toLocaleString("fr-FR")} FCFA`,
+          }))}
         />
+      ) : null}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <InputMontant label="Montant rendu (FCFA)" required value={montant} onValueChange={setMontant} />
       </div>
       <Textarea
         label="Motif"
@@ -114,7 +131,7 @@ export function RetourExceptionnelDecision({ retourId, disabled }: { retourId: s
         <Textarea label="Motif du rejet" rows={2} required value={motif} onChange={(e) => setMotif(e.target.value)} />
         {erreur ? <p className="text-sm text-danger">{erreur}</p> : null}
         <div className="flex flex-wrap gap-3">
-          <Button type="button" variant="danger" loading={isPending} onClick={rejeter}>
+          <Button signe type="button" variant="danger" loading={isPending} onClick={rejeter}>
             Confirmer le rejet
           </Button>
           <Button type="button" variant="secondary" disabled={isPending} onClick={() => setRejet(false)}>
@@ -126,7 +143,7 @@ export function RetourExceptionnelDecision({ retourId, disabled }: { retourId: s
   }
   return (
     <div className="flex flex-wrap gap-3">
-      <Button type="button" loading={isPending} disabled={disabled} onClick={valider}>
+      <Button signe type="button" loading={isPending} disabled={disabled} onClick={valider}>
         Valider
       </Button>
       <Button type="button" variant="danger" disabled={disabled || isPending} onClick={() => setRejet(true)}>

@@ -2,11 +2,10 @@
 
 import { useActionState, useEffect, useState } from "react";
 
-import { Button, Input, Select } from "@/components/ui";
+import { Button, InputMontant, Select, Textarea } from "@/components/ui";
 import { useActionFeedback } from "@/lib/hooks/useActionFeedback";
-import { IDLE_ACTION_STATE } from "backend/client";
+import { IDLE_ACTION_STATE, MOTIF_REGLEMENT_MIN, refusMotifReglement } from "backend/client";
 
-import { AllocationCategorieFields, type CategorieAllocationOption } from "./AllocationCategorieFields";
 import { creerReglementAction } from "./reglementActions";
 
 /**
@@ -22,23 +21,22 @@ import { creerReglementAction } from "./reglementActions";
  * jamais absent : empêche d'ouvrir le formulaire plutôt que de le
  * masquer, même principe que `ValidationActions`.
  *
- * **`categoriesConcernees`** (Tâche "Allocation budgétaire explicite par
- * règlement", voir CLAUDE.md) — si elle contient au moins 2 catégories,
- * affiche `AllocationCategorieFields` en plus du montant/mode habituels ;
- * sinon (0 ou 1 catégorie, le cas le plus fréquent), **aucun changement
- * visible** par rapport à avant cette tâche — l'allocation unique à 100%
- * est créée automatiquement côté serveur.
+ * **`ligneDemandeId`** (lot D, « un règlement = un article ») — l'article réglé, transmis en champ caché ; absent pour une
+ * demande sans article (dépense directe). Le budget est alloué à 100 % à la catégorie de l'article, côté serveur.
  */
 export function ReglementForm({
   demandeId,
+  ligneDemandeId,
+  libelleArticle,
   resteARegler,
-  categoriesConcernees,
   disabled = false,
   raisonIndisponible = null,
 }: {
   demandeId: string;
+  /** Article réglé (lot D) ; absent pour une demande sans article. */
+  ligneDemandeId?: string;
+  libelleArticle?: string;
   resteARegler: number;
-  categoriesConcernees: CategorieAllocationOption[];
   disabled?: boolean;
   /** Phrase affichée sous le bouton grisé à la place du message de rôle (conflit d'intérêts). */
   raisonIndisponible?: string | null;
@@ -46,10 +44,10 @@ export function ReglementForm({
   const [state, formAction, isPending] = useActionState(creerReglementAction, IDLE_ACTION_STATE);
   const [open, setOpen] = useState(false);
   const [montant, setMontant] = useState("");
-  const [allocValues, setAllocValues] = useState<Record<string, string>>({});
+  // Lot I : motif / nature du règlement, obligatoire ; le bouton reste grisé tant qu'il est trop court (revérifié serveur).
+  const [motif, setMotif] = useState("");
+  const motifRefuse = refusMotifReglement(motif);
   useActionFeedback(state);
-
-  const multiCategories = categoriesConcernees.length >= 2;
 
   useEffect(() => {
     if (state.status === "success") {
@@ -59,16 +57,9 @@ export function ReglementForm({
       // eslint-disable-next-line react-hooks/set-state-in-effect -- réaction ponctuelle à un ActionState de succès, pas un état dérivé du rendu
       setOpen(false);
       setMontant("");
-      setAllocValues({});
+      setMotif("");
     }
   }, [state]);
-
-  const sommeAllocations = categoriesConcernees.reduce(
-    (total, c) => total + (Number(allocValues[c.categorieId]) || 0),
-    0
-  );
-  const allocationValide =
-    !multiCategories || Math.round(sommeAllocations * 100) === Math.round((Number(montant) || 0) * 100);
 
   if (!open) {
     // Couleur primaire (Tâche navigation/UX) : c'est la seule action
@@ -93,19 +84,26 @@ export function ReglementForm({
   return (
     <form action={formAction} className="animate-fade-in-up space-y-4 rounded-md border border-border p-4">
       <input type="hidden" name="demandeId" value={demandeId} />
-      <Input
+      {ligneDemandeId ? <input type="hidden" name="ligneDemandeId" value={ligneDemandeId} /> : null}
+      {libelleArticle ? <p className="text-sm text-muted-foreground">Article : {libelleArticle}</p> : null}
+      <InputMontant
         name="montant"
         label="Montant"
-        type="number"
-        inputMode="decimal"
-        min="1"
-        max={resteARegler}
-        step="1"
         required
         hint={`Reste à régler : ${resteARegler.toLocaleString("fr-FR")} FCFA`}
         value={montant}
-        onChange={(e) => setMontant(e.target.value)}
+        onValueChange={setMontant}
         error={state.status === "error" ? state.fieldErrors?.montant : undefined}
+      />
+      <Textarea
+        name="motif"
+        label="Motif / nature du règlement"
+        required
+        rows={2}
+        hint={`Obligatoire (${MOTIF_REGLEMENT_MIN} caractères minimum), pour la caisse comme pour la banque.`}
+        value={motif}
+        onChange={(e) => setMotif(e.target.value)}
+        error={state.status === "error" ? state.fieldErrors?.motif : undefined}
       />
       <Select
         name="mode"
@@ -118,17 +116,8 @@ export function ReglementForm({
         error={state.status === "error" ? state.fieldErrors?.mode : undefined}
       />
 
-      {multiCategories ? (
-        <AllocationCategorieFields
-          categories={categoriesConcernees}
-          montantTotal={Number(montant) || 0}
-          values={allocValues}
-          onChange={(categorieId, valeur) => setAllocValues((prev) => ({ ...prev, [categorieId]: valeur }))}
-        />
-      ) : null}
-
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" loading={isPending} disabled={!allocationValide}>
+        <Button type="submit" loading={isPending} disabled={motifRefuse !== null}>
           Créer le règlement
         </Button>
         <Button type="button" variant="secondary" disabled={isPending} onClick={() => setOpen(false)}>

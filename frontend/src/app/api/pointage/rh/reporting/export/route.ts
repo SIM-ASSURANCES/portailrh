@@ -93,6 +93,8 @@ export async function GET(request: NextRequest) {
     { header: "Absences", key: "absences", width: 15 },
     { header: "Jours de retard", key: "joursRetard", width: 20 },
     { header: "Minutes de retard", key: "minutesRetard", width: 20 },
+    { header: "Jours de congé", key: "joursConge", width: 16 },
+    { header: "Pointé pendant un congé (jours)", key: "joursPointesEnConge", width: 30 },
   ];
 
   agrege.forEach((r) => {
@@ -104,6 +106,8 @@ export async function GET(request: NextRequest) {
       absences: r.absences,
       joursRetard: r.joursRetard,
       minutesRetard: r.minutesRetard,
+      joursConge: r.joursConge,
+      joursPointesEnConge: r.joursPointesEnConge,
     });
   });
   styleHeaderRow(sheetResume);

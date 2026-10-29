@@ -1,5 +1,6 @@
+import { affichageStatutDemande } from "@/components/tresorerie/demandeStatut";
 import { PageHeader } from "@/components/ui";
-import { FILES_FINANCE_WHERE, getBeneficiaireNom, resumeMotifDemande } from "backend";
+import { FILES_FINANCE_WHERE, nomBeneficiaireDemande, resumeMotifDemande } from "backend";
 import { prisma } from "backend";
 
 import { DemandesACategoriserTable } from "./DemandesACategoriserTable";
@@ -16,7 +17,7 @@ export default async function FinanceDemandesPage() {
   const charger = (where: object) =>
     prisma.demande.findMany({
       where,
-      include: { createur: true, beneficiaireUser: true, lignes: { select: { libelle: true, motif: true }, orderBy: { createdAt: "asc" } } },
+      include: { createur: true, beneficiaireUser: true, lignes: { select: { libelle: true, motif: true, statutValidation: true, beneficiaireType: true, beneficiaireUserId: true, beneficiaireNom: true, beneficiaireUser: { select: { fullName: true } } }, orderBy: { createdAt: "asc" } } },
       orderBy: { createdAt: "asc" },
     });
   const [etapeFinance, reliquats, rejetDG, decisionFinale] = await Promise.all([
@@ -31,36 +32,47 @@ export default async function FinanceDemandesPage() {
       id: d.id,
       reference: d.reference,
       createurNom: d.createur.fullName,
-      beneficiaireNom: getBeneficiaireNom(d),
+      beneficiaireNom: nomBeneficiaireDemande(d, d.lignes),
       montant: Number(d.montant),
       description: resumeMotifDemande(d.description, d.lignes),
       createdAt: d.createdAt,
       statut: d.statut,
+      statutAffiche: affichageStatutDemande(d.statut, d.lignes),
       typeDemande: d.typeDemande,
       natureDepenseDirecte: d.natureDepenseDirecte,
     }));
+
+  // Lot B : une demande peut avoir des articles dans plusieurs files (à décider, refusés par le DG, validés par le DG) :
+  // elle figure dans la première file où elle a quelque chose à faire — jamais deux fois dans la page.
+  const dejaListees = new Set<string>();
+  const sansDoublon = (liste: ReturnType<typeof lignes>) =>
+    liste.filter((d) => {
+      if (dejaListees.has(d.id)) return false;
+      dejaListees.add(d.id);
+      return true;
+    });
 
   const files = [
     {
       id: "file-etape-finance",
       titre: "Étape Finance",
-      description: "À décider ligne par ligne, à rejeter ou à soumettre au DG.",
+      description: "Articles à décider (valider, rejeter) ou à soumettre au DG — article par article.",
       vide: "Aucune demande à l'étape Finance.",
-      demandes: lignes([...etapeFinance, ...reliquats]),
+      demandes: sansDoublon(lignes([...etapeFinance, ...reliquats])),
     },
     {
       id: "file-rejet-dg",
       titre: "Rejetées par le DG",
-      description: "À resoumettre au DG ou à renvoyer au demandeur, avec un motif.",
+      description: "Articles rejetés par le DG : à resoumettre au DG ou à rejeter définitivement.",
       vide: "Aucune demande rejetée par le DG.",
-      demandes: lignes(rejetDG),
+      demandes: sansDoublon(lignes(rejetDG)),
     },
     {
       id: "file-decision-finale",
       titre: "Décision finale",
-      description: "Approuvées par le DG : à décider ligne par ligne (décision finale).",
+      description: "Articles validés par le DG : à confirmer par la Finance.",
       vide: "Aucune demande en attente de décision finale.",
-      demandes: lignes(decisionFinale),
+      demandes: sansDoublon(lignes(decisionFinale)),
     },
   ];
 

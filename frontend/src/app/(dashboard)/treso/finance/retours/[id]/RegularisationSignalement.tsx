@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, InputMontant, Textarea } from "@/components/ui";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
 import {
@@ -102,14 +102,11 @@ export function RegularisationSignalement({
         {fcfa(montantRecu)}). Proposez un remboursement : la caisse ne sera débitée qu&apos;après validation de
         Finance.
       </p>
-      <Input
+      <InputMontant
         label="Montant à rembourser (FCFA)"
-        type="number"
-        min="0"
-        max={max}
         hint={`Maximum ${fcfa(max)}`}
         value={montant}
-        onChange={(e) => setMontant(e.target.value)}
+        onValueChange={setMontant}
       />
       <Textarea label="Motif" rows={2} value={motif} onChange={(e) => setMotif(e.target.value)} />
       <PieceJointeUpload label="Justificatif (obligatoire)" onChange={(url) => setPj(url ?? undefined)} />
@@ -119,7 +116,7 @@ export function RegularisationSignalement({
         onClick={() => {
           if (!pj) return toast.error("Le justificatif est obligatoire.");
           startTransition(async () => {
-            const r = await proposerRemboursementRetourAction(retourId, Number(montant), motif, pj);
+            const r = await proposerRemboursementRetourAction(retourId, montant, motif, pj);
             if (r.status === "success") {
               toast.success(r.message);
               router.refresh();
@@ -152,7 +149,7 @@ export function RemboursementDecision({ remboursementId }: { remboursementId: st
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
-        <Button type="button" loading={isPending} onClick={() => run(() => validerRemboursementRetourAction(remboursementId))}>
+        <Button signe type="button" loading={isPending} onClick={() => run(() => validerRemboursementRetourAction(remboursementId))}>
           Valider le remboursement
         </Button>
         <Button type="button" variant="secondary" disabled={isPending} onClick={() => setRejet((v) => !v)}>
@@ -162,7 +159,7 @@ export function RemboursementDecision({ remboursementId }: { remboursementId: st
       {rejet ? (
         <div className="space-y-2">
           <Textarea label="Motif du rejet" rows={2} value={motifRejet} onChange={(e) => setMotifRejet(e.target.value)} />
-          <Button
+          <Button signe
             type="button"
             variant="danger"
             loading={isPending}

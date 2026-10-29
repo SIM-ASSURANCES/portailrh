@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { networkInterfaces } from "os";
+import { urlReseauDev } from "backend";
 
 /**
  * GET /api/network-config
@@ -9,6 +10,9 @@ import { networkInterfaces } from "os";
  * Outil de développement uniquement : en production, elle révélerait l'IP
  * interne du serveur à n'importe qui. `QRCodeDownload` ne l'appelle que sur
  * localhost, et retombe sur `window.location.origin` si elle échoue.
+ *
+ * Le choix de l'adresse (cartes virtuelles WSL/Docker ignorées, 192.168.x.x préférée, port repris de
+ * l'hôte) est dans `backend/src/reseauLocal.ts`. `DEV_NETWORK_IP` force l'adresse si la détection se trompe.
  */
 export async function GET(request: NextRequest) {
   if (process.env.NODE_ENV === "production") {
@@ -16,37 +20,14 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Récupère le hostname du serveur depuis les headers de la requête
     const host = request.headers.get("host") || "localhost:3000";
-    
-    // Récupère l'adresse IP locale (IPv4, non-loopback)
-    let networkIp: string | null = null;
-    const interfaces = networkInterfaces();
-    
-    for (const [, addresses] of Object.entries(interfaces)) {
-      if (!addresses) continue;
-      for (const addr of addresses) {
-        // Cherche une adresse IPv4 non-loopback
-        if (addr.family === "IPv4" && !addr.address.startsWith("127.")) {
-          networkIp = addr.address;
-          break;
-        }
-      }
-      if (networkIp) break;
-    }
-
-    // Si pas d'IP trouvée, essaie d'extraire du host
-    const baseUrl = host.includes("192.") || host.includes("10.") || host.includes("172.")
-      ? `http://${host}`
-      : networkIp
-        ? `http://${networkIp}:3000`
-        : `http://localhost:3000`;
-
-    return NextResponse.json({
-      networkUrl: baseUrl,
-      host: host,
-      networkIp: networkIp,
+    const { networkUrl, networkIp } = urlReseauDev({
+      host,
+      interfaces: networkInterfaces(),
+      ipForcee: process.env.DEV_NETWORK_IP,
     });
+
+    return NextResponse.json({ networkUrl, host, networkIp });
   } catch (error) {
     console.error("Error fetching network config:", error);
     return NextResponse.json(

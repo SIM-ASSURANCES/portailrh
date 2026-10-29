@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
+import { ArticleTag } from "@/components/tresorerie/ArticleTag";
 import { DetailDepensesRetour } from "@/components/tresorerie/DetailDepensesRetour";
 import { getSession, hasPermission } from "@/lib/auth";
 import { detailMontantDefinitif, etatRetourAffiche } from "@/lib/retourAffichage";
@@ -11,8 +12,9 @@ import {
   getCouvertureRetoursPostCloture,
   getMontantsDefinitifsRetours,
   getRecuNetSignalement,
+  getResumeArticle,
   prisma,
-  refusExecutionPropreDemande,
+  refusExecutionPropreSurReglement,
 } from "backend";
 
 import { AjusterTotalDeclareForm } from "./AjusterTotalDeclareForm";
@@ -58,7 +60,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     where: { id },
     include: {
       declarant: true,
-      reglement: { include: { demande: true } },
+      reglement: { include: { demande: { include: { lignes: true } }, ligneDemande: { select: { libelle: true } } } },
       depenses: { include: { pieceJointe: true, motifNonJustifiePar: true }, orderBy: { date: "asc" } },
       signalements: { where: { estResolu: false }, include: { signalePar: true } },
       remboursements: {
@@ -68,14 +70,17 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     },
   });
 
+  const resumeArticle = retour?.reglement.ligneDemandeId ? await getResumeArticle(retour.reglement.ligneDemandeId) : null;
   if (!retour) {
     notFound();
   }
 
   // Sa propre demande (demandeur ou bénéficiaire) : réception, détail, justification et remboursement grisés avec la
   // phrase que le serveur renvoie (`refusExecutionPropreDemande`, gardes 1 à 3 et 8).
-  const conflitInteret = session ? refusExecutionPropreDemande(retour.reglement.demande, session.user.id) : null;
+  const conflitInteret = session ? refusExecutionPropreSurReglement(retour.reglement, session.user.id) : null;
   const peutAgirRetour = canReceptionner && !conflitInteret;
+  // Lot G bis : la fiche de détail d'un fonds versé par banque ne se réceptionne pas (ancien retour Banque : inchangé).
+  const fondsBanque = retour.reglement.mode === "BANQUE" && !retour.versementBancaire;
 
   // Même imputation des retours post-clôture que l'écran Collaborateur (source unique).
   const couverture = await getCouvertureRetoursPostCloture(retour.reglement.demandeId);
@@ -84,7 +89,7 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
     estReceptionne: retour.estReceptionne,
     dejaCouvertPostCloture: couverture.get(retour.id) ?? 0,
   });
-  // "Montant à retourner définitif" : net après compléments/remboursements liés à un signalement (n'altère pas "Retourné à la compta").
+  // "Montant à retourner définitif" : net après compléments/remboursements liés à un signalement (n'altère pas « Montant retourné »).
   const montantDefinitif = (await getMontantsDefinitifsRetours([retour.id])).get(retour.id);
   const totalDeclare = retour.depenses.reduce((sum, d) => sum + Number(d.montant), 0);
   const montantNonJustifie = retour.depenses
@@ -198,20 +203,29 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             {retour.signalementOrigineId ? <Badge variant="info">Retour complémentaire (suite à un signalement)</Badge> : null}
-            <Badge variant={retour.estReceptionne ? "success" : "warning"}>
-              {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
-            </Badge>
+            {fondsBanque && !retour.estReceptionne ? (
+              <Badge variant="neutral">Détail des dépenses (fonds versé par banque)</Badge>
+            ) : (
+              <Badge variant={retour.estReceptionne ? "success" : "warning"}>
+                {retour.estReceptionne ? "Réceptionné" : "En attente de réception"}
+              </Badge>
+            )}
             {retour.creeParAssistant ? <Badge variant="info">Déclaré par l&apos;Assistant Finance</Badge> : null}
             {retour.motifReouvertureExceptionnelle ? (
               <Badge variant="danger">Réouverture exceptionnelle (demande clôturée)</Badge>
             ) : null}
           </div>
-          {!retour.estReceptionne ? (
+          {fondsBanque && !retour.estReceptionne ? (
+            <p data-retour-banque-externe className="max-w-md text-xs text-muted-foreground">
+              Fonds versé par banque : ce détail ne se réceptionne pas. Le retour éventuel s&apos;enregistre en « Retour externe »,
+              rattaché à la demande et à l&apos;article.
+            </p>
+          ) : !retour.estReceptionne ? (
             <ReceptionnerAction
               retourId={retour.id}
               disabled={!peutAgirRetour}
               raisonIndisponible={canReceptionner ? conflitInteret : null}
-              retourNul={estRetourNul({ montantARetourner: Number(retour.montantARetourner), mode: retour.reglement.mode })}
+              retourNul={estRetourNul({ montantARetourner: Number(retour.montantARetourner), versementBancaire: retour.versementBancaire })}
             />
           ) : (
             // Reçu du retour (nul ou non) dès que l'Assistant l'a réceptionné : mêmes accès que cet écran.
@@ -225,6 +239,15 @@ export default async function RetourDetailPage({ params }: { params: Promise<{ i
         </div>
 
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {retour.reglement.ligneDemande ? (
+            <div data-article-retour className="sm:col-span-3">
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Article</dt>
+              <dd className="space-y-0.5">
+                <span className="block text-sm font-semibold text-foreground">{retour.reglement.ligneDemande.libelle}</span>
+                <ArticleTag article={resumeArticle} />
+              </dd>
+            </div>
+          ) : null}
           <div>
             <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Règlement d&apos;origine</dt>
             <dd className="text-sm font-semibold text-foreground">

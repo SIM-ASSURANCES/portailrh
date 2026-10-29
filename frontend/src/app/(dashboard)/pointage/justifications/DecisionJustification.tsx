@@ -34,7 +34,7 @@ export function DecisionJustification({ justificationId }: { justificationId: st
     return (
       <div className="space-y-3 border-t border-border pt-3">
         <Textarea
-          label="Motif du refus"
+          label="Motif du rejet"
           required
           rows={3}
           maxLength={500}
@@ -50,7 +50,7 @@ export function DecisionJustification({ justificationId }: { justificationId: st
             disabled={longueur < MOTIF_REFUS_MIN}
             onClick={() => executer(() => refuserJustificationAction(justificationId, motifRefus))}
           >
-            Confirmer le refus
+            Confirmer le rejet
           </Button>
           <Button variant="secondary" disabled={isPending} onClick={() => setRefusOuvert(false)}>
             Annuler
@@ -66,7 +66,7 @@ export function DecisionJustification({ justificationId }: { justificationId: st
         Accepter
       </Button>
       <Button variant="danger" disabled={isPending} onClick={() => setRefusOuvert(true)}>
-        Refuser
+        Rejeter
       </Button>
     </div>
   );

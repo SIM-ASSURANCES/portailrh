@@ -12,7 +12,9 @@ import {
   DASHBOARD_ITEM,
   DELEGATIONS_ITEM,
   REINITIALISATION_ITEM,
+  REINITIALISATION_POINTAGE_ITEM,
   getNavBranches,
+  type ModuleCongeNav,
   type NavBranch,
   type NavItem,
 } from "./nav";
@@ -25,16 +27,17 @@ interface SidebarProps {
   canAdmin?: boolean;
   /** treso.creer_demande OU treso.declarer_retour : ajoute "Demandes". */
   canAccesDemandes?: boolean;
-  /** treso.creer_demande seule : ajoute "Mon tableau de bord". */
+  /** treso.creer_demande seule : ajoute « Accueil » (ex-« Mon tableau de bord »). */
   canAccesMonTableauDeBord?: boolean;
   /** categoriser_demande OU valider_demande : ajoute "Demandes à traiter (Finance)". */
   canAccesFinanceDemandes?: boolean;
   /** valider_demande OU effectuer_reglement OU receptionner_retour : ajoute "Toutes les demandes". */
   canVoirToutesLesDemandes?: boolean;
   canRetourExterne?: boolean;
+  canVoirBudgets?: boolean;
   /** treso.receptionner_retour : ajoute "Retours en attente". */
   canReceptionnerRetour?: boolean;
-  /** treso.voir_dashboard_finance : ajoute "Tableau de bord Finance". */
+  /** treso.voir_dashboard_finance : ajoute « Accueil Finance » (ex-« Tableau de bord Finance »). */
   canVoirDashboardFinance?: boolean;
   /** treso.voir_reporting : ajoute "Reporting". */
   canVoirReporting?: boolean;
@@ -54,6 +57,8 @@ interface SidebarProps {
   canDelegerAcces?: boolean;
   /** `systeme.reinitialiser` (DG) ET réinitialisation pas encore effectuée. */
   canReinitialiser?: boolean;
+  /** `pointage.reinitialiser` et Pointage pas encore en service. */
+  canReinitialiserPointage?: boolean;
   /** `pointage.pointer` : ajoute "Pointer" au groupe "Mon espace". */
   canPointer?: boolean;
   /** `pointage.consulter_historique` : ajoute "Mon historique" au groupe "Mon espace". */
@@ -67,6 +72,10 @@ interface SidebarProps {
   demandesDGADecider?: number | null;
   /** Voir `NavFlags.justificationsADecider`. */
   justificationsADecider?: number | null;
+  /** Voir `NavFlags.canVoirMonEquipe`. */
+  canVoirMonEquipe?: boolean;
+  /** Voir `NavFlags.congesNav`. */
+  congesNav?: ModuleCongeNav | null;
   /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
   canRecevoirFeedback?: boolean;
   /** Tiroir mobile (< lg) : ouvert/fermé. Sans effet à partir de lg. */
@@ -111,6 +120,7 @@ export function Sidebar({
   canAccesFinanceDemandes = false,
   canVoirToutesLesDemandes = false,
   canRetourExterne = false,
+  canVoirBudgets = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
   canVoirReporting = false,
@@ -122,6 +132,7 @@ export function Sidebar({
   canAccessPointageRH = false,
   canDelegerAcces = false,
   canReinitialiser = false,
+  canReinitialiserPointage = false,
   canPointer = false,
   canConsulterHistorique = false,
   canModererFeedback = false,
@@ -129,6 +140,8 @@ export function Sidebar({
   demandesServiceAValider = null,
   demandesDGADecider = null,
   justificationsADecider = null,
+  canVoirMonEquipe = false,
+  congesNav = null,
   canRecevoirFeedback = false,
   mobileOpen,
   onCloseMobile,
@@ -140,6 +153,7 @@ export function Sidebar({
     canAccesFinanceDemandes,
     canVoirToutesLesDemandes,
     canRetourExterne,
+    canVoirBudgets,
     canReceptionnerRetour,
     canVoirDashboardFinance,
     canVoirReporting,
@@ -157,6 +171,8 @@ export function Sidebar({
     demandesServiceAValider,
     demandesDGADecider,
     justificationsADecider,
+    canVoirMonEquipe,
+    congesNav,
   });
   const [openBranch, setOpenBranch] = useState<string | null>(
     () => navBranches.find((branch) => branchContains(branch, pathname))?.key ?? navBranches[0]?.key ?? null
@@ -242,7 +258,9 @@ export function Sidebar({
                   } hover:bg-muted`}
                 >
                   <Icon name={branch.icon} className="size-[18px] shrink-0" />
-                  <span className="flex-1 truncate text-left">{branch.label}</span>
+                  <span className="flex-1 truncate text-left" title={branch.label}>
+                    {branch.label}
+                  </span>
                   <Icon
                     name="chevron-down"
                     className={`size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out-strong motion-reduce:transition-none ${open ? "" : "-rotate-90"}`}
@@ -296,6 +314,17 @@ export function Sidebar({
               <ItemLink
                 item={REINITIALISATION_ITEM}
                 active={isActive(pathname, REINITIALISATION_ITEM)}
+                collapsed={collapsed}
+                onNavigate={onCloseMobile}
+              />
+            </div>
+          ) : null}
+
+          {canReinitialiserPointage ? (
+            <div className="mt-2 border-t border-sidebar-border pt-2">
+              <ItemLink
+                item={REINITIALISATION_POINTAGE_ITEM}
+                active={isActive(pathname, REINITIALISATION_POINTAGE_ITEM)}
                 collapsed={collapsed}
                 onNavigate={onCloseMobile}
               />
@@ -400,7 +429,7 @@ function ItemLink({
   return (
     <Link
       href={item.href}
-      title={collapsed ? item.label : undefined}
+      title={item.label}
       aria-current={active ? "page" : undefined}
       onClick={onNavigate}
       className={`flex items-center rounded-lg text-sm font-medium transition-[background-color,color,transform] duration-150 ease-out-strong motion-safe:active:scale-[0.98] ${

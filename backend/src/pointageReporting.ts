@@ -2,6 +2,8 @@ import { prisma } from "./prisma";
 import { Prisma } from "./generated/prisma/client";
 import { z } from "zod";
 import { justificationAffichee, type JustificationLue } from "./justificationPointage";
+import { syntheseCongesPeriode } from "./congesPointage";
+import { formatJourCivil } from "./congesCalcul";
 
 export const pointageReportingSchema = z.object({
   dateDebut: z.string().optional(),
@@ -10,7 +12,22 @@ export const pointageReportingSchema = z.object({
   service: z.string().optional(),
 });
 
-export type PointageReportingFilters = z.infer<typeof pointageReportingSchema>;
+export type PointageReportingFilters = z.infer<typeof pointageReportingSchema> & {
+  /** Restreint aux comptes listés (« Mon équipe », phase 5 de la fiabilisation) ; absent = tous. */
+  userIds?: string[];
+};
+
+/**
+ * Filtre d'identifiants de comptes d'un reporting : `userId` (un seul compte) et `userIds` (une liste) se combinent
+ * par intersection ; `undefined` = aucun filtre.
+ */
+export function filtreIdentifiants(filters: Pick<PointageReportingFilters, "userId" | "userIds">): string | { in: string[] } | undefined {
+  if (filters.userIds) {
+    if (filters.userId) return { in: filters.userIds.includes(filters.userId) ? [filters.userId] : [] };
+    return { in: filters.userIds };
+  }
+  return filters.userId;
+}
 
 export function getReportingPeriodConstraints(dateDebut?: string, dateFin?: string) {
   if (!dateDebut || !dateFin) return { error: null };
@@ -82,7 +99,8 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
   const whereUser: Prisma.UserWhereInput = {
     ...USER_CAN_POINT_WHERE,
   };
-  if (filters.userId) whereUser.id = filters.userId;
+  const idFiltre = filtreIdentifiants(filters);
+  if (idFiltre !== undefined) whereUser.id = idFiltre;
   if (filters.service) whereUser.service = { name: filters.service };
 
   const wherePointage: Prisma.PointageWhereInput = {};
@@ -107,6 +125,16 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
     }
   }
 
+  // Bornes de la période (mêmes que les absences), réutilisées pour les plages de congé et les jours fériés (T08).
+  const bornesJour: { gte?: Date; lte?: Date } = {};
+  if (filters.dateDebut) bornesJour.gte = new Date(filters.dateDebut);
+  if (filters.dateFin) {
+    const fin = new Date(filters.dateFin);
+    fin.setHours(23, 59, 59, 999);
+    bornesJour.lte = fin;
+  }
+  const filtreDate = filters.dateDebut || filters.dateFin ? { date: bornesJour } : {};
+
   const users = await prisma.user.findMany({
     where: whereUser,
     select: {
@@ -121,15 +149,26 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
         select: {
           estRetard: true,
           minutesRetard: true,
+          heure: true,
         },
       },
       absencesDeclarees: {
         where: whereAbsence,
         select: { id: true },
-      }
+      },
+      // T08 : plages de congé de la période (même bornes que les absences) pour « Jours de congé » et « Pointé pendant un congé ».
+      plagesAbsenceAutorisee: {
+        where: { ...filtreDate, source: "CONGE" },
+        select: { date: true, source: true, provisoire: true, demandeConge: { select: { statut: true, reference: true } } },
+      },
     },
     orderBy: { fullName: "asc" },
   });
+
+  // Jours fériés de la période : un jour férié n'est pas un jour de congé (même règle que le décompte des jours ouvrés).
+  const joursFeries = (
+    await prisma.jourFerie.findMany({ where: filtreDate, select: { date: true } })
+  ).map((j) => formatJourCivil(j.date));
 
   return users.map((u) => {
     const presences = u.pointagesEffectues.length;
@@ -139,7 +178,14 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
     const retards = u.pointagesEffectues.filter((p) => p.estRetard);
     const joursRetard = retards.length;
     const minutesRetard = retards.reduce((acc, p) => acc + (p.minutesRetard || 0), 0);
-    
+    // Jours de congé validés (jours ouvrés) et ceux où une arrivée a pourtant été pointée. N'entre dans AUCUN autre compteur :
+    // un jour couvert n'a jamais d'absence (la tâche des absences l'ignore), les chiffres existants ne changent pas.
+    const { joursConge, joursPointesEnConge } = syntheseCongesPeriode({
+      plages: u.plagesAbsenceAutorisee,
+      arrivees: u.pointagesEffectues.map((p) => p.heure),
+      joursFeries,
+    });
+
     return {
       id: u.id,
       fullName: u.fullName,
@@ -149,6 +195,8 @@ export async function getReportingAgrégé(filters: PointageReportingFilters) {
       absences,
       joursRetard,
       minutesRetard,
+      joursConge,
+      joursPointesEnConge,
     };
   });
 }
@@ -178,7 +226,8 @@ export function construireRequeteDetails(
     ...USER_CAN_POINT_WHERE,
     ...(filters.service ? { service: { name: filters.service } } : {}),
   };
-  if (filters.userId) where.userId = filters.userId;
+  const idFiltre = filtreIdentifiants(filters);
+  if (idFiltre !== undefined) where.userId = idFiltre;
   if (filters.dateDebut || filters.dateFin) {
     where.heure = {};
     if (filters.dateDebut) where.heure.gte = new Date(filters.dateDebut);
@@ -249,4 +298,43 @@ export function getDetailsRetards(filters: PointageReportingFilters, pagination?
 /** Détail des départs anticipés ; sans pagination, toutes les lignes (export). */
 export function getDetailsDepartsAnticipes(filters: PointageReportingFilters, pagination?: PaginationDetails) {
   return getDetails("DEPART_ANTICIPE", filters, pagination);
+}
+
+export interface SyntheseEquipeMembre {
+  userId: string;
+  departsAnticipes: number;
+  /** Justifications refusées ou clôturées sans justification (statuts REFUSEE et NON_JUSTIFIEE) sur la période. */
+  justificationsRefuseesOuNonJustifiees: number;
+}
+
+/**
+ * Compléments du reporting pour « Mon équipe » : départs anticipés et justifications refusées ou non justifiées par
+ * membre sur la période. Même périmètre de pointages que le reporting (`construireRequeteDetails`) : retards, absences et
+ * minutes viennent de `getReportingAgrégé`, jamais recalculés ailleurs.
+ */
+export async function getSyntheseEquipe(filters: PointageReportingFilters): Promise<Map<string, SyntheseEquipeMembre>> {
+  const departs = construireRequeteDetails("DEPART_ANTICIPE", filters);
+  const [departsPar, justifications] = await Promise.all([
+    prisma.pointage.groupBy({ by: ["userId"], where: departs.where, _count: { id: true } }),
+    prisma.justificationPointage.findMany({
+      where: {
+        statut: { in: ["REFUSEE", "NON_JUSTIFIEE"] },
+        pointage: {
+          ...(departs.where.heure ? { heure: departs.where.heure } : {}),
+          userId: filtreIdentifiants(filters),
+          user: { ...USER_CAN_POINT_WHERE, ...(filters.service ? { service: { name: filters.service } } : {}) },
+        },
+      },
+      select: { pointage: { select: { userId: true } } },
+    }),
+  ]);
+  const synthese = new Map<string, SyntheseEquipeMembre>();
+  const ligne = (userId: string) => {
+    let l = synthese.get(userId);
+    if (!l) synthese.set(userId, (l = { userId, departsAnticipes: 0, justificationsRefuseesOuNonJustifiees: 0 }));
+    return l;
+  };
+  for (const d of departsPar) ligne(d.userId).departsAnticipes = d._count.id;
+  for (const j of justifications) ligne(j.pointage.userId).justificationsRefuseesOuNonJustifiees += 1;
+  return synthese;
 }

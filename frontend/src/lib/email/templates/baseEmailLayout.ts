@@ -1,3 +1,4 @@
+import { urlPublique } from "@/lib/urlPublique";
 /**
  * Gabarit HTML de base pour tous les courriels institutionnels de SIM Assurances.
  *
@@ -19,7 +20,7 @@ export function baseEmailLayout({
   contentHtml: string;
   appUrl?: string;
 }): string {
-  const baseUrl = appUrl || process.env.NEXTAUTH_URL || process.env.AUTH_URL || "http://localhost:3000";
+  const baseUrl = appUrl || urlPublique();
 
   return `<!DOCTYPE html>
 <html lang="fr" xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office">

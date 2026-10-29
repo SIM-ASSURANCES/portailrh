@@ -2,6 +2,8 @@
 
 import { z } from "zod";
 
+import { schemaMontant } from "@/lib/schemaMontant";
+
 import { NATURE_DEPENSE_DIRECTE_LABEL } from "@/components/tresorerie/depenseDirecte";
 import { BENEFICIAIRE_TYPE_LABEL } from "backend";
 import { Prisma } from "backend";
@@ -10,7 +12,8 @@ import { publishDataChanged } from "@/lib/eventBus";
 import { notifierEtapeCircuit } from "@/lib/notificationsCircuit";
 import { prisma } from "backend";
 import { generateDemandeReference, initialiserCircuit } from "backend";
-import { fieldErrorsFromZod, type ActionState } from "backend";
+import { fieldErrorsFromZod, nettoyerMotifEchange, refusMotifEchange, type ActionState } from "backend";
+import { avecSignature } from "@/lib/signature";
 
 const MAX_ATTEMPTS = 5;
 
@@ -25,7 +28,7 @@ const depenseDirecteSchema = z
     beneficiaireUserId: z.string().optional(),
     beneficiaireNom: z.string().optional(),
     description: z.string().trim().min(3, "Merci de décrire précisément cette dépense (3 caractères minimum)"),
-    montant: z.coerce.number().positive("Le montant doit être supérieur à 0"),
+    montant: schemaMontant({ messagePositif: "Le montant doit être supérieur à 0" }),
     commentaire: z.string().optional(),
   })
   .superRefine((data, ctx) => {
@@ -89,6 +92,13 @@ export async function creerDepenseDirecteAction(
   _prevState: ActionState<{ demandeId: string }>,
   formData: FormData
 ): Promise<ActionState<{ demandeId: string }>> {
+  return avecSignature({ action: "depense_directe", permission: "treso.saisir_depense_directe", cibleApres: (r) => (r.status === "success" && r.data?.demandeId ? { type: "demande" as const, id: r.data.demandeId } : null) }, () => creerDepenseDirecteInterne(_prevState, formData));
+}
+
+async function creerDepenseDirecteInterne(
+  _prevState: ActionState<{ demandeId: string }>,
+  formData: FormData
+): Promise<ActionState<{ demandeId: string }>> {
   const session = await getSession();
   if (!session || !hasPermission(session, "treso.saisir_depense_directe")) {
     return { status: "error", message: "Action non autorisée." };
@@ -140,6 +150,14 @@ export async function creerDepenseDirecteAction(
     // Garde 9 : une dépense directe pour soi-même est décidée par le DG (comme le cas b).
     beneficiaireEstLeCreateur: beneficiaireUserIdFinal === session.user.id,
   });
+  // Lot M : une dépense directe de la Finance pour elle-même part chez le DG — envoi Finance → DG, qui porte un motif.
+  const motifEnvoiDG = nettoyerMotifEchange(formData.get("motifEnvoiDG"));
+  if (circuit.envoiDirectAuDG) {
+    const refusEnvoi = refusMotifEchange(motifEnvoiDG, "l'envoi de la dépense au DG");
+    if (refusEnvoi) {
+      return { status: "error", message: "Le formulaire contient des erreurs.", fieldErrors: { motifEnvoiDG: refusEnvoi } };
+    }
+  }
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const reference = await generateDemandeReference();
@@ -150,6 +168,7 @@ export async function creerDepenseDirecteAction(
       const demande = await prisma.demande.create({
         data: {
           ...circuit.data,
+          ...(circuit.envoiDirectAuDG ? { motifSoumissionDG: motifEnvoiDG } : {}),
           reference,
           montant,
           description,
@@ -174,7 +193,7 @@ export async function creerDepenseDirecteAction(
         },
       });
       await prisma.historiqueEntry.create({
-        data: { entity: "Demande", entityId: demande.id, action: "circuit_initialise", detail: circuit.detail, userId: session.user.id },
+        data: { entity: "Demande", entityId: demande.id, action: "circuit_initialise", detail: circuit.envoiDirectAuDG ? `${circuit.detail} Motif de l'envoi au DG : ${motifEnvoiDG}` : circuit.detail, userId: session.user.id },
       });
 
       publishDataChanged();

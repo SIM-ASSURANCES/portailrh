@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import { BrandBackdrop } from "@/components/ui";
 
-import { InactivityLogout } from "./InactivityLogout";
+import type { ModuleCongeNav } from "./nav";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 
@@ -16,16 +16,17 @@ interface AppShellProps {
   canAdmin?: boolean;
   /** Affiche "Demandes" (treso.creer_demande OU treso.declarer_retour). */
   canAccesDemandes?: boolean;
-  /** Affiche "Mon tableau de bord" (treso.creer_demande seule). */
+  /** Affiche « Accueil » (ex-« Mon tableau de bord ») (treso.creer_demande seule). */
   canAccesMonTableauDeBord?: boolean;
   /** Affiche "Demandes à traiter (Finance)" (categoriser_demande OU valider_demande). */
   canAccesFinanceDemandes?: boolean;
   /** Affiche "Toutes les demandes" (valider_demande OU effectuer_reglement OU receptionner_retour). */
   canVoirToutesLesDemandes?: boolean;
   canRetourExterne?: boolean;
+  canVoirBudgets?: boolean;
   /** Affiche "Retours en attente" (treso.receptionner_retour). */
   canReceptionnerRetour?: boolean;
-  /** Affiche "Tableau de bord Finance" (treso.voir_dashboard_finance). */
+  /** Affiche « Accueil Finance » (ex-« Tableau de bord Finance ») (treso.voir_dashboard_finance). */
   canVoirDashboardFinance?: boolean;
   /** Affiche "Reporting" (treso.voir_reporting). */
   canVoirReporting?: boolean;
@@ -44,6 +45,7 @@ interface AppShellProps {
   /** Affiche "Déléguer des accès" (au moins une permission treso.x ou pointage.x via son propre rôle). */
   canDelegerAcces?: boolean;
   canReinitialiser?: boolean;
+  canReinitialiserPointage?: boolean;
   /** `pointage.pointer` : ajoute "Pointer" au groupe "Mon espace". */
   canPointer?: boolean;
   /** `pointage.consulter_historique` : ajoute "Mon historique" au groupe "Mon espace". */
@@ -54,6 +56,10 @@ interface AppShellProps {
   demandesServiceAValider?: number | null;
   demandesDGADecider?: number | null;
   justificationsADecider?: number | null;
+  /** Voir `NavFlags.canVoirMonEquipe`. */
+  canVoirMonEquipe?: boolean;
+  /** Voir `NavFlags.congesNav`. */
+  congesNav?: ModuleCongeNav | null;
   /** `Role.peutRecevoirFeedback` : affiche "Mes critiques reçues". */
   canRecevoirFeedback?: boolean;
   unreadNotificationsCount?: number;
@@ -78,6 +84,7 @@ export function AppShell({
   canAccesFinanceDemandes = false,
   canVoirToutesLesDemandes = false,
   canRetourExterne = false,
+  canVoirBudgets = false,
   canReceptionnerRetour = false,
   canVoirDashboardFinance = false,
   canVoirReporting = false,
@@ -89,6 +96,7 @@ export function AppShell({
   canAccessPointageRH = false,
   canDelegerAcces = false,
   canReinitialiser = false,
+  canReinitialiserPointage = false,
   canPointer = false,
   canConsulterHistorique = false,
   canModererFeedback = false,
@@ -96,6 +104,8 @@ export function AppShell({
   demandesServiceAValider = null,
   demandesDGADecider = null,
   justificationsADecider = null,
+  canVoirMonEquipe = false,
+  congesNav = null,
   canRecevoirFeedback = false,
   unreadNotificationsCount = 0,
   topbarAlert = null,
@@ -134,11 +144,6 @@ export function AppShell({
 
   return (
     <div className="relative z-0 flex min-h-screen border-[3px] border-primary bg-app-bg">
-      {/* Déconnexion automatique après inactivité (voir CLAUDE.md) — monté
-          ici une seule fois pour rester actif sur toutes les pages
-          authentifiées (tout ce qui passe par l'AppShell), sans avoir à
-          l'ajouter à chaque page individuellement. */}
-      <InactivityLogout />
       {/* Fond de marque étendu à toute l'application (voir CLAUDE.md "Fond
           de marque étendu à toute l'application" — décision explicite de
           l'utilisateur, revient sur la restriction initiale à /login).
@@ -188,6 +193,7 @@ export function AppShell({
         canAccesFinanceDemandes={canAccesFinanceDemandes}
         canVoirToutesLesDemandes={canVoirToutesLesDemandes}
         canRetourExterne={canRetourExterne}
+        canVoirBudgets={canVoirBudgets}
         canReceptionnerRetour={canReceptionnerRetour}
         canVoirDashboardFinance={canVoirDashboardFinance}
         canVoirReporting={canVoirReporting}
@@ -199,6 +205,7 @@ export function AppShell({
         canAccessPointageRH={canAccessPointageRH}
         canDelegerAcces={canDelegerAcces}
         canReinitialiser={canReinitialiser}
+        canReinitialiserPointage={canReinitialiserPointage}
         canPointer={canPointer}
         canConsulterHistorique={canConsulterHistorique}
         canModererFeedback={canModererFeedback}
@@ -206,6 +213,8 @@ export function AppShell({
         demandesServiceAValider={demandesServiceAValider}
         demandesDGADecider={demandesDGADecider}
         justificationsADecider={justificationsADecider}
+        canVoirMonEquipe={canVoirMonEquipe}
+        congesNav={congesNav}
         canRecevoirFeedback={canRecevoirFeedback}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}

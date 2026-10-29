@@ -145,6 +145,69 @@ function renderSource(row: PointageRHRow | null) {
   );
 }
 
+function heureCourte(row: PointageRHRow | null) {
+  return row ? new Date(row.heure).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : null;
+}
+
+/**
+ * Liste mobile (< md) pensée pour un grand nombre de lignes : un en-tête par jour, puis UNE ligne par collaborateur
+ * (nom à gauche, arrivée → départ à droite) ; une seconde ligne seulement pour un retard ou un départ anticipé.
+ * Source, adresse IP, heures prévues, motifs et corrections restent consultables sur ordinateur.
+ */
+function PointagesRHListeMobile({ groupes }: { groupes: GroupedPointageRow[] }) {
+  if (groupes.length === 0) {
+    return <p className="py-6 text-center text-sm text-muted-foreground">Aucun pointage trouvé pour ces critères.</p>;
+  }
+  const jours: { cle: string; libelle: string; lignes: GroupedPointageRow[] }[] = [];
+  for (const g of groupes) {
+    const dernier = jours[jours.length - 1];
+    if (dernier && dernier.cle === g.dateFormatted) {
+      dernier.lignes.push(g);
+    } else {
+      jours.push({
+        cle: g.dateFormatted,
+        libelle: new Date(g.dateRaw).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" }),
+        lignes: [g],
+      });
+    }
+  }
+  return (
+    <div className="space-y-3">
+      {jours.map((jour) => (
+        <section key={jour.cle}>
+          <h3 className="border-b border-border pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            {jour.libelle}
+          </h3>
+          <ul className="divide-y divide-border">
+            {jour.lignes.map((g) => {
+              const retard = g.arrivee?.estRetard ?? false;
+              const anticipe = g.depart?.estDepartAnticipe ?? false;
+              return (
+                <li key={g.id} className="py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="min-w-0 truncate text-sm font-medium text-foreground">{g.collaborateurNom}</span>
+                    <span className="shrink-0 text-sm tabular-nums">
+                      <span className={retard ? "font-bold text-primary" : "font-semibold text-foreground"}>{heureCourte(g.arrivee) ?? "—"}</span>
+                      <span className="mx-1 text-muted-foreground">→</span>
+                      <span className={anticipe ? "font-bold text-primary" : "font-semibold text-foreground"}>{heureCourte(g.depart) ?? "—"}</span>
+                    </span>
+                  </div>
+                  {retard || anticipe ? (
+                    <p className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] font-semibold text-primary">
+                      {retard ? <span>Retard +{g.arrivee?.minutesRetard ?? 0} min</span> : null}
+                      {anticipe ? <span>Départ anticipé</span> : null}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export function PointagesRHTables({ pointages }: { pointages: PointageRHRow[] }) {
   const groupedData = useMemo(() => {
     const map = new Map<string, GroupedPointageRow>();
@@ -238,15 +301,20 @@ export function PointagesRHTables({ pointages }: { pointages: PointageRHRow[] })
   ];
 
   return (
-    <div className="overflow-x-auto -mx-4 sm:mx-0">
-      <div className="min-w-[800px] px-4 sm:px-0">
-        <DataTable
-          rowKey={(r) => r.id}
-          columns={columns}
-          data={groupedData}
-          emptyMessage="Aucun pointage trouvé pour ces critères."
-        />
+    <>
+      <div className="md:hidden">
+        <PointagesRHListeMobile groupes={groupedData} />
       </div>
-    </div>
+      <div className="hidden overflow-x-auto md:block">
+        <div className="min-w-[800px]">
+          <DataTable
+            rowKey={(r) => r.id}
+            columns={columns}
+            data={groupedData}
+            emptyMessage="Aucun pointage trouvé pour ces critères."
+          />
+        </div>
+      </div>
+    </>
   );
 }

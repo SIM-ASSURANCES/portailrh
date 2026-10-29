@@ -208,9 +208,9 @@ describe("messages", () => {
       decideurNom: "RH Test",
       motifRefus: "Aucun justificatif",
     });
-    expect(refus.titre).toBe("Justification refusée");
+    expect(refus.titre).toBe("Justification rejetée");
     expect(refus.message).toBe(
-      "Votre justification du départ anticipé le 12/10/2026 à 15:00 a été refusée par RH Test. Motif : Aucun justificatif"
+      "Votre justification du départ anticipé le 12/10/2026 à 15:00 a été rejetée par RH Test. Motif : Aucun justificatif"
     );
   });
 });

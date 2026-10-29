@@ -1,31 +1,49 @@
 import { notFound } from "next/navigation";
 
 import { Badge, PageHeader } from "@/components/ui";
-import { STATUT_DEMANDE_BADGE_VARIANT, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
-import { BENEFICIAIRE_TYPE_LABEL, getBeneficiaireNom, getMontantConsommeCategorie } from "backend";
+import { affichageStatutDemande, STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
+import {
+  aPlusieursBeneficiaires,
+  BENEFICIAIRE_TYPE_LABEL,
+  detailsArticles,
+  getBudgetsCategoriesEnVigueur,
+  getParcoursArticles,
+  nomBeneficiaireDemande,
+} from "backend";
+import { detailsArticleDe } from "@/components/tresorerie/DetailsArticle";
 import { DemandeHistorique } from "@/components/tresorerie/DemandeHistorique";
 import { DepenseDirecteBadge } from "@/components/tresorerie/DepenseDirecteBadge";
 import { PersonnesIntervenantes } from "@/components/tresorerie/PersonnesIntervenantes";
 import { RegularisationSummary } from "@/components/tresorerie/RegularisationSummary";
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma, refusDemandeSansCategorie } from "backend";
-import { getMontantsLignesParStatut, lignesToutesDecidees, STATUTS_VALIDATION_COMPLETE } from "backend";
+import { categorisationEstObligatoire, getDatesGestionDemandes, prisma, refusDemandeSansCategorie } from "backend";
+import { libelleGestionArticle } from "backend/client";
+import { chargerEvaluationCloture, getMontantsLignesParStatut, peutEtreCloturee } from "backend";
 import {
   chargerActeur,
-  attendDecisionFinale,
+  chargerAffichageReorientation,
+  chargerElementsReprise,
+  attendValidationPourExecution,
   estExecutantFinance,
+  etapeDepuisArticles,
+  transition,
   MESSAGE_ATTENTE_VALIDATION_FINALE,
   raisonIndisponible,
+  raisonSoumissionDemande,
   refusExecutionPropreDemande,
   versDemandeCircuit,
   type TypeActionCircuit,
 } from "backend";
 import { FriseCircuit } from "@/components/tresorerie/FriseCircuit";
+import { RepriseEtapeSection } from "@/components/tresorerie/RepriseEtapeSection";
+import { ReorienterDemande } from "@/components/tresorerie/ReorienterDemande";
 
 import { CategorisationForm } from "./CategorisationForm";
 import { CircuitFinanceActions } from "./CircuitFinanceActions";
+import { ClotureForceeBandeau } from "@/components/tresorerie/ClotureForceeBandeau";
 import { ClotureActions } from "./ClotureActions";
 import { DescriptionEditor } from "./DescriptionEditor";
+import { chargerBudgetValidation } from "@/lib/budgetValidation";
 import { LignesValidationTable } from "./LignesValidationTable";
 import { ReglementsSection } from "./ReglementsSection";
 import { RetourExceptionnelSection } from "./RetourExceptionnelSection";
@@ -68,15 +86,16 @@ export default async function CategoriserDemandePage({
   const demande = await prisma.demande.findUnique({
     where: { id },
     include: {
-      createur: true,
+      createur: { include: { service: { select: { name: true } } } },
       categorie: true,
       objet: true,
       beneficiaireUser: true,
       dgApprobateur: true,
+      clotureForceePar: { select: { fullName: true } },
       pieces: true,
       lignes: {
         orderBy: { createdAt: "asc" },
-        include: { decidePar: true, categorie: true, objet: true, decisionDGPar: { select: { fullName: true } } },
+        include: { decidePar: true, categorie: true, objet: true, beneficiaireUser: true, decisionDGPar: { select: { fullName: true } } },
       },
     },
   });
@@ -97,25 +116,50 @@ export default async function CategoriserDemandePage({
 
   // Circuit de validation (commit 4) : ce que ce compte peut faire à l'étape courante, et sinon pourquoi — la phrase
   // que le serveur renverrait (`raisonIndisponible`, moteur du circuit), affichée sous les boutons grisés.
-  const demandeCircuit = versDemandeCircuit(demande);
+  // Lot I : la catégorisation n'est exigée (validation, soumission au DG) qu'à partir de la date fixée par la Finance.
+  const categorisationObligatoire = await categorisationEstObligatoire();
+  const demandeCircuit = versDemandeCircuit(demande, categorisationObligatoire);
   // Soumission au DG ligne par ligne (2026-10-10) : demande standard à lignes, étape DG optionnelle.
   const soumissionParLignes = demandeAauMoinsUneLigne && demande.typeDemande === "STANDARD" && demande.modeEtapeDG === "OPTIONNELLE";
-  const acteurCircuit = session ? await chargerActeur(prisma, session, demande.createurId) : null;
+  const acteurCircuit = session ? await chargerActeur(prisma, session, demande.createurId, demande.id) : null;
   const raisonCircuit = (type: TypeActionCircuit) =>
     acteurCircuit ? raisonIndisponible(demandeCircuit, acteurCircuit, type) : "Action non autorisée.";
   const raisonDecider = raisonCircuit("DECIDER_LIGNES");
+  // Lot K : réorientation (étape Service) et reprise — chargées seulement quand elles peuvent s'afficher.
+  const affichageReorientation =
+    demande.etapeCircuit === "SERVICE" && acteurCircuit && raisonCircuit("REORIENTER") === null
+      ? await chargerAffichageReorientation(prisma, demande.id)
+      : null;
+  const elementsReprise =
+    acteurCircuit && (acteurCircuit.permissions.includes("treso.decider_finance") || acteurCircuit.permissions.includes("treso.decider_dg"))
+      ? await chargerElementsReprise(prisma, demande.id, acteurCircuit)
+      : [];
+  // Soumission au DG : phrases lisibles (lot 2, 2026-10-13) — permission absente, demande décidée d'office par le DG…
+  // `raisonSoumissionLignes` : la demande se prête-t-elle à la soumission d'articles ? (les raisons propres à chaque
+  // article s'y ajoutent dans le tableau) ; `raisonSoumissionEntiere` : le bouton « Soumettre la demande entière ».
+  const raisonSoumissionLignes = acteurCircuit
+    ? raisonSoumissionDemande(demandeCircuit, acteurCircuit, "LIGNES")
+    : "Action non autorisée.";
+  const raisonSoumissionEntiere = acteurCircuit
+    ? raisonSoumissionDemande(demandeCircuit, acteurCircuit, "DEMANDE")
+    : "Action non autorisée.";
   // Assistant Finance (exécution sans décision) avant la décision finale : il voit la demande, tous ses boutons sont
   // grisés avec « En attente de la validation finale », jamais « Action non autorisée. » (commit 4, morceau 4).
   const attenteValidationFinale =
-    session && estExecutantFinance(session.permissions) && attendDecisionFinale(demande.etapeCircuit)
+    session &&
+    estExecutantFinance(session.permissions) &&
+    attendValidationPourExecution({ etape: demande.etapeCircuit, lignes: demande.lignes.map((l) => ({ statut: l.statutValidation })) })
       ? MESSAGE_ATTENTE_VALIDATION_FINALE
       : null;
   // Sa propre demande (demandeur ou bénéficiaire) : règlement, décaissement et retours grisés avec la phrase que le
   // serveur renvoie (`refusExecutionPropreDemande`).
   const conflitInteret = session ? refusExecutionPropreDemande(demande, session.user.id) : null;
-  const etapeAvecDecisionFinance = ["SERVICE", "FINANCE", "DG", "REJET_DG", "DECISION_FINALE"].includes(
-    demande.etapeCircuit
-  );
+  // Lot B : l'étape se déduit des articles (la colonne n'en est que le reflet).
+  const etapeEffective = etapeDepuisArticles(demande.etapeCircuit, demande.modeEtapeDG, demandeCircuit.lignes ?? []);
+  const etapeAvecDecisionFinance = ["SERVICE", "FINANCE", "DG", "REJET_DG", "DECISION_FINALE"].includes(etapeEffective);
+  // Demande À ARTICLES encore vivante : tableau interactif + règlement + régularisation + clôture sur le même écran.
+  const parArticlesActif = demandeAauMoinsUneLigne && demande.statut !== "REJETEE" && demande.statut !== "CLOTUREE";
+  const articlesEnAttente = demande.lignes.some((l) => l.statutValidation === "EN_ATTENTE");
   // Tâche "Bug d'affichage 'Montant restant à valider'" (voir CLAUDE.md) :
   // pour une demande AVEC lignes, `montant - montantValide` (formule de
   // l'ancien modèle par montant global, toujours valable pour une
@@ -125,8 +169,36 @@ export default async function CategoriserDemandePage({
   // l'ancien modèle (qui garde sa formule `reliquatRejete` inchangée).
   const { montantEnAttente: montantLignesEnAttente, montantRejete: montantLignesRejete } =
     getMontantsLignesParStatut(demande.lignes);
+  const vueArticles = detailsArticles(demande, demande.lignes, demande.pieces);
+  // Lot D : parcours de chaque article (validé, réglé, retour de caisse, régularisé), lecture seule.
+  const parcoursArticles = await getParcoursArticles(demande.id, { avecBudget: true });
+  // Pourquoi CE compte ne peut pas décider tel article (bénéficiaire de l'article, règle des deux personnes…) : la phrase
+  // du moteur pour un rejet hypothétique de l'article — `null` s'il le peut ou si l'article n'attend pas la Finance.
+  const raisonDecisionArticle = (ligneId: string): string | null => {
+    if (!acteurCircuit || !canValiderLignes) return null;
+    // Décision hypothétique permise à l'état de l'article : confirmer la validation du DG, sinon rejeter.
+    const ligne = demande.lignes.find((l) => l.id === ligneId);
+    const statutProbe = ligne?.soumiseAuDG && ligne.decisionDG === "VALIDEE" ? "VALIDEE" : "REJETEE";
+    const r = transition(demandeCircuit, acteurCircuit, {
+      type: "DECIDER_LIGNES",
+      decisions: [{ ligneId, statut: statutProbe }],
+    });
+    return r.ok ? null : r.message;
+  };
+  const enteteDemande = {
+    reference: demande.reference,
+    demandeurNom: demande.createur.fullName,
+    serviceNom: demande.createur.service?.name ?? null,
+    creeeLe: demande.createdAt,
+    devise: demande.devise,
+  };
   const lignesPourTable = demande.lignes.map((ligne) => ({
     id: ligne.id,
+    raisonDecision:
+      ligne.statutValidation === "EN_ATTENTE" && !(ligne.soumiseAuDG && ligne.decisionDG === null) && raisonDecider === null
+        ? raisonDecisionArticle(ligne.id)
+        : null,
+    details: detailsArticleDe(vueArticles, ligne.id, parcoursArticles),
     libelle: ligne.libelle,
     libelleOriginal: ligne.libelleOriginal,
     motif: ligne.motif,
@@ -146,6 +218,8 @@ export default async function CategoriserDemandePage({
     decisionDGParNom: ligne.decisionDGPar?.fullName ?? null,
     decisionDGAt: ligne.decisionDGAt,
     motifRefusDG: ligne.motifRefusDG,
+    motifSoumissionDG: ligne.motifSoumissionDG,
+    motifDecisionDG: ligne.motifDecisionDG,
   }));
 
   // Les 3 requêtes ci-dessous sont mutuellement indépendantes (chacune ne
@@ -168,7 +242,9 @@ export default async function CategoriserDemandePage({
   // Ticket A.1 : seules les catégories/objets actifs sont proposables pour
   // une nouvelle catégorisation (soft-delete, jamais de suppression
   // définitive — voir admin/categories).
-  const peutCategoriserMaintenant = demande.statut === "EN_ATTENTE_VALIDATION" && canCategoriser;
+  // Lot B : une demande à articles se catégorise article par article tant qu'au moins un article est en attente.
+  const peutCategoriserMaintenant =
+    canCategoriser && (demande.statut === "EN_ATTENTE_VALIDATION" || (parArticlesActif && articlesEnAttente));
   const [dernierEvenementDG, categoriesActives, objetsActives] = await Promise.all([
     demande.validationCompleteParDG
       ? Promise.resolve(null)
@@ -231,23 +307,79 @@ export default async function CategoriserDemandePage({
     { budgetAlloue: number | null; consomme: number; restant: number | null }
   > = {};
   if (categories.length > 0) {
-    const consommations = await Promise.all(categories.map((c) => getMontantConsommeCategorie(c.id)));
-    categories.forEach((c, i) => {
-      const budgetAlloue = c.budgetAlloue == null ? null : Number(c.budgetAlloue);
-      const consomme = consommations[i];
-      budgetParCategorie[c.id] = {
-        budgetAlloue,
-        consomme,
-        restant: budgetAlloue == null ? null : budgetAlloue - consomme,
-      };
+    // Lot J : budget EN VIGUEUR (paramétrage validé par le DG) et consommé depuis sa date d'effet.
+    const enVigueur = await getBudgetsCategoriesEnVigueur();
+    categories.forEach((c) => {
+      const b = enVigueur[c.id];
+      budgetParCategorie[c.id] = { budgetAlloue: b ? b.budget : null, consomme: b ? b.consomme : 0, restant: b ? b.restant : null };
     });
   }
 
+  // Lot J : budgets en vigueur et confirmations de dépassement de cette demande (reste après chaque validation).
+  const budgetValidation = session ? await chargerBudgetValidation(demande.id, session) : null;
+  const budgetDepenseDirecte = budgetValidation ? { ...budgetValidation, categorieId: demande.categorieId } : null;
+
+  // Lot C : clôture d'une demande à articles = tous les articles terminés ; sinon la liste de ce qui manque à chacun.
+  const evaluationCloture =
+    demande.typeDemande !== "DEPENSE_DIRECTE" && demandeAauMoinsUneLigne && peutEtreCloturee(demande) && demande.statut !== "CLOTUREE"
+      ? (await chargerEvaluationCloture(demande.id)).evaluation
+      : null;
+
+  // Règlement, régularisation et clôture : même bloc pour une demande à articles vivante (dès qu'un article est validé) et
+  // pour une demande sans article déjà validée.
+  const blocExecution = (
+    <>
+      <ReglementsSection
+        demandeId={demande.id}
+        montantValide={Number(demande.montantValide)}
+        canEffectuerReglement={canEffectuerReglement}
+        // Tâche "Annulation d'un règlement après reçu réservée au
+        // Responsable" (voir CLAUDE.md) — même garde que
+        // `annulerReglementAction`, distincte de `canEffectuerReglement`
+        // (Assistant Finance) : réutilise `canValiderLignes`, déjà
+        // calculé plus haut pour la même identification "Responsable
+        // Finance UNIQUEMENT".
+        canAnnulerReglementConfirme={canAnnulerReglement}
+        userId={session?.user.id ?? null}
+      />
+      <RegularisationSummary
+        demandeId={demande.id}
+        montantValide={Number(demande.montantValide)}
+        canGererJustification={canGererJustification}
+        userId={session?.user.id ?? null}
+      />
+      {peutEtreCloturee(demande) && canCloturerDemande ? (
+        demande.validationCompleteParDG ? (
+          <ClotureActions
+            demandeId={demande.id}
+            bloquants={(evaluationCloture?.bloquants ?? []).map((b) => ({
+              libelle: b.libelle,
+              beneficiaire: b.beneficiaire,
+              manques: b.manques,
+              solde: b.manque.solde,
+            }))}
+            refusForcee={conflitInteret}
+          />
+        ) : (
+          // Ticket 7 + verrou de clôture : jamais un simple masquage
+          // silencieux des boutons — le message explique explicitement
+          // pourquoi la clôture n'est pas encore possible.
+          <div className="rounded-lg border border-border bg-warning-bg px-4 py-3 text-sm text-warning">
+            La clôture nécessite l&apos;approbation complète du DG au préalable (voir «&nbsp;Validation
+            complète&nbsp;» ci-dessus).
+          </div>
+        )
+      ) : null}
+    </>
+  );
+
+  // Lot H : « Géré le » = date du dernier événement de la demande (décision, règlement, retour, clôture).
+  const gestionDemande = (await getDatesGestionDemandes([demande.id])).get(demande.id) ?? null;
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title={`Demande ${demande.reference}`}
-        description={`Créée par ${demande.createur.fullName} le ${demande.createdAt.toLocaleDateString("fr-FR")}`}
+        description={`Demande créée le ${demande.createdAt.toLocaleDateString("fr-FR")} par ${demande.createur.fullName} · ${libelleGestionArticle(gestionDemande)}`}
         actions={
           demande.typeDemande === "DEPENSE_DIRECTE" && demande.natureDepenseDirecte ? (
             <DepenseDirecteBadge nature={demande.natureDepenseDirecte} />
@@ -271,9 +403,10 @@ export default async function CategoriserDemandePage({
               Statut
             </dt>
             <dd className="mt-1.5">
-              <Badge variant={STATUT_DEMANDE_BADGE_VARIANT[demande.statut]}>
-                {STATUT_DEMANDE_LABEL[demande.statut]}
-              </Badge>
+              {(() => {
+                const affichage = affichageStatutDemande(demande.statut, demande.lignes);
+                return <Badge variant={affichage.variant}>{affichage.label}</Badge>;
+              })()}
             </dd>
           </div>
           {/* Phase F (saisie directe) : bénéficiaire toujours affiché, y
@@ -285,8 +418,10 @@ export default async function CategoriserDemandePage({
               Bénéficiaire
             </dt>
             <dd className="mt-1 text-sm text-foreground">
-              {getBeneficiaireNom(demande)}{" "}
-              <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              {nomBeneficiaireDemande(demande, demande.lignes)}{" "}
+              {aPlusieursBeneficiaires(demande, demande.lignes) ? null : (
+                <span className="text-muted-foreground">({BENEFICIAIRE_TYPE_LABEL[demande.beneficiaireType]})</span>
+              )}
             </dd>
           </div>
           {/* Phase B (validation partielle) : montant validé/restant visible
@@ -377,19 +512,19 @@ export default async function CategoriserDemandePage({
               <dd className="text-sm text-foreground">{demande.commentaire}</dd>
             </div>
           ) : null}
-          {demande.pieces.length > 0 ? (
+          {vueArticles.communes.length > 0 ? (
             <div>
               <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Pièce jointe
               </dt>
               <dd className="space-x-3 text-sm text-foreground">
-                {demande.pieces.map((piece, index) => (
+                {vueArticles.communes.map((piece, index) => (
                   <a
                     key={piece.id}
                     href={`/api/treso/pieces-jointes/${piece.id}`}
                     className="text-info underline-offset-4 transition-colors hover:text-primary hover:underline"
                   >
-                    Télécharger{demande.pieces.length > 1 ? ` (${index + 1})` : ""}
+                    Télécharger{vueArticles.communes.length > 1 ? ` (${index + 1})` : ""}
                   </a>
                 ))}
               </dd>
@@ -411,6 +546,12 @@ export default async function CategoriserDemandePage({
         motifRejet={demande.motifRejet}
       />
 
+      {/* Lot K : réorientation de l'étape Service (Finance avec `treso.reorienter_demande`) et reprise (retour à l'étape précédente). */}
+      {demande.etapeCircuit === "SERVICE" && acteurCircuit && raisonCircuit("REORIENTER") === null && affichageReorientation ? (
+        <ReorienterDemande demandeId={demande.id} responsableActuel={affichageReorientation.responsableActuel} eligibles={affichageReorientation.eligibles} />
+      ) : null}
+      <RepriseEtapeSection demandeId={demande.id} elements={elementsReprise} />
+
       <DemandeHistorique demandeId={demande.id} />
 
       {/* Tâche "L'Assistant Finance déclare les dépenses sur toute demande,
@@ -424,7 +565,7 @@ export default async function CategoriserDemandePage({
         demandeId={demande.id}
         demandeEstCloturee={demande.statut === "CLOTUREE"}
         canDeclarerAssistant={canGererJustification}
-        raisonIndisponible={conflitInteret}
+        userId={session?.user.id ?? null}
       />
 
       {/* Retour de caisse exceptionnel post-clôture (voir CLAUDE.md) — uniquement
@@ -453,11 +594,15 @@ export default async function CategoriserDemandePage({
                 </p>
               ) : (
                 <div className="mt-1">
-                  <Badge variant="warning">Validation complète : en attente du DG</Badge>
+                  <Badge variant="warning">
+                    {articlesEnAttente
+                      ? "Validation complète : après la décision de tous les articles"
+                      : "Validation complète : en attente du DG"}
+                  </Badge>
                 </div>
               )}
             </div>
-            {canApprouverValidationComplete && !demande.validationCompleteParDG ? (
+            {canApprouverValidationComplete && !demande.validationCompleteParDG && !articlesEnAttente ? (
               <ValidationCompleteDGActions
                 demandeId={demande.id}
                 mode="examen"
@@ -532,7 +677,42 @@ export default async function CategoriserDemandePage({
         </div>
       ) : null}
 
-      {demande.statut === "EN_ATTENTE_VALIDATION" ? (
+      {parArticlesActif ? (
+        // Lot B : demande à articles encore vivante — chaque article a sa propre vie (décision de la Finance par
+        // sous-ensemble, soumission au DG, confirmation d'un article validé par le DG). Le règlement est possible dès
+        // qu'un article est validé ; la clôture seulement quand tous sont traités.
+        <>
+          <LignesValidationTable
+            budget={budgetValidation}
+              categorisationObligatoire={categorisationObligatoire}
+            demandeId={demande.id}
+            lignes={lignesPourTable}
+            canValider={canValiderLignes && raisonDecider === null}
+            raisonIndisponible={canValiderLignes ? raisonDecider : attenteValidationFinale}
+            canModifierLibelle={canModifierLibelleLigne}
+            libelleModifiable={!conflitInteret}
+            canCategoriser={canCategoriser}
+            categories={categories.map((c) => ({ id: c.id, label: c.label }))}
+            objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
+            budgetParCategorie={budgetParCategorie}
+            soumissionDG={soumissionParLignes ? { raisonDemande: raisonSoumissionLignes } : null}
+            etapeCircuit={etapeEffective}
+            enteteDemande={enteteDemande}
+          />
+          {etapeAvecDecisionFinance ? (
+            <CircuitFinanceActions
+              demandeId={demande.id}
+              apresRejetDG={false}
+              afficherRejet
+              raisonSoumettre={raisonSoumissionEntiere}
+              raisonRejeter={raisonCircuit("REJETER")}
+              raisonResoumettre={raisonCircuit("RESOUMETTRE_DG")}
+              soumissionParLignes={soumissionParLignes}
+            />
+          ) : null}
+          {demande.montantValide != null && Number(demande.montantValide) > 0 ? blocExecution : null}
+        </>
+      ) : demande.statut === "EN_ATTENTE_VALIDATION" ? (
         <>
           {/* Catégorisation par ligne (voir CLAUDE.md) : `CategorisationForm`
               (catégorisation de la demande ENTIÈRE) reste utilisé tel quel
@@ -568,6 +748,8 @@ export default async function CategoriserDemandePage({
               commentaire plus haut). */}
           {demandeAauMoinsUneLigne ? (
             <LignesValidationTable
+            budget={budgetValidation}
+              categorisationObligatoire={categorisationObligatoire}
               demandeId={demande.id}
               lignes={lignesPourTable}
               canValider={canValiderLignes && raisonDecider === null}
@@ -580,17 +762,19 @@ export default async function CategoriserDemandePage({
               budgetParCategorie={budgetParCategorie}
               soumissionDG={
                 soumissionParLignes
-                  ? { possible: canSoumettreDG && raisonCircuit("SOUMETTRE_LIGNES_DG") === null, raison: raisonCircuit("SOUMETTRE_LIGNES_DG") }
+                  ? { raisonDemande: raisonSoumissionLignes }
                   : null
               }
+              etapeCircuit={demande.etapeCircuit}
             />
           ) : (
             <ValidationActions
+              budget={budgetDepenseDirecte}
               demandeId={demande.id}
               montantDemande={Number(demande.montant)}
               disabled={!canValider || raisonDecider !== null}
               raisonIndisponible={canValider ? raisonDecider : attenteValidationFinale}
-              raisonValidationIndisponible={refusDemandeSansCategorie(demande)}
+              raisonValidationIndisponible={refusDemandeSansCategorie(demande, categorisationObligatoire)}
             />
           )}
 
@@ -599,7 +783,7 @@ export default async function CategoriserDemandePage({
               demandeId={demande.id}
               apresRejetDG={demande.etapeCircuit === "REJET_DG"}
               afficherRejet={demandeAauMoinsUneLigne}
-              raisonSoumettre={raisonCircuit("SOUMETTRE_DG")}
+              raisonSoumettre={raisonSoumissionEntiere}
               raisonRejeter={raisonCircuit("REJETER")}
               raisonResoumettre={raisonCircuit("RESOUMETTRE_DG")}
               soumissionParLignes={soumissionParLignes}
@@ -654,6 +838,8 @@ export default async function CategoriserDemandePage({
           ) : null}
           {demandeAauMoinsUneLigne ? (
             <LignesValidationTable
+            budget={budgetValidation}
+              categorisationObligatoire={categorisationObligatoire}
               demandeId={demande.id}
               lignes={lignesPourTable}
               canValider={false}
@@ -680,7 +866,8 @@ export default async function CategoriserDemandePage({
             userId={session?.user.id ?? null}
           />
           <PersonnesIntervenantes demandeId={demande.id} demandeurNom={demande.createur.fullName} />
-          {demande.motifCloture ? (
+          <ClotureForceeBandeau demande={demande} />
+          {demande.motifCloture && !demande.clotureForcee ? (
             <div className="rounded-lg border border-border bg-surface p-4 sm:p-6">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Motif de la clôture
@@ -722,6 +909,8 @@ export default async function CategoriserDemandePage({
               SANS ligne (ex: DEPENSE_DIRECTE). */}
           {demandeAauMoinsUneLigne ? (
             <LignesValidationTable
+            budget={budgetValidation}
+              categorisationObligatoire={categorisationObligatoire}
               demandeId={demande.id}
               lignes={lignesPourTable}
               canValider={false}
@@ -745,44 +934,13 @@ export default async function CategoriserDemandePage({
             </div>
           ) : demande.statut === "PARTIELLEMENT_VALIDEE" && canValider ? (
             <ValidationComplementaireActions
+              budget={budgetDepenseDirecte}
               demandeId={demande.id}
               montantRestant={Number(demande.montant) - Number(demande.montantValide)}
-              raisonValidationIndisponible={refusDemandeSansCategorie(demande)}
+              raisonValidationIndisponible={refusDemandeSansCategorie(demande, categorisationObligatoire)}
             />
           ) : null}
-          <ReglementsSection
-            demandeId={demande.id}
-            montantValide={Number(demande.montantValide)}
-            canEffectuerReglement={canEffectuerReglement}
-            // Tâche "Annulation d'un règlement après reçu réservée au
-            // Responsable" (voir CLAUDE.md) — même garde que
-            // `annulerReglementAction`, distincte de `canEffectuerReglement`
-            // (Assistant Finance) : réutilise `canValiderLignes`, déjà
-            // calculé plus haut pour la même identification "Responsable
-            // Finance UNIQUEMENT".
-            canAnnulerReglementConfirme={canAnnulerReglement}
-            raisonIndisponible={canEffectuerReglement || canAnnulerReglement ? conflitInteret : null}
-          />
-          <RegularisationSummary
-            demandeId={demande.id}
-            montantValide={Number(demande.montantValide)}
-            canGererJustification={canGererJustification}
-            userId={session?.user.id ?? null}
-          />
-          {(STATUTS_VALIDATION_COMPLETE.includes(demande.statut) || lignesToutesDecidees(demande.lignes)) &&
-          canCloturerDemande ? (
-            demande.validationCompleteParDG ? (
-              <ClotureActions demandeId={demande.id} />
-            ) : (
-              // Ticket 7 + verrou de clôture : jamais un simple masquage
-              // silencieux des boutons — le message explique explicitement
-              // pourquoi la clôture n'est pas encore possible.
-              <div className="rounded-lg border border-border bg-warning-bg px-4 py-3 text-sm text-warning">
-                La clôture nécessite l&apos;approbation complète du DG au préalable (voir «&nbsp;Validation
-                complète&nbsp;» ci-dessus).
-              </div>
-            )
-          ) : null}
+          {blocExecution}
         </>
       ) : (
         <p className="rounded-lg border border-border bg-muted px-4 py-6 text-center text-sm text-muted-foreground">

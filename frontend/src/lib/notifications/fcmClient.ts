@@ -24,8 +24,37 @@ export async function registerFcmToken(): Promise<string | null> {
       return null;
     }
 
-    // Enregistrement du service worker
-    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+    const { apiKey, authDomain, projectId, messagingSenderId, appId } =
+      messaging.app.options;
+    if (!apiKey || !projectId || !messagingSenderId || !appId) {
+      console.warn("[FCM] Configuration Firebase incomplète pour le service worker.");
+      return null;
+    }
+
+    const serviceWorkerUrl = new URL(
+      "/firebase-messaging-sw.js",
+      window.location.origin
+    );
+    serviceWorkerUrl.search = new URLSearchParams({
+      apiKey,
+      ...(authDomain ? { authDomain } : {}),
+      projectId,
+      messagingSenderId,
+      appId,
+    }).toString();
+
+    // register() peut retourner avant l'activation du service worker.
+    const requestedRegistration = await navigator.serviceWorker.register(
+      serviceWorkerUrl,
+      { scope: "/" }
+    );
+    const registration = await navigator.serviceWorker.ready;
+    if (
+      !registration.active ||
+      registration.scope !== requestedRegistration.scope
+    ) {
+      throw new Error("Le service worker Firebase n'est pas actif pour cette page.");
+    }
 
     const token = await getToken(messaging, {
       vapidKey,

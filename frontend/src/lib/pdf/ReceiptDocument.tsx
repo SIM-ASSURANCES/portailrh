@@ -2,6 +2,9 @@ import { Document, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 
 import { COLORS } from "./colors";
 import { formatDate, formatMontant } from "./format";
+import type { HistoriqueImprime } from "./historiqueDocument";
+import { SignaturesSection } from "./SignaturesSection";
+import type { SignatureImprimee } from "./signaturesDocument";
 import "./registerFonts";
 
 /** Styles partagés avec le reçu de retour de caisse (`RetourReceiptDocument.tsx`) : même gabarit, mêmes mentions. */
@@ -143,10 +146,193 @@ export const styles = StyleSheet.create({
   },
 });
 
+/** Article payé par le règlement (lot D) — imprimé sur les trois documents (reçu, bon de caisse, reçu de retour). */
+export interface ArticleImprime {
+  libelle: string;
+  beneficiaireNom: string;
+  montantValide: number;
+  /** Date de livraison de l'article (lot G), déjà formatée (« 12/10/2026 » ou « — »). */
+  dateLivraison?: string;
+  /** Lot H : « Géré le » de l'article, déjà formaté (« 12/10/2026 (réglé) » ou « — »). */
+  gereLe?: string;
+  regleADate?: number;
+  resteARegler?: number;
+}
+
+/**
+ * Bloc « Article concerné » : libellé, bénéficiaire et montant de l'article, puis — si fournis — réglé à ce jour et
+ * reste. Rappel de la demande (numéro, demandeur, service) dans `RappelDemande`.
+ */
+export function ArticleSection({ article, titre = "Article concerné" }: { article: ArticleImprime; titre?: string }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{titre}</Text>
+      <View style={styles.detailRow}>
+        <Text style={styles.detailLabel}>Article</Text>
+        <Text style={styles.detailValue}>{article.libelle}</Text>
+      </View>
+      <View style={styles.detailRow}>
+        <Text style={styles.detailLabel}>Bénéficiaire</Text>
+        <Text style={styles.detailValue}>{article.beneficiaireNom}</Text>
+      </View>
+      {article.dateLivraison != null ? (
+        <View style={styles.detailRow}>
+          <Text style={styles.detailLabel}>Livraison prévue le</Text>
+          <Text style={styles.detailValue}>{article.dateLivraison}</Text>
+        </View>
+      ) : null}
+      {article.gereLe != null ? (
+        <View style={styles.detailRow}>
+          <Text style={styles.detailLabel}>Géré le</Text>
+          <Text style={styles.detailValue}>{article.gereLe}</Text>
+        </View>
+      ) : null}
+      <View style={article.regleADate == null ? [styles.detailRow, { marginBottom: 0 }] : styles.detailRow}>
+        <Text style={styles.detailLabel}>Montant de l&apos;article</Text>
+        <Text style={styles.detailValue}>{formatMontant(article.montantValide)}</Text>
+      </View>
+      {article.regleADate != null ? (
+        <View style={styles.detailRow}>
+          <Text style={styles.detailLabel}>Réglé à ce jour sur l&apos;article</Text>
+          <Text style={styles.detailValue}>{formatMontant(article.regleADate)}</Text>
+        </View>
+      ) : null}
+      {article.resteARegler != null ? (
+        <View style={[styles.detailRow, { marginBottom: 0 }]}>
+          <Text style={styles.detailLabel}>Reste à régler sur l&apos;article</Text>
+          <Text style={styles.detailValue}>{formatMontant(article.resteARegler)}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const libelleMode = (m: "CAISSE" | "BANQUE") => (m === "CAISSE" ? "Caisse" : "Banque");
+
+/**
+ * Historique détaillé de l'article (ou de la demande) — lot G : chaque règlement (Caisse et Banque), chaque retour de
+ * caisse, chaque dépense déclarée, puis le solde final. Données : `chargerHistoriqueDocument`.
+ */
+export function HistoriqueSection({ historique: h }: { historique: HistoriqueImprime }) {
+  const portee = h.portee === "ARTICLE" ? "de l'article" : "de la demande";
+  const ligne = (cle: string, libelle: string, valeur: string, dernier = false) => (
+    <View key={cle} style={dernier ? [styles.detailRow, { marginBottom: 0 }] : styles.detailRow}>
+      <Text style={styles.detailLabel}>{libelle}</Text>
+      <Text style={styles.detailValue}>{valeur}</Text>
+    </View>
+  );
+  return (
+    <>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Règlements {portee}</Text>
+        {h.reglements.flatMap((r, i) => [
+          ligne(
+            `r${i}`,
+            `${r.reference} — ${libelleMode(r.mode)}${r.date ? ` — ${formatDate(r.date)}` : ""} — par ${r.auteur}${r.courant ? " (ce reçu)" : ""}`,
+            formatMontant(r.montant)
+          ),
+          // Lot I : motif / nature du règlement sur sa propre ligne (un libellé trop long s'entremêlerait avec le montant).
+          ligne(`rm${i}`, `Motif : ${r.motif}`, ""),
+        ])}
+        {ligne("rt", "Total réglé", formatMontant(h.totalRegle), true)}
+      </View>
+
+      {h.retours.length > 0 ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Retours de caisse</Text>
+          {h.retours.map((t, i) =>
+            ligne(
+              `t${i}`,
+              `${formatDate(t.date)} — ${t.nul ? "Retour nul" : t.etat}${t.receptionnePar ? ` par ${t.receptionnePar}` : ` (déclaré par ${t.declarant})`} — sur ${t.reglementReference}`,
+              formatMontant(t.montant),
+              i === h.retours.length - 1
+            )
+          )}
+        </View>
+      ) : null}
+
+      {h.retoursExternes.length > 0 ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Retours enregistrés par la Finance (fonds versé par banque)</Text>
+          {h.retoursExternes.map((x, i) =>
+            ligne(`x${i}`, `${formatDate(x.date)} — rendu à la caisse, enregistré par ${x.par}`, formatMontant(x.montant), i === h.retoursExternes.length - 1)
+          )}
+        </View>
+      ) : null}
+
+      {h.depenses.length > 0 ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Dépenses déclarées</Text>
+          {h.depenses.map((d, i) =>
+            ligne(`d${i}`, `${d.libelle} — ${d.etat}`, formatMontant(d.montant), i === h.depenses.length - 1)
+          )}
+        </View>
+      ) : null}
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Solde final {portee}</Text>
+        {ligne("f1", "Fonds remis (Caisse + Banque)", formatMontant(h.fondsRemis))}
+        {ligne("f2", "− Dépenses déclarées", formatMontant(h.totalDepenses))}
+        {ligne("f3", "− Retours reçus", formatMontant(h.retoursRecus))}
+        {ligne("f4", "= Solde à régulariser", formatMontant(h.solde), h.resteNonDetaille <= 0)}
+        {h.resteNonDetaille > 0 ? ligne("f5", "Dont reste non détaillé (ni retourné, ni justifié)", formatMontant(h.resteNonDetaille), true) : null}
+      </View>
+    </>
+  );
+}
+
+/** Rappel de la demande : numéro, demandeur et service. */
+export function RappelDemande({
+  reference,
+  demandeurNom,
+  serviceNom,
+  creeeLe,
+}: {
+  reference: string;
+  demandeurNom: string;
+  serviceNom: string | null;
+  /** Lot H : date de création de la demande (« Demande créée le »), une seule pour toute la demande. */
+  creeeLe?: Date;
+}) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>Demande</Text>
+      <View style={styles.detailRow}>
+        <Text style={styles.detailLabel}>Numéro</Text>
+        <Text style={styles.detailValue}>{reference}</Text>
+      </View>
+      <View style={styles.detailRow}>
+        <Text style={styles.detailLabel}>Demandeur</Text>
+        <Text style={styles.detailValue}>{demandeurNom}</Text>
+      </View>
+      <View style={creeeLe ? styles.detailRow : [styles.detailRow, { marginBottom: 0 }]}>
+        <Text style={styles.detailLabel}>Service</Text>
+        <Text style={styles.detailValue}>{serviceNom ?? "—"}</Text>
+      </View>
+      {creeeLe ? (
+        <View style={[styles.detailRow, { marginBottom: 0 }]}>
+          <Text style={styles.detailLabel}>Demande créée le</Text>
+          <Text style={styles.detailValue}>{formatDate(creeeLe)}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export interface ReceiptData {
+  /** Historique détaillé (lot G) : règlements, retours, dépenses, solde final. */
+  historique: HistoriqueImprime;
+  /** Lot L : signatures des étapes validées, dans l'ordre du circuit. */
+  signatures: SignatureImprimee[];
   recuReference: string;
   demandeReference: string;
   demandeurNom: string;
+  /** Service du demandeur (rappel de la demande, lot D). */
+  serviceNom: string | null;
+  /** Date de création de la demande (lot H, « Demande créée le »). */
+  demandeCreeeLe: Date;
+  /** Article payé par ce règlement (lot D) ; `null` pour une demande sans article. */
+  article: ArticleImprime | null;
   /** Distinct du demandeur (Phase A) — voir `getBeneficiaireNom`. */
   beneficiaireNom: string;
   categorieLabel: string | null;
@@ -166,6 +352,8 @@ export interface ReceiptData {
   mode: "CAISSE" | "BANQUE";
   confirmeLe: Date;
   auteurNom: string;
+  /** Motif / nature du règlement (lot I) ; « Non renseigné » pour un règlement antérieur. */
+  motif: string;
   /** Section 12.2 : nom(s) du/des validateur(s) — voir `getValidateursNoms` (route.tsx). */
   validateursNoms: string;
   genereLe: Date;
@@ -244,6 +432,8 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
             </View>
           </View>
 
+          {data.article ? <ArticleSection article={data.article} /> : null}
+
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Situation de la demande</Text>
             <View style={styles.statsRow}>
@@ -275,6 +465,10 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
             </View>
           </View>
 
+          <HistoriqueSection historique={data.historique} />
+
+          <SignaturesSection signatures={data.signatures} />
+
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Détails de la demande</Text>
             <View style={styles.detailRow}>
@@ -282,8 +476,20 @@ export function ReceiptDocument({ data }: { data: ReceiptData }) {
               <Text style={styles.detailValue}>{data.demandeurNom}</Text>
             </View>
             <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Service</Text>
+              <Text style={styles.detailValue}>{data.serviceNom ?? "—"}</Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Demande créée le</Text>
+              <Text style={styles.detailValue}>{formatDate(data.demandeCreeeLe)}</Text>
+            </View>
+            <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Bénéficiaire</Text>
               <Text style={styles.detailValue}>{data.beneficiaireNom}</Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Motif / nature du règlement</Text>
+              <Text style={styles.detailValue}>{data.motif}</Text>
             </View>
             {data.repartitionCategories && data.repartitionCategories.length > 0 ? (
               data.repartitionCategories.map((r, index) => (

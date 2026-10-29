@@ -21,7 +21,8 @@ describe("contrôles de saisie (§8.1)", () => {
     expect(controlerSaisie({ ...base, datePaiement: "2026-10-08" }, maintenant).datePaiement).toBeUndefined();
   });
   it("montant > 0", () => {
-    for (const m of ["0", "-5", "abc", "10.123"]) expect(controlerSaisie({ ...base, montant: m }, maintenant).montant, m).toBeDefined();
+    // Lot M : « 10.123 » (point + trois chiffres) se lit 10 123 (milliers) ; « 10,123 » (virgule + trois chiffres) est refusé comme ambigu.
+    for (const m of ["0", "-5", "abc", "10,123", "10,5000"]) expect(controlerSaisie({ ...base, montant: m }, maintenant).montant, m).toBeDefined();
   });
   it("Wave : T_ suivi d'au moins 10 lettres ou chiffres, sinon refusé", () => {
     const wave = (reference: string) => controlerSaisie({ ...base, mode: "WAVE", reference }, maintenant).reference;

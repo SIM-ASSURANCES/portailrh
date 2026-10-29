@@ -40,7 +40,7 @@ import { SoldeCaisseTrendChart } from "./SoldeCaisseTrendChart";
  * 1. Demandes en attente de validation
  * 2. Montants validés restant à régler (rien réglé encore)
  * 3. Règlements partiels à compléter (déjà commencé, pas fini)
- * 4. Fonds remis à régulariser (règlements Caisse au solde non nul)
+ * 4. Fonds remis à régulariser (règlements Caisse et Banque au solde non nul)
  * 5. Retours de fonds en attente de réception
  * 6. Dépense sans pièce formelle à suivre (renommé depuis "Dépenses non
  *    justifiées" — Tâche "Refonte de la zone 'Régularisation'", voir
@@ -148,7 +148,7 @@ export default async function DashboardFinancePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
-        title="Tableau de bord Finance"
+        title="Accueil Finance"
         description="Vue d'ensemble de la trésorerie, recalculée en temps réel."
       />
 

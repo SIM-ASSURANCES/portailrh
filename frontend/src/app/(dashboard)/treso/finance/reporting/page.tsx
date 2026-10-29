@@ -2,11 +2,15 @@ import { redirect } from "next/navigation";
 
 import { Button, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { prisma } from "backend";
+import { peutTelechargerJustificatifsRetourExterne } from "@/lib/droitsPiecesJointes";
+import { libelleSeuil, prisma } from "backend";
+
+import { BadgeNiveauBudget } from "@/components/tresorerie/BudgetPrevision";
 import {
   getBeneficiairesConnus,
-  getReportingFondsRemis,
-  getReportingParDemande,
+  COLONNES_ARBRE,
+  getReportingArbre,
+  totauxParDevise,
   getReportingRows,
   getReportingSuiviBudgetaire,
   parseReportingFilters,
@@ -15,7 +19,7 @@ import {
 
 import { STATUT_DEMANDE_LABEL } from "@/components/tresorerie/demandeStatut";
 
-import { ReportingDemandesTable } from "./ReportingDemandesTable";
+import { ReportingArbreTable } from "./ReportingArbreTable";
 import { ReportingFiltersForm } from "./ReportingFiltersForm";
 
 function rawString(value: string | string[] | undefined): string | undefined {
@@ -47,24 +51,25 @@ export default async function ReportingPage({
   const rawParams = await searchParams;
   const filters = parseReportingFilters(rawParams);
 
-  // Ticket A.1 : les filtres ne listent que les catégories/objets actifs
-  // (soft-delete) — les demandes historiques liées à une catégorie
-  // désactivée depuis continuent d'apparaître normalement dans les
-  // résultats, ce filtre ne porte que sur les OPTIONS du formulaire.
-  const [lignesDemandes, rows, fondsRemisRows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
+  // Ticket A.1, modifié au lot J bis : les catégories/objets désactivés (soft-delete) restent filtrables, signalés « désactivée » —
+  // les demandes historiques qui les référencent apparaissent de toute façon normalement dans les résultats.
+  const [arbre, rows, suiviBudgetaireRows, categories, objets, users, servicesRaw, beneficiaires] =
     await Promise.all([
-      getReportingParDemande(filters, (statut) => STATUT_DEMANDE_LABEL[statut]),
+      getReportingArbre(filters, (statut) => STATUT_DEMANDE_LABEL[statut], {
+        justificatifsRetoursExternes: peutTelechargerJustificatifsRetourExterne(session),
+      }),
       getReportingRows(filters),
-      getReportingFondsRemis(filters),
       getReportingSuiviBudgetaire(),
-      prisma.categorie.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
-      prisma.objet.findMany({ where: { isActive: true }, orderBy: { label: "asc" } }),
+      // Lot J bis : une catégorie / un objet désactivé reste filtrable (l'historique et le reporting le gardent), signalé « désactivée ».
+      prisma.categorie.findMany({ orderBy: { label: "asc" } }),
+      prisma.objet.findMany({ orderBy: { label: "asc" } }),
       prisma.user.findMany({ orderBy: { fullName: "asc" } }),
       prisma.service.findMany({ orderBy: { name: "asc" }, select: { name: true } }),
       getBeneficiairesConnus(),
     ]);
 
   const services = servicesRaw.map((s) => s.name);
+  const totauxArbre = totauxParDevise(arbre.lignes);
 
 
   const total = rows.reduce(
@@ -99,7 +104,7 @@ export default async function ReportingPage({
     <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader
         title="Reporting"
-        description="Une ligne par demande (articles, validations, règlements, dépenses, retours), puis la synthèse par catégorie et objet."
+        description="Un seul tableau : la demande, ses articles et, sous chaque article, ses règlements, retours de caisse, mouvements banque et retours externes ; puis la synthèse par catégorie et objet."
         actions={
           <a href={exportHref}>
             <Button type="button">Exporter en Excel</Button>
@@ -108,8 +113,8 @@ export default async function ReportingPage({
       />
 
       <ReportingFiltersForm
-        categories={categories.map((c) => ({ id: c.id, label: c.label }))}
-        objets={objets.map((o) => ({ id: o.id, label: o.label, categorieId: o.categorieId }))}
+        categories={categories.map((c) => ({ id: c.id, label: c.isActive ? c.label : `${c.label} (désactivée)` }))}
+        objets={objets.map((o) => ({ id: o.id, label: o.isActive ? o.label : `${o.label} (désactivé)`, categorieId: o.categorieId }))}
         users={users.map((u) => ({ id: u.id, label: u.fullName }))}
         services={services}
         beneficiaires={beneficiaires}
@@ -127,7 +132,7 @@ export default async function ReportingPage({
         }}
       />
 
-      <ReportingDemandesTable lignes={lignesDemandes} />
+      <ReportingArbreTable colonnes={COLONNES_ARBRE} lignes={arbre.lignes} totauxParDevise={totauxArbre} nbDemandes={arbre.arbres.length} />
 
       <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Synthèse par catégorie / objet</h2>
@@ -223,70 +228,6 @@ export default async function ReportingPage({
         </div>
       </div>
 
-      <div className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
-        <h2 className="text-sm font-semibold text-foreground">Fonds remis</h2>
-        {/* Section 15 du cahier des charges : distinct du tableau général
-            ci-dessus — restreint aux demandes ayant au moins un règlement
-            Caisse confirmé (voir `getReportingFondsRemis`, reporting.ts). */}
-        {fondsRemisRows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Aucun règlement Caisse confirmé pour ces filtres.
-          </p>
-        ) : (
-          <>
-            <p className="text-xs text-muted-foreground md:hidden">Faites glisser pour voir plus de colonnes →</p>
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full min-w-full divide-y divide-border text-sm">
-                <thead className="bg-muted">
-                  <tr>
-                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Catégorie</th>
-                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Objet</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Nb. opérations</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Demandé</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Validé</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Remis</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Dépenses effectuées</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Retours reçus</th>
-                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Restant à régulariser</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border bg-surface">
-                  {fondsRemisRows.map((f) => (
-                    <tr key={`${f.categorieId ?? "none"}|${f.objetId ?? "none"}`} className="hover:bg-muted/50">
-                      <td className="px-4 py-2 text-foreground">{f.categorieLabel}</td>
-                      <td className="px-4 py-2 text-foreground">{f.objetLabel}</td>
-                      <td className="px-4 py-2 text-right text-foreground">{f.nombreOperations}</td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {f.montantDemande.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {f.montantValide.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {f.montantRemis.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {f.depensesDeclarees.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td className="px-4 py-2 text-right text-foreground">
-                        {f.retoursRecus.toLocaleString("fr-FR")} FCFA
-                      </td>
-                      <td
-                        className={`px-4 py-2 text-right font-semibold ${
-                          f.montantRestantARegulariser !== 0 ? "text-warning" : "text-success"
-                        }`}
-                      >
-                        {f.montantRestantARegulariser.toLocaleString("fr-FR")} FCFA
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </div>
-
       <div id="suivi-budgetaire" className="space-y-4 rounded-lg border border-border bg-surface p-4 shadow-elevated sm:p-6">
         <h2 className="text-sm font-semibold text-foreground">Suivi budgétaire</h2>
         {/* Budget PARTAGÉ par Catégorie (pas par demande, pas par service du
@@ -297,9 +238,9 @@ export default async function ReportingPage({
         {suiviBudgetaireRows.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             Aucune catégorie n&apos;a de budget alloué défini pour l&apos;instant — aucune limite
-            n&apos;est donc appliquée. Un budget se définit par catégorie depuis{" "}
-            <a href="/admin/categories" className="text-info underline-offset-4 hover:underline">
-              la console d&apos;administration
+            n&apos;est donc appliquée. Un budget se paramètre (et se soumet à la validation du DG) depuis{" "}
+            <a href="/treso/finance/budgets" className="text-info underline-offset-4 hover:underline">
+              l&apos;écran Budgets
             </a>
             .
           </p>
@@ -310,29 +251,49 @@ export default async function ReportingPage({
               <table className="w-full min-w-full divide-y divide-border text-sm">
                 <thead className="bg-muted">
                   <tr>
-                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Catégorie</th>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Budget</th>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Période</th>
                     <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Budget alloué</th>
                     <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Consommé (réglé)</th>
                     <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Restant</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium text-muted-foreground">Reste après validations</th>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Seuils</th>
+                    <th scope="col" className="px-4 py-2 text-left font-medium text-muted-foreground">Niveau</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border bg-surface">
                   {suiviBudgetaireRows.map((r) => {
-                    const depassement = r.budgetRestant < 0;
+                    const depassement = r.budgetRestant !== null && r.budgetRestant < 0;
                     return (
-                      <tr key={r.categorieId} className="hover:bg-muted/50">
+                      <tr key={r.global ? "global" : r.categorieId} data-suivi-budget={r.global ? "global" : r.categorieLabel} className="hover:bg-muted/50">
                         <td className="px-4 py-2 text-foreground">{r.categorieLabel}</td>
-                        <td className="px-4 py-2 text-right text-foreground">
+                        <td className="px-4 py-2 text-xs text-muted-foreground">{r.periode}</td>
+                        <td className="px-4 py-2 text-right text-foreground" data-budget-alloue>
                           {r.budgetAlloue.toLocaleString("fr-FR")} FCFA
+                          {r.global ? <span className="block text-xs text-muted-foreground">solde de caisse actuel</span> : null}
                         </td>
                         <td className="px-4 py-2 text-right text-foreground">
-                          {r.montantConsomme.toLocaleString("fr-FR")} FCFA
+                          {r.montantConsomme === null ? "—" : `${r.montantConsomme.toLocaleString("fr-FR")} FCFA`}
                         </td>
                         <td
                           className={`px-4 py-2 text-right font-semibold ${depassement ? "text-danger" : "text-success"}`}
                         >
-                          {depassement ? "Dépassement de " : ""}
-                          {Math.abs(r.budgetRestant).toLocaleString("fr-FR")} FCFA
+                          {r.budgetRestant === null ? (
+                            "—"
+                          ) : (
+                            <>
+                              {depassement ? "Dépassement de " : ""}
+                              {Math.abs(r.budgetRestant).toLocaleString("fr-FR")} FCFA
+                            </>
+                          )}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-semibold ${r.resteApresEngagements < 0 ? "text-danger" : "text-foreground"}`} data-reste-apres-validations>
+                          {r.resteApresEngagements < 0 ? "Dépassement de " : ""}
+                          {Math.abs(r.resteApresEngagements).toLocaleString("fr-FR")} FCFA
+                        </td>
+                        <td className="px-4 py-2 text-xs text-muted-foreground">{libelleSeuil(r.seuil)}</td>
+                        <td className="px-4 py-2">
+                          <BadgeNiveauBudget niveau={r.niveau} />
                         </td>
                       </tr>
                     );

@@ -4,6 +4,7 @@ import {
   getCouvertureRetoursPostCloture,
   getDateDernierReglementConfirme,
   getMontantsDefinitifsRetours,
+  getResumeArticle,
   rienARendre,
 } from "backend";
 import { prisma } from "backend";
@@ -11,10 +12,9 @@ import { prisma } from "backend";
 import { RetourCaisseRow } from "./RetourCaisseRow";
 
 /**
- * Section "Retours de caisse" : un règlement CAISSE confirmé et non annulé
- * de la demande = une ligne éligible à un retour. Rien n'est affiché si la
- * demande n'a aucun règlement de ce type (les règlements BANQUE ne donnent
- * jamais lieu à un retour de caisse). Server Component autonome : ne prend
+ * Section "Retours de caisse" : un règlement confirmé et non annulé de la
+ * demande, Caisse OU Banque (lot G : un fonds versé par banque se retourne en espèces à la caisse), = une ligne éligible à
+ * un retour. Rien n'est affiché si la demande n'a aucun règlement confirmé. Server Component autonome : ne prend
  * que l'id de la demande.
  *
  * `peutDeclarer` (Ticket 7) : masque le bouton "Déclarer un retour de
@@ -54,6 +54,7 @@ export async function RetoursCaisseSection({
     prisma.reglement.findMany({
       where: { demandeId, estConfirme: true, estAnnule: false },
       include: {
+        ligneDemande: { select: { libelle: true, libelleOriginal: true, libelleDemandeur: true } },
         retours: {
           include: {
             depenses: { include: { pieceJointe: true, motifNonJustifiePar: true } },
@@ -81,6 +82,9 @@ export async function RetoursCaisseSection({
     reglements.map((r) => (r.retours.length > 0 ? calculerMontantARetournerNet({ reglementId: r.id, totalDepensesNouvelles: 0 }) : null))
   );
 
+  // Lot E : chaque règlement nomme son article (libellé d'origine, bénéficiaire, montant validé).
+  const resumes = await Promise.all(reglements.map((r) => (r.ligneDemandeId ? getResumeArticle(r.ligneDemandeId) : null)));
+
   const dateMin = dateDernierReglement ? dateDernierReglement.toISOString().slice(0, 10) : undefined;
 
   return (
@@ -103,13 +107,13 @@ export async function RetoursCaisseSection({
               dateRetour: retour.dateRetour,
               creeParAssistant: retour.creeParAssistant,
               // Fiche de régularisation de l'Assistant (détail sans retour) : la déclaration du collaborateur la complète.
-              estFiche: estFicheRegularisation({ ...retour, mode: r.mode }),
+              estFiche: estFicheRegularisation(retour),
               // Modification (avant réception) réservée au déclarant
               // original — cohérent avec la déclaration elle-même. Un
               // retour créé par l'Assistant Finance (declarantId = son
               // propre id) n'est donc jamais modifiable depuis cet écran
               // Collaborateur.
-              peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer && r.mode !== "BANQUE",
+              peutModifier: !retour.estReceptionne && retour.declarantId === userId && peutDeclarer && !retour.versementBancaire,
               depenses: retour.depenses.map((d) => ({
                 id: d.id,
                 montant: Number(d.montant),
@@ -130,8 +134,18 @@ export async function RetoursCaisseSection({
             rienARendre={soldes[index] !== null && rienARendre(soldes[index]!)}
             dateMin={dateMin}
             repere={
-              reglements.length > 1
-                ? `Règlement ${index + 1}/${reglements.length}${r.mode === "BANQUE" ? " (Banque)" : ""} — ${(r.confirmeAt ?? r.createdAt).toLocaleDateString("fr-FR")}`
+              reglements.length > 1 || r.ligneDemande
+                ? [
+                    reglements.length > 1 ? `Règlement ${index + 1}/${reglements.length}${r.mode === "BANQUE" ? " (Banque)" : ""}` : null,
+                    r.ligneDemande
+                      ? `Article « ${(r.ligneDemande.libelleDemandeur ?? r.ligneDemande.libelleOriginal ?? r.ligneDemande.libelle)} »${
+                          resumes[index] ? ` (bénéficiaire : ${resumes[index]!.beneficiaire}, montant validé : ${resumes[index]!.montantValide.toLocaleString("fr-FR")} FCFA)` : ""
+                        }`
+                      : null,
+                    (r.confirmeAt ?? r.createdAt).toLocaleDateString("fr-FR"),
+                  ]
+                    .filter(Boolean)
+                    .join(" — ")
                 : undefined
             }
           />

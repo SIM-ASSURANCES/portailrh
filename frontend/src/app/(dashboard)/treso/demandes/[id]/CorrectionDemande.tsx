@@ -6,9 +6,20 @@ import { toast } from "sonner";
 
 import { Icon } from "@/components/icons";
 import { formatMontantDevise } from "@/components/tresorerie/devise";
+import { DetailsArticleEditeur, type DetailsArticleSaisie } from "@/components/tresorerie/DetailsArticleEditeur";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
-import { Button, Input, Textarea } from "@/components/ui";
-import { MOTIF_LIGNE_MIN } from "backend/client";
+import { Button, Input, InputMontant, Textarea } from "@/components/ui";
+import {
+  analyserMontant,
+  erreurSaisieBeneficiaire,
+  jourCourant,
+  MOTIF_LIGNE_MIN,
+  refusDateLivraison,
+  saisieVersChoix,
+  texteSaisieMontant,
+  valeurSaisieMontant,
+  type SaisieBeneficiaire,
+} from "backend/client";
 
 import { abandonnerDemandeAction, corrigerEtResoumettreDemandeAction } from "../../circuit/actions";
 
@@ -19,9 +30,26 @@ export interface LigneACorriger {
   motif: string;
   quantite: number;
   prixUnitaire: number;
+  /** Bénéficiaire propre de l'article ; `null` = hérite de celui de la demande. */
+  beneficiaire: SaisieBeneficiaire | null;
+  /** Date de livraison de l'article (« AAAA-MM-JJ »), vide pour un ancien article. */
+  dateLivraison: string;
 }
 
-type LigneEdit = { key: string; id?: string; libelle: string; motif: string; quantite: number; prixUnitaire: string };
+type LigneEdit = {
+  key: string;
+  id?: string;
+  libelle: string;
+  motif: string;
+  quantite: number;
+  prixUnitaire: string;
+  /** Bénéficiaire propre et NOUVELLES pièces (les pièces déjà jointes sont conservées par le serveur). */
+  details: DetailsArticleSaisie;
+  /** Date de livraison de l'article, « AAAA-MM-JJ » (vide = aucune). */
+  dateLivraison: string;
+  /** Valeur d'origine : une date inchangée n'est pas réexaminée (elle peut être passée). */
+  dateLivraisonInitiale: string;
+};
 
 let compteur = 0;
 const cle = () => `n${++compteur}`;
@@ -40,6 +68,10 @@ export function CorrectionDemande({
   descriptionInitiale,
   lignesInitiales,
   devise,
+  commun,
+  createurId,
+  comptes,
+  dateCommune,
 }: {
   demandeId: string;
   avecLignes: boolean;
@@ -47,6 +79,12 @@ export function CorrectionDemande({
   descriptionInitiale: string | null;
   lignesInitiales: LigneACorriger[];
   devise: string;
+  /** Bénéficiaire par défaut de la demande (non modifiable à la correction) et comptes proposés pour un article. */
+  commun: SaisieBeneficiaire;
+  createurId: string;
+  comptes: { value: string; label: string }[];
+  /** Date de livraison commune de la demande (« AAAA-MM-JJ »), vide si aucune. */
+  dateCommune: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -54,12 +92,36 @@ export function CorrectionDemande({
   const [description, setDescription] = useState(descriptionInitiale ?? "");
   const [pieceJointeUrl, setPieceJointeUrl] = useState<string | null>(null);
   const [lignes, setLignes] = useState<LigneEdit[]>(() =>
-    lignesInitiales.map((l) => ({ key: l.id, id: l.id, libelle: l.libelle, motif: l.motif, quantite: l.quantite, prixUnitaire: String(l.prixUnitaire) }))
+    lignesInitiales.map((l) => ({
+      key: l.id,
+      id: l.id,
+      libelle: l.libelle,
+      motif: l.motif,
+      quantite: l.quantite,
+      prixUnitaire: texteSaisieMontant(l.prixUnitaire, { devise }),
+      details: { beneficiaire: l.beneficiaire, pieces: [] },
+      dateLivraison: l.dateLivraison,
+      dateLivraisonInitiale: l.dateLivraison,
+    }))
   );
+  const aujourdHui = jourCourant();
+  const [dateAppliquee, setDateAppliquee] = useState(dateCommune);
+  const refusDate = (l: LigneEdit) => (l.dateLivraison === l.dateLivraisonInitiale ? null : refusDateLivraison(l.dateLivraison, aujourdHui));
+  const datesValides = lignes.every((l) => refusDate(l) === null);
+  const appliquerDateATous = () => {
+    const refus = refusDateLivraison(dateAppliquee, aujourdHui);
+    if (!dateAppliquee || refus) {
+      toast.error(refus ?? "Choisissez d'abord une date de livraison.");
+      return;
+    }
+    setLignes((ls) => ls.map((l) => ({ ...l, dateLivraison: dateAppliquee })));
+  };
   const motifsValides = lignes.every((l) => l.motif.trim().length >= MOTIF_LIGNE_MIN);
-  const peutResoumettre = avecLignes ? lignes.length > 0 && motifsValides : description.trim().length >= 3;
+  const beneficiairesValides = lignes.every((l) => !l.details.beneficiaire || erreurSaisieBeneficiaire(l.details.beneficiaire) === null);
+  const prixValides = lignes.every((l) => l.prixUnitaire.trim() === "" || analyserMontant(l.prixUnitaire, { devise }).ok);
+  const peutResoumettre = avecLignes ? lignes.length > 0 && motifsValides && beneficiairesValides && datesValides && prixValides : description.trim().length >= 3;
 
-  const total = lignes.reduce((s, l) => s + (Number(l.quantite) || 0) * (Number(l.prixUnitaire) || 0), 0);
+  const total = lignes.reduce((s, l) => s + (Number(l.quantite) || 0) * valeurSaisieMontant(l.prixUnitaire, { devise }), 0);
   const maj = (key: string, patch: Partial<LigneEdit>) => setLignes((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
   function resoumettre() {
@@ -71,7 +133,10 @@ export function CorrectionDemande({
           libelle: l.libelle,
           motif: l.motif,
           quantite: Number(l.quantite),
-          prixUnitaire: Number(l.prixUnitaire) || 0,
+          prixUnitaire: valeurSaisieMontant(l.prixUnitaire, { devise }),
+          beneficiaire: l.details.beneficiaire ? saisieVersChoix(l.details.beneficiaire) : null,
+          pieceJointeUrls: l.details.pieces.map((p) => p.url),
+          dateLivraison: l.dateLivraison,
         })),
         pieceJointeUrl: pieceJointeUrl ?? undefined,
       });
@@ -131,10 +196,23 @@ export function CorrectionDemande({
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => setLignes((ls) => [...ls, { key: cle(), libelle: "", motif: "", quantite: 1, prixUnitaire: "" }])}
+                  onClick={() => setLignes((ls) => [...ls, { key: cle(), libelle: "", motif: "", quantite: 1, prixUnitaire: "", details: { beneficiaire: null, pieces: [] }, dateLivraison: dateAppliquee, dateLivraisonInitiale: "" }])}
                 >
                   <Icon name="plus-circle" className="size-4" />
                   Ajouter une ligne
+                </Button>
+              </div>
+              <div className="flex flex-wrap items-end gap-2 rounded-md bg-muted/40 p-3">
+                <Input
+                  label="Date de livraison commune"
+                  type="date"
+                  min={aujourdHui}
+                  value={dateAppliquee}
+                  onChange={(e) => setDateAppliquee(e.target.value)}
+                  data-date-livraison-commune
+                />
+                <Button type="button" variant="secondary" data-appliquer-date-a-tous onClick={appliquerDateATous}>
+                  Appliquer la date à tous les articles
                 </Button>
               </div>
               {lignes.map((l) => (
@@ -152,17 +230,16 @@ export function CorrectionDemande({
                     value={l.quantite}
                     onChange={(e) => maj(l.key, { quantite: Number(e.target.value) })}
                   />
-                  <Input
+                  <InputMontant
                     aria-label="Prix unitaire"
-                    type="number"
-                    min="0"
-                    step="1"
+                    devise={devise}
                     placeholder="0"
+                    echo={false}
                     value={l.prixUnitaire}
-                    onChange={(e) => maj(l.key, { prixUnitaire: e.target.value })}
+                    onValueChange={(texte) => maj(l.key, { prixUnitaire: texte })}
                   />
                   <span className="text-sm font-bold tabular-nums text-foreground sm:text-right">
-                    {formatMontantDevise((Number(l.quantite) || 0) * (Number(l.prixUnitaire) || 0), devise)}
+                    {formatMontantDevise((Number(l.quantite) || 0) * valeurSaisieMontant(l.prixUnitaire, { devise }), devise)}
                   </span>
                   <div className="flex justify-end sm:row-start-1 sm:col-start-5">
                     {lignes.length > 1 ? (
@@ -183,6 +260,25 @@ export function CorrectionDemande({
                       value={l.motif}
                       onChange={(e) => maj(l.key, { motif: e.target.value })}
                       error={l.motif.trim().length < MOTIF_LIGNE_MIN ? `Motif obligatoire (${MOTIF_LIGNE_MIN} caractères minimum).` : undefined}
+                    />
+                    <Input
+                      label="Date de livraison de l'article"
+                      type="date"
+                      min={aujourdHui}
+                      value={l.dateLivraison}
+                      onChange={(e) => maj(l.key, { dateLivraison: e.target.value })}
+                      error={refusDate(l) ?? undefined}
+                      data-date-livraison-article
+                    />
+                    <DetailsArticleEditeur
+                      details={l.details}
+                      commun={commun}
+                      createurId={createurId}
+                      comptes={comptes}
+                      onChange={(patch) => maj(l.key, { details: { ...l.details, ...patch } })}
+                      erreur={
+                        l.details.beneficiaire ? (erreurSaisieBeneficiaire(l.details.beneficiaire) ?? undefined) : undefined
+                      }
                     />
                   </div>
                 </div>

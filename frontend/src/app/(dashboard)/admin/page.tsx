@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { ServicesSansResponsableBanniere } from "@/components/admin/ServicesSansResponsableBanniere";
 import { PageHeader } from "@/components/ui";
+import { resumeJournalTechnique } from "@/lib/moniteurTaches";
 import { getServicesSansResponsable, prisma } from "backend";
 
 const sections = [
@@ -30,10 +31,16 @@ const sections = [
     title: "Modules",
     description: "Activer ou désactiver les modules du portail.",
   },
+  {
+    href: "/admin/logs",
+    title: "Logs Système",
+    description: "Traçabilité complète des actions effectuées sur le portail.",
+  },
 ];
 
 export default async function AdminHomePage() {
-  const sansResponsable = await getServicesSansResponsable(prisma);
+  const [sansResponsable, journal] = await Promise.all([getServicesSansResponsable(prisma), resumeJournalTechnique()]);
+  const tachesOk = journal.tachesEnRetard.length === 0;
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
       <PageHeader
@@ -52,6 +59,21 @@ export default async function AdminHomePage() {
             <p className="mt-1 text-sm text-muted-foreground">{section.description}</p>
           </Link>
         ))}
+        <Link
+          href="/admin/journal-technique"
+          data-carte="journal-technique"
+          className={`rounded-lg border p-5 shadow-sm transition-shadow hover:shadow-md ${
+            tachesOk && journal.erreurs24h === 0 ? "border-border bg-surface" : "border-danger-border bg-danger-bg"
+          }`}
+        >
+          <h2 className="font-semibold text-foreground">Journal technique</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {journal.erreurs24h} erreur{journal.erreurs24h > 1 ? "s" : ""} sur 24 h
+          </p>
+          <p className={`mt-1 text-sm font-medium ${tachesOk ? "text-success" : "text-danger"}`}>
+            {tachesOk ? "Tâches planifiées à jour" : `${journal.tachesEnRetard.length} tâche${journal.tachesEnRetard.length > 1 ? "s" : ""} en retard`}
+          </p>
+        </Link>
       </div>
     </div>
   );

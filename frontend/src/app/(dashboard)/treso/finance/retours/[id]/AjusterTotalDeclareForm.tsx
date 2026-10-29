@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, InputMontant, Textarea } from "@/components/ui";
+import { analyserMontant, texteSaisieMontant } from "backend/client";
 
 import { ajusterTotalDeclareRetourAction } from "../retourActions";
 
@@ -17,7 +18,7 @@ import { ajusterTotalDeclareRetourAction } from "../retourActions";
  */
 export function AjusterTotalDeclareForm({ retourId, totalActuel }: { retourId: string; totalActuel: number }) {
   const [open, setOpen] = useState(false);
-  const [total, setTotal] = useState(String(totalActuel));
+  const [total, setTotal] = useState(texteSaisieMontant(totalActuel));
   const [motif, setMotif] = useState("");
   const [erreur, setErreur] = useState<string | undefined>();
   const [isPending, startTransition] = useTransition();
@@ -31,9 +32,9 @@ export function AjusterTotalDeclareForm({ retourId, totalActuel }: { retourId: s
   }
 
   function handleSubmit() {
-    const nouveau = Number(total);
-    if (!nouveau || nouveau <= 0) {
-      setErreur("Le nouveau total doit être supérieur à 0.");
+    const analyse = analyserMontant(total);
+    if (!analyse.ok || analyse.centimes <= 0) {
+      setErreur(analyse.ok ? "Le nouveau total doit être supérieur à 0." : analyse.message);
       return;
     }
     if (motif.trim().length < 10) {
@@ -42,7 +43,7 @@ export function AjusterTotalDeclareForm({ retourId, totalActuel }: { retourId: s
     }
     setErreur(undefined);
     startTransition(async () => {
-      const result = await ajusterTotalDeclareRetourAction(retourId, nouveau, motif);
+      const result = await ajusterTotalDeclareRetourAction(retourId, total, motif);
       if (result.status === "success") {
         toast.success(result.message);
         setOpen(false);
@@ -59,16 +60,7 @@ export function AjusterTotalDeclareForm({ retourId, totalActuel }: { retourId: s
         Total déclaré actuel : <span className="font-semibold text-foreground">{totalActuel.toLocaleString("fr-FR")} FCFA</span>.
         L&apos;Assistant Finance pourra ensuite détailler jusqu&apos;au nouveau total.
       </p>
-      <Input
-        label="Nouveau total déclaré (FCFA)"
-        type="number"
-        inputMode="decimal"
-        min="0"
-        step="1"
-        required
-        value={total}
-        onChange={(e) => setTotal(e.target.value)}
-      />
+      <InputMontant label="Nouveau total déclaré (FCFA)" required value={total} onValueChange={setTotal} />
       <Textarea
         label="Motif de l'ajustement"
         rows={2}

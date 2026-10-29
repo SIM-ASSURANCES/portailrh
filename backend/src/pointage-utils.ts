@@ -127,9 +127,9 @@ export function horairesPointage(parametrage: Partial<HorairesPointage> | null |
 export const DELAI_MINIMUM_DEPART_MINUTES = 30;
 
 /**
- * SEULE règle de retard du module (lot 3) : à l'heure jusqu'à la référence + tolérance INCLUSE ; au-delà, le retard
- * se compte depuis la référence (07:45 + 15 : 07:58 à l'heure, 08:10 = 25 min). La référence est `heureDebutMatin`,
- * repoussée à la fin d'une permission du matin (`heureReferenceArriveeMinutes`).
+ * SEULE règle de retard du module : à l'heure jusqu'à la référence + tolérance INCLUSE ; au-delà, le retard se compte
+ * depuis la FIN de la tolérance (décision du 2026-10-15 ; 07:45 + 15 : 08:00 à l'heure, 08:10 = 10 min, avant : 25 min).
+ * La référence est `heureDebutMatin`, repoussée à la fin d'une permission du matin (`heureReferenceArriveeMinutes`).
  */
 export function checkLateStatus(
   now: Date,
@@ -138,8 +138,9 @@ export function checkLateStatus(
 ): { estRetard: boolean; minutesRetard: number } {
   const minutes = getMinutesSinceMidnight(now);
   const reference = heureReferenceArriveeMinutes(config, plages);
-  if (minutes > reference + Math.max(0, config.toleranceRetardMinutes)) {
-    return { estRetard: true, minutesRetard: minutes - reference };
+  const limite = reference + Math.max(0, config.toleranceRetardMinutes);
+  if (minutes > limite) {
+    return { estRetard: true, minutesRetard: minutes - limite };
   }
   return { estRetard: false, minutesRetard: 0 };
 }
@@ -269,7 +270,7 @@ export function timeToMinutes(timeStr: string): number {
 }
 
 /**
- * Plage d'absence autorisée (congé ou permission, modèle `PlageAbsenceAutorisee`) d'UNE journée, réduite à ses
+ * Plage d'absence autorisée pour un congé (modèle `PlageAbsenceAutorisee`) d'UNE journée, réduite à ses
  * horaires "HH:MM". L'appelant filtre lui-même les plages de l'utilisateur et du jour concernés.
  */
 export interface PlageHoraire {

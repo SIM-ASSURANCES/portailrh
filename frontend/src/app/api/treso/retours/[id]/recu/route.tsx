@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 
-import { estRetourNul, getBeneficiaireNom, prisma, referenceRecuRetour } from "backend";
+import { estRetourNul, nomBeneficiaireDemande, prisma, referenceRecuRetour } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
+import { chargerArticleDocument } from "@/lib/pdf/articleReglement";
+import { chargerHistoriqueDocument } from "@/lib/pdf/historiqueDocument";
+import { chargerSignaturesImprimees } from "@/lib/pdf/signaturesDocument";
 import { RetourReceiptDocument, type RetourReceiptData } from "@/lib/pdf/RetourReceiptDocument";
 
 /**
@@ -26,9 +29,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     where: { id },
     include: {
       declarant: { select: { fullName: true } },
-      receptionnePar: { select: { fullName: true } },
+      receptionnePar: { select: { fullName: true, role: { select: { name: true } } } },
       depenses: { orderBy: { date: "asc" } },
-      reglement: { include: { demande: { include: { createur: true, beneficiaireUser: true } } } },
+      reglement: { include: { demande: { include: { createur: { include: { service: true } }, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } } } },
     },
   });
   if (!retour || !retour.estReceptionne || !retour.receptionneAt) {
@@ -65,16 +68,42 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const totalJustifie = depenses.filter((d) => d.etat === "justifiée").reduce((t, d) => t + d.montant, 0);
   const totalNonJustifie = depenses.filter((d) => d.etat !== "justifiée").reduce((t, d) => t + d.montant, 0);
 
+  const article = await chargerArticleDocument(retour.reglement, demande, accesFinance);
+  // Lot L : signatures des étapes validées (ordre du circuit), puis de la personne qui a réceptionné CE retour.
+  const signatures = await chargerSignaturesImprimees(demande.id, {
+    action: "reception_retour",
+    entiteId: retour.id,
+    etape: "Réception du retour de caisse",
+    repli: retour.receptionnePar ? { nom: retour.receptionnePar.fullName, fonction: retour.receptionnePar.role.name, date: retour.receptionneAt } : null,
+  });
   const data: RetourReceiptData = {
+    signatures,
     recuReference,
     demandeReference: demande.reference,
     demandeurNom: demande.createur.fullName,
-    beneficiaireNom: getBeneficiaireNom(demande),
+    serviceNom: demande.createur.service?.name ?? null,
+    demandeCreeeLe: demande.createdAt,
+    article: article
+      ? {
+          libelle: article.libelle,
+          beneficiaireNom: article.beneficiaireNom,
+          montantValide: article.montantValide,
+          dateLivraison: article.dateLivraison,
+          gereLe: article.gereLe,
+        }
+      : null,
+    historique: await chargerHistoriqueDocument({
+      demandeId: demande.id,
+      ligneDemandeId: retour.reglement.ligneDemandeId,
+      reglementCourantId: retour.reglement.id,
+    }),
+    versementBancaire: retour.versementBancaire,
+    beneficiaireNom: nomBeneficiaireDemande(demande, demande.lignes, { seulementValidees: true }),
     montantRegle: Number(retour.reglement.montant),
     mode: retour.reglement.mode,
     regleLe: retour.reglement.confirmeAt ?? retour.reglement.createdAt,
     montantRetourne: Number(retour.montantARetourner),
-    retourNul: estRetourNul({ montantARetourner: Number(retour.montantARetourner), mode: retour.reglement.mode }),
+    retourNul: estRetourNul({ montantARetourner: Number(retour.montantARetourner), versementBancaire: retour.versementBancaire }),
     receptionneLe: retour.receptionneAt,
     declarantNom: retour.declarant.fullName,
     creeParAssistant: retour.creeParAssistant,

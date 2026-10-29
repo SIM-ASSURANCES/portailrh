@@ -24,11 +24,23 @@
 export * from "./generated/prisma/enums";
 export * from "./validation";
 export * from "./beneficiaire";
+export * from "./beneficiaireArticles";
 export * from "./motifLigne";
 export * from "./cheminRetour";
 export * from "./categorisationObligatoire";
+export * from "./budgets";
+export * from "./motifReglement";
+export * from "./montant";
 export * from "./retourNul";
+export * from "./retourExterneRattache";
 export * from "./regularisationDepenses";
+// Pas de congé dans le passé : phrase et règle partagées avec le formulaire (pure, importe seulement congesCalcul).
+export * from "./congesCalcul";
+export * from "./congesPasse";
+export * from "./congesVueEnsemble";
+export * from "./regularisationArticle";
+export * from "./clotureDemande";
+export * from "./dateLivraisonArticle";
 // Constantes/validations pures uniquement (compteur de caractères côté
 // client) — depuis `./feedback-constants`, JAMAIS depuis `./feedback` :
 // même un `export { X } from "./feedback"` nommé (pas `export *`)
@@ -48,4 +60,13 @@ export { FEEDBACK_CONTENT_MIN, FEEDBACK_CONTENT_MAX } from "./feedback-constants
 // pratique (jamais faire confiance à un `content` envoyé par le client).
 export * from "./feedback-questions";
 // Circuit de validation des demandes : moteur PUR (import de types seulement), sûr pour un Client Component.
+export * from "./etatArticles";
+export * from "./reglementArticle";
+export * from "./parcoursArticle";
 export * from "./circuitDemande";
+export * from "./circuitReorientation";
+export * from "./circuitReprise";
+export * from "./soumissionDGEcran";
+export * from "./signatureConstantes";
+export * from "./motifEchange";
+export * from "./reinitialisationEtapes";

@@ -2,6 +2,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
 import { redirect } from "next/navigation";
 import { ProfileClient } from "./ProfileClient";
+import { SignatureProfil } from "./SignatureProfil";
 
 import { format } from "date-fns";
 
@@ -30,16 +31,11 @@ export default async function ProfilPage({
   const endOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0, 23, 59, 59, 999);
   const selectedMonth = format(referenceDate, "yyyy-MM");
 
-  // Données utilisateur complètes (service) + liste des Services existants
-  // pour le sélecteur (voir CLAUDE.md "Modification du service par
-  // l'utilisateur lui-même depuis son profil").
-  const [userDb, services] = await Promise.all([
-    prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { service: { select: { id: true, name: true } }, createdAt: true },
-    }),
-    prisma.service.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
-  ]);
+  // Service lu en base, en lecture seule : l'utilisateur ne le choisit pas (affecté par l'Admin, `/admin/users`).
+  const userDb = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { service: { select: { name: true } }, createdAt: true },
+  });
 
   const canPointer = hasPermission(session, "pointage.pointer");
   const canCreerDemande = hasPermission(session, "treso.creer_demande");
@@ -98,13 +94,18 @@ export default async function ProfilPage({
     },
   });
 
+  const versionsSignature = await prisma.signatureUtilisateur.findMany({
+    where: { userId: session.user.id },
+    orderBy: { version: "desc" },
+    select: { id: true, version: true, creeAt: true },
+  });
+
   return (
     <div className="mx-auto max-w-6xl">
       <ProfileClient
         user={session.user}
         role={session.role}
-        serviceId={userDb?.service?.id ?? null}
-        services={services}
+        serviceNom={userDb?.service?.name ?? null}
         membreDepuis={userDb?.createdAt?.toISOString() ?? null}
         selectedMonth={selectedMonth}
         showPointageStats={canPointer}
@@ -119,6 +120,7 @@ export default async function ProfilPage({
           detail: c.detail ?? "",
         }))}
       />
+      <SignatureProfil versions={versionsSignature.map((v) => ({ id: v.id, version: v.version, creeAt: v.creeAt.toISOString() }))} />
     </div>
   );
 }

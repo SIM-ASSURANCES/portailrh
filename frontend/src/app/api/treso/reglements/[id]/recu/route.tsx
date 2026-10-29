@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 
-import { getBeneficiaireNom } from "backend";
+import { libelleMotifReglement, nomBeneficiaireDemande } from "backend";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
+import { chargerArticleDocument } from "@/lib/pdf/articleReglement";
+import { chargerHistoriqueDocument } from "@/lib/pdf/historiqueDocument";
+import { chargerSignaturesImprimees } from "@/lib/pdf/signaturesDocument";
 import { ReceiptDocument, type ReceiptData } from "@/lib/pdf/ReceiptDocument";
 import { getResteARegler, getTotalRegle } from "backend";
 
@@ -57,8 +60,8 @@ export async function GET(
   const reglement = await prisma.reglement.findUnique({
     where: { id },
     include: {
-      demande: { include: { createur: true, categorie: true, objet: true, beneficiaireUser: true } },
-      auteur: true,
+      demande: { include: { createur: { include: { service: true } }, categorie: true, objet: true, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } } },
+      auteur: { include: { role: true } },
       allocations: { include: { categorie: true } },
     },
   });
@@ -113,11 +116,29 @@ export async function GET(
   const categorieLabelUnique =
     reglement.allocations.length === 1 ? reglement.allocations[0].categorie.label : reglement.demande.categorie?.label ?? null;
 
+  const article = await chargerArticleDocument(reglement, reglement.demande, estFinanceOuDG);
+  const historique = await chargerHistoriqueDocument({
+    demandeId: reglement.demandeId,
+    ligneDemandeId: reglement.ligneDemandeId,
+    reglementCourantId: reglement.id,
+  });
+  // Lot L : signature de chaque personne qui a validé une étape (ordre du circuit), puis du régleur de CE règlement.
+  const signatures = await chargerSignaturesImprimees(reglement.demandeId, {
+    action: "confirmation_reglement",
+    entiteId: reglement.id,
+    etape: "Règlement (décaissement)",
+    repli: reglement.confirmeAt ? { nom: reglement.auteur.fullName, fonction: reglement.auteur.role.name, date: reglement.confirmeAt } : null,
+  });
   const data: ReceiptData = {
+    signatures,
+    historique,
     recuReference,
     demandeReference: reglement.demande.reference,
     demandeurNom: reglement.demande.createur.fullName,
-    beneficiaireNom: getBeneficiaireNom(reglement.demande),
+    serviceNom: reglement.demande.createur.service?.name ?? null,
+    demandeCreeeLe: reglement.demande.createdAt,
+    article,
+    beneficiaireNom: nomBeneficiaireDemande(reglement.demande, reglement.demande.lignes, { seulementValidees: true }),
     categorieLabel: repartitionCategories ? null : categorieLabelUnique,
     objetLabel: repartitionCategories ? null : reglement.demande.objet?.label ?? null,
     repartitionCategories,
@@ -125,6 +146,7 @@ export async function GET(
     mode: reglement.mode,
     confirmeLe: reglement.confirmeAt ?? reglement.createdAt,
     auteurNom: reglement.auteur.fullName,
+    motif: libelleMotifReglement(reglement.motif),
     validateursNoms,
     genereLe: new Date(),
     montantDemande: Number(reglement.demande.montant),

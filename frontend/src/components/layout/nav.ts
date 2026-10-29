@@ -22,6 +22,20 @@ export interface NavItem {
   compteur?: number;
 }
 
+/**
+ * Entrées de menu du module Congés. `null` côté `NavFlags` = aucun accès (branche absente).
+ * `aDecider` : `null` = pas de décision possible pour ce compte (entrée absente), sinon le nombre en pastille.
+ */
+export interface ModuleCongeNav {
+  /** `<module>.soumettre` : « Mes … » et « Nouvelle demande ». */
+  soumettre: boolean;
+  aDecider: number | null;
+  /** « Saisir un congé » : la RH (permission du rôle), comme le layout du module. */
+  saisieRH: boolean;
+  /** « Toutes les demandes » : DG (permission du rôle), RH ou consultation de tous. */
+  toutes: boolean;
+}
+
 export interface NavGroup {
   /** Sous-titre de groupe à l'intérieur d'une branche (facultatif). */
   title?: string;
@@ -55,12 +69,12 @@ export interface NavFlags {
   canAccesDemandes: boolean;
   /**
    * `treso.creer_demande` seule (pas de OR avec `declarer_retour`) : ajoute
-   * "Mon tableau de bord". Distincte de `canAccesDemandes` — un rôle combiné
+   * « Accueil » (ex-« Mon tableau de bord », lot H). Distincte de `canAccesDemandes` — un rôle combiné
    * (ex: Finance + RH) peut avoir `declarer_retour` sans jamais créer ses
-   * propres demandes ; "Mon tableau de bord" (indicateurs Demandé/Validé/
+   * propres demandes ; « Accueil » (indicateurs Demandé/Validé/
    * Réglé sur SES demandes) n'a alors aucun sens et ne doit pas s'ajouter
-   * comme un 3ᵉ "dashboard" redondant à côté de "Tableau de bord" (général)
-   * et "Tableau de bord Finance" — voir CLAUDE.md.
+   * comme un 3ᵉ "dashboard" redondant à côté de « Tableau de bord » (général)
+   * et « Accueil Finance » — voir CLAUDE.md.
    */
   canAccesMonTableauDeBord: boolean;
   canAccesFinanceDemandes: boolean;
@@ -76,9 +90,11 @@ export interface NavFlags {
   canVoirToutesLesDemandes: boolean;
   /** Responsable Finance uniquement (valider_demande sans approuver_validation_complete) : ajoute "Retour externe". */
   canRetourExterne?: boolean;
+  /** Lot J : `treso.modifier_budget_categorie` (paramètre), `treso.valider_budget` (DG) ou `treso.voir_dashboard_finance` (consulte) : ajoute « Budgets ». */
+  canVoirBudgets?: boolean;
   /** `treso.receptionner_retour` : ajoute "Retours en attente" (Finance). */
   canReceptionnerRetour: boolean;
-  /** `treso.voir_dashboard_finance` : ajoute "Tableau de bord Finance" (en tête de branche). */
+  /** `treso.voir_dashboard_finance` : ajoute « Accueil Finance » (en tête de branche). */
   canVoirDashboardFinance: boolean;
   /** `treso.voir_reporting` : ajoute "Reporting". */
   canVoirReporting: boolean;
@@ -101,11 +117,9 @@ export interface NavFlags {
    */
   canGererSoldeOuverture: boolean;
   /**
-   * `isAdmin()` OU `treso.gerer_categories` : ajoute "Catégories" — voir
-   * CLAUDE.md "Gestion des Catégories/Objets ouverte à Finance". Cible
-   * `/treso/finance/categories`, distincte de `/admin/categories`
-   * (toujours accessible séparément à l'Admin via la section
-   * "Administration" de la sidebar).
+   * `isAdmin()` OU `treso.gerer_categories` : fait apparaître « Budgets » (lot J ter) — la gestion des catégories vit dans l'onglet
+   * « Catégories » de cette page ; l'entrée de menu « Catégories » n'existe plus (voir CLAUDE.md « Lot J ter »). Distincte de
+   * `/admin/categories` (toujours accessible séparément à l'Admin via la section "Administration" de la sidebar).
    */
   canGererCategories: boolean;
 
@@ -147,6 +161,10 @@ export interface NavFlags {
    * `null` si le compte n'est ni responsable d'un service ni RH du pointage (entrée absente), sinon le nombre.
    */
   justificationsADecider?: number | null;
+  /** Pointage (phase 5 de la fiabilisation) : responsable actuel d'au moins un service → entrée « Mon équipe ». */
+  canVoirMonEquipe?: boolean;
+  /** Congés : `null` sans accès au module (branche absente). */
+  congesNav?: ModuleCongeNav | null;
 }
 
 /**
@@ -161,6 +179,13 @@ export interface NavFlags {
 export const REINITIALISATION_ITEM: NavItem = {
   label: "Réinitialisation",
   href: "/systeme/reinitialisation",
+  icon: "rotate-ccw",
+};
+
+/** Purge du Pointage seul (`pointage.reinitialiser`), tant que le Pointage n'est pas en service. */
+export const REINITIALISATION_POINTAGE_ITEM: NavItem = {
+  label: "Purge du Pointage",
+  href: "/admin/reinitialisation-pointage",
   icon: "rotate-ccw",
 };
 
@@ -220,6 +245,7 @@ export function getNavBranches({
   canAccesFinanceDemandes,
   canVoirToutesLesDemandes,
   canRetourExterne,
+  canVoirBudgets,
   canReceptionnerRetour,
   canVoirDashboardFinance,
   canVoirReporting,
@@ -237,6 +263,8 @@ export function getNavBranches({
   demandesServiceAValider = null,
   demandesDGADecider = null,
   justificationsADecider = null,
+  canVoirMonEquipe = false,
+  congesNav = null,
 }: NavFlags): NavBranch[] {
   const branches: NavBranch[] = [
     {
@@ -249,7 +277,7 @@ export function getNavBranches({
             ...(canVoirDashboardFinance
               ? [
                   {
-                    label: "Tableau de bord Finance",
+                    label: "Accueil Finance",
                     href: "/treso/finance",
                     icon: "layout-grid",
                     exact: true,
@@ -265,19 +293,10 @@ export function getNavBranches({
                   } satisfies NavItem,
                 ]
               : []),
-            ...(canGererCategories
-              ? [
-                  {
-                    label: "Catégories",
-                    href: "/treso/finance/categories",
-                    icon: "folder-tree",
-                  } satisfies NavItem,
-                ]
-              : []),
             ...(canAccesMonTableauDeBord
               ? [
                   {
-                    label: "Mon tableau de bord",
+                    label: "Accueil",
                     href: "/treso/tableau-de-bord",
                     icon: "layout-grid",
                     exact: true,
@@ -330,6 +349,17 @@ export function getNavBranches({
                     // du détail `/treso/finance/demandes/[id]`, non modifié
                     // par cette tâche).
                     exact: true,
+                  } satisfies NavItem,
+                ]
+              : []),
+            // Lot J ter : la page « Budgets » porte aussi la gestion des catégories (ancienne entrée « Catégories », retirée du
+            // menu : /treso/finance/categories redirige vers l'onglet « Catégories » de cette page).
+            ...(canVoirBudgets || canGererCategories
+              ? [
+                  {
+                    label: "Budgets",
+                    href: "/treso/finance/budgets",
+                    icon: "pie-chart",
                   } satisfies NavItem,
                 ]
               : []),
@@ -402,6 +432,9 @@ export function getNavBranches({
                   } satisfies NavItem,
                 ]
               : []),
+            ...(canVoirMonEquipe
+              ? [{ label: "Mon équipe", href: "/pointage/mon-equipe", icon: "users" } satisfies NavItem]
+              : []),
           ],
         },
         ...(canAccessPointageRH
@@ -417,6 +450,33 @@ export function getNavBranches({
               } satisfies NavGroup,
             ]
           : []),
+      ],
+    },
+    // Congés : branche masquée sans accès (mêmes conditions que le layout du module).
+    {
+      key: "conges",
+      label: "Congés",
+      icon: "calendar",
+      groups: [
+        {
+          items: congesNav
+            ? [
+                ...(congesNav.soumettre
+                  ? [
+                      { label: "Mes congés", href: "/conges", icon: "calendar", exact: true } satisfies NavItem,
+                      { label: "Nouvelle demande", href: "/conges/nouvelle", icon: "plus-circle" } satisfies NavItem,
+                    ]
+                  : []),
+                ...(congesNav.aDecider !== null
+                  ? [{ label: "À décider", href: "/conges/a-decider", icon: "check-circle", compteur: congesNav.aDecider } satisfies NavItem]
+                  : []),
+                ...(congesNav.toutes ? [{ label: "Toutes les demandes", href: "/conges/toutes", icon: "file-text" } satisfies NavItem] : []),
+                ...(congesNav.saisieRH
+                  ? [{ label: "Saisir un congé", href: "/conges/saisie-rh", icon: "plus-circle" } satisfies NavItem]
+                  : []),
+              ]
+            : [],
+        },
       ],
     },
     {
@@ -495,13 +555,10 @@ export const ADMIN_GROUP: NavGroup = {
   items: [
     { label: "Vue d'ensemble", href: "/admin", icon: "layout-grid", exact: true },
     { label: "Utilisateurs", href: "/admin/users", icon: "users" },
-    { label: "Notifications Push", href: "/admin/notifications", icon: "bell" },
     { label: "Rôles & permissions", href: "/admin/roles", icon: "shield-check" },
     { label: "Délégations", href: "/admin/delegations", icon: "shield" },
     { label: "Services", href: "/admin/services", icon: "briefcase" },
     { label: "Modules", href: "/admin/modules", icon: "package" },
     { label: "Catégories", href: "/admin/categories", icon: "folder-tree" },
-    { label: "Logs Système", href: "/admin/logs", icon: "scroll-text" },
   ],
 };
-

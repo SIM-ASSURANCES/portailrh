@@ -127,7 +127,7 @@ function CarteJustification({
       </blockquote>
       {lectureSeule ? (
         <p className="text-sm text-muted-foreground">
-          {j.statut === "ACCEPTEE" ? "Acceptée" : "Refusée"}
+          {j.statut === "ACCEPTEE" ? "Acceptée" : "Rejetée"}
           {j.decideur ? ` par ${j.decideur.fullName}` : ""}
           {j.decisionAt ? ` le ${dateCourte(j.decisionAt)}` : ""}
           {j.statut === "REFUSEE" && j.motifRefus ? `. Motif : ${j.motifRefus}` : "."}

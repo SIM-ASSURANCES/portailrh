@@ -57,6 +57,9 @@ model User {
   /// Demandes dont ce DG a approuvé la "validation complète" (verrou de clôture, Ticket 7).
   demandesApprouveesDG          Demande[]         @relation("DgApprobateurValidationComplete")
   demandesDecideesFinance       Demande[]         @relation("DemandeDecideurFinance")
+  demandesReorienteesVersMoi    Demande[]         @relation("DemandeResponsableEtapeService")
+  /// Demandes clôturées de force par ce compte (lot C).
+  demandesClotureesDeForce      Demande[]         @relation("DemandeClotureForceePar")
   reglementsFaits               Reglement[]       @relation("ReglementAuteur")
   retoursDeclares               RetourCaisse[]    @relation("RetourDeclarant")
   retoursReceptionnes           RetourCaisse[]    @relation("RetourReceptionnaire")
@@ -67,8 +70,11 @@ model User {
   /// Finance — `validerLignesAction` (voir CLAUDE.md "Validation ligne par
   /// ligne").
   lignesDemandeDecidees         LigneDemande[]    @relation("LigneDemandeDecideur")
+  lignesDemandeDecideesFinance  LigneDemande[]    @relation("LigneDemandeDecideurFinance")
   lignesSoumisesAuDG            LigneDemande[]    @relation("LigneDemandeSoumiseDGPar")
   lignesDecideesParDG           LigneDemande[]    @relation("LigneDemandeDecisionDGPar")
+  /// Articles dont il est le bénéficiaire PROPRE (autonomie des articles, lot A).
+  lignesBeneficiaire            LigneDemande[]    @relation("LigneDemandeBeneficiaire")
   /// Signalements d'erreur sur un retour de caisse — voir CLAUDE.md
   /// "Signalement d'erreur par le Collaborateur".
   signalementsRetourEmis        SignalementRetour[] @relation("SignalementRetourSignalePar")
@@ -78,6 +84,12 @@ model User {
   retoursExternesCollaborateur  RetourExterne[]      @relation("RetourExterneCollaborateur")
   retoursExternesCrees          RetourExterne[]      @relation("RetourExterneCreePar")
   reinitialisationsSysteme      ReinitialisationSysteme[]
+  reinitialisationsPointage     ReinitialisationPointage[]
+  /// Lot L : signatures manuscrites enrôlées (une ligne par version) et actions signées.
+  signatures                    SignatureUtilisateur[] @relation("SignatureUtilisateur")
+  actionsSignees                ActionSignee[]         @relation("ActionSigneeSignataire")
+  actionsSigneesAuNomDe         ActionSignee[]         @relation("ActionSigneeAuNomDe")
+  pointageMisEnService          PointageMiseEnService[]
   remboursementsRetourProposes  RemboursementRetour[] @relation("RemboursementRetourProposePar")
   remboursementsRetourValides   RemboursementRetour[] @relation("RemboursementRetourValidePar")
   retoursExceptionnelsValides   RetourExceptionnel[] @relation("RetourExceptionnelValidePar")
@@ -126,6 +138,12 @@ model User {
   encAudits         EncAudit[]         @relation("EncAuditUser")
   encMisesEnService EncMiseEnService[] @relation("EncMiseEnServiceActiveePar")
   encParametresMaj  EncParametre[]     @relation("EncParametreMajPar")
+  /// Paramètres Trésorerie (lot I) : `SetNull` (le changement reste tracé dans `HistoriqueEntry`).
+  parametresTresorerieMaj ParametreTresorerie[] @relation("ParametreTresorerieMajPar")
+  budgetsSoumis           BudgetParametrage[]   @relation("BudgetParametrageSoumisPar")
+  budgetsDecides          BudgetParametrage[]   @relation("BudgetParametrageDecidePar")
+  depassementsDemandes    BudgetDepassement[]   @relation("BudgetDepassementDemandePar")
+  depassementsConfirmes   BudgetDepassement[]   @relation("BudgetDepassementConfirmePar")
   encPiecesDeposees EncPieceJointe[]   @relation("EncPieceJointeDeposeePar")
   /// Paramètres V2 (docs/encaissements-conception.md §5.2) — toutes en `onDelete: Restrict`, sauf les créateurs des
   /// deux référentiels dont la toute première ligne est posée par la migration (`creeParId` nul dans ce seul cas).
@@ -141,6 +159,13 @@ model User {
   encEncaissementsConfirmes EncEncaissement[] @relation("EncEncaissementConfirmePar")
   encEncaissementsNonRecus  EncEncaissement[] @relation("EncEncaissementNonRecuPar")
   encSignalementsTraites EncSignalement[] @relation("EncSignalementTraitePar")
+
+  // Congés
+  congesDemandes                DemandeConge[]      @relation("CongeDemandeur")
+  congesCrees                   DemandeConge[]      @relation("CongeCreateur")
+  congesApprouves               DemandeConge[]      @relation("CongeApprobateur")
+  congesValides                 DemandeConge[]      @relation("CongeValidateur")
+  congesAnnules                 DemandeConge[]      @relation("CongeAnnulateur")
 }
 
 model Role {
@@ -266,6 +291,11 @@ model HistoriqueEntry {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
+  /// Lot L bis : action signée dont cette ligne est une conséquence (posée à la création, dans la même transaction que
+  /// l'action). Vide pour une ligne qui n'est pas la suite d'une action signée, ou antérieure au lot L bis.
+  actionSigneeId String?
+  actionSignee   ActionSignee? @relation(fields: [actionSigneeId], references: [id], onDelete: SetNull)
+
   // PERF-06 : Index composé (entity + entityId) pour les requêtes
   // "tous les historiques d'une Demande/User/etc." qui filtrent sur les deux.
   // Index sur createdAt pour les tris chronologiques et les recherches par
@@ -273,6 +303,7 @@ model HistoriqueEntry {
   @@index([entity, entityId])
   @@index([createdAt])
   @@index([userId])
+  @@index([actionSigneeId])
 }
 
 /// Niveaux de priorité des notifications (routage des canaux)
@@ -471,6 +502,10 @@ model Categorie {
   /// calculé). Aucun renouvellement automatique périodique : un montant
   /// total consommable jusqu'à épuisement, à réajuster manuellement par
   /// l'Admin (`admin/categories`).
+  ///
+  /// **Lot J (2026-10-19) — ANCIENNE valeur, plus lue.** Le budget d'une catégorie est désormais porté par
+  /// `BudgetParametrage` (date d'effet, seuils, validation du DG) ; la migration a copié chaque `budgetAlloue` existant en
+  /// paramétrage validé par le DG. Colonne conservée (historique, retour arrière), jamais écrite par l'application.
   budgetAlloue Decimal? @db.Decimal(14, 2)
 
   demandes             Demande[]                      @relation("DemandeCategorie")
@@ -479,6 +514,8 @@ model Categorie {
   /// ne couvre que les `DEPENSE_DIRECTE` depuis cette tâche.
   lignesDemande        LigneDemande[]                 @relation("LigneDemandeCategorie")
   allocationsReglement ReglementCategorieAllocation[]
+  /// Paramétrages de budget de cette catégorie (lot J) : seule source du budget EN VIGUEUR (`budgetAlloue` est l'ancienne valeur).
+  budgetsParametres    BudgetParametrage[]
 }
 
 model Objet {
@@ -565,11 +602,26 @@ model Demande {
   /// Lignes d'articles (Libellé / Nombre / Prix unitaire). `montant` ci-dessus
   /// est la somme des (quantite × prixUnitaire) — jamais saisi directement.
   lignes LigneDemande[]
+  /// Dépassements de budget (seuil rouge) demandés/confirmés pour cette demande (lot J).
+  depassementsBudget BudgetDepassement[]
 
   /// Motif du dernier rejet : ancien rejet définitif, ou renvoi en correction / rejet DG du circuit (voir
   /// `niveauRejet`).
   motifRejet   String?
   motifCloture String?
+  /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de chaque échange Finance ↔ DG sur la demande entière — dernier envoi de la
+  /// Finance au DG (`motifSoumissionDG`) et dernière réponse du DG à la Finance (`motifDecisionDG` : validation, rejet, approbation
+  /// de clôture…). `null` pour les échanges antérieurs au lot M (affichés « Non renseigné ») ; l'historique garde chaque motif.
+  motifSoumissionDG String?
+  motifDecisionDG   String?
+  /// Lot C : demande clôturée de force (articles non régularisés), avec motif (`motifCloture`, 10 caractères minimum).
+  /// Aucune écriture de caisse n'est touchée. `clotureForceeArticles` : instantané des articles non terminés (libellé,
+  /// bénéficiaire, montants, solde restant) au moment de la clôture, relu par le reporting et l'affichage.
+  clotureForcee         Boolean   @default(false)
+  clotureForceeAt       DateTime?
+  clotureForceeParId    String?
+  clotureForceePar      User?     @relation("DemandeClotureForceePar", fields: [clotureForceeParId], references: [id])
+  clotureForceeArticles Json?
 
   /// Circuit de validation (2026-10-06, voir backend/src/circuitDemande.ts). Pas de valeur par défaut pour
   /// `etapeCircuit` : toute création de demande choisit sa première étape.
@@ -595,6 +647,11 @@ model Demande {
   /// approbation de clôture), voir `MESSAGE_DEUX_PERSONNES`. `null` tant qu'aucune décision Finance n'est prise.
   decideurFinanceId            String?
   decideurFinance              User?        @relation("DemandeDecideurFinance", fields: [decideurFinanceId], references: [id])
+  /// Lot K : décideur de l'étape Service posé par une RÉORIENTATION (autre responsable de service disponible). `null` =
+  /// le responsable ACTUEL du service du demandeur (règle d'origine). Remis à `null` à la resoumission après correction.
+  /// Le service du demandeur ne change jamais. Voir `backend/src/circuitReorientation.ts`.
+  responsableEtapeServiceId    String?
+  responsableEtapeService      User?        @relation("DemandeResponsableEtapeService", fields: [responsableEtapeServiceId], references: [id])
   /// Dernière version de la description écrite par le DEMANDEUR lors d'une correction. `null` = jamais corrigée :
   /// sa version est alors `descriptionOriginale ?? description`. Le demandeur voit toujours sa dernière version.
   descriptionDemandeur         String?
@@ -634,6 +691,8 @@ model Demande {
   pieces        PieceJointe[]
   /// Retours exceptionnels post-clôture (voir CLAUDE.md), distincts de `RetourCaisse`.
   retoursExceptionnels RetourExceptionnel[]
+  /// Retours externes rattachés à cette demande (lot G bis).
+  retoursExternes RetourExterne[] @relation("RetourExterneDemande")
   reglements    Reglement[]
   journalCaisse JournalCaisse[]
 
@@ -648,6 +707,7 @@ model Demande {
   // dashboard Finance et le filtre "validations en attente DG".
   @@index([validationCompleteParDG, statut])
   @@index([etapeCircuit])
+  @@index([responsableEtapeServiceId])
 }
 
 /// Stockage local sur disque (`./uploads/`, hors dépôt git — voir
@@ -693,7 +753,15 @@ model PieceJointe {
   remboursementRetour  RemboursementRetour?
   retourExceptionnelId String?             @unique
   retourExceptionnel   RetourExceptionnel? @relation(fields: [retourExceptionnelId], references: [id], onDelete: SetNull)
+  /// Pièce jointe PROPRE à un article de la demande (lot A « autonomie des articles »). `demandeId` reste renseigné
+  /// (droits d'accès calculés par demande). Vide : pièce de la demande entière, ou d'un autre objet (dépense…).
+  /// Pas `@unique` : plusieurs pièces par article. `SetNull` : si l'article est supprimé (correction avant toute
+  /// décision), la pièce redevient une pièce de la demande plutôt que de disparaître.
+  ligneDemandeId       String?
+  ligneDemande         LigneDemande?       @relation(fields: [ligneDemandeId], references: [id], onDelete: SetNull)
   createdAt       DateTime       @default(now())
+
+  @@index([ligneDemandeId])
 }
 
 /// Ligne d'article d'une Demande d'Achat ("Tableau des articles" du
@@ -716,6 +784,9 @@ model LigneDemande {
   libelle      String
   quantite     Int
   prixUnitaire Decimal @db.Decimal(14, 2)
+  /// Lot J : reste du budget global et de la catégorie APRÈS la validation de cet article (photo posée une seule fois, à la
+  /// première validation — celle du DG ou de la Finance —, jamais recalculée). Gestion interne : jamais montrée au demandeur.
+  budgetApresValidation Json?
 
   /// Version ORIGINALE de `libelle`, immuable une fois posée — même
   /// mécanique exacte que `Demande.descriptionOriginale` (voir CLAUDE.md
@@ -751,6 +822,11 @@ model LigneDemande {
   decideParId      String?
   decidePar        User?              @relation("LigneDemandeDecideur", fields: [decideParId], references: [id])
   decideAt         DateTime?
+  /// Compte qui a décidé l'article COMME FINANCE (lot B, 2026-10-15) : sert à la règle des deux personnes par
+  /// article. Distinct de `decideParId`, qui garde l'auteur DG pour un article validé par le DG. `null` tant que
+  /// l'article n'a pas été décidé par la Finance (ou décidé par le DG seul, cas où la Finance n'a rien décidé).
+  decideurFinanceId String?
+  decideurFinance   User?              @relation("LigneDemandeDecideurFinance", fields: [decideurFinanceId], references: [id])
 
   /// Soumission de la ligne au DG par la Finance (2026-10-10, `treso.soumettre_dg`) : seules les lignes soumises sont
   /// vues et décidées par le DG. Une ligne refusée par le DG revient à la Finance (resoumission ou refus définitif).
@@ -765,6 +841,10 @@ model LigneDemande {
   decisionDGParId  String?
   decisionDGPar    User?              @relation("LigneDemandeDecisionDGPar", fields: [decisionDGParId], references: [id])
   motifRefusDG     String?
+  /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de la dernière soumission de cet article au DG par la Finance, et de la
+  /// dernière réponse du DG (validation OU rejet ; `motifRefusDG` reste le motif du rejet, recopié ici). `null` avant le lot M.
+  motifSoumissionDG String?
+  motifDecisionDG   String?
 
   demandeId String
   demande   Demande @relation(fields: [demandeId], references: [id])
@@ -786,7 +866,36 @@ model LigneDemande {
   objetId     String?
   objet       Objet?     @relation(fields: [objetId], references: [id])
 
+  /// Bénéficiaire PROPRE à l'article (autonomie des articles, lot A, 2026-10-14). `beneficiaireType` vide = l'article
+  /// HÉRITE du bénéficiaire par défaut de la demande (`Demande.beneficiaire*`) ; renseigné, les trois champs décrivent
+  /// le bénéficiaire de cet article (même règle que la demande : un compte OU un nom libre, jamais les deux). À la
+  /// création, un article dont le bénéficiaire égale la valeur commune n'a aucune valeur propre.
+  beneficiaireType   BeneficiaireType?
+  beneficiaireUserId String?
+  beneficiaireUser   User?            @relation("LigneDemandeBeneficiaire", fields: [beneficiaireUserId], references: [id])
+  beneficiaireNom    String?
+
+  /// Date de livraison de CET article (lot G, 2026-10-14). Vide pour les articles antérieurs (affichée « — », aucune
+  /// reprise) ; à la création, un article sans date propre reçoit la date commune de la demande
+  /// (`Demande.dateLivraisonSouhaitee`), copiée telle quelle — jamais un héritage dynamique.
+  dateLivraison DateTime? @db.Date
+
+  /// Pièces jointes de CET article (plusieurs possibles). Une pièce de la demande entière (« pièce commune ») n'a
+  /// pas de `ligneDemandeId`.
+  pieces PieceJointe[]
+
+  /// Règlements de CET article (autonomie des articles, lot D, 2026-10-16) : un règlement concerne un seul article.
+  reglements Reglement[]
+
+  /// Retours exceptionnels post-clôture rattachés à CET article (lot E).
+  retoursExceptionnels RetourExceptionnel[]
+  /// Retours externes (fonds versé par banque, rendu à la caisse) rattachés à CET article (lot G bis).
+  retoursExternes RetourExterne[] @relation("RetourExterneLigne")
+
   createdAt DateTime @default(now())
+
+  @@index([beneficiaireUserId])
+  @@index([decideurFinanceId])
 }
 
 model Reglement {
@@ -796,9 +905,20 @@ model Reglement {
   estConfirme     Boolean       @default(false)
   estAnnule       Boolean       @default(false)
   motifAnnulation String?
+  /// Motif / nature du règlement (lot I, 2026-10-19) : obligatoire (5 caractères minimum) pour tout NOUVEAU règlement,
+  /// côté serveur et à l'écran, Caisse comme Banque. `null` pour les règlements antérieurs : jamais bloqués ni modifiés,
+  /// affichés « Non renseigné ».
+  motif           String?
 
   demandeId String
   demande   Demande @relation(fields: [demandeId], references: [id])
+
+  /// Article réglé (lot D, 2026-10-16) : un règlement = un article. `null` pour une demande sans article (dépense
+  /// directe) et pour un règlement antérieur au lot D pas encore rattaché (cas ambigu : plusieurs articles validés,
+  /// rattachement à faire à la main — voir `recalculer-reglements-articles.ts`). Clé `RESTRICT` : un article réglé ne
+  /// peut pas disparaître sans emporter son règlement.
+  ligneDemandeId String?
+  ligneDemande   LigneDemande? @relation(fields: [ligneDemandeId], references: [id], onDelete: Restrict)
 
   auteurId String
   auteur   User   @relation("ReglementAuteur", fields: [auteurId], references: [id])
@@ -829,6 +949,7 @@ model Reglement {
   // générés sur chaque affichage Finance).
   @@index([demandeId])
   @@index([demandeId, estConfirme, estAnnule])
+  @@index([ligneDemandeId])
 }
 
 /// Une ligne = la part explicite de `Reglement.montant` que Finance a
@@ -870,6 +991,11 @@ model RetourCaisse {
   /// (`getSoldeCaisse`) qu'aucun solde financier ne se saisit à la main.
   montantARetourner Decimal        @db.Decimal(14, 2)
   estReceptionne    Boolean        @default(false)
+  /// Ancien retour sur règlement Banque (avant le lot G, 2026-10-14) : versement à la banque justifié par un bordereau, écrit
+  /// dans `JournalBanque` (RETOUR), JAMAIS en caisse. Posé par la migration pour ces seuls retours ; tout nouveau retour (Caisse
+  /// ou Banque) est rendu en espèces à la caisse et écrit à la réception dans `JournalCaisse`. Une écriture déjà passée n'est
+  /// jamais modifiée : ces anciens retours gardent leur traitement (non modifiables, réception sans écriture de caisse).
+  versementBancaire Boolean        @default(false)
   depenses          DepenseLigne[]
 
   reglementId String
@@ -1308,9 +1434,96 @@ model PlageAbsenceAutorisee {
   userId String
   user   User   @relation(fields: [userId], references: [id])
 
+  /// Demande de congé qui a créé la plage : l'annulation supprime par cette clé, jamais par plage de dates ni par le texte de la
+  /// description. Nulle pour une plage créée autrement.
+  demandeCongeId      String?
+  demandeConge        DemandeConge?      @relation(fields: [demandeCongeId], references: [id], onDelete: Cascade)
+
+  /// Plage posée dès la soumission, avant décision : la journée n'est pas comptée absente, mais le congé n'est pas encore validé.
+  provisoire Boolean @default(false)
+
   createdAt DateTime @default(now())
 
   @@index([userId, date])
+  @@index([demandeCongeId])
+}
+
+// ============================================================
+// CONGÉS (module simplifié, 2026-10-19)
+// ============================================================
+//
+// Circuit : responsable du service d'abord (Service.responsableId, aucune permission), puis la RH (rôle porteur de
+// `conges.valider_rh`) ; repli DG si la RH est le demandeur (moteur pur backend/src/circuitConge.ts). Seul point de
+// contact avec le Pointage : `PlageAbsenceAutorisee`.
+
+/// Nature d'une demande : un congé, ou une permission exceptionnelle (mariage, décès, naissance…). Même circuit.
+enum NatureConge {
+  CONGE
+  PERMISSION_EXCEPTIONNELLE
+}
+
+enum StatutDemandeConge {
+  EN_ATTENTE_RESPONSABLE
+  EN_ATTENTE_RH
+  VALIDEE
+  REJETEE
+  ANNULEE
+  MODIFICATION_DEMANDEE
+}
+
+/// Demande de congé (module simplifié, 2026-10-19) : aucun solde, aucun type, aucune pièce jointe. Circuit : responsable du
+/// service puis RH (backend/src/circuitConge.ts). Les jours demandés sont couverts par des plages d'absence autorisée.
+model DemandeConge {
+  id                        String             @id @default(cuid())
+  /// CNG-AAAAMM-NNNN, calculée sous verrou consultatif dans la transaction de création.
+  reference                 String             @unique
+  nature                    NatureConge
+  motif                     String
+  dateDebut                 DateTime           @db.Date
+  dateFin                   DateTime           @db.Date
+  /// Jours du lundi au vendredi hors `JourFerie` : information seulement.
+  nbJoursOuvres             Int
+  statut                    StatutDemandeConge @default(EN_ATTENTE_RESPONSABLE)
+  /// Étape du responsable requise, fixée à la soumission (affichage « non requise » dans la frise).
+  etapeResponsableRequise   Boolean            @default(true)
+  /// Congé enregistré par la RH pour le salarié (statut VALIDEE d'emblée).
+  saisieParRH               Boolean            @default(false)
+  motifRejet                String?
+  motifModification         String?
+  motifAnnulation           String?
+  /// Observation facultative de la RH, jointe à sa décision.
+  observationRH             String?
+  /// Refus après la date de début : les jours déjà passés et non pointés ont-ils été comptés comme absences ? (`null` : sans objet)
+  joursPassesComptesAbsents Boolean?
+
+  userId        String
+  user          User      @relation("CongeDemandeur", fields: [userId], references: [id])
+  /// = userId, sauf saisie par la RH.
+  creeParId     String
+  creePar       User      @relation("CongeCreateur", fields: [creeParId], references: [id])
+  approuveParId String?
+  approuvePar   User?     @relation("CongeApprobateur", fields: [approuveParId], references: [id])
+  approuveAt    DateTime?
+  /// Auteur de la décision RH (validation ou refus à l'étape RH).
+  valideParId   String?
+  validePar     User?     @relation("CongeValidateur", fields: [valideParId], references: [id])
+  valideAt      DateTime?
+  annuleParId   String?
+  annulePar     User?     @relation("CongeAnnulateur", fields: [annuleParId], references: [id])
+  annuleAt      DateTime?
+
+  /// Début de l'étape en cours et dernier rappel envoyé (rappel quotidien, planificateur).
+  etapeDepuis     DateTime  @default(now())
+  dernierRappelAt DateTime?
+
+  plages PlageAbsenceAutorisee[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([statut])
+  @@index([dateDebut, dateFin])
 }
 
 // ============================================================
@@ -1430,6 +1643,10 @@ model RetourExceptionnel {
   id        String                   @id @default(cuid())
   demandeId String
   demande   Demande                  @relation(fields: [demandeId], references: [id])
+  /// Article concerné (lot E, 2026-10-17). Vide pour une demande sans article (dépense directe) et pour un retour
+  /// antérieur au lot E sur une demande à plusieurs articles validés (cas ambigu : jamais attribué au hasard).
+  ligneDemandeId String?
+  ligneDemande   LigneDemande?            @relation(fields: [ligneDemandeId], references: [id], onDelete: Restrict)
   montant   Decimal                  @db.Decimal(14, 2)
   motif     String
   statut    StatutRetourExceptionnel @default(EN_ATTENTE_VALIDATION)
@@ -1448,6 +1665,7 @@ model RetourExceptionnel {
 
   @@index([demandeId])
   @@index([statut])
+  @@index([ligneDemandeId])
 }
 
 /// Retour EXTERNE (voir CLAUDE.md "Retour externe") : argent revenu en caisse
@@ -1470,11 +1688,20 @@ model RetourExterne {
   /// côté applicatif ; nullable en base uniquement pour les lignes antérieures.
   pieceJointeChequeId  String?  @unique
   pieceJointeCheque    PieceJointe? @relation("RetourExternePieceCheque", fields: [pieceJointeChequeId], references: [id])
+  /// Rattachement FACULTATIF à une demande et à son article (lot G bis, 2026-10-19) : retour d'un fonds versé par
+  /// BANQUE, rendu en espèces à la caisse. Rattaché, il compte comme retour reçu de l'article (solde à régulariser) ;
+  /// non rattaché, il reste totalement autonome (cas du chèque hors système). Vide pour une demande sans article.
+  demandeId            String?
+  demande              Demande? @relation("RetourExterneDemande", fields: [demandeId], references: [id], onDelete: Restrict)
+  ligneDemandeId       String?
+  ligneDemande         LigneDemande? @relation("RetourExterneLigne", fields: [ligneDemandeId], references: [id], onDelete: Restrict)
   creeParId            String
   creePar              User     @relation("RetourExterneCreePar", fields: [creeParId], references: [id])
   creeAt               DateTime @default(now())
 
   @@index([creeAt])
+  @@index([demandeId])
+  @@index([ligneDemandeId])
 }
 
 /// Réinitialisation à USAGE UNIQUE avant mise en production (voir CLAUDE.md "Réinitialisation avant mise en
@@ -1974,4 +2201,261 @@ model EncSignalement {
   @@index([statut, creeAt])
   /// Fiche police : signalements d'une ligne rejetée, retrouvés par n° de police (commit 6-0).
   @@index([numPolice])
+}
+
+// ---------------------------------------------------------------------------
+// Planificateur intégré (fiabilisation du pointage, phase 2, 2026-10-14)
+// ---------------------------------------------------------------------------
+
+enum TacheNom {
+  RELANCES_JUSTIFICATION
+  ABSENCES
+  PURGE
+  RAPPELS_CONGES
+}
+
+enum DeclenchementTache {
+  PLANIFICATEUR
+  MANUEL
+}
+
+enum StatutExecutionTache {
+  SUCCES
+  ECHEC
+  IGNOREE
+}
+
+/// Paramètres du module Trésorerie modifiables par la Finance (lot I, 2026-10-19). Une ligne par paramètre, jamais
+/// supprimée ; chaque changement est historisé dans `HistoriqueEntry` (entité `ParametreTresorerie`, entityId = `cle`).
+/// `categorisation.obligatoire_a_partir_du` : `valeurDate` nul = la catégorisation n'est jamais obligatoire pour valider ;
+/// sinon elle l'est à partir de ce jour (inclus). Posé à NUL par la migration : rien n'est bloqué au déploiement.
+model ParametreTresorerie {
+  cle        String    @id
+  valeurDate DateTime? @db.Date
+  majAt      DateTime  @default(now())
+  majParId   String?
+  majPar     User?     @relation("ParametreTresorerieMajPar", fields: [majParId], references: [id], onDelete: SetNull)
+}
+
+enum PorteeBudget {
+  GLOBAL
+  CATEGORIE
+}
+
+enum ModeSeuilBudget {
+  POURCENTAGE
+  MONTANT
+}
+
+enum StatutParametrageBudget {
+  EN_ATTENTE
+  VALIDE
+  REFUSE
+}
+
+enum StatutDepassementBudget {
+  /// Demandé par la Finance, en attente du DG.
+  DEMANDE
+  /// Confirmé par le DG (motif obligatoire), pas encore utilisé par une validation.
+  CONFIRME
+  /// Utilisé par la validation qu'il autorisait (à usage unique).
+  UTILISE
+}
+
+/// Paramétrage de budget (lot J, 2026-10-19) : budget GLOBAL ou d'une CATÉGORIE, avec date d'effet (début, fin facultative) et
+/// seuils d'alerte facultatifs. Soumis par la Finance, utilisable seulement une fois VALIDÉ par le DG ; jamais modifié en
+/// place : un nouveau paramétrage remplace l'ancien à sa date d'effet (`budgetEnVigueur`, `backend/src/budgets.ts`), l'historique
+/// reste. `categorieId` renseignée pour CATEGORIE seulement. Seuil : `modeSeuil` nul = aucune alerte ; sinon `seuilOrange` >
+/// `seuilRouge` ≥ 0 (pourcentage restant ou montant restant). Les budgets existants avant le lot J sont repris par la migration
+/// (`repris`, validés, début 2000-01-01, sans fin, seuil 20 % / 0 %) ; leur `soumisParId` est nul.
+model BudgetParametrage {
+  id          String                  @id @default(cuid())
+  portee      PorteeBudget
+  categorieId String?
+  categorie   Categorie?              @relation(fields: [categorieId], references: [id], onDelete: Restrict)
+  /// Budget d'une CATÉGORIE (saisi par la Finance). `null` pour le budget GLOBAL (lot J ter) : c'est le solde de caisse réel,
+  /// jamais saisi — le paramétrage global ne porte que les seuils d'alerte (en montant).
+  montant     Decimal?                @db.Decimal(14, 2)
+  dateDebut   DateTime                @db.Date
+  dateFin     DateTime?               @db.Date
+  modeSeuil   ModeSeuilBudget?
+  seuilOrange Decimal?                @db.Decimal(14, 2)
+  seuilRouge  Decimal?                @db.Decimal(14, 2)
+  statut      StatutParametrageBudget @default(EN_ATTENTE)
+  repris      Boolean                 @default(false)
+  soumisParId String?
+  soumisPar   User?                   @relation("BudgetParametrageSoumisPar", fields: [soumisParId], references: [id])
+  soumisAt    DateTime                @default(now())
+  decideParId String?
+  decidePar   User?                   @relation("BudgetParametrageDecidePar", fields: [decideParId], references: [id])
+  decideAt    DateTime?
+  /// Obligatoire (10 caractères minimum depuis le lot M) quand le DG rejette ; `statut = REFUSE` reste la valeur interne (« Rejeté »).
+  motifRefus  String?
+  /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de l'envoi au DG par la Finance, et de la réponse du DG (validation comme
+  /// rejet). `null` pour les paramétrages antérieurs au lot M (affichés « Non renseigné »).
+  motifSoumission String?
+  motifDecision   String?
+
+  @@index([portee, categorieId, statut])
+  @@index([statut, soumisAt])
+}
+
+/// Dépassement du seuil rouge d'un budget (lot J) : la validation d'une demande est bloquée tant que le DG n'a pas confirmé le
+/// dépassement avec un motif. La Finance le DEMANDE (statut DEMANDE, `resume` = photo des périmètres en alerte) ; le DG le
+/// CONFIRME (motif obligatoire) ; la validation qui s'en sert le fait passer à UTILISE (usage unique). Quand c'est le DG qui
+/// valide, il confirme dans le même geste : la ligne est créée directement UTILISE (demandeur = confirmateur).
+model BudgetDepassement {
+  id           String                  @id @default(cuid())
+  demandeId    String
+  demande      Demande                 @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+  statut       StatutDepassementBudget
+  resume       String
+  demandeParId String
+  demandePar   User                    @relation("BudgetDepassementDemandePar", fields: [demandeParId], references: [id])
+  demandeAt    DateTime                @default(now())
+  confirmeParId String?
+  confirmePar  User?                   @relation("BudgetDepassementConfirmePar", fields: [confirmeParId], references: [id])
+  confirmeAt   DateTime?
+  motif        String?
+  /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de la demande de confirmation faite au DG par la Finance (`motif` = celui du DG).
+  motifDemande String?
+  utiliseAt    DateTime?
+  /// Lot J bis : montants que cette confirmation couvre, par article (ou dépense directe) et par catégorie
+  /// (`[{ ligneId, categorieId, montant }]`), posés à l'utilisation — le règlement de l'article peut les dépasser du reste du budget.
+  couverture   Json?
+
+  @@index([demandeId, statut])
+  @@index([statut, demandeAt])
+}
+
+/// Une ligne par exécution d'une tâche planifiée, planifiée ou manuelle (moniteur de `/admin/journal-technique`).
+/// `erreur` : texte court, sans donnée personnelle. `bilan` : chiffres de l'exécution (JSON).
+model ExecutionTache {
+  id            String               @id @default(cuid())
+  tache         TacheNom
+  declenchement DeclenchementTache
+  debut         DateTime
+  fin           DateTime
+  statut        StatutExecutionTache
+  bilan         Json?
+  erreur        String?
+
+  @@index([tache, debut])
+}
+
+// ---------------------------------------------------------------------------
+// Journal technique (fiabilisation du pointage, phase 3, 2026-10-14)
+// ---------------------------------------------------------------------------
+
+enum NiveauJournal {
+  ERREUR
+  AVERTISSEMENT
+}
+
+enum SourceJournal {
+  EMAIL
+  PUSH
+  TACHE
+  IMPORT
+  AUTRE
+}
+
+/// Incidents techniques (envoi d'e-mail ou de push en échec, tâche en échec, configuration absente) visibles dans
+/// `/admin/journal-technique`. `contexte` : identifiants seulement (jamais de contenu d'e-mail, mot de passe ni jeton).
+model JournalTechnique {
+  id        String        @id @default(cuid())
+  niveau    NiveauJournal
+  source    SourceJournal
+  /// Code court et stable (SMTP_ECHEC, FCM_ECHEC, TACHE_ECHEC…).
+  code      String
+  message   String
+  contexte  Json?
+  createdAt DateTime      @default(now())
+
+  @@index([createdAt])
+  @@index([source, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Clôture initiale et réinitialisation du Pointage seul (2026-10-14)
+// ---------------------------------------------------------------------------
+
+/// Marqueurs « une seule fois » (ex : clôture initiale des justifications et absences en attente au premier passage du
+/// planificateur en production). Jamais purgé : la clé est unique, l'insertion fait office de verrou.
+model MarqueurUnique {
+  cle   String   @id
+  creeAt DateTime @default(now())
+  bilan Json?
+}
+
+/// Journal d'audit PERMANENT des purges du Pointage seul (jamais purgé) : une ligne par purge.
+model ReinitialisationPointage {
+  id               String   @id @default(cuid())
+  effectueeAt      DateTime @default(now())
+  effectueeParId   String
+  effectueePar     User     @relation(fields: [effectueeParId], references: [id])
+  /// Nombre de lignes supprimées par table.
+  decompte         Json
+  /// Empreinte SHA-256 de la sauvegarde JSON téléchargée juste avant la purge.
+  sauvegardeSha256 String
+}
+
+/// Marqueur DÉFINITIF « le Pointage est en service » : posé une fois (`verrou` unique), il interdit toute nouvelle purge.
+model PointageMiseEnService {
+  id           String   @id @default(cuid())
+  verrou       String   @unique @default("MISE_EN_SERVICE")
+  misEnServiceAt DateTime @default(now())
+  parId        String
+  par          User     @relation(fields: [parId], references: [id])
+}
+
+
+/// Lot L (2026-10-27) — signature manuscrite (dessinée au curseur ou au doigt), enrôlée UNE fois dans le profil. Une ligne par
+/// VERSION : une nouvelle signature ajoute une version, l'ancienne n'est jamais modifiée ni supprimée (les actions déjà signées
+/// gardent celle qu'elles ont utilisée). La version courante d'un compte est la plus élevée. Traçabilité interne, PAS une
+/// signature électronique qualifiée.
+model SignatureUtilisateur {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("SignatureUtilisateur", fields: [userId], references: [id])
+  version   Int
+  /// PNG validé et reconstruit côté serveur (IHDR + IDAT + IEND seulement).
+  image     Bytes
+  largeur   Int
+  hauteur   Int
+  /// SHA-256 (hexadécimal) de `image`.
+  empreinte String
+  creeAt    DateTime @default(now())
+  actions   ActionSignee[]
+
+  @@unique([userId, version])
+  @@index([userId])
+}
+
+/// Lot L — une action sensible signée : qui (signataire), avec quelle version de signature, quand, depuis quelle adresse IP.
+/// Table à ajout seul. Aucune clé vers la demande (comme `HistoriqueEntry`) : `demandeId`/`ligneDemandeId` sont des repères.
+/// `auNomDeId` : titulaire de la permission quand le signataire agit par délégation.
+model ActionSignee {
+  id             String               @id @default(cuid())
+  signatureId    String
+  signature      SignatureUtilisateur @relation(fields: [signatureId], references: [id])
+  signataireId   String
+  signataire     User                 @relation("ActionSigneeSignataire", fields: [signataireId], references: [id])
+  auNomDeId      String?
+  auNomDe        User?                @relation("ActionSigneeAuNomDe", fields: [auNomDeId], references: [id], onDelete: SetNull)
+  action         String
+  demandeId      String?
+  ligneDemandeId String?
+  entite         String?
+  entiteId       String?
+  ip             String
+  creeAt         DateTime             @default(now())
+
+  /// Lot L bis : les lignes d'historique que cette action a produites (lien par identifiant, plus de fenêtre de temps).
+  historique HistoriqueEntry[]
+
+  @@index([demandeId, creeAt])
+  @@index([signataireId, creeAt])
+  @@index([signatureId])
+  @@index([auNomDeId])
 }

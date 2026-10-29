@@ -1,5 +1,9 @@
+import { MentionSignature } from "@/components/signature/MentionSignature";
 import { parseCorrectionDetail, type LigneSnapshot } from "@/lib/correctionRetour";
 import {
+  detailHistoriqueEchange,
+  ACTIONS_HISTORIQUE_SIGNEES,
+  etatsSignatureHistorique,
   lignesRetireesParCorrection,
   lireVersionCorrection,
   prisma,
@@ -16,6 +20,16 @@ import {
  */
 const ACTION_LABELS: Record<string, string> = {
   CREATE: "Création de la demande",
+  // Lot J : budgets (gestion interne Finance/DG, jamais montrée au demandeur).
+  alerte_budget: "Alerte budget à la validation",
+  confirmation_depassement_budget: "Dépassement de budget confirmé par le DG",
+  demande_confirmation_depassement: "Confirmation du DG demandée (dépassement de budget)",
+  depassement_budget_utilise: "Validation avec dépassement de budget confirmé",
+  reglement_couvert_depassement: "Règlement couvert par la confirmation du DG (dépassement de budget)",
+  confirmation_depassement_caduque: "Confirmation du DG caduque (article repris)",
+  // Lot K : réorientation de l'étape Service et reprise (retour à l'étape précédente) — visibles du demandeur (histoire de SA demande).
+  reorientation_service: "Étape Service réorientée vers un autre responsable",
+  reprise_etape: "Reprise : retour à l'étape précédente",
   CATEGORISER: "Catégorisation",
   modification_description: "Description du besoin modifiée",
   validation: "Validation",
@@ -27,6 +41,8 @@ const ACTION_LABELS: Record<string, string> = {
   declaration_retour: "Retour de caisse déclaré",
   modification_retour: "Retour de caisse modifié",
   reception_retour: "Retour de caisse réceptionné",
+  // Lot G bis : retour d'un fonds versé par banque, enregistré par la Finance (retour externe) et rattaché à la demande.
+  retour_externe_rattache: "Retour enregistré par la Finance (fonds versé par banque)",
   retour_nul_constate: "Retour nul constaté (rien à rendre)",
   // Correction d'une dépense détaillée par l'Assistant Finance (2026-10-10) : avant/après et motif dans le détail.
   modification_depense: "Dépense modifiée",
@@ -56,7 +72,7 @@ const ACTION_LABELS: Record<string, string> = {
   // Soumission au DG ligne par ligne (2026-10-10).
   soumission_lignes_dg: "Lignes soumises au DG",
   validation_ligne_dg: "Ligne validée par le DG",
-  refus_ligne_dg: "Ligne refusée par le DG",
+  refus_ligne_dg: "Ligne rejetée par le DG",
   decision_circuit: "Décision finale",
   correction_demande: "Version avant correction",
   resoumission_correction: "Corrigée et resoumise",
@@ -81,6 +97,8 @@ const ACTION_LABELS: Record<string, string> = {
   remboursement_retour_rejete: "Remboursement rejeté",
   cloture_totale: "Clôture totale",
   cloture_partielle: "Clôture partielle",
+  cloture_forcee: "Clôture forcée (sans régularisation)",
+  reprise_cloture_articles: "Reprise : clôture sans régularisation (script manuel)",
   validation_complete_dg: "Validation complète approuvée par le DG",
   rejet_validation_complete: "Validation complète rejetée par le DG (examen)",
   annulation_validation_complete: "Approbation du DG annulée",
@@ -237,6 +255,13 @@ const ACTIONS_GESTION_INTERNE = new Set([
   "categorisation_ligne",
   "retour_exceptionnel_saisie",
   "retour_exceptionnel_rejete",
+  // Lot J : les budgets sont de la gestion interne Finance/DG.
+  "alerte_budget",
+  "confirmation_depassement_budget",
+  "demande_confirmation_depassement",
+  "depassement_budget_utilise",
+  "reglement_couvert_depassement",
+  "confirmation_depassement_caduque",
 ]);
 
 /**
@@ -297,6 +322,8 @@ export async function DemandeHistorique({
         })
       : [];
   const entries = [...entreesDemande, ...entreesLignes].sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime());
+  // Lot L : signature de chaque action signée (ou « Antérieur à la signature » avant la mise en service).
+  const signatures = await etatsSignatureHistorique(prisma, demandeId, entries, ACTIONS_HISTORIQUE_SIGNEES);
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-surface p-4 sm:p-6">
@@ -312,6 +339,13 @@ export async function DemandeHistorique({
                 {entry.user.fullName} — {entry.createdAt.toLocaleString("fr-FR")}
               </p>
               {(() => {
+                const etat = signatures.get(entry.id);
+                if (!etat) return null;
+                if (etat.etat === "SIGNEE") return <MentionSignature signature={etat.signature} />;
+                if (etat.etat === "ANTERIEURE") return <MentionSignature anterieure />;
+                return <MentionSignature nonRattachee />;
+              })()}
+              {(() => {
                 const versionCorrection = versionParEntree.get(entry.id);
                 if (versionCorrection) {
                   return (
@@ -323,7 +357,10 @@ export async function DemandeHistorique({
                   );
                 }
                 const correction = parseCorrectionDetail(entry.detail);
-                if (!correction) return entry.detail ? <p className="mt-1 text-foreground">{entry.detail}</p> : null;
+                if (!correction) {
+                  const detail = detailHistoriqueEchange(entry.action, entry.detail);
+                  return detail ? <p className="mt-1 text-foreground">{detail}</p> : null;
+                }
                 return (
                   <div className="mt-1 space-y-2">
                     <p className="text-foreground">{correction.resume}</p>

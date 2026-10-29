@@ -1,6 +1,11 @@
 import { getApps, initializeApp, cert, type App } from "firebase-admin/app";
 import { getMessaging, type Messaging } from "firebase-admin/messaging";
 import fs from "node:fs";
+import { journaliserIncident } from "@/lib/journalTechnique";
+
+function incidentFirebase(message: string) {
+  void journaliserIncident({ niveau: "AVERTISSEMENT", source: "PUSH", code: "FIREBASE_NON_CONFIGURE", message });
+}
 
 /**
  * Initialisation singleton de Firebase Admin SDK côté serveur.
@@ -22,6 +27,8 @@ function getFirebaseAdminApp(): App | null {
       console.warn(
         "[FCM Admin] FIREBASE_SERVICE_ACCOUNT_JSON n'est pas configuré. Les pushs FCM réels sont désactivés."
       );
+    } else {
+      incidentFirebase("FIREBASE_SERVICE_ACCOUNT_JSON absent : aucun push FCM ne peut partir.");
     }
     return null;
   }
@@ -60,6 +67,9 @@ function getFirebaseAdminApp(): App | null {
     });
   } catch (error) {
     console.error("[FCM Admin] Erreur lors du parsing de FIREBASE_SERVICE_ACCOUNT_JSON:", error);
+    if (process.env.NODE_ENV === "production") {
+      incidentFirebase("FIREBASE_SERVICE_ACCOUNT_JSON invalide : aucun push FCM ne peut partir.");
+    }
     return null;
   }
 }

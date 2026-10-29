@@ -1,0 +1,277 @@
+import { prisma, journeeCouverteParAbsence, dateDebutAbsences, PERMISSION_RH_POINTAGE } from "backend";
+import type { Prisma, PlageHoraire } from "backend";
+import { notify, notifyByPermission } from "@/lib/notifications";
+
+export interface BilanAbsences {
+  nouvellesAbsences: number;
+  oublisDetectes: number;
+  joursAnalyses: number;
+  finDeJourneePassee: boolean;
+  message: string;
+}
+
+/**
+ * Absences et oublis de départ. Logique de la route `/api/cron/absences` (déplacée ici le 2026-10-14, phase 2 de la
+ * fiabilisation du pointage) : appelée par le planificateur intégré et par la route (déclenchement manuel), via
+ * `executerTache` (verrou, ligne `ExecutionTache`). Lève en cas d'échec.
+ */
+export async function executerAbsences(): Promise<BilanAbsences> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // 1. Date de départ : la plus récente entre SYSTEM_START_DATE, le lendemain de la dernière purge du Pointage et le jour de sa
+    //    mise en service (`dateDebutAbsences`) — jamais d'absence recréée avant une purge, sans dépendre d'un réglage du superviseur.
+    const [purgePointage, purgeGlobale, miseEnService] = await Promise.all([
+      prisma.reinitialisationPointage.findFirst({ orderBy: { effectueeAt: "desc" }, select: { effectueeAt: true } }),
+      prisma.reinitialisationSysteme.findFirst({ orderBy: { effectueeAt: "desc" }, select: { effectueeAt: true } }),
+      prisma.pointageMiseEnService.findFirst({ select: { misEnServiceAt: true } }),
+    ]);
+    // La réinitialisation globale supprime aussi les pointages : même règle que la purge du Pointage seul (lot N).
+    const dernierePurge = [purgePointage?.effectueeAt, purgeGlobale?.effectueeAt]
+      .filter((d): d is Date => d instanceof Date)
+      .sort((a, b) => b.getTime() - a.getTime())[0];
+    const systemStartDate = dateDebutAbsences({
+      systemStartDate: new Date(process.env.SYSTEM_START_DATE || "2026-09-07"),
+      dernierePurge,
+      miseEnService: miseEnService?.misEnServiceAt,
+    });
+
+    // Fetch ParametrageHoraire to get end of day
+    const parametrage = await prisma.parametrageHoraire.findFirst({
+      where: { isActive: true }
+    });
+
+    // Check if current time has passed heureFinApresMidi
+    let hasPassedEndOfDay = false;
+    const now = new Date();
+    if (parametrage && parametrage.heureFinApresMidi) {
+      const [endHour, endMinute] = parametrage.heureFinApresMidi.split(":").map(Number);
+      if (now.getHours() > endHour || (now.getHours() === endHour && now.getMinutes() >= endMinute)) {
+        hasPassedEndOfDay = true;
+      }
+    } else {
+      // Fallback: 18:00
+      if (now.getHours() >= 18) {
+        hasPassedEndOfDay = true;
+      }
+    }
+
+    // 2. Récupérer tous les collaborateurs qui doivent pointer (ceux qui ont la permission pointage.pointer)
+    const users = await prisma.user.findMany({
+      where: {
+        isActive: true,
+        role: {
+          permissions: {
+            some: {
+              permission: {
+                key: "pointage.pointer"
+              }
+            }
+          }
+        }
+      },
+      select: { id: true, createdAt: true }
+    });
+
+    // 2b. Récupérer la dernière date d'activation/réactivation pour chaque compte
+    const dernieresActivations = await prisma.historiqueEntry.findMany({
+      where: {
+        entity: "User",
+        action: { in: ["ACTIVATE", "INVITATION_ACTIVATED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { entityId: true, createdAt: true },
+    });
+    const derniereActivationMap = new Map<string, Date>();
+    for (const entry of dernieresActivations) {
+      if (entry.entityId && !derniereActivationMap.has(entry.entityId)) {
+        derniereActivationMap.set(entry.entityId, entry.createdAt);
+      }
+    }
+
+    let nouvellesAbsences = 0;
+
+    // 3. Boucle de rattrapage : on analyse les 2 derniers jours (y compris aujourd'hui)
+    const joursAnalyses = 2;
+
+    const dateMin = new Date(today);
+    dateMin.setDate(today.getDate() - (joursAnalyses - 1));
+    dateMin.setHours(0, 0, 0, 0);
+
+    const startOfPeriod = dateMin < systemStartDate ? systemStartDate : dateMin;
+    const endOfPeriod = new Date(today);
+    endOfPeriod.setHours(23, 59, 59, 999);
+
+    const formatDate = (date: Date) => {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    };
+
+    const joursFeries = await prisma.jourFerie.findMany({
+      where: { date: { gte: startOfPeriod, lte: endOfPeriod } }
+    });
+    const joursFeriesSet = new Set(joursFeries.map(jf => formatDate(jf.date)));
+
+    const pointages = await prisma.pointage.findMany({
+      where: { type: "ARRIVEE", heure: { gte: startOfPeriod, lte: endOfPeriod } },
+      select: { userId: true, heure: true }
+    });
+    const pointagesSet = new Set(pointages.map(p => `${p.userId}_${formatDate(p.heure)}`));
+
+    const absences = await prisma.absence.findMany({
+      where: { date: { gte: startOfPeriod, lte: endOfPeriod } },
+      select: { userId: true, date: true }
+    });
+    const absencesSet = new Set(absences.map(a => `${a.userId}_${formatDate(a.date)}`));
+
+    // Congés et permissions (`PlageAbsenceAutorisee`) : un jour entièrement couvert n'est jamais une absence.
+    const plages = await prisma.plageAbsenceAutorisee.findMany({
+      where: { date: { gte: startOfPeriod, lte: endOfPeriod } },
+      select: { userId: true, date: true, heureDebut: true, heureFin: true },
+    });
+    const plagesParJour = new Map<string, PlageHoraire[]>();
+    for (const p of plages) {
+      const key = `${p.userId}_${formatDate(p.date)}`;
+      plagesParJour.set(key, [...(plagesParJour.get(key) ?? []), p]);
+    }
+    const horairesJournee = {
+      heureDebutMatin: parametrage?.heureDebutMatin || "07:45",
+      heureFinApresMidi: parametrage?.heureFinApresMidi || "16:45",
+    };
+
+    const absencesToCreate: Prisma.AbsenceCreateManyInput[] = [];
+
+    for (let i = 0; i < joursAnalyses; i++) {
+      const currentDate = new Date(today);
+      currentDate.setDate(today.getDate() - i);
+      currentDate.setHours(0, 0, 0, 0);
+
+      if (currentDate < systemStartDate) continue;
+
+      // Skip today if the end of the work day hasn't passed yet
+      if (i === 0 && !hasPassedEndOfDay) continue;
+
+      const dayOfWeek = currentDate.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+
+      const dateStr = formatDate(currentDate);
+      if (joursFeriesSet.has(dateStr)) continue;
+
+      for (const user of users) {
+        // Date d'entrée en vigueur : dernière réactivation (si plus récente) ou date de création
+        const derniereActivation = derniereActivationMap.get(user.id);
+        const dateReference = (derniereActivation && derniereActivation > user.createdAt)
+          ? derniereActivation
+          : user.createdAt;
+
+        // Règle Option B : Un utilisateur ne peut pas être absent avant ou le jour même de sa création/réactivation
+        const userEffectiveDate = new Date(dateReference);
+        userEffectiveDate.setHours(0, 0, 0, 0);
+        if (currentDate <= userEffectiveDate) {
+          continue;
+        }
+
+        const key = `${user.id}_${dateStr}`;
+        if (journeeCouverteParAbsence(plagesParJour.get(key) ?? [], horairesJournee)) continue;
+        if (!pointagesSet.has(key) && !absencesSet.has(key)) {
+          absencesToCreate.push({
+            userId: user.id,
+            date: currentDate,
+            statut: "A_CONTROLER"
+          });
+          absencesSet.add(key);
+        }
+      }
+    }
+
+    if (absencesToCreate.length > 0) {
+      await prisma.absence.createMany({
+        data: absencesToCreate
+      });
+      nouvellesAbsences = absencesToCreate.length;
+    }
+
+    // 4. Détection des oublis de pointage de départ (attendre le délai configurable après l'heure de fin)
+    let oublisDetectes = 0;
+    const delaiOubliMinutes = parametrage?.delaiAlerteOubliDepartMinutes ?? 30;
+    let hasPassedDepartureAlertThreshold = false;
+
+    if (parametrage && parametrage.heureFinApresMidi) {
+      const [endHour, endMinute] = parametrage.heureFinApresMidi.split(":").map(Number);
+      const thresholdDate = new Date(now);
+      thresholdDate.setHours(endHour, endMinute + delaiOubliMinutes, 0, 0);
+      if (now >= thresholdDate) {
+        hasPassedDepartureAlertThreshold = true;
+      }
+    } else {
+      const thresholdDate = new Date(now);
+      thresholdDate.setHours(18, delaiOubliMinutes, 0, 0);
+      if (now >= thresholdDate) {
+        hasPassedDepartureAlertThreshold = true;
+      }
+    }
+
+    if (hasPassedDepartureAlertThreshold) {
+      const todayStart = new Date(today);
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(today);
+      todayEnd.setHours(23, 59, 59, 999);
+
+      const pointagesArriveeAuj = await prisma.pointage.findMany({
+        where: { type: "ARRIVEE", heure: { gte: todayStart, lte: todayEnd } },
+        include: { user: { select: { id: true, fullName: true } } }
+      });
+
+      const pointagesDepartAuj = await prisma.pointage.findMany({
+        where: { type: "DEPART", heure: { gte: todayStart, lte: todayEnd } },
+        select: { userId: true }
+      });
+      const departAujSet = new Set(pointagesDepartAuj.map(p => p.userId));
+
+      for (const arrivee of pointagesArriveeAuj) {
+        // S'il n'y a pas de pointage de départ pour ce collaborateur aujourd'hui
+        if (!departAujSet.has(arrivee.userId)) {
+          // Vérifier si la notification a déjà été envoyée aujourd'hui
+          const existingNotif = await prisma.notification.findFirst({
+            where: {
+              userId: arrivee.userId,
+              titre: "Oubli de pointage de départ",
+              createdAt: { gte: todayStart }
+            }
+          });
+
+          if (!existingNotif) {
+             // Notifier le collaborateur concerné (Email + Push + In-app : CRITIQUE)
+             await notify({
+               userId: arrivee.userId,
+               titre: "Oubli de pointage de départ",
+               message: "Vous avez pointé votre arrivée mais vous avez oublié de pointer votre départ aujourd'hui.",
+               lien: "/pointage/historique",
+               priority: "CRITIQUE",
+               category: "POINTAGE",
+             });
+
+             // Notifier la RH (Push + In-app : IMPORTANT), ciblée par permission et non par nom de rôle : l'ancien
+             // ciblage ["ADMIN", "RH"] ne trouvait jamais le rôle « Admin » (casse), qui n'a d'ailleurs aucune
+             // permission pointage.* par conception.
+             await notifyByPermission(PERMISSION_RH_POINTAGE, {
+               titre: "Oubli de pointage détecté",
+               message: `Le collaborateur ${arrivee.user.fullName} n'a pas pointé son départ aujourd'hui.`,
+               lien: `/pointage/rh/presence?date=${formatDate(today)}`,
+               priority: "IMPORTANT",
+               category: "POINTAGE",
+             });
+
+             oublisDetectes++;
+          }
+        }
+      }
+    }
+
+    let baseMessage = `Cron exécuté avec succès. ${nouvellesAbsences} nouvelle(s) absence(s) détectée(s) sur les ${joursAnalyses} derniers jours. ${oublisDetectes} oubli(s) de pointage notifié(s).`;
+    
+    if (!hasPassedEndOfDay) {
+      baseMessage += " L'heure de fin de journée n'est pas encore passée. Seules les absences des jours précédents ont été analysées.";
+    }
+
+    return { nouvellesAbsences, oublisDetectes, joursAnalyses, finDeJourneePassee: hasPassedEndOfDay, message: baseMessage };
+}

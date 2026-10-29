@@ -1,8 +1,9 @@
+import { affichageStatutDemande } from "@/components/tresorerie/demandeStatut";
 import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { getBeneficiaireNom } from "backend";
+import { getDatesGestionDemandes, nomBeneficiaireDemande } from "backend";
 import { prisma } from "backend";
 import type { StatutDemande } from "backend";
 
@@ -77,20 +78,23 @@ export default async function ToutesLesDemandesPage({
         ...(createurId ? { createurId } : {}),
         ...(statut ? { statut } : {}),
       },
-      include: { createur: true, beneficiaireUser: true },
+      include: { createur: true, beneficiaireUser: true, lignes: { include: { beneficiaireUser: true } } },
       orderBy: { createdAt: "desc" },
     }),
     prisma.user.findMany({ orderBy: { fullName: "asc" } }),
   ]);
 
+  const gestions = await getDatesGestionDemandes(rawDemandes.map((d) => d.id));
   const demandes = rawDemandes.map((d) => ({
     id: d.id,
     reference: d.reference,
     createurNom: d.createur.fullName,
-    beneficiaireNom: getBeneficiaireNom(d),
+    beneficiaireNom: nomBeneficiaireDemande(d, d.lignes),
     montant: Number(d.montant),
     createdAt: d.createdAt,
+    gere: gestions.get(d.id) ?? null,
     statut: d.statut,
+    statutAffiche: affichageStatutDemande(d.statut, d.lignes),
   }));
 
   return (

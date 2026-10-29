@@ -4,10 +4,10 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { Button, Input, Select, Textarea } from "@/components/ui";
+import { Button, Input, InputMontant, Select, Textarea } from "@/components/ui";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
-import { MOTIF_MODIFICATION_DEPENSE_MIN } from "backend/client";
+import { analyserMontant, MOTIF_MODIFICATION_DEPENSE_MIN, texteSaisieMontant } from "backend/client";
 
 import { modifierDepenseDetailleeAction } from "../retourActions";
 
@@ -24,7 +24,7 @@ export function DepenseLigneEdition({
 }) {
   const [mode, setMode] = useState<"repos" | "modifier">("repos");
   const [libelle, setLibelle] = useState(depense.libelle);
-  const [montant, setMontant] = useState(String(depense.montant));
+  const [montant, setMontant] = useState(texteSaisieMontant(depense.montant));
   const [justifiee, setJustifiee] = useState(depense.justifiee);
   const [motifNonJustifie, setMotifNonJustifie] = useState(depense.motifNonJustifie ?? "");
   const [pieceJointeUrl, setPieceJointeUrl] = useState<string | undefined>();
@@ -85,7 +85,7 @@ export function DepenseLigneEdition({
               value={justifiee ? "justifiee" : "sans_piece"}
               onChange={(e) => setJustifiee(e.target.value === "justifiee")}
             />
-            <Input label="Montant" type="number" inputMode="decimal" min="0" step="1" required value={montant} onChange={(e) => setMontant(e.target.value)} />
+            <InputMontant label="Montant" required value={montant} onValueChange={setMontant} />
           </div>
           <Input label="Libellé" required value={libelle} onChange={(e) => setLibelle(e.target.value)} />
           {!justifiee ? (
@@ -107,12 +107,12 @@ export function DepenseLigneEdition({
             <Button
               type="button"
               loading={isPending}
-              disabled={!motifValide || pieceManquante || !(Number(montant) > 0) || !libelle.trim() || isPending}
+              disabled={!motifValide || pieceManquante || !(analyserMontant(montant).ok && (analyserMontant(montant) as { centimes: number }).centimes > 0) || !libelle.trim() || isPending}
               onClick={() =>
                 envoyer(() =>
                   modifierDepenseDetailleeAction(
                     depense.id,
-                    { libelle: libelle.trim(), montant: Number(montant), justifiee, pieceJointeUrl, motifNonJustifie: justifiee ? undefined : motifNonJustifie },
+                    { libelle: libelle.trim(), montant, justifiee, pieceJointeUrl, motifNonJustifie: justifiee ? undefined : motifNonJustifie },
                     motif
                   )
                 )

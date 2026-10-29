@@ -27,6 +27,9 @@ import {
 } from "./circuitDemande";
 import type { EtapeCircuit } from "./generated/prisma/enums";
 
+/** Lot M : tout envoi de la Finance au DG et toute réponse du DG portent un motif (10 à 300 caractères). */
+const MOTIF_TEST = "Motif de test suffisant";
+
 const PROFIL: Record<string, ProfilDemandeur> = {
   collaborateur: { estDG: false, estFinance: false, estResponsableDeSonService: false },
   responsable: { estDG: false, estFinance: false, estResponsableDeSonService: true },
@@ -125,8 +128,8 @@ describe("étape Service", () => {
     }
   });
   it("Finance ne peut ni soumettre au DG ni décider les lignes", () => {
-    expect(ko(d, FINANCE, { type: "SOUMETTRE_DG" })).toBe(messageAttente("SERVICE"));
-    expect(ko(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true })).toBe(messageAttente("SERVICE"));
+    expect(ko(d, FINANCE, { type: "SOUMETTRE_DG", motif: MOTIF_TEST })).toBe(messageAttente("SERVICE"));
+    expect(ko(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST })).toBe(messageAttente("SERVICE"));
   });
   it("un responsable qui serait aussi le demandeur est refusé (défense en profondeur)", () => {
     expect(ko(d, acteur(DEMANDEUR, [], true), { type: "VALIDER_SERVICE" })).toContain("propre demande");
@@ -136,10 +139,10 @@ describe("étape Service", () => {
 describe("étape Finance", () => {
   const d = demande("FINANCE");
   it("décide les lignes, au moins une validée → Terminée", () => {
-    expect(ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).etapeSuivante).toBe("TERMINEE");
+    expect(ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).etapeSuivante).toBe("TERMINEE");
   });
   it("toutes les lignes rejetées → À corriger (niveau Finance)", () => {
-    const r = ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: false });
+    const r = ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: false, motifDG: MOTIF_TEST });
     expect(r.etapeSuivante).toBe("A_CORRIGER");
     expect(r.effets.niveauRejet).toBe("FINANCE");
   });
@@ -147,28 +150,28 @@ describe("étape Finance", () => {
     expect(ok(d, FINANCE, { type: "REJETER", motif: "Budget épuisé" }).etapeSuivante).toBe("A_CORRIGER");
   });
   it("soumet au DG → étape DG", () => {
-    expect(ok(d, FINANCE, { type: "SOUMETTRE_DG" })).toEqual({ ok: true, etapeSuivante: "DG", effets: { soumiseAuDG: true } });
+    expect(ok(d, FINANCE, { type: "SOUMETTRE_DG", motif: MOTIF_TEST })).toEqual({ ok: true, etapeSuivante: "DG", effets: { soumiseAuDG: true } });
   });
   it("le DG, l'Assistant, le responsable et le demandeur ne décident pas", () => {
     for (const qui of [DG, ASSISTANT, RESPONSABLE, AUTEUR]) {
-      expect(transition(d, qui, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).ok).toBe(false);
-      expect(transition(d, qui, { type: "SOUMETTRE_DG" }).ok).toBe(false);
+      expect(transition(d, qui, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).ok).toBe(false);
+      expect(transition(d, qui, { type: "SOUMETTRE_DG", motif: MOTIF_TEST }).ok).toBe(false);
     }
   });
   it("un compte Finance ne décide pas sa propre demande", () => {
     const sienne: DemandeCircuit = { ...d, createurId: FINANCE.userId };
-    expect(ko(sienne, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true })).toContain("propre demande");
+    expect(ko(sienne, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST })).toContain("propre demande");
     expect(ko(sienne, FINANCE, { type: "REJETER", motif: "abc" })).toContain("propre demande");
   });
   it("demande du DG (cas a) : la soumission au DG est refusée", () => {
-    expect(ko(demande("FINANCE", PROFIL.dgResponsable), FINANCE, { type: "SOUMETTRE_DG" })).toContain("émise par le DG");
+    expect(ko(demande("FINANCE", PROFIL.dgResponsable), FINANCE, { type: "SOUMETTRE_DG", motif: MOTIF_TEST })).toContain("émise par le DG");
   });
 });
 
 describe("étape DG (soumise par Finance)", () => {
   const d = demande("DG");
   it("le DG valide → décision finale Finance, et cela vaut approbation de clôture", () => {
-    expect(ok(d, DG, { type: "VALIDER_DG" })).toEqual({ ok: true, etapeSuivante: "DECISION_FINALE", effets: { approbationClotureParDG: true } });
+    expect(ok(d, DG, { type: "VALIDER_DG", motif: MOTIF_TEST })).toEqual({ ok: true, etapeSuivante: "DECISION_FINALE", effets: { approbationClotureParDG: true } });
   });
   it("le DG rejette avec motif → Rejet DG (retour Finance)", () => {
     const r = ok(d, DG, { type: "REJETER_DG", motif: "Montant trop élevé" });
@@ -180,20 +183,20 @@ describe("étape DG (soumise par Finance)", () => {
   });
   it("Finance a tous ses boutons grisés", () => {
     expect(actionsPossibles(d, FINANCE)).toEqual([]);
-    expect(ko(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true })).toBe(messageAttente("DG"));
+    expect(ko(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST })).toBe(messageAttente("DG"));
   });
   it("le DG ne décide pas ligne par ligne une demande simplement soumise", () => {
-    expect(transition(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).ok).toBe(false);
+    expect(transition(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).ok).toBe(false);
   });
   it("le DG ne peut agir que sur une demande soumise", () => {
-    expect(ko(demande("FINANCE"), DG, { type: "VALIDER_DG" })).toBe(messageAttente("FINANCE"));
+    expect(ko(demande("FINANCE"), DG, { type: "VALIDER_DG", motif: MOTIF_TEST })).toBe(messageAttente("FINANCE"));
   });
 });
 
 describe("Rejet DG (retour Finance)", () => {
   const d = demande("REJET_DG");
   it("Finance resoumet → DG", () => {
-    expect(ok(d, FINANCE, { type: "RESOUMETTRE_DG" }).etapeSuivante).toBe("DG");
+    expect(ok(d, FINANCE, { type: "RESOUMETTRE_DG", motif: MOTIF_TEST }).etapeSuivante).toBe("DG");
   });
   it("Finance renvoie au demandeur → À corriger (niveau Finance)", () => {
     const r = ok(d, FINANCE, { type: "REJETER", motif: "Voir avec le DG" });
@@ -201,21 +204,21 @@ describe("Rejet DG (retour Finance)", () => {
     expect(r.effets.niveauRejet).toBe("FINANCE");
   });
   it("Finance ne peut pas valider après un rejet du DG", () => {
-    expect(transition(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).ok).toBe(false);
+    expect(transition(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).ok).toBe(false);
   });
   it("actions possibles de Finance : rejeter, resoumettre", () => {
     expect(actionsPossibles(d, FINANCE).sort()).toEqual(["REJETER", "RESOUMETTRE_DG"]);
   });
   it("resoumettre est refusé ailleurs qu'après un rejet du DG", () => {
-    expect(ko(demande("FINANCE"), FINANCE, { type: "RESOUMETTRE_DG" })).toContain("pas été rejetée");
+    expect(ko(demande("FINANCE"), FINANCE, { type: "RESOUMETTRE_DG", motif: MOTIF_TEST })).toContain("pas été rejetée");
   });
 });
 
 describe("décision finale Finance (après approbation du DG)", () => {
   const d = demande("DECISION_FINALE");
   it("décide les lignes → Terminée, ou À corriger si tout est rejeté", () => {
-    expect(ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).etapeSuivante).toBe("TERMINEE");
-    expect(ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: false }).etapeSuivante).toBe("A_CORRIGER");
+    expect(ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).etapeSuivante).toBe("TERMINEE");
+    expect(ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: false, motifDG: MOTIF_TEST }).etapeSuivante).toBe("A_CORRIGER");
   });
   it("« Soumettre au DG » est grisé", () => {
     expect(actionsPossibles(d, FINANCE)).not.toContain("SOUMETTRE_DG");
@@ -225,21 +228,21 @@ describe("décision finale Finance (après approbation du DG)", () => {
 describe("cas (b) : le DG décide ligne par ligne, décision finale", () => {
   const d = demande("DG", PROFIL.finance);
   it("au moins une ligne validée → Terminée, vaut approbation de clôture", () => {
-    expect(ok(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: true })).toEqual({ ok: true, etapeSuivante: "TERMINEE", effets: { approbationClotureParDG: true } });
+    expect(ok(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST })).toEqual({ ok: true, etapeSuivante: "TERMINEE", effets: { approbationClotureParDG: true } });
   });
   it("toutes rejetées → À corriger (niveau DG)", () => {
-    const r = ok(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: false });
+    const r = ok(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: false, motifDG: MOTIF_TEST });
     expect(r.etapeSuivante).toBe("A_CORRIGER");
     expect(r.effets.niveauRejet).toBe("DG");
   });
   it("le DG peut rejeter la demande entière → À corriger (niveau DG)", () => {
-    expect(ok(d, DG, { type: "REJETER", motif: "Hors budget" }).effets.niveauRejet).toBe("DG");
+    expect(ok(d, DG, { type: "REJETER", motif: MOTIF_TEST }).effets.niveauRejet).toBe("DG");
   });
   it("valider/rejeter « en bloc » (VALIDER_DG/REJETER_DG) refusés : décision ligne par ligne", () => {
-    expect(ko(d, DG, { type: "VALIDER_DG" })).toContain("ligne par ligne");
+    expect(ko(d, DG, { type: "VALIDER_DG", motif: MOTIF_TEST })).toContain("ligne par ligne");
   });
   it("Finance ne décide pas une demande de l'Assistant Finance (elle peut seulement la catégoriser)", () => {
-    expect(transition(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).ok).toBe(false);
+    expect(transition(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).ok).toBe(false);
     expect(transition(d, FINANCE, { type: "REJETER", motif: "abc" }).ok).toBe(false);
     expect(actionsPossibles(d, FINANCE)).toEqual([]);
   });
@@ -248,9 +251,9 @@ describe("cas (b) : le DG décide ligne par ligne, décision finale", () => {
 describe("cas (a) : demande du DG", () => {
   it("Finance décide ; le DG ne peut jamais décider sa propre demande", () => {
     const d: DemandeCircuit = { ...demande("FINANCE", PROFIL.dgResponsable), createurId: DG.userId };
-    expect(ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).etapeSuivante).toBe("TERMINEE");
-    expect(transition(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).ok).toBe(false);
-    expect(transition({ ...d, etape: "DG" }, DG, { type: "VALIDER_DG" }).ok).toBe(false);
+    expect(ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).etapeSuivante).toBe("TERMINEE");
+    expect(transition(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).ok).toBe(false);
+    expect(transition({ ...d, etape: "DG" }, DG, { type: "VALIDER_DG", motif: MOTIF_TEST }).ok).toBe(false);
   });
 });
 
@@ -272,10 +275,12 @@ describe("À corriger, Abandonnée, Terminée", () => {
       expect(actionsPossibles(d, qui)).toEqual([]);
     }
   });
-  it("le demandeur ne peut rien faire hors de « À corriger »", () => {
-    for (const e of ["SERVICE", "FINANCE", "DG", "REJET_DG", "DECISION_FINALE", "TERMINEE", "ABANDONNEE"] as const) {
+  it("le demandeur ne peut rien faire hors de « À corriger » — sauf réorienter l'étape Service (lot K)", () => {
+    for (const e of ["FINANCE", "DG", "REJET_DG", "DECISION_FINALE", "TERMINEE", "ABANDONNEE"] as const) {
       expect(actionsPossibles(demande(e), AUTEUR)).toEqual([]);
     }
+    // Lot K : tant que la demande attend le responsable de service, son demandeur peut la réorienter (motif obligatoire).
+    expect(actionsPossibles(demande("SERVICE"), AUTEUR)).toEqual(["REORIENTER"]);
   });
   it("Abandonnée et Terminée sont finales pour le circuit", () => {
     for (const qui of [FINANCE, DG, RESPONSABLE, ASSISTANT, AUTEUR]) {
@@ -302,16 +307,16 @@ describe("Assistant Finance", () => {
 describe("dépense directe (exception tracée : son auteur Finance la décide)", () => {
   const d: DemandeCircuit = { ...demande("FINANCE", PROFIL.finance, "DEPENSE_DIRECTE"), createurId: FINANCE.userId };
   it("l'auteur Finance décide, l'exception est signalée", () => {
-    const r = ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true });
+    const r = ok(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST });
     expect(r.etapeSuivante).toBe("TERMINEE");
     expect(r.effets.decisionParAuteurDepenseDirecte).toBe(true);
   });
   it("l'auteur Finance peut la soumettre au DG", () => {
-    expect(ok(d, FINANCE, { type: "SOUMETTRE_DG" }).etapeSuivante).toBe("DG");
+    expect(ok(d, FINANCE, { type: "SOUMETTRE_DG", motif: MOTIF_TEST }).etapeSuivante).toBe("DG");
   });
   it("un autre compte Finance la décide sans exception", () => {
     const autre = acteur("u-fin2", FINANCE.permissions as string[]);
-    expect(ok(d, autre, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).effets.decisionParAuteurDepenseDirecte).toBe(false);
+    expect(ok(d, autre, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).effets.decisionParAuteurDepenseDirecte).toBe(false);
   });
 });
 
@@ -347,41 +352,41 @@ describe("deux personnes distinctes pour une validation complète (Finance ≠ D
 
   it("valide à l'étape DG puis tente la décision Finance : refusé", () => {
     const d = demande("FINANCE");
-    expect(ok(d, CUMUL, { type: "SOUMETTRE_DG" }).etapeSuivante).toBe("DG");
-    expect(ok({ ...d, etape: "DG" }, CUMUL, { type: "VALIDER_DG" }).etapeSuivante).toBe("DECISION_FINALE");
+    expect(ok(d, CUMUL, { type: "SOUMETTRE_DG", motif: MOTIF_TEST }).etapeSuivante).toBe("DG");
+    expect(ok({ ...d, etape: "DG" }, CUMUL, { type: "VALIDER_DG", motif: MOTIF_TEST }).etapeSuivante).toBe("DECISION_FINALE");
     const apresDG: DemandeCircuit = { ...d, etape: "DECISION_FINALE", approbateurDGId: CUMUL.userId };
-    expect(ko(apresDG, CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: true })).toBe(MESSAGE_DEUX_PERSONNES);
+    expect(ko(apresDG, CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST })).toBe(MESSAGE_DEUX_PERSONNES);
     expect(actionsPossibles(apresDG, CUMUL)).not.toContain("DECIDER_LIGNES");
     // Un autre compte Finance peut, lui, décider.
-    expect(ok(apresDG, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).effets.decideurFinance).toBe(true);
+    expect(ok(apresDG, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).effets.decideurFinance).toBe(true);
   });
 
   it("décide comme Finance puis tente l'approbation de clôture : refusé", () => {
     const d = demande("FINANCE");
-    const r = ok(d, CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: true });
+    const r = ok(d, CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST });
     expect(r.effets.decideurFinance).toBe(true);
-    const decidee = { createurId: d.createurId, decideurFinanceId: CUMUL.userId, approbationClotureNonRequise: false };
+    const decidee = { createurId: d.createurId, decideursFinanceIds: [CUMUL.userId], approbationClotureNonRequise: false };
     expect(refusApprobationCloture(decidee, CUMUL.userId)).toBe(MESSAGE_DEUX_PERSONNES);
     expect(refusApprobationCloture(decidee, DG.userId)).toBeNull();
   });
 
   it("le décideur Finance ne peut pas non plus agir à l'étape DG (cas b, ou tour ultérieur)", () => {
     const d: DemandeCircuit = { ...demande("DG"), decideurFinanceId: CUMUL.userId };
-    expect(ko(d, CUMUL, { type: "VALIDER_DG" })).toBe(MESSAGE_DEUX_PERSONNES);
+    expect(ko(d, CUMUL, { type: "VALIDER_DG", motif: MOTIF_TEST })).toBe(MESSAGE_DEUX_PERSONNES);
     const b: DemandeCircuit = { ...demande("DG", PROFIL.finance), decideurFinanceId: CUMUL.userId };
-    expect(ko(b, CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: true })).toBe(MESSAGE_DEUX_PERSONNES);
+    expect(ko(b, CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST })).toBe(MESSAGE_DEUX_PERSONNES);
   });
 
   it("le demandeur n'approuve jamais la clôture de sa propre demande", () => {
-    expect(refusApprobationCloture({ createurId: DG.userId, decideurFinanceId: FINANCE.userId, approbationClotureNonRequise: false }, DG.userId)).toContain("propre demande");
+    expect(refusApprobationCloture({ createurId: DG.userId, decideursFinanceIds: [FINANCE.userId], approbationClotureNonRequise: false }, DG.userId)).toContain("propre demande");
   });
 
   it("demande émise par le DG : approbation non requise", () => {
-    expect(refusApprobationCloture({ createurId: "x", decideurFinanceId: null, approbationClotureNonRequise: true }, DG.userId)).toContain("n'est pas requise");
+    expect(refusApprobationCloture({ createurId: "x", decideursFinanceIds: [], approbationClotureNonRequise: true }, DG.userId)).toContain("n'est pas requise");
   });
 
   it("un rejet n'est pas une décision Finance (n'enregistre pas de décideur)", () => {
-    expect(ok(demande("FINANCE"), CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: false }).effets.decideurFinance).toBeUndefined();
+    expect(ok(demande("FINANCE"), CUMUL, { type: "DECIDER_LIGNES", auMoinsUneValidee: false, motifDG: MOTIF_TEST }).effets.decideurFinance).toBeUndefined();
   });
 });
 
@@ -411,18 +416,18 @@ describe("raisons des boutons grisés (écran = serveur)", () => {
 
 describe("conflit d'intérêts : jamais l'exécution de sa propre demande", () => {
   it("refusé au demandeur et au bénéficiaire (garde 8), permis à tout autre compte", () => {
-    expect(refusExecutionPropreDemande({ createurId: "u-assist" }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
-    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist" }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
-    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist" }, "u-autre")).toBeNull();
-    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: null }, "u-autre")).toBeNull();
+    expect(refusExecutionPropreDemande({ createurId: "u-assist", lignes: [] }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
+    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist", lignes: [] }, "u-assist")).toBe(MESSAGE_EXECUTION_PROPRE_DEMANDE);
+    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: "u-assist", lignes: [] }, "u-autre")).toBeNull();
+    expect(refusExecutionPropreDemande({ createurId: "u-fin", beneficiaireUserId: null, lignes: [] }, "u-autre")).toBeNull();
   });
   it("garde 9 : dépense directe de la Finance pour elle-même → le DG décide (cas b)", () => {
     const p = determinerParcours(PROFIL.finance, "DEPENSE_DIRECTE", { beneficiaireEstLeCreateur: true });
     expect(p).toEqual({ cas: "DEPENSE_DIRECTE_POUR_SOI", etapeServiceRequise: false, etapeFinanceRequise: false, modeEtapeDG: "OBLIGATOIRE", approbationClotureNonRequise: false });
     expect(etapeInitiale(p)).toBe("DG");
     const d: DemandeCircuit = { etape: "DG", createurId: FINANCE.userId, typeDemande: "DEPENSE_DIRECTE", ...p };
-    expect(transition(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true }).ok).toBe(false);
-    expect(ok(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: true })).toEqual({ ok: true, etapeSuivante: "TERMINEE", effets: { approbationClotureParDG: true } });
+    expect(transition(d, FINANCE, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST }).ok).toBe(false);
+    expect(ok(d, DG, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST })).toEqual({ ok: true, etapeSuivante: "TERMINEE", effets: { approbationClotureParDG: true } });
     // Pour un autre bénéficiaire : parcours habituel de la dépense directe.
     expect(determinerParcours(PROFIL.finance, "DEPENSE_DIRECTE", { beneficiaireEstLeCreateur: false }).cas).toBe("DEPENSE_DIRECTE");
   });
@@ -438,7 +443,7 @@ describe("Assistant Finance avant la décision finale (commit 4, morceau 4)", ()
     expect(raisonIndisponible(demande("FINANCE"), ASSISTANT, "DECIDER_LIGNES")).toBe(MESSAGE_ATTENTE_VALIDATION_FINALE);
     expect(raisonIndisponible(demande("DECISION_FINALE"), ASSISTANT, "REJETER")).toBe(MESSAGE_ATTENTE_VALIDATION_FINALE);
     // Le serveur, lui, refuse toujours de la même façon (transition inchangée).
-    expect(ko(demande("FINANCE"), ASSISTANT, { type: "DECIDER_LIGNES", auMoinsUneValidee: true })).toBe("Action non autorisée.");
+    expect(ko(demande("FINANCE"), ASSISTANT, { type: "DECIDER_LIGNES", auMoinsUneValidee: true, motifDG: MOTIF_TEST })).toBe("Action non autorisée.");
     // Un compte sans permission d'exécution garde le message habituel.
     expect(raisonIndisponible(demande("FINANCE"), acteur("u-x"), "DECIDER_LIGNES")).toBe("Action non autorisée.");
   });

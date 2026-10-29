@@ -6,9 +6,24 @@ import { toast } from "sonner";
 
 import Link from "next/link";
 
-import { Button, Card, Input, Select } from "@/components/ui";
+import { Button, Card, Input, InputMontant, Select } from "@/components/ui";
 import { Icon } from "@/components/icons";
-import { MOTIF_LIGNE_MIN, type ChoixBeneficiaire } from "backend/client";
+import {
+  analyserMontant,
+  appliquerATous,
+  erreurSaisieBeneficiaire,
+  ilYADesPersonnalisations,
+  refusDateLivraison,
+  refusMotifEchange,
+  MOTIF_LIGNE_MIN,
+  SAISIE_BENEFICIAIRE_MOI,
+  saisieVersChoix,
+  valeurSaisieMontant,
+  type SaisieBeneficiaire,
+} from "backend/client";
+import { BeneficiaireChamp } from "@/components/tresorerie/BeneficiaireChamp";
+import { ChampMotifEchange } from "@/components/tresorerie/ChampMotifEchange";
+import { DetailsArticleEditeur, type DetailsArticleSaisie } from "@/components/tresorerie/DetailsArticleEditeur";
 import { DEVISE_OPTIONS, formatMontantDevise } from "@/components/tresorerie/devise";
 import { PieceJointeUpload } from "@/components/tresorerie/PieceJointeUpload";
 
@@ -28,6 +43,10 @@ type LigneEdit = {
    * calcul (`Number(...) || 0`) et à l'envoi.
    */
   prixUnitaire: string;
+  /** Bénéficiaire et pièces propres à l'article (autonomie des articles, lot A). */
+  details: DetailsArticleSaisie;
+  /** Date de livraison de l'article (`YYYY-MM-DD`, lot G) ; vide = reçoit la date commune à l'enregistrement. */
+  dateLivraison: string;
 };
 
 function nouvelleLigne(): LigneEdit {
@@ -37,6 +56,8 @@ function nouvelleLigne(): LigneEdit {
     motif: "",
     quantite: 1,
     prixUnitaire: "",
+    details: { beneficiaire: null, pieces: [] },
+    dateLivraison: "",
   };
 }
 
@@ -62,25 +83,27 @@ type FieldErrors = Partial<Record<string, string>>;
  * directement l'action via `useTransition` (même pattern que
  * `RetourCaisseForm`, Phase D), pas via `<form action={...}>`.
  */
-type ModeBeneficiaire = ChoixBeneficiaire["mode"];
-
-const OPTIONS_BENEFICIAIRE: { value: ModeBeneficiaire; label: string }[] = [
-  { value: "MOI", label: "Moi-même" },
-  { value: "COMPTE", label: "Un autre compte du portail" },
-  { value: "NOM", label: "Un nom libre (fournisseur, entreprise…)" },
-];
-
-export function DemandeForm({ comptes }: { comptes: { value: string; label: string }[] }) {
+export function DemandeForm({
+  comptes,
+  createurId,
+  envoiDirectAuDG = false,
+}: {
+  comptes: { value: string; label: string }[];
+  createurId: string;
+  /** Lot M : la demande part directement chez le DG (émise par la Finance ou le DG) : un motif d'envoi est alors obligatoire. */
+  envoiDirectAuDG?: boolean;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  const [modeBeneficiaire, setModeBeneficiaire] = useState<ModeBeneficiaire>("MOI");
-  const [compteBeneficiaire, setCompteBeneficiaire] = useState("");
-  const [nomBeneficiaire, setNomBeneficiaire] = useState("");
+  // « Détails communs » : bénéficiaire par défaut de la demande (hérité par chaque article qui n'a pas le sien).
+  const [commun, setCommun] = useState<SaisieBeneficiaire>(SAISIE_BENEFICIAIRE_MOI);
+  const [confirmerAppliquer, setConfirmerAppliquer] = useState(false);
   const [dateLivraison, setDateLivraison] = useState("");
   const [devise, setDevise] = useState("XOF");
   const [lignes, setLignes] = useState<LigneEdit[]>([nouvelleLigne()]);
   const [pieceJointeUrl, setPieceJointeUrl] = useState<string | null>(null);
+  const [motifEnvoiDG, setMotifEnvoiDG] = useState("");
 
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [erreurLignes, setErreurLignes] = useState<string | undefined>();
@@ -93,7 +116,7 @@ export function DemandeForm({ comptes }: { comptes: { value: string; label: stri
   const aujourdHui = new Date().toISOString().slice(0, 10);
 
   const totalGeneral = lignes.reduce(
-    (sum, l) => sum + (Number(l.quantite) || 0) * (Number(l.prixUnitaire) || 0),
+    (sum, l) => sum + (Number(l.quantite) || 0) * valeurSaisieMontant(l.prixUnitaire, { devise }),
     0
   );
 
@@ -107,10 +130,48 @@ export function DemandeForm({ comptes }: { comptes: { value: string; label: stri
     setLignes((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
   }
 
+  // UN SEUL bouton « Appliquer à tous les articles » : bénéficiaire commun, pièce commune et date de livraison commune.
+  // La pièce commune est portée par la demande et héritée par chaque article (les pièces propres d'un article sont
+  // gardées) : rien à copier. La date n'est appliquée que si elle est saisie (une date vide n'efface jamais les dates
+  // des articles).
+  const datesPersonnalisees = Boolean(dateLivraison) && lignes.some((l) => l.dateLivraison && l.dateLivraison !== dateLivraison);
+  const beneficiairesPersonnalises = ilYADesPersonnalisations(lignes.map((l) => l.details), commun, createurId);
+
+  function appliquerCommunATous() {
+    setLignes((prev) => {
+      const maj = appliquerATous(prev.map((l) => l.details));
+      return prev.map((l, i) => ({
+        ...l,
+        details: { ...l.details, beneficiaire: maj[i].beneficiaire },
+        ...(dateLivraison ? { dateLivraison } : {}),
+      }));
+    });
+    setConfirmerAppliquer(false);
+    toast.success(
+      dateLivraison
+        ? "Le bénéficiaire, la pièce et la date de livraison communs sont appliqués à tous les articles."
+        : "Le bénéficiaire et la pièce communs sont appliqués à tous les articles."
+    );
+  }
+  function demanderAppliquerATous() {
+    if (beneficiairesPersonnalises || datesPersonnalisees) setConfirmerAppliquer(true);
+    else appliquerCommunATous();
+  }
+
   function handleSubmit() {
     const errors: FieldErrors = {};
-    if (modeBeneficiaire === "COMPTE" && !compteBeneficiaire) errors.beneficiaire = "Choisissez un compte.";
-    if (modeBeneficiaire === "NOM" && nomBeneficiaire.trim().length < 2) errors.beneficiaire = "Saisissez le nom du bénéficiaire.";
+    const erreurCommun = erreurSaisieBeneficiaire(commun);
+    if (erreurCommun) errors.beneficiaire = erreurCommun;
+    lignes.forEach((l, i) => {
+      const e = l.details.beneficiaire ? erreurSaisieBeneficiaire(l.details.beneficiaire) : null;
+      if (e) errors[`lignes.${i}.beneficiaire`] = e;
+    });
+    const erreurDateCommune = refusDateLivraison(dateLivraison);
+    if (erreurDateCommune) errors.dateLivraisonSouhaitee = erreurDateCommune;
+    lignes.forEach((l, i) => {
+      const e = refusDateLivraison(l.dateLivraison);
+      if (e) errors[`lignes.${i}.dateLivraison`] = e;
+    });
     setFieldErrors(errors);
 
     let ligneError: string | undefined;
@@ -120,33 +181,41 @@ export function DemandeForm({ comptes }: { comptes: { value: string; label: stri
       ligneError = `Chaque ligne doit avoir un motif (${MOTIF_LIGNE_MIN} caractères minimum).`;
     } else if (lignes.some((l) => !l.quantite || l.quantite < 1)) {
       ligneError = "Chaque ligne doit avoir un nombre supérieur à 0.";
+    } else if (lignes.some((l) => l.prixUnitaire.trim() !== "" && !analyserMontant(l.prixUnitaire, { devise }).ok)) {
+      const pire = lignes.map((l) => analyserMontant(l.prixUnitaire, { devise })).find((r) => !r.ok);
+      ligneError = `Prix unitaire invalide : ${pire && !pire.ok ? pire.message : "montant illisible."}`;
     } else if (totalGeneral <= 0) {
       ligneError = "Le total général doit être supérieur à 0.";
     }
     setErreurLignes(ligneError);
+
+    if (envoiDirectAuDG) {
+      const refus = refusMotifEchange(motifEnvoiDG, "l'envoi de la demande au DG");
+      if (refus) errors.motifEnvoiDG = refus;
+      setFieldErrors(errors);
+    }
 
     if (Object.keys(errors).length > 0 || ligneError) {
       return;
     }
 
     startTransition(async () => {
-      const beneficiaire: ChoixBeneficiaire =
-        modeBeneficiaire === "COMPTE"
-          ? { mode: "COMPTE", userId: compteBeneficiaire }
-          : modeBeneficiaire === "NOM"
-            ? { mode: "NOM", nom: nomBeneficiaire }
-            : { mode: "MOI" };
       const result = await creerDemandeAction({
-        beneficiaire,
+        beneficiaire: saisieVersChoix(commun),
         dateLivraisonSouhaitee: dateLivraison || undefined,
         devise,
         lignes: lignes.map((l) => ({
           libelle: l.libelle,
           motif: l.motif,
           quantite: l.quantite,
-          prixUnitaire: Number(l.prixUnitaire) || 0,
+          // Texte saisi, réanalysé par le serveur avec la devise (jamais un nombre de confiance).
+          prixUnitaire: l.prixUnitaire.trim() === "" ? "0" : l.prixUnitaire,
+          beneficiaire: l.details.beneficiaire ? saisieVersChoix(l.details.beneficiaire) : null,
+          pieceJointeUrls: l.details.pieces.map((p) => p.url),
+          dateLivraison: l.dateLivraison || undefined,
         })),
         pieceJointeUrl: pieceJointeUrl ?? undefined,
+        motifEnvoiDG: envoiDirectAuDG ? motifEnvoiDG.trim() : undefined,
       });
 
       if (result.status === "success") {
@@ -210,7 +279,7 @@ export function DemandeForm({ comptes }: { comptes: { value: string; label: stri
           </div>
 
           {lignes.map((ligne) => {
-            const total = (Number(ligne.quantite) || 0) * (Number(ligne.prixUnitaire) || 0);
+            const total = (Number(ligne.quantite) || 0) * valeurSaisieMontant(ligne.prixUnitaire, { devise });
             return (
               <div
                 key={ligne.key}
@@ -238,15 +307,13 @@ export function DemandeForm({ comptes }: { comptes: { value: string; label: stri
                 </div>
                 <div>
                   <span className="mb-1 block text-xs font-medium text-muted-foreground sm:hidden">Prix unitaire</span>
-                  <Input
+                  <InputMontant
                     aria-label="Prix unitaire"
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="1"
+                    devise={devise}
                     placeholder="0"
+                    echo={false}
                     value={ligne.prixUnitaire}
-                    onChange={(e) => updateLigne(ligne.key, { prixUnitaire: e.target.value })}
+                    onValueChange={(texte) => updateLigne(ligne.key, { prixUnitaire: texte })}
                   />
                 </div>
                 <div className="text-sm font-bold text-foreground tabular-nums sm:text-right">
@@ -273,6 +340,26 @@ export function DemandeForm({ comptes }: { comptes: { value: string; label: stri
                     value={ligne.motif}
                     onChange={(e) => updateLigne(ligne.key, { motif: e.target.value })}
                   />
+                  <div className="mt-2 max-w-xs">
+                    <Input
+                      label="Date de livraison de l'article"
+                      type="date"
+                      min={aujourdHui}
+                      data-date-livraison-article
+                      hint={ligne.dateLivraison ? undefined : dateLivraison ? "Vide : la date commune sera utilisée." : undefined}
+                      value={ligne.dateLivraison}
+                      onChange={(e) => updateLigne(ligne.key, { dateLivraison: e.target.value })}
+                      error={fieldErrors[`lignes.${lignes.indexOf(ligne)}.dateLivraison`]}
+                    />
+                  </div>
+                  <DetailsArticleEditeur
+                    details={ligne.details}
+                    commun={commun}
+                    createurId={createurId}
+                    comptes={comptes}
+                    onChange={(patch) => updateLigne(ligne.key, { details: { ...ligne.details, ...patch } })}
+                    erreur={fieldErrors[`lignes.${lignes.indexOf(ligne)}.beneficiaire`]}
+                  />
                 </div>
               </div>
             );
@@ -291,6 +378,52 @@ export function DemandeForm({ comptes }: { comptes: { value: string; label: stri
 
       {erreurLignes ? <p className="text-sm text-danger">{erreurLignes}</p> : null}
 
+      {/* Détails communs (autonomie des articles, lot A) : bénéficiaire par défaut et pièce commune, hérités par chaque
+          article qui n'a pas ses propres détails. « Appliquer à tous les articles » remet tous les articles sur ces valeurs. */}
+      <Card>
+        <h2 className="flex items-center gap-2 text-base font-bold text-foreground">
+          <span className="h-4 w-1 rounded-full bg-primary" aria-hidden="true" />
+          Détails communs
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Valables pour tous les articles, sauf ceux dont vous personnalisez les détails dans le tableau ci-dessus.
+        </p>
+        <div className="mt-4 space-y-4">
+          <BeneficiaireChamp value={commun} onChange={setCommun} comptes={comptes} error={fieldErrors.beneficiaire} />
+          <PieceJointeUpload label="Pièce commune" onChange={(url) => setPieceJointeUrl(url)} />
+          <div className="max-w-xs">
+            <Input
+              label="Date de livraison commune"
+              type="date"
+              min={aujourdHui}
+              data-date-livraison-commune
+              hint="Ne peut pas être dans le passé."
+              value={dateLivraison}
+              onChange={(e) => setDateLivraison(e.target.value)}
+              error={fieldErrors.dateLivraisonSouhaitee}
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" variant="secondary" data-appliquer-a-tous onClick={demanderAppliquerATous}>
+              Appliquer à tous les articles
+            </Button>
+            {confirmerAppliquer ? (
+              <div role="alert" data-confirmation-appliquer className="flex flex-wrap items-center gap-2 text-sm text-foreground">
+                <span>
+                  {beneficiairesPersonnalises && datesPersonnalisees
+                    ? "Certains articles ont un bénéficiaire ou une date de livraison personnalisés : ils seront remplacés par les valeurs communes."
+                    : datesPersonnalisees
+                      ? "Certains articles ont une date de livraison personnalisée : elle sera remplacée par la date commune."
+                      : "Certains articles ont un bénéficiaire personnalisé : il sera remplacé par la valeur commune."}
+                </span>
+                <Button type="button" onClick={appliquerCommunATous}>Remplacer</Button>
+                <Button type="button" variant="secondary" onClick={() => setConfirmerAppliquer(false)}>Annuler</Button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </Card>
+
       {/* En-tête de la demande — champs secondaires, remplis après les
           articles. Pas de Catégorie d'achat ici : la catégorisation reste
           un travail de Finance après création. */}
@@ -301,43 +434,6 @@ export function DemandeForm({ comptes }: { comptes: { value: string; label: stri
         </h2>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2 sm:col-span-2">
-            <Select
-              label="Bénéficiaire"
-              options={OPTIONS_BENEFICIAIRE}
-              value={modeBeneficiaire}
-              onChange={(e) => setModeBeneficiaire(e.target.value as ModeBeneficiaire)}
-              error={modeBeneficiaire === "MOI" ? fieldErrors.beneficiaire : undefined}
-            />
-            {modeBeneficiaire === "COMPTE" ? (
-              <Select
-                label="Compte bénéficiaire"
-                placeholder="Sélectionner un compte..."
-                options={comptes}
-                value={compteBeneficiaire}
-                onChange={(e) => setCompteBeneficiaire(e.target.value)}
-                error={fieldErrors.beneficiaire}
-              />
-            ) : null}
-            {modeBeneficiaire === "NOM" ? (
-              <Input
-                label="Nom du bénéficiaire"
-                hint="Fournisseur, prestataire ou « SIM Assurances CI »."
-                value={nomBeneficiaire}
-                onChange={(e) => setNomBeneficiaire(e.target.value)}
-                error={fieldErrors.beneficiaire}
-              />
-            ) : null}
-          </div>
-          <Input
-            label="Date de livraison souhaitée"
-            type="date"
-            min={aujourdHui}
-            hint="Ne peut pas être dans le passé."
-            value={dateLivraison}
-            onChange={(e) => setDateLivraison(e.target.value)}
-            error={fieldErrors.dateLivraisonSouhaitee}
-          />
           <Select
             label="Devise"
             options={[...DEVISE_OPTIONS]}
@@ -345,12 +441,30 @@ export function DemandeForm({ comptes }: { comptes: { value: string; label: stri
             onChange={(e) => setDevise(e.target.value)}
             error={fieldErrors.devise}
           />
-        </div>
-
-        <div className="mt-4">
-          <PieceJointeUpload onChange={setPieceJointeUrl} />
+          {/* Date de création : posée par le serveur à l'enregistrement (`Demande.createdAt`), jamais saisie. */}
+          <div data-demande-creee-le>
+            <span className="block text-sm font-medium text-foreground">Demande créée le</span>
+            <p className="mt-1.5 rounded-lg border border-border bg-muted/60 px-3 py-2 text-sm font-semibold text-foreground" suppressHydrationWarning>
+              {new Date().toLocaleDateString("fr-FR", { timeZone: "Africa/Abidjan" })}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">Automatique, non modifiable.</p>
+          </div>
         </div>
       </Card>
+
+      {envoiDirectAuDG ? (
+        <Card>
+          <ChampMotifEchange
+            name="motifEnvoiDG"
+            label="Motif de l'envoi au DG"
+            hint="Votre demande est décidée par le DG : ce motif lui est transmis."
+            value={motifEnvoiDG}
+            onChange={setMotifEnvoiDG}
+            disabled={isPending}
+          />
+          {fieldErrors.motifEnvoiDG ? <p className="mt-1 text-xs text-danger">{fieldErrors.motifEnvoiDG}</p> : null}
+        </Card>
+      ) : null}
 
       <Button type="button" onClick={handleSubmit} loading={isPending} className="w-full">
         Envoyer la demande

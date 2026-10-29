@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession, hasPermission } from "@/lib/auth";
 import { prisma } from "backend";
@@ -16,8 +17,12 @@ interface PointagesRHPageProps {
     au?: string;
     type?: string;
     userId?: string;
+    page?: string;
   }>;
 }
+
+/** Lignes par page (mesuré : 30 000 pointages affichés d'un coup mettaient plus de 40 s à charger). */
+const TAILLE_PAGE = 200;
 
 export default async function PointagesRHPage({ searchParams }: PointagesRHPageProps) {
   const session = await getSession();
@@ -28,7 +33,8 @@ export default async function PointagesRHPage({ searchParams }: PointagesRHPageP
      redirect("/?error=acces_refuse");
   }
 
-  const { du, au, type, userId } = await searchParams;
+  const { du, au, type, userId, page: pageBrute } = await searchParams;
+  const page = Math.max(1, Math.floor(Number(pageBrute)) || 1);
 
   // Construction des bornes de dates
   let dateDebut: Date | undefined = undefined;
@@ -69,10 +75,12 @@ export default async function PointagesRHPage({ searchParams }: PointagesRHPageP
   }
 
   // Récupération des données
-  const [pointagesDb, usersDb] = await Promise.all([
+  const [pointagesDb, total, usersDb] = await Promise.all([
     prisma.pointage.findMany({
       where: pointageWhere,
-      orderBy: { heure: "desc" },
+      orderBy: [{ heure: "desc" }, { id: "asc" }],
+      skip: (page - 1) * TAILLE_PAGE,
+      take: TAILLE_PAGE,
       include: {
         user: { select: { fullName: true } },
         effectuePar: { select: { fullName: true } },
@@ -82,6 +90,7 @@ export default async function PointagesRHPage({ searchParams }: PointagesRHPageP
         },
       },
     }),
+    prisma.pointage.count({ where: pointageWhere }),
     prisma.user.findMany({
       where: { isActive: true },
       select: { id: true, fullName: true },
@@ -107,36 +116,73 @@ export default async function PointagesRHPage({ searchParams }: PointagesRHPageP
     ipAddress: p.ipAddress ?? null,
   }));
 
+  const pagesTotal = Math.max(1, Math.ceil(total / TAILLE_PAGE));
+  const lienPage = (n: number) => {
+    const params = new URLSearchParams();
+    if (du) params.set("du", du);
+    if (au) params.set("au", au);
+    if (type) params.set("type", type);
+    if (userId) params.set("userId", userId);
+    params.set("page", String(Math.min(Math.max(1, n), pagesTotal)));
+    return `/pointage/rh/pointages?${params.toString()}`;
+  };
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 font-sans">
-      <PageHeader
-        title="Consultation des pointages"
-        description="Vue globale de tous les pointages (arrivées, départs) de l'ensemble des collaborateurs."
-        backHref="/pointage/rh"
-        backLabel="Retour à la Boîte à Outils"
-      />
+    <div className="mx-auto max-w-6xl space-y-3 px-4 py-2 font-sans sm:px-6 md:space-y-6 md:py-8">
+      <div className="hidden md:block">
+        <PageHeader
+          title="Consultation des pointages"
+          description="Vue globale de tous les pointages (arrivées, départs) de l'ensemble des collaborateurs."
+          backHref="/pointage/rh"
+          backLabel="Retour à la Boîte à Outils"
+        />
+      </div>
+      {/* Mobile : titre compact en gras, sans description. */}
+      <h1 className="text-xl font-black tracking-tight text-foreground md:hidden">Tous les pointages</h1>
 
       <PointagesRHFilters
         initial={{ du, au, type, userId }}
         users={usersDb}
       />
 
-      <div className="space-y-3 rounded-2xl border border-border bg-surface p-4 sm:p-6 shadow-xs">
+      <div className="space-y-2 rounded-2xl border border-border bg-surface p-3 shadow-xs md:space-y-3 md:p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Icon name="file-text" className="size-5 text-primary" />
-            <h2 className="text-base font-bold text-foreground">
-              Pointages ({pointages.length})
+            <Icon name="file-text" className="size-4 text-primary md:size-5" />
+            <h2 className="text-sm font-bold text-foreground md:text-base">
+              Pointages ({total})
             </h2>
           </div>
           {pointages.length > 0 ? (
-            <span className="text-xs text-muted-foreground">
+            <span className="hidden text-xs text-muted-foreground md:inline">
               Trié par date décroissante
             </span>
           ) : null}
         </div>
 
         <PointagesRHTables pointages={pointages} />
+
+        {total > TAILLE_PAGE ? (
+          <nav className="flex items-center justify-between gap-3 pt-2 text-sm" aria-label="Pagination des pointages">
+            <Link
+              href={lienPage(page - 1)}
+              className={`rounded-md border border-border px-4 py-2 ${page <= 1 ? "pointer-events-none opacity-50" : ""}`}
+              aria-disabled={page <= 1}
+            >
+              Précédent
+            </Link>
+            <span className="text-muted-foreground">
+              Page {page} / {pagesTotal} — lignes {(page - 1) * TAILLE_PAGE + 1} à {Math.min(page * TAILLE_PAGE, total)} sur {total}
+            </span>
+            <Link
+              href={lienPage(page + 1)}
+              className={`rounded-md border border-border px-4 py-2 ${page >= pagesTotal ? "pointer-events-none opacity-50" : ""}`}
+              aria-disabled={page >= pagesTotal}
+            >
+              Suivant
+            </Link>
+          </nav>
+        ) : null}
       </div>
     </div>
   );

@@ -3,7 +3,10 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
+import { ChampMotifEchange } from "@/components/tresorerie/ChampMotifEchange";
+import { RaisonVisible } from "@/components/tresorerie/RaisonVisible";
 import { Button, Textarea } from "@/components/ui";
+import { motifEchangeValide } from "backend/client";
 
 import { resoumettreAuDGAction, soumettreAuDGAction } from "../../../circuit/actions";
 import { rejeterDemandeAction } from "./actions";
@@ -35,12 +38,17 @@ export function CircuitFinanceActions({
   raisonSoumettre: string | null;
   raisonRejeter: string | null;
   raisonResoumettre: string | null;
-  /** Soumission au DG ligne par ligne (2026-10-10) : elle se fait depuis le tableau des lignes, pas de bouton ici. */
+  /** Soumission au DG article par article : elle se fait depuis le bouton de chaque article, pas de bouton ici. Pour une
+   *  demande à lignes qui n'en relève pas (décidée d'office par le DG, ou émise par le DG), une seule phrase explicative
+   *  au niveau de la demande, jamais de bouton global (lot B bis). */
   soumissionParLignes?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [rejetOuvert, setRejetOuvert] = useState(false);
   const [motif, setMotif] = useState("");
+  // Lot M : motif de l'envoi (ou de la resoumission) au DG, 10 à 300 caractères.
+  const [motifDG, setMotifDG] = useState("");
+  const motifDGValide = motifEchangeValide(motifDG);
 
   function lancer(appel: () => Promise<{ status: string; message?: string }>) {
     startTransition(async () => {
@@ -49,8 +57,9 @@ export function CircuitFinanceActions({
         toast.success(r.message ?? "Enregistré.");
         setRejetOuvert(false);
         setMotif("");
+        setMotifDG("");
       } else {
-        toast.error(r.message ?? "Action refusée.");
+        toast.error(r.message ?? "Action impossible.");
       }
     });
   }
@@ -67,23 +76,32 @@ export function CircuitFinanceActions({
       <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {apresRejetDG ? "Après le rejet du DG" : "Circuit de validation"}
       </h2>
+      {apresRejetDG || !(soumissionParLignes || afficherRejet) ? (
+        <ChampMotifEchange
+          value={motifDG}
+          onChange={setMotifDG}
+          label={apresRejetDG ? "Motif de la resoumission au DG" : "Motif de la soumission au DG"}
+          hint="Transmis au DG avec la demande."
+          disabled={apresRejetDG ? !!raisonResoumettre : !!raisonSoumettre}
+        />
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {apresRejetDG ? (
-          <Button
+          <Button signe
             type="button"
-            disabled={!!raisonResoumettre || isPending}
+            disabled={!!raisonResoumettre || isPending || !motifDGValide}
             loading={isPending && !rejetOuvert}
-            onClick={() => lancer(() => resoumettreAuDGAction(demandeId))}
+            onClick={() => lancer(() => resoumettreAuDGAction(demandeId, motifDG))}
           >
             Resoumettre au DG
           </Button>
-        ) : soumissionParLignes ? null : (
-          <Button
+        ) : soumissionParLignes || afficherRejet ? null : (
+          <Button signe
             type="button"
             variant="secondary"
-            disabled={!!raisonSoumettre || isPending}
+            disabled={!!raisonSoumettre || isPending || !motifDGValide}
             loading={isPending && !rejetOuvert}
-            onClick={() => lancer(() => soumettreAuDGAction(demandeId))}
+            onClick={() => lancer(() => soumettreAuDGAction(demandeId, motifDG))}
           >
             Soumettre au DG
           </Button>
@@ -111,7 +129,7 @@ export function CircuitFinanceActions({
             error={motif.length > 0 && !motifValide ? `${MOTIF_MIN} caractères minimum.` : undefined}
           />
           <div className="flex flex-wrap gap-2">
-            <Button
+            <Button signe
               type="button"
               variant="danger"
               disabled={!motifValide || isPending}
@@ -130,7 +148,7 @@ export function CircuitFinanceActions({
         </div>
       ) : null}
 
-      {raison ? <p className="text-xs text-muted-foreground">{raison}</p> : null}
+      {raison ? <RaisonVisible data-raison-circuit>{raison}</RaisonVisible> : null}
     </section>
   );
 }

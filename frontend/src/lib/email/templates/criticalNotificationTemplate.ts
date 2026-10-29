@@ -1,3 +1,4 @@
+import { urlPublique } from "@/lib/urlPublique";
 import { baseEmailLayout } from "./baseEmailLayout";
 
 interface CriticalNotificationEmailParams {
@@ -17,7 +18,7 @@ export function generateCriticalNotificationEmail({
 }: CriticalNotificationEmailParams): { subject: string; html: string; text: string } {
   const subject = `[ALERTE] ${titre} — SIM Assurances`;
 
-  const appUrl = process.env.NEXTAUTH_URL || process.env.AUTH_URL || "http://localhost:3000";
+  const appUrl = urlPublique();
   const actionUrl = lien ? (lien.startsWith("http") ? lien : `${appUrl}${lien}`) : appUrl;
 
   const contentHtml = `
