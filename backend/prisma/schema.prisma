@@ -46,8 +46,6 @@ model User {
   /// Services dont ce compte est le responsable (étape « Service » du circuit de validation, 2026-10-06).
   servicesResponsable    Service[] @relation("ServiceResponsable")
   photoUrl               String?   @default("/default-avatar.svg")
-  /// Date d'embauche (Congés, 2026-10-15) : exercice de congé et ancienneté. Jamais de repli silencieux sur
-  /// `createdAt` (tous les comptes ont été créés en septembre 2026) : la RH la renseigne.
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 

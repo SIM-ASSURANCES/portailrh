@@ -59,7 +59,7 @@ export default async function DetailCongePage({ params }: { params: Promise<{ id
       ) : null}
       {statut === "REJETEE" && demande.motifRejet ? (
         <p className="rounded-lg border border-danger-border bg-danger-bg px-4 py-3 text-sm text-danger">
-          Motif du refus : {demande.motifRejet}
+          Motif du rejet : {demande.motifRejet}
         </p>
       ) : null}
       {statut === "ANNULEE" && demande.motifAnnulation ? (

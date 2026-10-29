@@ -287,7 +287,7 @@ const lancer = (...args) =>
   verifier("4. script (simulation) : la demande est listée « AMBIGU »", sortie.includes("[AMBIGU] DEM-LOTD-3") && sortie.includes(REG3));
   verifier("4. script (simulation) : rien n'est écrit", (await reglementsDe(D3))[0].ligneDemandeId === null);
   const refus = lancer("--affecter", `${REG3}:${B3}`.replace(B3, `${PREFIXE}inconnu`), "--appliquer");
-  verifier("4. script : article étranger refusé", refus.includes("REFUSÉ"));
+  verifier("4. script : article étranger refusé", refus.includes("IMPOSSIBLE"));
   const ok = lancer("--affecter", `${REG3}:${A3}`, "--appliquer");
   verifier("4. script : rattachement manuel appliqué", ok.includes("appliqué") && (await reglementsDe(D3))[0].ligneDemandeId === A3);
   const cs = (await q(`SELECT count(*)::int AS n FROM "JournalCaisse" WHERE "demandeId" = $1`, [D3]))[0].n;

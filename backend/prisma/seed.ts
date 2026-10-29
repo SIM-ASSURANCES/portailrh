@@ -7,15 +7,10 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
-import { ENC_MODULE_KEY, ENC_PERMISSIONS, ENC_PERMISSION_MISE_EN_SERVICE, ENC_ROLES_DEPART } from "../src/encPermissions";
+import { ENC_ROLES_DEPART } from "../src/encPermissions";
+import { MODULES_CATALOGUE, PERMISSIONS_CATALOGUE, ROLES_CIBLES } from "../src/rolesCibles";
 import { ENC_PARAMETRES } from "../src/encParametres";
 import { ENC_BENEFICIAIRE_HONORAIRES_INITIAL } from "../src/encReferentiels";
-import {
-  MODULE_CONGES_KEY,
-  MODULE_CONGES_LABEL,
-  PERMISSIONS_CONGES,
-  permissionsCongePourCles,
-} from "../src/congesPermissions";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -78,228 +73,52 @@ async function main() {
 
   console.log("Création des rôles...");
 
-  const [roleCollaborateur, roleFinance, roleDG, roleAdmin, roleRH, roleAssistantFinance] = await Promise.all([
-    prisma.role.upsert({
-      where: { name: "Collaborateur" },
-      update: {
-        description: "Collaborateur pouvant créer des demandes",
-        peutEtreBeneficiaireDelegation: true,
-      },
-      create: {
-        name: "Collaborateur",
-        description: "Collaborateur pouvant créer des demandes",
-        peutEtreBeneficiaireDelegation: true,
-      },
-    }),
-    prisma.role.upsert({
-      where: { name: "Finance" },
-      update: { description: "Équipe finance / trésorerie : décide (valide, rejette, clôture)" },
-      create: { name: "Finance", description: "Équipe finance / trésorerie : décide (valide, rejette, clôture)" },
-    }),
-    prisma.role.upsert({
-      where: { name: "DG" },
-      update: { description: "Direction générale" },
-      create: { name: "DG", description: "Direction générale" },
-    }),
-    prisma.role.upsert({
-      where: { name: "Admin" },
-      // FeedbackApp (voir CLAUDE.md "FeedbackApp") — compte technique, pas
-      // un vrai employé à évaluer : jamais proposable comme destinataire.
-      // Comparaison sur le nom exact ("Admin"), jamais sur `estAdmin` : un
-      // rôle combiné comme "Admin / Collaborateur" représente, lui, un
-      // vrai employé et doit rester proposable malgré `estAdmin: true`.
-      update: { description: "Administrateur du portail", estAdmin: true, peutRecevoirFeedback: false },
-      create: {
-        name: "Admin",
-        description: "Administrateur du portail",
-        estAdmin: true,
-        peutRecevoirFeedback: false,
-      },
-    }),
-    prisma.role.upsert({
-      where: { name: "RH" },
-      update: { description: "Gère le pointage, les retards, absences et reportings RH" },
-      create: { name: "RH", description: "Gère le pointage, les retards, absences et reportings RH" },
-    }),
-    // Séparation stricte des tâches Trésorerie (voir CLAUDE.md "Séparation
-    // Responsable Finance / Assistant Finance") — exécute le
-    // règlement/décaissement et la réception des retours de caisse,
-    // JAMAIS la validation elle-même : réduit le risque de fraude en
-    // s'assurant qu'une seule personne ne peut jamais à la fois valider
-    // une dépense ET la régler. `peutEtreBeneficiaireDelegation: true` DÈS
-    // LA CRÉATION — second cas explicite après "Collaborateur" à déroger à
-    // la règle "réservé au rôle Collaborateur" (voir "Délégation
-    // individuelle de permissions") : un Responsable Finance doit pouvoir
-    // déléguer au cas par cas l'alimentation de caisse/la correction du
-    // solde d'ouverture/la dépense directe à son Assistant.
-    prisma.role.upsert({
-      where: { name: "Assistant Finance" },
-      update: {
-        description: "Exécute les règlements/décaissements et réceptionne les retours de caisse (séparation des tâches)",
-        peutEtreBeneficiaireDelegation: true,
-      },
-      create: {
-        name: "Assistant Finance",
-        description: "Exécute les règlements/décaissements et réceptionne les retours de caisse (séparation des tâches)",
-        peutEtreBeneficiaireDelegation: true,
-      },
-    }),
-  ]);
-
-  console.log(
-    `Rôles créés : ${roleCollaborateur.name}, ${roleFinance.name}, ${roleDG.name}, ${roleAdmin.name}, ${roleRH.name}, ${roleAssistantFinance.name}`
-  );
-
+  // Source unique des rôles, modules et permissions : src/rolesCibles.ts (aussi lue par docs/roles-et-permissions.md et par
+  // le script de comparaison lister-roles-permissions.ts). Même contenu qu'avant, déplacé tel quel.
+  const rolesParNom: Record<string, { id: string; name: string }> = {};
+  for (const r of ROLES_CIBLES) {
+    const donnees = {
+      description: r.description,
+      estAdmin: r.estAdmin,
+      peutEtreBeneficiaireDelegation: r.peutEtreBeneficiaireDelegation,
+      peutRecevoirFeedback: r.peutRecevoirFeedback,
+    };
+    rolesParNom[r.name] = await prisma.role.upsert({ where: { name: r.name }, update: donnees, create: { name: r.name, ...donnees } });
+  }
+  const roleCollaborateur = rolesParNom["Collaborateur"];
+  const roleFinance = rolesParNom["Finance"];
+  const roleDG = rolesParNom["DG"];
+  const roleAdmin = rolesParNom["Admin"];
+  const roleRH = rolesParNom["RH"];
+  const roleAssistantFinance = rolesParNom["Assistant Finance"];
   // Module Encaissements (voir docs/encaissements-conception.md §4) : 3 rôles de départ, modifiables ensuite.
-  const rolesEncaissements = await Promise.all(
-    ENC_ROLES_DEPART.map((r) =>
-      prisma.role.upsert({
-        where: { name: r.name },
-        update: { description: r.description },
-        create: { name: r.name, description: r.description },
-      })
-    )
-  );
+  const rolesEncaissements = ENC_ROLES_DEPART.map((r) => rolesParNom[r.name]);
+
+  console.log(`Rôles créés : ${ROLES_CIBLES.map((r) => r.name).join(", ")}`);
 
   console.log("Création des modules...");
 
-  const [moduleTresorerie, modulePointage, moduleFeedback, moduleSysteme] = await Promise.all([
-    prisma.module.upsert({
-      where: { key: "tresorerie" },
-      update: { label: "Gestion des demandes et trésorerie" },
-      create: { key: "tresorerie", label: "Gestion des demandes et trésorerie" },
-    }),
-    prisma.module.upsert({
-      where: { key: "pointage" },
-      update: { label: "Pointage RH" },
-      create: { key: "pointage", label: "Pointage RH" },
-    }),
-    prisma.module.upsert({
-      where: { key: "feedback" },
-      update: { label: "FeedbackApp" },
-      create: { key: "feedback", label: "FeedbackApp" },
-    }),
-    // Module TECHNIQUE (jamais affiché comme carte, voir getAccessibleModules) : réinitialisation à usage unique.
-    prisma.module.upsert({
-      where: { key: "systeme" },
-      update: { label: "Système" },
-      create: { key: "systeme", label: "Système" },
-    }),
-  ]);
+  const modulesParCle: Record<string, { id: string; label: string }> = {};
+  for (const m of MODULES_CATALOGUE) {
+    modulesParCle[m.key] = await prisma.module.upsert({
+      where: { key: m.key },
+      update: { label: m.label },
+      create: { key: m.key, label: m.label },
+    });
+  }
+  const moduleTresorerie = modulesParCle["tresorerie"];
+  const modulePointage = modulesParCle["pointage"];
 
-  console.log(`Modules créés : ${moduleTresorerie.label}, ${modulePointage.label}, ${moduleFeedback.label}`);
-
-  const moduleEncaissements = await prisma.module.upsert({
-    where: { key: ENC_MODULE_KEY },
-    update: { label: "Encaissements, taxes et commissions" },
-    create: { key: ENC_MODULE_KEY, label: "Encaissements, taxes et commissions" },
-  });
-
-  const moduleConges = await prisma.module.upsert({
-    where: { key: MODULE_CONGES_KEY },
-    update: { label: MODULE_CONGES_LABEL },
-    create: { key: MODULE_CONGES_KEY, label: MODULE_CONGES_LABEL },
-  });
+  console.log(`Modules créés : ${MODULES_CATALOGUE.map((m) => m.label).join(", ")}`);
 
   console.log("Création des permissions...");
 
-  const permissionKeys = [
-    { key: "treso.creer_demande", label: "Créer une demande", moduleId: moduleTresorerie.id },
-    { key: "treso.categoriser_demande", label: "Catégoriser une demande", moduleId: moduleTresorerie.id },
-    { key: "treso.valider_demande", label: "Valider une demande", moduleId: moduleTresorerie.id },
-    { key: "treso.effectuer_reglement", label: "Effectuer un règlement", moduleId: moduleTresorerie.id },
-    { key: "treso.declarer_retour", label: "Déclarer un retour de caisse", moduleId: moduleTresorerie.id },
-    { key: "treso.receptionner_retour", label: "Réceptionner un retour de caisse", moduleId: moduleTresorerie.id },
-    { key: "treso.cloturer_demande", label: "Clôturer une demande", moduleId: moduleTresorerie.id },
-    {
-      key: "treso.approuver_validation_complete",
-      label: "Approuver la validation complète (verrou de clôture)",
-      moduleId: moduleTresorerie.id,
-    },
-    { key: "treso.saisir_depense_directe", label: "Saisir une dépense directe", moduleId: moduleTresorerie.id },
-    {
-      key: "treso.alimenter_caisse",
-      label: "Enregistrer une alimentation de caisse",
-      moduleId: moduleTresorerie.id,
-    },
-    {
-      key: "treso.corriger_solde_ouverture",
-      label: "Définir/corriger le solde d'ouverture de caisse",
-      moduleId: moduleTresorerie.id,
-    },
-    { key: "treso.voir_dashboard_finance", label: "Voir le dashboard finance", moduleId: moduleTresorerie.id },
-    { key: "treso.voir_reporting", label: "Voir le reporting", moduleId: moduleTresorerie.id },
-    {
-      key: "treso.gerer_categories",
-      label: "Gérer les catégories et objets d'achat (créer/supprimer)",
-      moduleId: moduleTresorerie.id,
-    },
-    // Permissions explicites qui remplacent la règle « Resp » (2026-10-06, migration
-    // 20261006100000_tresorerie_permissions_explicites, mêmes libellés).
-    { key: "treso.decider_finance", label: "Décider à l'étape Finance (valider ou rejeter les lignes)", moduleId: moduleTresorerie.id },
-    { key: "treso.soumettre_dg", label: "Soumettre ou resoumettre une demande au DG", moduleId: moduleTresorerie.id },
-    { key: "treso.annuler_reglement", label: "Annuler un règlement confirmé", moduleId: moduleTresorerie.id },
-    { key: "treso.ajuster_retour", label: "Ajuster le total déclaré d'un retour de caisse", moduleId: moduleTresorerie.id },
-    { key: "treso.valider_remboursement", label: "Valider ou rejeter un remboursement de retour", moduleId: moduleTresorerie.id },
-    { key: "treso.valider_retour_exceptionnel", label: "Valider ou rejeter un retour exceptionnel post-clôture", moduleId: moduleTresorerie.id },
-    { key: "treso.creer_retour_externe", label: "Enregistrer un retour externe (hors demande)", moduleId: moduleTresorerie.id },
-    { key: "treso.modifier_budget_categorie", label: "Modifier le budget d'une catégorie", moduleId: moduleTresorerie.id },
-    { key: "treso.deleguer_acces", label: "Déléguer des accès", moduleId: moduleTresorerie.id },
-    // Circuit de validation (2026-10-06) : décision à l'étape DG.
-    { key: "treso.decider_dg", label: "Décider à l'étape DG (valider ou rejeter une demande soumise)", moduleId: moduleTresorerie.id },
-    // Lot K : réorienter l'étape Service d'une demande vers un autre responsable disponible (le demandeur le peut sans permission).
-    { key: "treso.reorienter_demande", label: "Réorienter l'étape Service d'une demande vers un autre responsable", moduleId: moduleTresorerie.id },
-    // Lot J : le DG valide ou refuse les paramétrages de budget (la Finance les soumet avec modifier_budget_categorie).
-    { key: "treso.valider_budget", label: "Valider ou refuser un paramétrage de budget (DG)", moduleId: moduleTresorerie.id },
-    {
-      key: "treso.modifier_description",
-      label: "Modifier la description d'une demande et le libellé de ses lignes",
-      moduleId: moduleTresorerie.id,
-    },
-    { key: "pointage.pointer", label: "Pointer (arrivée / départ)", moduleId: modulePointage.id },
-    { key: "pointage.consulter_historique", label: "Consulter son propre historique de pointage", moduleId: modulePointage.id },
-    { key: "pointage.consulter_tous", label: "Consulter les pointages de tous les employés", moduleId: modulePointage.id },
-    { key: "pointage.pointage_exceptionnel", label: "Pointer à la place d'un collaborateur", moduleId: modulePointage.id },
-    { key: "pointage.corriger_pointage", label: "Corriger un pointage", moduleId: modulePointage.id },
-    { key: "pointage.gerer_horaires", label: "Paramétrer les horaires de référence", moduleId: modulePointage.id },
-    { key: "pointage.voir_dashboard_rh", label: "Voir le dashboard RH", moduleId: modulePointage.id },
-    { key: "pointage.voir_reporting", label: "Voir le reporting RH", moduleId: modulePointage.id },
-    {
-      key: "pointage.reinitialiser",
-      label: "Réinitialiser les données du Pointage avant sa mise en service",
-      moduleId: modulePointage.id,
-    },
-    {
-      key: "feedback.moderer",
-      label: "Modérer les messages FeedbackApp",
-      moduleId: moduleFeedback.id,
-    },
-    {
-      key: "systeme.reinitialiser",
-      label: "Réinitialiser les données de test avant mise en production (usage unique)",
-      moduleId: moduleSysteme.id,
-    },
-    // Module Encaissements (source unique : src/encPermissions.ts). La mise en service va au module technique « systeme ».
-    ...ENC_PERMISSIONS.map((p) => ({ key: p.key, label: p.label, moduleId: moduleEncaissements.id })),
-    { ...ENC_PERMISSION_MISE_EN_SERVICE, moduleId: moduleSysteme.id },
-    // Congés (source unique : src/congesPermissions.ts, aussi posées par la migration).
-    ...PERMISSIONS_CONGES.map((p) => ({
-      key: p.key,
-      label: p.label,
-      moduleId: moduleConges.id,
-    })),
-  ];
-
   const createdPermissions = await Promise.all(
-    permissionKeys.map((p) =>
+    PERMISSIONS_CATALOGUE.map((p) =>
       prisma.permission.upsert({
         where: { key: p.key },
-        update: { label: p.label, moduleId: p.moduleId },
-        create: {
-          key: p.key,
-          label: p.label,
-          moduleId: p.moduleId,
-        },
+        update: { label: p.label, moduleId: modulesParCle[p.moduleKey].id },
+        create: { key: p.key, label: p.label, moduleId: modulesParCle[p.moduleKey].id },
       })
     )
   );
@@ -310,132 +129,15 @@ async function main() {
 
   console.log("Attribution des permissions aux rôles...");
 
-  const rolePermissionMap: Record<string, string[]> = {
-    [roleCollaborateur.id]: [
-      "treso.creer_demande",
-      "treso.declarer_retour",
-      "pointage.pointer",
-      "pointage.consulter_historique",
-    ],
-    // Responsable Finance : décide (valide/rejette, clôture) — voir
-    // CLAUDE.md "Séparation Responsable Finance / Assistant Finance".
-    // Retrait assumé (choix produit daté 2026-09-21, PAS un correctif de
-    // bug) de "treso.effectuer_reglement"/"treso.receptionner_retour" :
-    // désormais l'exclusivité du rôle "Assistant Finance" ci-dessous,
-    // pour qu'une seule personne ne puisse jamais à la fois valider une
-    // dépense ET la régler.
-    [roleFinance.id]: [
-      // Décision 3 du circuit (2026-10-07) : la Finance crée aussi des demandes (cas b : le DG les décide), et déclare
-      // le retour de caisse des siennes (un autre compte le réceptionne).
-      "treso.creer_demande",
-      "treso.declarer_retour",
-      "treso.categoriser_demande",
-      "treso.valider_demande",
-      "treso.cloturer_demande",
-      "treso.alimenter_caisse",
-      "treso.corriger_solde_ouverture",
-      "treso.voir_dashboard_finance",
-      "treso.voir_reporting",
-      "treso.saisir_depense_directe",
-      "treso.gerer_categories",
-      // Actions autrefois déduites de « valider_demande sans approuver_validation_complete » (2026-10-06).
-      "treso.decider_finance",
-      "treso.soumettre_dg",
-      "treso.annuler_reglement",
-      "treso.ajuster_retour",
-      "treso.valider_remboursement",
-      "treso.valider_retour_exceptionnel",
-      "treso.creer_retour_externe",
-      "treso.modifier_budget_categorie",
-      "treso.deleguer_acces",
-      "treso.modifier_description",
-      "treso.reorienter_demande",
-    ],
-    [roleDG.id]: [
-      // Décision 10 (2026-10-08) : plus de "treso.valider_demande" — le DG décide à l'étape DG (decider_dg) et approuve
-      // la clôture ; ses consultations passent par "treso.voir_dashboard_finance".
-      "treso.voir_dashboard_finance",
-      "treso.voir_reporting",
-      "treso.approuver_validation_complete",
-      "treso.decider_dg",
-      "treso.valider_budget",
-      // Décision 3 : le DG crée aussi des demandes (cas a : la Finance les décide) et déclare leur retour de caisse.
-      "treso.creer_demande",
-      "treso.declarer_retour",
-      "pointage.consulter_tous",
-      "pointage.voir_dashboard_rh",
-      "pointage.voir_reporting",
-      // FeedbackApp (voir CLAUDE.md "FeedbackApp") — décision confirmée :
-      // la Direction modère aussi les messages, au même titre que RH.
-      "feedback.moderer",
-      // Réinitialisation à usage unique : DG SEUL (jamais Admin, jamais héritée d'estAdmin).
-      "systeme.reinitialiser",
-      // Mise en service du module Encaissements : même modèle, DG seul.
-      ENC_PERMISSION_MISE_EN_SERVICE.key,
-    ],
-    // EXCEPTION DÉLIBÉRÉE à l'invariant "le rôle Admin n'a aucune
-    // RolePermission explicite" (voir CLAUDE.md "estAdmin — accès à la
-    // console /admin") : décision produit confirmée par le maître de
-    // stage le 17/09/2026 (voir CLAUDE.md "FeedbackApp — notation
-    // structurée"), jamais l'ancien mécanisme runtime bugué qui
-    // réattribuait ceci automatiquement à chaque process (corrigé). Seule
-    // exception à ce jour — ne pas y ajouter d'autres permissions
-    // `treso.*`/`pointage.*` sans une décision tout aussi explicite.
-    // 2026-10-14 : `pointage.reinitialiser` (purge du Pointage seul avant sa mise en service) — autre exception délibérée,
-    // attribuée explicitement (jamais via le contournement estAdmin), retirable dans /admin/roles, jamais délégable.
-    [roleAdmin.id]: ["feedback.moderer", "pointage.reinitialiser"],
-    [roleRH.id]: [
-      "pointage.pointer",
-      "pointage.consulter_historique",
-      "pointage.consulter_tous",
-      "pointage.pointage_exceptionnel",
-      "pointage.corriger_pointage",
-      "pointage.gerer_horaires",
-      "pointage.voir_dashboard_rh",
-      "pointage.voir_reporting",
-      // FeedbackApp (voir CLAUDE.md "FeedbackApp") — attribuée à RH ET DG
-      // (voir roleDG.id ci-dessus) : les deux rôles peuvent modérer.
-      "feedback.moderer",
-    ],
-    // Assistant Finance : exécute (règlement/décaissement, réception des
-    // retours de caisse) — jamais la validation, jamais par défaut
-    // l'alimentation de caisse/la correction du solde d'ouverture/la
-    // dépense directe (délégables au cas par cas par le Responsable
-    // Finance, voir CLAUDE.md).
-    // Décision 3 : l'Assistant crée aussi des demandes (cas b), mais n'exécute jamais l'argent des siennes.
-    [roleAssistantFinance.id]: [
-      "treso.effectuer_reglement",
-      "treso.receptionner_retour",
-      "treso.modifier_description",
-      "treso.creer_demande",
-      "treso.declarer_retour",
-    ],
-    // Module Encaissements : un rôle par profil du cahier (§2).
-    ...Object.fromEntries(rolesEncaissements.map((role, i) => [role.id, ENC_ROLES_DEPART[i].permissions])),
-  };
-
-  // Congés : même règle que la migration (permission sœur), jamais un nom de rôle.
-  // Le rôle Admin (`estAdmin`) ne reçoit que le droit de DEMANDE (soumettre), comme la migration : jamais l'étape RH, l'annulation
-  // ni la consultation de tout. Dans ce seed il ne porte aucune permission sœur, donc n'en reçoit aucune.
-  for (const [roleId, keys] of Object.entries(rolePermissionMap)) {
-    rolePermissionMap[roleId] = [...keys, ...permissionsCongePourCles(keys, roleId === roleAdmin.id)];
-  }
-
+  // Congés compris : calculés par permission sœur dans ROLES_CIBLES (même règle que la migration), jamais par nom de rôle.
   let rolePermissionCount = 0;
-  for (const [roleId, keys] of Object.entries(rolePermissionMap)) {
-    for (const key of keys) {
+  for (const r of ROLES_CIBLES) {
+    const roleId = rolesParNom[r.name].id;
+    for (const key of r.permissions) {
       await prisma.rolePermission.upsert({
-        where: {
-          roleId_permissionId: {
-            roleId,
-            permissionId: permissionByKey[key].id,
-          },
-        },
+        where: { roleId_permissionId: { roleId, permissionId: permissionByKey[key].id } },
         update: {},
-        create: {
-          roleId,
-          permissionId: permissionByKey[key].id,
-        },
+        create: { roleId, permissionId: permissionByKey[key].id },
       });
       rolePermissionCount++;
     }

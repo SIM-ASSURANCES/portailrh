@@ -85,6 +85,7 @@ export async function soumettreJustificationAction(pointageId: string, motif: st
       priority: "IMPORTANT",
       category: "POINTAGE",
       excludeUserId: dest.exclureUserId,
+      inclureDelegues: false, // la décision se lit sur le rôle : un délégué ne décide pas la justification
     });
   }
 

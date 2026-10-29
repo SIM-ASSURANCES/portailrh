@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 
 import type { Prisma } from "./generated/prisma/client";
 import { prisma } from "./prisma";
-import { CATEGORIES_NOTIFICATION_POINTAGE, ENTITES_HISTORIQUE_POINTAGE } from "./reinitialisation";
+import { CATEGORIES_NOTIFICATION_POINTAGE } from "./reinitialisation";
+import { ENTITES_HISTORIQUE_POINTAGE } from "./reinitialisationClassification";
 
 /**
  * Réinitialisation du POINTAGE SEUL, répétable jusqu'à sa mise en service (2026-10-14). Distincte de la réinitialisation

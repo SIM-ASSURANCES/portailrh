@@ -363,7 +363,7 @@ let demandeIdAttenteResp = null;
   // Demande 1 (déjà validée) : aucun bouton de décision actif pour dg@
   await dg.p.goto(`${B}/conges/${demandeId1}`);
   const btnValider1 = dg.p.getByRole("button", { name: "Valider" });
-  const btnRefuser1 = dg.p.getByRole("button", { name: "Refuser" });
+  const btnRefuser1 = dg.p.getByRole("button", { name: "Rejeter" });
   const boutonsDesactives1 = (await btnValider1.isDisabled()) && (await btnRefuser1.isDisabled());
   await verifier(
     "3.c",
@@ -376,7 +376,7 @@ let demandeIdAttenteResp = null;
   // Demande en attente du responsable : aucun bouton de décision actif pour dg@
   await dg.p.goto(`${B}/conges/${demandeIdAttenteResp}`);
   const btnValiderAtt = dg.p.getByRole("button", { name: "Valider" });
-  const btnRefuserAtt = dg.p.getByRole("button", { name: "Refuser" });
+  const btnRefuserAtt = dg.p.getByRole("button", { name: "Rejeter" });
   const boutonsDesactivesAtt = (await btnValiderAtt.isDisabled()) && (await btnRefuserAtt.isDisabled());
   await verifier(
     "3.d",
@@ -541,9 +541,9 @@ let demandeId6 = null;
 
   const resp = await connecter("responsable-commercial@simassurances.test");
   await resp.p.goto(`${B}/conges/${demandeId6}`);
-  await resp.p.getByRole("button", { name: "Refuser" }).click();
-  await resp.p.getByLabel("Motif du refus").fill("Refus pour surcharge de travail");
-  await resp.p.getByRole("button", { name: "Confirmer le refus" }).click();
+  await resp.p.getByRole("button", { name: "Rejeter" }).click();
+  await resp.p.getByLabel("Motif du rejet").fill("Refus pour surcharge de travail");
+  await resp.p.getByRole("button", { name: "Confirmer le rejet" }).click();
   for (let i = 0; i < 30; i++) {
     const check = (await q('SELECT statut FROM "DemandeConge" WHERE id = $1', [demandeId6]))[0];
     if (check?.statut === "REJETEE") break;
@@ -872,10 +872,10 @@ let demandeId10b = null;
 
   const rhA = await connecter("rh@simassurances.test");
   await rhA.p.goto(`${B}/conges/${demandeId10a}`);
-  await rhA.p.getByRole("button", { name: "Refuser" }).click();
+  await rhA.p.getByRole("button", { name: "Rejeter" }).click();
   await rhA.p.check('input[type="checkbox"]');
-  await rhA.p.getByLabel("Motif du refus").fill("Refus tardif avec comptabilisation des absences");
-  await rhA.p.getByRole("button", { name: "Confirmer le refus" }).click();
+  await rhA.p.getByLabel("Motif du rejet").fill("Refus tardif avec comptabilisation des absences");
+  await rhA.p.getByRole("button", { name: "Confirmer le rejet" }).click();
   for (let i = 0; i < 30; i++) {
     const check = (await q('SELECT statut FROM "DemandeConge" WHERE id = $1', [demandeId10a]))[0];
     if (check?.statut === "REJETEE") break;
@@ -929,10 +929,10 @@ let demandeId10b = null;
 
   const rhB = await connecter("rh@simassurances.test");
   await rhB.p.goto(`${B}/conges/${demandeId10b}`);
-  await rhB.p.getByRole("button", { name: "Refuser" }).click();
+  await rhB.p.getByRole("button", { name: "Rejeter" }).click();
   // Laisser la case décochée (par défaut non cochée)
-  await rhB.p.getByLabel("Motif du refus").fill("Refus tardif sans comptabilisation des absences");
-  await rhB.p.getByRole("button", { name: "Confirmer le refus" }).click();
+  await rhB.p.getByLabel("Motif du rejet").fill("Refus tardif sans comptabilisation des absences");
+  await rhB.p.getByRole("button", { name: "Confirmer le rejet" }).click();
   for (let i = 0; i < 30; i++) {
     const check = (await q('SELECT statut FROM "DemandeConge" WHERE id = $1', [demandeId10b]))[0];
     if (check?.statut === "REJETEE") break;

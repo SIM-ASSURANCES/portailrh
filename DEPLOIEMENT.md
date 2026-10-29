@@ -2,6 +2,9 @@
 
 # Déploiement de sim-portail avec Docker
 
+> **Passage en production (sauvegarde, rattrapage des données, rôles, purge des données de test, solde d'ouverture, vérification, retour arrière, levée du verrou
+> de réinitialisation) : suivre [docs/mise-en-production.md](docs/mise-en-production.md).** Les tâches planifiées sont intégrées à l'application (§ 7) : aucun cron-job.org.
+
 Ce guide décrit comment construire et démarrer sim-portail entièrement
 conteneurisé (application Next.js + PostgreSQL), sur n'importe quelle
 machine disposant de Docker — pas de dépendance à un environnement

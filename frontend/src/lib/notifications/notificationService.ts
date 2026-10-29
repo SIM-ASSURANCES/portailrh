@@ -1,4 +1,4 @@
-import { contexteSignatureCourant, differerApresCommit, prisma, type NotificationPriority, type NotificationCategory } from "backend";
+import { contexteSignatureCourant, utilisateursAvecPermission, differerApresCommit, prisma, type NotificationPriority, type NotificationCategory } from "backend";
 import { publishUserNotification, publishDataChanged } from "@/lib/eventBus";
 import { fcmAdmin } from "@/lib/firebase/firebaseAdmin";
 import { sendEmail, generateCriticalNotificationEmail } from "@/lib/email";
@@ -20,6 +20,11 @@ export interface NotifyByPermissionParams {
   priority?: NotificationPriority;
   category?: NotificationCategory;
   excludeUserId?: string;
+  /**
+   * Inclure les délégués ACTIFS de la permission (défaut : oui, lot N). À `false` pour une notification de DÉCISION dont la
+   * garde se lit sur le RÔLE seul (justification de pointage : un délégué de `pointage.corriger_pointage` ne la décide pas).
+   */
+  inclureDelegues?: boolean;
 }
 
 /**
@@ -111,20 +116,11 @@ export async function notifyByPermission(
   params: NotifyByPermissionParams
 ) {
   try {
-    const users = await prisma.user.findMany({
-      where: {
-        isActive: true,
-        ...(params.excludeUserId ? { id: { not: params.excludeUserId } } : {}),
-        role: {
-          permissions: {
-            some: {
-              permission: { key: permissionKey },
-            },
-          },
-        },
-      },
-      select: { id: true },
+    const ids = await utilisateursAvecPermission(prisma, permissionKey, {
+      excludeUserId: params.excludeUserId,
+      inclureDelegues: params.inclureDelegues,
     });
+    const users = ids.map((id) => ({ id }));
 
     if (users.length === 0) return;
 

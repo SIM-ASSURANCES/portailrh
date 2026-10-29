@@ -13,7 +13,7 @@ import {
   PERMISSIONS_SIGNATAIRES,
   signatureCourante,
   pointageEnService,
-  reinitialisationEffectuee,
+  panneauComptesDeTestAVoir,
 } from "backend";
 import { getUnreadNotificationsCount } from "@/app/(dashboard)/profil/actions";
 import { getTopbarAlert } from "@/lib/topbarAlerts";
@@ -145,7 +145,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
       // inclurait des permissions reçues par délégation) — même garde que `delegations/page.tsx` et
       // `accorderDelegationAction`.
       canDelegerAcces={session.rolePermissions.includes("treso.deleguer_acces")}
-      canReinitialiser={hasPermission(session, "systeme.reinitialiser") && !(await reinitialisationEffectuee())}
+      canReinitialiser={
+        hasPermission(session, "systeme.reinitialiser") || (isAdmin(session) && (await panneauComptesDeTestAVoir()))
+      }
       canReinitialiserPointage={hasPermission(session, PERMISSION_REINITIALISER_POINTAGE) && !(await pointageEnService())}
       canPointer={hasPermission(session, "pointage.pointer")}
       canConsulterHistorique={hasPermission(session, "pointage.consulter_historique")}
