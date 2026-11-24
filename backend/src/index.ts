@@ -57,6 +57,9 @@ export * from "./feedback";
 export * from "./reinitialisation";
 export * from "./reinitialisationClassification";
 export * from "./reinitialisationFichiers";
+export * from "./reinitialisationEtapes";
+export * from "./reinitialisationEtapesDb";
+export * from "./comptesDeTest";
 
 // Module Encaissements : socle technique (séquences, audit, paramètres, permissions). Le moteur de calcul
 // (encCalcul.ts) n'est pas réexporté ici : il est importé directement là où il sert.

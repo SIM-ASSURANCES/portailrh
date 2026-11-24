@@ -56,7 +56,7 @@ function resumeLot(verbe: string, resultats: ResultatBlocCpt[]): ResultatRattach
   const traites = resultats.filter((r) => r.ok).reduce((s, r) => s + r.ids.length, 0);
   const refus = resultats.filter((r) => !r.ok);
   if (traites === 0) return { status: "error", message: refus[0]?.message ?? "Aucun rattachement traité." };
-  const suite = refus.length > 0 ? ` — ${refus.length} refusé(s) : ${refus[0].message}` : "";
+  const suite = refus.length > 0 ? ` — ${refus.length} non traité(s) : ${refus[0].message}` : "";
   return { status: "success", message: `${traites} rattachement(s) ${verbe}${suite}` };
 }
 

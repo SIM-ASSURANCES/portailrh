@@ -16,7 +16,9 @@ import {
 // Synchronisation source unique (cptPermissions.ts) ↔ migration du lot GC-1c ↔ seed, sur le patron de congesPermissions.test.ts.
 const RACINE = path.resolve(__dirname, "..");
 const sql = readFileSync(path.join(RACINE, "prisma/migrations/20261101110000_compta_permissions_roles/migration.sql"), "utf8");
-const seed = readFileSync(path.join(RACINE, "prisma/seed.ts"), "utf8");
+const seedSeul = readFileSync(path.join(RACINE, "prisma/seed.ts"), "utf8");
+// Depuis le lot R, le seed lit modules, permissions et rôles dans rolesCibles.ts : les deux fichiers forment ensemble « le seed ».
+const seed = seedSeul + readFileSync(path.join(RACINE, "src/rolesCibles.ts"), "utf8");
 const code = sql.replace(/^--.*$/gm, "");
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
