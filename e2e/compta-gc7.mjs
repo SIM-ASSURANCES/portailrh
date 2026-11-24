@@ -5,6 +5,8 @@
 //   7b : état des créances par débiteur (tranches, détail contrat par contrat, débiteur partenaire), échéances à surveiller, filtres en GET,
 //        pagination à 50, export CSV (401 / 403), 390 px.
 //   7c : relevé client en PDF (téléchargé, contenu relu, 401 / 403 / 404, lien sur la fiche).
+//   7d : relance consignée hors application et promesse de paiement (« relance proposée », promesse en cours, évaluation par la règle : tenue /
+//        non tenue, audit, statut final non modifiable, refus serveur par rejeu sans cpt.relancer, validations).
 import { chromium } from "playwright";
 import pg from "pg";
 
@@ -255,7 +257,7 @@ await client("cl-vide", "Zézé Paul");
   verifier("7b. l'échéance à venir (POL-T7 n°3, dans 30 jours) n'y est pas", (await p.locator('[data-echeance-proche="POL-T7-3"]').count()) === 0);
   verifier("7b. l'échéance payée (POL-T12 n°1) n'y est pas", (await p.locator('[data-echeance-proche="POL-T12-1"]').count()) === 0);
   verifier("7b. T12 : l'échéance d'août est en retard", (await p.locator('[data-echeance-proche="POL-T12-3"]').getAttribute("data-etat")) === "EN_RETARD");
-  verifier("7b. lecture seule : aucun bouton d'action", (await p.locator("[data-etat-creances] button, [data-echeances-proches] button").count()) === 0);
+  verifier("7b. lecture seule : aucun bouton d'action", (await p.locator("[data-etat-creances] button:not([data-evaluer-promesses]), [data-echeances-proches] button").count()) === 0);
   await p.close();
 }
 {
@@ -352,6 +354,100 @@ await client("cl-vide", "Zézé Paul");
   verifier("7c. client inconnu : 404", r404.status() === 404, `${r404.status()}`);
   const rVide = await ctx.request.get(`${B}/api/compta/clients/cl-vide/releve`);
   verifier("7c. client sans contrat : relevé produit (vide, sans erreur)", rVide.status() === 200);
+}
+// ---------- 7d. Relances et promesses ----------
+{
+  const compter = async (table, where = "TRUE") => Number((await db.query(`SELECT count(*)::int AS n FROM "${table}" WHERE ${where}`)).rows[0].n);
+  const p = await ouvrir(COMMERCIAL, "/compta/clients/cl-t7");
+  verifier("7d. fiche : « relance proposée » (échéances en retard, aucune promesse), rien n'est envoyé", (await p.locator("[data-relance-proposee]").count()) === 1 && (await p.locator("[data-formulaire-relance]").count()) === 1);
+  const f = p.locator("[data-formulaire-relance]");
+  await f.locator('select[name="canal"]').selectOption("TELEPHONE");
+  await f.locator('textarea[name="commentaire"]').fill("Appelé ce matin, promet de payer");
+  await f.locator("[data-promesse-case]").check();
+  await f.locator('input[name="promesseMontant"]').fill("100 000");
+  await f.locator('input[name="promesseDate"]').fill(jour(5));
+  const [requete] = await Promise.all([p.waitForRequest((r) => r.method() === "POST" && !!r.headers()["next-action"]), f.locator('button[type="submit"]').click()]);
+  await p.waitForLoadState("networkidle");
+  await p.waitForTimeout(600);
+  verifier("7d. relance enregistrée : une ligne, canal téléphone, commentaire, auteur", (await compter("CptRelance", `"clientId" = 'cl-t7' AND canal = 'TELEPHONE' AND commentaire LIKE 'Appelé%' AND origine = 'MANUELLE'`)) === 1 && /Téléphone/.test(await p.locator("[data-liste-relances]").innerText()));
+  verifier("7d. promesse en cours : 100 000 à la date promise", (await compter("CptPromesse", `"clientId" = 'cl-t7' AND statut = 'EN_COURS' AND montant = 100000 AND "datePromise" = '${jour(5)}'`)) === 1 && (await p.locator('[data-promesse][data-statut="EN_COURS"]').count()) === 1);
+  verifier("7d. la relance proposée disparaît tant qu'une promesse est en cours", (await p.locator("[data-relance-proposee]").count()) === 0);
+  verifier("7d. audit : la relance et la promesse sont tracées", (await compter("CptAudit", `entite IN ('CptRelance', 'CptPromesse') AND action IN ('relance', 'promesse')`)) === 2);
+  const g = await ouvrir(COMMERCIAL, "/compta/creances?q=kon");
+  verifier("7d. état des créances : « 1 promesse en cours » et plus de relance proposée pour Koné", /1 promesse\(s\) en cours/.test(await g.locator('[data-debiteur="Koné Awa"] summary').innerText()) && !/Relance proposée/.test(await g.locator('[data-debiteur="Koné Awa"] summary').innerText()));
+  await g.close();
+
+  // Validations : le serveur refuse (rejeu avec un corps modifié).
+  const rejouer = async (email, req, modifier) => {
+    const ctx = await contexte(email);
+    const donnees = modifier ? modifier(JSON.parse(req.postData())) : JSON.parse(req.postData());
+    const rep = await ctx.request.post(req.url(), { headers: { "next-action": req.headers()["next-action"], "content-type": "text/plain;charset=UTF-8", accept: "text/x-component", origin: B }, data: JSON.stringify(donnees) });
+    return rep.text();
+  };
+  const avant = await compter("CptRelance");
+  const futur = await rejouer(COMMERCIAL, requete, (c) => [c[0], { ...c[1], faiteLe: jour(3), promesseMontant: "", promesseDate: "" }]);
+  verifier("7d. une relance datée dans le futur est refusée", /futur/.test(futur) && (await compter("CptRelance")) === avant, futur.slice(0, 160));
+  const trop = await rejouer(COMMERCIAL, requete, (c) => [c[0], { ...c[1], promesseMontant: "999999999" }]);
+  verifier("7d. une promesse au-delà du reste dû est refusée (et la relance avec elle)", /dépasse le reste dû/.test(trop) && (await compter("CptRelance")) === avant, trop.slice(0, 160));
+  const passee = await rejouer(COMMERCIAL, requete, (c) => [c[0], { ...c[1], promesseDate: jour(-1) }]);
+  verifier("7d. une date promise passée est refusée", /passé/.test(passee) && (await compter("CptRelance")) === avant, passee.slice(0, 160));
+  const canal = await rejouer(COMMERCIAL, requete, (c) => [c[0], { ...c[1], canal: "PIGEON", promesseMontant: "", promesseDate: "" }]);
+  verifier("7d. un canal inconnu est refusé", /canal/i.test(canal) && (await compter("CptRelance")) === avant, canal.slice(0, 160));
+
+  // Refus serveur sans cpt.relancer.
+  const refus = await rejouer(DIRECTION, requete, (c) => [c[0], { ...c[1], promesseMontant: "", promesseDate: "" }]);
+  verifier("7d. rejeu direct de l'enregistrement sans cpt.relancer : refusé, rien n'est écrit", /Action non autoris/.test(refus) && (await compter("CptRelance")) === avant, refus.slice(0, 160));
+  await p.close();
+
+  // Évaluation par la règle : une tenue (argent prouvé dans la fenêtre), une non tenue (échéance passée sans argent).
+  await db.query(`INSERT INTO "CptPromesse" (id, "clientId", montant, "datePromise", "creeParId", "creeAt") VALUES ('pr-tenue', 'cl-t7', 50000, $1, $2, $3)`, [jour(-2), prodId, new Date(`${jour(-10)}T09:00:00Z`)]);
+  await db.query(`INSERT INTO "CptPromesse" (id, "clientId", montant, "datePromise", "creeParId", "creeAt") VALUES ('pr-non-tenue', 'cl-t12', 100000, $1, $2, $3)`, [jour(-1), prodId, new Date(`${jour(-10)}T09:00:00Z`)]);
+  await encaissement("en-promesse", { date: jour(-5), montant: 50000, payeur: "Awa Kone" });
+  await rattachement("ra-promesse", "en-promesse", "ct-t7-e1", 50000, "VALIDE");
+  await db.query(`UPDATE "CptEcheance" SET "montantRegle" = 50000 WHERE id = 'ct-t7-e1'`);
+  const fiche = await ouvrir(COMMERCIAL, "/compta/clients/cl-t7");
+  verifier("7d. la fiche annonce le verdict de la règle avant l'évaluation (« à évaluer : tenue »), sans rien écrire", /à évaluer : tenue/.test((await fiche.locator("[data-a-evaluer]").allInnerTexts()).join(" ")) && (await compter("CptPromesse", `id = 'pr-tenue' AND statut = 'EN_COURS'`)) === 1);
+  await fiche.close();
+  const cr = await ouvrir(COMMERCIAL, "/compta/creances");
+  const [reqEval] = await Promise.all([cr.waitForRequest((r) => r.method() === "POST" && !!r.headers()["next-action"]), cr.locator("[data-evaluer-promesses]").click()]);
+  await cr.waitForLoadState("networkidle");
+  await cr.waitForTimeout(600);
+  const tenue = (await db.query(`SELECT statut, "montantProuve", "evalueAt" FROM "CptPromesse" WHERE id = 'pr-tenue'`)).rows[0];
+  const nonTenue = (await db.query(`SELECT statut, "montantProuve", "evalueAt" FROM "CptPromesse" WHERE id = 'pr-non-tenue'`)).rows[0];
+  verifier("7d. évaluation : la promesse couverte par 50 000 prouvés dans la fenêtre est TENUE (montant prouvé et date tracés)", tenue.statut === "TENUE" && Number(tenue.montantProuve) === 50000 && tenue.evalueAt !== null, JSON.stringify(tenue));
+  verifier("7d. évaluation : la promesse échue sans argent est NON TENUE (prouvé 0)", nonTenue.statut === "NON_TENUE" && Number(nonTenue.montantProuve) === 0 && nonTenue.evalueAt !== null, JSON.stringify(nonTenue));
+  verifier("7d. la promesse encore dans les délais reste EN COURS", (await compter("CptPromesse", `"clientId" = 'cl-t7' AND statut = 'EN_COURS' AND montant = 100000`)) === 1);
+  verifier("7d. audit : une ligne « evaluation_promesse » par promesse évaluée, avec l'auteur", (await compter("CptAudit", `action = 'evaluation_promesse' AND "userId" = '${commercialId}'`)) === 2);
+  await cr.locator("[data-evaluer-promesses]").click();
+  await cr.waitForTimeout(800);
+  verifier("7d. une seconde évaluation ne change rien (statuts finaux, pas de nouvel audit)", (await compter("CptAudit", `action = 'evaluation_promesse'`)) === 2);
+  const refusEval = await rejouer(DIRECTION, reqEval, null);
+  verifier("7d. rejeu de l'évaluation sans cpt.relancer : refusé", /Action non autoris/.test(refusEval), refusEval.slice(0, 160));
+  await cr.close();
+  let modif = null;
+  try {
+    await db.query(`UPDATE "CptPromesse" SET statut = 'TENUE' WHERE id = 'pr-non-tenue'`);
+  } catch (e) {
+    modif = String(e.message);
+  }
+  verifier("7d. un statut final ne se modifie plus (trigger), même par SQL", modif !== null && /CPT_PROMESSE_FINALE/.test(modif), modif ?? "modifié");
+  let rel = null;
+  try {
+    await db.query(`UPDATE "CptRelance" SET commentaire = 'x' WHERE "clientId" = 'cl-t7'`);
+  } catch (e) {
+    rel = String(e.message);
+  }
+  verifier("7d. une relance enregistrée ne se modifie pas (trigger)", rel !== null && /CPT_RELANCE_IMMUABLE/.test(rel), rel ?? "modifiée");
+
+  // Relance proposée pour un client dont la promesse n'a pas été tenue.
+  const t12 = await ouvrir(COMMERCIAL, "/compta/clients/cl-t12");
+  verifier("7d. T12 : promesse non tenue → « relance proposée » à nouveau, promesse « Non tenue » listée", (await t12.locator("[data-relance-proposee]").count()) === 1 && /Non tenue/.test(await t12.locator('[data-promesse][data-statut="NON_TENUE"]').innerText()));
+  await t12.close();
+
+  // Lecture seule pour la Direction : ni formulaire ni bouton d'évaluation.
+  const dir = await ouvrir(DIRECTION, "/compta/clients/cl-t7");
+  verifier("7d. Direction : lit les relances et promesses, sans formulaire ni bouton d'évaluation", (await dir.locator("[data-liste-relances]").count()) === 1 && (await dir.locator("[data-formulaire-relance], [data-evaluer-promesses]").count()) === 0);
+  await dir.close();
 }
 void commercialId;
 

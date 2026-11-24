@@ -6,7 +6,19 @@ import { LIBELLE_FRACTIONNEMENT_CPT, LIBELLE_STATUT_RATTACHEMENT_CPT, VARIANTE_E
 import { formaterDateCpt, formaterMontantCpt, LIBELLE_STATUT_CONTRAT_CPT } from "@/components/compta/libellesProduction";
 import { Badge, PageHeader, StatCard } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { chargerFicheClientCpt, jourTexteCpt, LIBELLE_BRANCHE_CPT, LIBELLE_TRANCHE_CREANCE_CPT, prisma, type PaiementFicheCpt } from "backend";
+import {
+  chargerFicheClientCpt,
+  jourTexteCpt,
+  LIBELLE_BRANCHE_CPT,
+  LIBELLE_CANAL_RELANCE_CPT,
+  LIBELLE_STATUT_PROMESSE_CPT,
+  LIBELLE_TRANCHE_CREANCE_CPT,
+  lireSuiviRelancesClientCpt,
+  prisma,
+  type PaiementFicheCpt,
+} from "backend";
+
+import { FormulaireRelance, EvaluerPromessesBouton } from "./RelancesPromesses";
 
 const TH = "px-3 py-2";
 
@@ -69,6 +81,8 @@ export default async function FicheClientPage({ params }: { params: Promise<{ id
   const fiche = await chargerFicheClientCpt(prisma, id, aujourdhui);
   if (!fiche) notFound();
   const { client, totaux } = fiche;
+  const suivi = await lireSuiviRelancesClientCpt(prisma, id, aujourdhui);
+  const peutRelancer = hasPermission(session, "cpt.relancer");
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6 sm:py-10" data-fiche-client={client.id}>
@@ -175,6 +189,67 @@ export default async function FicheClientPage({ params }: { params: Promise<{ id
           <TableauPaiements paiements={fiche.paiementsEnAttente} vide="" attribut="data-paiements-en-attente" />
         </section>
       )}
+
+      <section className="space-y-3" data-relances-promesses>
+        <h2 className="text-base font-bold text-foreground">Relances et promesses de paiement</h2>
+        {suivi.relanceProposee && (
+          <p className="rounded-lg border border-warning/40 bg-warning-bg px-4 py-3 text-sm text-warning" data-relance-proposee>
+            Relance proposée : ce client a {suivi.nbEcheancesEnRetard} échéance(s) en retard et aucune promesse de paiement en cours.
+            {suivi.derniereRelance ? ` Dernière relance consignée le ${formaterDateCpt(suivi.derniereRelance)}.` : " Aucune relance n'a encore été consignée."} L&apos;application n&apos;envoie rien : la relance se fait hors de l&apos;application.
+          </p>
+        )}
+        {peutRelancer && <FormulaireRelance clientId={client.id} aujourdhui={aujourdhui} />}
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-foreground">Promesses</h3>
+          {peutRelancer && <EvaluerPromessesBouton clientId={client.id} />}
+        </div>
+        {suivi.promesses.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucune promesse de paiement.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-elevated">
+            <table className="w-full min-w-[620px] text-left text-sm">
+              <thead className="border-b border-border bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className={TH}>Date promise</th>
+                  <th className={`${TH} text-right`}>Montant promis</th>
+                  <th className={TH}>Statut</th>
+                  <th className={TH}>Encaissé prouvé</th>
+                </tr>
+              </thead>
+              <tbody>
+                {suivi.promesses.map((p) => (
+                  <tr key={p.id} className="border-b border-border last:border-0" data-promesse data-statut={p.statut}>
+                    <td className="whitespace-nowrap px-3 py-2">{formaterDateCpt(p.datePromise)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">{formaterMontantCpt(p.montant)}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant={p.statut === "TENUE" ? "success" : p.statut === "NON_TENUE" ? "danger" : "info"}>{LIBELLE_STATUT_PROMESSE_CPT[p.statut]}</Badge>
+                      {p.statut === "EN_COURS" && p.verdictActuel && p.verdictActuel !== "EN_COURS" && (
+                        <span className="ml-2 text-xs text-muted-foreground" data-a-evaluer>
+                          à évaluer : {LIBELLE_STATUT_PROMESSE_CPT[p.verdictActuel].toLowerCase()}
+                        </span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{formaterMontantCpt(p.montantProuve ?? p.prouveActuel)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <h3 className="text-sm font-bold text-foreground">Relances consignées</h3>
+        {suivi.relances.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucune relance consignée.</p>
+        ) : (
+          <ul className="space-y-1 text-sm" data-liste-relances>
+            {suivi.relances.map((r) => (
+              <li key={r.id} data-relance={r.canal}>
+                <span className="font-semibold">{formaterDateCpt(r.faiteLe)}</span> · {LIBELLE_CANAL_RELANCE_CPT[r.canal]} · {r.auteur}
+                {r.commentaire ? ` — ${r.commentaire}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section className="space-y-3" data-sommes-pas-une-prime>
         <h2 className="text-base font-bold text-foreground">Sommes qui ne sont pas des primes</h2>

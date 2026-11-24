@@ -12,12 +12,13 @@ import {
 } from "./cptCreances";
 import { ajouterJoursCpt, etatAfficheEcheance, type EtatAfficheEcheance, texteDepuisCentimes } from "./cptEcheancier";
 import { RECHERCHE_LIMITE_MAX_CPT, rechercherCpt } from "./cptRecherche";
+import { relanceProposeeAvecPromessesCpt } from "./cptRelances";
 
 /**
  * État des créances et échéances proches (lot GC-7b) : LECTURE SEULE. Les chiffres d'un contrat viennent de `syntheseContratCreanceCpt`
  * (`cptCreances.ts`), le même calcul que la fiche client : jamais un second calcul. Encaissé prouvé = `montantRegle` (rattachements validés).
  */
-export type CreancesDbCpt = Pick<PrismaClient, "cptContrat" | "cptEcheance" | "cptPartenaire" | "$queryRaw">;
+export type CreancesDbCpt = Pick<PrismaClient, "cptContrat" | "cptEcheance" | "cptPartenaire" | "cptPromesse" | "cptRelance" | "$queryRaw">;
 
 export const TAILLE_PAGE_ECHEANCES_CPT = 50;
 export const TAILLE_PAGE_DEBITEURS_CPT = 50;
@@ -38,9 +39,15 @@ async function filtreContrat(db: CreancesDbCpt, f: FiltresCreancesCpt): Promise<
   };
 }
 
+/** Un débiteur avec le suivi des relances de ses clients (lot GC-7d) : `relanceProposee` tient compte des promesses en cours. */
+export interface DebiteurSuiviCpt extends DebiteurCreanceCpt {
+  nbPromessesEnCours: number;
+  derniereRelance: string | null;
+}
+
 export interface EtatCreancesCpt {
   /** Tous les débiteurs filtrés (la page découpe). */
-  debiteurs: DebiteurCreanceCpt[];
+  debiteurs: DebiteurSuiviCpt[];
   repartition: RepartitionTrancheCpt[];
   totaux: { resteDu: bigint; resteEchu: bigint; resteEnRetard: bigint; declarePayeNonProuve: bigint; nbDebiteurs: number };
 }
@@ -79,7 +86,24 @@ export async function chargerEtatCreancesCpt(db: CreancesDbCpt, f: FiltresCreanc
       aujourdhui
     ),
   }));
-  const tous = regrouperParDebiteurCpt(lignes);
+  // Suivi des relances (7d) : promesses en cours et dernière relance des clients concernés, en deux requêtes groupées.
+  const clientIds = [...new Set(lignes.map((l) => l.clientId))];
+  const [promesses, relances] = clientIds.length
+    ? await Promise.all([
+        db.cptPromesse.groupBy({ by: ["clientId"], where: { clientId: { in: clientIds }, statut: "EN_COURS" }, _count: { _all: true } }),
+        db.cptRelance.groupBy({ by: ["clientId"], where: { clientId: { in: clientIds } }, _max: { faiteLe: true } }),
+      ])
+    : [[], []];
+  const promessesParClient = new Map(promesses.map((p) => [p.clientId, p._count._all]));
+  const relanceParClient = new Map(relances.map((r) => [r.clientId, r._max.faiteLe?.toISOString().slice(0, 10) ?? null]));
+  const tousBruts = regrouperParDebiteurCpt(lignes);
+  const tous: DebiteurSuiviCpt[] = tousBruts.map((d) => {
+    const clients = [...new Set(d.contrats.map((c) => c.clientId))];
+    const nbPromessesEnCours = clients.reduce((s, id) => s + (promessesParClient.get(id) ?? 0), 0);
+    const derniereRelance = clients.map((id) => relanceParClient.get(id) ?? null).filter((j): j is string => j !== null).sort().pop() ?? null;
+    const nbEcheancesEnRetard = d.contrats.reduce((s, c) => s + c.synthese.nbEcheancesEnRetard, 0);
+    return { ...d, nbPromessesEnCours, derniereRelance, relanceProposee: relanceProposeeAvecPromessesCpt({ nbEcheancesEnRetard, nbPromessesEnCours }) };
+  });
   const debiteurs = f.tranche ? tous.filter((d) => d.tranche === f.tranche) : tous;
   const zero = BigInt(0);
   return {

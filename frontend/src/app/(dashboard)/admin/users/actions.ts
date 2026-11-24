@@ -870,6 +870,8 @@ export async function supprimerUtilisateurAction(
     cptTransfertsCrees,
     cptChequesCrees,
     cptRattachementsFaits,
+    cptRelancesFaites,
+    cptPromessesCreees,
     justificationsDecidees,
     lignesSoumisesAuDG,
     lignesDecideesParDG,
@@ -955,6 +957,9 @@ export async function supprimerUtilisateurAction(
     prisma.cptRattachement.count({
       where: { OR: [{ proposeParId: userId }, { confirmeParId: userId }, { valideParId: userId }, { rejeteParId: userId }] },
     }),
+    // Gestion Compta GC-7d : relances enregistrées et promesses de paiement créées (RESTRICT).
+    prisma.cptRelance.count({ where: { creeParId: userId } }),
+    prisma.cptPromesse.count({ where: { creeParId: userId } }),
     // Pointage V2 : justifications de retard / départ anticipé décidées par ce compte (RESTRICT).
     prisma.justificationPointage.count({ where: { decideurId: userId } }),
     // Soumission au DG ligne par ligne (2026-10-10) : 2 relations vers User supplémentaires (SET NULL en base).
@@ -1044,6 +1049,8 @@ export async function supprimerUtilisateurAction(
   if (cptTransfertsCrees > 0) blocages.push(`rapproché ${cptTransfertsCrees} virement(s) interne(s) de Gestion Compta`);
   if (cptChequesCrees > 0) blocages.push(`enregistré ${cptChequesCrees} chèque(s) de Gestion Compta`);
   if (cptRattachementsFaits > 0) blocages.push(`proposé, confirmé, validé ou rejeté ${cptRattachementsFaits} rattachement(s) de Gestion Compta`);
+  if (cptRelancesFaites > 0) blocages.push(`enregistré ${cptRelancesFaites} relance(s) de Gestion Compta`);
+  if (cptPromessesCreees > 0) blocages.push(`enregistré ${cptPromessesCreees} promesse(s) de paiement de Gestion Compta`);
   if (justificationsDecidees > 0)
     blocages.push(`décidé ${justificationsDecidees} justification(s) de retard ou de départ anticipé`);
   if (lignesSoumisesAuDG > 0) blocages.push(`soumis ${lignesSoumisesAuDG} ligne(s) d'article au DG`);

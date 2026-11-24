@@ -72,4 +72,5 @@ export * from "./motifEchange";
 // Gestion Compta : libellés des énumérations et suggestions des formulaires de référentiels (pur, n'importe que ./montant).
 export * from "./cptReferentiels";
 export * from "./cptCorrespondancesOdoo";
+export * from "./cptRelances";
 export * from "./reinitialisationEtapes";

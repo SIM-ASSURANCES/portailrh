@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { EvaluerPromessesBouton } from "../clients/[id]/RelancesPromesses";
 import { PaginationCpt } from "@/components/compta/Pagination";
 import { VARIANTE_ETAT_ECHEANCE_CPT } from "@/components/compta/libellesCreances";
 import { formaterDateCpt, formaterMontantCpt } from "@/components/compta/libellesProduction";
@@ -103,6 +104,7 @@ export default async function CreancesPage({ searchParams }: { searchParams: Pro
       <section className="space-y-3" data-etat-creances>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-bold text-foreground">Par débiteur</h2>
+          {hasPermission(session, "cpt.relancer") && <EvaluerPromessesBouton />}
           <a href={exporter("debiteurs")} className="text-sm font-semibold text-primary hover:underline" data-export-debiteurs>
             Exporter (CSV)
           </a>
@@ -134,13 +136,14 @@ export default async function CreancesPage({ searchParams }: { searchParams: Pro
                     <span>Reste dû {montant(d.resteDu)} FCFA</span>
                     {d.tranche && <Badge variant="danger">{LIBELLE_TRANCHE_CREANCE_CPT[d.tranche]}</Badge>}
                     {d.relanceProposee && <Badge variant="warning">Relance proposée</Badge>}
+                    {d.nbPromessesEnCours > 0 && <Badge variant="info">{d.nbPromessesEnCours} promesse(s) en cours</Badge>}
                   </span>
                 </summary>
                 <div className="space-y-2 border-t border-border px-4 py-3 text-sm">
                   <p className="text-muted-foreground">
                     Prime émise {montant(d.primeEmise)} · encaissé prouvé {montant(d.encaisseProuve)} · déclaré payé non prouvé {montant(d.declarePayeNonProuve)} · dû depuis le{" "}
                     {d.depuisLe ? formaterDateCpt(new Date(`${d.depuisLe}T00:00:00Z`)) : "—"}
-                    {d.joursAnciennete !== null && ` (${d.joursAnciennete} jour${d.joursAnciennete > 1 ? "s" : ""})`}
+                    {d.joursAnciennete !== null && ` (${d.joursAnciennete} jour${d.joursAnciennete > 1 ? "s" : ""})`} · dernière relance {d.derniereRelance ? formaterDateCpt(new Date(`${d.derniereRelance}T00:00:00Z`)) : "aucune"}
                   </p>
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[640px] text-left">

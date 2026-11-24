@@ -126,6 +126,9 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
   // GC-5 : rattachements (proposition du moteur, confirmation du commercial, validation du RFCRH).
   CptRattachement: C("rattachements encaissement ↔ échéance de Gestion Compta : statut définitif une fois validé ou rejeté (trigger), remise à zéro propre au module (lot GC-11)"),
   CptAlerteControle: C("paliers de relance du contrôle hebdomadaire de Gestion Compta (une ligne par palier réservé) : remise à zéro propre au module (lot GC-11)"),
+  // GC-7d : relances faites hors de l'application et promesses de paiement.
+  CptRelance: C("relances de clients enregistrées dans Gestion Compta (ajout seul, jamais modifiées) : remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
+  CptPromesse: C("promesses de paiement de clients de Gestion Compta : statut final posé par la règle d'évaluation, remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
 };
 
 /** Entités de `HistoriqueEntry` supprimées (Trésorerie puis Pointage). */

@@ -186,6 +186,8 @@ model User {
   cptRattachementsConfirmes CptRattachement[] @relation("CptRattachementConfirmePar")
   cptRattachementsValides   CptRattachement[] @relation("CptRattachementValidePar")
   cptRattachementsRejetes   CptRattachement[] @relation("CptRattachementRejetePar")
+  cptRelancesFaites         CptRelance[]      @relation("CptRelanceCreePar")
+  cptPromessesCreees        CptPromesse[]     @relation("CptPromesseCreePar")
 }
 
 model Role {
@@ -2695,7 +2697,9 @@ model CptClient {
   creeAt              DateTime       @default(now())
   majAt               DateTime       @updatedAt
 
-  contrats CptContrat[]
+  contrats  CptContrat[]
+  relances  CptRelance[]
+  promesses CptPromesse[]
 
   @@index([nom])
   @@index([telephone])
@@ -3255,4 +3259,66 @@ model CptCheque {
 
   @@index([statut])
   @@index([numero])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// GC-7d — relances faites hors de l'application et promesses de paiement (Q10, option A, provisoire : aucun envoi).
+// ---------------------------------------------------------------------------------------------------------------------
+
+enum CptCanalRelance {
+  TELEPHONE
+  SMS
+  VISITE
+  EMAIL
+}
+
+/// Qui a écrit la relance : une personne (MANUELLE) ou un futur envoi automatique (AUTOMATIQUE, Q10 option B), sans changer le modèle.
+enum CptOrigineRelance {
+  MANUELLE
+  AUTOMATIQUE
+}
+
+enum CptStatutPromesse {
+  EN_COURS
+  TENUE
+  NON_TENUE
+}
+
+/// Relance d'un client, faite hors de l'application (ajout seul : une erreur se signale par une nouvelle ligne, jamais une modification).
+model CptRelance {
+  id          String            @id @default(cuid())
+  clientId    String
+  client      CptClient         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  canal       CptCanalRelance
+  origine     CptOrigineRelance @default(MANUELLE)
+  faiteLe     DateTime          @db.Date
+  commentaire String?
+  creeParId   String
+  creePar     User              @relation("CptRelanceCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt      DateTime          @default(now())
+
+  promesses CptPromesse[]
+
+  @@index([clientId, faiteLe])
+}
+
+/// Promesse de paiement d'un client. Son statut ne se choisit jamais : il passe de EN_COURS à TENUE ou NON_TENUE par la règle de
+/// `backend/src/cptRelances.ts` (encaissé prouvé), une seule fois (trigger), avec le montant prouvé constaté et la date d'évaluation.
+model CptPromesse {
+  id            String            @id @default(cuid())
+  clientId      String
+  client        CptClient         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  relanceId     String?
+  relance       CptRelance?       @relation(fields: [relanceId], references: [id], onDelete: Restrict)
+  montant       Decimal           @db.Decimal(14, 2)
+  datePromise   DateTime          @db.Date
+  statut        CptStatutPromesse @default(EN_COURS)
+  evalueAt      DateTime?
+  montantProuve Decimal?          @db.Decimal(14, 2)
+  creeParId     String
+  creePar       User              @relation("CptPromesseCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt        DateTime          @default(now())
+
+  @@index([clientId, statut])
+  @@index([statut, datePromise])
 }
