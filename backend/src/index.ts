@@ -113,6 +113,7 @@ export * from "./cptRapprochement";
 export * from "./cptRattachement";
 export * from "./cptSuiviHebdo";
 export * from "./cptSuiviHebdoDb";
+export * from "./cptRelancesDb";
 // Traitement des anomalies de l'import (GC-3h) : noms finissant par « Cpt ».
 export * from "./cptAnomalies";
 export { CPT_PERMISSIONS_DEPOT_PIECE_JOINTE } from "./cptPermissions";

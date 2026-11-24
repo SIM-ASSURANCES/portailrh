@@ -60,6 +60,13 @@ export function dateLimiteAgeCpt(maintenant: Date, jours: number): string {
   return ajouterJoursCpt(jourTexteCpt(maintenant), -jours);
 }
 
+/** Lundi (AAAA-MM-JJ) de la semaine d'un jour donné : la semaine du contrôle hebdomadaire va du lundi au dimanche. */
+export function lundiDeLaSemaineCpt(jour: string): string {
+  const d = new Date(`${jour}T00:00:00Z`);
+  const ecart = (d.getUTCDay() + 6) % 7; // lundi = 0
+  return ajouterJoursCpt(jour, -ecart);
+}
+
 export type ObjetControleCpt = "ENCAISSEMENT" | "CONTRAT";
 
 export interface LigneAgeeCpt {
@@ -111,6 +118,60 @@ export function planifierPaliersCpt(
     }
   }
   return { aEnvoyer, silencieux };
+}
+
+// ---------- Destinataires et messages des paliers ----------
+
+/**
+ * Permissions dont les porteurs reçoivent un palier. Relance (7 jours) : ceux qui traitent la ligne — le commercial pour un
+ * encaissement sans contrat, la production pour un contrat sans encaissement ; alerte (30 jours) : le RFCRH ; escalade (60 jours) :
+ * la direction générale (superviseur, `cpt.trancher_litige`). Aucune permission nouvelle : ce sont celles du plan §6.2 (C-8).
+ */
+export function permissionsDestinatairesCpt(objet: ObjetControleCpt, palier: PalierCpt): string[] {
+  if (palier === "ALERTE") return ["cpt.valider_rattachement"];
+  if (palier === "ESCALADE") return ["cpt.trancher_litige"];
+  return objet === "ENCAISSEMENT" ? ["cpt.confirmer_rattachement", "cpt.identifier_encaissement"] : ["cpt.importer_production", "cpt.saisir_contrat"];
+}
+
+const PRIORITE_PALIER: Record<PalierCpt, "INFO" | "IMPORTANT"> = { RELANCE: "INFO", ALERTE: "IMPORTANT", ESCALADE: "IMPORTANT" };
+export const prioritePalierCpt = (palier: PalierCpt) => PRIORITE_PALIER[palier];
+
+const NOM_PALIER: Record<PalierCpt, string> = { RELANCE: "Relance", ALERTE: "Alerte", ESCALADE: "Escalade" };
+const REFERENCES_MAX_MESSAGE = 5;
+
+const pluriel = (n: number, un: string, plusieurs: string) => `${n} ${n > 1 ? plusieurs : un}`;
+
+export interface MessagePalierCpt {
+  titre: string;
+  message: string;
+}
+
+/**
+ * Message groupé d'un palier : une notification par destinataire et par (objet, palier), pas une par ligne (un lundi chargé en
+ * produirait des centaines). Aucun nom de personne : seulement les références (numéros CPE ou de police).
+ */
+export function messagePalierCpt(entree: { objet: ObjetControleCpt; palier: PalierCpt; seuils: SeuilsPaliersCpt; references: readonly string[] }): MessagePalierCpt {
+  const total = entree.references.length;
+  const jours = seuilDuPalierCpt(entree.palier, entree.seuils);
+  const sujet = entree.objet === "ENCAISSEMENT" ? pluriel(total, "encaissement sans contrat", "encaissements sans contrat") : pluriel(total, "contrat déclaré payé sans encaissement", "contrats déclarés payés sans encaissement");
+  const vues = entree.references.slice(0, REFERENCES_MAX_MESSAGE).join(", ");
+  const reste = total - REFERENCES_MAX_MESSAGE;
+  const liste = reste > 0 ? `${vues} et ${pluriel(reste, "autre", "autres")}` : vues;
+  const nature = entree.objet === "ENCAISSEMENT" ? "Références" : "Polices";
+  return {
+    titre: `${NOM_PALIER[entree.palier]} : ${sujet} depuis ${jours} jours ou plus`,
+    message: `${nature} : ${liste}. Ouvrez le contrôle hebdomadaire pour traiter ${total > 1 ? "ces lignes" : "cette ligne"}.`,
+  };
+}
+
+/** Résumé du lundi (tâche COMPTA_CONTROLE_HEBDO) : les chiffres seulement. Nul si rien n'est à signaler. */
+export function messageResumeHebdoCpt(entree: { objet: ObjetControleCpt; total: number; relance: number; alerte: number; seuils: SeuilsPaliersCpt }): MessagePalierCpt | null {
+  if (entree.total === 0) return null;
+  const sujet = entree.objet === "ENCAISSEMENT" ? pluriel(entree.total, "encaissement sans contrat", "encaissements sans contrat") : pluriel(entree.total, "contrat déclaré payé sans encaissement", "contrats déclarés payés sans encaissement");
+  return {
+    titre: `Contrôle de la semaine : ${sujet}`,
+    message: `${sujet} à traiter, dont ${entree.relance} depuis ${entree.seuils.relanceJours} jours ou plus et ${entree.alerte} depuis ${entree.seuils.alerteJours} jours ou plus.`,
+  };
 }
 
 // ---------- Filtres (GET) ----------

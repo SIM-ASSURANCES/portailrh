@@ -219,8 +219,15 @@ export function libelleBilan(tache: NomTache, bilan: unknown): string {
       return `${pluriel(n("rappels"), "rappel")}, ${pluriel(n("erreurs"), "erreur")}`;
     case "COMPTA_CONTROLE_HEBDO":
     case "COMPTA_RELANCES":
+      // GC-6b : module non mis en service = rien lu, rien envoyé ; sinon des chiffres, jamais de donnée personnelle.
+      if (b.moduleNonMisEnService === true) return "Aucun traitement pour l'instant (module non mis en service)";
+      if (tache === "COMPTA_RELANCES") {
+        const base = `${pluriel(n("traites"), "ligne relancée", "lignes relancées")}, ${pluriel(n("notifications"), "notification")}, ${pluriel(n("silencieuses"), "palier réservé sans envoi", "paliers réservés sans envoi")}, ${pluriel(n("erreurs"), "erreur")}`;
+        return b.premierPassage === true ? `Premier passage : arriéré réservé sans envoi (${base})` : base;
+      }
+      return `${pluriel(n("notifications"), "notification")} de résumé, ${pluriel(n("erreurs"), "erreur")}`;
     case "COMPTA_RAPPEL_TCA":
-      // Tâches enregistrées vides (GC-1e) : tant que leur traitement n'existe pas, le bilan le dit au lieu d'afficher « 0 ».
+      // Tâche encore vide (GC-8) : le bilan le dit au lieu d'afficher « 0 ».
       if (b.enAttenteDuModule === true) return "Aucun traitement pour l'instant (module en construction)";
       return `${pluriel(n("traites"), "élément traité", "éléments traités")}, ${pluriel(n("erreurs"), "erreur")}`;
   }

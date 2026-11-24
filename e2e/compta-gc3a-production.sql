@@ -115,7 +115,7 @@ SELECT pg_temp.doit_echouer('import : DELETE interdit après la mise en service'
 SELECT pg_temp.doit_echouer('anomalie : DELETE interdit après la mise en service', $q$DELETE FROM "CptAnomalie" WHERE id = 'an1'$q$, 'CPT_IMMUABLE');
 SELECT pg_temp.doit_echouer('contrat : TRUNCATE interdit après la mise en service', $q$TRUNCATE "CptContrat" CASCADE$q$, 'CPT_IMMUABLE');
 SELECT pg_temp.doit_echouer('acte : TRUNCATE interdit après la mise en service', $q$TRUNCATE "CptActe"$q$, 'CPT_IMMUABLE');
-SELECT pg_temp.doit_echouer('échéance : TRUNCATE interdit après la mise en service', $q$TRUNCATE "CptEcheance"$q$, 'CPT_IMMUABLE');
+SELECT pg_temp.doit_echouer('échéance : TRUNCATE interdit après la mise en service', $q$TRUNCATE "CptEcheance" CASCADE$q$, 'CPT_IMMUABLE');
 SELECT pg_temp.doit_reussir('anomalie : traitement toujours possible après la mise en service', $q$INSERT INTO "CptAnomalie" ("id","type","objetEntite","objetId") VALUES ('an4','X','CONTRAT','k1'); UPDATE "CptAnomalie" SET statut = 'TRAITEE', "traiteeParId" = 'u-test', "traiteeAt" = now() WHERE id = 'an4'$q$);
 SELECT pg_temp.doit_reussir('contrat : mise à jour toujours possible après la mise en service (réimport)', $q$UPDATE "CptContrat" SET statut = 'ECHU' WHERE id = 'k7'$q$);
 

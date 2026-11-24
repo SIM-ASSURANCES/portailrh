@@ -223,11 +223,19 @@ describe("libellés", () => {
     expect(libelleBilan("ABSENCES", { nouvellesAbsences: 2, oublisDetectes: 1 })).toBe("2 nouvelles absences, 1 oubli de départ");
     expect(libelleBilan("PURGE", null)).toBe("0 exécution et 0 incident supprimés");
     expect(libelleBilan("RAPPELS_CONGES", { rappels: 2, erreurs: 1 })).toBe("2 rappels, 1 erreur");
-    // Tâches Gestion Compta : vides tant que leur lot n'existe pas, puis un décompte normal.
-    expect(libelleBilan("COMPTA_RELANCES", { traites: 0, erreurs: 0, enAttenteDuModule: true })).toBe(
-      "Aucun traitement pour l'instant (module en construction)"
+    // Tâches Gestion Compta : module non mis en service (rien lu), puis des chiffres ; le rappel de la taxe reste vide (GC-8).
+    expect(libelleBilan("COMPTA_RELANCES", { traites: 0, erreurs: 0, enAttenteDuModule: true, moduleNonMisEnService: true })).toBe(
+      "Aucun traitement pour l'instant (module non mis en service)"
     );
-    expect(libelleBilan("COMPTA_CONTROLE_HEBDO", { traites: 2, erreurs: 0 })).toBe("2 éléments traités, 0 erreur");
+    expect(libelleBilan("COMPTA_CONTROLE_HEBDO", { moduleNonMisEnService: true })).toBe("Aucun traitement pour l'instant (module non mis en service)");
+    expect(libelleBilan("COMPTA_RELANCES", { traites: 3, notifications: 5, silencieuses: 2, erreurs: 0 })).toBe(
+      "3 lignes relancées, 5 notifications, 2 paliers réservés sans envoi, 0 erreur"
+    );
+    expect(libelleBilan("COMPTA_RELANCES", { traites: 0, notifications: 0, silencieuses: 40, erreurs: 0, premierPassage: true })).toBe(
+      "Premier passage : arriéré réservé sans envoi (0 ligne relancée, 0 notification, 40 paliers réservés sans envoi, 0 erreur)"
+    );
+    expect(libelleBilan("COMPTA_CONTROLE_HEBDO", { notifications: 2, erreurs: 0 })).toBe("2 notifications de résumé, 0 erreur");
+    expect(libelleBilan("COMPTA_RAPPEL_TCA", { traites: 0, erreurs: 0, enAttenteDuModule: true })).toBe("Aucun traitement pour l'instant (module en construction)");
     expect(libelleBilan("COMPTA_RAPPEL_TCA", null)).toBe("0 élément traité, 0 erreur");
   });
 

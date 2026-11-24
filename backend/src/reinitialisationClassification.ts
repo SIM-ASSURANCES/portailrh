@@ -125,6 +125,7 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
   CptCheque: C("chèques reçus de Gestion Compta : remise à zéro propre au module (lot GC-11), jamais supprimés après la mise en service (trigger)"),
   // GC-5 : rattachements (proposition du moteur, confirmation du commercial, validation du RFCRH).
   CptRattachement: C("rattachements encaissement ↔ échéance de Gestion Compta : statut définitif une fois validé ou rejeté (trigger), remise à zéro propre au module (lot GC-11)"),
+  CptAlerteControle: C("paliers de relance du contrôle hebdomadaire de Gestion Compta (une ligne par palier réservé) : remise à zéro propre au module (lot GC-11)"),
 };
 
 /** Entités de `HistoriqueEntry` supprimées (Trésorerie puis Pointage). */

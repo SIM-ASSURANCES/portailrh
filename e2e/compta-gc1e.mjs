@@ -85,17 +85,18 @@ for (const [cle, libelle] of Object.entries(TACHES)) {
   const carte = p.locator(`[data-tache="${cle}"]`);
   verifier(`4. le moniteur affiche la tâche ${cle}`, (await carte.count()) === 1 && (await carte.innerText()).includes(libelle));
 }
-await p.locator('[data-tache="COMPTA_RELANCES"]').getByRole("button", { name: "Lancer maintenant" }).click();
-// Base jetable neuve, planificateur coupé : la première ligne COMPTA_RELANCES est celle du clic.
+// GC-6b : les relances et le résumé du lundi ne sont plus vides ; le rappel de la taxe (GC-8) l'est encore, il sert de témoin.
+await p.locator('[data-tache="COMPTA_RAPPEL_TCA"]').getByRole("button", { name: "Lancer maintenant" }).click();
+// Base jetable neuve, planificateur coupé : la première ligne COMPTA_RAPPEL_TCA est celle du clic.
 let ligne;
 for (let i = 0; i < 30 && !ligne; i++) {
-  ligne = (await db.query(`SELECT declenchement, statut, bilan, erreur FROM "ExecutionTache" WHERE tache = 'COMPTA_RELANCES' ORDER BY debut DESC LIMIT 1`)).rows[0];
+  ligne = (await db.query(`SELECT declenchement, statut, bilan, erreur FROM "ExecutionTache" WHERE tache = 'COMPTA_RAPPEL_TCA' ORDER BY debut DESC LIMIT 1`)).rows[0];
   if (!ligne) await new Promise((r) => setTimeout(r, 500));
 }
 verifier("4. « Lancer maintenant » écrit une exécution MANUELLE réussie", ligne?.declenchement === "MANUEL" && ligne?.statut === "SUCCES", JSON.stringify(ligne));
 verifier("4. le bilan est celui d'une tâche vide", ligne?.bilan?.enAttenteDuModule === true && ligne?.bilan?.traites === 0 && ligne?.bilan?.erreurs === 0);
 await p.goto(`${B}/admin/journal-technique`);
-verifier("4. le moniteur dit « Aucun traitement pour l'instant »", /Aucun traitement pour l'instant/.test(await p.locator('[data-tache="COMPTA_RELANCES"]').innerText()));
+verifier("4. le moniteur dit « Aucun traitement pour l'instant »", /Aucun traitement pour l'instant/.test(await p.locator('[data-tache="COMPTA_RAPPEL_TCA"]').innerText()));
 const incidents = (await db.query(`SELECT count(*)::int AS n FROM "JournalTechnique" WHERE contexte->>'tache' LIKE 'COMPTA\\_%'`)).rows[0].n;
 verifier("4. aucun incident technique n'est journalisé par ces tâches", incidents === 0, `${incidents} incident(s)`);
 

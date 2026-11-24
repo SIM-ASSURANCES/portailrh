@@ -160,4 +160,9 @@ psql_cpt -d postgres -c 'CREATE DATABASE compta_rat2' >/dev/null
 (DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_rat2?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "successfully applied|rror"')
 DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_rat2?schema=public" npx tsx e2e/compta-gc5c-rattachements.ts | tail -60
 
-echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b et GC-5c : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés et rattachements vérifiés."
+echo "== 15. Relances 7 / 30 / 60 jours (GC-6b), sur une base FRAÎCHE =="
+psql_cpt -d postgres -c 'CREATE DATABASE compta_rl6' >/dev/null
+(DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_rl6?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "successfully applied|rror"')
+DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_rl6?schema=public" npx tsx e2e/compta-gc6b-relances.ts | tail -60
+
+echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c et GC-6b : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements et relances vérifiés."

@@ -6,6 +6,11 @@ import {
   dateLimiteAgeCpt,
   jourTexteCpt,
   libelleAgeCpt,
+  lundiDeLaSemaineCpt,
+  messagePalierCpt,
+  messageResumeHebdoCpt,
+  permissionsDestinatairesCpt,
+  prioritePalierCpt,
   lireFiltresSuiviCpt,
   pageDemandeeCpt,
   palierAtteintCpt,
@@ -123,5 +128,48 @@ describe("filtres GET", () => {
     expect(pageDemandeeCpt("abc")).toBe(1);
     expect(pageDemandeeCpt("3")).toBe(3);
     expect(pageDemandeeCpt("2.9")).toBe(2);
+  });
+});
+
+describe("destinataires et messages des paliers", () => {
+  it("relance : ceux qui traitent la ligne ; alerte : le RFCRH ; escalade : la direction", () => {
+    expect(permissionsDestinatairesCpt("ENCAISSEMENT", "RELANCE")).toEqual(["cpt.confirmer_rattachement", "cpt.identifier_encaissement"]);
+    expect(permissionsDestinatairesCpt("CONTRAT", "RELANCE")).toEqual(["cpt.importer_production", "cpt.saisir_contrat"]);
+    for (const objet of ["ENCAISSEMENT", "CONTRAT"] as const) {
+      expect(permissionsDestinatairesCpt(objet, "ALERTE")).toEqual(["cpt.valider_rattachement"]);
+      expect(permissionsDestinatairesCpt(objet, "ESCALADE")).toEqual(["cpt.trancher_litige"]);
+    }
+    expect(prioritePalierCpt("RELANCE")).toBe("INFO");
+    expect(prioritePalierCpt("ESCALADE")).toBe("IMPORTANT");
+  });
+
+  it("message groupé : seuil, pluriel, cinq références au plus", () => {
+    const un = messagePalierCpt({ objet: "ENCAISSEMENT", palier: "RELANCE", seuils: SEUILS, references: ["CPE-2026-000001"] });
+    expect(un.titre).toBe("Relance : 1 encaissement sans contrat depuis 7 jours ou plus");
+    expect(un.message).toBe("Références : CPE-2026-000001. Ouvrez le contrôle hebdomadaire pour traiter cette ligne.");
+    const sept = messagePalierCpt({ objet: "CONTRAT", palier: "ESCALADE", seuils: SEUILS, references: ["P1", "P2", "P3", "P4", "P5", "P6", "P7"] });
+    expect(sept.titre).toBe("Escalade : 7 contrats déclarés payés sans encaissement depuis 60 jours ou plus");
+    expect(sept.message).toBe("Polices : P1, P2, P3, P4, P5 et 2 autres. Ouvrez le contrôle hebdomadaire pour traiter ces lignes.");
+    expect(messagePalierCpt({ objet: "CONTRAT", palier: "ALERTE", seuils: { relanceJours: 3, alerteJours: 10, escaladeJours: 20 }, references: ["P1"] }).titre).toContain("depuis 10 jours ou plus");
+  });
+
+  it("le message ne contient aucun nom de personne : seulement des références", () => {
+    const m = messagePalierCpt({ objet: "ENCAISSEMENT", palier: "ALERTE", seuils: SEUILS, references: ["CPE-2026-000009"] });
+    expect(`${m.titre} ${m.message}`).not.toMatch(/Kouassi|Awa|Yao/);
+  });
+
+  it("résumé du lundi : rien à signaler = aucun message", () => {
+    expect(messageResumeHebdoCpt({ objet: "ENCAISSEMENT", total: 0, relance: 0, alerte: 0, seuils: SEUILS })).toBeNull();
+    const m = messageResumeHebdoCpt({ objet: "CONTRAT", total: 4, relance: 3, alerte: 1, seuils: SEUILS });
+    expect(m?.titre).toBe("Contrôle de la semaine : 4 contrats déclarés payés sans encaissement");
+    expect(m?.message).toBe("4 contrats déclarés payés sans encaissement à traiter, dont 3 depuis 7 jours ou plus et 1 depuis 30 jours ou plus.");
+  });
+
+  it("lundi de la semaine", () => {
+    expect(lundiDeLaSemaineCpt("2027-03-01")).toBe("2027-03-01"); // lundi
+    expect(lundiDeLaSemaineCpt("2027-03-03")).toBe("2027-03-01"); // mercredi
+    expect(lundiDeLaSemaineCpt("2027-03-07")).toBe("2027-03-01"); // dimanche
+    expect(lundiDeLaSemaineCpt("2027-03-08")).toBe("2027-03-08");
+    expect(lundiDeLaSemaineCpt("2027-01-01")).toBe("2026-12-28"); // chevauche l'année
   });
 });

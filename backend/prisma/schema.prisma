@@ -3121,6 +3121,35 @@ enum CptStatutRattachement {
   REJETE
 }
 
+/// Objet d'un palier du contrôle hebdomadaire (lot GC-6b) : un encaissement sans contrat ou un contrat déclaré payé sans encaissement.
+enum CptObjetControle {
+  ENCAISSEMENT
+  CONTRAT
+}
+
+/// Palier d'ancienneté : relance (7 jours), alerte (30), escalade (60), seuils lus dans `CptParametre`.
+enum CptPalierControle {
+  RELANCE
+  ALERTE
+  ESCALADE
+}
+
+/// Réservation d'un palier du contrôle hebdomadaire pour une ligne (conception §9, GC-6b). Une ligne par (objet, identifiant, palier) :
+/// la contrainte d'unicité est le verrou d'idempotence — le palier est réservé AVANT tout envoi, une seconde exécution ne peut pas
+/// le réserver à son tour, donc ne l'envoie pas. `envoyeeAt` nul = palier réservé SANS envoi (arriéré d'avant la mise en service,
+/// paliers inférieurs franchis d'un coup) : il n'est jamais notifié plus tard. Référence polymorphe (`objetId` sans clé étrangère).
+model CptAlerteControle {
+  id        String            @id @default(cuid())
+  objet     CptObjetControle
+  objetId   String
+  palier    CptPalierControle
+  envoyeeAt DateTime?
+  creeAt    DateTime          @default(now())
+
+  @@unique([objet, objetId, palier])
+  @@index([objet, palier])
+}
+
 /// Rattachement d'une part d'un encaissement à une échéance (conception §5.5 et §6.2). Deux étapes : le commercial CONFIRME avec le
 /// reçu (niveaux déduction et à confirmer, identifications manuelles), puis le RFCRH VALIDE (jamais automatique, RG-02). Seul un
 /// rattachement VALIDE rend la prime payée (RG-01). Les champs qui décrivent la proposition ne changent jamais (trigger SQL), le statut
