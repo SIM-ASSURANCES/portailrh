@@ -1,5 +1,6 @@
 import { messagePalierCpt, permissionsDestinatairesCpt, prioritePalierCpt, prisma, reserverRelancesCpt, reserverResumeHebdoCpt, utilisateursAvecPermission } from "backend";
 import { notify } from "@/lib/notifications";
+import { journaliserIncident } from "@/lib/journalTechnique";
 
 /**
  * Gestion Compta, tâches planifiées (W9). État :
@@ -75,6 +76,21 @@ async function notifierTous(userIds: readonly string[], message: { titre: string
 
 const LIEN_CONTROLE = "/compta/controle";
 
+/**
+ * Palier (ou résumé) réservé sans aucun destinataire : la réservation reste (jamais renvoyé), mais l'anomalie de configuration est
+ * tracée au journal technique. Contexte sans donnée personnelle : type d'objet, palier, permissions attendues. Anti-inondation du
+ * journal : au plus une ligne par code et par minute.
+ */
+async function tracerSansDestinataire(typeObjet: string, palier: string, permissions: readonly string[]): Promise<void> {
+  await journaliserIncident({
+    niveau: "AVERTISSEMENT",
+    source: "TACHE",
+    code: "COMPTA_PALIER_SANS_DESTINATAIRE",
+    message: "Gestion Compta : palier de relance sans destinataire (aucun compte actif ne porte la permission attendue).",
+    contexte: { tache: "COMPTA_RELANCES", typeObjet, palier, permissionAttendue: permissions.join(", ") },
+  });
+}
+
 /** Relance 7 / 30 / 60 jours. Les horloges et le client sont injectables pour les tests d'intégration. */
 export async function executerComptaRelances(maintenant: Date = new Date()): Promise<BilanTacheCompta> {
   const r = await reserverRelancesCpt(prisma, maintenant);
@@ -95,6 +111,7 @@ export async function executerComptaRelances(maintenant: Date = new Date()): Pro
     if (destinataires.length === 0) {
       bilan.sansDestinataire++;
       bilan.erreurs++;
+      await tracerSansDestinataire(groupe.objet, groupe.palier, permissionsDestinatairesCpt(groupe.objet, groupe.palier));
       continue;
     }
     const { envoyes, erreurs } = await notifierTous(destinataires, message, prioritePalierCpt(groupe.palier));
@@ -120,6 +137,7 @@ export async function executerComptaControleHebdo(maintenant: Date = new Date())
     if (destinataires.length === 0) {
       bilan.sansDestinataire++;
       bilan.erreurs++;
+      await tracerSansDestinataire("RESUME", "RELANCE", permissions);
       continue;
     }
     const { envoyes, erreurs } = await notifierTous(destinataires, message, "INFO");

@@ -7,7 +7,9 @@
 //  2. premier passage après la mise en service : l'arriéré est réservé sans envoi, aucune notification ;
 //  3. une ligne qui franchit un palier APRÈS : notification groupée, aux porteurs de la permission du palier, et à eux seuls ;
 //  4. un second « Lancer maintenant » n'envoie rien de plus ;
-//  5. résumé de la semaine : une fois, au commercial et à la production ; le moniteur affiche des chiffres, aucun incident.
+//  5. résumé de la semaine : une fois, au commercial et à la production ; le moniteur affiche des chiffres, aucun incident ;
+//  6. palier sans aucun destinataire : réservé (jamais renvoyé), compté en erreur, TRACÉ au journal technique (une ligne, sans donnée
+//     personnelle), aucun envoi, pas de doublon au passage suivant.
 import { chromium } from "playwright";
 import pg from "pg";
 
@@ -145,6 +147,19 @@ verifier("5. le moniteur affiche des chiffres pour le résumé", /notifications?
 const incidents = (await db.query(`SELECT count(*)::int AS n FROM "JournalTechnique" WHERE contexte->>'tache' LIKE 'COMPTA\\_%'`)).rows[0].n;
 verifier("5. aucun incident technique journalisé par ces tâches", incidents === 0, `${incidents} incident(s)`);
 verifier("5. aucune erreur JavaScript", erreursJs.length === 0, erreursJs.slice(0, 3).join(" | "));
+
+// ---------- 6. Palier sans destinataire : tracé au journal technique ----------
+await db.query(`DELETE FROM "RolePermission" WHERE "permissionId" IN (SELECT id FROM "Permission" WHERE key = 'cpt.trancher_litige')`);
+await encaissement("CPE-SANS-DEST-65J", 65); // escalade (60 jours) : plus aucun porteur de cpt.trancher_litige
+const avantSans = (await notifications()).length;
+e = await lancer("COMPTA_RELANCES");
+verifier("6. palier sans destinataire : compté en erreur, aucun envoi", e?.bilan?.sansDestinataire === 1 && e?.bilan?.erreurs === 1 && e?.bilan?.notifications === 0 && (await notifications()).length === avantSans, JSON.stringify(e?.bilan));
+const lignes = (await db.query(`SELECT niveau, source, message, contexte FROM "JournalTechnique" WHERE code = 'COMPTA_PALIER_SANS_DESTINATAIRE'`)).rows;
+verifier("6. UNE ligne de journal (source TACHE, avertissement)", lignes.length === 1 && lignes[0].source === "TACHE" && lignes[0].niveau === "AVERTISSEMENT", JSON.stringify(lignes));
+const ctxt = lignes[0]?.contexte ?? {};
+verifier("6. contexte : type d'objet, palier, permission attendue — et rien de personnel", ctxt.typeObjet === "ENCAISSEMENT" && ctxt.palier === "ESCALADE" && ctxt.permissionAttendue === "cpt.trancher_litige" && !/CPE-|Kouassi/.test(JSON.stringify(lignes[0])), JSON.stringify(ctxt));
+e = await lancer("COMPTA_RELANCES");
+verifier("6. passage suivant : pas de doublon (palier réservé, jamais renvoyé, aucune nouvelle ligne)", e?.bilan?.sansDestinataire === 0 && (await db.query(`SELECT count(*)::int AS n FROM "JournalTechnique" WHERE code = 'COMPTA_PALIER_SANS_DESTINATAIRE'`)).rows[0].n === 1, JSON.stringify(e?.bilan));
 
 await ctx.close();
 await browser.close();

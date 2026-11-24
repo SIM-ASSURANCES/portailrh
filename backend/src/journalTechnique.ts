@@ -16,6 +16,8 @@ export const CODES_JOURNAL = {
   TACHE_ECHEC: "TACHE_ECHEC",
   TACHE_ERREURS_PARTIELLES: "TACHE_ERREURS_PARTIELLES",
   CLOTURE_INITIALE: "CLOTURE_INITIALE",
+  /** Gestion Compta : un palier de relance est réservé mais aucun compte ne porte la permission qui le reçoit. */
+  COMPTA_PALIER_SANS_DESTINATAIRE: "COMPTA_PALIER_SANS_DESTINATAIRE",
 } as const;
 
 export type CodeJournal = (typeof CODES_JOURNAL)[keyof typeof CODES_JOURNAL];
@@ -33,6 +35,9 @@ export const CLES_CONTEXTE_AUTORISEES = [
   "statut",
   "justificationsCloturees",
   "absencesConfirmees",
+  "typeObjet",
+  "palier",
+  "permissionAttendue",
 ] as const;
 
 const LONGUEUR_MAX_TEXTE = 200;

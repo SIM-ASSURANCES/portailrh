@@ -43,3 +43,10 @@ describe("incidentRepete", () => {
     expect(incidentRepete(new Date(t.getTime() - 60_000), t)).toBe(false);
   });
 });
+
+describe("Gestion Compta : palier sans destinataire", () => {
+  it("garde le type d'objet, le palier et la permission attendue, et rien d'autre", () => {
+    const contexte = contexteAssaini({ tache: "COMPTA_RELANCES", typeObjet: "ENCAISSEMENT", palier: "ESCALADE", permissionAttendue: "cpt.trancher_litige", nomClient: "Kouassi Ama", reference: "CPE-2026-000001" });
+    expect(contexte).toEqual({ tache: "COMPTA_RELANCES", typeObjet: "ENCAISSEMENT", palier: "ESCALADE", permissionAttendue: "cpt.trancher_litige" });
+  });
+});

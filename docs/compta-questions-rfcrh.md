@@ -36,6 +36,12 @@
 | **Q11** | Quand un client paie **plus** que l'échéance la plus ancienne, que fait-on par défaut de l'excédent : l'affecter à l'échéance suivante, ou le laisser « à rattacher » en attendant la décision du RFCRH ? *Notre proposition : l'application propose l'échéance suivante, et ce qui reste attend.* | Rattachement |
 | **Q16** | Les seuils du rapprochement automatique (même montant à 1 FCFA près ; entre 3 jours avant et 5 jours après ; ±2 % sur ±45 jours ; 12 premiers caractères de la référence) sont-ils **fixes** ou le RFCRH doit-il pouvoir les **modifier** ? *Notre proposition : modifiables par le RFCRH, avec une trace.* | Rattachement |
 
+### Contrôle hebdomadaire
+
+| # | Question | Lot |
+|---|---|---|
+| **Q17** | **Écart entre le « technique » et le « réel » depuis le 1er janvier** : que doit comparer exactement cet indicateur (par exemple les primes que la production déclare payées, contre les encaissements validés par vous) ? Le cahier ne le définit pas. *Notre lecture provisoire (C-19) : le technique est la prime TTC des contrats déclarés payés depuis le 1er janvier ; le réel est la somme des rattachements validés sur ces mêmes contrats ; seuls les contrats payés **en une fois** sont comparés.* Que faire des contrats **fractionnés** (mensuel, trimestriel…) : « déclaré payé » ne dit pas quelle échéance est payée, donc nous ne les comparons pas aujourd'hui. Faut-il comparer par échéance (dès que la production indique laquelle est payée), ou garder les seuls contrats payés en une fois ? | Contrôle hebdomadaire |
+
 ### Relances, clôture et mise en service
 
 | # | Question | Lot |
