@@ -1,12 +1,23 @@
 import type { Prisma, PrismaClient } from "./generated/prisma/client";
-import { ageEnJoursCpt, dateLimiteAgeCpt, TAILLE_PAGE_SUIVI_CPT, type FiltresSuiviCpt } from "./cptSuiviHebdo";
+import { chargerParametresCpt, seuilsRelance } from "./cptParametres";
+import {
+  ageEnJoursCpt,
+  dateLimiteAgeCpt,
+  debutAnneeCpt,
+  ecartTechniqueReelCpt,
+  FILTRES_SUIVI_VIDES_CPT,
+  TAILLE_PAGE_SUIVI_CPT,
+  type EcartTechniqueReelCpt,
+  type FiltresSuiviCpt,
+  type SeuilsPaliersCpt,
+} from "./cptSuiviHebdo";
 
 /**
  * Accès base du contrôle hebdomadaire (lot GC-6) : LECTURE SEULE. Les deux listes de travail, leurs compteurs (indicateurs de
  * l'écran, lot GC-6c) et la sélection des lignes à relancer (GC-6b) passent TOUS par les deux filtres `where` ci-dessous : un
  * compteur et sa liste ne peuvent donc jamais diverger. Règles et âge : `cptSuiviHebdo.ts`.
  */
-export type SuiviHebdoDbCpt = Pick<PrismaClient, "cptEncaissement" | "cptContrat" | "cptCompte" | "cptPartenaire">;
+export type SuiviHebdoDbCpt = Pick<PrismaClient, "cptEncaissement" | "cptContrat" | "cptCompte" | "cptPartenaire" | "cptRattachement" | "cptParametre">;
 
 const jourEnDate = (jour: string) => new Date(`${jour}T00:00:00Z`);
 
@@ -199,4 +210,75 @@ export async function chargerOptionsFiltresSuiviCpt(db: SuiviHebdoDbCpt): Promis
     db.cptPartenaire.findMany({ orderBy: { nom: "asc" }, select: { id: true, nom: true } }),
   ]);
   return { comptes, partenaires };
+}
+
+// ---------- Indicateurs de la semaine (lot GC-6c) ----------
+
+export interface IndicateursHebdoCpt {
+  seuils: SeuilsPaliersCpt;
+  /** Compteurs globaux (sans filtre) : MÊMES requêtes que les deux listes de travail. */
+  encaissementsSansContrat: number;
+  encaissementsDepuisRelance: number;
+  encaissementsDepuisAlerte: number;
+  contratsSansEncaissement: number;
+  contratsDepuisRelance: number;
+  contratsDepuisAlerte: number;
+  ecartTechniqueReel: EcartTechniqueReelCpt;
+}
+
+/**
+ * Écart technique / réel depuis le début de l'année (registre C-19, PROVISOIRE : la définition exacte n'est écrite nulle part dans
+ * le plan). Lecture prudente : TECHNIQUE = prime TTC des contrats que la production déclare payés depuis le 1er janvier (date de
+ * paiement déclarée, à défaut date d'import), contrats annulés exclus ; RÉEL = montants des rattachements VALIDÉS (RG-01) sur ces
+ * mêmes contrats. Seuls les contrats payés EN UNE FOIS (`COMPTANT`) sont comptés : pour un contrat fractionné, « déclaré payé » ne
+ * dit pas quelle part de la prime annuelle est payée, et comparer la prime entière à la première échéance créerait un écart faux.
+ */
+export async function calculerEcartTechniqueReelCpt(db: SuiviHebdoDbCpt, maintenant: Date): Promise<EcartTechniqueReelCpt> {
+  const depuis = debutAnneeCpt(maintenant);
+  const debut = jourEnDate(depuis);
+  const where: Prisma.CptContratWhereInput = {
+    declarePaye: true,
+    statut: { not: "ANNULE" },
+    fractionnement: "COMPTANT",
+    OR: [{ datePaiementDeclaree: { gte: debut } }, { datePaiementDeclaree: null, creeAt: { gte: debut } }],
+  };
+  const [technique, reel] = await Promise.all([
+    db.cptContrat.aggregate({ where, _sum: { primeTtc: true }, _count: true }),
+    db.cptRattachement.aggregate({ where: { statut: "VALIDE", echeance: { contrat: where } }, _sum: { montant: true } }),
+  ]);
+  return ecartTechniqueReelCpt({
+    depuis,
+    nbContrats: technique._count,
+    technique: technique._sum.primeTtc?.toString() ?? null,
+    reel: reel._sum.montant?.toString() ?? null,
+  });
+}
+
+/**
+ * Indicateurs affichés en tête du contrôle hebdomadaire. Les compteurs passent par `encaissementsSansContratWhere` et
+ * `contratsSansEncaissementWhere`, les filtres des listes : aucun second calcul. « Taxe payée d'avance non encore imputée » n'est pas
+ * ici : sa donnée (lignes de taxe) arrive au lot GC-8, l'écran l'annonce sans la calculer.
+ */
+export async function chargerIndicateursHebdoCpt(db: SuiviHebdoDbCpt, maintenant: Date): Promise<IndicateursHebdoCpt> {
+  const seuils = seuilsRelance(await chargerParametresCpt(db));
+  const f = FILTRES_SUIVI_VIDES_CPT;
+  const [encTotal, encRelance, encAlerte, conTotal, conRelance, conAlerte, ecartTechniqueReel] = await Promise.all([
+    compterEncaissementsSansContratCpt(db, f, maintenant),
+    compterEncaissementsSansContratCpt(db, f, maintenant, seuils.relanceJours),
+    compterEncaissementsSansContratCpt(db, f, maintenant, seuils.alerteJours),
+    compterContratsSansEncaissementCpt(db, f, maintenant),
+    compterContratsSansEncaissementCpt(db, f, maintenant, seuils.relanceJours),
+    compterContratsSansEncaissementCpt(db, f, maintenant, seuils.alerteJours),
+    calculerEcartTechniqueReelCpt(db, maintenant),
+  ]);
+  return {
+    seuils,
+    encaissementsSansContrat: encTotal,
+    encaissementsDepuisRelance: encRelance,
+    encaissementsDepuisAlerte: encAlerte,
+    contratsSansEncaissement: conTotal,
+    contratsDepuisRelance: conRelance,
+    contratsDepuisAlerte: conAlerte,
+    ecartTechniqueReel,
+  };
 }

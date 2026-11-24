@@ -1,5 +1,5 @@
 import { BRANCHES_CPT, type BrancheCpt } from "./cptReferentiels";
-import { ajouterJoursCpt, joursEntreCpt } from "./cptEcheancier";
+import { ajouterJoursCpt, enCentimesEcheancier, joursEntreCpt, texteDepuisCentimes } from "./cptEcheancier";
 
 /**
  * Contrôle hebdomadaire de Gestion Compta (lot GC-6, docs/PLAN_GESTION_COMPTA.md §GC-6, conception §9) : règles PURES, sans accès base.
@@ -118,6 +118,37 @@ export function planifierPaliersCpt(
     }
   }
   return { aEnvoyer, silencieux };
+}
+
+// ---------- Indicateurs de la semaine (GC-6c) ----------
+
+export interface EcartTechniqueReelCpt {
+  /** Premier jour compté (1er janvier de l'année en cours), AAAA-MM-JJ. */
+  depuis: string;
+  nbContrats: number;
+  /** Montants en FCFA au centime, texte décimal. */
+  technique: string;
+  reel: string;
+  /** technique − réel : positif = la production déclare plus que ce que les relevés ont prouvé. */
+  ecart: string;
+}
+
+/** Premier jour de l'année du jour donné (AAAA-MM-JJ). */
+export function debutAnneeCpt(maintenant: Date): string {
+  return `${jourTexteCpt(maintenant).slice(0, 4)}-01-01`;
+}
+
+/** Écart technique / réel à partir des deux sommes (texte décimal, nul = 0), au centime exact. */
+export function ecartTechniqueReelCpt(entree: { depuis: string; nbContrats: number; technique: string | null; reel: string | null }): EcartTechniqueReelCpt {
+  const technique = enCentimesEcheancier(entree.technique ?? "0") ?? BigInt(0);
+  const reel = enCentimesEcheancier(entree.reel ?? "0") ?? BigInt(0);
+  return {
+    depuis: entree.depuis,
+    nbContrats: entree.nbContrats,
+    technique: texteDepuisCentimes(technique),
+    reel: texteDepuisCentimes(reel),
+    ecart: texteDepuisCentimes(technique - reel),
+  };
 }
 
 // ---------- Destinataires et messages des paliers ----------

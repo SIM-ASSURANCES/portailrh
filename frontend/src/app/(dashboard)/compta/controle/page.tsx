@@ -2,10 +2,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { formaterDateCpt, formaterMontantCpt } from "@/components/compta/libellesProduction";
-import { Badge, Button, PageHeader, Select } from "@/components/ui";
+import { Badge, Button, PageHeader, Select, StatCard } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import {
   BRANCHES_CPT,
+  chargerIndicateursHebdoCpt,
   chargerOptionsFiltresSuiviCpt,
   libelleAgeCpt,
   LIBELLE_BRANCHE_CPT,
@@ -36,7 +37,8 @@ export default async function ControleHebdomadairePage({ searchParams }: { searc
   const pageCon = pageDemandeeCpt(recherche.pageContrats);
   const maintenant = new Date();
 
-  const [encaissements, contrats] = await Promise.all([
+  const [indicateurs, encaissements, contrats] = await Promise.all([
+    chargerIndicateursHebdoCpt(prisma, maintenant),
     listerEncaissementsSansContratCpt(prisma, filtres, maintenant, pageEnc),
     listerContratsSansEncaissementCpt(prisma, filtres, maintenant, pageCon),
   ]);
@@ -63,6 +65,42 @@ export default async function ControleHebdomadairePage({ searchParams }: { searc
         title="Contrôle hebdomadaire"
         description="Ce qui reste à traiter : l'argent reçu qu'aucun contrat n'a encore absorbé, et les contrats déclarés payés dont on ne voit pas l'argent."
       />
+
+      <section className="space-y-2" data-indicateurs-hebdo>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div data-indicateur="encaissements-relance">
+            <StatCard
+              icon="wallet"
+              label={`Encaissements sans contrat depuis ${indicateurs.seuils.relanceJours} jours ou plus`}
+              value={indicateurs.encaissementsDepuisRelance.toLocaleString("fr-FR")}
+              hint={`Dont ${indicateurs.encaissementsDepuisAlerte.toLocaleString("fr-FR")} depuis ${indicateurs.seuils.alerteJours} jours ou plus · ${indicateurs.encaissementsSansContrat.toLocaleString("fr-FR")} au total`}
+              tone={indicateurs.encaissementsDepuisAlerte > 0 ? "danger" : indicateurs.encaissementsDepuisRelance > 0 ? "warning" : "success"}
+            />
+          </div>
+          <div data-indicateur="contrats-sans-encaissement">
+            <StatCard
+              icon="file-text"
+              label="Contrats déclarés payés sans encaissement"
+              value={indicateurs.contratsSansEncaissement.toLocaleString("fr-FR")}
+              hint={`Dont ${indicateurs.contratsDepuisRelance.toLocaleString("fr-FR")} depuis ${indicateurs.seuils.relanceJours} jours ou plus et ${indicateurs.contratsDepuisAlerte.toLocaleString("fr-FR")} depuis ${indicateurs.seuils.alerteJours} jours ou plus`}
+              tone={indicateurs.contratsDepuisAlerte > 0 ? "danger" : indicateurs.contratsSansEncaissement > 0 ? "warning" : "success"}
+            />
+          </div>
+          <div data-indicateur="taxe-payee-avance">
+            <StatCard icon="scroll-text" label="Taxe payée d'avance non encore imputée" value="—" hint="Disponible au lot GC-8 (déclaration de la taxe)" tone="neutral" />
+          </div>
+          <div data-indicateur="ecart-technique-reel" className="sm:col-span-2 lg:col-span-3">
+            <StatCard
+              icon="alert-triangle"
+              label={`Écart technique / réel depuis le 1er janvier (${indicateurs.ecartTechniqueReel.nbContrats.toLocaleString("fr-FR")} contrats payés en une fois)`}
+              value={`${formaterMontantCpt(indicateurs.ecartTechniqueReel.ecart)} FCFA`}
+              hint={`Déclaré payé par la production : ${formaterMontantCpt(indicateurs.ecartTechniqueReel.technique)} FCFA · prouvé par un rattachement validé : ${formaterMontantCpt(indicateurs.ecartTechniqueReel.reel)} FCFA. Définition provisoire : les contrats payés en plusieurs fois sont exclus.`}
+              tone={Number(indicateurs.ecartTechniqueReel.ecart) === 0 ? "success" : "warning"}
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">Les chiffres ci-dessus portent sur toutes les lignes, sans tenir compte des filtres des listes.</p>
+      </section>
 
       <form method="get" className="flex flex-wrap items-end gap-3" data-filtres-controle>
         <label className="block w-full text-sm sm:w-40">

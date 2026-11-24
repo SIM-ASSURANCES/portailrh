@@ -2,7 +2,7 @@
 // `bash e2e/base-jetable.sh`) : ce script ÉCRIT en base et ne se rejoue pas sur la même base. Données 100 % synthétiques.
 //   6a : les deux listes de travail (encaissements sans contrat, contrats déclarés payés sans encaissement), leur âge, leurs filtres en
 //        GET, la pagination à 50, l'accès (cpt.consulter), le mobile 390 px sans défilement horizontal de la page.
-//   6c : les indicateurs de la semaine (ajoutés au même script par le sous-lot 6c).
+//   6c : les indicateurs de la semaine (mêmes chiffres que les listes, taxe d'avance annoncée pour le lot GC-8, écart technique / réel).
 import { chromium } from "playwright";
 import pg from "pg";
 
@@ -178,6 +178,33 @@ await p.goto(`${B}/compta/controle?page=999`);
 verifier("4. page hors limites : message « aucun » sans erreur, pied de page cohérent", (await p.locator("[data-liste-vide]").count()) >= 1 || (await attributs(p, "data-encaissement-sans-contrat")).length === 0);
 await p.goto(`${B}/compta/controle?page=2&du=${jour(-3)}`);
 verifier("4. la page 2 de la pagination suit les filtres", (await p.locator("[data-pagination-total]").first().innerText()).includes("1 encaissement(s)"), (await p.locator("[data-pagination-total]").first().innerText()));
+await p.close();
+
+// ---------- 4 bis (6c). Indicateurs de la semaine ----------
+const texteIndicateur = async (page, nom) => (await page.locator(`[data-indicateur="${nom}"]`).innerText()).replace(/\s+/g, " ");
+p = await ouvrir(COMMERCIAL);
+let ind = await texteIndicateur(p, "encaissements-relance");
+verifier("4b. encaissements sans contrat depuis 7 jours ou plus : 58 sur 59 (CPE-…003 à 3 jours n'y est pas)", /depuis 7 jours ou plus/.test(ind) && /(?<!\d)58(?!\d)/.test(ind) && /59 au total/.test(ind), ind);
+verifier("4b. dont 56 depuis 30 jours ou plus", /Dont 56 depuis 30 jours ou plus/.test(ind), ind);
+ind = await texteIndicateur(p, "contrats-sans-encaissement");
+verifier("4b. contrats sans encaissement : 4, dont 4 depuis 7 jours ou plus et 2 depuis 30 jours ou plus", /(?<!\d)4(?!\d)/.test(ind) && /Dont 4 depuis 7 jours ou plus et 2 depuis 30 jours ou plus/.test(ind), ind);
+ind = await texteIndicateur(p, "taxe-payee-avance");
+verifier("4b. taxe payée d'avance : non calculée, annoncée pour le lot GC-8 (aucune valeur inventée)", /Disponible au lot GC-8/.test(ind) && /—/.test(ind), ind);
+ind = await texteIndicateur(p, "ecart-technique-reel");
+verifier("4b. écart technique / réel : 5 contrats payés en une fois, 50 000 déclarés, 0 prouvé, écart 50 000", /5 contrats payés en une fois/.test(ind) && /50 000 FCFA/.test(ind) && /prouvé par un rattachement validé : 0 FCFA/.test(ind), ind);
+// Mêmes chiffres que les listes (sans filtre) : le total des listes est celui des indicateurs.
+const totalListes = await p.locator("[data-liste-encaissements-sans-contrat] h2").innerText();
+verifier("4b. l'indicateur et la liste disent le même total d'encaissements (59) et de contrats (4)", totalListes.includes("(59)") && (await p.locator("[data-liste-contrats-sans-encaissement] h2").innerText()).includes("(4)"));
+await p.goto(`${B}/compta/controle?compte=co-bni&partenaire=pa-1&branche=SANTE`);
+verifier("4b. les indicateurs ne dépendent pas des filtres des listes", /58/.test(await texteIndicateur(p, "encaissements-relance")) && /Dont 4 depuis/.test(await texteIndicateur(p, "contrats-sans-encaissement")));
+await p.close();
+// Un rattachement VALIDÉ sur POL-PR (2 500 sur 10 000) : le « réel » monte à 2 500, l'écart baisse à 47 500 ; le contrat reste hors de la liste.
+const autreId = (await db.query(`SELECT id FROM "User" WHERE email = 'admin@simassurances.test'`)).rows[0].id;
+await db.query(`UPDATE "CptRattachement" SET statut = 'CONFIRME', "confirmeParId" = $1, "confirmeAt" = now(), "recuReference" = 'RECU-1' WHERE id = 'r-prop'`, [techniqueId]);
+await db.query(`UPDATE "CptRattachement" SET statut = 'VALIDE', "valideParId" = $1, "valideAt" = now() WHERE id = 'r-prop'`, [autreId]);
+p = await ouvrir(COMMERCIAL);
+ind = await texteIndicateur(p, "ecart-technique-reel");
+verifier("4b. avec un rattachement validé de 2 500 : prouvé 2 500, écart 47 500", /prouvé par un rattachement validé : 2 500 FCFA/.test(ind) && /47 500 FCFA/.test(ind), ind);
 await p.close();
 
 // ---------- 5. Mobile 390 px ----------

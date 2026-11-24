@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   ageEnJoursCpt,
   clePalierCpt,
+  debutAnneeCpt,
+  ecartTechniqueReelCpt,
   dateLimiteAgeCpt,
   jourTexteCpt,
   libelleAgeCpt,
@@ -171,5 +173,20 @@ describe("destinataires et messages des paliers", () => {
     expect(lundiDeLaSemaineCpt("2027-03-07")).toBe("2027-03-01"); // dimanche
     expect(lundiDeLaSemaineCpt("2027-03-08")).toBe("2027-03-08");
     expect(lundiDeLaSemaineCpt("2027-01-01")).toBe("2026-12-28"); // chevauche l'année
+  });
+});
+
+describe("écart technique / réel (GC-6c)", () => {
+  it("début d'année", () => {
+    expect(debutAnneeCpt(new Date("2026-11-24T08:00:00Z"))).toBe("2026-01-01");
+    expect(debutAnneeCpt(new Date("2027-01-01T00:00:00Z"))).toBe("2027-01-01");
+  });
+  it("écart = technique − réel, au centime, positif quand la production déclare plus que les relevés", () => {
+    const e = ecartTechniqueReelCpt({ depuis: "2026-01-01", nbContrats: 5, technique: "50000", reel: "2500.5" });
+    expect(e).toEqual({ depuis: "2026-01-01", nbContrats: 5, technique: "50000.00", reel: "2500.50", ecart: "47499.50" });
+  });
+  it("aucune donnée : écart nul ; réel supérieur au technique : écart négatif", () => {
+    expect(ecartTechniqueReelCpt({ depuis: "2026-01-01", nbContrats: 0, technique: null, reel: null }).ecart).toBe("0.00");
+    expect(ecartTechniqueReelCpt({ depuis: "2026-01-01", nbContrats: 1, technique: "100", reel: "130" }).ecart).toBe("-30.00");
   });
 });
