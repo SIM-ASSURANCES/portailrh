@@ -40,13 +40,13 @@ async function ouvrir(email) {
 
 // « Référentiels » (GC-2c) est la première rubrique de tout compte qui consulte le module, et la seule déjà disponible.
 const RUBRIQUES = {
-  production: ["Référentiels", "Production", "Contrôle hebdomadaire", "Créances et relances"],
-  commercial: ["Référentiels", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Créances et relances"],
+  production: ["Référentiels", "Production", "Contrôle hebdomadaire", "Clients", "Créances et relances"],
+  commercial: ["Référentiels", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Clients", "Créances et relances"],
   rfcrh: [
     "Référentiels",
     "Encaissements",
     "Rattachements",
-    "Contrôle hebdomadaire",
+    "Contrôle hebdomadaire", "Clients",
     "Créances et relances",
     "Taxe sur les contrats d'assurance",
     "Partenaires",
@@ -54,8 +54,8 @@ const RUBRIQUES = {
     "Clôture du mois",
     "Paramètres",
   ],
-  comptable: ["Référentiels", "Production", "Encaissements", "Contrôle hebdomadaire", "Comptabilité (Odoo)"],
-  direction: ["Référentiels", "Contrôle hebdomadaire", "Litiges"],
+  comptable: ["Référentiels", "Production", "Encaissements", "Contrôle hebdomadaire", "Clients", "Comptabilité (Odoo)"],
+  direction: ["Référentiels", "Contrôle hebdomadaire", "Clients", "Litiges"],
 };
 const AUTORISES = [
   ["Compta – Production", "compta-production@simassurances.test", RUBRIQUES.production],
@@ -63,7 +63,7 @@ const AUTORISES = [
   ["Compta – RFCRH", "compta-rfcrh@simassurances.test", RUBRIQUES.rfcrh],
   ["Compta – Comptable", "compta-comptable@simassurances.test", RUBRIQUES.comptable],
   ["Compta – Direction", "compta-direction@simassurances.test", RUBRIQUES.direction],
-  ["DG (superviseur)", "dg@simassurances.test", ["Référentiels", "Contrôle hebdomadaire", "Litiges"]],
+  ["DG (superviseur)", "dg@simassurances.test", ["Référentiels", "Contrôle hebdomadaire", "Clients", "Litiges"]],
 ];
 const encaissements = (await db.query(`SELECT email FROM "User" WHERE email LIKE 'enc-%' ORDER BY email LIMIT 1`)).rows[0]?.email;
 const REFUSES = [
@@ -127,7 +127,7 @@ for (const [nom, email, attendues] of AUTORISES) {
   if (param) verifier(`4. ${nom} : « Paramètres » est un lien vers /compta/parametres`, param.lien === "/compta/parametres" && !param.bientot);
   const enc = rubriques.find((r) => r.libelle === "Encaissements");
   if (enc) verifier(`4. ${nom} : « Encaissements » est un lien vers /compta/encaissements`, enc.lien === "/compta/encaissements" && !enc.bientot);
-  const DISPONIBLES = ["Référentiels", "Production", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Paramètres"];
+  const DISPONIBLES = ["Référentiels", "Production", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Clients", "Paramètres"];
   verifier(`4. ${nom} : les autres rubriques sont « Bientôt »`, rubriques.filter((r) => !DISPONIBLES.includes(r.libelle)).every((r) => r.bientot && r.lien === null));
 
   // /compta reste une adresse valide : elle mène à la première rubrique construite, et n'affiche plus de page d'accueil.

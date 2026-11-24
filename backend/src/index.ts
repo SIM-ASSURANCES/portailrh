@@ -99,6 +99,8 @@ export * from "./cptReferentiels";
 export * from "./cptRecherche";
 export * from "./cptCorrespondancesOdoo";
 export * from "./cptEcheancier";
+export * from "./cptCreances";
+export * from "./cptFicheClientDb";
 export * from "./cptProduction";
 // Application en base d'un bordereau de production (GC-3c) : la fonction finit par « Cpt » (Encaissements exporte déjà `appliquerImportProduction`).
 export * from "./cptImportProduction";

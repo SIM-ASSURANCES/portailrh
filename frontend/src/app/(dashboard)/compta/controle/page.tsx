@@ -238,7 +238,11 @@ export default async function ControleHebdomadairePage({ searchParams }: { searc
                   <tr key={c.id} className="border-b border-border last:border-0" data-contrat-sans-encaissement={c.numPolice} data-age={c.age}>
                     <td className="whitespace-nowrap px-3 py-2 font-semibold tabular-nums">{libelleAgeCpt(c.age)}</td>
                     <td className="whitespace-nowrap px-3 py-2 font-semibold text-foreground">{c.numPolice}</td>
-                    <td className="px-3 py-2">{c.clientNom}</td>
+                    <td className="px-3 py-2">
+                      <Link href={`/compta/clients/${c.clientId}`} className="font-semibold text-primary hover:underline" data-lien-fiche-client>
+                        {c.clientNom}
+                      </Link>
+                    </td>
                     <td className="px-3 py-2">{c.partenaireNom ?? "—"}</td>
                     <td className="px-3 py-2">
                       {c.produitLibelle}

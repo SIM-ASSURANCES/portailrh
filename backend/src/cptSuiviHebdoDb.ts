@@ -78,6 +78,7 @@ export interface LigneEncaissementSansContratCpt {
 export interface LigneContratSansEncaissementCpt {
   id: string;
   numPolice: string;
+  clientId: string;
   clientNom: string;
   partenaireNom: string | null;
   produitLibelle: string;
@@ -163,7 +164,7 @@ export async function listerContratsSansEncaissementCpt(
         datePaiementDeclaree: true,
         creeAt: true,
         primeTtc: true,
-        client: { select: { nom: true } },
+        client: { select: { id: true, nom: true } },
         partenaireApporteur: { select: { nom: true } },
         produit: { select: { libelle: true, branche: true } },
       },
@@ -176,6 +177,7 @@ export async function listerContratsSansEncaissementCpt(
       return {
         id: c.id,
         numPolice: c.numPolice,
+        clientId: c.client.id,
         clientNom: c.client.nom,
         partenaireNom: c.partenaireApporteur?.nom ?? null,
         produitLibelle: c.produit.libelle,

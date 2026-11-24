@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import {
@@ -52,7 +53,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
       where: filtreContrats,
       orderBy: [{ creeAt: "desc" }, { numPolice: "asc" }],
       take: LIGNES_CONTRATS,
-      include: { client: { select: { nom: true } }, produit: { select: { code: true } }, partenaireApporteur: { select: { nom: true } } },
+      include: { client: { select: { id: true, nom: true } }, produit: { select: { code: true } }, partenaireApporteur: { select: { nom: true } } },
     }),
     prisma.cptImport.findMany({
       where: { type: "PRODUCTION" },
@@ -117,7 +118,11 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
                 {contrats.map((c) => (
                   <tr key={c.id} className="border-b border-border last:border-0" data-contrat-police={c.numPolice}>
                     <td className="whitespace-nowrap px-3 py-2 font-semibold text-foreground">{c.numPolice}</td>
-                    <td className="px-3 py-2">{c.client.nom}</td>
+                    <td className="px-3 py-2">
+                      <Link href={`/compta/clients/${c.client.id}`} className="font-semibold text-primary hover:underline" data-lien-fiche-client>
+                        {c.client.nom}
+                      </Link>
+                    </td>
                     <td className="px-3 py-2">{c.produit.code}</td>
                     <td className="px-3 py-2">{c.partenaireApporteur?.nom ?? "—"}</td>
                     <td className="whitespace-nowrap px-3 py-2">
