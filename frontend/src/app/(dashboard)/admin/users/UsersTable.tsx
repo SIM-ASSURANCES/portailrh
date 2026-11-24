@@ -7,6 +7,7 @@ import { Badge, DataTable } from "@/components/ui";
 import { RegenererInvitationButton } from "./RegenererInvitationButton";
 import { UserActiveToggle } from "./UserActiveToggle";
 import { UserDeleteButton } from "./UserDeleteButton";
+import { UserNameEditor } from "./UserNameEditor";
 import { UserResponsableToggle, type ServiceAvecResponsable } from "./UserResponsableToggle";
 import { UserRoleSelect } from "./UserRoleSelect";
 import { UserServiceSelect } from "./UserServiceSelect";
@@ -62,6 +63,7 @@ export function UsersTable({
             header: "Nom",
             sortable: true,
             accessor: (u) => u.fullName,
+            render: (u) => <UserNameEditor userId={u.id} fullName={u.fullName} />,
           },
           { key: "email", header: "Email", sortable: true, accessor: (u) => u.email },
           {

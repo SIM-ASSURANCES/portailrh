@@ -248,7 +248,8 @@ export const getSession = cache(async (): Promise<{
   return {
     user: {
       id: session.user.id,
-      fullName: session.user.fullName,
+      // Nom relu depuis la base (déjà chargée ci-dessus) : un renommage par l'Admin s'affiche sans reconnexion.
+      fullName: user.fullName,
       email: session.user.email,
       photoUrl: session.user.photoUrl || null,
     },

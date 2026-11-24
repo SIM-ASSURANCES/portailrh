@@ -519,6 +519,62 @@ export async function modifierRoleUtilisateurAction(
   return { status: "success", message: `Rôle de ${user.fullName} mis à jour : ${nouveauRole.name}.` };
 }
 
+const nomUtilisateurSchema = z
+  .string()
+  .transform((v) => v.trim().replace(/\s+/g, " "))
+  .pipe(
+    z
+      .string()
+      .min(2, "Le nom doit contenir au moins 2 caractères.")
+      .max(100, "Le nom ne peut pas dépasser 100 caractères.")
+  );
+
+/**
+ * Modifie le nom affiché (`User.fullName`) d'un compte existant. Admin seul (revérifié ici). Ni l'e-mail, ni le rôle,
+ * ni le service. Les textes déjà écrits (historique, notifications) gardent l'ancien nom, volontairement.
+ */
+export async function modifierNomUtilisateurAction(userId: string, nom: string): Promise<ActionState> {
+  const session = await getSession();
+  if (!session || !isAdmin(session)) {
+    return { status: "error", message: "Action non autorisée." };
+  }
+
+  const parsed = nomUtilisateurSchema.safeParse(nom);
+  if (!parsed.success) {
+    return {
+      status: "error",
+      message: parsed.error.issues[0]?.message ?? "Nom invalide.",
+      fieldErrors: { nom: parsed.error.issues[0]?.message ?? "Nom invalide." },
+    };
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, fullName: true, email: true } });
+  if (!user) {
+    return { status: "error", message: "Utilisateur introuvable." };
+  }
+  if (user.fullName === parsed.data) {
+    return { status: "success", message: "Nom inchangé." };
+  }
+
+  await prisma.user.update({ where: { id: userId }, data: { fullName: parsed.data } });
+
+  await prisma.historiqueEntry.create({
+    data: {
+      entity: "User",
+      entityId: user.id,
+      action: "CHANGE_NOM",
+      detail: `Nom modifié pour ${user.email} : « ${user.fullName} » → « ${parsed.data} »`,
+      userId: session.user.id,
+    },
+  });
+
+  revalidatePath("/admin/users");
+  revalidatePath("/", "layout");
+  publishDataChanged();
+
+  return { status: "success", message: `Nom mis à jour : ${parsed.data}.` };
+}
+
 /** Refus de désactiver ou supprimer le seul responsable d'un ou plusieurs services sans remplaçant (`null` : permis). */
 async function refusResponsableSansRemplacant(userId: string, action: "desactiver" | "supprimer"): Promise<string | null> {
   const user = await prisma.user.findUnique({

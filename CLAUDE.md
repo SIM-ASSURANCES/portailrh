@@ -7628,6 +7628,12 @@ désactiver, changer le rôle, supprimer si jamais utilisé), `/admin/roles`
 applique la mutation immédiatement (pas de bouton « Enregistrer » global).
 Toute mutation est historisée dans `HistoriqueEntry`.
 
+**Renommer un compte** : `modifierNomUtilisateurAction(userId, nom)` (`admin/users/actions.ts`, Admin seul revérifié dans
+l'action) modifie `User.fullName` (2 à 100 caractères, espaces réduits ; aucune écriture si identique) et écrit
+`HistoriqueEntry` `CHANGE_NOM` (ancien → nouveau). UI : `UserNameEditor.tsx` (« Modifier » inline, tableau et cartes).
+`getSession()` relit désormais `fullName` depuis la base (plus le JWT) : le nouveau nom s'affiche sans reconnexion. Les
+textes déjà écrits (historique, notifications) gardent l'ancien nom, volontairement. `/profil` ne permet pas de changer son nom.
+
 `DataTable` étant un Client Component, ses `columns` (avec leurs fonctions
 `accessor`/`render`) ne peuvent jamais être construites dans une page
 Server Component puis passées en props — toujours un petit wrapper Client
