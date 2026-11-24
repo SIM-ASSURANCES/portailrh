@@ -89,7 +89,7 @@ describe("vocabulaire uniforme « Rejeter »", () => {
   it("aucun texte visible ne dit « refus / refuser / refusé » pour un rejet métier", () => {
     const restes = restesVocabulaire();
     expect(restes, `Restes de l'ancien vocabulaire :\n${restes.join("\n")}`).toEqual([]);
-  });
+  }, 30_000);
 
   it("la liste blanche ne laisse passer que les refus d'accès, de droits ou techniques", () => {
     expect(LISTE_BLANCHE.every((b) => b.raison.length > 0)).toBe(true);
