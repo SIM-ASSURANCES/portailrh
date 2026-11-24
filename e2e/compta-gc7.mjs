@@ -7,6 +7,7 @@
 //   7c : relevé client en PDF (téléchargé, contenu relu, 401 / 403 / 404, lien sur la fiche).
 //   7d : relance consignée hors application et promesse de paiement (« relance proposée », promesse en cours, évaluation par la règle : tenue /
 //        non tenue, audit, statut final non modifiable, refus serveur par rejeu sans cpt.relancer, validations).
+//   7e : prévision d'encaissements par semaine et par mois, chaque ligne recoupée par un calcul SQL indépendant, promesses, accès, 390 px.
 import { chromium } from "playwright";
 import pg from "pg";
 
@@ -448,6 +449,48 @@ await client("cl-vide", "Zézé Paul");
   const dir = await ouvrir(DIRECTION, "/compta/clients/cl-t7");
   verifier("7d. Direction : lit les relances et promesses, sans formulaire ni bouton d'évaluation", (await dir.locator("[data-liste-relances]").count()) === 1 && (await dir.locator("[data-formulaire-relance], [data-evaluer-promesses]").count()) === 0);
   await dir.close();
+}
+// ---------- 7e. Prévision d'encaissements ----------
+{
+  const nb = (t) => Number((t ?? "").replace(/[^\d,-]/g, "").replace(",", ".")) || 0;
+  const sql = async (texte, params) => Number((await db.query(texte, params)).rows[0].v);
+  for (const [vue, attendu] of [["semaine", 13], ["mois", 9]]) {
+    const p = await ouvrir(DIRECTION, vue === "semaine" ? "/compta/previsions" : "/compta/previsions?vue=mois");
+    const lignes = await p.$$eval("[data-periode]", (els) => els.map((e) => ({ debut: e.getAttribute("data-periode"), position: e.getAttribute("data-position"), prevu: e.querySelector("[data-prevu]").textContent, reste: e.querySelector("[data-reste]").textContent, reel: e.querySelector("[data-reel]").textContent, promesses: e.querySelector("[data-promesses]").textContent })));
+    verifier(`7e. vue ${vue} : ${attendu} périodes dont une seule en cours`, lignes.length === attendu && lignes.filter((l) => l.position === "COURANTE").length === 1, `${lignes.length}`);
+    let ecarts = 0;
+    for (const [i, l] of lignes.entries()) {
+      const fin = vue === "semaine" ? jour(0, new Date(`${l.debut}T00:00:00Z`)) : null;
+      const finPeriode = vue === "semaine" ? new Date(new Date(`${l.debut}T00:00:00Z`).getTime() + 6 * 86_400_000).toISOString().slice(0, 10) : new Date(Date.UTC(Number(l.debut.slice(0, 4)), Number(l.debut.slice(5, 7)), 0)).toISOString().slice(0, 10);
+      void fin;
+      const prevu = await sql(`SELECT COALESCE(SUM(e."montantDu"),0)::float8 AS v FROM "CptEcheance" e JOIN "CptContrat" c ON c.id = e."contratId" WHERE e.etat <> 'ANNULEE' AND c.statut <> 'ANNULE' AND e."datePrevue" BETWEEN $1 AND $2`, [l.debut, finPeriode]);
+      const regle = await sql(`SELECT COALESCE(SUM(e."montantRegle"),0)::float8 AS v FROM "CptEcheance" e JOIN "CptContrat" c ON c.id = e."contratId" WHERE e.etat <> 'ANNULEE' AND c.statut <> 'ANNULE' AND e."datePrevue" BETWEEN $1 AND $2`, [l.debut, finPeriode]);
+      const reel = await sql(`SELECT COALESCE(SUM(r.montant),0)::float8 AS v FROM "CptRattachement" r JOIN "CptEncaissement" e ON e.id = r."encaissementId" WHERE r.statut = 'VALIDE' AND e."dateValeur" BETWEEN $1 AND $2`, [l.debut, finPeriode]);
+      const promesses = await sql(`SELECT COALESCE(SUM(montant),0)::float8 AS v FROM "CptPromesse" WHERE statut = 'EN_COURS' AND "datePromise" BETWEEN $1 AND $2`, [l.debut, finPeriode]);
+      const resteAttendu = Math.max(0, prevu - regle);
+      if (nb(l.prevu) !== prevu || nb(l.reste) !== resteAttendu || (l.position !== "FUTURE" && nb(l.reel) !== reel) || nb(l.promesses) !== promesses) {
+        ecarts++;
+        verifier(`7e. vue ${vue} : ligne ${i} (${l.debut}) recoupée par SQL`, false, `${JSON.stringify(l)} / SQL prévu ${prevu} reste ${resteAttendu} réel ${reel} promesses ${promesses}`);
+      }
+    }
+    verifier(`7e. vue ${vue} : chaque ligne (prévu, reste à encaisser, réel, promesses) est égale à un calcul SQL indépendant`, ecarts === 0);
+    verifier(`7e. vue ${vue} : les périodes futures n'affichent pas de réel (« — »)`, lignes.filter((l) => l.position === "FUTURE").every((l) => l.reel.trim() === "—"));
+    const totalPrevu = nb(await p.locator("[data-total-prevu]").innerText());
+    verifier(`7e. vue ${vue} : le total affiché est la somme des lignes`, totalPrevu === lignes.reduce((s, l) => s + nb(l.prevu), 0));
+    if (vue === "semaine") {
+      verifier("7e. semaine : la promesse de 100 000 (date promise dans 5 jours) apparaît dans la période qui la contient", lignes.some((l) => nb(l.promesses) === 100000));
+      verifier("7e. semaine : un montant en retard d'une période passée est signalé « en retard »", /en retard/.test(await p.locator('[data-position="PASSEE"] [data-reste]').allInnerTexts().then((t) => t.join(" "))));
+    }
+    await p.close();
+  }
+  const m = await ouvrir(DIRECTION, "/compta/previsions", { width: 390, height: 844 });
+  verifier("7e. 390 px : pas de défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await m.close();
+  const r = await (await contexte(COLLABORATEUR)).request.get(`${B}/compta/previsions`, { maxRedirects: 0 });
+  verifier("7e. sans cpt.consulter : redirigé", r.status() >= 300 && r.status() < 400, `${r.status()}`);
+  const p = await ouvrir(COMMERCIAL, "/compta/previsions");
+  verifier("7e. la rubrique « Prévision d'encaissements » est dans la barre latérale", (await p.locator('a[href="/compta/previsions"]').count()) > 0);
+  await p.close();
 }
 void commercialId;
 
