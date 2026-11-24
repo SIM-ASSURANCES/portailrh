@@ -54,8 +54,8 @@ const RUBRIQUES = {
     "Clôture du mois",
     "Paramètres",
   ],
-  comptable: ["Référentiels", "Production", "Encaissements", "Contrôle hebdomadaire", "Clients", "Comptabilité (Odoo)"],
-  direction: ["Référentiels", "Contrôle hebdomadaire", "Clients", "Litiges"],
+  comptable: ["Référentiels", "Production", "Encaissements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Comptabilité (Odoo)"],
+  direction: ["Référentiels", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Litiges"],
 };
 const AUTORISES = [
   ["Compta – Production", "compta-production@simassurances.test", RUBRIQUES.production],
@@ -63,7 +63,7 @@ const AUTORISES = [
   ["Compta – RFCRH", "compta-rfcrh@simassurances.test", RUBRIQUES.rfcrh],
   ["Compta – Comptable", "compta-comptable@simassurances.test", RUBRIQUES.comptable],
   ["Compta – Direction", "compta-direction@simassurances.test", RUBRIQUES.direction],
-  ["DG (superviseur)", "dg@simassurances.test", ["Référentiels", "Contrôle hebdomadaire", "Clients", "Litiges"]],
+  ["DG (superviseur)", "dg@simassurances.test", ["Référentiels", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Litiges"]],
 ];
 const encaissements = (await db.query(`SELECT email FROM "User" WHERE email LIKE 'enc-%' ORDER BY email LIMIT 1`)).rows[0]?.email;
 const REFUSES = [
@@ -127,7 +127,7 @@ for (const [nom, email, attendues] of AUTORISES) {
   if (param) verifier(`4. ${nom} : « Paramètres » est un lien vers /compta/parametres`, param.lien === "/compta/parametres" && !param.bientot);
   const enc = rubriques.find((r) => r.libelle === "Encaissements");
   if (enc) verifier(`4. ${nom} : « Encaissements » est un lien vers /compta/encaissements`, enc.lien === "/compta/encaissements" && !enc.bientot);
-  const DISPONIBLES = ["Référentiels", "Production", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Clients", "Paramètres"];
+  const DISPONIBLES = ["Référentiels", "Production", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Paramètres"];
   verifier(`4. ${nom} : les autres rubriques sont « Bientôt »`, rubriques.filter((r) => !DISPONIBLES.includes(r.libelle)).every((r) => r.bientot && r.lien === null));
 
   // /compta reste une adresse valide : elle mène à la première rubrique construite, et n'affiche plus de page d'accueil.

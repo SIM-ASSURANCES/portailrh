@@ -130,3 +130,151 @@ export function syntheseContratCreanceCpt(contrat: ContratCreanceEntreeCpt, aujo
     nbEcheancesEnRetard,
   };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Par débiteur (lot GC-7b)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export type TypeDebiteurCpt = "CLIENT" | "PARTENAIRE";
+
+export interface DebiteurCpt {
+  /** Clé stable : « CLIENT:<id> » ou « PARTENAIRE:<id> ». */
+  cle: string;
+  type: TypeDebiteurCpt;
+  id: string;
+  nom: string;
+}
+
+/**
+ * Qui doit l'argent (règle C-20, PROVISOIRE, question Q18) : un partenaire apporteur qui est aussi CLIENT (`estClient`) paie pour ses
+ * clients, il est donc le débiteur de leurs contrats ; sinon le débiteur est le client du contrat (client direct). Le modèle ne dit pas
+ * autrement qui paie : un partenaire qui n'est pas marqué client n'est jamais débiteur.
+ */
+export function debiteurDuContratCpt(contrat: {
+  client: { id: string; nom: string };
+  apporteur: { id: string; nom: string; estClient: boolean } | null;
+}): DebiteurCpt {
+  if (contrat.apporteur?.estClient) return { cle: `PARTENAIRE:${contrat.apporteur.id}`, type: "PARTENAIRE", id: contrat.apporteur.id, nom: contrat.apporteur.nom };
+  return { cle: `CLIENT:${contrat.client.id}`, type: "CLIENT", id: contrat.client.id, nom: contrat.client.nom };
+}
+
+export interface ContratPourCreanceCpt {
+  contratId: string;
+  numPolice: string;
+  clientId: string;
+  clientNom: string;
+  apporteurId: string | null;
+  apporteurNom: string | null;
+  produitLibelle: string;
+  debiteur: DebiteurCpt;
+  synthese: SyntheseContratCreanceCpt;
+}
+
+export interface DebiteurCreanceCpt {
+  debiteur: DebiteurCpt;
+  primeEmise: bigint;
+  encaisseProuve: bigint;
+  declarePayeNonProuve: bigint;
+  resteDu: bigint;
+  resteEchu: bigint;
+  resteEnRetard: bigint;
+  depuisLe: string | null;
+  joursAnciennete: number | null;
+  tranche: TrancheCreanceCpt | null;
+  /** Les contrats AYANT un reste dû, du plus ancien impayé au plus récent. */
+  contrats: ContratPourCreanceCpt[];
+  /** Une relance est proposée (jamais envoyée) dès qu'une échéance est en retard. */
+  relanceProposee: boolean;
+}
+
+/**
+ * Regroupe par débiteur les seuls contrats qui ont un reste dû (une créance). Prime émise et encaissé prouvé sont ceux de CES contrats :
+ * reste dû = prime émise − encaissé prouvé, sur le même ensemble. Tri : la dette la plus ancienne d'abord, puis le reste échu le plus gros.
+ */
+export function regrouperParDebiteurCpt(contrats: readonly ContratPourCreanceCpt[]): DebiteurCreanceCpt[] {
+  const parCle = new Map<string, DebiteurCreanceCpt>();
+  for (const c of contrats) {
+    if (c.synthese.resteDu === ZERO) continue;
+    let d = parCle.get(c.debiteur.cle);
+    if (!d) {
+      d = { debiteur: c.debiteur, primeEmise: ZERO, encaisseProuve: ZERO, declarePayeNonProuve: ZERO, resteDu: ZERO, resteEchu: ZERO, resteEnRetard: ZERO, depuisLe: null, joursAnciennete: null, tranche: null, contrats: [], relanceProposee: false };
+      parCle.set(c.debiteur.cle, d);
+    }
+    d.primeEmise += c.synthese.primeEmise;
+    d.encaisseProuve += c.synthese.encaisseProuve;
+    d.declarePayeNonProuve += c.synthese.declarePayeNonProuve;
+    d.resteDu += c.synthese.resteDu;
+    d.resteEchu += c.synthese.resteEchu;
+    d.resteEnRetard += c.synthese.resteEnRetard;
+    if (c.synthese.depuisLe && (d.depuisLe === null || c.synthese.depuisLe < d.depuisLe)) {
+      d.depuisLe = c.synthese.depuisLe;
+      d.joursAnciennete = c.synthese.joursAnciennete;
+      d.tranche = c.synthese.tranche;
+    }
+    if (c.synthese.nbEcheancesEnRetard > 0) d.relanceProposee = true;
+    d.contrats.push(c);
+  }
+  const liste = [...parCle.values()];
+  for (const d of liste) d.contrats.sort((a, b) => (a.synthese.depuisLe ?? "9999") .localeCompare(b.synthese.depuisLe ?? "9999") || a.numPolice.localeCompare(b.numPolice));
+  return liste.sort(
+    (a, b) =>
+      (a.depuisLe ?? "9999").localeCompare(b.depuisLe ?? "9999") || (b.resteEchu > a.resteEchu ? 1 : b.resteEchu < a.resteEchu ? -1 : 0) || a.debiteur.nom.localeCompare(b.debiteur.nom, "fr")
+  );
+}
+
+export interface RepartitionTrancheCpt {
+  tranche: TrancheCreanceCpt;
+  nbDebiteurs: number;
+  /** Reste échu des débiteurs dont la dette la plus ancienne tombe dans cette tranche. */
+  resteEchu: bigint;
+}
+
+/** Nombre de débiteurs et reste échu par tranche (la tranche d'un débiteur est celle de sa plus ancienne échéance impayée et échue). */
+export function repartitionParTrancheCpt(debiteurs: readonly DebiteurCreanceCpt[]): RepartitionTrancheCpt[] {
+  return TRANCHES_CREANCE_CPT.map((tranche) => {
+    const concernes = debiteurs.filter((d) => d.tranche === tranche);
+    return { tranche, nbDebiteurs: concernes.length, resteEchu: concernes.reduce((s, d) => s + d.resteEchu, ZERO) };
+  });
+}
+
+// ---------- Filtres (GET) ----------
+
+export const VUES_ECHEANCES_CPT = ["TOUTES", "EN_RETARD", "DUES_7J"] as const;
+export type VueEcheancesCpt = (typeof VUES_ECHEANCES_CPT)[number];
+export const LIBELLE_VUE_ECHEANCES_CPT: Record<VueEcheancesCpt, string> = {
+  TOUTES: "En retard et dues dans les 7 jours",
+  EN_RETARD: "En retard seulement",
+  DUES_7J: "Dues dans les 7 jours seulement",
+};
+
+/** Horizon de la liste « dues bientôt » : 7 jours à partir d'aujourd'hui, aujourd'hui compris. */
+export const HORIZON_ECHEANCES_JOURS_CPT = 7;
+
+export interface FiltresCreancesCpt {
+  /** Recherche libre d'un client (début de mot : nom, téléphone, partenaire d'origine). Vide = tous. */
+  q: string;
+  /** Partenaire apporteur du contrat. */
+  partenaireId: string | null;
+  /** Tranche d'ancienneté du débiteur (état des créances). */
+  tranche: TrancheCreanceCpt | null;
+  vue: VueEcheancesCpt;
+}
+
+export interface RechercheCreancesBruteCpt {
+  q?: string;
+  partenaire?: string;
+  tranche?: string;
+  vue?: string;
+  page?: string;
+  pageEcheances?: string;
+}
+
+/** Lit les paramètres GET ; une valeur absente ou invalide est ignorée (jamais une erreur de page). */
+export function lireFiltresCreancesCpt(recherche: RechercheCreancesBruteCpt, partenairesIds: readonly string[]): FiltresCreancesCpt {
+  return {
+    q: (recherche.q ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
+    partenaireId: partenairesIds.includes(recherche.partenaire ?? "") ? (recherche.partenaire as string) : null,
+    tranche: TRANCHES_CREANCE_CPT.find((t) => t === recherche.tranche) ?? null,
+    vue: VUES_ECHEANCES_CPT.find((v) => v === recherche.vue) ?? "TOUTES",
+  };
+}

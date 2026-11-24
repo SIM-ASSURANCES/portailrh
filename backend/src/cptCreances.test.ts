@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { construireEcheancier } from "./cptEcheancier";
-import { syntheseContratCreanceCpt, trancheCreanceCpt, type EcheanceCreanceCpt } from "./cptCreances";
+import {
+  debiteurDuContratCpt,
+  regrouperParDebiteurCpt,
+  repartitionParTrancheCpt,
+  syntheseContratCreanceCpt,
+  trancheCreanceCpt,
+  type ContratPourCreanceCpt,
+  type EcheanceCreanceCpt,
+} from "./cptCreances";
 
 const c = (centimes: number) => BigInt(centimes);
 
@@ -123,3 +131,55 @@ describe("syntheseContratCreanceCpt", () => {
     expect(syntheseContratCreanceCpt({ statut: "EN_COURS", declarePaye: false, echeances: [{ ...echeances[0], etat: "ANNULEE" }] }, "2026-11-24").resteDu).toBe(c(0));
   });
 });
+
+
+function contratCreance(numPolice: string, debiteur: ReturnType<typeof debiteurDuContratCpt>, echeances: EcheanceCreanceCpt[], declarePaye = false): ContratPourCreanceCpt {
+  return {
+    contratId: numPolice,
+    numPolice,
+    clientId: "c",
+    clientNom: "C",
+    apporteurId: null,
+    apporteurNom: null,
+    produitLibelle: "P",
+    debiteur,
+    synthese: syntheseContratCreanceCpt({ statut: "EN_COURS", declarePaye, echeances }, "2026-11-24"),
+  };
+}
+
+describe("débiteur et regroupement (C-20)", () => {
+  const client = { id: "k1", nom: "Koné" };
+  it("un partenaire apporteur qui est aussi client est le débiteur ; sinon le client direct", () => {
+    expect(debiteurDuContratCpt({ client, apporteur: { id: "p1", nom: "Beta", estClient: true } }).cle).toBe("PARTENAIRE:p1");
+    expect(debiteurDuContratCpt({ client, apporteur: { id: "p2", nom: "Alpha", estClient: false } }).cle).toBe("CLIENT:k1");
+    expect(debiteurDuContratCpt({ client, apporteur: null }).cle).toBe("CLIENT:k1");
+  });
+
+  it("regroupe par débiteur, ignore les contrats soldés, garde la plus ancienne dette, trie par ancienneté", () => {
+    const d1 = debiteurDuContratCpt({ client, apporteur: null });
+    const d2 = debiteurDuContratCpt({ client: { id: "k2", nom: "Diabaté" }, apporteur: { id: "p1", nom: "Beta", estClient: true } });
+    const a = contratCreance("A", d1, [{ rang: 1, etat: "OUVERTE", datePrevue: "2026-07-27", montantDu: "1000", montantRegle: "0" }]);
+    const b = contratCreance("B", d1, [{ rang: 1, etat: "OUVERTE", datePrevue: "2026-11-01", montantDu: "500", montantRegle: "200" }], true);
+    const solde = contratCreance("S", d1, [{ rang: 1, etat: "SOLDEE", datePrevue: "2026-01-01", montantDu: "900", montantRegle: "900" }]);
+    const c = contratCreance("C", d2, [{ rang: 1, etat: "OUVERTE", datePrevue: "2026-03-01", montantDu: "2000", montantRegle: "0" }]);
+    const liste = regrouperParDebiteurCpt([a, b, solde, c]);
+    expect(liste.map((d) => d.debiteur.cle)).toEqual(["PARTENAIRE:p1", "CLIENT:k1"]);
+    const k1 = liste[1];
+    expect(k1.contrats.map((x) => x.numPolice)).toEqual(["A", "B"]);
+    expect(k1.primeEmise).toBe(c_(150_000));
+    expect(k1.encaisseProuve).toBe(c_(20_000));
+    expect(k1.resteDu).toBe(c_(130_000));
+    expect(k1.declarePayeNonProuve).toBe(c_(30_000));
+    expect(k1.depuisLe).toBe("2026-07-27");
+    expect(k1.tranche).toBe("T91_180");
+    expect(k1.relanceProposee).toBe(true);
+    expect(liste[0].tranche).toBe("PLUS_180");
+    const rep = repartitionParTrancheCpt(liste);
+    expect(rep.find((r) => r.tranche === "PLUS_180")?.nbDebiteurs).toBe(1);
+    expect(rep.find((r) => r.tranche === "T91_180")?.resteEchu).toBe(c_(130_000));
+  });
+});
+
+function c_(centimes: number) {
+  return BigInt(centimes);
+}

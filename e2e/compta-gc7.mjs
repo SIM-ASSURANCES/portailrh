@@ -2,6 +2,8 @@
 // `bash e2e/base-jetable.sh`) : ce script ÉCRIT en base et ne se rejoue pas sur la même base. Données 100 % synthétiques.
 //   7a : fiche client (identité, contrats, échéances, paiements prouvés, paiements en attente, « pas une prime », retards), recherche par
 //        début de mot, accès depuis /compta/controle et /compta/production, lecture seule, 390 px sans défilement horizontal.
+//   7b : état des créances par débiteur (tranches, détail contrat par contrat, débiteur partenaire), échéances à surveiller, filtres en GET,
+//        pagination à 50, export CSV (401 / 403), 390 px.
 import { chromium } from "playwright";
 import pg from "pg";
 
@@ -224,6 +226,93 @@ await client("cl-vide", "Zézé Paul");
   const hrefs = await q.$$eval("[data-lien-fiche-client]", (els) => els.map((e) => e.getAttribute("href")));
   verifier("7a. /compta/production : le client des contrats trouvés ouvre sa fiche", hrefs.length >= 1 && hrefs.every((h) => h === "/compta/clients/cl-t7"), JSON.stringify(hrefs));
   await q.close();
+}
+// ---------- 7b. État des créances ----------
+{
+  const restants = (t12Payees = 2) => 506486 * (12 - t12Payees);
+  const p = await ouvrir(RFCRH, "/compta/creances");
+  const totaux = (await p.locator("[data-totaux-creances]").innerText()).replace(/\s+/g, " ");
+  verifier("7b. reste dû total = Koné (350 000) + Courtage Beta (T12 : 5 064 860)", /5\s?414\s?860/.test(totaux), totaux);
+  const kone = p.locator('[data-debiteur="Koné Awa"]');
+  const beta = p.locator('[data-debiteur="Courtage Beta"]');
+  verifier("7b. un débiteur client direct (Koné Awa) et un débiteur partenaire (Courtage Beta : il est aussi client)", (await kone.count()) === 1 && (await beta.count()) === 1);
+  verifier("7b. le client Diabaté n'est pas lui-même débiteur (c'est le partenaire qui paie)", (await p.locator('[data-debiteur="Diabaté Moussa"]').count()) === 0);
+  verifier("7b. T7 : tranche 91 à 180 jours", (await kone.getAttribute("data-tranche-debiteur")) === "T91_180" && /91 à 180 jours/.test(await kone.locator("summary").innerText()));
+  verifier("7b. T12 : reste dû 5 064 860, tranche selon l'ancienneté du 1er août", /5\s?064\s?860/.test(await beta.locator("summary").innerText()) && (await beta.getAttribute("data-tranche-debiteur")) === (({ "0 à 30 jours": "T0_30", "31 à 90 jours": "T31_90", "91 à 180 jours": "T91_180", "Plus de 180 jours": "PLUS_180" })[tranche(joursEntre("2026-08-01", AUJOURDHUI))]));
+  verifier("7b. « relance proposée » signalée (échéances en retard), rien n'est envoyé", /Relance proposée/.test(await kone.locator("summary").innerText()) && (await p.locator("form [name=envoyer]").count()) === 0);
+  await kone.locator("summary").click();
+  const detail = await kone.innerText();
+  verifier("7b. détail contrat par contrat (POL-T7 et POL-T7B), prime, encaissé, reste", (await kone.locator('[data-contrat-creance="POL-T7"]').count()) === 1 && (await kone.locator('[data-contrat-creance="POL-T7B"]').count()) === 1 && /Prime émise 400\s?000/.test(detail) && /encaissé prouvé 50\s?000/.test(detail), detail.replace(/\s+/g, " ").slice(0, 300));
+  verifier("7b. dû depuis la date PRÉVUE de la plus ancienne échéance impayée (pas la date de saisie)", detail.includes(new Date(`${jour(-120)}T00:00:00Z`).toLocaleDateString("fr-FR", { timeZone: "UTC" })));
+  verifier("7b. déclaré payé non prouvé affiché", /déclaré payé non prouvé 350\s?000/.test(detail));
+  void restants;
+
+  // Échéances à surveiller : en retard + dues dans 7 jours.
+  const attendues = 3 + moisT12.slice(2).filter((d) => d <= jour(7)).length;
+  const nbLignes = await p.locator("[data-echeance-proche]").count();
+  verifier("7b. échéances à surveiller : en retard + dues dans les 7 jours (et seulement elles)", nbLignes === attendues, `${nbLignes} / ${attendues}`);
+  verifier("7b. l'échéance à venir (POL-T7 n°3, dans 30 jours) n'y est pas", (await p.locator('[data-echeance-proche="POL-T7-3"]').count()) === 0);
+  verifier("7b. l'échéance payée (POL-T12 n°1) n'y est pas", (await p.locator('[data-echeance-proche="POL-T12-1"]').count()) === 0);
+  verifier("7b. T12 : l'échéance d'août est en retard", (await p.locator('[data-echeance-proche="POL-T12-3"]').getAttribute("data-etat")) === "EN_RETARD");
+  verifier("7b. lecture seule : aucun bouton d'action", (await p.locator("main button:not([type=submit])").count()) === 0);
+  await p.close();
+}
+{
+  // Filtres en GET.
+  const q = await ouvrir(DIRECTION, "/compta/creances?q=kon");
+  verifier("7b. filtre client « kon » : Koné seul", (await q.locator("[data-debiteur]").count()) === 1 && (await q.locator('[data-debiteur="Koné Awa"]').count()) === 1);
+  verifier("7b. filtre client : les échéances suivent (aucune échéance T12)", (await q.locator('[data-echeance-proche^="POL-T12"]').count()) === 0 && (await q.locator("[data-echeance-proche]").count()) === 3);
+  await q.close();
+  const b = await ouvrir(DIRECTION, "/compta/creances?partenaire=pa-beta");
+  verifier("7b. filtre partenaire : Courtage Beta seul", (await b.locator("[data-debiteur]").count()) === 1 && (await b.locator('[data-debiteur="Courtage Beta"]').count()) === 1);
+  await b.close();
+  const t = await ouvrir(DIRECTION, "/compta/creances?tranche=PLUS_180");
+  verifier("7b. filtre tranche « plus de 180 jours » : aucun débiteur", (await t.locator("[data-debiteur]").count()) === 0 && (await t.locator("[data-liste-vide]").count()) >= 1);
+  await t.close();
+  const r = await ouvrir(DIRECTION, "/compta/creances?vue=EN_RETARD&q=kon");
+  verifier("7b. vue « en retard seulement » : les 3 échéances de Koné en retard", (await r.locator("[data-echeance-proche]").count()) === 3 && (await r.locator('[data-echeance-proche][data-etat="EN_RETARD"]').count()) === 3);
+  await r.close();
+  const d7 = await ouvrir(DIRECTION, "/compta/creances?vue=DUES_7J&q=kon");
+  verifier("7b. vue « dues dans 7 jours » : aucune pour Koné", (await d7.locator("[data-echeance-proche]").count()) === 0);
+  await d7.close();
+}
+{
+  // Pagination à 50 : 60 débiteurs de plus, un contrat en retard chacun.
+  for (let i = 1; i <= 60; i++) {
+    const id = `bulk${String(i).padStart(2, "0")}`;
+    await client(`cl-${id}`, `Bulk Client ${String(i).padStart(2, "0")}`);
+    await contrat(`ct-${id}`, `POL-${id.toUpperCase()}`, `cl-${id}`, { fractionnement: "COMPTANT", echeances: [{ date: jour(-5), du: 1000 }] });
+  }
+  const p = await ouvrir(DIRECTION, "/compta/creances");
+  verifier("7b. pagination : 50 débiteurs sur la première page", (await p.locator("[data-debiteur]").count()) === 50, `${await p.locator("[data-debiteur]").count()}`);
+  verifier("7b. pagination : total 62 débiteurs, page 1 sur 2", /62 débiteur\(s\) · page 1 sur 2/.test(await p.locator("[data-etat-creances] [data-pagination-total]").innerText()));
+  await Promise.all([p.waitForURL(/page=2/), p.getByRole("link", { name: /Suivante/ }).first().click()]);
+  await p.waitForLoadState("networkidle").catch(() => {});
+  verifier("7b. page 2 : les 12 derniers débiteurs", (await p.locator("[data-debiteur]").count()) === 12);
+  await p.close();
+  const m = await ouvrir(DIRECTION, "/compta/creances", { width: 390, height: 844 });
+  verifier("7b. 390 px : pas de défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await m.close();
+}
+{
+  // Export CSV : mêmes filtres que l'écran ; 401 sans session, 403 sans la permission.
+  const ctx = await contexte(DIRECTION);
+  const r = await ctx.request.get(`${B}/api/compta/export/creances?vue=debiteurs&q=kon`);
+  const texte = await r.text();
+  verifier("7b. export CSV des débiteurs : 200, filtre appliqué (Koné seul), montants et tranche", r.status() === 200 && /text\/csv/.test(r.headers()["content-type"] ?? "") && /Koné Awa/.test(texte) && !/Courtage Beta/.test(texte) && /350000,00|350 000,00|350000\.00/.test(texte.replace(/\s/g, "")) && /91 à 180 jours/.test(texte), texte.slice(0, 250));
+  const e = await ctx.request.get(`${B}/api/compta/export/creances?vue=echeances&q=kon`);
+  const te = await e.text();
+  verifier("7b. export CSV des échéances : 3 lignes pour Koné", e.status() === 200 && te.trim().split(/\r?\n/).length === 4 && /POL-T7/.test(te), `${te.trim().split(/\r?\n/).length} lignes`);
+  const anonyme = await browser.newContext();
+  const r401 = await anonyme.request.get(`${B}/api/compta/export/creances?vue=debiteurs`, { maxRedirects: 0 });
+  verifier("7b. export sans session : refusé (401 ou redirection de connexion)", [401, 307, 302, 308].includes(r401.status()), `${r401.status()}`);
+  await anonyme.close();
+  const r403 = await (await contexte(COLLABORATEUR)).request.get(`${B}/api/compta/export/creances?vue=debiteurs`, { maxRedirects: 0 });
+  verifier("7b. export sans cpt.consulter : 403", r403.status() === 403, `${r403.status()}`);
+  const rVue = await ctx.request.get(`${B}/api/compta/export/creances?vue=zzz`);
+  verifier("7b. vue inconnue : 400", rVue.status() === 400);
+  const rClient = await (await contexte(COLLABORATEUR)).request.get(`${B}/compta/creances`, { maxRedirects: 0 });
+  verifier("7b. écran sans cpt.consulter : redirigé", rClient.status() >= 300 && rClient.status() < 400, `${rClient.status()}`);
 }
 void commercialId;
 
