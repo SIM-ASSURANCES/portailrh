@@ -66,6 +66,10 @@ interface SidebarProps {
   /** `feedback.moderer` : ajoute "Modération Feedbacks" (RH & DG). */
   canModererFeedback?: boolean;
   canConsulterEncaissements?: boolean;
+  /** Voir `NavFlags.canConsulterCompta`. */
+  canConsulterCompta?: boolean;
+  /** Voir `NavFlags.comptaRubriques`. */
+  comptaRubriques?: string[];
   /** Voir `NavFlags.demandesServiceAValider`. */
   demandesServiceAValider?: number | null;
   /** Voir `NavFlags.demandesDGADecider`. */
@@ -137,6 +141,8 @@ export function Sidebar({
   canConsulterHistorique = false,
   canModererFeedback = false,
   canConsulterEncaissements = false,
+  canConsulterCompta = false,
+  comptaRubriques = [],
   demandesServiceAValider = null,
   demandesDGADecider = null,
   justificationsADecider = null,
@@ -168,6 +174,8 @@ export function Sidebar({
     canRecevoirFeedback,
     canModererFeedback,
     canConsulterEncaissements,
+    canConsulterCompta,
+    comptaRubriques,
     demandesServiceAValider,
     demandesDGADecider,
     justificationsADecider,

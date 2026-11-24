@@ -11,8 +11,23 @@
  */
 import { ENC_MODULE_KEY, ENC_PERMISSIONS, ENC_PERMISSION_MISE_EN_SERVICE, ENC_ROLES_DEPART } from "./encPermissions";
 import { MODULE_CONGES_KEY, MODULE_CONGES_LABEL, PERMISSIONS_CONGES, permissionsCongePourCles } from "./congesPermissions";
+import {
+  CPT_MODULE_KEY,
+  CPT_MODULE_LABEL,
+  CPT_PERMISSION_MISE_EN_SERVICE,
+  CPT_PERMISSIONS,
+  CPT_PERMISSIONS_DG,
+  CPT_ROLES_DEPART,
+} from "./cptPermissions";
 
-export type CleModule = "tresorerie" | "pointage" | "feedback" | "systeme" | typeof ENC_MODULE_KEY | typeof MODULE_CONGES_KEY;
+export type CleModule =
+  | "tresorerie"
+  | "pointage"
+  | "feedback"
+  | "systeme"
+  | typeof ENC_MODULE_KEY
+  | typeof MODULE_CONGES_KEY
+  | typeof CPT_MODULE_KEY;
 
 export interface ModuleCatalogue {
   key: CleModule;
@@ -27,6 +42,7 @@ export const MODULES_CATALOGUE: readonly ModuleCatalogue[] = [
   { key: "systeme", label: "Système" },
   { key: ENC_MODULE_KEY, label: "Encaissements, taxes et commissions" },
   { key: MODULE_CONGES_KEY, label: MODULE_CONGES_LABEL },
+  { key: CPT_MODULE_KEY, label: CPT_MODULE_LABEL },
 ];
 
 export interface PermissionCatalogue {
@@ -86,6 +102,9 @@ export const PERMISSIONS_CATALOGUE: readonly PermissionCatalogue[] = [
   ...ENC_PERMISSIONS.map((e): PermissionCatalogue => ({ key: e.key, label: e.label, moduleKey: ENC_MODULE_KEY })),
   { ...ENC_PERMISSION_MISE_EN_SERVICE, moduleKey: "systeme" },
   ...PERMISSIONS_CONGES.map((c): PermissionCatalogue => ({ key: c.key, label: c.label, moduleKey: MODULE_CONGES_KEY })),
+  // Gestion Compta (source unique : cptPermissions.ts). La mise en service va au module technique « systeme ».
+  ...CPT_PERMISSIONS.map((c): PermissionCatalogue => ({ key: c.key, label: c.label, moduleKey: CPT_MODULE_KEY })),
+  { ...CPT_PERMISSION_MISE_EN_SERVICE, moduleKey: "systeme" },
 ];
 
 export interface RoleCible {
@@ -170,6 +189,8 @@ const ROLES_BASE: RoleBase[] = [
       "systeme.reinitialiser",
       // Mise en service du module Encaissements : même modèle, DG seul.
       ENC_PERMISSION_MISE_EN_SERVICE.key,
+      // Gestion Compta : le DG est un SUPERVISEUR (consulte, tranche les litiges, met en service), il ne saisit rien.
+      ...CPT_PERMISSIONS_DG,
     ],
   },
   {
@@ -217,6 +238,17 @@ const ROLES_BASE: RoleBase[] = [
     ],
   },
   ...ENC_ROLES_DEPART.map(
+    (r): RoleBase => ({
+      name: r.name,
+      description: r.description,
+      estAdmin: false,
+      peutEtreBeneficiaireDelegation: false,
+      peutRecevoirFeedback: true,
+      permissionsBase: [...r.permissions],
+    })
+  ),
+  // Gestion Compta : un rôle par profil du cahier SIM-XX-XX (§2), provisoires et modifiables dans /admin/roles.
+  ...CPT_ROLES_DEPART.map(
     (r): RoleBase => ({
       name: r.name,
       description: r.description,

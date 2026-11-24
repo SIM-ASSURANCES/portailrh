@@ -10,9 +10,9 @@
 2. Dans `/admin/roles`, ouvrir chaque rôle et cocher ou décocher pour que la section du rôle ci-dessous soit respectée exactement. Chaque case s'applique tout de suite (pas de bouton « Enregistrer »).
 3. Lire les encadrés « Permissions réservées » et « Vérifier avant de cocher » avant de commencer.
 
-Les permissions du module « Système » (`systeme.reinitialiser`, `enc.mettre_en_service`) n'apparaissent **pas** dans `/admin/roles` : elles sont posées par le seed ou la migration et ne se cochent pas à la main.
+Les permissions du module « Système » (`systeme.reinitialiser`, `enc.mettre_en_service`, `cpt.mettre_en_service`) n'apparaissent **pas** dans `/admin/roles` : elles sont posées par le seed ou la migration et ne se cochent pas à la main.
 
-Total : **52 permissions** réparties ainsi : Trésorerie 27, Pointage 9, Congés 4, Encaissements 9, Feedback 1, Système 2.
+Total : **71 permissions** réparties ainsi : Trésorerie 27, Pointage 9, Congés 4, Encaissements 9, Gestion Compta 18, Feedback 1, Système 3.
 
 ## Permissions réservées
 
@@ -23,6 +23,7 @@ Total : **52 permissions** réparties ainsi : Trésorerie 27, Pointage 9, Congé
 > - `treso.decider_dg` — étape DG du circuit de validation.
 > - `systeme.reinitialiser` — remise à zéro globale à usage unique.
 > - `enc.mettre_en_service` — mise en service du module Encaissements (usage unique).
+> - `cpt.mettre_en_service` — mise en service du module Gestion Compta (usage unique).
 >
 > **Couples INTERDITS (jamais sur le même rôle) :**
 >
@@ -49,6 +50,7 @@ Ne sont **jamais délégables** (même cochées, l'octroi est impossible) : `tre
 > - **Lot K — réorientation et reprise** — migration `20261026090000_circuit_reorientation_reprise` : `treso.reorienter_demande`.
 > - **Pointage — purge du Pointage seul** — migration `20261014120000_pointage_reinitialisation` : `pointage.reinitialiser`.
 > - **Module Congés** — migration `20261030090000_conges_permissions_absence` : `conges.soumettre`, `conges.valider_rh`, `conges.annuler`, `conges.consulter_tous`.
+> - **Module Gestion Compta** — migration `20261101110000_compta_permissions_roles` : `cpt.consulter`, `cpt.importer_production`, `cpt.saisir_contrat`, `cpt.importer_releves`, `cpt.identifier_encaissement`, `cpt.confirmer_rattachement`, `cpt.valider_rattachement`, `cpt.classer_pas_une_prime`, `cpt.declarer_tca`, `cpt.payer_tca`, `cpt.regler_partenaire`, `cpt.compenser`, `cpt.gerer_conventions`, `cpt.parametrer`, `cpt.preparer_ecritures`, `cpt.relancer`, `cpt.cloturer_periode`, `cpt.trancher_litige`, `cpt.mettre_en_service`.
 >
 > Après `prisma migrate deploy`, ces permissions existent mais **les rôles ne les portent que si la migration les a données** (par permission « sœur », jamais par nom de rôle). Vérifier chaque section de rôle ci-dessous.
 
@@ -124,7 +126,7 @@ Direction générale.
 - Accès à la console d'administration (« Administrateur », fixé à la création) : **non**
 - Peut être bénéficiaire d'une délégation : **non**
 - Peut recevoir un feedback (FeedbackApp) : **oui**
-- Nombre de permissions à cocher : **15**
+- Nombre de permissions à cocher : **18**
 
 **Trésorerie** (7)
 
@@ -147,14 +149,20 @@ Direction générale.
 - [ ] `conges.soumettre` — Demander un congé et consulter les siens.
 - [ ] `conges.consulter_tous` — Consulter les congés de tous les employés et les exporter.
 
+**Gestion Compta** (2)
+
+- [ ] `cpt.consulter` — Gestion Compta : consulter les référentiels, contrats, encaissements et rattachements, et exporter.
+- [ ] `cpt.trancher_litige` — Gestion Compta : trancher un litige, rôle de supervision de la direction (écran pas encore livré).
+
 **Feedback** (1)
 
 - [ ] `feedback.moderer` — Modérer les messages de FeedbackApp (masquer, rétablir) et exporter.
 
-**Système** (2)
+**Système** (3)
 
 - [ ] `systeme.reinitialiser` — Remise à zéro globale de mise en production (écran « Réinitialisation »), usage unique. DG seul, jamais déléguée, jamais cochable dans /admin/roles.
 - [ ] `enc.mettre_en_service` — Encaissements : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul.
+- [ ] `cpt.mettre_en_service` — Gestion Compta : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul.
 
 ### Admin
 
@@ -275,24 +283,116 @@ Consultation et export, aucune modification.
 
 - [ ] `enc.consulter` — Encaissements : consulter les polices, le registre, les signalements et exporter.
 
+### Compta – Production
+
+Service technique : saisit et importe les contrats, corrige les contrats signalés, relance.
+
+- Accès à la console d'administration (« Administrateur », fixé à la création) : **non**
+- Peut être bénéficiaire d'une délégation : **non**
+- Peut recevoir un feedback (FeedbackApp) : **oui**
+- Nombre de permissions à cocher : **4**
+
+**Gestion Compta** (4)
+
+- [ ] `cpt.consulter` — Gestion Compta : consulter les référentiels, contrats, encaissements et rattachements, et exporter.
+- [ ] `cpt.importer_production` — Gestion Compta : déposer le bordereau de production et traiter ses anomalies.
+- [ ] `cpt.saisir_contrat` — Gestion Compta : saisir et corriger un contrat, traiter les anomalies de production.
+- [ ] `cpt.relancer` — Gestion Compta : relancer les clients et suivre les promesses de paiement (écran pas encore livré).
+
+### Compta – Commercial
+
+Identifie les encaissements sans contrat, confirme les rattachements avec le reçu, relance les clients.
+
+- Accès à la console d'administration (« Administrateur », fixé à la création) : **non**
+- Peut être bénéficiaire d'une délégation : **non**
+- Peut recevoir un feedback (FeedbackApp) : **oui**
+- Nombre de permissions à cocher : **4**
+
+**Gestion Compta** (4)
+
+- [ ] `cpt.consulter` — Gestion Compta : consulter les référentiels, contrats, encaissements et rattachements, et exporter.
+- [ ] `cpt.identifier_encaissement` — Gestion Compta : lancer le rapprochement et identifier à la main un encaissement sans proposition (avec `cpt.confirmer_rattachement`).
+- [ ] `cpt.confirmer_rattachement` — Gestion Compta : confirmer un rattachement proposé avec la référence du reçu (étape 1). Ne valide jamais.
+- [ ] `cpt.relancer` — Gestion Compta : relancer les clients et suivre les promesses de paiement (écran pas encore livré).
+
+### Compta – RFCRH
+
+Valide les rattachements, classe « pas une prime », déclare et paie la taxe, règle et compense les partenaires, gère conventions et paramètres, prépare les écritures, clôture le mois.
+
+- Accès à la console d'administration (« Administrateur », fixé à la création) : **non**
+- Peut être bénéficiaire d'une délégation : **non**
+- Peut recevoir un feedback (FeedbackApp) : **oui**
+- Nombre de permissions à cocher : **13**
+
+**Gestion Compta** (13)
+
+- [ ] `cpt.consulter` — Gestion Compta : consulter les référentiels, contrats, encaissements et rattachements, et exporter.
+- [ ] `cpt.identifier_encaissement` — Gestion Compta : lancer le rapprochement et identifier à la main un encaissement sans proposition (avec `cpt.confirmer_rattachement`).
+- [ ] `cpt.valider_rattachement` — Gestion Compta : valider ou rejeter un rattachement (étape 2), seule action qui rend une prime payée. Jamais le compte qui a confirmé.
+- [ ] `cpt.classer_pas_une_prime` — Gestion Compta : classer tout ou partie d'un encaissement « pas une prime » avec un motif écrit.
+- [ ] `cpt.declarer_tca` — Gestion Compta : déclarer la taxe sur les contrats d'assurance du mois (écran pas encore livré).
+- [ ] `cpt.payer_tca` — Gestion Compta : enregistrer le paiement de la taxe et sa quittance (écran pas encore livré).
+- [ ] `cpt.regler_partenaire` — Gestion Compta : régler un partenaire (écran pas encore livré).
+- [ ] `cpt.compenser` — Gestion Compta : compenser entre natures de rémunération, opération explicite (écran pas encore livré).
+- [ ] `cpt.gerer_conventions` — Gestion Compta : gérer les conventions des partenaires (fin de validité).
+- [ ] `cpt.parametrer` — Gestion Compta : référentiels, taux de taxe, formats d'import, correspondances Odoo, paramètres et seuils.
+- [ ] `cpt.preparer_ecritures` — Gestion Compta : préparer les exports Odoo (écran pas encore livré).
+- [ ] `cpt.relancer` — Gestion Compta : relancer les clients et suivre les promesses de paiement (écran pas encore livré).
+- [ ] `cpt.cloturer_periode` — Gestion Compta : clôturer un mois (écran pas encore livré).
+
+### Compta – Comptable
+
+Stagiaire comptable : importe les relevés et la production, prépare les listes et les écritures Odoo.
+
+- Accès à la console d'administration (« Administrateur », fixé à la création) : **non**
+- Peut être bénéficiaire d'une délégation : **non**
+- Peut recevoir un feedback (FeedbackApp) : **oui**
+- Nombre de permissions à cocher : **4**
+
+**Gestion Compta** (4)
+
+- [ ] `cpt.consulter` — Gestion Compta : consulter les référentiels, contrats, encaissements et rattachements, et exporter.
+- [ ] `cpt.importer_production` — Gestion Compta : déposer le bordereau de production et traiter ses anomalies.
+- [ ] `cpt.importer_releves` — Gestion Compta : importer les relevés (Wave, banque, microfinance…), lancer le rapprochement, traiter les anomalies de relevé.
+- [ ] `cpt.preparer_ecritures` — Gestion Compta : préparer les exports Odoo (écran pas encore livré).
+
+### Compta – Direction
+
+Direction générale : consulte tous les tableaux de bord, tranche les litiges, ne saisit rien.
+
+- Accès à la console d'administration (« Administrateur », fixé à la création) : **non**
+- Peut être bénéficiaire d'une délégation : **non**
+- Peut recevoir un feedback (FeedbackApp) : **oui**
+- Nombre de permissions à cocher : **2**
+
+**Gestion Compta** (2)
+
+- [ ] `cpt.consulter` — Gestion Compta : consulter les référentiels, contrats, encaissements et rattachements, et exporter.
+- [ ] `cpt.trancher_litige` — Gestion Compta : trancher un litige, rôle de supervision de la direction (écran pas encore livré).
+
 ### Responsable de service (pas un rôle)
 
 Un responsable de service est désigné dans **Admin > Services** (champ responsable). Il n'a besoin d'**aucune permission** pour valider l'étape Service des demandes de son équipe, décider les justifications de pointage de son équipe, décider les congés de son service et consulter « Mon équipe ». Son compte porte un rôle ordinaire (Collaborateur dans le seed). **Rien à cocher.**
 
 ## Synthèse : nombre de permissions par rôle et par module
 
-| Rôle | Trésorerie | Pointage | Congés | Encaissements | Feedback | Système | Total |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Collaborateur | 2 | 2 | 1 | 0 | 0 | 0 | 5 |
-| Finance | 22 | 0 | 1 | 0 | 0 | 0 | 23 |
-| DG | 7 | 3 | 2 | 0 | 1 | 2 | 15 |
-| Admin | 0 | 1 | 0 | 0 | 1 | 0 | 2 |
-| RH | 0 | 8 | 4 | 0 | 1 | 0 | 13 |
-| Assistant Finance | 5 | 0 | 1 | 0 | 0 | 0 | 6 |
-| Encaissements – Équipe technique | 0 | 0 | 0 | 3 | 0 | 0 | 3 |
-| Encaissements – Finance | 0 | 0 | 0 | 8 | 0 | 0 | 8 |
-| Encaissements – Consultation | 0 | 0 | 0 | 1 | 0 | 0 | 1 |
-| **Catalogue** | 27 | 9 | 4 | 9 | 1 | 2 | 52 |
+| Rôle | Trésorerie | Pointage | Congés | Encaissements | Gestion Compta | Feedback | Système | Total |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Collaborateur | 2 | 2 | 1 | 0 | 0 | 0 | 0 | 5 |
+| Finance | 22 | 0 | 1 | 0 | 0 | 0 | 0 | 23 |
+| DG | 7 | 3 | 2 | 0 | 2 | 1 | 3 | 18 |
+| Admin | 0 | 1 | 0 | 0 | 0 | 1 | 0 | 2 |
+| RH | 0 | 8 | 4 | 0 | 0 | 1 | 0 | 13 |
+| Assistant Finance | 5 | 0 | 1 | 0 | 0 | 0 | 0 | 6 |
+| Encaissements – Équipe technique | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 3 |
+| Encaissements – Finance | 0 | 0 | 0 | 8 | 0 | 0 | 0 | 8 |
+| Encaissements – Consultation | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
+| Compta – Production | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 4 |
+| Compta – Commercial | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 4 |
+| Compta – RFCRH | 0 | 0 | 0 | 0 | 13 | 0 | 0 | 13 |
+| Compta – Comptable | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 4 |
+| Compta – Direction | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 2 |
+| **Catalogue** | 27 | 9 | 4 | 9 | 18 | 1 | 3 | 71 |
 
 ## À VALIDER PAR LE DG
 
@@ -373,6 +473,25 @@ Vérifié le 2026-10-22 sur deux bases jetables : (1) toutes les migrations seul
 | `enc.gerer_non_identifie` | Encaissements, taxes et commissions | Encaissements : gérer l'argent non identifié (affecter, classer hors prime) | Encaissements : gérer l'argent non identifié (affecter, classer hors prime). Aucun écran ne l'utilise encore. | Encaissements – Finance |
 | `enc.marquer_paye` | Encaissements, taxes et commissions | Encaissements : marquer payés (et décocher) taxes, commissions, honoraires et accessoires | Encaissements : marquer payés taxes, commissions, honoraires et accessoires. Aucun écran ne l'utilise encore (prévu au lot 4). | Encaissements – Finance |
 | `enc.parametrer` | Encaissements, taxes et commissions | Encaissements : paramétrer les honoraires, le partage des accessoires, les taux de contrôle et les branches | Encaissements : paramétrer branches, honoraires, partage des accessoires et taux de contrôle. | Encaissements – Finance |
+| `cpt.consulter` | Gestion Compta | Gestion Compta : consulter et exporter | Gestion Compta : consulter les référentiels, contrats, encaissements et rattachements, et exporter. | DG, Compta – Production, Compta – Commercial, Compta – RFCRH, Compta – Comptable, Compta – Direction |
+| `cpt.importer_production` | Gestion Compta | Gestion Compta : importer le bordereau de production | Gestion Compta : déposer le bordereau de production et traiter ses anomalies. | Compta – Production, Compta – Comptable |
+| `cpt.saisir_contrat` | Gestion Compta | Gestion Compta : saisir et corriger un contrat | Gestion Compta : saisir et corriger un contrat, traiter les anomalies de production. | Compta – Production |
+| `cpt.importer_releves` | Gestion Compta | Gestion Compta : importer les relevés d'encaissement | Gestion Compta : importer les relevés (Wave, banque, microfinance…), lancer le rapprochement, traiter les anomalies de relevé. | Compta – Comptable |
+| `cpt.identifier_encaissement` | Gestion Compta | Gestion Compta : identifier un encaissement (produit, client, partenaire, contrat) | Gestion Compta : lancer le rapprochement et identifier à la main un encaissement sans proposition (avec `cpt.confirmer_rattachement`). | Compta – Commercial, Compta – RFCRH |
+| `cpt.confirmer_rattachement` | Gestion Compta | Gestion Compta : confirmer un rattachement avec le reçu (étape 1) | Gestion Compta : confirmer un rattachement proposé avec la référence du reçu (étape 1). Ne valide jamais. | Compta – Commercial |
+| `cpt.valider_rattachement` | Gestion Compta | Gestion Compta : valider ou rejeter un rattachement (étape 2) | Gestion Compta : valider ou rejeter un rattachement (étape 2), seule action qui rend une prime payée. Jamais le compte qui a confirmé. | Compta – RFCRH |
+| `cpt.classer_pas_une_prime` | Gestion Compta | Gestion Compta : classer un encaissement « pas une prime » (motif écrit) | Gestion Compta : classer tout ou partie d'un encaissement « pas une prime » avec un motif écrit. | Compta – RFCRH |
+| `cpt.declarer_tca` | Gestion Compta | Gestion Compta : déclarer la taxe du mois | Gestion Compta : déclarer la taxe sur les contrats d'assurance du mois (écran pas encore livré). | Compta – RFCRH |
+| `cpt.payer_tca` | Gestion Compta | Gestion Compta : enregistrer le paiement de la taxe et sa quittance | Gestion Compta : enregistrer le paiement de la taxe et sa quittance (écran pas encore livré). | Compta – RFCRH |
+| `cpt.regler_partenaire` | Gestion Compta | Gestion Compta : régler un partenaire | Gestion Compta : régler un partenaire (écran pas encore livré). | Compta – RFCRH |
+| `cpt.compenser` | Gestion Compta | Gestion Compta : compenser entre natures de rémunération (opération explicite) | Gestion Compta : compenser entre natures de rémunération, opération explicite (écran pas encore livré). | Compta – RFCRH |
+| `cpt.gerer_conventions` | Gestion Compta | Gestion Compta : gérer les conventions des partenaires | Gestion Compta : gérer les conventions des partenaires (fin de validité). | Compta – RFCRH |
+| `cpt.parametrer` | Gestion Compta | Gestion Compta : paramétrer les taux de taxe, formats d'import, comptes et seuils | Gestion Compta : référentiels, taux de taxe, formats d'import, correspondances Odoo, paramètres et seuils. | Compta – RFCRH |
+| `cpt.preparer_ecritures` | Gestion Compta | Gestion Compta : préparer les exports Odoo et la liste des éléments non comptabilisés | Gestion Compta : préparer les exports Odoo (écran pas encore livré). | Compta – RFCRH, Compta – Comptable |
+| `cpt.relancer` | Gestion Compta | Gestion Compta : relancer et suivre les promesses de paiement | Gestion Compta : relancer les clients et suivre les promesses de paiement (écran pas encore livré). | Compta – Production, Compta – Commercial, Compta – RFCRH |
+| `cpt.cloturer_periode` | Gestion Compta | Gestion Compta : clôturer un mois | Gestion Compta : clôturer un mois (écran pas encore livré). | Compta – RFCRH |
+| `cpt.trancher_litige` | Gestion Compta | Gestion Compta : trancher un litige (direction générale) | Gestion Compta : trancher un litige, rôle de supervision de la direction (écran pas encore livré). | DG, Compta – Direction |
 | `feedback.moderer` | FeedbackApp | Modérer les messages FeedbackApp | Modérer les messages de FeedbackApp (masquer, rétablir) et exporter. | DG, Admin, RH |
 | `systeme.reinitialiser` | Système | *(non affichée : module Système)* | Remise à zéro globale de mise en production (écran « Réinitialisation »), usage unique. DG seul, jamais déléguée, jamais cochable dans /admin/roles. | DG |
 | `enc.mettre_en_service` | Système | *(non affichée : module Système)* | Encaissements : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul. | DG |
+| `cpt.mettre_en_service` | Système | *(non affichée : module Système)* | Gestion Compta : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul. | DG |

@@ -365,6 +365,12 @@ aucune table de données métier ne peut être oubliée quand un lot en ajoute u
 | `Notification` | partielle | supprimées : catégories TRESORERIE, RH, POINTAGE ; conservées : ADMIN, SYSTEME |
 | `BudgetParametrage` | conservée | budgets validés ou en attente du DG, seuils, historique de validation |
 | `Categorie` | conservée | catalogue des catégories |
+| `CptAudit` | conservée | audit de Gestion Compta : remise à zéro propre au module avant sa mise en service (lot GC-11) |
+| `CptMiseEnService` | conservée | verrou de mise en service de Gestion Compta : s'il existe, TOUT le module est conservé (triggers d'immuabilité) |
+| `CptParametre` | conservée | paramètres de Gestion Compta |
+| `CptPeriode` | conservée | périodes comptables de Gestion Compta : une période clôturée est définitive (trigger) |
+| `CptPieceJointe` | conservée | pièces jointes de Gestion Compta : remise à zéro propre au module (lot GC-11) |
+| `CptSequence` | conservée | compteurs de numérotation de Gestion Compta : remise à zéro propre au module (lot GC-11) |
 | `EncBeneficiaireHonoraires` | conservée | bénéficiaire des honoraires daté |
 | `EncBranche` | conservée | branches |
 | `EncMiseEnService` | conservée | verrou de mise en service du module : s'il existe, TOUT le module est conservé (triggers d'immuabilité) |

@@ -11,6 +11,8 @@ import { ENC_ROLES_DEPART } from "../src/encPermissions";
 import { MODULES_CATALOGUE, PERMISSIONS_CATALOGUE, ROLES_CIBLES } from "../src/rolesCibles";
 import { ENC_PARAMETRES } from "../src/encParametres";
 import { ENC_BENEFICIAIRE_HONORAIRES_INITIAL } from "../src/encReferentiels";
+import { CPT_ROLES_DEPART } from "../src/cptPermissions";
+import { CPT_PARAMETRES } from "../src/cptParametres";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -23,6 +25,11 @@ async function main() {
   // Refus AVANT toute suppression, pour ne rien effacer à moitié.
   if ((await prisma.encMiseEnService.count()) > 0) {
     throw new Error("Module Encaissements mis en service sur cette base : seed refusé, aucune donnée supprimée.");
+  }
+
+  // Module Gestion Compta : même règle (audit, séquences et période clôturée verrouillés par trigger après la mise en service).
+  if ((await prisma.cptMiseEnService.count()) > 0) {
+    throw new Error("Module Gestion Compta mis en service sur cette base : seed refusé, aucune donnée supprimée.");
   }
 
   console.log("Suppression des données existantes...");
@@ -63,6 +70,12 @@ async function main() {
   await prisma.encPartenaire.deleteMany();
   await prisma.encBeneficiaireHonoraires.deleteMany();
   await prisma.encBranche.deleteMany();
+  // Module Gestion Compta (socle technique) : relations vers User, à vider avant les comptes.
+  await prisma.cptAudit.deleteMany();
+  await prisma.cptPieceJointe.deleteMany();
+  await prisma.cptPeriode.deleteMany();
+  await prisma.cptSequence.deleteMany();
+  await prisma.cptParametre.deleteMany();
   // Un service pointe vers son responsable (clé RESTRICT) : le détacher avant de supprimer les comptes.
   await prisma.service.updateMany({ data: { responsableId: null } });
   await prisma.user.deleteMany();
@@ -93,6 +106,8 @@ async function main() {
   const roleAssistantFinance = rolesParNom["Assistant Finance"];
   // Module Encaissements (voir docs/encaissements-conception.md §4) : 3 rôles de départ, modifiables ensuite.
   const rolesEncaissements = ENC_ROLES_DEPART.map((r) => rolesParNom[r.name]);
+  // Module Gestion Compta (voir docs/compta-conception.md §4) : 5 rôles de départ, modifiables ensuite.
+  const rolesCompta = CPT_ROLES_DEPART.map((r) => rolesParNom[r.name]);
 
   console.log(`Rôles créés : ${ROLES_CIBLES.map((r) => r.name).join(", ")}`);
 
@@ -214,6 +229,10 @@ async function main() {
     ...(process.env.NODE_ENV === "production"
       ? []
       : ENC_ROLES_DEPART.map((r, i) => ({ ...r.compteTest, roleId: rolesEncaissements[i].id, serviceId: serviceByName["Finance"].id }))),
+    // Module Gestion Compta : un compte de test par rôle de départ, mêmes règles (jamais en production).
+    ...(process.env.NODE_ENV === "production"
+      ? []
+      : CPT_ROLES_DEPART.map((r, i) => ({ ...r.compteTest, roleId: rolesCompta[i].id, serviceId: serviceByName["Comptabilité"].id }))),
   ];
 
   const createdUsers = await Promise.all(
@@ -338,6 +357,10 @@ async function main() {
   // Module Encaissements : paramètres par défaut (source unique : src/encParametres.ts, aussi posés par la migration).
   await prisma.encParametre.createMany({ data: ENC_PARAMETRES.map((p) => ({ cle: p.cle, valeur: p.defaut })) });
   console.log(`Paramètres Encaissements : ${ENC_PARAMETRES.length}`);
+
+  // Gestion Compta : paramètres par défaut (source unique : src/cptParametres.ts, aussi posés par la migration).
+  await prisma.cptParametre.createMany({ data: CPT_PARAMETRES.map((p) => ({ cle: p.cle, valeur: p.defaut })) });
+  console.log(`Paramètres Gestion Compta : ${CPT_PARAMETRES.length}`);
 
   // Bénéficiaire des honoraires (CDC §3.6) : NOVELIA, posé une seule fois — `creeParId` nul (aucun utilisateur réel à
   // cet instant, seul cas où ce champ est nul), même valeur que la migration corrective

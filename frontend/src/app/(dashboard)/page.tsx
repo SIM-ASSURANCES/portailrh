@@ -98,6 +98,10 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
   if (moduleKey === "encaissements") {
     return { href: hasPermission(session, "enc.consulter") ? "/encaissements" : null, reason: "no_access" };
   }
+  // Gestion Compta : accueil réservé à `cpt.consulter` (sinon « Aucun accès », jamais « Bientôt disponible »).
+  if (moduleKey === "compta") {
+    return { href: hasPermission(session, "cpt.consulter") ? "/compta" : null, reason: "no_access" };
+  }
   // Congés : « Aucun accès » (jamais « Bientôt disponible ») sans permission, y compris pour l'Admin.
   if (moduleKey === "conges") {
     if (hasPermission(session, "conges.soumettre")) return { href: "/conges", reason: "no_access" };
@@ -344,6 +348,9 @@ export default async function DashboardHomePage({
       ) : null}
       {error === "acces_refuse_encaissements" ? (
         <ToastOnMount variant="error" message="Vous n'avez pas accès au module Encaissements." />
+      ) : null}
+      {error === "acces_refuse_compta" ? (
+        <ToastOnMount variant="error" message="Vous n'avez pas accès au module Gestion Compta." />
       ) : null}
       {error === "acces_refuse_recevoir_feedback" ? (
         <ToastOnMount

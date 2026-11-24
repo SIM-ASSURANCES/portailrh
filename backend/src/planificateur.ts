@@ -7,20 +7,32 @@
  * - relances de justification : toutes les 5 minutes (créneaux alignés sur les minutes multiples de 5) ;
  * - absences : du lundi au vendredi à 17:30 et 20:00 ;
  * - purge : une fois par jour à 03:00 ;
- * - rappels des congés en attente : du lundi au vendredi à 08:30.
+ * - rappels des congés en attente : du lundi au vendredi à 08:30 ;
+ * - Gestion Compta (tâches vides jusqu'aux lots GC-6/8/9) : contrôle hebdomadaire le lundi à 07:30, relances du lundi
+ *   au vendredi à 08:00, rappel de la taxe (TCA) les 10 et 17 de chaque mois à 08:00.
  *
  * Une tâche est « due » quand le créneau le plus récent déjà passé n'a pas encore été couvert par une exécution
  * (`debut` ≥ créneau). Conséquence : une exécution manquée parce que le serveur était arrêté est rattrapée au
  * redémarrage, et une exécution manuelle récente évite un doublon immédiat.
  */
 
-export type NomTache = "RELANCES_JUSTIFICATION" | "ABSENCES" | "PURGE" | "RAPPELS_CONGES";
+export type NomTache =
+  | "RELANCES_JUSTIFICATION"
+  | "ABSENCES"
+  | "PURGE"
+  | "RAPPELS_CONGES"
+  | "COMPTA_CONTROLE_HEBDO"
+  | "COMPTA_RELANCES"
+  | "COMPTA_RAPPEL_TCA";
 
 export const TOUTES_LES_TACHES: readonly NomTache[] = [
   "RELANCES_JUSTIFICATION",
   "ABSENCES",
   "PURGE",
   "RAPPELS_CONGES",
+  "COMPTA_CONTROLE_HEBDO",
+  "COMPTA_RELANCES",
+  "COMPTA_RAPPEL_TCA",
 ];
 
 export const LIBELLE_TACHE: Record<NomTache, string> = {
@@ -28,6 +40,9 @@ export const LIBELLE_TACHE: Record<NomTache, string> = {
   ABSENCES: "Absences et oublis de départ",
   PURGE: "Purge des journaux",
   RAPPELS_CONGES: "Rappels des congés en attente",
+  COMPTA_CONTROLE_HEBDO: "Gestion Compta : contrôle hebdomadaire",
+  COMPTA_RELANCES: "Gestion Compta : relances de créances",
+  COMPTA_RAPPEL_TCA: "Gestion Compta : rappel de la taxe (TCA)",
 };
 
 /** Intervalle des relances, en minutes. */
@@ -46,24 +61,63 @@ const CRENEAUX_ABSENCES: ReadonlyArray<[number, number]> = [
 ];
 const CRENEAUX_PURGE: ReadonlyArray<[number, number]> = [[3, 0]];
 const CRENEAUX_RAPPELS_CONGES: ReadonlyArray<[number, number]> = [[8, 30]];
+// Gestion Compta (GC-1e) : cadences du plan (docs/compta-conception.md §7). L'heure du rappel TCA n'est pas précisée
+// par le plan : 08:00, comme les relances.
+const CRENEAUX_COMPTA_CONTROLE_HEBDO: ReadonlyArray<[number, number]> = [[7, 30]];
+const CRENEAUX_COMPTA_RELANCES: ReadonlyArray<[number, number]> = [[8, 0]];
+const CRENEAUX_COMPTA_RAPPEL_TCA: ReadonlyArray<[number, number]> = [[8, 0]];
+/** Jours du mois du rappel TCA (déclarer et payer avant le 20). */
+const JOURS_DU_MOIS_RAPPEL_TCA: readonly number[] = [10, 17];
+
+/** Fenêtre de recherche d'un créneau, en jours. 8 suffit à franchir un week-end ou une semaine ; le rappel TCA (10 et 17) a jusqu'à 24 jours d'écart. */
+const HORIZON_JOURS_DEFAUT = 8;
+const HORIZON_JOURS: Partial<Record<NomTache, number>> = { COMPTA_RAPPEL_TCA: 31 };
+const horizonJours = (tache: NomTache) => HORIZON_JOURS[tache] ?? HORIZON_JOURS_DEFAUT;
 
 function estJourOuvre(date: Date): boolean {
   const jour = date.getDay();
   return jour !== 0 && jour !== 6;
 }
 
-function creneauxDuJour(tache: NomTache, jour: Date): Date[] {
-  if ((tache === "ABSENCES" || tache === "RAPPELS_CONGES") && !estJourOuvre(jour)) return [];
-  const liste =
-    tache === "ABSENCES"
-      ? CRENEAUX_ABSENCES
-      : tache === "RAPPELS_CONGES"
-        ? CRENEAUX_RAPPELS_CONGES
-        : CRENEAUX_PURGE;
-  return liste.map(([h, m]) => new Date(jour.getFullYear(), jour.getMonth(), jour.getDate(), h, m, 0, 0));
+/** La tâche a-t-elle des créneaux ce jour-là ? (la purge, tous les jours ; les relances à intervalle n'utilisent pas cette fonction) */
+function jourActif(tache: NomTache, jour: Date): boolean {
+  switch (tache) {
+    case "ABSENCES":
+    case "RAPPELS_CONGES":
+    case "COMPTA_RELANCES":
+      return estJourOuvre(jour);
+    case "COMPTA_CONTROLE_HEBDO":
+      return jour.getDay() === 1;
+    case "COMPTA_RAPPEL_TCA":
+      return JOURS_DU_MOIS_RAPPEL_TCA.includes(jour.getDate());
+    default:
+      return true;
+  }
 }
 
-/** Créneau planifié le plus récent ≤ `now` (jamais plus de 8 jours en arrière pour une tâche à créneaux fixes). */
+function creneauxHoraires(tache: NomTache): ReadonlyArray<[number, number]> {
+  switch (tache) {
+    case "ABSENCES":
+      return CRENEAUX_ABSENCES;
+    case "RAPPELS_CONGES":
+      return CRENEAUX_RAPPELS_CONGES;
+    case "COMPTA_CONTROLE_HEBDO":
+      return CRENEAUX_COMPTA_CONTROLE_HEBDO;
+    case "COMPTA_RELANCES":
+      return CRENEAUX_COMPTA_RELANCES;
+    case "COMPTA_RAPPEL_TCA":
+      return CRENEAUX_COMPTA_RAPPEL_TCA;
+    default:
+      return CRENEAUX_PURGE;
+  }
+}
+
+function creneauxDuJour(tache: NomTache, jour: Date): Date[] {
+  if (!jourActif(tache, jour)) return [];
+  return creneauxHoraires(tache).map(([h, m]) => new Date(jour.getFullYear(), jour.getMonth(), jour.getDate(), h, m, 0, 0));
+}
+
+/** Créneau planifié le plus récent ≤ `now` (dans l'horizon de la tâche : 8 jours, 31 pour le rappel TCA). */
 export function dernierCreneau(tache: NomTache, now: Date): Date | null {
   if (tache === "RELANCES_JUSTIFICATION") {
     const d = new Date(now);
@@ -71,7 +125,7 @@ export function dernierCreneau(tache: NomTache, now: Date): Date | null {
     d.setMinutes(d.getMinutes() - (d.getMinutes() % INTERVALLE_RELANCES_MINUTES));
     return d;
   }
-  for (let retour = 0; retour <= 8; retour++) {
+  for (let retour = 0; retour <= horizonJours(tache); retour++) {
     const jour = new Date(now.getFullYear(), now.getMonth(), now.getDate() - retour);
     const passes = creneauxDuJour(tache, jour).filter((c) => c <= now);
     if (passes.length > 0) return passes[passes.length - 1];
@@ -87,12 +141,12 @@ export function prochainCreneau(tache: NomTache, now: Date): Date {
     d.setMinutes(d.getMinutes() - (d.getMinutes() % INTERVALLE_RELANCES_MINUTES) + INTERVALLE_RELANCES_MINUTES);
     return d;
   }
-  for (let avant = 0; avant <= 8; avant++) {
+  for (let avant = 0; avant <= horizonJours(tache); avant++) {
     const jour = new Date(now.getFullYear(), now.getMonth(), now.getDate() + avant);
     const suivant = creneauxDuJour(tache, jour).find((c) => c > now);
     if (suivant) return suivant;
   }
-  // Inatteignable (au plus un week-end à franchir) ; valeur de repli sûre.
+  // Inatteignable (au plus un week-end ou, pour le rappel TCA, un mois à franchir) ; valeur de repli sûre.
   return new Date(now.getTime() + 24 * 60 * 60 * 1000);
 }
 
@@ -163,5 +217,11 @@ export function libelleBilan(tache: NomTache, bilan: unknown): string {
       return `${pluriel(n("executionsSupprimees"), "exécution")} et ${pluriel(n("incidentsSupprimes"), "incident")} supprimés`;
     case "RAPPELS_CONGES":
       return `${pluriel(n("rappels"), "rappel")}, ${pluriel(n("erreurs"), "erreur")}`;
+    case "COMPTA_CONTROLE_HEBDO":
+    case "COMPTA_RELANCES":
+    case "COMPTA_RAPPEL_TCA":
+      // Tâches enregistrées vides (GC-1e) : tant que leur traitement n'existe pas, le bilan le dit au lieu d'afficher « 0 ».
+      if (b.enAttenteDuModule === true) return "Aucun traitement pour l'instant (module en construction)";
+      return `${pluriel(n("traites"), "élément traité", "éléments traités")}, ${pluriel(n("erreurs"), "erreur")}`;
   }
 }

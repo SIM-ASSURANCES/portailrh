@@ -84,6 +84,27 @@ export const DESCRIPTIONS: Readonly<Record<string, string>> = {
   "enc.parametrer": "Encaissements : paramétrer branches, honoraires, partage des accessoires et taux de contrôle.",
   "enc.mettre_en_service":
     "Encaissements : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul.",
+  // Gestion Compta (module indépendant ; aucune de ces permissions n'est délégable : le module n'est pas dans MODULES_DELEGABLES)
+  "cpt.consulter": "Gestion Compta : consulter les référentiels, contrats, encaissements et rattachements, et exporter.",
+  "cpt.importer_production": "Gestion Compta : déposer le bordereau de production et traiter ses anomalies.",
+  "cpt.saisir_contrat": "Gestion Compta : saisir et corriger un contrat, traiter les anomalies de production.",
+  "cpt.importer_releves": "Gestion Compta : importer les relevés (Wave, banque, microfinance…), lancer le rapprochement, traiter les anomalies de relevé.",
+  "cpt.identifier_encaissement": "Gestion Compta : lancer le rapprochement et identifier à la main un encaissement sans proposition (avec `cpt.confirmer_rattachement`).",
+  "cpt.confirmer_rattachement": "Gestion Compta : confirmer un rattachement proposé avec la référence du reçu (étape 1). Ne valide jamais.",
+  "cpt.valider_rattachement": "Gestion Compta : valider ou rejeter un rattachement (étape 2), seule action qui rend une prime payée. Jamais le compte qui a confirmé.",
+  "cpt.classer_pas_une_prime": "Gestion Compta : classer tout ou partie d'un encaissement « pas une prime » avec un motif écrit.",
+  "cpt.declarer_tca": "Gestion Compta : déclarer la taxe sur les contrats d'assurance du mois (écran pas encore livré).",
+  "cpt.payer_tca": "Gestion Compta : enregistrer le paiement de la taxe et sa quittance (écran pas encore livré).",
+  "cpt.regler_partenaire": "Gestion Compta : régler un partenaire (écran pas encore livré).",
+  "cpt.compenser": "Gestion Compta : compenser entre natures de rémunération, opération explicite (écran pas encore livré).",
+  "cpt.gerer_conventions": "Gestion Compta : gérer les conventions des partenaires (fin de validité).",
+  "cpt.parametrer": "Gestion Compta : référentiels, taux de taxe, formats d'import, correspondances Odoo, paramètres et seuils.",
+  "cpt.preparer_ecritures": "Gestion Compta : préparer les exports Odoo (écran pas encore livré).",
+  "cpt.relancer": "Gestion Compta : relancer les clients et suivre les promesses de paiement (écran pas encore livré).",
+  "cpt.cloturer_periode": "Gestion Compta : clôturer un mois (écran pas encore livré).",
+  "cpt.trancher_litige": "Gestion Compta : trancher un litige, rôle de supervision de la direction (écran pas encore livré).",
+  "cpt.mettre_en_service":
+    "Gestion Compta : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul.",
   // Autres
   "feedback.moderer": "Modérer les messages de FeedbackApp (masquer, rétablir) et exporter.",
   "systeme.reinitialiser":
@@ -97,6 +118,7 @@ export const PERMISSIONS_DG_SEUL: readonly { cle: string; raison: string }[] = [
   { cle: "treso.decider_dg", raison: "étape DG du circuit de validation" },
   { cle: "systeme.reinitialiser", raison: "remise à zéro globale à usage unique" },
   { cle: "enc.mettre_en_service", raison: "mise en service du module Encaissements (usage unique)" },
+  { cle: "cpt.mettre_en_service", raison: "mise en service du module Gestion Compta (usage unique)" },
 ];
 
 /** Couples INTERDITS connus (jamais sur un même rôle). */
@@ -138,6 +160,31 @@ export const PERMISSIONS_RECENTES: readonly { lot: string; migration: string; cl
     lot: "Module Congés",
     migration: "20261030090000_conges_permissions_absence",
     cles: ["conges.soumettre", "conges.valider_rh", "conges.annuler", "conges.consulter_tous"],
+  },
+  {
+    lot: "Module Gestion Compta",
+    migration: "20261101110000_compta_permissions_roles",
+    cles: [
+      "cpt.consulter",
+      "cpt.importer_production",
+      "cpt.saisir_contrat",
+      "cpt.importer_releves",
+      "cpt.identifier_encaissement",
+      "cpt.confirmer_rattachement",
+      "cpt.valider_rattachement",
+      "cpt.classer_pas_une_prime",
+      "cpt.declarer_tca",
+      "cpt.payer_tca",
+      "cpt.regler_partenaire",
+      "cpt.compenser",
+      "cpt.gerer_conventions",
+      "cpt.parametrer",
+      "cpt.preparer_ecritures",
+      "cpt.relancer",
+      "cpt.cloturer_periode",
+      "cpt.trancher_litige",
+      "cpt.mettre_en_service",
+    ],
   },
 ];
 
@@ -211,13 +258,14 @@ export const POINTS_A_VALIDER: readonly PointAValider[] = [
   },
 ];
 
-const ORDRE_MODULES: CleModule[] = ["tresorerie", "pointage", "conges", "encaissements", "feedback", "systeme"];
+const ORDRE_MODULES: CleModule[] = ["tresorerie", "pointage", "conges", "encaissements", "compta", "feedback", "systeme"];
 
 const TITRE_MODULE: Record<string, string> = {
   tresorerie: "Trésorerie",
   pointage: "Pointage",
   conges: "Congés",
   encaissements: "Encaissements",
+  compta: "Gestion Compta",
   feedback: "Feedback",
   systeme: "Système",
 };
@@ -318,7 +366,7 @@ export function genererDocRoles(): string {
   o.push("2. Dans `/admin/roles`, ouvrir chaque rôle et cocher ou décocher pour que la section du rôle ci-dessous soit respectée exactement. Chaque case s'applique tout de suite (pas de bouton « Enregistrer »).");
   o.push("3. Lire les encadrés « Permissions réservées » et « Vérifier avant de cocher » avant de commencer.");
   o.push("");
-  o.push("Les permissions du module « Système » (`systeme.reinitialiser`, `enc.mettre_en_service`) n'apparaissent **pas** dans `/admin/roles` : elles sont posées par le seed ou la migration et ne se cochent pas à la main.");
+  o.push("Les permissions du module « Système » (`systeme.reinitialiser`, `enc.mettre_en_service`, `cpt.mettre_en_service`) n'apparaissent **pas** dans `/admin/roles` : elles sont posées par le seed ou la migration et ne se cochent pas à la main.");
   o.push("");
   o.push(`Total : **${PERMISSIONS_CATALOGUE.length} permissions** réparties ainsi : ${ORDRE_MODULES.filter((c) => comptes[c]).map((c) => `${titreModule(c)} ${comptes[c]}`).join(", ")}.`);
   o.push("");

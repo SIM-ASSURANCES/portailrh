@@ -1,5 +1,7 @@
 import type { IconName } from "@/components/icons";
 
+import { RUBRIQUES_COMPTA } from "./navCompta";
+
 export interface NavItem {
   label: string;
   href: string;
@@ -149,6 +151,10 @@ export interface NavFlags {
   canModererFeedback?: boolean;
   /** `enc.consulter` : affiche la branche "Encaissements" (revérifié côté serveur par `encaissements/layout.tsx`). */
   canConsulterEncaissements?: boolean;
+  /** `cpt.consulter` : affiche la branche « Gestion Compta » (revérifié côté serveur par `compta/layout.tsx`). */
+  canConsulterCompta?: boolean;
+  /** Clés (`navCompta.ts`) des rubriques de Gestion Compta visibles par ce compte, calculées côté serveur avec `hasPermission`. */
+  comptaRubriques?: string[];
   /**
    * Circuit de validation : demandes à l'étape Service à valider par ce compte. `null` si le compte n'est
    * responsable d'aucun service (entrée « Demandes de mon service » absente), sinon le nombre (pastille).
@@ -260,6 +266,8 @@ export function getNavBranches({
   canRecevoirFeedback,
   canModererFeedback,
   canConsulterEncaissements,
+  canConsulterCompta = false,
+  comptaRubriques = [],
   demandesServiceAValider = null,
   demandesDGADecider = null,
   justificationsADecider = null,
@@ -528,6 +536,23 @@ export function getNavBranches({
         {
           items: canConsulterEncaissements
             ? [{ label: "Accueil", href: "/encaissements", icon: "layout-grid", exact: true } satisfies NavItem]
+            : [],
+        },
+      ],
+    },
+    // Module Gestion Compta (voir docs/compta-conception.md) : branche masquée sans `cpt.consulter`.
+    {
+      key: "compta",
+      label: "Gestion Compta",
+      icon: "book-text",
+      groups: [
+        {
+          // Plus de page d'accueil : toutes les rubriques du module sont dans la barre (navCompta.ts). Une rubrique sans écran
+          // construit est affichée « Bientôt disponible ».
+          items: canConsulterCompta
+            ? RUBRIQUES_COMPTA.filter((r) => comptaRubriques.includes(r.cle)).map(
+                (r): NavItem => ({ label: r.label, href: r.href ?? `/compta#${r.cle}`, icon: r.icon, ...(r.href ? {} : { comingSoon: true }) })
+              )
             : [],
         },
       ],

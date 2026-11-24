@@ -1,0 +1,397 @@
+# Module « Gestion Compta » — conception détaillée (lot GC-0)
+
+> Document de référence du module, même rôle que `docs/encaissements-conception.md` pour Encaissements : **arbitrages datés**, modèle
+> de données, permissions, règles de calcul, découpage en commits. Il est mis à jour **dans le même commit que le code** qui applique
+> une décision. Le plan d'ensemble (lots GC-0 à GC-12, risques, recette) est dans [PLAN_GESTION_COMPTA.md](PLAN_GESTION_COMPTA.md).
+> Les écrans clés sont maquettés dans [maquettes-compta.html](maquettes-compta.html). Les questions à poser au RFCRH sont dans
+> [compta-questions-rfcrh.md](compta-questions-rfcrh.md).
+>
+> **Source** : cahier des charges `SIM-XX-XX` v1.0 (« Application de gestion : production, encaissements, créances clients, taxes,
+> partenaires et comptabilité »), reçu le 2026-10-22. **Statut du lot GC-0 : terminé côté documents ; les points marqués
+> « À VALIDER » attendent l'accord du RFCRH ou de l'équipe avant le premier commit de code.**
+
+---
+
+## 1. Arbitrages datés
+
+### 1.1 Décisions de l'équipe (2026-10-22)
+
+| # | Décision | Application |
+|---|---|---|
+| **V1** | Module **indépendant** : rien de ce qui existe n'est modifié ; les fonctions identiques à celles d'autres modules sont **refaites** dans celui-ci | Règle de copie (section 2) ; câblage limité à des ajouts (section 3) |
+| **V2** | Nom : **« Gestion Compta »** | Clé de module `compta`, préfixe de tables `Cpt`, permissions `cpt.*`, route `/compta`, lots `GC-n`. Vérifié le 2026-10-22 : aucun modèle, permission ni route `compta` / `cpt` dans le dépôt |
+| **V3** | Rattachement en **deux étapes** : le commercial confirme avec le reçu, puis le RFCRH valide | Section 6.2 et table `CptRattachement` |
+
+### 1.2 Décisions D1 à D8 du plan
+
+| # | Sujet | État | Décision retenue |
+|---|---|---|---|
+| D1 | Nom et clé | Tranchée (V2) | `compta` / `Cpt` / `cpt.*` |
+| D2 | Sort d'Encaissements | Tranchée (V1) | Coexistence totale, aucun lien de données |
+| D3 | Rôles | **À VALIDER** (Q5) | Cinq rôles de départ préfixés « Compta – » ; les cumuls (RFCRH) se font par un rôle combiné créé dans `/admin/roles`, jamais par code |
+| D4 | Arrondi | **À VALIDER** | `Decimal(14,2)` ; arrondi à l'unité **à la figeure de chaque ligne**, reliquat exact sur la dernière ligne ; affichage sans décimales |
+| D5 | Signature | **À VALIDER** | Signées : validation d'un rattachement, « pas une prime », déclaration et paiement de TCA, règlement de partenaire, compensation, clôture. **Non signée** : la confirmation du commercial (tracée dans l'audit avec son reçu) |
+| D6 | SMS | **À VALIDER** (Q10) | Suivi manuel de la relance au lot 1 ; aucune passerelle SMS |
+| D7 | Pièces et relevés | Retenue | Tables propres `CptPieceJointe` ; **aucune donnée client dans le dépôt** |
+| D8 | Solution technique | Retenue | Option B du cahier (application web reliée à Odoo) |
+
+### 1.3 Registre des règles provisoires (le cahier est muet ou ambigu)
+
+Chaque ligne est une valeur **par défaut codée comme paramètre ou comme fonction remplaçable**, pour qu'une réponse du RFCRH ne
+force jamais une refonte. Numérotation `C-n` (comme les `V2-An` d'Encaissements).
+
+| # | Sujet | Défaut retenu | Question |
+|---|---|---|---|
+| C-1 | Statut d'une échéance | **Dérivé, non stocké** : on stocke `montantRegle` et un état stable (ouverte, soldée, annulée) ; « à venir », « due », « en retard (n jours) » se calculent depuis la date prévue et la date du jour | — |
+| C-2 | Paiement supérieur à l'échéance la plus ancienne | Le moteur **propose** d'affecter l'excédent aux échéances suivantes du même contrat, jusqu'à leur montant ; ce qui reste est **reste à rattacher** ; tout reste soumis à validation | Q11 |
+| C-3 | Mois de la taxe | **Mois de la date de valeur de l'encaissement** (date du relevé) ; exigible ce mois-là ; à payer avant le 20 du mois suivant (paramètre, borne 1–28) | — |
+| C-4 | Honoraires de gestion : fait générateur | **Émission** si le contrat est apporté par SIM ou un autre apporteur que le gestionnaire ; **encaissement** (au prorata) si l'apporteur est le gestionnaire lui-même (NOVELIA). Stocké dans la convention (`apporteurDeLaConvention`) | — |
+| C-5 | Ancienneté d'une créance | Depuis la **date prévue de la plus ancienne échéance impayée et échue** ; tranches 0–30, 31–90, 91–180, > 180 jours | — |
+| C-6 | Prime acquise / non acquise | **Prorata temporis au jour** : primes × jours courus ÷ durée de la période. Fonction isolée `primeAcquise(contrat, arrete)` | Q8 |
+| C-7 | Ristourne d'un retrait | Prime de l'assuré × jours non courus ÷ durée × **taux de ristourne** (paramètre) | Q9 |
+| C-8 | Escalade à 60 jours | Notification au **RFCRH** à 30 jours (alerte) puis au **DG** à 60 jours ; relance au 7ᵉ jour au commercial ou à la production selon la liste | Q12 |
+| C-9 | Fenêtres de rapprochement | Paramètres de `CptParametre` : −3 / +5 jours, ±1 FCFA, ±2 % sur ±45 jours, 12 caractères. Modifiables par le RFCRH avec trace | Q16 |
+| C-10 | Taux de TCA applicable | Taux en vigueur **à la date de valeur de l'encaissement** (dernière date d'effet ≤ date) ; SECURPRO : taux saisi sur le contrat | Q7 |
+| C-11 | Identifiants métier | `CPE-AAAA-NNNNNN` (encaissement), `CPR-AAAA-NNNNNN` (règlement partenaire), `CPD-AAAA-NN` (déclaration TCA). Différents des `PAI-` d'Encaissements | — |
+| C-12 | Confirmation du commercial | Un **seul commercial quelconque** des quatre peut confirmer ; le RFCRH ne confirme pas à sa place | Q3 bis |
+| C-13 | Statut d'un contrat | `EN_COURS`, `ECHU`, `ANNULE`, `RESILIE` | — |
+| C-14 | Branches | Quatre valeurs fixes (accidents, santé, incendie, décès), comme dans le cahier ; une table paramétrable serait un ajout futur | — |
+| C-15 | Spécificité d'un taux de TCA ou d'une convention (GC-2b) | Plusieurs lignes peuvent convenir à un contrat : la **plus spécifique** l'emporte, puis la date d'effet la plus récente. Taux : produit (2 points) avant nature du contrat (1 point), la branche seule en dernier. Convention : produit (2 points) avant apporteur (1 point). `produitCode` nul = tous les produits ; `apporteurId` nul = tout apporteur (SIM compris, représenté au besoin par un partenaire). Aucune ligne ne convient : **pas de taux, jamais un zéro deviné** | Q7 |
+| C-16 | Qui modifie les référentiels (GC-2c, **appliqué, provisoire**) | Partenaires, produits, comptes et taux de TCA : `cpt.parametrer` ; conventions : `cpt.gerer_conventions` ; clients : `cpt.saisir_contrat` ou `cpt.identifier_encaissement` (le commercial crée le client qu'il identifie). Aucune suppression : on désactive, la trace est dans `CptAudit` | — |
+
+---
+
+## 2. Règle de copie et inventaire de duplication
+
+**Principe** : ce qui est métier est **copié** dans `cpt*` ; ce qui est infrastructure générique est **utilisé tel quel**. Une copie
+porte en tête de fichier : `Copié de <fichier> le <date> — Gestion Compta est indépendant : toute correction se reporte à la main.`
+Une copie reprend **son propre fichier de tests**. Aucune copie n'importe un fichier `enc*`.
+
+### 2.1 Backend (relevé du 2026-10-22)
+
+| Fichier source | Lignes | Copie | Adaptation |
+|---|---:|---|---|
+| `backend/src/encAudit.ts` | 70 | `cptAudit.ts` | Table `CptAudit`, code d'erreur `CPT_IMMUABLE` |
+| `backend/src/encSequence.ts` | 92 | `cptSequence.ts` | Clés `CPE-AAAA`, `CPR-AAAA`, `CPD-AAAA` (C-11) |
+| `backend/src/encParametres.ts` | 140 | `cptParametres.ts` | Autres paramètres (tolérances, jours, seuils de relance, jour limite de TCA) |
+| `backend/src/encCalcul.ts` | 476 | `cptCalcul.ts` | Prorata, reliquat au soldant, taxe contenue ; on retire ce qui est propre à Encaissements (reprise, régularisation) |
+| `backend/src/encImportLecture.ts` | 301 | `cptImportLecture.ts` | **Colonnes par format paramétrable** (en-têtes), au lieu de la position fixe A à AH |
+| `backend/src/encImportRegles.ts` | 381 | `cptProductionRegles.ts` | Contrôles du paragraphe 6.1 du cahier |
+| `backend/src/encImportApplication.ts` | 474 | `cptProductionApplication.ts` | Transaction par lots, verrou par police, échéancier |
+| `backend/src/encRecherche.ts` | 153 | `cptRecherche.ts` | Clients, contrats, références ; index de mots |
+| `backend/src/encReferentiels.ts` | 119 | `cptReferentiels.ts` | Partenaires à rôles multiples, produits, comptes, conventions |
+| `backend/src/encSituation.ts` | 20 | `cptSituation.ts` | Reste dû par échéance |
+| `backend/src/encSignalements.ts` | 195 | `cptAnomalies.ts` | Anomalies du paragraphe 6.8 |
+| `backend/src/encPermissions.ts` | 98 | `cptPermissions.ts` | **Réécrit** (section 4) |
+| `backend/src/encConfirmation.ts`, `encConfirmationLot.ts`, `encSaisie.ts` | 332 / 128 / 149 | **Non copiés** | Modèle différent (confirmation d'un paiement du fichier) ; servent seulement d'inspiration pour le verrou par police et les lots |
+
+### 2.2 Schéma Prisma
+
+| Modèle source | Copie | Remarque |
+|---|---|---|
+| `EncMiseEnService`, `EncSequence`, `EncParametre`, `EncAudit`, `EncPieceJointe` | `CptMiseEnService`, `CptSequence`, `CptParametre`, `CptAudit`, `CptPieceJointe` | Mêmes champs |
+| `EncContratMot` | `CptMot` (clients, contrats, références) | Même collation « C » sur la colonne `mot` |
+| `EncPartenaire` | `CptPartenaire` | Étendu : rôles multiples |
+| `EncContrat`, `EncEncaissement`, `EncImport`, `EncSignalement` | **Nouveaux modèles** | Pas de copie : le modèle de données est différent (section 5) |
+| `EncBranche`, `EncBeneficiaireHonoraires`, `EncTauxControle` | **Non repris** | Remplacés par l'énumération de branches (C-14), la convention (bénéficiaire) et la comparaison convention / technique |
+
+### 2.3 SQL et frontend
+
+- **Fonctions et triggers** : `enc_interdire`, `enc_interdire_apres_mise_en_service`, `enc_sequence_garde` → **nouvelles fonctions** `cpt_interdire`, `cpt_interdire_apres_mise_en_service`, `cpt_sequence_garde`. Les fonctions `enc_*` ne sont ni modifiées ni réutilisées.
+- **Frontend** : `components/encaissements/libelles.ts` → `components/compta/libelles.ts` ; `RechercheContrats.tsx` ; `SignalementsTable.tsx` (→ tableau d'anomalies) ; `lib/encaissements/pieceJointe.ts` → `lib/compta/pieceJointe.ts` ; routes `api/encaissements/import/upload` et `api/encaissements/pieces-jointes/[id]` → équivalents sous `api/compta/` ; garde de `encaissements/layout.tsx` → `compta/layout.tsx`.
+- **Environnement** : le trigger SQL utilise `plpgsql`. Sur le poste Windows, une politique de sécurité a déjà bloqué `plpgsql.dll` (documenté pour Encaissements) : **les migrations se testent sur un conteneur Docker `postgres:16` jetable**, comme pour Encaissements.
+
+### 2.4 Utilisé tel quel (aucune copie, aucune modification)
+
+`getSession()`, `hasPermission()`, `isAdmin()`, le client `prisma`, `notify`, `executerTache`, `avecSignature`, les composants de `@/components/ui` (dont `DataTable`, `Badge`, `PageHeader`), `InputMontant` et `lireMontant`, SheetJS (bibliothèque vendue), ExcelJS, `@react-pdf/renderer`, `useActionFeedback`, `ToastOnMount`.
+
+---
+
+## 3. Points de câblage (vérifiés dans le code le 2026-10-22)
+
+Interprétation retenue de V1 : **ajouts seulement, aucun comportement existant changé, non-régression prouvée**. **À VALIDER.**
+Le module Encaissements a dû subir exactement les mêmes ajouts ; cela confirme que ce sont les seuls points.
+
+| # | Fichier | Ce qui existe pour Encaissements (modèle à suivre) | Ajout pour Compta |
+|---|---|---|---|
+| W1 | `backend/prisma/schema.prisma` | Modèles `Enc*` ; relations inverses sur `User` ; `enum TacheNom { RELANCES_JUSTIFICATION ABSENCES PURGE RAPPELS_CONGES }` | Modèles `Cpt*` ; relations inverses sur `User` (nommées `Cpt…`) ; **valeurs d'enum** `COMPTA_CONTROLE_HEBDO`, `COMPTA_RELANCES`, `COMPTA_RAPPEL_TCA` (migration `ALTER TYPE … ADD VALUE`, comme `RAPPELS_CONGES`) |
+| W2 | `backend/prisma/migrations/`, `backend/prisma/seed.ts` | Migrations Enc ; seed : `moduleEncaissements`, rôles et comptes de test | Nouvelles migrations (horodatées **après `20261030090000`**) ; ajouts au seed : module `compta`, permissions, 5 rôles, comptes de test |
+| W3 | `frontend/src/components/layout/nav.ts` | Option `canConsulterEncaissements` + branche `encaissements` | Option `canConsulterCompta` + branche `compta` |
+| W4 | `frontend/src/app/(dashboard)/layout.tsx` | `canConsulterEncaissements={hasPermission(session, "enc.consulter")}` | `canConsulterCompta={hasPermission(session, "cpt.consulter")}` |
+| W5 | `AppShell.tsx`, `Sidebar.tsx` | Propagation de `canConsulterEncaissements` | Propagation de `canConsulterCompta` |
+| W6 | `frontend/src/app/(dashboard)/page.tsx` | Carte : `moduleKey === "encaissements"` ; message `acces_refuse_encaissements` | Même ajout pour `compta` et `acces_refuse_compta` |
+| W7 | `backend/src/reinitialisationClassification.ts` | `EncMiseEnService: C(...)`, `EncAudit: P(...)`, etc. (un test échoue si un modèle n'est pas classé) | **Une ligne par table `Cpt*`** (voir 8.3 : toutes **conservées** par la purge globale, le module ayant sa propre remise à zéro) — **aucune modification de `reinitialisation.ts`** |
+| W8 | `frontend/src/app/(dashboard)/admin/users/actions.ts` | Comptage des relations Enc vers `User` dans `supprimerUtilisateurAction` | Comptage des relations `Cpt*` vers `User` |
+| W9 | `frontend/src/lib/taches/planificateur.ts` (et `backend/src/planificateur.ts`, `executer.ts`) | Registre des tâches (relances, absences, purge, rappels congés) | Trois nouvelles tâches ajoutées au registre |
+| W10 | Rôle DG existant (données, par migration) | `enc.mettre_en_service` donnée aux rôles portant `systeme.reinitialiser` | **Décision du 2026-10-23 (Q4 : le DG est un superviseur)** : `cpt.mettre_en_service`, `cpt.consulter` et `cpt.trancher_litige`, par la même règle (permission sœur `systeme.reinitialiser`, jamais un nom de rôle). Aucune permission de saisie ni de décision comptable. Les autres permissions `cpt.*` s'attribuent depuis `/admin/roles` |
+| W11 | `backend/src/index.ts` | Réexports du module | Réexports `cpt*` si nécessaire côté frontend |
+
+**Non touchés** : `MODULES_DELEGABLES` (`["tresorerie", "pointage"]` : `compta` n'y figure pas, donc ses permissions ne sont pas délégables sans rien changer), `PERMISSIONS_DECISION_NON_DELEGABLES`, `reinitialisation.ts`, `auth.ts`, `auth.config.ts`, `permissions.ts`, tous les fichiers de Trésorerie, Pointage, Congés, FeedbackApp et Encaissements.
+
+**Preuve de non-régression exigée à chaque lot** : `vitest run` complet, `tsc` (backend et frontend), `eslint`, `next build`, et rejeu des scripts e2e existants sur base jetable. Une régression est un défaut du lot, jamais un « effet attendu » du câblage.
+
+---
+
+## 4. Permissions et rôles de départ
+
+Source unique : `backend/src/cptPermissions.ts`. Un test de synchronisation (patron `congesPermissions.test.ts`) vérifie que le seed et la migration insèrent **exactement** les mêmes lignes. Aucune permission n'est déduite d'une autre ; aucune n'est héritée d'`estAdmin`.
+
+| Permission | Libellé | Production | Commercial | RFCRH | Comptable | Direction |
+|---|---|:-:|:-:|:-:|:-:|:-:|
+| `cpt.consulter` | Consulter et exporter | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `cpt.importer_production` | Importer le bordereau de production | ✓ | | | ✓ | |
+| `cpt.saisir_contrat` | Saisir et corriger un contrat | ✓ | | | | |
+| `cpt.importer_releves` | Importer les relevés d'encaissement | | | | ✓ | |
+| `cpt.identifier_encaissement` | Identifier un encaissement (produit, client, partenaire, contrat) | | ✓ | ✓ | | |
+| `cpt.confirmer_rattachement` | **Étape 1** : confirmer un rattachement avec le reçu | | ✓ | | | |
+| `cpt.valider_rattachement` | **Étape 2** : valider ou rejeter un rattachement | | | ✓ | | |
+| `cpt.classer_pas_une_prime` | Classer « pas une prime » (motif écrit) | | | ✓ | | |
+| `cpt.declarer_tca` | Déclarer la taxe du mois | | | ✓ | | |
+| `cpt.payer_tca` | Enregistrer le paiement et la quittance | | | ✓ | | |
+| `cpt.regler_partenaire` | Régler un partenaire | | | ✓ | | |
+| `cpt.compenser` | Compenser entre natures (opération explicite) | | | ✓ | | |
+| `cpt.gerer_conventions` | Conventions des partenaires | | | ✓ | | |
+| `cpt.parametrer` | Taux de TCA, formats d'import, comptes, tolérances | | | ✓ | | |
+| `cpt.preparer_ecritures` | Exports Odoo et liste des non comptabilisés | | | ✓ | ✓ | |
+| `cpt.relancer` | Relances et promesses de paiement | ✓ | ✓ | ✓ | | |
+| `cpt.cloturer_periode` | Clôturer un mois | | | ✓ | | |
+| `cpt.trancher_litige` | Trancher un litige (DG) | | | | | ✓ |
+| `cpt.mettre_en_service` | Mettre le module en service (**module technique `systeme`**, DG seul) | | | | | ✓* |
+
+\* Attribuée au rôle DG existant par la migration (W10) ; absente de la matrice `/admin/roles`. **Le rôle DG existant reçoit aussi `cpt.consulter` et `cpt.trancher_litige`** (le DG est un superviseur, Q4) : un compte n'a qu'un seul rôle, il lui faut donc la consultation pour ouvrir le module. Le rôle « Compta – Direction » sert à un superviseur qui n'est pas le DG.
+
+- **Pourquoi le RFCRH ne porte pas `cpt.confirmer_rattachement`** : pour qu'il ne puisse jamais sauter l'étape 1 (le serveur le rejette). Si le client veut autoriser une confirmation par le RFCRH en cas d'absence, c'est la question Q3 bis, et cela passera par une permission distincte, pas par un contournement.
+- **Rôles de départ** : « Compta – Production », « Compta – Commercial », « Compta – RFCRH », « Compta – Comptable », « Compta – Direction ». Comptes de test du seed uniquement (`compta-production@simassurances.test`, etc.), **jamais créés en production**. Un compte qui cumule plusieurs profils reçoit un **rôle combiné** créé depuis `/admin/roles` (un seul rôle par utilisateur).
+- **Décisions non délégables** : tout ce qui est décision (`valider_rattachement`, `declarer_tca`, `payer_tca`, `regler_partenaire`, `compenser`, `cloturer_periode`, `trancher_litige`) l'est **par construction** (module absent de `MODULES_DELEGABLES`).
+- Les gardes de page et de Server Action vérifient **chacune** leur permission (jamais le layout seul). Les boutons sans droit ou hors état restent **visibles et grisés avec la raison**.
+
+---
+
+## 5. Modèle de données définitif
+
+Conventions : `Decimal(14,2)` pour les montants, `Decimal(7,6)` pour les taux, `@db.Date` pour les faits comptables, `DateTime` pour les traces. Toute clé étrangère vers `User` est en `Restrict`. « idx » = index, « uq » = unicité. Relations inverses sur `User` nommées `Cpt…` (W1).
+
+### 5.1 Énumérations
+
+`CptBranche` (ACCIDENTS, SANTE, INCENDIE, DECES) · `CptNatureContrat` (INDIVIDUEL, GROUPE) · `CptStatutContrat` (EN_COURS, ECHU, ANNULE, RESILIE) · `CptTypeActe` (AFFAIRE_NOUVELLE, RENOUVELLEMENT, TRANCHE, AVENANT_INCORPORATION, RETRAIT, RISTOURNE, ANNULATION) · `CptFractionnement` (COMPTANT, MENSUEL, TRIMESTRIEL, SEMESTRIEL, LIBRE) · `CptEtatEcheance` (OUVERTE, SOLDEE, ANNULEE) · `CptTypeCompte` (WAVE_BUSINESS, WAVE_HORS_BUSINESS, BANQUE, MICROFINANCE, AGREGATEUR, CAISSE) · `CptTypeFlux` (PRIME_POSSIBLE, REMBOURSEMENT, TEST, VIREMENT_INTERNE, AUTRE_CREDIT) · `CptStatutEncaissement` (A_IDENTIFIER, IDENTIFIE_A_RATTACHER, CONTRAT_TROUVE_A_RATTACHER, RATTACHE, PAS_UNE_PRIME) · `CptMethodeRattachement` (REFERENCE_EXACTE, REFERENCE_INCOMPLETE, MONTANT_DATE, GROUPE, PROBABLE, MANUELLE) · `CptNiveauPreuve` (PREUVE, DEDUCTION, A_CONFIRMER) · `CptStatutRattachement` (PROPOSE, CONFIRME, VALIDE, REJETE) · `CptNatureRemuneration` (COMMISSION, ACCESSOIRES, HONORAIRES) · `CptFaitGenerateur` (EMISSION, ENCAISSEMENT) · `CptModeReglement` (EN_UNE_FOIS, AU_PRORATA) · `CptStatutPeriode` (OUVERTE, CLOTUREE) · `CptStatutAnomalie` (A_TRAITER, TRAITEE) · `CptTypeImport` (PRODUCTION, RELEVE, BORDEREAU_PARTENAIRE).
+
+### 5.2 Socle (copié d'Encaissements)
+
+`CptMiseEnService` · `CptSequence(cle, valeur)` · `CptParametre(cle, valeur, majParId, majAt)` · `CptAudit(id BigInt, entite, entiteId, action, avant, apres, motif, mois, userId, ip, at)` · `CptPieceJointe(id, url uq, nomOrigine, mime, taille, sha256, deposeeParId, deposeeAt)` · `CptMot(entite, entiteId, mot)` avec colonne `mot` en collation « C ».
+
+### 5.3 Référentiels
+
+| Table | Champs | Contraintes et index |
+|---|---|---|
+| `CptClient` | id, nom, telephone, pieceIdentite, partenaireOrigineId?, tiersOdoo? | idx (nom), idx (telephone) |
+| `CptPartenaire` | id, nom, estApporteur, estBeneficiaire, estGestionnaire, estClient (booléens), coordonnees, tiersOdoo?, actif | uq (nom) |
+| `CptProduit` | id, code uq, libelle, branche, tarifReference?, compteOdoo?, actif | — |
+| `CptTauxTca` | id, branche, produitCode?, natureContrat?, taux, dateEffet, creeParId, creeAt | **Jamais modifié** ; uq (branche, produitCode, natureContrat, dateEffet) ; idx (dateEffet) |
+| `CptCompte` | id, libelle, type, journalOdoo?, compteOdoo?, actif | — |
+| `CptConvention` | id, partenaireId, produitCode?, nature, taux, base (PRIME_NETTE, NETTE_PLUS_ACCESSOIRES, TTC), faitGenerateur, apporteurDeLaConvention? (partenaire ou « SIM »), beneficiaireId?, modeReglement, dateEffet, dateFin?, creeParId | Pas de chevauchement pour (partenaire, produit, nature, apporteur) ; idx (partenaireId, nature, dateEffet) |
+| `CptFormatImport` | id, type, nom, colonnes (JSON : nom d'en-tête → champ), parDefaut, actif | uq (type, nom) |
+
+### 5.4 Production
+
+| Table | Champs principaux | Contraintes et index |
+|---|---|---|
+| `CptContrat` | id, numPolice **uq**, produitId, natureContrat, clientId, partenaireApporteurId?, dateEffet, dateEcheance, statut, fractionnement, tauxTcaContrat? (SECURPRO), primeNetteHt, accessoiresHt, taxe, primeTtc, declarePaye (booléen du technique), modePaiementDeclare?, referencePaiementDeclaree?, datePaiementDeclaree?, contratOrigineId?, importId?, creeParId | idx (clientId), idx (partenaireApporteurId), idx (statut), idx (referencePaiementDeclaree) |
+| `CptActe` | id, contratId, type, date, montants (JSON ou colonnes), acteOrigineId?, motif? | idx (contratId, date) |
+| `CptEcheance` | id, contratId, rang, periodeDebut, periodeFin, datePrevue, primeTtc, primeHt, accessoires, taxe, montantDu, **montantRegle** (dénormalisé, mis à jour dans la transaction de validation), etat | uq (contratId, rang) ; idx (contratId, etat) ; idx (etat, datePrevue) |
+| `CptImport` | id, type, formatId, fichierId (pièce, uq), empreinte SHA-256, compteId?, periode?, statut, bilan (JSON), creeParId, creeAt | uq (empreinte) → un fichier importé deux fois est détecté |
+| `CptAnomalie` | id, type, objet (entité + id), detail (JSON), statut, traiteeParId?, traiteeAt?, resolution?, creeAt | idx (statut, creeAt) ; idx (objet) |
+
+### 5.5 Encaissements et rattachements
+
+| Table | Champs principaux | Contraintes et index |
+|---|---|---|
+| `CptEncaissement` | id, reference (identifiant métier `CPE-…`) uq, compteId, referenceReleve, dateValeur, montant, payeur?, telephone?, typeFlux, statut, motifPasUnePrime?, **resteARattacher**, releveId?, ligneReleve?, pieceOdoo?, dateComptabilisation?, reprise (booléen), creeParId | **uq (compteId, referenceReleve)** : RG-04 ; idx (statut, dateValeur) ; idx (compteId, dateValeur) ; CHECK (resteARattacher ≥ 0 et ≤ montant) |
+| `CptRattachement` | id, encaissementId, echeanceId, montant, methode, niveauPreuve, **statut** (PROPOSE, CONFIRME, VALIDE, REJETE), proposeParId? (nul = moteur), confirmeParId?, confirmeAt?, recuConfirmation? (pièce ou référence), valideParId?, valideAt?, rejeteParId?, motifRejet?, justification, reprise | idx (encaissementId, statut) ; idx (echeanceId, statut) ; CHECK (VALIDE ⇒ valideParId non nul) ; **Σ(VALIDE) par encaissement ≤ montant** et **Σ(VALIDE) par échéance ≤ montantDu**, vérifiées sous verrou |
+| `CptTransfertInterne` | id, encaissementSortantId, encaissementEntrantId, compteSourceId, compteCibleId | uq sur chaque côté ; jamais compté comme encaissement |
+| `CptCheque` | id, encaissementId?, dateReception, numero, tireur, montant, dateRemiseBanque?, statut | idx (statut) |
+| `CptReleve` | id, importId, compteId, periode (mois), nbLignes, totalCredits, totalFrais? | uq (compteId, periode, empreinte) |
+
+### 5.6 Taxe
+
+| Table | Champs | Contraintes |
+|---|---|---|
+| `CptLigneTaxe` | id, encaissementId?, echeanceId?, base, taux, montant, moisDeclaration (date 1ᵉʳ du mois), declarationId?, imputeeSurEcheanceId? | **Verrouillée** (UPDATE interdit par trigger) dès que `declarationId` est renseigné ; idx (moisDeclaration) |
+| `CptDeclarationTca` | id, reference `CPD-…`, mois uq, montantDu, montantDejaPaye, corrections, montantAPayer, statut, quittanceNumero?, quittanceDate?, quittanceMontant?, datePaiement?, pieceOdoo?, declareParId, payeParId? | uq (mois) |
+| `CptCreditTaxe` | id, origine (TROP_PAYE, CORRECTION_TAUX), declarationId, montant, statut (A_RECUPERER, RECUPERE), recupereDansId? | — |
+
+### 5.7 Rémunération des partenaires
+
+| Table | Champs | Contraintes |
+|---|---|---|
+| `CptLigneRemuneration` | id, contratId, echeanceId?, partenaireBeneficiaireId, nature, conventionId, du, exigible, payable, paye, partSurPrimesEncaissees, partSurPrimesNonEncaissees | uq (contratId, echeanceId, partenaireBeneficiaireId, nature) ; idx (partenaireBeneficiaireId, nature) |
+| `CptReglementPartenaire` | id, reference `CPR-…`, partenaireId, **nature (obligatoire)**, montant, date, mode, referenceReglement, pieceOdoo?, dateComptabilisation?, motif?, creeParId | CHECK (montant > 0) |
+| `CptAffectationReglement` | id, reglementId, ligneRemunerationId, montant | Σ par règlement = montant du règlement |
+| `CptCompensation` | id, partenaireId, natureSource, natureCible, montant, motif, valideeParId | Seule voie de passage entre natures |
+| `CptBordereauPartenaire` + `CptBordereauLigne` | id, partenaireId, importId, periode ; ligne : numPolice, montants, resultat (CONCORDE, ECART, A_SAISIR, ABSENT_DU_BORDEREAU), ecart? | idx (partenaireId, periode) |
+
+### 5.8 Pilotage
+
+`CptPeriode(mois uq, statut, clotureeParId?, clotureeAt?)` · `CptTacheCloture(periodeId, code, libelle, etat, bloquante)` · `CptPrimeAcquise(periodeId, contratId, acquise, nonAcquise)` uq (periodeId, contratId) · `CptRelance(id, debiteur (client ou partenaire), echeanceIds, canal, date, resultat, creeParId)` · `CptPromesse(relanceId, datePromise, montantPromis, tenue?)`.
+
+### 5.9 Volumétrie et index critiques
+
+Cible : 100 000 encaissements et 50 000 contrats par an, **10 ans minimum** ⇒ ~1 000 000 encaissements, ~500 000 contrats, plusieurs millions d'échéances. Index à poser dès la migration (liste ci-dessus) ; **pagination côté serveur** sur toutes les listes ; mesures `EXPLAIN` sur un jeu synthétique à 10 ans à la fin de GC-3 (méthode des mesures D38 d'Encaissements). Pas de partitionnement prévu.
+
+---
+
+## 6. Règles de calcul
+
+### 6.1 Taxe sur les contrats (TCA)
+
+- **Taxe contenue** dans un montant TTC : `montant × taux ÷ (1 + taux)`. Exemples chiffrés du cahier (tous vérifiés) : 2 500 à 7,25 % → 169 ; à 1,5 % → 37 ; à 4 % → 96 ; à 12,5 % → 278 ; 1 500 à 7,25 % → 101 ; décès 0 % → 0.
+- **Au prorata** pour un encaissement rattaché : `taxe de l'échéance × (montant rattaché ÷ montant dû de l'échéance)`, arrondi à l'unité à la figeure, **reliquat exact sur le dernier rattachement** qui solde l'échéance (D4).
+- **Cinq cas** : rattaché ; sans contrat avec produit connu ; contrat existant non rattaché (même calcul, imputé au rattachement) ; non identifié (0) ; pas une prime (0).
+- **Jamais payée deux fois** : chaque `CptLigneTaxe` porte `moisDeclaration`. Au rattachement d'un encaissement déjà taxé, la ligne existante est **imputée** sur l'échéance (`imputeeSurEcheanceId`), pas recréée ; l'écart éventuel entre taxe payée et taxe du contrat devient une ligne de correction du mois en cours (jamais une réécriture d'une ligne déclarée).
+- **Calcul du mois** : `à payer = taxe due cumulée − taxe déjà payée (quittances) − corrections validées`. Si négatif : **crédit** (`CptCreditTaxe`), reporté.
+- **État de déclaration par taux** : primes et accessoires encaissés hors taxe, primes remboursées, base d'imposition, taux, impôt ; les crédits sont affichés à part.
+
+### 6.2 Rattachement et validation en deux étapes
+
+1. Le moteur calcule des **propositions** (méthodes 1 à 5 du cahier) et les crée à l'état `PROPOSE`, avec `niveauPreuve` : méthodes 1 et 2 → `PREUVE` ; 3 et 4 → `DEDUCTION` ; 5 → `A_CONFIRMER`. Une identification faite à la main (`MANUELLE`) est toujours `A_CONFIRMER`.
+2. **Étape 1** (si niveau ≠ `PREUVE`) : le commercial (`cpt.confirmer_rattachement`) confirme en joignant le **reçu** (obligatoire) → `CONFIRME`.
+3. **Étape 2** : le RFCRH (`cpt.valider_rattachement`) valide → `VALIDE` (signée), ou rejette avec motif → `REJETE` (retour au commercial).
+4. **Contrôles serveur sous verrou** (verrou consultatif sur l'encaissement, puis sur l'échéance) : validation impossible si l'étape 1 est requise et absente ; Σ validés par encaissement ≤ montant (RG-04) ; Σ validés par échéance ≤ montant dû ; `resteARattacher` recalculé ; `montantRegle` de l'échéance mis à jour ; statut de l'encaissement recalculé.
+5. **Aucun effet avant `VALIDE`** : ni reste dû, ni taxe affectée, ni rémunération exigible (RG-01).
+
+### 6.3 Échéancier (C-1, C-2)
+
+- Création à la saisie : fractionnement (comptant, mensuel, trimestriel, semestriel, libre), nombre, dates et montants (HT, accessoires, taxe) ; **la somme des échéances = la prime du contrat** (reliquat sur la dernière). Exemple T12 : 6 077 832 ÷ 12 = 506 486 exact.
+- Affectation par défaut : à l'échéance la plus ancienne non soldée ; excédent proposé aux suivantes ; reste → `resteARattacher`.
+- États affichés (calculés) : à venir (date prévue > aujourd'hui), due (échue, reste > 0), en retard (n jours), payée, partiellement payée, annulée.
+- Reste dû du contrat = Σ (montantDu − montantRegle) des échéances non annulées.
+
+### 6.4 Rémunération des partenaires
+
+Pour chaque (contrat, échéance, bénéficiaire, nature) :
+- **dû** = base de la convention × taux ; **exigible** selon `faitGenerateur` (émission : dès l'émission ; encaissement : au prorata du montant rattaché validé) ; **payable aujourd'hui** = dû × part de la prime encaissée si `AU_PRORATA`, sinon exigible ; **payé** = Σ affectations ; **reste payable** = payable − payé ; **reste dû** = dû − payé.
+- **Honoraires** : ventilés `sur primes encaissées` / `sur primes non encaissées` (avec reste dû du client et ancienneté). Une prime jamais encaissée (annulation, résiliation) fait ressortir ses honoraires **à régulariser**.
+- **Vérification T6 ter** : 120 000 en 12 mensualités, commission 12 000, 3 mensualités encaissées → dû 12 000, payable 3 000 ; après règlement de 3 000 → reste payable 0, reste dû 9 000.
+- La convention signée prime ; **alerte** si le taux appliqué par le technique (colonnes commission / gestion du bordereau) diffère.
+- Aucune compensation entre natures : seule `CptCompensation` (validée, signée, motif).
+
+### 6.5 Créances (C-5)
+
+Par débiteur (client direct, ou partenaire qui paie pour ses clients) : prime émise, encaissé prouvé (rattachements validés), **déclaré payé par le technique mais non prouvé**, reste dû, date depuis laquelle la dette est due, tranche d'ancienneté. Une échéance non échue n'est pas une dette en retard ; la taxe n'est pas exigible sur le reste dû.
+
+### 6.6 Clôture et verrou (RG-08)
+
+Une période `CLOTUREE` rejette toute écriture datée dans cette période (contrôle applicatif **et** trigger sur les tables de faits). Une correction se fait sur la période ouverte, avec motif, et fait apparaître la ligne dans le rapport « changements depuis la clôture ». Les contrôles **bloquants** de la clôture sont à définir (Q12) ; défaut : rattachements `PROPOSE`/`CONFIRME` restants, TCA du mois non déclarée, encaissements sans statut final.
+
+---
+
+## 7. Imports (formats paramétrables)
+
+- **Format** (`CptFormatImport`) : pour chaque type d'import (production, relevé Wave Business, Wave hors business, banque, microfinance, PeyaPay, bordereau de partenaire), liste `en-tête du fichier → champ interne`, avec formats de date et de montant. Un changement de format de relevé = modification du format, **pas du code**.
+- **Lecture permissive** : un champ illisible devient `null` et produit une anomalie ; seules les erreurs structurelles (en-têtes introuvables, fichier illisible, trop volumineux) arrêtent l'import. Limites par défaut : 10 Mo ; 50 000 lignes (paramètres).
+- **Anti-doublon** : empreinte SHA-256 du fichier (`CptImport.empreinte` unique) **et** référence unique par compte (`CptEncaissement(compteId, referenceReleve)`). Un relevé importé deux fois ne crée rien (T9).
+- **Reconnaissance** : remboursements (`refund`), transactions test, frais, virements internes (appariement par montant, date et comptes), classés par `typeFlux`. **Contrôle mensuel par compte** : crédits du relevé = primes + virements internes reçus + autres crédits.
+- **Performance** : insertions par lots (`createMany`), rapprochement en mémoire sur index ; objectif **10 000 lignes + rapprochement < 2 minutes**, mesuré sur PostgreSQL 16 jetable (timeout de transaction explicite, comme les 300 s d'Encaissements).
+
+---
+
+## 8. Mise en service, audit et réinitialisation
+
+1. **Audit** : `CptAudit` en ajout seul. Trigger : `UPDATE` toujours interdit ; `DELETE`/`TRUNCATE` interdits dès qu'une ligne `CptMiseEnService` existe. Chaque opération importante écrit sa trace **dans la même transaction** (qui, quand, avant, après, motif, IP).
+2. **Mise en service** : `cpt.mettre_en_service` (DG seul, module technique `systeme`) : remise à zéro des données de test puis activation, usage unique, avec sauvegarde JSON et empreinte (mécanisme copié d'Encaissements, dans des fichiers `cpt*`).
+3. **Classement de réinitialisation (W7)** : **toutes les tables `Cpt*` sont classées `CONSERVEE`** pour la purge globale, avec la note « le module a sa propre remise à zéro » (même précédent que la purge du Pointage seul). Conséquence : `reinitialisation.ts` n'est pas modifié, et la purge globale (déjà exécutée et verrouillée en production) ne touche jamais Gestion Compta.
+4. **Mise en production** : extension de la procédure `docs/mise-en-production.md` (vérification : rôles, comptes de test neutralisés, signatures enrôlées pour le RFCRH et le DG, taux de TCA en vigueur, correspondances Odoo renseignées). **Décision d'exploitation préalable (risque R1 du plan) : un seul module, Encaissements ou Gestion Compta, fait foi pour la TCA et les honoraires.**
+
+---
+
+## 9. Tâches planifiées et notifications
+
+| Tâche | Cadence (heure du serveur = Abidjan) | Effet |
+|---|---|---|
+| `COMPTA_CONTROLE_HEBDO` | Lundi 07:30 | Génère les deux listes (encaissements sans contrat ; contrats déclarés payés sans encaissement) et notifie le commercial et la production |
+| `COMPTA_RELANCES` | Lundi à vendredi 08:00 | Relance à 7 jours, alerte à 30 jours (RFCRH), escalade à 60 jours (DG) — C-8 ; **une seule notification par objet et par seuil** (réservation conditionnelle, comme les rappels de congés) |
+| `COMPTA_RAPPEL_TCA` | Le 10 et le 17 de chaque mois | Rappel de déclarer et payer avant le 20 |
+
+Rattrapage après un arrêt et idempotence : comportement standard de `executerTache` (verrou consultatif, ligne `ExecutionTache`). Notifications via `notify` (catégorie du portail existante la plus proche ; **aucune catégorie nouvelle** pour rester sans modification de l'énumération).
+
+---
+
+## 10. Découpage en commits
+
+Chaque commit passe `tsc`, `eslint`, `vitest`, `next build`, le rejeu des tests existants, et met à jour ce document. **Aucun commit ne modifie un comportement existant.**
+
+### GC-1 — Socle (≈ 1,5 à 2 semaines)
+
+| # | Commit | Contenu | Tests |
+|---|---|---|---|
+| 1a | **Schéma du socle** — **fait (2026-10-22)** | Modèles `CptMiseEnService`, `CptSequence`, `CptParametre`, `CptAudit`, `CptPieceJointe`, `CptPeriode` (+ enum `CptStatutPeriode`), relations inverses sur `User`, fonctions et triggers `cpt_*` (4 fonctions, 9 triggers), migration `20261101090000_compta_socle_technique`. **Ajout par rapport au plan : W7 (classement de réinitialisation) est fait ici et non en 1e**, car le test de classement échoue dès qu'un modèle n'est pas classé | `bash e2e/compta-gc1a-schema.sh` : migrations depuis zéro sur `postgres:16` jetable, `migrate diff` vide, 34 contrôles SQL (audit en ajout seul, séquences, mise en service unique, période clôturée définitive, indépendance vis-à-vis des fonctions `enc_*`) ; vitest 1413 réussis, `tsc` et `eslint` propres |
+| 1b | **Moteurs du socle** — **fait (2026-10-23)** | `cptAudit.ts`, `cptSequence.ts` (CPE/CPR sur 6 chiffres, CPD sur 2), `cptParametres.ts` (12 paramètres typés, cohérence relance < alerte < escalade), `cptPermissions.ts` (18 permissions + mise en service, 5 rôles de départ, 8 permissions de décision) + leurs tests. **Ajouts par rapport au plan** : migration `20261101100000_compta_parametres_defauts` (12 valeurs par défaut, `ON CONFLICT DO NOTHING`, borne 1..28 du jour limite par `CASE`) et test `cptIndependance.test.ts` (aucun fichier `cpt*` / `compta` n'importe un autre module) | vitest : 5 fichiers, 48 tests ; `bash e2e/compta-gc1a-schema.sh` étendu (étape 4) : 12 paramètres posés, migration rejouée sans écraser une valeur modifiée, jour limite 0 / 29 / texte refusés, 28 accepté ; suite complète 1459 réussis (2 délais à froid, verts en isolé) ; `tsc` et `eslint` propres. **Non couvert ici** : l'incrément de séquence sous concurrence réelle (seule la logique pure est testée) — à ajouter au script SQL quand le premier appelant (import GC-2) existera |
+| 1c | **Permissions, rôles, seed** — **fait (2026-10-23)** | Module `compta`, 19 permissions (18 + la mise en service du module technique `systeme`), 5 rôles, comptes de test (hors production), migration `20261101110000_compta_permissions_roles` (permission sœur, W10), seed (module, rôles, comptes, paramètres, garde « module mis en service », nettoyage des tables `Cpt*` avant les comptes). **Décision Q4 : le DG est un superviseur** → il reçoit `cpt.consulter`, `cpt.trancher_litige` et `cpt.mettre_en_service`, jamais une saisie. Rôles de départ toujours provisoires jusqu'à Q5 | `cptPermissionsMigration.test.ts` (12 tests : synchronisation source ↔ migration ↔ seed) ; `bash e2e/compta-gc1c-roles.sh` sur `postgres:16` jetable : 27 contrôles (migrations depuis zéro, `migrate diff` vide, 18 + 1 permissions, 27 attributions, RFCRH sans l'étape 1, rejeu sur base « existante » : le DG reçoit exactement 3 permissions par permission sœur — preuve qu'un autre rôle porteur de la sœur la reçoit aussi et qu'un rôle « Finance » ne reçoit rien —, seed rejoué, aucun compte de test en production, seed refusé sans rien supprimer si le module est mis en service) ; vitest complet 1473 réussis, `tsc` et `eslint` propres |
+| 1d | **Câblage de navigation** — **fait (2026-10-23)** | W3 à W6 (`canConsulterCompta` dans `nav.ts`, `Sidebar.tsx`, `AppShell.tsx`, `(dashboard)/layout.tsx` ; branche « Gestion Compta » ; carte d'accueil du portail dans `getModuleCardState` ; message `acces_refuse_compta`), `compta/layout.tsx` (garde) et `compta/page.tsx` (garde revérifiée, rubriques filtrées par permission, badge « Bientôt disponible »). **Écart par rapport au plan : pas de « compteurs à zéro »** — un « 0 » affirmerait quelque chose que l'on ne sait pas tant que les données du module n'existent pas | `e2e/compta-gc1d.mjs` sur base jetable (`next build` puis `bash e2e/base-jetable.sh`) : **77/77** — 5 rôles Compta + DG autorisés avec leurs rubriques exactes (le DG et la Direction ne voient que « Litiges »), Collaborateur / Finance / RH / Assistant Finance / Admin / Encaissements refusés (aucun lien `/compta`, redirection avec message, l'Admin voit la carte « Aucun accès »), sans session → `/login`, mobile 390 px sans défilement horizontal, 0 erreur JavaScript. **Non-régression** : `lot-h.mjs` 44/46, les 2 échecs sont l'extraction de texte des PDF (`pdftotext` sous Windows sort en Latin-1, le script lit de l'UTF-8) sans rapport avec GC-1d ; `next build` propre. **Piège de test** : le menu est un accordéon, les liens d'une branche ne sont dans le DOM qu'une fois dépliée |
+| 1e | **Câblage technique** — **fait (2026-10-26)** | **W8** : `supprimerUtilisateurAction` compte les 5 relations `Cpt*` → `User` (audit, mise en service, paramètre modifié, pièce déposée, période clôturée), message précis par cause. **W9** : trois tâches enregistrées **vides** (`COMPTA_CONTROLE_HEBDO` lundi 07:30, `COMPTA_RELANCES` lundi à vendredi 08:00, `COMPTA_RAPPEL_TCA` les 10 et 17 du mois à 08:00 — heure non précisée par le plan, 08:00 retenue) : enum `TacheNom` + migration `20261101120000_compta_taches_planifiees`, `backend/src/planificateur.ts` (créneaux « lundi » et « jours du mois », **horizon de recherche de 31 jours pour le rappel TCA** au lieu de 8 : le 17 et le 10 suivant sont séparés de 24 jours), `frontend/src/lib/taches/compta.ts` (bilan `enAttenteDuModule`, affiché « Aucun traitement pour l'instant »), table `FONCTIONS` de `executer.ts`. W7 était déjà fait en 1a | vitest 1486 réussis dont 13 nouveaux dans `planificateur.test.ts` (cadences, rattrapage, écart de 23–24 jours, retard, **synchronisation registre ↔ enum Prisma ↔ migrations**) ; `tsc` et `eslint` propres ; `bash e2e/compta-gc1a-schema.sh` étendu (étape 5 : 7 valeurs d'enum, rejeu sans effet, `ExecutionTache` accepte les 3 tâches, valeur inconnue refusée) ; `e2e/compta-gc1e.mjs` **20/20** (les 5 types de trace refusés avec leur message, compte sans trace supprimé, moniteur affichant les 3 tâches, « Lancer maintenant » → exécution MANUELLE réussie, aucun incident) ; non-régression `planificateur-journal.mjs` **28/28** (SMTP volontairement faux, voir `e2e/README.md`). **Constat** : un planificateur actif exécute les 3 tâches dès son premier passage (une tâche jamais exécutée est « due ») ; sans effet tant qu'elles sont vides, **à traiter quand GC-6/8/9 les rempliront** (voir le commentaire de `compta.ts`). **Piège de test** : un compte sans mot de passe est affiché comme « invitation en attente » (pas de bouton Supprimer) |
+| 1f | **Formats d'import et exports en flux (squelettes)** — **fait (2026-10-26)** | **Schéma** : `CptFormatImport` (type, nom, ligne d'en-têtes, colonnes en JSON, format par défaut, actif) + enum `CptTypeImport` (production, 4 types de relevé, Peyapay, bordereau partenaire), migration `20261101130000_compta_formats_import` : bornes de la ligne d'en-têtes (1..50) et de la liste de colonnes **en base**, et **index unique partiel** « un seul format par défaut par type » (`migrate diff` reste vide). **Moteurs purs** : `cptFormatImport.ts` (`validerDefinitionFormat` : toutes les erreurs d'un coup, nom de champ interne contraint, doublons refusés), `cptImportLecture.ts` (copie adaptée de `encImportLecture.ts` : colonnes retrouvées **par leur en-tête** et non par position, car les relevés changent d'un opérateur à l'autre ; types texte / date / montant signé ; formats de date fermés, **une date ambiguë n'est jamais devinée** ; lecture permissive, anomalies détaillées plafonnées à 1 000 avec le total exact ; type du fichier déduit du **contenu**), `cptExportCsv.ts` (`;`, BOM, CRLF, virgule décimale, formules neutralisées, jour civil UTC). **Frontend** : `lib/compta/pieceJointe.ts` (copie de celle d'Encaissements, sans contrôle croisé avec la Trésorerie), `lib/compta/exportFlux.ts` (CSV par `ReadableStream` à contre-pression, Excel par `WorkbookWriter` ExcelJS), routes `POST /api/compta/import/upload` (`cpt.importer_production` **ou** `cpt.importer_releves`) et `GET /api/compta/export/essai` (`cpt.parametrer`, lignes **synthétiques**, aucune lecture en base). **Ajouts par rapport au plan** : la route d'upload enregistre elle-même `CptPieceJointe` + audit `depot_fichier_import` (adresse IP comprise) dans une seule transaction — un fichier de production est la preuve d'une écriture, il ne doit pas exister sans trace — et la taille maximale suit le paramètre `import.limite_taille_mo` | vitest : 93 fichiers, **1563 réussis** dont 77 pour les 3 nouveaux moteurs (lecture de fichiers synthétiques xlsx / xls / csv fabriqués en mémoire, 50 000 lignes) ; `tsc` et `eslint` propres ; `bash e2e/compta-gc1a-schema.sh` étendu (étape 6 : unicité, index partiel, bornes, enum) ; `e2e/compta-gc1f.mjs` **44/44** sur base jetable : 401 / 403 par rôle, type déduit du contenu (un `.xlsx` renommé `.csv` reste `xlsx`), SHA-256 recalculé, audit, plafond qui suit le paramètre, **CSV de 100 000 lignes en 0,6 s et Excel de 100 000 lignes en 5,7 s** (objectif : moins d'une minute), relecture ExcelJS (montant négatif = nombre, date = vraie date, `=CLIENT(50)` resté du texte). **Deux défauts trouvés par l'e2e et corrigés** : (1) un PDF « texte » (sans octet nul) était pris pour un CSV — la détection refuse désormais les signatures PDF, PNG, JPEG, GIF et RTF ; (2) un fichier de plus de 10 Mo faisait un 500 : dès qu'un `proxy.ts` existe, Next ne garde que les **10 premiers Mo du corps** (`experimental.proxyClientMaxBodySize`) et tronque le reste sans erreur, `formData()` échoue alors — la route refuse maintenant sur `Content-Length` puis protège `formData()` (400 lisible). **Limites assumées** : (a) **le plafond d'un dépôt est 10 Mo — décision du 2026-10-26** : Next.js ne garde que les 10 premiers Mo du corps dès qu'un proxy existe (`experimental.proxyClientMaxBodySize`, réglage partagé de `next.config.ts`, non touché : règle d'indépendance). La borne du paramètre `import.limite_taille_mo` est donc ramenée de 50 à **10** (le défaut, déjà 10, ne change pas ; aucune migration) pour qu'il ne promette jamais davantage que ce que le serveur reçoit. À rouvrir seulement si un relevé réel dépasse 10 Mo : il faudrait alors relever cette option ET la borne ; (b) `normaliserEnteteCpt` (comparaison des en-têtes : casse, accents, espaces) est **provisoire**, à fixer avec un vrai relevé ; (c) la limite de 1 048 575 lignes d'une feuille Excel n'est pas atteignable par la route d'essai (plafonnée à 1 000 000) : elle n'est pas testée de bout en bout |
+
+### GC-2 à GC-11 (commits indicatifs, détaillés au début de chaque lot)
+
+| Lot | Commits prévus |
+|---|---|
+| **GC-2** Référentiels | **2a schéma — fait (2026-10-26)** : 7 enums (`CptBranche`, `CptNatureContrat`, `CptTypeCompte`, `CptNatureRemuneration`, `CptBaseConvention`, `CptFaitGenerateur`, `CptModeReglement`), 6 tables (`CptPartenaire` à rôles multiples, `CptClient`, `CptProduit`, `CptTauxTca`, `CptCompte`, `CptConvention`), migration `20261101140000_compta_referentiels` (appliquée sur la base de dev) : taux et conventions bornés à 0–100 % **en base**, unicité du taux sur (branche, produit, nature, date d'effet) en `NULLS NOT DISTINCT` (PostgreSQL 15+, déclarée dans `schema.prisma` sous le même nom pour que `migrate diff` reste vide), **taux jamais modifié** (trigger), **convention : seule `dateFin` change** (trigger), suppression et `TRUNCATE` interdits après la mise en service ; câblages W7 (classement de réinitialisation) et W8 (2 relations `creeParId` comptées dans la suppression de compte) · **2b moteurs — fait (2026-10-26)** : `cptReferentiels.ts` pur (validation par champ de chaque saisie, pourcentage → fraction exacte sans flottant, `tauxTcaEnVigueur` C-10, `chronologieTauxTcaCpt`, `conventionEnVigueurCpt`, chevauchement de conventions, clôture d'une convention, fait générateur proposé C-4) · **2c écrans — fait (2026-10-26)** : `/compta/referentiels` (six onglets en GET : partenaires, clients, produits, comptes, taux de taxe, conventions ; lecture pour tout compte qui a `cpt.consulter`, écriture selon C-16 **revérifiée par chaque Server Action** de `compta/referentiels/actions.ts`), formulaire et gestionnaire génériques (`ReferentielsClient.tsx`, erreurs par champ renvoyées par les moteurs de 2b), rubrique « Référentiels » (lien, badge « Disponible ») en tête de l'accueil `/compta`. Écriture et audit `CptAudit` (avant/après) dans UNE transaction ; **verrou `pg_advisory_xact_lock`** par partenaire pour les conventions et global pour les taux ; jamais de suppression (désactivation tracée) ; code d'un produit **immuable** (ignoré s'il est envoyé) et branche figée dès qu'un taux s'y rattache ; taux : création seule, état « remplacé / en vigueur / à venir » calculé par portée ; conventions : création puis **clôture** (date de fin seule), fait générateur des honoraires proposé selon l'apporteur (C-4), chevauchement refusé avec la phrase du moteur. `cptReferentiels.ts` est aussi réexporté par `backend/client` (pur, n'importe que `./montant`) · 2d recherche par mots — **fait (2026-10-26)** : table `CptMot` (entités `CLIENT`, `PARTENAIRE`, `PRODUIT`, chaîne et non enum pour ne pas migrer à chaque nouvelle entité), colonne `mot` en collation « C » + btree `(mot, entite, entiteId)` (patron `EncContratMot`, sans extension), mots = minuscules, accents retirés, `'’-` ignorés, parties d'un mot composé aussi indexées, téléphone indexé sans « + » ; recherche par **début de mot**, plusieurs mots en ET, 6 mots au plus (limite assumée : un fragment au milieu d'un mot ne trouve rien) ; `/compta/referentiels?q=` filtre l'onglet courant et affiche des compteurs sur Partenaires, Clients et Produits ; les onglets taux, comptes et conventions ignorent `q`. Index écrit à la création et à la modification, clients réindexés quand le nom de leur partenaire d'origine change. Migration `20261101150000_compta_recherche_mots` (remplissage idempotent des fiches existantes). **Mesuré** (150 000 clients, 3 passages) : pire recherche 174 ms ; remplissage SQL = calcul TypeScript fiche par fiche (`e2e/compta-gc2d-mots.ts`, étape 8 de `compta-gc1a-schema.sh`) ; `e2e/compta-gc2d.mjs` : 35 contrôles · 2e correspondances Odoo — **fait (2026-10-26)** : septième onglet `/compta/referentiels?onglet=odoo` (compte, tiers et journal Odoo des partenaires, clients, produits et comptes d'encaissement ; les fiches à compléter d'abord, filtre « À compléter seulement », compteurs « n à compléter sur N » qui ne comptent que les fiches actives, recherche rapide appliquée aux trois entités indexées, 300 fiches au plus par section) ; moteur pur `cptCorrespondancesOdoo.ts` (champs par entité, longueurs 60/40 comme les formulaires, vide = NULL, **aucun format imposé** tant que Q14 est ouverte) ; Server Action `modifierCorrespondanceOdooAction` : droit `cpt.parametrer` **y compris pour les clients** (la correspondance comptable est de la configuration, décision provisoire), seuls les champs Odoo lus et écrits, réindexation de la recherche et audit `correspondance_odoo` (avant/après) dans la même transaction. Aucune migration. `e2e/compta-gc2e.mjs` : 46 contrôles (ordre et compteurs, filtre, enregistrement et audit, champ trop long, recherche, Direction en lecture seule, **rejeu de la Server Action refusé**, champs étrangers ignorés, mobile 390 px). **Vérifié** : `e2e/compta-gc2c.mjs` (**79 contrôles** sur base jetable : droits par rôle, erreurs par champ, taux et conventions, audit, trigger de non-modification, **refus serveur par rejeu des Server Actions** avec la session d'un rôle non autorisé, deux envois simultanés (un seul passe), mobile 390 px sans défilement horizontal) et `e2e/compta-gc1d.mjs` adapté (83 contrôles). **Vérifié (2a, 2b)** : `bash e2e/compta-gc1a-schema.sh` étape 7 (base fraîche : **31 contrôles SQL** dont suppression acceptée avant la mise en service puis refusée après), vitest `cptReferentiels.test.ts` (**74 tests avec les gardes d'indépendance, de classement et de vocabulaire**), `tsc` backend et frontend, `eslint`. **Piège** : un index unique `NULLS NOT DISTINCT` non déclaré dans `schema.prisma` est signalé par `migrate diff` (« DropIndex »), contrairement à l'index partiel de GC-1f |
+| **GC-3** Production | 3a schéma (contrat, acte, échéance, import) · 3b contrôles de saisie (6.1) et comparaison avec l'import précédent · 3c application en base (verrou par police) · 3d actes et ristourne · 3e échéancier · 3f écrans et vue de la production · 3g mesures `EXPLAIN` à 10 ans |
+| **GC-4** Relevés | 4a schéma (encaissement, relevé, transfert, chèque) — **fait (2026-11-09)**, migration `20261101180000`, ajout de `montantPasUnePrime` (cas T1) · 4b lecture des relevés par format — **fait (2026-11-09)**, formats proposés provisoires (Q6) · 4c reconnaissance (remboursements, tests, virements) et anti-doublon — **fait (2026-11-09)**, moteur pur, appariement prudent · 4d application en base — **fait (2026-11-09)**, 10 000 lignes + 10 000 virements en 26,8 s · 4e écrans d'import et contrôle mensuel par compte — **fait (2026-11-09)** · 4f chèques et espèces |
+| **GC-5** Rattachement | 5a schéma (rattachement, statuts) · 5b moteur des 5 méthodes · 5c verrous et contrôles de somme · 5d étape 1 (écran mobile du commercial) · 5e étape 2 (validation signée par lot) · 5f « pas une prime » · 5g aide au rattachement sans référence |
+| **GC-6** Contrôle hebdomadaire | 6a listes de travail · 6b tâches planifiées et relances 7/30/60 · 6c indicateurs |
+| **GC-7** Créances | 7a fiche client · 7b état des créances et ancienneté · 7c relevé PDF · 7d relances et promesses · 7e prévision d'encaissements |
+| **GC-8** TCA | 8a schéma · 8b moteur (taxe contenue, prorata, imputation) · 8c calcul du mois et crédits · 8d déclaration, quittance, verrouillage · 8e état par taux · 8f suivi par contrat et rappels |
+| **GC-9** Rémunérations | 9a schéma · 9b moteur (dû, exigible, payable) · 9c honoraires encaissés / non encaissés · 9d bordereaux · 9e règlements et affectations · 9f compensation · 9g relevés par partenaire |
+| **GC-10** Pilotage | 10a anomalies · 10b clôture (tâches, contrôles, verrou) · 10c tableaux de bord · 10d exports Excel et CSV en flux · 10e exports Odoo et liste des non comptabilisés |
+| **GC-11** Reprise et mise en service | 11a scripts de reprise (simulation par défaut, `--appliquer`, rattachements anciens marqués `reprise`) · 11b recette T1 à T13 · 11c vérification avant mise en service · 11d formation et documentation · 11e remise à zéro et mise en service |
+
+---
+
+## 11. Plan de branchement du lot 2 (Odoo)
+
+Condition : le lot 2 **n'ajoute aucune colonne obligatoire ni ne modifie aucune table** du lot 1 ; il ajoute des tables de rapprochement.
+
+| Donnée du lot 1 | Utilisation au lot 2 |
+|---|---|
+| `CptCompte.journalOdoo`, `compteOdoo` ; `CptProduit.compteOdoo` ; `CptClient`/`CptPartenaire.tiersOdoo` | Génération des lignes d'écriture sans paramétrage supplémentaire |
+| `CptEncaissement.pieceOdoo`, `dateComptabilisation` ; `CptReglementPartenaire.pieceOdoo` ; `CptDeclarationTca.pieceOdoo` | Remplis **automatiquement** par le lot 2 (saisis à la main au lot 1) ; base du lettrage paiement ↔ pièce |
+| Export Odoo du lot 1 (encaissements avec compte d'attente, taxe 4352 / 4351 / payée, production par branche, rémunérations) | Même sélection de données, envoyée par fichier d'import ou connexion directe |
+| Liste « sans n° de pièce Odoo » | Devient la liste des **écritures à générer** |
+| `CptPeriode` et ses contrôles bloquants (`CptTacheCloture`) | Ajout d'un contrôle bloquant « écarts Odoo justifiés » (RG-09, T10) |
+
+Tables nouvelles du lot 2 (indicatif) : `CptEcritureOdoo`, `CptLettrage`, `CptRapprochementOdoo`, `CptEcartOdoo` (avec commentaire de justification).
+
+---
+
+## 12. Tests et performance
+
+- **Moteurs purs** : exemples chiffrés du cahier (section 6) + cas limites (arrondi, reliquat, excédent, zéro).
+- **Base** : verrous et concurrence (deux validations simultanées d'un même rattachement : une seule passe ; deux confirmations de la même échéance).
+- **e2e Playwright** sur base jetable (`e2e/compta-gcN.mjs`), par rôle, avec **rejeu direct des Server Actions** pour prouver les rejets serveur.
+- **Recette** : T1 à T13 du plan (section 9), chacun automatisé quand c'est possible.
+- **Performance** : import 10 000 lignes + rapprochement < 2 min ; export 100 000 lignes < 1 min ; recherche < 1 s ; `EXPLAIN` sur jeu synthétique à 10 ans.
+- **Non-régression** : `vitest run` complet et rejeu des scripts e2e existants à chaque lot.
+- **Vocabulaire** : le test `vocabulaireRejeter` doit rester vert (« Rejeter », jamais « refuser » dans un texte visible).
+
+---
+
+## 13. Échantillons à collecter (hors dépôt)
+
+Dossier **hors du dépôt**, ex. `C:\Projets\donnees-sensibles\compta\` (le dépôt ignore déjà `/donnees-sensibles/`). **Constat du 2026-10-22 : ce dossier n'existe pas sur le poste de ce lot** ; à créer. Jamais de copie dans `docs/`, jamais de relevé réel dans un test (jeux synthétiques seulement).
+
+| Échantillon demandé | Pour | Anonymisation |
+|---|---|---|
+| Un relevé Wave Business d'un mois | GC-4 (format, références `T_…` et `cos-…`, types, frais) | Noms et téléphones remplacés ; références conservées si non sensibles |
+| Un relevé Wave hors business | GC-4 | Idem |
+| Un relevé BNI, un d'une autre banque, un de microfinance | GC-4 | Libellés conservés, noms remplacés |
+| Un export PeyaPay | GC-4 | Idem |
+| Le bordereau de production d'un mois | GC-3 | Noms clients remplacés |
+| Deux bordereaux de partenaires de formats différents | GC-9 | Idem |
+| Un état de déclaration de TCA et sa quittance | GC-8 | Montants conservés |
+| Les conventions de deux partenaires (commission, honoraires) | GC-2, GC-9 | — |
+
+---
+
+## 14. Points encore ouverts
+
+À poser au RFCRH (liste complète dans [compta-questions-rfcrh.md](compta-questions-rfcrh.md)) : **Q4** (le DG « tranche les litiges »), **Q5** (qui occupe chaque profil), puis Q3 bis, Q6 à Q16 au fil des lots. **Les lots GC-1 et GC-2 peuvent démarrer sans les réponses Q6 à Q16.** **Q4 répondue le 2026-10-23** : le DG est un superviseur (consulte, tranche les litiges, met en service, ne saisit rien) ; le détail de ses litiges (écran, trace de sa décision) reste à préciser avant le lot qui les implémente. **Q5 reste ouverte** : les rôles de départ sont provisoires et se corrigent dans `/admin/roles` sans modifier le code.

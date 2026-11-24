@@ -799,6 +799,21 @@ export async function supprimerUtilisateurAction(
     encEncaissementsConfirmes,
     encEncaissementsNonRecus,
     encSignalementsTraites,
+    cptAudits,
+    cptMisesEnService,
+    cptParametresModifies,
+    cptPiecesDeposees,
+    cptPeriodesCloturees,
+    cptTauxTcaCrees,
+    cptConventionsCreees,
+    cptContratsCrees,
+    cptActesCrees,
+    cptImportsFaits,
+    cptAnomaliesTraitees,
+    cptEncaissementsCrees,
+    cptTransfertsCrees,
+    cptChequesCrees,
+    cptRattachementsFaits,
     justificationsDecidees,
     lignesSoumisesAuDG,
     lignesDecideesParDG,
@@ -864,6 +879,26 @@ export async function supprimerUtilisateurAction(
     prisma.encEncaissement.count({ where: { confirmeParId: userId } }),
     prisma.encEncaissement.count({ where: { nonRecuParId: userId } }),
     prisma.encSignalement.count({ where: { traiteParId: userId } }),
+    // Module Gestion Compta (GC-1e, W8) : 5 relations vers User, toutes en RESTRICT (docs/compta-conception.md §3).
+    prisma.cptAudit.count({ where: { userId } }),
+    prisma.cptMiseEnService.count({ where: { activeeParId: userId } }),
+    prisma.cptParametre.count({ where: { majParId: userId } }),
+    prisma.cptPieceJointe.count({ where: { deposeeParId: userId } }),
+    prisma.cptPeriode.count({ where: { clotureeParId: userId } }),
+    prisma.cptTauxTca.count({ where: { creeParId: userId } }),
+    prisma.cptConvention.count({ where: { creeParId: userId } }),
+    // GC-3 : production (4 relations vers User, toutes en RESTRICT).
+    prisma.cptContrat.count({ where: { creeParId: userId } }),
+    prisma.cptActe.count({ where: { creeParId: userId } }),
+    prisma.cptImport.count({ where: { creeParId: userId } }),
+    prisma.cptAnomalie.count({ where: { traiteeParId: userId } }),
+    // GC-4 : encaissements, virements internes et chèques (3 relations vers User, toutes en RESTRICT).
+    prisma.cptEncaissement.count({ where: { creeParId: userId } }),
+    prisma.cptTransfertInterne.count({ where: { creeParId: userId } }),
+    prisma.cptCheque.count({ where: { creeParId: userId } }),
+    prisma.cptRattachement.count({
+      where: { OR: [{ proposeParId: userId }, { confirmeParId: userId }, { valideParId: userId }, { rejeteParId: userId }] },
+    }),
     // Pointage V2 : justifications de retard / départ anticipé décidées par ce compte (RESTRICT).
     prisma.justificationPointage.count({ where: { decideurId: userId } }),
     // Soumission au DG ligne par ligne (2026-10-10) : 2 relations vers User supplémentaires (SET NULL en base).
@@ -938,6 +973,21 @@ export async function supprimerUtilisateurAction(
   if (encEncaissementsConfirmes > 0) blocages.push(`confirmé ${encEncaissementsConfirmes} encaissement(s)`);
   if (encEncaissementsNonRecus > 0) blocages.push(`déclaré ${encEncaissementsNonRecus} encaissement(s) non reçu(s)`);
   if (encSignalementsTraites > 0) blocages.push(`traité ${encSignalementsTraites} signalement(s) (encaissements)`);
+  if (cptAudits > 0) blocages.push(`${cptAudits} entrée(s) dans le journal d'audit de Gestion Compta`);
+  if (cptMisesEnService > 0) blocages.push("mis le module Gestion Compta en service");
+  if (cptParametresModifies > 0) blocages.push(`modifié ${cptParametresModifies} paramètre(s) de Gestion Compta`);
+  if (cptPiecesDeposees > 0) blocages.push(`déposé ${cptPiecesDeposees} pièce(s) jointe(s) de Gestion Compta`);
+  if (cptPeriodesCloturees > 0) blocages.push(`clôturé ${cptPeriodesCloturees} période(s) de Gestion Compta`);
+  if (cptTauxTcaCrees > 0) blocages.push(`saisi ${cptTauxTcaCrees} taux de TCA de Gestion Compta`);
+  if (cptConventionsCreees > 0) blocages.push(`saisi ${cptConventionsCreees} convention(s) de rémunération de Gestion Compta`);
+  if (cptContratsCrees > 0) blocages.push(`saisi ${cptContratsCrees} contrat(s) de Gestion Compta`);
+  if (cptActesCrees > 0) blocages.push(`saisi ${cptActesCrees} acte(s) de Gestion Compta`);
+  if (cptImportsFaits > 0) blocages.push(`importé ${cptImportsFaits} fichier(s) dans Gestion Compta`);
+  if (cptAnomaliesTraitees > 0) blocages.push(`traité ${cptAnomaliesTraitees} anomalie(s) de Gestion Compta`);
+  if (cptEncaissementsCrees > 0) blocages.push(`saisi ou importé ${cptEncaissementsCrees} encaissement(s) de Gestion Compta`);
+  if (cptTransfertsCrees > 0) blocages.push(`rapproché ${cptTransfertsCrees} virement(s) interne(s) de Gestion Compta`);
+  if (cptChequesCrees > 0) blocages.push(`enregistré ${cptChequesCrees} chèque(s) de Gestion Compta`);
+  if (cptRattachementsFaits > 0) blocages.push(`proposé, confirmé, validé ou rejeté ${cptRattachementsFaits} rattachement(s) de Gestion Compta`);
   if (justificationsDecidees > 0)
     blocages.push(`décidé ${justificationsDecidees} justification(s) de retard ou de départ anticipé`);
   if (lignesSoumisesAuDG > 0) blocages.push(`soumis ${lignesSoumisesAuDG} ligne(s) d'article au DG`);

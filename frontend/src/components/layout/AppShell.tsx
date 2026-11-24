@@ -53,6 +53,10 @@ interface AppShellProps {
   /** `feedback.moderer` : ajoute "Modération Feedbacks" (RH & DG). */
   canModererFeedback?: boolean;
   canConsulterEncaissements?: boolean;
+  /** Voir `NavFlags.canConsulterCompta`. */
+  canConsulterCompta?: boolean;
+  /** Voir `NavFlags.comptaRubriques`. */
+  comptaRubriques?: string[];
   demandesServiceAValider?: number | null;
   demandesDGADecider?: number | null;
   justificationsADecider?: number | null;
@@ -101,6 +105,8 @@ export function AppShell({
   canConsulterHistorique = false,
   canModererFeedback = false,
   canConsulterEncaissements = false,
+  canConsulterCompta = false,
+  comptaRubriques = [],
   demandesServiceAValider = null,
   demandesDGADecider = null,
   justificationsADecider = null,
@@ -210,6 +216,8 @@ export function AppShell({
         canConsulterHistorique={canConsulterHistorique}
         canModererFeedback={canModererFeedback}
         canConsulterEncaissements={canConsulterEncaissements}
+        canConsulterCompta={canConsulterCompta}
+        comptaRubriques={comptaRubriques}
         demandesServiceAValider={demandesServiceAValider}
         demandesDGADecider={demandesDGADecider}
         justificationsADecider={justificationsADecider}

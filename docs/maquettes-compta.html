@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maquettes Gestion Compta</title>
+<style>
+  :root {
+    --primary: #004B9C; --primary-bg: #E6EEF8; --light: #51AEE2;
+    --danger: #B80000; --danger-bg: #FDECEC;
+    --warning: #A8480F; --warning-bg: #FDF0E6;
+    --success: #19703A; --success-bg: #E7F5EC;
+    --neutral: #4B5563; --neutral-bg: #EEF0F3;
+    --border: #D5DAE1; --muted: #5B6573; --bg: #fff; --text: #14202E;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Montserrat, "Segoe UI", Arial, sans-serif; color: var(--text); background: #F5F7FA; line-height: 1.45; }
+  header.page { background: var(--primary); color: #fff; padding: 20px 24px; }
+  header.page h1 { margin: 0 0 4px; font-size: 20px; }
+  header.page p { margin: 0; font-size: 13px; opacity: .9; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  .avertissement { background: var(--warning-bg); border: 1px solid var(--warning); color: var(--warning); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 24px; }
+  section.ecran { margin-bottom: 40px; }
+  section.ecran > h2 { font-size: 16px; margin: 0 0 4px; color: var(--primary); }
+  .meta { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+  .cadre { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: 0 2px 10px rgba(0,75,156,.08); }
+  .titre-page { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .titre-page h3 { margin: 0; font-size: 17px; }
+  .titre-page p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+  .grille { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .carte { border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: 10px; padding: 12px; background: #fff; }
+  .carte.alerte { border-left-color: var(--danger); } .carte.attention { border-left-color: var(--warning); } .carte.ok { border-left-color: var(--success); }
+  .carte .libelle { font-size: 12px; color: var(--muted); }
+  .carte .valeur { font-size: 26px; font-weight: 800; }
+  .carte .detail { font-size: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 11px; color: var(--muted); border-bottom: 2px solid var(--border); padding: 8px 8px; white-space: nowrap; }
+  td { border-bottom: 1px solid var(--border); padding: 9px 8px; vertical-align: top; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { font-weight: 800; border-top: 2px solid var(--border); background: #FAFBFC; }
+  .tableau-defil { overflow-x: auto; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .b-info { background: var(--primary-bg); color: var(--primary); } .b-ok { background: var(--success-bg); color: var(--success); }
+  .b-att { background: var(--warning-bg); color: var(--warning); } .b-err { background: var(--danger-bg); color: var(--danger); }
+  .b-neu { background: var(--neutral-bg); color: var(--neutral); }
+  button, .bouton { font: inherit; font-size: 12px; font-weight: 700; border: 0; border-radius: 8px; padding: 7px 12px; background: var(--primary); color: #fff; cursor: pointer; text-decoration: none; display: inline-block; }
+  .bouton.sec { background: #fff; color: var(--primary); border: 1px solid var(--primary); }
+  button[disabled] { background: #D8DCE2; color: #6B7280; border: 0; cursor: not-allowed; }
+  .raison { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; max-width: 230px; white-space: normal; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  td .note { margin-top: 2px; }
+  .deux { display: grid; gap: 16px; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { .deux { grid-template-columns: 1fr 390px; align-items: start; } }
+  .telephone { width: 100%; max-width: 390px; margin: 0 auto; border: 8px solid #1F2937; border-radius: 28px; background: #F5F7FA; padding: 12px; }
+  .telephone .barre { background: var(--primary); color: #fff; border-radius: 10px; padding: 10px 12px; font-weight: 700; font-size: 14px; margin-bottom: 10px; }
+  .fiche { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  .fiche .montant { font-size: 22px; font-weight: 800; }
+  .fiche .ligne { font-size: 12px; color: var(--muted); }
+  .fiche .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .fiche .actions > * { flex: 1; text-align: center; min-width: 120px; }
+  .barre-anciennete { display: flex; height: 22px; border-radius: 6px; overflow: hidden; margin: 8px 0; }
+  .barre-anciennete span { display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 700; }
+  .liste-controle { list-style: none; margin: 0; padding: 0; }
+  .liste-controle li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; align-items: center; }
+  .chaine { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; margin-bottom: 12px; }
+  .chaine .etape { background: var(--primary-bg); color: var(--primary); border-radius: 8px; padding: 4px 10px; font-weight: 700; }
+  .chaine .etape.fait { background: var(--success-bg); color: var(--success); }
+</style>
+</head>
+<body>
+<header class="page">
+  <h1>Gestion Compta : maquettes des écrans clés (lot GC-0)</h1>
+  <p>Document du 22/10/2026 · référencé par <code>compta-conception.md</code> · fait foi pour la mise en page, pas pour les couleurs exactes (le portail utilise ses propres jetons)</p>
+</header>
+<main>
+<div class="avertissement"><strong>Maquette non fonctionnelle.</strong> Toutes les données sont fictives ou reprennent les exemples du cahier des charges. Les boutons sans droit ou hors état restent visibles, grisés, avec la raison (convention du portail).</div>
+
+<!-- 1. ACCUEIL -->
+<section class="ecran">
+  <h2>1. Accueil du module (profil RFCRH)</h2>
+  <p class="meta">Route <code>/compta</code> · permission <code>cpt.consulter</code> · les cartes ne montrent que ce que le rôle peut traiter</p>
+  <div class="cadre">
+    <div class="titre-page"><div><h3>Accueil Gestion Compta</h3><p>Période en cours : septembre 2026 (ouverte)</p></div><span class="badge b-info">Période ouverte</span></div>
+    <div class="grille">
+      <div class="carte attention"><div class="libelle">Rattachements à valider</div><div class="valeur">12</div><div class="detail">dont 4 déjà confirmés par le commercial</div></div>
+      <div class="carte alerte"><div class="libelle">Encaissements sans contrat</div><div class="valeur">34</div><div class="detail">8 depuis plus de 7 jours · 2 depuis plus de 30 jours</div></div>
+      <div class="carte attention"><div class="libelle">Contrats déclarés payés sans encaissement</div><div class="valeur">5</div><div class="detail">à signaler à la production</div></div>
+      <div class="carte"><div class="libelle">Taxe du mois à déclarer</div><div class="valeur">1 132 675</div><div class="detail">FCFA · à payer avant le 20 du mois suivant</div></div>
+      <div class="carte alerte"><div class="libelle">Échéances en retard</div><div class="valeur">57</div><div class="detail">6 clients à plus de 90 jours</div></div>
+      <div class="carte ok"><div class="libelle">Clôture de la période</div><div class="valeur">3 / 5</div><div class="detail">tâches terminées · 1 contrôle bloquant</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. RATTACHEMENTS -->
+<section class="ecran">
+  <h2>2. Rattachements à valider (étape 2, RFCRH)</h2>
+  <p class="meta">Route <code>/compta/rattachements</code> · permission <code>cpt.valider_rattachement</code> · validation par ligne ou par lot, signée</p>
+  <div class="cadre">
+    <div class="titre-page"><div><h3>Rattachements à valider</h3><p>Un rattachement validé rend la prime payée. Rien n'a d'effet avant.</p></div>
+      <div><button>Valider la sélection (2)</button></div></div>
+    <div class="chaine"><span class="etape fait">Proposé</span> → <span class="etape">Confirmé par le commercial (si requis)</span> → <span class="etape">Validé par le RFCRH</span></div>
+    <div class="tableau-defil">
+    <table>
+      <thead><tr><th></th><th>Encaissement</th><th>Contrat · échéance</th><th class="num">Montant</th><th>Méthode</th><th>Preuve</th><th>Étape 1 (commercial)</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="checkbox" checked aria-label="Sélectionner"></td>
+          <td>CPE-2026-000123<br><span class="note">Wave Business · 06/08/2026 · T_6247IZRDFTEOZ6RQ</span></td>
+          <td>IRM-2026-000728-I00000<br><span class="note">échéance 6 · client fictif</span></td>
+          <td class="num">2 500</td><td>Référence exacte</td>
+          <td><span class="badge b-ok">Preuve</span></td><td><span class="badge b-neu">Non requise</span></td>
+          <td><button>Valider</button> <button class="bouton sec">Rejeter</button></td>
+        </tr>
+        <tr>
+          <td><input type="checkbox" checked aria-label="Sélectionner"></td>
+          <td>CPE-2026-000131<br><span class="note">BNI · 12/08/2026 · virement</span></td>
+          <td>GRP-2026-000041-G00000<br><span class="note">échéance 2 · société fictive</span></td>
+          <td class="num">50 000</td><td>Montant et date</td>
+          <td><span class="badge b-att">Déduction</span></td>
+          <td><span class="badge b-ok">Confirmé</span><br><span class="note">reçu joint · commercial · 13/08</span></td>
+          <td><button>Valider</button> <button class="bouton sec">Rejeter</button></td>
+        </tr>
+        <tr>
+          <td><input type="checkbox" disabled aria-label="Sélectionner"></td>
+          <td>CPE-2026-000140<br><span class="note">Wave hors business · 14/08/2026</span></td>
+          <td>IRM-2026-000802-I00000<br><span class="note">échéance 3</span></td>
+          <td class="num">1 500</td><td>Probable (même nom)</td>
+          <td><span class="badge b-err">À confirmer</span></td>
+          <td><span class="badge b-att">En attente</span></td>
+          <td><button disabled>Valider</button> <button class="bouton sec">Rejeter</button>
+            <span class="raison">Validation impossible : la confirmation du commercial avec le reçu est requise pour une correspondance probable.</span></td>
+        </tr>
+      </tbody>
+    </table></div>
+    <p class="note">Les montants affectés à chaque échéance sont modifiables avant validation (un encaissement peut couvrir plusieurs échéances et inversement). Le reste non affecté reste visible comme « reste à rattacher ».</p>
+  </div>
+</section>
+
+<!-- 3. MOBILE COMMERCIAL -->
+<section class="ecran">
+  <h2>3. Écran du commercial sur téléphone (étape 1)</h2>
+  <p class="meta">Route <code>/compta/a-identifier</code> · permissions <code>cpt.identifier_encaissement</code> et <code>cpt.confirmer_rattachement</code> · conçu à 390 px, sans défilement horizontal</p>
+  <div class="telephone">
+    <div class="barre">Encaissements à identifier (8)</div>
+    <div class="fiche">
+      <span class="badge b-err">Depuis 9 jours</span>
+      <div class="montant">1 500 FCFA</div>
+      <div class="ligne">Wave Business · 13/10/2026 · T_8821ABCDEF12345</div>
+      <div class="ligne">Payeur : <strong>nom fictif</strong> · 07 00 00 00 00</div>
+      <div class="ligne">Proposition : INDIVIDUELLE CONDUCTEUR (1 500 = tarif du produit)</div>
+      <div class="actions"><a class="bouton sec" href="#">Appeler</a><button>Identifier</button></div>
+    </div>
+    <div class="fiche">
+      <span class="badge b-att">Déduction à confirmer</span>
+      <div class="montant">2 500 FCFA</div>
+      <div class="ligne">BNI · 12/10/2026 · contrat IRM-2026-000728-I00000</div>
+      <div class="ligne">Montant et date concordent (écart 1 jour)</div>
+      <div class="ligne">Reçu : <em>à joindre (photo ou numéro)</em></div>
+      <div class="actions"><button class="bouton sec">Joindre le reçu</button><button disabled>Confirmer</button></div>
+      <span class="raison">Confirmation impossible : joignez d'abord le reçu.</span>
+    </div>
+  </div>
+  <p class="note">Le commercial ne saisit pas de contrat : si le contrat n'existe pas, il l'indique et la production est alertée.</p>
+</section>
+
+<!-- 4. FICHE CLIENT / CREANCES -->
+<section class="ecran">
+  <h2>4. Fiche client et créances (cas T12)</h2>
+  <p class="meta">Route <code>/compta/clients/[id]</code> · situation au 30/09/2026 · l'ancienneté se compte depuis la date <strong>prévue</strong> de la plus ancienne échéance impayée</p>
+  <div class="cadre">
+    <div class="titre-page"><div><h3>Société fictive · contrat groupe 6 077 832 FCFA</h3><p>12 mensualités de 506 486 · 2 payées (juillet et septembre)</p></div>
+      <div><button class="bouton sec">Relevé imprimable</button> <button>Enregistrer une relance</button></div></div>
+    <div class="grille" style="margin-bottom:14px">
+      <div class="carte"><div class="libelle">Prime émise</div><div class="valeur">6 077 832</div></div>
+      <div class="carte ok"><div class="libelle">Encaissé prouvé</div><div class="valeur">1 012 972</div></div>
+      <div class="carte alerte"><div class="libelle">Reste dû</div><div class="valeur">5 064 860</div><div class="detail">dont en retard : 506 486</div></div>
+      <div class="carte attention"><div class="libelle">Ancienneté</div><div class="valeur">56 j</div><div class="detail">tranche 31 à 90 jours</div></div>
+    </div>
+    <div class="tableau-defil">
+    <table>
+      <thead><tr><th>Rang</th><th>Date prévue</th><th class="num">Montant dû</th><th class="num">Réglé</th><th>État</th></tr></thead>
+      <tbody>
+        <tr><td>1 · juillet</td><td>05/07/2026</td><td class="num">506 486</td><td class="num">506 486</td><td><span class="badge b-ok">Payée</span></td></tr>
+        <tr><td>2 · août</td><td>05/08/2026</td><td class="num">506 486</td><td class="num">0</td><td><span class="badge b-err">En retard (56 jours)</span></td></tr>
+        <tr><td>3 · septembre</td><td>05/09/2026</td><td class="num">506 486</td><td class="num">506 486</td><td><span class="badge b-ok">Payée</span></td></tr>
+        <tr><td>4 · octobre</td><td>05/10/2026</td><td class="num">506 486</td><td class="num">0</td><td><span class="badge b-info">À venir</span></td></tr>
+        <tr><td colspan="5" class="note">… rangs 5 à 12</td></tr>
+        <tr class="total"><td colspan="2">Total des 12 échéances</td><td class="num">6 077 832</td><td class="num">1 012 972</td><td></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Rappel proposé : relancer pour l'échéance d'août. Promesse de paiement : <em>aucune enregistrée</em>.</p>
+    <div class="barre-anciennete" aria-label="Répartition des créances par ancienneté (exemple)">
+      <span style="background:#19703A;flex:5">0 à 30 j</span><span style="background:#A8480F;flex:3">31 à 90 j</span><span style="background:#B80000;flex:1.5">91 à 180 j</span><span style="background:#7A0000;flex:.8">&gt; 180</span>
+    </div>
+  </div>
+</section>
+
+<!-- 5. TCA -->
+<section class="ecran">
+  <h2>5. Taxe sur les contrats : état de déclaration du mois</h2>
+  <p class="meta">Route <code>/compta/tca/2026-09</code> · permissions <code>cpt.declarer_tca</code> et <code>cpt.payer_tca</code> · les lignes déjà déclarées sont verrouillées</p>
+  <div class="deux">
+  <div class="cadre">
+    <div class="titre-page"><div><h3>État par taux · septembre 2026</h3><p>À reporter sur le formulaire de l'administration</p></div></div>
+    <div class="tableau-defil">
+    <table>
+      <thead><tr><th>Branche</th><th class="num">Primes et accessoires hors taxe</th><th class="num">Remboursées</th><th class="num">Base</th><th class="num">Taux</th><th class="num">Impôt</th></tr></thead>
+      <tbody>
+        <tr><td>Accidents</td><td class="num">12 450 000</td><td class="num">120 000</td><td class="num">12 330 000</td><td class="num">7,25 %</td><td class="num">893 925</td></tr>
+        <tr><td>Santé groupe</td><td class="num">3 200 000</td><td class="num">0</td><td class="num">3 200 000</td><td class="num">1,5 %</td><td class="num">48 000</td></tr>
+        <tr><td>Santé individuelle, Coups durs</td><td class="num">1 800 000</td><td class="num">0</td><td class="num">1 800 000</td><td class="num">4 %</td><td class="num">72 000</td></tr>
+        <tr><td>Incendie</td><td class="num">950 000</td><td class="num">0</td><td class="num">950 000</td><td class="num">12,5 %</td><td class="num">118 750</td></tr>
+        <tr><td>Décès</td><td class="num">600 000</td><td class="num">0</td><td class="num">600 000</td><td class="num">0 %</td><td class="num">0</td></tr>
+        <tr class="total"><td>Total</td><td class="num">19 000 000</td><td class="num">120 000</td><td class="num">18 880 000</td><td></td><td class="num">1 132 675</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Les crédits (taxe payée en trop, correction de taux) ne figurent pas sur ce formulaire : ils sont suivis à part avec leur origine.</p>
+  </div>
+  <div class="cadre">
+    <div class="titre-page"><div><h3>Calcul du mois</h3></div></div>
+    <table>
+      <tbody>
+        <tr><td>Taxe due depuis le début</td><td class="num">6 480 120</td></tr>
+        <tr><td>− Taxe déjà payée (quittances)</td><td class="num">5 346 445</td></tr>
+        <tr><td>− Corrections validées</td><td class="num">1 000</td></tr>
+        <tr class="total"><td>À payer</td><td class="num">1 132 675</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Si le résultat est négatif, il devient un crédit reporté sur le mois suivant.</p>
+    <p><button>Déclarer le mois</button> <button disabled>Enregistrer la quittance</button>
+    <span class="raison">Impossible avant la déclaration du mois.</span></p>
+  </div>
+  </div>
+</section>
+
+<!-- 6. PARTENAIRE -->
+<section class="ecran">
+  <h2>6. Fiche partenaire : soldes séparés par nature (cas T6 ter et T6 bis)</h2>
+  <p class="meta">Route <code>/compta/partenaires/[id]</code> · aucune compensation automatique entre natures · règlement : <code>cpt.regler_partenaire</code></p>
+  <div class="cadre">
+    <div class="titre-page"><div><h3>Partenaire fictif · courtier et gestionnaire santé</h3><p>Rôles : apporteur, bénéficiaire, gestionnaire</p></div><button>Enregistrer un règlement</button></div>
+    <div class="tableau-defil">
+    <table>
+      <thead><tr><th>Nature</th><th>Mode</th><th class="num">Dû</th><th class="num">Exigible</th><th class="num">Payable aujourd'hui</th><th class="num">Payé</th><th class="num">Reste payable</th><th class="num">Reste dû</th></tr></thead>
+      <tbody>
+        <tr><td>Commission<br><span class="note">contrat de 120 000 en 12 mensualités, 3 encaissées</span></td><td>Au prorata</td><td class="num">12 000</td><td class="num">3 000</td><td class="num">3 000</td><td class="num">3 000</td><td class="num">0</td><td class="num">9 000</td></tr>
+        <tr><td>Accessoires reversés</td><td>En une fois</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+        <tr><td>Honoraires de gestion<br><span class="note">sur primes <strong>encaissées</strong></span></td><td>En une fois</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+        <tr><td>Honoraires de gestion<br><span class="note">sur primes <strong>non encaissées</strong> (contrat apporté par SIM)</span></td><td>En une fois</td><td class="num">1 800</td><td class="num">1 800</td><td class="num">1 800</td><td class="num">0</td><td class="num">1 800</td><td class="num">1 800</td></tr>
+        <tr><td>Honoraires de gestion<br><span class="note">contrat apporté par le gestionnaire (NOVELIA) : exigible après encaissement</span></td><td>Au prorata</td><td class="num">1 800</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">1 800</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Un règlement d'honoraires ne réduit jamais les commissions dues. Les montants d'honoraires de cette maquette sont purement illustratifs.</p>
+  </div>
+</section>
+
+<!-- 7. CLOTURE -->
+<section class="ecran">
+  <h2>7. Clôture mensuelle</h2>
+  <p class="meta">Route <code>/compta/cloture/2026-09</code> · permission <code>cpt.cloturer_periode</code> · clôture signée, période verrouillée ensuite</p>
+  <div class="cadre">
+    <div class="titre-page"><div><h3>Clôture de septembre 2026</h3><p>Une période clôturée n'est plus modifiable ; une correction se fait sur la période ouverte, avec un motif.</p></div>
+      <div><button disabled>Clôturer la période</button><span class="raison">Impossible : un contrôle bloquant n'est pas levé.</span></div></div>
+    <ul class="liste-controle">
+      <li><span>Encaissements du mois saisis dans Odoo (liste des pièces manquantes vide)</span><span class="badge b-att">Saisie manuelle au lot 1</span></li>
+      <li><span>Rattachements du mois validés (0 en attente)</span><span class="badge b-err">Bloquant : 3 en attente de validation</span></li>
+      <li><span>Taxe déclarée et payée (quittance enregistrée)</span><span class="badge b-ok">Terminé</span></li>
+      <li><span>Rémunérations exigibles calculées</span><span class="badge b-ok">Terminé</span></li>
+      <li><span>Primes acquises et non acquises figées</span><span class="badge b-ok">Terminé</span></li>
+      <li><span>Rapprochement avec Odoo justifié (lot 2)</span><span class="badge b-neu">Non applicable au lot 1</span></li>
+    </ul>
+    <p class="note">Historique des clôtures : août 2026 clôturée le 03/09/2026 par le RFCRH (signature) · juillet 2026 clôturée le 04/08/2026.</p>
+  </div>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,6 +1,7 @@
 import { cleVerrouTache, erreurCourte, prisma, type DeclenchementTache, type NomTache, type StatutExecutionTache } from "backend";
 import { journaliserIncident } from "@/lib/journalTechnique";
 import { executerAbsences } from "./absences";
+import { executerComptaControleHebdo, executerComptaRappelTca, executerComptaRelances } from "./compta";
 import { executerPurge } from "./purge";
 import { executerRappelsConges } from "./rappelsConges";
 import { executerRelancesJustification } from "./relancesJustification";
@@ -16,6 +17,9 @@ const FONCTIONS: Record<NomTache, () => Promise<unknown>> = {
   ABSENCES: executerAbsences,
   PURGE: executerPurge,
   RAPPELS_CONGES: executerRappelsConges,
+  COMPTA_CONTROLE_HEBDO: executerComptaControleHebdo,
+  COMPTA_RELANCES: executerComptaRelances,
+  COMPTA_RAPPEL_TCA: executerComptaRappelTca,
 };
 
 /**
