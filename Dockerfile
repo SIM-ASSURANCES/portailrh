@@ -33,7 +33,7 @@
 # invoqué en CLI (migrations/seed) depuis l'image finale.
 # ============================================================
 
-ARG NODE_IMAGE=node:20-bookworm-slim
+ARG NODE_IMAGE=node:22-bookworm-slim
 
 # ---------- Stage 1 : deps (installation complète, pour le build) ----------
 FROM ${NODE_IMAGE} AS deps
@@ -57,7 +57,7 @@ COPY backend/package.json ./backend/package.json
 # prend, par construction, que les `package.json`, jamais leurs dépendances vendues).
 COPY backend/vendor ./backend/vendor
 COPY frontend/package.json ./frontend/package.json
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci --fetch-retries=5 --fetch-retry-maxtimeout=120000
 
 # ---------- Stage 2 : builder ----------
 FROM ${NODE_IMAGE} AS builder
@@ -134,7 +134,7 @@ COPY backend/package.json ./backend/package.json
 # `backend/package.json`, requise avant `npm ci`.
 COPY backend/vendor ./backend/vendor
 COPY frontend/package.json ./frontend/package.json
-RUN npm ci --omit=dev
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --fetch-retries=5 --fetch-retry-maxtimeout=120000
 
 # ---------- Stage 4 : runner (image finale) ----------
 FROM ${NODE_IMAGE} AS runner

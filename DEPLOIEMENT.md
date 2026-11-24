@@ -202,7 +202,7 @@ Penser aussi à vérifier sur `/admin/notifications` que les responsables de ser
 
 ## Récapitulatif des choix techniques
 
-- **Image de base Debian** (`node:20-bookworm-slim`), pas Alpine — voir
+- **Image de base Debian** (`node:22-bookworm-slim` (Node 22 : exigé par `firebase-admin` 14.4). Les `npm ci` du `Dockerfile` utilisent un cache BuildKit (`--mount=type=cache,target=/root/.npm`) et `--fetch-retries=5` : un build relancé après une coupure réseau repart de ce qui est déjà téléchargé. **Au démarrage, `prisma migrate deploy` et `npx` contactent le registre npm** : sur un réseau instable, `NPM_CONFIG_UPDATE_NOTIFIER=false` (et `CHECKPOINT_DISABLE=1`, `PRISMA_HIDE_UPDATE_MESSAGE=1`) évite qu'un démarrage reste bloqué (constaté lors du test de l'image)), pas Alpine — voir
   les commentaires en tête du `Dockerfile` pour le détail de l'analyse
   Prisma (driver adapter `@prisma/adapter-pg`, pas de moteur de requête
   binaire au runtime, `binaryTargets` volontairement non ajouté).
