@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 
 import { AppShell } from "@/components/layout/AppShell";
+import { rubriquesComptaVisibles } from "@/components/layout/navCompta";
 import { BanniereSignature } from "@/components/signature/BanniereSignature";
 import { FournisseurSignature } from "@/components/signature/ContexteSignature";
 import { getSession, hasPermission, isAdmin } from "@/lib/auth";
@@ -151,6 +152,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       canConsulterHistorique={hasPermission(session, "pointage.consulter_historique")}
       canModererFeedback={hasPermission(session, "feedback.moderer")}
       canConsulterEncaissements={hasPermission(session, "enc.consulter")}
+      canConsulterCompta={hasPermission(session, "cpt.consulter")}
+      comptaRubriques={rubriquesComptaVisibles((permission) => hasPermission(session, permission))}
       demandesServiceAValider={demandesServiceAValider}
       demandesDGADecider={demandesDGADecider}
       justificationsADecider={justificationsADecider}

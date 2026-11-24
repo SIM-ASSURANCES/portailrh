@@ -1,11 +1,15 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   dernierCreneau,
   erreurCourte,
+  LIBELLE_TACHE,
   libelleBilan,
   prochaineExecution,
   prochainCreneau,
   tacheEnRetard,
+  TOUTES_LES_TACHES,
   tachesDues,
 } from "./planificateur";
 
@@ -122,12 +126,109 @@ describe("prochaine exécution et retard", () => {
   });
 });
 
+describe("Gestion Compta : contrôle hebdomadaire le lundi à 07:30", () => {
+  // 2026-10-05, 12 et 19 sont des lundis ; le 14 est un mercredi.
+  it("le créneau est le dernier lundi 07:30 passé", () => {
+    expect(dernierCreneau("COMPTA_CONTROLE_HEBDO", d(14, 10, 0))).toEqual(d(12, 7, 30));
+    expect(dernierCreneau("COMPTA_CONTROLE_HEBDO", d(12, 7, 29))).toEqual(d(5, 7, 30));
+    expect(dernierCreneau("COMPTA_CONTROLE_HEBDO", d(12, 7, 30))).toEqual(d(12, 7, 30));
+  });
+
+  it("le prochain créneau est le lundi suivant", () => {
+    expect(prochainCreneau("COMPTA_CONTROLE_HEBDO", d(14, 10, 0))).toEqual(d(19, 7, 30));
+    expect(prochainCreneau("COMPTA_CONTROLE_HEBDO", d(12, 7, 30))).toEqual(d(19, 7, 30));
+  });
+
+  it("due une seule fois par lundi, rattrapée après un arrêt", () => {
+    expect(tachesDues(d(12, 7, 30), { COMPTA_CONTROLE_HEBDO: d(5, 7, 30, 1) })).toContain("COMPTA_CONTROLE_HEBDO");
+    expect(tachesDues(d(12, 9, 0), { COMPTA_CONTROLE_HEBDO: d(12, 7, 30, 2) })).not.toContain("COMPTA_CONTROLE_HEBDO");
+    // Serveur arrêté le lundi : rattrapée le mardi au premier passage.
+    expect(tachesDues(d(13, 9, 0), { COMPTA_CONTROLE_HEBDO: d(5, 7, 30, 1) })).toContain("COMPTA_CONTROLE_HEBDO");
+  });
+});
+
+describe("Gestion Compta : relances du lundi au vendredi à 08:00", () => {
+  it("créneau d'un samedi → vendredi 08:00, d'un lundi 07:00 → vendredi 08:00", () => {
+    expect(dernierCreneau("COMPTA_RELANCES", d(17, 12, 0))).toEqual(d(16, 8, 0));
+    expect(dernierCreneau("COMPTA_RELANCES", d(19, 7, 0))).toEqual(d(16, 8, 0));
+    expect(dernierCreneau("COMPTA_RELANCES", d(14, 8, 0))).toEqual(d(14, 8, 0));
+  });
+
+  it("le prochain créneau saute le week-end", () => {
+    expect(prochainCreneau("COMPTA_RELANCES", d(16, 9, 0))).toEqual(d(19, 8, 0));
+  });
+
+  it("rien le week-end : le vendredi couvert, pas de nouvelle exécution", () => {
+    expect(tachesDues(d(17, 12, 0), { COMPTA_RELANCES: d(16, 8, 0, 3) })).not.toContain("COMPTA_RELANCES");
+    expect(tachesDues(d(19, 8, 0), { COMPTA_RELANCES: d(16, 8, 0, 3) })).toContain("COMPTA_RELANCES");
+  });
+});
+
+describe("Gestion Compta : rappel de la taxe les 10 et 17 de chaque mois", () => {
+  // 2026-10-10 et 2026-10-17 sont des samedis : le rappel est LITTÉRAL (le 10 et le 17), week-end compris.
+  it("créneau du 10 ou du 17, à 08:00", () => {
+    expect(dernierCreneau("COMPTA_RAPPEL_TCA", d(14, 12, 0))).toEqual(d(10, 8, 0));
+    expect(dernierCreneau("COMPTA_RAPPEL_TCA", d(17, 7, 59))).toEqual(d(10, 8, 0));
+    expect(dernierCreneau("COMPTA_RAPPEL_TCA", d(17, 8, 0))).toEqual(d(17, 8, 0));
+  });
+
+  it("franchit un mois entier : l'écart du 17 au 10 suivant dépasse les 8 jours des autres tâches", () => {
+    // Lundi 9 novembre : le dernier créneau est le 17 octobre (23 jours en arrière).
+    expect(dernierCreneau("COMPTA_RAPPEL_TCA", new Date(2026, 10, 9, 12, 0))).toEqual(d(17, 8, 0));
+    // Le prochain après le 17 octobre est le 10 novembre (24 jours en avant), et non un repli de 24 h.
+    expect(prochainCreneau("COMPTA_RAPPEL_TCA", d(17, 9, 0))).toEqual(new Date(2026, 10, 10, 8, 0));
+  });
+
+  it("chaque créneau n'est dû qu'une fois", () => {
+    expect(tachesDues(d(10, 8, 0), { COMPTA_RAPPEL_TCA: new Date(2026, 8, 17, 8, 0, 2) })).toContain("COMPTA_RAPPEL_TCA");
+    expect(tachesDues(d(12, 9, 0), { COMPTA_RAPPEL_TCA: d(10, 8, 0, 2) })).not.toContain("COMPTA_RAPPEL_TCA");
+    expect(tachesDues(d(17, 8, 0), { COMPTA_RAPPEL_TCA: d(10, 8, 0, 2) })).toContain("COMPTA_RAPPEL_TCA");
+  });
+
+  it("en retard seulement 30 minutes après le créneau, sans succès", () => {
+    expect(tacheEnRetard("COMPTA_RAPPEL_TCA", d(10, 8, 30), null)).toBe(false);
+    expect(tacheEnRetard("COMPTA_RAPPEL_TCA", d(10, 8, 31), null)).toBe(true);
+    expect(tacheEnRetard("COMPTA_RAPPEL_TCA", d(10, 8, 31), d(10, 8, 1))).toBe(false);
+    // Entre deux créneaux, rien n'est en retard tant que le dernier a réussi.
+    expect(tacheEnRetard("COMPTA_RAPPEL_TCA", d(14, 12, 0), d(10, 8, 1))).toBe(false);
+  });
+});
+
+describe("registre des tâches : planificateur, enum Prisma et migrations restent synchronisés", () => {
+  const racineBackend = fileURLToPath(new URL("..", import.meta.url));
+  const schema = readFileSync(`${racineBackend}prisma/schema.prisma`, "utf8");
+  const valeursEnum = [...(/enum TacheNom \{([^}]*)\}/.exec(schema)?.[1] ?? "").matchAll(/^\s*(\w+)\s*$/gm)].map((m) => m[1]);
+
+  it("chaque tâche du registre est une valeur de l'enum TacheNom, et inversement", () => {
+    expect([...valeursEnum].sort()).toEqual([...TOUTES_LES_TACHES].sort());
+  });
+
+  it("chaque tâche a un libellé", () => {
+    expect(Object.keys(LIBELLE_TACHE).sort()).toEqual([...TOUTES_LES_TACHES].sort());
+  });
+
+  it("chaque valeur de l'enum est créée par une migration (sinon l'écriture de l'exécution échouerait en production)", () => {
+    const dossier = `${racineBackend}prisma/migrations`;
+    const sql = readdirSync(dossier, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => readFileSync(`${dossier}/${e.name}/migration.sql`, "utf8"))
+      .join("\n");
+    for (const tache of TOUTES_LES_TACHES) expect(sql, tache).toContain(`'${tache}'`);
+  });
+});
+
 describe("libellés", () => {
   it("bilan lisible", () => {
     expect(libelleBilan("RELANCES_JUSTIFICATION", { envois: 3, clotures: 1, erreurs: 0 })).toBe("3 envois, 1 clôture, 0 erreur");
     expect(libelleBilan("ABSENCES", { nouvellesAbsences: 2, oublisDetectes: 1 })).toBe("2 nouvelles absences, 1 oubli de départ");
     expect(libelleBilan("PURGE", null)).toBe("0 exécution et 0 incident supprimés");
     expect(libelleBilan("RAPPELS_CONGES", { rappels: 2, erreurs: 1 })).toBe("2 rappels, 1 erreur");
+    // Tâches Gestion Compta : vides tant que leur lot n'existe pas, puis un décompte normal.
+    expect(libelleBilan("COMPTA_RELANCES", { traites: 0, erreurs: 0, enAttenteDuModule: true })).toBe(
+      "Aucun traitement pour l'instant (module en construction)"
+    );
+    expect(libelleBilan("COMPTA_CONTROLE_HEBDO", { traites: 2, erreurs: 0 })).toBe("2 éléments traités, 0 erreur");
+    expect(libelleBilan("COMPTA_RAPPEL_TCA", null)).toBe("0 élément traité, 0 erreur");
   });
 
   it("erreur courte : une ligne, 200 caractères", () => {

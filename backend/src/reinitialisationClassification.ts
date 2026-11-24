@@ -94,6 +94,37 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
   EncContratMot: P("index de recherche des contrats (supprimé avec eux)"),
   EncEncaissement: P("encaissements de test — seulement avant la mise en service d'Encaissements"),
   EncSignalement: P("signalements d'import de test — seulement avant la mise en service d'Encaissements"),
+  // ---- Gestion Compta (docs/compta-conception.md §8.3) : TOUTES conservées par la purge globale. Le module est indépendant
+  // et a sa propre remise à zéro avant sa mise en service (lot GC-11, même précédent que la purge du Pointage seul) ;
+  // la purge globale n'est donc jamais modifiée pour lui.
+  CptMiseEnService: C("verrou de mise en service de Gestion Compta : s'il existe, TOUT le module est conservé (triggers d'immuabilité)"),
+  CptSequence: C("compteurs de numérotation de Gestion Compta : remise à zéro propre au module (lot GC-11)"),
+  CptParametre: C("paramètres de Gestion Compta"),
+  CptAudit: C("audit de Gestion Compta : remise à zéro propre au module avant sa mise en service (lot GC-11)"),
+  CptPieceJointe: C("pièces jointes de Gestion Compta : remise à zéro propre au module (lot GC-11)"),
+  CptPeriode: C("périodes comptables de Gestion Compta : une période clôturée est définitive (trigger)"),
+  CptFormatImport: C("formats d'import de Gestion Compta : paramétrage, jamais des données de test"),
+  // GC-2 : référentiels. Conservés par la purge globale ; le module a sa propre remise à zéro (lot GC-11).
+  CptPartenaire: C("partenaires de Gestion Compta : référentiel, remise à zéro propre au module (lot GC-11)"),
+  CptClient: C("clients de Gestion Compta : référentiel, remise à zéro propre au module (lot GC-11)"),
+  CptProduit: C("produits de Gestion Compta : référentiel, remise à zéro propre au module (lot GC-11)"),
+  CptTauxTca: C("taux de TCA datés : jamais modifiés (trigger), remise à zéro propre au module (lot GC-11)"),
+  CptCompte: C("comptes d'encaissement de Gestion Compta : référentiel, remise à zéro propre au module (lot GC-11)"),
+  CptConvention: C("conventions de rémunération : seule la date de fin change (trigger), remise à zéro propre au module (lot GC-11)"),
+  CptMot: C("index de recherche des référentiels de Gestion Compta (dérivé des fiches), remise à zéro propre au module (lot GC-11)"),
+  // GC-3 : production. Conservée par la purge globale ; le module a sa propre remise à zéro (lot GC-11).
+  CptContrat: C("contrats de Gestion Compta : remise à zéro propre au module (lot GC-11), jamais supprimés après la mise en service (trigger)"),
+  CptActe: C("actes sur les contrats : ajout seul (trigger), remise à zéro propre au module (lot GC-11)"),
+  CptEcheance: C("échéances des contrats : remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
+  CptImport: C("imports de fichiers de Gestion Compta (empreinte anti-doublon) : remise à zéro propre au module (lot GC-11)"),
+  CptAnomalie: C("anomalies d'import et de saisie de Gestion Compta : remise à zéro propre au module (lot GC-11)"),
+  // GC-4 : encaissements et relevés. Conservés par la purge globale ; le module a sa propre remise à zéro (lot GC-11).
+  CptEncaissement: C("lignes d'encaissement de Gestion Compta : champs jamais modifiés (trigger), remise à zéro propre au module (lot GC-11)"),
+  CptReleve: C("relevés importés de Gestion Compta : jamais modifiés (trigger), remise à zéro propre au module (lot GC-11)"),
+  CptTransfertInterne: C("virements internes entre comptes de Gestion Compta : jamais modifiés (trigger), remise à zéro propre au module (lot GC-11)"),
+  CptCheque: C("chèques reçus de Gestion Compta : remise à zéro propre au module (lot GC-11), jamais supprimés après la mise en service (trigger)"),
+  // GC-5 : rattachements (proposition du moteur, confirmation du commercial, validation du RFCRH).
+  CptRattachement: C("rattachements encaissement ↔ échéance de Gestion Compta : statut définitif une fois validé ou rejeté (trigger), remise à zéro propre au module (lot GC-11)"),
 };
 
 /** Entités de `HistoriqueEntry` supprimées (Trésorerie puis Pointage). */

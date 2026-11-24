@@ -17,6 +17,16 @@ import {
   permissionsCongePourCles,
 } from "../src/congesPermissions";
 
+import {
+  CPT_MODULE_KEY,
+  CPT_MODULE_LABEL,
+  CPT_PERMISSION_MISE_EN_SERVICE,
+  CPT_PERMISSIONS,
+  CPT_PERMISSIONS_DG,
+  CPT_ROLES_DEPART,
+} from "../src/cptPermissions";
+import { CPT_PARAMETRES } from "../src/cptParametres";
+
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
@@ -28,6 +38,11 @@ async function main() {
   // Refus AVANT toute suppression, pour ne rien effacer à moitié.
   if ((await prisma.encMiseEnService.count()) > 0) {
     throw new Error("Module Encaissements mis en service sur cette base : seed refusé, aucune donnée supprimée.");
+  }
+
+  // Module Gestion Compta : même règle (audit, séquences et période clôturée verrouillés par trigger après la mise en service).
+  if ((await prisma.cptMiseEnService.count()) > 0) {
+    throw new Error("Module Gestion Compta mis en service sur cette base : seed refusé, aucune donnée supprimée.");
   }
 
   console.log("Suppression des données existantes...");
@@ -68,6 +83,12 @@ async function main() {
   await prisma.encPartenaire.deleteMany();
   await prisma.encBeneficiaireHonoraires.deleteMany();
   await prisma.encBranche.deleteMany();
+  // Module Gestion Compta (socle technique) : relations vers User, à vider avant les comptes.
+  await prisma.cptAudit.deleteMany();
+  await prisma.cptPieceJointe.deleteMany();
+  await prisma.cptPeriode.deleteMany();
+  await prisma.cptSequence.deleteMany();
+  await prisma.cptParametre.deleteMany();
   // Un service pointe vers son responsable (clé RESTRICT) : le détacher avant de supprimer les comptes.
   await prisma.service.updateMany({ data: { responsableId: null } });
   await prisma.user.deleteMany();
@@ -161,6 +182,17 @@ async function main() {
     )
   );
 
+  // Module Gestion Compta (voir docs/compta-conception.md §4) : 5 rôles de départ, modifiables ensuite.
+  const rolesCompta = await Promise.all(
+    CPT_ROLES_DEPART.map((r) =>
+      prisma.role.upsert({
+        where: { name: r.name },
+        update: { description: r.description },
+        create: { name: r.name, description: r.description },
+      })
+    )
+  );
+
   console.log("Création des modules...");
 
   const [moduleTresorerie, modulePointage, moduleFeedback, moduleSysteme] = await Promise.all([
@@ -199,6 +231,12 @@ async function main() {
     where: { key: MODULE_CONGES_KEY },
     update: { label: MODULE_CONGES_LABEL },
     create: { key: MODULE_CONGES_KEY, label: MODULE_CONGES_LABEL },
+  });
+
+  const moduleCompta = await prisma.module.upsert({
+    where: { key: CPT_MODULE_KEY },
+    update: { label: CPT_MODULE_LABEL },
+    create: { key: CPT_MODULE_KEY, label: CPT_MODULE_LABEL },
   });
 
   console.log("Création des permissions...");
@@ -282,6 +320,9 @@ async function main() {
     // Module Encaissements (source unique : src/encPermissions.ts). La mise en service va au module technique « systeme ».
     ...ENC_PERMISSIONS.map((p) => ({ key: p.key, label: p.label, moduleId: moduleEncaissements.id })),
     { ...ENC_PERMISSION_MISE_EN_SERVICE, moduleId: moduleSysteme.id },
+    // Gestion Compta (source unique : src/cptPermissions.ts, aussi posées par la migration). Mise en service : module technique.
+    ...CPT_PERMISSIONS.map((p) => ({ key: p.key as string, label: p.label as string, moduleId: moduleCompta.id })),
+    { ...CPT_PERMISSION_MISE_EN_SERVICE, moduleId: moduleSysteme.id },
     // Congés (source unique : src/congesPermissions.ts, aussi posées par la migration).
     ...PERMISSIONS_CONGES.map((p) => ({
       key: p.key,
@@ -372,6 +413,8 @@ async function main() {
       "systeme.reinitialiser",
       // Mise en service du module Encaissements : même modèle, DG seul.
       ENC_PERMISSION_MISE_EN_SERVICE.key,
+      // Gestion Compta : le DG est un SUPERVISEUR (consulte, tranche les litiges, met en service), il ne saisit rien.
+      ...CPT_PERMISSIONS_DG,
     ],
     // EXCEPTION DÉLIBÉRÉE à l'invariant "le rôle Admin n'a aucune
     // RolePermission explicite" (voir CLAUDE.md "estAdmin — accès à la
@@ -412,6 +455,8 @@ async function main() {
     ],
     // Module Encaissements : un rôle par profil du cahier (§2).
     ...Object.fromEntries(rolesEncaissements.map((role, i) => [role.id, ENC_ROLES_DEPART[i].permissions])),
+    // Module Gestion Compta : un rôle par profil du cahier SIM-XX-XX (§2).
+    ...Object.fromEntries(rolesCompta.map((role, i) => [role.id, [...CPT_ROLES_DEPART[i].permissions] as string[]])),
   };
 
   // Congés : même règle que la migration (permission sœur), jamais un nom de rôle.
@@ -512,6 +557,10 @@ async function main() {
     ...(process.env.NODE_ENV === "production"
       ? []
       : ENC_ROLES_DEPART.map((r, i) => ({ ...r.compteTest, roleId: rolesEncaissements[i].id, serviceId: serviceByName["Finance"].id }))),
+    // Module Gestion Compta : un compte de test par rôle de départ, mêmes règles (jamais en production).
+    ...(process.env.NODE_ENV === "production"
+      ? []
+      : CPT_ROLES_DEPART.map((r, i) => ({ ...r.compteTest, roleId: rolesCompta[i].id, serviceId: serviceByName["Comptabilité"].id }))),
   ];
 
   const createdUsers = await Promise.all(
@@ -647,6 +696,10 @@ async function main() {
     },
   });
   console.log(`Bénéficiaire des honoraires initial : ${ENC_BENEFICIAIRE_HONORAIRES_INITIAL.nom}`);
+
+  // Gestion Compta : paramètres par défaut (source unique : src/cptParametres.ts, aussi posés par la migration).
+  await prisma.cptParametre.createMany({ data: CPT_PARAMETRES.map((p) => ({ cle: p.cle, valeur: p.defaut })) });
+  console.log(`Paramètres Gestion Compta : ${CPT_PARAMETRES.length}`);
 
   console.log("\n=== Résumé du seed ===");
   console.log(`Rôles : ${createdUsers.length === 5 ? 5 : "?"}`);

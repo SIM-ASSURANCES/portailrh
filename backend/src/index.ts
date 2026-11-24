@@ -83,6 +83,36 @@ export * from "./encImportApplication";
 // F2 (recherche, fiche police) — commit 5a.
 export * from "./encRecherche";
 export * from "./encSituation";
+// Gestion Compta (GC-1f) : formats d'import, lecture de tableurs, exports CSV. Les noms sont tous suffixés ou préfixés
+// « Cpt » / « CPT_ » pour ne jamais entrer en collision avec ceux d'Encaissements. `cptAudit` et `cptParametres` ne sont
+// PAS réexportés en bloc : ils ont les mêmes noms qu'`encAudit` et `encParametres` (`ecrireAudit`, `assemblerParametres`…),
+// d'où des ré-exports nommés.
+export * from "./cptFormatImport";
+export * from "./cptImportLecture";
+export * from "./cptExportCsv";
+// Référentiels de Gestion Compta (GC-2b) : validations, taux de TCA en vigueur, conventions — PUR, tous les noms finissent par « Cpt ».
+export * from "./cptReferentiels";
+// Recherche rapide par début de mot (GC-2d) : tous les noms finissent par « Cpt » (`indexerMotsCpt`, `rechercherCpt`…).
+export * from "./cptRecherche";
+export * from "./cptCorrespondancesOdoo";
+export * from "./cptEcheancier";
+export * from "./cptProduction";
+// Application en base d'un bordereau de production (GC-3c) : la fonction finit par « Cpt » (Encaissements exporte déjà `appliquerImportProduction`).
+export * from "./cptImportProduction";
+// Création d'un format d'import à partir d'un fichier d'exemple (GC-3i).
+export * from "./cptFormatApercu";
+export * from "./cptReleve";
+export * from "./cptReconnaissance";
+export * from "./cptImportReleve";
+export * from "./cptControleReleves";
+export * from "./cptControleRelevesDb";
+export * from "./cptRapprochement";
+export * from "./cptRattachement";
+// Traitement des anomalies de l'import (GC-3h) : noms finissant par « Cpt ».
+export * from "./cptAnomalies";
+export { CPT_PERMISSIONS_DEPOT_PIECE_JOINTE } from "./cptPermissions";
+export { CPT_PARAMETRES, chargerParametresCpt, type CptParametresValeurs } from "./cptParametres";
+export { ecrireAudit as ecrireAuditCpt, type CptAuditEntree } from "./cptAudit";
 // Services et responsables (circuit de validation des demandes, 2026-10-06).
 export * from "./services";
 // Circuit de validation des demandes (commit 3) : moteur pur et application en base.

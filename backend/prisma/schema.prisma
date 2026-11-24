@@ -52,54 +52,54 @@ model User {
   roleId String
   role   Role   @relation(fields: [roleId], references: [id])
 
-  demandesCreees                Demande[]         @relation("DemandeCreateur")
-  demandesBeneficiees           Demande[]         @relation("DemandeBeneficiaire")
+  demandesCreees                Demande[]                  @relation("DemandeCreateur")
+  demandesBeneficiees           Demande[]                  @relation("DemandeBeneficiaire")
   /// Demandes dont ce DG a approuvé la "validation complète" (verrou de clôture, Ticket 7).
-  demandesApprouveesDG          Demande[]         @relation("DgApprobateurValidationComplete")
-  demandesDecideesFinance       Demande[]         @relation("DemandeDecideurFinance")
-  demandesReorienteesVersMoi    Demande[]         @relation("DemandeResponsableEtapeService")
+  demandesApprouveesDG          Demande[]                  @relation("DgApprobateurValidationComplete")
+  demandesDecideesFinance       Demande[]                  @relation("DemandeDecideurFinance")
+  demandesReorienteesVersMoi    Demande[]                  @relation("DemandeResponsableEtapeService")
   /// Demandes clôturées de force par ce compte (lot C).
-  demandesClotureesDeForce      Demande[]         @relation("DemandeClotureForceePar")
-  reglementsFaits               Reglement[]       @relation("ReglementAuteur")
-  retoursDeclares               RetourCaisse[]    @relation("RetourDeclarant")
-  retoursReceptionnes           RetourCaisse[]    @relation("RetourReceptionnaire")
+  demandesClotureesDeForce      Demande[]                  @relation("DemandeClotureForceePar")
+  reglementsFaits               Reglement[]                @relation("ReglementAuteur")
+  retoursDeclares               RetourCaisse[]             @relation("RetourDeclarant")
+  retoursReceptionnes           RetourCaisse[]             @relation("RetourReceptionnaire")
   /// Lignes de dépense marquées "non justifiée" par cet utilisateur Finance
   /// (`marquerDepenseNonJustifieeAction`), avec motif obligatoire.
-  depensesMarqueesNonJustifiees DepenseLigne[]    @relation("MotifNonJustifiePar")
+  depensesMarqueesNonJustifiees DepenseLigne[]             @relation("MotifNonJustifiePar")
   /// Lignes de demande décidées (validée OU rejetée) par cet utilisateur
   /// Finance — `validerLignesAction` (voir CLAUDE.md "Validation ligne par
   /// ligne").
-  lignesDemandeDecidees         LigneDemande[]    @relation("LigneDemandeDecideur")
-  lignesDemandeDecideesFinance  LigneDemande[]    @relation("LigneDemandeDecideurFinance")
-  lignesSoumisesAuDG            LigneDemande[]    @relation("LigneDemandeSoumiseDGPar")
-  lignesDecideesParDG           LigneDemande[]    @relation("LigneDemandeDecisionDGPar")
+  lignesDemandeDecidees         LigneDemande[]             @relation("LigneDemandeDecideur")
+  lignesDemandeDecideesFinance  LigneDemande[]             @relation("LigneDemandeDecideurFinance")
+  lignesSoumisesAuDG            LigneDemande[]             @relation("LigneDemandeSoumiseDGPar")
+  lignesDecideesParDG           LigneDemande[]             @relation("LigneDemandeDecisionDGPar")
   /// Articles dont il est le bénéficiaire PROPRE (autonomie des articles, lot A).
-  lignesBeneficiaire            LigneDemande[]    @relation("LigneDemandeBeneficiaire")
+  lignesBeneficiaire            LigneDemande[]             @relation("LigneDemandeBeneficiaire")
   /// Signalements d'erreur sur un retour de caisse — voir CLAUDE.md
   /// "Signalement d'erreur par le Collaborateur".
-  signalementsRetourEmis        SignalementRetour[] @relation("SignalementRetourSignalePar")
-  signalementsRetourResolus     SignalementRetour[] @relation("SignalementRetourResoluPar")
+  signalementsRetourEmis        SignalementRetour[]        @relation("SignalementRetourSignalePar")
+  signalementsRetourResolus     SignalementRetour[]        @relation("SignalementRetourResoluPar")
   /// Retours exceptionnels post-clôture saisis / validés par cet utilisateur.
-  retoursExceptionnelsSaisis    RetourExceptionnel[] @relation("RetourExceptionnelSaisiPar")
-  retoursExternesCollaborateur  RetourExterne[]      @relation("RetourExterneCollaborateur")
-  retoursExternesCrees          RetourExterne[]      @relation("RetourExterneCreePar")
+  retoursExceptionnelsSaisis    RetourExceptionnel[]       @relation("RetourExceptionnelSaisiPar")
+  retoursExternesCollaborateur  RetourExterne[]            @relation("RetourExterneCollaborateur")
+  retoursExternesCrees          RetourExterne[]            @relation("RetourExterneCreePar")
   reinitialisationsSysteme      ReinitialisationSysteme[]
   reinitialisationsPointage     ReinitialisationPointage[]
   /// Lot L : signatures manuscrites enrôlées (une ligne par version) et actions signées.
-  signatures                    SignatureUtilisateur[] @relation("SignatureUtilisateur")
-  actionsSignees                ActionSignee[]         @relation("ActionSigneeSignataire")
-  actionsSigneesAuNomDe         ActionSignee[]         @relation("ActionSigneeAuNomDe")
+  signatures                    SignatureUtilisateur[]     @relation("SignatureUtilisateur")
+  actionsSignees                ActionSignee[]             @relation("ActionSigneeSignataire")
+  actionsSigneesAuNomDe         ActionSignee[]             @relation("ActionSigneeAuNomDe")
   pointageMisEnService          PointageMiseEnService[]
-  remboursementsRetourProposes  RemboursementRetour[] @relation("RemboursementRetourProposePar")
-  remboursementsRetourValides   RemboursementRetour[] @relation("RemboursementRetourValidePar")
-  retoursExceptionnelsValides   RetourExceptionnel[] @relation("RetourExceptionnelValidePar")
-  mouvementsBanqueCrees         JournalBanque[] @relation("JournalBanqueCreePar")
+  remboursementsRetourProposes  RemboursementRetour[]      @relation("RemboursementRetourProposePar")
+  remboursementsRetourValides   RemboursementRetour[]      @relation("RemboursementRetourValidePar")
+  retoursExceptionnelsValides   RetourExceptionnel[]       @relation("RetourExceptionnelValidePar")
+  mouvementsBanqueCrees         JournalBanque[]            @relation("JournalBanqueCreePar")
   historique                    HistoriqueEntry[]
   /// Écritures JournalCaisse déclenchées par cet utilisateur (auteur du
   /// règlement pour une SORTIE, receptionneParId pour une ENTRÉE de retour,
   /// ou l'utilisateur ayant annulé un règlement pour une ENTRÉE
   /// compensatoire — section 13 du cahier des charges, traçabilité).
-  ecrituresJournalCaisse        JournalCaisse[]   @relation("JournalCaisseUser")
+  ecrituresJournalCaisse        JournalCaisse[]            @relation("JournalCaisseUser")
 
   pointagesEffectues     Pointage[]              @relation("PointageEmploye")
   pointagesRealises      Pointage[]              @relation("PointageEffectuePar")
@@ -107,7 +107,7 @@ model User {
   absencesDeclarees      Absence[]               @relation("AbsenceEmploye")
   absencesControlees     Absence[]               @relation("AbsenceControlePar")
   /// Justifications de retard / départ anticipé décidées (acceptées ou refusées) par ce compte (pointage V2).
-  justificationsDecidees JustificationPointage[]  @relation("JustificationPointageDecideur")
+  justificationsDecidees JustificationPointage[] @relation("JustificationPointageDecideur")
   notifications          Notification[]
   /// Tokens FCM (notifications push, voir CLAUDE.md côté Thierry) —
   /// plusieurs appareils/navigateurs possibles par utilisateur.
@@ -135,37 +135,57 @@ model User {
   feedbacksModeres Feedback[] @relation("FeedbackModeratedBy")
 
   /// Module Encaissements (docs/encaissements-conception.md §5.1) — toutes en `onDelete: Restrict`.
-  encAudits         EncAudit[]         @relation("EncAuditUser")
-  encMisesEnService EncMiseEnService[] @relation("EncMiseEnServiceActiveePar")
-  encParametresMaj  EncParametre[]     @relation("EncParametreMajPar")
+  encAudits                       EncAudit[]                  @relation("EncAuditUser")
+  encMisesEnService               EncMiseEnService[]          @relation("EncMiseEnServiceActiveePar")
+  encParametresMaj                EncParametre[]              @relation("EncParametreMajPar")
   /// Paramètres Trésorerie (lot I) : `SetNull` (le changement reste tracé dans `HistoriqueEntry`).
-  parametresTresorerieMaj ParametreTresorerie[] @relation("ParametreTresorerieMajPar")
-  budgetsSoumis           BudgetParametrage[]   @relation("BudgetParametrageSoumisPar")
-  budgetsDecides          BudgetParametrage[]   @relation("BudgetParametrageDecidePar")
-  depassementsDemandes    BudgetDepassement[]   @relation("BudgetDepassementDemandePar")
-  depassementsConfirmes   BudgetDepassement[]   @relation("BudgetDepassementConfirmePar")
-  encPiecesDeposees EncPieceJointe[]   @relation("EncPieceJointeDeposeePar")
+  parametresTresorerieMaj         ParametreTresorerie[]       @relation("ParametreTresorerieMajPar")
+  budgetsSoumis                   BudgetParametrage[]         @relation("BudgetParametrageSoumisPar")
+  budgetsDecides                  BudgetParametrage[]         @relation("BudgetParametrageDecidePar")
+  depassementsDemandes            BudgetDepassement[]         @relation("BudgetDepassementDemandePar")
+  depassementsConfirmes           BudgetDepassement[]         @relation("BudgetDepassementConfirmePar")
+  encPiecesDeposees               EncPieceJointe[]            @relation("EncPieceJointeDeposeePar")
   /// Paramètres V2 (docs/encaissements-conception.md §5.2) — toutes en `onDelete: Restrict`, sauf les créateurs des
   /// deux référentiels dont la toute première ligne est posée par la migration (`creeParId` nul dans ce seul cas).
-  encBranchesCreees               EncBranche[]               @relation("EncBrancheCreePar")
+  encBranchesCreees               EncBranche[]                @relation("EncBrancheCreePar")
   encBeneficiairesHonorairesCrees EncBeneficiaireHonoraires[] @relation("EncBeneficiaireHonorairesCreePar")
   encPartenairesCrees             EncPartenaire[]             @relation("EncPartenaireCreePar")
   encPartenairesMajs              EncPartenaire[]             @relation("EncPartenaireMajPar")
   encTauxControleMajs             EncTauxControle[]           @relation("EncTauxControleMajPar")
   /// Import F1 (docs/encaissements-conception.md §5.3/§5.5) — toutes en `onDelete: Restrict`.
-  encImportsFaits        EncImport[]       @relation("EncImportImportePar")
-  encImportsValides      EncImport[]       @relation("EncImportValidePar")
-  encEncaissementsSaisis EncEncaissement[] @relation("EncEncaissementSaisiPar")
-  encEncaissementsConfirmes EncEncaissement[] @relation("EncEncaissementConfirmePar")
-  encEncaissementsNonRecus  EncEncaissement[] @relation("EncEncaissementNonRecuPar")
-  encSignalementsTraites EncSignalement[] @relation("EncSignalementTraitePar")
+  encImportsFaits                 EncImport[]                 @relation("EncImportImportePar")
+  encImportsValides               EncImport[]                 @relation("EncImportValidePar")
+  encEncaissementsSaisis          EncEncaissement[]           @relation("EncEncaissementSaisiPar")
+  encEncaissementsConfirmes       EncEncaissement[]           @relation("EncEncaissementConfirmePar")
+  encEncaissementsNonRecus        EncEncaissement[]           @relation("EncEncaissementNonRecuPar")
+  encSignalementsTraites          EncSignalement[]            @relation("EncSignalementTraitePar")
 
   // Congés
-  congesDemandes                DemandeConge[]      @relation("CongeDemandeur")
-  congesCrees                   DemandeConge[]      @relation("CongeCreateur")
-  congesApprouves               DemandeConge[]      @relation("CongeApprobateur")
-  congesValides                 DemandeConge[]      @relation("CongeValidateur")
-  congesAnnules                 DemandeConge[]      @relation("CongeAnnulateur")
+  congesDemandes  DemandeConge[] @relation("CongeDemandeur")
+  congesCrees     DemandeConge[] @relation("CongeCreateur")
+  congesApprouves DemandeConge[] @relation("CongeApprobateur")
+  congesValides   DemandeConge[] @relation("CongeValidateur")
+  congesAnnules   DemandeConge[] @relation("CongeAnnulateur")
+
+  /// Module Gestion Compta (docs/compta-conception.md §5.2) — toutes en `onDelete: Restrict`.
+  cptAudits             CptAudit[]            @relation("CptAuditUser")
+  cptMisesEnService     CptMiseEnService[]    @relation("CptMiseEnServiceActiveePar")
+  cptParametresMaj      CptParametre[]        @relation("CptParametreMajPar")
+  cptPiecesDeposees     CptPieceJointe[]      @relation("CptPieceJointeDeposeePar")
+  cptPeriodesCloturees  CptPeriode[]          @relation("CptPeriodeCloturePar")
+  cptTauxTcaCrees       CptTauxTca[]          @relation("CptTauxTcaCreePar")
+  cptConventionsCreees  CptConvention[]       @relation("CptConventionCreePar")
+  cptContratsCrees      CptContrat[]          @relation("CptContratCreePar")
+  cptActesCrees         CptActe[]             @relation("CptActeCreePar")
+  cptImportsFaits       CptImport[]           @relation("CptImportCreePar")
+  cptAnomaliesTraitees  CptAnomalie[]         @relation("CptAnomalieTraiteePar")
+  cptEncaissementsCrees CptEncaissement[]     @relation("CptEncaissementCreePar")
+  cptTransfertsCrees    CptTransfertInterne[] @relation("CptTransfertCreePar")
+  cptChequesCrees       CptCheque[]           @relation("CptChequeCreePar")
+  cptRattachementsProposes  CptRattachement[] @relation("CptRattachementProposePar")
+  cptRattachementsConfirmes CptRattachement[] @relation("CptRattachementConfirmePar")
+  cptRattachementsValides   CptRattachement[] @relation("CptRattachementValidePar")
+  cptRattachementsRejetes   CptRattachement[] @relation("CptRattachementRejetePar")
 }
 
 model Role {
@@ -308,9 +328,9 @@ model HistoriqueEntry {
 
 /// Niveaux de priorité des notifications (routage des canaux)
 enum NotificationPriority {
-  CRITIQUE    // Email + FCM Push + In-app
-  IMPORTANT   // FCM Push + In-app
-  INFO        // In-app uniquement
+  CRITIQUE // Email + FCM Push + In-app
+  IMPORTANT // FCM Push + In-app
+  INFO // In-app uniquement
 }
 
 /// Catégories fonctionnelles des notifications
@@ -334,8 +354,8 @@ model Notification {
   emailSent Boolean              @default(false)
   createdAt DateTime             @default(now())
 
-  userId    String
-  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, estLue, createdAt])
 }
@@ -601,19 +621,19 @@ model Demande {
 
   /// Lignes d'articles (Libellé / Nombre / Prix unitaire). `montant` ci-dessus
   /// est la somme des (quantite × prixUnitaire) — jamais saisi directement.
-  lignes LigneDemande[]
+  lignes             LigneDemande[]
   /// Dépassements de budget (seuil rouge) demandés/confirmés pour cette demande (lot J).
   depassementsBudget BudgetDepassement[]
 
   /// Motif du dernier rejet : ancien rejet définitif, ou renvoi en correction / rejet DG du circuit (voir
   /// `niveauRejet`).
-  motifRejet   String?
-  motifCloture String?
+  motifRejet            String?
+  motifCloture          String?
   /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de chaque échange Finance ↔ DG sur la demande entière — dernier envoi de la
   /// Finance au DG (`motifSoumissionDG`) et dernière réponse du DG à la Finance (`motifDecisionDG` : validation, rejet, approbation
   /// de clôture…). `null` pour les échanges antérieurs au lot M (affichés « Non renseigné ») ; l'historique garde chaque motif.
-  motifSoumissionDG String?
-  motifDecisionDG   String?
+  motifSoumissionDG     String?
+  motifDecisionDG       String?
   /// Lot C : demande clôturée de force (articles non régularisés), avec motif (`motifCloture`, 10 caractères minimum).
   /// Aucune écriture de caisse n'est touchée. `clotureForceeArticles` : instantané des articles non terminés (libellé,
   /// bénéficiaire, montants, solde restant) au moment de la clôture, relu par le reporting et l'affichage.
@@ -670,17 +690,17 @@ model Demande {
   /// continue de débloquer le RÈGLEMENT via `montantValide` seul). Une
   /// demande ne peut être CLÔTURÉE (totale ou partielle) que si le DG a
   /// donné cette approbation, même si Finance a déjà tout réglé.
-  validationCompleteParDG Boolean   @default(false)
-  dgApprobateurId         String?
-  dgApprobateur           User?     @relation("DgApprobateurValidationComplete", fields: [dgApprobateurId], references: [id])
-  dgApprouveAt            DateTime?
+  validationCompleteParDG        Boolean   @default(false)
+  dgApprobateurId                String?
+  dgApprobateur                  User?     @relation("DgApprobateurValidationComplete", fields: [dgApprobateurId], references: [id])
+  dgApprouveAt                   DateTime?
   /// `true` tant que le DG a REJETÉ la validation complète sans qu'elle ait
   /// été approuvée depuis : distingue "rejetée" de "jamais examinée"
   /// (`validationCompleteParDG` reste `false` dans les deux cas). Gèle la
   /// création/modification/confirmation de règlement (voir CLAUDE.md
   /// "Le rejet DG gèle le règlement"). Posé par `rejeterValidationCompleteAction`,
   /// remis à `false` uniquement par `approuverValidationCompleteAction`.
-  validationCompleteRejeteeParDG Boolean @default(false)
+  validationCompleteRejeteeParDG Boolean   @default(false)
 
   createurId String
   createur   User   @relation("DemandeCreateur", fields: [createurId], references: [id])
@@ -688,13 +708,13 @@ model Demande {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  pieces        PieceJointe[]
+  pieces               PieceJointe[]
   /// Retours exceptionnels post-clôture (voir CLAUDE.md), distincts de `RetourCaisse`.
   retoursExceptionnels RetourExceptionnel[]
   /// Retours externes rattachés à cette demande (lot G bis).
-  retoursExternes RetourExterne[] @relation("RetourExterneDemande")
-  reglements    Reglement[]
-  journalCaisse JournalCaisse[]
+  retoursExternes      RetourExterne[]      @relation("RetourExterneDemande")
+  reglements           Reglement[]
+  journalCaisse        JournalCaisse[]
 
   @@index([createurId])
   @@index([statut])
@@ -715,8 +735,8 @@ model Demande {
 /// fichier généré côté serveur (jamais dérivé d'une entrée utilisateur),
 /// résolu par la route de téléchargement.
 model PieceJointe {
-  id              String         @id @default(cuid())
-  url             String
+  id                   String               @id @default(cuid())
+  url                  String
   /// Renseigné pour toute pièce rattachée à une Demande (y compris quand
   /// elle est en réalité attachée à une seule ligne de dépense,
   /// `depenseLigneId` ci-dessous, plutôt qu'à la demande elle-même —
@@ -727,8 +747,8 @@ model PieceJointe {
   /// (`journalCaisseId` ci-dessous) n'a, par nature, aucune demande
   /// d'origine — même raisonnement que `JournalCaisse.demandeId`,
   /// assoupli pour la même raison.
-  demandeId       String?
-  demande         Demande?       @relation(fields: [demandeId], references: [id])
+  demandeId            String?
+  demande              Demande?             @relation(fields: [demandeId], references: [id])
   /// Renseigné uniquement si cette pièce est attachée à une ligne de
   /// dépense précise d'un retour de caisse, plutôt qu'à la demande
   /// elle-même (formulaire de création / dépense directe). `@unique` : une
@@ -737,29 +757,29 @@ model PieceJointe {
   /// disparaît avec elle plutôt que de rester orpheline en base (le
   /// fichier lui-même reste sur disque — V1 volontairement simple, pas de
   /// tâche de nettoyage des fichiers orphelins).
-  depenseLigneId  String?        @unique
-  depenseLigne    DepenseLigne?  @relation(fields: [depenseLigneId], references: [id], onDelete: SetNull)
+  depenseLigneId       String?              @unique
+  depenseLigne         DepenseLigne?        @relation(fields: [depenseLigneId], references: [id], onDelete: SetNull)
   /// Renseigné uniquement pour une pièce jointe attachée à une écriture
   /// `JournalCaisse` du cycle "solde d'ouverture" (`definirSoldeOuvertureAction`/
   /// `corrigerSoldeOuvertureAction`) — le seul cas de pièce jointe sans
   /// Demande d'origine. `@unique` : une seule pièce par écriture.
-  journalCaisseId String?        @unique
-  journalCaisse   JournalCaisse? @relation(fields: [journalCaisseId], references: [id])
+  journalCaisseId      String?              @unique
+  journalCaisse        JournalCaisse?       @relation(fields: [journalCaisseId], references: [id])
   /// Justificatif optionnel d'un retour exceptionnel post-clôture (une seule pièce).
   /// Bordereau de versement d'un retour sur règlement Banque.
   journalBanque        JournalBanque?
-  retourExterne        RetourExterne? @relation("RetourExternePieceRetour")
-  retourExterneCheque  RetourExterne? @relation("RetourExternePieceCheque")
+  retourExterne        RetourExterne?       @relation("RetourExternePieceRetour")
+  retourExterneCheque  RetourExterne?       @relation("RetourExternePieceCheque")
   remboursementRetour  RemboursementRetour?
-  retourExceptionnelId String?             @unique
-  retourExceptionnel   RetourExceptionnel? @relation(fields: [retourExceptionnelId], references: [id], onDelete: SetNull)
+  retourExceptionnelId String?              @unique
+  retourExceptionnel   RetourExceptionnel?  @relation(fields: [retourExceptionnelId], references: [id], onDelete: SetNull)
   /// Pièce jointe PROPRE à un article de la demande (lot A « autonomie des articles »). `demandeId` reste renseigné
   /// (droits d'accès calculés par demande). Vide : pièce de la demande entière, ou d'un autre objet (dépense…).
   /// Pas `@unique` : plusieurs pièces par article. `SetNull` : si l'article est supprimé (correction avant toute
   /// décision), la pièce redevient une pièce de la demande plutôt que de disparaître.
   ligneDemandeId       String?
-  ligneDemande         LigneDemande?       @relation(fields: [ligneDemandeId], references: [id], onDelete: SetNull)
-  createdAt       DateTime       @default(now())
+  ligneDemande         LigneDemande?        @relation(fields: [ligneDemandeId], references: [id], onDelete: SetNull)
+  createdAt            DateTime             @default(now())
 
   @@index([ligneDemandeId])
 }
@@ -780,10 +800,10 @@ model PieceJointe {
 /// à traiter plus tard une fois les lignes tranchées, jamais de
 /// dévalidation.
 model LigneDemande {
-  id           String  @id @default(cuid())
-  libelle      String
-  quantite     Int
-  prixUnitaire Decimal @db.Decimal(14, 2)
+  id                    String  @id @default(cuid())
+  libelle               String
+  quantite              Int
+  prixUnitaire          Decimal @db.Decimal(14, 2)
   /// Lot J : reste du budget global et de la catégorie APRÈS la validation de cet article (photo posée une seule fois, à la
   /// première validation — celle du DG ou de la Finance —, jamais recalculée). Gestion interne : jamais montrée au demandeur.
   budgetApresValidation Json?
@@ -797,7 +817,7 @@ model LigneDemande {
   /// réécrite ensuite. Le Collaborateur créateur voit toujours cette
   /// version (jamais `libelle` si elle diverge) ; Finance voit les deux
   /// côte à côte dès qu'elles divergent.
-  libelleOriginal String?
+  libelleOriginal  String?
   /// Dernière version du libellé écrite par le DEMANDEUR lors d'une correction (même principe que
   /// `Demande.descriptionDemandeur`) ; `null` = jamais corrigé.
   libelleDemandeur String?
@@ -813,15 +833,15 @@ model LigneDemande {
   /// `EN_ATTENTE` par défaut, posée UNE SEULE FOIS par
   /// `validerLignesAction` (décision unique et complète, jamais de
   /// dévalidation ensuite).
-  statutValidation StatutLigneDemande @default(EN_ATTENTE)
+  statutValidation  StatutLigneDemande @default(EN_ATTENTE)
   /// Obligatoire si `statutValidation = REJETEE` (min 3 caractères,
   /// revérifié côté serveur), sinon toujours `null`.
-  motifRejet       String?
+  motifRejet        String?
   /// Auteur et date de la décision (validée OU rejetée) — `null` tant que
   /// `statutValidation = EN_ATTENTE`.
-  decideParId      String?
-  decidePar        User?              @relation("LigneDemandeDecideur", fields: [decideParId], references: [id])
-  decideAt         DateTime?
+  decideParId       String?
+  decidePar         User?              @relation("LigneDemandeDecideur", fields: [decideParId], references: [id])
+  decideAt          DateTime?
   /// Compte qui a décidé l'article COMME FINANCE (lot B, 2026-10-15) : sert à la règle des deux personnes par
   /// article. Distinct de `decideParId`, qui garde l'auteur DG pour un article validé par le DG. `null` tant que
   /// l'article n'a pas été décidé par la Finance (ou décidé par le DG seul, cas où la Finance n'a rien décidé).
@@ -831,16 +851,16 @@ model LigneDemande {
   /// Soumission de la ligne au DG par la Finance (2026-10-10, `treso.soumettre_dg`) : seules les lignes soumises sont
   /// vues et décidées par le DG. Une ligne refusée par le DG revient à la Finance (resoumission ou refus définitif).
   /// La décision finale de la ligne reste `statutValidation`, posée à la décision finale de la Finance.
-  soumiseAuDG      Boolean            @default(false)
-  soumiseDGAt      DateTime?
-  soumiseDGParId   String?
-  soumiseDGPar     User?              @relation("LigneDemandeSoumiseDGPar", fields: [soumiseDGParId], references: [id])
+  soumiseAuDG       Boolean          @default(false)
+  soumiseDGAt       DateTime?
+  soumiseDGParId    String?
+  soumiseDGPar      User?            @relation("LigneDemandeSoumiseDGPar", fields: [soumiseDGParId], references: [id])
   /// `null` tant que la ligne soumise attend le DG.
-  decisionDG       DecisionLigneDG?
-  decisionDGAt     DateTime?
-  decisionDGParId  String?
-  decisionDGPar    User?              @relation("LigneDemandeDecisionDGPar", fields: [decisionDGParId], references: [id])
-  motifRefusDG     String?
+  decisionDG        DecisionLigneDG?
+  decisionDGAt      DateTime?
+  decisionDGParId   String?
+  decisionDGPar     User?            @relation("LigneDemandeDecisionDGPar", fields: [decisionDGParId], references: [id])
+  motifRefusDG      String?
   /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de la dernière soumission de cet article au DG par la Finance, et de la
   /// dernière réponse du DG (validation OU rejet ; `motifRefusDG` reste le motif du rejet, recopié ici). `null` avant le lot M.
   motifSoumissionDG String?
@@ -872,7 +892,7 @@ model LigneDemande {
   /// création, un article dont le bénéficiaire égale la valeur commune n'a aucune valeur propre.
   beneficiaireType   BeneficiaireType?
   beneficiaireUserId String?
-  beneficiaireUser   User?            @relation("LigneDemandeBeneficiaire", fields: [beneficiaireUserId], references: [id])
+  beneficiaireUser   User?             @relation("LigneDemandeBeneficiaire", fields: [beneficiaireUserId], references: [id])
   beneficiaireNom    String?
 
   /// Date de livraison de CET article (lot G, 2026-10-14). Vide pour les articles antérieurs (affichée « — », aucune
@@ -890,7 +910,7 @@ model LigneDemande {
   /// Retours exceptionnels post-clôture rattachés à CET article (lot E).
   retoursExceptionnels RetourExceptionnel[]
   /// Retours externes (fonds versé par banque, rendu à la caisse) rattachés à CET article (lot G bis).
-  retoursExternes RetourExterne[] @relation("RetourExterneLigne")
+  retoursExternes      RetourExterne[]      @relation("RetourExterneLigne")
 
   createdAt DateTime @default(now())
 
@@ -923,7 +943,7 @@ model Reglement {
   auteurId String
   auteur   User   @relation("ReglementAuteur", fields: [auteurId], references: [id])
 
-  retours RetourCaisse[]
+  retours          RetourCaisse[]
   /// Mouvements banque (SORTIE/ANNULATION/RETOUR) — voir `JournalBanque`.
   mouvementsBanque JournalBanque[]
 
@@ -1048,15 +1068,15 @@ model RetourCaisse {
   /// Collaborateur". Historique complet (jamais un seul champ figé sur
   /// `RetourCaisse` lui-même) : un même retour peut être signalé plusieurs
   /// fois au fil du temps (signalé, corrigé, signalé à nouveau...).
-  signalements SignalementRetour[]
+  signalements         SignalementRetour[]
   /// Remboursements (sortie de caisse) proposés suite à un signalement sur CE retour.
-  remboursements RemboursementRetour[]
+  remboursements       RemboursementRetour[]
   /// Retour COMPLÉMENTAIRE déclaré en réponse à un signalement (voir CLAUDE.md
   /// "Correction d'un retour signalé") : lien explicite, jamais une fusion.
   signalementOrigineId String?
-  signalementOrigine   SignalementRetour? @relation("RetourComplementaire", fields: [signalementOrigineId], references: [id])
+  signalementOrigine   SignalementRetour?    @relation("RetourComplementaire", fields: [signalementOrigineId], references: [id])
   /// Mouvement banque `RETOUR` (règlement Banque uniquement).
-  mouvementsBanque JournalBanque[]
+  mouvementsBanque     JournalBanque[]
 
   // PERF-06 : Index sur reglementId pour les jointures fréquentes (un
   // règlement a au plus un retour, mais la jointure Reglement → RetourCaisse
@@ -1105,7 +1125,7 @@ model SignalementRetour {
   /// Montant total du retour selon le collaborateur — INFORMATIF, ne déclenche rien.
   montantPropose Decimal? @db.Decimal(14, 2)
 
-  retoursComplementaires RetourCaisse[]       @relation("RetourComplementaire")
+  retoursComplementaires RetourCaisse[]        @relation("RetourComplementaire")
   remboursements         RemboursementRetour[]
 }
 
@@ -1120,21 +1140,21 @@ enum StatutRemboursementRetour {
 /// validé par le Responsable Finance ; écriture JournalCaisse SORTIE à la validation
 /// uniquement. Le retour original n'est jamais modifié dans son écriture de caisse.
 model RemboursementRetour {
-  id             String                   @id @default(cuid())
+  id             String                    @id @default(cuid())
   retourCaisseId String
-  retourCaisse   RetourCaisse             @relation(fields: [retourCaisseId], references: [id])
+  retourCaisse   RetourCaisse              @relation(fields: [retourCaisseId], references: [id])
   signalementId  String
-  signalement    SignalementRetour        @relation(fields: [signalementId], references: [id])
-  montant        Decimal                  @db.Decimal(14, 2)
+  signalement    SignalementRetour         @relation(fields: [signalementId], references: [id])
+  montant        Decimal                   @db.Decimal(14, 2)
   motif          String
-  pieceJointeId  String                   @unique
-  pieceJointe    PieceJointe              @relation(fields: [pieceJointeId], references: [id])
+  pieceJointeId  String                    @unique
+  pieceJointe    PieceJointe               @relation(fields: [pieceJointeId], references: [id])
   statut         StatutRemboursementRetour @default(EN_ATTENTE_VALIDATION)
   proposeParId   String
-  proposePar     User                     @relation("RemboursementRetourProposePar", fields: [proposeParId], references: [id])
-  proposeAt      DateTime                 @default(now())
+  proposePar     User                      @relation("RemboursementRetourProposePar", fields: [proposeParId], references: [id])
+  proposeAt      DateTime                  @default(now())
   valideParId    String?
-  validePar      User?                    @relation("RemboursementRetourValidePar", fields: [valideParId], references: [id])
+  validePar      User?                     @relation("RemboursementRetourValidePar", fields: [valideParId], references: [id])
   valideAt       DateTime?
   motifRejet     String?
 
@@ -1230,7 +1250,7 @@ model Service {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  users User[] @relation("ServiceMembres")
+  users         User[]  @relation("ServiceMembres")
   /// Responsable du service : valide l'étape « Service » des demandes de ses membres. Facultatif en base (comptes
   /// créés après la migration) ; exigé par l'écran d'administration ; création de demande refusée sans lui.
   responsableId String?
@@ -1264,34 +1284,34 @@ enum StatutAbsence {
 }
 
 model ParametrageHoraire {
-  id                    String   @id @default(cuid())
-  heureDebutMatin       String
-  heureFinMatin         String
-  heureDebutApresMidi   String
-  heureFinApresMidi     String
-  isActive              Boolean  @default(true)
+  id                                    String   @id @default(cuid())
+  heureDebutMatin                       String
+  heureFinMatin                         String
+  heureDebutApresMidi                   String
+  heureFinApresMidi                     String
+  isActive                              Boolean  @default(true)
   /// Délai d'attente en minutes après l'heure de fin avant d'envoyer l'alerte d'oubli de départ (défaut: 30)
-  delaiAlerteOubliDepartMinutes Int @default(30)
+  delaiAlerteOubliDepartMinutes         Int      @default(30)
   /// Activer le pointage par géolocalisation GPS comme fallback réseau
-  geolocalisationActive Boolean  @default(false)
+  geolocalisationActive                 Boolean  @default(false)
   /// Latitude GPS du bureau (point de référence pour le calcul de distance)
-  bureauLatitude        Float?   @default(5.3628189)
+  bureauLatitude                        Float?   @default(5.3628189)
   /// Longitude GPS du bureau
-  bureauLongitude       Float?   @default(-3.9374753)
+  bureauLongitude                       Float?   @default(-3.9374753)
   /// Rayon autorisé en mètres autour du bureau (min: 30, max: 200, défaut: 50)
-  rayonAutorise         Int      @default(50)
+  rayonAutorise                         Int      @default(50)
   /// Tolérance d'arrivée en minutes (pointage V2, 2026-10-08) : une arrivée jusqu'à `heureDebutMatin` + tolérance
   /// n'est pas un retard ; au-delà, le retard se compte depuis `heureDebutMatin` (la tolérance est un seuil, jamais
   /// un décalage de l'horaire). Paramétrable par la RH (`/pointage/rh/horaires`).
-  toleranceRetardMinutes                Int @default(15)
+  toleranceRetardMinutes                Int      @default(15)
   /// Délai entre un pointage en retard (ou un départ anticipé) et la demande de justification (premier envoi).
-  delaiDemandeJustificationMinutes      Int @default(15)
+  delaiDemandeJustificationMinutes      Int      @default(15)
   /// Écart entre deux envois de la demande de justification.
-  intervalleRelanceJustificationMinutes Int @default(30)
+  intervalleRelanceJustificationMinutes Int      @default(30)
   /// Nombre TOTAL d'envois de la demande de justification, premier envoi compris (email + push + interne pour le
   /// premier, push + interne pour les suivants).
-  nombreMaxRelancesJustification        Int @default(3)
-  updatedAt             DateTime @updatedAt
+  nombreMaxRelancesJustification        Int      @default(3)
+  updatedAt                             DateTime @updatedAt
 }
 
 model Pointage {
@@ -1323,7 +1343,7 @@ model Pointage {
 
   createdAt DateTime @default(now())
 
-  corrections CorrectionPointage[]
+  corrections   CorrectionPointage[]
   /// Justification demandée après coup pour un retard ou un départ anticipé (pointage V2) : absente pour un pointage
   /// à l'heure. Le motif du retard n'est plus saisi au pointage (`motif` ci-dessus reste pour l'historique et les
   /// pointages RH exceptionnels).
@@ -1349,8 +1369,8 @@ enum StatutJustificationPointage {
 /// responsable, qu'il est inactif ou que le collaborateur est lui-même ce responsable. Registre séparé du pointage,
 /// comme `CorrectionPointage` : rien n'est écrasé.
 model JustificationPointage {
-  id     String                      @id @default(cuid())
-  statut StatutJustificationPointage @default(EN_ATTENTE)
+  id        String                      @id @default(cuid())
+  statut    StatutJustificationPointage @default(EN_ATTENTE)
   /// Motif saisi par le collaborateur (obligatoire pour passer à SOUMISE).
   motif     String?
   soumiseAt DateTime?
@@ -1436,8 +1456,8 @@ model PlageAbsenceAutorisee {
 
   /// Demande de congé qui a créé la plage : l'annulation supprime par cette clé, jamais par plage de dates ni par le texte de la
   /// description. Nulle pour une plage créée autrement.
-  demandeCongeId      String?
-  demandeConge        DemandeConge?      @relation(fields: [demandeCongeId], references: [id], onDelete: Cascade)
+  demandeCongeId String?
+  demandeConge   DemandeConge? @relation(fields: [demandeCongeId], references: [id], onDelete: Cascade)
 
   /// Plage posée dès la soumission, avant décision : la journée n'est pas comptée absente, mais le congé n'est pas encore validé.
   provisoire Boolean @default(false)
@@ -1640,16 +1660,16 @@ enum StatutRetourExceptionnel {
 /// jamais affecté par un retour en attente ou rejeté. Distinct de
 /// `RetourCaisse` pour ne pas compliquer les requêtes des retours normaux.
 model RetourExceptionnel {
-  id        String                   @id @default(cuid())
-  demandeId String
-  demande   Demande                  @relation(fields: [demandeId], references: [id])
+  id             String                   @id @default(cuid())
+  demandeId      String
+  demande        Demande                  @relation(fields: [demandeId], references: [id])
   /// Article concerné (lot E, 2026-10-17). Vide pour une demande sans article (dépense directe) et pour un retour
   /// antérieur au lot E sur une demande à plusieurs articles validés (cas ambigu : jamais attribué au hasard).
   ligneDemandeId String?
   ligneDemande   LigneDemande?            @relation(fields: [ligneDemandeId], references: [id], onDelete: Restrict)
-  montant   Decimal                  @db.Decimal(14, 2)
-  motif     String
-  statut    StatutRetourExceptionnel @default(EN_ATTENTE_VALIDATION)
+  montant        Decimal                  @db.Decimal(14, 2)
+  motif          String
+  statut         StatutRetourExceptionnel @default(EN_ATTENTE_VALIDATION)
 
   saisiParId String
   saisiPar   User     @relation("RetourExceptionnelSaisiPar", fields: [saisiParId], references: [id])
@@ -1675,29 +1695,29 @@ model RetourExceptionnel {
 /// `montantChequeInitial` est purement déclaratif (non vérifiable).
 /// Écrit immédiatement dans `JournalCaisse` (ENTREE, source "retour_externe").
 model RetourExterne {
-  id                   String   @id @default(cuid())
+  id                   String        @id @default(cuid())
   collaborateurId      String?
-  collaborateur        User?    @relation("RetourExterneCollaborateur", fields: [collaborateurId], references: [id])
+  collaborateur        User?         @relation("RetourExterneCollaborateur", fields: [collaborateurId], references: [id])
   nomExterne           String?
-  montantChequeInitial Decimal  @db.Decimal(14, 2)
-  montantRetourne      Decimal  @db.Decimal(14, 2)
+  montantChequeInitial Decimal       @db.Decimal(14, 2)
+  montantRetourne      Decimal       @db.Decimal(14, 2)
   motif                String
-  pieceJointeId        String   @unique
-  pieceJointe          PieceJointe @relation("RetourExternePieceRetour", fields: [pieceJointeId], references: [id])
+  pieceJointeId        String        @unique
+  pieceJointe          PieceJointe   @relation("RetourExternePieceRetour", fields: [pieceJointeId], references: [id])
   /// Justificatif du chèque initial (preuve du règlement d'origine). Obligatoire
   /// côté applicatif ; nullable en base uniquement pour les lignes antérieures.
-  pieceJointeChequeId  String?  @unique
-  pieceJointeCheque    PieceJointe? @relation("RetourExternePieceCheque", fields: [pieceJointeChequeId], references: [id])
+  pieceJointeChequeId  String?       @unique
+  pieceJointeCheque    PieceJointe?  @relation("RetourExternePieceCheque", fields: [pieceJointeChequeId], references: [id])
   /// Rattachement FACULTATIF à une demande et à son article (lot G bis, 2026-10-19) : retour d'un fonds versé par
   /// BANQUE, rendu en espèces à la caisse. Rattaché, il compte comme retour reçu de l'article (solde à régulariser) ;
   /// non rattaché, il reste totalement autonome (cas du chèque hors système). Vide pour une demande sans article.
   demandeId            String?
-  demande              Demande? @relation("RetourExterneDemande", fields: [demandeId], references: [id], onDelete: Restrict)
+  demande              Demande?      @relation("RetourExterneDemande", fields: [demandeId], references: [id], onDelete: Restrict)
   ligneDemandeId       String?
   ligneDemande         LigneDemande? @relation("RetourExterneLigne", fields: [ligneDemandeId], references: [id], onDelete: Restrict)
   creeParId            String
-  creePar              User     @relation("RetourExterneCreePar", fields: [creeParId], references: [id])
-  creeAt               DateTime @default(now())
+  creePar              User          @relation("RetourExterneCreePar", fields: [creeParId], references: [id])
+  creeAt               DateTime      @default(now())
 
   @@index([creeAt])
   @@index([demandeId])
@@ -1709,15 +1729,15 @@ model RetourExterne {
 /// purgée : une ligne = "déjà exécutée" (flag définitif) ET journal d'audit hors des tables purgées.
 /// `verrou` est constant + unique : deux exécutions concurrentes ne peuvent pas réussir toutes les deux.
 model ReinitialisationSysteme {
-  id             String   @id @default(cuid())
-  verrou         String   @unique @default("REINITIALISATION")
-  effectueeAt    DateTime @default(now())
-  effectueeParId String
-  effectueePar   User     @relation(fields: [effectueeParId], references: [id])
+  id                String   @id @default(cuid())
+  verrou            String   @unique @default("REINITIALISATION")
+  effectueeAt       DateTime @default(now())
+  effectueeParId    String
+  effectueePar      User     @relation(fields: [effectueeParId], references: [id])
   /// Nombre de lignes supprimées par table.
-  decompte       Json
+  decompte          Json
   /// Empreinte SHA-256 de la sauvegarde JSON téléchargée juste avant la purge.
-  sauvegardeSha256 String
+  sauvegardeSha256  String
   /// Fichiers de uploads/ supprimés du disque après le commit (mis à jour après coup).
   fichiersSupprimes Int      @default(0)
   fichiersEchecs    Int      @default(0)
@@ -1736,20 +1756,20 @@ enum TypeMouvementBanque {
 /// règlement Banque, `ANNULATION` à son annulation, `RETOUR` à la déclaration
 /// d'un retour (avec bordereau de versement obligatoire, `pieceJointeId`).
 model JournalBanque {
-  id         String              @id @default(cuid())
-  type       TypeMouvementBanque
-  montant    Decimal             @db.Decimal(14, 2)
-  reglementId String
-  reglement   Reglement          @relation(fields: [reglementId], references: [id])
+  id             String              @id @default(cuid())
+  type           TypeMouvementBanque
+  montant        Decimal             @db.Decimal(14, 2)
+  reglementId    String
+  reglement      Reglement           @relation(fields: [reglementId], references: [id])
   /// Retour de caisse associé, pour un mouvement `RETOUR`.
   retourCaisseId String?
-  retourCaisse   RetourCaisse?   @relation(fields: [retourCaisseId], references: [id])
+  retourCaisse   RetourCaisse?       @relation(fields: [retourCaisseId], references: [id])
   /// Bordereau de versement — obligatoire pour un `RETOUR` (revérifié côté serveur).
-  pieceJointeId String?          @unique
-  pieceJointe   PieceJointe?     @relation(fields: [pieceJointeId], references: [id])
-  creeParId  String
-  creePar    User                @relation("JournalBanqueCreePar", fields: [creeParId], references: [id])
-  creeAt     DateTime            @default(now())
+  pieceJointeId  String?             @unique
+  pieceJointe    PieceJointe?        @relation(fields: [pieceJointeId], references: [id])
+  creeParId      String
+  creePar        User                @relation("JournalBanqueCreePar", fields: [creeParId], references: [id])
+  creeAt         DateTime            @default(now())
 
   @@index([reglementId])
 }
@@ -1850,10 +1870,10 @@ model EncBranche {
 
   /// Import F1 (§5.3/§5.5, commit 4c) — champs virtuels (aucune colonne ici), déclarés pour résoudre les relations
   /// nommées côté `EncContrat`/`EncEncaissement`/`EncImport`/`EncSignalement`.
-  encContrats          EncContrat[]
-  encEncaissements     EncEncaissement[]
-  encImportsParDefaut  EncImport[]       @relation("EncImportBrancheParDefaut")
-  encSignalements      EncSignalement[]
+  encContrats         EncContrat[]
+  encEncaissements    EncEncaissement[]
+  encImportsParDefaut EncImport[]       @relation("EncImportBrancheParDefaut")
+  encSignalements     EncSignalement[]
 }
 
 /// Bénéficiaire des honoraires, DATÉ (CDC §3.6) : jamais une ligne modifiée, toujours une nouvelle ligne à une nouvelle
@@ -1980,36 +2000,36 @@ enum EncStatutSignalement {
 /// présente dans le fichier, jamais touchée par un import). Changement de branche/partenaire sur avenant : autorisé
 /// (le fichier fait foi), question ouverte V2-A5 non tranchée par ce commit.
 model EncContrat {
-  id             String     @id @default(cuid())
-  numPolice      String     @unique
-  brancheId      String
-  branche        EncBranche @relation(fields: [brancheId], references: [id], onDelete: Restrict)
-  typeContrat    String?
-  produitLibelle String?
-  produitCode    String?
-  typeOperation  String?
-  clientId       String?
-  clientNom      String?
-  partenaireId   String?
-  partenaire     EncPartenaire? @relation(fields: [partenaireId], references: [id], onDelete: Restrict)
-  dateEffet      DateTime   @db.Date
-  dateEcheance   DateTime?  @db.Date
-  typePolice     String?
+  id                        String         @id @default(cuid())
+  numPolice                 String         @unique
+  brancheId                 String
+  branche                   EncBranche     @relation(fields: [brancheId], references: [id], onDelete: Restrict)
+  typeContrat               String?
+  produitLibelle            String?
+  produitCode               String?
+  typeOperation             String?
+  clientId                  String?
+  clientNom                 String?
+  partenaireId              String?
+  partenaire                EncPartenaire? @relation(fields: [partenaireId], references: [id], onDelete: Restrict)
+  dateEffet                 DateTime       @db.Date
+  dateEcheance              DateTime?      @db.Date
+  typePolice                String?
   /// Montants du contrat (CDC §3.1), mêmes noms que `MontantsContrat` (encCalcul.ts) : S prime TTC, T prime nette,
   /// U accessoires, V taxes, W commission, X honoraires — jamais recalculés, toujours ceux du fichier.
-  S Decimal @db.Decimal(14, 2)
-  T Decimal @db.Decimal(14, 2)
-  U Decimal @db.Decimal(14, 2)
-  V Decimal @db.Decimal(14, 2)
-  W Decimal @db.Decimal(14, 2)
-  X Decimal @db.Decimal(14, 2)
-  partAccessoiresPartenaire Decimal? @db.Decimal(7, 6)
-  creeParImportId String
-  creeParImport   EncImport  @relation("EncContratCreeParImport", fields: [creeParImportId], references: [id], onDelete: Restrict)
-  majParImportId  String?
-  majParImport    EncImport? @relation("EncContratMajParImport", fields: [majParImportId], references: [id], onDelete: Restrict)
-  creeAt DateTime @default(now())
-  majAt  DateTime @updatedAt
+  S                         Decimal        @db.Decimal(14, 2)
+  T                         Decimal        @db.Decimal(14, 2)
+  U                         Decimal        @db.Decimal(14, 2)
+  V                         Decimal        @db.Decimal(14, 2)
+  W                         Decimal        @db.Decimal(14, 2)
+  X                         Decimal        @db.Decimal(14, 2)
+  partAccessoiresPartenaire Decimal?       @db.Decimal(7, 6)
+  creeParImportId           String
+  creeParImport             EncImport      @relation("EncContratCreeParImport", fields: [creeParImportId], references: [id], onDelete: Restrict)
+  majParImportId            String?
+  majParImport              EncImport?     @relation("EncContratMajParImport", fields: [majParImportId], references: [id], onDelete: Restrict)
+  creeAt                    DateTime       @default(now())
+  majAt                     DateTime       @updatedAt
 
   encaissements EncEncaissement[]
   signalements  EncSignalement[]
@@ -2042,60 +2062,60 @@ model EncContratMot {
 /// honoraires, parts d'accessoires, exigibilité) : colonnes déjà présentes (schéma stable pour F5, commit ultérieur)
 /// mais TOUJOURS `null` ici, jamais renseignées par l'import.
 model EncEncaissement {
-  id                String                @id @default(cuid())
+  id                        String                @id @default(cuid())
   /// NOTRE numéro (PAI-AAAA-NNNNNN, `encSequence.ts`) — attribué à la création, jamais réutilisé (D7).
-  paiementId        String                @unique
+  paiementId                String                @unique
   /// PaiementID DU FICHIER, s'il existe : anti-doublon SEULEMENT (D7/A1b), jamais notre identifiant. `@unique` sur
   /// une colonne nullable = unique seulement quand renseignée (sémantique Postgres native).
-  paiementIdFichier String?               @unique
-  contratId         String
-  contrat           EncContrat            @relation(fields: [contratId], references: [id], onDelete: Restrict)
-  brancheId         String
-  branche           EncBranche            @relation(fields: [brancheId], references: [id], onDelete: Restrict)
-  source            EncSourceEncaissement
-  statut            EncStatutEncaissement @default(A_CONFIRMER)
-  datePaiement      DateTime              @db.Date
-  mode              String
+  paiementIdFichier         String?               @unique
+  contratId                 String
+  contrat                   EncContrat            @relation(fields: [contratId], references: [id], onDelete: Restrict)
+  brancheId                 String
+  branche                   EncBranche            @relation(fields: [brancheId], references: [id], onDelete: Restrict)
+  source                    EncSourceEncaissement
+  statut                    EncStatutEncaissement @default(A_CONFIRMER)
+  datePaiement              DateTime              @db.Date
+  mode                      String
   /// `null` UNIQUEMENT pour le cas « référence manquante » (F1.4, décision du 2026-09-30) — un encaissement SAISI
   /// (F3, hors de ce commit) l'exige toujours (CDC §3.2).
-  reference String?
-  Z         Decimal @db.Decimal(14, 2)
-  dateSaisie DateTime
-  saisiParId String
-  saisiPar   User     @relation("EncEncaissementSaisiPar", fields: [saisiParId], references: [id], onDelete: Restrict)
-  dateConfirmation DateTime?
-  confirmeParId    String?
-  confirmePar      User?     @relation("EncEncaissementConfirmePar", fields: [confirmeParId], references: [id], onDelete: Restrict)
-  datePriseEnCompte  DateTime? @db.Date
-  ordrePriseEnCompte Int?
-  motifNonReception String?
-  nonRecuParId      String?
-  nonRecuPar        User?     @relation("EncEncaissementNonRecuPar", fields: [nonRecuParId], references: [id], onDelete: Restrict)
-  nonRecuAt         DateTime?
-  referenceGroupe String?
-  groupeId        String?
-  nonIdentifieId  String?
-  importId        String?
-  import          EncImport? @relation(fields: [importId], references: [id], onDelete: Restrict)
-  importLigne     Int?
-  releveLigneId   String?
-  contrePasseId   String?          @unique
-  contrePasse     EncEncaissement? @relation("EncEncaissementContrepassation", fields: [contrePasseId], references: [id], onDelete: Restrict)
-  contrePassePar  EncEncaissement? @relation("EncEncaissementContrepassation")
-  motifContrePassation String?
+  reference                 String?
+  Z                         Decimal               @db.Decimal(14, 2)
+  dateSaisie                DateTime
+  saisiParId                String
+  saisiPar                  User                  @relation("EncEncaissementSaisiPar", fields: [saisiParId], references: [id], onDelete: Restrict)
+  dateConfirmation          DateTime?
+  confirmeParId             String?
+  confirmePar               User?                 @relation("EncEncaissementConfirmePar", fields: [confirmeParId], references: [id], onDelete: Restrict)
+  datePriseEnCompte         DateTime?             @db.Date
+  ordrePriseEnCompte        Int?
+  motifNonReception         String?
+  nonRecuParId              String?
+  nonRecuPar                User?                 @relation("EncEncaissementNonRecuPar", fields: [nonRecuParId], references: [id], onDelete: Restrict)
+  nonRecuAt                 DateTime?
+  referenceGroupe           String?
+  groupeId                  String?
+  nonIdentifieId            String?
+  importId                  String?
+  import                    EncImport?            @relation(fields: [importId], references: [id], onDelete: Restrict)
+  importLigne               Int?
+  releveLigneId             String?
+  contrePasseId             String?               @unique
+  contrePasse               EncEncaissement?      @relation("EncEncaissementContrepassation", fields: [contrePasseId], references: [id], onDelete: Restrict)
+  contrePassePar            EncEncaissement?      @relation("EncEncaissementContrepassation")
+  motifContrePassation      String?
   /// Figés à la confirmation (D9, F5 — commit ultérieur) : jamais renseignés par ce commit.
-  AA         Decimal? @db.Decimal(14, 2)
-  AB         Decimal? @db.Decimal(14, 2)
-  AC         Decimal? @db.Decimal(14, 2)
-  AD         Decimal? @db.Decimal(14, 2)
-  commission Decimal? @db.Decimal(14, 2)
-  honoraires Decimal? @db.Decimal(14, 2)
-  partAccessoiresTaux       Decimal?  @db.Decimal(7, 6)
-  partAccessoiresPartenaire Decimal?  @db.Decimal(14, 2)
-  partAccessoiresSim        Decimal?  @db.Decimal(14, 2)
-  moisExigibilite           DateTime? @db.Date
-  dateLimiteReversement     DateTime? @db.Date
-  estRegularisation         Boolean   @default(false)
+  AA                        Decimal?              @db.Decimal(14, 2)
+  AB                        Decimal?              @db.Decimal(14, 2)
+  AC                        Decimal?              @db.Decimal(14, 2)
+  AD                        Decimal?              @db.Decimal(14, 2)
+  commission                Decimal?              @db.Decimal(14, 2)
+  honoraires                Decimal?              @db.Decimal(14, 2)
+  partAccessoiresTaux       Decimal?              @db.Decimal(7, 6)
+  partAccessoiresPartenaire Decimal?              @db.Decimal(14, 2)
+  partAccessoiresSim        Decimal?              @db.Decimal(14, 2)
+  moisExigibilite           DateTime?             @db.Date
+  dateLimiteReversement     DateTime?             @db.Date
+  estRegularisation         Boolean               @default(false)
   beneficiaireHonorairesId  String?
   /// Marquages « payé » hors application (F7, commit ultérieur) : date + référence par nature, jamais renseignés ici.
   taxePayeeDate             DateTime?
@@ -2106,8 +2126,8 @@ model EncEncaissement {
   honorairesPayesReference  String?
   accessoiresPayesDate      DateTime?
   accessoiresPayesReference String?
-  aRegulariser Boolean @default(false)
-  observations String?
+  aRegulariser              Boolean               @default(false)
+  observations              String?
 
   signalementsExistant EncSignalement[] @relation("EncSignalementEncaissementExistant")
   signalementsCree     EncSignalement[] @relation("EncSignalementEncaissementCree")
@@ -2124,37 +2144,37 @@ model EncEncaissement {
 /// par ce commit (`RELEVE` = F5, `REPRISE` = F1.5, hors périmètre). Le fichier est conservé comme preuve (D6) via
 /// `EncPieceJointe` (`fichierId`) — jamais dans le dépôt ni dans un test (données clients).
 model EncImport {
-  id         String          @id @default(cuid())
-  type       EncTypeImport
-  statut     EncStatutImport
-  nomFichier String
-  sha256     String
-  fichierId  String?         @unique
-  fichier    EncPieceJointe? @relation(fields: [fichierId], references: [id], onDelete: Restrict)
-  brancheParDefautId String?
-  brancheParDefaut   EncBranche? @relation("EncImportBrancheParDefaut", fields: [brancheParDefautId], references: [id], onDelete: Restrict)
-  operateur  String?
+  id                    String          @id @default(cuid())
+  type                  EncTypeImport
+  statut                EncStatutImport
+  nomFichier            String
+  sha256                String
+  fichierId             String?         @unique
+  fichier               EncPieceJointe? @relation(fields: [fichierId], references: [id], onDelete: Restrict)
+  brancheParDefautId    String?
+  brancheParDefaut      EncBranche?     @relation("EncImportBrancheParDefaut", fields: [brancheParDefautId], references: [id], onDelete: Restrict)
+  operateur             String?
   /// Codes `EncBranche` lus dans la colonne « Branche » du fichier (tableau JSON trié, sans doublon), enregistrés au
   /// moment de l'import (commit 4e). `null` : aucune branche lue dans le fichier (branche par défaut choisie à l'écran),
   /// ou import antérieur à cette colonne — l'historique se rabat alors sur une reconstitution.
-  branchesFichier Json?
+  branchesFichier       Json?
   /// Reprise (D10, F1.5, hors périmètre de ce commit) : jamais renseignées pour un import `PRODUCTION`.
-  basculeTaxe        DateTime? @db.Date
-  basculeCommission  DateTime? @db.Date
-  basculeHonoraires  DateTime? @db.Date
-  basculeAccessoires DateTime? @db.Date
+  basculeTaxe           DateTime?       @db.Date
+  basculeCommission     DateTime?       @db.Date
+  basculeHonoraires     DateTime?       @db.Date
+  basculeAccessoires    DateTime?       @db.Date
   nbLignes              Int
-  totalPrimesTtc        Decimal? @db.Decimal(14, 2)
-  nbContratsCrees       Int      @default(0)
-  nbContratsMaj         Int      @default(0)
-  nbPaiementsAConfirmer Int      @default(0)
-  nbATraiter            Int      @default(0)
-  importeParId String
-  importePar   User      @relation("EncImportImportePar", fields: [importeParId], references: [id], onDelete: Restrict)
-  importeAt    DateTime
-  valideParId  String?
-  validePar    User?     @relation("EncImportValidePar", fields: [valideParId], references: [id], onDelete: Restrict)
-  valideAt     DateTime?
+  totalPrimesTtc        Decimal?        @db.Decimal(14, 2)
+  nbContratsCrees       Int             @default(0)
+  nbContratsMaj         Int             @default(0)
+  nbPaiementsAConfirmer Int             @default(0)
+  nbATraiter            Int             @default(0)
+  importeParId          String
+  importePar            User            @relation("EncImportImportePar", fields: [importeParId], references: [id], onDelete: Restrict)
+  importeAt             DateTime
+  valideParId           String?
+  validePar             User?           @relation("EncImportValidePar", fields: [valideParId], references: [id], onDelete: Restrict)
+  valideAt              DateTime?
 
   contratsCrees EncContrat[]      @relation("EncContratCreeParImport")
   contratsMajs  EncContrat[]      @relation("EncContratMajParImport")
@@ -2166,33 +2186,33 @@ model EncImport {
 /// (sévérité, posée à la création) et `statut` (cycle de vie : démarre égal à `niveau`, `TRAITE` par un futur écran)
 /// sont deux champs DISTINCTS.
 model EncSignalement {
-  id        String    @id @default(cuid())
-  importId  String
-  import    EncImport @relation(fields: [importId], references: [id], onDelete: Restrict)
-  contratId String?
-  contrat   EncContrat? @relation(fields: [contratId], references: [id], onDelete: Restrict)
+  id                     String                @id @default(cuid())
+  importId               String
+  import                 EncImport             @relation(fields: [importId], references: [id], onDelete: Restrict)
+  contratId              String?
+  contrat                EncContrat?           @relation(fields: [contratId], references: [id], onDelete: Restrict)
   /// `null` UNIQUEMENT si la ligne du fichier n'avait aucun numéro de police (cas hors tableau F1.4, ne bloque pas le
   /// reste de l'import — décision du commit 4c).
-  numPolice String?
-  brancheId String?
-  branche   EncBranche? @relation(fields: [brancheId], references: [id], onDelete: Restrict)
-  analyse   EncAnalyseSignalement
-  niveau    EncNiveauSignalement
-  statut    EncStatutSignalement
+  numPolice              String?
+  brancheId              String?
+  branche                EncBranche?           @relation(fields: [brancheId], references: [id], onDelete: Restrict)
+  analyse                EncAnalyseSignalement
+  niveau                 EncNiveauSignalement
+  statut                 EncStatutSignalement
   /// Paiement tel qu'indiqué dans le fichier (date/mode/référence/montant), pour les cas sans `EncEncaissement` créé.
-  paiementIndique Json?
+  paiementIndique        Json?
   encaissementExistantId String?
-  encaissementExistant   EncEncaissement? @relation("EncSignalementEncaissementExistant", fields: [encaissementExistantId], references: [id], onDelete: Restrict)
+  encaissementExistant   EncEncaissement?      @relation("EncSignalementEncaissementExistant", fields: [encaissementExistantId], references: [id], onDelete: Restrict)
   encaissementCreeId     String?
-  encaissementCree       EncEncaissement? @relation("EncSignalementEncaissementCree", fields: [encaissementCreeId], references: [id], onDelete: Restrict)
-  primeAvant Json?
-  primeApres Json?
-  detail     String
-  traiteParId String?
-  traitePar   User?     @relation("EncSignalementTraitePar", fields: [traiteParId], references: [id], onDelete: Restrict)
-  traiteAt    DateTime?
-  resolution  String?
-  creeAt      DateTime  @default(now())
+  encaissementCree       EncEncaissement?      @relation("EncSignalementEncaissementCree", fields: [encaissementCreeId], references: [id], onDelete: Restrict)
+  primeAvant             Json?
+  primeApres             Json?
+  detail                 String
+  traiteParId            String?
+  traitePar              User?                 @relation("EncSignalementTraitePar", fields: [traiteParId], references: [id], onDelete: Restrict)
+  traiteAt               DateTime?
+  resolution             String?
+  creeAt                 DateTime              @default(now())
 
   @@index([importId])
   @@index([contratId])
@@ -2212,6 +2232,9 @@ enum TacheNom {
   ABSENCES
   PURGE
   RAPPELS_CONGES
+  COMPTA_CONTROLE_HEBDO
+  COMPTA_RELANCES
+  COMPTA_RAPPEL_TCA
 }
 
 enum DeclenchementTache {
@@ -2269,28 +2292,28 @@ enum StatutDepassementBudget {
 /// `seuilRouge` ≥ 0 (pourcentage restant ou montant restant). Les budgets existants avant le lot J sont repris par la migration
 /// (`repris`, validés, début 2000-01-01, sans fin, seuil 20 % / 0 %) ; leur `soumisParId` est nul.
 model BudgetParametrage {
-  id          String                  @id @default(cuid())
-  portee      PorteeBudget
-  categorieId String?
-  categorie   Categorie?              @relation(fields: [categorieId], references: [id], onDelete: Restrict)
+  id              String                  @id @default(cuid())
+  portee          PorteeBudget
+  categorieId     String?
+  categorie       Categorie?              @relation(fields: [categorieId], references: [id], onDelete: Restrict)
   /// Budget d'une CATÉGORIE (saisi par la Finance). `null` pour le budget GLOBAL (lot J ter) : c'est le solde de caisse réel,
   /// jamais saisi — le paramétrage global ne porte que les seuils d'alerte (en montant).
-  montant     Decimal?                @db.Decimal(14, 2)
-  dateDebut   DateTime                @db.Date
-  dateFin     DateTime?               @db.Date
-  modeSeuil   ModeSeuilBudget?
-  seuilOrange Decimal?                @db.Decimal(14, 2)
-  seuilRouge  Decimal?                @db.Decimal(14, 2)
-  statut      StatutParametrageBudget @default(EN_ATTENTE)
-  repris      Boolean                 @default(false)
-  soumisParId String?
-  soumisPar   User?                   @relation("BudgetParametrageSoumisPar", fields: [soumisParId], references: [id])
-  soumisAt    DateTime                @default(now())
-  decideParId String?
-  decidePar   User?                   @relation("BudgetParametrageDecidePar", fields: [decideParId], references: [id])
-  decideAt    DateTime?
+  montant         Decimal?                @db.Decimal(14, 2)
+  dateDebut       DateTime                @db.Date
+  dateFin         DateTime?               @db.Date
+  modeSeuil       ModeSeuilBudget?
+  seuilOrange     Decimal?                @db.Decimal(14, 2)
+  seuilRouge      Decimal?                @db.Decimal(14, 2)
+  statut          StatutParametrageBudget @default(EN_ATTENTE)
+  repris          Boolean                 @default(false)
+  soumisParId     String?
+  soumisPar       User?                   @relation("BudgetParametrageSoumisPar", fields: [soumisParId], references: [id])
+  soumisAt        DateTime                @default(now())
+  decideParId     String?
+  decidePar       User?                   @relation("BudgetParametrageDecidePar", fields: [decideParId], references: [id])
+  decideAt        DateTime?
   /// Obligatoire (10 caractères minimum depuis le lot M) quand le DG rejette ; `statut = REFUSE` reste la valeur interne (« Rejeté »).
-  motifRefus  String?
+  motifRefus      String?
   /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de l'envoi au DG par la Finance, et de la réponse du DG (validation comme
   /// rejet). `null` pour les paramétrages antérieurs au lot M (affichés « Non renseigné »).
   motifSoumission String?
@@ -2305,24 +2328,24 @@ model BudgetParametrage {
 /// CONFIRME (motif obligatoire) ; la validation qui s'en sert le fait passer à UTILISE (usage unique). Quand c'est le DG qui
 /// valide, il confirme dans le même geste : la ligne est créée directement UTILISE (demandeur = confirmateur).
 model BudgetDepassement {
-  id           String                  @id @default(cuid())
-  demandeId    String
-  demande      Demande                 @relation(fields: [demandeId], references: [id], onDelete: Cascade)
-  statut       StatutDepassementBudget
-  resume       String
-  demandeParId String
-  demandePar   User                    @relation("BudgetDepassementDemandePar", fields: [demandeParId], references: [id])
-  demandeAt    DateTime                @default(now())
+  id            String                  @id @default(cuid())
+  demandeId     String
+  demande       Demande                 @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+  statut        StatutDepassementBudget
+  resume        String
+  demandeParId  String
+  demandePar    User                    @relation("BudgetDepassementDemandePar", fields: [demandeParId], references: [id])
+  demandeAt     DateTime                @default(now())
   confirmeParId String?
-  confirmePar  User?                   @relation("BudgetDepassementConfirmePar", fields: [confirmeParId], references: [id])
-  confirmeAt   DateTime?
-  motif        String?
+  confirmePar   User?                   @relation("BudgetDepassementConfirmePar", fields: [confirmeParId], references: [id])
+  confirmeAt    DateTime?
+  motif         String?
   /// Lot M : motif OBLIGATOIRE (10 à 300 caractères) de la demande de confirmation faite au DG par la Finance (`motif` = celui du DG).
-  motifDemande String?
-  utiliseAt    DateTime?
+  motifDemande  String?
+  utiliseAt     DateTime?
   /// Lot J bis : montants que cette confirmation couvre, par article (ou dépense directe) et par catégorie
   /// (`[{ ligneId, categorieId, montant }]`), posés à l'utilisation — le règlement de l'article peut les dépasser du reste du budget.
-  couverture   Json?
+  couverture    Json?
 
   @@index([demandeId, statut])
   @@index([statut, demandeAt])
@@ -2383,9 +2406,9 @@ model JournalTechnique {
 /// Marqueurs « une seule fois » (ex : clôture initiale des justifications et absences en attente au premier passage du
 /// planificateur en production). Jamais purgé : la clé est unique, l'insertion fait office de verrou.
 model MarqueurUnique {
-  cle   String   @id
+  cle    String   @id
   creeAt DateTime @default(now())
-  bilan Json?
+  bilan  Json?
 }
 
 /// Journal d'audit PERMANENT des purges du Pointage seul (jamais purgé) : une ligne par purge.
@@ -2402,22 +2425,21 @@ model ReinitialisationPointage {
 
 /// Marqueur DÉFINITIF « le Pointage est en service » : posé une fois (`verrou` unique), il interdit toute nouvelle purge.
 model PointageMiseEnService {
-  id           String   @id @default(cuid())
-  verrou       String   @unique @default("MISE_EN_SERVICE")
+  id             String   @id @default(cuid())
+  verrou         String   @unique @default("MISE_EN_SERVICE")
   misEnServiceAt DateTime @default(now())
-  parId        String
-  par          User     @relation(fields: [parId], references: [id])
+  parId          String
+  par            User     @relation(fields: [parId], references: [id])
 }
-
 
 /// Lot L (2026-10-27) — signature manuscrite (dessinée au curseur ou au doigt), enrôlée UNE fois dans le profil. Une ligne par
 /// VERSION : une nouvelle signature ajoute une version, l'ancienne n'est jamais modifiée ni supprimée (les actions déjà signées
 /// gardent celle qu'elles ont utilisée). La version courante d'un compte est la plus élevée. Traçabilité interne, PAS une
 /// signature électronique qualifiée.
 model SignatureUtilisateur {
-  id        String   @id @default(cuid())
+  id        String         @id @default(cuid())
   userId    String
-  user      User     @relation("SignatureUtilisateur", fields: [userId], references: [id])
+  user      User           @relation("SignatureUtilisateur", fields: [userId], references: [id])
   version   Int
   /// PNG validé et reconstruit côté serveur (IHDR + IDAT + IEND seulement).
   image     Bytes
@@ -2425,7 +2447,7 @@ model SignatureUtilisateur {
   hauteur   Int
   /// SHA-256 (hexadécimal) de `image`.
   empreinte String
-  creeAt    DateTime @default(now())
+  creeAt    DateTime       @default(now())
   actions   ActionSignee[]
 
   @@unique([userId, version])
@@ -2458,4 +2480,750 @@ model ActionSignee {
   @@index([signataireId, creeAt])
   @@index([signatureId])
   @@index([auNomDeId])
+}
+
+// =====================================================================================================================
+// Module « Gestion Compta » (docs/compta-conception.md §5) — préfixe `Cpt`, INDÉPENDANT des autres modules (décision V1).
+// Socle COPIÉ du patron d'Encaissements (aucun lien de données avec les tables `Enc*`). Toutes les clés étrangères vers
+// `User` sont en `Restrict`. Fonctions et triggers SQL `cpt_*` (ajouts manuels) : migration
+// `20261101090000_compta_socle_technique`.
+// =====================================================================================================================
+
+enum CptStatutPeriode {
+  OUVERTE
+  CLOTUREE
+}
+
+/// Types de fichier importables (docs/compta-conception.md §7). Chaque type a ses formats paramétrables (`CptFormatImport`).
+enum CptTypeImport {
+  PRODUCTION
+  RELEVE_WAVE_BUSINESS
+  RELEVE_WAVE_HORS_BUSINESS
+  RELEVE_BANQUE
+  RELEVE_MICROFINANCE
+  RELEVE_PEYAPAY
+  BORDEREAU_PARTENAIRE
+}
+
+/// Mise en service du module : une seule ligne possible (CHECK id = 1), jamais modifiée ni supprimée (triggers).
+model CptMiseEnService {
+  id               Int      @id @default(1)
+  activeeAt        DateTime @default(now())
+  activeeParId     String
+  activeePar       User     @relation("CptMiseEnServiceActiveePar", fields: [activeeParId], references: [id], onDelete: Restrict)
+  /// Empreinte SHA-256 de la sauvegarde JSON téléchargée juste avant la remise à zéro.
+  sauvegardeSha256 String
+}
+
+/// Compteurs de numérotation (CPE-AAAA, CPR-AAAA, CPD-AAAA). Incrément atomique uniquement (backend/src/cptSequence.ts),
+/// jamais count()+1. Après mise en service : DELETE, baisse de valeur et renommage interdits (trigger).
+model CptSequence {
+  cle    String @id
+  valeur Int    @default(0)
+}
+
+/// Paramètres du module (clé → valeur texte typée par backend/src/cptParametres.ts). `majParId` nul = valeur par défaut
+/// jamais modifiée.
+model CptParametre {
+  cle      String   @id
+  valeur   String
+  majParId String?
+  majPar   User?    @relation("CptParametreMajPar", fields: [majParId], references: [id], onDelete: Restrict)
+  majAt    DateTime @default(now())
+}
+
+/// Journal d'audit du module, en ajout seul : UPDATE toujours interdit, DELETE/TRUNCATE interdits dès qu'une ligne
+/// CptMiseEnService existe (triggers SQL). Écriture uniquement via backend/src/cptAudit.ts.
+model CptAudit {
+  id       BigInt    @id @default(autoincrement())
+  entite   String
+  entiteId String
+  action   String
+  avant    Json?
+  apres    Json?
+  motif    String?
+  /// Mois de rattachement (1er du mois) pour le rapport « changements depuis la clôture ».
+  mois     DateTime? @db.Date
+  userId   String
+  user     User      @relation("CptAuditUser", fields: [userId], references: [id], onDelete: Restrict)
+  ip       String?
+  at       DateTime  @default(now())
+
+  @@index([entite, entiteId])
+  @@index([mois, at])
+  @@index([at])
+}
+
+/// Pièce jointe du module, séparée de PieceJointe et d'EncPieceJointe. Fichier déposé par une route d'upload propre au
+/// module (uploads/), métadonnées recalculées côté serveur depuis le fichier.
+model CptPieceJointe {
+  id           String   @id @default(cuid())
+  url          String   @unique
+  nomOrigine   String?
+  mime         String
+  taille       Int
+  sha256       String
+  deposeeParId String
+  deposeePar   User     @relation("CptPieceJointeDeposeePar", fields: [deposeeParId], references: [id], onDelete: Restrict)
+  deposeeAt    DateTime @default(now())
+
+  import CptImport?
+  /// Rattachements dont cette pièce est le reçu de confirmation du commercial (GC-5).
+  recusRattachements CptRattachement[] @relation("CptRattachementRecu")
+
+  @@index([sha256])
+}
+
+/// Période comptable (un mois). Une période CLOTUREE n'est plus modifiable : elle ne se rouvre pas et ne se supprime pas
+/// (trigger, RG-08). Le contrôle des écritures datées dans une période clôturée viendra avec les tables de faits (GC-10).
+model CptPeriode {
+  id            String           @id @default(cuid())
+  /// Premier jour du mois (contrainte CHECK en base).
+  mois          DateTime         @unique @db.Date
+  statut        CptStatutPeriode @default(OUVERTE)
+  clotureeParId String?
+  clotureePar   User?            @relation("CptPeriodeCloturePar", fields: [clotureeParId], references: [id], onDelete: Restrict)
+  clotureeAt    DateTime?
+  creeAt        DateTime         @default(now())
+
+  @@index([statut])
+}
+
+/// Format d'un fichier à importer : correspondance « en-tête du fichier → champ interne », avec le type de chaque champ
+/// (texte, date, montant) et le format des dates. Un changement de format de relevé = une modification de cette ligne,
+/// jamais du code (docs/compta-conception.md §7). `colonnes` est validé par backend/src/cptFormatImport.ts.
+/// Un seul format `parDefaut` par type (index unique partiel posé par la migration). Jamais lié à `User` : la trace de
+/// qui a modifié un format est dans `CptAudit`.
+model CptFormatImport {
+  id          String        @id @default(cuid())
+  type        CptTypeImport
+  nom         String
+  /// Ligne (à partir de 1) qui porte les en-têtes : certains relevés ont des lignes de titre avant. Borné 1 à 50 (CHECK).
+  ligneEntete Int           @default(1)
+  colonnes    Json
+  parDefaut   Boolean       @default(false)
+  actif       Boolean       @default(true)
+  creeAt      DateTime      @default(now())
+  majAt       DateTime      @updatedAt
+
+  imports CptImport[]
+
+  @@unique([type, nom])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// GC-2 — Référentiels (docs/compta-conception.md §5.3). Migration `20261101140000_compta_referentiels`.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// Branche d'un produit (C-14 : quatre valeurs fixes, comme dans le cahier).
+enum CptBranche {
+  ACCIDENTS
+  SANTE
+  INCENDIE
+  DECES
+}
+
+enum CptNatureContrat {
+  INDIVIDUEL
+  GROUPE
+}
+
+enum CptTypeCompte {
+  WAVE_BUSINESS
+  WAVE_HORS_BUSINESS
+  BANQUE
+  MICROFINANCE
+  AGREGATEUR
+  CAISSE
+}
+
+/// Ce qu'une convention rémunère.
+enum CptNatureRemuneration {
+  COMMISSION
+  ACCESSOIRES
+  HONORAIRES
+}
+
+/// Sur quel montant porte le taux d'une convention.
+enum CptBaseConvention {
+  PRIME_NETTE
+  NETTE_PLUS_ACCESSOIRES
+  TTC
+}
+
+/// Quand la rémunération devient exigible (C-4 : émission, ou encaissement au prorata).
+enum CptFaitGenerateur {
+  EMISSION
+  ENCAISSEMENT
+}
+
+enum CptModeReglement {
+  EN_UNE_FOIS
+  AU_PRORATA
+}
+
+/// Partenaire (apporteur, bénéficiaire de rémunération, gestionnaire, client) : rôles multiples (booléens). Jamais supprimé :
+/// on le désactive, la trace est dans `CptAudit`.
+model CptPartenaire {
+  id              String   @id @default(cuid())
+  nom             String   @unique
+  estApporteur    Boolean  @default(false)
+  estBeneficiaire Boolean  @default(false)
+  estGestionnaire Boolean  @default(false)
+  estClient       Boolean  @default(false)
+  coordonnees     String?
+  tiersOdoo       String?
+  actif           Boolean  @default(true)
+  creeAt          DateTime @default(now())
+  majAt           DateTime @updatedAt
+
+  clientsOrigine          CptClient[]     @relation("CptClientPartenaireOrigine")
+  conventions             CptConvention[] @relation("CptConventionPartenaire")
+  conventionsApporteur    CptConvention[] @relation("CptConventionApporteur")
+  conventionsBeneficiaire CptConvention[] @relation("CptConventionBeneficiaire")
+  contratsApportes        CptContrat[]    @relation("CptContratApporteur")
+}
+
+model CptClient {
+  id                  String         @id @default(cuid())
+  nom                 String
+  telephone           String?
+  pieceIdentite       String?
+  partenaireOrigineId String?
+  partenaireOrigine   CptPartenaire? @relation("CptClientPartenaireOrigine", fields: [partenaireOrigineId], references: [id], onDelete: Restrict)
+  tiersOdoo           String?
+  creeAt              DateTime       @default(now())
+  majAt               DateTime       @updatedAt
+
+  contrats CptContrat[]
+
+  @@index([nom])
+  @@index([telephone])
+  @@index([partenaireOrigineId])
+}
+
+/// Produit d'assurance. `code` est la clé métier (référencée par les taux de TCA et les conventions) : il ne change pas.
+model CptProduit {
+  id             String     @id @default(cuid())
+  code           String     @unique
+  libelle        String
+  branche        CptBranche
+  tarifReference Decimal?   @db.Decimal(14, 2)
+  compteOdoo     String?
+  actif          Boolean    @default(true)
+  creeAt         DateTime   @default(now())
+  majAt          DateTime   @updatedAt
+
+  tauxTca     CptTauxTca[]
+  conventions CptConvention[]
+  contrats    CptContrat[]
+}
+
+/// Taux de TCA daté, en fraction (0,0725 = 7,25 %). JAMAIS MODIFIÉ : un changement de taux est une NOUVELLE ligne datée,
+/// l'ancienne reste intacte (trigger SQL ; suppression interdite après la mise en service). Unicité (branche, produit,
+/// nature, date d'effet) posée par la migration avec `NULLS NOT DISTINCT` (Prisma ne sait pas la modéliser, sans écart
+/// signalé par `migrate diff`). Choix du taux applicable : backend/src/cptReferentiels.ts (`tauxTcaEnVigueur`).
+model CptTauxTca {
+  id            String            @id @default(cuid())
+  branche       CptBranche
+  produitCode   String?
+  produit       CptProduit?       @relation(fields: [produitCode], references: [code], onDelete: Restrict)
+  natureContrat CptNatureContrat?
+  taux          Decimal           @db.Decimal(7, 6)
+  dateEffet     DateTime          @db.Date
+  creeParId     String
+  creePar       User              @relation("CptTauxTcaCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt        DateTime          @default(now())
+
+  /// Même nom que l'index de la migration, qui ajoute `NULLS NOT DISTINCT` (non modélisable) : sans cette déclaration,
+  /// `migrate diff` réclamerait sa suppression.
+  @@unique([branche, produitCode, natureContrat, dateEffet], map: "CptTauxTca_unique_portee_date")
+  @@index([dateEffet])
+  @@index([branche, dateEffet])
+}
+
+/// Compte d'encaissement (Wave, banque, microfinance, caisse…).
+model CptCompte {
+  id          String        @id @default(cuid())
+  libelle     String
+  type        CptTypeCompte
+  journalOdoo String?
+  compteOdoo  String?
+  actif       Boolean       @default(true)
+  creeAt      DateTime      @default(now())
+  majAt       DateTime      @updatedAt
+
+  imports            CptImport[]
+  encaissements      CptEncaissement[]
+  releves            CptReleve[]
+  transfertsSortants CptTransfertInterne[] @relation("CptTransfertSource")
+  transfertsEntrants CptTransfertInterne[] @relation("CptTransfertCible")
+
+  @@index([type])
+}
+
+/// Convention de rémunération d'un partenaire. Seule `dateFin` peut changer après la création (clôture de la convention,
+/// trigger SQL) ; le reste se corrige en créant une nouvelle convention. Pas de chevauchement pour (partenaire, produit,
+/// nature, apporteur) : contrôlé par backend/src/cptReferentiels.ts sous verrou (pas de contrainte d'exclusion en base,
+/// elle exigerait une extension). `produitCode` nul = tous les produits ; `apporteurId` nul = tout apporteur.
+model CptConvention {
+  id             String                @id @default(cuid())
+  partenaireId   String
+  partenaire     CptPartenaire         @relation("CptConventionPartenaire", fields: [partenaireId], references: [id], onDelete: Restrict)
+  produitCode    String?
+  produit        CptProduit?           @relation(fields: [produitCode], references: [code], onDelete: Restrict)
+  nature         CptNatureRemuneration
+  taux           Decimal               @db.Decimal(7, 6)
+  base           CptBaseConvention
+  faitGenerateur CptFaitGenerateur
+  apporteurId    String?
+  apporteur      CptPartenaire?        @relation("CptConventionApporteur", fields: [apporteurId], references: [id], onDelete: Restrict)
+  beneficiaireId String?
+  beneficiaire   CptPartenaire?        @relation("CptConventionBeneficiaire", fields: [beneficiaireId], references: [id], onDelete: Restrict)
+  modeReglement  CptModeReglement
+  dateEffet      DateTime              @db.Date
+  dateFin        DateTime?             @db.Date
+  creeParId      String
+  creePar        User                  @relation("CptConventionCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt         DateTime              @default(now())
+
+  @@index([partenaireId, nature, dateEffet])
+}
+
+/// Index de recherche par début de mot des fiches de Gestion Compta (lot GC-2d) : un mot normalisé par ligne (minuscules, sans
+/// accents). `entite` = CLIENT, PARTENAIRE, PRODUIT (puis CONTRAT au lot GC-3) ; pas de clé étrangère : l'entrée est
+/// réécrite par la même transaction que la fiche (backend/src/cptRecherche.ts). La colonne `mot` est créée en collation « C »
+/// par la migration (Prisma ne la modélise pas, `migrate diff` ne la voit pas) : c'est ce qui permet à un btree ordinaire de
+/// servir `LIKE 'x%'`, comme `EncContratMot`.
+model CptMot {
+  entite   String
+  entiteId String
+  mot      String
+
+  @@id([entite, entiteId, mot])
+  @@index([mot, entite, entiteId])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// GC-3 — Production, actes, échéancier (docs/compta-conception.md §5.4). Migration `20261101160000_compta_production`.
+// ---------------------------------------------------------------------------------------------------------------------
+
+enum CptStatutContrat {
+  EN_COURS
+  ECHU
+  ANNULE
+  RESILIE
+}
+
+/// Acte de gestion d'un contrat. Les montants d'un acte sont SIGNÉS : un retrait, une ristourne ou une annulation les
+/// portent en négatif (la prime du contrat n'est jamais réécrite, c'est la somme des actes qui la fait évoluer).
+enum CptTypeActe {
+  AFFAIRE_NOUVELLE
+  RENOUVELLEMENT
+  TRANCHE
+  AVENANT_INCORPORATION
+  RETRAIT
+  RISTOURNE
+  ANNULATION
+}
+
+enum CptFractionnement {
+  COMPTANT
+  MENSUEL
+  TRIMESTRIEL
+  SEMESTRIEL
+  LIBRE
+}
+
+enum CptEtatEcheance {
+  OUVERTE
+  SOLDEE
+  ANNULEE
+}
+
+enum CptStatutImport {
+  VALIDE
+  ANNULE
+}
+
+enum CptStatutAnomalie {
+  A_TRAITER
+  TRAITEE
+}
+
+/// Contrat (une police). `numPolice` est la clé métier unique : le même contrat réimporté est mis à jour, jamais dupliqué.
+/// Les montants sont ceux du contrat initial ; les évolutions (avenants, retraits) sont des `CptActe`. `declarePaye` et les
+/// champs `*Declare*` sont ce que le TECHNIQUE déclare : jamais une preuve d'encaissement (RG-01, seul un rattachement VALIDE
+/// rend une prime payée). Aucune règle de cohérence TTC = HT + accessoires + taxe en base : un écart est une anomalie de
+/// saisie signalée à l'import (lecture permissive, docs/compta-conception.md §7).
+model CptContrat {
+  id                        String            @id @default(cuid())
+  numPolice                 String            @unique
+  produitId                 String
+  produit                   CptProduit        @relation(fields: [produitId], references: [id], onDelete: Restrict)
+  natureContrat             CptNatureContrat
+  clientId                  String
+  client                    CptClient         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  partenaireApporteurId     String?
+  partenaireApporteur       CptPartenaire?    @relation("CptContratApporteur", fields: [partenaireApporteurId], references: [id], onDelete: Restrict)
+  dateEffet                 DateTime          @db.Date
+  dateEcheance              DateTime          @db.Date
+  statut                    CptStatutContrat  @default(EN_COURS)
+  fractionnement            CptFractionnement @default(COMPTANT)
+  /// Taux de TCA propre au contrat (SECURPRO, Q7 ouverte) ; nul = taux du référentiel à la date d'effet.
+  tauxTcaContrat            Decimal?          @db.Decimal(7, 6)
+  primeNetteHt              Decimal           @db.Decimal(14, 2)
+  accessoiresHt             Decimal           @default(0) @db.Decimal(14, 2)
+  taxe                      Decimal           @default(0) @db.Decimal(14, 2)
+  primeTtc                  Decimal           @db.Decimal(14, 2)
+  declarePaye               Boolean           @default(false)
+  modePaiementDeclare       String?
+  referencePaiementDeclaree String?
+  datePaiementDeclaree      DateTime?         @db.Date
+  contratOrigineId          String?
+  contratOrigine            CptContrat?       @relation("CptContratOrigine", fields: [contratOrigineId], references: [id], onDelete: Restrict)
+  contratsSuivants          CptContrat[]      @relation("CptContratOrigine")
+  importId                  String?
+  import                    CptImport?        @relation("CptContratImport", fields: [importId], references: [id], onDelete: Restrict)
+  creeParId                 String
+  creePar                   User              @relation("CptContratCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt                    DateTime          @default(now())
+  majAt                     DateTime          @updatedAt
+
+  actes     CptActe[]
+  echeances CptEcheance[]
+
+  @@index([clientId])
+  @@index([partenaireApporteurId])
+  @@index([produitId])
+  @@index([statut])
+  @@index([referencePaiementDeclaree])
+  @@index([importId])
+}
+
+/// Acte sur un contrat (conception §5.4). Ajout seul : une erreur se corrige par un acte inverse, jamais par une modification.
+model CptActe {
+  id            String      @id @default(cuid())
+  contratId     String
+  contrat       CptContrat  @relation(fields: [contratId], references: [id], onDelete: Restrict)
+  type          CptTypeActe
+  date          DateTime    @db.Date
+  /// Montants SIGNÉS de l'acte (négatifs pour un retrait, une ristourne ou une annulation).
+  primeNetteHt  Decimal     @default(0) @db.Decimal(14, 2)
+  accessoiresHt Decimal     @default(0) @db.Decimal(14, 2)
+  taxe          Decimal     @default(0) @db.Decimal(14, 2)
+  primeTtc      Decimal     @default(0) @db.Decimal(14, 2)
+  /// Acte annulé ou corrigé par celui-ci (retrait qui annule une tranche, par exemple).
+  acteOrigineId String?
+  acteOrigine   CptActe?    @relation("CptActeOrigine", fields: [acteOrigineId], references: [id], onDelete: Restrict)
+  actesLies     CptActe[]   @relation("CptActeOrigine")
+  motif         String?
+  importId      String?
+  import        CptImport?  @relation("CptActeImport", fields: [importId], references: [id], onDelete: Restrict)
+  creeParId     String
+  creePar       User        @relation("CptActeCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt        DateTime    @default(now())
+
+  @@index([contratId, date])
+  @@index([importId])
+}
+
+/// Échéance d'un contrat. `montantRegle` est DÉNORMALISÉ : il n'est mis à jour que dans la transaction qui valide un
+/// rattachement (GC-5), jamais ailleurs. Σ des échéances non annulées = prime du contrat (contrôlé par
+/// backend/src/cptEcheancier.ts, reliquat sur la dernière).
+model CptEcheance {
+  id           String          @id @default(cuid())
+  contratId    String
+  contrat      CptContrat      @relation(fields: [contratId], references: [id], onDelete: Restrict)
+  rang         Int
+  periodeDebut DateTime        @db.Date
+  periodeFin   DateTime        @db.Date
+  datePrevue   DateTime        @db.Date
+  primeTtc     Decimal         @db.Decimal(14, 2)
+  primeHt      Decimal         @db.Decimal(14, 2)
+  accessoires  Decimal         @default(0) @db.Decimal(14, 2)
+  taxe         Decimal         @default(0) @db.Decimal(14, 2)
+  montantDu    Decimal         @db.Decimal(14, 2)
+  montantRegle Decimal         @default(0) @db.Decimal(14, 2)
+  etat         CptEtatEcheance @default(OUVERTE)
+  creeAt       DateTime        @default(now())
+  majAt        DateTime        @updatedAt
+
+  rattachements CptRattachement[]
+
+  @@unique([contratId, rang])
+  @@index([contratId, etat])
+  @@index([etat, datePrevue])
+}
+
+/// Import d'un fichier (production, relevé, bordereau). Un même fichier ne s'importe qu'une fois : `empreinte` (SHA-256 du
+/// contenu) ET `fichierId` sont uniques (T9). `bilan` : décompte (lignes lues, créées, modifiées, rejetées, anomalies).
+model CptImport {
+  id        String           @id @default(cuid())
+  type      CptTypeImport
+  formatId  String?
+  format    CptFormatImport? @relation(fields: [formatId], references: [id], onDelete: Restrict)
+  fichierId String           @unique
+  fichier   CptPieceJointe   @relation(fields: [fichierId], references: [id], onDelete: Restrict)
+  empreinte String           @unique
+  /// Compte et mois concernés (relevés, GC-4) ; nuls pour un bordereau de production.
+  compteId  String?
+  compte    CptCompte?       @relation(fields: [compteId], references: [id], onDelete: Restrict)
+  periode   DateTime?        @db.Date
+  statut    CptStatutImport  @default(VALIDE)
+  bilan     Json?
+  creeParId String
+  creePar   User             @relation("CptImportCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt    DateTime         @default(now())
+
+  contrats  CptContrat[]  @relation("CptContratImport")
+  actes     CptActe[]     @relation("CptActeImport")
+  anomalies CptAnomalie[]
+  /// Relevé produit par cet import (types RELEVE_*, GC-4) ; nul pour un bordereau de production.
+  releve    CptReleve?
+
+  @@index([type, creeAt])
+}
+
+/// Anomalie à traiter (import, contrôle de saisie, écart…). `objetEntite` + `objetId` désignent la fiche concernée, sans clé
+/// étrangère : une anomalie survit à la correction de sa cible. Traitée = `statut` TRAITEE avec `traiteePar` et `resolution`.
+model CptAnomalie {
+  id           String            @id @default(cuid())
+  type         String
+  objetEntite  String
+  objetId      String
+  detail       Json?
+  statut       CptStatutAnomalie @default(A_TRAITER)
+  importId     String?
+  import       CptImport?        @relation(fields: [importId], references: [id], onDelete: Restrict)
+  traiteeParId String?
+  traiteePar   User?             @relation("CptAnomalieTraiteePar", fields: [traiteeParId], references: [id], onDelete: Restrict)
+  traiteeAt    DateTime?
+  resolution   String?
+  creeAt       DateTime          @default(now())
+
+  @@index([statut, creeAt])
+  @@index([objetEntite, objetId])
+  @@index([importId])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Gestion Compta, lot GC-4a : encaissements et relevés (docs/compta-conception.md §5.5). Le rattachement d'un encaissement
+// à des échéances (CptRattachement) arrive au lot GC-5a.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// Nature d'une ligne de relevé. Seul `ENCAISSEMENT` est un crédit à rattacher à des primes ; les autres lignes sont
+/// reconnues à l'import (remboursement, transaction test, frais, virement entre deux comptes du groupe) et ne sont jamais
+/// comptées comme des primes. Le sens (entrée / sortie) est porté par le type : `montant` est toujours positif.
+enum CptTypeFlux {
+  ENCAISSEMENT
+  VIREMENT_INTERNE_ENTRANT
+  VIREMENT_INTERNE_SORTANT
+  REMBOURSEMENT
+  TEST
+  FRAIS
+  AUTRE_DEBIT
+}
+
+/// État de traitement d'un encaissement : à rattacher (il reste de l'argent sans destination), soldé (tout est rattaché ou
+/// classé « pas une prime »), sans objet (ligne qui n'est pas un encaissement de prime : aucun rattachement à faire).
+enum CptStatutEncaissement {
+  A_RATTACHER
+  SOLDE
+  SANS_OBJET
+}
+
+enum CptStatutCheque {
+  RECU
+  REMIS_EN_BANQUE
+  IMPAYE
+}
+
+/// Une ligne d'un compte d'encaissement (relevé importé, ou saisie de chèque / d'espèces). Identité = (compte, référence du
+/// relevé) : la même ligne importée deux fois ne crée rien (RG-04, T9). Les champs qui décrivent la ligne ne changent jamais
+/// (trigger SQL) ; seuls l'avancement du rattachement, le classement « pas une prime » et les champs comptables Odoo changent.
+/// Invariant maintenu par le moteur de rattachement (GC-5) : Σ rattachements validés + `montantPasUnePrime` + `resteARattacher`
+/// = `montant` pour un encaissement.
+model CptEncaissement {
+  id                   String                @id @default(cuid())
+  /// Identifiant métier CPE-AAAA-NNNNNN (séquence atomique).
+  reference            String                @unique
+  compteId             String
+  compte               CptCompte             @relation(fields: [compteId], references: [id], onDelete: Restrict)
+  /// Identifiant de la ligne chez l'opérateur (T_…, référence bancaire, « CHQ-… », reçu de caisse).
+  referenceReleve      String
+  dateValeur           DateTime              @db.Date
+  /// Montant brut, toujours positif ; le sens vient de `typeFlux`.
+  montant              Decimal               @db.Decimal(14, 2)
+  /// Frais retenus par l'opérateur (relevés Wave) ; le net reçu est `montant - frais`.
+  frais                Decimal               @default(0) @db.Decimal(14, 2)
+  typeFlux             CptTypeFlux
+  /// Type d'origine chez l'opérateur (merchant_payment, api_checkout, refund…), conservé tel quel.
+  typeSource           String?
+  payeur               String?
+  telephone            String?
+  /// Référence saisie par le payeur (souvent un numéro de police) : base du rattachement par référence.
+  referenceClient      String?
+  libelle              String?
+  /// Session de paiement (cos-…, Wave Business).
+  sessionPaiement      String?
+  statut               CptStatutEncaissement @default(A_RATTACHER)
+  /// Part de l'encaissement qui n'est encore rattachée à aucune échéance ni classée.
+  resteARattacher      Decimal               @db.Decimal(14, 2)
+  /// Part classée « pas une prime » (frais de carte santé, remboursement reçu…) : motif écrit obligatoire (RG-03).
+  montantPasUnePrime   Decimal               @default(0) @db.Decimal(14, 2)
+  motifPasUnePrime     String?
+  releveId             String?
+  releve               CptReleve?            @relation(fields: [releveId], references: [id], onDelete: Restrict)
+  /// Rang de la ligne dans le relevé (à partir de 1).
+  ligneReleve          Int?
+  pieceOdoo            String?
+  dateComptabilisation DateTime?             @db.Date
+  /// Repris de l'ancien classeur à la mise en service (GC-11).
+  reprise              Boolean               @default(false)
+  creeParId            String
+  creePar              User                  @relation("CptEncaissementCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt               DateTime              @default(now())
+  majAt                DateTime              @updatedAt
+
+  transfertSortant CptTransfertInterne? @relation("CptTransfertSortant")
+  transfertEntrant CptTransfertInterne? @relation("CptTransfertEntrant")
+  cheque           CptCheque?
+  rattachements    CptRattachement[]
+
+  @@unique([compteId, referenceReleve])
+  @@index([statut, dateValeur])
+  @@index([compteId, dateValeur])
+  @@index([releveId])
+  @@index([referenceClient])
+  @@index([telephone])
+}
+
+enum CptMethodeRattachement {
+  REFERENCE_EXACTE
+  REFERENCE_INCOMPLETE
+  MONTANT_DATE
+  GROUPE
+  PROBABLE
+  MANUELLE
+}
+
+enum CptNiveauPreuve {
+  PREUVE
+  DEDUCTION
+  A_CONFIRMER
+}
+
+enum CptStatutRattachement {
+  PROPOSE
+  CONFIRME
+  VALIDE
+  REJETE
+}
+
+/// Rattachement d'une part d'un encaissement à une échéance (conception §5.5 et §6.2). Deux étapes : le commercial CONFIRME avec le
+/// reçu (niveaux déduction et à confirmer, identifications manuelles), puis le RFCRH VALIDE (jamais automatique, RG-02). Seul un
+/// rattachement VALIDE rend la prime payée (RG-01). Les champs qui décrivent la proposition ne changent jamais (trigger SQL), le statut
+/// n'avance que dans un sens, et la validation est contrôlée EN BASE (Σ validés ≤ encaissement et ≤ montant dû, sous verrou).
+model CptRattachement {
+  id                 String                 @id @default(cuid())
+  encaissementId     String
+  encaissement       CptEncaissement        @relation(fields: [encaissementId], references: [id], onDelete: Restrict)
+  echeanceId         String
+  echeance           CptEcheance            @relation(fields: [echeanceId], references: [id], onDelete: Restrict)
+  montant            Decimal                @db.Decimal(14, 2)
+  methode            CptMethodeRattachement
+  niveauPreuve       CptNiveauPreuve
+  statut             CptStatutRattachement  @default(PROPOSE)
+  /// Propositions d'un même groupe (méthode 4) : elles se valident ensemble.
+  groupe             String?
+  /// Phrase du moteur (ou du commercial pour une identification manuelle) qui explique la proposition.
+  justification      String
+  /// Nul = proposé par le moteur.
+  proposeParId       String?
+  proposePar         User?                  @relation("CptRattachementProposePar", fields: [proposeParId], references: [id], onDelete: Restrict)
+  confirmeParId      String?
+  confirmePar        User?                  @relation("CptRattachementConfirmePar", fields: [confirmeParId], references: [id], onDelete: Restrict)
+  confirmeAt         DateTime?
+  /// Reçu de la confirmation : référence saisie et/ou pièce jointe (l'un des deux au moins).
+  recuReference      String?
+  recuPieceId        String?
+  recuPiece          CptPieceJointe?        @relation("CptRattachementRecu", fields: [recuPieceId], references: [id], onDelete: Restrict)
+  commentaireConfirmation String?
+  valideParId        String?
+  validePar          User?                  @relation("CptRattachementValidePar", fields: [valideParId], references: [id], onDelete: Restrict)
+  valideAt           DateTime?
+  rejeteParId        String?
+  rejetePar          User?                  @relation("CptRattachementRejetePar", fields: [rejeteParId], references: [id], onDelete: Restrict)
+  rejeteAt           DateTime?
+  motifRejet         String?
+  /// Repris de l'ancien classeur à la mise en service (GC-11) : pas d'étape de confirmation.
+  reprise            Boolean                @default(false)
+  creeAt             DateTime               @default(now())
+  majAt              DateTime               @updatedAt
+
+  @@index([encaissementId, statut])
+  @@index([echeanceId, statut])
+  @@index([statut, niveauPreuve])
+  @@index([groupe])
+}
+
+/// Relevé importé d'un compte pour un mois. Un relevé par import (`importId` unique) ; plusieurs relevés d'un même mois sont
+/// possibles (exports partiels) : le contrôle mensuel les additionne. Jamais modifié après sa création.
+model CptReleve {
+  id           String    @id @default(cuid())
+  importId     String    @unique
+  import       CptImport @relation(fields: [importId], references: [id], onDelete: Restrict)
+  compteId     String
+  compte       CptCompte @relation(fields: [compteId], references: [id], onDelete: Restrict)
+  /// Premier jour du mois couvert.
+  periode      DateTime  @db.Date
+  nbLignes     Int
+  totalCredits Decimal   @db.Decimal(14, 2)
+  totalFrais   Decimal   @default(0) @db.Decimal(14, 2)
+  creeAt       DateTime  @default(now())
+
+  encaissements CptEncaissement[]
+
+  @@index([compteId, periode])
+}
+
+/// Virement entre deux comptes du groupe (Wave → banque…) : une ligne sortante et une ligne entrante rapprochées. Jamais
+/// compté comme un encaissement de prime. Jamais modifié (une erreur se défait avant la mise en service, ou par un nouveau
+/// rapprochement après).
+model CptTransfertInterne {
+  id                    String          @id @default(cuid())
+  encaissementSortantId String          @unique
+  encaissementSortant   CptEncaissement @relation("CptTransfertSortant", fields: [encaissementSortantId], references: [id], onDelete: Restrict)
+  encaissementEntrantId String          @unique
+  encaissementEntrant   CptEncaissement @relation("CptTransfertEntrant", fields: [encaissementEntrantId], references: [id], onDelete: Restrict)
+  compteSourceId        String
+  compteSource          CptCompte       @relation("CptTransfertSource", fields: [compteSourceId], references: [id], onDelete: Restrict)
+  compteCibleId         String
+  compteCible           CptCompte       @relation("CptTransfertCible", fields: [compteCibleId], references: [id], onDelete: Restrict)
+  creeParId             String
+  creePar               User            @relation("CptTransfertCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt                DateTime        @default(now())
+}
+
+/// Chèque reçu : de la réception à la remise en banque. L'encaissement n'existe qu'une fois le chèque remis sur un compte
+/// bancaire (`encaissementId` nul tant que le chèque est seulement reçu). Les espèces n'ont pas de table : un reçu de caisse
+/// est un encaissement du compte de type CAISSE.
+model CptCheque {
+  id               String           @id @default(cuid())
+  encaissementId   String?          @unique
+  encaissement     CptEncaissement? @relation(fields: [encaissementId], references: [id], onDelete: Restrict)
+  dateReception    DateTime         @db.Date
+  numero           String
+  tireur           String
+  montant          Decimal          @db.Decimal(14, 2)
+  dateRemiseBanque DateTime?        @db.Date
+  statut           CptStatutCheque  @default(RECU)
+  creeParId        String
+  creePar          User             @relation("CptChequeCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt           DateTime         @default(now())
+  majAt            DateTime         @updatedAt
+
+  @@index([statut])
+  @@index([numero])
 }
