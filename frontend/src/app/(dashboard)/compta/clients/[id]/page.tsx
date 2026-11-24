@@ -78,9 +78,14 @@ export default async function FicheClientPage({ params }: { params: Promise<{ id
           .filter(Boolean)
           .join(" · ") || "Client sans coordonnées enregistrées"}
         actions={
-          <Link href="/compta/clients" className="text-sm font-semibold text-primary hover:underline">
-            ← Tous les clients
-          </Link>
+          <span className="flex flex-wrap items-center gap-4">
+            <a href={`/api/compta/clients/${client.id}/releve`} className="text-sm font-semibold text-primary hover:underline" data-releve-pdf>
+              Relevé PDF
+            </a>
+            <Link href="/compta/clients" className="text-sm font-semibold text-primary hover:underline">
+              ← Tous les clients
+            </Link>
+          </span>
         }
       />
 

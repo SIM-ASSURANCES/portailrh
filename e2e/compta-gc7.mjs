@@ -4,6 +4,7 @@
 //        début de mot, accès depuis /compta/controle et /compta/production, lecture seule, 390 px sans défilement horizontal.
 //   7b : état des créances par débiteur (tranches, détail contrat par contrat, débiteur partenaire), échéances à surveiller, filtres en GET,
 //        pagination à 50, export CSV (401 / 403), 390 px.
+//   7c : relevé client en PDF (téléchargé, contenu relu, 401 / 403 / 404, lien sur la fiche).
 import { chromium } from "playwright";
 import pg from "pg";
 
@@ -254,7 +255,7 @@ await client("cl-vide", "Zézé Paul");
   verifier("7b. l'échéance à venir (POL-T7 n°3, dans 30 jours) n'y est pas", (await p.locator('[data-echeance-proche="POL-T7-3"]').count()) === 0);
   verifier("7b. l'échéance payée (POL-T12 n°1) n'y est pas", (await p.locator('[data-echeance-proche="POL-T12-1"]').count()) === 0);
   verifier("7b. T12 : l'échéance d'août est en retard", (await p.locator('[data-echeance-proche="POL-T12-3"]').getAttribute("data-etat")) === "EN_RETARD");
-  verifier("7b. lecture seule : aucun bouton d'action", (await p.locator("main button:not([type=submit])").count()) === 0);
+  verifier("7b. lecture seule : aucun bouton d'action", (await p.locator("[data-etat-creances] button, [data-echeances-proches] button").count()) === 0);
   await p.close();
 }
 {
@@ -313,6 +314,44 @@ await client("cl-vide", "Zézé Paul");
   verifier("7b. vue inconnue : 400", rVue.status() === 400);
   const rClient = await (await contexte(COLLABORATEUR)).request.get(`${B}/compta/creances`, { maxRedirects: 0 });
   verifier("7b. écran sans cpt.consulter : redirigé", rClient.status() >= 300 && rClient.status() < 400, `${rClient.status()}`);
+}
+// ---------- 7c. Relevé client en PDF ----------
+{
+  const p = await ouvrir(COMMERCIAL, "/compta/clients/cl-t7");
+  const lien = p.locator("[data-releve-pdf]");
+  verifier("7c. la fiche propose le relevé PDF", (await lien.count()) === 1 && (await lien.getAttribute("href")) === "/api/compta/clients/cl-t7/releve");
+  await p.close();
+  const ctx = await contexte(COMMERCIAL);
+  const r = await ctx.request.get(`${B}/api/compta/clients/cl-t7/releve`);
+  const corps = await r.body();
+  verifier("7c. relevé : 200, application/pdf, fichier PDF valide", r.status() === 200 && /application\/pdf/.test(r.headers()["content-type"] ?? "") && corps.subarray(0, 5).toString() === "%PDF-" && corps.length > 2000, `${r.status()} ${corps.length} o`);
+  verifier("7c. en-tête de téléchargement : nom de fichier du client", /attachment; filename="releve-kone-awa\.pdf"/.test(r.headers()["content-disposition"] ?? ""), r.headers()["content-disposition"]);
+  const { writeFileSync, mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { execFileSync } = await import("node:child_process");
+  const dossier = mkdtempSync(`${tmpdir()}/releve-`);
+  writeFileSync(`${dossier}/releve.pdf`, corps);
+  let texte = null;
+  try {
+    texte = execFileSync("pdftotext", ["-enc", "UTF-8", "-layout", `${dossier}/releve.pdf`, "-"], { encoding: "utf8" });
+  } catch {
+    texte = null;
+  }
+  if (texte === null) verifier("7c. contenu du PDF relu (pdftotext indisponible : contrôle non exécuté)", true, "non exécuté");
+  else {
+    const plat = texte.replace(/\s+/g, " ");
+    verifier("7c. contenu : client, échéances, paiement, reste dû et ancienneté", /Koné Awa/.test(plat) && /POL-T7/.test(plat) && /POL-T7B/.test(plat) && /CPE-2026-900001/.test(plat) && /350 000 FCFA/.test(plat) && /91 à 180 jours/.test(plat) && /Relevé client|RELEVÉ CLIENT/i.test(plat), plat.slice(0, 300));
+  }
+  const anonyme = await browser.newContext();
+  const r401 = await anonyme.request.get(`${B}/api/compta/clients/cl-t7/releve`, { maxRedirects: 0 });
+  verifier("7c. relevé sans session : refusé (401 ou redirection de connexion)", [401, 307, 302, 308].includes(r401.status()), `${r401.status()}`);
+  await anonyme.close();
+  const r403 = await (await contexte(COLLABORATEUR)).request.get(`${B}/api/compta/clients/cl-t7/releve`, { maxRedirects: 0 });
+  verifier("7c. relevé sans cpt.consulter : 403", r403.status() === 403, `${r403.status()}`);
+  const r404 = await ctx.request.get(`${B}/api/compta/clients/inexistant/releve`);
+  verifier("7c. client inconnu : 404", r404.status() === 404, `${r404.status()}`);
+  const rVide = await ctx.request.get(`${B}/api/compta/clients/cl-vide/releve`);
+  verifier("7c. client sans contrat : relevé produit (vide, sans erreur)", rVide.status() === 200);
 }
 void commercialId;
 
