@@ -44,6 +44,14 @@ export const RUBRIQUES_COMPTA: readonly RubriqueCompta[] = [
     href: "/compta/rattachements",
     lot: "GC-5",
   },
+  {
+    cle: "controle",
+    label: "Contrôle hebdomadaire",
+    icon: "clock",
+    permissions: [],
+    href: "/compta/controle",
+    lot: "GC-6",
+  },
   { cle: "creances", label: "Créances et relances", icon: "alert-triangle", permissions: ["cpt.relancer"], lot: "GC-6 et GC-7" },
   { cle: "tca", label: "Taxe sur les contrats d'assurance", icon: "scroll-text", permissions: ["cpt.declarer_tca", "cpt.payer_tca"], lot: "GC-8" },
   {
