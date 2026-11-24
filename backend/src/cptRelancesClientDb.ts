@@ -1,9 +1,10 @@
 import type { PrismaClient } from "./generated/prisma/client";
 import { ecrireAudit } from "./cptAudit";
+import { etatsAffichesPromessesCpt } from "./cptPromessesDb";
 import { syntheseContratCreanceCpt } from "./cptCreances";
 import { enCentimesEcheancier, texteDepuisCentimes } from "./cptEcheancier";
 import {
-  evaluerPromesseCpt,
+  etatAffichePromesseCpt,
   relanceProposeeAvecPromessesCpt,
   validerPromesseCpt,
   validerRelanceCpt,
@@ -84,15 +85,6 @@ export async function enregistrerRelanceCpt(
   return { ok: true, message: promesse ? "Relance et promesse de paiement enregistrées." : "Relance enregistrée." };
 }
 
-/** Encaissé prouvé du client : rattachements VALIDE sur ses contrats, dont la date de valeur est dans [depuis, jusqu'à] (jours AAAA-MM-JJ, inclus). */
-async function prouveSurPeriode(db: RelancesClientDbCpt, clientId: string, depuis: string, jusqua: string): Promise<bigint> {
-  const lignes = await db.cptRattachement.findMany({
-    where: { statut: "VALIDE", echeance: { contrat: { clientId } }, encaissement: { dateValeur: { gte: enDate(depuis), lte: enDate(jusqua) } } },
-    select: { montant: true },
-  });
-  return lignes.reduce((s, r) => s + (enCentimesEcheancier(r.montant.toString()) ?? ZERO), ZERO);
-}
-
 export interface PromesseSuiviCpt {
   id: string;
   montant: string;
@@ -101,9 +93,10 @@ export interface PromesseSuiviCpt {
   creeAt: Date;
   evalueAt: Date | null;
   montantProuve: string | null;
-  /** Verdict de la règle, calculé à l'instant (jamais écrit) : seulement pour une promesse encore EN COURS. */
-  verdictActuel: StatutPromesseCpt | null;
-  prouveActuel: string | null;
+  /** ÉTAT AFFICHÉ (règle C-21, calculée à l'affichage, jamais écrite) : c'est lui qu'on montre. `statut` n'est que la trace d'une évaluation enregistrée. */
+  etat: StatutPromesseCpt;
+  /** Encaissé prouvé sur la fenêtre de la promesse (calcul à l'affichage). */
+  prouve: string;
 }
 
 /** Évalue les promesses EN COURS (d'un client, ou de tous) par la règle et écrit les statuts qui changent. Audit `evaluation_promesse` par promesse. */
@@ -112,11 +105,11 @@ export async function evaluerPromessesCpt(
   entree: { userId: string; ip: string | null; aujourdhui: string; clientId?: string }
 ): Promise<{ evaluees: number; tenues: number; nonTenues: number }> {
   const promesses = await db.cptPromesse.findMany({ where: { statut: "EN_COURS", ...(entree.clientId ? { clientId: entree.clientId } : {}) }, orderBy: { creeAt: "asc" }, take: 2000 });
+  const etats = await etatsAffichesPromessesCpt(db, promesses, entree.aujourdhui);
   let tenues = 0;
   let nonTenues = 0;
   for (const p of promesses) {
-    const prouve = await prouveSurPeriode(db, p.clientId, jourDe(p.creeAt), jourDe(p.datePromise));
-    const verdict = evaluerPromesseCpt({ montant: enCentimesEcheancier(p.montant.toString()) ?? ZERO, datePromise: jourDe(p.datePromise), prouve }, entree.aujourdhui);
+    const { etat: verdict, prouve } = (etats.get(p.id) as { etat: StatutPromesseCpt; prouve: bigint });
     if (verdict === "EN_COURS") continue;
     const r = await db.cptPromesse.updateMany({ where: { id: p.id, statut: "EN_COURS" }, data: { statut: verdict, evalueAt: new Date(), montantProuve: texteDepuisCentimes(prouve) } });
     if (r.count === 0) continue;
@@ -152,18 +145,12 @@ export async function lireSuiviRelancesClientCpt(db: RelancesClientDbCpt, client
     db.cptPromesse.findMany({ where: { clientId }, orderBy: [{ datePromise: "desc" }, { creeAt: "desc" }], take: 100 }),
     situationClient(db, clientId, aujourdhui),
   ]);
-  const suivies: PromesseSuiviCpt[] = [];
-  for (const p of promesses) {
-    let verdictActuel: StatutPromesseCpt | null = null;
-    let prouveActuel: string | null = null;
-    if (p.statut === "EN_COURS") {
-      const prouve = await prouveSurPeriode(db, clientId, jourDe(p.creeAt), jourDe(p.datePromise));
-      verdictActuel = evaluerPromesseCpt({ montant: enCentimesEcheancier(p.montant.toString()) ?? ZERO, datePromise: jourDe(p.datePromise), prouve }, aujourdhui);
-      prouveActuel = texteDepuisCentimes(prouve);
-    }
-    suivies.push({ id: p.id, montant: p.montant.toString(), datePromise: p.datePromise, statut: p.statut, creeAt: p.creeAt, evalueAt: p.evalueAt, montantProuve: p.montantProuve?.toString() ?? null, verdictActuel, prouveActuel });
-  }
-  const nbPromessesEnCours = promesses.filter((p) => p.statut === "EN_COURS").length;
+  const etats = await etatsAffichesPromessesCpt(db, promesses, aujourdhui);
+  const suivies: PromesseSuiviCpt[] = promesses.map((p) => {
+    const e = etats.get(p.id) as { etat: StatutPromesseCpt; prouve: bigint };
+    return { id: p.id, montant: p.montant.toString(), datePromise: p.datePromise, statut: p.statut, creeAt: p.creeAt, evalueAt: p.evalueAt, montantProuve: p.montantProuve?.toString() ?? null, etat: e.etat, prouve: texteDepuisCentimes(e.prouve) };
+  });
+  const nbPromessesEnCours = suivies.filter((p) => p.etat === "EN_COURS").length;
   return {
     relances: relances.map((r) => ({ id: r.id, canal: r.canal, faiteLe: r.faiteLe, commentaire: r.commentaire, auteur: r.creePar.fullName, origine: r.origine, creeAt: r.creeAt })),
     promesses: suivies,

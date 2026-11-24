@@ -103,6 +103,7 @@ export * from "./cptCreances";
 export * from "./cptFicheClientDb";
 export * from "./cptCreancesDb";
 export * from "./cptRelances";
+export * from "./cptPromessesDb";
 export * from "./cptRelancesClientDb";
 export * from "./cptPrevision";
 export * from "./cptPrevisionDb";
