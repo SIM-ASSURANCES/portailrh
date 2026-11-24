@@ -5997,7 +5997,7 @@ au-delà de la simple relecture de code :
 ### Anti-spam en mémoire — limite mono-instance documentée
 
 **`checkRateLimit`** (`frontend/src/lib/rate-limit.ts`, `Map` en mémoire du
-process, déjà utilisé par `/login`) — 3 soumissions / 5 minutes par IP,
+process, déjà utilisé par `/login`) — 30 soumissions / 5 minutes par IP relevé de 3 à 30 le 2026-11-24,
 l'IP servant uniquement de clé de compteur transitoire (jamais persistée).
 Vérifié en pratique : la 4ᵉ soumission valide consécutive est bloquée,
 sans écriture en base. **Limite connue et acceptée pour cette V1** : ce

@@ -83,7 +83,7 @@ export async function soumettreFeedbackAction(
   // clé à un compteur en mémoire, jamais écrite en base ni journalisée.
   const headersList = await headers();
   const ip = getClientIp(headersList);
-  if (!checkRateLimit(`feedback_${ip}`, 3, 5 * 60 * 1000)) {
+  if (!checkRateLimit(`feedback_${ip}`, 30, 5 * 60 * 1000)) {
     return {
       status: "error",
       message: "Trop d'avis envoyés récemment depuis cette connexion. Merci de réessayer plus tard.",
