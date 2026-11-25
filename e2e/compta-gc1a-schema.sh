@@ -174,4 +174,9 @@ docker exec -i "$NOM" psql -U postgres -d compta_tca -v ON_ERROR_STOP=1 -q -t -A
 # `migrate deploy` relancé ne réapplique rien.
 (DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_tca?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "No pending|rror"')
 
-echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c, GC-6b et GC-8a : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements et relances vérifiés."
+echo "== 17. Taxe en base (GC-8b), sur une base FRAÎCHE =="
+psql_cpt -d postgres -c 'CREATE DATABASE compta_tca2' >/dev/null
+(DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_tca2?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "successfully applied|rror"')
+DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_tca2?schema=public" npx tsx e2e/compta-gc8b-taxe.ts | tail -40
+
+echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c, GC-6b, GC-8a et GC-8b : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements et relances vérifiés."

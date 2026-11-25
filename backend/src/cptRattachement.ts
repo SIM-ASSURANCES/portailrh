@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "./generated/prisma/client";
 import { ecrireAudit } from "./cptAudit";
 import { enCentimesEcheancier, texteDepuisCentimes } from "./cptEcheancier";
+import { appliquerTaxeRattachementsCpt } from "./cptTaxeDb";
 import {
   controlerConfirmationCpt,
   proposerRattachementsCpt,
@@ -339,6 +340,7 @@ export async function validerRattachementsCpt(
   const valideEch = new Map(sommesEch.map((s) => [s.echeanceId, s._sum.montant ? centimes(s._sum.montant) : ZERO]));
 
   const resultats: ResultatBlocCpt[] = [];
+  const valides: string[] = [];
   const encTouches = new Set<string>();
   const echTouchees = new Set<string>();
   for (const bloc of enBlocs(lus)) {
@@ -406,6 +408,7 @@ export async function validerRattachementsCpt(
       valideEch.set(id, (valideEch.get(id) ?? ZERO) + v);
       echTouchees.add(id);
     }
+    valides.push(...idsBloc);
     resultats.push({ ids: idsBloc, ok: true });
   }
 
@@ -418,6 +421,9 @@ export async function validerRattachementsCpt(
     const regle = valideEch.get(id) ?? ZERO;
     await db.cptEcheance.update({ where: { id }, data: { montantRegle: texteDepuisCentimes(regle), etat: regle >= (duEch.get(id) ?? ZERO) ? "SOLDEE" : "OUVERTE" } });
   }
+  // GC-8 : un rattachement VALIDÉ (et seulement lui, RG-01) porte sa taxe, dans la même transaction. Sans taux applicable, aucune
+  // ligne n'est écrite : le rattachement reste valide et apparaît dans la liste « taux manquant ».
+  await appliquerTaxeRattachementsCpt(db, valides, { userId: p.userId, ip: p.ip });
   return { ok: true, resultats };
 }
 
