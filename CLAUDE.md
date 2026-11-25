@@ -5978,11 +5978,10 @@ au-delà de la simple relecture de code :
   (pas de préfixe libre) pour ne jamais lever l'authentification d'une
   future route interne du module, ex: `/feedback/interne` (Tranche B).
 - **Aucune IP journalisée** — `soumettreFeedbackAction`
-  (`frontend/src/app/feedback/nouveau/actions.ts`) est la seule fonction
-  du module à lire une IP (`getClientIp`, `backend/src/pointage-utils.ts`),
-  utilisée **uniquement** comme clé d'un compteur anti-spam **en
-  mémoire** (`checkRateLimit`, voir plus bas) — jamais écrite en base, ni
-  passée à `console.log`, ni au logger d'audit persistant du projet.
+  (`frontend/src/app/feedback/actions.ts`) ne lit **plus aucune IP** depuis le
+  retrait de la limite anti-spam (2026-11-25, voir plus bas) : auparavant elle
+  servait seulement de clé d'un compteur en mémoire. Rien n'est écrit en base,
+  passé à `console.log` ni au logger d'audit persistant du projet.
   Vérification exhaustive faite par grep projet entier : le portail a une
   fonction `logAuditAction` (`frontend/src/lib/auditLog.ts`) qui, elle,
   persiste bien l'IP en base (utilisée par login, pointage, actions admin
@@ -5994,18 +5993,11 @@ au-delà de la simple relecture de code :
   log natif `next dev` (méthode + chemin + statut + timing), qui ne
   contient jamais d'adresse IP.
 
-### Anti-spam en mémoire — limite mono-instance documentée
+### Anti-spam : limite d'envoi RETIRÉE (2026-11-25)
 
-**`checkRateLimit`** (`frontend/src/lib/rate-limit.ts`, `Map` en mémoire du
-process, déjà utilisé par `/login`) — 30 soumissions / 5 minutes par IP relevé de 3 à 30 le 2026-11-24,
-l'IP servant uniquement de clé de compteur transitoire (jamais persistée).
-Vérifié en pratique : la 4ᵉ soumission valide consécutive est bloquée,
-sans écriture en base. **Limite connue et acceptée pour cette V1** : ce
-compteur est en mémoire d'un seul process — un déploiement multi-instance
-(scaling horizontal) ne partagerait pas ce compteur entre conteneurs,
-même limite déjà documentée pour le bus SSE (voir "Rafraîchissement en
-temps réel"). À revoir (ex: Redis) si l'infrastructure de déploiement
-change un jour.
+La limite par IP (`checkRateLimit`, en mémoire) a été retirée de `soumettreFeedbackAction` le 2026-11-25 sur décision du superviseur ; l'IP n'est
+plus lue du tout par cette action (`frontend/src/lib/rate-limit.ts` reste utilisé par `/login` et « mot de passe oublié »). Seule protection restante :
+le champ piège `site_web` ci-dessous. **Risque assumé : la page publique n'a plus aucune limite d'envoi.**
 
 ### Anti-bot : honeypot (pas de CAPTCHA tiers pour cette V1)
 
@@ -6408,7 +6400,7 @@ maître de stage avant mise en production** (`generateFeedbackComment`,
   (307 vers `/?error=acces_refuse_moderation`).
 - Réponses incomplètes rejetées côté serveur avec un message précis
   (testé par rejeu réseau direct, contournant le formulaire).
-- Honeypot et rate limiting revérifiés fonctionnels avec le nouveau
+- Honeypot (et, à l'époque, rate limiting — retiré le 2026-11-25) revérifiés fonctionnels avec le nouveau
   formulaire (mêmes mécanismes, inchangés).
 - **Aucune régression de bundle** : `feedback-questions.ts` n'importe que
   `./feedback-constants` et le type `FeedbackType` généré (sûr) — jamais

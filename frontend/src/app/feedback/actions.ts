@@ -1,13 +1,10 @@
 "use server";
 
-import { headers } from "next/headers";
 import { z } from "zod";
 
-import { checkRateLimit } from "@/lib/rate-limit";
 import { getSession } from "@/lib/auth";
 import {
   createFeedback,
-  getClientIp,
   prisma,
   validateFeedbackRatings,
   type ActionState,
@@ -21,9 +18,8 @@ import {
  *
  * RÈGLE ABSOLUE DE CE FICHIER : aucune donnée permettant d'identifier
  * l'auteur n'est jamais lue au-delà de la portée de cette fonction, jamais
- * stockée, jamais journalisée. L'IP (`getClientIp`) n'est utilisée QUE
- * comme CLÉ d'un compteur en mémoire (`checkRateLimit`), jamais écrite en
- * base ni journalisée. Aucun `console.log`/`logAuditAction` n'est appelé
+ * stockée, jamais journalisée. L'IP n'est même plus lue (limite anti-spam
+ * retirée le 2026-11-25 sur décision du superviseur). Aucun `console.log`/`logAuditAction` n'est appelé
  * ici, contrairement à la quasi-totalité des autres Server Actions.
  *
  * DEPUIS LA NOTATION STRUCTURÉE : ce formulaire n'accepte plus AUCUN champ
@@ -77,17 +73,6 @@ export async function soumettreFeedbackAction(
   const ratingsError = validateFeedbackRatings(type, ratings);
   if (ratingsError) {
     return { status: "error", message: ratingsError };
-  }
-
-  // Anti-spam SANS aucune donnée traçable stockée : l'IP ne sert QUE de
-  // clé à un compteur en mémoire, jamais écrite en base ni journalisée.
-  const headersList = await headers();
-  const ip = getClientIp(headersList);
-  if (!checkRateLimit(`feedback_${ip}`, 30, 5 * 60 * 1000)) {
-    return {
-      status: "error",
-      message: "Trop d'avis envoyés récemment depuis cette connexion. Merci de réessayer plus tard.",
-    };
   }
 
   // Détection de la session : "INTERNAL" si l'employé est connecté,
