@@ -202,7 +202,7 @@ Penser aussi à vérifier sur `/admin/notifications` que les responsables de ser
 
 ## Récapitulatif des choix techniques
 
-- **Image de base Debian** (`node:20-bookworm-slim`), pas Alpine — voir
+- **Image de base Debian** (`node:22-bookworm-slim` (Node 22 : exigé par `firebase-admin` 14.4). Les `npm ci` du `Dockerfile` utilisent un cache BuildKit (`--mount=type=cache,target=/root/.npm`) et `--fetch-retries=5` : un build relancé après une coupure réseau repart de ce qui est déjà téléchargé. **L'image fixe elle-même `NPM_CONFIG_UPDATE_NOTIFIER=false`, `CHECKPOINT_DISABLE=1` et `PRISMA_HIDE_UPDATE_MESSAGE=1`** (étape `runner`) : au démarrage, ni npm ni la CLI Prisma ne contactent le registre ou le service de version, ce qui bloquait `prisma migrate deploy` sur un réseau sortant instable. Le script de démarrage (`docker-entrypoint.sh`) et le service `init` des fichiers compose appellent le binaire Prisma local (`../node_modules/.bin/prisma`), jamais `npx prisma` (le service `init` ajoute `/app/node_modules/.bin` au `PATH`, que `npx` fournissait au seed pour trouver `tsx`). Le seed n'est lancé que par `init`, une seule fois (marqueur `/app/uploads/.seeded`)), pas Alpine — voir
   les commentaires en tête du `Dockerfile` pour le détail de l'analyse
   Prisma (driver adapter `@prisma/adapter-pg`, pas de moteur de requête
   binaire au runtime, `binaryTargets` volontairement non ajouté).

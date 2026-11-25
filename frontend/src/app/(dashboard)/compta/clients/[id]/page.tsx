@@ -218,18 +218,18 @@ export default async function FicheClientPage({ params }: { params: Promise<{ id
               </thead>
               <tbody>
                 {suivi.promesses.map((p) => (
-                  <tr key={p.id} className="border-b border-border last:border-0" data-promesse data-statut={p.statut}>
+                  <tr key={p.id} className="border-b border-border last:border-0" data-promesse data-statut={p.etat} data-statut-enregistre={p.statut}>
                     <td className="whitespace-nowrap px-3 py-2">{formaterDateCpt(p.datePromise)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">{formaterMontantCpt(p.montant)}</td>
                     <td className="px-3 py-2">
-                      <Badge variant={p.statut === "TENUE" ? "success" : p.statut === "NON_TENUE" ? "danger" : "info"}>{LIBELLE_STATUT_PROMESSE_CPT[p.statut]}</Badge>
-                      {p.statut === "EN_COURS" && p.verdictActuel && p.verdictActuel !== "EN_COURS" && (
+                      <Badge variant={p.etat === "TENUE" ? "success" : p.etat === "NON_TENUE" ? "danger" : "info"}>{LIBELLE_STATUT_PROMESSE_CPT[p.etat]}</Badge>
+                      {p.statut !== p.etat && (
                         <span className="ml-2 text-xs text-muted-foreground" data-a-evaluer>
-                          à évaluer : {LIBELLE_STATUT_PROMESSE_CPT[p.verdictActuel].toLowerCase()}
+                          évaluation non enregistrée
                         </span>
                       )}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{formaterMontantCpt(p.montantProuve ?? p.prouveActuel)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{formaterMontantCpt(p.montantProuve ?? p.prouve)}</td>
                   </tr>
                 ))}
               </tbody>

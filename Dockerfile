@@ -33,7 +33,7 @@
 # invoqué en CLI (migrations/seed) depuis l'image finale.
 # ============================================================
 
-ARG NODE_IMAGE=node:20-bookworm-slim
+ARG NODE_IMAGE=node:22-bookworm-slim
 
 # ---------- Stage 1 : deps (installation complète, pour le build) ----------
 FROM ${NODE_IMAGE} AS deps
@@ -57,7 +57,7 @@ COPY backend/package.json ./backend/package.json
 # prend, par construction, que les `package.json`, jamais leurs dépendances vendues).
 COPY backend/vendor ./backend/vendor
 COPY frontend/package.json ./frontend/package.json
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci --fetch-retries=5 --fetch-retry-maxtimeout=120000
 
 # ---------- Stage 2 : builder ----------
 FROM ${NODE_IMAGE} AS builder
@@ -134,7 +134,7 @@ COPY backend/package.json ./backend/package.json
 # `backend/package.json`, requise avant `npm ci`.
 COPY backend/vendor ./backend/vendor
 COPY frontend/package.json ./frontend/package.json
-RUN npm ci --omit=dev
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --fetch-retries=5 --fetch-retry-maxtimeout=120000
 
 # ---------- Stage 4 : runner (image finale) ----------
 FROM ${NODE_IMAGE} AS runner
@@ -150,6 +150,11 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+
+# Réglage de l'image (pas un contournement) : au démarrage, ni `npm` ni la CLI Prisma ne doivent contacter le registre / le service de version
+# (vérification de mise à jour, télémétrie). Sur un réseau sortant instable, ces appels bloquaient `prisma migrate deploy` plusieurs minutes
+# (constaté en testant l'image) ; le conteneur n'a aucune raison de faire ces appels.
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false CHECKPOINT_DISABLE=1 PRISMA_HIDE_UPDATE_MESSAGE=1
 
 # Build standalone : serveur Next.js minimal + node_modules tracés. En
 # monorepo npm workspaces, le traçage (`outputFileTracingRoot` = racine du

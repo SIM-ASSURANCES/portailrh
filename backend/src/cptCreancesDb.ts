@@ -11,6 +11,7 @@ import {
   type RepartitionTrancheCpt,
 } from "./cptCreances";
 import { ajouterJoursCpt, etatAfficheEcheance, type EtatAfficheEcheance, texteDepuisCentimes } from "./cptEcheancier";
+import { promessesEnCoursAffichees } from "./cptPromessesDb";
 import { RECHERCHE_LIMITE_MAX_CPT, rechercherCpt } from "./cptRecherche";
 import { relanceProposeeAvecPromessesCpt } from "./cptRelances";
 
@@ -18,7 +19,7 @@ import { relanceProposeeAvecPromessesCpt } from "./cptRelances";
  * État des créances et échéances proches (lot GC-7b) : LECTURE SEULE. Les chiffres d'un contrat viennent de `syntheseContratCreanceCpt`
  * (`cptCreances.ts`), le même calcul que la fiche client : jamais un second calcul. Encaissé prouvé = `montantRegle` (rattachements validés).
  */
-export type CreancesDbCpt = Pick<PrismaClient, "cptContrat" | "cptEcheance" | "cptPartenaire" | "cptPromesse" | "cptRelance" | "$queryRaw">;
+export type CreancesDbCpt = Pick<PrismaClient, "cptContrat" | "cptEcheance" | "cptPartenaire" | "cptPromesse" | "cptRattachement" | "cptRelance" | "$queryRaw">;
 
 export const TAILLE_PAGE_ECHEANCES_CPT = 50;
 export const TAILLE_PAGE_DEBITEURS_CPT = 50;
@@ -90,11 +91,12 @@ export async function chargerEtatCreancesCpt(db: CreancesDbCpt, f: FiltresCreanc
   const clientIds = [...new Set(lignes.map((l) => l.clientId))];
   const [promesses, relances] = clientIds.length
     ? await Promise.all([
-        db.cptPromesse.groupBy({ by: ["clientId"], where: { clientId: { in: clientIds }, statut: "EN_COURS" }, _count: { _all: true } }),
+        promessesEnCoursAffichees(db, aujourdhui, { clientIds }),
         db.cptRelance.groupBy({ by: ["clientId"], where: { clientId: { in: clientIds } }, _max: { faiteLe: true } }),
       ])
     : [[], []];
-  const promessesParClient = new Map(promesses.map((p) => [p.clientId, p._count._all]));
+  const promessesParClient = new Map<string, number>();
+  for (const p of promesses) promessesParClient.set(p.clientId, (promessesParClient.get(p.clientId) ?? 0) + 1);
   const relanceParClient = new Map(relances.map((r) => [r.clientId, r._max.faiteLe?.toISOString().slice(0, 10) ?? null]));
   const tousBruts = regrouperParDebiteurCpt(lignes);
   const tous: DebiteurSuiviCpt[] = tousBruts.map((d) => {

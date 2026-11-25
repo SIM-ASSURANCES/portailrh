@@ -83,7 +83,7 @@ export function validerPromesseCpt(saisie: SaisiePromesseCpt, aujourdhui: string
   return { ok: true, valeur: { montant, datePromise: saisie.datePromise as string } };
 }
 
-export interface EntreeEvaluationPromesseCpt {
+export interface EntreeEtatPromesseCpt {
   /** Centimes promis. */
   montant: bigint;
   datePromise: string;
@@ -92,10 +92,12 @@ export interface EntreeEvaluationPromesseCpt {
 }
 
 /**
- * Règle (C-21, provisoire) : TENUE dès que l'encaissé prouvé atteint le montant promis (même avant la date) ; NON TENUE quand la date promise
- * est dépassée (strictement) sans que ce montant soit atteint ; sinon EN COURS. Jamais décidée à la main : c'est cette règle qui fait foi.
+ * ÉTAT AFFICHÉ d'une promesse (règle C-21, provisoire) — la SEULE règle, utilisée par tous les écrans et calculs (fiche client, créances, prévision)
+ * et par l'évaluation qui l'enregistre : TENUE dès que l'encaissé prouvé atteint le montant promis (même avant la date) ; NON TENUE quand la date
+ * promise est dépassée (strictement) sans que ce montant soit atteint ; sinon EN COURS. Fonction pure, aucune écriture : le statut enregistré en
+ * base n'est que la trace d'une évaluation faite par une personne, jamais l'état qu'on montre.
  */
-export function evaluerPromesseCpt(e: EntreeEvaluationPromesseCpt, aujourdhui: string): StatutPromesseCpt {
+export function etatAffichePromesseCpt(e: EntreeEtatPromesseCpt, aujourdhui: string): StatutPromesseCpt {
   if (e.prouve >= e.montant) return "TENUE";
   if (aujourdhui > e.datePromise) return "NON_TENUE";
   return "EN_COURS";
@@ -107,4 +109,19 @@ export function evaluerPromesseCpt(e: EntreeEvaluationPromesseCpt, aujourdhui: s
  */
 export function relanceProposeeAvecPromessesCpt(entree: { nbEcheancesEnRetard: number; nbPromessesEnCours: number }): boolean {
   return entree.nbEcheancesEnRetard > 0 && entree.nbPromessesEnCours === 0;
+}
+
+export interface PaiementProuveCpt {
+  /** Date de valeur de l'encaissement (AAAA-MM-JJ). */
+  jour: string;
+  /** Centimes rattachés (rattachement VALIDÉ). */
+  montant: bigint;
+}
+
+/**
+ * Encaissé prouvé qui compte pour une promesse : les rattachements VALIDÉS d'un client dont la date de valeur est comprise (bornes incluses)
+ * entre le jour de création de la promesse et sa date promise.
+ */
+export function prouvePourPromesseCpt(paiements: readonly PaiementProuveCpt[], promesse: { creeLe: string; datePromise: string }): bigint {
+  return paiements.filter((p) => p.jour >= promesse.creeLe && p.jour <= promesse.datePromise).reduce((s, p) => s + p.montant, BigInt(0));
 }
