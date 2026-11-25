@@ -129,6 +129,10 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
   // GC-7d : relances faites hors de l'application et promesses de paiement.
   CptRelance: C("relances de clients enregistrées dans Gestion Compta (ajout seul, jamais modifiées) : remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
   CptPromesse: C("promesses de paiement de clients de Gestion Compta : statut final posé par la règle d'évaluation, remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
+  // GC-8 : taxe sur les contrats.
+  CptLigneTaxe: C("lignes de taxe (TCA) de Gestion Compta : ajout seul, verrouillées une fois déclarées (trigger), remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
+  CptDeclarationTca: C("déclarations mensuelles de TCA de Gestion Compta : montants figés, seul le paiement s'ajoute (trigger), remise à zéro propre au module (lot GC-11)"),
+  CptCreditTaxe: C("crédits de taxe (trop-payé reporté) de Gestion Compta : remise à zéro propre au module (lot GC-11)"),
 };
 
 /** Entités de `HistoriqueEntry` supprimées (Trésorerie puis Pointage). */

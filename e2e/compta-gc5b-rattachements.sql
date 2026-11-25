@@ -139,7 +139,7 @@ SELECT pg_temp.doit_reussir('DELETE accepté avant la mise en service', pg_temp.
 -- ---------------------------------------------------------------------------------------------------------------------
 INSERT INTO "CptMiseEnService" ("activeeParId", "sauvegardeSha256") VALUES ('u-test', 'sha-synthetique');
 SELECT pg_temp.doit_echouer('rattachement : DELETE interdit après la mise en service', $q$DELETE FROM "CptRattachement" WHERE id = 'r1'$q$, 'CPT_IMMUABLE');
-SELECT pg_temp.doit_echouer('rattachement : TRUNCATE interdit après la mise en service', $q$TRUNCATE "CptRattachement"$q$, 'CPT_IMMUABLE');
+SELECT pg_temp.doit_echouer('rattachement : TRUNCATE interdit après la mise en service', $q$TRUNCATE "CptRattachement" CASCADE$q$, 'CPT_IMMUABLE');
 SELECT pg_temp.doit_reussir('une proposition avance encore après la mise en service', pg_temp.proposer('r10','e5','ee',2500,'PROBABLE','A_CONFIRMER') || '; ' || pg_temp.confirmer('r10') || '; ' || pg_temp.valider('r10'));
 
 -- ---------------------------------------------------------------------------------------------------------------------

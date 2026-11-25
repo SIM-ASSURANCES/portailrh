@@ -872,6 +872,8 @@ export async function supprimerUtilisateurAction(
     cptRattachementsFaits,
     cptRelancesFaites,
     cptPromessesCreees,
+    cptLignesTaxeCreees,
+    cptDeclarationsTcaFaites,
     justificationsDecidees,
     lignesSoumisesAuDG,
     lignesDecideesParDG,
@@ -960,6 +962,9 @@ export async function supprimerUtilisateurAction(
     // Gestion Compta GC-7d : relances enregistrées et promesses de paiement créées (RESTRICT).
     prisma.cptRelance.count({ where: { creeParId: userId } }),
     prisma.cptPromesse.count({ where: { creeParId: userId } }),
+    // Gestion Compta GC-8 : lignes de taxe créées, déclarations et paiements de TCA (RESTRICT).
+    prisma.cptLigneTaxe.count({ where: { creeParId: userId } }),
+    prisma.cptDeclarationTca.count({ where: { OR: [{ declareParId: userId }, { payeParId: userId }] } }),
     // Pointage V2 : justifications de retard / départ anticipé décidées par ce compte (RESTRICT).
     prisma.justificationPointage.count({ where: { decideurId: userId } }),
     // Soumission au DG ligne par ligne (2026-10-10) : 2 relations vers User supplémentaires (SET NULL en base).
@@ -1051,6 +1056,8 @@ export async function supprimerUtilisateurAction(
   if (cptRattachementsFaits > 0) blocages.push(`proposé, confirmé, validé ou rejeté ${cptRattachementsFaits} rattachement(s) de Gestion Compta`);
   if (cptRelancesFaites > 0) blocages.push(`enregistré ${cptRelancesFaites} relance(s) de Gestion Compta`);
   if (cptPromessesCreees > 0) blocages.push(`enregistré ${cptPromessesCreees} promesse(s) de paiement de Gestion Compta`);
+  if (cptLignesTaxeCreees > 0) blocages.push(`créé ${cptLignesTaxeCreees} ligne(s) de taxe de Gestion Compta`);
+  if (cptDeclarationsTcaFaites > 0) blocages.push(`déclaré ou payé ${cptDeclarationsTcaFaites} déclaration(s) de TCA de Gestion Compta`);
   if (justificationsDecidees > 0)
     blocages.push(`décidé ${justificationsDecidees} justification(s) de retard ou de départ anticipé`);
   if (lignesSoumisesAuDG > 0) blocages.push(`soumis ${lignesSoumisesAuDG} ligne(s) d'article au DG`);

@@ -165,4 +165,13 @@ psql_cpt -d postgres -c 'CREATE DATABASE compta_rl6' >/dev/null
 (DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_rl6?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "successfully applied|rror"')
 DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_rl6?schema=public" npx tsx e2e/compta-gc6b-relances.ts | tail -60
 
-echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c et GC-6b : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements et relances vérifiés."
+echo "== 16. Taxe sur les contrats (GC-8a), sur une base FRAÎCHE =="
+psql_cpt -d postgres -c 'CREATE DATABASE compta_tca' >/dev/null
+(DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_tca?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "compta_taxe|successfully applied|rror"')
+docker exec -i "$NOM" psql -U postgres -d compta_tca -v ON_ERROR_STOP=1 -q -t -A < e2e/compta-gc8a-taxe.sql
+(DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_tca?schema=public" bash -c 'cd backend && npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code --config prisma7.config.ts >/dev/null 2>&1; code=$?; if [ $code -eq 0 ]; then echo "OK  migrate diff vide (schéma et migrations alignés)"; else echo "KO  migrate diff non vide (code $code)"; exit 1; fi')
+# Rejeu de la partie manuelle sans effet notable : la migration crée des tables, elle ne se rejoue pas (comme toutes les migrations de création) ;
+# `migrate deploy` relancé ne réapplique rien.
+(DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_tca?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "No pending|rror"')
+
+echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c, GC-6b et GC-8a : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements et relances vérifiés."

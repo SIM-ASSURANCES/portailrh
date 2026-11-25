@@ -188,6 +188,9 @@ model User {
   cptRattachementsRejetes   CptRattachement[] @relation("CptRattachementRejetePar")
   cptRelancesFaites         CptRelance[]      @relation("CptRelanceCreePar")
   cptPromessesCreees        CptPromesse[]     @relation("CptPromesseCreePar")
+  cptLignesTaxeCreees       CptLigneTaxe[]       @relation("CptLigneTaxeCreePar")
+  cptDeclarationsTcaFaites  CptDeclarationTca[]  @relation("CptDeclarationTcaDeclarePar")
+  cptPaiementsTcaFaits      CptDeclarationTca[]  @relation("CptDeclarationTcaPayePar")
 }
 
 model Role {
@@ -2572,6 +2575,8 @@ model CptPieceJointe {
   import CptImport?
   /// Rattachements dont cette pièce est le reçu de confirmation du commercial (GC-5).
   recusRattachements CptRattachement[] @relation("CptRattachementRecu")
+  /// Déclarations de TCA dont cette pièce est la quittance (GC-8).
+  quittancesTca CptDeclarationTca[] @relation("CptDeclarationTcaQuittance")
 
   @@index([sha256])
 }
@@ -2954,6 +2959,8 @@ model CptEcheance {
   majAt        DateTime        @updatedAt
 
   rattachements CptRattachement[]
+  lignesTaxeImputees CptLigneTaxe[] @relation("CptLigneTaxeImputeeSur")
+  lignesTaxe         CptLigneTaxe[] @relation("CptLigneTaxeEcheance")
 
   @@unique([contratId, rang])
   @@index([contratId, etat])
@@ -3090,6 +3097,8 @@ model CptEncaissement {
   creeAt               DateTime              @default(now())
   majAt                DateTime              @updatedAt
 
+  lignesTaxe       CptLigneTaxe[]
+
   transfertSortant CptTransfertInterne? @relation("CptTransfertSortant")
   transfertEntrant CptTransfertInterne? @relation("CptTransfertEntrant")
   cheque           CptCheque?
@@ -3194,6 +3203,8 @@ model CptRattachement {
   reprise            Boolean                @default(false)
   creeAt             DateTime               @default(now())
   majAt              DateTime               @updatedAt
+
+  lignesTaxe CptLigneTaxe[]
 
   @@index([encaissementId, statut])
   @@index([echeanceId, statut])
@@ -3321,4 +3332,129 @@ model CptPromesse {
 
   @@index([clientId, statut])
   @@index([statut, datePromise])
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// GC-8 : taxe sur les contrats (TCA). Moteur : backend/src/cptTaxe.ts ; écritures : backend/src/cptTaxeDb.ts.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// AVANCE : taxe estimée sur un encaissement pas (encore) rattaché (produit ou contrat connu : cas 2 et 3 du plan 7.1).
+/// RATTACHEMENT : taxe du contrat au prorata d'un rattachement VALIDÉ. IMPUTATION : ligne NÉGATIVE qui annule la part d'une avance
+/// couverte par un rattachement validé (la taxe déjà payée n'est jamais redemandée).
+enum CptOrigineLigneTaxe {
+  AVANCE
+  RATTACHEMENT
+  IMPUTATION
+}
+
+enum CptStatutDeclarationTca {
+  DECLAREE
+  PAYEE
+}
+
+enum CptOrigineCreditTaxe {
+  TROP_PAYE
+  CORRECTION_TAUX
+}
+
+enum CptStatutCreditTaxe {
+  A_RECUPERER
+  RECUPERE
+}
+
+/// Ligne de taxe. Ajout seul : seule l'affectation à une déclaration (`declarationId`, de nul à une valeur) est permise, puis la
+/// ligne est VERROUILLÉE (trigger). `montant` est signé (une imputation est négative). Mois = 1er du mois (CHECK).
+model CptLigneTaxe {
+  id                   String              @id @default(cuid())
+  origine              CptOrigineLigneTaxe
+  moisDeclaration      DateTime            @db.Date
+  encaissementId       String?
+  encaissement         CptEncaissement?    @relation(fields: [encaissementId], references: [id], onDelete: Restrict)
+  rattachementId       String?
+  rattachement         CptRattachement?    @relation(fields: [rattachementId], references: [id], onDelete: Restrict)
+  echeanceId           String?
+  echeance             CptEcheance?        @relation("CptLigneTaxeEcheance", fields: [echeanceId], references: [id], onDelete: Restrict)
+  contratId            String?
+  produitCode          String?
+  branche              CptBranche?
+  /// Montant TTC sur lequel la taxe contenue est calculée (signé pour une imputation).
+  base                 Decimal             @db.Decimal(14, 2)
+  /// Primes et accessoires hors taxe de la base (pour l'état par taux).
+  primeHt              Decimal             @default(0) @db.Decimal(14, 2)
+  accessoiresHt        Decimal             @default(0) @db.Decimal(14, 2)
+  taux                 Decimal             @db.Decimal(7, 6)
+  montant              Decimal             @db.Decimal(14, 2)
+  /// Imputation : l'avance dont une part est annulée, et l'échéance sur laquelle elle est imputée.
+  ligneAvanceId        String?
+  ligneAvance          CptLigneTaxe?       @relation("CptLigneTaxeAvance", fields: [ligneAvanceId], references: [id], onDelete: Restrict)
+  imputations          CptLigneTaxe[]      @relation("CptLigneTaxeAvance")
+  imputeeSurEcheanceId String?
+  imputeeSurEcheance   CptEcheance?        @relation("CptLigneTaxeImputeeSur", fields: [imputeeSurEcheanceId], references: [id], onDelete: Restrict)
+  declarationId        String?
+  declaration          CptDeclarationTca?  @relation(fields: [declarationId], references: [id], onDelete: Restrict)
+  creeParId            String
+  creePar              User                @relation("CptLigneTaxeCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt               DateTime            @default(now())
+
+  @@index([moisDeclaration])
+  @@index([declarationId])
+  @@index([encaissementId])
+  @@index([rattachementId])
+  @@index([ligneAvanceId])
+  @@index([contratId])
+}
+
+/// Déclaration de TCA d'un mois (`CPD-AAAA-NN`, une seule par mois). Montants figés à la déclaration ; seul le paiement
+/// (quittance) s'ajoute ensuite, une fois (trigger).
+model CptDeclarationTca {
+  id               String                  @id @default(cuid())
+  reference        String                  @unique
+  mois             DateTime                @unique @db.Date
+  statut           CptStatutDeclarationTca @default(DECLAREE)
+  /// Taxe due cumulée jusqu'à ce mois (corrections comprises).
+  montantDu        Decimal                 @db.Decimal(14, 2)
+  /// Taxe déjà engagée par les déclarations précédentes (quittance si payée, sinon montant à payer).
+  montantDejaPaye  Decimal                 @db.Decimal(14, 2)
+  /// Part des corrections (imputations) dans `montantDu`, pour information.
+  corrections      Decimal                 @default(0) @db.Decimal(14, 2)
+  montantAPayer    Decimal                 @db.Decimal(14, 2)
+  nbLignes         Int
+  declareParId     String
+  declarePar       User                    @relation("CptDeclarationTcaDeclarePar", fields: [declareParId], references: [id], onDelete: Restrict)
+  declareAt        DateTime                @default(now())
+  quittanceNumero  String?
+  quittanceDate    DateTime?               @db.Date
+  quittanceMontant Decimal?                @db.Decimal(14, 2)
+  datePaiement     DateTime?               @db.Date
+  quittancePieceId String?
+  quittancePiece   CptPieceJointe?         @relation("CptDeclarationTcaQuittance", fields: [quittancePieceId], references: [id], onDelete: Restrict)
+  pieceOdoo        String?
+  payeParId        String?
+  payePar          User?                   @relation("CptDeclarationTcaPayePar", fields: [payeParId], references: [id], onDelete: Restrict)
+  payeAt           DateTime?
+
+  lignes  CptLigneTaxe[]
+  credits CptCreditTaxe[] @relation("CptCreditTaxeNe")
+  creditsRecuperes CptCreditTaxe[] @relation("CptCreditTaxeRecupere")
+
+  @@index([statut])
+}
+
+/// Crédit de taxe : trop-payé reporté. Né d'une déclaration (montant à payer négatif) ou d'un paiement supérieur au dû ;
+/// récupéré (une fois) à la déclaration qui l'absorbe.
+model CptCreditTaxe {
+  id             String               @id @default(cuid())
+  origine        CptOrigineCreditTaxe
+  declarationId  String
+  declaration    CptDeclarationTca    @relation("CptCreditTaxeNe", fields: [declarationId], references: [id], onDelete: Restrict)
+  montant        Decimal              @db.Decimal(14, 2)
+  statut         CptStatutCreditTaxe  @default(A_RECUPERER)
+  recupereDansId String?
+  recupereDans   CptDeclarationTca?   @relation("CptCreditTaxeRecupere", fields: [recupereDansId], references: [id], onDelete: Restrict)
+  creeAt         DateTime             @default(now())
+  recupereAt     DateTime?
+
+  @@index([statut])
+  @@index([declarationId])
 }
