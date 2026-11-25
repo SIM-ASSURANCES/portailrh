@@ -3,3 +3,5 @@
 # shell en CRLF échoue au démarrage dans le conteneur Linux avec une erreur
 # "bad interpreter" (le shebang #!/bin/sh devient #!/bin/sh\r, introuvable).
 *.sh text eol=lf
+Dockerfile text eol=lf
+docker-compose*.yml text eol=lf
