@@ -11,6 +11,8 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 
 import {
+  declarerMoisTcaCpt,
+  enregistrerPaiementTcaCpt,
   getTrustedClientIp,
   prisma,
   rattraperTaxesManquantesCpt,
@@ -27,6 +29,7 @@ type SessionCpt = NonNullable<Awaited<ReturnType<typeof getSession>>>;
 
 const DELAI_TRANSACTION_MS = 120_000;
 const NON_AUTORISE: ResultatTcaAction = { status: "error", message: "Action non autorisée." };
+const MOIS = /^\d{4}-\d{2}-01$/;
 
 async function exigerUne(...permissions: string[]): Promise<SessionCpt | null> {
   const session = await getSession();
@@ -40,6 +43,36 @@ function rafraichir() {
 }
 
 const fcfa = (texte: string) => Number(texte).toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+
+/** Déclare un mois : fige le calcul et verrouille les lignes de taxe. */
+export async function declarerMoisTcaAction(mois: string): Promise<ResultatTcaAction> {
+  const session = await exigerUne("cpt.declarer_tca");
+  if (!session) return NON_AUTORISE;
+  if (typeof mois !== "string" || !MOIS.test(mois)) return { status: "error", message: "Mois invalide." };
+  const ip = getTrustedClientIp(await headers());
+  try {
+    const r = await prisma.$transaction((tx) => declarerMoisTcaCpt(tx, { mois }, { userId: session.user.id, ip }), { timeout: DELAI_TRANSACTION_MS, maxWait: 10_000 });
+    if (!r.ok) return { status: "error", message: r.message };
+    rafraichir();
+    const credit = Number(r.credit) > 0 ? ` Crédit à reporter : ${fcfa(r.credit)} FCFA.` : "";
+    return { status: "success", message: `Déclaration ${r.reference} enregistrée : ${fcfa(r.montantAPayer)} FCFA à payer, ${r.nbLignes} ligne(s) verrouillée(s).${credit}` };
+  } catch (e) {
+    return { status: "error", message: e instanceof Error ? e.message : "La déclaration a échoué." };
+  }
+}
+
+/** Enregistre le paiement et la quittance d'une déclaration. */
+export async function enregistrerPaiementTcaAction(declarationId: string, saisie: Record<string, unknown>): Promise<ResultatTcaAction> {
+  const session = await exigerUne("cpt.payer_tca");
+  if (!session) return NON_AUTORISE;
+  if (typeof declarationId !== "string" || !declarationId || typeof saisie !== "object" || saisie === null) return { status: "error", message: "Saisie invalide." };
+  const ip = getTrustedClientIp(await headers());
+  const r = await prisma.$transaction((tx) => enregistrerPaiementTcaCpt(tx, { declarationId, saisie }, { userId: session.user.id, ip }), { timeout: DELAI_TRANSACTION_MS });
+  if (!r.ok) return { status: "error", message: r.message, erreurs: r.erreurs };
+  rafraichir();
+  const trop = Number(r.tropPaye) > 0 ? ` Trop-payé reporté : ${fcfa(r.tropPaye)} FCFA.` : "";
+  return { status: "success", message: `Paiement de la déclaration ${r.reference} enregistré.${trop}` };
+}
 
 /** Rejoue la taxe des rattachements validés qui n'avaient pas de taux (à faire une fois le taux saisi). */
 export async function rattraperTaxesManquantesAction(): Promise<ResultatTcaAction> {

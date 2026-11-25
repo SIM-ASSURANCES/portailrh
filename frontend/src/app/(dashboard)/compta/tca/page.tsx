@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
 
 import { AvertissementTaxe, OngletsTaxe } from "@/components/compta/AvertissementTaxe";
-import { formaterDateCpt, formaterMontantCpt } from "@/components/compta/libellesProduction";
-import { Button, Input, PageHeader, StatCard } from "@/components/ui";
+import { formaterDateCpt, formaterDateHeureCpt, formaterMontantCpt } from "@/components/compta/libellesProduction";
+import { Badge, Button, Input, PageHeader, StatCard } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { chargerCalculMoisCpt, chargerParametresCpt, dateLimiteTcaCpt, listerTauxManquantsCpt, prisma } from "backend";
 
-import { AvanceForm, RattraperBouton } from "./TaxeActions";
+import { AvanceForm, DeclarerMoisBouton, PaiementForm, RattraperBouton } from "./TaxeActions";
 
 const montant = (centimes: bigint) => formaterMontantCpt(Number(centimes) / 100);
 const MOIS = /^\d{4}-\d{2}$/;
@@ -30,10 +30,12 @@ export default async function TaxePage({ searchParams }: { searchParams: Promise
   const session = await getSession();
   if (!session || !hasPermission(session, "cpt.consulter")) redirect("/?error=acces_refuse_compta");
   const peutDeclarer = hasPermission(session, "cpt.declarer_tca");
+  const peutPayer = hasPermission(session, "cpt.payer_tca");
   const peutTaxer = peutDeclarer || hasPermission(session, "cpt.identifier_encaissement");
 
   const maintenant = new Date();
   const mois = moisDemande((await searchParams).mois, maintenant);
+  const aujourdhui = maintenant.toISOString().slice(0, 10);
   const [etat, parametres, manquants, declarations] = await Promise.all([
     chargerCalculMoisCpt(prisma, mois, maintenant),
     chargerParametresCpt(prisma),
@@ -77,9 +79,32 @@ export default async function TaxePage({ searchParams }: { searchParams: Promise
 
       <section className="space-y-3 rounded-xl border border-border bg-card p-4 shadow-elevated" data-declaration>
         <h2 className="text-base font-bold text-foreground">Déclaration du mois</h2>
-        <p className="text-sm text-foreground" data-declaration-impossible>
-          {declaration ? `Déclaration ${declaration.reference}.` : (etat.refus ?? "Ce mois est prêt à être déclaré.")}
-        </p>
+        {declaration ? (
+          <div className="space-y-3 text-sm" data-declaration-existante>
+            <p>
+              <strong data-reference-declaration>{declaration.reference}</strong> · déclarée le {formaterDateHeureCpt(declaration.declareAt)} · <Badge variant={declaration.statut === "PAYEE" ? "success" : "warning"}>{declaration.statut === "PAYEE" ? "Payée" : "À payer"}</Badge>
+            </p>
+            <p className="tabular-nums">
+              Due {formaterMontantCpt(declaration.montantDu.toString())} − déjà payée {formaterMontantCpt(declaration.montantDejaPaye.toString())} = <strong>{formaterMontantCpt(declaration.montantAPayer.toString())} FCFA</strong> ({declaration.nbLignes} ligne(s) verrouillée(s)).
+            </p>
+            {declaration.statut === "PAYEE" ? (
+              <p data-quittance>
+                Quittance <strong>{declaration.quittanceNumero}</strong> du {formaterDateCpt(declaration.quittanceDate)} : {formaterMontantCpt(declaration.quittanceMontant?.toString())} FCFA, payée le {formaterDateCpt(declaration.datePaiement)}
+                {declaration.pieceOdoo ? ` · pièce ${declaration.pieceOdoo}` : ""}.
+              </p>
+            ) : peutPayer ? (
+              <PaiementForm declarationId={declaration.id} montantAPayer={declaration.montantAPayer.toFixed(2)} aujourdhui={aujourdhui} />
+            ) : (
+              <p className="text-muted-foreground">Le paiement est enregistré par un compte qui porte « enregistrer le paiement de la taxe ».</p>
+            )}
+          </div>
+        ) : peutDeclarer ? (
+          <DeclarerMoisBouton mois={mois} raison={etat.refus} />
+        ) : (
+          <p className="text-sm text-muted-foreground" data-declaration-lecture>
+            Seul un compte qui porte « déclarer la taxe du mois » peut déclarer. {etat.refus ?? ""}
+          </p>
+        )}
       </section>
 
       <section className="space-y-3" data-taux-manquants>

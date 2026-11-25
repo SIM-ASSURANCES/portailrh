@@ -1,12 +1,20 @@
 import type { Prisma } from "./generated/prisma/client";
 import { ecrireAudit } from "./cptAudit";
 import { enCentimesEcheancier, texteDepuisCentimes } from "./cptEcheancier";
+import {
+  cleSequenceAnnuelle,
+  prochainNumero,
+} from "./cptSequence";
 import type { BrancheCpt, NatureContratCpt, TauxTcaLigne } from "./cptReferentiels";
 import {
   baseAvanceCpt,
   calculerAvanceCpt,
+  anneeDeclarationCpt,
   calculerMoisTcaCpt,
   moisSuivantCpt,
+  tropPayeAuPaiementCpt,
+  validerPaiementTcaCpt,
+  type SaisiePaiementTcaCpt,
   refusDeclarationMoisCpt,
   type CalculMoisTcaCpt,
   moisImputationLigneCpt,
@@ -369,4 +377,105 @@ export async function listerTauxManquantsCpt(db: CptTaxeDb, limite = 100): Promi
       encaissementReference: l.encaissement.reference,
     })),
   };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Déclaration, quittance et verrouillage (GC-8d)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export type ResultatDeclarationCpt =
+  | { ok: true; declarationId: string; reference: string; montantAPayer: string; credit: string; nbLignes: number }
+  | { ok: false; message: string };
+
+/**
+ * Déclare un mois : fige le calcul (`chargerCalculMoisCpt`, la même fonction que l'écran), affecte TOUTES les lignes non déclarées du
+ * mois et antérieures — elles sont verrouillées par trigger —, crée la déclaration `CPD-AAAA-NN` et traite les crédits (les crédits
+ * ouverts sont récupérés ici, un nouveau crédit porte le trop-payé éventuel). Sous le verrou `cpt:tca` : deux déclarations simultanées
+ * du même mois, une seule passe (la seconde lit la déclaration existante, et l'unicité du mois le garantit aussi en base).
+ */
+export async function declarerMoisTcaCpt(db: CptTaxeDb, e: { mois: string }, p: ParametresTaxeCpt): Promise<ResultatDeclarationCpt> {
+  const maintenant = p.maintenant ?? new Date();
+  await verrouillerTaxeCpt(db);
+  const etat = await chargerCalculMoisCpt(db, e.mois, maintenant);
+  if (etat.refus) return { ok: false, message: etat.refus };
+  const c = etat.calcul;
+  const aAffecter = { declarationId: null, moisDeclaration: { lte: dateMois(e.mois) } };
+  const nbLignes = await db.cptLigneTaxe.count({ where: aAffecter });
+  const reference = await prochainNumero(db, cleSequenceAnnuelle("CPD", anneeDeclarationCpt(e.mois)));
+  const declaration = await db.cptDeclarationTca.create({
+    data: {
+      reference,
+      mois: dateMois(e.mois),
+      montantDu: texte(c.montantDu),
+      montantDejaPaye: texte(c.montantDejaPaye),
+      corrections: texte(c.corrections),
+      montantAPayer: texte(c.montantAPayer),
+      nbLignes,
+      declareParId: p.userId,
+    },
+    select: { id: true },
+  });
+  const affectees = await db.cptLigneTaxe.updateMany({ where: aAffecter, data: { declarationId: declaration.id } });
+  if (affectees.count !== nbLignes) throw new Error("La taxe du mois a changé pendant la déclaration : recommencez.");
+  // Crédits : ceux qui attendaient sont absorbés par ce mois ; le trop-payé éventuel de ce mois devient le crédit à reporter.
+  if (c.creditsRecuperes.length > 0) {
+    await db.cptCreditTaxe.updateMany({ where: { id: { in: c.creditsRecuperes }, statut: "A_RECUPERER" }, data: { statut: "RECUPERE", recupereDansId: declaration.id, recupereAt: maintenant } });
+  }
+  if (c.credit > ZERO) {
+    await db.cptCreditTaxe.create({ data: { origine: "TROP_PAYE", declarationId: declaration.id, montant: texte(c.credit) } });
+  }
+  await ecrireAudit(db, {
+    entite: "CptDeclarationTca",
+    entiteId: declaration.id,
+    action: "declaration",
+    apres: { reference, mois: e.mois, montantDu: texte(c.montantDu), montantDejaPaye: texte(c.montantDejaPaye), montantAPayer: texte(c.montantAPayer), credit: texte(c.credit), nbLignes },
+    mois: dateMois(e.mois),
+    userId: p.userId,
+    ip: p.ip,
+  });
+  return { ok: true, declarationId: declaration.id, reference, montantAPayer: texte(c.montantAPayer), credit: texte(c.credit), nbLignes };
+}
+
+export type ResultatPaiementTcaCpt = { ok: true; reference: string; tropPaye: string } | { ok: false; message: string; erreurs?: Record<string, string> };
+
+/**
+ * Enregistre le paiement et la quittance d'une déclaration (DECLAREE → PAYEE, une seule fois). Une quittance supérieure au montant déclaré
+ * crée un crédit (trop-payé) ; inférieure, le manque se retrouve au calcul du mois suivant (le cumul compte ce qui a réellement été payé).
+ */
+export async function enregistrerPaiementTcaCpt(db: CptTaxeDb, e: { declarationId: string; saisie: SaisiePaiementTcaCpt }, p: ParametresTaxeCpt): Promise<ResultatPaiementTcaCpt> {
+  const maintenant = p.maintenant ?? new Date();
+  const valide = validerPaiementTcaCpt(e.saisie, jour(maintenant));
+  if (!valide.ok) return { ok: false, message: "Saisie invalide.", erreurs: valide.erreurs };
+  await verrouillerTaxeCpt(db);
+  const d = await db.cptDeclarationTca.findUnique({ where: { id: e.declarationId }, select: { id: true, reference: true, mois: true, statut: true, montantAPayer: true } });
+  if (!d) return { ok: false, message: "Déclaration introuvable." };
+  if (d.statut !== "DECLAREE") return { ok: false, message: "Cette déclaration est déjà payée." };
+  const v = valide.valeur;
+  const maj = await db.cptDeclarationTca.updateMany({
+    where: { id: d.id, statut: "DECLAREE" },
+    data: {
+      statut: "PAYEE",
+      quittanceNumero: v.quittanceNumero,
+      quittanceDate: new Date(`${v.quittanceDate}T00:00:00.000Z`),
+      quittanceMontant: texte(v.quittanceMontant),
+      datePaiement: new Date(`${v.datePaiement}T00:00:00.000Z`),
+      pieceOdoo: v.pieceOdoo,
+      payeParId: p.userId,
+      payeAt: maintenant,
+    },
+  });
+  if (maj.count !== 1) return { ok: false, message: "Cette déclaration vient d'être payée par quelqu'un d'autre." };
+  const trop = tropPayeAuPaiementCpt(centimes(d.montantAPayer), v.quittanceMontant);
+  if (trop > ZERO) await db.cptCreditTaxe.create({ data: { origine: "TROP_PAYE", declarationId: d.id, montant: texte(trop) } });
+  await ecrireAudit(db, {
+    entite: "CptDeclarationTca",
+    entiteId: d.id,
+    action: "paiement",
+    avant: { statut: "DECLAREE", montantAPayer: texte(centimes(d.montantAPayer)) },
+    apres: { statut: "PAYEE", quittanceNumero: v.quittanceNumero, quittanceDate: v.quittanceDate, quittanceMontant: texte(v.quittanceMontant), datePaiement: v.datePaiement, pieceOdoo: v.pieceOdoo, tropPaye: texte(trop) },
+    mois: d.mois,
+    userId: p.userId,
+    ip: p.ip,
+  });
+  return { ok: true, reference: d.reference, tropPaye: texte(trop) };
 }

@@ -243,3 +243,22 @@ describe("déclarabilité d'un mois", () => {
     expect(dateLimiteTcaCpt("2026-12-01", 20)).toBe("2027-01-20");
   });
 });
+
+import { validerPaiementTcaCpt } from "./cptTaxe";
+
+describe("paiement et quittance (GC-8d)", () => {
+  const ok = { quittanceNumero: "Q-2026-001", quittanceDate: "2026-03-10", quittanceMontant: "169", datePaiement: "2026-03-10" };
+  it("saisie valide", () => {
+    const r = validerPaiementTcaCpt(ok, "2026-03-15");
+    expect(r.ok && r.valeur.quittanceMontant).toBe(BigInt(16900));
+  });
+  it("champs obligatoires et dates futures refusés", () => {
+    const r = validerPaiementTcaCpt({ quittanceNumero: "x", quittanceDate: "", quittanceMontant: "-5", datePaiement: "2027-01-01" }, "2026-03-15");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(Object.keys(r.erreurs).sort()).toEqual(["datePaiement", "quittanceDate", "quittanceMontant", "quittanceNumero"]);
+  });
+  it("montant à virgule accepté, nul accepté", () => {
+    expect(validerPaiementTcaCpt({ ...ok, quittanceMontant: "0" }, "2026-03-15").ok).toBe(true);
+    expect(validerPaiementTcaCpt({ ...ok, quittanceMontant: "169,50" }, "2026-03-15").ok).toBe(true);
+  });
+});

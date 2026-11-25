@@ -1,12 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { Button, Input } from "@/components/ui";
 
-import { rattraperTaxesManquantesAction, taxerEncaissementAction, type ResultatTcaAction } from "./actions";
+import { declarerMoisTcaAction, enregistrerPaiementTcaAction, rattraperTaxesManquantesAction, taxerEncaissementAction, type ResultatTcaAction } from "./actions";
 
 function useAction() {
   const router = useRouter();
@@ -21,6 +21,52 @@ function useAction() {
     });
   }
   return { enCours, lancer };
+}
+
+/** « Déclarer le mois » : fige le calcul et verrouille les lignes (cpt.declarer_tca). */
+export function DeclarerMoisBouton({ mois, raison }: { mois: string; raison: string | null }) {
+  const { enCours, lancer } = useAction();
+  return (
+    <div>
+      <Button type="button" data-declarer-mois onClick={() => lancer(() => declarerMoisTcaAction(mois))} loading={enCours} disabled={enCours || raison !== null}>
+        Déclarer le mois
+      </Button>
+      {raison && (
+        <p data-declaration-impossible className="mt-2 text-sm text-foreground">
+          {raison}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Paiement et quittance d'une déclaration (cpt.payer_tca). */
+export function PaiementForm({ declarationId, montantAPayer, aujourdhui }: { declarationId: string; montantAPayer: string; aujourdhui: string }) {
+  const { enCours, lancer } = useAction();
+  const [erreurs, setErreurs] = useState<Record<string, string>>({});
+  function envoyer(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const saisie = Object.fromEntries(["quittanceNumero", "quittanceDate", "quittanceMontant", "datePaiement", "pieceOdoo"].map((k) => [k, String(f.get(k) ?? "")]));
+    lancer(
+      () => enregistrerPaiementTcaAction(declarationId, saisie),
+      (r) => setErreurs(r.status === "error" ? (r.erreurs ?? {}) : {}),
+    );
+  }
+  return (
+    <form onSubmit={envoyer} data-paiement-tca className="grid gap-3 sm:grid-cols-2">
+      <Input name="quittanceNumero" label="Numéro de la quittance" required error={erreurs.quittanceNumero} />
+      <Input name="quittanceDate" label="Date de la quittance" type="date" max={aujourdhui} defaultValue={aujourdhui} required error={erreurs.quittanceDate} />
+      <Input name="quittanceMontant" label="Montant payé (FCFA)" inputMode="decimal" defaultValue={montantAPayer} required error={erreurs.quittanceMontant} />
+      <Input name="datePaiement" label="Date du paiement" type="date" max={aujourdhui} defaultValue={aujourdhui} required error={erreurs.datePaiement} />
+      <Input name="pieceOdoo" label="Pièce comptable (Odoo, facultatif)" />
+      <div className="flex items-end">
+        <Button type="submit" loading={enCours} disabled={enCours}>
+          Enregistrer le paiement
+        </Button>
+      </div>
+    </form>
+  );
 }
 
 /** Rejoue la taxe des rattachements validés sans taux (une fois le taux saisi dans les référentiels). */

@@ -384,3 +384,43 @@ export function dateLimiteTcaCpt(mois: string, jourLimite: number): string {
 export function anneeDeclarationCpt(mois: string): number {
   return Number(mois.slice(0, 4));
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Paiement et quittance (GC-8d)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface SaisiePaiementTcaCpt {
+  quittanceNumero?: unknown;
+  quittanceDate?: unknown;
+  quittanceMontant?: unknown;
+  datePaiement?: unknown;
+  pieceOdoo?: unknown;
+}
+
+export interface PaiementTcaValideCpt {
+  quittanceNumero: string;
+  quittanceDate: string;
+  quittanceMontant: bigint;
+  datePaiement: string;
+  pieceOdoo: string | null;
+}
+
+const DATE_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Contrôle de la saisie du paiement et de la quittance. Erreurs par champ ; les dates ne sont jamais dans le futur. */
+export function validerPaiementTcaCpt(s: SaisiePaiementTcaCpt, aujourdhui: string): { ok: true; valeur: PaiementTcaValideCpt } | { ok: false; erreurs: Record<string, string> } {
+  const erreurs: Record<string, string> = {};
+  const numero = String(s.quittanceNumero ?? "").replace(/\s+/g, " ").trim();
+  if (numero.length < 3 || numero.length > 60) erreurs.quittanceNumero = "Numéro de quittance : 3 à 60 caractères.";
+  const dateQuittance = String(s.quittanceDate ?? "").trim();
+  if (!DATE_ISO.test(dateQuittance)) erreurs.quittanceDate = "Date de la quittance obligatoire.";
+  else if (dateQuittance > aujourdhui) erreurs.quittanceDate = "La date de la quittance ne peut pas être dans le futur.";
+  const datePaiement = String(s.datePaiement ?? "").trim();
+  if (!DATE_ISO.test(datePaiement)) erreurs.datePaiement = "Date du paiement obligatoire.";
+  else if (datePaiement > aujourdhui) erreurs.datePaiement = "La date du paiement ne peut pas être dans le futur.";
+  const montant = centimesTaxeCpt(typeof s.quittanceMontant === "number" ? s.quittanceMontant : String(s.quittanceMontant ?? "").replace(/\s/g, ""));
+  if (montant === null) erreurs.quittanceMontant = "Montant de la quittance invalide (nombre positif ou nul, deux décimales au plus).";
+  const pieceOdoo = String(s.pieceOdoo ?? "").trim().slice(0, 100) || null;
+  if (Object.keys(erreurs).length > 0 || montant === null) return { ok: false, erreurs };
+  return { ok: true, valeur: { quittanceNumero: numero, quittanceDate: dateQuittance, quittanceMontant: montant, datePaiement, pieceOdoo } };
+}

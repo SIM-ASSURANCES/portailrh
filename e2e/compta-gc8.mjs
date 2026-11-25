@@ -144,6 +144,71 @@ if (partie("8c")) {
   await n.close();
 }
 
+// =====================================================================================================================
+// 8d — déclaration, quittance, verrouillage
+// =====================================================================================================================
+if (partie("8d")) {
+  const mois = new Date().toISOString().slice(0, 7);
+  const c = await ouvrir(RFCRH, `/compta/tca?mois=${mois}`);
+  verifier("8d. le mois courant ne se déclare pas (« pas terminé »)", /pas terminé/.test(await c.locator("[data-declaration-impossible]").innerText()) && (await c.locator("[data-declarer-mois]").isDisabled()));
+  await c.close();
+  donnees("mars");
+  const ordre = await ouvrir(RFCRH, "/compta/tca?mois=2026-03");
+  verifier("8d. mars ne se déclare pas avant février (ordre des mois)", /Déclarez d'abord le mois du 2026-02/.test(await ordre.locator("[data-declaration-impossible]").innerText()), await ordre.locator("[data-declaration-impossible]").innerText());
+  await ordre.close();
+
+  const p = await ouvrir(RFCRH, "/compta/tca?mois=2026-02");
+  const attendu = await sommeLignes(`"moisDeclaration" <= '2026-02-01'`);
+  reqDeclarer = await cliquerEtCapturer(p, p.locator("[data-declarer-mois]"));
+  declarationFevrier = await un(`SELECT id, reference, "montantDu"::float AS du, "montantAPayer"::float AS a_payer, "nbLignes", statut FROM "CptDeclarationTca" WHERE mois = '2026-02-01'`);
+  verifier("8d. déclaration CPD-2026-01 : montant à payer = somme des lignes", declarationFevrier?.reference === "CPD-2026-01" && declarationFevrier.a_payer === attendu && attendu === totalFevrier, JSON.stringify(declarationFevrier));
+  const verrouillees = Number((await un(`SELECT count(*)::int AS n FROM "CptLigneTaxe" WHERE "declarationId" = $1`, [declarationFevrier.id])).n);
+  verifier("8d. toutes les lignes du mois sont rattachées à la déclaration", verrouillees === declarationFevrier.nbLignes && Number((await un(`SELECT count(*)::int AS n FROM "CptLigneTaxe" WHERE "declarationId" IS NULL AND "moisDeclaration" <= '2026-02-01'`)).n) === 0);
+  let refus = "";
+  try {
+    await db.query(`UPDATE "CptLigneTaxe" SET montant = 1 WHERE "declarationId" = $1`, [declarationFevrier.id]);
+  } catch (e) {
+    refus = e.message;
+  }
+  verifier("8d. trigger : une ligne déclarée ne se modifie plus (SQL direct)", /CPT_LIGNE_TAXE_VERROUILLEE/.test(refus), refus);
+  verifier("8d. l'écran montre la déclaration et le formulaire de paiement", (await p.locator("[data-reference-declaration]").innerText()) === "CPD-2026-01" && (await p.locator("[data-paiement-tca]").count()) === 1);
+  const rejeuDecl = await rejouer(DIRECTION, reqDeclarer);
+  verifier("8d. rejeu direct de la déclaration sans permission : refusé", /Action non autoris/.test(rejeuDecl), rejeuDecl.slice(0, 120));
+  const rejeuDeclDeux = await rejouer(RFCRH, reqDeclarer);
+  verifier("8d. un mois déjà déclaré ne se déclare pas deux fois", /déjà déclaré/.test(rejeuDeclDeux) && Number((await un(`SELECT count(*)::int AS n FROM "CptDeclarationTca"`)).n) === 1, rejeuDeclDeux.slice(0, 160));
+
+  // Paiement : 13 de trop.
+  const f = p.locator("[data-paiement-tca]");
+  await f.locator('input[name="quittanceNumero"]').fill("Q-FEV-2026");
+  await f.locator('input[name="quittanceMontant"]').fill(String(declarationFevrier.a_payer + 13));
+  reqPaiement = await cliquerEtCapturer(p, f.locator('button[type="submit"]'));
+  const payee = await un(`SELECT statut, "quittanceNumero", "quittanceMontant"::float AS q FROM "CptDeclarationTca" WHERE id = $1`, [declarationFevrier.id]);
+  verifier("8d. paiement : déclaration PAYEE avec sa quittance", payee.statut === "PAYEE" && payee.quittanceNumero === "Q-FEV-2026" && payee.q === declarationFevrier.a_payer + 13, JSON.stringify(payee));
+  verifier("8d. trop-payé de 13 : un crédit à récupérer", Number((await un(`SELECT coalesce(sum(montant),0)::float AS s FROM "CptCreditTaxe" WHERE statut = 'A_RECUPERER'`)).s) === 13);
+  await p.reload();
+  await p.waitForLoadState("networkidle").catch(() => {});
+  verifier("8d. l'écran affiche la quittance", /Q-FEV-2026/.test(await p.locator("[data-quittance]").innerText()));
+  const rejeuPaiementDirection = await rejouer(DIRECTION, reqPaiement);
+  verifier("8d. rejeu direct du paiement sans cpt.payer_tca : refusé", /Action non autoris/.test(rejeuPaiementDirection), rejeuPaiementDirection.slice(0, 120));
+  const rejeuPaiementDeux = await rejouer(RFCRH, reqPaiement);
+  verifier("8d. une déclaration payée ne se paie pas deux fois", /déjà payée/.test(rejeuPaiementDeux), rejeuPaiementDeux.slice(0, 160));
+  await p.close();
+
+  // Mars : le trop-payé est reporté.
+  const mars = await ouvrir(RFCRH, "/compta/tca?mois=2026-03");
+  verifier("8d. mars : à payer = 101 − 13 de trop-payé reporté = 88", (await aPayerAffiche(mars)) === 88, await mars.locator("[data-a-payer]").innerText());
+  // Deux déclarations simultanées du même mois : une seule passe.
+  const reqMars = await cliquerEtCapturer(mars, mars.locator("[data-declarer-mois]"));
+  const decMars = await un(`SELECT id, reference, "montantAPayer"::float AS a_payer FROM "CptDeclarationTca" WHERE mois = '2026-03-01'`);
+  verifier("8d. mars déclarée : 88 à payer, référence CPD-2026-02", decMars?.a_payer === 88 && decMars.reference === "CPD-2026-02", JSON.stringify(decMars));
+  verifier("8d. le crédit de 13 est récupéré par la déclaration de mars", Number((await un(`SELECT count(*)::int AS n FROM "CptCreditTaxe" WHERE statut = 'RECUPERE' AND "recupereDansId" = $1`, [decMars.id])).n) === 1);
+  // Simultanéité : deux déclarations d'avril (mois terminé, sans ligne) lancées EN MÊME TEMPS, une seule passe.
+  const [r1, r2] = await Promise.all([rejouer(RFCRH, reqMars, () => ["2026-04-01"]), rejouer(RFCRH, reqMars, () => ["2026-04-01"])]);
+  const nbAvril = Number((await un(`SELECT count(*)::int AS n FROM "CptDeclarationTca" WHERE mois = '2026-04-01'`)).n);
+  verifier("8d. deux déclarations simultanées du même mois : une seule passe, l'autre reçoit « déjà déclaré »", nbAvril === 1 && /déjà déclaré/.test(r1 + r2), `${nbAvril} — ${(r1 + r2).replace(/\s+/g, " ").slice(0, 200)}`);
+  await mars.close();
+}
+
 verifier("aucune erreur JavaScript", erreursJs.length === 0, erreursJs.slice(0, 3).join(" | "));
 await browser.close();
 await db.end();
