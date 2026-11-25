@@ -209,6 +209,55 @@ if (partie("8d")) {
   await mars.close();
 }
 
+// =====================================================================================================================
+// 8e — état par taux
+// =====================================================================================================================
+if (partie("8e")) {
+  const p = await ouvrir(RFCRH, "/compta/tca/etat?mois=2026-02");
+  verifier("8e. avertissement R1 visible en tête de l'état par taux", (await p.locator("[data-avertissement-r1]").innerText()).includes(R1));
+  // Chaque taux de l'écran est recoupé par un GROUP BY indépendant sur les lignes du mois.
+  const attendu = await sql(`SELECT taux::float AS taux, sum("primeHt")::float AS primes, sum("accessoiresHt")::float AS acc, sum(montant)::float AS impot FROM "CptLigneTaxe" WHERE "moisDeclaration" = '2026-02-01' GROUP BY taux ORDER BY taux DESC`);
+  const libelles = { 0.0725: "7,25 %", 0.015: "1,5 %", 0.125: "12,5 %" };
+  verifier("8e. trois taux (12,5 %, 7,25 %, 1,5 %) et un total", attendu.length === 3 && (await p.locator("[data-etat-par-taux] tbody tr").count()) === 3);
+  for (const a of attendu) {
+    const ligne = p.locator(`[data-taux="${libelles[a.taux]}"]`);
+    const primes = nombre(await ligne.locator("[data-primes]").innerText());
+    const base = nombre(await ligne.locator("[data-base]").innerText());
+    const impot = nombre(await ligne.locator("[data-impot]").innerText());
+    verifier(`8e. taux ${libelles[a.taux]} : primes hors taxe, base d'imposition et impôt = calcul SQL indépendant`, primes === a.primes && base === a.primes + a.acc && impot === a.impot, `écran ${primes}/${base}/${impot} — SQL ${a.primes}/${a.primes + a.acc}/${a.impot}`);
+  }
+  verifier("8e. le taux de 7,25 % porte T1 (169) + T5 (101, une seule fois) + l'avance de 68 = 338", nombre(await p.locator('[data-taux="7,25 %"] [data-impot]').innerText()) === 338);
+  verifier("8e. total de l'impôt = 1 355 (le même que le montant déclaré)", nombre(await p.locator("[data-impot-total]").innerText()) === 1355);
+  verifier("8e. primes remboursées : « à compléter (Q15) », jamais inventées", (await p.locator('[data-etat-par-taux] [data-remboursees]').first().innerText()).includes("à compléter (Q15)"));
+  verifier("8e. la déclaration du mois est rappelée (CPD-2026-01, payée)", /CPD-2026-01/.test(await p.locator("[data-etat-declaration]").innerText()));
+  verifier("8e. crédits à part : trop-payé de 13 né de ce mois, plus rien à récupérer après mars", nombre(await p.locator("[data-credit-mois]").innerText()) === 13 && nombre(await p.locator("[data-credit-ouvert]").innerText()) === 0);
+  await p.close();
+
+  const mars = await ouvrir(RFCRH, "/compta/tca/etat?mois=2026-03");
+  verifier("8e. mars : 1 ligne à 7,25 %, impôt 101", (await mars.locator("[data-etat-par-taux] tbody tr").count()) === 1 && nombre(await mars.locator('[data-taux="7,25 %"] [data-impot]').innerText()) === 101);
+  await mars.close();
+  const vide = await ouvrir(DIRECTION, "/compta/tca/etat?mois=2025-01");
+  verifier("8e. un mois sans taxe : message clair, la Direction peut consulter", (await vide.locator("[data-etat-vide]").count()) === 1);
+  await vide.close();
+
+  // Export : mêmes lignes que l'écran, accès contrôlé.
+  const ctx = await contexte(RFCRH);
+  const csv = await ctx.request.get(`${B}/api/compta/export/tca?mois=2026-02&format=csv`);
+  const texteCsv = await csv.text();
+  verifier("8e. export CSV : 200, trois taux et un total de 1 355", csv.status() === 200 && /7,25 %/.test(texteCsv) && /12,5 %/.test(texteCsv) && /Total/.test(texteCsv) && /1355/.test(texteCsv.replace(/\s/g, "")), texteCsv.slice(0, 200).replace(/\n/g, " | "));
+  const xlsx = await ctx.request.get(`${B}/api/compta/export/tca?mois=2026-02&format=xlsx`);
+  const octets = await xlsx.body();
+  verifier("8e. export Excel : 200 et fichier xlsx valide (PK)", xlsx.status() === 200 && octets[0] === 0x50 && octets[1] === 0x4b);
+  const anonyme = await browser.newContext();
+  verifier("8e. export sans session : 401", (await anonyme.request.get(`${B}/api/compta/export/tca?mois=2026-02&format=csv`, { maxRedirects: 0 })).status() === 401);
+  const refuse = await (await contexte(COLLABORATEUR)).request.get(`${B}/api/compta/export/tca?mois=2026-02&format=csv`, { maxRedirects: 0 });
+  verifier("8e. export sans cpt.consulter : refusé (403)", refuse.status() === 403, `${refuse.status()}`);
+  verifier("8e. mois invalide : 400", (await ctx.request.get(`${B}/api/compta/export/tca?mois=abc&format=csv`)).status() === 400);
+  const m = await ouvrir(RFCRH, "/compta/tca/etat?mois=2026-02", { width: 390, height: 844 });
+  verifier("8e. 390 px : pas de défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await m.close();
+}
+
 verifier("aucune erreur JavaScript", erreursJs.length === 0, erreursJs.slice(0, 3).join(" | "));
 await browser.close();
 await db.end();

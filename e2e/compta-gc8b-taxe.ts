@@ -109,6 +109,16 @@ async function main() {
   const lrel = await lignesDe({ echeanceId: rel.echs[0].id });
   verifier("reliquat : trois rattachements, taxe totale exactement 725", somme(lrel) === 725 && lrel.length === 3, lrel.map((x) => num(x.montant)).join("+"));
 
+  // ---------- Avance imputée en deux fois (montants négatifs relus en base) ----------
+  const e6 = await encaissement(1500, "2026-02-14");
+  await prisma.$transaction((tx) => taxerEncaissementCpt(tx, { encaissementId: e6.id, produitCode: "RELAXMOTO" }, { userId: tech.id }));
+  const k6 = await contrat("POL-AV2", pAcc.id, "INDIVIDUEL", [{ du: 1000, taxe: 67 }, { du: 500, taxe: 34 }]);
+  await rattacher(e6.id, k6.echs[0].id, 1000);
+  await rattacher(e6.id, k6.echs[1].id, 500);
+  const l6 = await lignesDe({ encaissementId: e6.id });
+  const imput = l6.filter((x) => x.origine === "IMPUTATION");
+  verifier("avance imputée en deux fois : les deux imputations annulent exactement l'avance (base −1 500, taxe −101)", imput.length === 2 && imput.reduce((s, x) => s + num(x.base), 0) === -1500 && imput.reduce((s, x) => s + num(x.montant), 0) === -101, imput.map((x) => `${num(x.base)}/${num(x.montant)}`).join(" + "));
+
   // ---------- Idempotence ----------
   const avant = await prisma.cptLigneTaxe.count();
   const rejeu = await prisma.$transaction((tx) => appliquerTaxeRattachementsCpt(tx, [r1.id], { userId: rf.id }));

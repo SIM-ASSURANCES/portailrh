@@ -262,3 +262,41 @@ describe("paiement et quittance (GC-8d)", () => {
     expect(validerPaiementTcaCpt({ ...ok, quittanceMontant: "169,50" }, "2026-03-15").ok).toBe(true);
   });
 });
+
+import { etatParTauxCpt, libelleTauxCpt } from "./cptTaxe";
+
+describe("état de déclaration par taux (GC-8e)", () => {
+  const f = (n: number) => BigInt(n) * BigInt(100);
+  it("regroupe par taux, base d'imposition = primes + accessoires hors taxe, impôt = somme des lignes", () => {
+    const etat = etatParTauxCpt([
+      { taux: "0.072500", base: f(2500), primeHt: f(2331), accessoiresHt: BigInt(0), montant: f(169) },
+      { taux: "0.072500", base: f(1500), primeHt: f(1399), accessoiresHt: BigInt(0), montant: f(101) },
+      { taux: "0.015", base: f(50000), primeHt: f(49261), accessoiresHt: BigInt(0), montant: f(739) },
+      { taux: "0.040000", base: f(1000), primeHt: f(850), accessoiresHt: f(54), montant: f(96) },
+    ]);
+    expect(etat.lignes.map((l) => l.libelleTaux)).toEqual(["7,25 %", "4 %", "1,5 %"]);
+    const accidents = etat.lignes[0];
+    expect([Number(accidents.primesHt / BigInt(100)), Number(accidents.baseImposition / BigInt(100)), Number(accidents.impot / BigInt(100)), accidents.nbLignes]).toEqual([3730, 3730, 270, 2]);
+    expect(Number(etat.lignes[1].baseImposition / BigInt(100))).toBe(904); // 850 + 54
+    expect(Number(etat.total.impot / BigInt(100))).toBe(270 + 96 + 739);
+    expect(etat.total.primesRemboursees).toBeNull();
+  });
+  it("une avance imputée n'est comptée qu'une fois (T5)", () => {
+    const etat = etatParTauxCpt([
+      { taux: "0.0725", base: f(1500), primeHt: f(1399), accessoiresHt: BigInt(0), montant: f(101) }, // avance
+      { taux: "0.0725", base: f(1500), primeHt: f(1399), accessoiresHt: BigInt(0), montant: f(101) }, // rattachement
+      { taux: "0.0725", base: -f(1500), primeHt: -f(1399), accessoiresHt: BigInt(0), montant: -f(101) }, // imputation
+    ]);
+    expect(Number(etat.lignes[0].impot / BigInt(100))).toBe(101);
+    expect(Number(etat.lignes[0].baseImposition / BigInt(100))).toBe(1399);
+  });
+  it("un état vide", () => {
+    const etat = etatParTauxCpt([]);
+    expect(etat.lignes).toEqual([]);
+    expect(etat.total.impot).toBe(BigInt(0));
+  });
+  it("libellé du taux", () => {
+    expect(libelleTauxCpt("0.125000")).toBe("12,5 %");
+    expect(libelleTauxCpt("0.000000")).toBe("0 %");
+  });
+});

@@ -424,3 +424,76 @@ export function validerPaiementTcaCpt(s: SaisiePaiementTcaCpt, aujourdhui: strin
   if (Object.keys(erreurs).length > 0 || montant === null) return { ok: false, erreurs };
   return { ok: true, valeur: { quittanceNumero: numero, quittanceDate: dateQuittance, quittanceMontant: montant, datePaiement, pieceOdoo } };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// État de déclaration par taux (GC-8e)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface LigneEtatTauxEntreeCpt {
+  taux: string;
+  base: bigint;
+  primeHt: bigint;
+  accessoiresHt: bigint;
+  montant: bigint;
+}
+
+export interface LigneEtatTauxCpt {
+  /** Taux en fraction à six décimales (clé de regroupement). */
+  taux: string;
+  /** « 7,25 % » */
+  libelleTaux: string;
+  /** Primes encaissées hors taxe. */
+  primesHt: bigint;
+  /** Accessoires encaissés hors taxe. */
+  accessoiresHt: bigint;
+  /** Base d'imposition = primes + accessoires hors taxe. */
+  baseImposition: bigint;
+  /** Primes remboursées : non calculées (Q15). */
+  primesRemboursees: null;
+  /** Impôt = somme des lignes de taxe du taux. */
+  impot: bigint;
+  nbLignes: number;
+}
+
+export interface EtatParTauxCpt {
+  lignes: LigneEtatTauxCpt[];
+  total: Omit<LigneEtatTauxCpt, "taux" | "libelleTaux">;
+}
+
+/** « 0.072500 » → « 7,25 % » ; « 0.015000 » → « 1,5 % ». */
+export function libelleTauxCpt(taux: string): string {
+  const t = tauxEnMillioniemesCpt(taux);
+  if (t === null) return taux;
+  const dixMilliemes = Number(t) / 100; // 72500 → 725
+  const pourcent = dixMilliemes / 100; // 7,25
+  return `${pourcent.toLocaleString("fr-FR", { maximumFractionDigits: 4 })} %`;
+}
+
+/**
+ * État de déclaration par taux : pour chaque taux, primes et accessoires encaissés hors taxe, base d'imposition, impôt. Les lignes d'IMPUTATION
+ * (négatives) viennent en déduction de l'avance qu'elles annulent : une avance imputée n'est comptée qu'une fois. Les primes remboursées ne sont
+ * pas calculées (question Q15 ouverte) : la colonne existe et reste « à compléter ». Les crédits ne sont jamais mêlés à cet état.
+ */
+export function etatParTauxCpt(lignes: readonly LigneEtatTauxEntreeCpt[]): EtatParTauxCpt {
+  const parTaux = new Map<string, LigneEtatTauxCpt>();
+  for (const l of lignes) {
+    const cle = (tauxEnMillioniemesCpt(l.taux) ?? ZERO).toString().padStart(6, "0");
+    const taux = `0.${cle}`;
+    const courante =
+      parTaux.get(taux) ?? { taux, libelleTaux: libelleTauxCpt(taux), primesHt: ZERO, accessoiresHt: ZERO, baseImposition: ZERO, primesRemboursees: null, impot: ZERO, nbLignes: 0 };
+    courante.primesHt += l.primeHt;
+    courante.accessoiresHt += l.accessoiresHt;
+    courante.baseImposition += l.primeHt + l.accessoiresHt;
+    courante.impot += l.montant;
+    courante.nbLignes += 1;
+    parTaux.set(taux, courante);
+  }
+  const triees = [...parTaux.values()].sort((a, b) => (a.taux < b.taux ? 1 : a.taux > b.taux ? -1 : 0));
+  const total = triees.reduce(
+    (t, l) => ({ ...t, primesHt: t.primesHt + l.primesHt, accessoiresHt: t.accessoiresHt + l.accessoiresHt, baseImposition: t.baseImposition + l.baseImposition, impot: t.impot + l.impot, nbLignes: t.nbLignes + l.nbLignes }),
+    { primesHt: ZERO, accessoiresHt: ZERO, baseImposition: ZERO, primesRemboursees: null, impot: ZERO, nbLignes: 0 } as EtatParTauxCpt["total"],
+  );
+  return { lignes: triees, total };
+}
+
+export const LIBELLE_PRIMES_REMBOURSEES_CPT = "à compléter (Q15)";

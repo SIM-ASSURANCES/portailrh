@@ -11,12 +11,14 @@ import {
   calculerAvanceCpt,
   anneeDeclarationCpt,
   calculerMoisTcaCpt,
+  etatParTauxCpt,
   moisSuivantCpt,
   tropPayeAuPaiementCpt,
   validerPaiementTcaCpt,
   type SaisiePaiementTcaCpt,
   refusDeclarationMoisCpt,
   type CalculMoisTcaCpt,
+  type EtatParTauxCpt,
   moisImputationLigneCpt,
   planifierTaxeRattachementCpt,
   tauxApplicableCpt,
@@ -34,7 +36,14 @@ import {
 export type CptTaxeDb = Prisma.TransactionClient;
 
 const ZERO = BigInt(0);
-const centimes = (d: { toFixed(n: number): string } | null | undefined) => (d ? (enCentimesEcheancier(d.toFixed(2)) ?? ZERO) : ZERO);
+/** Decimal (signé) → centimes. `enCentimesEcheancier` n'accepte que des montants positifs : le signe est traité ici (une imputation est négative). */
+const centimes = (d: { toFixed(n: number): string } | null | undefined): bigint => {
+  if (!d) return ZERO;
+  const t = d.toFixed(2);
+  const negatif = t.startsWith("-");
+  const c = enCentimesEcheancier(negatif ? t.slice(1) : t) ?? ZERO;
+  return negatif ? -c : c;
+};
 const jour = (d: Date) => d.toISOString().slice(0, 10);
 const texte = texteDepuisCentimes;
 
@@ -478,4 +487,39 @@ export async function enregistrerPaiementTcaCpt(db: CptTaxeDb, e: { declarationI
     ip: p.ip,
   });
   return { ok: true, reference: d.reference, tropPaye: texte(trop) };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// État par taux (GC-8e) — lecture seule
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface EtatParTauxMoisCpt {
+  mois: string;
+  etat: EtatParTauxCpt;
+  declaration: { reference: string; statut: "DECLAREE" | "PAYEE"; montantAPayer: string } | null;
+  /** Crédits à part : trop-payés nés de la déclaration du mois, et total des crédits encore à récupérer. */
+  creditsDuMois: bigint;
+  creditsAReporter: bigint;
+}
+
+/** Lignes de taxe d'un mois (celles que sa déclaration verrouille), regroupées par taux : la source de l'écran ET de l'export. */
+export async function lireLignesEtatTauxCpt(db: CptTaxeDb, mois: string) {
+  const lignes = await db.cptLigneTaxe.findMany({ where: { moisDeclaration: dateMois(mois) }, select: { taux: true, base: true, primeHt: true, accessoiresHt: true, montant: true } });
+  return lignes.map((l) => ({ taux: l.taux.toFixed(6), base: centimes(l.base), primeHt: centimes(l.primeHt), accessoiresHt: centimes(l.accessoiresHt), montant: centimes(l.montant) }));
+}
+
+export async function chargerEtatParTauxCpt(db: CptTaxeDb, mois: string): Promise<EtatParTauxMoisCpt> {
+  const [lignes, declaration, creditsMois, creditsOuverts] = await Promise.all([
+    lireLignesEtatTauxCpt(db, mois),
+    db.cptDeclarationTca.findUnique({ where: { mois: dateMois(mois) }, select: { id: true, reference: true, statut: true, montantAPayer: true } }),
+    db.cptCreditTaxe.aggregate({ where: { declaration: { mois: dateMois(mois) } }, _sum: { montant: true } }),
+    db.cptCreditTaxe.aggregate({ where: { statut: "A_RECUPERER" }, _sum: { montant: true } }),
+  ]);
+  return {
+    mois,
+    etat: etatParTauxCpt(lignes),
+    declaration: declaration ? { reference: declaration.reference, statut: declaration.statut, montantAPayer: declaration.montantAPayer.toFixed(2) } : null,
+    creditsDuMois: centimes(creditsMois._sum.montant),
+    creditsAReporter: centimes(creditsOuverts._sum.montant),
+  };
 }
