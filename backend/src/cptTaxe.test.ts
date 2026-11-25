@@ -198,3 +198,48 @@ describe("mois d'une ligne (C-3)", () => {
 function ZERO_ACC(): bigint {
   return BigInt(0);
 }
+
+import { calculerMoisTcaCpt, dateLimiteTcaCpt, refusDeclarationMoisCpt, tropPayeAuPaiementCpt } from "./cptTaxe";
+
+describe("calcul du mois et report du trop-payé (GC-8c)", () => {
+  const f = (n: number) => BigInt(n) * BigInt(100);
+  it("à payer = taxe due cumulée − taxe déjà payée", () => {
+    const c = calculerMoisTcaCpt({ mois: "2026-03-01", montantDuCumule: f(400), corrections: BigInt(0), nbLignesDuMois: 3, anterieures: [{ mois: "2026-02-01", montantAPayer: f(300), quittanceMontant: f(300) }], creditsOuverts: [] });
+    expect([unites(c.montantAPayer), unites(c.montantDejaPaye), unites(c.credit)]).toEqual([100, 300, 0]);
+  });
+  it("un trop-payé du mois 1 est reporté sur le mois 2 (jamais soustrait deux fois)", () => {
+    // Mois 1 : dû 100, quittance 120 → 20 de trop.
+    expect(unites(tropPayeAuPaiementCpt(f(100), f(120)))).toBe(20);
+    // Mois 2 : 60 de taxe nouvelle → cumul 160, déjà engagé 120 → 40 à payer (60 − 20).
+    const m2 = calculerMoisTcaCpt({ mois: "2026-03-01", montantDuCumule: f(160), corrections: BigInt(0), nbLignesDuMois: 2, anterieures: [{ mois: "2026-02-01", montantAPayer: f(100), quittanceMontant: f(120) }], creditsOuverts: [{ id: "c1", montant: f(20) }] });
+    expect(unites(m2.montantAPayer)).toBe(40);
+    expect(unites(m2.credit)).toBe(0);
+    expect(m2.creditsRecuperes).toEqual(["c1"]);
+    expect(unites(m2.creditOuvertAvant)).toBe(20);
+  });
+  it("un mois plus petit que le crédit ne paie rien et reporte le solde", () => {
+    const m2 = calculerMoisTcaCpt({ mois: "2026-03-01", montantDuCumule: f(115), corrections: BigInt(0), nbLignesDuMois: 1, anterieures: [{ mois: "2026-02-01", montantAPayer: f(100), quittanceMontant: f(120) }], creditsOuverts: [{ id: "c1", montant: f(20) }] });
+    expect([unites(m2.montantAPayer), unites(m2.credit)]).toEqual([0, 5]);
+  });
+  it("des corrections négatives qui dépassent le dû donnent un crédit", () => {
+    const m = calculerMoisTcaCpt({ mois: "2026-03-01", montantDuCumule: f(70), corrections: -f(30), nbLignesDuMois: 2, anterieures: [{ mois: "2026-02-01", montantAPayer: f(100), quittanceMontant: null }], creditsOuverts: [] });
+    expect([unites(m.montantAPayer), unites(m.credit)]).toEqual([0, 30]);
+  });
+  it("une déclaration non payée compte pour son montant à payer (pas de double demande)", () => {
+    const m = calculerMoisTcaCpt({ mois: "2026-03-01", montantDuCumule: f(150), corrections: BigInt(0), nbLignesDuMois: 1, anterieures: [{ mois: "2026-02-01", montantAPayer: f(100), quittanceMontant: null }], creditsOuverts: [] });
+    expect(unites(m.montantAPayer)).toBe(50);
+  });
+});
+
+describe("déclarabilité d'un mois", () => {
+  const base = { mois: "2026-03-01", moisCourant: "2026-11-01", dernierMoisDeclare: "2026-02-01", moisAvecLignesNonDeclarees: [] as string[], nbTauxManquants: 0 };
+  it("possible", () => expect(refusDeclarationMoisCpt(base)).toBeNull());
+  it("le mois courant n'est pas terminé", () => expect(refusDeclarationMoisCpt({ ...base, mois: "2026-11-01" })).toMatch(/pas terminé/));
+  it("un mois déjà couvert", () => expect(refusDeclarationMoisCpt({ ...base, mois: "2026-02-01" })).toMatch(/déjà déclaré/));
+  it("dans l'ordre : un mois antérieur non déclaré passe d'abord", () => expect(refusDeclarationMoisCpt({ ...base, mois: "2026-05-01", moisAvecLignesNonDeclarees: ["2026-03-01"] })).toMatch(/2026-03/));
+  it("un taux manquant bloque la déclaration", () => expect(refusDeclarationMoisCpt({ ...base, nbTauxManquants: 2 })).toMatch(/2 rattachement/));
+  it("date limite = le jour paramétré du mois suivant", () => {
+    expect(dateLimiteTcaCpt("2026-02-01", 20)).toBe("2026-03-20");
+    expect(dateLimiteTcaCpt("2026-12-01", 20)).toBe("2027-01-20");
+  });
+});

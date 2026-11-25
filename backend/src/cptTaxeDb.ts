@@ -5,6 +5,10 @@ import type { BrancheCpt, NatureContratCpt, TauxTcaLigne } from "./cptReferentie
 import {
   baseAvanceCpt,
   calculerAvanceCpt,
+  calculerMoisTcaCpt,
+  moisSuivantCpt,
+  refusDeclarationMoisCpt,
+  type CalculMoisTcaCpt,
   moisImputationLigneCpt,
   planifierTaxeRattachementCpt,
   tauxApplicableCpt,
@@ -265,4 +269,104 @@ export async function taxerEncaissementCpt(
     ip: p.ip,
   });
   return { ok: true, ligneId: creee.id, taxe: texte(calcul.ligne.taxe), taux: calcul.taux, mois };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Calcul du mois (GC-8c) — lecture seule
+// ---------------------------------------------------------------------------------------------------------------------
+
+const dateMois = (mois: string) => new Date(`${mois}T00:00:00.000Z`);
+
+/** Rattachements VALIDÉS dont la taxe manque faute de taux (aucune ligne RATTACHEMENT), valorisés au plus tard le mois indiqué. */
+export function rattachementsSansTauxWhere(moisMax?: string): Prisma.CptRattachementWhereInput {
+  return {
+    statut: "VALIDE",
+    lignesTaxe: { none: { origine: "RATTACHEMENT" } },
+    ...(moisMax ? { encaissement: { dateValeur: { lt: dateMois(moisSuivantCpt(moisMax)) } } } : {}),
+  };
+}
+
+export interface EtatCalculMoisCpt {
+  calcul: CalculMoisTcaCpt;
+  /** Motif pour lequel le mois ne peut pas être déclaré (ou `null`). */
+  refus: string | null;
+  dernierMoisDeclare: string | null;
+  declaration: { id: string; reference: string; statut: "DECLAREE" | "PAYEE" } | null;
+  nbTauxManquants: number;
+}
+
+/**
+ * Calcul du mois : taxe due cumulée (lignes des mois ≤ mois) − taxe déjà payée (déclarations antérieures, quittance si payée) ; un
+ * négatif devient un crédit reporté. Lecture seule, la même fonction sert l'écran et la déclaration (aucun second calcul).
+ */
+export async function chargerCalculMoisCpt(db: CptTaxeDb, mois: string, maintenant: Date = new Date()): Promise<EtatCalculMoisCpt> {
+  const dateM = dateMois(mois);
+  const [cumul, imputations, nbLignesDuMois, anterieures, credits, dernier, mensNonDeclares, nbTauxManquants, declaration] = await Promise.all([
+    db.cptLigneTaxe.aggregate({ where: { moisDeclaration: { lte: dateM } }, _sum: { montant: true } }),
+    db.cptLigneTaxe.aggregate({ where: { moisDeclaration: { lte: dateM }, origine: "IMPUTATION" }, _sum: { montant: true } }),
+    db.cptLigneTaxe.count({ where: { moisDeclaration: dateM } }),
+    db.cptDeclarationTca.findMany({ where: { mois: { lt: dateM } }, orderBy: { mois: "asc" }, select: { mois: true, montantAPayer: true, quittanceMontant: true } }),
+    db.cptCreditTaxe.findMany({ where: { statut: "A_RECUPERER" }, select: { id: true, montant: true } }),
+    dernierMoisDeclareCpt(db),
+    db.cptLigneTaxe.groupBy({ by: ["moisDeclaration"], where: { declarationId: null } }),
+    db.cptRattachement.count({ where: rattachementsSansTauxWhere(mois) }),
+    db.cptDeclarationTca.findUnique({ where: { mois: dateM }, select: { id: true, reference: true, statut: true } }),
+  ]);
+  const calcul = calculerMoisTcaCpt({
+    mois,
+    montantDuCumule: centimes(cumul._sum.montant),
+    corrections: centimes(imputations._sum.montant),
+    nbLignesDuMois,
+    anterieures: anterieures.map((d) => ({ mois: jour(d.mois), montantAPayer: centimes(d.montantAPayer), quittanceMontant: d.quittanceMontant ? centimes(d.quittanceMontant) : null })),
+    creditsOuverts: credits.map((c) => ({ id: c.id, montant: centimes(c.montant) })),
+  });
+  const refus = declaration
+    ? "Ce mois est déjà déclaré."
+    : refusDeclarationMoisCpt({
+        mois,
+        moisCourant: `${maintenant.toISOString().slice(0, 7)}-01`,
+        dernierMoisDeclare: dernier,
+        moisAvecLignesNonDeclarees: mensNonDeclares.map((m) => jour(m.moisDeclaration)),
+        nbTauxManquants,
+      });
+  return { calcul, refus, dernierMoisDeclare: dernier, declaration, nbTauxManquants };
+}
+
+export interface RattachementSansTauxCpt {
+  rattachementId: string;
+  montant: string;
+  dateValeur: string;
+  numPolice: string;
+  produit: string;
+  encaissementReference: string;
+}
+
+/** Liste « taux manquant » : rattachements validés sans ligne de taxe, du plus ancien au plus récent. */
+export async function listerTauxManquantsCpt(db: CptTaxeDb, limite = 100): Promise<{ total: number; lignes: RattachementSansTauxCpt[] }> {
+  const where = rattachementsSansTauxWhere();
+  const [total, lignes] = await Promise.all([
+    db.cptRattachement.count({ where }),
+    db.cptRattachement.findMany({
+      where,
+      orderBy: [{ valideAt: "asc" }, { id: "asc" }],
+      take: limite,
+      select: {
+        id: true,
+        montant: true,
+        encaissement: { select: { dateValeur: true, reference: true } },
+        echeance: { select: { contrat: { select: { numPolice: true, produit: { select: { code: true } } } } } },
+      },
+    }),
+  ]);
+  return {
+    total,
+    lignes: lignes.map((l) => ({
+      rattachementId: l.id,
+      montant: l.montant.toFixed(2),
+      dateValeur: jour(l.encaissement.dateValeur),
+      numPolice: l.echeance.contrat.numPolice,
+      produit: l.echeance.contrat.produit.code,
+      encaissementReference: l.encaissement.reference,
+    })),
+  };
 }

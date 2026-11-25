@@ -16,7 +16,6 @@ import { tauxTcaEnVigueur, type BrancheCpt, type NatureContratCpt, type TauxTcaL
  */
 
 const ZERO = BigInt(0);
-const UN = BigInt(1);
 const DEUX = BigInt(2);
 const CENT = BigInt(100);
 const MILLION = BigInt(1000000);
@@ -274,4 +273,114 @@ export function planifierTaxeRattachementCpt(e: EntreePlanRattachementCpt): Plan
     if (imputation) lignes.push({ origine: "IMPUTATION", taux: e.avance.taux, ligneAvanceId: e.avance.id, ...imputation });
   }
   return { ok: true, lignes };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Calcul du mois et crédits (GC-8c)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface DeclarationAnterieureCpt {
+  mois: string;
+  montantAPayer: bigint;
+  /** Montant de la quittance si la déclaration est payée. */
+  quittanceMontant: bigint | null;
+}
+
+/** Ce qu'une déclaration antérieure a ENGAGÉ : la quittance si elle est payée (un trop-payé compte), sinon le montant à payer. */
+export function montantEngageCpt(d: DeclarationAnterieureCpt): bigint {
+  return d.quittanceMontant ?? d.montantAPayer;
+}
+
+export interface EntreeCalculMoisCpt {
+  mois: string;
+  /** Σ des lignes de taxe des mois ≤ `mois`, corrections comprises (signées). */
+  montantDuCumule: bigint;
+  /** Part de ce cumul qui vient des imputations (corrections de taxe déjà payée d'avance), pour information. */
+  corrections: bigint;
+  nbLignesDuMois: number;
+  anterieures: readonly DeclarationAnterieureCpt[];
+  creditsOuverts: readonly { id: string; montant: bigint }[];
+}
+
+export interface CalculMoisTcaCpt {
+  mois: string;
+  /** Taxe due cumulée jusqu'à ce mois. */
+  montantDu: bigint;
+  corrections: bigint;
+  /** Taxe déjà engagée par les déclarations antérieures (quittances comprises). */
+  montantDejaPaye: bigint;
+  /** `montantDu − montantDejaPaye`, négatif = trop-payé. */
+  brut: bigint;
+  montantAPayer: bigint;
+  /** Crédit à reporter sur le mois suivant (trop-payé), 0 si rien à reporter. */
+  credit: bigint;
+  /** Crédits antérieurs absorbés par ce mois (ils sont récupérés ; un nouveau crédit porte le solde éventuel). */
+  creditsRecuperes: string[];
+  creditOuvertAvant: bigint;
+  nbLignesDuMois: number;
+}
+
+/**
+ * Calcul du mois : à payer = taxe due cumulée − taxe déjà payée (quittances), jamais négatif. Le cumul fait lui-même le REPORT : un
+ * trop-payé d'un mois diminue naturellement ce qui reste à payer le mois suivant. Les crédits enregistrés ne sont donc JAMAIS soustraits
+ * une seconde fois ; ils ne servent qu'à tracer le trop-payé (créé ici si le brut est négatif, récupéré au calcul suivant).
+ */
+export function calculerMoisTcaCpt(e: EntreeCalculMoisCpt): CalculMoisTcaCpt {
+  const dejaPaye = e.anterieures.filter((d) => d.mois < e.mois).reduce((s, d) => s + montantEngageCpt(d), ZERO);
+  const brut = e.montantDuCumule - dejaPaye;
+  return {
+    mois: e.mois,
+    montantDu: e.montantDuCumule,
+    corrections: e.corrections,
+    montantDejaPaye: dejaPaye,
+    brut,
+    montantAPayer: brut > ZERO ? brut : ZERO,
+    credit: brut < ZERO ? -brut : ZERO,
+    creditsRecuperes: e.creditsOuverts.map((c) => c.id),
+    creditOuvertAvant: e.creditsOuverts.reduce((s, c) => s + c.montant, ZERO),
+    nbLignesDuMois: e.nbLignesDuMois,
+  };
+}
+
+/** Trop-payé constaté au paiement : quittance supérieure au montant déclaré. */
+export function tropPayeAuPaiementCpt(montantAPayer: bigint, quittanceMontant: bigint): bigint {
+  return quittanceMontant > montantAPayer ? quittanceMontant - montantAPayer : ZERO;
+}
+
+export interface EntreeDeclarabiliteCpt {
+  mois: string;
+  /** Mois courant (AAAA-MM-01). */
+  moisCourant: string;
+  dernierMoisDeclare: string | null;
+  /** Mois (AAAA-MM-01) qui portent encore des lignes non déclarées. */
+  moisAvecLignesNonDeclarees: readonly string[];
+  /** Rattachements validés sans taux applicable (leur taxe manquerait à la déclaration). */
+  nbTauxManquants: number;
+}
+
+export const MESSAGE_MOIS_NON_TERMINE_CPT = "Ce mois n'est pas terminé : la taxe d'un mois se déclare le mois suivant.";
+export const MESSAGE_MOIS_DEJA_DECLARE_CPT = "Ce mois (ou un mois suivant) est déjà déclaré.";
+
+/** Motif de refus de la déclaration d'un mois, ou `null` si elle est possible. Les mois se déclarent dans l'ordre. */
+export function refusDeclarationMoisCpt(e: EntreeDeclarabiliteCpt): string | null {
+  if (!/^\d{4}-\d{2}-01$/.test(e.mois)) return "Mois invalide.";
+  if (e.mois >= e.moisCourant) return MESSAGE_MOIS_NON_TERMINE_CPT;
+  if (e.dernierMoisDeclare && e.mois <= e.dernierMoisDeclare) return MESSAGE_MOIS_DEJA_DECLARE_CPT;
+  const avant = [...e.moisAvecLignesNonDeclarees].filter((m) => m < e.mois).sort();
+  if (avant.length > 0) return `Déclarez d'abord le mois du ${avant[0].slice(0, 7)} : il porte encore des lignes de taxe non déclarées.`;
+  if (e.nbTauxManquants > 0) {
+    return `${e.nbTauxManquants} rattachement(s) validé(s) n'ont pas de taux de TCA : saisissez le taux puis recalculez avant de déclarer.`;
+  }
+  return null;
+}
+
+/** Date limite de déclaration et de paiement du mois : le `jourLimite` du mois suivant (paramètre, 1 à 28). */
+export function dateLimiteTcaCpt(mois: string, jourLimite: number): string {
+  const suivant = moisSuivantCpt(mois);
+  return `${suivant.slice(0, 8)}${String(jourLimite).padStart(2, "0")}`;
+}
+
+/** Numéro de la déclaration : l'année du mois déclaré porte la séquence `CPD-AAAA`. */
+export function anneeDeclarationCpt(mois: string): number {
+  return Number(mois.slice(0, 4));
 }

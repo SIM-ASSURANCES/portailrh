@@ -127,7 +127,7 @@ for (const [nom, email, attendues] of AUTORISES) {
   if (param) verifier(`4. ${nom} : « Paramètres » est un lien vers /compta/parametres`, param.lien === "/compta/parametres" && !param.bientot);
   const enc = rubriques.find((r) => r.libelle === "Encaissements");
   if (enc) verifier(`4. ${nom} : « Encaissements » est un lien vers /compta/encaissements`, enc.lien === "/compta/encaissements" && !enc.bientot);
-  const DISPONIBLES = ["Référentiels", "Production", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Paramètres"];
+  const DISPONIBLES = ["Référentiels", "Production", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance", "Paramètres"];
   verifier(`4. ${nom} : les autres rubriques sont « Bientôt »`, rubriques.filter((r) => !DISPONIBLES.includes(r.libelle)).every((r) => r.bientot && r.lien === null));
 
   // /compta reste une adresse valide : elle mène à la première rubrique construite, et n'affiche plus de page d'accueil.
