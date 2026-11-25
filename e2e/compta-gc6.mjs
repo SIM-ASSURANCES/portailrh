@@ -189,7 +189,7 @@ verifier("4b. dont 56 depuis 30 jours ou plus", /Dont 56 depuis 30 jours ou plus
 ind = await texteIndicateur(p, "contrats-sans-encaissement");
 verifier("4b. contrats sans encaissement : 4, dont 4 depuis 7 jours ou plus et 2 depuis 30 jours ou plus", /(?<!\d)4(?!\d)/.test(ind) && /Dont 4 depuis 7 jours ou plus et 2 depuis 30 jours ou plus/.test(ind), ind);
 ind = await texteIndicateur(p, "taxe-payee-avance");
-verifier("4b. taxe payée d'avance : non calculée, annoncée pour le lot GC-8 (aucune valeur inventée)", /Disponible au lot GC-8/.test(ind) && /—/.test(ind), ind);
+verifier("4b. taxe payée d'avance : calculée depuis le lot GC-8 (0 FCFA, aucune avance déclarée), plus de « Disponible au lot GC-8 »", !/Disponible au lot GC-8/.test(ind) && /0 FCFA/.test(ind) && /0 encaissement/.test(ind), ind);
 ind = await texteIndicateur(p, "ecart-technique-reel");
 verifier("4b. écart technique / réel : 5 contrats payés en une fois, 50 000 déclarés, 0 prouvé, écart 50 000", /5 contrats payés en une fois/.test(ind) && /50 000 FCFA/.test(ind) && /prouvé par un rattachement validé : 0 FCFA/.test(ind), ind);
 // Mêmes chiffres que les listes (sans filtre) : le total des listes est celui des indicateurs.

@@ -258,6 +258,39 @@ if (partie("8e")) {
   await m.close();
 }
 
+// =====================================================================================================================
+// 8f — suivi par contrat et par mois, taxe payée d'avance
+// =====================================================================================================================
+if (partie("8f")) {
+  const p = await ouvrir(RFCRH, "/compta/tca/suivi?mois=2026-02");
+  verifier("8f. avertissement R1 visible en tête du suivi", (await p.locator("[data-avertissement-r1]").innerText()).includes(R1));
+  const ligne = (police) => p.locator(`[data-suivi-contrat="${police}"]`);
+  verifier("8f. T1 : exigible 169, déclarée 169, payée 169 → « Payée »", nombre(await ligne("POL-GC8-T1").locator("[data-exigible]").innerText()) === 169 && nombre(await ligne("POL-GC8-T1").locator("[data-payee]").innerText()) === 169 && (await ligne("POL-GC8-T1").getAttribute("data-etat-suivi")) === "PAYEE");
+  verifier("8f. T3 : exigible 739", nombre(await ligne("POL-GC8-T3").locator("[data-exigible]").innerText()) === 739);
+  verifier("8f. T5 : taxe exigible 101 payée d'avance et imputée 101, rien de plus à déclarer (« Payée »)", nombre(await ligne("POL-GC8-T5").locator("[data-exigible]").innerText()) === 101 && nombre(await ligne("POL-GC8-T5").locator("[data-imputee]").innerText()) === 101 && nombre(await ligne("POL-GC8-T5").locator("[data-nette]").innerText()) === 0 && (await ligne("POL-GC8-T5").getAttribute("data-etat-suivi")) === "PAYEE");
+  verifier("8f. émise : la taxe de l'échéance (T1 = 169) est affichée même sans encaissement ce mois-là", nombre(await ligne("POL-GC8-T1").locator("[data-emise]").innerText()) >= 0);
+  const f = await ouvrir(RFCRH, "/compta/tca/suivi?mois=2026-02&q=T5");
+  verifier("8f. filtre par numéro de police : une seule ligne", (await f.locator("[data-suivi-contrat]").count()) === 1);
+  await f.close();
+  verifier("8f. la carte « taxe payée d'avance non encore imputée » = l'avance de 68 déjà déclarée", Number(((await p.locator("[data-avances-non-imputees]").innerText()).match(/(\d+) FCFA/) ?? [])[1]) === 68, (await p.locator("[data-avances-non-imputees]").innerText()).replace(/\s+/g, " "));
+  const c = await ouvrir(RFCRH, "/compta/controle");
+  verifier("8f. /compta/controle : la carte n'est plus « Disponible au lot GC-8 » et affiche 68 FCFA", !/Disponible au lot GC-8/.test(await c.locator('[data-indicateur="taxe-payee-avance"]').innerText()) && Number(((await c.locator('[data-indicateur="taxe-payee-avance"]').innerText()).match(/(\d+) FCFA/) ?? [])[1]) === 68, (await c.locator('[data-indicateur="taxe-payee-avance"]').innerText()).replace(/\s+/g, " "));
+  await c.close();
+
+  // Imputation de l'avance de 68 : l'encaissement est rattaché à un contrat ; février est déclaré, la correction va au premier mois ouvert.
+  donnees("imputer");
+  const apres = await sql(`SELECT origine, montant::float AS montant, to_char("moisDeclaration",'YYYY-MM') AS mois FROM "CptLigneTaxe" WHERE "encaissementId" = 'enc-avance' ORDER BY "creeAt"`);
+  verifier("8f. rattachement de l'encaissement taxé d'avance : avance 68 + rattachement 68 + imputation −68, total toujours 68", apres.length === 3 && apres.reduce((s, l) => s + l.montant, 0) === 68, JSON.stringify(apres));
+  verifier("8f. février est déclaré : les deux lignes de correction vont au premier mois non déclaré (mai, après avril)", apres.filter((l) => l.origine !== "AVANCE").every((l) => l.mois === "2026-05"), JSON.stringify(apres));
+  await p.reload();
+  await p.waitForLoadState("networkidle").catch(() => {});
+  verifier("8f. la carte repasse à 0 : l'avance est imputée", Number(((await p.locator("[data-avances-non-imputees]").innerText()).match(/(\d+) FCFA/) ?? [])[1]) === 0);
+  const m = await ouvrir(RFCRH, "/compta/tca/suivi?mois=2026-02", { width: 390, height: 844 });
+  verifier("8f. 390 px : pas de défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await m.close();
+  await p.close();
+}
+
 verifier("aucune erreur JavaScript", erreursJs.length === 0, erreursJs.slice(0, 3).join(" | "));
 await browser.close();
 await db.end();

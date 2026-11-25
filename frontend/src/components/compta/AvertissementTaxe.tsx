@@ -15,6 +15,7 @@ export function AvertissementTaxe() {
 const ONGLETS = [
   { href: "/compta/tca", cle: "calcul", label: "Calcul du mois et déclaration" },
   { href: "/compta/tca/etat", cle: "etat", label: "État par taux" },
+  { href: "/compta/tca/suivi", cle: "suivi", label: "Suivi par contrat" },
 ] as const;
 
 /** Navigation entre les trois écrans de taxe (ils partagent le mois choisi). */

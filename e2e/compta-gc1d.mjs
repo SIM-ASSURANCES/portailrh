@@ -40,8 +40,8 @@ async function ouvrir(email) {
 
 // « Référentiels » (GC-2c) est la première rubrique de tout compte qui consulte le module, et la seule déjà disponible.
 const RUBRIQUES = {
-  production: ["Référentiels", "Production", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements"],
-  commercial: ["Référentiels", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements"],
+  production: ["Référentiels", "Production", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance"],
+  commercial: ["Référentiels", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance"],
   rfcrh: [
     "Référentiels",
     "Encaissements",
@@ -54,8 +54,8 @@ const RUBRIQUES = {
     "Clôture du mois",
     "Paramètres",
   ],
-  comptable: ["Référentiels", "Production", "Encaissements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Comptabilité (Odoo)"],
-  direction: ["Référentiels", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Litiges"],
+  comptable: ["Référentiels", "Production", "Encaissements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance", "Comptabilité (Odoo)"],
+  direction: ["Référentiels", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance", "Litiges"],
 };
 const AUTORISES = [
   ["Compta – Production", "compta-production@simassurances.test", RUBRIQUES.production],
@@ -63,7 +63,7 @@ const AUTORISES = [
   ["Compta – RFCRH", "compta-rfcrh@simassurances.test", RUBRIQUES.rfcrh],
   ["Compta – Comptable", "compta-comptable@simassurances.test", RUBRIQUES.comptable],
   ["Compta – Direction", "compta-direction@simassurances.test", RUBRIQUES.direction],
-  ["DG (superviseur)", "dg@simassurances.test", ["Référentiels", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Litiges"]],
+  ["DG (superviseur)", "dg@simassurances.test", ["Référentiels", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance", "Litiges"]],
 ];
 const encaissements = (await db.query(`SELECT email FROM "User" WHERE email LIKE 'enc-%' ORDER BY email LIMIT 1`)).rows[0]?.email;
 const REFUSES = [

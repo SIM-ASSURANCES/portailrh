@@ -12,6 +12,7 @@ import {
   anneeDeclarationCpt,
   calculerMoisTcaCpt,
   etatParTauxCpt,
+  ligneSuiviTaxeCpt,
   moisSuivantCpt,
   tropPayeAuPaiementCpt,
   validerPaiementTcaCpt,
@@ -19,6 +20,8 @@ import {
   refusDeclarationMoisCpt,
   type CalculMoisTcaCpt,
   type EtatParTauxCpt,
+  type LigneSuiviTaxeCpt,
+  type SuiviTaxeContratEntreeCpt,
   moisImputationLigneCpt,
   planifierTaxeRattachementCpt,
   tauxApplicableCpt,
@@ -522,4 +525,70 @@ export async function chargerEtatParTauxCpt(db: CptTaxeDb, mois: string): Promis
     creditsDuMois: centimes(creditsMois._sum.montant),
     creditsAReporter: centimes(creditsOuverts._sum.montant),
   };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Suivi par contrat et par mois, taxe payée d'avance (GC-8f) — lecture seule
+// ---------------------------------------------------------------------------------------------------------------------
+
+export const TAILLE_PAGE_SUIVI_TAXE_CPT = 50;
+
+export interface LigneSuiviContratCpt extends LigneSuiviTaxeCpt {
+  numPolice: string;
+  clientNom: string;
+}
+
+/**
+ * Suivi par contrat pour un mois : taxe émise (échéances du mois), exigible (rattachements validés du mois), payée d'avance et imputée,
+ * déclarée, payée. Trois requêtes groupées ; la recherche par numéro de police et la pagination se font sur les contrats concernés.
+ */
+export async function chargerSuiviTaxeCpt(db: CptTaxeDb, p: { mois: string; q?: string; page?: number }): Promise<{ total: number; page: number; nbPages: number; lignes: LigneSuiviContratCpt[] }> {
+  const debut = dateMois(p.mois);
+  const fin = dateMois(moisSuivantCpt(p.mois));
+  const [emises, taxees] = await Promise.all([
+    db.$queryRaw<{ contratId: string; emise: string }[]>`
+      SELECT "contratId", sum("taxe")::text AS emise FROM "CptEcheance"
+      WHERE "datePrevue" >= ${debut} AND "datePrevue" < ${fin} AND "etat" <> 'ANNULEE' GROUP BY "contratId"`,
+    db.$queryRaw<{ contratId: string; exigible: string; imputee: string; declaree: string; payee: string }[]>`
+      SELECT l."contratId",
+        coalesce(sum(CASE WHEN l."origine" = 'RATTACHEMENT' THEN l."montant" ELSE 0 END), 0)::text AS exigible,
+        coalesce(sum(CASE WHEN l."origine" = 'IMPUTATION' THEN -l."montant" ELSE 0 END), 0)::text AS imputee,
+        coalesce(sum(CASE WHEN l."declarationId" IS NOT NULL THEN l."montant" ELSE 0 END), 0)::text AS declaree,
+        coalesce(sum(CASE WHEN d."statut" = 'PAYEE' THEN l."montant" ELSE 0 END), 0)::text AS payee
+      FROM "CptLigneTaxe" l LEFT JOIN "CptDeclarationTca" d ON d."id" = l."declarationId"
+      WHERE l."moisDeclaration" = ${debut} AND l."contratId" IS NOT NULL GROUP BY l."contratId"`,
+  ]);
+  const parContrat = new Map<string, SuiviTaxeContratEntreeCpt>();
+  const entree = (id: string) => parContrat.get(id) ?? { contratId: id, taxeEmise: ZERO, taxeExigible: ZERO, taxeImputee: ZERO, taxeDeclaree: ZERO, taxePayee: ZERO };
+  for (const e of emises) parContrat.set(e.contratId, { ...entree(e.contratId), taxeEmise: centimes({ toFixed: () => Number(e.emise).toFixed(2) }) });
+  for (const t of taxees) {
+    const c = (v: string) => centimes({ toFixed: () => Number(v).toFixed(2) });
+    parContrat.set(t.contratId, { ...entree(t.contratId), taxeExigible: c(t.exigible), taxeImputee: c(t.imputee), taxeDeclaree: c(t.declaree), taxePayee: c(t.payee) });
+  }
+  const ids = [...parContrat.keys()];
+  const q = (p.q ?? "").trim();
+  const contrats = ids.length === 0 ? [] : await db.cptContrat.findMany({ where: { id: { in: ids }, ...(q ? { numPolice: { contains: q, mode: "insensitive" } } : {}) }, select: { id: true, numPolice: true, client: { select: { nom: true } } }, orderBy: { numPolice: "asc" } });
+  const total = contrats.length;
+  const nbPages = Math.max(1, Math.ceil(total / TAILLE_PAGE_SUIVI_TAXE_CPT));
+  const page = Math.min(Math.max(1, p.page ?? 1), nbPages);
+  const lignes = contrats.slice((page - 1) * TAILLE_PAGE_SUIVI_TAXE_CPT, page * TAILLE_PAGE_SUIVI_TAXE_CPT).map((c) => ({ ...ligneSuiviTaxeCpt(parContrat.get(c.id)!), numPolice: c.numPolice, clientNom: c.client.nom }));
+  return { total, page, nbPages, lignes };
+}
+
+export interface AvancesNonImputeesCpt {
+  /** Taxe déclarée au titre d'une avance et pas encore (entièrement) imputée sur un rattachement. */
+  montant: bigint;
+  nbAvances: number;
+}
+
+/** « Taxe payée d'avance non encore imputée » : avances DÉCLARÉES moins ce que les rattachements en ont déjà annulé (imputations). */
+export async function chargerAvancesNonImputeesCpt(db: CptTaxeDb): Promise<AvancesNonImputeesCpt> {
+  const lignes = await db.$queryRaw<{ restant: string; nb: number }[]>`
+    SELECT coalesce(sum(a."montant" - coalesce(i."imputee", 0)), 0)::text AS restant,
+           count(*) FILTER (WHERE a."montant" - coalesce(i."imputee", 0) > 0)::int AS nb
+    FROM "CptLigneTaxe" a
+    LEFT JOIN (SELECT "ligneAvanceId", sum(-"montant") AS imputee FROM "CptLigneTaxe" WHERE "origine" = 'IMPUTATION' GROUP BY "ligneAvanceId") i ON i."ligneAvanceId" = a."id"
+    WHERE a."origine" = 'AVANCE' AND a."declarationId" IS NOT NULL`;
+  const l = lignes[0];
+  return { montant: centimes({ toFixed: () => Number(l?.restant ?? 0).toFixed(2) }), nbAvances: Number(l?.nb ?? 0) };
 }

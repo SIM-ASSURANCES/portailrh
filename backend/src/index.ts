@@ -123,6 +123,8 @@ export * from "./cptSuiviHebdo";
 export * from "./cptSuiviHebdoDb";
 export * from "./cptTaxe";
 export * from "./cptTaxeDb";
+export * from "./cptRappelTca";
+export * from "./cptRappelTcaDb";
 export * from "./cptRelancesDb";
 // Traitement des anomalies de l'import (GC-3h) : noms finissant par « Cpt ».
 export * from "./cptAnomalies";

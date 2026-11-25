@@ -6,6 +6,7 @@ import { Badge, Button, PageHeader, Select, StatCard } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import {
   BRANCHES_CPT,
+  chargerAvancesNonImputeesCpt,
   chargerIndicateursHebdoCpt,
   chargerOptionsFiltresSuiviCpt,
   libelleAgeCpt,
@@ -36,6 +37,7 @@ export default async function ControleHebdomadairePage({ searchParams }: { searc
   const pageEnc = pageDemandeeCpt(recherche.page);
   const pageCon = pageDemandeeCpt(recherche.pageContrats);
   const maintenant = new Date();
+  const avancesNonImputees = await chargerAvancesNonImputeesCpt(prisma);
 
   const [indicateurs, encaissements, contrats] = await Promise.all([
     chargerIndicateursHebdoCpt(prisma, maintenant),
@@ -87,7 +89,14 @@ export default async function ControleHebdomadairePage({ searchParams }: { searc
             />
           </div>
           <div data-indicateur="taxe-payee-avance">
-            <StatCard icon="scroll-text" label="Taxe payée d'avance non encore imputée" value="—" hint="Disponible au lot GC-8 (déclaration de la taxe)" tone="neutral" />
+            <StatCard
+              icon="scroll-text"
+              label="Taxe payée d'avance non encore imputée"
+              value={`${formaterMontantCpt(Number(avancesNonImputees.montant) / 100)} FCFA`}
+              hint={`${avancesNonImputees.nbAvances.toLocaleString("fr-FR")} encaissement(s) taxé(s) avant leur rattachement, taxe déjà déclarée`}
+              tone={avancesNonImputees.montant > BigInt(0) ? "warning" : "success"}
+              href="/compta/tca/suivi"
+            />
           </div>
           <div data-indicateur="ecart-technique-reel" className="sm:col-span-2 lg:col-span-3">
             <StatCard

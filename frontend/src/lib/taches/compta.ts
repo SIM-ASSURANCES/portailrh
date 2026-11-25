@@ -1,4 +1,4 @@
-import { messagePalierCpt, permissionsDestinatairesCpt, prioritePalierCpt, prisma, reserverRelancesCpt, reserverResumeHebdoCpt, utilisateursAvecPermission } from "backend";
+import { messagePalierCpt, permissionsDestinatairesCpt, prioritePalierCpt, prisma, reserverRappelsTcaCpt, reserverRelancesCpt, reserverResumeHebdoCpt, utilisateursAvecPermission } from "backend";
 import { notify } from "@/lib/notifications";
 import { journaliserIncident } from "@/lib/journalTechnique";
 
@@ -8,9 +8,10 @@ import { journaliserIncident } from "@/lib/journalTechnique";
  *  - `COMPTA_CONTROLE_HEBDO` (lundi 07:30) : résumé de la semaine au commercial et à la production — lot GC-6b. Écart avec
  *    le commentaire d'origine de GC-1e, qui l'attribuait à GC-9 : le plan (§GC-6) et la conception §9 le mettent en GC-6, c'est
  *    ce qui est suivi ici ;
- *  - `COMPTA_RAPPEL_TCA` (les 10 et 17) : rappel de la taxe avant le 20 — lot GC-8, encore VIDE.
+ *  - `COMPTA_RAPPEL_TCA` (les 10 et 17) : rappel de déclarer puis de payer la taxe du mois précédent avant le jour limite — lot GC-8f (voir
+ *    `backend/src/cptRappelTcaDb.ts` : module hors service = rien, premier passage = aucun envoi, un rappel réservé avant d'être envoyé).
  *
- * RÈGLE (conservée) : une tâche jamais exécutée est « due » dès le premier passage du planificateur. Les deux tâches remplies ici
+ * RÈGLE (conservée) : une tâche jamais exécutée est « due » dès le premier passage du planificateur. Les trois tâches remplies ici
  * ne font donc RIEN tant que le module n'est pas mis en service (`CptMiseEnService`), et au premier passage après la mise en
  * service l'arriéré est réservé SANS envoi (règles complètes : `backend/src/cptRelancesDb.ts`, registre C-18).
  *
@@ -59,12 +60,12 @@ async function destinatairesDe(permissions: readonly string[]): Promise<string[]
 }
 
 /** Envoie un message à chaque destinataire ; une erreur sur l'un n'empêche pas les autres. Renvoie (envoyés, erreurs). */
-async function notifierTous(userIds: readonly string[], message: { titre: string; message: string }, priority: "INFO" | "IMPORTANT"): Promise<{ envoyes: number; erreurs: number }> {
+async function notifierTous(userIds: readonly string[], message: { titre: string; message: string }, priority: "INFO" | "IMPORTANT", lien: string = LIEN_CONTROLE): Promise<{ envoyes: number; erreurs: number }> {
   let envoyes = 0;
   let erreurs = 0;
   for (const userId of userIds) {
     try {
-      await notify({ userId, titre: message.titre, message: message.message, lien: LIEN_CONTROLE, priority, category: "SYSTEME" });
+      await notify({ userId, titre: message.titre, message: message.message, lien, priority, category: "SYSTEME" });
       envoyes++;
     } catch (e) {
       erreurs++;
@@ -75,19 +76,20 @@ async function notifierTous(userIds: readonly string[], message: { titre: string
 }
 
 const LIEN_CONTROLE = "/compta/controle";
+const LIEN_TCA = "/compta/tca";
 
 /**
  * Palier (ou résumé) réservé sans aucun destinataire : la réservation reste (jamais renvoyé), mais l'anomalie de configuration est
  * tracée au journal technique. Contexte sans donnée personnelle : type d'objet, palier, permissions attendues. Anti-inondation du
  * journal : au plus une ligne par code et par minute.
  */
-async function tracerSansDestinataire(typeObjet: string, palier: string, permissions: readonly string[]): Promise<void> {
+async function tracerSansDestinataire(typeObjet: string, palier: string, permissions: readonly string[], tache = "COMPTA_RELANCES"): Promise<void> {
   await journaliserIncident({
     niveau: "AVERTISSEMENT",
     source: "TACHE",
     code: "COMPTA_PALIER_SANS_DESTINATAIRE",
     message: "Gestion Compta : palier de relance sans destinataire (aucun compte actif ne porte la permission attendue).",
-    contexte: { tache: "COMPTA_RELANCES", typeObjet, palier, permissionAttendue: permissions.join(", ") },
+    contexte: { tache, typeObjet, palier, permissionAttendue: permissions.join(", ") },
   });
 }
 
@@ -148,15 +150,28 @@ export async function executerComptaControleHebdo(maintenant: Date = new Date())
   return bilan;
 }
 
-/** Bilan d'une tâche encore vide : `enAttenteDuModule` fait afficher « Aucun traitement pour l'instant » dans le moniteur. */
-export interface BilanTacheComptaVide {
-  traites: number;
-  erreurs: number;
-  enAttenteDuModule: true;
+/**
+ * Rappel de la taxe (les 10 et 17) : « déclarer » tant que le mois précédent n'est pas déclaré, « payer » une fois déclaré. Destinataires = les
+ * porteurs de `cpt.declarer_tca` / `cpt.payer_tca` (délégués actifs compris). Un rappel est réservé avant d'être envoyé ; un rappel sans
+ * destinataire reste réservé et est tracé au journal technique. L'horloge est injectable pour les tests.
+ */
+export async function executerComptaRappelTca(maintenant: Date = new Date()): Promise<BilanTacheCompta> {
+  const r = await reserverRappelsTcaCpt(prisma, maintenant);
+  if (!r.moduleMisEnService) return { ...BILAN_MODULE_NON_MIS_EN_SERVICE };
+  const bilan: BilanTacheCompta = { traites: 0, notifications: 0, silencieuses: r.silencieux, examinees: r.mois ? 1 : 0, erreurs: 0, premierPassage: r.premierPassage, sansDestinataire: 0 };
+  for (const rappel of r.aEnvoyer) {
+    const destinataires = await destinatairesDe([rappel.permission]);
+    if (destinataires.length === 0) {
+      bilan.sansDestinataire++;
+      bilan.erreurs++;
+      await tracerSansDestinataire("TCA", rappel.type, [rappel.permission], "COMPTA_RAPPEL_TCA");
+      continue;
+    }
+    const { envoyes, erreurs } = await notifierTous(destinataires, rappel.message, rappel.message.joursRestants <= 3 ? "IMPORTANT" : "INFO", LIEN_TCA);
+    bilan.notifications += envoyes;
+    bilan.erreurs += erreurs;
+    if (envoyes > 0) bilan.traites++;
+  }
+  return bilan;
 }
 
-async function tacheVide(): Promise<BilanTacheComptaVide> {
-  return { traites: 0, erreurs: 0, enAttenteDuModule: true };
-}
-
-export const executerComptaRappelTca = tacheVide;

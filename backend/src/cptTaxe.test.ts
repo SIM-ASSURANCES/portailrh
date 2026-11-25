@@ -300,3 +300,31 @@ describe("état de déclaration par taux (GC-8e)", () => {
     expect(libelleTauxCpt("0.000000")).toBe("0 %");
   });
 });
+
+import { ligneSuiviTaxeCpt } from "./cptTaxe";
+
+describe("suivi par contrat et par mois (GC-8f)", () => {
+  const f = (n: number) => BigInt(n) * BigInt(100);
+  const z = BigInt(0);
+  const base = { contratId: "k", taxeEmise: z, taxeExigible: z, taxeImputee: z, taxeDeclaree: z, taxePayee: z };
+  it("émise mais pas encore exigible", () => {
+    expect(ligneSuiviTaxeCpt({ ...base, taxeEmise: f(169) }).etat).toBe("NON_EXIGIBLE");
+  });
+  it("exigible, pas encore déclarée", () => {
+    const l = ligneSuiviTaxeCpt({ ...base, taxeEmise: f(169), taxeExigible: f(169) });
+    expect([l.etat, Number(l.taxeNette / BigInt(100))]).toEqual(["A_DECLARER", 169]);
+  });
+  it("déclarée puis payée", () => {
+    expect(ligneSuiviTaxeCpt({ ...base, taxeExigible: f(169), taxeDeclaree: f(169) }).etat).toBe("DECLAREE");
+    expect(ligneSuiviTaxeCpt({ ...base, taxeExigible: f(169), taxeDeclaree: f(169), taxePayee: f(169) }).etat).toBe("PAYEE");
+  });
+  it("T5 : taxe payée d'avance et imputée, rien de plus à payer", () => {
+    const l = ligneSuiviTaxeCpt({ ...base, taxeExigible: f(101), taxeImputee: f(101), taxeDeclaree: z, taxePayee: z });
+    expect(l.taxeNette).toBe(z);
+    expect(l.etat).toBe("PAYEE");
+  });
+  it("une imputation partielle laisse un net à déclarer", () => {
+    const l = ligneSuiviTaxeCpt({ ...base, taxeExigible: f(110), taxeImputee: f(101) });
+    expect([l.etat, Number(l.taxeNette / BigInt(100))]).toEqual(["A_DECLARER", 9]);
+  });
+});

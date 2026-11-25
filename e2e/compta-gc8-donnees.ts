@@ -2,7 +2,8 @@
 // rattachement, avance de taxe) pour que la taxe soit celle du moteur, jamais recopiée à la main. Base JETABLE seulement.
 //   phase « fevrier » : T1 (4 500 dont 2 000 « pas une prime »), T3 (groupe santé 1,5 %), T5 (1 500 sans contrat, avance de 101 puis rattachement),
 //                       un contrat INCENDIE sans taux (liste « taux manquant ») ;
-//   phase « mars »    : un contrat accidents de 1 500 (taxe 101) encaissé en mars.
+//   phase « mars »    : un contrat accidents de 1 500 (taxe 101) encaissé en mars ;
+//   phase « imputer » : rattachement de l'encaissement déjà taxé d'avance par produit (partie 8f).
 import { prisma } from "../backend/src/prisma";
 import { validerRattachementsCpt } from "../backend/src/cptRattachement";
 import { taxerEncaissementCpt } from "../backend/src/cptTaxeDb";
@@ -74,6 +75,11 @@ async function main() {
     const pAcc = await produit("RELAXMOTO", "ACCIDENTS");
     const m = await contrat("POL-GC8-MARS", pAcc.id, "INDIVIDUEL", 1500, 101);
     await rattacher((await encaissement(1500, "2026-03-10")).id, m.e.id, 1500);
+  } else if (phase === "imputer") {
+    // L'encaissement « enc-avance » (1 000, déjà taxé d'avance par produit à 68) est rattaché à son contrat.
+    const pAcc = await produit("RELAXMOTO", "ACCIDENTS");
+    const k = await contrat("POL-GC8-AVANCE", pAcc.id, "INDIVIDUEL", 1000, 68);
+    await rattacher("enc-avance", k.e.id, 1000);
   } else {
     throw new Error("phase inconnue");
   }

@@ -497,3 +497,48 @@ export function etatParTauxCpt(lignes: readonly LigneEtatTauxEntreeCpt[]): EtatP
 }
 
 export const LIBELLE_PRIMES_REMBOURSEES_CPT = "à compléter (Q15)";
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Suivi par contrat et par mois (GC-8f)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface SuiviTaxeContratEntreeCpt {
+  contratId: string;
+  /** Taxe des échéances dont la date prévue tombe dans le mois (émise). */
+  taxeEmise: bigint;
+  /** Taxe devenue exigible par un rattachement validé du mois (lignes RATTACHEMENT). */
+  taxeExigible: bigint;
+  /** Part déjà payée d'avance, imputée sur ce contrat ce mois-ci (valeur positive). */
+  taxeImputee: bigint;
+  /** Lignes du mois affectées à une déclaration, et celles dont la déclaration est payée. */
+  taxeDeclaree: bigint;
+  taxePayee: bigint;
+}
+
+export type EtatSuiviTaxeCpt = "NON_EXIGIBLE" | "A_DECLARER" | "DECLAREE" | "PAYEE";
+
+export const LIBELLE_ETAT_SUIVI_TAXE_CPT: Record<EtatSuiviTaxeCpt, string> = {
+  NON_EXIGIBLE: "Émise, pas encore exigible",
+  A_DECLARER: "À déclarer",
+  DECLAREE: "Déclarée, à payer",
+  PAYEE: "Payée",
+};
+
+export interface LigneSuiviTaxeCpt extends SuiviTaxeContratEntreeCpt {
+  /** Exigible − payée d'avance et imputée : ce que ce contrat ajoute à la déclaration du mois. */
+  taxeNette: bigint;
+  etat: EtatSuiviTaxeCpt;
+}
+
+/** Une ligne de suivi : l'état se déduit des montants, jamais saisi. Une taxe exigible entièrement imputée (déjà payée d'avance) est « payée ». */
+export function ligneSuiviTaxeCpt(e: SuiviTaxeContratEntreeCpt): LigneSuiviTaxeCpt {
+  const taxeNette = e.taxeExigible - e.taxeImputee;
+  const aDesLignes = e.taxeExigible !== ZERO || e.taxeImputee !== ZERO;
+  let etat: EtatSuiviTaxeCpt;
+  if (!aDesLignes) etat = "NON_EXIGIBLE";
+  else if (e.taxeDeclaree === ZERO && e.taxePayee === ZERO && (taxeNette !== ZERO || e.taxeImputee === ZERO)) etat = "A_DECLARER";
+  else if (e.taxePayee === e.taxeDeclaree && e.taxeDeclaree !== ZERO) etat = "PAYEE";
+  else if (e.taxeDeclaree !== ZERO) etat = "DECLAREE";
+  else etat = taxeNette === ZERO ? "PAYEE" : "A_DECLARER";
+  return { ...e, taxeNette, etat };
+}
