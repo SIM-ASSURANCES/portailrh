@@ -104,14 +104,17 @@ services:
         # Monorepo : le schema et prisma7.config.ts vivent dans backend/,
         # les commandes Prisma doivent donc s'executer depuis ce dossier
         # (meme raison que le "cd backend" de docker-entrypoint.sh).
+        # Binaire Prisma LOCAL (jamais `npx prisma`, qui peut interroger le registre npm au demarrage). `npx` ajoutait
+        # node_modules/.bin au PATH : le seed (`tsx prisma/seed.ts`) en a besoin, d'ou cet export.
+        export PATH="/app/node_modules/.bin:$PATH"
         cd backend
         echo "[init] migrations..."
-        npx prisma migrate deploy
+        ../node_modules/.bin/prisma migrate deploy
         if [ -f /app/uploads/.seeded ]; then
           echo "[init] seed deja effectue precedemment -> ignore (protection des donnees)"
         else
           echo "[init] premier deploiement -> seed initial"
-          npx prisma db seed
+          ../node_modules/.bin/prisma db seed
           touch /app/uploads/.seeded
         fi
         echo "[init] termine."

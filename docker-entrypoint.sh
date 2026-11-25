@@ -20,8 +20,9 @@ set -e
 # config Prisma vivent dans backend/ (copiés séparément du serveur Next.js
 # lui-même, voir Dockerfile stage "runner") — la commande doit s'exécuter
 # depuis ce dossier pour que `backend/prisma7.config.ts` soit auto-détecté.
+# Binaire Prisma LOCAL (`../node_modules/.bin/prisma`), jamais `npx prisma` : `npx` peut interroger le registre npm au démarrage.
 echo "==> Application des migrations Prisma (prisma migrate deploy)..."
-(cd backend && npx prisma migrate deploy)
+(cd backend && ../node_modules/.bin/prisma migrate deploy)
 
 echo "==> Migrations à jour. Démarrage du serveur..."
 exec "$@"

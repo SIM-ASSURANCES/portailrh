@@ -151,6 +151,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
+# Réglage de l'image (pas un contournement) : au démarrage, ni `npm` ni la CLI Prisma ne doivent contacter le registre / le service de version
+# (vérification de mise à jour, télémétrie). Sur un réseau sortant instable, ces appels bloquaient `prisma migrate deploy` plusieurs minutes
+# (constaté en testant l'image) ; le conteneur n'a aucune raison de faire ces appels.
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false CHECKPOINT_DISABLE=1 PRISMA_HIDE_UPDATE_MESSAGE=1
+
 # Build standalone : serveur Next.js minimal + node_modules tracés. En
 # monorepo npm workspaces, le traçage (`outputFileTracingRoot` = racine du
 # monorepo, voir frontend/next.config.ts) reproduit la structure du dépôt
