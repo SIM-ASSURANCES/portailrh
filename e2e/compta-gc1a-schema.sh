@@ -193,4 +193,9 @@ docker exec -i "$NOM" psql -U postgres -d compta_rem -v ON_ERROR_STOP=1 -q -t -A
 docker exec -i "$NOM" psql -U postgres -d compta_rem -v ON_ERROR_STOP=1 -q < backend/prisma/migrations/20261128090000_compta_remuneration/migration.sql >/dev/null 2>&1 && echo "OK  SQL de la migration rejoué sans erreur"
 (DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_rem?schema=public" bash -c 'cd backend && npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code --config prisma7.config.ts >/dev/null 2>&1 && echo "OK  migrate diff toujours vide après le rejeu"')
 
-echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c, GC-6b, GC-8a, GC-8b, GC-8f et GC-9a : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements, relances et rémunération des partenaires vérifiés."
+echo "== 20. Honoraires en base (GC-9c), sur une base FRAÎCHE =="
+psql_cpt -d postgres -c 'CREATE DATABASE compta_hon' >/dev/null
+(DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_hon?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "successfully applied|rror"')
+DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_hon?schema=public" npx tsx e2e/compta-gc9c-honoraires.ts | tail -20
+
+echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c, GC-6b, GC-8a, GC-8b, GC-8f, GC-9a et GC-9c : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements, relances et rémunération des partenaires vérifiés."

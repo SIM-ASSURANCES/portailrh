@@ -44,6 +44,7 @@
 | **Q18** | **Créances** : (1) un contrat n'a aujourd'hui aucun **commercial** rattaché : faut-il en désigner un (par partenaire, ou par contrat) pour filtrer les créances et les relances par commercial ? (2) Qui est le **débiteur** quand un partenaire paie pour ses clients ? *Notre lecture provisoire (C-20) : le partenaire apporteur marqué « client » est le débiteur de tous ses contrats ; sinon le client du contrat.* Est-ce la bonne règle ? | Créances |
 | **Q19** | **Rémunération des partenaires** : le bordereau de production contient des colonnes de commission et de frais de gestion, que l'application lit sans les enregistrer. Faut-il les enregistrer pour être alerté quand le taux appliqué par le technique diffère de la convention signée ? | Rémunération |
 | **Q20** | **Rémunération** : à quelle date choisit-on la convention (date d'effet du contrat, de l'échéance, de l'encaissement) ? Une convention de commission sans apporteur désigné vaut-elle pour tous les contrats ? Après une résiliation, la rémunération des primes jamais encaissées disparaît-elle, même pour la période déjà courue ? *Lecture provisoire : C-31 de la conception.* | Rémunération |
+| **Q21** | **Honoraires** : la séparation « sur primes encaissées » / « sur primes non encaissées » doit-elle porter sur les honoraires exigibles (notre lecture) ou sur la totalité des honoraires dus, même non exigibles ? | Rémunération |
 
 ### Relances, clôture et mise en service
 
