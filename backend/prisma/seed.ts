@@ -42,6 +42,7 @@ async function main() {
   await prisma.historiqueEntry.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.feedback.deleteMany();
+  await prisma.feedbackQuota.deleteMany();
   await prisma.plageAbsenceAutorisee.deleteMany();
   // Congés : les demandes avant les comptes (supprimés plus bas).
   await prisma.demandeConge.deleteMany();

@@ -214,7 +214,7 @@ export function libelleBilan(tache: NomTache, bilan: unknown): string {
     case "ABSENCES":
       return `${pluriel(n("nouvellesAbsences"), "nouvelle absence", "nouvelles absences")}, ${pluriel(n("oublisDetectes"), "oubli")} de départ`;
     case "PURGE":
-      return `${pluriel(n("executionsSupprimees"), "exécution")} et ${pluriel(n("incidentsSupprimes"), "incident")} supprimés`;
+      return `${pluriel(n("executionsSupprimees"), "exécution")} et ${pluriel(n("incidentsSupprimes"), "incident")} supprimés, ${pluriel(n("quotasFeedbackSupprimes"), "trace")} de quota FeedbackApp effacée${n("quotasFeedbackSupprimes") > 1 ? "s" : ""}`;
     case "RAPPELS_CONGES":
       return `${pluriel(n("rappels"), "rappel")}, ${pluriel(n("erreurs"), "erreur")}`;
     case "COMPTA_CONTROLE_HEBDO":

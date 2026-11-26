@@ -10,6 +10,8 @@ import {
   COLLABORATION_QUESTIONS,
   CONDITIONS_TRAVAIL_STEPS,
   IDLE_ACTION_STATE,
+  MESSAGE_QUOTA_COLLABORATION,
+  MESSAGE_QUOTA_CONDITIONS_TRAVAIL,
   type FeedbackQuestionDef,
 } from "backend/client";
 
@@ -136,24 +138,42 @@ function ConfirmationPanel({ nextTabLabel }: { nextTabLabel: string | null }) {
             Direction « {nextTabLabel} »...
           </p>
         ) : (
-          <p className="mt-1 text-sm text-success/80">Il vient d&apos;être ajouté à la liste publique ci-dessous.</p>
+          <p className="mt-1 text-sm text-success/80">Il sera lu uniquement par la RH et la Direction générale.</p>
         )}
       </div>
     </div>
   );
 }
 
+function AvisDejaDonne({ message }: { message: string }) {
+  return (
+    <p data-avis-deja-donne role="status" className="rounded-xl border border-info/30 bg-info-bg px-4 py-3 text-sm text-info">
+      {message}
+    </p>
+  );
+}
+
 /**
  * Formulaire de soumission — Client Component UNIQUEMENT pour
- * l'interactivité (onglets, étapes, sélection des notes) : ne lit ni ne
- * transmet AUCUNE information sur son visiteur. Le champ `site_web` est le
+ * l'interactivité (onglets, étapes, sélection des notes) : ne transmet
+ * aucune information sur son auteur. `colleguesDejaEvalues` et
+ * `conditionsTravailDejaDonne` annoncent la limite d'un avis par jour
+ * (confort : le serveur reste la seule autorité). Le champ `site_web` est le
  * honeypot anti-bot (voir `actions.ts`/CLAUDE.md "FeedbackApp").
  *
  * DEPUIS LA NOTATION STRUCTURÉE : plus aucun champ texte libre — les
  * réponses sont assemblées dans `ratingsJson` (un unique champ caché,
  * jamais un `content` tapé par l'utilisateur) juste avant soumission.
  */
-export function FeedbackForm({ recipients }: { recipients: { id: string; fullName: string }[] }) {
+export function FeedbackForm({
+  recipients,
+  colleguesDejaEvalues,
+  conditionsTravailDejaDonne,
+}: {
+  recipients: { id: string; fullName: string }[];
+  colleguesDejaEvalues: string[];
+  conditionsTravailDejaDonne: boolean;
+}) {
   const router = useRouter();
   const [state, formAction, isPending] = useActionState(soumettreFeedbackAction, IDLE_ACTION_STATE);
   useActionFeedback(state);
@@ -189,16 +209,18 @@ export function FeedbackForm({ recipients }: { recipients: { id: string; fullNam
     [tab, collabAnswers, ctAnswers]
   );
 
+  const collegueDejaEvalue = colleguesDejaEvalues.includes(recipientId);
   const canSubmit =
-    tab === "COLLABORATION" ? collabComplete && recipientId.length > 0 : currentCtStepComplete && isLastCtStep;
+    tab === "COLLABORATION"
+      ? collabComplete && recipientId.length > 0 && !collegueDejaEvalue
+      : currentCtStepComplete && isLastCtStep;
 
   // Bascule automatique vers "Conditions de travail" après une COLLABORATION
-  // réussie (réinitialisée), ou rafraîchissement de la liste publique après
-  // une CONDITIONS_TRAVAIL réussie (réinitialisée, reste sur l'onglet) —
-  // jamais un rechargement brut de page. Ne réagit qu'à `confirmationTab`
-  // (jamais à `state` directement) : les seuls `setState` de cet effet sont
-  // dans le callback DIFFÉRÉ de `setTimeout`, jamais synchrones dans le
-  // corps de l'effet.
+  // réussie (réinitialisée) ; après une CONDITIONS_TRAVAIL réussie, le
+  // formulaire est réinitialisé. Dans les deux cas `router.refresh()` relit
+  // les avis déjà donnés aujourd'hui, sans rechargement brut de page. Ne
+  // réagit qu'à `confirmationTab` (jamais à `state` directement) : les seuls
+  // `setState` de cet effet sont dans le callback DIFFÉRÉ de `setTimeout`.
   useEffect(() => {
     if (!confirmationTab) return;
     const timer = setTimeout(() => {
@@ -210,8 +232,8 @@ export function FeedbackForm({ recipients }: { recipients: { id: string; fullNam
       } else {
         setCtAnswers(initialAnswersFor(CT_QUESTIONS_FLAT));
         setCtStep(0);
-        router.refresh();
       }
+      router.refresh();
     }, 2200);
     return () => clearTimeout(timer);
   }, [confirmationTab, router]);
@@ -274,9 +296,13 @@ export function FeedbackForm({ recipients }: { recipients: { id: string; fullNam
               required
               value={recipientId}
               onChange={(e) => setRecipientId(e.target.value)}
-              options={recipients.map((r) => ({ value: r.id, label: r.fullName }))}
+              options={recipients.map((r) => ({
+                value: r.id,
+                label: colleguesDejaEvalues.includes(r.id) ? `${r.fullName} (déjà évalué aujourd'hui)` : r.fullName,
+              }))}
               error={state.status === "error" ? state.fieldErrors?.recipientId : undefined}
             />
+            {collegueDejaEvalue ? <AvisDejaDonne message={MESSAGE_QUOTA_COLLABORATION} /> : null}
 
             {COLLABORATION_QUESTIONS.map((question) => (
               <QuestionCard key={question.key}>
@@ -293,6 +319,8 @@ export function FeedbackForm({ recipients }: { recipients: { id: string; fullNam
               Envoyer mon avis
             </Button>
           </>
+        ) : conditionsTravailDejaDonne ? (
+          <AvisDejaDonne message={MESSAGE_QUOTA_CONDITIONS_TRAVAIL} />
         ) : (
           <>
             <Stepper steps={CONDITIONS_TRAVAIL_STEPS} currentStep={ctStep} />

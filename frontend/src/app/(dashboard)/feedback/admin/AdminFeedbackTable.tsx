@@ -3,14 +3,21 @@
 import { useState } from "react";
 import { Badge, Button, DataTable } from "@/components/ui";
 import type { AdminFeedbackEntry } from "backend";
+import { DetailFeedbackDialog } from "./DetailFeedbackDialog";
 import { ModererFeedbackDialog } from "./ModererFeedbackDialog";
 
 interface AdminFeedbackTableProps {
   feedbacks: AdminFeedbackEntry[];
+  /** `feedback.voir_details` : `destinataire` est alors un nom réel, et la colonne devient triable. */
+  voirDetails: boolean;
 }
 
-export function AdminFeedbackTable({ feedbacks }: AdminFeedbackTableProps) {
+/** Clé de tri d'un nom : sans accents ni casse (« Éric » se classe à E). */
+const cleTri = (nom: string) => nom.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+
+export function AdminFeedbackTable({ feedbacks, voirDetails }: AdminFeedbackTableProps) {
   const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<AdminFeedbackEntry | null>(null);
 
   return (
     <>
@@ -59,10 +66,14 @@ export function AdminFeedbackTable({ feedbacks }: AdminFeedbackTableProps) {
           {
             key: "recipient",
             header: "Destinataire",
-            accessor: (row) => row.recipientPseudo ?? "",
+            sortable: voirDetails,
+            accessor: (row) => (voirDetails && row.destinataire ? cleTri(row.destinataire) : null),
             render: (row) => (
-              <span className="text-xs font-mono text-muted-foreground">
-                {row.recipientPseudo ?? "—"}
+              <span
+                data-destinataire
+                className={voirDetails ? "text-sm text-foreground" : "text-xs font-mono text-muted-foreground"}
+              >
+                {row.destinataire ?? "—"}
               </span>
             ),
           },
@@ -96,28 +107,32 @@ export function AdminFeedbackTable({ feedbacks }: AdminFeedbackTableProps) {
           {
             key: "actions",
             header: "Actions",
-            render: (row) => {
-              if (row.isModerated) {
-                return (
+            render: (row) => (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="secondary" className="px-2 py-1 text-xs" onClick={() => setDetail(row)}>
+                  Voir
+                </Button>
+                {row.isModerated ? (
                   <span className="text-xs italic text-muted-foreground">
                     Retiré {row.moderatedByNom ? `par ${row.moderatedByNom}` : ""}
                   </span>
-                );
-              }
-              return (
-                <Button
-                  type="button"
-                  variant="danger"
-                  className="px-2 py-1 text-xs"
-                  onClick={() => setSelectedFeedbackId(row.id)}
-                >
-                  Modérer
-                </Button>
-              );
-            },
+                ) : (
+                  <Button
+                    type="button"
+                    variant="danger"
+                    className="px-2 py-1 text-xs"
+                    onClick={() => setSelectedFeedbackId(row.id)}
+                  >
+                    Modérer
+                  </Button>
+                )}
+              </div>
+            ),
           },
         ]}
       />
+
+      {detail && <DetailFeedbackDialog feedback={detail} onClose={() => setDetail(null)} />}
 
       {selectedFeedbackId && (
         <ModererFeedbackDialog

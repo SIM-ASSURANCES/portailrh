@@ -15,7 +15,7 @@ import type { FeedbackType } from "./generated/prisma/enums";
  * identifiant, une IP, un texte saisi par l'auteur. `generateFeedbackComment`
  * ci-dessous est la SEULE source du `content` final, calculée côté
  * SERVEUR à partir de `ratings` (jamais un `content` envoyé tel quel par
- * le client — voir `frontend/.../feedback/nouveau/actions.ts`, qui
+ * le client — voir `frontend/.../(dashboard)/feedback/actions.ts`, qui
  * n'accepte d'ailleurs plus aucun champ `content` dans son schéma zod).
  *
  * ⚠️ CONTENU PROVISOIRE : les libellés de questions reproduisent au mot
@@ -271,6 +271,34 @@ export function validateFeedbackRatings(type: FeedbackType, ratings: unknown): s
 /** Valeur brute d'une réponse : note (stars/scale10/slider) ou code de choix. */
 export type FeedbackRatingValue = number | string;
 export type FeedbackRatings = Record<string, FeedbackRatingValue>;
+
+export interface NoteDetailleeFeedback {
+  question: string;
+  reponse: string;
+}
+
+/**
+ * Réponses question par question d'un avis, pour la lecture en modération. Reconstruit à partir des SEULES questions
+ * connues et de valeurs valides : aucune autre clé ni valeur du JSON stocké ne sort d'ici (le JSON brut n'est jamais
+ * exposé). Un avis sans `ratings` (antérieur à la notation structurée) donne une liste vide.
+ */
+export function detailNotesFeedback(type: FeedbackType, ratings: unknown): NoteDetailleeFeedback[] {
+  if (typeof ratings !== "object" || ratings === null || Array.isArray(ratings)) return [];
+  const record = ratings as Record<string, unknown>;
+  const notes: NoteDetailleeFeedback[] = [];
+  for (const q of questionsForType(type)) {
+    const valeur = record[q.key];
+    if (q.questionType === "choice") {
+      const option = q.options?.find((o) => o.value === valeur);
+      if (option) notes.push({ question: q.label, reponse: option.label });
+      continue;
+    }
+    const max = q.questionType === "scale10" ? 10 : 5;
+    const n = typeof valeur === "number" || typeof valeur === "string" ? Number(valeur) : NaN;
+    if (Number.isInteger(n) && n >= 1 && n <= max) notes.push({ question: q.label, reponse: `${n}/${max}` });
+  }
+  return notes;
+}
 
 // ============================================================
 // Génération du commentaire final — ⚠️ PHRASES PROVISOIRES, À VALIDER

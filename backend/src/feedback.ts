@@ -1,27 +1,21 @@
 import { prisma } from "./prisma";
 import type { FeedbackSource, FeedbackType, Prisma } from "./generated/prisma/client";
 import { FEEDBACK_CONTENT_MAX, FEEDBACK_CONTENT_MIN } from "./feedback-constants";
-import { generateFeedbackComment, type FeedbackRatings } from "./feedback-questions";
+import { detailNotesFeedback, generateFeedbackComment, type FeedbackRatings, type NoteDetailleeFeedback } from "./feedback-questions";
 
 /**
- * FeedbackApp — messages constructifs anonymes sur un employé (voir
- * CLAUDE.md "FeedbackApp : anonymat total"). RÈGLE ABSOLUE : aucune
- * fonction de ce fichier ne doit jamais accepter ni journaliser une donnée
- * permettant d'identifier l'auteur d'un message (IP, id de session,
- * empreinte navigateur...) — même à titre de paramètre transitoire non
- * persisté. La seule exception tolérée dans tout le module est l'IP
- * utilisée comme CLÉ DE COMPTEUR anti-spam EN MÉMOIRE (voir
- * `soumettreFeedbackAction`, `frontend/.../feedback/nouveau/actions.ts`),
- * jamais dans ce fichier-ci, qui ne connaît que des données déjà
- * anonymisées.
+ * FeedbackApp — avis structurés sur un collègue ou sur les conditions de travail (voir CLAUDE.md « Module FeedbackApp »).
+ * Module PRIVÉ : seuls des comptes connectés déposent un avis.
  *
- * Les constantes/validations sans dépendance Prisma (compteur de
- * caractères, filtre anti-haine, détection d'URL) vivent dans
- * `./feedback-constants.ts`, réexportées ci-dessous pour tout code
- * backend qui importe depuis `"backend"` — ne jamais les rapatrier ici :
- * ce fichier importe `./prisma`, ce qui casserait `client-safe.ts` si ces
- * constantes y étaient réexportées depuis ce module-ci plutôt que
- * directement depuis `feedback-constants.ts` (voir ce fichier).
+ * RÈGLE ABSOLUE : aucune fonction de ce fichier ne reçoit ni ne journalise une donnée qui identifie l'AUTEUR d'un avis
+ * (identifiant de compte, IP, session, empreinte navigateur), même à titre transitoire. Pour la limite d'un avis par
+ * jour, ce fichier ne reçoit que l'EMPREINTE HMAC déjà calculée (`./feedbackQuota.ts`) et le jour, jamais l'identifiant
+ * de l'auteur. L'empreinte n'est jamais journalisée.
+ *
+ * Les constantes/validations sans dépendance Prisma (compteur de caractères, filtre anti-haine, détection d'URL) vivent
+ * dans `./feedback-constants.ts`, réexportées ci-dessous pour tout code backend qui importe depuis `"backend"` — ne
+ * jamais les rapatrier ici : ce fichier importe `./prisma`, ce qui casserait `client-safe.ts` si ces constantes y
+ * étaient réexportées depuis ce module-ci plutôt que directement depuis `feedback-constants.ts`.
  */
 export * from "./feedback-constants";
 // Idem pour les définitions de questions et la génération du commentaire
@@ -89,8 +83,8 @@ export interface FeedbackRecipientOption {
 }
 
 /**
- * Employés proposables comme destinataire sur la page publique de
- * soumission — voir CLAUDE.md "FeedbackApp" pour la décision retenue
+ * Employés proposables comme destinataire sur la page de soumission —
+ * voir CLAUDE.md "FeedbackApp" pour la décision retenue
  * (TOUS les comptes actifs du portail dont le RÔLE est éligible, pas
  * seulement un rôle métier précis : n'importe quel employé peut recevoir
  * un message constructif, pas seulement Finance/RH/DG). Réutilise le
@@ -117,81 +111,79 @@ export async function getFeedbackRecipients(excludeUserId?: string): Promise<Fee
 }
 
 /**
- * Crée un `Feedback` à partir de réponses structurées — **seul point
- * d'écriture** du module (voir CLAUDE.md "FeedbackApp — notation
- * structurée") : `content` n'est **jamais** reçu en paramètre, il est
- * TOUJOURS calculé ici via `generateFeedbackComment(type, ratings)`.
- * Empêche structurellement qu'un `content` fabriqué par un client
- * malveillant (rejeu réseau direct, contournant le formulaire) ne soit
- * jamais persisté tel quel — la seule donnée texte jamais écrite en base
- * est celle que ce module génère lui-même à partir de notes fixes.
+ * Crée un `Feedback` à partir de réponses structurées — **seul point d'écriture** du module. `content` n'est jamais reçu
+ * en paramètre : il est TOUJOURS calculé ici par `generateFeedbackComment(type, ratings)`, si bien qu'aucun texte
+ * fabriqué par un client (rejeu réseau direct) n'est persisté.
  *
- * `recipientId` : obligatoire pour `COLLABORATION`, ignoré (forcé à
- * `null`) pour `CONDITIONS_TRAVAIL` — revalidé ici, jamais une simple
- * convention côté appelant.
+ * `db` DOIT être le client d'une transaction : la trace de quota et l'avis sont écrits ensemble (si l'avis échoue, la
+ * limite n'est pas consommée). `quota` porte l'empreinte déjà calculée et le jour — jamais l'identifiant de l'auteur.
+ *
+ * La contrainte d'unicité sur `cle` décide seule (deux envois simultanés : un seul réussit). L'insertion se fait en
+ * `ON CONFLICT DO NOTHING` (`skipDuplicates`) et non en laissant lever `P2002` : une violation d'unicité ferait écrire
+ * par PostgreSQL « Key (cle)=(…) already exists » dans ses journaux, horodaté, qui survivrait à la purge.
+ *
+ * `recipientId` : obligatoire pour `COLLABORATION`, forcé à `null` pour `CONDITIONS_TRAVAIL`.
  */
-export async function createFeedback(params: {
-  type: FeedbackType;
-  recipientId: string | null;
-  ratings: FeedbackRatings;
-  source: FeedbackSource;
-}): Promise<{ success: true; id: string } | { success: false; message: string }> {
+export async function createFeedback(
+  db: Prisma.TransactionClient,
+  params: {
+    type: FeedbackType;
+    recipientId: string | null;
+    ratings: FeedbackRatings;
+    source: FeedbackSource;
+    quota: { cle: string; jour: string };
+  }
+): Promise<{ success: true; id: string } | { success: false; quotaAtteint: boolean; message: string }> {
   const content = generateFeedbackComment(params.type, params.ratings);
   if (content.length < FEEDBACK_CONTENT_MIN || content.length > FEEDBACK_CONTENT_MAX) {
-    // Filet de sécurité : ne devrait jamais se produire avec les phrases
-    // actuelles (voir `generateFeedbackComment`), mais on ne persiste
-    // jamais un contenu hors des bornes déjà vérifiées ailleurs (zod côté
-    // action, contrainte documentée sur la colonne).
-    return { success: false, message: "Impossible de générer un commentaire valide à partir de ces réponses." };
+    // Filet de sécurité : ne devrait jamais se produire avec les phrases actuelles.
+    return {
+      success: false,
+      quotaAtteint: false,
+      message: "Impossible de générer un commentaire valide à partir de ces réponses.",
+    };
   }
 
   if (params.type === "COLLABORATION" && !params.recipientId) {
-    return { success: false, message: "Destinataire requis pour ce type d'avis." };
+    return { success: false, quotaAtteint: false, message: "Destinataire requis pour ce type d'avis." };
   }
 
-  const feedback = await prisma.feedback.create({
+  const jour = new Date(`${params.quota.jour}T00:00:00.000Z`);
+  // Une trace d'un jour passé que la purge n'a pas encore effacée ne bloque jamais.
+  await db.feedbackQuota.deleteMany({ where: { cle: params.quota.cle, jour: { lt: jour } } });
+  const reserve = await db.feedbackQuota.createMany({ data: [{ cle: params.quota.cle, jour }], skipDuplicates: true });
+  if (reserve.count === 0) {
+    return { success: false, quotaAtteint: true, message: "Limite d'un avis par jour atteinte." };
+  }
+
+  const feedback = await db.feedback.create({
     data: {
       content,
       recipientId: params.type === "COLLABORATION" ? params.recipientId : null,
       type: params.type,
       source: params.source,
       ratings: params.ratings as Prisma.InputJsonValue,
+      submittedAt: jour,
     },
   });
 
   return { success: true, id: feedback.id };
 }
 
-export interface PublicFeedbackEntry {
-  id: string;
-  content: string;
-  /** DATE seule (voir `Feedback.submittedAt`, schema.prisma) — jamais d'heure. */
-  submittedAt: Date;
+/** Parmi ces empreintes, celles déjà consommées (affichage anticipé du formulaire ; `createFeedback` reste l'autorité). */
+export async function clesQuotaDejaUtilisees(cles: string[], jour: string): Promise<Set<string>> {
+  if (cles.length === 0) return new Set();
+  const lignes = await prisma.feedbackQuota.findMany({
+    where: { cle: { in: cles }, jour: new Date(`${jour}T00:00:00.000Z`) },
+    select: { cle: true },
+  });
+  return new Set(lignes.map((l) => l.cle));
 }
 
-/**
- * Messages publics affichés sur la vue publique (`/feedback`) — jamais le
- * nom d'un destinataire (de toute façon inexistant pour ce type, voir
- * plus bas). Exclut les messages déjà modérés (`isModerated: true`).
- *
- * **Filtre sur `type`, jamais sur `source`** (voir CLAUDE.md "FeedbackApp
- * — notation structurée", changement de comportement important) : la
- * visibilité publique dépend désormais de la NATURE de l'avis
- * (`CONDITIONS_TRAVAIL`, toujours public), pas de qui l'a soumis
- * (`FeedbackSource` reste orthogonal — un avis `CONDITIONS_TRAVAIL`
- * soumis par un employé connecté, `source: INTERNAL`, est tout aussi
- * public qu'un avis anonyme). Les avis `COLLABORATION` (critique d'un
- * collaborateur nommé) ne sont **plus jamais** listés ici, quel que soit
- * leur `source` — ils sont désormais strictement privés (destinataire +
- * comptes `feedback.moderer`, voir `getUserFeedbacks`/`getAdminFeedbacks`).
- */
-export async function getPublicFeedbacks(): Promise<PublicFeedbackEntry[]> {
-  const feedbacks = await prisma.feedback.findMany({
-    where: { type: "CONDITIONS_TRAVAIL" as FeedbackType, isModerated: false },
-    select: { id: true, content: true, submittedAt: true },
-    orderBy: { submittedAt: "desc" },
-  });
-  return feedbacks;
+/** Efface les traces de quota des jours antérieurs à `jour` (purge quotidienne). Renvoie le nombre de lignes effacées. */
+export async function purgerQuotasFeedback(jour: string): Promise<number> {
+  const r = await prisma.feedbackQuota.deleteMany({ where: { jour: { lt: new Date(`${jour}T00:00:00.000Z`) } } });
+  return r.count;
 }
 
 export interface UserFeedbackEntry {
@@ -260,9 +252,23 @@ export interface AdminFeedbackFilters {
   au?: string;
   statut?: "tous" | "actifs" | "moderes";
   source?: "tous" | "PUBLIC" | "INTERNAL";
+  /** Ignoré sans `voirDetails` (seuls les avis « Collaboration » sont alors lus). */
   type?: "tous" | "COLLABORATION" | "CONDITIONS_TRAVAIL";
+  /** Identifiant du destinataire ou « tous ». Ignoré sans `voirDetails`. */
+  destinataire?: string;
   search?: string;
 }
+
+/**
+ * Droit de lecture, décidé par l'appelant d'après la permission `feedback.voir_details` (RH et DG) : noms réels des
+ * destinataires et avis « Conditions de travail ». Paramètre OBLIGATOIRE des lectures de modération : aucun appelant ne
+ * peut l'oublier.
+ */
+export interface AccesFeedback {
+  voirDetails: boolean;
+}
+
+export const PERMISSION_FEEDBACK_VOIR_DETAILS = "feedback.voir_details";
 
 export interface AdminFeedbackEntry {
   id: string;
@@ -274,19 +280,27 @@ export interface AdminFeedbackEntry {
   motifModeration: string | null;
   moderatedAt: Date | null;
   moderatedByNom: string | null;
-  /** Identifiant pseudonymisé du destinataire, respectant le CDC — `null`
-   * pour `CONDITIONS_TRAVAIL` (jamais de destinataire pour ce type). */
-  recipientPseudo: string | null;
+  /** Nom réel avec `voirDetails`, pseudonyme sinon ; `null` pour `CONDITIONS_TRAVAIL`. L'identifiant du
+   * destinataire n'est jamais renvoyé. */
+  destinataire: string | null;
+  /** Réponses question par question, reconstruites à partir des seules questions connues (jamais le JSON brut) ;
+   * vide pour un avis antérieur à la notation structurée. */
+  notes: NoteDetailleeFeedback[];
+}
+
+/** Pseudonyme déterministe d'un destinataire (ex : « Collaborateur #A1B2 »). */
+function pseudonymeDestinataire(recipientId: string): string {
+  return `Collaborateur #${recipientId.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase() || "ANON"}`;
 }
 
 /**
- * Vue d'ensemble de TOUS les messages de la plateforme (les deux
- * `type`, `COLLABORATION` et `CONDITIONS_TRAVAIL`, jamais filtré par
- * défaut — voir CLAUDE.md "FeedbackApp — notation structurée") pour la
- * modération RH/Direction/Admin (Tranche B). Respecte le CDC : ne divulgue
- * jamais l'identité nominative du destinataire dans la liste globale.
+ * Messages de la modération. Le filtrage de visibilité se fait ICI, côté serveur : sans `voirDetails`, la requête se
+ * limite aux avis « Collaboration » et aucun nom de destinataire n'est lu en base.
  */
-export async function getAdminFeedbacks(filters: AdminFeedbackFilters = {}): Promise<AdminFeedbackEntry[]> {
+export async function getAdminFeedbacks(
+  filters: AdminFeedbackFilters,
+  acces: AccesFeedback
+): Promise<AdminFeedbackEntry[]> {
   const whereClause: Prisma.FeedbackWhereInput = {};
 
   if (filters.du || filters.au) {
@@ -309,8 +323,15 @@ export async function getAdminFeedbacks(filters: AdminFeedbackFilters = {}): Pro
     whereClause.source = filters.source as FeedbackSource;
   }
 
-  if (filters.type && filters.type !== "tous") {
-    whereClause.type = filters.type as FeedbackType;
+  if (!acces.voirDetails) {
+    whereClause.type = "COLLABORATION";
+  } else {
+    if (filters.type === "COLLABORATION" || filters.type === "CONDITIONS_TRAVAIL") {
+      whereClause.type = filters.type;
+    }
+    if (filters.destinataire && filters.destinataire !== "tous") {
+      whereClause.recipientId = filters.destinataire;
+    }
   }
 
   if (filters.search && filters.search.trim()) {
@@ -328,26 +349,40 @@ export async function getAdminFeedbacks(filters: AdminFeedbackFilters = {}): Pro
     orderBy: { submittedAt: "desc" },
   });
 
-  return feedbacks.map((f) => {
-    // Pseudonymisation déterministe basée sur l'id du destinataire (ex:
-    // "Collaborateur #A1B2") — `null` pour `CONDITIONS_TRAVAIL`, qui n'a
-    // structurellement aucun `recipientId` (voir schema.prisma).
-    const recipientPseudo = f.recipientId
-      ? `Collaborateur #${f.recipientId.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase() || "ANON"}`
-      : null;
-    return {
-      id: f.id,
-      content: f.content,
-      submittedAt: f.submittedAt,
-      source: f.source,
-      type: f.type,
-      isModerated: f.isModerated,
-      motifModeration: f.motifModeration,
-      moderatedAt: f.moderatedAt,
-      moderatedByNom: f.moderatedBy?.fullName ?? null,
-      recipientPseudo,
-    };
+  const noms = new Map<string, string>();
+  if (acces.voirDetails) {
+    const ids = [...new Set(feedbacks.map((f) => f.recipientId).filter((id): id is string => id !== null))];
+    const comptes = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, fullName: true } });
+    for (const c of comptes) noms.set(c.id, c.fullName);
+  }
+
+  return feedbacks.map((f) => ({
+    id: f.id,
+    content: f.content,
+    submittedAt: f.submittedAt,
+    source: f.source,
+    type: f.type,
+    isModerated: f.isModerated,
+    motifModeration: f.motifModeration,
+    moderatedAt: f.moderatedAt,
+    moderatedByNom: f.moderatedBy?.fullName ?? null,
+    destinataire: !f.recipientId
+      ? null
+      : acces.voirDetails
+        ? (noms.get(f.recipientId) ?? "Compte introuvable")
+        : pseudonymeDestinataire(f.recipientId),
+    notes: detailNotesFeedback(f.type, f.ratings),
+  }));
+}
+
+/** Personnes ayant reçu au moins un avis, triées par nom — vide sans `voirDetails`. */
+export async function getDestinatairesAyantRecuUnFeedback(acces: AccesFeedback): Promise<FeedbackRecipientOption[]> {
+  if (!acces.voirDetails) return [];
+  const comptes = await prisma.user.findMany({
+    where: { feedbacksRecus: { some: {} } },
+    select: { id: true, fullName: true },
   });
+  return comptes.sort((a, b) => a.fullName.localeCompare(b.fullName, "fr"));
 }
 
 export interface FeedbackStats {
@@ -361,26 +396,20 @@ export interface FeedbackStats {
 }
 
 /**
- * Statistiques globales et anonymisées pour le tableau de bord de modération.
+ * Statistiques du tableau de bord de modération. Sans `voirDetails`, les avis « Conditions de travail » ne sont comptés
+ * nulle part.
  */
-export async function getFeedbackStats(): Promise<FeedbackStats> {
+export async function getFeedbackStats(acces: AccesFeedback): Promise<FeedbackStats> {
   const now = new Date();
   const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const perimetre: Prisma.FeedbackWhereInput = acces.voirDetails ? {} : { type: "COLLABORATION" };
 
   const [total, ceMois, moderes, nbPublic, nbInterne] = await Promise.all([
-    prisma.feedback.count(),
-    prisma.feedback.count({
-      where: { submittedAt: { gte: firstDayOfMonth } },
-    }),
-    prisma.feedback.count({
-      where: { isModerated: true },
-    }),
-    prisma.feedback.count({
-      where: { source: "PUBLIC" },
-    }),
-    prisma.feedback.count({
-      where: { source: "INTERNAL" },
-    }),
+    prisma.feedback.count({ where: perimetre }),
+    prisma.feedback.count({ where: { ...perimetre, submittedAt: { gte: firstDayOfMonth } } }),
+    prisma.feedback.count({ where: { ...perimetre, isModerated: true } }),
+    prisma.feedback.count({ where: { ...perimetre, source: "PUBLIC" } }),
+    prisma.feedback.count({ where: { ...perimetre, source: "INTERNAL" } }),
   ]);
 
   const actifs = total - moderes;

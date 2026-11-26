@@ -5385,7 +5385,7 @@ Correction directe demandée après la tâche ci-dessus : la pastille
 `bg-white/15` contenant le logo (petit badge, `<Image src="/logo-sim-blanc.svg">`)
 jugée incohérente avec le seul autre endroit du portail qui affiche déjà le
 logo sur un fond bleu plein — le bandeau hero de FeedbackApp
-(`FeedbackHero()`, `app/feedback/page.tsx`), qui utilise un **grand
+(`FeedbackHero()`, `(dashboard)/feedback/page.tsx`), qui utilise un **grand
 filigrane pâle** du pictogramme en arrière-plan, pas un badge. Demande :
 reproduire exactement ce traitement sur les 4 cartes "Vos accès".
 
@@ -5810,7 +5810,7 @@ Plan : `docs/PLAN_FIABILISATION_POINTAGE.md`. Les tâches planifiées vivent **d
 - **Logique pure** `backend/src/planificateur.ts` (14 tests, horloge simulée) : `tachesDues(now, dernieres)`, `dernierCreneau`,
   `prochaineExecution`, `tacheEnRetard`, `libelleBilan`, `erreurCourte`. Cadence (heure locale du serveur = Abidjan) :
   relances toutes les 5 minutes (créneaux alignés sur les multiples de 5), absences lundi-vendredi 17:30 et 20:00, purge
-  quotidienne 03:00, rappels des congés en attente lundi-vendredi 08:30 (Module Congés). Une tâche est due quand le créneau le plus récent passé n'est couvert par aucune exécution
+  quotidienne 03:00 (journaux et traces de quota FeedbackApp), rappels des congés en attente lundi-vendredi 08:30 (Module Congés). Une tâche est due quand le créneau le plus récent passé n'est couvert par aucune exécution
   (`debut` ≥ créneau, tous statuts) : rattrapage automatique après arrêt, pas de doublon avec un déclenchement manuel.
 - **Exécution** `frontend/src/lib/taches/` : `relancesJustification.ts`, `absences.ts`, `purge.ts`, `rappelsConges.ts` (logique des anciennes
   routes, sans duplication) ; `executer.ts` (`executerTache(tache, declenchement)`, SEUL point d'exécution : verrou
@@ -5931,73 +5931,95 @@ Distincte de la réinitialisation globale (« Réinitialisation avant mise en pr
   Les autres fichiers (réinitialisation, profil, gabarits, invitation) utilisent maintenant la même règle ; ne plus écrire `process.env.… || "http://localhost:3000"` dans un fichier.
 - **Limite en dev** : le retour après connexion reste validé contre l'origine `AUTH_URL` (open redirect) ; pour tester le lien d'un e-mail depuis un téléphone jusqu'à la page demandée, mettre `AUTH_URL` à l'adresse réseau (ex. `http://192.168.1.49:3000`), sinon le téléphone retombe sur l'accueil après connexion.
 
-## Module FeedbackApp — anonymat total
+## Module FeedbackApp — module privé, auteur anonyme
 
-Troisième module : permet à QUICONQUE (employé connecté ou visiteur sans
-compte) de laisser un message constructif anonyme sur un employé nommé du
-portail. **Tranche A seulement implémentée à ce stade** : page publique de
-soumission (`/feedback/nouveau`) et de consultation (`/feedback`), sans
-compte. La soumission par un employé déjà connecté (`source: INTERNAL`)
-est prévue mais pas encore construite (colonne déjà en place pour éviter
-une migration supplémentaire).
+Troisième module : chaque employé **connecté** peut donner un avis structuré sur un collègue (« Collaboration ») ou sur les
+conditions de travail. L'auteur reste anonyme pour tout le monde, RH et DG compris.
 
-### Règle absolue : anonymat structurel de l'auteur
+### Quatre règles (2026-11-27, décision du responsable)
 
-**Aucune donnée permettant d'identifier l'auteur d'un message ne doit
-JAMAIS être stockée, ni même transiter dans un log serveur.** Cette règle
-prime sur tout le reste du module et a été vérifiée à chaque étape,
-au-delà de la simple relecture de code :
+1. **Module privé** : il faut être connecté pour donner ou lire un avis. `/feedback` est dans le groupe `(dashboard)`
+   (coquille du portail), n'est plus exclu du `matcher` de `frontend/src/proxy.ts`, et la page comme la Server Action
+   revérifient elles-mêmes `getSession()`. `/feedback/nouveau` redirige vers `/feedback#soumettre-un-feedback`.
+   `source` vaut toujours `INTERNAL` ; l'enum `FeedbackSource` est gardé (les anciens avis gardent `PUBLIC`). La liste
+   publique des avis n'existe plus.
+2. **RH et DG voient les vrais noms** des destinataires et les avis « Conditions de travail » : permission
+   `feedback.voir_details` (voir plus bas). Personne d'autre, Admin compris.
+3. **Un avis « Collaboration » par collègue évalué et par jour calendaire** (Abidjan, UTC+0).
+4. **Un avis « Conditions de travail » par jour calendaire** ; ces avis ne sont lus qu'avec `feedback.voir_details`.
 
-- **Modèle `Feedback`** (`backend/prisma/schema.prisma`) — colonnes :
-  `id`, `content`, `recipientId`, `source`, `submittedAt`, `isModerated`,
-  `motifModeration`, `moderatedById`/`moderatedAt` (traçabilité de
-  l'ACTION DE MODÉRATION elle-même, RH/DG — sans rapport avec l'auteur du
-  message). **Aucune colonne** `authorId`/`authorIp`/`authorSession` ni
-  équivalent, sous aucune forme.
-- **`submittedAt` est une colonne SQL `DATE`** (`@db.Date`, jamais
-  `TIMESTAMP`) — garantie posée au niveau du **schéma**, pas seulement par
-  convention applicative : aucune heure/minute/seconde n'est
-  physiquement stockable, même par erreur d'un futur appelant. Vérifié en
-  base après une soumission réelle : `submittedAt` vaut exactement
-  `AAAA-MM-JJT00:00:00.000Z` et `information_schema.columns` confirme
-  `data_type: "date"` (pas `timestamp`).
-- **Aucun cookie posé pour un visiteur anonyme** — `/feedback` et
-  `/feedback/nouveau` sont exclus du **`matcher`** de `frontend/src/proxy.ts`
-  lui-même (pas seulement autorisés dans le callback `authorized` de
-  `auth.config.ts`). Un chemin simplement "autorisé" par `authorized`
-  passe quand même par le wrapper `NextAuth(...).auth`, qui pose ses
-  propres cookies (`authjs.csrf-token`, `authjs.callback-url`) sur
-  **toute** requête qu'il traite, y compris une requête finalement
-  autorisée — **constaté empiriquement** lors de la construction de ce
-  module (`Set-Cookie` présent malgré `authorized` renvoyant `true`).
-  Seule l'exclusion du matcher empêche réellement le middleware de
-  s'exécuter. Vérifié par inspection réseau réelle (pas supposée) : GET
-  et POST (soumission) sur les deux routes renvoient zéro `Set-Cookie`,
-  alors que `/login` et toute route protégée (ex: `/pointage/pointer`)
-  continuent d'en recevoir normalement. Ancré avec `$` dans le matcher
-  (pas de préfixe libre) pour ne jamais lever l'authentification d'une
-  future route interne du module, ex: `/feedback/interne` (Tranche B).
-- **Aucune IP journalisée** — `soumettreFeedbackAction`
-  (`frontend/src/app/feedback/actions.ts`) ne lit **plus aucune IP** depuis le
-  retrait de la limite anti-spam (2026-11-25, voir plus bas) : auparavant elle
-  servait seulement de clé d'un compteur en mémoire. Rien n'est écrit en base,
-  passé à `console.log` ni au logger d'audit persistant du projet.
-  Vérification exhaustive faite par grep projet entier : le portail a une
-  fonction `logAuditAction` (`frontend/src/lib/auditLog.ts`) qui, elle,
-  persiste bien l'IP en base (utilisée par login, pointage, actions admin
-  users/services, profil) — confirmé que `soumettreFeedbackAction` ne
-  l'appelle **jamais** (seule mention : un commentaire expliquant pourquoi).
-  Confirmé aussi qu'aucun mécanisme de journalisation globale
-  (`instrumentation.ts`, middleware générique, `morgan`/`pino`/`winston`)
-  n'existe dans le projet — le seul log qui existe sur cette route est le
-  log natif `next dev` (méthode + chemin + statut + timing), qui ne
-  contient jamais d'adresse IP.
+| Écran | `feedback.moderer` + `feedback.voir_details` (RH, DG) | `feedback.moderer` seul (Admin) | Autres |
+|---|---|---|---|
+| Modération `/feedback/admin` | vrai nom du destinataire, avis « Conditions de travail » | pseudonyme, aucun avis « Conditions de travail » | refusé |
+| Export `/api/feedback/export` | même règle | même règle | refusé |
+| `/feedback` (formulaire) | formulaire | formulaire | formulaire |
+| « Mes critiques reçues » | inchangé (`peutRecevoirFeedback`) | inchangé | inchangé |
 
-### Anti-spam : limite d'envoi RETIRÉE (2026-11-25)
+`feedback.voir_details` seule n'ouvre pas la modération : `feedback.moderer` reste la porte d'entrée.
 
-La limite par IP (`checkRateLimit`, en mémoire) a été retirée de `soumettreFeedbackAction` le 2026-11-25 sur décision du superviseur ; l'IP n'est
-plus lue du tout par cette action (`frontend/src/lib/rate-limit.ts` reste utilisé par `/login` et « mot de passe oublié »). Seule protection restante :
-le champ piège `site_web` ci-dessous. **Risque assumé : la page publique n'a plus aucune limite d'envoi.**
+- **Filtrage côté serveur** : `getAdminFeedbacks(filters, acces)`, `getFeedbackStats(acces)` et
+  `getDestinatairesAyantRecuUnFeedback(acces)` prennent un `AccesFeedback` **obligatoire**. Sans `voirDetails`, la requête
+  se limite à `COLLABORATION`, aucun nom n'est lu, les paramètres `type` et `destinataire` sont ignorés, et les
+  statistiques ne comptent pas les avis « Conditions de travail ». L'entrée envoyée au navigateur porte un seul champ
+  `destinataire` (nom réel **ou** pseudonyme) : jamais l'identifiant du destinataire.
+- **Modération** : bouton « Voir » (`DetailFeedbackDialog.tsx` : date, type, destinataire, texte entier, réponses question par
+  question). Les réponses viennent de `detailNotesFeedback` (`feedback-questions.ts`), qui ne garde que les questions
+  connues et les valeurs valides : le JSON `ratings` brut n'est jamais envoyé. Ancien avis sans `ratings` : texte seul.
+  Filtres « Type » (tous les modérateurs ; « Conditions de travail » proposé avec `voirDetails` seulement) et
+  « Destinataire » (`voirDetails` seulement, personnes ayant reçu au moins un avis, triées par nom, repris par l'export) ;
+  la colonne « Destinataire » n'est triable (sur le nom réel) qu'avec `voirDetails`.
+
+### Règle absolue : l'auteur n'est jamais enregistré
+
+- **Modèle `Feedback`** — colonnes : `id`, `content`, `recipientId`, `source`, `type`, `ratings`, `submittedAt`,
+  `isModerated`, `motifModeration`, `moderatedById`/`moderatedAt` (qui a MODÉRÉ, sans rapport avec l'auteur).
+  **Aucune colonne** `authorId`/`authorIp`/`authorSession` ni équivalent.
+- **`submittedAt` est une colonne SQL `DATE`** : aucune heure n'est stockable.
+- **Aucune IP lue** par `soumettreFeedbackAction`, aucun `console.log`, `logAuditAction`, `HistoriqueEntry` ni journal
+  technique sur l'envoi. Les erreurs d'écriture sont avalées sans être journalisées (une erreur Prisma peut citer les
+  valeurs écrites). `backend/src/feedback.ts` ne reçoit **jamais** l'identifiant de l'auteur.
+- La connexion elle-même reste tracée comme partout (`LOGIN_SUCCESS` avec IP) : elle ne dit rien d'un avis. Les anciennes
+  garanties « aucun cookie pour un visiteur » et les vérifications associées **n'ont plus d'objet** (plus de visiteur).
+
+### Limite d'un avis par jour : la trace chiffrée (`FeedbackQuota`)
+
+- Table `FeedbackQuota` : `cle` (unique) et `jour` (`DATE`), **aucune autre colonne, aucune relation**. Ne jamais en ajouter.
+- `cle` = HMAC-SHA256 de `<auteur>|<cible>|<AAAA-MM-JJ>` (cible : id du destinataire, ou `CONDITIONS_TRAVAIL`), avec une clé
+  dérivée `HMAC-SHA256(AUTH_SECRET, "feedback-quota-v1")` (`backend/src/feedbackQuota.ts`, pur, testé, jamais dans
+  `client-safe.ts`). **Sans `AUTH_SECRET`, l'envoi est refusé.** Changer `AUTH_SECRET` en cours de journée remet les
+  limites du jour à zéro.
+- Trace et avis sont écrits dans **une seule transaction** (`createFeedback(tx, …)`) : un avis qui échoue ne consomme pas la
+  limite ; deux envois simultanés, un seul passe (contrainte d'unicité).
+- **`ON CONFLICT DO NOTHING` (`createMany` + `skipDuplicates`), pas une erreur `P2002`** : une violation d'unicité ferait
+  écrire `Key (cle)=(…) already exists` dans les journaux de PostgreSQL, horodaté, qui survivraient à la purge. Ne pas
+  revenir à un `create` suivi d'un `catch P2002`.
+- Une trace d'un jour passé ne bloque jamais (effacée dans la transaction si elle porte la même clé).
+- **Purge** : la tâche quotidienne de 03:00 (`lib/taches/purge.ts`) efface les lignes dont `jour` est antérieur au jour
+  courant (`quotasFeedbackSupprimes` au bilan). Planificateur arrêté (`PLANIFICATEUR_ACTIF=false`) = traces conservées.
+  La table n'est ni dans la réinitialisation globale ni dans sa sauvegarde (classée `CONSERVEE`).
+- Le formulaire annonce d'avance les collègues déjà évalués aujourd'hui (confort ; la Server Action reste l'autorité).
+
+**Ce que peut faire quelqu'un qui a à la fois la base et `AUTH_SECRET`** (hébergeur, exploitant) : recalculer les empreintes
+de tous les couples (auteur, cible) et retrouver qui a évalué un collègue donné, ou donné un avis sur les conditions de
+travail, **dans la journée**, tant que la trace existe. De plus, la trace et l'avis étant écrits dans la même transaction,
+ils partagent le même identifiant de transaction PostgreSQL (colonne système `xmin`) et se suivent physiquement : il peut
+alors relier l'auteur retrouvé **à son avis précis**, pas seulement au collègue évalué. Après la purge, la base vivante ne
+porte plus ce lien (les lignes effacées disparaissent au `VACUUM`), **mais une sauvegarde ou une copie des fichiers de la
+base prise avant la purge (journal WAL compris) le conserve** : leur durée de conservation borne la garantie. Aucun
+utilisateur du portail, RH et DG compris, ne peut faire ce rapprochement depuis l'application.
+
+**Texte affiché aux employés** (ne rien promettre de plus, y compris dans les cartes de réassurance) : « Votre avis est
+anonyme : ni la RH, ni la Direction, ni personne d'autre ne peut voir qui l'a écrit. Pour limiter chaque personne à un
+avis par collègue et par jour, le portail conserve une trace technique chiffrée jusqu'au lendemain, puis l'efface
+automatiquement. Les avis sur les conditions de travail sont lus uniquement par la RH et la Direction générale. »
+
+Le serveur refuse aussi un destinataire inactif **ou** dont le rôle a `peutRecevoirFeedback: false` (rejeu réseau vers un
+compte Admin), et l'auto-évaluation. Test de bout en bout : `e2e/feedback-prive.mjs`.
+
+### Anti-spam
+
+La limite par IP a été retirée le 2026-11-25 (décision du superviseur) et l'IP n'est plus lue. Depuis le 2026-11-27, le
+module est privé et limité à un avis par collègue et par jour (voir ci-dessus) ; le champ piège `site_web` reste.
 
 ### Anti-bot : honeypot (pas de CAPTCHA tiers pour cette V1)
 
@@ -6044,16 +6066,23 @@ runtime ajouté en Tranche B réattribuait automatiquement cette permission
 révocation Admin — corrigé, `Admin` n'y a plus jamais accès sauf choix
 manuel explicite d'un Admin via `/admin/roles`.
 
+### Permission `feedback.voir_details`
+
+« Voir les destinataires et les avis sur les conditions de travail (FeedbackApp) », module `feedback`. Donnée aux rôles
+**RH et DG** seulement, **jamais à Admin**, jamais héritée de `estAdmin`. Posée par `rolesCibles.ts`/`seed.ts` et par la
+migration `20261127090000_feedback_prive_quota_voir_details` (idempotente, une seule fois ; elle crée aussi
+`FeedbackQuota`). **Aucune attribution au démarrage** ; librement modifiable dans `/admin/roles` (section « Module
+FeedbackApp »). Conséquence à connaître : un compte qui accède à `/admin/roles` peut la cocher pour n'importe quel rôle,
+et le texte affiché aux employés (« lus uniquement par la RH et la Direction générale ») ne reste vrai que si elle reste
+sur ces deux rôles. Un rôle combiné créé à la main (ex. « Finance/RH ») ne la reçoit pas automatiquement.
+
 ### Décisions confirmées
 
 - **Destinataires proposables** (`getFeedbackRecipients`,
   `backend/src/feedback.ts`) : **tous** les `User` actifs du portail dont
   le rôle est éligible (`role.peutRecevoirFeedback`, voir ci-dessous) —
   confirmé, ne pas restreindre par rôle métier au-delà de ça.
-- **Destinataire jamais affiché publiquement** (`getPublicFeedbacks`) : la
-  vue publique (`/feedback`) ne montre que le contenu et la date (arrondie
-  au jour) des messages `source: PUBLIC` non modérés — confirmé, ne pas
-  changer.
+- Le formulaire ne propose pas le compte connecté lui-même.
 
 ### `Role.peutRecevoirFeedback` — exclure les comptes techniques
 
@@ -6096,26 +6125,10 @@ dur** (`role.name === "Admin"`), même principe que `estAdmin`/
   Action réel, pas une écriture DB directe) — Finance a bien disparu puis
   réapparu de la liste après avoir retiré puis rendu l'éligibilité.
 
-### Coexistence avec le flux mot de passe oublié (Thierry)
+### Middleware
 
-`frontend/src/lib/auth.config.ts` est partagé entre l'exclusion FeedbackApp
-et le flux mot de passe oublié/réinitialisation de Thierry
-(`/forgot-password`, `/reset-password`) — **vérifié que les deux
-coexistent sans que l'un écrase l'autre**, aucune correction nécessaire :
-les deux logiques ne se recouvrent sur aucun chemin (le matcher de
-`proxy.ts` exclut uniquement `feedback$`/`feedback/nouveau$` ; `isAuthRoute`
-dans `authorized()`, lui, couvre `/login`/`/invitation`/`/forgot-password`/
-`/reset-password` — deux mécanismes disjoints, sur des routes disjointes,
-dans le même fichier sans interférence). Testé de bout en bout après la
-fusion : soumission réelle de `/forgot-password` → email simulé en
-console (aucun SMTP configuré dans `.env`, mode simulation sans risque
-d'envoi réel) avec lien de réinitialisation → `/reset-password/<token>`
-répond 200. `nodemailer`/`@types/nodemailer` (ajoutés par Thierry dans
-`frontend/package.json`) n'étaient pas installés après la fusion
-(`node_modules` non régénéré) — `npm install` exécuté pour corriger,
-resolu depuis le cache local sans accès réseau ; sans rapport avec
-`auth.config.ts`/`proxy.ts`, mais nécessaire pour tester réellement ce
-flux.
+Aucune route FeedbackApp n'est exclue du `matcher` de `proxy.ts` ni traitée comme publique dans `auth.config.ts`
+(l'ancienne exclusion de `/feedback` a été retirée le 2026-11-27). Le flux mot de passe oublié est inchangé.
 
 ### Module FeedbackApp — Tranche B (fusion Thierry : Admin + User)
 
@@ -6162,19 +6175,9 @@ d'ailleurs pas été touchés par cette fusion) : RH refusé sur
 même Collaborateur refusée avec le message attendu
 (`verifierEligibiliteDonneur`, `delegations/actions.ts`, inchangé).
 
-**Anonymat sur les nouveaux écrans Tranche B : confirmé, aucune fuite** —
-`getUserFeedbacks(userId)` filtre strictement `recipientId: userId`,
-vérifié avec deux comptes de test réels (Collaborateur/RH) : isolation
-croisée parfaite, zéro contamination. `/feedback/admin` et
-`/api/feedback/export` : gardés **côté serveur** (307/403/401 testés par
-requête réseau directe avec un compte sans `feedback.moderer`, et sans
-session du tout), jamais un masquage UI seul. `getAdminFeedbacks`
-pseudonymise le **destinataire** (`recipientPseudo`, dérivé de
-`recipientId` — ex: "Collaborateur #4CHY") sur la liste globale de
-modération, conformément au CDC de Thierry ; ceci concerne l'anonymat du
-DESTINATAIRE dans cet écran-là (un choix distinct de la règle absolue sur
-l'AUTEUR) — le champ structuré ne contient jamais le vrai nom, vérifié
-sur la charge utile RSC brute.
+**Écrans Tranche B** — `getUserFeedbacks(userId)` filtre strictement `recipientId: userId` ; `/feedback/admin` et
+`/api/feedback/export` sont gardés côté serveur (307/403/401), jamais par un masquage seul. La pseudonymisation du
+destinataire ne vaut plus que pour les comptes sans `feedback.voir_details` (voir « Quatre règles »).
 
 ### Régression `ensureFeedbackPermissions()` — réattribution automatique à chaque process
 
@@ -6253,7 +6256,7 @@ problème. **Constaté en pratique que non** : `next dev` échouait avec
 `Module not found: Can't resolve 'dns'` (`pg` → `dns`), car même un
 re-export nommé force le bundler à évaluer le module source en entier, et
 `feedback.ts` importe `./prisma` en tête de fichier pour ses fonctions de
-lecture (`getFeedbackRecipients`, `getPublicFeedbacks`). **Solution** :
+lecture (`getFeedbackRecipients`, et à l'époque `getPublicFeedbacks`, supprimée depuis). **Solution** :
 les constantes/validations sans aucune dépendance Prisma
 (`FEEDBACK_CONTENT_MIN`/`MAX`, `FEEDBACK_BANNED_WORDS`,
 `containsBannedContent`, `containsUrl`) vivent maintenant dans
@@ -6299,9 +6302,7 @@ plus jamais de champ `content` dans `formData`.
   ne portent jamais, même indirectement, de donnée permettant de
   reconstituer l'auteur — uniquement des notes/choix sur des questions
   FIXES, jamais un identifiant, une IP, un texte libre.
-- Aucun changement à `submittedAt` (`@db.Date`), aux vérifications de
-  cookie/IP/honeypot déjà en place — toutes revérifiées après cette
-  refonte, aucune régression (voir "Vérifications" plus bas).
+- Aucun changement à `submittedAt` (`@db.Date`).
 
 **Questions et structure** (`backend/src/feedback-questions.ts`, fichier
 PUR sans dépendance Prisma — mêmes règles que `feedback-constants.ts`,
@@ -6363,49 +6364,9 @@ maître de stage avant mise en production** (`generateFeedbackComment`,
   d'une phrase de secours — jamais déclenchés en pratique, gardés par
   défense en profondeur).
 
-**Visibilité par `type`** — changement de comportement important :
-
-- **`COLLABORATION` : privé.** Visible uniquement par le destinataire
-  (`getUserFeedbacks`, filtré `recipientId: userId` ET `type:
-  COLLABORATION`) et par les comptes `feedback.moderer` (`getAdminFeedbacks`,
-  sans filtre de type par défaut). **Les critiques sur un collègue, qui
-  étaient publiques avant cette tâche (`source: PUBLIC`), sont désormais
-  strictement privées.**
-- **`CONDITIONS_TRAVAIL` : public.** `getPublicFeedbacks` (`/feedback`)
-  filtre désormais sur **`type: CONDITIONS_TRAVAIL`, plus jamais sur
-  `source`** : la visibilité publique dépend de la nature de l'avis, pas
-  de qui l'a soumis (un avis `CONDITIONS_TRAVAIL` d'un employé connecté,
-  `source: INTERNAL`, est tout aussi public qu'un avis anonyme).
-- **`getAdminFeedbacks`** (écran de modération) renvoie toujours les
-  **deux types sans filtre par défaut** (un filtre `type` optionnel existe
-  dans `AdminFeedbackFilters` pour un usage futur côté UI) — colonne
-  "Type" ajoutée à `AdminFeedbackTable.tsx` pour les distinguer visuellement.
-  `recipientPseudo` devient `null` pour `CONDITIONS_TRAVAIL` (pas de
-  destinataire à pseudonymiser) — corrige au passage un plantage potentiel
-  (`recipientId.replace(...)` sur `null`) introduit par la nullabilité du
-  champ.
-
-**Vérifications, comptes de test réels + rejeux réseau** :
-- Un avis `COLLABORATION` de test (soumis via le protocole Server Action
-  réel) n'apparaît **jamais** sur `/feedback`, même en requête directe non
-  authentifiée — confirmé (0 occurrence).
-- Un avis `CONDITIONS_TRAVAIL` de test apparaît publiquement sans
-  authentification, zéro cookie — confirmé.
-- Le destinataire (compte de test réel) voit son `COLLABORATION` dans
-  "Mes critiques reçues" ; un autre collaborateur connecté ne le voit
-  jamais — confirmé avec deux comptes réels.
-- Admin, DG et RH voient chacun les **deux types** dans l'historique de
-  modération — testé séparément pour les 3 rôles (connexion réelle
-  chacun), confirmé. Un compte sans `feedback.moderer` reste refusé
-  (307 vers `/?error=acces_refuse_moderation`).
-- Réponses incomplètes rejetées côté serveur avec un message précis
-  (testé par rejeu réseau direct, contournant le formulaire).
-- Honeypot (et, à l'époque, rate limiting — retiré le 2026-11-25) revérifiés fonctionnels avec le nouveau
-  formulaire (mêmes mécanismes, inchangés).
-- **Aucune régression de bundle** : `feedback-questions.ts` n'importe que
-  `./feedback-constants` et le type `FeedbackType` généré (sûr) — jamais
-  `./prisma`. Un vrai `next build` passe intégralement (65 routes, aucune
-  erreur "Module not found").
+**Visibilité par `type`** (règles en vigueur : voir « Quatre règles » en tête du module) : un avis `COLLABORATION` est lu
+par son destinataire et par la modération ; un avis `CONDITIONS_TRAVAIL` n'est lu qu'avec `feedback.voir_details`. Aucun
+avis n'est public.
 
 ### `feedback.moderer` accordé à Admin — décision délibérée (pas l'incident précédent)
 
@@ -6428,9 +6389,8 @@ explicite et documenté**, appliqué UNE SEULE FOIS :
   comme n'importe quel autre rôle — jamais réinitialisé automatiquement
   (le mécanisme runtime qui faisait ça a été retiré, voir "Régression
   `ensureFeedbackPermissions()`" plus haut).
-- Vérifié en pratique : connexion réelle en Admin, accès à
-  `/feedback/admin` réussi, les deux types de feedback visibles dans
-  l'historique.
+- L'Admin accède à `/feedback/admin` mais n'y voit que les avis « Collaboration », destinataires pseudonymisés (il n'a pas
+  `feedback.voir_details`).
 
 ### FeedbackApp — refonte visuelle de la soumission
 
@@ -6445,23 +6405,9 @@ installation Windows/VSCode) — appliqué à la place les principes déjà
 `BrandBackdrop.tsx`, palette/ombres/animations de `globals.css`), signalé
 explicitement plutôt que silencieusement ignoré.
 
-**IA repensée** : `/feedback/nouveau` (formulaire seul) et `/feedback`
-(hub ou liste publique selon connexion, apporté par Thierry) fusionnent en
-UNE seule page — hero, réassurance, formulaire (les deux onglets) et liste
-publique cohabitent désormais sur `/feedback`, pour visiteur anonyme ET
-employé connecté. `/feedback/nouveau` devient une redirection vers
-`/feedback#soumettre-un-feedback` (ancre directe sur la section de
-soumission, jamais un simple retrait de route — même principe que la
-redirection déjà en place pour `/admin/feedbacks`). Les liens rapides
-"Mes critiques reçues"/"Modération" du Hub de Thierry sont conservés
-(affichés en haut si le compte est éligible) mais réduits à une rangée de
-liens secondaires — ils n'occupent plus toute la page.
-
-**Fichiers déplacés** : `StarRating.tsx`/`RatingSlider.tsx`/
-`ChoiceButtons.tsx`/`NumberScale.tsx`/`FeedbackForm.tsx`/`actions.ts`
-vivent maintenant sous `frontend/src/app/feedback/` (plus `.../nouveau/`)
-— convention du projet (colocalisation à la page qui les utilise
-réellement).
+**IA** : une seule page `/feedback` (hero, réassurance, formulaire à deux onglets, liens « Mes critiques reçues » et
+« Modération » selon les droits) ; `/feedback/nouveau` y redirige (ancre `#soumettre-un-feedback`). La page et ses
+composants vivent dans `frontend/src/app/(dashboard)/feedback/`, à côté de `admin/` et `mes-retours/`.
 
 **Traitement visuel par écran** :
 
@@ -6536,36 +6482,8 @@ réellement).
   appelle `setState`. Après une `COLLABORATION` réussie : réinitialise le
   formulaire et bascule vers l'onglet "Conditions de travail". Après une
   `CONDITIONS_TRAVAIL` réussie : réinitialise l'assistant (retour à
-  l'étape 1) et appelle `router.refresh()` pour que le nouvel avis
-  apparaisse immédiatement dans la liste publique en bas de la MÊME page
-  — jamais un rechargement brut.
-- **Liste publique** (`PublicFeedbackCard`) — vraies cartes (icône dans
-  pastille `info`, barre d'accent verticale, `.card-shadow-hover`), plus
-  une liste plate. État vide : `EmptyState` (composant partagé déjà
-  existant, pastille + message), pas un texte gris isolé.
-
-**Vérifications, parcours réel** :
-- Parcours anonyme complet (requêtes réseau réelles, protocole Server
-  Action) : soumission `COLLABORATION` → succès → soumission
-  `CONDITIONS_TRAVAIL` → succès → le texte généré pour `CONDITIONS_TRAVAIL`
-  apparaît sur `/feedback` en relecture, celui de `COLLABORATION` jamais.
-- **Zéro cookie à chaque étape** revérifié : `GET /feedback` (anonyme),
-  `GET /feedback/nouveau` (redirection), et les deux `POST /feedback`
-  (soumissions) — aucun `Set-Cookie` dans les 4 cas.
-- Un vrai `next build` passe intégralement (65 routes, `/feedback/nouveau`
-  redevenu statique `○` puisque simple redirection).
-- Aucune régression : `mes-retours` (compte destinataire réel) et
-  `/feedback/admin` (compte avec `feedback.moderer`) fonctionnent toujours
-  après le déplacement des fichiers et la fusion des pages ; le tableau de
-  modération affiche toujours les deux `type`.
-- Rendu mobile : vérifié par relecture de code (pas de capture d'écran
-  disponible dans cet environnement) — grilles `grid-cols-1 sm:grid-cols-*`
-  sur les cartes de réassurance/l'échelle 1-10/les onglets, titres d'étape
-  masqués sous `sm:`, hero en `overflow-hidden` (le triangle de texture
-  surdimensionné ne peut jamais provoquer de débordement horizontal).
-  Aucune capture d'écran produite (outil non disponible dans cet
-  environnement) — description précise fournie dans le résumé de la
-  tâche pour validation par le maître de stage.
+  l'étape 1). Dans les deux cas `router.refresh()` relit les avis déjà
+  donnés aujourd'hui — jamais un rechargement brut.
 
 ## Module « Encaissements, taxes » (en conception, V2)
 

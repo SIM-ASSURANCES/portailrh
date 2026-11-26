@@ -115,7 +115,7 @@ function getModuleCardState(moduleKey: string, session: { permissions: string[] 
 
 /**
  * Filigrane logo des cartes "Vos accès" — même technique que
- * `FeedbackHero()` (`app/feedback/page.tsx` : SVG `BRAND_ICON_PATHS`,
+ * `FeedbackHero()` (`(dashboard)/feedback/page.tsx` : SVG `BRAND_ICON_PATHS`,
  * `fill="currentColor"`, très pâle, débordant en haut à droite d'un
  * conteneur `relative overflow-hidden`), mais volontairement réduit
  * (`size-24 sm:size-32` contre `size-56 sm:size-72` sur le hero) : ces

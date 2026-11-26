@@ -1578,10 +1578,10 @@ enum FeedbackSource {
 /// (qui distingue QUI a soumis — anonyme ou employé connecté), jamais
 /// confondu : la visibilité dépend de `type`, jamais de `source`.
 enum FeedbackType {
-  /// Avis sur un collaborateur nommé (`recipientId` obligatoire) — privé.
+  /// Avis sur un collaborateur nommé (`recipientId` obligatoire) — lu par le destinataire et la modération.
   COLLABORATION
   /// Avis sur les conditions de travail générales de l'entreprise
-  /// (`recipientId` toujours `null`, aucun destinataire) — public.
+  /// (`recipientId` toujours `null`, aucun destinataire) — lu avec `feedback.voir_details` seulement (RH, DG).
   CONDITIONS_TRAVAIL
 }
 
@@ -1650,6 +1650,14 @@ model Feedback {
   @@index([source])
   @@index([isModerated])
   @@index([type])
+}
+
+/// FeedbackApp — limite « un avis par collègue et par jour ». Trace TEMPORAIRE : empreinte HMAC-SHA256 de
+/// « auteur|cible|jour » (voir `backend/src/feedbackQuota.ts`) et le jour, RIEN d'autre : ni auteur, ni heure, ni
+/// relation vers `Feedback` ou `User`. Les jours passés sont effacés par la purge quotidienne. Ne jamais ajouter de colonne.
+model FeedbackQuota {
+  cle  String   @unique
+  jour DateTime @db.Date
 }
 
 enum StatutRetourExceptionnel {

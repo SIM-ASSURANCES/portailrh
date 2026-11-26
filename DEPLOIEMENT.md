@@ -162,7 +162,7 @@ planificateur au lancement du serveur) : plus de dépendance à cron-job.org ni 
 |---|---|
 | Relances de justification du pointage (retard, départ anticipé) | toutes les 5 minutes |
 | Absences et oublis de départ | du lundi au vendredi, à 17:30 et 20:00 |
-| Purge des journaux (exécutions de plus de 90 jours) | chaque jour à 03:00 |
+| Purge des journaux (exécutions de plus de 90 jours) et des traces de quota FeedbackApp des jours passés | chaque jour à 03:00 |
 
 - **Une seule exécution à la fois**, même avec deux instances : verrou consultatif PostgreSQL par tâche ; une exécution qui
   trouve le verrou pris est enregistrée « ignorée ».

@@ -30,6 +30,7 @@ export default async function AdminRolesPage() {
   const feedbackModererPermission = feedbackModule?.permissions.find(
     (p) => p.key === "feedback.moderer"
   );
+  const feedbackVoirDetailsPermission = feedbackModule?.permissions.find((p) => p.key === "feedback.voir_details");
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-6 py-10">
@@ -133,6 +134,14 @@ export default async function AdminRolesPage() {
                       permissionId={feedbackModererPermission.id}
                       label="Peut modérer les feedbacks"
                       defaultChecked={grantedIds.has(feedbackModererPermission.id)}
+                    />
+                  ) : null}
+                  {feedbackVoirDetailsPermission ? (
+                    <PermissionToggle
+                      roleId={role.id}
+                      permissionId={feedbackVoirDetailsPermission.id}
+                      label={feedbackVoirDetailsPermission.label}
+                      defaultChecked={grantedIds.has(feedbackVoirDetailsPermission.id)}
                     />
                   ) : null}
                 </div>

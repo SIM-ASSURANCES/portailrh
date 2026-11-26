@@ -1,15 +1,15 @@
 import ExcelJS from "exceljs";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSession, hasPermission } from "@/lib/auth";
-import { getAdminFeedbacks, type AdminFeedbackFilters } from "backend";
+import { getAdminFeedbacks, PERMISSION_FEEDBACK_VOIR_DETAILS, type AdminFeedbackFilters } from "backend";
 
 const HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF004B9C" } };
 const HEADER_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF" } };
 
 /**
  * Export CSV / Excel des feedbacks pour l'Espace Admin (Modération).
- * Strictement protégé par `feedback.moderer` (RH & DG).
- * Respect du CDC : aucune identification d'auteur ni de destinataire nominatif.
+ * Strictement protégé par `feedback.moderer`. Aucune identification d'auteur. Noms réels des destinataires et avis
+ * « Conditions de travail » seulement avec `feedback.voir_details` (filtrage fait par `getAdminFeedbacks`).
  */
 export async function GET(request: NextRequest) {
   const session = await getSession();
@@ -26,10 +26,14 @@ export async function GET(request: NextRequest) {
     au: searchParams.get("au") ?? undefined,
     statut: (searchParams.get("statut") as AdminFeedbackFilters["statut"]) ?? undefined,
     source: (searchParams.get("source") as AdminFeedbackFilters["source"]) ?? undefined,
+    type: (searchParams.get("type") as AdminFeedbackFilters["type"]) ?? undefined,
+    destinataire: searchParams.get("destinataire") ?? undefined,
     search: searchParams.get("search") ?? undefined,
   };
 
-  const feedbacks = await getAdminFeedbacks(filters);
+  const feedbacks = await getAdminFeedbacks(filters, {
+    voirDetails: hasPermission(session, PERMISSION_FEEDBACK_VOIR_DETAILS),
+  });
 
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("Feedbacks");
@@ -37,6 +41,7 @@ export async function GET(request: NextRequest) {
   worksheet.columns = [
     { header: "ID", key: "id", width: 38 },
     { header: "Date de soumission", key: "submittedAt", width: 18 },
+    { header: "Type", key: "type", width: 22 },
     { header: "Source", key: "source", width: 14 },
     { header: "Destinataire", key: "recipient", width: 24 },
     { header: "Statut", key: "statut", width: 14 },
@@ -55,8 +60,9 @@ export async function GET(request: NextRequest) {
     worksheet.addRow({
       id: f.id,
       submittedAt: new Date(f.submittedAt).toLocaleDateString("fr-FR"),
+      type: f.type === "COLLABORATION" ? "Collaboration" : "Conditions de travail",
       source: f.source === "PUBLIC" ? "Public" : "Interne",
-      recipient: f.recipientPseudo, // Pseudonymisé
+      recipient: f.destinataire ?? "—",
       statut: f.isModerated ? "Modéré (Retiré)" : "Actif",
       content: f.content,
       moderatedBy: f.moderatedByNom ?? "—",

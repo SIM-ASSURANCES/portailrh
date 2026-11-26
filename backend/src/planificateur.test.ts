@@ -221,7 +221,10 @@ describe("libellés", () => {
   it("bilan lisible", () => {
     expect(libelleBilan("RELANCES_JUSTIFICATION", { envois: 3, clotures: 1, erreurs: 0 })).toBe("3 envois, 1 clôture, 0 erreur");
     expect(libelleBilan("ABSENCES", { nouvellesAbsences: 2, oublisDetectes: 1 })).toBe("2 nouvelles absences, 1 oubli de départ");
-    expect(libelleBilan("PURGE", null)).toBe("0 exécution et 0 incident supprimés");
+    expect(libelleBilan("PURGE", null)).toBe("0 exécution et 0 incident supprimés, 0 trace de quota FeedbackApp effacée");
+    expect(libelleBilan("PURGE", { executionsSupprimees: 2, incidentsSupprimes: 1, quotasFeedbackSupprimes: 3 })).toBe(
+      "2 exécutions et 1 incident supprimés, 3 traces de quota FeedbackApp effacées"
+    );
     expect(libelleBilan("RAPPELS_CONGES", { rappels: 2, erreurs: 1 })).toBe("2 rappels, 1 erreur");
     // Tâches Gestion Compta : module non mis en service (rien lu), puis des chiffres ; le rappel de la taxe reste vide (GC-8).
     expect(libelleBilan("COMPTA_RELANCES", { traites: 0, erreurs: 0, enAttenteDuModule: true, moduleNonMisEnService: true })).toBe(

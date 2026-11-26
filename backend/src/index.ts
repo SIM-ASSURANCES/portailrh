@@ -54,6 +54,8 @@ export * from "./clotureDemandeDb";
 export * from "./chronoDemande";
 export * from "./retourExterneRattacheDb";
 export * from "./feedback";
+// Limite d'un avis par jour (node:crypto + secret) : serveur uniquement, jamais dans client-safe.
+export * from "./feedbackQuota";
 export * from "./reinitialisation";
 export * from "./reinitialisationClassification";
 export * from "./reinitialisationFichiers";

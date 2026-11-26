@@ -1,7 +1,13 @@
 import { redirect } from "next/navigation";
 import { PageHeader, StatCard, Button } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { getAdminFeedbacks, getFeedbackStats, type AdminFeedbackFilters } from "backend";
+import {
+  getAdminFeedbacks,
+  getDestinatairesAyantRecuUnFeedback,
+  getFeedbackStats,
+  PERMISSION_FEEDBACK_VOIR_DETAILS,
+  type AdminFeedbackFilters,
+} from "backend";
 import { AdminFeedbackTable } from "./AdminFeedbackTable";
 import { FeedbackFilters } from "./FeedbackFilters";
 
@@ -18,6 +24,8 @@ export default async function FeedbackAdminPage({
     au?: string;
     statut?: string;
     source?: string;
+    type?: string;
+    destinataire?: string;
     search?: string;
   }>;
 }) {
@@ -26,6 +34,9 @@ export default async function FeedbackAdminPage({
     redirect("/?error=acces_refuse_moderation");
   }
 
+  // Noms réels et avis « Conditions de travail » : RH et DG. Le filtrage est fait par les fonctions de lecture.
+  const acces = { voirDetails: hasPermission(session, PERMISSION_FEEDBACK_VOIR_DETAILS) };
+
   const params = await searchParams;
   const filters: AdminFeedbackFilters = {
     du: params.du || undefined,
@@ -33,11 +44,15 @@ export default async function FeedbackAdminPage({
     statut: (params.statut as AdminFeedbackFilters["statut"]) || undefined,
     source: (params.source as AdminFeedbackFilters["source"]) || undefined,
     search: params.search || undefined,
+    // Sans la permission, ces deux paramètres sont ignorés même saisis à la main dans l'URL.
+    type: acces.voirDetails ? (params.type as AdminFeedbackFilters["type"]) || undefined : undefined,
+    destinataire: acces.voirDetails ? params.destinataire || undefined : undefined,
   };
 
-  const [feedbacks, stats] = await Promise.all([
-    getAdminFeedbacks(filters),
-    getFeedbackStats(),
+  const [feedbacks, stats, destinataires] = await Promise.all([
+    getAdminFeedbacks(filters, acces),
+    getFeedbackStats(acces),
+    getDestinatairesAyantRecuUnFeedback(acces),
   ]);
 
   // Construit l'URL d'export CSV avec les mêmes filtres
@@ -46,6 +61,8 @@ export default async function FeedbackAdminPage({
   if (filters.au) exportQuery.set("au", filters.au);
   if (filters.statut) exportQuery.set("statut", filters.statut);
   if (filters.source) exportQuery.set("source", filters.source);
+  if (filters.type) exportQuery.set("type", filters.type);
+  if (filters.destinataire) exportQuery.set("destinataire", filters.destinataire);
   if (filters.search) exportQuery.set("search", filters.search);
 
   const exportHref = `/api/feedback/export${exportQuery.toString() ? `?${exportQuery.toString()}` : ""}`;
@@ -64,7 +81,7 @@ export default async function FeedbackAdminPage({
         }
       />
 
-      {/* Cartes statistiques globales anonymisées */}
+      {/* Cartes statistiques (périmètre selon la permission) */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Total des messages"
@@ -95,7 +112,19 @@ export default async function FeedbackAdminPage({
       </div>
 
       {/* Filtres de recherche */}
-      <FeedbackFilters initial={params} />
+      <FeedbackFilters
+        initial={{
+          du: params.du,
+          au: params.au,
+          statut: params.statut,
+          source: params.source,
+          search: params.search,
+          type: filters.type,
+          destinataire: filters.destinataire,
+        }}
+        voirDetails={acces.voirDetails}
+        destinataires={destinataires}
+      />
 
       {/* Tableau des messages */}
       <div className="space-y-3">
@@ -104,10 +133,12 @@ export default async function FeedbackAdminPage({
             Messages ({feedbacks.length})
           </h2>
           <span className="text-xs text-muted-foreground">
-            Conformément au CDC, les destinataires sont pseudonymisés.
+            {acces.voirDetails
+              ? "L'auteur de chaque avis reste anonyme."
+              : "Conformément au CDC, les destinataires sont pseudonymisés."}
           </span>
         </div>
-        <AdminFeedbackTable feedbacks={feedbacks} />
+        <AdminFeedbackTable feedbacks={feedbacks} voirDetails={acces.voirDetails} />
       </div>
     </div>
   );

@@ -49,7 +49,12 @@ export * from "./dateLivraisonArticle";
 // documenté ci-dessus pour `"./prisma"` (constaté concrètement : "Module
 // not found: Can't resolve 'dns'" via `pg` en Client Component). Voir
 // `./feedback-constants.ts`, qui n'importe rien de Prisma par construction.
-export { FEEDBACK_CONTENT_MIN, FEEDBACK_CONTENT_MAX } from "./feedback-constants";
+export {
+  FEEDBACK_CONTENT_MIN,
+  FEEDBACK_CONTENT_MAX,
+  MESSAGE_QUOTA_COLLABORATION,
+  MESSAGE_QUOTA_CONDITIONS_TRAVAIL,
+} from "./feedback-constants";
 // Définitions de questions (notation structurée) — nécessaires au Client
 // Component qui affiche le formulaire (étoiles/curseurs/choix, libellés,
 // options). `./feedback-questions.ts` n'importe que `./feedback-constants`

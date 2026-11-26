@@ -85,3 +85,9 @@ const URL_PATTERN =
 export function containsUrl(content: string): boolean {
   return URL_PATTERN.test(content);
 }
+
+/** Messages de la limite d'un avis par jour (serveur ET formulaire). */
+export const MESSAGE_QUOTA_COLLABORATION =
+  "Vous avez déjà donné un avis sur ce collègue aujourd'hui. Vous pourrez recommencer demain.";
+export const MESSAGE_QUOTA_CONDITIONS_TRAVAIL =
+  "Vous avez déjà donné votre avis sur les conditions de travail aujourd'hui. Vous pourrez recommencer demain.";

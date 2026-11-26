@@ -12,7 +12,7 @@
 
 Les permissions du module « Système » (`systeme.reinitialiser`, `enc.mettre_en_service`, `cpt.mettre_en_service`) n'apparaissent **pas** dans `/admin/roles` : elles sont posées par le seed ou la migration et ne se cochent pas à la main.
 
-Total : **71 permissions** réparties ainsi : Trésorerie 27, Pointage 9, Congés 4, Encaissements 9, Gestion Compta 18, Feedback 1, Système 3.
+Total : **72 permissions** réparties ainsi : Trésorerie 27, Pointage 9, Congés 4, Encaissements 9, Gestion Compta 18, Feedback 2, Système 3.
 
 ## Permissions réservées
 
@@ -45,6 +45,7 @@ Ne sont **jamais délégables** (même cochées, l'octroi est impossible) : `tre
 
 > Une permission **absente de `/admin/roles`** signifie que **sa migration n'est pas encore appliquée** : la personne qui déploie doit lancer `prisma migrate deploy` avant de régler les rôles. Permissions créées par les migrations récentes :
 >
+> - **FeedbackApp privé (2026-11-27)** — migration `20261127090000_feedback_prive_quota_voir_details` : `feedback.voir_details`.
 > - **Circuit de validation (2026-10-06 à 2026-10-08)** — migration `20261006100000_tresorerie_permissions_explicites, 20261006120000_circuit_validation_demandes` : `treso.decider_finance`, `treso.soumettre_dg`, `treso.annuler_reglement`, `treso.ajuster_retour`, `treso.valider_remboursement`, `treso.valider_retour_exceptionnel`, `treso.creer_retour_externe`, `treso.modifier_budget_categorie`, `treso.deleguer_acces`, `treso.modifier_description`, `treso.decider_dg`.
 > - **Lot J — budgets** — migration `20261023090000_budgets_parametrage` : `treso.valider_budget`.
 > - **Lot K — réorientation et reprise** — migration `20261026090000_circuit_reorientation_reprise` : `treso.reorienter_demande`.
@@ -126,7 +127,7 @@ Direction générale.
 - Accès à la console d'administration (« Administrateur », fixé à la création) : **non**
 - Peut être bénéficiaire d'une délégation : **non**
 - Peut recevoir un feedback (FeedbackApp) : **oui**
-- Nombre de permissions à cocher : **18**
+- Nombre de permissions à cocher : **19**
 
 **Trésorerie** (7)
 
@@ -154,9 +155,10 @@ Direction générale.
 - [ ] `cpt.consulter` — Gestion Compta : consulter les référentiels, contrats, encaissements et rattachements, et exporter.
 - [ ] `cpt.trancher_litige` — Gestion Compta : trancher un litige, rôle de supervision de la direction (écran pas encore livré).
 
-**Feedback** (1)
+**Feedback** (2)
 
 - [ ] `feedback.moderer` — Modérer les messages de FeedbackApp (masquer, rétablir) et exporter.
+- [ ] `feedback.voir_details` — FeedbackApp : voir les vrais noms des destinataires et lire les avis sur les conditions de travail (écran de modération et export, avec `feedback.moderer`). RH et DG seuls, jamais le rôle Admin. L'auteur d'un avis reste anonyme.
 
 **Système** (3)
 
@@ -190,7 +192,7 @@ Gère le pointage, les retards, absences et reportings RH.
 - Accès à la console d'administration (« Administrateur », fixé à la création) : **non**
 - Peut être bénéficiaire d'une délégation : **non**
 - Peut recevoir un feedback (FeedbackApp) : **oui**
-- Nombre de permissions à cocher : **13**
+- Nombre de permissions à cocher : **14**
 
 **Pointage** (8)
 
@@ -210,9 +212,10 @@ Gère le pointage, les retards, absences et reportings RH.
 - [ ] `conges.annuler` — Annuler un congé, même déjà commencé (demandeur : seulement avant le début, sans cette permission).
 - [ ] `conges.consulter_tous` — Consulter les congés de tous les employés et les exporter.
 
-**Feedback** (1)
+**Feedback** (2)
 
 - [ ] `feedback.moderer` — Modérer les messages de FeedbackApp (masquer, rétablir) et exporter.
+- [ ] `feedback.voir_details` — FeedbackApp : voir les vrais noms des destinataires et lire les avis sur les conditions de travail (écran de modération et export, avec `feedback.moderer`). RH et DG seuls, jamais le rôle Admin. L'auteur d'un avis reste anonyme.
 
 ### Assistant Finance
 
@@ -380,9 +383,9 @@ Un responsable de service est désigné dans **Admin > Services** (champ respons
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Collaborateur | 2 | 2 | 1 | 0 | 0 | 0 | 0 | 5 |
 | Finance | 22 | 0 | 1 | 0 | 0 | 0 | 0 | 23 |
-| DG | 7 | 3 | 2 | 0 | 2 | 1 | 3 | 18 |
+| DG | 7 | 3 | 2 | 0 | 2 | 2 | 3 | 19 |
 | Admin | 0 | 1 | 0 | 0 | 0 | 1 | 0 | 2 |
-| RH | 0 | 8 | 4 | 0 | 0 | 1 | 0 | 13 |
+| RH | 0 | 8 | 4 | 0 | 0 | 2 | 0 | 14 |
 | Assistant Finance | 5 | 0 | 1 | 0 | 0 | 0 | 0 | 6 |
 | Encaissements – Équipe technique | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 3 |
 | Encaissements – Finance | 0 | 0 | 0 | 8 | 0 | 0 | 0 | 8 |
@@ -392,7 +395,7 @@ Un responsable de service est désigné dans **Admin > Services** (champ respons
 | Compta – RFCRH | 0 | 0 | 0 | 0 | 13 | 0 | 0 | 13 |
 | Compta – Comptable | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 4 |
 | Compta – Direction | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 2 |
-| **Catalogue** | 27 | 9 | 4 | 9 | 18 | 1 | 3 | 71 |
+| **Catalogue** | 27 | 9 | 4 | 9 | 18 | 2 | 3 | 72 |
 
 ## À VALIDER PAR LE DG
 
@@ -492,6 +495,7 @@ Vérifié le 2026-10-22 sur deux bases jetables : (1) toutes les migrations seul
 | `cpt.cloturer_periode` | Gestion Compta | Gestion Compta : clôturer un mois | Gestion Compta : clôturer un mois (écran pas encore livré). | Compta – RFCRH |
 | `cpt.trancher_litige` | Gestion Compta | Gestion Compta : trancher un litige (direction générale) | Gestion Compta : trancher un litige, rôle de supervision de la direction (écran pas encore livré). | DG, Compta – Direction |
 | `feedback.moderer` | FeedbackApp | Modérer les messages FeedbackApp | Modérer les messages de FeedbackApp (masquer, rétablir) et exporter. | DG, Admin, RH |
+| `feedback.voir_details` | FeedbackApp | Voir les destinataires et les avis sur les conditions de travail (FeedbackApp) | FeedbackApp : voir les vrais noms des destinataires et lire les avis sur les conditions de travail (écran de modération et export, avec `feedback.moderer`). RH et DG seuls, jamais le rôle Admin. L'auteur d'un avis reste anonyme. | DG, RH |
 | `systeme.reinitialiser` | Système | *(non affichée : module Système)* | Remise à zéro globale de mise en production (écran « Réinitialisation »), usage unique. DG seul, jamais déléguée, jamais cochable dans /admin/roles. | DG |
 | `enc.mettre_en_service` | Système | *(non affichée : module Système)* | Encaissements : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul. | DG |
 | `cpt.mettre_en_service` | Système | *(non affichée : module Système)* | Gestion Compta : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul. | DG |

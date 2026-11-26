@@ -72,6 +72,7 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
       "Les paramètres de congés ne sont pas dans cette table : le module n'a ni solde ni nombre de jours par an ; les jours fériés (JourFerie) sont conservés"
   ),
   Feedback: P("avis FeedbackApp"),
+  FeedbackQuota: C("traces chiffrées de la limite d'un avis par jour : ni purgées ni sauvegardées ici, la purge quotidienne les vide chaque nuit"),
   // ---- Techniques
   ExecutionTache: P("historique d'exécution du planificateur (hors empreinte : réécrit en continu)"),
   JournalTechnique: P("incidents techniques (hors empreinte : réécrit en continu)"),

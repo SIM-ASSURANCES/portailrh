@@ -95,6 +95,11 @@ export const PERMISSIONS_CATALOGUE: readonly PermissionCatalogue[] = [
   p("pointage.reinitialiser", "Réinitialiser les données du Pointage avant sa mise en service"),
   { key: "feedback.moderer", label: "Modérer les messages FeedbackApp", moduleKey: "feedback" },
   {
+    key: "feedback.voir_details",
+    label: "Voir les destinataires et les avis sur les conditions de travail (FeedbackApp)",
+    moduleKey: "feedback",
+  },
+  {
     key: "systeme.reinitialiser",
     label: "Réinitialiser les données de test avant mise en production (usage unique)",
     moduleKey: "systeme",
@@ -185,6 +190,8 @@ const ROLES_BASE: RoleBase[] = [
       "pointage.voir_dashboard_rh",
       "pointage.voir_reporting",
       "feedback.moderer",
+      // FeedbackApp : noms réels des destinataires et avis sur les conditions de travail. RH et DG seuls, jamais Admin.
+      "feedback.voir_details",
       // Réinitialisation à usage unique : DG SEUL (jamais Admin, jamais héritée d'estAdmin).
       "systeme.reinitialiser",
       // Mise en service du module Encaissements : même modèle, DG seul.
@@ -220,6 +227,7 @@ const ROLES_BASE: RoleBase[] = [
       "pointage.voir_dashboard_rh",
       "pointage.voir_reporting",
       "feedback.moderer",
+      "feedback.voir_details",
     ],
   },
   {

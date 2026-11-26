@@ -107,6 +107,8 @@ export const DESCRIPTIONS: Readonly<Record<string, string>> = {
     "Gestion Compta : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul.",
   // Autres
   "feedback.moderer": "Modérer les messages de FeedbackApp (masquer, rétablir) et exporter.",
+  "feedback.voir_details":
+    "FeedbackApp : voir les vrais noms des destinataires et lire les avis sur les conditions de travail (écran de modération et export, avec `feedback.moderer`). RH et DG seuls, jamais le rôle Admin. L'auteur d'un avis reste anonyme.",
   "systeme.reinitialiser":
     "Remise à zéro globale de mise en production (écran « Réinitialisation »), usage unique. DG seul, jamais déléguée, jamais cochable dans /admin/roles.",
 };
@@ -136,6 +138,11 @@ export const COUPLES_INTERDITS: readonly { roles: string; cle: string; raison: s
 
 /** Où chaque permission récente est créée : une permission absente de /admin/roles = migration non appliquée. */
 export const PERMISSIONS_RECENTES: readonly { lot: string; migration: string; cles: readonly string[] }[] = [
+  {
+    lot: "FeedbackApp privé (2026-11-27)",
+    migration: "20261127090000_feedback_prive_quota_voir_details",
+    cles: ["feedback.voir_details"],
+  },
   {
     lot: "Circuit de validation (2026-10-06 à 2026-10-08)",
     migration: "20261006100000_tresorerie_permissions_explicites, 20261006120000_circuit_validation_demandes",

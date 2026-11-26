@@ -1,11 +1,17 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
-import DashboardLayout from "@/app/(dashboard)/layout";
 import { BRAND_ICON_PATHS, BRAND_ICON_VIEWBOX } from "@/components/ui/brandIcon";
 import { Icon, type IconName } from "@/components/icons";
-import { EmptyState } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
-import { getFeedbackRecipients, getPublicFeedbacks } from "backend";
+import {
+  CIBLE_CONDITIONS_TRAVAIL,
+  clesQuotaDejaUtilisees,
+  empreinteQuotaFeedback,
+  getFeedbackRecipients,
+  jourCourant,
+  type FeedbackRecipientOption,
+} from "backend";
 
 import { FeedbackForm } from "./FeedbackForm";
 
@@ -64,7 +70,7 @@ function FeedbackHero() {
       <div className="relative max-w-2xl">
         <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
           <Icon name="lock" className="size-3.5" />
-          100% anonyme, par construction
+          Avis anonyme
         </span>
         <h1 className="mt-4 text-3xl font-black leading-tight tracking-tight sm:text-4xl">
           Votre avis compte,{" "}
@@ -72,42 +78,64 @@ function FeedbackHero() {
         </h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-white/85 sm:text-[15px]">
           Notez votre collaboration avec un collègue ou partagez votre ressenti sur les conditions
-          de travail chez SIM Assurances — quelques clics, jamais un mot tapé, jamais une trace de
-          qui vous êtes.
+          de travail chez SIM Assurances.
+        </p>
+        <p data-texte-anonymat className="mt-3 max-w-xl text-sm font-semibold leading-relaxed text-white sm:text-[15px]">
+          Votre avis est anonyme : ni la RH, ni la Direction, ni personne d&apos;autre ne peut voir qui
+          l&apos;a écrit. Pour limiter chaque personne à un avis par collègue et par jour, le portail
+          conserve une trace technique chiffrée jusqu&apos;au lendemain, puis l&apos;efface
+          automatiquement. Les avis sur les conditions de travail sont lus uniquement par la RH et la
+          Direction générale.
         </p>
       </div>
     </div>
   );
 }
 
-function PublicFeedbackCard({ content, submittedAt }: { content: string; submittedAt: Date }) {
-  return (
-    <div className="card-shadow-hover relative overflow-hidden rounded-2xl border border-border bg-surface p-5 shadow-elevated transition-transform duration-200 ease-out-strong motion-safe:hover:-translate-y-0.5">
-      <span className="absolute inset-y-0 left-0 w-1.5 bg-info" aria-hidden="true" />
-      <div className="flex items-start gap-3 pl-2">
-        <span className="mt-0.5 inline-grid size-8 shrink-0 place-items-center rounded-full bg-info-bg text-info">
-          <Icon name="message-square" className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{content}</p>
-          <p className="mt-2 text-xs font-medium text-muted-foreground">
-            {submittedAt.toLocaleDateString("fr-FR", { year: "numeric", month: "long", day: "numeric" })}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
+/**
+ * Ce que le compte connecté a déjà donné aujourd'hui, pour l'annoncer dans le formulaire (confort seulement : la Server
+ * Action reste la seule autorité). Les empreintes sont calculées pour SON propre compte et ne quittent pas le serveur.
+ */
+async function avisDejaDonnesAujourdhui(userId: string, recipients: FeedbackRecipientOption[]) {
+  const jour = jourCourant();
+  try {
+    const cibles = [...recipients.map((r) => r.id), CIBLE_CONDITIONS_TRAVAIL];
+    const parCle = new Map(
+      cibles.map((cible) => [
+        empreinteQuotaFeedback({ secret: process.env.AUTH_SECRET, auteurId: userId, cible, jour }),
+        cible,
+      ])
+    );
+    const utilisees = await clesQuotaDejaUtilisees([...parCle.keys()], jour);
+    const dejaDonnes = new Set([...utilisees].map((cle) => parCle.get(cle)));
+    return {
+      collegues: recipients.filter((r) => dejaDonnes.has(r.id)).map((r) => r.id),
+      conditionsTravail: dejaDonnes.has(CIBLE_CONDITIONS_TRAVAIL),
+    };
+  } catch {
+    // Jamais journalisé. Sans information, le formulaire reste ouvert et le serveur tranche à l'envoi.
+    return { collegues: [], conditionsTravail: false };
+  }
 }
 
-async function FeedbackPageContent({
-  quickLinks,
-}: {
-  quickLinks?: { canRecevoir: boolean; canModerer: boolean };
-}) {
-  const [recipients, feedbacks] = await Promise.all([getFeedbackRecipients(), getPublicFeedbacks()]);
+/**
+ * Page du module FeedbackApp — hero, réassurance et formulaire (les deux onglets, voir `FeedbackForm.tsx`). Module
+ * privé : la session est revérifiée ici, en plus du middleware. Les avis eux-mêmes ne sont listés nulle part sur cette
+ * page (« Mes critiques reçues » pour le destinataire, modération pour les comptes habilités).
+ */
+export default async function FeedbackPage() {
+  const session = await getSession();
+  if (!session) {
+    redirect("/login");
+  }
+
+  const canRecevoir = session.peutRecevoirFeedback === true;
+  const canModerer = hasPermission(session, "feedback.moderer");
+  const recipients = await getFeedbackRecipients(session.user.id);
+  const dejaDonnes = await avisDejaDonnesAujourdhui(session.user.id, recipients);
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-10 px-4 py-10 sm:px-6">
+    <div className="mx-auto w-full max-w-4xl space-y-10">
       <FeedbackHero />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -115,7 +143,7 @@ async function FeedbackPageContent({
           icon="lock"
           tone="primary"
           title="Anonyme"
-          description="Aucune IP, aucun cookie, aucun texte libre : structurellement impossible de remonter à vous."
+          description="Ni la RH, ni la Direction, ni personne d'autre ne peut voir qui a écrit un avis."
         />
         <ReassuranceCard
           icon="trending-up"
@@ -127,13 +155,13 @@ async function FeedbackPageContent({
           icon="shield-check"
           tone="info"
           title="Sécurisé"
-          description="Les critiques sur un collègue restent privées ; seules RH, Direction et Admin peuvent les modérer."
+          description="Les avis sur les conditions de travail sont lus uniquement par la RH et la Direction générale."
         />
       </div>
 
-      {quickLinks && (quickLinks.canRecevoir || quickLinks.canModerer) ? (
+      {canRecevoir || canModerer ? (
         <div className="flex flex-wrap gap-3">
-          {quickLinks.canRecevoir ? (
+          {canRecevoir ? (
             <Link
               href="/feedback/mes-retours"
               className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2 text-xs font-semibold text-foreground shadow-elevated transition-colors hover:border-primary/50 hover:text-primary"
@@ -142,7 +170,7 @@ async function FeedbackPageContent({
               Mes critiques reçues
             </Link>
           ) : null}
-          {quickLinks.canModerer ? (
+          {canModerer ? (
             <Link
               href="/feedback/admin"
               className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2 text-xs font-semibold text-foreground shadow-elevated transition-colors hover:border-primary/50 hover:text-primary"
@@ -160,66 +188,13 @@ async function FeedbackPageContent({
           Soumettre un feedback
         </h2>
         <div className="rounded-3xl border border-border bg-surface p-5 shadow-elevated sm:p-8">
-          <FeedbackForm recipients={recipients} />
+          <FeedbackForm
+            recipients={recipients}
+            colleguesDejaEvalues={dejaDonnes.collegues}
+            conditionsTravailDejaDonne={dejaDonnes.conditionsTravail}
+          />
         </div>
       </section>
-
-      <section className="space-y-4">
-        <h2 className="flex items-center gap-2.5 text-xl font-black tracking-tight text-foreground">
-          <span className="h-5 w-1 rounded-full bg-info" aria-hidden="true" />
-          Avis sur l&apos;entreprise
-        </h2>
-        <p className="-mt-2 text-sm text-muted-foreground">
-          Avis publics et anonymes sur les conditions de travail chez SIM Assurances. Les critiques
-          sur un collaborateur restent, elles, toujours privées.
-        </p>
-
-        {feedbacks.length === 0 ? (
-          <EmptyState
-            icon="message-square"
-            message="Aucun avis pour le moment — soyez la première personne à en partager un."
-          />
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {feedbacks.map((feedback) => (
-              <PublicFeedbackCard key={feedback.id} content={feedback.content} submittedAt={feedback.submittedAt} />
-            ))}
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-/**
- * Page d'accueil du module FeedbackApp — hero, réassurance, formulaire de
- * soumission (les deux onglets, voir `FeedbackForm.tsx`) et liste publique
- * des avis "Conditions de travail" partagent désormais TOUS la même page,
- * pour visiteur anonyme ET employé connecté (voir CLAUDE.md "FeedbackApp —
- * refonte visuelle de la soumission"). Les liens rapides "Mes critiques
- * reçues"/"Modération" (hérités du Hub de Thierry) restent affichés en
- * haut pour un compte connecté éligible, mais n'occupent plus toute la
- * page : ce n'est plus qu'une des sections, pas la page entière.
- */
-export default async function FeedbackPage() {
-  const session = await getSession();
-
-  if (session) {
-    const quickLinks = {
-      canRecevoir: session.peutRecevoirFeedback === true,
-      canModerer: hasPermission(session, "feedback.moderer"),
-    };
-
-    return (
-      <DashboardLayout>
-        <FeedbackPageContent quickLinks={quickLinks} />
-      </DashboardLayout>
-    );
-  }
-
-  return (
-    <div className="relative flex-1 overflow-hidden bg-surface">
-      <FeedbackPageContent />
     </div>
   );
 }
