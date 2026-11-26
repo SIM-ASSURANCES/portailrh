@@ -1,5 +1,5 @@
 import { getToken, onMessage, deleteToken } from "firebase/messaging";
-import { getFirebaseMessaging } from "@/lib/firebase/firebaseClient";
+import { getFirebaseApp, getFirebaseMessaging } from "@/lib/firebase/firebaseClient";
 
 /**
  * Enregistre le navigateur pour les notifications push FCM et sauvegarde le token en DB.
@@ -24,8 +24,11 @@ export async function registerFcmToken(): Promise<string | null> {
       return null;
     }
 
-    const { apiKey, authDomain, projectId, messagingSenderId, appId } =
-      messaging.app.options;
+    // const { apiKey, authDomain, projectId, messagingSenderId, appId } =
+    //   messaging.app.options;
+    const options = getFirebaseApp()?.options;
+    if (!options) return null;
+    const { apiKey, authDomain, projectId, messagingSenderId, appId } = options;
     if (!apiKey || !projectId || !messagingSenderId || !appId) {
       console.warn("[FCM] Configuration Firebase incomplète pour le service worker.");
       return null;
