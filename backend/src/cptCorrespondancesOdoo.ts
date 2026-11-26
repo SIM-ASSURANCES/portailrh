@@ -33,7 +33,6 @@ export function estEntiteOdooCpt(valeur: unknown): valeur is EntiteOdooCpt {
 
 export type ValeursOdooCpt = Partial<Record<ChampOdooCpt, string | null>>;
 
-// eslint-disable-next-line no-control-regex
 const CARACTERES_DE_CONTROLE = /[\u0000-\u001f\u007f]/;
 
 /**

@@ -2,9 +2,8 @@ import type { PrismaClient } from "./generated/prisma/client";
 import { ecrireAudit } from "./cptAudit";
 import { etatsAffichesPromessesCpt } from "./cptPromessesDb";
 import { syntheseContratCreanceCpt } from "./cptCreances";
-import { enCentimesEcheancier, texteDepuisCentimes } from "./cptEcheancier";
+import { texteDepuisCentimes } from "./cptEcheancier";
 import {
-  etatAffichePromesseCpt,
   relanceProposeeAvecPromessesCpt,
   validerPromesseCpt,
   validerRelanceCpt,
