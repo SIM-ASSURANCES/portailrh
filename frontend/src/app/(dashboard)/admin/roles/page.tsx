@@ -5,6 +5,7 @@ import { PermissionToggle } from "./PermissionToggle";
 import { PeutEtreBeneficiaireToggle } from "./PeutEtreBeneficiaireToggle";
 import { PeutRecevoirFeedbackToggle } from "./PeutRecevoirFeedbackToggle";
 import { RoleCreateForm } from "./RoleCreateForm";
+import { RolesListe } from "./RolesListe";
 
 export default async function AdminRolesPage() {
   // Garantit uniquement l'EXISTENCE du Module/Permission FeedbackApp (pour
@@ -44,13 +45,12 @@ export default async function AdminRolesPage() {
         <RoleCreateForm />
       </section>
 
-      <div className="space-y-6">
-        {roles.map((role) => {
+      <RolesListe
+        roles={roles.map((role) => {
           const grantedIds = new Set(role.permissions.map((rp) => rp.permissionId));
 
-          return (
-            <section key={role.id} className="rounded-md border border-border p-5">
-              <h2 className="font-semibold text-foreground">{role.name}</h2>
+          const corps = (
+            <>
               {role.description ? (
                 <p className="text-sm text-muted-foreground">{role.description}</p>
               ) : null}
@@ -146,10 +146,19 @@ export default async function AdminRolesPage() {
                   ) : null}
                 </div>
               </div>
-            </section>
+            </>
           );
+
+          return {
+            id: role.id,
+            nom: role.name,
+            estAdmin: role.estAdmin,
+            beneficiaireDelegation: role.peutEtreBeneficiaireDelegation,
+            nbPermissions: grantedIds.size,
+            corps,
+          };
         })}
-      </div>
+      />
     </div>
   );
 }
