@@ -45,6 +45,7 @@
 | **Q19** | **Rémunération des partenaires** : le bordereau de production contient des colonnes de commission et de frais de gestion, que l'application lit sans les enregistrer. Faut-il les enregistrer pour être alerté quand le taux appliqué par le technique diffère de la convention signée ? | Rémunération |
 | **Q20** | **Rémunération** : à quelle date choisit-on la convention (date d'effet du contrat, de l'échéance, de l'encaissement) ? Une convention de commission sans apporteur désigné vaut-elle pour tous les contrats ? Après une résiliation, la rémunération des primes jamais encaissées disparaît-elle, même pour la période déjà courue ? *Lecture provisoire : C-31 de la conception.* | Rémunération |
 | **Q21** | **Honoraires** : la séparation « sur primes encaissées » / « sur primes non encaissées » doit-elle porter sur les honoraires exigibles (notre lecture) ou sur la totalité des honoraires dus, même non exigibles ? | Rémunération |
+| **Q22** | **Règlements aux partenaires** : un versement supérieur au montant payable doit-il être impossible, ou accepté comme avance avec motif, dans la limite du reste dû (notre lecture) ? Comment voulez-vous corriger un règlement saisi par erreur ? | Rémunération |
 
 ### Relances, clôture et mise en service
 

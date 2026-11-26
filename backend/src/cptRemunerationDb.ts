@@ -6,6 +6,7 @@ import { etatHonorairesCpt, type EtatHonorairesCpt } from "./cptHonoraires";
 import {
   beneficiaireConventionCpt,
   lignesContratCpt,
+  payeDecideEnUneFoisCpt,
   soldesParNatureCpt,
   trierLignesRemunerationCpt,
   type ConflitConventionCpt,
@@ -139,19 +140,19 @@ export async function chargerLignesEnregistreesCpt(db: RemunerationDbCpt, parten
       nature: true,
       conventionId: true,
       du: true,
-      affectationsReglement: { select: { montant: true, reglement: { select: { modeDerogation: true } } } },
+      affectationsReglement: { select: { montant: true, reglement: { select: { modeDerogation: true, creeAt: true } } } },
       affectationsCompensation: { select: { montant: true } },
     },
   });
   return lignes.map((l) => {
-    let paye = ZERO;
-    let payeEnUneFois = ZERO;
-    for (const a of l.affectationsReglement) {
-      const m = centimesSignesRemunerationCpt(a.montant);
-      paye += m;
-      if (a.reglement.modeDerogation === "EN_UNE_FOIS") payeEnUneFois += m;
-    }
+    const reglements = l.affectationsReglement.map((a) => ({
+      montant: centimesSignesRemunerationCpt(a.montant),
+      derogation: a.reglement.modeDerogation as ModeReglementCpt | null,
+      creeAt: a.reglement.creeAt.toISOString(),
+    }));
+    let paye = reglements.reduce((s, a) => s + a.montant, ZERO);
     for (const a of l.affectationsCompensation) paye += centimesSignesRemunerationCpt(a.montant);
+    const payeEnUneFois = payeDecideEnUneFoisCpt(reglements);
     return {
       id: l.id,
       contratId: l.contratId,
@@ -213,6 +214,22 @@ async function chargerCreancePartenaire(db: RemunerationDbCpt, partenaire: { id:
       nbContrats: total.nbContrats + 1,
     };
   }, vide);
+}
+
+/** Partenaires concernés par la rémunération : désignés par une convention, déjà réglés, ou payant pour leurs clients. */
+export async function listerPartenairesRemuneresCpt(db: RemunerationDbCpt): Promise<{ id: string; nom: string }[]> {
+  return db.cptPartenaire.findMany({
+    where: {
+      OR: [
+        { conventions: { some: { beneficiaireId: null } } },
+        { conventionsBeneficiaire: { some: {} } },
+        { lignesRemuneration: { some: {} } },
+        { estClient: true },
+      ],
+    },
+    select: { id: true, nom: true },
+    orderBy: { nom: "asc" },
+  });
 }
 
 /** `null` si le partenaire n'existe pas. */

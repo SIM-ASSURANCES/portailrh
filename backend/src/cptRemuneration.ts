@@ -98,6 +98,20 @@ export interface LigneEnregistreeCpt {
   payeEnUneFois: bigint;
 }
 
+/**
+ * Part d'une ligne payée « en une fois » : tout ce que les règlements ont versé jusqu'au dernier règlement décidé « en une fois »
+ * compris (ce qui avait été payé avant est alors couvert par la même décision). `creeAt` : texte ISO, ordre chronologique.
+ */
+export function payeDecideEnUneFoisCpt(affectations: readonly { montant: bigint; derogation: ModeReglementCpt | null; creeAt: string }[]): bigint {
+  let cumul = ZERO;
+  let decide = ZERO;
+  for (const a of [...affectations].sort((x, y) => x.creeAt.localeCompare(y.creeAt))) {
+    cumul += a.montant;
+    if (a.derogation === "EN_UNE_FOIS") decide = cumul;
+  }
+  return decide;
+}
+
 /** Décision du RFCRH « en une fois / au prorata » sur un contrat, pour un bénéficiaire et une nature. */
 export interface DecisionModeCpt {
   contratId: string;

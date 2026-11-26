@@ -132,6 +132,8 @@ export * from "./cptRappelTcaDb";
 export * from "./cptRemuneration";
 export * from "./cptHonoraires";
 export * from "./cptRemunerationDb";
+export * from "./cptReglementPartenaire";
+export * from "./cptReglementPartenaireDb";
 export * from "./cptRelancesDb";
 // Traitement des anomalies de l'import (GC-3h) : noms finissant par « Cpt ».
 export * from "./cptAnomalies";
