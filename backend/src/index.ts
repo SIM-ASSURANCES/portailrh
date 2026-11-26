@@ -128,6 +128,8 @@ export * from "./cptTaxe";
 export * from "./cptTaxeDb";
 export * from "./cptRappelTca";
 export * from "./cptRappelTcaDb";
+// Rémunération des partenaires (GC-9) : moteur pur ; noms finissant par « Cpt ».
+export * from "./cptRemuneration";
 export * from "./cptRelancesDb";
 // Traitement des anomalies de l'import (GC-3h) : noms finissant par « Cpt ».
 export * from "./cptAnomalies";
