@@ -184,4 +184,13 @@ psql_cpt -d postgres -c 'CREATE DATABASE compta_tca3' >/dev/null
 (DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_tca3?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "successfully applied|rror"')
 DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_tca3?schema=public" npx tsx e2e/compta-gc8f-rappel.ts | tail -30
 
-echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c, GC-6b, GC-8a, GC-8b et GC-8f : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements et relances vérifiés."
+echo "== 19. Rémunération des partenaires (GC-9a), sur une base FRAÎCHE =="
+psql_cpt -d postgres -c 'CREATE DATABASE compta_rem' >/dev/null
+(DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_rem?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "compta_remuneration|successfully applied|rror"')
+docker exec -i "$NOM" psql -U postgres -d compta_rem -v ON_ERROR_STOP=1 -q -t -A < e2e/compta-gc9a-remuneration.sql
+(DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_rem?schema=public" bash -c 'cd backend && npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code --config prisma7.config.ts >/dev/null 2>&1; code=$?; if [ $code -eq 0 ]; then echo "OK  migrate diff vide (schéma et migrations alignés)"; else echo "KO  migrate diff non vide (code $code)"; exit 1; fi')
+# Rejeu direct du SQL de la migration sur une base déjà migrée : sans effet, sans erreur.
+docker exec -i "$NOM" psql -U postgres -d compta_rem -v ON_ERROR_STOP=1 -q < backend/prisma/migrations/20261128090000_compta_remuneration/migration.sql >/dev/null 2>&1 && echo "OK  SQL de la migration rejoué sans erreur"
+(DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_rem?schema=public" bash -c 'cd backend && npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code --config prisma7.config.ts >/dev/null 2>&1 && echo "OK  migrate diff toujours vide après le rejeu"')
+
+echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c, GC-6b, GC-8a, GC-8b, GC-8f et GC-9a : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements, relances et rémunération des partenaires vérifiés."

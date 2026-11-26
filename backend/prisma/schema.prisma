@@ -191,6 +191,10 @@ model User {
   cptLignesTaxeCreees       CptLigneTaxe[]       @relation("CptLigneTaxeCreePar")
   cptDeclarationsTcaFaites  CptDeclarationTca[]  @relation("CptDeclarationTcaDeclarePar")
   cptPaiementsTcaFaits      CptDeclarationTca[]  @relation("CptDeclarationTcaPayePar")
+  cptLignesRemunerationCreees  CptLigneRemuneration[]        @relation("CptLigneRemunerationCreePar")
+  cptDecisionsRemuneration     CptDecisionModeRemuneration[] @relation("CptDecisionModeRemunerationCreePar")
+  cptReglementsPartenaireFaits CptReglementPartenaire[]      @relation("CptReglementPartenaireCreePar")
+  cptCompensationsValidees     CptCompensation[]             @relation("CptCompensationValideePar")
 }
 
 model Role {
@@ -2697,6 +2701,10 @@ model CptPartenaire {
   conventionsApporteur    CptConvention[] @relation("CptConventionApporteur")
   conventionsBeneficiaire CptConvention[] @relation("CptConventionBeneficiaire")
   contratsApportes        CptContrat[]    @relation("CptContratApporteur")
+  lignesRemuneration      CptLigneRemuneration[]        @relation("CptLigneRemunerationBeneficiaire")
+  decisionsRemuneration   CptDecisionModeRemuneration[] @relation("CptDecisionModeRemunerationPartenaire")
+  reglementsRecus         CptReglementPartenaire[]      @relation("CptReglementPartenaireDestinataire")
+  compensations           CptCompensation[]             @relation("CptCompensationPartenaire")
 }
 
 model CptClient {
@@ -2804,6 +2812,8 @@ model CptConvention {
   creePar        User                  @relation("CptConventionCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
   creeAt         DateTime              @default(now())
 
+  lignesRemuneration CptLigneRemuneration[]
+
   @@index([partenaireId, nature, dateEffet])
 }
 
@@ -2910,6 +2920,9 @@ model CptContrat {
   actes     CptActe[]
   echeances CptEcheance[]
 
+  lignesRemuneration    CptLigneRemuneration[]
+  decisionsRemuneration CptDecisionModeRemuneration[]
+
   @@index([clientId])
   @@index([partenaireApporteurId])
   @@index([produitId])
@@ -2969,6 +2982,8 @@ model CptEcheance {
   rattachements CptRattachement[]
   lignesTaxeImputees CptLigneTaxe[] @relation("CptLigneTaxeImputeeSur")
   lignesTaxe         CptLigneTaxe[] @relation("CptLigneTaxeEcheance")
+
+  lignesRemuneration CptLigneRemuneration[]
 
   @@unique([contratId, rang])
   @@index([contratId, etat])
@@ -3465,4 +3480,144 @@ model CptCreditTaxe {
 
   @@index([statut])
   @@index([declarationId])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// GC-9 — Rémunération des partenaires (docs/compta-conception.md §5.7, §6.4). Migration `20261128090000_compta_remuneration`.
+// Les bordereaux des partenaires (GC-9d : `CptBordereauPartenaire`, `CptBordereauLigne`) ne sont PAS créés ici : en attente des
+// modèles de fichiers.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// Moyen de paiement d'un règlement versé à un partenaire.
+enum CptModePaiementPartenaire {
+  VIREMENT
+  CHEQUE
+  ESPECES
+  MOBILE_MONEY
+  AUTRE
+}
+
+/// Ligne de rémunération (contrat, échéance, bénéficiaire, nature), FIGÉE à sa création : elle est l'ancre des affectations de
+/// règlements et de compensations. Seul le montant dû (`du`) y est enregistré ; exigible, payable, payé et restes ne sont JAMAIS
+/// stockés (calculés par backend/src/cptRemuneration.ts depuis les rattachements VALIDÉS et les affectations). Toutes les
+/// échéances d'un même (contrat, bénéficiaire, nature) sont créées ensemble, avec la même convention (reliquat exact). Jamais
+/// modifiée (trigger).
+model CptLigneRemuneration {
+  id                       String                @id @default(cuid())
+  contratId                String
+  contrat                  CptContrat            @relation(fields: [contratId], references: [id], onDelete: Restrict)
+  echeanceId               String
+  echeance                 CptEcheance           @relation(fields: [echeanceId], references: [id], onDelete: Restrict)
+  partenaireBeneficiaireId String
+  partenaireBeneficiaire   CptPartenaire         @relation("CptLigneRemunerationBeneficiaire", fields: [partenaireBeneficiaireId], references: [id], onDelete: Restrict)
+  nature                   CptNatureRemuneration
+  conventionId             String
+  convention               CptConvention         @relation(fields: [conventionId], references: [id], onDelete: Restrict)
+  du                       Decimal               @db.Decimal(14, 2)
+  creeParId                String
+  creePar                  User                  @relation("CptLigneRemunerationCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt                   DateTime              @default(now())
+
+  affectationsReglement    CptAffectationReglement[]
+  affectationsCompensation CptAffectationCompensation[]
+
+  @@unique([contratId, echeanceId, partenaireBeneficiaireId, nature])
+  @@index([partenaireBeneficiaireId, nature])
+  @@index([echeanceId])
+  @@index([conventionId])
+}
+
+/// Décision du RFCRH sur le mode de règlement (« en une fois » ou « au prorata ») d'un contrat, pour un bénéficiaire et une
+/// nature, avec motif. Ajout seul (trigger) : la décision la plus récente l'emporte sur la convention.
+model CptDecisionModeRemuneration {
+  id           String                @id @default(cuid())
+  contratId    String
+  contrat      CptContrat            @relation(fields: [contratId], references: [id], onDelete: Restrict)
+  partenaireId String
+  partenaire   CptPartenaire         @relation("CptDecisionModeRemunerationPartenaire", fields: [partenaireId], references: [id], onDelete: Restrict)
+  nature       CptNatureRemuneration
+  mode         CptModeReglement
+  motif        String
+  creeParId    String
+  creePar      User                  @relation("CptDecisionModeRemunerationCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt       DateTime              @default(now())
+
+  @@index([partenaireId, nature])
+  @@index([contratId])
+}
+
+/// Règlement versé à un partenaire (`CPR-AAAA-NNNNNN`, C-11) : nature obligatoire, montant > 0, entièrement affecté à des lignes
+/// de la même nature (Σ des affectations = montant, contrôlé en base à la validation de la transaction). Jamais modifié (seules la
+/// pièce Odoo et sa date, d'abord vides, peuvent être renseignées une fois). `montantAvance` = part versée au-delà du payable,
+/// acceptée explicitement avec motif.
+model CptReglementPartenaire {
+  id                   String                    @id @default(cuid())
+  reference            String                    @unique
+  partenaireId         String
+  partenaire           CptPartenaire             @relation("CptReglementPartenaireDestinataire", fields: [partenaireId], references: [id], onDelete: Restrict)
+  nature               CptNatureRemuneration
+  montant              Decimal                   @db.Decimal(14, 2)
+  date                 DateTime                  @db.Date
+  mode                 CptModePaiementPartenaire
+  referenceReglement   String
+  pieceOdoo            String?
+  dateComptabilisation DateTime?                 @db.Date
+  /// Choix « en une fois / au prorata » décidé pour CE règlement (motif obligatoire) ; nul = règle de chaque ligne.
+  modeDerogation       CptModeReglement?
+  montantAvance        Decimal                   @default(0) @db.Decimal(14, 2)
+  motif                String?
+  creeParId            String
+  creePar              User                      @relation("CptReglementPartenaireCreePar", fields: [creeParId], references: [id], onDelete: Restrict)
+  creeAt               DateTime                  @default(now())
+
+  affectations CptAffectationReglement[]
+
+  @@index([partenaireId, nature])
+  @@index([date])
+}
+
+/// Part d'un règlement affectée à une ligne (les montants exigibles les plus anciens d'abord). Jamais modifiée (trigger).
+model CptAffectationReglement {
+  id                  String                 @id @default(cuid())
+  reglementId         String
+  reglement           CptReglementPartenaire @relation(fields: [reglementId], references: [id], onDelete: Restrict)
+  ligneRemunerationId String
+  ligneRemuneration   CptLigneRemuneration   @relation(fields: [ligneRemunerationId], references: [id], onDelete: Restrict)
+  montant             Decimal                @db.Decimal(14, 2)
+
+  @@unique([reglementId, ligneRemunerationId])
+  @@index([ligneRemunerationId])
+}
+
+/// Compensation EXPLICITE entre deux natures d'un même partenaire : la seule voie de passage d'une nature à l'autre. Jamais
+/// automatique, motif obligatoire (10 caractères au moins). Jamais modifiée (trigger).
+model CptCompensation {
+  id           String                @id @default(cuid())
+  partenaireId String
+  partenaire   CptPartenaire         @relation("CptCompensationPartenaire", fields: [partenaireId], references: [id], onDelete: Restrict)
+  natureSource CptNatureRemuneration
+  natureCible  CptNatureRemuneration
+  montant      Decimal               @db.Decimal(14, 2)
+  motif        String
+  valideeParId String
+  valideePar   User                  @relation("CptCompensationValideePar", fields: [valideeParId], references: [id], onDelete: Restrict)
+  creeAt       DateTime              @default(now())
+
+  affectations CptAffectationCompensation[]
+
+  @@index([partenaireId])
+}
+
+/// Effet d'une compensation sur les lignes : montant NÉGATIF sur les lignes de la nature source (l'avance reprise), POSITIF sur
+/// celles de la nature cible. Σ des positifs = Σ des négatifs = montant de la compensation (contrôlé en base).
+model CptAffectationCompensation {
+  id                  String               @id @default(cuid())
+  compensationId      String
+  compensation        CptCompensation      @relation(fields: [compensationId], references: [id], onDelete: Restrict)
+  ligneRemunerationId String
+  ligneRemuneration   CptLigneRemuneration @relation(fields: [ligneRemunerationId], references: [id], onDelete: Restrict)
+  montant             Decimal              @db.Decimal(14, 2)
+
+  @@unique([compensationId, ligneRemunerationId])
+  @@index([ligneRemunerationId])
 }

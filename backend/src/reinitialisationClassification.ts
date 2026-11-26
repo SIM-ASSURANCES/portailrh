@@ -134,6 +134,13 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
   CptLigneTaxe: C("lignes de taxe (TCA) de Gestion Compta : ajout seul, verrouillées une fois déclarées (trigger), remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
   CptDeclarationTca: C("déclarations mensuelles de TCA de Gestion Compta : montants figés, seul le paiement s'ajoute (trigger), remise à zéro propre au module (lot GC-11)"),
   CptCreditTaxe: C("crédits de taxe (trop-payé reporté) de Gestion Compta : remise à zéro propre au module (lot GC-11)"),
+  // GC-9 : rémunération des partenaires.
+  CptLigneRemuneration: C("lignes de rémunération des partenaires de Gestion Compta : jamais modifiées (trigger), remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
+  CptDecisionModeRemuneration: C("décisions « en une fois / au prorata » du RFCRH : ajout seul (trigger), remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
+  CptReglementPartenaire: C("règlements versés aux partenaires : jamais modifiés (trigger), remise à zéro propre au module (lot GC-11), jamais supprimés après la mise en service (trigger)"),
+  CptAffectationReglement: C("affectations des règlements de partenaires aux lignes de rémunération : jamais modifiées (trigger), remise à zéro propre au module (lot GC-11)"),
+  CptCompensation: C("compensations explicites entre natures de rémunération : jamais modifiées (trigger), remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
+  CptAffectationCompensation: C("effet des compensations sur les lignes de rémunération : jamais modifié (trigger), remise à zéro propre au module (lot GC-11)"),
 };
 
 /** Entités de `HistoriqueEntry` supprimées (Trésorerie puis Pointage). */

@@ -874,6 +874,10 @@ export async function supprimerUtilisateurAction(
     cptPromessesCreees,
     cptLignesTaxeCreees,
     cptDeclarationsTcaFaites,
+    cptLignesRemunerationCreees,
+    cptDecisionsRemunerationPrises,
+    cptReglementsPartenaireSaisis,
+    cptCompensationsFaites,
     justificationsDecidees,
     lignesSoumisesAuDG,
     lignesDecideesParDG,
@@ -965,6 +969,11 @@ export async function supprimerUtilisateurAction(
     // Gestion Compta GC-8 : lignes de taxe créées, déclarations et paiements de TCA (RESTRICT).
     prisma.cptLigneTaxe.count({ where: { creeParId: userId } }),
     prisma.cptDeclarationTca.count({ where: { OR: [{ declareParId: userId }, { payeParId: userId }] } }),
+    // Gestion Compta GC-9 : lignes de rémunération, décisions de mode de règlement, règlements et compensations (RESTRICT).
+    prisma.cptLigneRemuneration.count({ where: { creeParId: userId } }),
+    prisma.cptDecisionModeRemuneration.count({ where: { creeParId: userId } }),
+    prisma.cptReglementPartenaire.count({ where: { creeParId: userId } }),
+    prisma.cptCompensation.count({ where: { valideeParId: userId } }),
     // Pointage V2 : justifications de retard / départ anticipé décidées par ce compte (RESTRICT).
     prisma.justificationPointage.count({ where: { decideurId: userId } }),
     // Soumission au DG ligne par ligne (2026-10-10) : 2 relations vers User supplémentaires (SET NULL en base).
@@ -1058,6 +1067,10 @@ export async function supprimerUtilisateurAction(
   if (cptPromessesCreees > 0) blocages.push(`enregistré ${cptPromessesCreees} promesse(s) de paiement de Gestion Compta`);
   if (cptLignesTaxeCreees > 0) blocages.push(`créé ${cptLignesTaxeCreees} ligne(s) de taxe de Gestion Compta`);
   if (cptDeclarationsTcaFaites > 0) blocages.push(`déclaré ou payé ${cptDeclarationsTcaFaites} déclaration(s) de TCA de Gestion Compta`);
+  if (cptLignesRemunerationCreees > 0) blocages.push(`créé ${cptLignesRemunerationCreees} ligne(s) de rémunération de Gestion Compta`);
+  if (cptDecisionsRemunerationPrises > 0) blocages.push(`décidé ${cptDecisionsRemunerationPrises} mode(s) de règlement de rémunération dans Gestion Compta`);
+  if (cptReglementsPartenaireSaisis > 0) blocages.push(`enregistré ${cptReglementsPartenaireSaisis} règlement(s) de partenaire de Gestion Compta`);
+  if (cptCompensationsFaites > 0) blocages.push(`validé ${cptCompensationsFaites} compensation(s) de Gestion Compta`);
   if (justificationsDecidees > 0)
     blocages.push(`décidé ${justificationsDecidees} justification(s) de retard ou de départ anticipé`);
   if (lignesSoumisesAuDG > 0) blocages.push(`soumis ${lignesSoumisesAuDG} ligne(s) d'article au DG`);
