@@ -16,6 +16,10 @@ export const CODES_JOURNAL = {
   TACHE_ECHEC: "TACHE_ECHEC",
   TACHE_ERREURS_PARTIELLES: "TACHE_ERREURS_PARTIELLES",
   CLOTURE_INITIALE: "CLOTURE_INITIALE",
+  /** FeedbackApp : un avis n'a pas pu être enregistré. Un code par étape (l'anti-inondation regroupe par code). */
+  FEEDBACK_QUOTA_ECHEC: "FEEDBACK_QUOTA_ECHEC",
+  FEEDBACK_AVIS_ECHEC: "FEEDBACK_AVIS_ECHEC",
+  FEEDBACK_ENVOI_ECHEC: "FEEDBACK_ENVOI_ECHEC",
   /** Gestion Compta : un palier de relance est réservé mais aucun compte ne porte la permission qui le reçoit. */
   COMPTA_PALIER_SANS_DESTINATAIRE: "COMPTA_PALIER_SANS_DESTINATAIRE",
 } as const;

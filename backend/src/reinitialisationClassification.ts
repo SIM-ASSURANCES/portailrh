@@ -32,7 +32,7 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
   FcmToken: C("jetons push des appareils"),
   HistoriqueEntry: PP(
     "supprimées : entités Demande, LigneDemande, JournalCaisse, RetourExterne, Pointage, PointageQR, PointageGeo, JustificationPointage, DemandeConge ; " +
-      "conservées : audit Admin/Auth/User/Service/Role/Module/Categorie/Objet/PermissionDelegation, budgets (BudgetParametrage, ParametreTresorerie), signatures enrôlées, verrous"
+      "conservées : audit Admin/Auth/User/Service/Role/Module/Categorie/Objet/PermissionDelegation, budgets (BudgetParametrage, ParametreTresorerie), signatures enrôlées, verrous, modération FeedbackApp"
   ),
   Notification: PP("supprimées : catégories TRESORERIE, RH, POINTAGE ; conservées : ADMIN, SYSTEME"),
   // ---- Trésorerie : configuration
@@ -151,6 +151,9 @@ export const ENTITES_HISTORIQUE_PURGEES: string[] = [...ENTITES_HISTORIQUE_TRESO
  * dans le code (`entity: "X"` et constantes `ENTITE_*`) figure dans l'une des deux listes.
  */
 export const ENTITES_HISTORIQUE_CONSERVEES: string[] = [
+  // Modération FeedbackApp (masquage, rétablissement) : audit des modérateurs.
+  "Feedback",
+  "FeedbackConditionsTravail",
   "User",
   "Service",
   "Auth",

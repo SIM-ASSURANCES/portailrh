@@ -16,7 +16,7 @@ interface AdminFeedbackTableProps {
 const cleTri = (nom: string) => nom.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 
 export function AdminFeedbackTable({ feedbacks, voirDetails }: AdminFeedbackTableProps) {
-  const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
+  const [aModerer, setAModerer] = useState<{ id: string; operation: "masquer" | "retablir" } | null>(null);
   const [detail, setDetail] = useState<AdminFeedbackEntry | null>(null);
 
   return (
@@ -113,15 +113,25 @@ export function AdminFeedbackTable({ feedbacks, voirDetails }: AdminFeedbackTabl
                   Voir
                 </Button>
                 {row.isModerated ? (
-                  <span className="text-xs italic text-muted-foreground">
-                    Retiré {row.moderatedByNom ? `par ${row.moderatedByNom}` : ""}
-                  </span>
+                  <>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="px-2 py-1 text-xs"
+                      onClick={() => setAModerer({ id: row.id, operation: "retablir" })}
+                    >
+                      Rétablir
+                    </Button>
+                    <span className="text-xs italic text-muted-foreground">
+                      Retiré {row.moderatedByNom ? `par ${row.moderatedByNom}` : ""}
+                    </span>
+                  </>
                 ) : (
                   <Button
                     type="button"
                     variant="danger"
                     className="px-2 py-1 text-xs"
-                    onClick={() => setSelectedFeedbackId(row.id)}
+                    onClick={() => setAModerer({ id: row.id, operation: "masquer" })}
                   >
                     Modérer
                   </Button>
@@ -134,11 +144,12 @@ export function AdminFeedbackTable({ feedbacks, voirDetails }: AdminFeedbackTabl
 
       {detail && <DetailFeedbackDialog feedback={detail} onClose={() => setDetail(null)} />}
 
-      {selectedFeedbackId && (
+      {aModerer && (
         <ModererFeedbackDialog
-          feedbackId={selectedFeedbackId}
-          onSuccess={() => setSelectedFeedbackId(null)}
-          onCancel={() => setSelectedFeedbackId(null)}
+          operation={aModerer.operation}
+          feedbackId={aModerer.id}
+          onSuccess={() => setAModerer(null)}
+          onCancel={() => setAModerer(null)}
         />
       )}
     </>

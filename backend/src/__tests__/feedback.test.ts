@@ -9,7 +9,7 @@ import {
   containsBannedContent,
   containsUrl,
 } from "../feedback-constants";
-import { modererFeedback } from "../feedback";
+import { modererFeedback, retablirFeedback } from "../feedback";
 import { prisma } from "../prisma";
 
 describe("FeedbackApp — Tests Unitaires des Règles Pures", () => {
@@ -77,78 +77,99 @@ describe("FeedbackApp — Tests Unitaires des Règles Pures", () => {
   });
 });
 
-describe("FeedbackApp — Tests Unitaires de la Modération (modererFeedback)", () => {
-  it("rejette si le motif fait moins de 3 caractères", async () => {
-    const resCourt = await modererFeedback("fb-123", "mod-456", "ab");
-    assert.strictEqual(resCourt.success, false);
-    assert.match(resCourt.message, /au moins 3 caractères/i);
+describe("FeedbackApp — Tests Unitaires de la Modération (masquer, rétablir)", () => {
+  const RH = { voirDetails: true };
+  const ADMIN = { voirDetails: false };
 
-    const resEspaces = await modererFeedback("fb-123", "mod-456", "   ");
-    assert.strictEqual(resEspaces.success, false);
-    assert.match(resEspaces.message, /au moins 3 caractères/i);
-  });
-
-  it("rejette si le feedback n'existe pas en base", async () => {
-    const originalFindUnique = prisma.feedback.findUnique;
-    prisma.feedback.findUnique = (async () => null) as any;
-
+  /** Remplace la lecture et la transaction par des doublures qui notent les écritures. */
+  async function avecBase(feedback: any, run: (ecritures: { maj: any[]; historique: any[] }) => Promise<void>) {
+    const ecritures = { maj: [] as any[], historique: [] as any[] };
+    const findOriginal = prisma.feedback.findUnique;
+    const txOriginal = prisma.$transaction;
+    prisma.feedback.findUnique = (async () => feedback) as any;
+    (prisma as any).$transaction = async (fn: any) =>
+      fn({
+        feedback: { updateMany: async (a: any) => (ecritures.maj.push(a), { count: 1 }) },
+        historiqueEntry: { create: async (a: any) => ecritures.historique.push(a.data) },
+      });
     try {
-      const res = await modererFeedback("non-existent-id", "mod-456", "Message injurieux");
-      assert.strictEqual(res.success, false);
-      assert.strictEqual(res.message, "Message introuvable.");
+      await run(ecritures);
     } finally {
-      prisma.feedback.findUnique = originalFindUnique;
+      prisma.feedback.findUnique = findOriginal;
+      (prisma as any).$transaction = txOriginal;
+    }
+  }
+
+  it("rejette si le motif fait moins de 3 caractères, sans accès à la base", async () => {
+    for (const action of [modererFeedback, retablirFeedback]) {
+      for (const motif of ["ab", "   "]) {
+        const res = await action("fb-123", "mod-456", motif, RH);
+        assert.strictEqual(res.success, false);
+        assert.match(res.message, /au moins 3 caractères/i);
+      }
     }
   });
 
-  it("rejette si le feedback a déjà été modéré", async () => {
-    const originalFindUnique = prisma.feedback.findUnique;
-    prisma.feedback.findUnique = (async () => ({
-      id: "fb-already-mod",
-      isModerated: true,
-      motifModeration: "Déjà retiré",
-    })) as any;
-
-    try {
-      const res = await modererFeedback("fb-already-mod", "mod-456", "Deuxième tentative");
-      assert.strictEqual(res.success, false);
-      assert.strictEqual(res.message, "Ce message a déjà été modéré.");
-    } finally {
-      prisma.feedback.findUnique = originalFindUnique;
+  it("introuvable : avis inexistant, comme avis « Conditions de travail » sans le droit de le lire (quel que soit son état)", async () => {
+    const cas = [
+      null,
+      { id: "ct", type: "CONDITIONS_TRAVAIL", isModerated: false },
+      { id: "ct", type: "CONDITIONS_TRAVAIL", isModerated: true },
+    ];
+    for (const feedback of cas) {
+      await avecBase(feedback, async (e) => {
+        for (const action of [modererFeedback, retablirFeedback]) {
+          const res = await action("ct", "admin", "Motif valable", ADMIN);
+          assert.deepStrictEqual(res, { success: false, message: "Message introuvable." });
+        }
+        assert.strictEqual(e.maj.length + e.historique.length, 0);
+      });
     }
   });
 
-  it("met à jour et retire le message avec traçabilité quand les données sont valides", async () => {
-    let updateCalledWith: any = null;
+  it("refuse de masquer un avis déjà masqué et de rétablir un avis visible", async () => {
+    await avecBase({ id: "a", type: "COLLABORATION", isModerated: true }, async () => {
+      assert.strictEqual((await modererFeedback("a", "m", "Deuxième tentative", RH)).message, "Ce message a déjà été modéré.");
+    });
+    await avecBase({ id: "a", type: "COLLABORATION", isModerated: false }, async () => {
+      assert.strictEqual((await retablirFeedback("a", "m", "Rien à rétablir", RH)).message, "Ce message n'est pas masqué.");
+    });
+  });
 
-    const originalFindUnique = prisma.feedback.findUnique;
-    const originalUpdate = prisma.feedback.update;
-
-    prisma.feedback.findUnique = (async () => ({
-      id: "fb-valid",
-      isModerated: false,
-      motifModeration: null,
-    })) as any;
-
-    prisma.feedback.update = (async (args: any) => {
-      updateCalledWith = args;
-      return { id: "fb-valid", isModerated: true };
-    }) as any;
-
-    try {
-      const res = await modererFeedback("fb-valid", "mod-rh-1", "Propos agressifs non constructifs");
+  it("masque avec une ligne d'historique (un compte sans voir_details peut masquer un avis « Collaboration »)", async () => {
+    await avecBase({ id: "a", type: "COLLABORATION", isModerated: false }, async (e) => {
+      const res = await modererFeedback("a", "mod-1", "  Propos agressifs  ", ADMIN);
       assert.strictEqual(res.success, true);
-      assert.match(res.message, /retiré de la plateforme/i);
+      assert.deepStrictEqual(e.maj[0].where, { id: "a", isModerated: false });
+      assert.strictEqual(e.maj[0].data.motifModeration, "Propos agressifs");
+      assert.strictEqual(e.maj[0].data.moderatedById, "mod-1");
+      assert.deepStrictEqual(e.historique, [
+        { entity: "Feedback", entityId: "a", action: "moderation_masquage", detail: "Avis masqué. Motif : Propos agressifs", userId: "mod-1" },
+      ]);
+    });
+  });
 
-      assert.notStrictEqual(updateCalledWith, null);
-      assert.strictEqual(updateCalledWith.where.id, "fb-valid");
-      assert.strictEqual(updateCalledWith.data.isModerated, true);
-      assert.strictEqual(updateCalledWith.data.motifModeration, "Propos agressifs non constructifs");
-      assert.strictEqual(updateCalledWith.data.moderatedById, "mod-rh-1");
-      assert.ok(updateCalledWith.data.moderatedAt instanceof Date);
-    } finally {
-      prisma.feedback.findUnique = originalFindUnique;
-      prisma.feedback.update = originalUpdate;
-    }
+  it("rétablit sans réécrire les colonnes du masquage, que l'historique rappelle ; entité distincte pour les conditions de travail", async () => {
+    const masque = {
+      id: "ct",
+      type: "CONDITIONS_TRAVAIL",
+      isModerated: true,
+      motifModeration: "Masqué par erreur",
+      moderatedAt: new Date("2026-11-20T10:00:00Z"),
+    };
+    await avecBase(masque, async (e) => {
+      const res = await retablirFeedback("ct", "mod-2", "Avis finalement acceptable", RH);
+      assert.strictEqual(res.success, true);
+      assert.deepStrictEqual(e.maj, [{ where: { id: "ct", isModerated: true }, data: { isModerated: false } }]);
+      assert.deepStrictEqual(e.historique, [
+        {
+          entity: "FeedbackConditionsTravail",
+          entityId: "ct",
+          action: "moderation_retablissement",
+          detail: "Avis rétabli. Motif : Avis finalement acceptable. Masquage levé du 20/11/2026 (motif : Masqué par erreur).",
+          userId: "mod-2",
+        },
+      ]);
+    });
   });
 });

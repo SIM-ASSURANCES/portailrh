@@ -1,7 +1,7 @@
 // FeedbackApp privé : module réservé aux comptes connectés, noms et avis « Conditions de travail » pour RH/DG, un avis par
 // collègue et par jour. Base JETABLE NEUVE (voir e2e/README.md). Les avis sont envoyés par de vraies connexions (écran, ou
 // rejeu de la vraie requête de la Server Action) ; la base n'est écrite que pour préparer (renommages, ancien avis sans
-// notes) et pour vieillir une trace de quota.
+// notes), pour vieillir une trace de quota et pour provoquer des erreurs d'enregistrement (déclencheurs retirés ensuite).
 // E2E_SERVER_LOG=<fichier> : journal du serveur, contrôlé à la fin (aucune empreinte, aucune mention de la table).
 import { chromium } from "playwright";
 import pg from "pg";
@@ -76,7 +76,10 @@ for (const chemin of ["/feedback", "/feedback/nouveau", "/feedback/mes-retours",
 const c = await connecter("collaborateur@simassurances.test");
 await c.p.goto(`${B}/feedback`, { waitUntil: "networkidle" });
 const corps = await c.p.locator("main").innerText();
-verifier("2. /feedback : nouveau texte d'anonymat, coquille du portail", (await c.p.locator("[data-texte-anonymat]").innerText()).includes("trace technique chiffrée jusqu'au lendemain") && (await c.p.locator("main").count()) === 1);
+const TEXTE = "Votre avis est anonyme : le portail n'affiche jamais son auteur, ni à la RH, ni à la Direction, ni aux administrateurs. Pour limiter chaque personne à un avis par collègue et par jour, une trace technique chiffrée est conservée jusqu'au lendemain, puis effacée automatiquement. Les avis sur les conditions de travail sont lus uniquement par la RH et la Direction générale.";
+const affiche = (await c.p.locator("[data-texte-anonymat]").innerText()).replace(/\s+/g, " ").replace(/’/g, "'").trim();
+verifier("Texte d'anonymat affiché mot pour mot, coquille du portail", affiche === TEXTE && (await c.p.locator("main").count()) === 1, affiche === TEXTE ? "" : affiche);
+verifier("Plus aucune promesse « personne d'autre » sur la page (cartes comprises)", !/personne d.autre/i.test(corps) && corps.includes("Le portail n'affiche jamais l'auteur d'un avis"));
 verifier("2. /feedback : plus de liste publique des avis", !corps.includes("Avis sur l'entreprise"));
 const options = await c.p.locator("select option").allInnerTexts();
 verifier("2. Liste des destinataires : ni soi-même ni le compte Admin", !options.some((o) => /Collaborateur Test|Admin Test/.test(o)), options.join(" | "));
@@ -179,10 +182,7 @@ const deux = await Promise.all([rejouer(c.ctx, requeteCollab, [[paul, zoe]]), re
 verifier("Deux envois simultanés : un seul réussit", deux.filter((x) => x.texte.includes(MSG_OK)).length === 1 && deux.filter((x) => x.texte.includes(MSG_COLLAB)).length === 1 && (await nbAvis()) === 4);
 
 // ── 4. Changement de jour ─────────────────────────────────────────────────────────────────────────────────────────────
-await q(`UPDATE "FeedbackQuota" SET jour = jour - 1 WHERE cle = $1`, [clePaul]);
-r = await rejouer(c.ctx, requeteCollab);
-verifier("4. Trace de Paul vieillie à hier : un nouvel avis est accepté", r.texte.includes(MSG_OK) && (await nbAvis()) === 5, r.texte.slice(-200));
-verifier("4. La trace est de nouveau au jour courant", (await un(`SELECT jour = (now() AT TIME ZONE 'UTC')::date AS auj FROM "FeedbackQuota" WHERE cle = $1`, [clePaul])).auj === true);
+// La date entre dans l'empreinte (clé différente le lendemain : tests unitaires). Ici : la purge efface une trace vieillie.
 await q(`UPDATE "FeedbackQuota" SET jour = jour - 1 WHERE cle = $1`, [clePaul]);
 const a = await connecter("admin@simassurances.test");
 await a.p.goto(`${B}/admin/journal-technique`, { waitUntil: "networkidle" });
@@ -190,8 +190,15 @@ await a.p.locator('xpath=//*[normalize-space(text())="Purge des journaux"]/ances
 for (let i = 0; i < 40 && (await cles()).includes(clePaul); i++) await a.p.waitForTimeout(250);
 const restantes = await cles();
 verifier("4. La purge efface la trace d'hier, garde celles du jour", !restantes.includes(clePaul) && restantes.length === 3, `${restantes.length} traces`);
-const bilan = await un(`SELECT bilan FROM "ExecutionTache" WHERE tache = 'PURGE' AND declenchement = 'MANUEL' ORDER BY debut DESC LIMIT 1`);
+// La ligne d'exécution est écrite à la FIN de la tâche, après la suppression : on l'attend.
+let bilan;
+for (let i = 0; i < 60 && !bilan; i++) {
+  bilan = await un(`SELECT bilan FROM "ExecutionTache" WHERE tache = 'PURGE' AND declenchement = 'MANUEL' ORDER BY debut DESC LIMIT 1`);
+  if (!bilan) await a.p.waitForTimeout(250);
+}
 verifier("4. Bilan de la purge : 1 trace de quota comptée", bilan?.bilan?.quotasFeedbackSupprimes === 1, JSON.stringify(bilan?.bilan));
+r = await rejouer(c.ctx, requeteCollab);
+verifier("4. Trace purgée : un nouvel avis sur Paul est accepté", r.texte.includes(MSG_OK) && (await nbAvis()) === 5 && (await cles()).includes(clePaul), r.texte.slice(-200));
 
 // ── 8. En base ────────────────────────────────────────────────────────────────────────────────────────────────────────
 const colonnes = (await q(`SELECT column_name || ':' || data_type AS c FROM information_schema.columns WHERE table_name = 'FeedbackQuota' ORDER BY 1`)).map((x) => x.c);
@@ -310,6 +317,100 @@ const zoeSession = await connecter("responsable-marketing@simassurances.test");
 await zoeSession.p.goto(`${B}/feedback/mes-retours`, { waitUntil: "networkidle" });
 verifier("10. Modération : avis masqué pour son destinataire, « Voir » reste disponible", (await zoeSession.p.locator("main").innerText()).includes("pas encore reçu") && (await rh.p.locator("table").getByRole("button", { name: "Voir" }).count()) === 1);
 
+// ── Suite 3 et 2. Rétablir (RH), sur les deux types ────────────────────────────────────────────────────────────────────
+const requetesModeration = []; // requêtes réelles des actions de masquage et de rétablissement, pour les rejouer
+rh.p.on("request", (x) => {
+  if (x.method() === "POST" && x.headers()["next-action"]) {
+    requetesModeration.push({ action: x.headers()["next-action"], type: x.headers()["content-type"], corps: x.postData() ?? "" });
+  }
+});
+const idZoe = (await un(`SELECT id FROM "Feedback" WHERE "recipientId" = $1`, [zoe])).id;
+const rhId = await userId("rh@simassurances.test");
+const etat = async (id) => (await un(`SELECT "isModerated", "motifModeration", "moderatedById", "moderatedAt" FROM "Feedback" WHERE id = $1`, [id]));
+const attendreEtat = async (id, masque) => {
+  for (let i = 0; i < 60 && (await etat(id)).isModerated !== masque; i++) await rh.p.waitForTimeout(250);
+};
+
+async function modererParEcran(operation, id, motif) {
+  await rh.p.locator("table").getByRole("button", { name: operation === "masquer" ? "Modérer" : "Rétablir", exact: true }).click();
+  await rh.p.getByLabel(operation === "masquer" ? "Motif de modération" : "Motif du rétablissement").fill(motif);
+  await rh.p.getByRole("button", { name: operation === "masquer" ? "Confirmer le retrait" : "Confirmer le rétablissement" }).click();
+  await attendreEtat(id, operation === "masquer");
+  await rh.p.locator("table").getByRole("button", { name: operation === "masquer" ? "Rétablir" : "Modérer", exact: true }).waitFor();
+}
+
+const requeteMasquer = requetesModeration.at(-1) ?? null;
+await modererParEcran("retablir", idZoe, "Rétablissement e2e collaboration");
+const requeteRetablir = requetesModeration.filter((x) => x.corps.includes("Rétablissement e2e collaboration")).at(-1);
+const apres = await etat(idZoe);
+verifier("2. RH rétablit un avis « Collaboration » ; les colonnes du dernier masquage sont gardées", !apres.isModerated && apres.motifModeration === "Retrait de test e2e" && apres.moderatedById === rhId && apres.moderatedAt !== null);
+verifier("2. Un avis rétabli ne montre plus « Retiré par » ni motif à l'écran", !(await rh.p.locator("table").innerText()).includes("Retrait de test e2e"));
+await zoeSession.p.reload({ waitUntil: "networkidle" });
+verifier("3. Rétabli : l'avis réapparaît dans « Mes critiques reçues »", (await zoeSession.p.locator("main").innerText()).includes((await un(`SELECT content FROM "Feedback" WHERE id = $1`, [idZoe])).content));
+
+await rh.p.goto(`${B}/feedback/admin?type=CONDITIONS_TRAVAIL`, { waitUntil: "networkidle" });
+await modererParEcran("masquer", idCT, "MOTIFCT masquage e2e");
+const masquer = requetesModeration.filter((x) => x.corps.includes("MOTIFCT masquage e2e")).at(-1);
+const csvMasque = await (await rh.ctx.request.get(`${B}/api/feedback/export?type=CONDITIONS_TRAVAIL`)).text();
+verifier("2. RH masque un avis « Conditions de travail » (export : Modéré, motif)", csvMasque.includes("Modéré (Retiré)") && csvMasque.includes("MOTIFCT masquage e2e"));
+await modererParEcran("retablir", idCT, "MOTIFCT rétablissement e2e");
+const csvRetabli = await (await rh.ctx.request.get(`${B}/api/feedback/export?type=CONDITIONS_TRAVAIL`)).text();
+verifier("2. RH le rétablit (export : Actif, plus de motif de masquage)", !(await etat(idCT)).isModerated && csvRetabli.includes("Actif") && !csvRetabli.includes("MOTIFCT masquage"));
+
+const historiqueModeration = async (id) =>
+  q(`SELECT entity, action, detail, "userId", "ipAddress" FROM "HistoriqueEntry" WHERE "entityId" = $1 ORDER BY "createdAt"`, [id]);
+for (const [id, entite] of [[idZoe, "Feedback"], [idCT, "FeedbackConditionsTravail"]]) {
+  const h = await historiqueModeration(id);
+  verifier(
+    `2. Historique ${entite} : deux lignes (masquage puis rétablissement), auteur = RH, motifs`,
+    h.length === 2 && h[0].action === "moderation_masquage" && h[1].action === "moderation_retablissement" && h.every((x) => x.entity === entite && x.userId === rhId) && /Motif : /.test(h[0].detail) && /Masquage levé du .*motif : /.test(h[1].detail),
+    h.map((x) => x.detail).join(" | ")
+  );
+  verifier(`2. Historique ${entite} : rien sur l'auteur de l'avis`, !JSON.stringify(h).includes(collab) && !JSON.stringify(h).includes("Collaborateur Test"));
+}
+
+// Motif trop court : refusé côté serveur (rejeu direct), rien écrit.
+// Le corps d'un appel direct d'action est le tableau JSON de ses arguments.
+const appel = (modele, id, motif) => ({ ...modele, corps: JSON.stringify([id, motif]) });
+r = await rejouer(rh.ctx, appel(masquer, idCT, "ab"), [], `${B}/feedback/admin`);
+verifier("2. Motif de moins de 3 caractères : refusé par le serveur", r.texte.includes("au moins 3 caractères") && !(await etat(idCT)).isModerated);
+
+// ── 1. Admin : rejeu direct sur un avis « Conditions de travail » puis « Collaboration » ─────────────────────────────────
+const rejouerAdmin = (modele, id, motif) => rejouer(a.ctx, appel(modele, id, motif), [], `${B}/feedback/admin`);
+const nbHistoriqueCT = (await historiqueModeration(idCT)).length;
+r = await rejouerAdmin(masquer, idCT, "Tentative admin");
+verifier("1. Admin, masquer un avis « Conditions de travail » : « Message introuvable. », rien écrit", r.texte.includes("Message introuvable.") && !(await etat(idCT)).isModerated && (await historiqueModeration(idCT)).length === nbHistoriqueCT, r.texte.slice(-120));
+await rejouer(rh.ctx, appel(masquer, idCT, "MOTIFCT second masquage"), [], `${B}/feedback/admin`);
+r = await rejouerAdmin(requeteRetablir, idCT, "Tentative admin");
+verifier("1. Admin, rétablir un avis « Conditions de travail » masqué : « Message introuvable. », rien écrit", r.texte.includes("Message introuvable.") && (await etat(idCT)).isModerated && (await historiqueModeration(idCT)).length === nbHistoriqueCT + 1, r.texte.slice(-120));
+r = await rejouerAdmin(requeteRetablir, "identifiant-inexistant", "Tentative admin");
+verifier("1. Même réponse pour un identifiant inexistant", r.texte.includes("Message introuvable."));
+r = await rejouerAdmin(masquer, idZoe, "Masquage par l'admin");
+verifier("1. Admin masque un avis « Collaboration » : fonctionne", r.texte.includes("a été modéré") && (await etat(idZoe)).isModerated, r.texte.slice(-120));
+await zoeSession.p.reload({ waitUntil: "networkidle" });
+verifier("3. Masqué : l'avis disparaît de « Mes critiques reçues »", (await zoeSession.p.locator("main").innerText()).includes("pas encore reçu"));
+r = await rejouerAdmin(requeteRetablir, idZoe, "Rétablissement par l'admin");
+verifier("1. Admin rétablit un avis « Collaboration » : fonctionne", r.texte.includes("a été rétabli") && !(await etat(idZoe)).isModerated, r.texte.slice(-120));
+r = await rejouer(c.ctx, appel(masquer, idZoe, "Tentative collaborateur"), [], `${B}/feedback`);
+verifier("1. Collaborateur (sans feedback.moderer) : refusé", !r.texte.includes("a été modéré") && !(await etat(idZoe)).isModerated, `${r.statut} ${r.texte.slice(-120)}`);
+verifier("Écran Admin : « Voir » et « Modérer » sur les avis « Collaboration », aucune requête de masquage initiale perdue", requeteMasquer !== undefined);
+
+// ── Journal d'audit ──
+let requeteLogs;
+a.p.on("request", (x) => {
+  if (x.method() === "POST" && x.headers()["next-action"] && /^\[\d+,\d+\]$/.test(x.postData() ?? "")) {
+    requeteLogs = { action: x.headers()["next-action"], type: x.headers()["content-type"], corps: x.postData() };
+  }
+});
+await a.p.goto(`${B}/admin/logs`, { waitUntil: "networkidle" });
+await a.p.getByRole("button", { name: "Actualiser" }).click();
+for (let i = 0; i < 40 && !requeteLogs; i++) await a.p.waitForTimeout(250);
+const logsAdmin = await rejouer(a.ctx, { ...requeteLogs, corps: "[0,500]" }, [], `${B}/admin/logs`);
+verifier("Journal d'audit (Admin) : modération « Collaboration » visible, aucune trace des avis « Conditions de travail »", logsAdmin.texte.includes("moderation_masquage") && !logsAdmin.texte.includes("MOTIFCT") && !logsAdmin.texte.includes(idCT) && !logsAdmin.texte.includes("FeedbackConditionsTravail"));
+const logsCollab = await rejouer(c.ctx, { ...requeteLogs, corps: "[0,500]" }, [], `${B}/admin/logs`);
+const logsCollab2 = await rejouer(c.ctx, { ...requeteLogs, corps: "[0,500]" }, [], `${B}/feedback`);
+verifier("Journal d'audit : un compte non Admin qui appelle l'action directement n'obtient rien", [logsCollab, logsCollab2].every((x) => !x.texte.includes("totalCount") && !x.texte.includes("rh@simassurances.test") && !x.texte.includes("LOGIN_SUCCESS")), `${logsCollab.statut} / ${logsCollab2.statut}`);
+
 await a.p.goto(`${B}/admin/roles`, { waitUntil: "networkidle" });
 const LIBELLE = "Voir les destinataires et les avis sur les conditions de travail (FeedbackApp)";
 const caseDe = (role) => a.p.locator("section", { has: a.p.getByRole("heading", { level: 2, name: role, exact: true }) }).getByLabel(LIBELLE);
@@ -337,6 +438,39 @@ await rh.p.setViewportSize({ width: 390, height: 800 });
 for (const chemin of ["/feedback", "/feedback/admin"]) {
   await rh.p.goto(`${B}${chemin}`, { waitUntil: "networkidle" });
   verifier(`390 px sans défilement horizontal : ${chemin}`, !(await rh.p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)));
+}
+
+// ── Suite 4. Erreurs d'enregistrement provoquées : seuls l'étape et le code d'erreur sont journalisés ───────────────────
+const avantErreurs = [await nbAvis(), (await cles()).length];
+const envoyerChloe = () => rejouer(c.ctx, requeteCollab, [[paul, chloe]]);
+await db.query(`CREATE FUNCTION e2e_panne() RETURNS trigger AS $f$ BEGIN RAISE EXCEPTION 'E2EVALEURSECRETE'; END $f$ LANGUAGE plpgsql`);
+await db.query(`CREATE TRIGGER e2e_panne_quota BEFORE INSERT ON "FeedbackQuota" FOR EACH ROW EXECUTE FUNCTION e2e_panne()`);
+r = await envoyerChloe();
+verifier("4. Panne à l'étape « quota » : message générique, rien écrit", r.texte.includes("n'a pas pu être enregistré") && !r.texte.includes("E2EVALEURSECRETE") && (await nbAvis()) === avantErreurs[0] && (await cles()).length === avantErreurs[1]);
+await db.query(`DROP TRIGGER e2e_panne_quota ON "FeedbackQuota"`);
+// Comme un destinataire supprimé entre la validation et l'écriture : la clé étrangère refuse l'avis.
+await db.query(`CREATE FUNCTION e2e_destinataire_disparu() RETURNS trigger AS $f$ BEGIN NEW."recipientId" := 'E2EDESTINATAIREDISPARU'; RETURN NEW; END $f$ LANGUAGE plpgsql`);
+await db.query(`CREATE TRIGGER e2e_panne_avis BEFORE INSERT ON "Feedback" FOR EACH ROW EXECUTE FUNCTION e2e_destinataire_disparu()`);
+r = await envoyerChloe();
+verifier("4. Panne à l'étape « avis » : la limite n'est pas consommée (trace annulée avec l'avis)", r.texte.includes("n'a pas pu être enregistré") && (await nbAvis()) === avantErreurs[0] && (await cles()).length === avantErreurs[1]);
+await db.query(`DROP TRIGGER e2e_panne_avis ON "Feedback"; DROP FUNCTION e2e_panne; DROP FUNCTION e2e_destinataire_disparu`);
+let incidents = [];
+for (let i = 0; i < 40 && incidents.length < 2; i++) {
+  incidents = await q(`SELECT niveau, source, code, message, contexte FROM "JournalTechnique" WHERE code LIKE 'FEEDBACK%' ORDER BY "createdAt"`);
+  await new Promise((x) => setTimeout(x, 250));
+}
+for (const i of incidents) console.log(`    journal technique : ${i.niveau} ${i.source} ${i.code} — ${i.message} contexte=${JSON.stringify(i.contexte)}`);
+verifier(
+  "4. Journal technique : une ligne par étape, étape et code seulement, sans contexte",
+  incidents.length === 2 && incidents[0].code === "FEEDBACK_QUOTA_ECHEC" && incidents[1].code === "FEEDBACK_AVIS_ECHEC" &&
+    /^Enregistrement d'un avis FeedbackApp impossible \(étape quota, code (P\d{4}|INCONNU)\)\.$/.test(incidents[0].message) &&
+    incidents[1].message === "Enregistrement d'un avis FeedbackApp impossible (étape avis, code P2003)." && incidents.every((i) => i.contexte === null)
+);
+r = await envoyerChloe();
+verifier("4. Panne levée : le même avis passe", r.texte.includes(MSG_OK) && (await nbAvis()) === avantErreurs[0] + 1);
+if (process.env.E2E_SERVER_LOG) {
+  const journal = readFileSync(process.env.E2E_SERVER_LOG, "utf8");
+  verifier("4. Journal du serveur : ni message d'erreur ni valeur", !/E2EVALEURSECRETE|E2EDESTINATAIREDISPARU|Invalid `|Foreign key|ConnectorError|DriverAdapterError/i.test(journal));
 }
 
 // ── 1 (fin). L'action elle-même sans session : cookie que le middleware accepte, mais getSession() renvoie null ────────

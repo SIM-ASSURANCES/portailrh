@@ -91,10 +91,11 @@ La suite détaille chaque étape technique et sert de référence à l'équipe t
    démarrée), ou afficher la page de maintenance du serveur frontal. Les scripts n'ont pas besoin du service `app` démarré.
 2. **Sauvegarde de la base** (format personnalisé, restaurable table par table) — depuis le serveur :
    ```bash
-   docker exec <conteneur-db> pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" > sauvegarde-portail-$(date +%F-%H%M).dump
+   docker exec <conteneur-db> pg_dump -U "$POSTGRES_USER" -Fc --exclude-table-data='"FeedbackQuota"' "$POSTGRES_DB" > sauvegarde-portail-$(date +%F-%H%M).dump
    ls -lh sauvegarde-portail-*.dump          # taille non nulle
    docker exec -i <conteneur-db> pg_restore -l < sauvegarde-portail-AAAA-MM-JJ-HHMM.dump | head   # le fichier se relit
    ```
+   L'option `--exclude-table-data='"FeedbackQuota"'` est à garder dans **toute** commande de sauvegarde (guillemets compris) : cette table contient la trace chiffrée de la limite d'un avis FeedbackApp par jour, qui doit disparaître le lendemain et non durer autant que la sauvegarde (une restauration donne une table vide : au pire, un employé pourra redonner un avis le jour de la restauration). Une sauvegarde automatique de l'hébergeur qui ne permet pas cette exclusion, une copie des fichiers de la base ou les journaux WAL conservent la trace.
 3. **Sauvegarde des fichiers** (pièces jointes, volume `uploads`) :
    ```bash
    docker run --rm -v <projet>_uploads:/u -v "$PWD":/b alpine tar czf /b/uploads-$(date +%F-%H%M).tgz -C /u .

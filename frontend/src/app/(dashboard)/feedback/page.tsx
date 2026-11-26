@@ -81,9 +81,9 @@ function FeedbackHero() {
           de travail chez SIM Assurances.
         </p>
         <p data-texte-anonymat className="mt-3 max-w-xl text-sm font-semibold leading-relaxed text-white sm:text-[15px]">
-          Votre avis est anonyme : ni la RH, ni la Direction, ni personne d&apos;autre ne peut voir qui
-          l&apos;a écrit. Pour limiter chaque personne à un avis par collègue et par jour, le portail
-          conserve une trace technique chiffrée jusqu&apos;au lendemain, puis l&apos;efface
+          Votre avis est anonyme : le portail n&apos;affiche jamais son auteur, ni à la RH, ni à la
+          Direction, ni aux administrateurs. Pour limiter chaque personne à un avis par collègue et par
+          jour, une trace technique chiffrée est conservée jusqu&apos;au lendemain, puis effacée
           automatiquement. Les avis sur les conditions de travail sont lus uniquement par la RH et la
           Direction générale.
         </p>
@@ -143,7 +143,7 @@ export default async function FeedbackPage() {
           icon="lock"
           tone="primary"
           title="Anonyme"
-          description="Ni la RH, ni la Direction, ni personne d'autre ne peut voir qui a écrit un avis."
+          description="Le portail n'affiche jamais l'auteur d'un avis, ni à la RH, ni à la Direction, ni aux administrateurs."
         />
         <ReassuranceCard
           icon="trending-up"

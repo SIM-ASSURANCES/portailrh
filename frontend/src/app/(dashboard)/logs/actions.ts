@@ -1,15 +1,21 @@
 "use server";
 
-import { getSession } from "@/lib/auth";
-import { prisma } from "backend";
+import { getSession, hasPermission, isAdmin } from "@/lib/auth";
+import { ENTITE_FEEDBACK_CONDITIONS_TRAVAIL, PERMISSION_FEEDBACK_VOIR_DETAILS, prisma } from "backend";
 
 export async function getLogsAction(skip = 0, take = 50) {
   const session = await getSession();
-  if (!session) throw new Error("Non autorisé");
+  // Une Server Action s'appelle directement, sans passer par un layout : le contrôle est fait ICI. Les deux écrans qui
+  // l'utilisent (/admin/logs et /pointage/rh/logs) sont réservés à l'Admin.
+  if (!session || !isAdmin(session)) throw new Error("Non autorisé");
 
-  // La protection est déjà gérée par les layouts (admin/layout.tsx et rh/layout.tsx)
-  
+  // La modération d'un avis « Conditions de travail » ne se montre qu'à qui peut lire ces avis.
+  const where = hasPermission(session, PERMISSION_FEEDBACK_VOIR_DETAILS)
+    ? {}
+    : { entity: { not: ENTITE_FEEDBACK_CONDITIONS_TRAVAIL } };
+
   const logs = await prisma.historiqueEntry.findMany({
+    where,
     skip,
     take,
     orderBy: { createdAt: "desc" },
@@ -24,7 +30,7 @@ export async function getLogsAction(skip = 0, take = 50) {
     }
   });
 
-  const totalCount = await prisma.historiqueEntry.count();
+  const totalCount = await prisma.historiqueEntry.count({ where });
 
   return { logs, totalCount };
 }

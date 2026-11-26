@@ -106,7 +106,8 @@ export const DESCRIPTIONS: Readonly<Record<string, string>> = {
   "cpt.mettre_en_service":
     "Gestion Compta : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul.",
   // Autres
-  "feedback.moderer": "Modérer les messages de FeedbackApp (masquer, rétablir) et exporter.",
+  "feedback.moderer":
+    "Modérer les messages de FeedbackApp (masquer, rétablir, avec un motif tracé) et exporter. Les avis sur les conditions de travail demandent en plus `feedback.voir_details`.",
   "feedback.voir_details":
     "FeedbackApp : voir les vrais noms des destinataires et lire les avis sur les conditions de travail (écran de modération et export, avec `feedback.moderer`). RH et DG seuls, jamais le rôle Admin. L'auteur d'un avis reste anonyme.",
   "systeme.reinitialiser":

@@ -157,7 +157,7 @@ Direction générale.
 
 **Feedback** (2)
 
-- [ ] `feedback.moderer` — Modérer les messages de FeedbackApp (masquer, rétablir) et exporter.
+- [ ] `feedback.moderer` — Modérer les messages de FeedbackApp (masquer, rétablir, avec un motif tracé) et exporter. Les avis sur les conditions de travail demandent en plus `feedback.voir_details`.
 - [ ] `feedback.voir_details` — FeedbackApp : voir les vrais noms des destinataires et lire les avis sur les conditions de travail (écran de modération et export, avec `feedback.moderer`). RH et DG seuls, jamais le rôle Admin. L'auteur d'un avis reste anonyme.
 
 **Système** (3)
@@ -181,7 +181,7 @@ Administrateur du portail.
 
 **Feedback** (1)
 
-- [ ] `feedback.moderer` — Modérer les messages de FeedbackApp (masquer, rétablir) et exporter.
+- [ ] `feedback.moderer` — Modérer les messages de FeedbackApp (masquer, rétablir, avec un motif tracé) et exporter. Les avis sur les conditions de travail demandent en plus `feedback.voir_details`.
 
 L'accès à la console `/admin` vient du réglage « Administrateur » du rôle, pas d'une case à cocher. Ce rôle ne doit porter aucune autre permission métier que celles ci-dessus.
 
@@ -214,7 +214,7 @@ Gère le pointage, les retards, absences et reportings RH.
 
 **Feedback** (2)
 
-- [ ] `feedback.moderer` — Modérer les messages de FeedbackApp (masquer, rétablir) et exporter.
+- [ ] `feedback.moderer` — Modérer les messages de FeedbackApp (masquer, rétablir, avec un motif tracé) et exporter. Les avis sur les conditions de travail demandent en plus `feedback.voir_details`.
 - [ ] `feedback.voir_details` — FeedbackApp : voir les vrais noms des destinataires et lire les avis sur les conditions de travail (écran de modération et export, avec `feedback.moderer`). RH et DG seuls, jamais le rôle Admin. L'auteur d'un avis reste anonyme.
 
 ### Assistant Finance
@@ -494,7 +494,7 @@ Vérifié le 2026-10-22 sur deux bases jetables : (1) toutes les migrations seul
 | `cpt.relancer` | Gestion Compta | Gestion Compta : relancer et suivre les promesses de paiement | Gestion Compta : relancer les clients et suivre les promesses de paiement (écran pas encore livré). | Compta – Production, Compta – Commercial, Compta – RFCRH |
 | `cpt.cloturer_periode` | Gestion Compta | Gestion Compta : clôturer un mois | Gestion Compta : clôturer un mois (écran pas encore livré). | Compta – RFCRH |
 | `cpt.trancher_litige` | Gestion Compta | Gestion Compta : trancher un litige (direction générale) | Gestion Compta : trancher un litige, rôle de supervision de la direction (écran pas encore livré). | DG, Compta – Direction |
-| `feedback.moderer` | FeedbackApp | Modérer les messages FeedbackApp | Modérer les messages de FeedbackApp (masquer, rétablir) et exporter. | DG, Admin, RH |
+| `feedback.moderer` | FeedbackApp | Modérer les messages FeedbackApp | Modérer les messages de FeedbackApp (masquer, rétablir, avec un motif tracé) et exporter. Les avis sur les conditions de travail demandent en plus `feedback.voir_details`. | DG, Admin, RH |
 | `feedback.voir_details` | FeedbackApp | Voir les destinataires et les avis sur les conditions de travail (FeedbackApp) | FeedbackApp : voir les vrais noms des destinataires et lire les avis sur les conditions de travail (écran de modération et export, avec `feedback.moderer`). RH et DG seuls, jamais le rôle Admin. L'auteur d'un avis reste anonyme. | DG, RH |
 | `systeme.reinitialiser` | Système | *(non affichée : module Système)* | Remise à zéro globale de mise en production (écran « Réinitialisation »), usage unique. DG seul, jamais déléguée, jamais cochable dans /admin/roles. | DG |
 | `enc.mettre_en_service` | Système | *(non affichée : module Système)* | Encaissements : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul. | DG |

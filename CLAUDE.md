@@ -5969,15 +5969,43 @@ conditions de travail. L'auteur reste anonyme pour tout le monde, RH et DG compr
   « Destinataire » (`voirDetails` seulement, personnes ayant reçu au moins un avis, triées par nom, repris par l'export) ;
   la colonne « Destinataire » n'est triable (sur le nom réel) qu'avec `voirDetails`.
 
+### Masquer et rétablir
+
+`modererFeedback` et `retablirFeedback` (`feedback.ts`), actions `modererFeedbackAction` / `retablirFeedbackAction`,
+réservées à `feedback.moderer` ; motif obligatoire (3 à 500 caractères) ; bouton « Rétablir » à la place de « Modérer » sur
+une ligne masquée, même fenêtre de confirmation (`ModererFeedbackDialog`, prop `operation`). **Un avis « Conditions de
+travail » exige aussi `feedback.voir_details`** : sans elle, la réponse est « Message introuvable. », la même que pour un
+identifiant inexistant, quel que soit l'état de l'avis (`acces` est un paramètre obligatoire des deux fonctions).
+
+- **Historique** : chaque masquage et chaque rétablissement écrit une `HistoriqueEntry` dans la même transaction que le
+  changement d'état (auteur de la MODÉRATION et motif ; jamais rien sur l'auteur de l'avis ni son destinataire). Entité
+  `Feedback` pour un avis « Collaboration », **`FeedbackConditionsTravail`** pour l'autre type. Actions
+  `moderation_masquage` / `moderation_retablissement`. Les deux entités sont conservées par la réinitialisation globale.
+- **Rétablir ne change que `isModerated`** : `motifModeration` / `moderatedById` / `moderatedAt` gardent le dernier masquage
+  (montrés à l'écran et à l'export seulement tant que l'avis est masqué). La ligne de rétablissement rappelle le masquage
+  levé, ce qui couvre les masquages antérieurs à l'historique. Un nouveau masquage réécrit les colonnes ; l'historique
+  garde les précédents. Aucune table nouvelle.
+- **Journal d'audit** (`/admin/logs`) : sans `feedback.voir_details`, les lignes `FeedbackConditionsTravail` sont exclues
+  (sinon l'Admin apprendrait qu'un tel avis existe et lirait le motif). `getLogsAction` exige désormais `isAdmin`
+  **dans l'action** : auparavant, tout compte connecté pouvait l'appeler directement et lire tout le journal d'audit
+  (e-mails et adresses IP compris), les layouts ne protégeant pas une Server Action.
+
 ### Règle absolue : l'auteur n'est jamais enregistré
 
 - **Modèle `Feedback`** — colonnes : `id`, `content`, `recipientId`, `source`, `type`, `ratings`, `submittedAt`,
   `isModerated`, `motifModeration`, `moderatedById`/`moderatedAt` (qui a MODÉRÉ, sans rapport avec l'auteur).
   **Aucune colonne** `authorId`/`authorIp`/`authorSession` ni équivalent.
 - **`submittedAt` est une colonne SQL `DATE`** : aucune heure n'est stockable.
-- **Aucune IP lue** par `soumettreFeedbackAction`, aucun `console.log`, `logAuditAction`, `HistoriqueEntry` ni journal
-  technique sur l'envoi. Les erreurs d'écriture sont avalées sans être journalisées (une erreur Prisma peut citer les
-  valeurs écrites). `backend/src/feedback.ts` ne reçoit **jamais** l'identifiant de l'auteur.
+- **Aucune IP lue** par `soumettreFeedbackAction`, aucun `logAuditAction` ni `HistoriqueEntry` sur l'envoi.
+  `backend/src/feedback.ts` ne reçoit **jamais** l'identifiant de l'auteur.
+- **Échec d'enregistrement** : seuls le **nom de l'étape** (`cle`, `quota`, `avis`, `transaction`) et le **code Prisma**
+  (`P2003`, ou `INCONNU`) sont journalisés — jamais le message, la cause ni une valeur (un message Prisma peut citer ce
+  qui était écrit). `createFeedback` abandonne l'erreur d'origine (`ErreurEnregistrementFeedback`, `feedbackErreur.ts`).
+  En production : `journaliserIncident`, niveau `ERREUR`, source `AUTRE`, codes `FEEDBACK_QUOTA_ECHEC` /
+  `FEEDBACK_AVIS_ECHEC` / `FEEDBACK_ENVOI_ECHEC`, **sans contexte** ; ailleurs, `console.error`. L'anti-inondation
+  regroupe par code : deux échecs de la même étape dans la minute ne font qu'une ligne (celle du premier). PostgreSQL, lui,
+  écrit ses propres erreurs dans ses journaux (une violation de clé étrangère y cite l'identifiant du destinataire
+  manquant, jamais l'auteur ni l'empreinte).
 - La connexion elle-même reste tracée comme partout (`LOGIN_SUCCESS` avec IP) : elle ne dit rien d'un avis. Les anciennes
   garanties « aucun cookie pour un visiteur » et les vérifications associées **n'ont plus d'objet** (plus de visiteur).
 
@@ -5993,7 +6021,12 @@ conditions de travail. L'auteur reste anonyme pour tout le monde, RH et DG compr
 - **`ON CONFLICT DO NOTHING` (`createMany` + `skipDuplicates`), pas une erreur `P2002`** : une violation d'unicité ferait
   écrire `Key (cle)=(…) already exists` dans les journaux de PostgreSQL, horodaté, qui survivraient à la purge. Ne pas
   revenir à un `create` suivi d'un `catch P2002`.
-- Une trace d'un jour passé ne bloque jamais (effacée dans la transaction si elle porte la même clé).
+- La date entre dans l'empreinte : une trace d'un autre jour porte une autre clé et ne bloque jamais (aucune suppression
+  à l'envoi).
+- **Sauvegardes** : tout `pg_dump` doit porter `--exclude-table-data='"FeedbackQuota"'` (`docs/mise-en-production.md`),
+  sinon la trace dure aussi longtemps que la sauvegarde. Une restauration donne une table vide : au pire, un employé peut
+  redonner un avis le jour de la restauration. Les sauvegardes physiques, les journaux WAL et une sauvegarde automatique
+  d'hébergeur qui ne filtre pas la table la conservent.
 - **Purge** : la tâche quotidienne de 03:00 (`lib/taches/purge.ts`) efface les lignes dont `jour` est antérieur au jour
   courant (`quotasFeedbackSupprimes` au bilan). Planificateur arrêté (`PLANIFICATEUR_ACTIF=false`) = traces conservées.
   La table n'est ni dans la réinitialisation globale ni dans sa sauvegarde (classée `CONSERVEE`).
@@ -6004,14 +6037,16 @@ de tous les couples (auteur, cible) et retrouver qui a évalué un collègue don
 travail, **dans la journée**, tant que la trace existe. De plus, la trace et l'avis étant écrits dans la même transaction,
 ils partagent le même identifiant de transaction PostgreSQL (colonne système `xmin`) et se suivent physiquement : il peut
 alors relier l'auteur retrouvé **à son avis précis**, pas seulement au collègue évalué. Après la purge, la base vivante ne
-porte plus ce lien (les lignes effacées disparaissent au `VACUUM`), **mais une sauvegarde ou une copie des fichiers de la
-base prise avant la purge (journal WAL compris) le conserve** : leur durée de conservation borne la garantie. Aucun
+porte plus ce lien (les lignes effacées disparaissent au `VACUUM`), **mais une sauvegarde non filtrée, une copie des
+fichiers de la base ou les journaux WAL pris avant la purge le conservent** : leur durée de conservation borne la
+garantie. Un `pg_dump` qui exclut les données de `FeedbackQuota` ne contient pas la trace. Aucun
 utilisateur du portail, RH et DG compris, ne peut faire ce rapprochement depuis l'application.
 
 **Texte affiché aux employés** (ne rien promettre de plus, y compris dans les cartes de réassurance) : « Votre avis est
-anonyme : ni la RH, ni la Direction, ni personne d'autre ne peut voir qui l'a écrit. Pour limiter chaque personne à un
-avis par collègue et par jour, le portail conserve une trace technique chiffrée jusqu'au lendemain, puis l'efface
-automatiquement. Les avis sur les conditions de travail sont lus uniquement par la RH et la Direction générale. »
+anonyme : le portail n'affiche jamais son auteur, ni à la RH, ni à la Direction, ni aux administrateurs. Pour limiter
+chaque personne à un avis par collègue et par jour, une trace technique chiffrée est conservée jusqu'au lendemain, puis
+effacée automatiquement. Les avis sur les conditions de travail sont lus uniquement par la RH et la Direction générale. »
+La promesse porte sur ce que le PORTAIL affiche, pas sur ce que peut recalculer qui détient la base et `AUTH_SECRET`.
 
 Le serveur refuse aussi un destinataire inactif **ou** dont le rôle a `peutRecevoirFeedback: false` (rejeu réseau vers un
 compte Admin), et l'auto-évaluation. Test de bout en bout : `e2e/feedback-prive.mjs`.

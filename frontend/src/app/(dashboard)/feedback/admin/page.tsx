@@ -134,7 +134,7 @@ export default async function FeedbackAdminPage({
           </h2>
           <span className="text-xs text-muted-foreground">
             {acces.voirDetails
-              ? "L'auteur de chaque avis reste anonyme."
+              ? "Le portail n'affiche jamais l'auteur d'un avis."
               : "Conformément au CDC, les destinataires sont pseudonymisés."}
           </span>
         </div>

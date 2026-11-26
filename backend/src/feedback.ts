@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import type { FeedbackSource, FeedbackType, Prisma } from "./generated/prisma/client";
 import { FEEDBACK_CONTENT_MAX, FEEDBACK_CONTENT_MIN } from "./feedback-constants";
+import { codeErreurPrisma, ErreurEnregistrementFeedback, type EtapeEnregistrementFeedback } from "./feedbackErreur";
 import { detailNotesFeedback, generateFeedbackComment, type FeedbackRatings, type NoteDetailleeFeedback } from "./feedback-questions";
 
 /**
@@ -149,23 +150,34 @@ export async function createFeedback(
   }
 
   const jour = new Date(`${params.quota.jour}T00:00:00.000Z`);
-  // Une trace d'un jour passé que la purge n'a pas encore effacée ne bloque jamais.
-  await db.feedbackQuota.deleteMany({ where: { cle: params.quota.cle, jour: { lt: jour } } });
-  const reserve = await db.feedbackQuota.createMany({ data: [{ cle: params.quota.cle, jour }], skipDuplicates: true });
+  // L'erreur d'origine est abandonnée (son message peut citer les valeurs) : seuls l'étape et le code Prisma remontent.
+  const etape = async <T>(nom: EtapeEnregistrementFeedback, ecriture: () => Promise<T>): Promise<T> => {
+    try {
+      return await ecriture();
+    } catch (e) {
+      throw new ErreurEnregistrementFeedback(nom, codeErreurPrisma(e));
+    }
+  };
+
+  const reserve = await etape("quota", () =>
+    db.feedbackQuota.createMany({ data: [{ cle: params.quota.cle, jour }], skipDuplicates: true })
+  );
   if (reserve.count === 0) {
     return { success: false, quotaAtteint: true, message: "Limite d'un avis par jour atteinte." };
   }
 
-  const feedback = await db.feedback.create({
-    data: {
-      content,
-      recipientId: params.type === "COLLABORATION" ? params.recipientId : null,
-      type: params.type,
-      source: params.source,
-      ratings: params.ratings as Prisma.InputJsonValue,
-      submittedAt: jour,
-    },
-  });
+  const feedback = await etape("avis", () =>
+    db.feedback.create({
+      data: {
+        content,
+        recipientId: params.type === "COLLABORATION" ? params.recipientId : null,
+        type: params.type,
+        source: params.source,
+        ratings: params.ratings as Prisma.InputJsonValue,
+        submittedAt: jour,
+      },
+    })
+  );
 
   return { success: true, id: feedback.id };
 }
@@ -363,9 +375,10 @@ export async function getAdminFeedbacks(
     source: f.source,
     type: f.type,
     isModerated: f.isModerated,
-    motifModeration: f.motifModeration,
-    moderatedAt: f.moderatedAt,
-    moderatedByNom: f.moderatedBy?.fullName ?? null,
+    // Les colonnes gardent le dernier masquage après un rétablissement : elles ne sont montrées que sur un avis masqué.
+    motifModeration: f.isModerated ? f.motifModeration : null,
+    moderatedAt: f.isModerated ? f.moderatedAt : null,
+    moderatedByNom: f.isModerated ? (f.moderatedBy?.fullName ?? null) : null,
     destinataire: !f.recipientId
       ? null
       : acces.voirDetails
@@ -427,42 +440,125 @@ export async function getFeedbackStats(acces: AccesFeedback): Promise<FeedbackSt
 }
 
 /**
- * Action de modération d'un message inapproprié (retrait).
- * Exige un motif de modération obligatoire (min 3 caractères).
- * Traçabilité : qui a modéré et quand.
+ * Entités d'historique de la modération. Celle des avis « Conditions de travail » est DISTINCTE pour que le journal
+ * d'audit la cache à un compte sans `feedback.voir_details` (même après suppression de l'avis).
+ */
+export const ENTITE_FEEDBACK = "Feedback";
+export const ENTITE_FEEDBACK_CONDITIONS_TRAVAIL = "FeedbackConditionsTravail";
+
+export const ACTION_MASQUAGE_FEEDBACK = "moderation_masquage";
+export const ACTION_RETABLISSEMENT_FEEDBACK = "moderation_retablissement";
+
+/** Le même pour un avis inexistant et pour un avis que ce compte n'a pas le droit de lire : on ne confirme rien. */
+export const MESSAGE_FEEDBACK_INTROUVABLE = "Message introuvable.";
+
+type ResultatModeration = { success: boolean; message: string };
+
+const entiteHistorique = (type: FeedbackType) =>
+  type === "CONDITIONS_TRAVAIL" ? ENTITE_FEEDBACK_CONDITIONS_TRAVAIL : ENTITE_FEEDBACK;
+
+/** L'avis visé, ou `null` s'il n'existe pas OU si ce compte ne peut pas le lire (« Conditions de travail » sans droit). */
+async function chargerFeedbackModerable(id: string, acces: AccesFeedback) {
+  const feedback = await prisma.feedback.findUnique({ where: { id } });
+  if (!feedback || (feedback.type === "CONDITIONS_TRAVAIL" && !acces.voirDetails)) return null;
+  return feedback;
+}
+
+/**
+ * Masquage d'un message inapproprié. Motif obligatoire (3 caractères minimum). L'état et la ligne d'historique (qui a
+ * modéré, motif — jamais rien sur l'auteur de l'avis) sont écrits ensemble.
  */
 export async function modererFeedback(
   id: string,
   moderatorId: string,
-  motif: string
-): Promise<{ success: boolean; message: string }> {
+  motif: string,
+  acces: AccesFeedback
+): Promise<ResultatModeration> {
   // Contrôle de l'argument AVANT tout accès à la base : un motif trop court est refusé sans requête.
   const cleanMotif = motif.trim();
   if (cleanMotif.length < 3) {
     return { success: false, message: "Le motif de modération doit contenir au moins 3 caractères." };
   }
 
-  const feedback = await prisma.feedback.findUnique({
-    where: { id },
-  });
-
+  const feedback = await chargerFeedbackModerable(id, acces);
   if (!feedback) {
-    return { success: false, message: "Message introuvable." };
+    return { success: false, message: MESSAGE_FEEDBACK_INTROUVABLE };
   }
-
   if (feedback.isModerated) {
     return { success: false, message: "Ce message a déjà été modéré." };
   }
 
-  await prisma.feedback.update({
-    where: { id },
-    data: {
-      isModerated: true,
-      motifModeration: cleanMotif,
-      moderatedById: moderatorId,
-      moderatedAt: new Date(),
-    },
+  const fait = await prisma.$transaction(async (tx) => {
+    // Conditionné à l'état lu : deux modérations simultanées, une seule passe.
+    const r = await tx.feedback.updateMany({
+      where: { id, isModerated: false },
+      data: { isModerated: true, motifModeration: cleanMotif, moderatedById: moderatorId, moderatedAt: new Date() },
+    });
+    if (r.count === 0) return false;
+    await tx.historiqueEntry.create({
+      data: {
+        entity: entiteHistorique(feedback.type),
+        entityId: id,
+        action: ACTION_MASQUAGE_FEEDBACK,
+        detail: `Avis masqué. Motif : ${cleanMotif}`,
+        userId: moderatorId,
+      },
+    });
+    return true;
   });
+  if (!fait) {
+    return { success: false, message: "Ce message a déjà été modéré." };
+  }
 
   return { success: true, message: "Le message a été modéré et retiré de la plateforme." };
+}
+
+/**
+ * Rétablissement d'un message masqué (même droit de lecture que le masquage). Seul `isModerated` change : les colonnes
+ * `motifModeration`/`moderatedById`/`moderatedAt` gardent le dernier masquage, et la ligne d'historique du
+ * rétablissement rappelle le masquage levé (utile aussi pour les masquages antérieurs à l'historique).
+ */
+export async function retablirFeedback(
+  id: string,
+  moderatorId: string,
+  motif: string,
+  acces: AccesFeedback
+): Promise<ResultatModeration> {
+  const cleanMotif = motif.trim();
+  if (cleanMotif.length < 3) {
+    return { success: false, message: "Le motif du rétablissement doit contenir au moins 3 caractères." };
+  }
+
+  const feedback = await chargerFeedbackModerable(id, acces);
+  if (!feedback) {
+    return { success: false, message: MESSAGE_FEEDBACK_INTROUVABLE };
+  }
+  if (!feedback.isModerated) {
+    return { success: false, message: "Ce message n'est pas masqué." };
+  }
+
+  const masquageLeve = [
+    feedback.moderatedAt ? ` du ${feedback.moderatedAt.toISOString().slice(0, 10).split("-").reverse().join("/")}` : "",
+    feedback.motifModeration ? ` (motif : ${feedback.motifModeration})` : "",
+  ].join("");
+
+  const fait = await prisma.$transaction(async (tx) => {
+    const r = await tx.feedback.updateMany({ where: { id, isModerated: true }, data: { isModerated: false } });
+    if (r.count === 0) return false;
+    await tx.historiqueEntry.create({
+      data: {
+        entity: entiteHistorique(feedback.type),
+        entityId: id,
+        action: ACTION_RETABLISSEMENT_FEEDBACK,
+        detail: `Avis rétabli. Motif : ${cleanMotif}. Masquage levé${masquageLeve}.`,
+        userId: moderatorId,
+      },
+    });
+    return true;
+  });
+  if (!fait) {
+    return { success: false, message: "Ce message n'est pas masqué." };
+  }
+
+  return { success: true, message: "Le message a été rétabli." };
 }

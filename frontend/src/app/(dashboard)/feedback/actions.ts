@@ -3,8 +3,14 @@
 import { z } from "zod";
 
 import { getSession } from "@/lib/auth";
+import { journaliserIncident } from "@/lib/journalTechnique";
 import {
   cibleQuotaFeedback,
+  codeErreurPrisma,
+  CODES_JOURNAL,
+  ErreurEnregistrementFeedback,
+  messageIncidentFeedback,
+  type EtapeEnregistrementFeedback,
   createFeedback,
   empreinteQuotaFeedback,
   jourCourant,
@@ -20,14 +26,30 @@ import {
  *
  * RÈGLE ABSOLUE DE CE FICHIER : l'auteur reste anonyme. Son identifiant ne sert ici qu'à (1) refuser qu'il s'évalue
  * lui-même et (2) calculer l'empreinte HMAC de la limite d'un avis par jour. Il n'est jamais stocké avec l'avis, jamais
- * transmis à `createFeedback`, jamais renvoyé, jamais journalisé. L'empreinte non plus : aucun `console.log`,
- * `logAuditAction`, `HistoriqueEntry` ni journal technique ici, et les erreurs d'écriture sont avalées sans être
- * journalisées (un message d'erreur Prisma peut citer les valeurs écrites). L'IP n'est pas lue.
+ * transmis à `createFeedback`, jamais renvoyé, jamais journalisé. L'empreinte non plus : aucun `logAuditAction` ni
+ * `HistoriqueEntry` ici. Un échec d'enregistrement ne laisse que le NOM DE L'ÉTAPE et le CODE d'erreur Prisma, jamais
+ * le message ni une valeur (un message Prisma peut citer les valeurs écrites). L'IP n'est pas lue.
  *
  * Aucun champ texte libre : `content` est calculé côté serveur par `createFeedback` à partir de `ratings`.
  */
 
 const ERREUR_ENVOI = "Votre avis n'a pas pu être enregistré. Réessayez plus tard.";
+
+/** Seuls l'étape et le code d'erreur sortent d'ici, sans contexte. */
+async function signalerEchecEnregistrement(etape: EtapeEnregistrementFeedback, codePrisma: string): Promise<void> {
+  const message = messageIncidentFeedback(etape, codePrisma);
+  if (process.env.NODE_ENV !== "production") {
+    console.error(`[FeedbackApp] ${message}`);
+    return;
+  }
+  const code =
+    etape === "quota"
+      ? CODES_JOURNAL.FEEDBACK_QUOTA_ECHEC
+      : etape === "avis"
+        ? CODES_JOURNAL.FEEDBACK_AVIS_ECHEC
+        : CODES_JOURNAL.FEEDBACK_ENVOI_ECHEC;
+  await journaliserIncident({ niveau: "ERREUR", source: "AUTRE", code, message });
+}
 
 const honeypotSchema = z.string().optional();
 
@@ -113,6 +135,7 @@ export async function soumettreFeedbackAction(
   }
 
   const jour = jourCourant();
+  let etape: EtapeEnregistrementFeedback = "cle";
   try {
     // Sans AUTH_SECRET, l'empreinte lève et l'envoi est refusé : jamais « pas de limite ».
     const cle = empreinteQuotaFeedback({
@@ -121,6 +144,7 @@ export async function soumettreFeedbackAction(
       cible: cibleQuotaFeedback(type, recipientId),
       jour,
     });
+    etape = "transaction";
     // Trace de quota et avis dans la MÊME transaction : un échec ne consomme pas la limite.
     const result = await prisma.$transaction((tx) =>
       createFeedback(tx, { type, recipientId, ratings, source: "INTERNAL", quota: { cle, jour } })
@@ -128,7 +152,12 @@ export async function soumettreFeedbackAction(
     if (!result.success) {
       return { status: "error", message: result.quotaAtteint ? messageQuotaFeedback(type) : result.message };
     }
-  } catch {
+  } catch (e) {
+    if (e instanceof ErreurEnregistrementFeedback) {
+      await signalerEchecEnregistrement(e.etape, e.codePrisma);
+    } else {
+      await signalerEchecEnregistrement(etape, codeErreurPrisma(e));
+    }
     return { status: "error", message: ERREUR_ENVOI };
   }
 
