@@ -4,7 +4,8 @@ import { notFound, redirect } from "next/navigation";
 import { AvertissementHonoraires } from "@/components/compta/AvertissementHonoraires";
 import { dateIsoAfficheeCpt, montantCentimesCpt } from "@/components/compta/libellesRemuneration";
 import { PageHeader } from "@/components/ui";
-import { getSession, hasPermission } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
+import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
 import { chargerReleveRemunerationCpt, LIBELLE_NATURE_REMUNERATION_CPT, NATURES_REMUNERATION_CPT, prisma } from "backend";
 
 const TH = "px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground";
@@ -16,7 +17,7 @@ const LIGNES_ECRAN_MAX = 500;
 /** Relevé d'un partenaire pour une nature (lot GC-9g). Mêmes données que les exports et le PDF (`chargerReleveRemunerationCpt`). */
 export default async function ReleveRemunerationPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ nature?: string }> }) {
   const session = await getSession();
-  if (!session || !hasPermission(session, "cpt.consulter")) redirect("/?error=acces_refuse_compta");
+  if (!session || !peutVoirRemunerationCpt(session)) redirect("/?error=acces_refuse_compta");
   const { id } = await params;
   const { nature: demandee } = await searchParams;
   const nature = NATURES_REMUNERATION_CPT.find((n) => n === demandee) ?? "COMMISSION";

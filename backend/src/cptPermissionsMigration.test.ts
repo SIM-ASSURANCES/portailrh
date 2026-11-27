@@ -20,6 +20,12 @@ const seedSeul = readFileSync(path.join(RACINE, "prisma/seed.ts"), "utf8");
 // Depuis le lot R, le seed lit modules, permissions et rôles dans rolesCibles.ts : les deux fichiers forment ensemble « le seed ».
 const seed = seedSeul + readFileSync(path.join(RACINE, "src/rolesCibles.ts"), "utf8");
 const code = sql.replace(/^--.*$/gm, "");
+// Permission ajoutée après GC-1c (lecture de la rémunération, Q10) : sa propre migration, la première n'est jamais modifiée.
+const sqlLecture = readFileSync(path.join(RACINE, "prisma/migrations/20261129090000_compta_consulter_remuneration/migration.sql"), "utf8");
+const codeLecture = sqlLecture.replace(/^--.*$/gm, "");
+const LECTURE = "cpt.consulter_remuneration";
+const PERMISSIONS_GC1C = CPT_PERMISSIONS.filter((p) => p.key !== LECTURE);
+const DG_GC1C = CPT_PERMISSIONS_DG.filter((k) => k !== LECTURE);
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 
 describe("Gestion Compta — migration synchronisée avec cptPermissions.ts", () => {
@@ -28,9 +34,9 @@ describe("Gestion Compta — migration synchronisée avec cptPermissions.ts", ()
   });
 
   it("chaque permission (clé, libellé) figure dans la migration, et il n'y en a pas d'autre", () => {
-    for (const p of CPT_PERMISSIONS) expect(sql, `absente ou libellé différent : ${p.key}`).toContain(`${q(p.key)}, ${q(p.label)}`);
+    for (const p of PERMISSIONS_GC1C) expect(sql, `absente ou libellé différent : ${p.key}`).toContain(`${q(p.key)}, ${q(p.label)}`);
     const inserees = [...code.matchAll(/\('perm-cpt-[a-z-]+', '(cpt\.[a-z_]+)'/g)].map((m) => m[1]);
-    expect(inserees.sort()).toEqual(CPT_PERMISSIONS.map((p) => p.key as string).sort());
+    expect(inserees.sort()).toEqual(PERMISSIONS_GC1C.map((p) => p.key as string).sort());
   });
 
   it("la mise en service est rattachée au module technique `systeme`, pas au module `compta`", () => {
@@ -45,18 +51,18 @@ describe("Gestion Compta — migration synchronisée avec cptPermissions.ts", ()
   });
 
   it("chaque couple (rôle, permission) figure dans la migration, exactement", () => {
-    const attendus = CPT_ROLES_DEPART.flatMap((r) => r.permissions.map((k) => `(${q(r.name)}, ${q(k)})`));
+    const attendus = CPT_ROLES_DEPART.flatMap((r) => r.permissions.filter((k) => k !== LECTURE).map((k) => `(${q(r.name)}, ${q(k)})`));
     for (const couple of attendus) expect(sql, `couple absent : ${couple}`).toContain(couple);
     const dansLaMigration = [...code.matchAll(/\('(Compta – [^']+)', '(cpt\.[a-z_]+)'\)/g)];
     expect(dansLaMigration).toHaveLength(attendus.length);
   });
 
   it("le DG superviseur reçoit consulter, trancher_litige et mise en service — par permission sœur, jamais par nom de rôle", () => {
-    expect([...CPT_PERMISSIONS_DG].sort()).toEqual(["cpt.consulter", "cpt.mettre_en_service", "cpt.trancher_litige"]);
+    expect([...CPT_PERMISSIONS_DG].sort()).toEqual(["cpt.consulter", "cpt.consulter_remuneration", "cpt.mettre_en_service", "cpt.trancher_litige"]);
     expect(CPT_PERMISSION_SOEUR_DG).toBe("systeme.reinitialiser");
-    for (const k of CPT_PERMISSIONS_DG) expect(sql, k).toContain(`(${q(k)}, ${q(CPT_PERMISSION_SOEUR_DG)})`);
+    for (const k of DG_GC1C) expect(sql, k).toContain(`(${q(k)}, ${q(CPT_PERMISSION_SOEUR_DG)})`);
     const couplesDG = [...code.matchAll(/\('(cpt\.[a-z_]+)', 'systeme\.reinitialiser'\)/g)];
-    expect(couplesDG).toHaveLength(CPT_PERMISSIONS_DG.length);
+    expect(couplesDG).toHaveLength(DG_GC1C.length);
     expect(code).not.toMatch(/"Role"[^;]*"name" = 'DG'/);
     expect(code).not.toMatch(/r\."name" = 'DG'/);
   });
@@ -104,5 +110,32 @@ describe("Gestion Compta — seed synchronisé avec la même source", () => {
       expect(i, t).toBeGreaterThan(-1);
       expect(i, t).toBeLessThan(iUser);
     }
+  });
+});
+
+describe("Gestion Compta — lecture de la rémunération (migration 20261129090000)", () => {
+  it("crée la permission avec le libellé du code, dans le module compta", () => {
+    const p = CPT_PERMISSIONS.find((x) => x.key === LECTURE)!;
+    expect(sqlLecture).toContain(`${q(p.key)}, ${q(p.label)}`);
+    expect(codeLecture).toContain(`WHERE m."key" = 'compta'`);
+  });
+
+  it("la donne par permission sœur (régler un partenaire, trancher un litige), jamais par nom de rôle", () => {
+    const soeurs = [...codeLecture.matchAll(/\('cpt\.consulter_remuneration', '(cpt\.[a-z_]+)'\)/g)].map((m) => m[1]);
+    expect(soeurs.sort()).toEqual(["cpt.regler_partenaire", "cpt.trancher_litige"]);
+    expect(codeLecture).not.toMatch(/"Role"/);
+  });
+
+  it("les rôles du seed qui la portent sont exactement ceux que les permissions sœurs désignent", () => {
+    const avecLecture = CPT_ROLES_DEPART.filter((r) => r.permissions.includes(LECTURE)).map((r) => r.name);
+    const parSoeur = CPT_ROLES_DEPART.filter((r) => r.permissions.includes("cpt.regler_partenaire") || r.permissions.includes("cpt.trancher_litige")).map((r) => r.name);
+    expect(avecLecture).toEqual(parSoeur);
+    expect(avecLecture).toEqual(["Compta – RFCRH", "Compta – Direction"]);
+    expect(CPT_PERMISSIONS_DG).toContain(LECTURE);
+  });
+
+  it("est rejouable et ne modifie ni ne supprime rien", () => {
+    expect(codeLecture).not.toMatch(/\b(UPDATE|DELETE|CREATE)\b/);
+    expect(codeLecture.match(/ON CONFLICT/g)).toHaveLength(codeLecture.match(/^INSERT INTO/gm)!.length);
   });
 });

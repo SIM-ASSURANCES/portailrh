@@ -1,12 +1,14 @@
 // Gestion Compta, lot GC-9 — RÉMUNÉRATION DES PARTENAIRES (sans GC-9d). Sur base JETABLE et neuve (voir e2e/README.md : `next build` puis
 // `bash e2e/base-jetable.sh`) : ce script ÉCRIT en base et ne se rejoue pas sur la même base. Données 100 % synthétiques.
-// Parties : E2E_PARTIES="9e,9f,9g" (défaut : toutes ; les parties suivantes supposent les précédentes).
+// Parties : E2E_PARTIES="9e,9f,9g,9q" (défaut : toutes ; les parties suivantes supposent les précédentes).
 //   9e : avertissement R1 et message des bordereaux, quatre soldes, T6 ter, T6, T6 bis par les écrans ; règlement et affectation, avance,
 //        décision « en une fois », refus serveur par rejeu sans permission, deux règlements simultanés, 390 px ;
 //   9f : aucune compensation automatique, compensation d'une avance avec motif (montant et motif contrôlés), refus par rejeu sans
 //        permission, deux compensations simultanées, honoraires « à régulariser » après résiliation ;
 //   9g : relevé par partenaire et par nature (écran, mêmes chiffres que la fiche), exports CSV / Excel et PDF recoupés, accès refusés,
-//        390 px. Le PDF est relu avec `pdftotext`.
+//        390 px. Le PDF est relu avec `pdftotext` ;
+//   9q : la lecture de la rémunération est réservée (cpt.consulter_remuneration) : rubrique, pages, onglet Conventions, exports,
+//        PDF et actions, y compris pour un rôle à qui l'on ne donne que la permission de régler.
 import { execFileSync, execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,7 +19,7 @@ import pg from "pg";
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
 if (!/localhost:55497|e2e/i.test(DB)) throw new Error("E2E_DATABASE_URL doit viser une base jetable.");
-const PARTIES = (process.env.E2E_PARTIES ?? "9e,9f,9g").split(",");
+const PARTIES = (process.env.E2E_PARTIES ?? "9e,9f,9g,9q").split(",");
 const partie = (p) => PARTIES.includes(p);
 
 const db = new pg.Client({ connectionString: DB });
@@ -60,6 +62,8 @@ const RFCRH = "compta-rfcrh@simassurances.test";
 const DIRECTION = "compta-direction@simassurances.test";
 const COMMERCIAL = "compta-commercial@simassurances.test";
 const COLLABORATEUR = "collaborateur@simassurances.test";
+const PRODUCTION = "compta-production@simassurances.test";
+const COMPTABLE = "compta-comptable@simassurances.test";
 const R1 = "Le module Encaissements calcule aussi les honoraires. Avant la mise en service, un seul des deux doit faire foi.";
 const BORDEREAUX = "Bordereaux des partenaires : en attente des modèles de fichiers";
 
@@ -113,6 +117,7 @@ donnees("base");
 // 9e — règlements et affectations
 // =====================================================================================================================
 let reqReglement = null;
+let reqCompensation = null;
 if (partie("9e")) {
   const idTer = await idPartenaire("Courtier T6ter");
   const liste = await ouvrir(RFCRH, "/compta/partenaires");
@@ -247,6 +252,7 @@ if (partie("9f")) {
   await cliquerEtCapturer(p, await remplir(1000, "trop bref"));
   verifier("9f. motif de moins de 10 caractères : refusée par le serveur", /motif est obligatoire/.test(await p.locator("[data-message-compensation]").innerText()) && (await compter("CptCompensation")) === 0);
   const reqComp = await cliquerEtCapturer(p, await remplir(1000, "Compensation convenue avec le cabinet"));
+  reqCompensation = reqComp;
   await recharger(p);
   verifier("9f. compensation de 1 000 : avance de commission 2 000, honoraires à verser 6 000", (await carte(p, "COMMISSION", "avance")) === 2000 && (await carte(p, "HONORAIRES", "reste-payable")) === 6000);
   const mouvements = await sql(`SELECT l.nature, a.montant::float AS montant FROM "CptAffectationCompensation" a JOIN "CptLigneRemuneration" l ON l.id = a."ligneRemunerationId" ORDER BY a.montant`);
@@ -346,6 +352,62 @@ if (partie("9g")) {
   const m = await ouvrir(RFCRH, `/compta/partenaires/${idNovelia}/releve?nature=HONORAIRES`, { width: 390, height: 844 });
   verifier("9g. 390 px : relevé sans défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await m.close();
+}
+
+// =====================================================================================================================
+// 9q — lecture de la rémunération réservée (Q10, C-36)
+// =====================================================================================================================
+if (partie("9q")) {
+  const idCab = await idPartenaire("Cabinet Compensation");
+  const chemins = ["/compta/partenaires", `/compta/partenaires/${idCab}`, `/compta/partenaires/${idCab}/releve?nature=HONORAIRES`];
+  const exports9q = [
+    `/api/compta/export/remuneration?partenaire=${idCab}&nature=COMMISSION&format=csv`,
+    `/api/compta/export/remuneration?partenaire=${idCab}&nature=HONORAIRES&format=xlsx`,
+    `/api/compta/partenaires/${idCab}/releve?nature=HONORAIRES`,
+  ];
+  const fermes = async (compte) => {
+    const ctx = await contexte(compte);
+    const pages = [];
+    for (const c of chemins) {
+      const rep = await ctx.request.get(`${B}${c}`, { maxRedirects: 0 });
+      const texte = await rep.text();
+      // Une redirection de Next arrive soit en 307, soit dans le flux de la page (NEXT_REDIRECT) ; aucun montant ne sort.
+      pages.push((rep.status() >= 300 && rep.status() < 400) || (/NEXT_REDIRECT/.test(texte) && !/data-carte-solde|data-liste-partenaires|data-releve-ligne/.test(texte)) ? "fermée" : `ouverte (${rep.status()})`);
+    }
+    const codes = [];
+    for (const e of exports9q) codes.push((await ctx.request.get(`${B}${e}`, { maxRedirects: 0 })).status());
+    return { ok: pages.every((x) => x === "fermée") && codes.every((x) => x === 403), detail: `${pages.join(", ")} / ${codes.join(", ")}` };
+  };
+  const compterOperations = async () => `${await compter("CptReglementPartenaire")}/${await compter("CptCompensation")}/${await compter("CptDecisionModeRemuneration")}`;
+  const operationsAvant = await compterOperations();
+
+  for (const compte of [PRODUCTION, COMMERCIAL, COMPTABLE]) {
+    const nom = compte.split("@")[0];
+    const p = await ouvrir(compte, "/compta/referentiels?onglet=conventions");
+    await p.locator("h1").waitFor();
+    verifier(`9q. ${nom} : rubrique « Partenaires » absente de la barre latérale`, (await p.locator('aside a[href="/compta/partenaires"]').count()) === 0 && (await p.locator('aside a[href="/compta/referentiels"]').count()) > 0);
+    verifier(`9q. ${nom} : onglet Conventions absent, même demandé par l'adresse`, (await p.locator('a[href^="/compta/referentiels?onglet=conventions"]').count()) === 0 && (await p.locator('[data-referentiel="conventions"]').count()) === 0 && (await p.locator('[data-referentiel="partenaires"]').count()) > 0);
+    await p.close();
+    const f = await fermes(compte);
+    verifier(`9q. ${nom} : pages fermées, exports et PDF 403`, f.ok, f.detail);
+    const reponses = [await rejouer(compte, reqReglement), await rejouer(compte, reqCompensation)];
+    verifier(`9q. ${nom} : rejeu du règlement et de la compensation : « Action non autorisée », rien d'écrit`, reponses.every((r) => /Action non autoris/.test(r)) && (await compterOperations()) === operationsAvant);
+  }
+
+  // Une permission d'écriture n'implique pas la lecture : le rôle Comptable reçoit seulement « régler un partenaire ».
+  const lien = `FROM "Role" r, "Permission" p WHERE r.name = 'Compta – Comptable' AND p.key = 'cpt.regler_partenaire'`;
+  await sql(`INSERT INTO "RolePermission" ("roleId","permissionId") SELECT r.id, p.id ${lien}`);
+  const f = await fermes(COMPTABLE);
+  const rejeu = await rejouer(COMPTABLE, reqReglement);
+  verifier("9q. avec cpt.regler_partenaire mais sans la lecture : pages et exports fermés, action refusée", f.ok && /Action non autoris/.test(rejeu) && (await compterOperations()) === operationsAvant, f.detail);
+  await sql(`DELETE FROM "RolePermission" WHERE ("roleId","permissionId") IN (SELECT r.id, p.id ${lien})`);
+
+  for (const compte of [RFCRH, DIRECTION]) {
+    const p = await ouvrir(compte, "/compta/referentiels?onglet=conventions");
+    await p.locator("h1").waitFor();
+    verifier(`9q. ${compte.split("@")[0]} : rubrique « Partenaires » et onglet Conventions présents`, (await p.locator('aside a[href="/compta/partenaires"]').count()) > 0 && (await p.locator('[data-referentiel="conventions"]').count()) > 0);
+    await p.close();
+  }
 }
 
 verifier("aucune erreur JavaScript", erreursJs.length === 0, erreursJs.slice(0, 3).join(" | "));

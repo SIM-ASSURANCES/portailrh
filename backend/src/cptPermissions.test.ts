@@ -25,9 +25,9 @@ describe("Gestion Compta — module et permissions (conception §4)", () => {
 
   it("18 permissions de module + la mise en service = 19, toutes uniques et préfixées `cpt.`", () => {
     const toutes = [...CPT_PERMISSIONS.map((p) => p.key as string), CPT_PERMISSION_MISE_EN_SERVICE.key];
-    expect(CPT_PERMISSIONS).toHaveLength(18);
-    expect(toutes).toHaveLength(19);
-    expect(new Set(toutes).size).toBe(19);
+    expect(CPT_PERMISSIONS).toHaveLength(19);
+    expect(toutes).toHaveLength(20);
+    expect(new Set(toutes).size).toBe(20);
     for (const k of toutes) expect(k, k).toMatch(/^cpt\.[a-z_]+$/);
   });
 
@@ -111,7 +111,9 @@ describe("Gestion Compta — rôles de départ (profils du cahier §2, provisoir
   });
 
   it("la direction consulte et tranche les litiges, sans aucune saisie", () => {
-    expect(cles("Direction")).toEqual(["cpt.consulter", "cpt.trancher_litige"]);
+    expect(cles("Direction")).toEqual(["cpt.consulter", "cpt.consulter_remuneration", "cpt.trancher_litige"]);
+    // La lecture de la rémunération (Q10) : RFCRH et Direction seuls.
+    expect(roles("cpt.consulter_remuneration")).toEqual(["RFCRH", "Direction"]);
   });
 });
 

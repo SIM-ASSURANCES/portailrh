@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { AvertissementHonoraires } from "@/components/compta/AvertissementHonoraires";
 import { montantCentimesCpt } from "@/components/compta/libellesRemuneration";
 import { PageHeader } from "@/components/ui";
-import { getSession, hasPermission } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
+import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
 import { chargerRemunerationPartenaireCpt, LIBELLE_NATURE_REMUNERATION_CPT, listerPartenairesRemuneresCpt, NATURES_REMUNERATION_CPT, prisma } from "backend";
 
 const TH = "px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground";
@@ -12,11 +13,11 @@ const TD = "px-3 py-2 text-sm tabular-nums align-top";
 
 /**
  * Rémunération des partenaires (lot GC-9) : les QUATRE soldes de chacun, toujours séparés (commission, accessoires reversés,
- * honoraires de gestion, créance). Lecture : `cpt.consulter` (layout, revérifiée ici).
+ * honoraires de gestion, créance). Lecture : `cpt.consulter_remuneration` (C-36).
  */
 export default async function PartenairesRemunerationPage() {
   const session = await getSession();
-  if (!session || !hasPermission(session, "cpt.consulter")) redirect("/?error=acces_refuse_compta");
+  if (!session || !peutVoirRemunerationCpt(session)) redirect("/?error=acces_refuse_compta");
   const aujourdhui = new Date().toISOString().slice(0, 10);
   const partenaires = await listerPartenairesRemuneresCpt(prisma);
   const etats = [];

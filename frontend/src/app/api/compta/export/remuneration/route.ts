@@ -2,18 +2,19 @@ import { NextResponse } from "next/server";
 
 import { chargerReleveRemunerationCpt, colonnesReleveRemunerationCpt, lignesExportReleveRemunerationCpt, NATURES_REMUNERATION_CPT, prisma } from "backend";
 
-import { getSession, hasPermission } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
+import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
 import { exporterEnFlux, type FormatExportCpt, TYPE_MIME_EXPORT_CPT } from "@/lib/compta/exportFlux";
 
 /**
  * Export du relevé d'un partenaire pour une nature (lot GC-9g), en flux.
  * `GET /api/compta/export/remuneration?partenaire=ID&nature=COMMISSION|ACCESSOIRES|HONORAIRES&format=csv|xlsx`. Accès
- * `cpt.consulter` (401 sans session, 403 sans la permission). Même relevé que l'écran et le PDF : aucun second calcul.
+ * `cpt.consulter_remuneration` (401 sans session, 403 sans la permission). Même relevé que l'écran et le PDF : aucun second calcul.
  */
 export async function GET(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Non authentifié." }, { status: 401 });
-  if (!hasPermission(session, "cpt.consulter")) return NextResponse.json({ error: "Action non autorisée." }, { status: 403 });
+  if (!peutVoirRemunerationCpt(session)) return NextResponse.json({ error: "Action non autorisée." }, { status: 403 });
 
   const url = new URL(request.url);
   const format = url.searchParams.get("format") ?? "csv";

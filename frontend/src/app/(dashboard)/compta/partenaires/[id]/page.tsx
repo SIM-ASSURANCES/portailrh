@@ -7,6 +7,7 @@ import { dateIsoAfficheeCpt, montantCentimesCpt } from "@/components/compta/libe
 import { PaginationCpt } from "@/components/compta/Pagination";
 import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
+import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
 import {
   chargerRemunerationPartenaireCpt,
   LIBELLE_FAIT_GENERATEUR_CPT,
@@ -66,7 +67,7 @@ export default async function PartenaireRemunerationPage({
   searchParams: Promise<{ nature?: string; page?: string }>;
 }) {
   const session = await getSession();
-  if (!session || !hasPermission(session, "cpt.consulter")) redirect("/?error=acces_refuse_compta");
+  if (!session || !peutVoirRemunerationCpt(session)) redirect("/?error=acces_refuse_compta");
   const { id } = await params;
   const recherche = await searchParams;
   const aujourdhui = new Date().toISOString().slice(0, 10);

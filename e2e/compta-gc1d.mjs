@@ -40,8 +40,8 @@ async function ouvrir(email) {
 
 // « Référentiels » (GC-2c) est la première rubrique de tout compte qui consulte le module, et la seule déjà disponible.
 const RUBRIQUES = {
-  production: ["Référentiels", "Production", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance", "Partenaires"],
-  commercial: ["Référentiels", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance", "Partenaires"],
+  production: ["Référentiels", "Production", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance"],
+  commercial: ["Référentiels", "Encaissements", "Rattachements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance"],
   rfcrh: [
     "Référentiels",
     "Encaissements",
@@ -54,7 +54,7 @@ const RUBRIQUES = {
     "Clôture du mois",
     "Paramètres",
   ],
-  comptable: ["Référentiels", "Production", "Encaissements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance", "Partenaires", "Comptabilité (Odoo)"],
+  comptable: ["Référentiels", "Production", "Encaissements", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance", "Comptabilité (Odoo)"],
   direction: ["Référentiels", "Contrôle hebdomadaire", "Clients", "Créances et relances", "Prévision d'encaissements", "Taxe sur les contrats d'assurance", "Partenaires", "Litiges"],
 };
 const AUTORISES = [

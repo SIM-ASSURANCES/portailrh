@@ -15,6 +15,7 @@ import { revalidatePath } from "next/cache";
 
 import { getClientIp } from "@/lib/auditLog";
 import { getSession, hasPermission } from "@/lib/auth";
+import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
 import { publishDataChanged } from "@/lib/eventBus";
 import {
   estEntiteOdooCpt,
@@ -409,7 +410,7 @@ function ligneConvention(c: {
 
 export async function creerConventionAction(saisie: SaisieReferentielCpt): Promise<ResultatReferentielCpt> {
   const session = await exiger("cpt.gerer_conventions");
-  if (!session) return NON_AUTORISE;
+  if (!session || !peutVoirRemunerationCpt(session)) return NON_AUTORISE;
   const lu = validerConventionCpt(saisie);
   if (!lu.ok) return erreurChamps(lu.erreurs);
   const v = lu.valeur;
@@ -462,7 +463,7 @@ export async function creerConventionAction(saisie: SaisieReferentielCpt): Promi
 /** Clôture une convention : seule sa date de fin change (le trigger SQL refuse tout autre champ). */
 export async function cloturerConventionAction(id: string, dateFin: string): Promise<ResultatReferentielCpt> {
   const session = await exiger("cpt.gerer_conventions");
-  if (!session) return NON_AUTORISE;
+  if (!session || !peutVoirRemunerationCpt(session)) return NON_AUTORISE;
   const fin = typeof dateFin === "string" ? dateFin.trim() : "";
   if (!fin) return erreurChamps({ dateFin: "Date de fin : champ obligatoire." });
 

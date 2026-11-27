@@ -48,6 +48,7 @@
 | **Q22** | **Règlements aux partenaires** : un versement supérieur au montant payable doit-il être impossible, ou accepté comme avance avec motif, dans la limite du reste dû (notre lecture) ? Comment voulez-vous corriger un règlement saisi par erreur ? | Rémunération |
 | **Q23** | **Compensation** : l'application reprend une avance versée sur une nature (par exemple la commission) pour l'imputer sur ce qu'il reste à verser sur une autre (les honoraires). Est-ce bien la compensation que vous attendez ? Faut-il aussi pouvoir compenser la rémunération d'un partenaire avec ce qu'il doit comme client, et comment les primes concernées seraient-elles alors prouvées payées ? | Rémunération |
 | **Q24** | **Relevés des partenaires** : le relevé doit-il porter sur une période (mois, trimestre) ou sur tout l'historique (notre lecture actuelle) ? Faut-il le transmettre au partenaire, et sous quelle forme ? | Rémunération |
+| **Q25** | **Réponse provisoire (2026-11-27, C-36)** : seuls le Responsable Finances, Comptabilité & RH et la Direction voient la rémunération des partenaires (commissions, accessoires reversés, honoraires, conventions, règlements). **Question** : est-ce bien la liste voulue ? Le stagiaire comptable doit-il voir les règlements des partenaires pour préparer les écritures Odoo ? | Rémunération |
 
 ### Relances, clôture et mise en service
 

@@ -25,10 +25,10 @@ describe("rolesCibles : cohérence", () => {
     }
   });
 
-  it("le catalogue compte 72 permissions et 14 rôles", () => {
-    expect(PERMISSIONS_CATALOGUE).toHaveLength(72);
+  it("le catalogue compte 73 permissions et 14 rôles", () => {
+    expect(PERMISSIONS_CATALOGUE).toHaveLength(73);
     expect(ROLES_CIBLES).toHaveLength(14);
-    expect(ROLES_CIBLES.reduce((n, r) => n + r.permissions.length, 0)).toBe(108);
+    expect(ROLES_CIBLES.reduce((n, r) => n + r.permissions.length, 0)).toBe(111);
   });
 
   it("aucun couple interdit n'est porté", () => {
@@ -82,7 +82,7 @@ describe("docs/roles-et-permissions.md", () => {
 
   it("le décompte par module est cohérent", () => {
     const total = Object.values(decompteCatalogueParModule()).reduce((a, b) => a + b, 0);
-    expect(total).toBe(72);
+    expect(total).toBe(73);
     const dg = ROLES_CIBLES.find((r) => r.name === "DG")!;
     expect(Object.values(decompteParModule(dg)).reduce((a, b) => a + b, 0)).toBe(dg.permissions.length);
   });

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { Button, Input, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
+import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
 import {
   champsOdooManquantsCpt,
   chronologieTauxTcaCpt,
@@ -45,7 +46,8 @@ function versIso(date: Date): string {
 
 /**
  * Référentiels du module (lot GC-2c, docs/compta-conception.md §5.3) : partenaires, clients, produits, comptes d'encaissement,
- * taux de taxe datés et conventions de rémunération. Lecture : `cpt.consulter` (layout). Écriture : droits C-16 ci-dessous,
+ * taux de taxe datés et conventions de rémunération. Lecture : `cpt.consulter` (layout), sauf l'onglet Conventions, qui exige
+ * `cpt.consulter_remuneration` (C-36). Écriture : droits C-16 ci-dessous,
  * REVÉRIFIÉS par chaque Server Action (les formulaires masqués ne sont qu'un confort).
  */
 export default async function ReferentielsPage({ searchParams }: { searchParams: Promise<{ onglet?: string; q?: string; manquantes?: string }> }) {
@@ -61,7 +63,9 @@ export default async function ReferentielsPage({ searchParams }: { searchParams:
   };
 
   const { onglet: demande, q: saisie, manquantes } = await searchParams;
-  const onglet: OngletId = ONGLETS.some((o) => o.id === demande) ? (demande as OngletId) : "partenaires";
+  // Les conventions disent la rémunération des partenaires : sans la permission de la lire, l'onglet n'existe pas.
+  const onglets = ONGLETS.filter((o) => o.id !== "conventions" || peutVoirRemunerationCpt(session));
+  const onglet: OngletId = onglets.some((o) => o.id === demande) ? (demande as OngletId) : "partenaires";
   const aujourdhui = versIso(new Date());
 
   // Recherche rapide (GC-2d) : une seule requête sur l'index de mots pour les trois types de fiches ; elle filtre la liste
@@ -324,7 +328,7 @@ export default async function ReferentielsPage({ searchParams }: { searchParams:
         )}
       </form>
       <nav aria-label="Référentiels" className="flex flex-wrap gap-2">
-        {ONGLETS.map((o) => (
+        {onglets.map((o) => (
           <Link
             key={o.id}
             href={`/compta/referentiels?onglet=${o.id}${q ? `&q=${encodeURIComponent(q)}` : ""}`}

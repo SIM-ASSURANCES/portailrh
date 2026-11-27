@@ -3,7 +3,8 @@ import { renderToBuffer } from "@react-pdf/renderer";
 
 import { chargerReleveRemunerationCpt, NATURES_REMUNERATION_CPT, prisma } from "backend";
 
-import { getSession, hasPermission } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
+import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
 import { RelevePdfRemuneration } from "@/lib/compta/RelevePdfRemuneration";
 
 /**
@@ -14,7 +15,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const { id } = await params;
   const session = await getSession();
   if (!session) return new NextResponse("Non authentifié.", { status: 401 });
-  if (!hasPermission(session, "cpt.consulter")) return new NextResponse("Action non autorisée.", { status: 403 });
+  if (!peutVoirRemunerationCpt(session)) return new NextResponse("Action non autorisée.", { status: 403 });
   const nature = NATURES_REMUNERATION_CPT.find((n) => n === new URL(request.url).searchParams.get("nature"));
   if (!nature) return new NextResponse("Nature obligatoire.", { status: 400 });
   const maintenant = new Date();

@@ -85,7 +85,9 @@ export const DESCRIPTIONS: Readonly<Record<string, string>> = {
   "enc.mettre_en_service":
     "Encaissements : mettre le module en service (remise à zéro à usage unique). Aucun écran ne l'utilise encore. DG seul.",
   // Gestion Compta (module indépendant ; aucune de ces permissions n'est délégable : le module n'est pas dans MODULES_DELEGABLES)
-  "cpt.consulter": "Gestion Compta : consulter les référentiels, contrats, encaissements et rattachements, et exporter.",
+  "cpt.consulter": "Gestion Compta : consulter les référentiels (sauf les conventions), contrats, encaissements et rattachements, et exporter.",
+  "cpt.consulter_remuneration":
+    "Gestion Compta : voir la rémunération des partenaires (rubrique « Partenaires », relevés et leurs exports, onglet Conventions). Aucune permission d'écriture ne l'implique.",
   "cpt.importer_production": "Gestion Compta : déposer le bordereau de production et traiter ses anomalies.",
   "cpt.saisir_contrat": "Gestion Compta : saisir et corriger un contrat, traiter les anomalies de production.",
   "cpt.importer_releves": "Gestion Compta : importer les relevés (Wave, banque, microfinance…), lancer le rapprochement, traiter les anomalies de relevé.",
@@ -93,14 +95,14 @@ export const DESCRIPTIONS: Readonly<Record<string, string>> = {
   "cpt.confirmer_rattachement": "Gestion Compta : confirmer un rattachement proposé avec la référence du reçu (étape 1). Ne valide jamais.",
   "cpt.valider_rattachement": "Gestion Compta : valider ou rejeter un rattachement (étape 2), seule action qui rend une prime payée. Jamais le compte qui a confirmé.",
   "cpt.classer_pas_une_prime": "Gestion Compta : classer tout ou partie d'un encaissement « pas une prime » avec un motif écrit.",
-  "cpt.declarer_tca": "Gestion Compta : déclarer la taxe sur les contrats d'assurance du mois (écran pas encore livré).",
-  "cpt.payer_tca": "Gestion Compta : enregistrer le paiement de la taxe et sa quittance (écran pas encore livré).",
-  "cpt.regler_partenaire": "Gestion Compta : régler un partenaire (écran pas encore livré).",
-  "cpt.compenser": "Gestion Compta : compenser entre natures de rémunération, opération explicite (écran pas encore livré).",
-  "cpt.gerer_conventions": "Gestion Compta : gérer les conventions des partenaires (fin de validité).",
+  "cpt.declarer_tca": "Gestion Compta : déclarer la taxe sur les contrats d'assurance du mois.",
+  "cpt.payer_tca": "Gestion Compta : enregistrer le paiement de la taxe et sa quittance.",
+  "cpt.regler_partenaire": "Gestion Compta : régler un partenaire et décider « en une fois / au prorata » (avec `cpt.consulter_remuneration`).",
+  "cpt.compenser": "Gestion Compta : compenser entre natures de rémunération, opération explicite (avec `cpt.consulter_remuneration`).",
+  "cpt.gerer_conventions": "Gestion Compta : gérer les conventions des partenaires (fin de validité), avec `cpt.consulter_remuneration`.",
   "cpt.parametrer": "Gestion Compta : référentiels, taux de taxe, formats d'import, correspondances Odoo, paramètres et seuils.",
   "cpt.preparer_ecritures": "Gestion Compta : préparer les exports Odoo (écran pas encore livré).",
-  "cpt.relancer": "Gestion Compta : relancer les clients et suivre les promesses de paiement (écran pas encore livré).",
+  "cpt.relancer": "Gestion Compta : relancer les clients et suivre les promesses de paiement.",
   "cpt.cloturer_periode": "Gestion Compta : clôturer un mois (écran pas encore livré).",
   "cpt.trancher_litige": "Gestion Compta : trancher un litige, rôle de supervision de la direction (écran pas encore livré).",
   "cpt.mettre_en_service":
@@ -193,6 +195,11 @@ export const PERMISSIONS_RECENTES: readonly { lot: string; migration: string; cl
       "cpt.trancher_litige",
       "cpt.mettre_en_service",
     ],
+  },
+  {
+    lot: "Gestion Compta : lecture de la rémunération (Q10)",
+    migration: "20261129090000_compta_consulter_remuneration",
+    cles: ["cpt.consulter_remuneration"],
   },
 ];
 

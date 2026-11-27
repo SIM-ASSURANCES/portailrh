@@ -10,6 +10,7 @@ import { revalidatePath } from "next/cache";
 import { deciderModeRemunerationCpt, enregistrerCompensationCpt, enregistrerReglementPartenaireCpt, getTrustedClientIp, prisma } from "backend";
 
 import { getSession, hasPermission } from "@/lib/auth";
+import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
 import { publishDataChanged } from "@/lib/eventBus";
 
 export type ResultatRemunerationAction = { status: "success"; message: string } | { status: "error"; message: string; erreurs?: Record<string, string> };
@@ -20,7 +21,8 @@ const SAISIE_INVALIDE: ResultatRemunerationAction = { status: "error", message: 
 
 async function exiger(permission: string) {
   const session = await getSession();
-  return session && hasPermission(session, permission) ? session : null;
+  // Les réponses citent des montants de rémunération : la lecture (C-36) est exigée en plus de la permission de l'action.
+  return session && peutVoirRemunerationCpt(session) && hasPermission(session, permission) ? session : null;
 }
 
 const estObjet = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);

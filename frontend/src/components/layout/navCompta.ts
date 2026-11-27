@@ -56,7 +56,7 @@ export const RUBRIQUES_COMPTA: readonly RubriqueCompta[] = [
   { cle: "creances", label: "Créances et relances", icon: "alert-triangle", permissions: [], href: "/compta/creances", lot: "GC-7b" },
   { cle: "previsions", label: "Prévision d'encaissements", icon: "trending-up", permissions: [], href: "/compta/previsions", lot: "GC-7e" },
   { cle: "tca", label: "Taxe sur les contrats d'assurance", icon: "scroll-text", permissions: [], href: "/compta/tca", lot: "GC-8" },
-  { cle: "partenaires", label: "Partenaires", icon: "users", permissions: [], href: "/compta/partenaires", lot: "GC-9" },
+  { cle: "partenaires", label: "Partenaires", icon: "users", permissions: ["cpt.consulter_remuneration"], href: "/compta/partenaires", lot: "GC-9" },
   { cle: "odoo", label: "Comptabilité (Odoo)", icon: "book-text", permissions: ["cpt.preparer_ecritures"], lot: "GC-10" },
   { cle: "cloture", label: "Clôture du mois", icon: "shield-check", permissions: ["cpt.cloturer_periode"], lot: "GC-10" },
   { cle: "litiges", label: "Litiges", icon: "info", permissions: ["cpt.trancher_litige"], lot: "à préciser" },
