@@ -76,6 +76,9 @@ const REFUSES = [
 ];
 verifier("0. un compte Encaissements existe pour tester l'indépendance des modules", !!encaissements);
 
+// Le menu latéral : l'invitation aux notifications push est aussi un <aside>, affiché 1,5 s après le chargement.
+const MENU = 'aside:not([aria-label*="notifications push"])';
+
 // Le menu est un accordéon : les liens d'une branche ne sont dans le DOM qu'une fois la branche dépliée.
 async function ouvrirBrancheCompta(p) {
   const bouton = p.locator("aside button[aria-expanded]", { hasText: "Gestion Compta" });
@@ -107,7 +110,7 @@ for (const [nom, email, attendues] of AUTORISES) {
   const menu = await liensMenu(p);
   verifier(`2. ${nom} : le menu contient « Gestion Compta » → /compta/referentiels`, menu.includes("/compta/referentiels"));
   verifier(`2. ${nom} : plus d'entrée « Accueil » (/compta) dans le menu`, !menu.includes("/compta"));
-  const branche = await p.locator("aside").innerText();
+  const branche = await p.locator(MENU).innerText();
   verifier(`2. ${nom} : la branche s'appelle « Gestion Compta »`, /Gestion Compta/.test(branche));
   const carte = await p.locator('main a[href="/compta"]').count();
   verifier(`3. ${nom} : carte d'accueil du portail avec lien /compta`, carte >= 1, `liens trouvés : ${carte}`);
@@ -145,7 +148,7 @@ for (const [nom, email] of REFUSES) {
   await p.waitForSelector("aside a[href]");
   const menu = await liensMenu(p);
   verifier(`2. ${nom} : aucun lien /compta dans le menu`, !menu.some((h) => h === "/compta" || h?.startsWith("/compta/")));
-  const aside = await p.locator("aside").innerText();
+  const aside = await p.locator(MENU).innerText();
   verifier(`2. ${nom} : aucune branche « Gestion Compta »`, !/Gestion Compta/.test(aside));
   const accueil = await p.locator("main").innerText();
   if (nom === "Admin") {
@@ -157,10 +160,13 @@ for (const [nom, email] of REFUSES) {
     verifier(`3. ${nom} : aucune carte « Gestion Compta » sur l'accueil du portail`, !/Gestion Compta/.test(accueil));
   }
   await p.goto(`${B}/compta`);
-  await p.waitForLoadState("networkidle");
+  // Jamais « networkidle » (le flux temps réel du portail garde une requête ouverte) : on attend la redirection puis son message.
+  await p.waitForURL((adresse) => adresse.pathname === "/");
+  const message = p.getByText("Vous n'avez pas accès au module Gestion Compta.").first();
+  const messageVu = await message.waitFor({ state: "visible" }).then(() => true, () => false);
   const u = new URL(p.url());
   verifier(`1. ${nom} : /compta redirige vers l'accueil avec l'erreur`, u.pathname === "/" && u.searchParams.get("error") === "acces_refuse_compta", u.pathname + u.search);
-  verifier(`5. ${nom} : le message « pas accès au module Gestion Compta » s'affiche`, await p.getByText("Vous n'avez pas accès au module Gestion Compta.").first().isVisible().catch(() => false));
+  verifier(`5. ${nom} : le message « pas accès au module Gestion Compta » s'affiche`, messageVu);
   await p.close();
 }
 

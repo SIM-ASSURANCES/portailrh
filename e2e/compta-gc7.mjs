@@ -37,13 +37,20 @@ async function contexte(email) {
   }
   return ctx;
 }
+// Jamais « networkidle » : le flux temps réel du portail (SSE) garde une requête ouverte, le réseau n'est jamais au repos. On
+// attend le titre de la page ET son hydratation par React (clé interne posée sur l'élément), sans délai fixe.
+const hydratee = (p) =>
+  p.waitForFunction(() => {
+    const titre = document.querySelector("h1");
+    return !!titre && Object.keys(titre).some((k) => k.startsWith("__reactFiber"));
+  });
 async function ouvrir(email, chemin, taille) {
   const ctx = await contexte(email);
   const p = await ctx.newPage();
   if (taille) await p.setViewportSize(taille);
   p.on("pageerror", (e) => erreursJs.push(`${email} : ${e.message}`));
-  await p.goto(`${B}${chemin}`);
-  await p.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+  await p.goto(`${B}${chemin}`, { waitUntil: "domcontentloaded" });
+  await hydratee(p);
   return p;
 }
 
@@ -190,7 +197,12 @@ await client("cl-vide", "Zézé Paul");
   verifier("7a. … il figure à part, « en attente de validation »", /CPE-2026-900002/.test(await p.locator("[data-paiements-en-attente]").innerText()));
   verifier("7a. somme « pas une prime » avec son motif", /10\s?000/.test(await p.locator("[data-sommes-pas-une-prime]").innerText()) && /Frais de carte santé/.test(await p.locator("[data-sommes-pas-une-prime]").innerText()));
   verifier("7a. le contrat déclaré payé mais non prouvé est signalé (reste dû 50 000)", /50\s?000/.test(await p.locator("[data-declare-paye-non-prouve]").innerText()));
-  verifier("7a. lecture seule : aucun bouton d'action sur la fiche", (await p.locator("main button, main form").count()) === 0);
+  // Seules les actions de la fiche comptent : l'invitation aux notifications push (un <aside> placé dans <main>, affiché 1,5 s
+  // après le chargement) n'en est pas une. On l'exclut au lieu de dépendre de son moment d'apparition.
+  const actionsDeLaFiche = await p
+    .locator("main button, main form")
+    .evaluateAll((els) => els.filter((e) => !e.closest('aside[aria-label*="notifications push"]')).map((e) => e.outerHTML.slice(0, 160)));
+  verifier("7a. lecture seule pour la Direction : aucun bouton ni formulaire d'action sur la fiche", actionsDeLaFiche.length === 0, JSON.stringify(actionsDeLaFiche));
   await p.close();
 }
 
@@ -291,7 +303,7 @@ await client("cl-vide", "Zézé Paul");
   verifier("7b. pagination : 50 débiteurs sur la première page", (await p.locator("[data-debiteur]").count()) === 50, `${await p.locator("[data-debiteur]").count()}`);
   verifier("7b. pagination : total 62 débiteurs, page 1 sur 2", /62 débiteur\(s\) · page 1 sur 2/.test(await p.locator("[data-etat-creances] [data-pagination-total]").innerText()));
   await Promise.all([p.waitForURL(/page=2/), p.getByRole("link", { name: /Suivante/ }).first().click()]);
-  await p.waitForLoadState("networkidle").catch(() => {});
+  await p.locator("[data-etat-creances] [data-pagination-total]", { hasText: "page 2 sur 2" }).waitFor();
   verifier("7b. page 2 : les 12 derniers débiteurs", (await p.locator("[data-debiteur]").count()) === 12);
   await p.close();
   const m = await ouvrir(DIRECTION, "/compta/creances", { width: 390, height: 844 });
@@ -368,8 +380,7 @@ await client("cl-vide", "Zézé Paul");
   await f.locator('input[name="promesseMontant"]').fill("100 000");
   await f.locator('input[name="promesseDate"]').fill(jour(5));
   const [requete] = await Promise.all([p.waitForRequest((r) => r.method() === "POST" && !!r.headers()["next-action"]), f.locator('button[type="submit"]').click()]);
-  await p.waitForLoadState("networkidle");
-  await p.waitForTimeout(600);
+  await p.locator('[data-promesse][data-statut="EN_COURS"]').waitFor();
   verifier("7d. relance enregistrée : une ligne, canal téléphone, commentaire, auteur", (await compter("CptRelance", `"clientId" = 'cl-t7' AND canal = 'TELEPHONE' AND commentaire LIKE 'Appelé%' AND origine = 'MANUELLE'`)) === 1 && /Téléphone/.test(await p.locator("[data-liste-relances]").innerText()));
   verifier("7d. promesse en cours : 100 000 à la date promise", (await compter("CptPromesse", `"clientId" = 'cl-t7' AND statut = 'EN_COURS' AND montant = 100000 AND "datePromise" = '${jour(5)}'`)) === 1 && (await p.locator('[data-promesse][data-statut="EN_COURS"]').count()) === 1);
   verifier("7d. la relance proposée disparaît tant qu'une promesse est en cours", (await p.locator("[data-relance-proposee]").count()) === 0);
@@ -417,8 +428,8 @@ await client("cl-vide", "Zézé Paul");
   await credEchue.close();
   const cr = await ouvrir(COMMERCIAL, "/compta/creances");
   const [reqEval] = await Promise.all([cr.waitForRequest((r) => r.method() === "POST" && !!r.headers()["next-action"]), cr.locator("[data-evaluer-promesses]").click()]);
-  await cr.waitForLoadState("networkidle");
-  await cr.waitForTimeout(600);
+  // Le message de l'action n'apparaît qu'une fois l'évaluation écrite en base.
+  await cr.getByText(/\d+ promesse\(s\) évaluée\(s\)/).first().waitFor();
   const tenue = (await db.query(`SELECT statut, "montantProuve", "evalueAt" FROM "CptPromesse" WHERE id = 'pr-tenue'`)).rows[0];
   const nonTenue = (await db.query(`SELECT statut, "montantProuve", "evalueAt" FROM "CptPromesse" WHERE id = 'pr-non-tenue'`)).rows[0];
   verifier("7d. évaluation : la promesse couverte par 50 000 prouvés dans la fenêtre est TENUE (montant prouvé et date tracés)", tenue.statut === "TENUE" && Number(tenue.montantProuve) === 50000 && tenue.evalueAt !== null, JSON.stringify(tenue));
@@ -426,7 +437,7 @@ await client("cl-vide", "Zézé Paul");
   verifier("7d. la promesse encore dans les délais reste EN COURS", (await compter("CptPromesse", `"clientId" = 'cl-t7' AND statut = 'EN_COURS' AND montant = 100000`)) === 1);
   verifier("7d. audit : une ligne « evaluation_promesse » par promesse évaluée, avec l'auteur", (await compter("CptAudit", `action = 'evaluation_promesse' AND "userId" = '${commercialId}'`)) === 2);
   await cr.locator("[data-evaluer-promesses]").click();
-  await cr.waitForTimeout(800);
+  await cr.getByText("Aucune promesse à évaluer.").first().waitFor();
   verifier("7d. une seconde évaluation ne change rien (statuts finaux, pas de nouvel audit)", (await compter("CptAudit", `action = 'evaluation_promesse'`)) === 2);
   const refusEval = await rejouer(DIRECTION, reqEval, null);
   verifier("7d. rejeu de l'évaluation sans cpt.relancer : refusé", /Action non autoris/.test(refusEval), refusEval.slice(0, 160));
