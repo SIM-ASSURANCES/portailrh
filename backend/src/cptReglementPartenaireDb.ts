@@ -70,7 +70,7 @@ export async function enregistrerLignesRemunerationCpt(
 }
 
 export type ResultatReglementPartenaireCpt =
-  | { ok: true; reference: string; reglementId: string; montantAvance: string; nbAffectations: number }
+  | { ok: true; reference: string; reglementId: string; nbAffectations: number }
   | { ok: false; message: string; erreurs?: Record<string, string> };
 
 export async function enregistrerReglementPartenaireCpt(
@@ -88,12 +88,8 @@ export async function enregistrerReglementPartenaireCpt(
   const r = await chargerRemunerationPartenaireCpt(db, s.partenaireId, aujourdhui);
   if (!r) return { ok: false, message: "Partenaire introuvable." };
   const lignes = r.lignes.filter((l) => l.nature === s.nature);
-  const plan = planifierReglementCpt(lignes, s.montant, { accepterAvance: s.accepterAvance, modeDerogation: s.modeDerogation });
+  const plan = planifierReglementCpt(lignes, s.montant, { modeDerogation: s.modeDerogation });
   if (!plan.ok) return { ok: false, message: plan.message, erreurs: { montant: plan.message } };
-  if (plan.montantAvance > BigInt(0)) {
-    const m = lireMotifRemunerationCpt(s.motif);
-    if (!m.ok) return { ok: false, message: `Avance : ${m.message}`, erreurs: { motif: m.message } };
-  }
 
   const ids = await enregistrerLignesRemunerationCpt(db, lignes, new Set(plan.parts.map((x) => x.cle)), p);
   const reference = await prochainNumero(db, cleSequenceAnnuelle("CPR", Number(s.date.slice(0, 4))));
@@ -108,7 +104,6 @@ export async function enregistrerReglementPartenaireCpt(
       referenceReglement: s.referenceReglement,
       pieceOdoo: s.pieceOdoo,
       modeDerogation: s.modeDerogation,
-      montantAvance: texteDepuisCentimes(plan.montantAvance),
       motif: s.motif,
       creeParId: p.userId,
     },
@@ -130,7 +125,6 @@ export async function enregistrerReglementPartenaireCpt(
       mode: s.mode,
       referenceReglement: s.referenceReglement,
       modeDerogation: s.modeDerogation,
-      montantAvance: texteDepuisCentimes(plan.montantAvance),
       affectations: plan.parts.map((x) => ({ police: x.numPolice, echeance: x.rang, montant: texteDepuisCentimes(x.montant) })),
     },
     motif: s.motif,
@@ -138,7 +132,7 @@ export async function enregistrerReglementPartenaireCpt(
     userId: p.userId,
     ip: p.ip,
   });
-  return { ok: true, reference, reglementId: reglement.id, montantAvance: texteDepuisCentimes(plan.montantAvance), nbAffectations: plan.parts.length };
+  return { ok: true, reference, reglementId: reglement.id, nbAffectations: plan.parts.length };
 }
 
 export type ResultatDecisionModeCpt = { ok: true } | { ok: false; message: string };

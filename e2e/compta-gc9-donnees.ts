@@ -5,7 +5,8 @@
 //                        « au prorata » non encaissée et honoraires exigibles à l'émission), courtier « client » avec une créance ;
 //   phase « mois4 »    : 4ᵉ mensualité du T6 ter encaissée (1 000 de commission de plus à payer) ;
 //   phase « t6bis »    : encaissement des deux contrats de NOVELIA ;
-//   phase « resilier » : résiliation du contrat du cabinet à régulariser (honoraires jamais encaissés).
+//   phase « resilier » : résiliation du contrat du cabinet à régulariser (honoraires jamais encaissés) ;
+//   phase « cab-encaisse » : encaissement du premier contrat du cabinet (sa commission devient payable).
 import { prisma } from "../backend/src/prisma";
 import { construireEcheancier } from "../backend/src/cptEcheancier";
 import { validerRattachementsCpt } from "../backend/src/cptRattachement";
@@ -100,6 +101,8 @@ async function main() {
   } else if (phase === "t6bis") {
     await encaisser("POL-BIS-SIM", 1);
     await encaisser("POL-BIS-NOV", 1);
+  } else if (phase === "cab-encaisse") {
+    await encaisser("POL-CAB", 1);
   } else if (phase === "resilier") {
     await prisma.cptContrat.update({ where: { numPolice: "POL-CAB-RESIL" }, data: { statut: "RESILIE" } });
   } else {

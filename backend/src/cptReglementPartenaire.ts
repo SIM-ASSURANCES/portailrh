@@ -6,11 +6,10 @@ import { lireMontant } from "./montant";
 // Aucun import d'`enc*` ou de `treso*` (règle d'indépendance du module).
 
 /**
- * Règlement d'un partenaire (lot GC-9e, règle C-33). PUR : validation de la saisie et affectation aux montants les plus anciens.
+ * Règlement d'un partenaire (lot GC-9e, règle C-37). PUR : validation de la saisie et affectation aux montants les plus anciens.
  *
- * Règle d'un règlement supérieur au payable : REFUSÉ par défaut. Le surplus n'est accepté que comme AVANCE, sur demande explicite
- * et avec un motif d'au moins 10 caractères, dans la limite du reste dû de la nature ; au-delà du reste dû, jamais. La somme des
- * affectations est ainsi toujours égale au montant du règlement.
+ * Un règlement supérieur au net payable de la nature est TOUJOURS refusé : il n'existe pas d'avance volontaire (une avance ne naît
+ * que d'une prime abandonnée après un versement). La somme des affectations est ainsi toujours égale au montant du règlement.
  */
 
 const ZERO = BigInt(0);
@@ -57,7 +56,6 @@ export interface ReglementPartenaireSaisi {
   referenceReglement: string;
   pieceOdoo: string | null;
   modeDerogation: ModeReglementCpt | null;
-  accepterAvance: boolean;
   motif: string | null;
 }
 
@@ -84,17 +82,16 @@ export function validerSaisieReglementCpt(saisie: Record<string, unknown>, aujou
   const brutMode = texte(saisie.modeDerogation);
   const modeDerogation = brutMode ? (MODES_REGLEMENT_CPT.find((m) => m === brutMode) ?? null) : null;
   if (brutMode && !modeDerogation) erreurs.modeDerogation = "Choix « en une fois » ou « au prorata » invalide.";
-  const accepterAvance = saisie.accepterAvance === true || saisie.accepterAvance === "true" || saisie.accepterAvance === "on";
   const motifBrut = texte(saisie.motif);
   let motif: string | null = motifBrut || null;
-  if (modeDerogation || (accepterAvance && motifBrut)) {
+  if (modeDerogation) {
     const m = lireMotifRemunerationCpt(motifBrut);
     if (!m.ok) erreurs.motif = m.message;
     else motif = m.motif;
   } else if (motifBrut.length > MOTIF_REMUNERATION_MAX_CPT) erreurs.motif = `Motif : ${MOTIF_REMUNERATION_MAX_CPT} caractères au plus.`;
 
   if (Object.keys(erreurs).length > 0 || !nature || !montant.ok || !mode) return { ok: false, erreurs };
-  return { ok: true, valeur: { partenaireId, nature, montant: montant.centimes, date, mode, referenceReglement, pieceOdoo, modeDerogation, accepterAvance, motif } };
+  return { ok: true, valeur: { partenaireId, nature, montant: montant.centimes, date, mode, referenceReglement, pieceOdoo, modeDerogation, motif } };
 }
 
 /** Payable d'une ligne pour CE règlement : la règle de la ligne, ou le choix décidé pour ce règlement. */
@@ -106,22 +103,18 @@ export function payablePourReglementCpt(l: LigneRemunerationCalculeeCpt, derogat
 }
 
 export interface CapaciteReglementCpt {
-  /** Net payable aujourd'hui dans la nature : un règlement sans avance ne le dépasse jamais. */
+  /** Net payable aujourd'hui dans la nature : un règlement ne le dépasse jamais. */
   payable: bigint;
-  /** Reste dû de la nature : plafond d'un règlement avec avance. */
-  plafond: bigint;
 }
 
 export function capaciteReglementCpt(lignes: readonly LigneRemunerationCalculeeCpt[], derogation: ModeReglementCpt | null): CapaciteReglementCpt {
   let payable = ZERO;
   let paye = ZERO;
-  let du = ZERO;
   for (const l of lignes) {
     payable += payablePourReglementCpt(l, derogation);
     paye += l.paye;
-    du += l.du;
   }
-  return { payable: max0(payable - paye), plafond: max0(du - paye) };
+  return { payable: max0(payable - paye) };
 }
 
 export interface PartAffecteeCpt {
@@ -134,33 +127,23 @@ export interface PartAffecteeCpt {
 }
 
 export type PlanReglementCpt =
-  | { ok: true; parts: PartAffecteeCpt[]; montantAvance: bigint; capacite: CapaciteReglementCpt }
+  | { ok: true; parts: PartAffecteeCpt[]; capacite: CapaciteReglementCpt }
   | { ok: false; message: string; capacite: CapaciteReglementCpt };
 
 const fcfa = (c: bigint) => `${Number(texteDepuisCentimes(c)).toLocaleString("fr-FR")} FCFA`;
 
-/**
- * Affecte un règlement aux lignes d'UNE nature (celles d'un partenaire) : les montants exigibles les plus anciens d'abord, puis,
- * pour une avance seulement, le reste dû le plus ancien.
- */
+/** Affecte un règlement aux lignes d'UNE nature (celles d'un partenaire) : les montants payables les plus anciens d'abord. */
 export function planifierReglementCpt(
   lignes: readonly LigneRemunerationCalculeeCpt[],
   montant: bigint,
-  options: { accepterAvance: boolean; modeDerogation: ModeReglementCpt | null },
+  options: { modeDerogation: ModeReglementCpt | null },
 ): PlanReglementCpt {
   const natures = new Set(lignes.map((l) => l.nature));
   if (natures.size > 1) throw new Error("Un règlement porte sur une seule nature.");
   const capacite = capaciteReglementCpt(lignes, options.modeDerogation);
   if (montant <= ZERO) return { ok: false, message: "Le montant doit être supérieur à zéro.", capacite };
-  if (montant > capacite.plafond) {
-    return { ok: false, message: `Le montant dépasse le reste dû de cette nature (${fcfa(capacite.plafond)}) : un règlement n'est jamais accepté au-delà.`, capacite };
-  }
-  if (montant > capacite.payable && !options.accepterAvance) {
-    return {
-      ok: false,
-      message: `Le montant dépasse le payable aujourd'hui (${fcfa(capacite.payable)}). Pour verser le surplus d'avance, cochez « Enregistrer le surplus comme avance » et donnez un motif (reste dû : ${fcfa(capacite.plafond)}).`,
-      capacite,
-    };
+  if (montant > capacite.payable) {
+    return { ok: false, message: `Le montant dépasse le payable aujourd'hui (${fcfa(capacite.payable)}) : un règlement n'est jamais accepté au-delà.`, capacite };
   }
   const ordre = trierLignesRemunerationCpt(lignes);
   const affecte = new Map<string, bigint>();
@@ -172,10 +155,9 @@ export function planifierReglementCpt(
     restant -= part;
   };
   for (const l of ordre) affecter(l, payablePourReglementCpt(l, options.modeDerogation) - l.paye);
-  for (const l of ordre) affecter(l, l.du - l.paye - (affecte.get(l.cle) ?? ZERO));
   if (restant !== ZERO) return { ok: false, message: "Le montant ne peut pas être affecté en entier aux lignes de cette nature.", capacite };
   const parts = ordre
     .filter((l) => affecte.has(l.cle))
     .map((l) => ({ cle: l.cle, contratId: l.contratId, echeanceId: l.echeanceId, numPolice: l.numPolice, rang: l.rang, montant: affecte.get(l.cle)! }));
-  return { ok: true, parts, montantAvance: max0(montant - capacite.payable), capacite };
+  return { ok: true, parts, capacite };
 }

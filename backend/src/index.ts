@@ -136,6 +136,8 @@ export * from "./cptReglementPartenaire";
 export * from "./cptReglementPartenaireDb";
 export * from "./cptCompensation";
 export * from "./cptCompensationDb";
+export * from "./cptAnnulationRemuneration";
+export * from "./cptAnnulationRemunerationDb";
 export * from "./cptReleveRemuneration";
 export * from "./cptReleveRemunerationDb";
 export * from "./cptRelancesDb";

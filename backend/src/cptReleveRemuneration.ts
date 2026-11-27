@@ -9,8 +9,8 @@ import { soldeNatureCpt, trierLignesRemunerationCpt, type LigneRemunerationCalcu
 
 /**
  * Relevé d'un partenaire pour UNE nature (lot GC-9g). PUR : l'écran, l'export CSV / Excel et le PDF lisent ce même objet, jamais
- * un second calcul. Les mouvements (règlements, et compensations signées : négative quand la nature est la source) expliquent le
- * payé : leur somme est égale au payé du solde.
+ * un second calcul. Les mouvements (règlements, compensations signées — négative quand la nature est la source — et leurs
+ * annulations, chacun à sa date) expliquent le payé : leur somme est égale au payé du solde.
  */
 
 const ZERO = BigInt(0);
@@ -24,6 +24,13 @@ export interface ReglementReleveCpt {
   referenceReglement: string;
   /** Instant de la saisie (texte ISO) : départage les mouvements d'un même jour. */
   creeAt: string;
+  annulation: AnnulationReleveCpt | null;
+}
+
+export interface AnnulationReleveCpt {
+  date: string;
+  creeAt: string;
+  motif: string;
 }
 
 export interface CompensationReleveCpt {
@@ -33,6 +40,7 @@ export interface CompensationReleveCpt {
   montant: bigint;
   motif: string;
   creeAt: string;
+  annulation: AnnulationReleveCpt | null;
 }
 
 export interface LigneReleveCpt extends LigneRemunerationCalculeeCpt {
@@ -43,7 +51,7 @@ export interface LigneReleveCpt extends LigneRemunerationCalculeeCpt {
 }
 
 export interface MouvementReleveCpt {
-  type: "REGLEMENT" | "COMPENSATION";
+  type: "REGLEMENT" | "COMPENSATION" | "ANNULATION";
   date: string;
   creeAt: string;
   /** Numéro CPR d'un règlement ; vide pour une compensation. */
@@ -51,6 +59,18 @@ export interface MouvementReleveCpt {
   detail: string;
   /** Effet sur le payé de la nature, signé. */
   montant: bigint;
+}
+
+export const LIBELLE_MOUVEMENT_RELEVE_CPT: Record<MouvementReleveCpt["type"], string> = {
+  REGLEMENT: "Règlement",
+  COMPENSATION: "Compensation",
+  ANNULATION: "Annulation",
+};
+
+/** Intitulé court d'un mouvement : le numéro d'un règlement (et de son annulation), sinon le type. */
+export function titreMouvementReleveCpt(m: Pick<MouvementReleveCpt, "type" | "reference">): string {
+  if (!m.reference) return LIBELLE_MOUVEMENT_RELEVE_CPT[m.type];
+  return m.type === "ANNULATION" ? `Annulation ${m.reference}` : m.reference;
 }
 
 export interface ReleveRemunerationCpt {
@@ -76,29 +96,54 @@ export function construireReleveRemunerationCpt(entree: {
     const v = nature === "HONORAIRES" ? ventilerHonoraireCpt(l) : null;
     return { ...l, clientNom: entree.clients.get(l.contratId)?.clientNom ?? "", surPrimesEncaissees: v?.surPrimesEncaissees ?? null, surPrimesNonEncaissees: v?.surPrimesNonEncaissees ?? null };
   });
-  const mouvements: MouvementReleveCpt[] = [
+  const operations: { mouvement: MouvementReleveCpt; annulation: AnnulationReleveCpt | null; nom: string }[] = [
     ...entree.reglements.map((r) => ({
-      type: "REGLEMENT" as const,
-      date: r.date,
-      creeAt: r.creeAt,
-      reference: r.reference,
-      detail: `${LIBELLE_MODE_PAIEMENT_PARTENAIRE_CPT[r.mode]} ${r.referenceReglement}${r.montantAvance > ZERO ? ` (dont avance ${fcfa(r.montantAvance)})` : ""}`,
-      montant: r.montant,
+      mouvement: {
+        type: "REGLEMENT" as const,
+        date: r.date,
+        creeAt: r.creeAt,
+        reference: r.reference,
+        detail: `${LIBELLE_MODE_PAIEMENT_PARTENAIRE_CPT[r.mode]} ${r.referenceReglement}${r.montantAvance > ZERO ? ` (dont avance ${fcfa(r.montantAvance)})` : ""}`,
+        montant: r.montant,
+      },
+      annulation: r.annulation,
+      nom: `du règlement ${r.reference}`,
     })),
     ...entree.compensations
       .filter((c) => c.natureSource === nature || c.natureCible === nature)
       .map((c) => ({
-        type: "COMPENSATION" as const,
-        date: c.date,
-        creeAt: c.creeAt,
-        reference: "",
-        detail:
-          c.natureSource === nature
-            ? `Avance reprise vers ${LIBELLE_NATURE_REMUNERATION_CPT[c.natureCible].toLowerCase()} — ${c.motif}`
-            : `Imputation d'une avance de ${LIBELLE_NATURE_REMUNERATION_CPT[c.natureSource].toLowerCase()} — ${c.motif}`,
-        montant: c.natureSource === nature ? -c.montant : c.montant,
+        mouvement: {
+          type: "COMPENSATION" as const,
+          date: c.date,
+          creeAt: c.creeAt,
+          reference: "",
+          detail:
+            c.natureSource === nature
+              ? `Avance reprise vers ${LIBELLE_NATURE_REMUNERATION_CPT[c.natureCible].toLowerCase()} — ${c.motif}`
+              : `Imputation d'une avance de ${LIBELLE_NATURE_REMUNERATION_CPT[c.natureSource].toLowerCase()} — ${c.motif}`,
+          montant: c.natureSource === nature ? -c.montant : c.montant,
+        },
+        annulation: c.annulation,
+        nom: `de la compensation du ${c.date.slice(8, 10)}/${c.date.slice(5, 7)}/${c.date.slice(0, 4)}`,
       })),
-  ].sort((a, b) => a.date.localeCompare(b.date) || a.creeAt.localeCompare(b.creeAt));
+  ];
+  const mouvements: MouvementReleveCpt[] = operations
+    .flatMap(({ mouvement, annulation, nom }) =>
+      annulation
+        ? [
+            mouvement,
+            {
+              type: "ANNULATION" as const,
+              date: annulation.date,
+              creeAt: annulation.creeAt,
+              reference: mouvement.reference,
+              detail: `Annulation ${nom} — ${annulation.motif}`,
+              montant: -mouvement.montant,
+            },
+          ]
+        : [mouvement],
+    )
+    .sort((a, b) => a.date.localeCompare(b.date) || a.creeAt.localeCompare(b.creeAt));
   const honoraires =
     nature === "HONORAIRES"
       ? {
@@ -159,7 +204,7 @@ export function lignesExportReleveRemunerationCpt(r: ReleveRemunerationCpt): Lig
     detail: l.primeAbandonnee ? "Prime abandonnée" : "",
   }));
   const mouvements: LigneExportCpt[] = r.mouvements.map((m) => ({
-    section: m.type === "REGLEMENT" ? "Règlement" : "Compensation",
+    section: LIBELLE_MOUVEMENT_RELEVE_CPT[m.type],
     date: m.date,
     reference: m.reference,
     mouvement: nombre(m.montant),

@@ -1,10 +1,13 @@
 // Gestion Compta, lot GC-9 — RÉMUNÉRATION DES PARTENAIRES (sans GC-9d). Sur base JETABLE et neuve (voir e2e/README.md : `next build` puis
 // `bash e2e/base-jetable.sh`) : ce script ÉCRIT en base et ne se rejoue pas sur la même base. Données 100 % synthétiques.
-// Parties : E2E_PARTIES="9e,9f,9g,9q" (défaut : toutes ; les parties suivantes supposent les précédentes).
-//   9e : avertissement R1 et message des bordereaux, quatre soldes, T6 ter, T6, T6 bis par les écrans ; règlement et affectation, avance,
+// Parties : E2E_PARTIES="9e,9f,9h,9g,9q" (défaut : toutes ; les parties suivantes supposent les précédentes).
+//   9e : avertissement R1 et message des bordereaux, quatre soldes, T6 ter, T6, T6 bis par les écrans ; règlement et affectation,
+//        jamais au-delà du net payable (même par rejeu avec un paramètre d'avance),
 //        décision « en une fois », refus serveur par rejeu sans permission, deux règlements simultanés, 390 px ;
-//   9f : aucune compensation automatique, compensation d'une avance avec motif (montant et motif contrôlés), refus par rejeu sans
+//   9f : aucune compensation automatique, compensation d'une avance née d'une prime abandonnée (montant et motif contrôlés), refus par rejeu sans
 //        permission, deux compensations simultanées, honoraires « à régulariser » après résiliation ;
+//   9h : annulations (Q22) : jamais par l'auteur, compensation d'abord, « aucun versement » exigé, deux annulations simultanées,
+//        le net payable revient et le RFCRH ressaisit un règlement correct ;
 //   9g : relevé par partenaire et par nature (écran, mêmes chiffres que la fiche), exports CSV / Excel et PDF recoupés, accès refusés,
 //        390 px. Le PDF est relu avec `pdftotext` ;
 //   9q : la lecture de la rémunération est réservée (cpt.consulter_remuneration) : rubrique, pages, onglet Conventions, exports,
@@ -19,7 +22,7 @@ import pg from "pg";
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
 if (!/localhost:55497|e2e/i.test(DB)) throw new Error("E2E_DATABASE_URL doit viser une base jetable.");
-const PARTIES = (process.env.E2E_PARTIES ?? "9e,9f,9g,9q").split(",");
+const PARTIES = (process.env.E2E_PARTIES ?? "9e,9f,9h,9g,9q").split(",");
 const partie = (p) => PARTIES.includes(p);
 
 const db = new pg.Client({ connectionString: DB });
@@ -92,21 +95,22 @@ const carte = async (p, nature, cle) => nombre(await p.locator(`[data-carte-sold
 const lignesPayees = (partenaire) =>
   sql(
     `SELECT l.id, e.rang, c."numPolice", l.nature, l.du::float AS du,
-       (coalesce((SELECT sum(montant) FROM "CptAffectationReglement" a WHERE a."ligneRemunerationId" = l.id),0)
-        + coalesce((SELECT sum(montant) FROM "CptAffectationCompensation" a WHERE a."ligneRemunerationId" = l.id),0))::float AS paye
+       (coalesce((SELECT sum(montant) FROM "CptAffectationReglement" a WHERE a."ligneRemunerationId" = l.id
+                    AND NOT EXISTS (SELECT 1 FROM "CptAnnulationRemuneration" x WHERE x."reglementId" = a."reglementId")),0)
+        + coalesce((SELECT sum(montant) FROM "CptAffectationCompensation" a WHERE a."ligneRemunerationId" = l.id
+                    AND NOT EXISTS (SELECT 1 FROM "CptAnnulationRemuneration" x WHERE x."compensationId" = a."compensationId")),0))::float AS paye
      FROM "CptLigneRemuneration" l JOIN "CptEcheance" e ON e.id = l."echeanceId" JOIN "CptContrat" c ON c.id = l."contratId"
      WHERE l."partenaireBeneficiaireId" = $1 ORDER BY c."numPolice", l.nature, e.rang`,
     [partenaire]
   );
 
-async function remplirReglement(p, { nature, montant, reference = "VIR-E2E", avance = false, motif = "", mode = "VIREMENT", derogation = "" }) {
+async function remplirReglement(p, { nature, montant, reference = "VIR-E2E", motif = "", mode = "VIREMENT", derogation = "" }) {
   const f = p.locator("[data-form-reglement]");
   await f.locator('select[name="nature"]').selectOption(nature);
   await f.locator('input[name="montant"]').fill(String(montant));
   await f.locator('select[name="mode"]').selectOption(mode);
   await f.locator('input[name="referenceReglement"]').fill(reference);
   await f.locator('select[name="modeDerogation"]').selectOption(derogation);
-  if (avance) await f.locator('input[name="accepterAvance"]').check();
   if (motif) await f.locator('textarea[name="motif"]').fill(motif);
   return f.locator('button[type="submit"]');
 }
@@ -118,6 +122,7 @@ donnees("base");
 // =====================================================================================================================
 let reqReglement = null;
 let reqCompensation = null;
+let reqAnnulation = null;
 if (partie("9e")) {
   const idTer = await idPartenaire("Courtier T6ter");
   const liste = await ouvrir(RFCRH, "/compta/partenaires");
@@ -135,9 +140,9 @@ if (partie("9e")) {
   verifier("9e. T6 ter avant règlement : dû 12 000, payable 3 000, net 3 000, payé 0", (await carte(p, "COMMISSION", "du")) === 12000 && (await carte(p, "COMMISSION", "payable")) === 3000 && (await carte(p, "COMMISSION", "reste-payable")) === 3000 && (await carte(p, "COMMISSION", "paye")) === 0);
   verifier("9e. détail : 12 échéances de commission, 1 000 chacune", (await p.locator("[data-ligne]").count()) === 12 && nombre(await p.locator('[data-ligne="POL-T6TER-12"] [data-montant="du"]').innerText()) === 1000);
 
-  // Au-delà du payable, sans avance : refusé, rien n'est écrit.
+  // Au-delà du net payable : toujours refusé, rien n'est écrit.
   await cliquerEtCapturer(p, await remplirReglement(p, { nature: "COMMISSION", montant: 3001 }));
-  verifier("9e. 3 001 sans avance : refusé avec le payable (3 000), rien n'est écrit", /payable aujourd'hui \(3\s000 FCFA\)/.test(await p.locator("[data-message-reglement]").innerText()) && (await compter("CptReglementPartenaire")) === 0 && (await compter("CptLigneRemuneration")) === 0);
+  verifier("9e. 3 001 : refusé avec le payable (3 000), aucune case « avance » à l'écran, rien n'est écrit", (await p.locator('input[name="accepterAvance"]').count()) === 0 && /payable aujourd'hui \(3\s000 FCFA\)/.test(await p.locator("[data-message-reglement]").innerText()) && (await compter("CptReglementPartenaire")) === 0 && (await compter("CptLigneRemuneration")) === 0);
 
   reqReglement = await cliquerEtCapturer(p, await remplirReglement(p, { nature: "COMMISSION", montant: "3 000", reference: "VIR-T6TER-1" }));
   const r1 = await un(`SELECT reference, montant::float AS montant, "montantAvance"::float AS avance, nature FROM "CptReglementPartenaire"`);
@@ -148,6 +153,11 @@ if (partie("9e")) {
   await recharger(p);
   verifier("9e. T6 ter après règlement : reste payable 0, reste dû 9 000, payé 3 000, avance 0", (await carte(p, "COMMISSION", "reste-payable")) === 0 && (await carte(p, "COMMISSION", "reste-du")) === 9000 && (await carte(p, "COMMISSION", "paye")) === 3000 && (await carte(p, "COMMISSION", "avance")) === 0);
   verifier("9e. l'historique montre le règlement", (await p.locator('[data-reglement="CPR-2026-000001"]').count()) === 1);
+
+  // Rejeu réseau avec les anciens paramètres d'avance : le serveur ne les lit plus.
+  const avecAvance = (corps) => [{ ...corps[0], montant: "5000", accepterAvance: "true", motif: "Avance demandée par rejeu réseau" }];
+  const repAvance = await rejouer(RFCRH, reqReglement, avecAvance);
+  verifier("9e. rejeu du RFCRH avec un paramètre d'avance : refusé au-delà du net payable, rien d'écrit", /dépasse le payable/.test(repAvance) && (await compter("CptReglementPartenaire")) === 1, repAvance.replace(/\s+/g, " ").slice(0, 200));
 
   // Refus serveur sans la permission.
   for (const compte of [DIRECTION, COMMERCIAL]) {
@@ -165,7 +175,7 @@ if (partie("9e")) {
   const [a, b] = await Promise.all([rejouer(RFCRH, reqReglement, simultane), rejouer(RFCRH, reqReglement, simultane)]);
   const nbSimultanes = await compter("CptReglementPartenaire", `"referenceReglement" = 'VIR-SIMULTANE'`);
   const apresSimultanes = await lignesPayees(idTer);
-  verifier("9e. deux règlements simultanés de 1 000 : un seul enregistré, l'autre refusé", nbSimultanes === 1 && /dépasse le payable|dépasse le reste dû/.test(a + b), `${nbSimultanes} — ${(a + b).replace(/\s+/g, " ").slice(0, 200)}`);
+  verifier("9e. deux règlements simultanés de 1 000 : un seul enregistré, l'autre refusé", nbSimultanes === 1 && /dépasse le payable/.test(a + b), `${nbSimultanes} — ${(a + b).replace(/\s+/g, " ").slice(0, 200)}`);
   verifier("9e. aucun montant affecté deux fois : payé total 4 000, aucune ligne au-delà de son dû", apresSimultanes.reduce((s, l) => s + l.paye, 0) === 4000 && apresSimultanes.every((l) => l.paye <= l.du));
   verifier("9e. numérotation sans trou : CPR-2026-000002 pour le règlement accepté", (await compter("CptReglementPartenaire", `reference = 'CPR-2026-000002'`)) === 1);
 
@@ -226,6 +236,8 @@ if (partie("9e")) {
 // =====================================================================================================================
 // 9f — compensation
 // =====================================================================================================================
+const lignesCompensation = () =>
+  sql(`SELECT l.nature, a.montant::float AS montant FROM "CptAffectationCompensation" a JOIN "CptLigneRemuneration" l ON l.id = a."ligneRemunerationId" ORDER BY a.montant, l.nature`);
 if (partie("9f")) {
   const idCab = await idPartenaire("Cabinet Compensation");
   const p = await ouvrir(RFCRH, `/compta/partenaires/${idCab}`);
@@ -233,13 +245,15 @@ if (partie("9f")) {
   verifier("9f. sans avance : bouton « Compenser » grisé avec la raison", (await bouton.isDisabled()) && /Rien à compenser/.test(await p.locator("[data-raison-compensation]").innerText()));
   verifier("9f. avant : commission payable 0 (prime non encaissée), honoraires à verser 7 000", (await carte(p, "COMMISSION", "reste-payable")) === 0 && (await carte(p, "HONORAIRES", "reste-payable")) === 7000);
 
-  await cliquerEtCapturer(p, await remplirReglement(p, { nature: "COMMISSION", montant: 3000, avance: true, motif: "Avance sur commission demandée par le cabinet", reference: "VIR-CAB-AV" }));
+  // Une avance ne naît plus que d'une prime abandonnée : honoraires versés, puis le contrat jamais encaissé est résilié.
+  await cliquerEtCapturer(p, await remplirReglement(p, { nature: "HONORAIRES", montant: 7000, reference: "VIR-CAB-HON" }));
+  donnees("resilier");
+  donnees("cab-encaisse");
   await recharger(p);
-  const avance = await un(`SELECT "montantAvance"::float AS a, motif FROM "CptReglementPartenaire" WHERE "referenceReglement" = 'VIR-CAB-AV'`);
-  verifier("9f. règlement avec avance explicite et motif : 3 000 d'avance enregistrée", avance?.a === 3000 && /Avance sur commission/.test(avance.motif), JSON.stringify(avance));
-  verifier("9f. aucune compensation automatique : avance de commission 3 000, honoraires toujours 7 000 à verser", (await carte(p, "COMMISSION", "avance")) === 3000 && (await carte(p, "HONORAIRES", "reste-payable")) === 7000 && (await compter("CptCompensation")) === 0);
+  verifier("9f. après résiliation : avance d'honoraires 2 000 (prime abandonnée), commission à verser 10 000", (await carte(p, "HONORAIRES", "avance")) === 2000 && (await carte(p, "COMMISSION", "reste-payable")) === 10000);
+  verifier("9f. aucune compensation automatique", (await compter("CptCompensation")) === 0);
 
-  const remplir = async (montant, motif, source = "COMMISSION", cible = "HONORAIRES") => {
+  const remplir = async (montant, motif, source = "HONORAIRES", cible = "COMMISSION") => {
     const f = p.locator("[data-form-compensation]");
     await f.locator('select[name="natureSource"]').selectOption(source);
     await f.locator('select[name="natureCible"]').selectOption(cible);
@@ -247,16 +261,16 @@ if (partie("9f")) {
     await f.locator('textarea[name="motif"]').fill(motif);
     return f.locator('button[type="submit"]');
   };
-  await cliquerEtCapturer(p, await remplir(3001, "Compensation convenue avec le cabinet"));
-  verifier("9f. au-delà de l'avance disponible : refusée, rien n'est écrit", /avance disponible en commission \(3\s000 FCFA\)/.test(await p.locator("[data-message-compensation]").innerText()) && (await compter("CptCompensation")) === 0);
+  await cliquerEtCapturer(p, await remplir(2001, "Compensation convenue avec le cabinet"));
+  verifier("9f. au-delà de l'avance disponible : refusée, rien n'est écrit", /avance disponible en honoraires de gestion \(2\s000 FCFA\)/.test(await p.locator("[data-message-compensation]").innerText()) && (await compter("CptCompensation")) === 0, await p.locator("[data-message-compensation]").innerText());
   await cliquerEtCapturer(p, await remplir(1000, "trop bref"));
   verifier("9f. motif de moins de 10 caractères : refusée par le serveur", /motif est obligatoire/.test(await p.locator("[data-message-compensation]").innerText()) && (await compter("CptCompensation")) === 0);
   const reqComp = await cliquerEtCapturer(p, await remplir(1000, "Compensation convenue avec le cabinet"));
   reqCompensation = reqComp;
   await recharger(p);
-  verifier("9f. compensation de 1 000 : avance de commission 2 000, honoraires à verser 6 000", (await carte(p, "COMMISSION", "avance")) === 2000 && (await carte(p, "HONORAIRES", "reste-payable")) === 6000);
-  const mouvements = await sql(`SELECT l.nature, a.montant::float AS montant FROM "CptAffectationCompensation" a JOIN "CptLigneRemuneration" l ON l.id = a."ligneRemunerationId" ORDER BY a.montant`);
-  verifier("9f. en base : −1 000 sur la commission, +1 000 sur les honoraires, audit avec motif", JSON.stringify(mouvements) === JSON.stringify([{ nature: "COMMISSION", montant: -1000 }, { nature: "HONORAIRES", montant: 1000 }]) && (await compter("CptAudit", `action = 'compensation' AND motif = 'Compensation convenue avec le cabinet'`)) === 1, JSON.stringify(mouvements));
+  verifier("9f. compensation de 1 000 : avance d'honoraires 1 000, commission à verser 9 000", (await carte(p, "HONORAIRES", "avance")) === 1000 && (await carte(p, "COMMISSION", "reste-payable")) === 9000);
+  const mouvements = await lignesCompensation();
+  verifier("9f. en base : −1 000 sur les honoraires, +1 000 sur la commission, audit avec motif", JSON.stringify(mouvements) === JSON.stringify([{ nature: "HONORAIRES", montant: -1000 }, { nature: "COMMISSION", montant: 1000 }]) && (await compter("CptAudit", `action = 'compensation' AND motif = 'Compensation convenue avec le cabinet'`)) === 1, JSON.stringify(mouvements));
   verifier("9f. l'historique des compensations l'affiche", (await p.locator("[data-compensation-faite]").count()) === 1);
 
   for (const compte of [DIRECTION, COMMERCIAL]) {
@@ -267,18 +281,80 @@ if (partie("9f")) {
   verifier("9f. Direction : bouton grisé avec la raison", (await d.locator('[data-form-compensation] button[type="submit"]').isDisabled()) && /ne permet pas de compenser/.test(await d.locator("[data-raison-compensation]").innerText()));
   await d.close();
 
-  const deux = (corps) => [{ ...corps[0], montant: "2000" }];
-  const [a, b] = await Promise.all([rejouer(RFCRH, reqComp, deux), rejouer(RFCRH, reqComp, deux)]);
+  const [a, b] = await Promise.all([rejouer(RFCRH, reqComp), rejouer(RFCRH, reqComp)]);
   const apres = await lignesPayees(idCab);
-  verifier("9f. deux compensations simultanées de 2 000 (avance restante 2 000) : une seule passe", (await compter("CptCompensation", "montant = 2000")) === 1 && /avance disponible/.test(a + b), (a + b).replace(/\s+/g, " ").slice(0, 200));
-  verifier("9f. aucune avance reprise deux fois : total payé inchangé (3 000), aucune ligne négative ni au-delà de son dû", apres.reduce((s, l) => s + l.paye, 0) === 3000 && apres.every((l) => l.paye >= 0 && l.paye <= l.du), JSON.stringify(apres.map((l) => l.paye)));
+  verifier("9f. deux compensations simultanées de 1 000 (avance restante 1 000) : une seule passe", (await compter("CptCompensation")) === 2 && /avance disponible/.test(a + b), (a + b).replace(/\s+/g, " ").slice(0, 200));
+  verifier("9f. aucune avance reprise deux fois : total payé inchangé (7 000), aucune ligne négative ni au-delà de son dû", apres.reduce((s, l) => s + l.paye, 0) === 7000 && apres.every((l) => l.paye >= 0), JSON.stringify(apres.map((l) => l.paye)));
 
-  donnees("resilier");
   await recharger(p);
   verifier("9f. résiliation d'un contrat jamais encaissé : ses honoraires (2 000) sont « à régulariser »", /À régulariser 2\s000/.test(await p.locator('[data-honoraire="POL-CAB-RESIL"] [data-a-regulariser]').innerText()) && (await p.locator("[data-honoraire]").first().getAttribute("data-honoraire")) === "POL-CAB-RESIL");
   await p.close();
   const m = await ouvrir(RFCRH, `/compta/partenaires/${idCab}`, { width: 390, height: 844 });
   verifier("9f. 390 px : pas de défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await m.close();
+}
+
+// =====================================================================================================================
+// 9h — annulation d'un règlement ou d'une compensation (Q22, C-38)
+// =====================================================================================================================
+if (partie("9h")) {
+  const idCab = await idPartenaire("Cabinet Compensation");
+  const reglement = await un(`SELECT id, reference FROM "CptReglementPartenaire" WHERE "referenceReglement" = 'VIR-CAB-HON'`);
+  const ligneReglement = (p, ref) => p.locator(`[data-reglement="${ref}"]`);
+  const auteur = await ouvrir(RFCRH, `/compta/partenaires/${idCab}`);
+  verifier("9h. RFCRH, auteur : « Annuler » grisé avec la raison, sur le règlement et les deux compensations", (await ligneReglement(auteur, reglement.reference).locator("[data-bouton-annuler]").isDisabled()) && /Annulez d'abord|Vous avez saisi/.test(await ligneReglement(auteur, reglement.reference).locator("[data-raison-annulation]").innerText()) && (await auteur.locator("[data-compensation-faite] [data-bouton-annuler]:disabled").count()) === 2 && (await auteur.locator('[data-compensation-faite] [data-raison-annulation]').allInnerTexts()).every((t) => /Vous avez saisi cette opération/.test(t)));
+  await auteur.close();
+
+  const d = await ouvrir(DIRECTION, `/compta/partenaires/${idCab}`);
+  verifier("9h. Direction : règlement grisé tant qu'une compensation active reprend ses montants", (await ligneReglement(d, reglement.reference).locator("[data-bouton-annuler]").isDisabled()) && /^Annulez d'abord la compensation du/.test((await ligneReglement(d, reglement.reference).locator("[data-raison-annulation]").innerText()).trim()), await ligneReglement(d, reglement.reference).locator("[data-raison-annulation]").innerText());
+
+  async function annuler(conteneur, motif, cocher = false) {
+    const ouvrirBouton = conteneur.locator("[data-bouton-annuler]");
+    if ((await ouvrirBouton.count()) > 0) await ouvrirBouton.click();
+    const f = conteneur.locator("[data-form-annulation]");
+    await f.locator('textarea[name="motif"]').fill(motif);
+    if (cocher) await f.locator('input[name="sansVersement"]').check();
+    return cliquerEtCapturer(d, f.locator('button[type="submit"]'));
+  }
+  const premiere = d.locator("[data-compensation-faite]").first();
+  await annuler(premiere, "erreur");
+  verifier("9h. motif de moins de 10 caractères : refusé par le serveur, rien d'écrit", /motif est obligatoire/.test(await premiere.locator("[data-message-annulation]").innerText()) && (await compter("CptAnnulationRemuneration")) === 0);
+  verifier("9h. compensation : pas de case « aucun versement » (aucun argent ne circule)", (await premiere.locator('input[name="sansVersement"]').count()) === 0);
+  reqAnnulation = await annuler(premiere, "Compensation saisie à tort");
+  await recharger(d);
+  verifier("9h. première compensation annulée : mention à l'écran, annulation en base", (await compter("CptAnnulationRemuneration", `"compensationId" IS NOT NULL`)) === 1 && (await d.locator("[data-compensation-faite] [data-annule]").count()) === 1);
+  verifier("9h. le règlement reste grisé tant que l'autre compensation est active", await ligneReglement(d, reglement.reference).locator("[data-bouton-annuler]").isDisabled());
+
+  const restante = await un(`SELECT c.id FROM "CptCompensation" c WHERE NOT EXISTS (SELECT 1 FROM "CptAnnulationRemuneration" x WHERE x."compensationId" = c.id)`);
+  const surRestante = (corps) => [{ ...corps[0], operationId: restante.id }];
+  const [a, b] = await Promise.all([rejouer(DIRECTION, reqAnnulation, surRestante), rejouer(DIRECTION, reqAnnulation, surRestante)]);
+  verifier("9h. deux annulations simultanées de la même compensation : une seule passe", (await compter("CptAnnulationRemuneration", `"compensationId" = $1`, [restante.id])) === 1 && /déjà annulée/.test(a + b), (a + b).replace(/\s+/g, " ").slice(0, 200));
+
+  await recharger(d);
+  const rangee = ligneReglement(d, reglement.reference);
+  verifier("9h. les compensations annulées, le règlement devient annulable par la Direction", !(await rangee.locator("[data-bouton-annuler]").isDisabled()));
+  await annuler(rangee, "Montant saisi par erreur");
+  verifier("9h. sans la case « aucun versement n'a eu lieu, ou il a été rejeté » : refusé, rien d'écrit", /Aucun versement n'a eu lieu/.test(await rangee.locator("[data-message-annulation]").innerText()) && (await compter("CptAnnulationRemuneration", `"reglementId" IS NOT NULL`)) === 0);
+  await annuler(rangee, "Montant saisi par erreur", true);
+  await recharger(d);
+  const annulation = await un(`SELECT "sansVersement" AS v, motif, date::text AS date FROM "CptAnnulationRemuneration" WHERE "reglementId" = $1`, [reglement.id]);
+  verifier("9h. règlement annulé : datée du jour, case enregistrée, audit des deux types", annulation?.v === true && annulation.date === new Date().toISOString().slice(0, 10) && (await compter("CptAudit", `action = 'annulation_reglement_partenaire'`)) === 1 && (await compter("CptAudit", `action = 'annulation_compensation'`)) === 2, JSON.stringify(annulation));
+  verifier("9h. le net payable revient : honoraires payé 0, à verser 5 000, plus d'avance ; commission payé 0", (await carte(d, "HONORAIRES", "paye")) === 0 && (await carte(d, "HONORAIRES", "reste-payable")) === 5000 && (await carte(d, "HONORAIRES", "avance")) === 0 && (await carte(d, "COMMISSION", "paye")) === 0);
+  verifier("9h. l'historique garde le règlement, marqué « Annulé »", (await ligneReglement(d, reglement.reference).locator("[data-annule]").count()) === 1);
+  await d.close();
+
+  const rf = await ouvrir(RFCRH, `/compta/partenaires/${idCab}`);
+  await cliquerEtCapturer(rf, await remplirReglement(rf, { nature: "HONORAIRES", montant: 5000, reference: "VIR-CAB-OK" }));
+  await recharger(rf);
+  const nouveau = await un(`SELECT id, reference FROM "CptReglementPartenaire" WHERE "referenceReglement" = 'VIR-CAB-OK'`);
+  verifier("9h. le RFCRH ressaisit un règlement correct sur les mêmes lignes : accepté", !!nouveau && (await carte(rf, "HONORAIRES", "paye")) === 5000 && (await carte(rf, "HONORAIRES", "reste-payable")) === 0);
+  verifier("9h. RFCRH : son nouveau règlement a « Annuler » grisé (il en est l'auteur)", (await ligneReglement(rf, nouveau.reference).locator("[data-bouton-annuler]").isDisabled()) && /Vous avez saisi cette opération/.test(await ligneReglement(rf, nouveau.reference).locator("[data-raison-annulation]").innerText()));
+  const avant = await compter("CptAnnulationRemuneration");
+  const rep = await rejouer(RFCRH, reqAnnulation, () => [{ type: "REGLEMENT", operationId: nouveau.id, motif: "Je corrige ma propre saisie", sansVersement: "true" }]);
+  verifier("9h. rejeu direct du RFCRH sur son propre règlement : refusé, rien d'écrit", /une autre personne doit l'annuler/.test(rep) && (await compter("CptAnnulationRemuneration")) === avant, rep.replace(/\s+/g, " ").slice(0, 200));
+  await rf.close();
+  const m = await ouvrir(DIRECTION, `/compta/partenaires/${idCab}`, { width: 390, height: 844 });
+  verifier("9h. 390 px : fiche avec annulations sans défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await m.close();
 }
 
@@ -298,11 +374,13 @@ if (partie("9g")) {
   const r = fiche;
   verifier("9g. depuis la fiche : le relevé de commission, avec l'avertissement R1", /nature=COMMISSION/.test(r.url()) && (await r.locator("[data-avertissement-r1]").innerText()).includes(R1));
   verifier("9g. mêmes chiffres que la fiche (dû, payé, avance)", (await total(r, "du")) === ficheCommission.du && (await total(r, "paye")) === ficheCommission.paye && (await total(r, "avance")) === ficheCommission.avance, JSON.stringify(ficheCommission));
-  verifier("9g. commission du cabinet : le règlement de 3 000, deux reprises de compensation (−1 000, −2 000) ; leur somme est le payé", (await r.locator('[data-mouvement="REGLEMENT"]').count()) === 1 && (await r.locator('[data-mouvement="COMPENSATION"]').count()) === 2 && (await sommeMouvements(r)) === (await total(r, "paye")) && (await total(r, "paye")) === 0);
-  const payeSql = Number((await un(`SELECT (coalesce((SELECT sum(montant) FROM "CptReglementPartenaire" WHERE "partenaireId" = $1 AND nature = 'HONORAIRES'),0) + coalesce((SELECT sum(montant) FROM "CptCompensation" WHERE "partenaireId" = $1 AND "natureCible" = 'HONORAIRES'),0))::float AS s`, [idCab])).s);
+  const types = async (p) => (await p.locator("[data-releve-mouvements] [data-mouvement]").evaluateAll((els) => els.map((e) => e.getAttribute("data-mouvement")))).join(",");
+  verifier("9g. commission du cabinet : deux imputations et leurs deux annulations ; leur somme est le payé (0)", (await types(r)) === "COMPENSATION,COMPENSATION,ANNULATION,ANNULATION" && (await sommeMouvements(r)) === (await total(r, "paye")) && (await total(r, "paye")) === 0, await types(r));
+  const payeSql = Number((await un(`SELECT coalesce(sum(montant),0)::float AS s FROM "CptReglementPartenaire" g WHERE "partenaireId" = $1 AND nature = 'HONORAIRES' AND NOT EXISTS (SELECT 1 FROM "CptAnnulationRemuneration" x WHERE x."reglementId" = g.id)`, [idCab])).s);
   await r.goto(`${B}/compta/partenaires/${idCab}/releve?nature=HONORAIRES`);
   await calme(r);
-  verifier("9g. honoraires du cabinet : 3 000 imputés par compensation, recoupés par un calcul SQL indépendant", (await total(r, "paye")) === payeSql && payeSql === 3000 && (await sommeMouvements(r)) === 3000);
+  verifier("9g. honoraires du cabinet : règlement, reprises, trois annulations, règlement ressaisi ; payé 5 000 recoupé par SQL", (await types(r)) === "REGLEMENT,COMPENSATION,COMPENSATION,ANNULATION,ANNULATION,ANNULATION,REGLEMENT" && (await total(r, "paye")) === payeSql && payeSql === 5000 && (await sommeMouvements(r)) === 5000, await types(r));
+  verifier("9g. l'annulation du règlement est nommée avec son numéro et son motif", /Annulation CPR-2026-/.test(await r.locator("[data-releve-mouvements]").innerText()) && /Montant saisi par erreur/.test(await r.locator("[data-releve-mouvements]").innerText()));
   await r.close();
 
   const idTer = await idPartenaire("Courtier T6ter");
@@ -323,9 +401,9 @@ if (partie("9g")) {
   const lignesCsv = (await csv.text()).replace(/^\uFEFF/, "").trim().split("\r\n").map((l) => l.split(";"));
   const colonne = (titre) => lignesCsv[0].indexOf(titre);
   const sections = lignesCsv.slice(1).map((l) => l[0]);
-  verifier("9g. export CSV : échéance, règlement, deux compensations et un total", csv.status() === 200 && sections.join(",") === "Échéance,Règlement,Compensation,Compensation,Total", sections.join(","));
+  verifier("9g. export CSV : échéance, deux compensations, deux annulations et un total", csv.status() === 200 && sections.join(",") === "Échéance,Compensation,Compensation,Annulation,Annulation,Total", sections.join(","));
   const totalCsv = lignesCsv.at(-1);
-  verifier("9g. CSV : total payé 0 = somme des mouvements ; une reprise reste négative", Number(totalCsv[colonne("Payé (FCFA)")].replace(",", ".")) === 0 && Number(totalCsv[colonne("Mouvement (FCFA)")].replace(",", ".")) === 0 && lignesCsv.some((l) => l[colonne("Mouvement (FCFA)")] === "-2000,00"));
+  verifier("9g. CSV : total payé 0 = somme des mouvements ; une annulation reste négative", Number(totalCsv[colonne("Payé (FCFA)")].replace(",", ".")) === 0 && Number(totalCsv[colonne("Mouvement (FCFA)")].replace(",", ".")) === 0 && lignesCsv.some((l) => l[colonne("Mouvement (FCFA)")] === "-1000,00"));
   const csvH = await (await ctx.request.get(url(idNovelia, "HONORAIRES", "csv"))).text();
   const lh = csvH.replace(/^\uFEFF/, "").trim().split("\r\n").map((l) => l.split(";"));
   verifier("9g. CSV honoraires : total dû = écran, colonne « Sur primes encaissées » = 16000", Number(lh.at(-1)[lh[0].indexOf("Dû (FCFA)")].replace(",", ".")) === ecranDu && Number(lh.at(-1)[lh[0].indexOf("Sur primes encaissées (FCFA)")].replace(",", ".")) === 16000);
@@ -339,7 +417,7 @@ if (partie("9g")) {
   writeFileSync(join(dossier, "releve.pdf"), corps);
   const texte = execFileSync("pdftotext", ["-enc", "UTF-8", "-layout", join(dossier, "releve.pdf"), "-"]).toString("utf8");
   rmSync(dossier, { recursive: true, force: true });
-  verifier("9g. PDF : en-tête, partenaire, nature, compensation et payé 3 000", pdf.status() === 200 && corps.subarray(0, 4).toString() === "%PDF" && /RELEVÉ PARTENAIRE/.test(texte) && /Cabinet Compensation/.test(texte) && /Compensation/.test(texte) && /3 000 FCFA/.test(texte), texte.slice(0, 300).replace(/\s+/g, " "));
+  verifier("9g. PDF : en-tête, partenaire, nature, compensation, annulation et payé 5 000", pdf.status() === 200 && corps.subarray(0, 4).toString() === "%PDF" && /RELEVÉ PARTENAIRE/.test(texte) && /Cabinet Compensation/.test(texte) && /Compensation/.test(texte) && /Annulation/.test(texte) && /CPR-2026-\d{6}/.test(texte) && /5 000 FCFA/.test(texte), texte.slice(0, 300).replace(/\s+/g, " "));
 
   const anonyme = await browser.newContext();
   verifier("9g. sans session : export 401, PDF 401", (await anonyme.request.get(url(idCab, "COMMISSION", "csv"), { maxRedirects: 0 })).status() === 401 && (await anonyme.request.get(`${B}/api/compta/partenaires/${idCab}/releve?nature=COMMISSION`, { maxRedirects: 0 })).status() === 401);
@@ -378,7 +456,7 @@ if (partie("9q")) {
     for (const e of exports9q) codes.push((await ctx.request.get(`${B}${e}`, { maxRedirects: 0 })).status());
     return { ok: pages.every((x) => x === "fermée") && codes.every((x) => x === 403), detail: `${pages.join(", ")} / ${codes.join(", ")}` };
   };
-  const compterOperations = async () => `${await compter("CptReglementPartenaire")}/${await compter("CptCompensation")}/${await compter("CptDecisionModeRemuneration")}`;
+  const compterOperations = async () => `${await compter("CptReglementPartenaire")}/${await compter("CptCompensation")}/${await compter("CptDecisionModeRemuneration")}/${await compter("CptAnnulationRemuneration")}`;
   const operationsAvant = await compterOperations();
 
   for (const compte of [PRODUCTION, COMMERCIAL, COMPTABLE]) {
@@ -390,8 +468,8 @@ if (partie("9q")) {
     await p.close();
     const f = await fermes(compte);
     verifier(`9q. ${nom} : pages fermées, exports et PDF 403`, f.ok, f.detail);
-    const reponses = [await rejouer(compte, reqReglement), await rejouer(compte, reqCompensation)];
-    verifier(`9q. ${nom} : rejeu du règlement et de la compensation : « Action non autorisée », rien d'écrit`, reponses.every((r) => /Action non autoris/.test(r)) && (await compterOperations()) === operationsAvant);
+    const reponses = [await rejouer(compte, reqReglement), await rejouer(compte, reqCompensation), await rejouer(compte, reqAnnulation)];
+    verifier(`9q. ${nom} : rejeu du règlement, de la compensation et d'une annulation : « Action non autorisée », rien d'écrit`, reponses.every((r) => /Action non autoris/.test(r)) && (await compterOperations()) === operationsAvant);
   }
 
   // Une permission d'écriture n'implique pas la lecture : le rôle Comptable reçoit seulement « régler un partenaire ».

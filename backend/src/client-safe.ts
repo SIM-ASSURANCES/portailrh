@@ -79,5 +79,6 @@ export * from "./cptReferentiels";
 export * from "./cptCorrespondancesOdoo";
 // Rémunération des partenaires (GC-9e) : libellés et valeurs des formulaires (module pur).
 export { MODES_PAIEMENT_PARTENAIRE_CPT, LIBELLE_MODE_PAIEMENT_PARTENAIRE_CPT } from "./cptReglementPartenaire";
+export { CASE_AUCUN_VERSEMENT_CPT, type TypeOperationRemunerationCpt } from "./cptAnnulationRemuneration";
 export * from "./cptRelances";
 export * from "./reinitialisationEtapes";

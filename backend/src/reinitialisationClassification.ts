@@ -141,6 +141,7 @@ export const CLASSIFICATION_TABLES: Record<string, ClassementTable> = {
   CptAffectationReglement: C("affectations des règlements de partenaires aux lignes de rémunération : jamais modifiées (trigger), remise à zéro propre au module (lot GC-11)"),
   CptCompensation: C("compensations explicites entre natures de rémunération : jamais modifiées (trigger), remise à zéro propre au module (lot GC-11), jamais supprimées après la mise en service (trigger)"),
   CptAffectationCompensation: C("effet des compensations sur les lignes de rémunération : jamais modifié (trigger), remise à zéro propre au module (lot GC-11)"),
+  CptAnnulationRemuneration: C("annulations tracées de règlements et de compensations : jamais modifiées ni supprimées (trigger), remise à zéro propre au module (lot GC-11)"),
 };
 
 /** Entités de `HistoriqueEntry` supprimées (Trésorerie puis Pointage). */

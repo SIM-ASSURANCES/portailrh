@@ -9,6 +9,8 @@ import { centimesSignesRemunerationCpt, chargerRemunerationPartenaireCpt, type R
 export type ReleveRemunerationDbCpt = RemunerationDbCpt & Pick<PrismaClient, "cptReglementPartenaire" | "cptCompensation">;
 
 const jour = (d: Date) => d.toISOString().slice(0, 10);
+const ANNULATION = { select: { date: true, creeAt: true, motif: true } } as const;
+const versAnnulation = (a: { date: Date; creeAt: Date; motif: string } | null) => (a ? { date: jour(a.date), creeAt: a.creeAt.toISOString(), motif: a.motif } : null);
 
 /** Relevé d'un partenaire pour une nature (écran, export, PDF) : LECTURE SEULE. `null` si le partenaire n'existe pas. */
 export async function chargerReleveRemunerationCpt(
@@ -22,11 +24,11 @@ export async function chargerReleveRemunerationCpt(
   const [reglements, compensations] = await Promise.all([
     db.cptReglementPartenaire.findMany({
       where: { partenaireId, nature },
-      select: { reference: true, date: true, montant: true, montantAvance: true, mode: true, referenceReglement: true, creeAt: true },
+      select: { reference: true, date: true, montant: true, montantAvance: true, mode: true, referenceReglement: true, creeAt: true, annulation: ANNULATION },
     }),
     db.cptCompensation.findMany({
       where: { partenaireId, OR: [{ natureSource: nature }, { natureCible: nature }] },
-      select: { creeAt: true, natureSource: true, natureCible: true, montant: true, motif: true },
+      select: { creeAt: true, natureSource: true, natureCible: true, montant: true, motif: true, annulation: ANNULATION },
     }),
   ]);
   const releve = construireReleveRemunerationCpt({
@@ -41,6 +43,7 @@ export async function chargerReleveRemunerationCpt(
       mode: r.mode as ModePaiementPartenaireCpt,
       referenceReglement: r.referenceReglement,
       creeAt: r.creeAt.toISOString(),
+      annulation: versAnnulation(r.annulation),
     })),
     compensations: compensations.map((c) => ({
       date: jour(c.creeAt),
@@ -49,6 +52,7 @@ export async function chargerReleveRemunerationCpt(
       montant: centimesSignesRemunerationCpt(c.montant),
       motif: c.motif,
       creeAt: c.creeAt.toISOString(),
+      annulation: versAnnulation(c.annulation),
     })),
   });
   return { partenaire: etat.partenaire, releve };

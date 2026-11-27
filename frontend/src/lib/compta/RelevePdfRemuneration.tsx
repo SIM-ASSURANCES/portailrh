@@ -1,5 +1,5 @@
 import { Document, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
-import type { ReleveRemunerationCpt } from "backend";
+import { titreMouvementReleveCpt, type ReleveRemunerationCpt } from "backend";
 
 import { COLORS } from "@/lib/pdf/colors";
 import { formatDate, formatMontant } from "@/lib/pdf/format";
@@ -120,7 +120,7 @@ export function RelevePdfRemuneration({ partenaire, releve, edite }: { partenair
               {releve.mouvements.map((m, i) => (
                 <View key={i} style={styles.ligne} wrap={false}>
                   <Text style={styles.mDate}>{jour(m.date)}</Text>
-                  <Text style={styles.mRef}>{m.type === "REGLEMENT" ? m.reference : "Compensation"}</Text>
+                  <Text style={styles.mRef}>{titreMouvementReleveCpt(m)}</Text>
                   <Text style={styles.mDetail}>{m.detail}</Text>
                   <Text style={styles.mMontant}>{m.montant < BigInt(0) ? `- ${fcfa(-m.montant)}` : fcfa(m.montant)}</Text>
                 </View>

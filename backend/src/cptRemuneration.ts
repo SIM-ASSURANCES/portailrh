@@ -414,8 +414,6 @@ export interface SoldeNatureCpt extends MontantsLigneCpt {
   montantReglable: bigint;
   /** Net versé au-delà du payable DANS la nature : seul montant disponible pour une compensation. */
   avanceNette: bigint;
-  /** Maximum d'un règlement avec avance : dû − payé, jamais négatif. */
-  plafondAvecAvance: bigint;
 }
 
 export function soldeNatureCpt(nature: NatureRemunerationCpt, lignes: readonly (MontantsLigneCpt & { nature: NatureRemunerationCpt })[]): SoldeNatureCpt {
@@ -432,7 +430,7 @@ export function soldeNatureCpt(nature: NatureRemunerationCpt, lignes: readonly (
     s.avance += l.avance;
     s.aRegulariser += l.aRegulariser;
   }
-  return { ...s, nature, montantReglable: max0(s.payable - s.paye), avanceNette: max0(s.paye - s.payable), plafondAvecAvance: max0(s.du - s.paye) };
+  return { ...s, nature, montantReglable: max0(s.payable - s.paye), avanceNette: max0(s.paye - s.payable) };
 }
 
 /** Les trois soldes de rémunération d'un partenaire, TOUJOURS séparés (le quatrième, sa créance, vient de `cptCreances.ts`). */

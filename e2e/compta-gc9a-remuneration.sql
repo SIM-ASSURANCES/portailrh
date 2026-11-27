@@ -124,6 +124,36 @@ END $d$$q$, 'CPT_LIGNE_REMUNERATION_PAYE');
 SELECT pg_temp.doit_echouer('une compensation ne se modifie pas', $q$UPDATE "CptCompensation" SET montant = 1 WHERE id = 'c1'$q$, 'CPT_REMUNERATION_IMMUABLE');
 SELECT pg_temp.doit_echouer('l''effet d''une compensation ne se modifie pas', $q$UPDATE "CptAffectationCompensation" SET montant = 1 WHERE id = 'ac2'$q$, 'CPT_REMUNERATION_IMMUABLE');
 
+-- 4 bis. Annulations (Q22, migration 20261130090000_compta_annulations_remuneration), avant toute mise en service
+INSERT INTO "User" ("id", "fullName", "email", "roleId", "updatedAt") VALUES ('u-dir', 'Direction de test', 'compta-gc9a-dir@simassurances.test', 'r-test', now());
+SELECT pg_temp.doit_echouer('l''auteur d''un règlement ne l''annule pas', $q$INSERT INTO "CptAnnulationRemuneration" (id,"reglementId",date,motif,"sansVersement","creeParId") VALUES ('x0','r1','2026-03-01','Montant saisi par erreur',true,'u-test')$q$, 'CPT_ANNULATION_AUTEUR');
+SELECT pg_temp.doit_echouer('l''auteur d''une compensation ne l''annule pas', $q$INSERT INTO "CptAnnulationRemuneration" (id,"compensationId",date,motif,"creeParId") VALUES ('x0','c1','2026-03-01','Compensation saisie à tort','u-test')$q$, 'CPT_ANNULATION_AUTEUR');
+SELECT pg_temp.doit_echouer('règlement : « aucun versement » obligatoire', $q$INSERT INTO "CptAnnulationRemuneration" (id,"reglementId",date,motif,"creeParId") VALUES ('x0','r1','2026-03-01','Montant saisi par erreur','u-dir')$q$, 'CptAnnulationRemuneration_versement_check');
+SELECT pg_temp.doit_echouer('motif trop court refusé', $q$INSERT INTO "CptAnnulationRemuneration" (id,"reglementId",date,motif,"sansVersement","creeParId") VALUES ('x0','r1','2026-03-01','erreur   ',true,'u-dir')$q$, 'CptAnnulationRemuneration_motif_check');
+SELECT pg_temp.doit_echouer('une seule opération par annulation', $q$INSERT INTO "CptAnnulationRemuneration" (id,"reglementId","compensationId",date,motif,"sansVersement","creeParId") VALUES ('x0','r1','c1','2026-03-01','Montant saisi par erreur',true,'u-dir')$q$, 'CptAnnulationRemuneration_une_operation_check');
+SELECT pg_temp.doit_echouer('aucune opération : refusé', $q$INSERT INTO "CptAnnulationRemuneration" (id,date,motif,"creeParId") VALUES ('x0','2026-03-01','Montant saisi par erreur','u-dir')$q$, 'CptAnnulationRemuneration_une_operation_check');
+SELECT pg_temp.doit_echouer('règlement annulé pendant que la compensation reprend ses montants : payé négatif refusé', $q$INSERT INTO "CptAnnulationRemuneration" (id,"reglementId",date,motif,"sansVersement","creeParId") VALUES ('x0','r1','2026-03-01','Montant saisi par erreur',true,'u-dir')$q$, 'CPT_LIGNE_REMUNERATION_PAYE');
+SELECT pg_temp.doit_reussir('annulation de la compensation', $q$INSERT INTO "CptAnnulationRemuneration" (id,"compensationId",date,motif,"creeParId") VALUES ('xc','c1','2026-03-02','Compensation saisie à tort','u-dir')$q$);
+SELECT pg_temp.doit_reussir('puis annulation du règlement', $q$INSERT INTO "CptAnnulationRemuneration" (id,"reglementId",date,motif,"sansVersement","creeParId") VALUES ('xr','r1','2026-03-02','Montant saisi par erreur',true,'u-dir')$q$);
+SELECT pg_temp.doit_echouer('une seule annulation par règlement', $q$INSERT INTO "CptAnnulationRemuneration" (id,"reglementId",date,motif,"sansVersement","creeParId") VALUES ('x1','r1','2026-03-02','Deuxième annulation',true,'u-dir')$q$, 'CptAnnulationRemuneration_reglementId_key');
+SELECT pg_temp.doit_echouer('une seule annulation par compensation', $q$INSERT INTO "CptAnnulationRemuneration" (id,"compensationId",date,motif,"creeParId") VALUES ('x1','c1','2026-03-02','Deuxième annulation','u-dir')$q$, 'CptAnnulationRemuneration_compensationId_key');
+SELECT pg_temp.doit_reussir('après l''annulation, un règlement correct passe sur les mêmes lignes (1 000 + 1 000)', $q$DO $d$ BEGIN
+  INSERT INTO "CptReglementPartenaire" (id,reference,"partenaireId",nature,montant,date,mode,"referenceReglement","creeParId")
+    VALUES ('r3','CPR-2026-000003','pa-a','COMMISSION',2000,'2026-03-03','VIREMENT','V-3','u-test');
+  INSERT INTO "CptAffectationReglement" (id,"reglementId","ligneRemunerationId",montant) VALUES ('a31','r3','l1',1000), ('a32','r3','l2',1000);
+END $d$$q$);
+SELECT pg_temp.doit_echouer('le contrôle reste actif sur les opérations non annulées : 1 de plus refusé', $q$DO $d$ BEGIN
+  INSERT INTO "CptReglementPartenaire" (id,reference,"partenaireId",nature,montant,date,mode,"referenceReglement","creeParId")
+    VALUES ('r4','CPR-2026-000004','pa-a','COMMISSION',1,'2026-03-03','VIREMENT','V-4','u-test');
+  INSERT INTO "CptAffectationReglement" (id,"reglementId","ligneRemunerationId",montant) VALUES ('a41','r4','l1',1);
+END $d$$q$, 'CPT_LIGNE_REMUNERATION_PAYE');
+SELECT pg_temp.doit_echouer('une annulation ne se modifie pas (motif)', $q$UPDATE "CptAnnulationRemuneration" SET motif = 'Autre motif assez long' WHERE id = 'xr'$q$, 'CPT_REMUNERATION_IMMUABLE');
+SELECT pg_temp.doit_echouer('une annulation ne change pas d''opération', $q$UPDATE "CptAnnulationRemuneration" SET "reglementId" = 'r3' WHERE id = 'xr'$q$, 'CPT_REMUNERATION_IMMUABLE');
+SELECT pg_temp.doit_echouer('une annulation ne se supprime pas, même avant la mise en service', $q$DELETE FROM "CptAnnulationRemuneration" WHERE id = 'xr'$q$, 'CPT_REMUNERATION_IMMUABLE');
+SELECT pg_temp.doit_reussir('pièce de contre-passation vide puis renseignée une fois', $q$UPDATE "CptAnnulationRemuneration" SET "pieceOdoo" = 'OD-CP-1' WHERE id = 'xr'$q$);
+SELECT pg_temp.doit_echouer('pièce de contre-passation déjà renseignée : plus de modification', $q$UPDATE "CptAnnulationRemuneration" SET "pieceOdoo" = 'OD-CP-2' WHERE id = 'xr'$q$, 'CPT_REMUNERATION_IMMUABLE');
+SELECT pg_temp.doit_echouer('un règlement annulé reste immuable', $q$UPDATE "CptReglementPartenaire" SET montant = 1 WHERE id = 'r1'$q$, 'CPT_REMUNERATION_IMMUABLE');
+
 -- 5. Après la mise en service
 INSERT INTO "CptMiseEnService" ("activeeParId", "sauvegardeSha256") VALUES ('u-test', 'sha-synthetique');
 SELECT pg_temp.doit_echouer('règlement : DELETE interdit après la mise en service', $q$DELETE FROM "CptReglementPartenaire" WHERE id='r1'$q$, 'CPT_IMMUABLE');
@@ -131,13 +161,14 @@ SELECT pg_temp.doit_echouer('affectation : DELETE interdit après la mise en ser
 SELECT pg_temp.doit_echouer('compensation : TRUNCATE interdit après la mise en service', $q$TRUNCATE "CptCompensation" CASCADE$q$, 'CPT_IMMUABLE');
 SELECT pg_temp.doit_echouer('ligne : TRUNCATE interdit après la mise en service', $q$TRUNCATE "CptLigneRemuneration" CASCADE$q$, 'CPT_IMMUABLE');
 SELECT pg_temp.doit_echouer('décision : DELETE interdit après la mise en service', $q$DELETE FROM "CptDecisionModeRemuneration" WHERE id='dm1'$q$, 'CPT_IMMUABLE');
+SELECT pg_temp.doit_echouer('annulation : TRUNCATE interdit après la mise en service', $q$TRUNCATE "CptAnnulationRemuneration"$q$, 'CPT_IMMUABLE');
 
 -- 6. Indépendance
 SELECT pg_temp.doit_reussir('indépendance : triggers de la rémunération = fonctions cpt_*', $q$
   DO $d$ BEGIN
     IF EXISTS (
       SELECT 1 FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_proc p ON p.oid = tg.tgfoid
-      WHERE NOT tg.tgisinternal AND c.relname IN ('CptLigneRemuneration','CptDecisionModeRemuneration','CptReglementPartenaire','CptAffectationReglement','CptCompensation','CptAffectationCompensation') AND p.proname NOT LIKE 'cpt\_%'
+      WHERE NOT tg.tgisinternal AND c.relname IN ('CptLigneRemuneration','CptDecisionModeRemuneration','CptReglementPartenaire','CptAffectationReglement','CptCompensation','CptAffectationCompensation','CptAnnulationRemuneration') AND p.proname NOT LIKE 'cpt\_%'
     ) THEN RAISE EXCEPTION 'un trigger Gestion Compta utilise une fonction d''un autre module'; END IF;
   END $d$;
 $q$);

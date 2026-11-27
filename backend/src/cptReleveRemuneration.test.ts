@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ligneCsv } from "./cptExportCsv";
-import { colonnesReleveRemunerationCpt, construireReleveRemunerationCpt, lignesExportReleveRemunerationCpt } from "./cptReleveRemuneration";
+import { colonnesReleveRemunerationCpt, construireReleveRemunerationCpt, lignesExportReleveRemunerationCpt, titreMouvementReleveCpt } from "./cptReleveRemuneration";
 import { lignesContratCpt, type ContratRemunerationCpt, type ConventionRemunerationCpt, type LigneEnregistreeCpt } from "./cptRemuneration";
 
 const F = (fcfa: number) => BigInt(fcfa) * BigInt(100);
@@ -34,8 +34,8 @@ const enregistrees: LigneEnregistreeCpt[] = [
   { id: "lh", contratId: "k", echeanceId: "e1", beneficiaireId: "cabinet", nature: "HONORAIRES", conventionId: "HONORAIRES", du: F(5000), paye: F(1000), payeEnUneFois: BigInt(0) },
 ];
 const lignes = lignesContratCpt({ contrat, conventions, enregistrees }).lignes;
-const reglement = { reference: "CPR-2026-000001", date: "2026-02-01", montant: F(4000), montantAvance: BigInt(0), mode: "VIREMENT" as const, referenceReglement: "V-1", creeAt: "2026-02-01T09:00:00.000Z" };
-const compensation = { date: "2026-03-01", natureSource: "COMMISSION" as const, natureCible: "HONORAIRES" as const, montant: F(1000), motif: "Compensation convenue", creeAt: "2026-03-01T09:00:00.000Z" };
+const reglement = { reference: "CPR-2026-000001", date: "2026-02-01", montant: F(4000), montantAvance: BigInt(0), mode: "VIREMENT" as const, referenceReglement: "V-1", creeAt: "2026-02-01T09:00:00.000Z", annulation: null };
+const compensation = { date: "2026-03-01", natureSource: "COMMISSION" as const, natureCible: "HONORAIRES" as const, montant: F(1000), motif: "Compensation convenue", creeAt: "2026-03-01T09:00:00.000Z", annulation: null };
 const releve = (nature: "COMMISSION" | "HONORAIRES") =>
   construireReleveRemunerationCpt({ nature, lignes, clients: new Map([["k", { clientNom: "Client" }]]), reglements: nature === "COMMISSION" ? [reglement] : [], compensations: [compensation] });
 
@@ -61,6 +61,38 @@ describe("GC-9g — relevé par partenaire et par nature", () => {
       compensations: [compensation],
     });
     expect(r.mouvements.map((m) => m.type)).toEqual(["REGLEMENT", "COMPENSATION"]);
+  });
+
+  it("une opération annulée reste visible, suivie de son annulation à SA date ; leur somme est nulle", () => {
+    const r = construireReleveRemunerationCpt({
+      nature: "COMMISSION",
+      lignes,
+      clients: new Map(),
+      reglements: [
+        reglement,
+        { ...reglement, reference: "CPR-2026-000002", date: "2026-02-15", creeAt: "2026-02-15T09:00:00.000Z", annulation: { date: "2026-04-02", creeAt: "2026-04-02T10:00:00.000Z", motif: "Saisi deux fois" } },
+      ],
+      compensations: [compensation],
+    });
+    expect(r.mouvements.map((m) => [m.date, titreMouvementReleveCpt(m), m.montant])).toEqual([
+      ["2026-02-01", "CPR-2026-000001", F(4000)],
+      ["2026-02-15", "CPR-2026-000002", F(4000)],
+      ["2026-03-01", "Compensation", F(-1000)],
+      ["2026-04-02", "Annulation CPR-2026-000002", F(-4000)],
+    ]);
+    expect(r.mouvements.at(-1)!.detail).toBe("Annulation du règlement CPR-2026-000002 — Saisi deux fois");
+    // Le payé vient des lignes (chargées sans les opérations annulées) : il reste égal à la somme des mouvements.
+    expect(r.mouvements.reduce((s, m) => s + m.montant, BigInt(0))).toBe(r.solde.paye);
+    expect(lignesExportReleveRemunerationCpt(r).map((l) => l.section)).toEqual(["Échéance", "Règlement", "Règlement", "Compensation", "Annulation", "Total"]);
+  });
+
+  it("une compensation annulée est contre-passée avec le signe opposé", () => {
+    const r = construireReleveRemunerationCpt({ nature: "HONORAIRES", lignes, clients: new Map(), reglements: [], compensations: [{ ...compensation, annulation: { date: "2026-04-02", creeAt: "2026-04-02T10:00:00.000Z", motif: "Erreur de saisie" } }] });
+    expect(r.mouvements.map((m) => [m.type, m.montant])).toEqual([
+      ["COMPENSATION", F(1000)],
+      ["ANNULATION", F(-1000)],
+    ]);
+    expect(r.mouvements[1].detail).toBe("Annulation de la compensation du 01/03/2026 — Erreur de saisie");
   });
 
   it("honoraires : ventilation encaissées / non encaissées ; les autres natures n'ont pas ces colonnes", () => {

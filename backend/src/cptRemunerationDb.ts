@@ -140,8 +140,9 @@ export async function chargerLignesEnregistreesCpt(db: RemunerationDbCpt, parten
       nature: true,
       conventionId: true,
       du: true,
-      affectationsReglement: { select: { montant: true, reglement: { select: { modeDerogation: true, creeAt: true } } } },
-      affectationsCompensation: { select: { montant: true } },
+      // Une opération annulée (C-38) ne compte plus nulle part : ses affectations restent en base mais ne sont pas lues.
+      affectationsReglement: { where: { reglement: { annulation: null } }, select: { montant: true, reglement: { select: { modeDerogation: true, creeAt: true } } } },
+      affectationsCompensation: { where: { compensation: { annulation: null } }, select: { montant: true } },
     },
   });
   return lignes.map((l) => {

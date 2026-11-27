@@ -878,6 +878,7 @@ export async function supprimerUtilisateurAction(
     cptDecisionsRemunerationPrises,
     cptReglementsPartenaireSaisis,
     cptCompensationsFaites,
+    cptAnnulationsRemunerationFaites,
     justificationsDecidees,
     lignesSoumisesAuDG,
     lignesDecideesParDG,
@@ -974,6 +975,7 @@ export async function supprimerUtilisateurAction(
     prisma.cptDecisionModeRemuneration.count({ where: { creeParId: userId } }),
     prisma.cptReglementPartenaire.count({ where: { creeParId: userId } }),
     prisma.cptCompensation.count({ where: { valideeParId: userId } }),
+    prisma.cptAnnulationRemuneration.count({ where: { creeParId: userId } }),
     // Pointage V2 : justifications de retard / départ anticipé décidées par ce compte (RESTRICT).
     prisma.justificationPointage.count({ where: { decideurId: userId } }),
     // Soumission au DG ligne par ligne (2026-10-10) : 2 relations vers User supplémentaires (SET NULL en base).
@@ -1071,6 +1073,7 @@ export async function supprimerUtilisateurAction(
   if (cptDecisionsRemunerationPrises > 0) blocages.push(`décidé ${cptDecisionsRemunerationPrises} mode(s) de règlement de rémunération dans Gestion Compta`);
   if (cptReglementsPartenaireSaisis > 0) blocages.push(`enregistré ${cptReglementsPartenaireSaisis} règlement(s) de partenaire de Gestion Compta`);
   if (cptCompensationsFaites > 0) blocages.push(`validé ${cptCompensationsFaites} compensation(s) de Gestion Compta`);
+  if (cptAnnulationsRemunerationFaites > 0) blocages.push(`annulé ${cptAnnulationsRemunerationFaites} règlement(s) ou compensation(s) de Gestion Compta`);
   if (justificationsDecidees > 0)
     blocages.push(`décidé ${justificationsDecidees} justification(s) de retard ou de départ anticipé`);
   if (lignesSoumisesAuDG > 0) blocages.push(`soumis ${lignesSoumisesAuDG} ligne(s) d'article au DG`);

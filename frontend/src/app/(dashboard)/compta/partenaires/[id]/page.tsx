@@ -9,6 +9,7 @@ import { Badge, PageHeader } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
 import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
 import {
+  chargerOperationsRemunerationCpt,
   chargerRemunerationPartenaireCpt,
   LIBELLE_FAIT_GENERATEUR_CPT,
   LIBELLE_MODE_PAIEMENT_PARTENAIRE_CPT,
@@ -17,11 +18,13 @@ import {
   LIBELLE_TRANCHE_CREANCE_CPT,
   NATURES_REMUNERATION_CPT,
   prisma,
+  raisonBlocageAnnulationCpt,
   type NatureRemunerationCpt,
+  type TypeOperationRemunerationCpt,
   type SoldeNatureCpt,
 } from "backend";
 
-import { CompensationForm, DecisionModeForm, ReglementPartenaireForm } from "../FormulairesRemuneration";
+import { AnnulationOperation, CompensationForm, DecisionModeForm, ReglementPartenaireForm } from "../FormulairesRemuneration";
 
 const TH = "px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground";
 const TD = "px-3 py-2 text-sm tabular-nums align-top";
@@ -55,6 +58,18 @@ function CarteSolde({ solde }: { solde: SoldeNatureCpt }) {
   );
 }
 
+function MentionAnnulation({ annulation }: { annulation: { date: Date; motif: string; pieceOdoo: string | null; creePar: { fullName: string } } }) {
+  return (
+    <span className="block text-xs" data-annule>
+      <Badge variant="danger">{`Annulé le ${formaterDateCpt(annulation.date)}`}</Badge>
+      <span className="block text-muted-foreground">
+        {annulation.motif} — {annulation.creePar.fullName}
+        {annulation.pieceOdoo ? ` · Odoo ${annulation.pieceOdoo}` : ""}
+      </span>
+    </span>
+  );
+}
+
 /**
  * Rémunération d'un partenaire : quatre soldes, honoraires ventilés, détail par échéance, règlements (`cpt.regler_partenaire`) et
  * décisions de mode. Lecture `cpt.consulter` (layout, revérifiée ici) ; chaque écriture est revérifiée par son action.
@@ -77,17 +92,29 @@ export default async function PartenaireRemunerationPage({
     where: { partenaireId: id },
     orderBy: { creeAt: "desc" },
     take: 50,
-    include: { valideePar: { select: { fullName: true } } },
+    include: { valideePar: { select: { fullName: true } }, annulation: { include: { creePar: { select: { fullName: true } } } } },
   });
   const reglements = await prisma.cptReglementPartenaire.findMany({
     where: { partenaireId: id },
     orderBy: [{ date: "desc" }, { reference: "desc" }],
     take: 50,
-    include: { creePar: { select: { fullName: true } }, _count: { select: { affectations: true } } },
+    include: {
+      creePar: { select: { fullName: true } },
+      annulation: { include: { creePar: { select: { fullName: true } } } },
+      _count: { select: { affectations: true } },
+    },
   });
+  const { operations, dus } = await chargerOperationsRemunerationCpt(prisma, id);
 
   const peutRegler = hasPermission(session, "cpt.regler_partenaire");
   const peutCompenser = hasPermission(session, "cpt.compenser");
+  const peutTrancher = hasPermission(session, "cpt.trancher_litige");
+  // Même fonction que le serveur : le bouton « Annuler » grisé dit exactement ce qu'il répondrait.
+  const raisonAnnulation = (type: TypeOperationRemunerationCpt, operationId: string): string | null => {
+    if (!(peutTrancher || (type === "REGLEMENT" ? peutRegler : peutCompenser))) return "Votre rôle ne permet pas d'annuler cette opération.";
+    const operation = operations.find((o) => o.type === type && o.id === operationId)!;
+    return raisonBlocageAnnulationCpt({ operation, operations, dus, userId: session.user.id });
+  };
   const avances = NATURES_REMUNERATION_CPT.filter((n) => r.soldes[n].avanceNette > BigInt(0));
   const aVerser = NATURES_REMUNERATION_CPT.filter((n) => r.soldes[n].montantReglable > BigInt(0));
   const compensable = avances.some((a) => aVerser.some((b) => a !== b));
@@ -260,7 +287,7 @@ export default async function PartenaireRemunerationPage({
       <section className={SECTION}>
         <h2 className="text-base font-bold text-foreground">Nouveau règlement</h2>
         <p className="text-sm text-muted-foreground">
-          Affecté aux montants exigibles les plus anciens de la nature choisie. Au-delà du payable, il n&apos;est pas enregistré, sauf avance explicite avec motif, dans la limite du reste dû.
+          Affecté aux montants payables les plus anciens de la nature choisie. Au-delà du payable, il n&apos;est jamais enregistré.
         </p>
         <ReglementPartenaireForm partenaireId={id} aujourdhui={aujourdhui} autorise={peutRegler} />
       </section>
@@ -279,6 +306,9 @@ export default async function PartenaireRemunerationPage({
                 <span className="block text-xs text-muted-foreground">
                   {x.motif} — {x.valideePar.fullName}, {formaterDateHeureCpt(x.creeAt)}
                 </span>
+                <div className="mt-1">
+                  {x.annulation ? <MentionAnnulation annulation={x.annulation} /> : <AnnulationOperation type="COMPENSATION" operationId={x.id} raison={raisonAnnulation("COMPENSATION", x.id)} />}
+                </div>
               </li>
             ))}
           </ul>
@@ -300,7 +330,7 @@ export default async function PartenaireRemunerationPage({
             <table className="min-w-full">
               <thead className="border-b border-border">
                 <tr>
-                  {["Référence", "Date", "Nature", "Montant", "Avance", "Paiement", "Mode décidé", "Motif", "Saisi par"].map((t) => (
+                  {["Référence", "Date", "Nature", "Montant", "Avance", "Paiement", "Mode décidé", "Motif", "Saisi par", "Annulation"].map((t) => (
                     <th key={t} className={TH}>
                       {t}
                     </th>
@@ -323,6 +353,9 @@ export default async function PartenaireRemunerationPage({
                     <td className={TD}>{x.motif ?? "—"}</td>
                     <td className={`${TD} text-xs`}>
                       {x.creePar.fullName}, {formaterDateHeureCpt(x.creeAt)} · {x._count.affectations} affectation(s)
+                    </td>
+                    <td className={TD}>
+                      {x.annulation ? <MentionAnnulation annulation={x.annulation} /> : <AnnulationOperation type="REGLEMENT" operationId={x.id} raison={raisonAnnulation("REGLEMENT", x.id)} />}
                     </td>
                   </tr>
                 ))}

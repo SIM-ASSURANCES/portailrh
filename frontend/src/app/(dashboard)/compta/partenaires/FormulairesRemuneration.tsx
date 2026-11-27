@@ -4,17 +4,25 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
+  CASE_AUCUN_VERSEMENT_CPT,
   LIBELLE_MODE_PAIEMENT_PARTENAIRE_CPT,
   LIBELLE_MODE_REGLEMENT_CPT,
   LIBELLE_NATURE_REMUNERATION_CPT,
   MODES_PAIEMENT_PARTENAIRE_CPT,
   MODES_REGLEMENT_CPT,
   NATURES_REMUNERATION_CPT,
+  type TypeOperationRemunerationCpt,
 } from "backend/client";
 
 import { Button, Input, InputMontant, Select, Textarea } from "@/components/ui";
 
-import { compenserRemunerationAction, deciderModeRemunerationAction, enregistrerReglementPartenaireAction, type ResultatRemunerationAction } from "./actions";
+import {
+  annulerOperationRemunerationAction,
+  compenserRemunerationAction,
+  deciderModeRemunerationAction,
+  enregistrerReglementPartenaireAction,
+  type ResultatRemunerationAction,
+} from "./actions";
 
 export const RAISON_SANS_PERMISSION_REGLEMENT = "Votre rôle ne permet pas de régler un partenaire.";
 export const RAISON_SANS_PERMISSION_COMPENSATION = "Votre rôle ne permet pas de compenser entre natures.";
@@ -80,12 +88,8 @@ export function ReglementPartenaireForm({ partenaireId, aujourdhui, autorise }: 
         error={erreurs.modeDerogation}
       />
       <div className="sm:col-span-2">
-        <Textarea name="motif" label="Motif" rows={2} hint="Obligatoire (10 caractères) pour une avance ou un choix de mode." error={erreurs.motif} />
+        <Textarea name="motif" label="Motif" rows={2} hint="Obligatoire (10 caractères) pour un choix « en une fois / au prorata »." error={erreurs.motif} />
       </div>
-      <label className="flex items-start gap-2 text-sm text-foreground sm:col-span-2 lg:col-span-3">
-        <input type="checkbox" name="accepterAvance" value="true" className="mt-1" />
-        <span>Enregistrer le surplus comme avance, s&apos;il dépasse le payable aujourd&apos;hui (jamais au-delà du reste dû).</span>
-      </label>
       <div className="sm:col-span-2 lg:col-span-3">
         <Button type="submit" loading={enCours} disabled={enCours || !autorise}>
           Enregistrer le règlement
@@ -177,6 +181,62 @@ export function CompensationForm({ partenaireId, autorise, raison }: { partenair
           </p>
         )}
       </div>
+    </form>
+  );
+}
+
+/**
+ * Annulation d'une opération : bouton toujours visible sur une opération active, grisé avec la raison du serveur quand elle est
+ * impossible. Le motif, puis la confirmation, se font dans le panneau ouvert par le bouton.
+ */
+export function AnnulationOperation({ type, operationId, raison }: { type: TypeOperationRemunerationCpt; operationId: string; raison: string | null }) {
+  const { enCours, erreurs, message, lancer } = useAction();
+  const [ouvert, setOuvert] = useState(false);
+  function envoyer(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const saisie = { ...valeurs(e.currentTarget), type, operationId };
+    lancer(
+      () => annulerOperationRemunerationAction(saisie),
+      () => setOuvert(false),
+    );
+  }
+  if (!ouvert) {
+    return (
+      <div className="space-y-1" data-annulation={type}>
+        <Button type="button" variant="secondary" disabled={raison !== null} onClick={() => setOuvert(true)} data-bouton-annuler>
+          Annuler
+        </Button>
+        {raison && (
+          <p className="max-w-xs text-xs text-foreground" data-raison-annulation>
+            {raison}
+          </p>
+        )}
+      </div>
+    );
+  }
+  return (
+    <form onSubmit={envoyer} className="min-w-64 space-y-2 rounded-lg border border-border p-3 text-left" data-form-annulation={type}>
+      <Textarea name="motif" label="Motif de l'annulation" required rows={2} hint="10 caractères au moins." error={erreurs.motif} />
+      <Input name="pieceOdoo" label="Pièce de contre-passation (Odoo, facultatif)" error={erreurs.pieceOdoo} />
+      {type === "REGLEMENT" && (
+        <label className="flex items-start gap-2 text-sm text-foreground">
+          <input type="checkbox" name="sansVersement" value="true" className="mt-1" />
+          <span>{CASE_AUCUN_VERSEMENT_CPT}</span>
+        </label>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" variant="danger" loading={enCours} disabled={enCours}>
+          Confirmer l&apos;annulation
+        </Button>
+        <Button type="button" variant="secondary" disabled={enCours} onClick={() => setOuvert(false)}>
+          Fermer
+        </Button>
+      </div>
+      {message && (
+        <p role="alert" data-message-annulation className="text-sm text-danger">
+          {message}
+        </p>
+      )}
     </form>
   );
 }

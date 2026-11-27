@@ -198,4 +198,15 @@ psql_cpt -d postgres -c 'CREATE DATABASE compta_hon' >/dev/null
 (DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_hon?schema=public" bash -c 'cd backend && npx prisma migrate deploy --config prisma7.config.ts 2>&1 | grep -E "successfully applied|rror"')
 DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta_hon?schema=public" npx tsx e2e/compta-gc9c-honoraires.ts | tail -20
 
-echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c, GC-6b, GC-8a, GC-8b, GC-8f, GC-9a et GC-9c : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements, relances et rémunération des partenaires vérifiés."
+
+echo "== 21. Migrations du 2026-11-29 et du 2026-11-30 (lecture de la rémunération, annulations) : permissions et rejeu =="
+ROLES_LECTURE="SELECT string_agg(r.name, ', ' ORDER BY r.name) FROM \"RolePermission\" rp JOIN \"Role\" r ON r.id = rp.\"roleId\" JOIN \"Permission\" p ON p.id = rp.\"permissionId\" WHERE p.key = 'cpt.consulter_remuneration'"
+verifier "sur une base migrée sans seed : la lecture va aux rôles qui règlent ou tranchent" "Compta – Direction, Compta – RFCRH" "$ROLES_LECTURE"
+NB_RP="$(psql_cpt -c 'SELECT count(*) FROM "RolePermission"')"
+for m in 20261129090000_compta_consulter_remuneration 20261130090000_compta_annulations_remuneration; do
+  psql_cpt < "backend/prisma/migrations/$m/migration.sql" >/dev/null
+done
+verifier "rejeu des deux migrations : aucune attribution ajoutée" "$NB_RP" 'SELECT count(*) FROM "RolePermission"'
+(cd backend && DATABASE_URL="postgresql://postgres:pw@localhost:${PORT}/compta?schema=public" npx prisma migrate diff --config prisma7.config.ts --from-config-datasource --to-schema prisma/schema.prisma --exit-code 2>&1 | grep -E "No difference|rror|difference")   || { echo "KO : écart après rejeu"; exit 1; }
+
+echo "GC-1a, GC-1b, GC-1e, GC-1f, GC-2a, GC-2d, GC-3a, GC-3c, GC-4a, GC-4d, GC-5b, GC-5c, GC-6b, GC-8a, GC-8b, GC-8f, GC-9a et GC-9c : schéma, paramètres, tâches planifiées, formats d'import, référentiels, index de recherche, production, import de production, encaissements, import des relevés, rattachements, relances, rémunération des partenaires et migrations des 29 et 30 novembre vérifiés."

@@ -44,17 +44,16 @@ function ligne(rang: number, encaisse: number, p: Partial<LigneRemunerationCalcu
 }
 const t6ter = () => Array.from({ length: 12 }, (_, i) => ligne(i + 1, i < 3 ? 10000 : 0));
 const parts = (r: ReturnType<typeof planifierReglementCpt>) => (r.ok ? r.parts.map((p) => [p.rang, Number(p.montant) / 100]) : r.message);
-const sans = { accepterAvance: false, modeDerogation: null };
+const sans = { modeDerogation: null };
 
 describe("GC-9e — affectation aux montants exigibles les plus anciens", () => {
-  it("T6 ter : 3 000 affectés aux trois premières échéances, sans avance", () => {
+  it("T6 ter : 3 000 affectés aux trois premières échéances", () => {
     const r = planifierReglementCpt(t6ter(), F(3000), sans);
     expect(parts(r)).toEqual([
       [1, 1000],
       [2, 1000],
       [3, 1000],
     ]);
-    expect(r.ok && r.montantAvance).toBe(Z);
   });
 
   it("règlement partiel : la plus ancienne d'abord", () => {
@@ -64,33 +63,19 @@ describe("GC-9e — affectation aux montants exigibles les plus anciens", () => 
     ]);
   });
 
-  it("au-delà du payable sans demande d'avance : refusé, avec le payable et le reste dû", () => {
+  it("au-delà du net payable : TOUJOURS refusé, même d'un franc, même en demandant une avance", () => {
     const r = planifierReglementCpt(t6ter(), F(3001), sans);
-    expect(r.ok).toBe(false);
-    expect(!r.ok && r.message).toMatch(/payable aujourd'hui \(3\s000 FCFA\).*avance.*12\s000 FCFA/);
+    expect(!r.ok && r.message).toMatch(/payable aujourd'hui \(3\s000 FCFA\) : un règlement n'est jamais accepté au-delà/);
+    // Un ancien paramètre d'avance (rejeu réseau) n'est lu nulle part.
+    const avecAncienParametre = { modeDerogation: null, accepterAvance: true } as { modeDerogation: null };
+    expect(planifierReglementCpt(t6ter(), F(4500), avecAncienParametre).ok).toBe(false);
+    expect(planifierReglementCpt(t6ter(), F(12001), sans).ok).toBe(false);
   });
 
-  it("avance demandée : le surplus va au reste dû le plus ancien et il est compté comme avance", () => {
-    const r = planifierReglementCpt(t6ter(), F(4500), { accepterAvance: true, modeDerogation: null });
-    expect(parts(r)).toEqual([
-      [1, 1000],
-      [2, 1000],
-      [3, 1000],
-      [4, 1000],
-      [5, 500],
-    ]);
-    expect(r.ok && r.montantAvance).toBe(F(1500));
-  });
-
-  it("au-delà du reste dû : jamais, même avec avance", () => {
-    const r = planifierReglementCpt(t6ter(), F(12001), { accepterAvance: true, modeDerogation: null });
-    expect(!r.ok && r.message).toMatch(/dépasse le reste dû/);
-  });
-
-  it("règlement décidé « en une fois » : tout l'exigible est payable, sans avance", () => {
-    const r = planifierReglementCpt(t6ter(), F(12000), { accepterAvance: false, modeDerogation: "EN_UNE_FOIS" });
-    expect(r.ok && r.montantAvance).toBe(Z);
+  it("règlement décidé « en une fois » : tout l'exigible est payable", () => {
+    const r = planifierReglementCpt(t6ter(), F(12000), { modeDerogation: "EN_UNE_FOIS" });
     expect(r.ok && r.parts).toHaveLength(12);
+    expect(planifierReglementCpt(t6ter(), F(12001), { modeDerogation: "EN_UNE_FOIS" }).ok).toBe(false);
   });
 
   it("règlement décidé « au prorata » sur des lignes « en une fois » : plafonné à la part encaissée", () => {
@@ -102,7 +87,7 @@ describe("GC-9e — affectation aux montants exigibles les plus anciens", () => 
   it("une avance de la même nature réduit le net payable (jamais versé deux fois)", () => {
     // La ligne 12 a été payée d'avance : 1 000 déjà versés sans prime encaissée.
     const lignes = t6ter().map((l) => (l.rang === 12 ? ligne(12, 0, { paye: F(1000) }) : l));
-    expect(capaciteReglementCpt(lignes, null)).toEqual({ payable: F(2000), plafond: F(11000) });
+    expect(capaciteReglementCpt(lignes, null)).toEqual({ payable: F(2000) });
     expect(planifierReglementCpt(lignes, F(2001), sans).ok).toBe(false);
     expect(parts(planifierReglementCpt(lignes, F(2000), sans))).toEqual([
       [1, 1000],
@@ -130,6 +115,11 @@ describe("GC-9e — saisie d'un règlement", () => {
     const r = validerSaisieReglementCpt(s, "2026-11-26");
     return r.ok ? {} : r.erreurs;
   };
+
+  it("la saisie ne porte plus aucune avance : un champ « accepterAvance » est ignoré", () => {
+    const r = validerSaisieReglementCpt({ ...base, accepterAvance: "true", motif: "Avance demandée par le courtier" }, "2026-11-26");
+    expect(r.ok && Object.keys(r.valeur)).not.toContain("accepterAvance");
+  });
 
   it("saisie valable, montant lu en centimes", () => {
     const r = validerSaisieReglementCpt(base, "2026-11-26");

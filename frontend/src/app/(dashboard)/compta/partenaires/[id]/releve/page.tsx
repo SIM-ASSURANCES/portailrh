@@ -6,7 +6,7 @@ import { dateIsoAfficheeCpt, montantCentimesCpt } from "@/components/compta/libe
 import { PageHeader } from "@/components/ui";
 import { getSession } from "@/lib/auth";
 import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
-import { chargerReleveRemunerationCpt, LIBELLE_NATURE_REMUNERATION_CPT, NATURES_REMUNERATION_CPT, prisma } from "backend";
+import { chargerReleveRemunerationCpt, LIBELLE_NATURE_REMUNERATION_CPT, NATURES_REMUNERATION_CPT, prisma, titreMouvementReleveCpt } from "backend";
 
 const TH = "px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground";
 const TD = "px-3 py-2 text-sm tabular-nums align-top";
@@ -143,7 +143,7 @@ export default async function ReleveRemunerationPage({ params, searchParams }: {
             {releve.mouvements.map((m, i) => (
               <li key={i} className="flex flex-wrap justify-between gap-2 py-2" data-mouvement={m.type}>
                 <span>
-                  {dateIsoAfficheeCpt(m.date)} · {m.type === "REGLEMENT" ? m.reference : "Compensation"}
+                  {dateIsoAfficheeCpt(m.date)} · {titreMouvementReleveCpt(m)}
                   <span className="block text-xs text-muted-foreground">{m.detail}</span>
                 </span>
                 <strong className="tabular-nums" data-montant-mouvement>

@@ -7,7 +7,7 @@
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 
-import { deciderModeRemunerationCpt, enregistrerCompensationCpt, enregistrerReglementPartenaireCpt, getTrustedClientIp, prisma } from "backend";
+import { deciderModeRemunerationCpt, enregistrerAnnulationRemunerationCpt, enregistrerCompensationCpt, enregistrerReglementPartenaireCpt, getTrustedClientIp, prisma } from "backend";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
@@ -32,8 +32,6 @@ function rafraichir() {
   publishDataChanged();
 }
 
-const fcfa = (texte: string) => Number(texte).toLocaleString("fr-FR", { maximumFractionDigits: 2 });
-
 /** Enregistre un règlement versé à un partenaire et l'affecte aux montants exigibles les plus anciens de sa nature. */
 export async function enregistrerReglementPartenaireAction(saisie: Record<string, unknown>): Promise<ResultatRemunerationAction> {
   const session = await exiger("cpt.regler_partenaire");
@@ -44,8 +42,7 @@ export async function enregistrerReglementPartenaireAction(saisie: Record<string
     const r = await prisma.$transaction((tx) => enregistrerReglementPartenaireCpt(tx, saisie, { userId: session.user.id, ip }), { timeout: DELAI_TRANSACTION_MS, maxWait: 10_000 });
     if (!r.ok) return { status: "error", message: r.message, erreurs: r.erreurs };
     rafraichir();
-    const avance = Number(r.montantAvance) > 0 ? ` Dont avance : ${fcfa(r.montantAvance)} FCFA.` : "";
-    return { status: "success", message: `Règlement ${r.reference} enregistré, affecté à ${r.nbAffectations} échéance(s).${avance}` };
+    return { status: "success", message: `Règlement ${r.reference} enregistré, affecté à ${r.nbAffectations} échéance(s).` };
   } catch (e) {
     console.error("[Gestion Compta] règlement de partenaire", e);
     return { status: "error", message: "Le règlement n'a pas pu être enregistré. Rien n'a été écrit." };
@@ -87,4 +84,25 @@ export async function compenserRemunerationAction(saisie: Record<string, unknown
   }
   rafraichir();
   return { status: "success", message: "Compensation enregistrée." };
+}
+
+/**
+ * Annulation tracée d'un règlement (`cpt.regler_partenaire`) ou d'une compensation (`cpt.compenser`), avec motif ; la direction
+ * (`cpt.trancher_litige`) peut annuler les deux. Jamais l'auteur de l'opération : la couche base et la base le revérifient.
+ */
+export async function annulerOperationRemunerationAction(saisie: Record<string, unknown>): Promise<ResultatRemunerationAction> {
+  const session = await getSession();
+  if (!estObjet(saisie)) return SAISIE_INVALIDE;
+  const permission = saisie.type === "COMPENSATION" ? "cpt.compenser" : "cpt.regler_partenaire";
+  if (!session || !peutVoirRemunerationCpt(session) || !(hasPermission(session, permission) || hasPermission(session, "cpt.trancher_litige"))) return NON_AUTORISE;
+  const ip = getTrustedClientIp(await headers());
+  try {
+    const r = await prisma.$transaction((tx) => enregistrerAnnulationRemunerationCpt(tx, saisie, { userId: session.user.id, ip }), { timeout: DELAI_TRANSACTION_MS, maxWait: 10_000 });
+    if (!r.ok) return { status: "error", message: r.message, erreurs: r.erreurs };
+  } catch (e) {
+    console.error("[Gestion Compta] annulation d'une opération de rémunération", e);
+    return { status: "error", message: "L'annulation n'a pas pu être enregistrée. Rien n'a été écrit." };
+  }
+  rafraichir();
+  return { status: "success", message: "Annulation enregistrée : l'opération ne compte plus." };
 }
