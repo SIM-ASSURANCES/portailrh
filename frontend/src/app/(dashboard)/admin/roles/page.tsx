@@ -32,6 +32,10 @@ export default async function AdminRolesPage() {
     (p) => p.key === "feedback.moderer"
   );
   const feedbackVoirDetailsPermission = feedbackModule?.permissions.find((p) => p.key === "feedback.voir_details");
+  // Les permissions qui ont une case sur la carte d'un rôle : c'est ce que compte son en-tête (jamais les `systeme.*`).
+  const idsAvecCase = new Set(
+    [...standardModules.flatMap((m) => m.permissions), feedbackModererPermission, feedbackVoirDetailsPermission].flatMap((p) => (p ? [p.id] : [])),
+  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-6 py-10">
@@ -154,7 +158,7 @@ export default async function AdminRolesPage() {
             nom: role.name,
             estAdmin: role.estAdmin,
             beneficiaireDelegation: role.peutEtreBeneficiaireDelegation,
-            nbPermissions: grantedIds.size,
+            nbPermissions: [...grantedIds].filter((id) => idsAvecCase.has(id)).length,
             corps,
           };
         })}

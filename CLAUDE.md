@@ -7591,7 +7591,7 @@ Toute mutation est historisée dans `HistoriqueEntry`.
 **`/admin/roles` : cartes pliables et réordonnables** (affichage seul, `RolesListe.tsx`) : le corps de chaque carte reste rendu par la page
 (Server Component) ; plier le **cache** sans le démonter (les cases utilisent `defaultChecked`). Ordre (glisser par la poignée, ou « Monter » /
 « Descendre » au clavier et au doigt) et cartes dépliées en `localStorage` (`admin-roles:ordre`, `admin-roles:deplies`), propres au navigateur,
-jamais en base. Le compteur de l'en-tête compte **toutes** les permissions du rôle, y compris le module `systeme`, absent de la matrice.
+jamais en base. Le compteur de l'en-tête compte seulement les permissions qui ont une case sur la carte (donc jamais les `systeme.*`).
 
 **Renommer un compte** : `modifierNomUtilisateurAction(userId, nom)` (`admin/users/actions.ts`, Admin seul revérifié dans
 l'action) modifie `User.fullName` (2 à 100 caractères, espaces réduits ; aucune écriture si identique) et écrit

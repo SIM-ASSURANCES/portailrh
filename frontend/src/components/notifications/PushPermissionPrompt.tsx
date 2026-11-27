@@ -8,6 +8,32 @@ import { toast } from "sonner";
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const STORAGE_KEY = "sim_push_prompt_dismissed_at";
 
+// Le stockage du navigateur peut être bloqué (navigation privée, réglage « bloquer les données de site ») : chaque accès est
+// protégé. L'invitation réapparaît alors à chaque visite, sans jamais faire planter le portail.
+function lireReport(): string | null {
+  try {
+    return window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function noterReport(valeur: string) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, valeur);
+  } catch {
+    // Stockage indisponible : le report ne vaut que pour cet affichage.
+  }
+}
+
+function oublierReport() {
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Stockage indisponible : rien n'avait été enregistré.
+  }
+}
+
 export function PushPermissionPrompt() {
   const [isVisible, setIsVisible] = useState(false);
   const [isActivating, setIsActivating] = useState(false);
@@ -24,7 +50,7 @@ export function PushPermissionPrompt() {
     }
 
     // Vérifier la règle de relance après 1 heure
-    const dismissedAt = localStorage.getItem(STORAGE_KEY);
+    const dismissedAt = lireReport();
     if (dismissedAt) {
       const elapsed = Date.now() - parseInt(dismissedAt, 10);
       if (elapsed < ONE_HOUR_MS) {
@@ -42,7 +68,7 @@ export function PushPermissionPrompt() {
 
   const handleDismiss = () => {
     setIsVisible(false);
-    localStorage.setItem(STORAGE_KEY, Date.now().toString());
+    noterReport(Date.now().toString());
   };
 
   const handleActivate = async () => {
@@ -53,7 +79,7 @@ export function PushPermissionPrompt() {
         toast.success("Notifications push activées !", {
           description: "Vous recevrez désormais les alertes prioritaires même portail fermé.",
         });
-        localStorage.removeItem(STORAGE_KEY);
+        oublierReport();
         setIsVisible(false);
       } else {
         if (Notification.permission === "denied") {
