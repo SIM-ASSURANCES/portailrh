@@ -2,7 +2,9 @@
 // `bash e2e/base-jetable.sh`) : ce script ÉCRIT en base et ne se rejoue pas sur la même base. Données 100 % synthétiques.
 // Parties : E2E_PARTIES="9e,9f,9g" (défaut : toutes ; les parties suivantes supposent les précédentes).
 //   9e : avertissement R1 et message des bordereaux, quatre soldes, T6 ter, T6, T6 bis par les écrans ; règlement et affectation, avance,
-//        décision « en une fois », refus serveur par rejeu sans permission, deux règlements simultanés, 390 px.
+//        décision « en une fois », refus serveur par rejeu sans permission, deux règlements simultanés, 390 px ;
+//   9f : aucune compensation automatique, compensation d'une avance avec motif (montant et motif contrôlés), refus par rejeu sans
+//        permission, deux compensations simultanées, honoraires « à régulariser » après résiliation.
 import { execSync } from "node:child_process";
 import { chromium } from "playwright";
 import pg from "pg";
@@ -10,7 +12,7 @@ import pg from "pg";
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
 if (!/localhost:55497|e2e/i.test(DB)) throw new Error("E2E_DATABASE_URL doit viser une base jetable.");
-const PARTIES = (process.env.E2E_PARTIES ?? "9e").split(",");
+const PARTIES = (process.env.E2E_PARTIES ?? "9e,9f").split(",");
 const partie = (p) => PARTIES.includes(p);
 
 const db = new pg.Client({ connectionString: DB });
@@ -209,6 +211,64 @@ if (partie("9e")) {
   await ml.close();
   const refuse = await (await contexte(COLLABORATEUR)).request.get(`${B}/compta/partenaires`, { maxRedirects: 0 });
   verifier("9e. sans cpt.consulter : redirigé", refuse.status() >= 300 && refuse.status() < 400, `${refuse.status()}`);
+}
+
+// =====================================================================================================================
+// 9f — compensation
+// =====================================================================================================================
+if (partie("9f")) {
+  const idCab = await idPartenaire("Cabinet Compensation");
+  const p = await ouvrir(RFCRH, `/compta/partenaires/${idCab}`);
+  const bouton = p.locator('[data-form-compensation] button[type="submit"]');
+  verifier("9f. sans avance : bouton « Compenser » grisé avec la raison", (await bouton.isDisabled()) && /Rien à compenser/.test(await p.locator("[data-raison-compensation]").innerText()));
+  verifier("9f. avant : commission payable 0 (prime non encaissée), honoraires à verser 7 000", (await carte(p, "COMMISSION", "reste-payable")) === 0 && (await carte(p, "HONORAIRES", "reste-payable")) === 7000);
+
+  await cliquerEtCapturer(p, await remplirReglement(p, { nature: "COMMISSION", montant: 3000, avance: true, motif: "Avance sur commission demandée par le cabinet", reference: "VIR-CAB-AV" }));
+  await recharger(p);
+  const avance = await un(`SELECT "montantAvance"::float AS a, motif FROM "CptReglementPartenaire" WHERE "referenceReglement" = 'VIR-CAB-AV'`);
+  verifier("9f. règlement avec avance explicite et motif : 3 000 d'avance enregistrée", avance?.a === 3000 && /Avance sur commission/.test(avance.motif), JSON.stringify(avance));
+  verifier("9f. aucune compensation automatique : avance de commission 3 000, honoraires toujours 7 000 à verser", (await carte(p, "COMMISSION", "avance")) === 3000 && (await carte(p, "HONORAIRES", "reste-payable")) === 7000 && (await compter("CptCompensation")) === 0);
+
+  const remplir = async (montant, motif, source = "COMMISSION", cible = "HONORAIRES") => {
+    const f = p.locator("[data-form-compensation]");
+    await f.locator('select[name="natureSource"]').selectOption(source);
+    await f.locator('select[name="natureCible"]').selectOption(cible);
+    await f.locator('input[name="montant"]').fill(String(montant));
+    await f.locator('textarea[name="motif"]').fill(motif);
+    return f.locator('button[type="submit"]');
+  };
+  await cliquerEtCapturer(p, await remplir(3001, "Compensation convenue avec le cabinet"));
+  verifier("9f. au-delà de l'avance disponible : refusée, rien n'est écrit", /avance disponible en commission \(3\s000 FCFA\)/.test(await p.locator("[data-message-compensation]").innerText()) && (await compter("CptCompensation")) === 0);
+  await cliquerEtCapturer(p, await remplir(1000, "trop bref"));
+  verifier("9f. motif de moins de 10 caractères : refusée par le serveur", /motif est obligatoire/.test(await p.locator("[data-message-compensation]").innerText()) && (await compter("CptCompensation")) === 0);
+  const reqComp = await cliquerEtCapturer(p, await remplir(1000, "Compensation convenue avec le cabinet"));
+  await recharger(p);
+  verifier("9f. compensation de 1 000 : avance de commission 2 000, honoraires à verser 6 000", (await carte(p, "COMMISSION", "avance")) === 2000 && (await carte(p, "HONORAIRES", "reste-payable")) === 6000);
+  const mouvements = await sql(`SELECT l.nature, a.montant::float AS montant FROM "CptAffectationCompensation" a JOIN "CptLigneRemuneration" l ON l.id = a."ligneRemunerationId" ORDER BY a.montant`);
+  verifier("9f. en base : −1 000 sur la commission, +1 000 sur les honoraires, audit avec motif", JSON.stringify(mouvements) === JSON.stringify([{ nature: "COMMISSION", montant: -1000 }, { nature: "HONORAIRES", montant: 1000 }]) && (await compter("CptAudit", `action = 'compensation' AND motif = 'Compensation convenue avec le cabinet'`)) === 1, JSON.stringify(mouvements));
+  verifier("9f. l'historique des compensations l'affiche", (await p.locator("[data-compensation-faite]").count()) === 1);
+
+  for (const compte of [DIRECTION, COMMERCIAL]) {
+    const rep = await rejouer(compte, reqComp);
+    verifier(`9f. rejeu direct de la compensation sans cpt.compenser (${compte.split("@")[0]}) : refusé`, /Action non autoris/.test(rep) && (await compter("CptCompensation")) === 1, rep.slice(0, 120));
+  }
+  const d = await ouvrir(DIRECTION, `/compta/partenaires/${idCab}`);
+  verifier("9f. Direction : bouton grisé avec la raison", (await d.locator('[data-form-compensation] button[type="submit"]').isDisabled()) && /ne permet pas de compenser/.test(await d.locator("[data-raison-compensation]").innerText()));
+  await d.close();
+
+  const deux = (corps) => [{ ...corps[0], montant: "2000" }];
+  const [a, b] = await Promise.all([rejouer(RFCRH, reqComp, deux), rejouer(RFCRH, reqComp, deux)]);
+  const apres = await lignesPayees(idCab);
+  verifier("9f. deux compensations simultanées de 2 000 (avance restante 2 000) : une seule passe", (await compter("CptCompensation", "montant = 2000")) === 1 && /avance disponible/.test(a + b), (a + b).replace(/\s+/g, " ").slice(0, 200));
+  verifier("9f. aucune avance reprise deux fois : total payé inchangé (3 000), aucune ligne négative ni au-delà de son dû", apres.reduce((s, l) => s + l.paye, 0) === 3000 && apres.every((l) => l.paye >= 0 && l.paye <= l.du), JSON.stringify(apres.map((l) => l.paye)));
+
+  donnees("resilier");
+  await recharger(p);
+  verifier("9f. résiliation d'un contrat jamais encaissé : ses honoraires (2 000) sont « à régulariser »", /À régulariser 2\s000/.test(await p.locator('[data-honoraire="POL-CAB-RESIL"] [data-a-regulariser]').innerText()) && (await p.locator("[data-honoraire]").first().getAttribute("data-honoraire")) === "POL-CAB-RESIL");
+  await p.close();
+  const m = await ouvrir(RFCRH, `/compta/partenaires/${idCab}`, { width: 390, height: 844 });
+  verifier("9f. 390 px : pas de défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await m.close();
 }
 
 verifier("aucune erreur JavaScript", erreursJs.length === 0, erreursJs.slice(0, 3).join(" | "));

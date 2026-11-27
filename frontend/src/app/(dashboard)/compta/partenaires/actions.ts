@@ -7,7 +7,7 @@
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 
-import { deciderModeRemunerationCpt, enregistrerReglementPartenaireCpt, getTrustedClientIp, prisma } from "backend";
+import { deciderModeRemunerationCpt, enregistrerCompensationCpt, enregistrerReglementPartenaireCpt, getTrustedClientIp, prisma } from "backend";
 
 import { getSession, hasPermission } from "@/lib/auth";
 import { publishDataChanged } from "@/lib/eventBus";
@@ -68,4 +68,21 @@ export async function deciderModeRemunerationAction(saisie: Record<string, unkno
   if (!r.ok) return { status: "error", message: r.message };
   rafraichir();
   return { status: "success", message: "Décision enregistrée pour ce contrat." };
+}
+
+/** Compensation EXPLICITE : l'avance d'une nature est imputée sur ce qu'il reste à verser d'une autre, avec motif (`cpt.compenser`). */
+export async function compenserRemunerationAction(saisie: Record<string, unknown>): Promise<ResultatRemunerationAction> {
+  const session = await exiger("cpt.compenser");
+  if (!session) return NON_AUTORISE;
+  if (!estObjet(saisie)) return SAISIE_INVALIDE;
+  const ip = getTrustedClientIp(await headers());
+  try {
+    const r = await prisma.$transaction((tx) => enregistrerCompensationCpt(tx, saisie, { userId: session.user.id, ip }), { timeout: DELAI_TRANSACTION_MS, maxWait: 10_000 });
+    if (!r.ok) return { status: "error", message: r.message, erreurs: r.erreurs };
+  } catch (e) {
+    console.error("[Gestion Compta] compensation", e);
+    return { status: "error", message: "La compensation n'a pas pu être enregistrée. Rien n'a été écrit." };
+  }
+  rafraichir();
+  return { status: "success", message: "Compensation enregistrée." };
 }

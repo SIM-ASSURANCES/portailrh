@@ -20,7 +20,7 @@ import {
   type SoldeNatureCpt,
 } from "backend";
 
-import { DecisionModeForm, ReglementPartenaireForm } from "../FormulairesRemuneration";
+import { CompensationForm, DecisionModeForm, ReglementPartenaireForm } from "../FormulairesRemuneration";
 
 const TH = "px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground";
 const TD = "px-3 py-2 text-sm tabular-nums align-top";
@@ -72,6 +72,12 @@ export default async function PartenaireRemunerationPage({
   const aujourdhui = new Date().toISOString().slice(0, 10);
   const r = await chargerRemunerationPartenaireCpt(prisma, id, aujourdhui);
   if (!r) notFound();
+  const compensations = await prisma.cptCompensation.findMany({
+    where: { partenaireId: id },
+    orderBy: { creeAt: "desc" },
+    take: 50,
+    include: { valideePar: { select: { fullName: true } } },
+  });
   const reglements = await prisma.cptReglementPartenaire.findMany({
     where: { partenaireId: id },
     orderBy: [{ date: "desc" }, { reference: "desc" }],
@@ -80,6 +86,11 @@ export default async function PartenaireRemunerationPage({
   });
 
   const peutRegler = hasPermission(session, "cpt.regler_partenaire");
+  const peutCompenser = hasPermission(session, "cpt.compenser");
+  const avances = NATURES_REMUNERATION_CPT.filter((n) => r.soldes[n].avanceNette > BigInt(0));
+  const aVerser = NATURES_REMUNERATION_CPT.filter((n) => r.soldes[n].montantReglable > BigInt(0));
+  const compensable = avances.some((a) => aVerser.some((b) => a !== b));
+  const raisonCompensation = compensable ? null : "Rien à compenser : il faut une avance sur une nature et un montant à verser sur une autre.";
   const nature: NatureRemunerationCpt =
     NATURES_REMUNERATION_CPT.find((n) => n === recherche.nature) ?? NATURES_REMUNERATION_CPT.find((n) => r.lignes.some((l) => l.nature === n)) ?? "COMMISSION";
   const lignes = r.lignes.filter((l) => l.nature === nature);
@@ -248,6 +259,26 @@ export default async function PartenaireRemunerationPage({
           Affecté aux montants exigibles les plus anciens de la nature choisie. Au-delà du payable, il n&apos;est pas enregistré, sauf avance explicite avec motif, dans la limite du reste dû.
         </p>
         <ReglementPartenaireForm partenaireId={id} aujourdhui={aujourdhui} autorise={peutRegler} />
+      </section>
+
+      <section className={SECTION} data-compensation>
+        <h2 className="text-base font-bold text-foreground">Compensation entre natures</h2>
+        <p className="text-sm text-muted-foreground">
+          Jamais automatique : l&apos;avance d&apos;une nature est reprise et imputée sur ce qu&apos;il reste à verser d&apos;une autre, avec un motif. La créance du partenaire n&apos;est pas compensée.
+        </p>
+        <CompensationForm partenaireId={id} autorise={peutCompenser} raison={raisonCompensation} />
+        {compensations.length > 0 && (
+          <ul className="divide-y divide-border text-sm" data-liste-compensations>
+            {compensations.map((x) => (
+              <li key={x.id} className="py-2" data-compensation-faite>
+                <strong className="tabular-nums">{formaterMontantCpt(x.montant.toString())} FCFA</strong> : {LIBELLE_NATURE_REMUNERATION_CPT[x.natureSource]} → {LIBELLE_NATURE_REMUNERATION_CPT[x.natureCible]}
+                <span className="block text-xs text-muted-foreground">
+                  {x.motif} — {x.valideePar.fullName}, {formaterDateHeureCpt(x.creeAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className={SECTION}>

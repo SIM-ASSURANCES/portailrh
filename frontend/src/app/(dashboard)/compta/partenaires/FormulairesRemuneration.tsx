@@ -14,9 +14,10 @@ import {
 
 import { Button, Input, InputMontant, Select, Textarea } from "@/components/ui";
 
-import { deciderModeRemunerationAction, enregistrerReglementPartenaireAction, type ResultatRemunerationAction } from "./actions";
+import { compenserRemunerationAction, deciderModeRemunerationAction, enregistrerReglementPartenaireAction, type ResultatRemunerationAction } from "./actions";
 
 export const RAISON_SANS_PERMISSION_REGLEMENT = "Votre rôle ne permet pas de régler un partenaire.";
+export const RAISON_SANS_PERMISSION_COMPENSATION = "Votre rôle ne permet pas de compenser entre natures.";
 
 function useAction() {
   const router = useRouter();
@@ -132,6 +133,46 @@ export function DecisionModeForm({ partenaireId, contrats, autorise }: { partena
         {!autorise && <p className="mt-2 text-sm text-foreground">{RAISON_SANS_PERMISSION_REGLEMENT}</p>}
         {message && (
           <p role="alert" className="mt-2 text-sm text-danger">
+            {message}
+          </p>
+        )}
+      </div>
+    </form>
+  );
+}
+
+/** Compensation entre deux natures (cpt.compenser). `raison` : pourquoi elle est impossible pour l'instant (bouton grisé). */
+export function CompensationForm({ partenaireId, autorise, raison }: { partenaireId: string; autorise: boolean; raison: string | null }) {
+  const { enCours, erreurs, message, lancer } = useAction();
+  const [version, setVersion] = useState(0);
+  const blocage = autorise ? raison : RAISON_SANS_PERMISSION_COMPENSATION;
+  function envoyer(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const saisie = { ...valeurs(e.currentTarget), partenaireId };
+    lancer(
+      () => compenserRemunerationAction(saisie),
+      () => setVersion((v) => v + 1),
+    );
+  }
+  return (
+    <form key={version} onSubmit={envoyer} data-form-compensation className="grid gap-3 sm:grid-cols-3">
+      <Select name="natureSource" label="Reprendre l'avance de" required placeholder="Choisir..." options={optionsNatures} error={erreurs.natureSource} />
+      <Select name="natureCible" label="Imputer sur" required placeholder="Choisir..." options={optionsNatures} error={erreurs.natureCible} />
+      <InputMontant name="montant" label="Montant (FCFA)" required error={erreurs.montant} />
+      <div className="sm:col-span-3">
+        <Textarea name="motif" label="Motif" required rows={2} hint="10 caractères au moins." error={erreurs.motif} />
+      </div>
+      <div className="sm:col-span-3">
+        <Button type="submit" variant="secondary" loading={enCours} disabled={enCours || blocage !== null}>
+          Compenser
+        </Button>
+        {blocage && (
+          <p data-raison-compensation className="mt-2 text-sm text-foreground">
+            {blocage}
+          </p>
+        )}
+        {message && (
+          <p role="alert" data-message-compensation className="mt-2 text-sm text-danger">
             {message}
           </p>
         )}
