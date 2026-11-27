@@ -1,4 +1,4 @@
-import { texteDepuisCentimes } from "./cptEcheancier";
+import { dateValideEcheancier, texteDepuisCentimes } from "./cptEcheancier";
 import type { ColonneExportCpt, LigneExportCpt } from "./cptExportCsv";
 import { ventilerHonoraireCpt } from "./cptHonoraires";
 import { LIBELLE_NATURE_REMUNERATION_CPT, type NatureRemunerationCpt } from "./cptReferentiels";
@@ -10,7 +10,11 @@ import { soldeNatureCpt, trierLignesRemunerationCpt, type LigneRemunerationCalcu
 /**
  * Relevé d'un partenaire pour UNE nature (lot GC-9g). PUR : l'écran, l'export CSV / Excel et le PDF lisent ce même objet, jamais
  * un second calcul. Les mouvements (règlements, compensations signées — négative quand la nature est la source — et leurs
- * annulations, chacun à sa date) expliquent le payé : leur somme est égale au payé du solde.
+ * annulations, chacun à sa date) expliquent le payé : sur tout l'historique, leur somme est égale au payé du solde.
+ *
+ * Période (Q24, C-40) : le relevé montre les échéances PRÉVUES et les mouvements DATÉS entre `du` et `au`. Son solde est le reste dû :
+ * solde d'ouverture (dû des échéances prévues avant `du` − mouvements datés avant `du`) + dû des échéances de la période
+ * − versements de la période = solde de clôture. Le dû est celui d'aujourd'hui (une prime abandonnée depuis réduit son échéance).
  */
 
 const ZERO = BigInt(0);
@@ -73,8 +77,66 @@ export function titreMouvementReleveCpt(m: Pick<MouvementReleveCpt, "type" | "re
   return m.type === "ANNULATION" ? `Annulation ${m.reference}` : m.reference;
 }
 
+/** `null` de chaque côté = tout l'historique. */
+export interface PeriodeReleveCpt {
+  du: string | null;
+  au: string | null;
+}
+
+export const TOUT_HISTORIQUE_CPT: PeriodeReleveCpt = { du: null, au: null };
+
+/** Trimestre civil qui contient ce jour. */
+export function trimestreCivilCpt(jour: string): { du: string; au: string } {
+  const annee = jour.slice(0, 4);
+  const trimestre = Math.floor((Number(jour.slice(5, 7)) - 1) / 3);
+  const [debut, fin] = [
+    ["01-01", "03-31"],
+    ["04-01", "06-30"],
+    ["07-01", "09-30"],
+    ["10-01", "12-31"],
+  ][trimestre];
+  return { du: `${annee}-${debut}`, au: `${annee}-${fin}` };
+}
+
+/**
+ * Période demandée (adresse de l'écran et des exports). « periode=tout » : tout l'historique. Deux dates valides et ordonnées : elles.
+ * Une seule : complétée par le trimestre de cette date. Rien ou saisie incohérente : le trimestre civil en cours.
+ */
+export function lirePeriodeReleveCpt(recherche: { du?: unknown; au?: unknown; periode?: unknown }, aujourdhui: string): PeriodeReleveCpt {
+  if (recherche.periode === "tout") return TOUT_HISTORIQUE_CPT;
+  const lire = (v: unknown) => (typeof v === "string" && dateValideEcheancier(v) ? v : null);
+  const du = lire(recherche.du);
+  const au = lire(recherche.au);
+  if (du && au) return du <= au ? { du, au } : trimestreCivilCpt(aujourdhui);
+  if (du) return { du, au: trimestreCivilCpt(du).au };
+  if (au) return { du: trimestreCivilCpt(au).du, au };
+  return trimestreCivilCpt(aujourdhui);
+}
+
+/** Paramètres d'adresse qui redonnent la même période (écran et exports). */
+export function requetePeriodeReleveCpt(p: PeriodeReleveCpt): string {
+  return p.du && p.au ? `du=${p.du}&au=${p.au}` : "periode=tout";
+}
+
+const jourFr = (iso: string) => iso.split("-").reverse().join("/");
+
+export function libellePeriodeReleveCpt(p: PeriodeReleveCpt): string {
+  return p.du && p.au ? `Du ${jourFr(p.du)} au ${jourFr(p.au)}` : "Tout l'historique";
+}
+
+export interface SoldePeriodeCpt {
+  ouverture: bigint;
+  /** Dû des échéances prévues dans la période. */
+  duPeriode: bigint;
+  /** Somme signée des mouvements de la période (règlements, compensations, annulations). */
+  versementsPeriode: bigint;
+  cloture: bigint;
+}
+
 export interface ReleveRemunerationCpt {
   nature: NatureRemunerationCpt;
+  periode: PeriodeReleveCpt;
+  soldePeriode: SoldePeriodeCpt;
   libelleNature: string;
   lignes: LigneReleveCpt[];
   mouvements: MouvementReleveCpt[];
@@ -90,8 +152,12 @@ export function construireReleveRemunerationCpt(entree: {
   clients: ReadonlyMap<string, { clientNom: string }>;
   reglements: readonly ReglementReleveCpt[];
   compensations: readonly CompensationReleveCpt[];
+  periode?: PeriodeReleveCpt;
 }): ReleveRemunerationCpt {
   const { nature } = entree;
+  const periode = entree.periode ?? TOUT_HISTORIQUE_CPT;
+  const avant = (date: string) => periode.du !== null && date < periode.du;
+  const dedans = (date: string) => !avant(date) && (periode.au === null || date <= periode.au);
   const lignes: LigneReleveCpt[] = trierLignesRemunerationCpt(entree.lignes.filter((l) => l.nature === nature)).map((l) => {
     const v = nature === "HONORAIRES" ? ventilerHonoraireCpt(l) : null;
     return { ...l, clientNom: entree.clients.get(l.contratId)?.clientNom ?? "", surPrimesEncaissees: v?.surPrimesEncaissees ?? null, surPrimesNonEncaissees: v?.surPrimesNonEncaissees ?? null };
@@ -151,7 +217,23 @@ export function construireReleveRemunerationCpt(entree: {
           surPrimesNonEncaissees: lignes.reduce((s, l) => s + (l.surPrimesNonEncaissees ?? ZERO), ZERO),
         }
       : null;
-  return { nature, libelleNature: LIBELLE_NATURE_REMUNERATION_CPT[nature], lignes, mouvements, solde: soldeNatureCpt(nature, lignes), honoraires };
+  const somme = <T,>(elements: readonly T[], montant: (e: T) => bigint) => elements.reduce((s, e) => s + montant(e), ZERO);
+  const ouverture = somme(lignes.filter((l) => avant(l.datePrevue)), (l) => l.du) - somme(mouvements.filter((m) => avant(m.date)), (m) => m.montant);
+  const lignesPeriode = lignes.filter((l) => dedans(l.datePrevue));
+  const mouvementsPeriode = mouvements.filter((m) => dedans(m.date));
+  const duPeriode = somme(lignesPeriode, (l) => l.du);
+  const versementsPeriode = somme(mouvementsPeriode, (m) => m.montant);
+  return {
+    nature,
+    periode,
+    soldePeriode: { ouverture, duPeriode, versementsPeriode, cloture: ouverture + duPeriode - versementsPeriode },
+    libelleNature: LIBELLE_NATURE_REMUNERATION_CPT[nature],
+    lignes: lignesPeriode,
+    mouvements: mouvementsPeriode,
+    // Situation à ce jour : calculée sur toutes les lignes, quelle que soit la période.
+    solde: soldeNatureCpt(nature, lignes),
+    honoraires,
+  };
 }
 
 // ---------- Export (CSV / Excel) : les mêmes lignes que l'écran ----------
@@ -178,13 +260,14 @@ export function colonnesReleveRemunerationCpt(nature: NatureRemunerationCpt): Co
         ]
       : []),
     { cle: "mouvement", titre: "Mouvement (FCFA)", type: "montant" },
+    { cle: "solde", titre: "Solde (FCFA)", type: "montant" },
     { cle: "detail", titre: "Détail", type: "texte", largeur: 60 },
   ];
 }
 
 const nombre = (c: bigint) => Number(texteDepuisCentimes(c));
 
-/** Échéances, puis mouvements, puis le total de la nature (le « Net à verser » du total est le net de la nature). */
+/** Solde d'ouverture, échéances et mouvements de la période, totaux de la période, solde de clôture. */
 export function lignesExportReleveRemunerationCpt(r: ReleveRemunerationCpt): LigneExportCpt[] {
   const echeances: LigneExportCpt[] = r.lignes.map((l) => ({
     section: "Échéance",
@@ -210,20 +293,27 @@ export function lignesExportReleveRemunerationCpt(r: ReleveRemunerationCpt): Lig
     mouvement: nombre(m.montant),
     detail: m.detail,
   }));
-  const s = r.solde;
+  const somme = (montant: (l: LigneReleveCpt) => bigint) => nombre(r.lignes.reduce((t, l) => t + montant(l), ZERO));
   const total: LigneExportCpt = {
-    section: "Total",
-    du: nombre(s.du),
-    exigible: nombre(s.exigible),
-    payable: nombre(s.payable),
-    paye: nombre(s.paye),
-    restePayable: nombre(s.montantReglable),
-    resteDu: nombre(s.resteDu),
-    avance: nombre(s.avanceNette),
-    aRegulariser: nombre(s.aRegulariser),
-    ...(r.honoraires ? { encaissees: nombre(r.honoraires.surPrimesEncaissees), nonEncaissees: nombre(r.honoraires.surPrimesNonEncaissees) } : {}),
-    mouvement: nombre(r.mouvements.reduce((t, m) => t + m.montant, ZERO)),
-    detail: "Reste payable et avance du total : nets dans la nature",
+    section: "Total de la période",
+    du: somme((l) => l.du),
+    exigible: somme((l) => l.exigible),
+    payable: somme((l) => l.payable),
+    paye: somme((l) => l.paye),
+    restePayable: somme((l) => l.restePayable),
+    resteDu: somme((l) => l.resteDu),
+    avance: somme((l) => l.avance),
+    aRegulariser: somme((l) => l.aRegulariser),
+    ...(r.honoraires ? { encaissees: somme((l) => l.surPrimesEncaissees ?? ZERO), nonEncaissees: somme((l) => l.surPrimesNonEncaissees ?? ZERO) } : {}),
+    mouvement: nombre(r.soldePeriode.versementsPeriode),
+    detail: "Montants des échéances de la période ; mouvement : versements de la période",
   };
-  return [...echeances, ...mouvements, total];
+  const ouverture: LigneExportCpt = { section: "Solde d'ouverture", date: r.periode.du, solde: nombre(r.soldePeriode.ouverture), detail: libellePeriodeReleveCpt(r.periode) };
+  const cloture: LigneExportCpt = {
+    section: "Solde de clôture",
+    date: r.periode.au,
+    solde: nombre(r.soldePeriode.cloture),
+    detail: "Solde d'ouverture + dû des échéances de la période − versements de la période",
+  };
+  return [ouverture, ...echeances, ...mouvements, total, cloture];
 }

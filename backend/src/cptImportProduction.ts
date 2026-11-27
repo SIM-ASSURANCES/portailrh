@@ -8,11 +8,14 @@
 //  - une police inconnue crée le contrat, son acte d'origine et son échéancier ; une police connue n'est JAMAIS réécrite : un
 //    écart de montants ou de dates devient une anomalie « contrat différent du fichier », un acte nouveau (renouvellement,
 //    tranche, retrait, ristourne…) est signalé pour le lot des actes (GC-3d) ;
+//  - la commission et les frais de gestion du bordereau sont enregistrés avec un contrat NOUVEAU (C-39), puis comparés aux
+//    conventions pour chaque contrat du fichier (alertes sur /compta/controle, jamais en double) ;
 //  - les écritures sont ajoutées en lots (anomalies, audit) pour tenir 10 000 lignes ; les mesures sont l'objet de GC-3g.
 // Aucun import d'`enc*` ou de `treso*` (règle d'indépendance du module).
 
 import type { Prisma } from "./generated/prisma/client";
 import { preparerAudit, type CptAuditEntree } from "./cptAudit";
+import { alerterEcartsRemunerationCpt } from "./cptEcartRemunerationDb";
 import { construireEcheancier, dateValideEcheancier, enCentimesEcheancier, texteDepuisCentimes } from "./cptEcheancier";
 import type { ResultatLectureCpt } from "./cptImportLecture";
 import {
@@ -210,6 +213,7 @@ export async function appliquerImportProductionCpt(tx: CptImportProductionDb, p:
   const anomalies: AnomaliePrevue[] = [];
   const audits: CptAuditEntree[] = [];
   const clientParCle = new Map<string, string>();
+  const contratsAControler = new Set<string>();
 
   const objetLigne = (numeroLigne: number) => ({ objetEntite: "LIGNE_IMPORT", objetId: `${importId}:${numeroLigne}` });
   const detailSignalement = (ligne: LigneProduction, s: SignalementProduction): Prisma.InputJsonValue => ({
@@ -267,6 +271,7 @@ export async function appliquerImportProductionCpt(tx: CptImportProductionDb, p:
     let objetId = existant?.id ?? "";
 
     if (existant) {
+      contratsAControler.add(existant.id);
       const cleActe = `${typeActe}|${dateEffet}`;
       if (existant.actes.has(cleActe)) {
         const comparaison = comparerAvecImportPrecedent([{ ...ligne, produit: produit.code }], new Map([[numPolice, existant.connu]]));
@@ -328,12 +333,15 @@ export async function appliquerImportProductionCpt(tx: CptImportProductionDb, p:
           modePaiementDeclare: ligne.modePaiement,
           referencePaiementDeclaree: ligne.referencePaiement,
           datePaiementDeclaree: datePaiement,
+          commissionDeclaree: ligne.commission === null ? null : texteDepuisCentimes(ligne.commission),
+          gestionDeclaree: ligne.gestion === null ? null : texteDepuisCentimes(ligne.gestion),
           importId,
           creeParId: p.userId,
         },
         select: { id: true },
       });
       objetId = contrat.id;
+      contratsAControler.add(contrat.id);
       bilan.contratsCrees += 1;
 
       await tx.cptActe.create({
@@ -437,6 +445,9 @@ export async function appliquerImportProductionCpt(tx: CptImportProductionDb, p:
       detail: { numeroLigne: a.numeroLigne, champ: a.champ, entete: a.entete, valeurBrute: a.valeurBrute, message: a.motif },
     });
   }
+
+  // Écarts avec les conventions : après la création des échéances. Rien n'en va au bilan (montants réservés, C-36).
+  await alerterEcartsRemunerationCpt(tx, [...contratsAControler], importId);
 
   // ---------- Écritures en lots, bilan, audit de l'import ----------
   for (const lot of parLots(anomalies)) {

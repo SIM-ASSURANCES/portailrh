@@ -138,6 +138,8 @@ export * from "./cptCompensation";
 export * from "./cptCompensationDb";
 export * from "./cptAnnulationRemuneration";
 export * from "./cptAnnulationRemunerationDb";
+export * from "./cptEcartRemuneration";
+export * from "./cptEcartRemunerationDb";
 export * from "./cptReleveRemuneration";
 export * from "./cptReleveRemunerationDb";
 export * from "./cptRelancesDb";

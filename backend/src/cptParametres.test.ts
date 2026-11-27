@@ -13,22 +13,28 @@ import {
   verifierCoherence,
 } from "./cptParametres";
 
-const sql = readFileSync(
-  path.resolve(__dirname, "../prisma/migrations/20261101100000_compta_parametres_defauts/migration.sql"),
-  "utf8"
-);
+const lireMigration = (nom: string) => readFileSync(path.resolve(__dirname, `../prisma/migrations/${nom}/migration.sql`), "utf8");
+const sql = lireMigration("20261101100000_compta_parametres_defauts");
+// Paramètres ajoutés après GC-1b : leur propre migration, la première n'est jamais modifiée.
+const sqlSuivante = lireMigration("20261201090000_compta_ecarts_remuneration");
+const AJOUTES = ["remuneration.tolerance_ecart_fcfa"];
+const blocInsertion = (texte: string) => {
+  const code = texte.replace(/^--.*$/gm, "");
+  const debut = code.indexOf('INSERT INTO "CptParametre"');
+  return code.slice(debut, code.indexOf("ON CONFLICT", debut));
+};
 const defauts = CPT_PARAMETRES.map((p) => ({ cle: p.cle, valeur: p.defaut }));
 const sansCommentaires = sql.replace(/^--.*$/gm, "");
 
 describe("Paramètres Gestion Compta — migration synchronisée avec cptParametres.ts", () => {
   it("chaque paramètre et sa valeur par défaut figurent dans la migration", () => {
     for (const p of CPT_PARAMETRES) {
-      expect(sql, `paramètre absent ou valeur différente : ${p.cle}`).toContain(`('${p.cle}', '${p.defaut}')`);
+      expect(AJOUTES.includes(p.cle) ? sqlSuivante : sql, `paramètre absent ou valeur différente : ${p.cle}`).toContain(`('${p.cle}', '${p.defaut}')`);
     }
   });
 
   it("aucune clé insérée par la migration n'est absente des constantes, et réciproquement", () => {
-    const bloc = sansCommentaires.slice(sansCommentaires.indexOf('INSERT INTO "CptParametre"'), sansCommentaires.indexOf("ON CONFLICT"));
+    const bloc = blocInsertion(sql) + blocInsertion(sqlSuivante);
     const cles = [...bloc.matchAll(/\('([a-z_.]+)', '/g)].map((m) => m[1]);
     expect(cles.sort()).toEqual(CPT_PARAMETRES.map((p) => p.cle).sort());
   });

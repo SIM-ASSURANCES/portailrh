@@ -1,6 +1,6 @@
 // Gestion Compta, lot GC-9 — RÉMUNÉRATION DES PARTENAIRES (sans GC-9d). Sur base JETABLE et neuve (voir e2e/README.md : `next build` puis
 // `bash e2e/base-jetable.sh`) : ce script ÉCRIT en base et ne se rejoue pas sur la même base. Données 100 % synthétiques.
-// Parties : E2E_PARTIES="9e,9f,9h,9g,9q" (défaut : toutes ; les parties suivantes supposent les précédentes).
+// Parties : E2E_PARTIES="9e,9f,9h,9g,9t,9q" (défaut : toutes ; les parties suivantes supposent les précédentes).
 //   9e : avertissement R1 et message des bordereaux, quatre soldes, T6 ter, T6, T6 bis par les écrans ; règlement et affectation,
 //        jamais au-delà du net payable (même par rejeu avec un paramètre d'avance),
 //        décision « en une fois », refus serveur par rejeu sans permission, deux règlements simultanés, 390 px ;
@@ -8,7 +8,8 @@
 //        permission, deux compensations simultanées, honoraires « à régulariser » après résiliation ;
 //   9h : annulations (Q22) : jamais par l'auteur, compensation d'abord, « aucun versement » exigé, deux annulations simultanées,
 //        le net payable revient et le RFCRH ressaisit un règlement correct ;
-//   9g : relevé par partenaire et par nature (écran, mêmes chiffres que la fiche), exports CSV / Excel et PDF recoupés, accès refusés,
+//   9t : alerte d'écart de taux après un import de production par l'écran, jamais en double, lecture réservée ;
+//   9g : relevé par partenaire et par nature, par période (trimestre en cours par défaut, solde d'ouverture, tout l'historique) (écran, mêmes chiffres que la fiche), exports CSV / Excel et PDF recoupés, accès refusés,
 //        390 px. Le PDF est relu avec `pdftotext` ;
 //   9q : la lecture de la rémunération est réservée (cpt.consulter_remuneration) : rubrique, pages, onglet Conventions, exports,
 //        PDF et actions, y compris pour un rôle à qui l'on ne donne que la permission de régler.
@@ -22,7 +23,7 @@ import pg from "pg";
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
 if (!/localhost:55497|e2e/i.test(DB)) throw new Error("E2E_DATABASE_URL doit viser une base jetable.");
-const PARTIES = (process.env.E2E_PARTIES ?? "9e,9f,9h,9g,9q").split(",");
+const PARTIES = (process.env.E2E_PARTIES ?? "9e,9f,9h,9g,9t,9q").split(",");
 const partie = (p) => PARTIES.includes(p);
 
 const db = new pg.Client({ connectionString: DB });
@@ -365,6 +366,19 @@ if (partie("9g")) {
   const idCab = await idPartenaire("Cabinet Compensation");
   const idNovelia = await idPartenaire("NOVELIA");
   const total = async (p, cle) => nombre(await p.locator(`[data-total="${cle}"]`).innerText());
+  const soldePeriode = async (p, cle) => nombre(await p.locator(`[data-solde-periode="${cle}"]`).innerText());
+  // Trimestre civil du jour, calculé ici indépendamment de l'application.
+  const jourJ = new Date().toISOString().slice(0, 10);
+  const moisDebut = Math.floor((Number(jourJ.slice(5, 7)) - 1) / 3) * 3 + 1;
+  const debut = `${jourJ.slice(0, 4)}-${String(moisDebut).padStart(2, "0")}-01`;
+  const fin = new Date(Date.UTC(Number(jourJ.slice(0, 4)), moisDebut + 2, 0)).toISOString().slice(0, 10);
+  const fr = (iso) => iso.split("-").reverse().join("/");
+  const libelleTrimestre = `Du ${fr(debut)} au ${fr(fin)}`;
+  /** Solde d'ouverture recalculé en SQL : dû des échéances prévues avant le trimestre − versements actifs et annulations datés avant. */
+  const ouvertureSql = async (partenaire, nature) =>
+    // Prime abandonnée (contrat annulé ou résilié) : seule la part encaissée de l'échéance reste due (C-31).
+    Number((await un(`SELECT coalesce(sum(CASE WHEN c.statut IN ('ANNULE','RESILIE') OR e.etat = 'ANNULEE' THEN round(l.du * least(e."montantRegle", e."montantDu") / nullif(e."montantDu", 0)) ELSE l.du END),0)::float AS s FROM "CptLigneRemuneration" l JOIN "CptEcheance" e ON e.id = l."echeanceId" JOIN "CptContrat" c ON c.id = l."contratId" WHERE l."partenaireBeneficiaireId" = $1 AND l.nature = $2 AND e."datePrevue" < $3`, [partenaire, nature, debut])).s) -
+    Number((await un(`SELECT coalesce(sum(g.montant),0)::float AS s FROM "CptReglementPartenaire" g WHERE g."partenaireId" = $1 AND g.nature = $2 AND g.date < $3 AND NOT EXISTS (SELECT 1 FROM "CptAnnulationRemuneration" x WHERE x."reglementId" = g.id)`, [partenaire, nature, debut])).s);
   const sommeMouvements = async (p) => (await p.locator("[data-montant-mouvement]").allInnerTexts()).reduce((s, t) => s + nombre(t), 0);
 
   const fiche = await ouvrir(RFCRH, `/compta/partenaires/${idCab}?nature=COMMISSION`);
@@ -379,34 +393,49 @@ if (partie("9g")) {
   const payeSql = Number((await un(`SELECT coalesce(sum(montant),0)::float AS s FROM "CptReglementPartenaire" g WHERE "partenaireId" = $1 AND nature = 'HONORAIRES' AND NOT EXISTS (SELECT 1 FROM "CptAnnulationRemuneration" x WHERE x."reglementId" = g.id)`, [idCab])).s);
   await r.goto(`${B}/compta/partenaires/${idCab}/releve?nature=HONORAIRES`);
   await calme(r);
+  verifier("9g. par défaut : le trimestre civil en cours", (await r.locator("[data-libelle-periode]").innerText()).trim() === libelleTrimestre, libelleTrimestre);
+  const periodeCab = { ouverture: await soldePeriode(r, "ouverture"), du: await soldePeriode(r, "du-periode"), verse: await soldePeriode(r, "verse-periode"), cloture: await soldePeriode(r, "cloture") };
+  verifier("9g. solde d'ouverture juste (recalcul SQL : 5 000), clôture = ouverture + dû − versements = 0", periodeCab.ouverture === (await ouvertureSql(idCab, "HONORAIRES")) && periodeCab.ouverture === 5000 && periodeCab.cloture === periodeCab.ouverture + periodeCab.du - periodeCab.verse && periodeCab.cloture === 0, JSON.stringify(periodeCab));
+  verifier("9g. les échéances de janvier sont dans le solde d'ouverture, pas dans la liste du trimestre", (await r.locator("[data-releve-ligne]").count()) === 0);
   verifier("9g. honoraires du cabinet : règlement, reprises, trois annulations, règlement ressaisi ; payé 5 000 recoupé par SQL", (await types(r)) === "REGLEMENT,COMPENSATION,COMPENSATION,ANNULATION,ANNULATION,ANNULATION,REGLEMENT" && (await total(r, "paye")) === payeSql && payeSql === 5000 && (await sommeMouvements(r)) === 5000, await types(r));
   verifier("9g. l'annulation du règlement est nommée avec son numéro et son motif", /Annulation CPR-2026-/.test(await r.locator("[data-releve-mouvements]").innerText()) && /Montant saisi par erreur/.test(await r.locator("[data-releve-mouvements]").innerText()));
   await r.close();
 
   const idTer = await idPartenaire("Courtier T6ter");
-  const t = await ouvrir(DIRECTION, `/compta/partenaires/${idTer}/releve?nature=COMMISSION`);
+  const tTrimestre = await ouvrir(DIRECTION, `/compta/partenaires/${idTer}/releve?nature=COMMISSION`);
+  const lignesTrimestre = Number((await un(`SELECT count(*)::int AS n FROM "CptLigneRemuneration" l JOIN "CptEcheance" e ON e.id = l."echeanceId" WHERE l."partenaireBeneficiaireId" = $1 AND e."datePrevue" BETWEEN $2 AND $3`, [idTer, debut, fin])).n);
+  verifier("9g. T6 ter, trimestre en cours : ses échéances seulement, ouverture recoupée en SQL", (await tTrimestre.locator("[data-releve-ligne]").count()) === lignesTrimestre && lignesTrimestre > 0 && lignesTrimestre < 12 && (await soldePeriode(tTrimestre, "ouverture")) === (await ouvertureSql(idTer, "COMMISSION")), `${lignesTrimestre} échéances`);
+  await Promise.all([tTrimestre.waitForURL(/periode=tout/), tTrimestre.locator("[data-tout-historique]").click()]);
+  await calme(tTrimestre);
+  verifier("9g. « Tout l'historique » : ouverture 0, clôture = reste dû à ce jour", (await soldePeriode(tTrimestre, "ouverture")) === 0 && (await soldePeriode(tTrimestre, "cloture")) === (await total(tTrimestre, "reste-du")));
+  await tTrimestre.close();
+  const t = await ouvrir(DIRECTION, `/compta/partenaires/${idTer}/releve?nature=COMMISSION&periode=tout`);
   const attendu = await un(`SELECT coalesce(sum(montant),0)::float AS s, count(*)::int AS n FROM "CptReglementPartenaire" WHERE "partenaireId" = $1`, [idTer]);
   verifier("9g. la Direction consulte le relevé T6 ter : 12 échéances, payé = les règlements, dû 12 000", (await t.locator("[data-releve-ligne]").count()) === 12 && (await total(t, "du")) === 12000 && (await total(t, "paye")) === attendu.s && (await t.locator('[data-mouvement="REGLEMENT"]').count()) === attendu.n, JSON.stringify(attendu));
   await t.close();
 
-  const n = await ouvrir(RFCRH, `/compta/partenaires/${idNovelia}/releve?nature=HONORAIRES`);
+  const n = await ouvrir(RFCRH, `/compta/partenaires/${idNovelia}/releve?nature=HONORAIRES&periode=tout`);
   verifier("9g. relevé d'honoraires : colonnes encaissées / non encaissées (16 000 encaissées après T6 bis)", (await total(n, "encaissees")) === 16000 && (await total(n, "non-encaissees")) === 0);
   const ecranDu = await total(n, "du");
   await n.close();
 
   // Exports : mêmes lignes que l'écran, accès contrôlé.
   const ctx = await contexte(RFCRH);
-  const url = (id, nature, format) => `${B}/api/compta/export/remuneration?partenaire=${id}&nature=${nature}&format=${format}`;
+  const url = (id, nature, format, periode = "&periode=tout") => `${B}/api/compta/export/remuneration?partenaire=${id}&nature=${nature}&format=${format}${periode}`;
+  const trimestriel = await ctx.request.get(url(idCab, "HONORAIRES", "csv", ""));
+  const lt = (await trimestriel.text()).replace(/^\uFEFF/, "").trim().split("\r\n").map((l) => l.split(";"));
+  const col = (l, titre) => l[lt[0].indexOf(titre)];
+  verifier("9g. CSV par défaut : même trimestre que l'écran (ouverture 5 000, clôture 0, nom du fichier daté)", lt[1][0] === "Solde d'ouverture" && Number(col(lt[1], "Solde (FCFA)").replace(",", ".")) === 5000 && lt.at(-1)[0] === "Solde de clôture" && Number(col(lt.at(-1), "Solde (FCFA)").replace(",", ".")) === 0 && trimestriel.headers()["content-disposition"].includes(`${debut}-au-${fin}`), JSON.stringify([lt[1], lt.at(-1)]));
   const csv = await ctx.request.get(url(idCab, "COMMISSION", "csv"));
   const lignesCsv = (await csv.text()).replace(/^\uFEFF/, "").trim().split("\r\n").map((l) => l.split(";"));
   const colonne = (titre) => lignesCsv[0].indexOf(titre);
   const sections = lignesCsv.slice(1).map((l) => l[0]);
-  verifier("9g. export CSV : échéance, deux compensations, deux annulations et un total", csv.status() === 200 && sections.join(",") === "Échéance,Compensation,Compensation,Annulation,Annulation,Total", sections.join(","));
-  const totalCsv = lignesCsv.at(-1);
+  verifier("9g. export CSV : échéance, deux compensations, deux annulations et un total", csv.status() === 200 && sections.join(",") === "Solde d'ouverture,Échéance,Compensation,Compensation,Annulation,Annulation,Total de la période,Solde de clôture", sections.join(","));
+  const totalCsv = lignesCsv.at(-2);
   verifier("9g. CSV : total payé 0 = somme des mouvements ; une annulation reste négative", Number(totalCsv[colonne("Payé (FCFA)")].replace(",", ".")) === 0 && Number(totalCsv[colonne("Mouvement (FCFA)")].replace(",", ".")) === 0 && lignesCsv.some((l) => l[colonne("Mouvement (FCFA)")] === "-1000,00"));
   const csvH = await (await ctx.request.get(url(idNovelia, "HONORAIRES", "csv"))).text();
   const lh = csvH.replace(/^\uFEFF/, "").trim().split("\r\n").map((l) => l.split(";"));
-  verifier("9g. CSV honoraires : total dû = écran, colonne « Sur primes encaissées » = 16000", Number(lh.at(-1)[lh[0].indexOf("Dû (FCFA)")].replace(",", ".")) === ecranDu && Number(lh.at(-1)[lh[0].indexOf("Sur primes encaissées (FCFA)")].replace(",", ".")) === 16000);
+  verifier("9g. CSV honoraires : total dû = écran, colonne « Sur primes encaissées » = 16000", Number(lh.at(-2)[lh[0].indexOf("Dû (FCFA)")].replace(",", ".")) === ecranDu && Number(lh.at(-2)[lh[0].indexOf("Sur primes encaissées (FCFA)")].replace(",", ".")) === 16000);
   const xlsx = await ctx.request.get(url(idCab, "HONORAIRES", "xlsx"));
   const octets = await xlsx.body();
   verifier("9g. export Excel : 200 et fichier xlsx valide (PK)", xlsx.status() === 200 && octets[0] === 0x50 && octets[1] === 0x4b);
@@ -417,7 +446,7 @@ if (partie("9g")) {
   writeFileSync(join(dossier, "releve.pdf"), corps);
   const texte = execFileSync("pdftotext", ["-enc", "UTF-8", "-layout", join(dossier, "releve.pdf"), "-"]).toString("utf8");
   rmSync(dossier, { recursive: true, force: true });
-  verifier("9g. PDF : en-tête, partenaire, nature, compensation, annulation et payé 5 000", pdf.status() === 200 && corps.subarray(0, 4).toString() === "%PDF" && /RELEVÉ PARTENAIRE/.test(texte) && /Cabinet Compensation/.test(texte) && /Compensation/.test(texte) && /Annulation/.test(texte) && /CPR-2026-\d{6}/.test(texte) && /5 000 FCFA/.test(texte), texte.slice(0, 300).replace(/\s+/g, " "));
+  verifier("9g. PDF : en-tête, partenaire, nature, compensation, annulation et payé 5 000", pdf.status() === 200 && corps.subarray(0, 4).toString() === "%PDF" && /RELEVÉ PARTENAIRE/.test(texte) && /Cabinet Compensation/.test(texte) && /Compensation/.test(texte) && texte.includes(libelleTrimestre) && /Solde d.ouverture/.test(texte) && /Solde de clôture/.test(texte) && /Annulation/.test(texte) && /CPR-2026-\d{6}/.test(texte) && /5 000 FCFA/.test(texte), texte.slice(0, 300).replace(/\s+/g, " "));
 
   const anonyme = await browser.newContext();
   verifier("9g. sans session : export 401, PDF 401", (await anonyme.request.get(url(idCab, "COMMISSION", "csv"), { maxRedirects: 0 })).status() === 401 && (await anonyme.request.get(`${B}/api/compta/partenaires/${idCab}/releve?nature=COMMISSION`, { maxRedirects: 0 })).status() === 401);
@@ -429,6 +458,54 @@ if (partie("9g")) {
 
   const m = await ouvrir(RFCRH, `/compta/partenaires/${idNovelia}/releve?nature=HONORAIRES`, { width: 390, height: 844 });
   verifier("9g. 390 px : relevé sans défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await m.close();
+}
+
+// =====================================================================================================================
+// 9t — alerte d'écart de taux après un import de production (Q19, C-39)
+// =====================================================================================================================
+if (partie("9t")) {
+  const ENTETES = ["Numéro de police", "Identifiant de paiement (PaiementID)", "Type de contrat (individuel ou groupe)", "Produit (code ou libellé)", "Type d'opération", "Client", "Téléphone du client", "Partenaire apporteur", "Fractionnement", "Date d'effet", "Date d'échéance", "Mode de paiement déclaré", "Référence de paiement déclarée", "Date de paiement déclarée", "Prime TTC", "Prime hors taxe", "Accessoires", "Taxe", "Commission déclarée", "Frais de gestion déclarés", "Montant payé déclaré"];
+  const ligneCsvBordereau = (v) => ENTETES.map((e) => `"${v[e] ?? ""}"`).join(",");
+  const police = (numPolice, extra) => ligneCsvBordereau({ "Numéro de police": numPolice, "Produit (code ou libellé)": "ALERTE", Client: `Client ${numPolice}`, "Partenaire apporteur": "Courtier Alerte", Fractionnement: "Comptant", "Date d'effet": "01/03/2026", "Date d'échéance": "28/02/2027", "Prime TTC": "100000", ...extra });
+  const lignesBordereau = [
+    police("POL-ALERTE-1", { "Commission déclarée": "15000", "Frais de gestion déclarés": "2000" }),
+    police("POL-ALERTE-2", { "Commission déclarée": "10000" }),
+  ];
+  const bordereau = (lignes) => Buffer.from([ENTETES.map((e) => `"${e}"`).join(","), ...lignes].join("\n"), "utf8");
+  async function importer(nom, contenu) {
+    const p = await ouvrir(PRODUCTION, "/compta/production");
+    await p.locator("input[data-import-production-fichier]").setInputFiles({ name: nom, mimeType: "text/csv", buffer: contenu });
+    await p.getByText("déposé, pas encore importé").waitFor({ timeout: 15000 });
+    await p.locator("[data-import-production-lancer]").click();
+    await p.locator("[data-import-production-bilan]").waitFor({ timeout: 60000 });
+    const bilan = await p.locator("[data-import-production-bilan]").innerText();
+    await p.close();
+    return bilan;
+  }
+  const ecarts = () => sql(`SELECT "objetId", detail FROM "CptAlerteControle" WHERE objet = 'ECART_REMUNERATION'`);
+
+  const bilan = await importer("bordereau-alerte.csv", bordereau(lignesBordereau));
+  const apres = await ecarts();
+  verifier("9t. import par l'écran : les montants du bordereau sont enregistrés avec les contrats", (await compter("CptContrat", `"numPolice" = 'POL-ALERTE-1' AND "commissionDeclaree" = 15000 AND "gestionDeclaree" = 2000`)) === 1, bilan.replace(/\s+/g, " "));
+  verifier("9t. une seule alerte : commission 15 000 contre 10 000 (+5 000) ; conforme et sans convention : aucune", apres.length === 1 && apres[0].detail.numPolice === "POL-ALERTE-1" && apres[0].detail.nature === "COMMISSION" && Number(apres[0].detail.declare) === 15000 && Number(apres[0].detail.attendu) === 10000 && Number(apres[0].detail.ecart) === 5000, JSON.stringify(apres.map((a) => a.detail)));
+  verifier("9t. contrats importés avant (sans montant) : aucune valeur inventée", (await compter("CptContrat", `"numPolice" NOT LIKE 'POL-ALERTE%' AND ("commissionDeclaree" IS NOT NULL OR "gestionDeclaree" IS NOT NULL)`)) === 0);
+
+  await importer("bordereau-alerte-2.csv", bordereau([...lignesBordereau, police("POL-ALERTE-3", {})]));
+  verifier("9t. second import des mêmes polices : aucune alerte en double", (await ecarts()).length === 1 && (await compter("CptImport", `type = 'PRODUCTION'`)) === 2);
+
+  const c = await ouvrir(RFCRH, "/compta/controle");
+  const rangee = c.locator('[data-ecart="POL-ALERTE-1-COMMISSION"]');
+  verifier("9t. contrôle hebdomadaire (RFCRH) : l'écart de 5 000 est affiché", (await rangee.count()) === 1 && nombre(await rangee.locator("[data-montant-ecart]").innerText()) === 5000 && (await c.locator("[data-ecart]").count()) === 1);
+  await c.close();
+  for (const compte of [PRODUCTION, COMMERCIAL, COMPTABLE]) {
+    const p = await ouvrir(compte, "/compta/controle");
+    await p.locator("[data-filtres-controle]").waitFor();
+    verifier(`9t. ${compte.split("@")[0]} : contrôle hebdomadaire lisible, sans la liste des écarts ni ses montants`, (await p.locator("[data-ecarts-remuneration]").count()) === 0 && !(await p.content()).includes("POL-ALERTE-1-COMMISSION"));
+    await p.close();
+  }
+  const m = await ouvrir(RFCRH, "/compta/controle", { width: 390, height: 844 });
+  verifier("9t. 390 px : contrôle hebdomadaire sans défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await m.close();
 }
 

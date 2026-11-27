@@ -41,13 +41,13 @@ verifier() { # verifier "libellé" "valeur attendue" "requête"
   [ "$obtenu" = "$2" ] || { echo "KO : $1 (attendu $2, obtenu $obtenu)"; exit 1; }
   echo "OK $1"
 }
-verifier "12 paramètres posés par la migration" "12" 'SELECT count(*) FROM "CptParametre"'
+verifier "13 paramètres posés par les migrations" "13" 'SELECT count(*) FROM "CptParametre"'
 verifier "jour limite de la taxe = 20" "20" "SELECT valeur FROM \"CptParametre\" WHERE cle = 'tca.jour_limite_paiement'"
 # Une valeur modifiée n'est jamais écrasée par un rejeu de la migration (ON CONFLICT DO NOTHING) ; le rejeu est sans effet.
 psql_cpt -c "UPDATE \"CptParametre\" SET valeur = '15' WHERE cle = 'tca.jour_limite_paiement'" >/dev/null
 psql_cpt < backend/prisma/migrations/20261101100000_compta_parametres_defauts/migration.sql >/dev/null
 verifier "rejeu : valeur modifiée conservée" "15" "SELECT valeur FROM \"CptParametre\" WHERE cle = 'tca.jour_limite_paiement'"
-verifier "rejeu : toujours 12 paramètres" "12" 'SELECT count(*) FROM "CptParametre"'
+verifier "rejeu : toujours 13 paramètres" "13" 'SELECT count(*) FROM "CptParametre"'
 refuse() { # refuse "libellé" "requête" : la requête doit échouer sur la contrainte de borne
   if psql_cpt -c "$2" >/dev/null 2>&1; then echo "KO : $1 aurait dû être refusé"; exit 1; fi
   echo "OK $1"

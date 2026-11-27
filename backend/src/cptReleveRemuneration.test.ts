@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ligneCsv } from "./cptExportCsv";
-import { colonnesReleveRemunerationCpt, construireReleveRemunerationCpt, lignesExportReleveRemunerationCpt, titreMouvementReleveCpt } from "./cptReleveRemuneration";
+import { colonnesReleveRemunerationCpt, construireReleveRemunerationCpt, lignesExportReleveRemunerationCpt, titreMouvementReleveCpt, libellePeriodeReleveCpt, lirePeriodeReleveCpt, requetePeriodeReleveCpt, trimestreCivilCpt } from "./cptReleveRemuneration";
 import { lignesContratCpt, type ContratRemunerationCpt, type ConventionRemunerationCpt, type LigneEnregistreeCpt } from "./cptRemuneration";
 
 const F = (fcfa: number) => BigInt(fcfa) * BigInt(100);
@@ -83,7 +83,7 @@ describe("GC-9g — relevé par partenaire et par nature", () => {
     expect(r.mouvements.at(-1)!.detail).toBe("Annulation du règlement CPR-2026-000002 — Saisi deux fois");
     // Le payé vient des lignes (chargées sans les opérations annulées) : il reste égal à la somme des mouvements.
     expect(r.mouvements.reduce((s, m) => s + m.montant, BigInt(0))).toBe(r.solde.paye);
-    expect(lignesExportReleveRemunerationCpt(r).map((l) => l.section)).toEqual(["Échéance", "Règlement", "Règlement", "Compensation", "Annulation", "Total"]);
+    expect(lignesExportReleveRemunerationCpt(r).map((l) => l.section)).toEqual(["Solde d'ouverture", "Échéance", "Règlement", "Règlement", "Compensation", "Annulation", "Total de la période", "Solde de clôture"]);
   });
 
   it("une compensation annulée est contre-passée avec le signe opposé", () => {
@@ -105,9 +105,48 @@ describe("GC-9g — relevé par partenaire et par nature", () => {
   it("export : échéances, mouvements puis total égal au solde ; une reprise reste un nombre négatif en CSV", () => {
     const r = releve("COMMISSION");
     const exportes = lignesExportReleveRemunerationCpt(r);
-    expect(exportes.map((l) => l.section)).toEqual(["Échéance", "Règlement", "Compensation", "Total"]);
-    expect(exportes.at(-1)).toMatchObject({ du: 10000, paye: 3000, mouvement: 3000 });
-    const csv = ligneCsv(colonnesReleveRemunerationCpt("COMMISSION"), exportes[2]);
+    expect(exportes.map((l) => l.section)).toEqual(["Solde d'ouverture", "Échéance", "Règlement", "Compensation", "Total de la période", "Solde de clôture"]);
+    expect(exportes.at(-2)).toMatchObject({ du: 10000, paye: 3000, mouvement: 3000 });
+    expect(exportes.at(-1)).toMatchObject({ solde: 7000 });
+    const csv = ligneCsv(colonnesReleveRemunerationCpt("COMMISSION"), exportes[3]);
     expect(csv).toContain(";-1000,00;");
+  });
+});
+
+describe("Q24 — période du relevé", () => {
+  it("par défaut le trimestre civil en cours ; « tout » ; une seule date complétée ; saisie incohérente ignorée", () => {
+    expect(lirePeriodeReleveCpt({}, "2026-11-27")).toEqual({ du: "2026-10-01", au: "2026-12-31" });
+    expect(trimestreCivilCpt("2026-03-31")).toEqual({ du: "2026-01-01", au: "2026-03-31" });
+    expect(trimestreCivilCpt("2026-04-01")).toEqual({ du: "2026-04-01", au: "2026-06-30" });
+    expect(lirePeriodeReleveCpt({ periode: "tout" }, "2026-11-27")).toEqual({ du: null, au: null });
+    expect(lirePeriodeReleveCpt({ du: "2026-01-15", au: "2026-02-14" }, "2026-11-27")).toEqual({ du: "2026-01-15", au: "2026-02-14" });
+    expect(lirePeriodeReleveCpt({ du: "2026-05-10" }, "2026-11-27")).toEqual({ du: "2026-05-10", au: "2026-06-30" });
+    expect(lirePeriodeReleveCpt({ au: "2026-05-10" }, "2026-11-27")).toEqual({ du: "2026-04-01", au: "2026-05-10" });
+    expect(lirePeriodeReleveCpt({ du: "2026-06-01", au: "2026-05-01" }, "2026-11-27")).toEqual({ du: "2026-10-01", au: "2026-12-31" });
+    expect(lirePeriodeReleveCpt({ du: "2026-02-30", au: "x" }, "2026-11-27")).toEqual({ du: "2026-10-01", au: "2026-12-31" });
+    expect(requetePeriodeReleveCpt({ du: null, au: null })).toBe("periode=tout");
+    expect(libellePeriodeReleveCpt({ du: "2026-10-01", au: "2026-12-31" })).toBe("Du 01/10/2026 au 31/12/2026");
+  });
+
+  const periodique = (du: string | null, au: string | null) =>
+    construireReleveRemunerationCpt({ nature: "COMMISSION", lignes, clients: new Map(), reglements: [reglement], compensations: [compensation], periode: { du, au } });
+
+  it("solde d'ouverture = tout ce qui précède ; clôture = ouverture + dû de la période − versements de la période", () => {
+    // Échéance prévue le 01/01/2026 (dû 10 000), règlement 4 000 le 01/02, compensation −1 000 le 01/03.
+    const fevrier = periodique("2026-02-01", "2026-02-28");
+    expect(fevrier.soldePeriode).toEqual({ ouverture: F(10000), duPeriode: BigInt(0), versementsPeriode: F(4000), cloture: F(6000) });
+    expect(fevrier.lignes).toHaveLength(0);
+    expect(fevrier.mouvements.map((m) => m.type)).toEqual(["REGLEMENT"]);
+    const mars = periodique("2026-03-01", "2026-03-31");
+    expect(mars.soldePeriode.ouverture).toBe(fevrier.soldePeriode.cloture);
+    expect(mars.soldePeriode.cloture).toBe(F(7000));
+  });
+
+  it("tout l'historique : ouverture nulle, clôture = reste dû à ce jour ; la situation ne dépend pas de la période", () => {
+    const tout = periodique(null, null);
+    expect(tout.soldePeriode.ouverture).toBe(BigInt(0));
+    expect(tout.soldePeriode.cloture).toBe(tout.solde.resteDu);
+    expect(periodique("2027-01-01", "2027-03-31").solde).toEqual(tout.solde);
+    expect(periodique("2027-01-01", "2027-03-31").soldePeriode).toEqual({ ouverture: F(7000), duPeriode: BigInt(0), versementsPeriode: BigInt(0), cloture: F(7000) });
   });
 });

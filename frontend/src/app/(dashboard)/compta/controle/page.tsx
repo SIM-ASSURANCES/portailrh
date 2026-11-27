@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { formaterDateCpt, formaterMontantCpt } from "@/components/compta/libellesProduction";
 import { Badge, Button, PageHeader, Select, StatCard } from "@/components/ui";
 import { getSession, hasPermission } from "@/lib/auth";
+import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
 import {
   BRANCHES_CPT,
   chargerAvancesNonImputeesCpt,
@@ -13,6 +14,8 @@ import {
   LIBELLE_BRANCHE_CPT,
   lireFiltresSuiviCpt,
   listerContratsSansEncaissementCpt,
+  LIBELLE_NATURE_REMUNERATION_CPT,
+  listerEcartsRemunerationCpt,
   listerEncaissementsSansContratCpt,
   pageDemandeeCpt,
   prisma,
@@ -38,6 +41,8 @@ export default async function ControleHebdomadairePage({ searchParams }: { searc
   const pageCon = pageDemandeeCpt(recherche.pageContrats);
   const maintenant = new Date();
   const avancesNonImputees = await chargerAvancesNonImputeesCpt(prisma);
+  // Montants de rémunération : lus seulement avec la lecture réservée (C-36) ; sans elle, la liste n'est même pas chargée.
+  const ecarts = peutVoirRemunerationCpt(session) ? await listerEcartsRemunerationCpt(prisma) : null;
 
   const [indicateurs, encaissements, contrats] = await Promise.all([
     chargerIndicateursHebdoCpt(prisma, maintenant),
@@ -110,6 +115,8 @@ export default async function ControleHebdomadairePage({ searchParams }: { searc
         </div>
         <p className="text-xs text-muted-foreground">Les chiffres ci-dessus portent sur toutes les lignes, sans tenir compte des filtres des listes.</p>
       </section>
+
+      {ecarts && <EcartsRemuneration ecarts={ecarts} />}
 
       <form method="get" className="flex flex-wrap items-end gap-3" data-filtres-controle>
         <label className="block w-full text-sm sm:w-40">
@@ -279,6 +286,53 @@ export default async function ControleHebdomadairePage({ searchParams }: { searc
         />
       </section>
     </div>
+  );
+}
+
+function EcartsRemuneration({ ecarts }: { ecarts: Awaited<ReturnType<typeof listerEcartsRemunerationCpt>> }) {
+  return (
+    <section className="space-y-3" data-ecarts-remuneration>
+      <h2 className="text-base font-bold text-foreground">
+        Écarts de commission et de frais de gestion <span className="text-sm font-normal text-muted-foreground">({ecarts.total.toLocaleString("fr-FR")})</span>
+      </h2>
+      <p className="text-sm text-muted-foreground">
+        Montants du bordereau de production différents du total calculé avec les conventions, relevés à l&apos;import. Montants en FCFA, au moment de la détection.
+      </p>
+      {ecarts.lignes.length === 0 ? (
+        <p className="rounded-lg border border-border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground" data-aucun-ecart>
+          Aucun écart relevé.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-elevated">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead className="border-b border-border bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                {["Police", "Nature", "Bordereau", "D'après les conventions", "Écart", "Relevé le"].map((t) => (
+                  <th key={t} className="px-3 py-2">
+                    {t}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {ecarts.lignes.map((e) => (
+                <tr key={e.id} className="border-b border-border last:border-0" data-ecart={`${e.numPolice}-${e.nature}`}>
+                  <td className="whitespace-nowrap px-3 py-2 font-semibold text-foreground">{e.numPolice}</td>
+                  <td className="px-3 py-2">{LIBELLE_NATURE_REMUNERATION_CPT[e.nature]}</td>
+                  <td className="whitespace-nowrap px-3 py-2 tabular-nums">{formaterMontantCpt(e.declare)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 tabular-nums">{formaterMontantCpt(e.attendu)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 font-semibold tabular-nums" data-montant-ecart>
+                    {formaterMontantCpt(e.ecart)}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2">{formaterDateCpt(e.detecteLe)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {ecarts.total > ecarts.lignes.length && <p className="text-xs text-muted-foreground">Les {ecarts.lignes.length} plus récents sont affichés.</p>}
+    </section>
   );
 }
 

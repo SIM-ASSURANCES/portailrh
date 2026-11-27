@@ -3,7 +3,8 @@
 // Copié de backend/src/encParametres.ts le 2026-10-22 — Gestion Compta est indépendant : toute correction se reporte à la main.
 //
 // Source UNIQUE des clés et valeurs par défaut : reprise par la migration `20261101100000_compta_parametres_defauts`
-// (la production n'est seedée qu'une fois : la migration pose les défauts, sans jamais écraser une valeur modifiée).
+// (la production n'est seedée qu'une fois : la migration pose les défauts, sans jamais écraser une valeur modifiée) ; les
+// paramètres ajoutés ensuite le sont par leur propre migration (`20261201090000_compta_ecarts_remuneration`).
 // `cptParametres.test.ts` échoue si le SQL de la migration et ces constantes divergent.
 //
 // Les valeurs sont stockées en texte et typées ici : une valeur illisible en base est une erreur, jamais remplacée
@@ -136,6 +137,15 @@ export const CPT_PARAMETRES = [
     max: 10,
     type: "entier",
     source: "§8 exigences",
+  },
+  {
+    cle: "remuneration.tolerance_ecart_fcfa",
+    libelle: "Écart toléré entre le bordereau de production et les conventions (commission, frais de gestion, FCFA)",
+    defaut: "0",
+    min: 0,
+    max: 100000,
+    type: "montant",
+    source: "Q19, décision du 2026-11-27",
   },
 ] as const satisfies readonly CptParametreDefinition[];
 

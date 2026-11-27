@@ -1,5 +1,5 @@
 import { Document, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
-import { titreMouvementReleveCpt, type ReleveRemunerationCpt } from "backend";
+import { libellePeriodeReleveCpt, titreMouvementReleveCpt, type ReleveRemunerationCpt } from "backend";
 
 import { COLORS } from "@/lib/pdf/colors";
 import { formatDate, formatMontant } from "@/lib/pdf/format";
@@ -38,6 +38,7 @@ const styles = StyleSheet.create({
 
 const fcfa = (centimes: bigint) => formatMontant(Number(centimes) / 100);
 const jour = (iso: string) => iso.split("-").reverse().join("/");
+const signe = (c: bigint) => (c < BigInt(0) ? `- ${fcfa(-c)}` : fcfa(c));
 
 export function RelevePdfRemuneration({ partenaire, releve, edite }: { partenaire: string; releve: ReleveRemunerationCpt; edite: Date }) {
   const s = releve.solde;
@@ -63,6 +64,23 @@ export function RelevePdfRemuneration({ partenaire, releve, edite }: { partenair
         </View>
         <View style={styles.corps}>
           <Text style={styles.nom}>{partenaire}</Text>
+          <Text style={styles.section}>{libellePeriodeReleveCpt(releve.periode)}</Text>
+          <View style={styles.resume}>
+            {(
+              [
+                ["Solde d'ouverture", releve.soldePeriode.ouverture],
+                ["Dû de la période", releve.soldePeriode.duPeriode],
+                ["Versements de la période", releve.soldePeriode.versementsPeriode],
+                ["Solde de clôture", releve.soldePeriode.cloture],
+              ] as [string, bigint][]
+            ).map(([libelle, v]) => (
+              <View key={libelle} style={styles.carte}>
+                <Text style={styles.carteLibelle}>{libelle}</Text>
+                <Text style={styles.carteValeur}>{signe(v)}</Text>
+              </View>
+            ))}
+          </View>
+          <Text style={styles.section}>Situation à ce jour</Text>
           <View style={styles.resume}>
             {cartes.map(([libelle, v]) => (
               <View key={libelle} style={styles.carte}>
@@ -78,7 +96,7 @@ export function RelevePdfRemuneration({ partenaire, releve, edite }: { partenair
             </Text>
           )}
 
-          <Text style={styles.section}>Échéances</Text>
+          <Text style={styles.section}>Échéances prévues dans la période</Text>
           {releve.lignes.length === 0 ? (
             <Text style={styles.vide}>Aucune échéance.</Text>
           ) : (
@@ -106,7 +124,7 @@ export function RelevePdfRemuneration({ partenaire, releve, edite }: { partenair
             </View>
           )}
 
-          <Text style={styles.section}>Règlements et compensations</Text>
+          <Text style={styles.section}>Règlements, compensations et annulations de la période</Text>
           {releve.mouvements.length === 0 ? (
             <Text style={styles.vide}>Aucun mouvement.</Text>
           ) : (
@@ -122,7 +140,7 @@ export function RelevePdfRemuneration({ partenaire, releve, edite }: { partenair
                   <Text style={styles.mDate}>{jour(m.date)}</Text>
                   <Text style={styles.mRef}>{titreMouvementReleveCpt(m)}</Text>
                   <Text style={styles.mDetail}>{m.detail}</Text>
-                  <Text style={styles.mMontant}>{m.montant < BigInt(0) ? `- ${fcfa(-m.montant)}` : fcfa(m.montant)}</Text>
+                  <Text style={styles.mMontant}>{signe(m.montant)}</Text>
                 </View>
               ))}
             </View>

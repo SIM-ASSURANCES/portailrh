@@ -2908,6 +2908,9 @@ model CptContrat {
   modePaiementDeclare       String?
   referencePaiementDeclaree String?
   datePaiementDeclaree      DateTime?         @db.Date
+  /// Montants lus dans le bordereau à la création du contrat (C-39) ; nul = colonne absente ou vide, ou import antérieur.
+  commissionDeclaree        Decimal?          @db.Decimal(14, 2)
+  gestionDeclaree           Decimal?          @db.Decimal(14, 2)
   contratOrigineId          String?
   contratOrigine            CptContrat?       @relation("CptContratOrigine", fields: [contratOrigineId], references: [id], onDelete: Restrict)
   contratsSuivants          CptContrat[]      @relation("CptContratOrigine")
@@ -3162,6 +3165,7 @@ enum CptStatutRattachement {
 enum CptObjetControle {
   ENCAISSEMENT
   CONTRAT
+  ECART_REMUNERATION
 }
 
 /// Palier d'ancienneté : relance (7 jours), alerte (30), escalade (60), seuils lus dans `CptParametre`.
@@ -3182,6 +3186,8 @@ model CptAlerteControle {
   palier    CptPalierControle
   envoyeeAt DateTime?
   creeAt    DateTime          @default(now())
+  /// Montants d'une alerte d'écart de rémunération (C-39) ; nul pour les paliers de relance.
+  detail    Json?
 
   @@unique([objet, objetId, palier])
   @@index([objet, palier])

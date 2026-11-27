@@ -43,7 +43,7 @@ export function centimesSignesRemunerationCpt(d: { toFixed(n: number): string } 
 }
 const jour = (d: Date) => d.toISOString().slice(0, 10);
 
-const SELECT_CONTRAT = {
+export const SELECT_CONTRAT_REMUNERATION_CPT = {
   id: true,
   numPolice: true,
   statut: true,
@@ -56,9 +56,9 @@ const SELECT_CONTRAT = {
   echeances: { select: { id: true, rang: true, datePrevue: true, etat: true, primeHt: true, accessoires: true, primeTtc: true, montantDu: true, montantRegle: true } },
 } satisfies Prisma.CptContratSelect;
 
-type ContratLu = Prisma.CptContratGetPayload<{ select: typeof SELECT_CONTRAT }>;
+type ContratLu = Prisma.CptContratGetPayload<{ select: typeof SELECT_CONTRAT_REMUNERATION_CPT }>;
 
-function versContratRemuneration(c: ContratLu): ContratRemunerationCpt {
+export function versContratRemunerationCpt(c: ContratLu): ContratRemunerationCpt {
   return {
     id: c.id,
     numPolice: c.numPolice,
@@ -98,7 +98,12 @@ async function conventionsDuBeneficiaire(db: RemunerationDbCpt, partenaireId: st
     select: { partenaireId: true },
   });
   const partenaires = [...new Set(pointent.map((c) => c.partenaireId))];
-  const lues = await db.cptConvention.findMany({ where: { partenaireId: { in: partenaires } }, include: { produit: { select: { code: true } } } });
+  return chargerConventionsRemunerationCpt(db, partenaires);
+}
+
+/** Conventions (de ces partenaires, ou toutes) sous la forme que lit le moteur. */
+export async function chargerConventionsRemunerationCpt(db: Pick<RemunerationDbCpt, "cptConvention">, partenaireIds?: readonly string[]): Promise<ConventionRemunerationCpt[]> {
+  const lues = await db.cptConvention.findMany({ where: partenaireIds ? { partenaireId: { in: [...partenaireIds] } } : {}, include: { produit: { select: { code: true } } } });
   return lues.map((c) => ({
     id: c.id,
     partenaireId: c.partenaireId,
@@ -199,7 +204,7 @@ export interface RemunerationPartenaireCpt {
 async function chargerCreancePartenaire(db: RemunerationDbCpt, partenaire: { id: string; estClient: boolean }, aujourdhui: string): Promise<CreancePartenaireCpt> {
   const vide: CreancePartenaireCpt = { estClient: partenaire.estClient, resteDu: ZERO, resteEchu: ZERO, resteEnRetard: ZERO, depuisLe: null, joursAnciennete: null, nbContrats: 0 };
   if (!partenaire.estClient) return vide;
-  const contrats = await db.cptContrat.findMany({ where: { partenaireApporteurId: partenaire.id, statut: { not: "ANNULE" } }, select: SELECT_CONTRAT });
+  const contrats = await db.cptContrat.findMany({ where: { partenaireApporteurId: partenaire.id, statut: { not: "ANNULE" } }, select: SELECT_CONTRAT_REMUNERATION_CPT });
   return contrats.reduce((total, c) => {
     if (debiteurDuContratCpt({ client: c.client, apporteur: c.partenaireApporteur }).type !== "PARTENAIRE") return total;
     const s = syntheseDe(c, aujourdhui);
@@ -254,13 +259,13 @@ export async function chargerRemunerationPartenaireCpt(db: RemunerationDbCpt, pa
   const filtres: Prisma.CptContratWhereInput[] = filtreContratsConcernes(conventions, partenaireId);
   const figes = [...new Set(enregistrees.map((l) => l.contratId))];
   if (figes.length > 0) filtres.push({ id: { in: figes } });
-  const contratsLus = filtres.length > 0 ? await db.cptContrat.findMany({ where: { OR: filtres }, select: SELECT_CONTRAT }) : [];
+  const contratsLus = filtres.length > 0 ? await db.cptContrat.findMany({ where: { OR: filtres }, select: SELECT_CONTRAT_REMUNERATION_CPT }) : [];
 
   const lignes: LigneRemunerationCalculeeCpt[] = [];
   const conflits: ConflitConventionCpt[] = [];
   const contrats = new Map<string, ContratRemunereInfoCpt>();
   for (const c of contratsLus) {
-    const r = lignesContratCpt({ contrat: versContratRemuneration(c), conventions, enregistrees, decisions });
+    const r = lignesContratCpt({ contrat: versContratRemunerationCpt(c), conventions, enregistrees, decisions });
     const siennes = r.lignes.filter((l) => l.beneficiaireId === partenaireId);
     conflits.push(...r.conflits.filter((x) => x.beneficiaireId === partenaireId));
     if (siennes.length === 0) continue;

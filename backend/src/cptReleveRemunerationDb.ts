@@ -1,7 +1,7 @@
 import type { PrismaClient } from "./generated/prisma/client";
 import type { NatureRemunerationCpt } from "./cptReferentiels";
 import type { ModePaiementPartenaireCpt } from "./cptReglementPartenaire";
-import { construireReleveRemunerationCpt, type ReleveRemunerationCpt } from "./cptReleveRemuneration";
+import { construireReleveRemunerationCpt, type PeriodeReleveCpt, type ReleveRemunerationCpt } from "./cptReleveRemuneration";
 import { centimesSignesRemunerationCpt, chargerRemunerationPartenaireCpt, type RemunerationDbCpt, type RemunerationPartenaireCpt } from "./cptRemunerationDb";
 
 // Aucun import d'`enc*` ou de `treso*` (règle d'indépendance du module).
@@ -18,6 +18,7 @@ export async function chargerReleveRemunerationCpt(
   partenaireId: string,
   nature: NatureRemunerationCpt,
   aujourdhui: string,
+  periode: PeriodeReleveCpt,
 ): Promise<{ partenaire: RemunerationPartenaireCpt["partenaire"]; releve: ReleveRemunerationCpt } | null> {
   const etat = await chargerRemunerationPartenaireCpt(db, partenaireId, aujourdhui);
   if (!etat) return null;
@@ -32,6 +33,7 @@ export async function chargerReleveRemunerationCpt(
     }),
   ]);
   const releve = construireReleveRemunerationCpt({
+    periode,
     nature,
     lignes: etat.lignes,
     clients: etat.contrats,

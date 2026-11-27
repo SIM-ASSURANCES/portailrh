@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { chargerReleveRemunerationCpt, colonnesReleveRemunerationCpt, lignesExportReleveRemunerationCpt, NATURES_REMUNERATION_CPT, prisma } from "backend";
+import { chargerReleveRemunerationCpt, colonnesReleveRemunerationCpt, lignesExportReleveRemunerationCpt, lirePeriodeReleveCpt, NATURES_REMUNERATION_CPT, prisma } from "backend";
 
 import { getSession } from "@/lib/auth";
 import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
@@ -8,7 +8,8 @@ import { exporterEnFlux, type FormatExportCpt, TYPE_MIME_EXPORT_CPT } from "@/li
 
 /**
  * Export du relevé d'un partenaire pour une nature (lot GC-9g), en flux.
- * `GET /api/compta/export/remuneration?partenaire=ID&nature=COMMISSION|ACCESSOIRES|HONORAIRES&format=csv|xlsx`. Accès
+ * `GET /api/compta/export/remuneration?partenaire=ID&nature=COMMISSION|ACCESSOIRES|HONORAIRES&format=csv|xlsx[&du=&au=|&periode=tout]`
+ * (par défaut, le trimestre civil en cours). Accès
  * `cpt.consulter_remuneration` (401 sans session, 403 sans la permission). Même relevé que l'écran et le PDF : aucun second calcul.
  */
 export async function GET(request: Request) {
@@ -21,7 +22,9 @@ export async function GET(request: Request) {
   if (format !== "xlsx" && format !== "csv") return NextResponse.json({ error: "Format inconnu (xlsx ou csv)." }, { status: 400 });
   const nature = NATURES_REMUNERATION_CPT.find((n) => n === url.searchParams.get("nature"));
   if (!nature) return NextResponse.json({ error: "Nature obligatoire (COMMISSION, ACCESSOIRES ou HONORAIRES)." }, { status: 400 });
-  const donnees = await chargerReleveRemunerationCpt(prisma, url.searchParams.get("partenaire") ?? "", nature, new Date().toISOString().slice(0, 10));
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+  const periode = lirePeriodeReleveCpt(Object.fromEntries(url.searchParams), aujourdhui);
+  const donnees = await chargerReleveRemunerationCpt(prisma, url.searchParams.get("partenaire") ?? "", nature, aujourdhui, periode);
   if (!donnees) return NextResponse.json({ error: "Partenaire introuvable." }, { status: 404 });
 
   const flux = exporterEnFlux({
@@ -33,7 +36,7 @@ export async function GET(request: Request) {
   return new Response(flux, {
     headers: {
       "Content-Type": TYPE_MIME_EXPORT_CPT[format as FormatExportCpt],
-      "Content-Disposition": `attachment; filename="releve-${nature.toLowerCase()}.${format}"`,
+      "Content-Disposition": `attachment; filename="releve-${nature.toLowerCase()}-${periode.du ? `${periode.du}-au-${periode.au}` : "historique"}.${format}"`,
       "Cache-Control": "private, no-store",
     },
   });

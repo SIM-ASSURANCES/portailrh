@@ -116,7 +116,7 @@ export async function reserverRelancesCpt(db: RelancesDbCpt, maintenant: Date): 
       for (const objet of ["ENCAISSEMENT", "CONTRAT"] as const) {
         for (const lot of lots(lignes.filter((l) => l.objet === objet).map((l) => l.id))) {
           const lus = await tx.cptAlerteControle.findMany({ where: { objet, objetId: { in: lot } }, select: { objet: true, objetId: true, palier: true } });
-          for (const r of lus) dejaReserves.add(clePalierCpt(r.objet, r.objetId, r.palier));
+          for (const r of lus) dejaReserves.add(clePalierCpt(objet, r.objetId, r.palier));
         }
       }
 
@@ -129,7 +129,9 @@ export async function reserverRelancesCpt(db: RelancesDbCpt, maintenant: Date): 
       // Réservation : seules les lignes réellement insérées par CETTE exécution comptent (skipDuplicates écarte les autres).
       const reservees: { objet: ObjetControleCpt; objetId: string; palier: PalierCpt; envoyeeAt: Date | null }[] = [];
       for (const lot of lots(toutes)) {
-        reservees.push(...(await tx.cptAlerteControle.createManyAndReturn({ data: lot, skipDuplicates: true, select: { objet: true, objetId: true, palier: true, envoyeeAt: true } })));
+        // Seuls des encaissements et des contrats sont réservés ici (les écarts de rémunération, C-39, ne passent pas par les paliers).
+        const creees = await tx.cptAlerteControle.createManyAndReturn({ data: lot, skipDuplicates: true, select: { objet: true, objetId: true, palier: true, envoyeeAt: true } });
+        reservees.push(...creees.map((r) => ({ ...r, objet: r.objet as ObjetControleCpt })));
       }
 
       const groupes = new Map<string, PalierAEnvoyerCpt>();

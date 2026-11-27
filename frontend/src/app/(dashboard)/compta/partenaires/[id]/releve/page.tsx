@@ -3,10 +3,20 @@ import { notFound, redirect } from "next/navigation";
 
 import { AvertissementHonoraires } from "@/components/compta/AvertissementHonoraires";
 import { dateIsoAfficheeCpt, montantCentimesCpt } from "@/components/compta/libellesRemuneration";
-import { PageHeader } from "@/components/ui";
+import { Button, Input, PageHeader } from "@/components/ui";
 import { getSession } from "@/lib/auth";
 import { peutVoirRemunerationCpt } from "@/lib/compta/droitsRemuneration";
-import { chargerReleveRemunerationCpt, LIBELLE_NATURE_REMUNERATION_CPT, NATURES_REMUNERATION_CPT, prisma, titreMouvementReleveCpt } from "backend";
+import {
+  chargerReleveRemunerationCpt,
+  LIBELLE_NATURE_REMUNERATION_CPT,
+  libellePeriodeReleveCpt,
+  lirePeriodeReleveCpt,
+  NATURES_REMUNERATION_CPT,
+  prisma,
+  requetePeriodeReleveCpt,
+  titreMouvementReleveCpt,
+  trimestreCivilCpt,
+} from "backend";
 
 const TH = "px-3 py-2 text-left text-xs font-semibold uppercase text-muted-foreground";
 const TD = "px-3 py-2 text-sm tabular-nums align-top";
@@ -15,17 +25,34 @@ const SECTION = "space-y-3 rounded-xl border border-border bg-card p-4 shadow-el
 const LIGNES_ECRAN_MAX = 500;
 
 /** Relevé d'un partenaire pour une nature (lot GC-9g). Mêmes données que les exports et le PDF (`chargerReleveRemunerationCpt`). */
-export default async function ReleveRemunerationPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ nature?: string }> }) {
+export default async function ReleveRemunerationPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ nature?: string; du?: string; au?: string; periode?: string }>;
+}) {
   const session = await getSession();
   if (!session || !peutVoirRemunerationCpt(session)) redirect("/?error=acces_refuse_compta");
   const { id } = await params;
-  const { nature: demandee } = await searchParams;
+  const recherche = await searchParams;
+  const demandee = recherche.nature;
   const nature = NATURES_REMUNERATION_CPT.find((n) => n === demandee) ?? "COMMISSION";
-  const donnees = await chargerReleveRemunerationCpt(prisma, id, nature, new Date().toISOString().slice(0, 10));
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+  const periode = lirePeriodeReleveCpt(recherche, aujourdhui);
+  const requete = requetePeriodeReleveCpt(periode);
+  const donnees = await chargerReleveRemunerationCpt(prisma, id, nature, aujourdhui, periode);
   if (!donnees) notFound();
   const { releve, partenaire } = donnees;
   const s = releve.solde;
-  const exportUrl = (format: "csv" | "xlsx") => `/api/compta/export/remuneration?partenaire=${id}&nature=${nature}&format=${format}`;
+  const exportUrl = (format: "csv" | "xlsx") => `/api/compta/export/remuneration?partenaire=${id}&nature=${nature}&format=${format}&${requete}`;
+  const trimestre = trimestreCivilCpt(aujourdhui);
+  const soldes: [string, string, bigint][] = [
+    ["ouverture", "Solde d'ouverture", releve.soldePeriode.ouverture],
+    ["du-periode", "+ Dû des échéances de la période", releve.soldePeriode.duPeriode],
+    ["verse-periode", "− Versements de la période", releve.soldePeriode.versementsPeriode],
+    ["cloture", "Solde de clôture", releve.soldePeriode.cloture],
+  ];
   const bouton = "rounded-lg border border-border bg-surface px-3 py-2 text-sm font-semibold text-foreground hover:bg-primary-bg";
   const totaux: [string, string, bigint][] = [
     ["du", "Dû", s.du],
@@ -58,7 +85,7 @@ export default async function ReleveRemunerationPage({ params, searchParams }: {
         {NATURES_REMUNERATION_CPT.map((n) => (
           <Link
             key={n}
-            href={`/compta/partenaires/${id}/releve?nature=${n}`}
+            href={`/compta/partenaires/${id}/releve?nature=${n}&${requete}`}
             aria-current={n === nature ? "page" : undefined}
             className={`rounded-full border px-3 py-1.5 text-sm font-semibold ${n === nature ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-foreground"}`}
           >
@@ -73,12 +100,50 @@ export default async function ReleveRemunerationPage({ params, searchParams }: {
         <a href={exportUrl("csv")} className={bouton} data-export="csv">
           Exporter (CSV)
         </a>
-        <a href={`/api/compta/partenaires/${id}/releve?nature=${nature}`} className={bouton} data-export="pdf">
+        <a href={`/api/compta/partenaires/${id}/releve?nature=${nature}&${requete}`} className={bouton} data-export="pdf">
           Relevé PDF
         </a>
       </div>
 
+      <section className={SECTION} data-periode-releve>
+        <form method="get" action={`/compta/partenaires/${id}/releve`} className="flex flex-wrap items-end gap-3" key={requete}>
+          <input type="hidden" name="nature" value={nature} />
+          <div className="w-full sm:w-44">
+            <Input type="date" name="du" label="Du" defaultValue={periode.du ?? ""} />
+          </div>
+          <div className="w-full sm:w-44">
+            <Input type="date" name="au" label="Au" defaultValue={periode.au ?? ""} />
+          </div>
+          <Button type="submit" variant="secondary">
+            Afficher la période
+          </Button>
+          <Link href={`/compta/partenaires/${id}/releve?nature=${nature}&du=${trimestre.du}&au=${trimestre.au}`} className="pb-2 text-sm font-semibold text-primary hover:underline">
+            Trimestre en cours
+          </Link>
+          <Link href={`/compta/partenaires/${id}/releve?nature=${nature}&periode=tout`} className="pb-2 text-sm font-semibold text-primary hover:underline" data-tout-historique>
+            Tout l&apos;historique
+          </Link>
+        </form>
+        <h2 className="text-base font-bold text-foreground" data-libelle-periode>
+          {libellePeriodeReleveCpt(periode)}
+        </h2>
+        <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          {soldes.map(([cle, libelle, v]) => (
+            <div key={cle}>
+              <dt className="text-muted-foreground">{libelle}</dt>
+              <dd className={`tabular-nums ${cle === "cloture" ? "text-xl font-black" : "text-lg font-bold"}`} data-solde-periode={cle}>
+                {montantCentimesCpt(v)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <p className="text-xs text-muted-foreground">
+          Solde : ce qui reste dû au partenaire sur les échéances prévues, après les versements. Négatif, il a reçu plus que ces échéances.
+        </p>
+      </section>
+
       <section className={SECTION} data-total-releve>
+        <h2 className="text-base font-bold text-foreground">Situation à ce jour (toutes échéances)</h2>
         <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
           {totaux.map(([cle, libelle, v]) => (
             <div key={cle}>
@@ -92,10 +157,10 @@ export default async function ReleveRemunerationPage({ params, searchParams }: {
       </section>
 
       <section className={SECTION}>
-        <h2 className="text-base font-bold text-foreground">Échéances</h2>
+        <h2 className="text-base font-bold text-foreground">Échéances prévues dans la période</h2>
         {releve.lignes.length === 0 ? (
           <p className="text-sm text-muted-foreground" data-releve-vide>
-            Aucune échéance de cette nature.
+            Aucune échéance de cette nature prévue dans la période.
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -135,9 +200,9 @@ export default async function ReleveRemunerationPage({ params, searchParams }: {
       </section>
 
       <section className={SECTION}>
-        <h2 className="text-base font-bold text-foreground">Règlements et compensations</h2>
+        <h2 className="text-base font-bold text-foreground">Règlements, compensations et annulations de la période</h2>
         {releve.mouvements.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aucun mouvement.</p>
+          <p className="text-sm text-muted-foreground">Aucun mouvement dans la période.</p>
         ) : (
           <ul className="divide-y divide-border text-sm" data-releve-mouvements>
             {releve.mouvements.map((m, i) => (

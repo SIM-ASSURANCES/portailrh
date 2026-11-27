@@ -90,6 +90,10 @@ async function main() {
     await convention(novelia.id, "SANTE-GR", "HONORAIRES", "0.08", { mode: "EN_UNE_FOIS", fait: "ENCAISSEMENT", apporteurId: novelia.id });
     await contrat("POL-BIS-SIM", "SANTE-GR", null, 100000);
     await contrat("POL-BIS-NOV", "SANTE-GR", novelia.id, 100000);
+    // Alerte d'écart de taux (9t) : un produit et un courtier à 10 % de commission, sans convention d'honoraires.
+    await produit("ALERTE", "ACCIDENTS");
+    const courtierAlerte = await partenaire("Courtier Alerte");
+    await convention(courtierAlerte.id, "ALERTE", "COMMISSION", "0.1");
     // Cabinet à compenser
     const cabinet = await partenaire("Cabinet Compensation", { estGestionnaire: true });
     await convention(cabinet.id, "CABINET", "COMMISSION", "0.1");
