@@ -1,7 +1,7 @@
 // Gestion Compta, lot GC-9 — RÉMUNÉRATION DES PARTENAIRES (sans GC-9d). Sur base JETABLE et neuve (voir e2e/README.md : `next build` puis
 // `bash e2e/base-jetable.sh`) : ce script ÉCRIT en base et ne se rejoue pas sur la même base. Données 100 % synthétiques.
 // Parties : E2E_PARTIES="9e,9f,9h,9g,9t,9q" (défaut : toutes ; les parties suivantes supposent les précédentes).
-//   9e : avertissement R1 et message des bordereaux, quatre soldes, T6 ter, T6, T6 bis par les écrans ; règlement et affectation,
+//   9e : mention « Gestion Compta est la référence » et message des bordereaux, quatre soldes, T6 ter, T6, T6 bis par les écrans ; règlement et affectation,
 //        jamais au-delà du net payable (même par rejeu avec un paramètre d'avance),
 //        décision « en une fois », refus serveur par rejeu sans permission, deux règlements simultanés, 390 px ;
 //   9f : aucune compensation automatique, compensation d'une avance née d'une prime abandonnée (montant et motif contrôlés), refus par rejeu sans
@@ -68,7 +68,7 @@ const COMMERCIAL = "compta-commercial@simassurances.test";
 const COLLABORATEUR = "collaborateur@simassurances.test";
 const PRODUCTION = "compta-production@simassurances.test";
 const COMPTABLE = "compta-comptable@simassurances.test";
-const R1 = "Le module Encaissements calcule aussi les honoraires. Avant la mise en service, un seul des deux doit faire foi.";
+const R1 = "Gestion Compta est la référence pour les honoraires et la rémunération des partenaires.";
 const BORDEREAUX = "Bordereaux des partenaires : en attente des modèles de fichiers";
 
 const sql = async (texte, valeurs = []) => (await db.query(texte, valeurs)).rows;
@@ -127,7 +127,7 @@ let reqAnnulation = null;
 if (partie("9e")) {
   const idTer = await idPartenaire("Courtier T6ter");
   const liste = await ouvrir(RFCRH, "/compta/partenaires");
-  verifier("9e. liste : avertissement R1 visible, texte exact", (await liste.locator("[data-avertissement-r1]").innerText()).includes(R1));
+  verifier("9e. liste : mention de référence visible, texte exact", (await liste.locator("[data-reference-compta]").innerText()).includes(R1));
   verifier("9e. liste : « Bordereaux des partenaires : en attente des modèles de fichiers »", (await liste.locator("[data-bordereaux-en-attente]").innerText()).trim() === BORDEREAUX);
   const rangee = (nom) => liste.locator(`[data-partenaire="${nom}"]`);
   verifier("9e. liste : T6 ter, commission nette à verser 3 000, reste dû 12 000", nombre(await rangee("Courtier T6ter").locator('[data-solde="COMMISSION"] [data-net]').innerText()) === 3000 && nombre(await rangee("Courtier T6ter").locator('[data-solde="COMMISSION"] [data-reste-du]').innerText()) === 12000);
@@ -137,7 +137,7 @@ if (partie("9e")) {
 
   // ---------- T6 ter ----------
   const p = await ouvrir(RFCRH, `/compta/partenaires/${idTer}`);
-  verifier("9e. fiche : avertissement R1 et message des bordereaux", (await p.locator("[data-avertissement-r1]").innerText()).includes(R1) && (await p.locator("[data-bordereaux-en-attente]").count()) === 1);
+  verifier("9e. fiche : mention de référence et message des bordereaux", (await p.locator("[data-reference-compta]").innerText()).includes(R1) && (await p.locator("[data-bordereaux-en-attente]").count()) === 1);
   verifier("9e. T6 ter avant règlement : dû 12 000, payable 3 000, net 3 000, payé 0", (await carte(p, "COMMISSION", "du")) === 12000 && (await carte(p, "COMMISSION", "payable")) === 3000 && (await carte(p, "COMMISSION", "reste-payable")) === 3000 && (await carte(p, "COMMISSION", "paye")) === 0);
   verifier("9e. détail : 12 échéances de commission, 1 000 chacune", (await p.locator("[data-ligne]").count()) === 12 && nombre(await p.locator('[data-ligne="POL-T6TER-12"] [data-montant="du"]').innerText()) === 1000);
 
@@ -386,7 +386,7 @@ if (partie("9g")) {
   await Promise.all([fiche.waitForURL(/\/releve/), fiche.locator("[data-lien-releve]").click()]);
   await calme(fiche);
   const r = fiche;
-  verifier("9g. depuis la fiche : le relevé de commission, avec l'avertissement R1", /nature=COMMISSION/.test(r.url()) && (await r.locator("[data-avertissement-r1]").innerText()).includes(R1));
+  verifier("9g. depuis la fiche : le relevé de commission, avec la mention de référence", /nature=COMMISSION/.test(r.url()) && (await r.locator("[data-reference-compta]").innerText()).includes(R1));
   verifier("9g. mêmes chiffres que la fiche (dû, payé, avance)", (await total(r, "du")) === ficheCommission.du && (await total(r, "paye")) === ficheCommission.paye && (await total(r, "avance")) === ficheCommission.avance, JSON.stringify(ficheCommission));
   const types = async (p) => (await p.locator("[data-releve-mouvements] [data-mouvement]").evaluateAll((els) => els.map((e) => e.getAttribute("data-mouvement")))).join(",");
   verifier("9g. commission du cabinet : deux imputations et leurs deux annulations ; leur somme est le payé (0)", (await types(r)) === "COMPENSATION,COMPENSATION,ANNULATION,ANNULATION" && (await sommeMouvements(r)) === (await total(r, "paye")) && (await total(r, "paye")) === 0, await types(r));

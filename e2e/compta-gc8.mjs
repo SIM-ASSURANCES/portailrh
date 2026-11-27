@@ -51,7 +51,7 @@ async function ouvrir(email, chemin, taille) {
 const RFCRH = "compta-rfcrh@simassurances.test";
 const DIRECTION = "compta-direction@simassurances.test";
 const COLLABORATEUR = "collaborateur@simassurances.test";
-const R1 = "Le module Encaissements calcule aussi la taxe. Avant la mise en service, un seul des deux doit faire foi (décision à prendre).";
+const R1 = "Gestion Compta est la référence pour la taxe sur les contrats d'assurance.";
 
 const sql = async (texte, valeurs = []) => (await db.query(texte, valeurs)).rows;
 const un = async (texte, valeurs = []) => (await sql(texte, valeurs))[0];
@@ -91,7 +91,7 @@ if (partie("8c")) {
   verifier("8c. T5 : la taxe de l'encaissement de 1 500 n'est comptée qu'une fois (101)", (await sommeLignes(`"encaissementId" IN (SELECT id FROM "CptEncaissement" WHERE montant = 1500)`)) === 101);
 
   const p = await ouvrir(RFCRH, "/compta/tca?mois=2026-02");
-  verifier("8c. avertissement R1 visible en tête, texte exact", (await p.locator("[data-avertissement-r1]").innerText()).includes(R1));
+  verifier("8c. mention « Gestion Compta est la référence » en tête, texte exact", (await p.locator("[data-reference-compta]").innerText()).includes(R1));
   verifier("8c. à payer = T1 169 + T3 739 + T5 101 = 1 009 (le contrat sans taux n'est pas taxé)", (await aPayerAffiche(p)) === 1009, await p.locator("[data-a-payer]").innerText());
   verifier("8c. recoupé par un calcul SQL indépendant", (await sommeLignes()) === 1009);
   verifier("8c. liste « taux manquant » : le contrat INCENDIE sans taux", (await p.locator('[data-taux-manquant="POL-GC8-INC"]').count()) === 1, await p.locator("[data-taux-manquants] h2").innerText());
@@ -132,7 +132,7 @@ if (partie("8c")) {
   await p.close();
 
   const d = await ouvrir(DIRECTION, "/compta/tca?mois=2026-02");
-  verifier("8c. la Direction voit l'avertissement R1 et le calcul en lecture seule", (await d.locator("[data-avertissement-r1]").count()) === 1 && (await d.locator("[data-section-avance]").count()) === 0 && (await d.locator("[data-calcul-mois]").count()) === 1);
+  verifier("8c. la Direction voit la mention de référence et le calcul en lecture seule", (await d.locator("[data-reference-compta]").count()) === 1 && (await d.locator("[data-section-avance]").count()) === 0 && (await d.locator("[data-calcul-mois]").count()) === 1);
   await d.close();
   const m = await ouvrir(RFCRH, "/compta/tca?mois=2026-02", { width: 390, height: 844 });
   verifier("8c. 390 px : pas de défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
@@ -214,7 +214,7 @@ if (partie("8d")) {
 // =====================================================================================================================
 if (partie("8e")) {
   const p = await ouvrir(RFCRH, "/compta/tca/etat?mois=2026-02");
-  verifier("8e. avertissement R1 visible en tête de l'état par taux", (await p.locator("[data-avertissement-r1]").innerText()).includes(R1));
+  verifier("8e. mention de référence en tête de l'état par taux", (await p.locator("[data-reference-compta]").innerText()).includes(R1));
   // Chaque taux de l'écran est recoupé par un GROUP BY indépendant sur les lignes du mois.
   const attendu = await sql(`SELECT taux::float AS taux, sum("primeHt")::float AS primes, sum("accessoiresHt")::float AS acc, sum(montant)::float AS impot FROM "CptLigneTaxe" WHERE "moisDeclaration" = '2026-02-01' GROUP BY taux ORDER BY taux DESC`);
   const libelles = { 0.0725: "7,25 %", 0.015: "1,5 %", 0.125: "12,5 %" };
@@ -263,7 +263,7 @@ if (partie("8e")) {
 // =====================================================================================================================
 if (partie("8f")) {
   const p = await ouvrir(RFCRH, "/compta/tca/suivi?mois=2026-02");
-  verifier("8f. avertissement R1 visible en tête du suivi", (await p.locator("[data-avertissement-r1]").innerText()).includes(R1));
+  verifier("8f. mention de référence en tête du suivi", (await p.locator("[data-reference-compta]").innerText()).includes(R1));
   const ligne = (police) => p.locator(`[data-suivi-contrat="${police}"]`);
   verifier("8f. T1 : exigible 169, déclarée 169, payée 169 → « Payée »", nombre(await ligne("POL-GC8-T1").locator("[data-exigible]").innerText()) === 169 && nombre(await ligne("POL-GC8-T1").locator("[data-payee]").innerText()) === 169 && (await ligne("POL-GC8-T1").getAttribute("data-etat-suivi")) === "PAYEE");
   verifier("8f. T3 : exigible 739", nombre(await ligne("POL-GC8-T3").locator("[data-exigible]").innerText()) === 739);

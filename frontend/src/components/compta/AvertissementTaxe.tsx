@@ -1,14 +1,13 @@
 import Link from "next/link";
 
-/** Risque R1 (plan GC, registre C-23) : les deux modules calculent la taxe ; en tête de CHAQUE écran de taxe, jusqu'à la décision. */
-export const MESSAGE_AVERTISSEMENT_R1 =
-  "Le module Encaissements calcule aussi la taxe. Avant la mise en service, un seul des deux doit faire foi (décision à prendre).";
+/** R1 tranché le 2026-11-27 (registre C-41) : mention en tête de CHAQUE écran de taxe. */
+export const MESSAGE_REFERENCE_TAXE = "Gestion Compta est la référence pour la taxe sur les contrats d'assurance.";
 
 export function AvertissementTaxe() {
   return (
-    <div role="note" data-avertissement-r1 className="mb-4 rounded-lg border border-warning/40 bg-warning-bg px-4 py-3 text-sm text-warning">
-      <strong className="font-bold">Attention.</strong> {MESSAGE_AVERTISSEMENT_R1}
-    </div>
+    <p data-reference-compta className="mb-4 rounded-lg border border-border bg-info-bg px-4 py-3 text-sm text-info">
+      {MESSAGE_REFERENCE_TAXE}
+    </p>
   );
 }
 

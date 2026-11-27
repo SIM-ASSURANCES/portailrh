@@ -23,7 +23,8 @@
 2. **Le portail contient déjà un module « Encaissements, taxes » (cahier V2.6) qui recouvre en partie ce périmètre.** Décision V1 :
    il n'est **pas touché** et les fonctions communes sont **refaites** dans Gestion Compta. Conséquence à connaître : les deux modules
    calculeront chacun une taxe et des honoraires sur leurs propres données ; **un seul des deux doit servir de référence en production
-   pour la TCA**, sinon le risque est de la déclarer ou de la payer deux fois (voir risque R1, section 12).
+   pour la TCA**, sinon le risque est de la déclarer ou de la payer deux fois (voir risque R1, section 12). **Tranché le 2026-11-27 :
+   Gestion Compta fait foi (conception, C-41).**
 3. **Le périmètre est le plus gros du portail** : environ 25 tables, 5 profils, 9 règles de gestion, 14 cas de recette,
    deux lots (gestion, puis comptabilité Odoo). Le planning indicatif du cahier (21 semaines pour le lot 1) suppose une équipe
    de prestataire ; le plan estime plus long parce qu'il applique les conventions du portail (tests, base jetable,
@@ -560,7 +561,7 @@ Les questions **Q4 et Q5 bloquent GC-0** (Q1, Q2 et Q3 sont tranchées par V1 à
 
 | Risque | Gravité | Parade |
 |---|---|---|
-| **R1** — Deux modules (Encaissements et Gestion Compta) qui calculent chacun la TCA et les honoraires sur leurs propres données : TCA **déclarée ou payée deux fois**, ou chiffres différents | **Élevée** | Conséquence assumée de V1 (aucun lien de données). **Décision d'exploitation à prendre avant la mise en service : un seul module fait foi pour la TCA et les honoraires** ; l'autre reste en consultation ou n'est pas activé en production. Un avertissement visible sur l'écran de TCA de chaque module le rappelle. |
+| **R1** — Deux modules (Encaissements et Gestion Compta) qui calculent chacun la TCA et les honoraires sur leurs propres données : TCA **déclarée ou payée deux fois**, ou chiffres différents | **Élevée** | **Tranché le 2026-11-27 (conception, C-41) : Gestion Compta fait foi pour la TCA, les honoraires et la rémunération des partenaires.** Reste, dans une tâche séparée du module Encaissements, à rendre ses calculs de taxe et d'honoraires indicatifs ou à les retirer |
 | Dette de duplication : un même défaut corrigé dans un module doit l'être aussi dans l'autre | Moyenne | Inventaire de duplication en GC-0 ; chaque copie garde en en-tête de fichier son origine (fichier et date) pour retrouver l'équivalent ; tests propres à chaque module |
 | Câblage dans des fichiers partagés (2.1) pouvant casser un module existant | Moyenne | Ajouts seulement ; rejeu des tests et e2e existants à chaque lot ; revue ciblée de chaque fichier partagé touché |
 | Périmètre très large, estimation du cahier (21 semaines) optimiste | **Élevée** | Livrer **par lots utilisables** (GC-1 à GC-6 donnent déjà le contrôle hebdomadaire) ; recaler l'estimation à la fin de GC-0 |
