@@ -4,15 +4,20 @@
 //   9e : avertissement R1 et message des bordereaux, quatre soldes, T6 ter, T6, T6 bis par les écrans ; règlement et affectation, avance,
 //        décision « en une fois », refus serveur par rejeu sans permission, deux règlements simultanés, 390 px ;
 //   9f : aucune compensation automatique, compensation d'une avance avec motif (montant et motif contrôlés), refus par rejeu sans
-//        permission, deux compensations simultanées, honoraires « à régulariser » après résiliation.
-import { execSync } from "node:child_process";
+//        permission, deux compensations simultanées, honoraires « à régulariser » après résiliation ;
+//   9g : relevé par partenaire et par nature (écran, mêmes chiffres que la fiche), exports CSV / Excel et PDF recoupés, accès refusés,
+//        390 px. Le PDF est relu avec `pdftotext`.
+import { execFileSync, execSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chromium } from "playwright";
 import pg from "pg";
 
 const B = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 const DB = process.env.E2E_DATABASE_URL ?? "postgresql://postgres:pw@localhost:55497/e2e";
 if (!/localhost:55497|e2e/i.test(DB)) throw new Error("E2E_DATABASE_URL doit viser une base jetable.");
-const PARTIES = (process.env.E2E_PARTIES ?? "9e,9f").split(",");
+const PARTIES = (process.env.E2E_PARTIES ?? "9e,9f,9g").split(",");
 const partie = (p) => PARTIES.includes(p);
 
 const db = new pg.Client({ connectionString: DB });
@@ -268,6 +273,78 @@ if (partie("9f")) {
   await p.close();
   const m = await ouvrir(RFCRH, `/compta/partenaires/${idCab}`, { width: 390, height: 844 });
   verifier("9f. 390 px : pas de défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+  await m.close();
+}
+
+// =====================================================================================================================
+// 9g — relevés par partenaire et par nature
+// =====================================================================================================================
+if (partie("9g")) {
+  const idCab = await idPartenaire("Cabinet Compensation");
+  const idNovelia = await idPartenaire("NOVELIA");
+  const total = async (p, cle) => nombre(await p.locator(`[data-total="${cle}"]`).innerText());
+  const sommeMouvements = async (p) => (await p.locator("[data-montant-mouvement]").allInnerTexts()).reduce((s, t) => s + nombre(t), 0);
+
+  const fiche = await ouvrir(RFCRH, `/compta/partenaires/${idCab}?nature=COMMISSION`);
+  const ficheCommission = { du: await carte(fiche, "COMMISSION", "du"), paye: await carte(fiche, "COMMISSION", "paye"), avance: await carte(fiche, "COMMISSION", "avance") };
+  await Promise.all([fiche.waitForURL(/\/releve/), fiche.locator("[data-lien-releve]").click()]);
+  await calme(fiche);
+  const r = fiche;
+  verifier("9g. depuis la fiche : le relevé de commission, avec l'avertissement R1", /nature=COMMISSION/.test(r.url()) && (await r.locator("[data-avertissement-r1]").innerText()).includes(R1));
+  verifier("9g. mêmes chiffres que la fiche (dû, payé, avance)", (await total(r, "du")) === ficheCommission.du && (await total(r, "paye")) === ficheCommission.paye && (await total(r, "avance")) === ficheCommission.avance, JSON.stringify(ficheCommission));
+  verifier("9g. commission du cabinet : le règlement de 3 000, deux reprises de compensation (−1 000, −2 000) ; leur somme est le payé", (await r.locator('[data-mouvement="REGLEMENT"]').count()) === 1 && (await r.locator('[data-mouvement="COMPENSATION"]').count()) === 2 && (await sommeMouvements(r)) === (await total(r, "paye")) && (await total(r, "paye")) === 0);
+  const payeSql = Number((await un(`SELECT (coalesce((SELECT sum(montant) FROM "CptReglementPartenaire" WHERE "partenaireId" = $1 AND nature = 'HONORAIRES'),0) + coalesce((SELECT sum(montant) FROM "CptCompensation" WHERE "partenaireId" = $1 AND "natureCible" = 'HONORAIRES'),0))::float AS s`, [idCab])).s);
+  await r.goto(`${B}/compta/partenaires/${idCab}/releve?nature=HONORAIRES`);
+  await calme(r);
+  verifier("9g. honoraires du cabinet : 3 000 imputés par compensation, recoupés par un calcul SQL indépendant", (await total(r, "paye")) === payeSql && payeSql === 3000 && (await sommeMouvements(r)) === 3000);
+  await r.close();
+
+  const idTer = await idPartenaire("Courtier T6ter");
+  const t = await ouvrir(DIRECTION, `/compta/partenaires/${idTer}/releve?nature=COMMISSION`);
+  const attendu = await un(`SELECT coalesce(sum(montant),0)::float AS s, count(*)::int AS n FROM "CptReglementPartenaire" WHERE "partenaireId" = $1`, [idTer]);
+  verifier("9g. la Direction consulte le relevé T6 ter : 12 échéances, payé = les règlements, dû 12 000", (await t.locator("[data-releve-ligne]").count()) === 12 && (await total(t, "du")) === 12000 && (await total(t, "paye")) === attendu.s && (await t.locator('[data-mouvement="REGLEMENT"]').count()) === attendu.n, JSON.stringify(attendu));
+  await t.close();
+
+  const n = await ouvrir(RFCRH, `/compta/partenaires/${idNovelia}/releve?nature=HONORAIRES`);
+  verifier("9g. relevé d'honoraires : colonnes encaissées / non encaissées (16 000 encaissées après T6 bis)", (await total(n, "encaissees")) === 16000 && (await total(n, "non-encaissees")) === 0);
+  const ecranDu = await total(n, "du");
+  await n.close();
+
+  // Exports : mêmes lignes que l'écran, accès contrôlé.
+  const ctx = await contexte(RFCRH);
+  const url = (id, nature, format) => `${B}/api/compta/export/remuneration?partenaire=${id}&nature=${nature}&format=${format}`;
+  const csv = await ctx.request.get(url(idCab, "COMMISSION", "csv"));
+  const lignesCsv = (await csv.text()).replace(/^\uFEFF/, "").trim().split("\r\n").map((l) => l.split(";"));
+  const colonne = (titre) => lignesCsv[0].indexOf(titre);
+  const sections = lignesCsv.slice(1).map((l) => l[0]);
+  verifier("9g. export CSV : échéance, règlement, deux compensations et un total", csv.status() === 200 && sections.join(",") === "Échéance,Règlement,Compensation,Compensation,Total", sections.join(","));
+  const totalCsv = lignesCsv.at(-1);
+  verifier("9g. CSV : total payé 0 = somme des mouvements ; une reprise reste négative", Number(totalCsv[colonne("Payé (FCFA)")].replace(",", ".")) === 0 && Number(totalCsv[colonne("Mouvement (FCFA)")].replace(",", ".")) === 0 && lignesCsv.some((l) => l[colonne("Mouvement (FCFA)")] === "-2000,00"));
+  const csvH = await (await ctx.request.get(url(idNovelia, "HONORAIRES", "csv"))).text();
+  const lh = csvH.replace(/^\uFEFF/, "").trim().split("\r\n").map((l) => l.split(";"));
+  verifier("9g. CSV honoraires : total dû = écran, colonne « Sur primes encaissées » = 16000", Number(lh.at(-1)[lh[0].indexOf("Dû (FCFA)")].replace(",", ".")) === ecranDu && Number(lh.at(-1)[lh[0].indexOf("Sur primes encaissées (FCFA)")].replace(",", ".")) === 16000);
+  const xlsx = await ctx.request.get(url(idCab, "HONORAIRES", "xlsx"));
+  const octets = await xlsx.body();
+  verifier("9g. export Excel : 200 et fichier xlsx valide (PK)", xlsx.status() === 200 && octets[0] === 0x50 && octets[1] === 0x4b);
+
+  const pdf = await ctx.request.get(`${B}/api/compta/partenaires/${idCab}/releve?nature=HONORAIRES`);
+  const corps = await pdf.body();
+  const dossier = mkdtempSync(join(tmpdir(), "gc9-pdf-"));
+  writeFileSync(join(dossier, "releve.pdf"), corps);
+  const texte = execFileSync("pdftotext", ["-enc", "UTF-8", "-layout", join(dossier, "releve.pdf"), "-"]).toString("utf8");
+  rmSync(dossier, { recursive: true, force: true });
+  verifier("9g. PDF : en-tête, partenaire, nature, compensation et payé 3 000", pdf.status() === 200 && corps.subarray(0, 4).toString() === "%PDF" && /RELEVÉ PARTENAIRE/.test(texte) && /Cabinet Compensation/.test(texte) && /Compensation/.test(texte) && /3 000 FCFA/.test(texte), texte.slice(0, 300).replace(/\s+/g, " "));
+
+  const anonyme = await browser.newContext();
+  verifier("9g. sans session : export 401, PDF 401", (await anonyme.request.get(url(idCab, "COMMISSION", "csv"), { maxRedirects: 0 })).status() === 401 && (await anonyme.request.get(`${B}/api/compta/partenaires/${idCab}/releve?nature=COMMISSION`, { maxRedirects: 0 })).status() === 401);
+  const sansDroit = await contexte(COLLABORATEUR);
+  const e403 = (await sansDroit.request.get(url(idCab, "COMMISSION", "csv"), { maxRedirects: 0 })).status();
+  const p403 = (await sansDroit.request.get(`${B}/api/compta/partenaires/${idCab}/releve?nature=COMMISSION`, { maxRedirects: 0 })).status();
+  verifier("9g. sans cpt.consulter : export et PDF refusés (403)", e403 === 403 && p403 === 403, `${e403} / ${p403}`);
+  verifier("9g. nature absente : 400 ; partenaire inconnu : 404", (await ctx.request.get(url(idCab, "X", "csv"))).status() === 400 && (await ctx.request.get(url("inconnu", "COMMISSION", "csv"))).status() === 404 && (await ctx.request.get(`${B}/api/compta/partenaires/inconnu/releve?nature=COMMISSION`)).status() === 404);
+
+  const m = await ouvrir(RFCRH, `/compta/partenaires/${idNovelia}/releve?nature=HONORAIRES`, { width: 390, height: 844 });
+  verifier("9g. 390 px : relevé sans défilement horizontal de la page", await m.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await m.close();
 }
 

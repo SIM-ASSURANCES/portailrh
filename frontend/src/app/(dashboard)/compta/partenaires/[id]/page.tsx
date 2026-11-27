@@ -102,9 +102,12 @@ export default async function PartenaireRemunerationPage({
   return (
     <div className="mx-auto max-w-6xl space-y-4 px-4 py-6 sm:px-6 sm:py-10">
       <PageHeader title={r.partenaire.nom} description="Rémunération du partenaire : quatre soldes distincts. Montants en FCFA." />
-      <p>
+      <p className="flex flex-wrap items-center justify-between gap-2">
         <Link href="/compta/partenaires" className="text-sm font-semibold text-primary hover:underline">
           ← Tous les partenaires
+        </Link>
+        <Link href={`/compta/partenaires/${id}/releve?nature=${nature}`} className="text-sm font-semibold text-primary hover:underline" data-lien-releve>
+          Relevés par nature (écran, Excel, CSV, PDF) →
         </Link>
       </p>
       <AvertissementHonoraires />
